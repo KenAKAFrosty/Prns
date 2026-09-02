@@ -9,12 +9,14 @@ const workspaceRoot = fileURLToPath(new URL("../../..", import.meta.url));
 
 const expectedDependencies = {
   "@expo/metro-runtime": "~57.0.15",
+  "@prns-internal/expo": "*",
   "@react-native-async-storage/async-storage": "2.2.0",
   expo: "~57.0.19",
   "expo-constants": "~57.0.17",
   "expo-linking": "~57.0.9",
   "expo-router": "~57.0.18",
   "expo-status-bar": "~57.0.1",
+  effect: "4.0.0-rc.112",
   react: "19.2.3",
   "react-dom": "19.2.3",
   "react-native": "0.86.3",
@@ -134,6 +136,11 @@ const engines = stringRecord(workspacePackage.engines, "applications.engines");
 if (engines.node !== "^22.13.0 || ^24.3.0 || >=25.0.0") {
   fail(`applications.engines.node has an unexpected range: ${String(engines.node)}`);
 }
+assertSelections(
+  "applications.overrides",
+  stringRecord(workspacePackage.overrides, "applications.overrides"),
+  { react: "19.2.3", "react-dom": "19.2.3" },
+);
 if (!nodeVersionIsSupported(process.versions.node)) {
   fail(
     `Node ${process.versions.node} is outside the supported Expo/RN range ` +
@@ -151,18 +158,29 @@ if (typeScriptVersion !== "Version 7.0.2") {
   fail(`tsc must be Version 7.0.2, received ${typeScriptVersion}`);
 }
 
-const npmTreeText = execFileSync("npm", ["ls", "react", "--all", "--json"], {
-  cwd: workspaceRoot,
-  encoding: "utf8",
-});
+const npmTreeText = execFileSync(
+  "npm",
+  ["ls", "react", "react-dom", "--all", "--json", "--package-lock-only"],
+  {
+    cwd: workspaceRoot,
+    encoding: "utf8",
+  },
+);
 const npmTree: unknown = JSON.parse(npmTreeText);
 if (!isRecord(npmTree)) {
-  fail("npm ls react returned a non-object graph");
+  fail("npm ls react react-dom returned a non-object graph");
 }
 const reactVersions = new Set<string>();
 collectVersions(npmTree, "react", reactVersions);
 if (reactVersions.size !== 1 || !reactVersions.has("19.2.3")) {
   fail(`the install must resolve only React 19.2.3, received ${[...reactVersions].join(", ")}`);
+}
+const reactDomVersions = new Set<string>();
+collectVersions(npmTree, "react-dom", reactDomVersions);
+if (reactDomVersions.size !== 1 || !reactDomVersions.has("19.2.3")) {
+  fail(
+    `the install must resolve only React DOM 19.2.3, received ${[...reactDomVersions].join(", ")}`,
+  );
 }
 
 console.log(

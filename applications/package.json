@@ -6,10 +6,20 @@
   "engines": {
     "node": "^22.13.0 || ^24.3.0 || >=25.0.0"
   },
+  "overrides": {
+    "react": "19.2.3",
+    "react-dom": "19.2.3"
+  },
   "workspaces": [
-    "prns/app"
+    "prns/app",
+    "sdk/expo"
   ],
   "scripts": {
+    "api:generate": "node sdk/expo/scripts/generate-contract.mjs",
+    "api:check": "node sdk/expo/scripts/generate-contract.mjs --check",
+    "native:test": "cargo test --locked --manifest-path Cargo.toml -p prns-app-native --features host-test",
+    "native:verify": "npm run api:check && npm run native:test && npm --prefix sdk/expo run verify",
+    "native:ios": "env PLATFORM_NAME=iphonesimulator ARCHS=arm64 bash sdk/expo/ios/build-rust.sh && env PLATFORM_NAME=iphoneos ARCHS=arm64 bash sdk/expo/ios/build-rust.sh",
     "start": "npm --prefix prns/app run start",
     "start:web": "npm --prefix prns/app run start:web",
     "versions:check": "npm --prefix prns/app run versions:check",
@@ -20,8 +30,8 @@
     "config:check": "npm --prefix prns/app run config:check",
     "expo:check": "npm --prefix prns/app run expo:check",
     "doctor": "npm --prefix prns/app run doctor",
-    "test": "npm --prefix prns/app run test",
+    "test": "npm --prefix sdk/expo run test && npm --prefix prns/app run test",
     "export:web": "npm --prefix prns/app run export:web",
-    "verify": "npm --prefix prns/app run verify"
+    "verify": "npm run api:check && npm run native:test && npm --prefix sdk/expo run verify && npm --prefix prns/app run verify"
   }
 }

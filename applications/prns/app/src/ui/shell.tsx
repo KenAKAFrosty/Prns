@@ -5,7 +5,6 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { navigationEntries, type ScreenCatalogEntry } from "@/navigation/catalog";
 import { useScaffoldState } from "@/state/scaffold-state-context";
-import { managedNodeFixture } from "@/testkit/fixtures";
 import { Badge } from "./primitives";
 import { layoutModeForWidth, radius, space, useAppPalette } from "./theme";
 
@@ -144,8 +143,6 @@ function ShellNavigationItem({
 
 function ContextPanel({ active }: { readonly active: ScreenCatalogEntry | undefined }) {
   const palette = useAppPalette();
-  const { state } = useScaffoldState();
-  const target = managedNodeFixture(state.selectedManagedNodeFixtureId);
   return (
     <View
       accessibilityLabel="Workspace context"
@@ -161,12 +158,12 @@ function ContextPanel({ active }: { readonly active: ScreenCatalogEntry | undefi
       <Text style={[styles.contextValue, { color: palette.text }]}>
         {active?.label ?? "Detail"}
       </Text>
-      {active?.section === "nodes" && target !== undefined ? (
+      {active?.section === "nodes" ? (
         <>
-          <Text style={[styles.contextLabel, { color: palette.textMuted }]}>Managed target</Text>
-          <Text style={[styles.contextValue, { color: palette.text }]}>{target.label}</Text>
+          <Text style={[styles.contextLabel, { color: palette.textMuted }]}>Node data</Text>
+          <Text style={[styles.contextValue, { color: palette.text }]}>Native snapshots</Text>
           <Text style={[styles.contextHint, { color: palette.textMuted }]}>
-            {target.fingerprint}
+            Managed targets appear only after upstream authorization persistence.
           </Text>
         </>
       ) : null}

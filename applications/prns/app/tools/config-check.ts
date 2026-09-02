@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 type JsonRecord = Readonly<Record<string, unknown>>;
 
 const appRoot = fileURLToPath(new URL("..", import.meta.url));
+const bluetoothUsageDescription = "prns uses Bluetooth to connect to nearby Reticulum nodes.";
 
 function fail(message: string): never {
   throw new Error(`config:check: ${message}`);
@@ -36,6 +37,7 @@ function assertVariant(
 ): void {
   const config = render(variant);
   const ios = readRecord(config.ios, `${variant}.ios`);
+  const infoPlist = readRecord(ios.infoPlist, `${variant}.ios.infoPlist`);
   const android = readRecord(config.android, `${variant}.android`);
   const web = readRecord(config.web, `${variant}.web`);
 
@@ -50,6 +52,14 @@ function assertVariant(
     if (actual !== wanted) {
       fail(`${variant}.${field} must be ${wanted}, received ${String(actual)}`);
     }
+  }
+  if (infoPlist.NSBluetoothAlwaysUsageDescription !== bluetoothUsageDescription) {
+    fail(
+      `${variant}.ios.infoPlist.NSBluetoothAlwaysUsageDescription must be the tracked product copy`,
+    );
+  }
+  if (infoPlist.UIBackgroundModes !== undefined) {
+    fail(`${variant}.ios.infoPlist must not claim Bluetooth background execution`);
   }
 }
 
@@ -73,4 +83,4 @@ if (invalid.status === 0) {
   fail("PRNS_APP_VARIANT=preview must be rejected");
 }
 
-console.log("config:check: development and production coordinates are exact");
+console.log("config:check: coordinates and foreground-only Bluetooth declaration are exact");

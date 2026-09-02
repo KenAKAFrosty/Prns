@@ -1,0 +1,108 @@
+import type {
+  DevelopmentNodeSnapshot,
+  DevelopmentRuntime,
+  EffectDevelopmentRuntime,
+} from "@prns-internal/expo";
+import { render, waitFor } from "@testing-library/react-native";
+import { Effect } from "effect";
+import type { ReactNode } from "react";
+
+import { DevelopmentRuntimeProvider } from "@/native/development-runtime-context";
+import type { RuntimeProvider } from "@/native/runtime-provider.types";
+import { NodesScreen } from "./nodes-screen";
+import { PairNodeScreen } from "./pair-node-screen";
+
+jest.mock("expo-router", () => ({
+  Link: ({ children }: { readonly children: ReactNode }) => children,
+}));
+
+function snapshot(revision: bigint): DevelopmentNodeSnapshot {
+  return {
+    contractFingerprint: "test-contract",
+    revision,
+    runtime: "running",
+    bluetooth: { type: "ready" },
+    controllerIdentityFingerprint: null,
+    pairing: { type: "searching" },
+    pairedTargets: [],
+    activeOperation: null,
+    failure: null,
+  };
+}
+
+function fakeProvider(stop: jest.Mock): RuntimeProvider {
+  const initial = snapshot(2n);
+  const runtime: DevelopmentRuntime = {
+    startDevelopmentNode: async () => ({ type: "started", snapshot: initial }),
+    readDevelopmentNodeSnapshot: async () => snapshot(1n),
+    initiateRemoteControlPairing: async () => ({ type: "busy" }),
+    approveRemoteControlPairing: async () => ({ type: "busy" }),
+    rejectRemoteControlPairing: async () => ({ type: "busy" }),
+    describeRemoteControlTarget: async () => ({ type: "busy" }),
+    stopDevelopmentNode: async () => {
+      stop();
+      return { type: "stopped" };
+    },
+    resetDevelopmentData: async () => ({ type: "alreadyStopped" }),
+  };
+  const effectRuntime: EffectDevelopmentRuntime = {
+    startDevelopmentNode: Effect.promise(runtime.startDevelopmentNode),
+    readDevelopmentNodeSnapshot: Effect.promise(runtime.readDevelopmentNodeSnapshot),
+    initiateRemoteControlPairing: (input) =>
+      Effect.promise(() => runtime.initiateRemoteControlPairing(input)),
+    approveRemoteControlPairing: (input) =>
+      Effect.promise(() => runtime.approveRemoteControlPairing(input)),
+    rejectRemoteControlPairing: (input) =>
+      Effect.promise(() => runtime.rejectRemoteControlPairing(input)),
+    describeRemoteControlTarget: (input) =>
+      Effect.promise(() => runtime.describeRemoteControlTarget(input)),
+    stopDevelopmentNode: Effect.promise(runtime.stopDevelopmentNode),
+    resetDevelopmentData: Effect.promise(runtime.resetDevelopmentData),
+  };
+  return {
+    availability: { type: "available", platform: "ios" },
+    runtime,
+    acquire: (options) =>
+      Effect.acquireRelease(
+        Effect.sync(() => {
+          options.onSnapshot(initial);
+          options.onSnapshot(snapshot(1n));
+          return { runtime: effectRuntime, initialSnapshot: initial };
+        }),
+        () => Effect.promise(runtime.stopDevelopmentNode).pipe(Effect.asVoid),
+      ),
+  };
+}
+
+describe("Foundation 1 Nodes runtime binding", () => {
+  it("holds one scoped runtime across the Nodes surface and stops it on layout release", async () => {
+    const stop = jest.fn();
+    const view = render(
+      <DevelopmentRuntimeProvider provider={fakeProvider(stop)} refreshIntervalMillis={50}>
+        <NodesScreen />
+      </DevelopmentRuntimeProvider>,
+    );
+
+    await waitFor(() => expect(view.getByText("Running")).toBeTruthy());
+    expect(view.getByText("No persisted targets")).toBeTruthy();
+    expect(view.getByText("2")).toBeTruthy();
+
+    view.unmount();
+    await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
+  });
+
+  it("renders the observed searching state without claiming a pairing result", async () => {
+    const stop = jest.fn();
+    const view = render(
+      <DevelopmentRuntimeProvider provider={fakeProvider(stop)} refreshIntervalMillis={50}>
+        <PairNodeScreen selectedCandidateId={undefined} />
+      </DevelopmentRuntimeProvider>,
+    );
+
+    await waitFor(() => expect(view.getByText("Searching")).toBeTruthy());
+    expect(view.getByText("Waiting for signed availability")).toBeTruthy();
+    expect(view.queryByText("Authorization persisted")).toBeNull();
+    view.unmount();
+    await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
+  });
+});

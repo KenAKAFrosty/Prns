@@ -41,6 +41,11 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     ios: {
       ...config.ios,
       bundleIdentifier: selection.identifier,
+      infoPlist: {
+        ...config.ios?.infoPlist,
+        NSBluetoothAlwaysUsageDescription:
+          "prns uses Bluetooth to connect to nearby Reticulum nodes.",
+      },
       supportsTablet: true,
     },
     android: {

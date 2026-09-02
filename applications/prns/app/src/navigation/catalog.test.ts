@@ -11,7 +11,7 @@ describe("screen catalog", () => {
     expect(new Set(routeFiles).size).toBe(34);
   });
 
-  it("marks only the eight honest presentation slices as implemented", () => {
+  it("marks only the nine honest presentation slices as implemented", () => {
     expect(
       screenCatalog
         .filter(({ availability }) => availability === "implementedScaffold")
@@ -20,6 +20,7 @@ describe("screen catalog", () => {
       "installation.onboarding",
       "nodes.index",
       "nodes.managed",
+      "nodes.pair",
       "explore.index",
       "more.index",
       "settings.index",

@@ -593,6 +593,31 @@ jobs:
       - name: Verify application scaffold
         run: python3 validation/run.py run --suite application-scaffold --expected-sha "$GITHUB_SHA"
 
+  application-native-foundation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          workspaces: applications -> target
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.18.0"
+          cache: npm
+          cache-dependency-path: applications/package-lock.json
+      - name: Install exact application toolchain
+        run: |
+          npm install --global npm@11.16.0
+          test "$(node --version)" = "v24.18.0"
+          test "$(npm --version)" = "11.16.0"
+          npm --prefix applications ci --ignore-scripts --no-audit --no-fund
+      - name: Verify native application foundation
+        run: python3 validation/run.py run --suite application-native-foundation --expected-sha "$GITHUB_SHA"
+
   release-critical:
     name: Release critical
     if: always()
@@ -613,6 +638,7 @@ jobs:
       - local-interop
       - deny
       - application-scaffold
+      - application-native-foundation
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
@@ -632,6 +658,7 @@ jobs:
       INTEROP_RESULT: ${{ needs.local-interop.result }}
       DENY_RESULT: ${{ needs.deny.result }}
       APPLICATION_SCAFFOLD_RESULT: ${{ needs.application-scaffold.result }}
+      APPLICATION_NATIVE_FOUNDATION_RESULT: ${{ needs.application-native-foundation.result }}
     steps:
       - name: Require every release-critical lane
         run: |
@@ -651,6 +678,7 @@ jobs:
             "$WINDOWS_RESULT" \
             "$INTEROP_RESULT" \
             "$DENY_RESULT" \
-            "$APPLICATION_SCAFFOLD_RESULT"; do
+            "$APPLICATION_SCAFFOLD_RESULT" \
+            "$APPLICATION_NATIVE_FOUNDATION_RESULT"; do
             test "$result" = "success"
           done

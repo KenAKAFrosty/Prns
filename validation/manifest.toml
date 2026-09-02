@@ -35,6 +35,7 @@ version = "1.5.0"
 [registry]
 cargo_lock_workspaces = [
     ".",
+    "applications",
     "benchmarks",
     "docs/website",
     "personal-hopspot/desktop",
@@ -61,6 +62,8 @@ cargo_lock_workspaces = [
 ]
 cargo_manifests = [
     "Cargo.toml",
+    "applications/Cargo.toml",
+    "applications/prns/native-composition/Cargo.toml",
     "benchmarks/Cargo.toml",
     "docs/command/Cargo.toml",
     "docs/website/Cargo.toml",
@@ -121,6 +124,7 @@ cargo_manifests = [
 ]
 format_manifests = [
     "Cargo.toml",
+    "applications/Cargo.toml",
     "benchmarks/Cargo.toml",
     "docs/website/Cargo.toml",
     "personal-hopspot/desktop/Cargo.toml",
@@ -832,7 +836,7 @@ tiers = ["pr"]
 platform = "any"
 toolchain = "node"
 timeout_seconds = 900
-command = ["npm", "--prefix", "applications", "run", "verify"]
+command = ["npm", "--prefix", "applications/prns/app", "run", "verify"]
 inputs = [
   "applications/package.json",
   "applications/package-lock.json",
@@ -849,6 +853,25 @@ inputs = [
   "applications/prns/app/tools",
 ]
 artifacts = "validation-artifacts/results/application-scaffold"
+
+[[suite]]
+id = "application-native-foundation"
+domain = "platform"
+group = "application"
+tiers = ["pr"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 900
+command = ["npm", "--prefix", "applications", "run", "native:verify"]
+inputs = [
+  "applications/Cargo.toml",
+  "applications/Cargo.lock",
+  "applications/package.json",
+  "applications/package-lock.json",
+  "applications/prns/native-composition",
+  "applications/sdk/expo",
+]
+artifacts = "validation-artifacts/results/application-native-foundation"
 
 [[suite]]
 id = "javascript-contract"

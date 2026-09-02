@@ -2,10 +2,9 @@ import type { ReactNode } from "react";
 import { render, waitFor } from "@testing-library/react-native";
 
 import { NodesScreen } from "@/features/nodes/nodes-screen";
+import { DevelopmentRuntimeProvider } from "@/native/development-runtime-context";
 import { NotYetImplementedScreen } from "@/features/placeholder-screen";
 import { screenById } from "@/navigation/catalog";
-import { ScaffoldStateProvider } from "@/state/scaffold-state-context";
-import { developmentFingerprint } from "@/testkit/fixtures";
 
 const mockReplace = jest.fn();
 
@@ -32,18 +31,17 @@ describe("foundation scaffold screens", () => {
     expect(view.getByRole("button", { name: "Go back" })).toBeTruthy();
   });
 
-  it("keeps the managed fixture name and unmistakable fingerprint visible", async () => {
+  it("reports an unsupported native provider without synthetic nodes", async () => {
     const view = render(
-      <ScaffoldStateProvider>
+      <DevelopmentRuntimeProvider>
         <NodesScreen />
-      </ScaffoldStateProvider>,
+      </DevelopmentRuntimeProvider>,
     );
 
-    await waitFor(() => expect(view.getByText("E290 managed-node preview")).toBeTruthy());
-    expect(view.getByText(developmentFingerprint)).toBeTruthy();
-    expect(view.getByText("Fixture target")).toBeTruthy();
+    await waitFor(() => expect(view.getByText("Native runtime unavailable")).toBeTruthy());
     expect(
-      view.getByText(/cannot pair, connect, or execute RemoteControl commands/iu),
+      view.getByText(/No target inventory or pairing result is being simulated/iu),
     ).toBeTruthy();
+    expect(view.queryByText("Fixture target")).toBeNull();
   });
 });
