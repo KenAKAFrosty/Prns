@@ -2144,6 +2144,8 @@ name = "prns-host"
 version = "0.3.7"
 dependencies = [
  "prns-runtime",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
