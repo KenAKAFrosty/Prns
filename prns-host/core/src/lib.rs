@@ -18,6 +18,7 @@ mod lifecycle;
 mod limits;
 mod queue;
 mod resource;
+mod snapshot_json;
 mod types;
 
 pub use capability::{BackendCapabilities, BackendInfo};
@@ -78,6 +79,7 @@ pub use queue::{
 pub use resource::{
     ResourceAvailable, ResourceChunk, ResourceReadError, ResourceReader, ResourceStreamId,
 };
+pub use snapshot_json::serialize_host_snapshot_json;
 pub use types::{
     CommandId, DestinationHash, IdentityHash, InterfaceId, LinkId, PacketHash, RequestId,
     RequestPathHash, ResourceHash,
