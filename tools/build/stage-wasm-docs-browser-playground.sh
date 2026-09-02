@@ -34,6 +34,11 @@ else
     npm --prefix "$wasm_dir" run build:playground
 fi
 
+# The playground TypeScript project compiles prns-js from source so its SDK stays
+# coupled to the exact repository commit. Replace the resulting bare casework
+# package import with the same locked, self-contained module shipped by prns-js.
+node "$repo_root/prns-js/scripts/stage-code.mjs"
+
 if [[ -e "$public_dir/sdk" ]]; then
     rm -rf -- "$public_dir/sdk"
 fi
@@ -48,6 +53,7 @@ cp "$build_dir/prns-wasm/examples/browser-playground/presentation.js" "$public_d
 cp "$build_dir/prns-wasm/examples/browser-playground/state.js" "$public_dir/state.js"
 cp "$build_dir/prns-wasm/examples/browser-playground/view.js" "$public_dir/view.js"
 cp -R "$build_dir/prns-js/src/." "$public_dir/sdk/"
+cp "$repo_root/prns-js/dist/casework.js" "$public_dir/sdk/casework.js"
 cp "$example_dir/sdk/index.js" "$public_dir/sdk/index.js"
 cp "$example_dir/sdk/package.json" "$public_dir/sdk/package.json"
 cp "$build_dir/pkg/prns_wasm.js" "$public_dir/pkg/prns_wasm.js"
