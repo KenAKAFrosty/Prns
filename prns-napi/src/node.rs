@@ -673,7 +673,7 @@ fn request_error(error: personal_rns::SendError<SendRequestFailure>) -> crate::e
                 ResourceFailureCause::OpenTimedOut => ErrorCode::ResponseOpenTimedOut,
                 ResourceFailureCause::MetadataOverrun => ErrorCode::ResponseMetadataOverrun,
             };
-            code_err(code, &format!("response transfer failed: {cause:?}"))
+            code_err(code, format!("response transfer failed: {cause:?}"))
         }
         personal_rns::SendError::Failed(SendRequestFailure::ResponseTooLarge) => {
             code_err(ErrorCode::ResponseTooLarge, "response is too large")

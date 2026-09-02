@@ -104,6 +104,9 @@ impl LinkKey {
         }
     }
 
+    // The fallible conversion is an artifact of splitting a compile-time 64-byte array. Both
+    // halves are structurally fixed at 32 bytes, so neither branch can fail.
+    #[allow(clippy::expect_used)]
     pub(crate) fn token_material_halves(&self) -> (&[u8; 32], &[u8; 32]) {
         let (signing, encryption) = self.material.split_at(32);
         (

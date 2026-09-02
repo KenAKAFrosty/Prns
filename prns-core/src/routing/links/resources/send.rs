@@ -205,14 +205,14 @@ fn tracked_resource_failure(error: TrackOutgoingResourceError) -> SendResourceFa
     SendResourceFailure::Rejected(rejection)
 }
 
-// `Resolved` can carry an owned crypto continuation. Keep that state inline so resource proof
-// classification remains available to no-alloc runtimes.
-#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ResourceSealLane {
     Inline,
     External,
 }
+// `Resolved` can carry an owned crypto continuation. Keep that state inline so resource proof
+// classification remains available to no-alloc runtimes.
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum ResourceProofClassification {
     Resolved(IngestPacketOutcome<'static>),
     NotALocalLink,
@@ -822,6 +822,9 @@ impl<S: StorageLayout> EngineState<S> {
         )
     }
 
+    // The shared inner path names each borrowed command, segment, envelope, scheduling lane,
+    // clock, entropy source, and reaction route without materializing another aggregate.
+    #[allow(clippy::too_many_arguments)]
     fn ingest_send_resource_segment_enveloped<F, Work>(
         &mut self,
         send: &ResourceSend<'_>,
@@ -1457,6 +1460,9 @@ impl<S: StorageLayout> EngineState<S> {
         self.seal_staged_index(index, link_id, fill_entropy, sink);
     }
 
+    // A staged worker result is correlated by all four identity fields before its borrowed bytes
+    // and collision salts may land; keep that validation surface explicit at the boundary.
+    #[allow(clippy::too_many_arguments)]
     pub fn apply_external_staged_seal(
         &mut self,
         command_id: CommandId,
@@ -1511,6 +1517,9 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
+    // The digest continuation carries distinct correlation, returned-byte, and proof fields.
+    // Keeping them separate makes stale and malformed completions independently checkable.
+    #[allow(clippy::too_many_arguments)]
     pub fn apply_external_staged_seal_digests(
         &mut self,
         command_id: CommandId,

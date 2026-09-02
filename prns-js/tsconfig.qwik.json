@@ -6,8 +6,12 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "skipLibCheck": true,
-    "rootDir": "src/browser/adapters",
-    "outDir": "dist/qwik-types",
+    "baseUrl": ".",
+    "paths": {
+      "personal-rns/browser": ["src/browser/index.ts"]
+    },
+    "rootDir": "src",
+    "outDir": "dist",
     "emitDeclarationOnly": true
   },
   "include": ["src/browser/adapters/qwik.tsx"]

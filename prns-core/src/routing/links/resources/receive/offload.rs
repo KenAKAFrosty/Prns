@@ -116,6 +116,9 @@ impl<S: StorageLayout> EngineState<S> {
         self.conclude_resource(link_id, hash, now, sink);
     }
 
+    // This landing seam keeps the resource identity, returned bytes, verification evidence,
+    // engine time, and reaction route explicit; bundling them would obscure their ownership.
+    #[allow(clippy::too_many_arguments)]
     pub fn apply_external_open_verified(
         &mut self,
         link_id: &LinkId,

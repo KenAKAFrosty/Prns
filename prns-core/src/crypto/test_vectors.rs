@@ -15,7 +15,13 @@ fn hex_vec(raw: &str) -> Vec<u8> {
         .filter(|byte| !byte.is_ascii_whitespace())
         .collect();
     assert_eq!(hex.len() % 2, 0, "hex vector has complete bytes: {raw:?}");
-    hex.chunks_exact(2)
+    let (pairs, remainder) = hex.as_chunks::<2>();
+    assert!(
+        remainder.is_empty(),
+        "hex vector has complete bytes: {raw:?}"
+    );
+    pairs
+        .iter()
         .map(|pair| {
             let pair = core::str::from_utf8(pair).expect("ASCII hex");
             u8::from_str_radix(pair, 16).expect("valid hex")

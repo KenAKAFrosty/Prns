@@ -71,7 +71,7 @@
       "import": "./dist/browser/adapters/svelte.js"
     },
     "./qwik": {
-      "types": "./dist/qwik-types/qwik.d.ts",
+      "types": "./dist/browser/adapters/qwik.d.ts",
       "import": "./dist/qwik/index.qwik.mjs"
     },
     "./web-component": {

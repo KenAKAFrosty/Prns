@@ -210,4 +210,21 @@ private fun decodeCommandFailure(
     CommandFailureKind.CONNECT_FAILED -> CommandFailureConnectFailed(detail)
     CommandFailureKind.BACKEND_FAILED -> CommandFailureBackendFailed(detail)
     CommandFailureKind.RESPONSE_TOO_LARGE -> CommandFailureResponseTooLarge
+    CommandFailureKind.LINK_CLOSED -> CommandFailureLinkClosed
+    CommandFailureKind.RESPONSE_CANCELLED_BY_SENDER -> CommandFailureResponseCancelledBySender
+    CommandFailureKind.RESPONSE_HASHMAP_BEYOND_PART_COUNT ->
+        CommandFailureResponseHashmapBeyondPartCount
+    CommandFailureKind.RESPONSE_HASHMAP_SKIPS_AHEAD -> CommandFailureResponseHashmapSkipsAhead
+    CommandFailureKind.RESPONSE_HASHMAP_TOO_LONG -> CommandFailureResponseHashmapTooLong
+    CommandFailureKind.RESPONSE_HASHMAP_RAGGED -> CommandFailureResponseHashmapRagged
+    CommandFailureKind.RESPONSE_RETRIES_EXHAUSTED -> CommandFailureResponseRetriesExhausted
+    CommandFailureKind.RESPONSE_LINK_VANISHED -> CommandFailureResponseLinkVanished
+    CommandFailureKind.RESPONSE_TRANSFER_UNOPENABLE -> CommandFailureResponseTransferUnopenable
+    CommandFailureKind.RESPONSE_TRANSFER_CORRUPT -> CommandFailureResponseTransferCorrupt
+    CommandFailureKind.RESPONSE_PROOF_UNSENDABLE -> CommandFailureResponseProofUnsendable
+    CommandFailureKind.RESPONSE_DECOMPRESSION_FAILED -> CommandFailureResponseDecompressionFailed
+    CommandFailureKind.RESPONSE_DECOMPRESSION_TIMED_OUT ->
+        CommandFailureResponseDecompressionTimedOut
+    CommandFailureKind.RESPONSE_OPEN_TIMED_OUT -> CommandFailureResponseOpenTimedOut
+    CommandFailureKind.RESPONSE_METADATA_OVERRUN -> CommandFailureResponseMetadataOverrun
 }

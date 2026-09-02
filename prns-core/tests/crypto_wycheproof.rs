@@ -11,9 +11,10 @@ const ED25519_CORPUS: &str = include_str!("vectors/wycheproof_ed25519_dac1dd47.j
 const X25519_CORPUS: &str = include_str!("vectors/wycheproof_x25519_dac1dd47.json");
 
 fn hex_vec(raw: &str) -> Vec<u8> {
-    assert_eq!(raw.len() % 2, 0, "complete hex bytes");
-    raw.as_bytes()
-        .chunks_exact(2)
+    let (pairs, remainder) = raw.as_bytes().as_chunks::<2>();
+    assert!(remainder.is_empty(), "complete hex bytes");
+    pairs
+        .iter()
         .map(|pair| {
             let pair = core::str::from_utf8(pair).expect("ASCII hex");
             u8::from_str_radix(pair, 16).expect("valid vector hex")
