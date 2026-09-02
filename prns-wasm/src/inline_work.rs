@@ -12,9 +12,9 @@ use personal_rns::crypto::{
 use personal_rns::engine::{
     ChannelAckSignCompleted, ChannelAckVerification, CryptoOwed, Directive, EncryptCompleted,
     EngineReaction, EngineState, IdentifySignCompleted, InstantMillis, LinkIdentityVerification,
-    LinkReceiptSignCompleted, NoOwedWork, OwedWork, ProofSignCompleted,
-    ReceiptProofVerification, ResourceDecompressionCompleted, ResourceOpenCompleted,
-    TunnelSynthesizeSignCompleted, TunnelSynthesizeVerification,
+    LinkReceiptSignCompleted, NoOwedWork, OwedWork, ProofSignCompleted, ReceiptProofVerification,
+    ResourceDecompressionCompleted, ResourceOpenCompleted, TunnelSynthesizeSignCompleted,
+    TunnelSynthesizeVerification,
 };
 use personal_rns::identity::{decrypt_token_in_place_with_ratchets, OpenedToken};
 use personal_rns::interfaces::AttachedInterfaces;
@@ -120,31 +120,25 @@ pub(crate) fn fulfill_ready_work(
                     engine.resume_channel_ack_verify(owed, verification, sink);
                 }
                 CryptoOwed::LinkIdentityVerify(owed) => {
-                    let verification = if ed25519_verify(
-                        &owed.signing_key,
-                        &owed.signed_data,
-                        &owed.signature,
-                    )
-                    .is_ok()
-                    {
-                        LinkIdentityVerification::Valid
-                    } else {
-                        LinkIdentityVerification::Invalid
-                    };
+                    let verification =
+                        if ed25519_verify(&owed.signing_key, &owed.signed_data, &owed.signature)
+                            .is_ok()
+                        {
+                            LinkIdentityVerification::Valid
+                        } else {
+                            LinkIdentityVerification::Invalid
+                        };
                     engine.resume_link_identity_verify(owed, verification, sink);
                 }
                 CryptoOwed::TunnelSynthesizeVerify(owed) => {
-                    let verification = if ed25519_verify(
-                        &owed.signing_key,
-                        &owed.signed_region,
-                        &owed.signature,
-                    )
-                    .is_ok()
-                    {
-                        TunnelSynthesizeVerification::Valid
-                    } else {
-                        TunnelSynthesizeVerification::Invalid
-                    };
+                    let verification =
+                        if ed25519_verify(&owed.signing_key, &owed.signed_region, &owed.signature)
+                            .is_ok()
+                        {
+                            TunnelSynthesizeVerification::Valid
+                        } else {
+                            TunnelSynthesizeVerification::Invalid
+                        };
                     engine.resume_tunnel_synthesize_verify(owed, verification);
                 }
                 CryptoOwed::Encrypt(owed) => {

@@ -5,8 +5,7 @@ use personal_rns::crypto::{
 use personal_rns::engine::{
     ChannelAckSignCompleted, ChannelAckVerification, CryptoOwed, Directive, EncryptCompleted,
     EngineReaction, EngineState, IdentifySignCompleted, IngestIo, InstantMillis,
-    LinkIdentityVerification,
-    LinkReceiptSignCompleted, NoOwedWork, OwedWork, ProofSignCompleted,
+    LinkIdentityVerification, LinkReceiptSignCompleted, NoOwedWork, OwedWork, ProofSignCompleted,
     ReceiptProofVerification, ResourceDecompressionCompleted, ResourceOpenCompleted,
     TunnelSynthesizeSignCompleted, TunnelSynthesizeVerification,
 };
@@ -132,33 +131,27 @@ pub(super) fn feed_packet_inline(
                     });
                 }
                 CryptoOwed::LinkIdentityVerify(owed) => {
-                    let verification = if ed25519_verify(
-                        &owed.signing_key,
-                        &owed.signed_data,
-                        &owed.signature,
-                    )
-                    .is_ok()
-                    {
-                        LinkIdentityVerification::Valid
-                    } else {
-                        LinkIdentityVerification::Invalid
-                    };
+                    let verification =
+                        if ed25519_verify(&owed.signing_key, &owed.signed_data, &owed.signature)
+                            .is_ok()
+                        {
+                            LinkIdentityVerification::Valid
+                        } else {
+                            LinkIdentityVerification::Invalid
+                        };
                     engine.resume_link_identity_verify(owed, verification, &mut |reaction| {
                         capture.absorb(reaction, scratch)
                     });
                 }
                 CryptoOwed::TunnelSynthesizeVerify(owed) => {
-                    let verification = if ed25519_verify(
-                        &owed.signing_key,
-                        &owed.signed_region,
-                        &owed.signature,
-                    )
-                    .is_ok()
-                    {
-                        TunnelSynthesizeVerification::Valid
-                    } else {
-                        TunnelSynthesizeVerification::Invalid
-                    };
+                    let verification =
+                        if ed25519_verify(&owed.signing_key, &owed.signed_region, &owed.signature)
+                            .is_ok()
+                        {
+                            TunnelSynthesizeVerification::Valid
+                        } else {
+                            TunnelSynthesizeVerification::Invalid
+                        };
                     engine.resume_tunnel_synthesize_verify(owed, verification);
                 }
                 CryptoOwed::Encrypt(owed) => {
@@ -304,18 +297,14 @@ pub(super) fn feed_packet_inline(
                     );
                 }
                 CryptoOwed::EstablishLink(owed) => {
-                    engine.resume_establish_link(
-                        owed.fulfill(),
-                        interfaces,
-                        &mut |reaction| capture.absorb(reaction, scratch),
-                    );
+                    engine.resume_establish_link(owed.fulfill(), interfaces, &mut |reaction| {
+                        capture.absorb(reaction, scratch)
+                    });
                 }
                 CryptoOwed::AnnounceSign(owed) => {
-                    engine.resume_announce_sign(
-                        owed.fulfill(),
-                        interfaces,
-                        &mut |reaction| capture.absorb(reaction, scratch),
-                    );
+                    engine.resume_announce_sign(owed.fulfill(), interfaces, &mut |reaction| {
+                        capture.absorb(reaction, scratch)
+                    });
                 }
                 CryptoOwed::AnnounceVerify(owed) => {
                     if Announce::from_wire_unverified(&owed.header, &owed.payload)
