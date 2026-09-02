@@ -1,0 +1,51 @@
+{
+  "changed_boards": [
+    "heltec-v4",
+    "heltec-v4-r8",
+    "t-beam-supreme"
+  ],
+  "qualification": {
+    "deferred_hardware": [
+      {
+        "basis": "The R8 target uses the same shared ESP32-S3 RNG/ADC TRNG bootstrap and identity-generation path exercised on the physical S3R2 V4, and its board-specific release build passes, but no physical R8 hardware is presently available for the signed candidate.",
+        "board": "heltec-v4-r8",
+        "follow_up": "Capture and review an S3R8 full-erase first boot, fresh node and Auto-BLE identity creation, identity retention after reboot, LoRa readiness, and stable-runtime observation after promotion."
+      },
+      {
+        "basis": "The T-Beam target uses the same shared ESP32-S3 RNG/ADC TRNG bootstrap and identity-generation path exercised on the physical S3R2 V4, and its board-specific release build passes, but no physical T-Beam hardware is presently available for the signed candidate.",
+        "board": "t-beam-supreme",
+        "follow_up": "Capture and review a T-Beam full-erase first boot, fresh node and Auto-BLE identity creation, identity retention after reboot, LoRa readiness, and stable-runtime observation after promotion."
+      }
+    ],
+    "physical_boards": [
+      "heltec-v4"
+    ],
+    "required_checks": [
+      "fresh-node-and-ble-identities-created",
+      "hardware-trng-enabled-before-identity-generation",
+      "identities-retained-after-reboot",
+      "lora-radio-ready",
+      "stable-post-boot-runtime"
+    ],
+    "required_scenarios": [
+      "correct-board",
+      "fresh-install",
+      "full-erase-first-boot",
+      "post-flash-boot",
+      "second-boot"
+    ],
+    "surfaces": [
+      "cli"
+    ]
+  },
+  "release": {
+    "base_manifest_sha256": "0143926b236c1d33c820fd4cb0f7c430f560c4f663c052eeb13b1c1a88b935f8",
+    "base_release_record_sha256": "5716909da55dc2da84ecae6969fb4e50b9b81d19acf266b549bb6ca34419a137",
+    "base_signed_candidate_sha256": "512f98becce21eae1de876995c0d98d5eafccde669085f2c8beced7c38407650",
+    "base_source_commit": "d9e33cdd877545821af4b9c5d769f064b2940c85",
+    "base_version": "0.3.7-hotfix.4",
+    "version": "0.3.7-hotfix.5"
+  },
+  "schema": 1,
+  "summary": "ESP32-S3 identity bootstrap now enables the hardware RNG/ADC TRNG source before generating node and Auto-BLE identities; potentially affected existing installations require an explicit full-erase reflash."
+}

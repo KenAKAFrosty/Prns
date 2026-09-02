@@ -118,8 +118,8 @@ signed release. Qualification receipts and their remaining limits live under
 ## Embedded flash-layout upgrade
 
 The [runtime entropy guide](../docs/runtime-entropy.md) documents board bring-up,
-reseed sources, and the 0.4.0 full-erase remediation for ESP32-S3 identities
-created on the affected 0.3.7 through 0.3.7-hotfix.4 first-boot path.
+reseed sources, and the 0.3.7-hotfix.5 full-erase remediation for ESP32-S3
+identities created on the affected 0.3.7 through 0.3.7-hotfix.4 first-boot path.
 
 LoRa-capable firmware persists the selected radio profile in a dedicated two-page store. Reset records a durable choice to follow the firmware default, while an explicitly saved profile remains fixed across updates. Sparse firmware updates preserve the profile store; a full-chip erase clears it.
 
