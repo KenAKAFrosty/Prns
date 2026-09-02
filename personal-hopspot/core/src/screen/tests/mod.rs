@@ -191,6 +191,8 @@ fn test_ui_state() -> UiState {
         access_point: AccessPointState::Unsupported,
         shared_instance_config_export: SharedInstanceConfigExport::Unavailable,
         gnss: super::GnssAvailability::Unavailable,
+        #[cfg(feature = "remote-control-pairing")]
+        remote_control_pairing: crate::RemoteControlPairingAvailability::Unavailable,
     })
 }
 
@@ -201,6 +203,8 @@ fn test_ui_state_with_display_power() -> UiState {
         access_point: AccessPointState::Unsupported,
         shared_instance_config_export: SharedInstanceConfigExport::Unavailable,
         gnss: super::GnssAvailability::Unavailable,
+        #[cfg(feature = "remote-control-pairing")]
+        remote_control_pairing: crate::RemoteControlPairingAvailability::Unavailable,
     })
 }
 
@@ -211,6 +215,8 @@ fn test_ui_state_with_access_point(access_point: AccessPointState) -> UiState {
         access_point,
         shared_instance_config_export: SharedInstanceConfigExport::Unavailable,
         gnss: super::GnssAvailability::Unavailable,
+        #[cfg(feature = "remote-control-pairing")]
+        remote_control_pairing: crate::RemoteControlPairingAvailability::Unavailable,
     })
 }
 
@@ -221,6 +227,8 @@ fn test_ui_state_with_shared_instance_config() -> UiState {
         access_point: AccessPointState::Unsupported,
         shared_instance_config_export: SharedInstanceConfigExport::Available,
         gnss: super::GnssAvailability::Unavailable,
+        #[cfg(feature = "remote-control-pairing")]
+        remote_control_pairing: crate::RemoteControlPairingAvailability::Unavailable,
     })
 }
 
@@ -231,6 +239,20 @@ fn test_ui_state_with_gnss() -> UiState {
         access_point: AccessPointState::Unsupported,
         shared_instance_config_export: SharedInstanceConfigExport::Unavailable,
         gnss: GnssAvailability::Available,
+        #[cfg(feature = "remote-control-pairing")]
+        remote_control_pairing: crate::RemoteControlPairingAvailability::Unavailable,
+    })
+}
+
+#[cfg(feature = "remote-control-pairing")]
+fn test_ui_state_with_remote_control_pairing() -> UiState {
+    UiState::new(UiConfiguration {
+        storage_limits: DisplayedStorageLimits::DYNAMIC,
+        user_blanking: UserBlanking::unavailable(),
+        access_point: AccessPointState::Unsupported,
+        shared_instance_config_export: SharedInstanceConfigExport::Unavailable,
+        gnss: GnssAvailability::Unavailable,
+        remote_control_pairing: crate::RemoteControlPairingAvailability::Available,
     })
 }
 
