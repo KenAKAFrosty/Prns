@@ -411,7 +411,7 @@ platform = "any"
 toolchain = "python"
 timeout_seconds = 120
 command = ["__RUNNER_PYTHON__", "tools/prns", "verify"]
-inputs = ["tools/prns", "tools/tasks.toml", "tools/repo/cargo-check.py", "tools/README.md", ".githooks/pre-push"]
+inputs = ["tools/prns", "tools/tasks.toml", "tools/repo/cargo-check.py", "tools/README.md", ".githooks/pre-push", "validation/hygiene/pre-push-ci-parity.py"]
 artifacts = "validation-artifacts/results/tool-registry"
 
 [[suite]]

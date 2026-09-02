@@ -8,9 +8,11 @@ set -euo pipefail
 repo_root="$(git rev-parse --show-toplevel)"
 
 pushed_tips=()
+pushed_updates=()
 while read -r _local_ref local_sha _remote_ref _remote_sha; do
     if [ "${local_sha}" != "0000000000000000000000000000000000000000" ]; then
         pushed_tips+=("${local_sha}")
+        pushed_updates+=(--update "${local_sha}" "${_remote_sha}")
     fi
 done
 
@@ -51,4 +53,13 @@ if ! "${repo_root}/tools/prns" repo cargo-check; then
     echo "✗ push blocked by the repository Cargo check (see above)."
     echo "  fix every failed workspace before retrying the push."
     exit 1
+fi
+
+if [ "${#pushed_updates[@]}" -gt 0 ]; then
+    if ! python3 "${repo_root}/validation/hygiene/pre-push-ci-parity.py" "${pushed_updates[@]}"; then
+        echo ""
+        echo "✗ push blocked by a diff-selected CI parity check (see above)."
+        echo "  fix the failing Clippy, host binding, or RustSec lane before retrying."
+        exit 1
+    fi
 fi

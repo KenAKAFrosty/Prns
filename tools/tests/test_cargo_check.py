@@ -118,6 +118,7 @@ tiers = ["release"]
         self.assertIn("run release.host-sdk.distribution.check", hook)
         self.assertIn("run repo.host-contract.check", hook)
         self.assertIn('validation/run.py" verify', hook)
+        self.assertIn("pre-push-ci-parity.py", hook)
         self.assertIn('"${repo_root}/tools/prns" repo cargo-check', hook)
 
     def test_ci_checks_all_host_operating_systems_on_trunk_and_main(self) -> None:
