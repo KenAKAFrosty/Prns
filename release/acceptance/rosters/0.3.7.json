@@ -23,8 +23,8 @@
     {
       "board": "heltec-v4",
       "surface": "cli",
-      "os": "linux",
-      "architecture": "x86_64",
+      "os": "macos",
+      "architecture": "aarch64",
       "tester": "github:KenAKAFrosty",
       "cables_ready": true,
       "device_permissions_ready": true,
