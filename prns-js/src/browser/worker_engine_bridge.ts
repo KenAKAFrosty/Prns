@@ -1,5 +1,7 @@
+import type { InterfaceId } from "../contract.js";
 import type { PrnsDiagnosticEvent } from "./events.js";
 import type { MainThreadPrnsOptions } from "./index.js";
+import type { TransferredInterfaceOutboundOutcome } from "./outbound.js";
 import type {
   WorkerCapabilityCall,
   WorkerCapabilityCallOutcome,
@@ -19,6 +21,13 @@ type WorkerCapabilityDispatcher = <Call extends WorkerCapabilityCall>(
 const hooksByOptions = new WeakMap<MainThreadPrnsOptions, WorkerEngineHooks>();
 const capabilityDispatchers = new WeakMap<object, WorkerCapabilityDispatcher>();
 const snapshotCapturers = new WeakMap<object, () => WorkerSnapshotOutcome>();
+const networkOutboundDispatchers = new WeakMap<
+  object,
+  (
+    interfaceId: InterfaceId,
+    maximumFrames?: number,
+  ) => Promise<TransferredInterfaceOutboundOutcome>
+>();
 
 export function bindWorkerEngineOptions(
   options: MainThreadPrnsOptions,
@@ -50,6 +59,30 @@ export function dispatchWorkerCapability<Call extends WorkerCapabilityCall>(
     return Promise.reject(new Error("worker capability dispatcher is unavailable"));
   }
   return dispatcher(call);
+}
+
+export function registerWorkerNetworkOutboundDispatcher(
+  owner: object,
+  dispatcher: (
+    interfaceId: InterfaceId,
+    maximumFrames?: number,
+  ) => Promise<TransferredInterfaceOutboundOutcome>,
+): void {
+  networkOutboundDispatchers.set(owner, dispatcher);
+}
+
+export function dispatchWorkerNetworkOutbound(
+  owner: object,
+  interfaceId: InterfaceId,
+  maximumFrames?: number,
+): Promise<TransferredInterfaceOutboundOutcome> {
+  const dispatcher = networkOutboundDispatchers.get(owner);
+  if (dispatcher === undefined) {
+    return Promise.reject(
+      new Error("worker network outbound dispatcher is unavailable"),
+    );
+  }
+  return dispatcher(interfaceId, maximumFrames);
 }
 
 export function registerWorkerSnapshotCapturer(

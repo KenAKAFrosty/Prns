@@ -495,7 +495,10 @@ fn only_the_exact_prepared_offer_dispatch_failure_aborts_the_attempt() {
     assert_eq!(attempt_view(&state).attempt_id(), attempt_id);
     assert_eq!(
         state.offer_dispatch_failed(attempt_id),
-        FailRemoteControlTargetPairingOfferDispatchOutcome::Aborted { attempt_id },
+        FailRemoteControlTargetPairingOfferDispatchOutcome::Aborted {
+            attempt_id,
+            context: fixture.context(),
+        },
     );
     assert_eq!(state.view(), RemoteControlTargetPairingView::Idle);
     assert_eq!(
@@ -916,7 +919,12 @@ fn persisted_authorization_retains_one_exact_replayable_completion_until_its_dea
     );
     assert_eq!(
         state.expire(ATTEMPT_EXPIRES_AT),
-        ExpireRemoteControlTargetPairingOutcome::CompletionRetentionExpired { attempt_id },
+        ExpireRemoteControlTargetPairingOutcome::CompletionRetentionExpired {
+            expired: RemoteControlTargetPairingCompletionRetentionExpired::new(
+                attempt_id,
+                fixture.context(),
+            ),
+        },
     );
     assert_eq!(state.view(), RemoteControlTargetPairingView::Idle);
 }
@@ -963,6 +971,7 @@ fn authorization_persisted_after_the_shared_deadline_returns_the_exact_grant() {
         ),
         PersistRemoteControlTargetPairingAuthorizationOutcome::AuthorizationPersistedAfterDeadline {
             attempt_id,
+            context: fixture.context(),
             grant,
         },
     );
@@ -988,6 +997,7 @@ fn failed_authorization_aborts_only_the_correlated_attempt() {
         state.authorization_failed(attempt_id),
         FailRemoteControlTargetPairingAuthorizationOutcome::Aborted {
             attempt_id,
+            context: fixture.context(),
             responder: fixture.commit(0x61).responder(),
         },
     );

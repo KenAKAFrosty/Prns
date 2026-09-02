@@ -18,7 +18,7 @@ import {
 import {
   PrnsValidationError,
   channelTag,
-  packetFrame,
+  packetFrameView,
 } from "../values.js";
 import {
   bluetoothStage,
@@ -374,7 +374,10 @@ export class BrowserBluetoothSession implements BluetoothSession {
       });
     }
     if (frame && frame.length > 0) {
-      const ingested = await this.#host.ingest(this.#interfaceId, packetFrame(frame));
+      const ingested = await this.#host.ingest(
+        this.#interfaceId,
+        packetFrameView(frame),
+      );
       return ingested.tag === "Accepted" ? Tag("Handled") : ingested;
     }
     return Tag("Handled");

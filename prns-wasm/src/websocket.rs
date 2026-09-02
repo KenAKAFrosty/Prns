@@ -7,6 +7,11 @@ use personal_rns::interfaces::websocket::{
 use personal_rns::interfaces::{FrameSink, FrameSinkError};
 use wasm_bindgen::prelude::*;
 
+const WEBSOCKET_DECODE_BATCH_MAGIC: u32 = u32::from_le_bytes(*b"PWSD");
+const WEBSOCKET_DECODE_BATCH_VERSION: u16 = 1;
+const WEBSOCKET_DECODE_BATCH_HEADER_BYTES: usize = 12;
+const WEBSOCKET_DECODE_BATCH_RESOLVED_OUTBOUND: u16 = 1;
+
 #[wasm_bindgen]
 pub struct WebSocketFramingCodec {
     session: WebSocketSessionFraming,
@@ -42,6 +47,16 @@ impl WebSocketFramingCodec {
         self.session.can_stage_multiple_outbound()
     }
 
+    #[wasm_bindgen(js_name = canPassRawOutbound)]
+    pub fn can_pass_raw_outbound(&self) -> bool {
+        self.session.can_pass_raw_outbound()
+    }
+
+    #[wasm_bindgen(js_name = canPassRawInbound)]
+    pub fn can_pass_raw_inbound(&self) -> bool {
+        self.session.can_pass_raw_inbound()
+    }
+
     #[wasm_bindgen(js_name = rawFallbackIsArmed)]
     pub fn raw_fallback_is_armed(&self) -> bool {
         self.session.raw_fallback_is_armed()
@@ -59,6 +74,38 @@ impl WebSocketFramingCodec {
 
     pub fn decode(&mut self, message: Vec<u8>) -> Result<JsValue, JsValue> {
         let packets = Array::new();
+        let resolved_outbound = self.decode_with(message, |frame| {
+            packets.push(&Uint8Array::from(frame));
+            Ok(())
+        })?;
+        let batch = Object::new();
+        Reflect::set(
+            batch.as_ref(),
+            &JsValue::from_str("packets"),
+            packets.as_ref(),
+        )?;
+        if let Some(outbound) = resolved_outbound {
+            Reflect::set(
+                batch.as_ref(),
+                &JsValue::from_str("resolvedOutbound"),
+                Uint8Array::from(outbound.as_slice()).as_ref(),
+            )?;
+        }
+        Ok(batch.into())
+    }
+
+    #[wasm_bindgen(js_name = decodePacked)]
+    pub fn decode_packed(&mut self, message: Vec<u8>) -> Result<Vec<u8>, JsValue> {
+        let mut writer = WebSocketDecodeBatchWriter::new(message.len())?;
+        let resolved_outbound = self.decode_with(message, |frame| writer.frame(frame))?;
+        writer.finish(resolved_outbound.as_deref())
+    }
+
+    fn decode_with(
+        &mut self,
+        message: Vec<u8>,
+        mut emit: impl FnMut(&[u8]) -> Result<(), JsValue>,
+    ) -> Result<Option<Vec<u8>>, JsValue> {
         let mut resolved_outbound = None;
         let mut offset = 0;
         while offset < message.len() {
@@ -67,10 +114,10 @@ impl WebSocketFramingCodec {
                 .next_frame_into(&message, &mut offset, &mut self.frame);
             match outcome {
                 Ok(WebSocketSessionFrameDecodeOutcome::Frame) => {
-                    packets.push(&Uint8Array::from(self.frame.as_slice()));
+                    emit(self.frame.as_slice())?;
                 }
                 Ok(WebSocketSessionFrameDecodeOutcome::ResolvedFrame(resolution)) => {
-                    packets.push(&Uint8Array::from(self.frame.as_slice()));
+                    emit(self.frame.as_slice())?;
                     resolved_outbound = resolution
                         .pending_packet()
                         .map(|packet| {
@@ -87,20 +134,7 @@ impl WebSocketFramingCodec {
                 | Err(_) => break,
             }
         }
-        let batch = Object::new();
-        Reflect::set(
-            batch.as_ref(),
-            &JsValue::from_str("packets"),
-            packets.as_ref(),
-        )?;
-        if let Some(outbound) = resolved_outbound {
-            Reflect::set(
-                batch.as_ref(),
-                &JsValue::from_str("resolvedOutbound"),
-                Uint8Array::from(outbound.as_slice()).as_ref(),
-            )?;
-        }
-        Ok(batch.into())
+        Ok(resolved_outbound)
     }
 
     #[wasm_bindgen(js_name = stageOutbound)]
@@ -125,6 +159,58 @@ impl WebSocketFramingCodec {
         released
             .pending_packet()
             .and_then(|packet| encode_packet(released.framing(), packet))
+    }
+}
+
+struct WebSocketDecodeBatchWriter {
+    bytes: Vec<u8>,
+    packet_count: u32,
+}
+
+impl WebSocketDecodeBatchWriter {
+    fn new(message_bytes: usize) -> Result<Self, JsValue> {
+        let capacity = WEBSOCKET_DECODE_BATCH_HEADER_BYTES
+            .checked_add(message_bytes)
+            .ok_or_else(|| JsValue::from_str("WebSocket decode batch capacity overflowed"))?;
+        let mut bytes = Vec::new();
+        bytes
+            .try_reserve_exact(capacity)
+            .map_err(|_| JsValue::from_str("WebSocket decode batch allocation failed"))?;
+        bytes.extend_from_slice(&WEBSOCKET_DECODE_BATCH_MAGIC.to_le_bytes());
+        bytes.extend_from_slice(&WEBSOCKET_DECODE_BATCH_VERSION.to_le_bytes());
+        bytes.extend_from_slice(&0u16.to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        Ok(Self {
+            bytes,
+            packet_count: 0,
+        })
+    }
+
+    fn frame(&mut self, frame: &[u8]) -> Result<(), JsValue> {
+        let length = u32::try_from(frame.len())
+            .map_err(|_| JsValue::from_str("WebSocket decoded frame is too large"))?;
+        self.packet_count = self
+            .packet_count
+            .checked_add(1)
+            .ok_or_else(|| JsValue::from_str("WebSocket decode batch has too many frames"))?;
+        self.bytes.extend_from_slice(&length.to_le_bytes());
+        self.bytes.extend_from_slice(frame);
+        Ok(())
+    }
+
+    fn finish(mut self, resolved_outbound: Option<&[u8]>) -> Result<Vec<u8>, JsValue> {
+        let flags = if let Some(outbound) = resolved_outbound {
+            let length = u32::try_from(outbound.len())
+                .map_err(|_| JsValue::from_str("WebSocket resolved frame is too large"))?;
+            self.bytes.extend_from_slice(&length.to_le_bytes());
+            self.bytes.extend_from_slice(outbound);
+            WEBSOCKET_DECODE_BATCH_RESOLVED_OUTBOUND
+        } else {
+            0
+        };
+        self.bytes[6..8].copy_from_slice(&flags.to_le_bytes());
+        self.bytes[8..12].copy_from_slice(&self.packet_count.to_le_bytes());
+        Ok(self.bytes)
     }
 }
 
@@ -183,4 +269,35 @@ fn encode_packet(framing: WebSocketWireFraming, packet: &[u8]) -> Option<Vec<u8>
     let encoded_len = framing.encode(packet, &mut encoded).ok()?;
     encoded.truncate(encoded_len);
     Some(encoded)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{WebSocketFramingCodec, WEBSOCKET_DECODE_BATCH_MAGIC};
+
+    #[test]
+    fn packed_decode_preserves_packet_bytes_without_object_keys() -> Result<(), &'static str> {
+        let mut codec = WebSocketFramingCodec::new("kiss").map_err(|_| "codec creation failed")?;
+        let encoded = codec
+            .stage_outbound(vec![0x21, 0x22, 0x23])
+            .map_err(|_| "packet encoding failed")?
+            .ok_or("packet was unexpectedly queued")?;
+        let batch = codec
+            .decode_packed(encoded)
+            .map_err(|_| "packet decoding failed")?;
+
+        assert_eq!(
+            batch,
+            [
+                WEBSOCKET_DECODE_BATCH_MAGIC.to_le_bytes().as_slice(),
+                1u16.to_le_bytes().as_slice(),
+                0u16.to_le_bytes().as_slice(),
+                1u32.to_le_bytes().as_slice(),
+                3u32.to_le_bytes().as_slice(),
+                &[0x21, 0x22, 0x23],
+            ]
+            .concat(),
+        );
+        Ok(())
+    }
 }

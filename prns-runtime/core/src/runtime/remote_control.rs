@@ -3,13 +3,14 @@ use crate::engine::{
 };
 use crate::identity::IdentityHash;
 use crate::remote_control::{
-    RemoteControlAccessTable, RemoteControlAnnounceSelfOutcome, RemoteControlDescription,
+    RemoteControlAnnounceSelfOutcome, RemoteControlControllerGrantTable, RemoteControlDescription,
     RemoteControlDescriptionError, RemoteControlMessageWriteError, RemoteControlProtocolError,
     RemoteControlRequest, RemoteControlRequestKind, RemoteControlRequestParseError,
     RemoteControlRequestSet, RemoteControlResponse, RemoteControlResponseKind,
     RemoteControlResponseParseError, RemoteControlSelfAnnouncement,
     REMOTE_CONTROL_REQUEST_ENDPOINT_ID,
 };
+use crate::routing::links::request::REQUEST_WIRE_OVERHEAD;
 use crate::units::ByteLimit;
 use crate::wire::DestinationHash;
 
@@ -18,6 +19,9 @@ use super::request_endpoints::{
     ResponseSink,
 };
 use super::{AnnounceNowError, PrnsNodeApi, SendError};
+
+pub(super) const REMOTE_CONTROL_REQUEST_PLAINTEXT_MAX: usize =
+    REQUEST_WIRE_OVERHEAD.saturating_add(RemoteControlRequest::MAX_ENCODED_LEN);
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum RemoteControlError {
@@ -285,17 +289,17 @@ pub struct AdmittedRemoteControlRequest {
     operation: AdmittedRemoteControlOperation,
 }
 
-pub fn admit_remote_control_request<Access>(
-    access: &Access,
+pub fn admit_remote_control_request<ControllerGrants>(
+    controller_grants: &ControllerGrants,
     supported_requests: RemoteControlRequestSet,
     self_announcement: RemoteControlSelfAnnouncement,
     request: &InboundRequest<'_>,
 ) -> Result<AdmittedRemoteControlRequest, Decline>
 where
-    Access: RemoteControlAccessTable,
+    ControllerGrants: RemoteControlControllerGrantTable,
 {
     let binding = RemoteControlRequestBinding::new(request)?;
-    let Some(grant) = access.grant_for(&binding.controller) else {
+    let Some(grant) = controller_grants.grant_for(&binding.controller) else {
         return Err(Decline::Ignore);
     };
     let available_requests = supported_requests.intersection(grant.permitted_requests());
@@ -325,9 +329,9 @@ pub async fn dispatch_admitted_remote_control_request<'a, AppState>(
     .await
 }
 
-pub async fn dispatch_remote_control_request<'a, AppState, Access>(
+pub async fn dispatch_remote_control_request<'a, AppState, ControllerGrants>(
     state: &'a AppState,
-    access: &Access,
+    controller_grants: &ControllerGrants,
     supported_requests: RemoteControlRequestSet,
     self_announcement: RemoteControlSelfAnnouncement,
     node: &impl PrnsNodeApi,
@@ -335,10 +339,14 @@ pub async fn dispatch_remote_control_request<'a, AppState, Access>(
     sink: &'a mut dyn ResponseSink,
 ) -> Result<(), Decline>
 where
-    Access: RemoteControlAccessTable,
+    ControllerGrants: RemoteControlControllerGrantTable,
 {
-    let admission =
-        admit_remote_control_request(access, supported_requests, self_announcement, &request)?;
+    let admission = admit_remote_control_request(
+        controller_grants,
+        supported_requests,
+        self_announcement,
+        &request,
+    )?;
     dispatch_admitted_remote_control_request(state, node, request, sink, admission).await
 }
 
@@ -350,7 +358,7 @@ mod tests {
         IdentityEncryptionPublicKey, IdentityHash, IdentityPublicKeys, IdentitySigningPublicKey,
     };
     use crate::remote_control::{
-        FixedRemoteControlAccessTable, RemoteControlControllerGrant,
+        FixedRemoteControlControllerGrantTable, RemoteControlControllerGrant,
         RemoteControlControllerIdentity, RemoteControlProtocolVersion, RemoteControlRequestKind,
         RemoteControlRequestSet,
     };
@@ -458,39 +466,43 @@ mod tests {
         })
     }
 
-    fn access(allowed: RemoteControlControllerIdentity) -> FixedRemoteControlAccessTable<1> {
-        access_permitting(allowed, RemoteControlRequestSet::all())
+    fn controller_grants(
+        allowed: RemoteControlControllerIdentity,
+    ) -> FixedRemoteControlControllerGrantTable<1> {
+        controller_grants_permitting(allowed, RemoteControlRequestSet::all())
     }
 
-    fn access_permitting(
+    fn controller_grants_permitting(
         allowed: RemoteControlControllerIdentity,
         permitted_requests: RemoteControlRequestSet,
-    ) -> FixedRemoteControlAccessTable<1> {
-        let mut access = FixedRemoteControlAccessTable::default();
-        access
-            .upsert(RemoteControlControllerGrant::new(allowed, permitted_requests).unwrap())
+    ) -> FixedRemoteControlControllerGrantTable<1> {
+        let mut controller_grants = FixedRemoteControlControllerGrantTable::default();
+        controller_grants
+            .set_controller_grant(
+                RemoteControlControllerGrant::new(allowed, permitted_requests).unwrap(),
+            )
             .unwrap();
-        access
+        controller_grants
     }
 
     async fn dispatch(
-        access: &impl RemoteControlAccessTable,
+        controller_grants: &impl RemoteControlControllerGrantTable,
         requester: Option<IdentityHash>,
         data: &[u8],
         sink: &mut dyn super::super::request_endpoints::ResponseSink,
     ) -> Result<(), Decline> {
-        dispatch_with_node(access, &(), requester, data, sink).await
+        dispatch_with_node(controller_grants, &(), requester, data, sink).await
     }
 
     async fn dispatch_with_node(
-        access: &impl RemoteControlAccessTable,
+        controller_grants: &impl RemoteControlControllerGrantTable,
         node: &impl PrnsNodeApi,
         requester: Option<IdentityHash>,
         data: &[u8],
         sink: &mut dyn super::super::request_endpoints::ResponseSink,
     ) -> Result<(), Decline> {
         dispatch_with_configuration(
-            access,
+            controller_grants,
             RemoteControlRequestSet::all(),
             RemoteControlSelfAnnouncement::Destination(DestinationHash::new([0x87; 16])),
             node,
@@ -502,7 +514,7 @@ mod tests {
     }
 
     async fn dispatch_with_configuration(
-        access: &impl RemoteControlAccessTable,
+        controller_grants: &impl RemoteControlControllerGrantTable,
         supported_requests: RemoteControlRequestSet,
         self_announcement: RemoteControlSelfAnnouncement,
         node: &impl PrnsNodeApi,
@@ -521,7 +533,7 @@ mod tests {
         );
         dispatch_remote_control_request(
             &(),
-            access,
+            controller_grants,
             supported_requests,
             self_announcement,
             node,
@@ -667,14 +679,14 @@ mod tests {
     fn an_admitted_announce_self_waits_for_the_exact_destination_effect() {
         futures_executor::block_on(async {
             let allowed = identity(0x31);
-            let access = access(allowed);
+            let controller_grants = controller_grants(allowed);
             let node = AnnounceNode::new(Ok(()));
             let mut response =
                 heapless::Vec::<u8, { RemoteControlResponse::MAX_ENCODED_LEN }>::new();
 
             assert_eq!(
                 dispatch_with_node(
-                    &access,
+                    &controller_grants,
                     &node,
                     Some(allowed.identity_hash()),
                     &announce_self_request(),
@@ -704,7 +716,7 @@ mod tests {
     fn unavailable_self_announcement_is_neither_described_nor_dispatched() {
         futures_executor::block_on(async {
             let allowed = identity(0x35);
-            let access = access(allowed);
+            let controller_grants = controller_grants(allowed);
             let supported_requests =
                 RemoteControlRequestSet::only(RemoteControlRequestKind::Describe);
             let node = AnnounceNode::new(Ok(()));
@@ -713,7 +725,7 @@ mod tests {
 
             assert_eq!(
                 dispatch_with_configuration(
-                    &access,
+                    &controller_grants,
                     supported_requests,
                     RemoteControlSelfAnnouncement::Unavailable,
                     &node,
@@ -733,7 +745,7 @@ mod tests {
             response.clear();
             assert_eq!(
                 dispatch_with_configuration(
-                    &access,
+                    &controller_grants,
                     supported_requests,
                     RemoteControlSelfAnnouncement::Unavailable,
                     &node,
@@ -755,14 +767,14 @@ mod tests {
             let allowed = identity(0x33);
             let permitted_requests =
                 RemoteControlRequestSet::only(RemoteControlRequestKind::Describe);
-            let access = access_permitting(allowed, permitted_requests);
+            let controller_grants = controller_grants_permitting(allowed, permitted_requests);
             let node = AnnounceNode::new(Ok(()));
             let mut response =
                 heapless::Vec::<u8, { RemoteControlResponse::MAX_ENCODED_LEN }>::new();
 
             assert_eq!(
                 dispatch_with_node(
-                    &access,
+                    &controller_grants,
                     &node,
                     Some(allowed.identity_hash()),
                     &announce_self_request(),
@@ -776,7 +788,7 @@ mod tests {
 
             assert_eq!(
                 dispatch_with_node(
-                    &access,
+                    &controller_grants,
                     &node,
                     Some(allowed.identity_hash()),
                     &describe_request(),
@@ -869,7 +881,7 @@ mod tests {
     fn announce_self_effect_failures_are_stable_wire_outcomes() {
         futures_executor::block_on(async {
             let allowed = identity(0x32);
-            let access = access(allowed);
+            let controller_grants = controller_grants(allowed);
             let cases = [
                 (
                     AnnounceNowError::NodeStopped,
@@ -899,7 +911,7 @@ mod tests {
                     heapless::Vec::<u8, { RemoteControlResponse::MAX_ENCODED_LEN }>::new();
                 assert_eq!(
                     dispatch_with_node(
-                        &access,
+                        &controller_grants,
                         &node,
                         Some(allowed.identity_hash()),
                         &announce_self_request(),
@@ -930,13 +942,13 @@ mod tests {
             let allowed = identity(0x21);
             let available_requests =
                 RemoteControlRequestSet::only(RemoteControlRequestKind::Describe);
-            let access = access_permitting(allowed, available_requests);
+            let controller_grants = controller_grants_permitting(allowed, available_requests);
             let mut response =
                 heapless::Vec::<u8, { RemoteControlResponse::MAX_ENCODED_LEN }>::new();
 
             assert_eq!(
                 dispatch(
-                    &access,
+                    &controller_grants,
                     Some(allowed.identity_hash()),
                     &describe_request(),
                     &mut response,
@@ -955,7 +967,7 @@ mod tests {
     #[test]
     fn unidentified_and_unlisted_requesters_cannot_reach_remote_control() {
         futures_executor::block_on(async {
-            let access = access(identity(0x43));
+            let controller_grants = controller_grants(identity(0x43));
             let node = AnnounceNode::new(Ok(()));
 
             for requester in [None, Some(identity(0x65).identity_hash())] {
@@ -963,7 +975,7 @@ mod tests {
                     heapless::Vec::<u8, { RemoteControlResponse::MAX_ENCODED_LEN }>::new();
                 assert_eq!(
                     dispatch_with_node(
-                        &access,
+                        &controller_grants,
                         &node,
                         requester,
                         &announce_self_request(),
@@ -982,7 +994,7 @@ mod tests {
     fn admitted_protocol_failures_receive_typed_errors() {
         futures_executor::block_on(async {
             let allowed = identity(0x87);
-            let access = access(allowed);
+            let controller_grants = controller_grants(allowed);
             let unsupported_version = 0x73;
             let unknown_request_kind = 0x95;
             let cases = [
@@ -1012,7 +1024,7 @@ mod tests {
                     heapless::Vec::<u8, { RemoteControlResponse::MAX_ENCODED_LEN }>::new();
                 assert_eq!(
                     dispatch(
-                        &access,
+                        &controller_grants,
                         Some(allowed.identity_hash()),
                         request,
                         &mut response,

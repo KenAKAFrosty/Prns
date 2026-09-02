@@ -740,6 +740,25 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
         lowest.map(|(index, _)| index)
     }
 
+    pub fn next_unsealed_staged_index(&self, link_id: &LinkId) -> Option<usize> {
+        let mut lowest: Option<(usize, u64)> = None;
+        for (index, (candidate, state)) in self
+            .table
+            .link_ids()
+            .iter()
+            .zip(self.table.states())
+            .enumerate()
+        {
+            if candidate != link_id || state.status != OutgoingResourceStatus::Staged {
+                continue;
+            }
+            if lowest.is_none_or(|(_, segment)| state.segment_index < segment) {
+                lowest = Some((index, state.segment_index));
+            }
+        }
+        lowest.map(|(index, _)| index)
+    }
+
     /// The mutable transfer + name regions a deferred seal writes, borrowed together like a build's.
     pub fn seal_regions_mut(&mut self, index: usize) -> BuildRegions<'_> {
         let buffers = self.table.buffers_mut(index);

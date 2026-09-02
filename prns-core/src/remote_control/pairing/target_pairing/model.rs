@@ -293,6 +293,35 @@ impl RemoteControlTargetPairingAborted {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RemoteControlTargetPairingCompletionRetentionExpired {
+    attempt_id: RemoteControlPairingAttemptId,
+    context: RemoteControlPairingContext,
+}
+
+impl RemoteControlTargetPairingCompletionRetentionExpired {
+    #[must_use]
+    pub(super) const fn new(
+        attempt_id: RemoteControlPairingAttemptId,
+        context: RemoteControlPairingContext,
+    ) -> Self {
+        Self {
+            attempt_id,
+            context,
+        }
+    }
+
+    #[must_use]
+    pub const fn attempt_id(self) -> RemoteControlPairingAttemptId {
+        self.attempt_id
+    }
+
+    #[must_use]
+    pub const fn context(self) -> RemoteControlPairingContext {
+        self.context
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum BeginRemoteControlTargetPairingOutcome {
     OfferPrepared {
@@ -304,7 +333,7 @@ pub enum BeginRemoteControlTargetPairingOutcome {
         expired: RemoteControlTargetPairingAborted,
     },
     CompletionRetentionExpired {
-        attempt_id: RemoteControlPairingAttemptId,
+        expired: RemoteControlTargetPairingCompletionRetentionExpired,
     },
     Busy {
         active: RemoteControlPairingAttemptId,
@@ -334,6 +363,7 @@ pub enum DispatchRemoteControlTargetPairingOfferOutcome<'a> {
 pub enum FailRemoteControlTargetPairingOfferDispatchOutcome {
     Aborted {
         attempt_id: RemoteControlPairingAttemptId,
+        context: RemoteControlPairingContext,
     },
     AttemptMismatch {
         failed: RemoteControlPairingAttemptId,
@@ -378,7 +408,7 @@ pub enum ApproveRemoteControlTargetPairingOutcome {
         attempt_id: RemoteControlPairingAttemptId,
     },
     CompletionRetentionExpired {
-        attempt_id: RemoteControlPairingAttemptId,
+        expired: RemoteControlTargetPairingCompletionRetentionExpired,
     },
 }
 
@@ -417,7 +447,7 @@ pub enum CommitRemoteControlTargetPairingOutcome {
         completed: RemoteControlPairingCompleted,
     },
     CompletionRetentionExpired {
-        attempt_id: RemoteControlPairingAttemptId,
+        expired: RemoteControlTargetPairingCompletionRetentionExpired,
         rejected: RemoteControlTargetPairingResponder,
     },
     Expired {
@@ -453,7 +483,7 @@ pub enum RejectRemoteControlTargetPairingOutcome {
         attempt_id: RemoteControlPairingAttemptId,
     },
     CompletionRetentionExpired {
-        attempt_id: RemoteControlPairingAttemptId,
+        expired: RemoteControlTargetPairingCompletionRetentionExpired,
     },
 }
 
@@ -470,10 +500,11 @@ pub enum PersistRemoteControlTargetPairingAuthorizationOutcome {
     },
     AuthorizationPersistedAfterDeadline {
         attempt_id: RemoteControlPairingAttemptId,
+        context: RemoteControlPairingContext,
         grant: RemoteControlControllerGrant,
     },
     CompletionRetentionExpired {
-        attempt_id: RemoteControlPairingAttemptId,
+        expired: RemoteControlTargetPairingCompletionRetentionExpired,
     },
     NoAuthorizationOwed,
     AttemptMismatch {
@@ -486,6 +517,7 @@ pub enum PersistRemoteControlTargetPairingAuthorizationOutcome {
 pub enum FailRemoteControlTargetPairingAuthorizationOutcome {
     Aborted {
         attempt_id: RemoteControlPairingAttemptId,
+        context: RemoteControlPairingContext,
         responder: RemoteControlTargetPairingResponder,
     },
     NoAuthorizationOwed,
@@ -508,7 +540,7 @@ pub enum ExpireRemoteControlTargetPairingOutcome {
         attempt_id: RemoteControlPairingAttemptId,
     },
     CompletionRetentionExpired {
-        attempt_id: RemoteControlPairingAttemptId,
+        expired: RemoteControlTargetPairingCompletionRetentionExpired,
     },
 }
 

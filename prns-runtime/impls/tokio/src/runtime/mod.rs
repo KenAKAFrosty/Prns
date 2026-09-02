@@ -7,7 +7,9 @@ mod node_facade;
 pub mod node_introspection;
 #[cfg(feature = "rnx")]
 mod process_commands;
-mod remote_control_access;
+mod remote_control_controller_grants;
+mod remote_control_pairing_persistence;
+mod remote_control_target_accesses;
 mod request_runner;
 mod route_restore;
 
@@ -41,12 +43,13 @@ pub use node_facade::{
     PersistenceFlushStatus, PersistenceIntent, PersistenceRestoreReport, PersistenceTrigger,
     PersistenceWorker, PrepareFlushError, PreparedFlush, PreparedResourceReceiver, PrnsNode,
     PrnsNodeHandle, PrnsNodeLocalHandle, RatchetSeedReport, RegionFlush,
-    RegisterRequestEndpointError, RemoteControlHandle, RequestOptions, RequestPathError,
-    ResourceAdmissionPeer, ResourceOfferAdmission, ResourceOfferMonitor, ResourceProgress,
-    ResourceReceipt, ResourceReceiveError, ResourceSendError, ResponseSendError, RouteSeedProgress,
-    RouteSeedReport, RuntimeRequestHandlerError, SaveOnLearn, SaveOnLearnWiring,
-    SegmentCompression, SharedInstanceIdentityError, StreamId, TunnelSeedReport,
-    AUTO_COMPRESS_MAX_LEN,
+    RegisterRequestEndpointError, RemoteControlAuthorizationSeedReport, RemoteControlHandle,
+    RemoteControlTargetHandle, RequestOptions, RequestPathError, ResourceAdmissionPeer,
+    ResourceOfferAdmission, ResourceOfferMonitor, ResourceProgress, ResourceReceipt,
+    ResourceReceiveError, ResourceSendError, ResponseSendError, RouteSeedProgress, RouteSeedReport,
+    RuntimeRequestHandlerError, SaveOnLearn, SaveOnLearnWiring, SegmentCompression,
+    SharedInstanceIdentityError, StreamId, TunnelSeedReport, AUTO_COMPRESS_MAX_LEN,
 };
 #[cfg(feature = "rnx")]
 pub use process_commands::ProcessCommands;
+pub use remote_control_pairing_persistence::RemoteControlAuthorizationPersistenceFailure;

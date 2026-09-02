@@ -8,7 +8,9 @@ use crate::routing::links::data::{link_data_frame_ceiling, LINK_MDU};
 use crate::routing::links::resources::advertisement::parse_hashmap_update_plaintext;
 use crate::routing::links::resources::assemble_incoming::match_part_in_window;
 use crate::routing::links::resources::control::write_part_request_plaintext;
-use crate::routing::links::resources::streamed_open::{OpenProgress, StreamedOpen};
+use crate::routing::links::resources::streamed_open::{
+    OpenProgress, ResourceOpenLane, StreamedOpen,
+};
 use crate::routing::links::resources::table::IncomingResourceState;
 use crate::routing::links::resources::table::{IncomingResourceStatus, PlacePartOutcome};
 use crate::routing::links::resources::{
@@ -224,6 +226,9 @@ impl<S: StorageLayout> EngineState<S> {
     /// An intentional deviation in timing only: RNS 1.4.2 opens the joined transfer whole at
     /// assembly, while runtimes spread the same work under the part arrivals it was waiting on.
     fn advance_streamed_open(&mut self, index: usize) {
+        if self.resource_open_lane == ResourceOpenLane::ExternalWhole {
+            return;
+        }
         let state = *self.incoming_resources.state(index);
         let Some(height) = state.consecutive_completed else {
             return;

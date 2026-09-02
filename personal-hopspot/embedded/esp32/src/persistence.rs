@@ -185,5 +185,8 @@ fn observe(diagnostic: EmbeddedPersistenceDiagnostic) {
                 retry_at.0
             );
         }
+        EmbeddedPersistenceDiagnostic::RemoteControlPairingFailed { .. } => {
+            log::error!("remote-control pairing persistence failed");
+        }
     }
 }

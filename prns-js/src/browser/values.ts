@@ -70,6 +70,11 @@ export function packetFrame(bytes: Uint8Array): PacketFrame {
   return nonEmptyBytes(bytes, "PacketFrame") as PacketFrame;
 }
 
+export function packetFrameView(bytes: Uint8Array): PacketFrame {
+  requireNonEmptyBytes(bytes, "PacketFrame");
+  return bytes as PacketFrame;
+}
+
 export function entropyBytes(bytes: Uint8Array): EntropyBytes {
   if (bytes.length < MIN_ENTROPY_BYTES) {
     throw new PrnsValidationError(
@@ -169,10 +174,14 @@ function exactBytes(
 }
 
 function nonEmptyBytes(bytes: Uint8Array, name: string): Uint8Array {
+  requireNonEmptyBytes(bytes, name);
+  return copyBytes(bytes);
+}
+
+function requireNonEmptyBytes(bytes: Uint8Array, name: string): void {
   if (bytes.length === 0) {
     throw new PrnsValidationError("empty-bytes", `${name} must not be empty`);
   }
-  return copyBytes(bytes);
 }
 
 function dottedComponent(value: string, name: string): string {

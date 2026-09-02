@@ -58,7 +58,8 @@ import {
   webCryptoEntropy,
   webCryptoIdentity,
 } from "./bootstrap.js";
-import { byteKey } from "./bytes.js";
+import { byteKey, interfaceKey } from "./bytes.js";
+import type { InterfaceKey } from "./bytes.js";
 import {
   commandFailed,
 } from "./command_settlement.js";
@@ -144,6 +145,19 @@ import {
   sendResourceFromSource,
 } from "./resource_send.js";
 import { browserResourceCompressor } from "./resource_compressor.js";
+import {
+  parseResourceDigestLanding,
+  parseResourceSealBegin,
+  resourceDigestExecution,
+} from "./resource_crypto.js";
+import type {
+  ResourceCryptoExecution,
+  ResourceSealJob,
+} from "./resource_crypto.js";
+import type { CryptoExecution } from "./crypto_execution.js";
+import { BrowserCryptoExecutor } from "./crypto_pool.js";
+export type { CryptoExecution } from "./crypto_execution.js";
+export type { ResourceCryptoExecution } from "./resource_crypto.js";
 import { parseCommandSettlementBatch } from "./command_settlement_batch.js";
 import { describeInterfaceSessionFailure } from "./session.js";
 import { parsePackedSnapshot } from "./packed_snapshot.js";
@@ -180,6 +194,7 @@ import {
   nonNegativeInteger,
   nowMillis,
   packetFrame,
+  packetFrameView,
   positiveInteger,
 } from "./values.js";
 import type {
@@ -189,6 +204,7 @@ import type {
 } from "./worker_protocol.js";
 import {
   registerWorkerCapabilityDispatcher,
+  registerWorkerNetworkOutboundDispatcher,
   registerWorkerSnapshotCapturer,
   workerEngineHooks,
 } from "./worker_engine_bridge.js";
@@ -536,8 +552,22 @@ type PendingCommand =
   | Tag<"HostCommand", { readonly command: HostCommand }>
   | Tag<"ResourceSegment">;
 
-type CommonPrnsOptions = {
+const WEB_CRYPTO_WORKERS = 2;
+const PORTABLE_WASM_CRYPTO_WORKERS = 4;
+
+type CryptoExecutionOptions =
+  | {
+      crypto?: CryptoExecution;
+      resourceCrypto?: never;
+    }
+  | {
+      crypto?: never;
+      resourceCrypto?: ResourceCryptoExecution;
+    };
+
+type CommonPrnsOptions = CryptoExecutionOptions & {
   resourceCompressionModuleUrl?: URL;
+  portableWasmModuleUrl?: URL;
   identityStore?: IdentityStore;
   bleIdentityStore?: StableIdentityStore;
   persistenceStore?: BrowserPersistenceStore;
@@ -574,6 +604,7 @@ export class Prns {
   #startedAtMillis: number;
   #limits: HostLimits;
   #resourceCompressionModuleUrl: string;
+  #cryptoExecutor: BrowserCryptoExecutor | undefined;
   #events: BoundedAsyncLane<PrnsApplicationEvent>;
   #diagnostics: BoundedAsyncLane<PrnsDiagnosticEvent>;
   #pendingCommands = new Map<
@@ -584,7 +615,7 @@ export class Prns {
     }
   >();
   #responseParts = new Map<bigint, Uint8Array[]>();
-  #attachedInterfaces = new Map<string, InterfaceSession>();
+  #attachedInterfaces = new Map<InterfaceKey, InterfaceSession>();
   #lifecycle: HostLifecycleState = Tag("Running");
   #stopCompleted = false;
   #stopPromise: Promise<StopOutcome> | undefined;
@@ -611,6 +642,8 @@ export class Prns {
     bleIdentityAvailability: BleIdentityAvailability,
     limits: HostLimits,
     resourceCompressionModuleUrl: URL,
+    crypto: CryptoExecution,
+    portableWasmModuleUrl: URL | undefined,
     persistenceStore: BrowserPersistenceStore | undefined,
     persistenceRestored: boolean,
     restorationReport: BrowserPersistenceRestoreReport | undefined,
@@ -625,6 +658,17 @@ export class Prns {
     this.#limits = limits;
     this.#resourceCompressionModuleUrl =
       resourceCompressionModuleUrl.href;
+    this.#cryptoExecutor = match(crypto, {
+      PortableWasm: () => undefined,
+      WebCrypto: () => new BrowserCryptoExecutor(WEB_CRYPTO_WORKERS),
+      ParallelWorkers: () =>
+        new BrowserCryptoExecutor(WEB_CRYPTO_WORKERS, {
+          workers: PORTABLE_WASM_CRYPTO_WORKERS,
+          ...(portableWasmModuleUrl === undefined
+            ? {}
+            : { moduleUrl: portableWasmModuleUrl.href }),
+        }),
+    });
     this.#persistenceStore = persistenceStore;
     this.#persistenceRestored = persistenceRestored;
     this.#eventBatchSink = eventBatchSink;
@@ -652,6 +696,7 @@ export class Prns {
       entropy,
       now,
       bleIdentityAvailability,
+      this.#cryptoExecutor,
       () => {
         this.#pumpEvents();
         this.#scheduleProjectionRefresh();
@@ -659,6 +704,11 @@ export class Prns {
     );
     registerWorkerCapabilityDispatcher(this, (call) =>
       this.#dispatchPageCapability(call),
+    );
+    registerWorkerNetworkOutboundDispatcher(
+      this,
+      (interfaceId, maximumFrames) =>
+        this.#host.nextTransferredOutboundFor(interfaceId, maximumFrames),
     );
     registerWorkerSnapshotCapturer(this, () => this.#captureWorkerSnapshot());
     this.interfaces = new PrnsInterfaces(this.#host, autoWifiSelectionSeed);
@@ -844,6 +894,8 @@ export class Prns {
           limits,
           options.resourceCompressionModuleUrl ??
             bundledWasmModuleUrl(),
+          options.crypto ?? options.resourceCrypto ?? Tag("PortableWasm"),
+          options.portableWasmModuleUrl,
           persistenceStore,
           persistedState !== undefined,
           restorationReport,
@@ -881,7 +933,7 @@ export class Prns {
       DeactivateInterface: (value) =>
         this.#host.deactivateInterface(interfaceId(value)),
       Ingest: ({ interfaceId: id, bytes }) =>
-        this.#host.ingest(interfaceId(id), packetFrame(bytes)),
+        this.#host.ingest(interfaceId(id), packetFrameView(bytes)),
       NextOutbound: ({ interfaceId: id, maximumFrames }) =>
         this.#host.nextOutboundFor(interfaceId(id), maximumFrames),
       CreateBluetoothReassembler: () => {
@@ -1011,14 +1063,22 @@ export class Prns {
           }),
         ),
       SendLinkPacket: ({ linkId: value, payload }) =>
-        this.#issueCommand("send-link-packet", command, (entropy) =>
-          this.#runtime.sendLinkPacket({
-            linkId: value,
-            payload,
-            nowMs: this.#now(),
-            entropy,
-          }),
-        ),
+        this.#issueCommand("send-link-packet", command, (entropy) => {
+          const nowMs = this.#now();
+          return this.#runtime.sendLinkPacketDirect === undefined
+            ? this.#runtime.sendLinkPacket({
+                linkId: value,
+                payload,
+                nowMs,
+                entropy,
+              })
+            : this.#runtime.sendLinkPacketDirect(
+                value,
+                payload,
+                nowMs,
+                entropy,
+              );
+        }),
       Request: ({
         linkId: value,
         pathHash,
@@ -1400,6 +1460,9 @@ export class Prns {
     }
     this.#pendingCommands.clear();
     this.#responseParts.clear();
+    this.#host.stopCrypto();
+    this.#cryptoExecutor?.close();
+    this.#cryptoExecutor = undefined;
     const sessions = [...this.#attachedInterfaces.values()];
     for (const reassembler of this.#pageBluetoothReassemblers.values()) {
       reassembler.release?.();
@@ -1533,12 +1596,12 @@ export class Prns {
       return commandFailed(webSocketCommandFailure(connected));
     }
     const session = connected.data;
-    const key = byteKey(session.interfaceId);
+    const key = interfaceKey(session.interfaceId);
     if (this.#attachedInterfaces.has(key)) {
       await session.close();
       return commandFailed(
         Tag("BackendFailed", {
-          detail: `runtime reused active interface identifier ${key}`,
+          detail: `runtime reused active interface identifier ${byteKey(session.interfaceId)}`,
         }),
       );
     }
@@ -1551,7 +1614,7 @@ export class Prns {
   }
 
   async #detachInterface(interfaceId: InterfaceId): Promise<CommandSettlement> {
-    const key = byteKey(interfaceId);
+    const key = interfaceKey(interfaceId);
     const session = this.#attachedInterfaces.get(key);
     if (session === undefined) {
       return commandFailed(Tag("UnknownInterface"));
@@ -1587,6 +1650,14 @@ export class Prns {
   #issueResourceSegment(
     input: RuntimeResourceSegmentIssueInput,
   ): Promise<CommandSettlement> {
+    if (
+      this.#cryptoExecutor !== undefined &&
+      this.#runtime.sendResourceSegmentWebCrypto !== undefined &&
+      this.#runtime.completeResourceSegmentSeal !== undefined &&
+      this.#runtime.retryResourceSegmentSeal !== undefined
+    ) {
+      return this.#issueWebCryptoResourceSegment(input);
+    }
     return this.#issuePendingCommand(
       "send-resource",
       Tag("ResourceSegment"),
@@ -1597,6 +1668,157 @@ export class Prns {
           entropy,
         }),
     );
+  }
+
+  async #issueWebCryptoResourceSegment(
+    input: RuntimeResourceSegmentIssueInput,
+  ): Promise<CommandSettlement> {
+    if (this.#lifecycle.tag !== "Running") {
+      return commandFailed(Tag("NodeStopped"));
+    }
+    if (this.#pendingCommands.size >= this.#limits.pendingCommands) {
+      return commandFailed(Tag("Busy"));
+    }
+    const entropy = this.#entropyBytes();
+    if (entropy.tag !== "Filled") {
+      return commandFailed(Tag("EntropyUnavailable"));
+    }
+    let begun;
+    try {
+      begun = parseResourceSealBegin(
+        this.#runtime.sendResourceSegmentWebCrypto!({
+          ...input,
+          nowMs: this.#now(),
+          entropy: entropy.data,
+        }),
+      );
+    } catch (error) {
+      return commandFailed(browserCommandFailure("send-resource", error));
+    }
+    const id = commandId(begun.data.commandId);
+    const settlement = new Promise<CommandSettlement>((settle) => {
+      this.#pendingCommands.set(id, {
+        pending: Tag("ResourceSegment"),
+        settle,
+      });
+    });
+    this.#host.notifyRuntimeActivity();
+    if (begun.tag !== "Seal") {
+      return settlement;
+    }
+    const executor = this.#cryptoExecutor;
+    try {
+      if (executor === undefined) {
+        throw new TypeError("resource crypto executor is unavailable");
+      }
+      const offloadDigests =
+        this.#runtime.completeResourceSegmentSealDigests !== undefined &&
+        resourceDigestExecution(
+          begun.data.noncePrefixedBytes,
+          begun.data.totalSegments,
+        ).tag === "WebCrypto";
+      const outcome = offloadDigests
+        ? await executor.sealAndDigest(
+            begun.data,
+            begun.data.salts.subarray(0, 4),
+          )
+        : await executor.seal(begun.data);
+      if (
+        this.#cryptoExecutor !== executor ||
+        this.#lifecycle.tag !== "Running"
+      ) {
+        return settlement;
+      }
+      if (outcome.tag === "Busy") {
+        throw new TypeError("resource crypto pool is busy");
+      }
+      if (outcome.tag === "Failed") {
+        throw new TypeError(outcome.data.detail);
+      }
+      if (outcome.tag === "Sealed") {
+        this.#runtime.completeResourceSegmentSeal!({
+          commandId: begun.data.commandId,
+          linkId: linkId(begun.data.linkId),
+          streamNonce: begun.data.streamNonce,
+          noncePrefixedBytes: begun.data.noncePrefixedBytes,
+          sealed: outcome.data.sealed,
+          salts: begun.data.salts,
+          promotionEntropy: begun.data.promotionEntropy,
+          nowMs: this.#now(),
+        });
+      } else {
+        let plaintext = outcome.data.plaintext;
+        let digests = {
+          hash: outcome.data.hash,
+          proof: outcome.data.proof,
+        };
+        let landed = false;
+        for (let offset = 0; offset < begun.data.salts.length; offset += 4) {
+          const salt = begun.data.salts.subarray(offset, offset + 4);
+          if (offset !== 0) {
+            const digestOutcome = await executor.digest(plaintext, salt);
+            if (
+              this.#cryptoExecutor !== executor ||
+              this.#lifecycle.tag !== "Running"
+            ) {
+              return settlement;
+            }
+            if (digestOutcome.tag !== "Digested") {
+              throw new TypeError(
+                digestOutcome.tag === "Busy"
+                  ? "resource crypto pool is busy"
+                  : digestOutcome.data.detail,
+              );
+            }
+            plaintext = digestOutcome.data.plaintext;
+            digests = {
+              hash: digestOutcome.data.hash,
+              proof: digestOutcome.data.proof,
+            };
+          }
+          const landing = parseResourceDigestLanding(
+            this.#runtime.completeResourceSegmentSealDigests!({
+              commandId: begun.data.commandId,
+              linkId: linkId(begun.data.linkId),
+              streamNonce: begun.data.streamNonce,
+              noncePrefixedBytes: begun.data.noncePrefixedBytes,
+              sealed: outcome.data.sealed,
+              salt,
+              hash: digests.hash,
+              proof: digests.proof,
+              promotionEntropy: begun.data.promotionEntropy,
+              nowMs: this.#now(),
+            }),
+          );
+          if (landing.tag === "Applied" || landing.tag === "Stale") {
+            landed = true;
+            break;
+          }
+          if (landing.tag === "Invalid") {
+            throw new TypeError("resource digest landing was invalid");
+          }
+        }
+        if (!landed) {
+          throw new TypeError("resource digest salts exhausted");
+        }
+      }
+    } catch {
+      if (
+        this.#cryptoExecutor === executor &&
+        this.#lifecycle.tag === "Running"
+      ) {
+        this.#runtime.retryResourceSegmentSeal!({
+          commandId: begun.data.commandId,
+          linkId: linkId(begun.data.linkId),
+          streamNonce: begun.data.streamNonce,
+          noncePrefixedBytes: begun.data.noncePrefixedBytes,
+          nowMs: this.#now(),
+          entropy: entropyBytes(resourceSealFallbackEntropy(begun.data)),
+        });
+      }
+    }
+    this.#host.notifyRuntimeActivity();
+    return settlement;
   }
 
   #issuePendingCommand(
@@ -1926,7 +2148,7 @@ export class Prns {
     const running = this.#lifecycle.tag === "Running";
     const health: InterfaceHealth = running ? "Connected" : "Disabled";
     return interfaces.map((entry) => {
-      const active = inspection.get(byteKey(entry.id));
+      const active = inspection.get(interfaceKey(entry.id));
       return {
         interfaceId: entry.id,
         ...(active === undefined ? {} : { name: active.name }),
@@ -2039,6 +2261,14 @@ export class Prns {
     this.#projections.replaceLifecycle(lifecycle);
     this.#scheduleProjectionRefresh();
   }
+}
+
+function resourceSealFallbackEntropy(job: ResourceSealJob): Uint8Array {
+  const entropy = new Uint8Array(MIN_ENTROPY_BYTES);
+  entropy.set(job.sealIv);
+  entropy.set(job.salts, job.sealIv.length);
+  entropy.set(job.promotionEntropy, job.sealIv.length + job.salts.length);
+  return entropy;
 }
 
 function browserCommandFailure(

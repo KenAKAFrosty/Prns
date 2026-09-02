@@ -1,10 +1,10 @@
 mod fixed;
-pub use fixed::FixedRemoteControlAccessTable;
+pub use fixed::{FixedRemoteControlControllerGrantTable, FixedRemoteControlTargetAccessTable};
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "alloc")] {
         mod heap;
 
-        pub use heap::HeapRemoteControlAccessTable;
+        pub use heap::{HeapRemoteControlControllerGrantTable, HeapRemoteControlTargetAccessTable};
     }
 }

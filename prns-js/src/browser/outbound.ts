@@ -1,6 +1,7 @@
 import { Tag, match_into } from "../casework.js";
 import { interfaceId } from "../contract.js";
 import type { InterfaceId } from "../contract.js";
+import type { TransferredByteBatch } from "./byte_transfer.js";
 import {
   bytesField,
   field,
@@ -8,6 +9,7 @@ import {
   record,
   stringField,
 } from "./decoding.js";
+import { runtimeInterfaceKind } from "./interface_kind.js";
 import type {
   RuntimeInterfaceKind,
   RuntimeRejected,
@@ -15,7 +17,7 @@ import type {
 import {
   PrnsValidationError,
   hopCount,
-  packetFrame,
+  packetFrameView,
 } from "./values.js";
 import type { HopCount, PacketFrame } from "./values.js";
 
@@ -51,6 +53,10 @@ export type InterfaceOutboundOutcome =
   | Tag<"InterfaceDetached">
   | Tag<"OutboundQueueFull", { readonly capacity: number }>
   | RuntimeRejected;
+
+export type TransferredInterfaceOutboundOutcome =
+  | Tag<"TransferredOutbound", TransferredByteBatch>
+  | Exclude<InterfaceOutboundOutcome, Tag<"Outbound", unknown>>;
 
 export type InterfaceOutboundHost = {
   nextOutboundFor(
@@ -91,7 +97,7 @@ export function parseOutboundFrame(raw: unknown): PrnsOutboundFrame {
   const frame: PrnsOutboundFrame = {
     type,
     target: parseOutboundTarget(field(object, "target")),
-    bytes: packetFrame(bytesField(object, "bytes")),
+    bytes: packetFrameView(bytesField(object, "bytes")),
   };
   const hops = optionalNumber(object, "hops", hopCount);
   if (hops !== undefined) {
@@ -111,7 +117,7 @@ function parseOutboundTarget(raw: unknown): OutboundTarget {
   }
   if (type === "broadcast") {
     return Tag("Broadcast", {
-      supervisorKind: parseRuntimeInterfaceKind(
+      supervisorKind: runtimeInterfaceKind(
         stringField(object, "supervisorKind"),
       ),
       fan: parseFanTarget(field(object, "fan")),
@@ -144,29 +150,6 @@ function parseFanTarget(raw: unknown): FanTarget {
   throw new PrnsValidationError(
     "unknown-outbound-target",
     `unknown fan target ${type}`,
-  );
-}
-
-function parseRuntimeInterfaceKind(value: string): RuntimeInterfaceKind {
-  if (
-    value === "auto-usb-host" ||
-    value === "auto-usb-device" ||
-    value === "rnode" ||
-    value === "bluetooth-auto" ||
-    value === "bluetooth-peer" ||
-    value === "auto-wifi" ||
-    value === "websocket-client" ||
-    value === "websocket-server" ||
-    value === "websocket-server-peer" ||
-    value === "serial" ||
-    value === "kiss" ||
-    value === "pipe"
-  ) {
-    return value;
-  }
-  throw new PrnsValidationError(
-    "unknown-interface-kind",
-    `unknown interface kind ${value}`,
   );
 }
 

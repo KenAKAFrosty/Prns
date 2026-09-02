@@ -3,15 +3,20 @@ import type { Tag as Tagged } from "../casework.js";
 import type {
   InterfaceId,
 } from "../contract.js";
+import { interfaceId } from "../contract.js";
 import {
-  INTERFACE_ID_LENGTH,
-  interfaceId,
-} from "../contract.js";
+  prepareByteTransfer,
+  receiveByteTransfer,
+} from "./byte_transfer.js";
+import type { TransferredByteBatch } from "./byte_transfer.js";
 import type {
   InterfaceCloseOutcome,
   InterfaceSessionStatus,
 } from "./interface_contract.js";
-import type { PrnsOutboundFrame } from "./outbound.js";
+import type {
+  PrnsOutboundFrame,
+  TransferredInterfaceOutboundOutcome,
+} from "./outbound.js";
 import type {
   WebSocketConnectOptions,
 } from "./websocket/index.js";
@@ -20,7 +25,7 @@ import type {
   WorkerCapabilityCall,
   WorkerCapabilityOutcomes,
 } from "./worker_protocol.js";
-import { packetFrame } from "./values.js";
+import { packetFrameView } from "./values.js";
 
 export type NetworkWorkerStartMessage = Tagged<
   "InitializeNetworkWorker",
@@ -47,7 +52,7 @@ export type EngineNetworkMessage =
       {
         readonly id: number;
         readonly count: number;
-        readonly failures: readonly PackedIngressFailure[];
+        readonly failures: readonly IngressFailure[];
       }
     >;
 
@@ -72,149 +77,70 @@ export type NetworkEngineMessage =
       "HostCall",
       { readonly id: number; readonly call: WorkerCapabilityCall }
     >
-  | Tagged<"IngressBatch", { readonly id: number; readonly buffer: ArrayBuffer }>
+  | Tagged<
+      "IngressBatch",
+      { readonly id: number; readonly batch: TransferredIngressBatch }
+    >
   | Tagged<"ProtocolFailed", { readonly detail: string }>;
 
-export type PackedIngressItem = {
+export type TransferredIngressItem = {
   readonly interfaceId: InterfaceId;
   readonly bytes: Uint8Array;
 };
 
-export type PackedIngressFailure = {
+export type IngressFailure = {
   readonly index: number;
   readonly outcome: WorkerCapabilityOutcomes["Ingest"];
 };
 
-export type PackedOutboundOutcome = Tagged<
-  "PackedOutbound",
-  { readonly buffer: ArrayBuffer }
->;
+export type TransferredIngressBatch = {
+  readonly interfaceIds: readonly InterfaceId[];
+  readonly bytes: TransferredByteBatch;
+};
 
-export function packOutboundFrames(
-  frames: readonly PrnsOutboundFrame[],
-): ArrayBuffer {
-  let payloadBytes = 0;
-  for (const frame of frames) {
-    payloadBytes += frame.bytes.byteLength;
-  }
-  const headerBytes = 4 + frames.length * 4;
-  const buffer = new ArrayBuffer(headerBytes + payloadBytes);
-  const header = new DataView(buffer);
-  const bytes = new Uint8Array(buffer);
-  header.setUint32(0, frames.length, true);
-  let payloadOffset = headerBytes;
-  for (let index = 0; index < frames.length; index += 1) {
-    const frame = frames[index];
-    if (frame === undefined) {
-      throw new TypeError("outbound frame batch contains a missing frame");
-    }
-    header.setUint32(4 + index * 4, frame.bytes.byteLength, true);
-    bytes.set(frame.bytes, payloadOffset);
-    payloadOffset += frame.bytes.byteLength;
-  }
-  return buffer;
-}
-
-export function unpackOutboundFrames(
+export function receiveTransferredOutboundFrames(
   interfaceId: InterfaceId,
-  buffer: ArrayBuffer,
+  outcome: Extract<
+    TransferredInterfaceOutboundOutcome,
+    Tagged<"TransferredOutbound", unknown>
+  >,
 ): readonly PrnsOutboundFrame[] {
-  if (buffer.byteLength < 4) {
-    throw new TypeError("packed outbound batch is truncated");
-  }
-  const header = new DataView(buffer);
-  const count = header.getUint32(0, true);
-  const headerBytes = 4 + count * 4;
-  if (headerBytes > buffer.byteLength) {
-    throw new TypeError("packed outbound batch header is truncated");
-  }
-  const frames: PrnsOutboundFrame[] = new Array(count);
-  let payloadOffset = headerBytes;
-  for (let index = 0; index < count; index += 1) {
-    const length = header.getUint32(4 + index * 4, true);
-    if (payloadOffset + length > buffer.byteLength) {
-      throw new TypeError("packed outbound batch payload is truncated");
-    }
-    frames[index] = {
+  return receiveByteTransfer(outcome.data).map((bytes) =>
+    ({
       type: "frame",
       target: Tag("Interface", interfaceId),
-      bytes: packetFrame(new Uint8Array(buffer, payloadOffset, length)),
-    };
-    payloadOffset += length;
-  }
-  if (payloadOffset !== buffer.byteLength) {
-    throw new TypeError("packed outbound batch has trailing bytes");
-  }
-  return frames;
+      bytes: packetFrameView(bytes),
+    }) satisfies PrnsOutboundFrame
+  );
 }
 
-export function packIngressItems(
-  items: readonly PackedIngressItem[],
-): ArrayBuffer {
-  let payloadBytes = 0;
-  for (const item of items) {
-    payloadBytes += item.bytes.byteLength;
-  }
-  const rowBytes = INTERFACE_ID_LENGTH + 4;
-  const headerBytes = 4 + items.length * rowBytes;
-  const buffer = new ArrayBuffer(headerBytes + payloadBytes);
-  const header = new DataView(buffer);
-  const bytes = new Uint8Array(buffer);
-  header.setUint32(0, items.length, true);
-  let payloadOffset = headerBytes;
-  for (let index = 0; index < items.length; index += 1) {
-    const item = items[index];
-    if (item === undefined) {
-      throw new TypeError("ingress batch contains a missing item");
-    }
-    const rowOffset = 4 + index * rowBytes;
-    bytes.set(item.interfaceId, rowOffset);
-    header.setUint32(
-      rowOffset + INTERFACE_ID_LENGTH,
-      item.bytes.byteLength,
-      true,
-    );
-    bytes.set(item.bytes, payloadOffset);
-    payloadOffset += item.bytes.byteLength;
-  }
-  return buffer;
+export function prepareIngressTransfer(
+  items: readonly TransferredIngressItem[],
+): TransferredIngressBatch {
+  return {
+    interfaceIds: items.map((item) => item.interfaceId),
+    bytes: prepareByteTransfer(items.map((item) => item.bytes)),
+  };
 }
 
-export function unpackIngressItems(
-  buffer: ArrayBuffer,
-): readonly PackedIngressItem[] {
-  if (buffer.byteLength < 4) {
-    throw new TypeError("packed ingress batch is truncated");
+export function receiveIngressTransfer(
+  batch: TransferredIngressBatch,
+): readonly TransferredIngressItem[] {
+  if (!Array.isArray(batch.interfaceIds)) {
+    throw new TypeError("ingress transfer interfaces are malformed");
   }
-  const header = new DataView(buffer);
-  const bytes = new Uint8Array(buffer);
-  const count = header.getUint32(0, true);
-  const rowBytes = INTERFACE_ID_LENGTH + 4;
-  const headerBytes = 4 + count * rowBytes;
-  if (headerBytes > buffer.byteLength) {
-    throw new TypeError("packed ingress batch header is truncated");
+  const bytes = receiveByteTransfer(batch.bytes);
+  if (bytes.length !== batch.interfaceIds.length) {
+    throw new TypeError("ingress transfer columns have different lengths");
   }
-  const items: PackedIngressItem[] = new Array(count);
-  let payloadOffset = headerBytes;
-  for (let index = 0; index < count; index += 1) {
-    const rowOffset = 4 + index * rowBytes;
-    const length = header.getUint32(
-      rowOffset + INTERFACE_ID_LENGTH,
-      true,
-    );
-    if (payloadOffset + length > buffer.byteLength) {
-      throw new TypeError("packed ingress batch payload is truncated");
+  return bytes.map((value, index) => {
+    const rawInterfaceId = batch.interfaceIds[index];
+    if (rawInterfaceId === undefined) {
+      throw new TypeError("ingress transfer contains a missing interface");
     }
-    items[index] = {
-      interfaceId: interfaceId(
-        new Uint8Array(buffer, rowOffset, INTERFACE_ID_LENGTH),
-      ),
-      bytes: new Uint8Array(buffer, payloadOffset, length),
+    return {
+      interfaceId: interfaceId(rawInterfaceId),
+      bytes: value,
     };
-    payloadOffset += length;
-  }
-  if (payloadOffset !== buffer.byteLength) {
-    throw new TypeError("packed ingress batch has trailing bytes");
-  }
-  return items;
+  });
 }

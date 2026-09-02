@@ -7,7 +7,7 @@ use prns_host::{CommandOutcome, DeliveryEvidence};
 use wasm_bindgen::prelude::*;
 
 use crate::command_settlement::{CapturedCommandResult, CapturedCommandSettlement};
-use crate::runtime::{OutboundFrame, OutboundTarget};
+use crate::runtime::{OutboundFrame, OutboundFrameKind, OutboundTarget};
 
 pub(crate) fn command_settled_to_js(settlement: CapturedCommandSettlement) -> JsValue {
     let object = Object::new();
@@ -81,14 +81,17 @@ pub(crate) fn outbound_to_js(frame: &OutboundFrame) -> JsValue {
     set_str(
         &object,
         "type",
-        if frame.announce { "announce" } else { "frame" },
+        match frame.kind {
+            OutboundFrameKind::Frame => "frame",
+            OutboundFrameKind::Announce { .. } => "announce",
+        },
     );
     set_value(
         &object,
         "target",
         outbound_target_to_js(frame.target.clone()),
     );
-    if let Some(hops) = frame.hops {
+    if let OutboundFrameKind::Announce { hops } = frame.kind {
         set_u32(&object, "hops", hops as u32);
     }
     set_bytes(&object, "bytes", &frame.bytes);

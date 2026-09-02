@@ -2,17 +2,23 @@ use core::cell::RefCell;
 
 use crate::atomic::AtomicU64;
 use crate::engine::{
-    CloseLink, CloseRemoteControlPairing, CloseRemoteControlPairingOutcome, CommandId,
-    EgressTarget, IssuedCommand, Journaled, OpenRemoteControlPairing, PacketReceiptDelivered,
-    PrnsCommand, RemoteControlPairingOpened, RequestResponseTimeout, Respond, RespondData,
-    RespondPayload, SendGroup, SendGroupFailure, SendGroupPayload, SendPlainPacket,
+    ApproveRemoteControlControllerPairing, ApproveRemoteControlTargetPairing,
+    BeginRemoteControlControllerPairing, CloseLink, CloseRemoteControlPairing,
+    CloseRemoteControlPairingOutcome, CommandId, EgressTarget, EstablishLink, EstablishLinkFailure,
+    Identify, IdentifyFailure, IssuedCommand, Journaled, OpenRemoteControlPairing,
+    PacketReceiptDelivered, PrnsCommand, RejectRemoteControlControllerPairing,
+    RejectRemoteControlTargetPairing, RemoteControlPairingOpened, RequestResponseTimeout, Respond,
+    RespondData, RespondPayload, SendGroup, SendGroupFailure, SendGroupPayload, SendPlainPacket,
     SendPlainPacketFailure, SendPlainPacketPayload, SendRequest, SendRequestData,
     SendRequestFailure, SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload,
-    SetRegisteredAnnounceAppData, Settlement,
+    SetRegisteredAnnounceAppData, Settleable, Settlement,
 };
+use crate::identity::IdentityHash;
 use crate::remote_control::{
-    RemoteControlControllerGrant, RemoteControlControllerIdentity,
+    ForgetRemoteControlTargetOutcome, RemoteControlControllerGrant,
+    RemoteControlControllerIdentity, RemoteControlTargetAccess, RemoteControlTargetIdentity,
     RevokeRemoteControlControllerOutcome, SetRemoteControlControllerGrantOutcome,
+    SetRemoteControlTargetAccessOutcome,
 };
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
@@ -23,15 +29,34 @@ use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use embassy_sync::channel::Sender;
 use embassy_sync::signal::Signal;
 
-use super::super::remote_control_access::{
-    RemoteControlAccessCommand, RemoteControlAccessCompletion, RemoteControlAccessExchange,
+use super::super::remote_control_controller_grants::{
+    RemoteControlControllerGrantCommand, RemoteControlControllerGrantCompletion,
+    RemoteControlControllerGrantExchange,
+};
+use super::super::remote_control_pairing_authorizations::{
+    RemoteControlPairingAuthorization, RemoteControlPairingAuthorizationCommand,
+    RemoteControlPairingAuthorizationCompletion, RemoteControlPairingAuthorizationExchange,
+    RemoteControlPairingAuthorizationTransactionFailure,
+};
+use super::super::remote_control_target_accesses::{
+    RemoteControlTargetAccessCommand, RemoteControlTargetAccessCompletion,
+    RemoteControlTargetAccessExchange,
 };
 use super::super::request_endpoints::RespondToken;
 use super::super::{
-    AnnounceNowError, CloseRemoteControlPairingControlError, OpenRemoteControlPairingControlError,
-    PrnsNodeApi, RemoteControlAccessControl, RemoteControlPairingControlError,
+    AnnounceNowError, ApproveRemoteControlControllerPairingControlError,
+    ApproveRemoteControlControllerPairingControlFailure,
+    ApproveRemoteControlTargetPairingControlError, BeginRemoteControlControllerPairingControlError,
+    BeginRemoteControlControllerPairingControlFailure, CloseRemoteControlPairingControlError,
+    ForgetRemoteControlTargetControlError, OpenRemoteControlPairingControlError, PrnsNodeApi,
+    RejectRemoteControlControllerPairingControlError, RejectRemoteControlTargetPairingControlError,
+    RemoteControlControllerGrantControl, RemoteControlControllerPairingInitiationTransport,
+    RemoteControlPairingControl, RemoteControlPairingControlError,
+    RemoteControlPairingLinkCleanupOutcome, RemoteControlTargetAccessControl,
+    RemoteControlTargetInventory, RemoteControlTargetInventoryControlError,
+    ResolveRemoteControlTargetControlError, ResolvedRemoteControlTarget,
     RevokeRemoteControlControllerControlError, SendError, SetRegisteredAnnounceAppDataError,
-    SetRemoteControlControllerGrantControlError,
+    SetRemoteControlControllerGrantControlError, SetRemoteControlTargetAccessControlError,
 };
 
 const NO_AWAITER: u64 = u64::MAX;
@@ -47,7 +72,94 @@ pub struct CompletionPool<
     slots: [Signal<M, Settlement>; COMPLETIONS],
     requests: BlockingMutex<M, RefCell<[RequestAwaited<RESPONSE_BYTES>; REQUEST_COMPLETIONS]>>,
     request_slots: [Signal<M, Settlement>; REQUEST_COMPLETIONS],
-    remote_control_access: RemoteControlAccessExchange<M>,
+    remote_control_controller_grants: RemoteControlControllerGrantExchange<M>,
+    remote_control_target_accesses: RemoteControlTargetAccessExchange<M>,
+    remote_control_pairing_authorizations: RemoteControlPairingAuthorizationExchange<M>,
+    remote_control_pairing_settlement: RemoteControlPairingSettlementAwaiter<M>,
+}
+
+enum RemoteControlPairingSettlementState {
+    Available,
+    Awaiting(CommandId),
+    Settled(CommandId),
+    Completing(CommandId),
+}
+
+struct RemoteControlPairingSettlementAwaiter<M: RawMutex> {
+    state: BlockingMutex<M, RefCell<RemoteControlPairingSettlementState>>,
+    ready: Signal<M, Settlement>,
+}
+
+impl<M: RawMutex> RemoteControlPairingSettlementAwaiter<M> {
+    const fn new() -> Self {
+        Self {
+            state: BlockingMutex::new(RefCell::new(RemoteControlPairingSettlementState::Available)),
+            ready: Signal::new(),
+        }
+    }
+
+    fn claim(&self, id: CommandId) -> bool {
+        self.state.lock(|state| {
+            let mut state = state.borrow_mut();
+            if !matches!(*state, RemoteControlPairingSettlementState::Available) {
+                return false;
+            }
+            self.ready.reset();
+            *state = RemoteControlPairingSettlementState::Awaiting(id);
+            true
+        })
+    }
+
+    fn route(
+        &self,
+        id: CommandId,
+        settlement: Settlement,
+        on_unclaimed: impl FnOnce(Settlement),
+    ) -> JournalRoute {
+        let settled = self.state.lock(|state| {
+            let mut state = state.borrow_mut();
+            if !matches!(*state, RemoteControlPairingSettlementState::Awaiting(awaited) if awaited == id)
+            {
+                return false;
+            }
+            *state = RemoteControlPairingSettlementState::Settled(id);
+            true
+        });
+        if !settled {
+            on_unclaimed(settlement);
+            return JournalRoute::Application;
+        }
+        self.ready.signal(settlement);
+        JournalRoute::Awaiter
+    }
+
+    async fn completion(&self, id: CommandId) -> Settlement {
+        let settlement = self.ready.wait().await;
+        self.state.lock(|state| {
+            let mut state = state.borrow_mut();
+            if matches!(*state, RemoteControlPairingSettlementState::Settled(settled) if settled == id)
+            {
+                *state = RemoteControlPairingSettlementState::Completing(id);
+            }
+        });
+        settlement
+    }
+
+    fn release(&self, id: CommandId) {
+        self.state.lock(|state| {
+            let mut state = state.borrow_mut();
+            let belongs = match &*state {
+                RemoteControlPairingSettlementState::Available => false,
+                RemoteControlPairingSettlementState::Awaiting(awaited)
+                | RemoteControlPairingSettlementState::Settled(awaited)
+                | RemoteControlPairingSettlementState::Completing(awaited) => *awaited == id,
+            };
+            if belongs {
+                *state = RemoteControlPairingSettlementState::Available;
+                self.ready.reset();
+            }
+        });
+    }
 }
 
 enum RequestAwaited<const RESPONSE_BYTES: usize> {
@@ -114,7 +226,10 @@ impl<
                 [const { RequestAwaited::Available }; REQUEST_COMPLETIONS],
             )),
             request_slots: [const { Signal::new() }; REQUEST_COMPLETIONS],
-            remote_control_access: RemoteControlAccessExchange::new(),
+            remote_control_controller_grants: RemoteControlControllerGrantExchange::new(),
+            remote_control_target_accesses: RemoteControlTargetAccessExchange::new(),
+            remote_control_pairing_authorizations: RemoteControlPairingAuthorizationExchange::new(),
+            remote_control_pairing_settlement: RemoteControlPairingSettlementAwaiter::new(),
         }
     }
 
@@ -228,8 +343,8 @@ impl<
             self.slots[slot].signal(settlement);
             return JournalRoute::Awaiter;
         }
-        on_unclaimed(settlement);
-        JournalRoute::Application
+        self.remote_control_pairing_settlement
+            .route(id, settlement, on_unclaimed)
     }
 
     fn capture_response(&self, id: CommandId, data: &[u8]) -> ResponseCapture {
@@ -343,6 +458,45 @@ impl<
         let id = self.pool.mint();
         self.commands.try_send(IssuedCommand { id, command }).ok()?;
         Some(id)
+    }
+
+    async fn settle_command<C>(&self, command: C) -> Result<C::Success, SendError<C::Failure>>
+    where
+        C: Settleable,
+    {
+        let id = self.pool.mint();
+        let slot = self.pool.claim_settlement(id).ok_or(SendError::Busy)?;
+        let _guard = SlotGuard {
+            pool: self.pool,
+            slot,
+            id,
+        };
+        self.commands
+            .try_send(IssuedCommand {
+                id,
+                command: command.into_command(),
+            })
+            .map_err(|_| SendError::NodeStopped)?;
+        C::from_settlement(self.pool.parked(slot).await)
+            .ok_or(SendError::NodeStopped)?
+            .map_err(SendError::Failed)
+    }
+
+    pub async fn establish_link(
+        &self,
+        destination: DestinationHash,
+    ) -> Result<LinkId, SendError<EstablishLinkFailure>> {
+        self.settle_command(EstablishLink { destination })
+            .await
+            .map(|established| established.link_id)
+    }
+
+    pub async fn identify(
+        &self,
+        link_id: LinkId,
+        identity: IdentityHash,
+    ) -> Result<(), SendError<IdentifyFailure>> {
+        self.settle_command(Identify { link_id, identity }).await
     }
 
     pub async fn send_single_packet(
@@ -544,6 +698,64 @@ impl<
         }
     }
 
+    pub(in crate::runtime) async fn settle_pairing_command<C>(
+        &self,
+        command: C,
+    ) -> Result<C::Success, RemoteControlPairingControlError<C::Failure>>
+    where
+        C: Settleable,
+    {
+        let id = self.pool.mint();
+        if !self.pool.remote_control_pairing_settlement.claim(id) {
+            return Err(RemoteControlPairingControlError::Busy);
+        }
+        let _guard = RemoteControlPairingSettlementGuard {
+            pool: self.pool,
+            id,
+        };
+        self.commands
+            .send(IssuedCommand {
+                id,
+                command: command.into_command(),
+            })
+            .await;
+        let settlement = self
+            .pool
+            .remote_control_pairing_settlement
+            .completion(id)
+            .await;
+        let Some(result) = C::from_settlement(settlement) else {
+            return Err(RemoteControlPairingControlError::NodeStopped);
+        };
+        result.map_err(RemoteControlPairingControlError::Failed)
+    }
+
+    async fn run_remote_control_pairing_authorization_command(
+        &self,
+        build: impl FnOnce(CommandId) -> RemoteControlPairingAuthorizationCommand,
+    ) -> Result<
+        RemoteControlPairingAuthorizationCompletion,
+        RemoteControlPairingAuthorizationTransactionFailure,
+    > {
+        let id = self.pool.mint();
+        if !self
+            .pool
+            .remote_control_pairing_authorizations
+            .submit(build(id))
+        {
+            return Err(RemoteControlPairingAuthorizationTransactionFailure::RuntimeState);
+        }
+        let _guard = RemoteControlPairingAuthorizationSlotGuard {
+            pool: self.pool,
+            id,
+        };
+        Ok(self
+            .pool
+            .remote_control_pairing_authorizations
+            .completion(id)
+            .await)
+    }
+
     /// Responds inline; returns `false` when the body exceeds the link MDU or the command lane is full.
     pub fn respond_packed(&self, responder: RespondToken, packed: &[u8]) -> bool {
         match RespondData::from_slice(packed) {
@@ -710,18 +922,199 @@ impl<
         }
     }
 
-    pub(in crate::runtime) async fn next_remote_control_access_command(
+    pub(in crate::runtime) async fn next_remote_control_controller_grant_command(
         &self,
-    ) -> RemoteControlAccessCommand {
-        self.pool.remote_control_access.next_command().await
+    ) -> RemoteControlControllerGrantCommand {
+        self.pool
+            .remote_control_controller_grants
+            .next_command()
+            .await
     }
 
-    pub(in crate::runtime) fn settle_remote_control_access(
+    pub(in crate::runtime) fn settle_remote_control_controller_grant(
         &self,
         id: CommandId,
-        completion: RemoteControlAccessCompletion,
+        completion: RemoteControlControllerGrantCompletion,
     ) -> bool {
-        self.pool.remote_control_access.settle(id, completion)
+        self.pool
+            .remote_control_controller_grants
+            .settle(id, completion)
+    }
+
+    pub(in crate::runtime) async fn next_remote_control_target_access_command(
+        &self,
+    ) -> RemoteControlTargetAccessCommand {
+        self.pool
+            .remote_control_target_accesses
+            .next_command()
+            .await
+    }
+
+    pub(in crate::runtime) fn settle_remote_control_target_access(
+        &self,
+        id: CommandId,
+        completion: RemoteControlTargetAccessCompletion,
+    ) -> bool {
+        self.pool
+            .remote_control_target_accesses
+            .settle(id, completion)
+    }
+
+    pub(in crate::runtime) async fn next_remote_control_pairing_authorization_command(
+        &self,
+    ) -> RemoteControlPairingAuthorizationCommand {
+        self.pool
+            .remote_control_pairing_authorizations
+            .next_command()
+            .await
+    }
+
+    pub(in crate::runtime) fn settle_remote_control_pairing_authorization(
+        &self,
+        id: CommandId,
+        completion: RemoteControlPairingAuthorizationCompletion,
+    ) -> bool {
+        self.pool
+            .remote_control_pairing_authorizations
+            .settle(id, completion)
+    }
+
+    pub(in crate::runtime) async fn prepare_remote_control_pairing_authorization(
+        &self,
+        attempt_id: crate::remote_control::RemoteControlPairingAttemptId,
+        authorization: RemoteControlPairingAuthorization,
+    ) -> Result<
+        super::super::embedded_persistence::RemoteControlAuthorizationSnapshot,
+        RemoteControlPairingAuthorizationTransactionFailure,
+    > {
+        match self
+            .run_remote_control_pairing_authorization_command(|id| {
+                RemoteControlPairingAuthorizationCommand::Prepare {
+                    id,
+                    attempt_id,
+                    authorization,
+                }
+            })
+            .await?
+        {
+            RemoteControlPairingAuthorizationCompletion::Prepared(result) => result,
+            RemoteControlPairingAuthorizationCompletion::RollbackSnapshot(_)
+            | RemoteControlPairingAuthorizationCompletion::Activated(_)
+            | RemoteControlPairingAuthorizationCompletion::RolledBack(_)
+            | RemoteControlPairingAuthorizationCompletion::Released(_) => {
+                Err(RemoteControlPairingAuthorizationTransactionFailure::RuntimeState)
+            }
+        }
+    }
+
+    pub(in crate::runtime) async fn snapshot_remote_control_pairing_authorization_rollback(
+        &self,
+        attempt_id: crate::remote_control::RemoteControlPairingAttemptId,
+    ) -> Result<
+        super::super::embedded_persistence::RemoteControlAuthorizationSnapshot,
+        RemoteControlPairingAuthorizationTransactionFailure,
+    > {
+        match self
+            .run_remote_control_pairing_authorization_command(|id| {
+                RemoteControlPairingAuthorizationCommand::SnapshotRollback { id, attempt_id }
+            })
+            .await?
+        {
+            RemoteControlPairingAuthorizationCompletion::RollbackSnapshot(result) => result,
+            RemoteControlPairingAuthorizationCompletion::Prepared(_)
+            | RemoteControlPairingAuthorizationCompletion::Activated(_)
+            | RemoteControlPairingAuthorizationCompletion::RolledBack(_)
+            | RemoteControlPairingAuthorizationCompletion::Released(_) => {
+                Err(RemoteControlPairingAuthorizationTransactionFailure::RuntimeState)
+            }
+        }
+    }
+
+    pub(in crate::runtime) async fn activate_remote_control_pairing_authorization(
+        &self,
+        attempt_id: crate::remote_control::RemoteControlPairingAttemptId,
+    ) -> Result<(), RemoteControlPairingAuthorizationTransactionFailure> {
+        match self
+            .run_remote_control_pairing_authorization_command(|id| {
+                RemoteControlPairingAuthorizationCommand::Activate { id, attempt_id }
+            })
+            .await?
+        {
+            RemoteControlPairingAuthorizationCompletion::Activated(result) => result,
+            RemoteControlPairingAuthorizationCompletion::Prepared(_)
+            | RemoteControlPairingAuthorizationCompletion::RollbackSnapshot(_)
+            | RemoteControlPairingAuthorizationCompletion::RolledBack(_)
+            | RemoteControlPairingAuthorizationCompletion::Released(_) => {
+                Err(RemoteControlPairingAuthorizationTransactionFailure::RuntimeState)
+            }
+        }
+    }
+
+    pub(in crate::runtime) async fn roll_back_remote_control_pairing_authorization(
+        &self,
+        attempt_id: crate::remote_control::RemoteControlPairingAttemptId,
+    ) -> Result<
+        super::super::embedded_persistence::RemoteControlAuthorizationSnapshot,
+        RemoteControlPairingAuthorizationTransactionFailure,
+    > {
+        match self
+            .run_remote_control_pairing_authorization_command(|id| {
+                RemoteControlPairingAuthorizationCommand::RollBack { id, attempt_id }
+            })
+            .await?
+        {
+            RemoteControlPairingAuthorizationCompletion::RolledBack(result) => result,
+            RemoteControlPairingAuthorizationCompletion::Prepared(_)
+            | RemoteControlPairingAuthorizationCompletion::RollbackSnapshot(_)
+            | RemoteControlPairingAuthorizationCompletion::Activated(_)
+            | RemoteControlPairingAuthorizationCompletion::Released(_) => {
+                Err(RemoteControlPairingAuthorizationTransactionFailure::RuntimeState)
+            }
+        }
+    }
+
+    pub(in crate::runtime) async fn release_remote_control_pairing_authorization(
+        &self,
+        attempt_id: crate::remote_control::RemoteControlPairingAttemptId,
+    ) -> Result<(), RemoteControlPairingAuthorizationTransactionFailure> {
+        match self
+            .run_remote_control_pairing_authorization_command(|id| {
+                RemoteControlPairingAuthorizationCommand::Release { id, attempt_id }
+            })
+            .await?
+        {
+            RemoteControlPairingAuthorizationCompletion::Released(result) => result,
+            RemoteControlPairingAuthorizationCompletion::Prepared(_)
+            | RemoteControlPairingAuthorizationCompletion::RollbackSnapshot(_)
+            | RemoteControlPairingAuthorizationCompletion::Activated(_)
+            | RemoteControlPairingAuthorizationCompletion::RolledBack(_) => {
+                Err(RemoteControlPairingAuthorizationTransactionFailure::RuntimeState)
+            }
+        }
+    }
+}
+
+struct RemoteControlPairingSettlementGuard<
+    'a,
+    M: RawMutex,
+    const COMPLETIONS: usize,
+    const REQUEST_COMPLETIONS: usize,
+    const RESPONSE_BYTES: usize,
+> {
+    pool: &'a CompletionPool<M, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>,
+    id: CommandId,
+}
+
+impl<
+        M: RawMutex,
+        const COMPLETIONS: usize,
+        const REQUEST_COMPLETIONS: usize,
+        const RESPONSE_BYTES: usize,
+    > Drop
+    for RemoteControlPairingSettlementGuard<'_, M, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>
+{
+    fn drop(&mut self) {
+        self.pool.remote_control_pairing_settlement.release(self.id);
     }
 }
 
@@ -761,7 +1154,29 @@ struct RequestSlotGuard<
     id: CommandId,
 }
 
-struct RemoteControlAccessSlotGuard<
+struct RemoteControlControllerGrantSlotGuard<
+    'a,
+    M: RawMutex,
+    const COMPLETIONS: usize,
+    const REQUEST_COMPLETIONS: usize,
+    const RESPONSE_BYTES: usize,
+> {
+    pool: &'a CompletionPool<M, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>,
+    id: CommandId,
+}
+
+struct RemoteControlTargetAccessSlotGuard<
+    'a,
+    M: RawMutex,
+    const COMPLETIONS: usize,
+    const REQUEST_COMPLETIONS: usize,
+    const RESPONSE_BYTES: usize,
+> {
+    pool: &'a CompletionPool<M, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>,
+    id: CommandId,
+}
+
+struct RemoteControlPairingAuthorizationSlotGuard<
     'a,
     M: RawMutex,
     const COMPLETIONS: usize,
@@ -778,10 +1193,50 @@ impl<
         const REQUEST_COMPLETIONS: usize,
         const RESPONSE_BYTES: usize,
     > Drop
-    for RemoteControlAccessSlotGuard<'_, M, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>
+    for RemoteControlControllerGrantSlotGuard<
+        '_,
+        M,
+        COMPLETIONS,
+        REQUEST_COMPLETIONS,
+        RESPONSE_BYTES,
+    >
 {
     fn drop(&mut self) {
-        self.pool.remote_control_access.release(self.id);
+        self.pool.remote_control_controller_grants.release(self.id);
+    }
+}
+
+impl<
+        M: RawMutex,
+        const COMPLETIONS: usize,
+        const REQUEST_COMPLETIONS: usize,
+        const RESPONSE_BYTES: usize,
+    > Drop
+    for RemoteControlPairingAuthorizationSlotGuard<
+        '_,
+        M,
+        COMPLETIONS,
+        REQUEST_COMPLETIONS,
+        RESPONSE_BYTES,
+    >
+{
+    fn drop(&mut self) {
+        self.pool
+            .remote_control_pairing_authorizations
+            .release(self.id);
+    }
+}
+
+impl<
+        M: RawMutex,
+        const COMPLETIONS: usize,
+        const REQUEST_COMPLETIONS: usize,
+        const RESPONSE_BYTES: usize,
+    > Drop
+    for RemoteControlTargetAccessSlotGuard<'_, M, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>
+{
+    fn drop(&mut self) {
+        self.pool.remote_control_target_accesses.release(self.id);
     }
 }
 
@@ -791,7 +1246,7 @@ impl<
         const COMPLETIONS: usize,
         const REQUEST_COMPLETIONS: usize,
         const RESPONSE_BYTES: usize,
-    > RemoteControlAccessControl
+    > RemoteControlControllerGrantControl
     for PrnsNodeHandle<'_, M, COMMANDS, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>
 {
     async fn set_remote_control_controller_grant(
@@ -800,17 +1255,24 @@ impl<
     ) -> Result<SetRemoteControlControllerGrantOutcome, SetRemoteControlControllerGrantControlError>
     {
         let id = self.pool.mint();
-        let command = RemoteControlAccessCommand::SetControllerGrant { id, grant };
-        if !self.pool.remote_control_access.submit(command) {
+        let command = RemoteControlControllerGrantCommand::SetControllerGrant { id, grant };
+        if !self.pool.remote_control_controller_grants.submit(command) {
             return Err(SetRemoteControlControllerGrantControlError::Busy);
         }
-        let _guard = RemoteControlAccessSlotGuard {
+        let _guard = RemoteControlControllerGrantSlotGuard {
             pool: self.pool,
             id,
         };
-        match self.pool.remote_control_access.completion(id).await {
-            RemoteControlAccessCompletion::ControllerGrantSet(result) => result.map_err(Into::into),
-            RemoteControlAccessCompletion::ControllerRevoked(_) => {
+        match self
+            .pool
+            .remote_control_controller_grants
+            .completion(id)
+            .await
+        {
+            RemoteControlControllerGrantCompletion::ControllerGrantSet(result) => {
+                result.map_err(Into::into)
+            }
+            RemoteControlControllerGrantCompletion::ControllerRevoked(_) => {
                 Err(SetRemoteControlControllerGrantControlError::NodeStopped)
             }
         }
@@ -822,20 +1284,266 @@ impl<
     ) -> Result<RevokeRemoteControlControllerOutcome, RevokeRemoteControlControllerControlError>
     {
         let id = self.pool.mint();
-        let command = RemoteControlAccessCommand::RevokeController { id, controller };
-        if !self.pool.remote_control_access.submit(command) {
+        let command = RemoteControlControllerGrantCommand::RevokeController { id, controller };
+        if !self.pool.remote_control_controller_grants.submit(command) {
             return Err(RevokeRemoteControlControllerControlError::Busy);
         }
-        let _guard = RemoteControlAccessSlotGuard {
+        let _guard = RemoteControlControllerGrantSlotGuard {
             pool: self.pool,
             id,
         };
-        match self.pool.remote_control_access.completion(id).await {
-            RemoteControlAccessCompletion::ControllerRevoked(outcome) => {
+        match self
+            .pool
+            .remote_control_controller_grants
+            .completion(id)
+            .await
+        {
+            RemoteControlControllerGrantCompletion::ControllerRevoked(outcome) => {
                 outcome.map_err(Into::into)
             }
-            RemoteControlAccessCompletion::ControllerGrantSet(_) => {
+            RemoteControlControllerGrantCompletion::ControllerGrantSet(_) => {
                 Err(RevokeRemoteControlControllerControlError::NodeStopped)
+            }
+        }
+    }
+}
+
+impl<
+        M: RawMutex + Sync,
+        const COMMANDS: usize,
+        const COMPLETIONS: usize,
+        const REQUEST_COMPLETIONS: usize,
+        const RESPONSE_BYTES: usize,
+    > RemoteControlPairingControl
+    for PrnsNodeHandle<'_, M, COMMANDS, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>
+{
+    async fn begin_remote_control_controller_pairing(
+        &self,
+        begin: BeginRemoteControlControllerPairing,
+    ) -> Result<
+        crate::engine::RemoteControlControllerPairingResponseReceived,
+        BeginRemoteControlControllerPairingControlError,
+    > {
+        let link_id = begin.context.link_id();
+        let begun = self.settle_pairing_command(begin).await.map_err(|error| {
+            error.map_failure(BeginRemoteControlControllerPairingControlFailure::Begin)
+        })?;
+        if let Err(error) = self
+            .identify(link_id, begun.controller_identity_hash())
+            .await
+        {
+            let cleanup = match self.close_link(link_id) {
+                true => RemoteControlPairingLinkCleanupOutcome::Queued,
+                false => RemoteControlPairingLinkCleanupOutcome::NotQueued,
+            };
+            return Err(RemoteControlPairingControlError::Failed(
+                BeginRemoteControlControllerPairingControlFailure::Identify {
+                    failure: error,
+                    cleanup,
+                },
+            ));
+        }
+        self.settle_pairing_command(begun.into_request())
+            .await
+            .map_err(|error| {
+                error.map_failure(BeginRemoteControlControllerPairingControlFailure::Request)
+            })
+    }
+
+    async fn approve_remote_control_controller_pairing(
+        &self,
+        approve: ApproveRemoteControlControllerPairing,
+    ) -> Result<
+        crate::engine::RemoteControlControllerPairingResponseReceived,
+        ApproveRemoteControlControllerPairingControlError,
+    > {
+        let approval = self
+            .settle_pairing_command(approve)
+            .await
+            .map_err(|error| {
+                error.map_failure(ApproveRemoteControlControllerPairingControlFailure::Approve)
+            })?;
+        self.settle_pairing_command(approval.into_request())
+            .await
+            .map_err(|error| {
+                error.map_failure(ApproveRemoteControlControllerPairingControlFailure::Request)
+            })
+    }
+
+    async fn reject_remote_control_controller_pairing(
+        &self,
+        reject: RejectRemoteControlControllerPairing,
+    ) -> Result<
+        crate::engine::RemoteControlControllerPairingRejection,
+        RejectRemoteControlControllerPairingControlError,
+    > {
+        self.settle_pairing_command(reject).await
+    }
+
+    async fn approve_remote_control_target_pairing(
+        &self,
+        approve: ApproveRemoteControlTargetPairing,
+    ) -> Result<
+        crate::engine::RemoteControlTargetPairingApproval,
+        ApproveRemoteControlTargetPairingControlError,
+    > {
+        self.settle_pairing_command(approve).await
+    }
+
+    async fn reject_remote_control_target_pairing(
+        &self,
+        reject: RejectRemoteControlTargetPairing,
+    ) -> Result<
+        crate::engine::RemoteControlTargetPairingRejection,
+        RejectRemoteControlTargetPairingControlError,
+    > {
+        self.settle_pairing_command(reject).await
+    }
+}
+
+impl<
+        M: RawMutex + Sync,
+        const COMMANDS: usize,
+        const COMPLETIONS: usize,
+        const REQUEST_COMPLETIONS: usize,
+        const RESPONSE_BYTES: usize,
+    > RemoteControlControllerPairingInitiationTransport
+    for PrnsNodeHandle<'_, M, COMMANDS, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>
+{
+    async fn establish_remote_control_pairing_link(
+        &self,
+        destination: DestinationHash,
+    ) -> Result<LinkId, SendError<EstablishLinkFailure>> {
+        self.establish_link(destination).await
+    }
+
+    fn close_remote_control_pairing_link(
+        &self,
+        link_id: LinkId,
+    ) -> RemoteControlPairingLinkCleanupOutcome {
+        match self.close_link(link_id) {
+            true => RemoteControlPairingLinkCleanupOutcome::Queued,
+            false => RemoteControlPairingLinkCleanupOutcome::NotQueued,
+        }
+    }
+}
+
+impl<
+        M: RawMutex + Sync,
+        const COMMANDS: usize,
+        const COMPLETIONS: usize,
+        const REQUEST_COMPLETIONS: usize,
+        const RESPONSE_BYTES: usize,
+    > RemoteControlTargetAccessControl
+    for PrnsNodeHandle<'_, M, COMMANDS, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>
+{
+    async fn remote_control_target_inventory(
+        &self,
+    ) -> Result<RemoteControlTargetInventory, RemoteControlTargetInventoryControlError> {
+        let id = self.pool.mint();
+        let command = RemoteControlTargetAccessCommand::Inventory { id };
+        if !self.pool.remote_control_target_accesses.submit(command) {
+            return Err(RemoteControlTargetInventoryControlError::Busy);
+        }
+        let _guard = RemoteControlTargetAccessSlotGuard {
+            pool: self.pool,
+            id,
+        };
+        match self
+            .pool
+            .remote_control_target_accesses
+            .completion(id)
+            .await
+        {
+            RemoteControlTargetAccessCompletion::Inventory(result) => result.map_err(Into::into),
+            RemoteControlTargetAccessCompletion::Resolved(_)
+            | RemoteControlTargetAccessCompletion::AccessSet(_)
+            | RemoteControlTargetAccessCompletion::Forgotten(_) => {
+                Err(RemoteControlTargetInventoryControlError::NodeStopped)
+            }
+        }
+    }
+
+    async fn resolve_remote_control_target(
+        &self,
+        target: IdentityHash,
+    ) -> Result<ResolvedRemoteControlTarget, ResolveRemoteControlTargetControlError> {
+        let id = self.pool.mint();
+        let command = RemoteControlTargetAccessCommand::ResolveTarget { id, target };
+        if !self.pool.remote_control_target_accesses.submit(command) {
+            return Err(ResolveRemoteControlTargetControlError::Busy);
+        }
+        let _guard = RemoteControlTargetAccessSlotGuard {
+            pool: self.pool,
+            id,
+        };
+        match self
+            .pool
+            .remote_control_target_accesses
+            .completion(id)
+            .await
+        {
+            RemoteControlTargetAccessCompletion::Resolved(result) => result.map_err(Into::into),
+            RemoteControlTargetAccessCompletion::Inventory(_)
+            | RemoteControlTargetAccessCompletion::AccessSet(_)
+            | RemoteControlTargetAccessCompletion::Forgotten(_) => {
+                Err(ResolveRemoteControlTargetControlError::NodeStopped)
+            }
+        }
+    }
+
+    async fn set_remote_control_target_access(
+        &self,
+        access: RemoteControlTargetAccess,
+    ) -> Result<SetRemoteControlTargetAccessOutcome, SetRemoteControlTargetAccessControlError> {
+        let id = self.pool.mint();
+        let command = RemoteControlTargetAccessCommand::SetTargetAccess { id, access };
+        if !self.pool.remote_control_target_accesses.submit(command) {
+            return Err(SetRemoteControlTargetAccessControlError::Busy);
+        }
+        let _guard = RemoteControlTargetAccessSlotGuard {
+            pool: self.pool,
+            id,
+        };
+        match self
+            .pool
+            .remote_control_target_accesses
+            .completion(id)
+            .await
+        {
+            RemoteControlTargetAccessCompletion::AccessSet(result) => result.map_err(Into::into),
+            RemoteControlTargetAccessCompletion::Inventory(_)
+            | RemoteControlTargetAccessCompletion::Resolved(_)
+            | RemoteControlTargetAccessCompletion::Forgotten(_) => {
+                Err(SetRemoteControlTargetAccessControlError::NodeStopped)
+            }
+        }
+    }
+
+    async fn forget_remote_control_target(
+        &self,
+        target: RemoteControlTargetIdentity,
+    ) -> Result<ForgetRemoteControlTargetOutcome, ForgetRemoteControlTargetControlError> {
+        let id = self.pool.mint();
+        let command = RemoteControlTargetAccessCommand::ForgetTarget { id, target };
+        if !self.pool.remote_control_target_accesses.submit(command) {
+            return Err(ForgetRemoteControlTargetControlError::Busy);
+        }
+        let _guard = RemoteControlTargetAccessSlotGuard {
+            pool: self.pool,
+            id,
+        };
+        match self
+            .pool
+            .remote_control_target_accesses
+            .completion(id)
+            .await
+        {
+            RemoteControlTargetAccessCompletion::Forgotten(result) => result.map_err(Into::into),
+            RemoteControlTargetAccessCompletion::Inventory(_)
+            | RemoteControlTargetAccessCompletion::Resolved(_)
+            | RemoteControlTargetAccessCompletion::AccessSet(_) => {
+                Err(ForgetRemoteControlTargetControlError::NodeStopped)
             }
         }
     }

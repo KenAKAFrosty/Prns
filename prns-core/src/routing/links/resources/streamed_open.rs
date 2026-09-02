@@ -106,8 +106,26 @@ pub enum OpenProgress {
     Chewing {
         dispatched: core::ops::Range<usize>,
     },
+    ExternallyOpened {
+        plaintext_byte_len: usize,
+        verification: ExternalOpenVerification,
+    },
 }
 
+#[derive(Debug)]
+pub enum ExternalOpenVerification {
+    Rehash,
+    Verified(ResourceProof),
+}
+
+/// Whether core emits incremental typed open directives or leaves the complete sealed transfer
+/// for a runtime-owned external crypto implementation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ResourceOpenLane {
+    #[default]
+    EngineDirected,
+    ExternalWhole,
+}
 /// A concluded transfer's nonce-stripped stream, carrying the verify midstate when one streamed in.
 pub struct OpenedStream<'t> {
     pub stream: &'t [u8],

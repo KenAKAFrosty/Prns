@@ -249,6 +249,12 @@ fn the_transcript_and_confirmation_code_have_a_pinned_vector() {
         ],
     );
     assert_eq!(prepared.transcript().confirmation_code().value(), 105_940);
+    assert_eq!(
+        RemoteControlPairingAttemptId::from(prepared.transcript())
+            .confirmation_code()
+            .value(),
+        105_940,
+    );
 }
 
 #[test]

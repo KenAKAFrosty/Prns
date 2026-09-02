@@ -12,12 +12,12 @@ use crate::crypto::{
     Ed25519Signature, Ed25519Verifier, X25519PublicKey, X25519SharedSecret,
 };
 use crate::engine::{
-    AnnounceSignCompleted, AnnounceSignOwed, AnnounceVerifyOwed, ChannelAckSignCompleted,
-    ChannelAckSignOwed, ChannelAckVerification, ChannelAckVerifyOwed, CryptoOwed, DecryptOwed,
-    EncryptCompleted, EncryptOwed, EstablishLinkCompleted, EstablishLinkOwed,
-    IdentifySignCompleted, IdentifySignOwed, LinkIdentityVerification, LinkIdentityVerifyOwed,
-    LinkReceiptSignCompleted, LinkReceiptSignOwed, ProofSignCompleted, ProofSignOwed,
-    RatchetDecryptOwed, ReceiptProofVerification, ReceiptProofVerifyOwed,
+    AnnounceSignCompleted, AnnounceSignOwed, AnnounceVerification, AnnounceVerifyOwed,
+    ChannelAckSignCompleted, ChannelAckSignOwed, ChannelAckVerification, ChannelAckVerifyOwed,
+    CommandId, CryptoOwed, DecryptOwed, EncryptCompleted, EncryptOwed, EstablishLinkCompleted,
+    EstablishLinkOwed, IdentifySignCompleted, IdentifySignOwed, LinkIdentityVerification,
+    LinkIdentityVerifyOwed, LinkReceiptSignCompleted, LinkReceiptSignOwed, ProofSignCompleted,
+    ProofSignOwed, RatchetDecryptOwed, ReceiptProofVerification, ReceiptProofVerifyOwed,
     TunnelSynthesizeSignCompleted, TunnelSynthesizeSignOwed, TunnelSynthesizeVerification,
     TunnelSynthesizeVerifyOwed,
 };
@@ -25,7 +25,6 @@ use crate::identity::{decrypt_token_in_place_with_ratchets, OpenedBy};
 use crate::remote_control::{
     RemoteControlPairingAvailabilityVerification, RemoteControlPairingAvailabilityVerifyOwed,
 };
-use crate::routing::announce::Announce;
 use crate::routing::ingress::MAX_RATCHET_DECRYPT_PAYLOAD_LEN;
 use crate::routing::links::handshake::{
     link_proof_signature_valid, link_proof_signed_data, LinkProofSignOwed, LinkProofVerifyOwed,
@@ -200,6 +199,7 @@ fn macos_sysctl_usize(name: &str) -> Option<usize> {
 }
 
 pub(super) struct StagedSealJob {
+    pub(super) command_id: CommandId,
     pub(super) link_id: LinkId,
     pub(super) key: LinkKey,
     pub(super) sdu: usize,
@@ -488,14 +488,8 @@ pub(super) enum CryptoResult {
         shared: X25519SharedSecret,
         signature: Ed25519Signature,
     },
-    AnnounceVerified {
-        owed: AnnounceVerifyOwed,
-        valid: bool,
-    },
-    RemoteControlPairingAvailabilityVerified {
-        owed: RemoteControlPairingAvailabilityVerifyOwed,
-        verification: RemoteControlPairingAvailabilityVerification,
-    },
+    AnnounceVerification(AnnounceVerification),
+    RemoteControlPairingAvailabilityVerification(RemoteControlPairingAvailabilityVerification),
     ResourceBuilt {
         reservation: crate::routing::links::resources::table::ResourceBuildReservation,
         request_data: HostResourcePayload,
@@ -509,6 +503,7 @@ pub(super) enum CryptoResult {
         plaintext: Vec<u8>,
     },
     StagedSealed {
+        command_id: CommandId,
         link_id: LinkId,
         stream_nonce: [u8; RESOURCE_NONCE_LEN],
         nonce_prefixed_bytes: usize,
@@ -1096,6 +1091,7 @@ fn run_crypto_job(job: CryptoJob, verifier_cache: &mut WorkerVerifierCache) -> C
         }
         CryptoJob::SealStaged(job) => {
             let StagedSealJob {
+                command_id,
                 link_id,
                 key,
                 sdu,
@@ -1123,6 +1119,7 @@ fn run_crypto_job(job: CryptoJob, verifier_cache: &mut WorkerVerifierCache) -> C
                 },
             );
             CryptoResult::StagedSealed {
+                command_id,
                 link_id,
                 stream_nonce,
                 nonce_prefixed_bytes,
@@ -1223,14 +1220,9 @@ fn run_crypto_job(job: CryptoJob, verifier_cache: &mut WorkerVerifierCache) -> C
                 signature,
             }
         }
-        CryptoJob::VerifyAnnounce(owed) => {
-            let valid = Announce::from_wire_unverified(&owed.header, &owed.payload)
-                .is_ok_and(|announce| announce.signature_is_valid());
-            CryptoResult::AnnounceVerified { owed, valid }
-        }
+        CryptoJob::VerifyAnnounce(owed) => CryptoResult::AnnounceVerification(owed.verify()),
         CryptoJob::VerifyRemoteControlPairingAvailability(owed) => {
-            let verification = owed.verify();
-            CryptoResult::RemoteControlPairingAvailabilityVerified { owed, verification }
+            CryptoResult::RemoteControlPairingAvailabilityVerification(owed.verify())
         }
     }
 }

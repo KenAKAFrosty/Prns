@@ -25,7 +25,7 @@ fn runtime_entropy(seed: u8) -> RuntimeEntropy<TestEntropySource> {
     RuntimeEntropy::try_new(TestEntropySource(seed)).unwrap()
 }
 
-fn identity(fill: u8) -> RemoteControlControllerIdentity {
+fn controller_identity(fill: u8) -> RemoteControlControllerIdentity {
     RemoteControlControllerIdentity::new(IdentityPublicKeys {
         encryption: IdentityEncryptionPublicKey::new(X25519PublicKey([fill; 32])),
         signing: IdentitySigningPublicKey::new(Ed25519PublicKey([fill; 32])),
@@ -33,11 +33,14 @@ fn identity(fill: u8) -> RemoteControlControllerIdentity {
 }
 
 fn grant(fill: u8, request: RemoteControlRequestKind) -> RemoteControlControllerGrant {
-    RemoteControlControllerGrant::new(identity(fill), RemoteControlRequestSet::only(request))
-        .unwrap()
+    RemoteControlControllerGrant::new(
+        controller_identity(fill),
+        RemoteControlRequestSet::only(request),
+    )
+    .unwrap()
 }
 
-fn table_contract(table: &mut impl RemoteControlAccessTable) {
+fn controller_grant_table_contract(table: &mut impl RemoteControlControllerGrantTable) {
     let first = grant(0x21, RemoteControlRequestKind::Describe);
     let updated_first = grant(0x21, RemoteControlRequestKind::AnnounceSelf);
     let second = grant(0x43, RemoteControlRequestKind::Describe);
@@ -59,8 +62,8 @@ fn table_contract(table: &mut impl RemoteControlAccessTable) {
     );
     assert_eq!(table.len(), 1);
     assert_eq!(table.grant_for(&first_hash), Some(&updated_first));
-    assert!(table.contains(&first_hash));
-    assert!(!table.contains(&second_hash));
+    assert!(table.contains_controller(&first_hash));
+    assert!(!table.contains_controller(&second_hash));
     assert_eq!(
         table.revoke_controller(second.controller()),
         RevokeRemoteControlControllerOutcome::NotFound,
@@ -70,26 +73,35 @@ fn table_contract(table: &mut impl RemoteControlAccessTable) {
         Ok(SetRemoteControlControllerGrantOutcome::Added),
     );
     assert_eq!(table.len(), 2);
+    assert!(table
+        .grants_in_identity_hash_order()
+        .windows(2)
+        .all(|pair| matches!(
+        pair,
+        [first, second]
+            if first.controller().identity_hash().as_bytes()
+                < second.controller().identity_hash().as_bytes()
+        )));
     assert_eq!(
         table.revoke_controller(first.controller()),
         RevokeRemoteControlControllerOutcome::Revoked {
             grant: updated_first,
         },
     );
-    assert_eq!(table.grants(), &[second]);
+    assert_eq!(table.grants_in_identity_hash_order(), &[second]);
 }
 
 #[test]
-fn fixed_table_obeys_the_access_table_contract() {
-    let mut table = FixedRemoteControlAccessTable::<2>::default();
+fn fixed_table_obeys_the_controller_grant_table_contract() {
+    let mut table = FixedRemoteControlControllerGrantTable::<2>::default();
 
     assert_eq!(table.capacity(), 2);
-    table_contract(&mut table);
+    controller_grant_table_contract(&mut table);
 }
 
 #[test]
 fn a_full_fixed_table_refuses_only_a_new_identity() {
-    let mut table = FixedRemoteControlAccessTable::<1>::default();
+    let mut table = FixedRemoteControlControllerGrantTable::<1>::default();
     let first = grant(0x65, RemoteControlRequestKind::Describe);
     let updated_first = grant(0x65, RemoteControlRequestKind::AnnounceSelf);
 
@@ -105,26 +117,147 @@ fn a_full_fixed_table_refuses_only_a_new_identity() {
         table.set_controller_grant(grant(0x87, RemoteControlRequestKind::Describe)),
         Err(SetRemoteControlControllerGrantError::CapacityExhausted),
     );
-    assert_eq!(table.grants(), &[updated_first]);
+    assert_eq!(table.grants_in_identity_hash_order(), &[updated_first]);
 }
 
 #[cfg(feature = "alloc")]
 #[test]
-fn heap_table_obeys_the_access_table_contract() {
-    let mut table = HeapRemoteControlAccessTable::default();
+fn heap_table_obeys_the_controller_grant_table_contract() {
+    let mut table = HeapRemoteControlControllerGrantTable::default();
 
     assert_eq!(table.capacity(), usize::MAX);
-    table_contract(&mut table);
+    controller_grant_table_contract(&mut table);
 }
 
 #[test]
-fn a_zero_capacity_table_is_an_empty_disabled_table() {
-    let mut table = FixedRemoteControlAccessTable::<0>::default();
+fn a_zero_capacity_controller_grant_table_is_an_empty_disabled_table() {
+    let mut table = FixedRemoteControlControllerGrantTable::<0>::default();
 
     assert!(table.is_empty());
     assert_eq!(
         table.set_controller_grant(grant(0xA9, RemoteControlRequestKind::Describe)),
         Err(SetRemoteControlControllerGrantError::CapacityExhausted),
+    );
+}
+
+fn target_identity(fill: u8) -> RemoteControlTargetIdentity {
+    RemoteControlTargetIdentity::new(IdentityPublicKeys {
+        encryption: IdentityEncryptionPublicKey::new(X25519PublicKey([fill; 32])),
+        signing: IdentitySigningPublicKey::new(Ed25519PublicKey([fill; 32])),
+    })
+}
+
+fn target_access(fill: u8, request: RemoteControlRequestKind) -> RemoteControlTargetAccess {
+    RemoteControlTargetAccess::new(
+        target_identity(fill),
+        RemoteControlRequestSet::only(request),
+    )
+    .unwrap()
+}
+
+fn target_access_table_contract(table: &mut impl RemoteControlTargetAccessTable) {
+    let first_identity = target_identity(0x21);
+    let second_identity = target_identity(0x43);
+    let first_hash = first_identity.identity_hash();
+    let second_hash = second_identity.identity_hash();
+
+    assert!(table.is_empty());
+    assert_eq!(
+        table.set_target_access(target_access(0x21, RemoteControlRequestKind::Describe)),
+        Ok(SetRemoteControlTargetAccessOutcome::Added),
+    );
+    assert_eq!(
+        table.set_target_access(target_access(0x21, RemoteControlRequestKind::Describe)),
+        Ok(SetRemoteControlTargetAccessOutcome::Unchanged),
+    );
+    assert_eq!(
+        table.set_target_access(target_access(0x21, RemoteControlRequestKind::AnnounceSelf)),
+        Ok(SetRemoteControlTargetAccessOutcome::Updated {
+            previous: target_access(0x21, RemoteControlRequestKind::Describe),
+        }),
+    );
+    assert_eq!(table.len(), 1);
+    let expected = target_access(0x21, RemoteControlRequestKind::AnnounceSelf);
+    assert_eq!(table.access_for(&first_hash), Some(&expected));
+    assert!(table.contains_target(&first_hash));
+    assert!(!table.contains_target(&second_hash));
+    assert_eq!(
+        table.forget_target(&second_identity),
+        ForgetRemoteControlTargetOutcome::NotFound,
+    );
+    assert_eq!(
+        table.set_target_access(target_access(0x43, RemoteControlRequestKind::Describe)),
+        Ok(SetRemoteControlTargetAccessOutcome::Added),
+    );
+    assert_eq!(table.len(), 2);
+    assert!(table
+        .accesses_in_identity_hash_order()
+        .windows(2)
+        .all(|pair| matches!(
+        pair,
+        [first, second]
+            if first.target().identity_hash().as_bytes()
+                < second.target().identity_hash().as_bytes()
+        )));
+    assert_eq!(
+        table.forget_target(&first_identity),
+        ForgetRemoteControlTargetOutcome::Forgotten { access: expected },
+    );
+    assert_eq!(
+        table.accesses_in_identity_hash_order(),
+        &[target_access(0x43, RemoteControlRequestKind::Describe)],
+    );
+}
+
+#[test]
+fn fixed_table_obeys_the_target_access_table_contract() {
+    let mut table = FixedRemoteControlTargetAccessTable::<2>::default();
+
+    assert_eq!(table.capacity(), 2);
+    target_access_table_contract(&mut table);
+}
+
+#[test]
+fn a_full_fixed_target_access_table_refuses_only_a_new_identity() {
+    let mut table = FixedRemoteControlTargetAccessTable::<1>::default();
+
+    assert_eq!(
+        table.set_target_access(target_access(0x65, RemoteControlRequestKind::Describe)),
+        Ok(SetRemoteControlTargetAccessOutcome::Added),
+    );
+    assert_eq!(
+        table.set_target_access(target_access(0x65, RemoteControlRequestKind::AnnounceSelf)),
+        Ok(SetRemoteControlTargetAccessOutcome::Updated {
+            previous: target_access(0x65, RemoteControlRequestKind::Describe),
+        }),
+    );
+    assert_eq!(
+        table.set_target_access(target_access(0x87, RemoteControlRequestKind::Describe)),
+        Err(SetRemoteControlTargetAccessError::CapacityExhausted),
+    );
+    assert_eq!(
+        table.accesses_in_identity_hash_order(),
+        &[target_access(0x65, RemoteControlRequestKind::AnnounceSelf)],
+    );
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn heap_table_obeys_the_target_access_table_contract() {
+    let mut table = HeapRemoteControlTargetAccessTable::default();
+
+    assert_eq!(table.capacity(), usize::MAX);
+    target_access_table_contract(&mut table);
+}
+
+#[test]
+fn a_zero_capacity_target_access_table_is_an_empty_disabled_table() {
+    let mut table = FixedRemoteControlTargetAccessTable::<0>::default();
+
+    assert!(table.is_empty());
+    assert_eq!(
+        table.set_target_access(target_access(0xA9, RemoteControlRequestKind::Describe)),
+        Err(SetRemoteControlTargetAccessError::CapacityExhausted),
     );
 }
 

@@ -6,15 +6,15 @@ use std::collections::VecDeque;
 
 use crate::crypto::{ed25519_sign, ed25519_verify, x25519_diffie_hellman, x25519_keys_for_seal};
 use crate::engine::{
-    ChannelAckSignCompleted, ChannelAckVerification, CryptoOwed, Directive, EncryptCompleted,
-    EngineReaction, EngineState, IdentifySignCompleted, IngestIo, LinkIdentityVerification,
-    LinkReceiptSignCompleted, OwedWork, ProofSignCompleted, ReceiptProofVerification,
-    TunnelSynthesizeSignCompleted, TunnelSynthesizeVerification, WakeSchedules,
+    AnnounceVerification, ChannelAckSignCompleted, ChannelAckVerification, CryptoOwed, Directive,
+    EncryptCompleted, EngineReaction, EngineState, IdentifySignCompleted, IngestIo,
+    LinkIdentityVerification, LinkReceiptSignCompleted, OwedWork, ProofSignCompleted,
+    ReceiptProofVerification, TunnelSynthesizeSignCompleted, TunnelSynthesizeVerification,
+    WakeSchedules,
 };
 use crate::identity::decrypt_token_in_place_with_ratchets;
 use crate::interfaces::InboundPacket;
 use crate::remote_control::RemoteControlPairingAvailabilityVerification;
-use crate::routing::announce::Announce;
 use crate::routing::links::handshake::{link_proof_signature_valid, link_proof_signed_data};
 use crate::storage::StorageLayout;
 use crate::wire::BROADCAST_MTU;
@@ -275,11 +275,9 @@ where
                 });
             }
             CryptoOwed::AnnounceVerify(owed) => {
-                if Announce::from_wire_unverified(&owed.header, &owed.payload)
-                    .is_ok_and(|announce| announce.signature_is_valid())
-                {
+                if let AnnounceVerification::Verified(verified) = owed.verify() {
                     wake.compose(engine.resume_announce(
-                        owed,
+                        verified,
                         interfaces,
                         fill_random,
                         &mut |reaction| sink(reaction.map_work(|never| match never {})),
@@ -287,9 +285,11 @@ where
                 }
             }
             CryptoOwed::RemoteControlPairingAvailabilityVerify(owed) => {
-                if owed.verify() == RemoteControlPairingAvailabilityVerification::Valid {
+                if let RemoteControlPairingAvailabilityVerification::Verified(verified) =
+                    owed.verify()
+                {
                     wake.compose(engine.resume_remote_control_pairing_availability(
-                        owed,
+                        verified,
                         interfaces,
                         &mut |reaction| sink(reaction.map_work(|never| match never {})),
                     ));

@@ -143,8 +143,10 @@ fn an_ifac_frame_crosses_the_seam_and_leaves_masked_through_the_peer() {
         | Journaled::RemoteControlTargetPairingConfirmationRequired(_)
         | Journaled::RemoteControlTargetPairingControllerCommitted { .. }
         | Journaled::RemoteControlTargetPairingAuthorizationRequired { .. }
+        | Journaled::RemoteControlTargetPairingAuthorizationPersisted { .. }
         | Journaled::RemoteControlControllerPairingConfirmationRequired(_)
         | Journaled::RemoteControlControllerPairingPersistenceRequired(_)
+        | Journaled::RemoteControlControllerPairingAuthorizationPersisted { .. }
         | Journaled::RemoteControlControllerPairingExpired { .. }
         | Journaled::RemoteControlControllerPairingLinkClosed { .. }
         | Journaled::RemoteControlTargetPairingExpired { .. }

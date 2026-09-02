@@ -405,6 +405,12 @@ async function startEngine(
       bleIdentityStore,
       ...(persistenceStore === undefined ? {} : { persistenceStore }),
       limits: initialization.limits,
+      crypto: initialization.crypto,
+      ...(initialization.portableWasmModuleUrl === undefined
+        ? {}
+        : {
+            portableWasmModuleUrl: new URL(initialization.portableWasmModuleUrl),
+          }),
       ...(initialization.resourceCompressionModuleUrl === undefined
         ? {}
         : {

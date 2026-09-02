@@ -1,12 +1,13 @@
-import { Tag } from "../casework.js";
-import { interfaceId } from "../contract.js";
+import { Tag, match } from "../casework.js";
+import { interfaceId, linkId } from "../contract.js";
 import type {
   InterfaceId,
   InterfaceKind,
   InterfaceRoutingPolicy,
   WebSocketFramingSelection,
 } from "../contract.js";
-import { byteKey } from "./bytes.js";
+import { byteKey, interfaceKey } from "./bytes.js";
+import type { InterfaceKey } from "./bytes.js";
 import { describeHostError } from "./host_errors.js";
 import type { BrowserUsbDeviceFilter } from "./host_apis.js";
 import type { BluetoothHostReassembler } from "./bluetooth/runtime.js";
@@ -15,18 +16,21 @@ import {
   outboundTargets,
   parseOutboundFrame,
 } from "./outbound.js";
+import { parseOutboundBatch } from "./outbound_batch.js";
 import type {
   InterfaceOutboundOutcome,
   NonEmptyPrnsOutboundFrames,
   PrnsOutboundFrame,
+  TransferredInterfaceOutboundOutcome,
 } from "./outbound.js";
+import { prepareByteTransfer } from "./byte_transfer.js";
 import {
   MIN_ENTROPY_BYTES,
   PrnsValidationError,
   bitrateBps,
   channelTag,
   hardwareMtu,
-  packetFrame,
+  packetFrameView,
   positiveInteger,
 } from "./values.js";
 import type {
@@ -36,6 +40,16 @@ import type {
   PacketFrame,
 } from "./values.js";
 import type { WebSocketRuntimeRegistration } from "./websocket/index.js";
+import {
+  parseResourceOpenJob,
+  resourceOpenDigestExecution,
+} from "./resource_crypto.js";
+import type {
+  ResourceOpenJob,
+} from "./resource_crypto.js";
+import type { BrowserCryptoExecutor } from "./crypto_pool.js";
+import { parseProtocolCryptoJob } from "./protocol_crypto_runtime.js";
+import type { ProtocolCryptoJob } from "./protocol_crypto_runtime.js";
 import type {
   BleIdentityAvailability,
   BluetoothReassemblerBinding,
@@ -81,6 +95,10 @@ type OutboundTakeOutcome =
   | Tag<"Outbound", readonly PrnsOutboundFrame[]>
   | Tag<"OutboundQueueFull", { readonly capacity: number }>
   | RuntimeRejected;
+type OutboundUnavailable = Exclude<
+  InterfaceOutboundOutcome,
+  Tag<"Outbound", unknown>
+>;
 type RuntimeOutboundDrainOutcome =
   | Tag<"Drained", readonly PrnsOutboundFrame[]>
   | RuntimeRejected;
@@ -98,8 +116,9 @@ export class RuntimeHost {
   readonly #now: () => InstantMillis;
   readonly #bleIdentityAvailability: BleIdentityAvailability;
   readonly #onRuntimeActivity: () => void;
+  #cryptoExecutor: BrowserCryptoExecutor | undefined;
   #activeInterfaces = new Map<
-    string,
+    InterfaceKey,
     {
       id: InterfaceId;
       name: InterfaceName;
@@ -111,9 +130,9 @@ export class RuntimeHost {
     }
   >();
   #activeRegistrationKeys = new Set<string>();
-  #outboundQueues = new Map<string, PrnsOutboundFrame[]>();
-  #overflowedOutbound = new Set<string>();
-  #outboundWaiters = new Map<string, Set<OutboundWaiter>>();
+  #outboundQueues = new Map<InterfaceKey, PrnsOutboundFrame[]>();
+  #overflowedOutbound = new Set<InterfaceKey>();
+  #outboundWaiters = new Map<InterfaceKey, Set<OutboundWaiter>>();
 
   constructor(
     wasm: PrnsWasmModule,
@@ -121,6 +140,7 @@ export class RuntimeHost {
     entropy: EntropySource,
     now: () => InstantMillis,
     bleIdentityAvailability: BleIdentityAvailability,
+    cryptoExecutor: BrowserCryptoExecutor | undefined,
     onRuntimeActivity: () => void,
   ) {
     this.#wasm = wasm;
@@ -128,7 +148,21 @@ export class RuntimeHost {
     this.#entropy = entropy;
     this.#now = now;
     this.#bleIdentityAvailability = bleIdentityAvailability;
+    this.#cryptoExecutor = cryptoExecutor;
     this.#onRuntimeActivity = onRuntimeActivity;
+    if (
+      cryptoExecutor !== undefined &&
+      this.#runtime.enableResourceWebCrypto !== undefined
+    ) {
+      this.#runtime.enableResourceWebCrypto();
+    }
+    if (cryptoExecutor !== undefined) {
+      if (this.#runtime.enableProtocolCryptoOffload !== undefined) {
+        this.#runtime.enableProtocolCryptoOffload();
+      } else if (this.#runtime.enableProtocolWebCrypto !== undefined) {
+        this.#runtime.enableProtocolWebCrypto();
+      }
+    }
   }
 
   runtimeReadiness(): RuntimeReadyOutcome {
@@ -164,11 +198,11 @@ export class RuntimeHost {
     } catch (error) {
       return runtimeRejected("register-interface", error);
     }
-    const key = byteKey(id);
+    const key = interfaceKey(id);
     if (this.#activeInterfaces.has(key)) {
       return Tag("AlreadyActive", {
         interface: interfaceName,
-        target: key,
+        target: byteKey(id),
       });
     }
     this.#activeRegistrationKeys.add(registrationKey);
@@ -187,7 +221,7 @@ export class RuntimeHost {
   }
 
   deactivateInterface(id: InterfaceId): InterfaceDetachOutcome {
-    const key = byteKey(id);
+    const key = interfaceKey(id);
     const active = this.#activeInterfaces.get(key);
     if (!active) {
       this.#resolveOutboundWaiters(key, Tag("InterfaceDetached"));
@@ -201,7 +235,7 @@ export class RuntimeHost {
       if (!removed) {
         return runtimeRejected(
           "remove-interface",
-          `runtime did not contain interface ${key}`,
+          `runtime did not contain interface ${byteKey(id)}`,
         );
       }
     } catch (error) {
@@ -217,14 +251,14 @@ export class RuntimeHost {
   }
 
   setContractKind(id: InterfaceId, kind: InterfaceKind): void {
-    const active = this.#activeInterfaces.get(byteKey(id));
+    const active = this.#activeInterfaces.get(interfaceKey(id));
     if (active !== undefined && active.contractKind !== kind) {
       active.contractKind = kind;
       this.#onRuntimeActivity();
     }
   }
 
-  interfaceInspection(): ReadonlyMap<string, RuntimeInterfaceInspection> {
+  interfaceInspection(): ReadonlyMap<InterfaceKey, RuntimeInterfaceInspection> {
     return new Map(
       [...this.#activeInterfaces].map(([key, active]) => [
         key,
@@ -247,16 +281,23 @@ export class RuntimeHost {
       return entropy;
     }
     try {
-      this.#runtime.ingest({
-        interfaceId,
-        bytes,
-        nowMs: this.#now(),
-        entropy: entropy.data,
-      });
-      const active = this.#activeInterfaces.get(byteKey(interfaceId));
+      const nowMs = this.#now();
+      if (this.#runtime.ingestDirect === undefined) {
+        this.#runtime.ingest({
+          interfaceId,
+          bytes,
+          nowMs,
+          entropy: entropy.data,
+        });
+      } else {
+        this.#runtime.ingestDirect(interfaceId, bytes, nowMs, entropy.data);
+      }
+      const active = this.#activeInterfaces.get(interfaceKey(interfaceId));
       if (active !== undefined) {
         active.rxBytes = saturatingAdd(active.rxBytes, bytes.length);
       }
+      this.#drainResourceOpenJobs();
+      this.#drainProtocolCryptoJobs();
       this.notifyRuntimeActivity();
       return Tag("Accepted");
     } catch (error) {
@@ -264,9 +305,237 @@ export class RuntimeHost {
     }
   }
 
+  #drainResourceOpenJobs(): void {
+    if (
+      this.#cryptoExecutor === undefined ||
+      this.#runtime.takeResourceOpenJob === undefined ||
+      this.#runtime.completeResourceOpen === undefined ||
+      this.#runtime.rejectResourceOpen === undefined ||
+      this.#runtime.retryResourceOpen === undefined
+    ) {
+      return;
+    }
+    while (true) {
+      const job = parseResourceOpenJob(this.#runtime.takeResourceOpenJob());
+      if (job === undefined) {
+        return;
+      }
+      void this.#settleResourceOpen(job);
+    }
+  }
+
+  async #settleResourceOpen(job: ResourceOpenJob): Promise<void> {
+    const executor = this.#cryptoExecutor;
+    if (executor === undefined) {
+      return;
+    }
+    try {
+      if (
+        this.#runtime.completeResourceOpenDigests !== undefined &&
+        job.hashPlan.tag === "OpenedStream" &&
+        resourceOpenDigestExecution(
+          job.sealed.length,
+          job.totalSegments,
+        ).tag === "WebCrypto"
+      ) {
+        const outcome = await executor.openAndDigest(
+          job,
+          job.hashPlan.data.salt,
+        );
+        if (this.#cryptoExecutor !== executor) {
+          return;
+        }
+        await match(outcome, {
+          OpenedAndDigested: ({ plaintext, hash, proof }) => {
+            this.#runtime.completeResourceOpenDigests!({
+              linkId: linkId(job.linkId),
+              hash: job.hash,
+              calculatedHash: hash,
+              proof,
+              plaintext,
+              nowMs: this.#now(),
+              entropy: this.#completionEntropy(),
+            });
+          },
+          Refused: () => this.#runtime.rejectResourceOpen!({
+            linkId: linkId(job.linkId),
+            hash: job.hash,
+          }),
+          Busy: () => {
+            throw new TypeError("resource crypto pool is busy");
+          },
+          Failed: ({ detail }) => {
+            throw new TypeError(detail);
+          },
+        });
+        this.notifyRuntimeActivity();
+        this.#drainResourceOpenJobs();
+        return;
+      }
+      const outcome = await executor.open(job);
+      if (this.#cryptoExecutor !== executor) {
+        return;
+      }
+      await match(outcome, {
+        Opened: (plaintext) => {
+          this.#runtime.completeResourceOpen!({
+            linkId: linkId(job.linkId),
+            hash: job.hash,
+            plaintext,
+            nowMs: this.#now(),
+            entropy: this.#completionEntropy(),
+          });
+        },
+        Refused: () => this.#runtime.rejectResourceOpen!({
+          linkId: linkId(job.linkId),
+          hash: job.hash,
+        }),
+        Busy: () => {
+          throw new TypeError("resource crypto pool is busy");
+        },
+        Failed: ({ detail }) => {
+          throw new TypeError(detail);
+        },
+      });
+    } catch {
+      if (this.#cryptoExecutor !== executor) {
+        return;
+      }
+      this.#runtime.retryResourceOpen!({
+        linkId: linkId(job.linkId),
+        hash: job.hash,
+        nowMs: this.#now(),
+        entropy: this.#completionEntropy(),
+      });
+    }
+    this.notifyRuntimeActivity();
+    this.#drainResourceOpenJobs();
+  }
+
+  #drainProtocolCryptoJobs(): void {
+    if (
+      this.#cryptoExecutor === undefined ||
+      this.#runtime.takeProtocolCryptoJob === undefined ||
+      this.#runtime.completeProtocolAnnounceValid === undefined ||
+      this.#runtime.completeProtocolAnnounceInvalid === undefined ||
+      this.#runtime.completeProtocolLinkProofValid === undefined ||
+      this.#runtime.completeProtocolLinkProofInvalid === undefined ||
+      this.#runtime.completeProtocolCryptoInline === undefined
+    ) {
+      return;
+    }
+    while (true) {
+      const job = parseProtocolCryptoJob(this.#runtime.takeProtocolCryptoJob());
+      if (job === undefined) {
+        return;
+      }
+      void this.#settleProtocolCrypto(job);
+    }
+  }
+
+  async #settleProtocolCrypto(job: ProtocolCryptoJob): Promise<void> {
+    const executor = this.#cryptoExecutor;
+    if (executor === undefined) {
+      return;
+    }
+    try {
+      await match(job, {
+        AnnounceVerify: async ({ id, publicKey, message, signature }) => {
+          const outcome = await executor.verifyEd25519(publicKey, message, signature);
+          if (this.#cryptoExecutor !== executor) {
+            return;
+          }
+          await match(outcome, {
+            Valid: () => {
+              const entropy = this.#completionEntropy();
+              this.#runtime.completeProtocolAnnounceValid!(id, this.#now(), entropy);
+            },
+            Invalid: () => this.#runtime.completeProtocolAnnounceInvalid!(id),
+            Busy: () => this.#completeProtocolCryptoInline(id),
+            Unavailable: () => this.#completeProtocolCryptoInline(id),
+            Failed: () => this.#completeProtocolCryptoInline(id),
+          });
+        },
+        LinkProofVerify: async ({
+          id,
+          publicKey,
+          message,
+          signature,
+          secretScalar,
+          peerPublicKey,
+        }) => {
+          const outcome = await executor.verifyLinkProof(
+            publicKey,
+            message,
+            signature,
+            secretScalar,
+            peerPublicKey,
+          );
+          if (this.#cryptoExecutor !== executor) {
+            return;
+          }
+          await match(outcome, {
+            Verified: ({ sharedSecret }) => {
+              const entropy = this.#completionEntropy();
+              this.#runtime.completeProtocolLinkProofValid!(
+                id,
+                sharedSecret,
+                this.#now(),
+                entropy,
+              );
+            },
+            Invalid: () => this.#runtime.completeProtocolLinkProofInvalid!(id),
+            Busy: () => this.#completeProtocolCryptoInline(id),
+            Unavailable: () => this.#completeProtocolCryptoInline(id),
+            Failed: () => this.#completeProtocolCryptoInline(id),
+          });
+        },
+      });
+    } catch {
+      if (this.#cryptoExecutor === executor) {
+        this.#rejectProtocolCrypto(job);
+      }
+    }
+    if (this.#cryptoExecutor !== executor) {
+      return;
+    }
+    this.notifyRuntimeActivity();
+    this.#drainProtocolCryptoJobs();
+  }
+
+  #completeProtocolCryptoInline(id: number): void {
+    const entropy = this.#completionEntropy();
+    this.#runtime.completeProtocolCryptoInline!(id, this.#now(), entropy);
+  }
+
+  #completionEntropy(): Extract<EntropyOutcome, { readonly tag: "Filled" }>["data"] {
+    const entropy = this.entropy();
+    if (entropy.tag !== "Filled") {
+      throw new TypeError("protocol crypto completion entropy is unavailable");
+    }
+    return entropy.data;
+  }
+
+  #rejectProtocolCrypto(job: ProtocolCryptoJob): void {
+    match(job, {
+      AnnounceVerify: ({ id }) => this.#runtime.completeProtocolAnnounceInvalid!(id),
+      LinkProofVerify: ({ id }) => this.#runtime.completeProtocolLinkProofInvalid!(id),
+    });
+  }
+
+  stopCrypto(): void {
+    this.#cryptoExecutor = undefined;
+  }
+
   drainOutbound(): RuntimeOutboundDrainOutcome {
     try {
-      return Tag("Drained", this.#runtime.drainOutbound().map(parseOutboundFrame));
+      const packed = this.#runtime.drainOutboundBatch?.();
+      return Tag(
+        "Drained",
+        packed === undefined
+          ? this.#runtime.drainOutbound().map(parseOutboundFrame)
+          : parseOutboundBatch(packed),
+      );
     } catch (error) {
       return runtimeRejected("drain-outbound", error);
     }
@@ -276,19 +545,45 @@ export class RuntimeHost {
     interfaceId: InterfaceId,
     maximumFrames = Number.MAX_SAFE_INTEGER,
   ): Promise<InterfaceOutboundOutcome> {
-    const interfaceKey = byteKey(interfaceId);
-    while (this.#activeInterfaces.has(interfaceKey)) {
+    return this.#nextOutboundFor(
+      interfaceId,
+      maximumFrames,
+      (frames) => Tag("Outbound", frames),
+    );
+  }
+
+  async nextTransferredOutboundFor(
+    interfaceId: InterfaceId,
+    maximumFrames = Number.MAX_SAFE_INTEGER,
+  ): Promise<TransferredInterfaceOutboundOutcome> {
+    return this.#nextOutboundFor(
+      interfaceId,
+      maximumFrames,
+      (frames) => Tag(
+        "TransferredOutbound",
+        prepareByteTransfer(
+          frames.map((frame) => frame.bytes),
+          this.#retainedOutboundBuffers(),
+        ),
+      ),
+    );
+  }
+
+  async #nextOutboundFor<Ready>(
+    interfaceId: InterfaceId,
+    maximumFrames: number,
+    ready: (frames: NonEmptyPrnsOutboundFrames) => Ready,
+  ): Promise<Ready | OutboundUnavailable> {
+    const key = interfaceKey(interfaceId);
+    while (this.#activeInterfaces.has(key)) {
       const outbound = this.#takeOutboundFor(interfaceId, maximumFrames);
       if (outbound.tag !== "Outbound") {
         return outbound;
       }
       if (outbound.data.length > 0) {
-        return Tag(
-          "Outbound",
-          outbound.data as NonEmptyPrnsOutboundFrames,
-        );
+        return ready(outbound.data as NonEmptyPrnsOutboundFrames);
       }
-      const wake = await this.#waitForOutbound(interfaceKey);
+      const wake = await this.#waitForOutbound(key);
       if (wake.tag === "InterfaceDetached") {
         return wake;
       }
@@ -306,7 +601,7 @@ export class RuntimeHost {
     } catch (error) {
       return runtimeRejected("drain-outbound", error);
     }
-    const interfaceKey = byteKey(interfaceId);
+    const selectedInterfaceKey = interfaceKey(interfaceId);
     const direct: PrnsOutboundFrame[] = [];
     const drained = this.drainOutbound();
     if (drained.tag !== "Drained") {
@@ -315,7 +610,7 @@ export class RuntimeHost {
     for (const frame of drained.data) {
       for (const [key, active] of this.#activeInterfaces) {
         if (outboundTargets(frame.target, active.id, active.supervisorKind)) {
-          if (key === interfaceKey) {
+          if (key === selectedInterfaceKey) {
             direct.push(frame);
             continue;
           }
@@ -330,17 +625,17 @@ export class RuntimeHost {
         }
       }
     }
-    if (this.#overflowedOutbound.delete(interfaceKey)) {
-      this.#outboundQueues.set(interfaceKey, []);
+    if (this.#overflowedOutbound.delete(selectedInterfaceKey)) {
+      this.#outboundQueues.set(selectedInterfaceKey, []);
       return Tag("OutboundQueueFull", {
         capacity: INTERFACE_OUTBOUND_QUEUE_DEPTH,
       });
     }
-    const queued = this.#outboundQueues.get(interfaceKey) ?? [];
+    const queued = this.#outboundQueues.get(selectedInterfaceKey) ?? [];
     const available = queued.concat(direct);
     const outbound = available.slice(0, frameLimit);
-    this.#outboundQueues.set(interfaceKey, available.slice(frameLimit));
-    const active = this.#activeInterfaces.get(interfaceKey);
+    this.#outboundQueues.set(selectedInterfaceKey, available.slice(frameLimit));
+    const active = this.#activeInterfaces.get(selectedInterfaceKey);
     if (active !== undefined) {
       active.txBytes = outbound.reduce(
         (total, frame) => saturatingAdd(total, frame.bytes.length),
@@ -350,7 +645,7 @@ export class RuntimeHost {
     return Tag("Outbound", outbound);
   }
 
-  #waitForOutbound(key: string): Promise<OutboundWaitOutcome> {
+  #waitForOutbound(key: InterfaceKey): Promise<OutboundWaitOutcome> {
     if (!this.#activeInterfaces.has(key)) {
       return Promise.resolve(Tag("InterfaceDetached"));
     }
@@ -359,6 +654,16 @@ export class RuntimeHost {
       waiters.add(resolve);
       this.#outboundWaiters.set(key, waiters);
     });
+  }
+
+  #retainedOutboundBuffers(): ReadonlySet<ArrayBufferLike> {
+    const retained = new Set<ArrayBufferLike>();
+    for (const queue of this.#outboundQueues.values()) {
+      for (const frame of queue) {
+        retained.add(frame.bytes.buffer);
+      }
+    }
+    return retained;
   }
 
   notifyRuntimeActivity(): void {
@@ -370,7 +675,7 @@ export class RuntimeHost {
   }
 
   #resolveOutboundWaiters(
-    key: string,
+    key: InterfaceKey,
     outcome: OutboundWaitOutcome,
   ): void {
     const waiters = this.#outboundWaiters.get(key);
@@ -487,7 +792,7 @@ export class RuntimeHost {
     bytes: Uint8Array,
   ): RuntimeIngestOutcome {
     try {
-      return this.ingest(id, packetFrame(bytes));
+      return this.ingest(id, packetFrameView(bytes));
     } catch (error) {
       return runtimeRejected("ingest", error);
     }
@@ -520,7 +825,7 @@ export class RuntimeHost {
 
   autoWifiIngest(id: InterfaceId, bytes: Uint8Array): RuntimeIngestOutcome {
     try {
-      return this.ingest(id, packetFrame(bytes));
+      return this.ingest(id, packetFrameView(bytes));
     } catch (error) {
       return runtimeRejected("ingest", error);
     }

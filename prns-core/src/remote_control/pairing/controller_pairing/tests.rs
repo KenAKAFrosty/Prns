@@ -482,12 +482,14 @@ fn completed_requires_the_exact_transcript_before_persistence() {
     );
     let PersistRemoteControlControllerPairingOutcome::Completed {
         attempt_id: persisted,
+        context,
         access,
     } = state.persistence_succeeded(attempt_id)
     else {
         panic!("persisted")
     };
     assert_eq!(persisted, attempt_id);
+    assert_eq!(context, fixture.context());
     assert_eq!(access.target(), transcript.target());
     assert_eq!(state.view(), RemoteControlControllerPairingView::Idle);
 }
@@ -642,12 +644,14 @@ fn rejection_and_persistence_failure_settle_only_the_exact_attempt() {
     );
     let FailRemoteControlControllerPairingPersistenceOutcome::Failed {
         attempt_id: failed,
+        context,
         access,
     } = persisting.persistence_failed(attempt_id)
     else {
         panic!("persistence failure")
     };
     assert_eq!(failed, attempt_id);
+    assert_eq!(context, fixture.context());
     assert_eq!(access.target(), transcript.target());
     assert_eq!(persisting.view(), RemoteControlControllerPairingView::Idle);
 }
@@ -803,12 +807,14 @@ fn real_wire_messages_drive_both_reducers_to_the_same_durable_pairing() {
     assert_eq!(access.permitted_requests(), grant.permitted_requests());
     let PersistRemoteControlControllerPairingOutcome::Completed {
         attempt_id: persisted,
+        context,
         access,
     } = controller_state.persistence_succeeded(controller_attempt_id)
     else {
         panic!("controller persistence")
     };
     assert_eq!(persisted, target_attempt_id);
+    assert_eq!(context, fixture.context());
     assert_eq!(access.target().identity_hash(), target_identity);
     assert_eq!(
         controller_state.view(),

@@ -57,7 +57,8 @@ fn region_file_name(region: SnapshotRegion) -> &'static str {
         SnapshotRegion::Tunnels => "tunnels",
         SnapshotRegion::SelfRatchets => "self_ratchets",
         SnapshotRegion::DestinationIdentities => "known_destinations",
-        SnapshotRegion::RemoteControlAccess => "remote_control_access",
+        SnapshotRegion::RemoteControlControllerGrants => "remote_control_controller_grants",
+        SnapshotRegion::RemoteControlTargetAccesses => "remote_control_target_accesses",
     }
 }
 
@@ -237,6 +238,18 @@ mod tests {
         assert_eq!(
             region_file_name(SnapshotRegion::DestinationIdentities),
             "known_destinations"
+        );
+    }
+
+    #[test]
+    fn remote_control_regions_have_distinct_directional_filenames() {
+        assert_eq!(
+            region_file_name(SnapshotRegion::RemoteControlControllerGrants),
+            "remote_control_controller_grants"
+        );
+        assert_eq!(
+            region_file_name(SnapshotRegion::RemoteControlTargetAccesses),
+            "remote_control_target_accesses"
         );
     }
 

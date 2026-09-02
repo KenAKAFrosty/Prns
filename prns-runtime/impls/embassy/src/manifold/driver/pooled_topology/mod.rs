@@ -1,4 +1,4 @@
-use embassy_futures::select::{select6, Either6};
+use embassy_futures::select::{select, select6, Either6};
 use embassy_futures::yield_now;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::Receiver;
@@ -155,7 +155,7 @@ pub(crate) async fn run_pooled<
             wait_for_due_reason(&*host, wake),
             wait_for_pacer(&*host, pacer_wake),
             lifecycle.receive(),
-            wait_for_persistence(&*host, persistence_deadline),
+            wait_for_persistence_or_work(&*host, persistence_deadline, &*persistence),
         )
         .await
         {
@@ -503,6 +503,18 @@ async fn wait_for_persistence(host: &impl Host, deadline: Option<crate::engine::
         Some(deadline) => host.sleep_until(deadline).await,
         None => core::future::pending().await,
     }
+}
+
+async fn wait_for_persistence_or_work<S: StorageLayout>(
+    host: &impl Host,
+    deadline: Option<crate::engine::InstantMillis>,
+    persistence: &impl ManifoldPersistence<S>,
+) {
+    let _completed = select(
+        wait_for_persistence(host, deadline),
+        persistence.wait_for_work(),
+    )
+    .await;
 }
 
 #[cfg(test)]

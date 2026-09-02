@@ -1,21 +1,21 @@
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
 
-use crate::engine::EngineState;
 use crate::engine::RatchetPolicy;
+use crate::engine::{EngineState, RemoteControlServiceConfiguration};
 use crate::identity::held::HoldIdentityError;
 use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use crate::remote_control::{
-    FixedRemoteControlAccessTable, RemoteControlAccessTable, RemoteControlEndpoint,
-    RemoteControlNodeIdentities, RemoteControlPairingAvailabilityDestination, RemoteControlRequest,
-    RemoteControlRequestSet, RemoteControlSelfAnnouncement, RemoteControlService,
-    RevokeRemoteControlControllerError, RevokeRemoteControlControllerOutcome,
-    SetRemoteControlControllerGrantError, SetRemoteControlControllerGrantOutcome,
-    DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS, REMOTE_CONTROL_APPLICATION_ASPECTS,
-    REMOTE_CONTROL_APPLICATION_NAME, REMOTE_CONTROL_REQUEST_ENDPOINT_ID,
+    FixedRemoteControlControllerGrantTable, FixedRemoteControlTargetAccessTable,
+    RemoteControlControllerGrantTable, RemoteControlEndpoint, RemoteControlNodeIdentities,
+    RemoteControlPairingAvailabilityDestination, RemoteControlRequestSet,
+    RemoteControlSelfAnnouncement, RemoteControlService, RemoteControlTargetAccessTable,
+    RevokeRemoteControlControllerOutcome, SetRemoteControlControllerGrantError,
+    SetRemoteControlControllerGrantOutcome, DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS,
+    DEFAULT_MAX_REMOTE_CONTROL_TARGET_ACCESSES,
 };
 use crate::routing::links::resources::ResourceStrategy;
-use crate::routing::request_handlers::{RequestHandlerError, RequestPathHash, RequestPolicy};
+use crate::routing::request_handlers::{RequestHandlerError, RequestPathHash};
 use crate::routing::upstream_app_destinations::RegisterDestinationError;
 use crate::routing::{LinkRequestPolicy, ProofStrategy};
 use crate::storage::StorageLayout;
@@ -23,8 +23,15 @@ use crate::storage::TablePushError;
 use crate::units::ByteLimit;
 use crate::wire::DestinationHash;
 
+use super::super::remote_control::REMOTE_CONTROL_REQUEST_PLAINTEXT_MAX;
 use super::super::request_endpoints::RequestEndpointSet;
-use super::super::PrnsEvent;
+use super::super::{
+    ForgetRemoteControlTargetServiceError, PrnsEvent, RemoteControlAuthorizationRestoreError,
+    RemoteControlAuthorizationRestoreOutcome, RemoteControlTargetInventory,
+    RemoteControlTargetInventoryServiceError, ResolveRemoteControlTargetServiceError,
+    ResolvedRemoteControlTarget, RevokeRemoteControlControllerServiceError,
+    SetRemoteControlControllerGrantServiceError, SetRemoteControlTargetAccessServiceError,
+};
 use super::recipe::{PreConfiguredDestination, PrnsNodeRecipe, ServeMyRequestEndpoints};
 
 pub struct AssembledNode<St, R, F, S>
@@ -48,7 +55,10 @@ struct AvailableRemoteControl {
     identities: RemoteControlNodeIdentities,
     target_endpoint: RemoteControlEndpoint,
     request_endpoint_id: RequestPathHash,
-    access: FixedRemoteControlAccessTable<DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS>,
+    controller_grants:
+        FixedRemoteControlControllerGrantTable<DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS>,
+    target_accesses:
+        FixedRemoteControlTargetAccessTable<DEFAULT_MAX_REMOTE_CONTROL_TARGET_ACCESSES>,
     available_requests: RemoteControlRequestSet,
     self_announcement: RemoteControlSelfAnnouncement,
     pairing_availability_destination: RemoteControlPairingAvailabilityDestination,
@@ -85,11 +95,23 @@ impl AssembledRemoteControl {
     }
 
     #[must_use]
-    pub const fn access(
+    pub const fn controller_grants(
         &self,
-    ) -> Option<&FixedRemoteControlAccessTable<DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS>> {
+    ) -> Option<&FixedRemoteControlControllerGrantTable<DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS>>
+    {
         match &self.available {
-            Some(available) => Some(&available.access),
+            Some(available) => Some(&available.controller_grants),
+            None => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn target_accesses(
+        &self,
+    ) -> Option<&FixedRemoteControlTargetAccessTable<DEFAULT_MAX_REMOTE_CONTROL_TARGET_ACCESSES>>
+    {
+        match &self.available {
+            Some(available) => Some(&available.target_accesses),
             None => None,
         }
     }
@@ -126,7 +148,7 @@ impl AssembledRemoteControl {
         destination: DestinationHash,
         path: RequestPathHash,
     ) -> Option<(
-        &FixedRemoteControlAccessTable<DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS>,
+        &FixedRemoteControlControllerGrantTable<DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS>,
         RemoteControlRequestSet,
         RemoteControlSelfAnnouncement,
     )> {
@@ -137,7 +159,7 @@ impl AssembledRemoteControl {
             return None;
         }
         Some((
-            &available.access,
+            &available.controller_grants,
             available.available_requests,
             available.self_announcement,
         ))
@@ -146,35 +168,164 @@ impl AssembledRemoteControl {
     pub fn set_controller_grant(
         &mut self,
         grant: crate::remote_control::RemoteControlControllerGrant,
-    ) -> Result<SetRemoteControlControllerGrantOutcome, SetRemoteControlControllerGrantError> {
+    ) -> Result<SetRemoteControlControllerGrantOutcome, SetRemoteControlControllerGrantServiceError>
+    {
         self.available
             .as_mut()
-            .ok_or(SetRemoteControlControllerGrantError::Unavailable)?
-            .access
+            .ok_or(SetRemoteControlControllerGrantServiceError::Unavailable)?
+            .controller_grants
             .set_controller_grant(grant)
+            .map_err(Into::into)
     }
 
     pub fn revoke_controller(
         &mut self,
         controller: &crate::remote_control::RemoteControlControllerIdentity,
-    ) -> Result<RevokeRemoteControlControllerOutcome, RevokeRemoteControlControllerError> {
+    ) -> Result<RevokeRemoteControlControllerOutcome, RevokeRemoteControlControllerServiceError>
+    {
         Ok(self
             .available
             .as_mut()
-            .ok_or(RevokeRemoteControlControllerError::Unavailable)?
-            .access
+            .ok_or(RevokeRemoteControlControllerServiceError::Unavailable)?
+            .controller_grants
             .revoke_controller(controller))
+    }
+
+    pub fn set_target_access(
+        &mut self,
+        access: crate::remote_control::RemoteControlTargetAccess,
+    ) -> Result<
+        crate::remote_control::SetRemoteControlTargetAccessOutcome,
+        SetRemoteControlTargetAccessServiceError,
+    > {
+        self.available
+            .as_mut()
+            .ok_or(SetRemoteControlTargetAccessServiceError::Unavailable)?
+            .target_accesses
+            .set_target_access(access)
+            .map_err(Into::into)
+    }
+
+    pub fn resolve_target(
+        &self,
+        target: &crate::identity::IdentityHash,
+    ) -> Result<ResolvedRemoteControlTarget, ResolveRemoteControlTargetServiceError> {
+        let available = self
+            .available
+            .as_ref()
+            .ok_or(ResolveRemoteControlTargetServiceError::Unavailable)?;
+        let access = available
+            .target_accesses
+            .access_for(target)
+            .ok_or(ResolveRemoteControlTargetServiceError::TargetNotAuthorized)?;
+        Ok(ResolvedRemoteControlTarget::from((
+            available.identities.controller(),
+            access,
+        )))
+    }
+
+    pub fn target_inventory(
+        &self,
+    ) -> Result<RemoteControlTargetInventory, RemoteControlTargetInventoryServiceError> {
+        let available = self
+            .available
+            .as_ref()
+            .ok_or(RemoteControlTargetInventoryServiceError::Unavailable)?;
+        RemoteControlTargetInventory::try_from(&available.target_accesses).map_err(Into::into)
+    }
+
+    pub fn forget_target(
+        &mut self,
+        target: &crate::remote_control::RemoteControlTargetIdentity,
+    ) -> Result<
+        crate::remote_control::ForgetRemoteControlTargetOutcome,
+        ForgetRemoteControlTargetServiceError,
+    > {
+        Ok(self
+            .available
+            .as_mut()
+            .ok_or(ForgetRemoteControlTargetServiceError::Unavailable)?
+            .target_accesses
+            .forget_target(target))
+    }
+
+    pub fn restore_controller_grants(
+        &mut self,
+        grants: impl IntoIterator<Item = crate::remote_control::RemoteControlControllerGrant>,
+    ) -> Result<RemoteControlAuthorizationRestoreOutcome, RemoteControlAuthorizationRestoreError>
+    {
+        let available = self
+            .available
+            .as_mut()
+            .ok_or(RemoteControlAuthorizationRestoreError::Unavailable)?;
+        let mut restored = FixedRemoteControlControllerGrantTable::default();
+        for grant in grants {
+            restored.set_controller_grant(grant).map_err(
+                |SetRemoteControlControllerGrantError::CapacityExhausted| {
+                    RemoteControlAuthorizationRestoreError::CapacityExhausted
+                },
+            )?;
+        }
+        let restored_count = restored.len();
+        available.controller_grants = restored;
+        Ok(RemoteControlAuthorizationRestoreOutcome { restored_count })
+    }
+
+    pub fn restore_target_accesses(
+        &mut self,
+        accesses: impl IntoIterator<Item = crate::remote_control::RemoteControlTargetAccess>,
+    ) -> Result<RemoteControlAuthorizationRestoreOutcome, RemoteControlAuthorizationRestoreError>
+    {
+        let available = self
+            .available
+            .as_mut()
+            .ok_or(RemoteControlAuthorizationRestoreError::Unavailable)?;
+        let mut restored = FixedRemoteControlTargetAccessTable::default();
+        for access in accesses {
+            restored.set_target_access(access).map_err(
+                |crate::remote_control::SetRemoteControlTargetAccessError::CapacityExhausted| {
+                    RemoteControlAuthorizationRestoreError::CapacityExhausted
+                },
+            )?;
+        }
+        let restored_count = restored.len();
+        available.target_accesses = restored;
+        Ok(RemoteControlAuthorizationRestoreOutcome { restored_count })
+    }
+
+    pub fn write_controller_grants_snapshot(
+        &self,
+        out: &mut [u8],
+    ) -> Result<Option<usize>, crate::persistence::SnapshotSealError> {
+        let Some(available) = &self.available else {
+            return Ok(None);
+        };
+        crate::persistence::write_remote_control_controller_grants_snapshot(
+            &available.controller_grants,
+            out,
+        )
+        .map(Some)
+    }
+
+    pub fn write_target_accesses_snapshot(
+        &self,
+        out: &mut [u8],
+    ) -> Result<Option<usize>, crate::persistence::SnapshotSealError> {
+        let Some(available) = &self.available else {
+            return Ok(None);
+        };
+        crate::persistence::write_remote_control_target_accesses_snapshot(
+            &available.target_accesses,
+            out,
+        )
+        .map(Some)
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfigureRemoteControlServiceError {
-    ConfigureIdentities(crate::engine::ConfigureRemoteControlIdentitiesError),
-    RegisterTarget(RegisterDestinationError),
-    ConfigureRequestLimit,
-    RegisterRequestEndpoint(TablePushError),
-    BuildAccess(TablePushError),
-    ConfigurePairing(crate::engine::ConfigureRemoteControlPairingError),
+    BuildControllerGrants(SetRemoteControlControllerGrantError),
+    ConfigureService(crate::engine::ConfigureRemoteControlServiceError),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -258,51 +409,29 @@ where
         return Ok(AssembledRemoteControl { available: None });
     };
     let available_requests = configuration.available_requests();
-    let (identity_secrets, initial_access, self_announcement) = configuration.into_parts();
-    let identities = engine
-        .configure_remote_control_identities(identity_secrets)
-        .map_err(ConfigureRemoteControlServiceError::ConfigureIdentities)?;
-    let target_endpoint = identities.target().endpoint();
-    let destination = engine
-        .register_single_destination(
-            &identities.target().identity_hash(),
-            REMOTE_CONTROL_APPLICATION_NAME,
-            REMOTE_CONTROL_APPLICATION_ASPECTS,
-            b"",
-            ProofStrategy::ProveAll,
-            LinkRequestPolicy::AcceptAll,
-            RatchetPolicy::NoRatchets,
-        )
-        .map_err(ConfigureRemoteControlServiceError::RegisterTarget)?;
-    if !engine.set_maximum_request_bytes(
-        &destination,
-        ByteLimit::Maximum(RemoteControlRequest::MAX_ENCODED_LEN as u64),
-    ) {
-        return Err(ConfigureRemoteControlServiceError::ConfigureRequestLimit);
+    let (identity_secrets, initial_controller_grants, self_announcement) =
+        configuration.into_parts();
+    let mut controller_grants = FixedRemoteControlControllerGrantTable::default();
+    for grant in initial_controller_grants.grants() {
+        controller_grants
+            .set_controller_grant(*grant)
+            .map_err(ConfigureRemoteControlServiceError::BuildControllerGrants)?;
     }
-    let request_endpoint_id = RequestPathHash::of(REMOTE_CONTROL_REQUEST_ENDPOINT_ID);
-    engine
-        .register_request_handler_hash(
-            &destination,
-            request_endpoint_id,
-            RequestPolicy::RequireIdentified,
-        )
-        .map_err(ConfigureRemoteControlServiceError::RegisterRequestEndpoint)?;
-    let mut access = FixedRemoteControlAccessTable::default();
-    for grant in initial_access.grants() {
-        access
-            .upsert(*grant)
-            .map_err(ConfigureRemoteControlServiceError::BuildAccess)?;
-    }
-    let pairing_availability_destination = engine
-        .configure_remote_control_pairing(identities.target().identity_hash())
-        .map_err(ConfigureRemoteControlServiceError::ConfigurePairing)?;
+    let configured_service = engine
+        .configure_remote_control_service(RemoteControlServiceConfiguration {
+            identity_secrets,
+            maximum_request_bytes: ByteLimit::Maximum(REMOTE_CONTROL_REQUEST_PLAINTEXT_MAX as u64),
+        })
+        .map_err(ConfigureRemoteControlServiceError::ConfigureService)?;
+    let (identities, target_endpoint, request_endpoint_id, pairing_availability_destination) =
+        configured_service.into_parts();
     Ok(AssembledRemoteControl {
         available: Some(AvailableRemoteControl {
             identities,
             target_endpoint,
             request_endpoint_id,
-            access,
+            controller_grants,
+            target_accesses: FixedRemoteControlTargetAccessTable::default(),
             available_requests,
             self_announcement,
             pairing_availability_destination,
@@ -503,8 +632,9 @@ mod tests {
     use crate::remote_control::{
         RemoteControlControllerGrant, RemoteControlControllerGrants,
         RemoteControlControllerIdentity, RemoteControlControllerIdentitySecret,
-        RemoteControlInitialAccess, RemoteControlNodeIdentitySecrets, RemoteControlRequestKind,
-        RemoteControlRequestSet, RemoteControlStorageRequirements,
+        RemoteControlInitialControllerGrants, RemoteControlNodeIdentitySecrets,
+        RemoteControlRequestKind, RemoteControlRequestSet, RemoteControlStorageRequirements,
+        RemoteControlTargetAccess, RemoteControlTargetAccessTable, RemoteControlTargetIdentity,
         RemoteControlTargetIdentitySecret, REMOTE_CONTROL_NODE_IDENTITY_COUNT,
     };
     use crate::routing::request_handlers::RequestPathHash;
@@ -559,10 +689,23 @@ mod tests {
         .unwrap()
     }
 
+    fn remote_control_target(fill: u8) -> RemoteControlTargetIdentity {
+        let identities = remote_control_identity_secrets(fill, fill.saturating_add(1)).identities();
+        RemoteControlTargetIdentity::new(*identities.target().public_keys())
+    }
+
+    fn remote_control_target_access(fill: u8) -> RemoteControlTargetAccess {
+        RemoteControlTargetAccess::new(
+            remote_control_target(fill),
+            RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
+        )
+        .unwrap()
+    }
+
     fn remote_control_service() -> RemoteControlService<'static> {
         RemoteControlService::new(
             remote_control_identity_secrets(0x71, 0x72),
-            RemoteControlInitialAccess::Nobody,
+            RemoteControlInitialControllerGrants::Nobody,
             RemoteControlSelfAnnouncement::Unavailable,
         )
     }
@@ -648,17 +791,24 @@ mod tests {
     }
 
     #[test]
-    fn remote_control_service_registers_its_independent_target_and_access() {
+    fn remote_control_service_registers_its_independent_target_and_controller_grants() {
         let mut engine = EngineState::<Storage>::default();
         let identity_secrets = remote_control_identity_secrets(0x31, 0x32);
         let expected_identities = identity_secrets.identities();
         let grants = [remote_control_grant(0x41), remote_control_grant(0x51)];
-        let initial_access = RemoteControlInitialAccess::Grants(
+        let mut expected_grants = grants;
+        expected_grants.sort_by(|left, right| {
+            left.controller()
+                .identity_hash()
+                .as_bytes()
+                .cmp(right.controller().identity_hash().as_bytes())
+        });
+        let initial_controller_grants = RemoteControlInitialControllerGrants::Grants(
             RemoteControlControllerGrants::try_from(grants.as_slice()).unwrap(),
         );
         let service = RemoteControlService::new(
             identity_secrets,
-            initial_access,
+            initial_controller_grants,
             RemoteControlSelfAnnouncement::Destination(DestinationHash::new([0x61; 16])),
         );
 
@@ -669,7 +819,14 @@ mod tests {
             RemoteControlPairingAvailabilityDestination::canonical();
 
         assert_eq!(configured.identities(), Some(&expected_identities));
-        assert_eq!(configured.access().unwrap().grants(), grants.as_slice());
+        assert_eq!(
+            configured
+                .controller_grants()
+                .unwrap()
+                .grants_in_identity_hash_order(),
+            expected_grants.as_slice()
+        );
+        assert!(configured.target_accesses().unwrap().is_empty());
         assert_eq!(
             configured.pairing_availability_destination(),
             Some(pairing_availability_destination),
@@ -693,7 +850,7 @@ mod tests {
                     link_request_policy: LinkRequestPolicy::AcceptAll,
                     resource_strategy: ResourceStrategy::AcceptNone,
                     maximum_request_bytes: ByteLimit::Maximum(
-                        RemoteControlRequest::MAX_ENCODED_LEN as u64,
+                        REMOTE_CONTROL_REQUEST_PLAINTEXT_MAX as u64,
                     ),
                     ratchet_policy: RatchetPolicy::NoRatchets,
                 },
@@ -707,6 +864,108 @@ mod tests {
                 })
                 .map(|registered| registered.kind),
             Some(crate::routing::upstream_app_destinations::UpstreamAppDestinationKind::Plain),
+        );
+    }
+
+    #[test]
+    fn target_access_restoration_is_atomic() {
+        let mut engine = EngineState::<Storage>::default();
+        let mut configured =
+            configure_remote_control_service(&mut engine, remote_control_service()).unwrap();
+
+        let restored = configured
+            .restore_target_accesses([
+                remote_control_target_access(0x21),
+                remote_control_target_access(0x31),
+            ])
+            .unwrap();
+        assert_eq!(restored.restored_count, 2);
+        assert_eq!(configured.target_accesses().unwrap().len(), 2);
+
+        let overflowing = (0u8..9)
+            .map(|offset| remote_control_target_access(0x41u8.saturating_add(offset)))
+            .collect::<std::vec::Vec<_>>();
+        assert_eq!(
+            configured.restore_target_accesses(overflowing),
+            Err(RemoteControlAuthorizationRestoreError::CapacityExhausted),
+        );
+        assert_eq!(configured.target_accesses().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn target_resolution_projects_only_authoritative_operational_facts() {
+        let mut engine = EngineState::<Storage>::default();
+        let mut remote_control =
+            configure_remote_control_service(&mut engine, remote_control_service()).unwrap();
+        let access = remote_control_target_access(0x21);
+        let target = access.target().identity_hash();
+        let expected = ResolvedRemoteControlTarget::from((
+            remote_control.identities().unwrap().controller(),
+            &access,
+        ));
+        assert_eq!(expected.target(), target);
+
+        assert_eq!(
+            remote_control.resolve_target(&target),
+            Err(ResolveRemoteControlTargetServiceError::TargetNotAuthorized),
+        );
+        assert_eq!(
+            remote_control.set_target_access(access),
+            Ok(crate::remote_control::SetRemoteControlTargetAccessOutcome::Added),
+        );
+        assert_eq!(remote_control.resolve_target(&target), Ok(expected));
+
+        let unavailable =
+            configure_remote_control_service(&mut engine, RemoteControlService::Unavailable)
+                .unwrap();
+        assert_eq!(
+            unavailable.resolve_target(&target),
+            Err(ResolveRemoteControlTargetServiceError::Unavailable),
+        );
+    }
+
+    #[test]
+    fn target_inventory_is_an_ordered_projection_of_authorized_targets() {
+        let mut engine = EngineState::<Storage>::default();
+        let mut remote_control =
+            configure_remote_control_service(&mut engine, remote_control_service()).unwrap();
+        assert!(remote_control.target_inventory().unwrap().is_empty());
+
+        let first = remote_control_target_access(0x21);
+        let second = RemoteControlTargetAccess::new(
+            remote_control_target(0x31),
+            RemoteControlRequestSet::all(),
+        )
+        .unwrap();
+        let first_projection = crate::runtime::AuthorizedRemoteControlTarget::from(&first);
+        let second_projection = crate::runtime::AuthorizedRemoteControlTarget::from(&second);
+        let expected = if first_projection.identity_hash().as_bytes()
+            < second_projection.identity_hash().as_bytes()
+        {
+            [first_projection, second_projection]
+        } else {
+            [second_projection, first_projection]
+        };
+
+        assert_eq!(
+            remote_control.set_target_access(second),
+            Ok(crate::remote_control::SetRemoteControlTargetAccessOutcome::Added),
+        );
+        assert_eq!(
+            remote_control.set_target_access(first),
+            Ok(crate::remote_control::SetRemoteControlTargetAccessOutcome::Added),
+        );
+        assert_eq!(
+            remote_control.target_inventory().unwrap().targets(),
+            expected.as_slice(),
+        );
+
+        let unavailable =
+            configure_remote_control_service(&mut engine, RemoteControlService::Unavailable)
+                .unwrap();
+        assert_eq!(
+            unavailable.target_inventory(),
+            Err(RemoteControlTargetInventoryServiceError::Unavailable),
         );
     }
 
@@ -758,11 +1017,11 @@ mod tests {
         assert_eq!(engine.upstream_app_destinations().count(), 0);
         assert_eq!(
             remote_control.set_controller_grant(grant),
-            Err(SetRemoteControlControllerGrantError::Unavailable),
+            Err(SetRemoteControlControllerGrantServiceError::Unavailable),
         );
         assert_eq!(
             remote_control.revoke_controller(grant.controller()),
-            Err(RevokeRemoteControlControllerError::Unavailable),
+            Err(RevokeRemoteControlControllerServiceError::Unavailable),
         );
     }
 
@@ -790,7 +1049,13 @@ mod tests {
             remote_control.set_controller_grant(updated),
             Ok(SetRemoteControlControllerGrantOutcome::Updated { previous: initial }),
         );
-        assert_eq!(remote_control.access().unwrap().grants(), &[updated]);
+        assert_eq!(
+            remote_control
+                .controller_grants()
+                .unwrap()
+                .grants_in_identity_hash_order(),
+            &[updated]
+        );
         assert_eq!(
             remote_control.revoke_controller(updated.controller()),
             Ok(RevokeRemoteControlControllerOutcome::Revoked { grant: updated }),
@@ -799,7 +1064,7 @@ mod tests {
             remote_control.revoke_controller(updated.controller()),
             Ok(RevokeRemoteControlControllerOutcome::NotFound),
         );
-        assert!(remote_control.access().unwrap().is_empty());
+        assert!(remote_control.controller_grants().unwrap().is_empty());
     }
 
     #[test]

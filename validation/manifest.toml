@@ -1576,8 +1576,8 @@ group = "remote-control"
 tiers = ["release", "scheduled"]
 
 [[fuzz_target]]
-name = "remote_control_access_snapshot"
-path = "fuzz_targets/remote_control_access_snapshot.rs"
+name = "remote_control_controller_grants_snapshot"
+path = "fuzz_targets/remote_control_controller_grants_snapshot.rs"
 group = "remote-control"
 tiers = ["release", "scheduled"]
 

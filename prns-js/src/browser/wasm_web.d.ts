@@ -20,20 +20,53 @@ export declare class PrnsRuntime implements PrnsRuntimeBinding {
   requestPath: PrnsRuntimeBinding["requestPath"];
   identify: PrnsRuntimeBinding["identify"];
   sendLinkPacket: PrnsRuntimeBinding["sendLinkPacket"];
+  sendLinkPacketDirect: NonNullable<PrnsRuntimeBinding["sendLinkPacketDirect"]>;
   request: PrnsRuntimeBinding["request"];
   respond: PrnsRuntimeBinding["respond"];
   resourceSegmentPlan: PrnsRuntimeBinding["resourceSegmentPlan"];
   sendResourceSegment: PrnsRuntimeBinding["sendResourceSegment"];
+  sendResourceSegmentWebCrypto: NonNullable<
+    PrnsRuntimeBinding["sendResourceSegmentWebCrypto"]
+  >;
+  completeResourceSegmentSeal: NonNullable<
+    PrnsRuntimeBinding["completeResourceSegmentSeal"]
+  >;
+  completeResourceSegmentSealDigests: NonNullable<
+    PrnsRuntimeBinding["completeResourceSegmentSealDigests"]
+  >;
+  retryResourceSegmentSeal: NonNullable<
+    PrnsRuntimeBinding["retryResourceSegmentSeal"]
+  >;
+  enableResourceWebCrypto: NonNullable<
+    PrnsRuntimeBinding["enableResourceWebCrypto"]
+  >;
+  takeResourceOpenJob: NonNullable<
+    PrnsRuntimeBinding["takeResourceOpenJob"]
+  >;
+  completeResourceOpen: NonNullable<
+    PrnsRuntimeBinding["completeResourceOpen"]
+  >;
+  completeResourceOpenDigests: NonNullable<
+    PrnsRuntimeBinding["completeResourceOpenDigests"]
+  >;
+  rejectResourceOpen: NonNullable<
+    PrnsRuntimeBinding["rejectResourceOpen"]
+  >;
+  retryResourceOpen: NonNullable<
+    PrnsRuntimeBinding["retryResourceOpen"]
+  >;
   setLinkResourceStrategy: PrnsRuntimeBinding["setLinkResourceStrategy"];
   setDestinationResourceStrategy: PrnsRuntimeBinding["setDestinationResourceStrategy"];
   sendChannelMessage: PrnsRuntimeBinding["sendChannelMessage"];
   allowRequester: PrnsRuntimeBinding["allowRequester"];
   closeLink: PrnsRuntimeBinding["closeLink"];
   ingest: PrnsRuntimeBinding["ingest"];
+  ingestDirect: NonNullable<PrnsRuntimeBinding["ingestDirect"]>;
   drainEventBatch: PrnsRuntimeBinding["drainEventBatch"];
   drainCommandSettlementBatch(): Uint8Array;
   drainEvents: PrnsRuntimeBinding["drainEvents"];
   drainOutbound: PrnsRuntimeBinding["drainOutbound"];
+  drainOutboundBatch: NonNullable<PrnsRuntimeBinding["drainOutboundBatch"]>;
   persistedState: PrnsRuntimeBinding["persistedState"];
   restorePersistedState: PrnsRuntimeBinding["restorePersistedState"];
   snapshot: PrnsRuntimeBinding["snapshot"];
@@ -64,6 +97,7 @@ export declare class WebSocketFramingCodec
   isDetecting: WebSocketFramingCodecBinding["isDetecting"];
   rawFallbackDelayMillis: WebSocketFramingCodecBinding["rawFallbackDelayMillis"];
   decode: WebSocketFramingCodecBinding["decode"];
+  decodePacked: NonNullable<WebSocketFramingCodecBinding["decodePacked"]>;
   stageOutbound: WebSocketFramingCodecBinding["stageOutbound"];
   releaseRawFallback: WebSocketFramingCodecBinding["releaseRawFallback"];
 }
@@ -89,6 +123,18 @@ export declare function compressResourceCandidate(options: {
   readonly payload: Uint8Array;
   readonly packedMetadata?: Uint8Array;
 }): Uint8Array | undefined;
+export declare function portableEd25519Verify(
+  publicKey: Uint8Array,
+  message: Uint8Array,
+  signature: Uint8Array,
+): boolean;
+export declare function portableLinkProofVerify(
+  publicKey: Uint8Array,
+  message: Uint8Array,
+  signature: Uint8Array,
+  secretScalar: Uint8Array,
+  peerPublicKey: Uint8Array,
+): Uint8Array | undefined;
 export declare function websocketBitrateBps(): number;
 export declare function websocketFrameCap(): number;
 export declare function websocketHardwareMtu(): number;

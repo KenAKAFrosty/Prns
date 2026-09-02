@@ -67,22 +67,33 @@ const server = createServer(async (request, response) => {
       const expected = Number(url.searchParams.get("expected"));
       assert.ok(peer);
       assert.ok(Number.isSafeInteger(expected) && expected > 0);
-      assert.equal(activeRelayMeasurements.has(peer), false);
-      const id = nextRelayMeasurementId;
-      nextRelayMeasurementId += 1;
-      const measurement = {
-        id,
-        peer,
-        expected,
-        count: 0,
-        startedAt: performance.now(),
-        firstAt: undefined,
-        completedAt: undefined,
-      };
-      activeRelayMeasurements.set(peer, measurement);
-      relayMeasurements.set(id, measurement);
+      const measurement = beginRelayMeasurement(peer, expected);
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ id }));
+      response.end(JSON.stringify({ id: measurement.id }));
+      return;
+    }
+    if (
+      request.method === "GET" &&
+      url.pathname === "/browser-full-engine-relay-span-start"
+    ) {
+      const peer = url.searchParams.get("peer");
+      assert.ok(peer);
+      const measurement = beginRelayMeasurement(peer, undefined);
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ id: measurement.id }));
+      return;
+    }
+    if (
+      request.method === "GET" &&
+      url.pathname === "/browser-full-engine-relay-span-stop"
+    ) {
+      const id = Number(url.searchParams.get("id"));
+      const measurement = relayMeasurements.get(id);
+      assert.ok(measurement);
+      measurement.completedAt = performance.now();
+      activeRelayMeasurements.delete(measurement.peer);
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify(relayMeasurementResult(measurement)));
       return;
     }
     if (
@@ -93,16 +104,7 @@ const server = createServer(async (request, response) => {
       const measurement = relayMeasurements.get(id);
       assert.ok(measurement);
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({
-        count: measurement.count,
-        expected: measurement.expected,
-        ...(measurement.firstAt === undefined
-          ? {}
-          : { firstMillis: measurement.firstAt - measurement.startedAt }),
-        ...(measurement.completedAt === undefined
-          ? {}
-          : { completeMillis: measurement.completedAt - measurement.startedAt }),
-      }));
+      response.end(JSON.stringify(relayMeasurementResult(measurement)));
       return;
     }
     if (
@@ -183,7 +185,7 @@ server.on("upgrade", (request, socket) => {
       }
       if (decoded.opcode === 2) {
         if (decoded.final) {
-          observeRelayFrame(socket);
+          observeRelayFrame(socket, decoded.payload.length);
           broadcastBinary(socket, decoded.payload);
         } else {
           fragments = [decoded.payload];
@@ -193,8 +195,9 @@ server.on("upgrade", (request, socket) => {
       if (decoded.opcode === 0 && fragments.length > 0) {
         fragments.push(decoded.payload);
         if (decoded.final) {
-          observeRelayFrame(socket);
-          broadcastBinary(socket, Buffer.concat(fragments));
+          const payload = Buffer.concat(fragments);
+          observeRelayFrame(socket, payload.length);
+          broadcastBinary(socket, payload);
           fragments = [];
         }
       }
@@ -206,6 +209,13 @@ server.on("upgrade", (request, socket) => {
 await new Promise((resolveListening) => {
   server.listen(0, "127.0.0.1", resolveListening);
 });
+
+if (process.env.PRNS_BENCH_SERVE_ONLY === "1") {
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  console.log(`http://127.0.0.1:${address.port}/`);
+  await new Promise(() => undefined);
+}
 
 let browser;
 let browserTimeout;
@@ -265,7 +275,44 @@ function broadcastBinary(sender, payload) {
   }
 }
 
-function observeRelayFrame(socket) {
+function beginRelayMeasurement(peer, expected) {
+  assert.equal(activeRelayMeasurements.has(peer), false);
+  const id = nextRelayMeasurementId;
+  nextRelayMeasurementId += 1;
+  const measurement = {
+    id,
+    peer,
+    expected,
+    count: 0,
+    bytes: 0,
+    startedAt: performance.now(),
+    firstAt: undefined,
+    lastAt: undefined,
+    completedAt: undefined,
+  };
+  activeRelayMeasurements.set(peer, measurement);
+  relayMeasurements.set(id, measurement);
+  return measurement;
+}
+
+function relayMeasurementResult(measurement) {
+  return {
+    count: measurement.count,
+    ...(measurement.expected === undefined ? {} : { expected: measurement.expected }),
+    bytes: measurement.bytes,
+    ...(measurement.firstAt === undefined
+      ? {}
+      : { firstMillis: measurement.firstAt - measurement.startedAt }),
+    ...(measurement.lastAt === undefined
+      ? {}
+      : { lastMillis: measurement.lastAt - measurement.startedAt }),
+    ...(measurement.completedAt === undefined
+      ? {}
+      : { completeMillis: measurement.completedAt - measurement.startedAt }),
+  };
+}
+
+function observeRelayFrame(socket, payloadBytes) {
   const peer = socket.prnsPeer;
   if (peer === null) {
     return;
@@ -276,8 +323,13 @@ function observeRelayFrame(socket) {
   }
   const now = performance.now();
   measurement.firstAt ??= now;
+  measurement.lastAt = now;
   measurement.count += 1;
-  if (measurement.count === measurement.expected) {
+  measurement.bytes += payloadBytes;
+  if (
+    measurement.expected !== undefined &&
+    measurement.count === measurement.expected
+  ) {
     measurement.completedAt = now;
     activeRelayMeasurements.delete(peer);
   }

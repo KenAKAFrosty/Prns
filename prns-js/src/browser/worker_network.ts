@@ -12,7 +12,10 @@ import type {
   InterfaceCloseOutcome,
   InterfaceSessionStatus,
 } from "./interface_contract.js";
-import type { InterfaceOutboundOutcome } from "./outbound.js";
+import type {
+  InterfaceOutboundOutcome,
+  TransferredInterfaceOutboundOutcome,
+} from "./outbound.js";
 import type {
   PrnsWasmModule,
   RuntimeRejected,
@@ -29,15 +32,14 @@ import type {
 } from "./websocket/index.js";
 import type {
   EngineNetworkMessage,
+  IngressFailure,
   NetworkEngineMessage,
   NetworkWorkerStartMessage,
-  PackedIngressFailure,
-  PackedIngressItem,
-  PackedOutboundOutcome,
+  TransferredIngressItem,
 } from "./worker_network_protocol.js";
 import {
-  packIngressItems,
-  unpackOutboundFrames,
+  prepareIngressTransfer,
+  receiveTransferredOutboundFrames,
 } from "./worker_network_protocol.js";
 import {
   workerCapabilityCall,
@@ -48,7 +50,6 @@ import type {
   WorkerCapabilityOutcomes,
   WorkerSessionProjection,
 } from "./worker_protocol.js";
-import { messageTaskScheduler } from "../worker_wire/batched_port.js";
 import {
   bitrateBps,
   hardwareMtu,
@@ -69,7 +70,7 @@ type TrackedSession = {
   readonly releaseStatus: () => void;
 };
 
-type PendingIngress = PackedIngressItem & {
+type PendingIngress = TransferredIngressItem & {
   readonly settle: (outcome: WorkerCapabilityOutcomes["Ingest"]) => void;
 };
 
@@ -218,7 +219,6 @@ class NetworkRuntimeHost implements WebSocketRuntimeHost {
   readonly #wasm: PrnsWasmModule;
   readonly #pending = new Map<number, PendingHostCall>();
   readonly #pendingIngress: PendingIngress[] = [];
-  readonly #scheduleTask = messageTaskScheduler();
   #pendingIngressBytes = 0;
   #ingressState: IngressFlowState = Tag("Idle");
   #nextId = 1;
@@ -281,11 +281,11 @@ class NetworkRuntimeHost implements WebSocketRuntimeHost {
       maximumFrames === undefined
         ? { interfaceId }
         : { interfaceId, maximumFrames },
-    )) as InterfaceOutboundOutcome | PackedOutboundOutcome;
-    if (isPackedOutbound(outcome)) {
+    )) as InterfaceOutboundOutcome | TransferredInterfaceOutboundOutcome;
+    if (outcome.tag === "TransferredOutbound") {
       return Tag(
         "Outbound",
-        unpackOutboundFrames(interfaceId, outcome.data.buffer) as Extract<
+        receiveTransferredOutboundFrames(interfaceId, outcome) as Extract<
           InterfaceOutboundOutcome,
           { readonly tag: "Outbound" }
         >["data"],
@@ -324,7 +324,7 @@ class NetworkRuntimeHost implements WebSocketRuntimeHost {
   settleIngress(
     id: number,
     count: number,
-    failures: readonly PackedIngressFailure[],
+    failures: readonly IngressFailure[],
   ): void {
     if (this.#ingressState.tag === "Failed") {
       return;
@@ -375,7 +375,7 @@ class NetworkRuntimeHost implements WebSocketRuntimeHost {
       return;
     }
     this.#ingressState = Tag("Scheduled");
-    this.#scheduleTask(() => {
+    queueMicrotask(() => {
       try {
         this.#flushIngress();
       } catch (error) {
@@ -418,8 +418,12 @@ class NetworkRuntimeHost implements WebSocketRuntimeHost {
     const id = this.#nextIngressId;
     this.#nextIngressId = id === Number.MAX_SAFE_INTEGER ? 1 : id + 1;
     this.#ingressState = Tag("InFlight", { id, items, bytes });
-    const buffer = packIngressItems(items);
-    post(this.#port, Tag("IngressBatch", { id, buffer }), [buffer]);
+    const batch = prepareIngressTransfer(items);
+    post(
+      this.#port,
+      Tag("IngressBatch", { id, batch }),
+      batch.bytes.buffers,
+    );
   }
 
   fail(detail: string): void {
@@ -481,12 +485,6 @@ function networkIngressFailed(detail: string): RuntimeRejected {
     operation: "ingest",
     detail,
   });
-}
-
-function isPackedOutbound(value: unknown): value is PackedOutboundOutcome {
-  return typeof value === "object" && value !== null &&
-    (value as { readonly tag?: unknown }).tag === "PackedOutbound" &&
-    (value as { readonly data?: { readonly buffer?: unknown } }).data?.buffer instanceof ArrayBuffer;
 }
 
 function wasmFramingSelection(selection: WebSocketFramingSelection): string {

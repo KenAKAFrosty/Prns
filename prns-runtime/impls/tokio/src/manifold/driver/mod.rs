@@ -343,6 +343,7 @@ async fn run_inner<S, H, J, P, A, C>(
                     journal: &mut journal,
                     crypto_pool: crypto_pool.as_ref(),
                     owed_work: &mut owed_work,
+                    inbound: &mut inbound,
                 }
                 .complete(result, now, &mut seal_buf, &mut should_prove);
                 match effect {
@@ -399,6 +400,7 @@ async fn run_inner<S, H, J, P, A, C>(
                 journal: &mut journal,
                 crypto_pool: crypto_pool.as_ref(),
                 owed_work: &mut owed_work,
+                inbound: &mut inbound,
             }
             .dispatch_staged_seal(now);
             progressed = true;
@@ -514,6 +516,7 @@ async fn run_inner<S, H, J, P, A, C>(
                     journal: &mut journal,
                     crypto_pool: crypto_pool.as_ref(),
                     owed_work: &mut owed_work,
+                    inbound: &mut inbound,
                 }
                 .complete(
                     CryptoCompletion {

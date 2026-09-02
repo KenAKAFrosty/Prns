@@ -12,6 +12,7 @@ use crate::manifold::wake_schedule::merge_wake_schedules_delta;
 use crate::manifold::Host;
 use crate::routing::dedup::PacketHash;
 use crate::routing::links::resources::ResourceOffer;
+use crate::routing::links::LinkId;
 use crate::runtime::InterfaceStore;
 use crate::storage::StorageLayout;
 
@@ -33,6 +34,8 @@ fn route_ingress_reaction<J>(
     owed_work: &mut PendingOwedWork,
     crypto_pool: Option<&CryptoPool>,
     link_signs: &mut std::vec::Vec<LinkSignJob>,
+    link_identity_barriers: &mut std::vec::Vec<(InterfaceId, LinkId)>,
+    source: InterfaceId,
     now: InstantMillis,
 ) where
     J: for<'a> FnMut(Journaled<'a>),
@@ -52,7 +55,17 @@ fn route_ingress_reaction<J>(
             OwedWork::Crypto(CryptoOwed::ChannelAckSign(owed)) => {
                 link_signs.push(LinkSignJob::ChannelAck(owed));
             }
-            OwedWork::Crypto(owed) => owed_work.push_crypto(owed),
+            OwedWork::Crypto(owed) => {
+                if let CryptoOwed::LinkIdentityVerify(owed) = &owed {
+                    if !link_identity_barriers
+                        .iter()
+                        .any(|(_, link_id)| *link_id == owed.link_id)
+                    {
+                        link_identity_barriers.push((source, owed.link_id));
+                    }
+                }
+                owed_work.push_crypto(owed);
+            }
             OwedWork::ResourceBuild(owed) => {
                 owed_work.push(OwedWork::ResourceBuild(owed), crypto_pool);
             }
@@ -69,6 +82,9 @@ pub(super) struct InboundDispatch {
     unmask_scratch: std::boxed::Box<[u8]>,
     link_signs: std::vec::Vec<LinkSignJob>,
     inline_link_signs: std::vec::Vec<LinkSignJob>,
+    /// LINKIDENTIFY changes the authority attached to a link. Later frames from its ingress lane
+    /// cannot overtake that verdict merely because signature verification ran on a worker.
+    link_identity_barriers: std::vec::Vec<(InterfaceId, LinkId)>,
 }
 
 // The minimum sixteen-job admission depth exposes at most fifteen link signs while retaining
@@ -85,11 +101,25 @@ impl InboundDispatch {
             unmask_scratch: std::vec![0u8; frame_capacity].into_boxed_slice(),
             link_signs: std::vec::Vec::new(),
             inline_link_signs: std::vec::Vec::new(),
+            link_identity_barriers: std::vec::Vec::new(),
         }
     }
 
     pub(super) fn has_ready_lanes(&self) -> bool {
-        !self.ready_lanes.is_empty()
+        if self.link_identity_barriers.is_empty() {
+            return !self.ready_lanes.is_empty();
+        }
+        self.ready_lanes.iter().any(|source| {
+            !self
+                .link_identity_barriers
+                .iter()
+                .any(|(blocked, _)| blocked == source)
+        })
+    }
+
+    pub(super) fn release_link_identity_barrier(&mut self, link_id: LinkId) {
+        self.link_identity_barriers
+            .retain(|(_, blocked_link)| *blocked_link != link_id);
     }
 
     pub(super) fn mark_ready(&mut self, source: InterfaceId) {
@@ -138,8 +168,16 @@ impl InboundDispatch {
             unmask_scratch,
             link_signs,
             inline_link_signs,
+            link_identity_barriers,
         } = self;
         for &source in ready_lanes.iter() {
+            if !link_identity_barriers.is_empty()
+                && link_identity_barriers
+                    .iter()
+                    .any(|(blocked, _)| *blocked == source)
+            {
+                continue;
+            }
             debug_assert!(link_signs.is_empty());
             debug_assert!(inline_link_signs.is_empty());
             let frame_accounting = topology.frame_accounting_recorder(source);
@@ -220,6 +258,8 @@ impl InboundDispatch {
                                 owed_work,
                                 crypto_pool,
                                 link_signs,
+                                link_identity_barriers,
+                                source,
                                 now,
                             );
                         },
@@ -241,6 +281,13 @@ impl InboundDispatch {
                     engine,
                     topology.interfaces.view(),
                 );
+                if !link_identity_barriers.is_empty()
+                    && link_identity_barriers
+                        .iter()
+                        .any(|(blocked, _)| *blocked == source)
+                {
+                    break;
+                }
             }
             {
                 let inline_signs = if crypto_pool.is_some() {
@@ -361,6 +408,28 @@ mod tests {
     use super::*;
     use crate::engine::test_support::{bytes_from_hex, RNS_1_4_2_ANNOUNCE};
     use crate::interfaces::{RssiDbm, SignalQualityTenthsPercent, SnrQuarterDb};
+
+    #[test]
+    fn link_identity_verdict_blocks_only_its_ingress_lane_until_completion() {
+        let blocked = InterfaceId::new([0xB1; 8]);
+        let independent = InterfaceId::new([0xB2; 8]);
+        let link_id = LinkId::new([0x51; 16]);
+        let mut inbound = InboundDispatch::new(64);
+        inbound.mark_ready(blocked);
+        inbound.link_identity_barriers.push((blocked, link_id));
+
+        assert!(!inbound.has_ready_lanes());
+
+        inbound.mark_ready(independent);
+        assert!(inbound.has_ready_lanes());
+
+        inbound.ready_lanes.retain(|source| *source == blocked);
+        inbound.release_link_identity_barrier(LinkId::new([0x52; 16]));
+        assert!(!inbound.has_ready_lanes());
+
+        inbound.release_link_identity_barrier(link_id);
+        assert!(inbound.has_ready_lanes());
+    }
 
     #[test]
     fn packet_phy_reuses_the_classified_wire_stable_packet_hash() {

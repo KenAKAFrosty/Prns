@@ -88,9 +88,10 @@ pub use registration::{
 pub(crate) use remote_control::RemoteControlControllerIdentityConfiguration;
 pub use remote_control::{
     AdmitRemoteControlControllerPairingResponseOutcome, ConfigureRemoteControlIdentitiesError,
+    ConfigureRemoteControlServiceError, ConfiguredRemoteControlService,
     RemoteControlControllerPairingResponseArrival,
     RemoteControlControllerPairingResponseBridgeInvariantViolation,
-    RemoteControlControllerPairingResponseEffect,
+    RemoteControlControllerPairingResponseEffect, RemoteControlServiceConfiguration,
 };
 pub use remote_control_pairing::{
     ConfigureRemoteControlPairingError, RemoteControlPairingResponseDispatchFailure,
@@ -123,9 +124,10 @@ pub use crate::routing::delivery::send_single::{
     SendSinglePacketWriteOutcome, SendSinglePacketWriteRejection,
 };
 pub use crate::routing::ingress::{
-    AcceptedAnnounce, AnnounceIngest, AnnounceVerifyOwed, ClassifiedInboundPacket, DataPacket,
-    DecryptOwed, IgnoreReason, IngestPacketOutcome, Ingress, LinkRttOwed, PacketToForward,
-    ProtocolViolationKind, RatchetDecryptOwed, RebroadcastDecision,
+    AcceptedAnnounce, AnnounceIngest, AnnounceVerification, AnnounceVerifyOwed,
+    ClassifiedInboundPacket, DataPacket, DecryptOwed, IgnoreReason, IngestPacketOutcome, Ingress,
+    InvalidAnnounce, LinkRttOwed, PacketToForward, ProtocolViolationKind, RatchetDecryptOwed,
+    RebroadcastDecision, VerifiedAnnounce,
 };
 pub use crate::routing::links::channel::send::{ChannelAckVerification, ChannelAckVerifyOwed};
 pub use crate::routing::links::data::{

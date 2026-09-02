@@ -73,8 +73,7 @@ impl<C: HeldIdentityTable> HeldIdentities<C> {
         let second_is_new = identities_are_distinct && !self.contains(&second.hash);
         let required_capacity =
             usize::from(first_is_new).saturating_add(usize::from(second_is_new));
-        let available_capacity = self.table.capacity().saturating_sub(self.table.len());
-        if required_capacity > available_capacity {
+        if !self.has_capacity_for(required_capacity) {
             return Err(HoldIdentityError::StoreFull);
         }
 
@@ -123,6 +122,10 @@ impl<C: HeldIdentityTable> HeldIdentities<C> {
 
     pub fn is_empty(&self) -> bool {
         self.table.is_empty()
+    }
+
+    pub(crate) fn has_capacity_for(&self, additional: usize) -> bool {
+        additional <= self.table.capacity().saturating_sub(self.table.len())
     }
 
     pub fn release(&mut self, hash: &IdentityHash) -> ReleaseHeldIdentityOutcome {

@@ -3,7 +3,7 @@ use personal_hopspot_core::display::{
     DisplayBlankReason, DisplayDuration, DisplayVisibility, MonotonicMillis, PresentationUrgency,
 };
 use personal_rns::remote_control::{
-    RemoteControlInitialAccess, RemoteControlSelfAnnouncement, RemoteControlService,
+    RemoteControlInitialControllerGrants, RemoteControlSelfAnnouncement, RemoteControlService,
 };
 
 fn display_now() -> MonotonicMillis {
@@ -214,7 +214,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         remote_control_bootstrap.into_parts();
     let remote_control = RemoteControlService::new(
         remote_control_identity_secrets,
-        RemoteControlInitialAccess::Nobody,
+        RemoteControlInitialControllerGrants::Nobody,
         RemoteControlSelfAnnouncement::Destination(destination_hashes.node_page),
     );
     let destinations = personal_hopspot_core::HopspotDestinationSet::new(

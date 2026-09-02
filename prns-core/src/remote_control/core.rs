@@ -2,7 +2,6 @@ use crate::entropy::{EntropySource, RuntimeEntropy};
 use crate::identity::in_memory::{IdentityParts, InMemoryNodeIdentity};
 use crate::identity::vault::IdentitySecretKey;
 use crate::identity::{IdentityHash, IdentityPublicKeys, IDENTITY_SECRET_KEY_LEN};
-use crate::storage::TablePushError;
 
 use super::pairing::RemoteControlPairingPermissions;
 use super::{RemoteControlRequestKind, RemoteControlRequestSet};
@@ -341,13 +340,7 @@ pub enum SetRemoteControlControllerGrantOutcome {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SetRemoteControlControllerGrantError {
-    Unavailable,
     CapacityExhausted,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RevokeRemoteControlControllerError {
-    Unavailable,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -356,63 +349,76 @@ pub enum RevokeRemoteControlControllerOutcome {
     NotFound,
 }
 
-pub trait RemoteControlAccessTable {
+pub trait RemoteControlControllerGrantTable {
     fn capacity(&self) -> usize;
     fn len(&self) -> usize;
-    fn grants(&self) -> &[RemoteControlControllerGrant];
-    fn upsert(&mut self, grant: RemoteControlControllerGrant) -> Result<(), TablePushError>;
-    fn swap_remove(&mut self, index: usize);
+    fn grants_in_identity_hash_order(&self) -> &[RemoteControlControllerGrant];
+    fn set_controller_grant(
+        &mut self,
+        grant: RemoteControlControllerGrant,
+    ) -> Result<SetRemoteControlControllerGrantOutcome, SetRemoteControlControllerGrantError>;
+    fn revoke_controller(
+        &mut self,
+        controller: &RemoteControlControllerIdentity,
+    ) -> RevokeRemoteControlControllerOutcome;
 
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
-    fn index_of(&self, identity: &IdentityHash) -> Option<usize> {
-        self.grants()
-            .iter()
-            .position(|grant| grant.controller().identity_hash() == *identity)
-    }
-
     fn grant_for(&self, identity: &IdentityHash) -> Option<&RemoteControlControllerGrant> {
-        //It's expected this will be a very short list (single digit members allowed in most cases, etc.)
-        //Because the domain fundamentally wants to keep this tight, quick scans like this are not only okay but probably faster
-        //If we start getting to like ~32 members or more to support real use cases or something, we'll want to improve this with a proper index.
-        self.grants().get(self.index_of(identity)?)
+        self.grants_in_identity_hash_order()
+            .iter()
+            .find(|grant| grant.controller().identity_hash() == *identity)
     }
 
-    fn contains(&self, identity: &IdentityHash) -> bool {
-        self.index_of(identity).is_some()
+    fn contains_controller(&self, identity: &IdentityHash) -> bool {
+        self.grant_for(identity).is_some()
     }
+}
 
-    fn set_controller_grant(
+#[derive(Debug, PartialEq, Eq)]
+pub enum SetRemoteControlTargetAccessOutcome {
+    Added,
+    Unchanged,
+    Updated { previous: RemoteControlTargetAccess },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SetRemoteControlTargetAccessError {
+    CapacityExhausted,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ForgetRemoteControlTargetOutcome {
+    Forgotten { access: RemoteControlTargetAccess },
+    NotFound,
+}
+
+pub trait RemoteControlTargetAccessTable {
+    fn capacity(&self) -> usize;
+    fn len(&self) -> usize;
+    fn accesses_in_identity_hash_order(&self) -> &[RemoteControlTargetAccess];
+    fn set_target_access(
         &mut self,
-        grant: RemoteControlControllerGrant,
-    ) -> Result<SetRemoteControlControllerGrantOutcome, SetRemoteControlControllerGrantError> {
-        let identity = grant.controller().identity_hash();
-        let previous = self.grant_for(&identity).copied();
-        if previous == Some(grant) {
-            return Ok(SetRemoteControlControllerGrantOutcome::Unchanged);
-        }
-        self.upsert(grant).map_err(|TablePushError::TableFull| {
-            SetRemoteControlControllerGrantError::CapacityExhausted
-        })?;
-        Ok(match previous {
-            Some(previous) => SetRemoteControlControllerGrantOutcome::Updated { previous },
-            None => SetRemoteControlControllerGrantOutcome::Added,
-        })
+        access: RemoteControlTargetAccess,
+    ) -> Result<SetRemoteControlTargetAccessOutcome, SetRemoteControlTargetAccessError>;
+    fn forget_target(
+        &mut self,
+        target: &RemoteControlTargetIdentity,
+    ) -> ForgetRemoteControlTargetOutcome;
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
-    fn revoke_controller(
-        &mut self,
-        controller: &RemoteControlControllerIdentity,
-    ) -> RevokeRemoteControlControllerOutcome {
-        let Some(index) = self.index_of(&controller.identity_hash()) else {
-            return RevokeRemoteControlControllerOutcome::NotFound;
-        };
-        let Some(grant) = self.grants().get(index).copied() else {
-            return RevokeRemoteControlControllerOutcome::NotFound;
-        };
-        self.swap_remove(index);
-        RevokeRemoteControlControllerOutcome::Revoked { grant }
+    fn access_for(&self, identity: &IdentityHash) -> Option<&RemoteControlTargetAccess> {
+        self.accesses_in_identity_hash_order()
+            .iter()
+            .find(|access| access.target().identity_hash() == *identity)
+    }
+
+    fn contains_target(&self, identity: &IdentityHash) -> bool {
+        self.access_for(identity).is_some()
     }
 }

@@ -1,3 +1,8 @@
+mod connection;
+mod pairing;
+
+pub use connection::RemoteControlTargetHandle;
+
 use crate::engine::RequestResponseTimeout;
 use crate::remote_control::REMOTE_CONTROL_REQUEST_ENDPOINT_ID;
 use crate::routing::links::LinkId;

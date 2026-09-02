@@ -57,6 +57,26 @@ Web Bluetooth and WebUSB device objects remain on the page because those APIs
 are permission-gated page capabilities; their packet traffic uses a separate
 bounded capability channel.
 
+Protocol cryptography remains in the engine's WebAssembly instance by default.
+Applications with sustained concurrent protocol and resource work can select
+the measured role-separated execution policy:
+
+```ts
+import { Prns, Tag } from "personal-rns/browser";
+
+const created = await Prns.create({
+  crypto: Tag("ParallelWorkers"),
+});
+```
+
+`ParallelWorkers` owns two Web Crypto workers for resource operations and four
+portable-WebAssembly workers for protocol verification. Same-turn protocol
+jobs coalesce at a microtask boundary into bounded batches. Worker failure,
+saturation, or unsupported browser cryptography returns the retained operation
+to the authoritative Rust engine rather than changing protocol behavior. This
+mode trades additional startup time and memory for role isolation and parallel
+capacity; `PortableWasm` remains the stewardship-oriented default.
+
 `execution: "MainThread"` is the explicit diagnostic and embedding mode. It is
 also the only mode that accepts an already imported `wasm` module, a custom
 entropy function, or a custom clock. Worker startup and protocol failures are

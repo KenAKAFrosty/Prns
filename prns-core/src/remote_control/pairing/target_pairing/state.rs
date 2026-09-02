@@ -109,10 +109,8 @@ impl RemoteControlTargetPairingState {
         arrival: &RemoteControlTargetPairingBeginArrival,
         started_at: InstantMillis,
     ) -> BeginRemoteControlTargetPairingOutcome {
-        if let Some(attempt_id) = self.take_expired_completion(started_at) {
-            return BeginRemoteControlTargetPairingOutcome::CompletionRetentionExpired {
-                attempt_id,
-            };
+        if let Some(expired) = self.take_expired_completion(started_at) {
+            return BeginRemoteControlTargetPairingOutcome::CompletionRetentionExpired { expired };
         }
         let claimed = arrival.begin.controller().identity_hash();
         if claimed != arrival.identified_controller {
@@ -219,8 +217,10 @@ impl RemoteControlTargetPairingState {
             } => {
                 let active = attempt.attempt_id();
                 if failed == active {
+                    let context = attempt.view().context();
                     return FailRemoteControlTargetPairingOfferDispatchOutcome::Aborted {
                         attempt_id: active,
+                        context,
                     };
                 }
                 self.phase = RemoteControlTargetPairingPhase::Active {
@@ -247,9 +247,9 @@ impl RemoteControlTargetPairingState {
         requested: RemoteControlPairingAttemptId,
         now: InstantMillis,
     ) -> ApproveRemoteControlTargetPairingOutcome {
-        if let Some(attempt_id) = self.take_expired_completion(now) {
+        if let Some(expired) = self.take_expired_completion(now) {
             return ApproveRemoteControlTargetPairingOutcome::CompletionRetentionExpired {
-                attempt_id,
+                expired,
             };
         }
         if let Some(expired) = self.take_expired_attempt(now) {
@@ -352,9 +352,9 @@ impl RemoteControlTargetPairingState {
         arrival: RemoteControlTargetPairingCommitArrival,
         now: InstantMillis,
     ) -> CommitRemoteControlTargetPairingOutcome {
-        if let Some(attempt_id) = self.take_expired_completion(now) {
+        if let Some(expired) = self.take_expired_completion(now) {
             return CommitRemoteControlTargetPairingOutcome::CompletionRetentionExpired {
-                attempt_id,
+                expired,
                 rejected: arrival.responder,
             };
         }
@@ -471,10 +471,8 @@ impl RemoteControlTargetPairingState {
         requested: RemoteControlPairingAttemptId,
         now: InstantMillis,
     ) -> RejectRemoteControlTargetPairingOutcome {
-        if let Some(attempt_id) = self.take_expired_completion(now) {
-            return RejectRemoteControlTargetPairingOutcome::CompletionRetentionExpired {
-                attempt_id,
-            };
+        if let Some(expired) = self.take_expired_completion(now) {
+            return RejectRemoteControlTargetPairingOutcome::CompletionRetentionExpired { expired };
         }
         if let Some(expired) = self.take_expired_attempt(now) {
             return RejectRemoteControlTargetPairingOutcome::Expired { expired };
@@ -564,9 +562,9 @@ impl RemoteControlTargetPairingState {
         target_signer: &impl IdentitySigner,
         now: InstantMillis,
     ) -> PersistRemoteControlTargetPairingAuthorizationOutcome {
-        if let Some(attempt_id) = self.take_expired_completion(now) {
+        if let Some(expired) = self.take_expired_completion(now) {
             return PersistRemoteControlTargetPairingAuthorizationOutcome::CompletionRetentionExpired {
-                attempt_id,
+                expired,
             };
         }
         let phase = core::mem::take(&mut self.phase);
@@ -584,6 +582,7 @@ impl RemoteControlTargetPairingState {
                 if now >= attempt.window.expires_at() {
                     return PersistRemoteControlTargetPairingAuthorizationOutcome::AuthorizationPersistedAfterDeadline {
                         attempt_id: active,
+                        context: attempt.view().context(),
                         grant: attempt.grant(),
                     };
                 }
@@ -659,6 +658,7 @@ impl RemoteControlTargetPairingState {
                 }
                 FailRemoteControlTargetPairingAuthorizationOutcome::Aborted {
                     attempt_id: active,
+                    context: attempt.view().context(),
                     responder,
                 }
             }
@@ -672,10 +672,8 @@ impl RemoteControlTargetPairingState {
     }
 
     pub fn expire(&mut self, now: InstantMillis) -> ExpireRemoteControlTargetPairingOutcome {
-        if let Some(attempt_id) = self.take_expired_completion(now) {
-            return ExpireRemoteControlTargetPairingOutcome::CompletionRetentionExpired {
-                attempt_id,
-            };
+        if let Some(expired) = self.take_expired_completion(now) {
+            return ExpireRemoteControlTargetPairingOutcome::CompletionRetentionExpired { expired };
         }
         if let Some(aborted) = self.take_expired_attempt(now) {
             return ExpireRemoteControlTargetPairingOutcome::Expired { aborted };
@@ -795,13 +793,16 @@ impl RemoteControlTargetPairingState {
     fn take_expired_completion(
         &mut self,
         now: InstantMillis,
-    ) -> Option<RemoteControlPairingAttemptId> {
+    ) -> Option<RemoteControlTargetPairingCompletionRetentionExpired> {
         let phase = core::mem::take(&mut self.phase);
         match phase {
             RemoteControlTargetPairingPhase::Completing { attempt, .. }
                 if now >= attempt.window.expires_at() =>
             {
-                Some(attempt.attempt_id())
+                Some(RemoteControlTargetPairingCompletionRetentionExpired::new(
+                    attempt.attempt_id(),
+                    attempt.view().context(),
+                ))
             }
             phase @ (RemoteControlTargetPairingPhase::Idle
             | RemoteControlTargetPairingPhase::Active { .. }

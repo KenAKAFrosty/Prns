@@ -125,9 +125,17 @@ mod tests {
         ));
 
         let verifier = Ed25519Verifier::new(&public).expect("canonical key");
+        assert_eq!(Ed25519Verifier::validate_public_key(&public), Ok(()));
         assert_eq!(verifier.public_key(), &public);
         assert!(verifier.verify(b"sign-this", &sig).is_ok());
         assert_eq!(verifier.verify(b"sign-thus", &sig), Err(InvalidSignature));
+
+        let mut rejected = [0u8; Ed25519PublicKey::LEN];
+        rejected[1] = 3;
+        assert_eq!(
+            Ed25519Verifier::validate_public_key(&Ed25519PublicKey(rejected)),
+            Err(InvalidPublicKey),
+        );
     }
 
     #[test]

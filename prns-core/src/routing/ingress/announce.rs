@@ -13,8 +13,8 @@ use crate::routing::announce::schedule::{
     ScheduleOutcome, ScheduleRejection, ScheduledAnnounceQueue,
 };
 use crate::routing::announce::{
-    determine_acceptance, AnnounceAcceptanceDecision, AnnounceAcceptanceInput, AnnounceArrival,
-    AnnounceRateAccounting,
+    determine_acceptance, Announce, AnnounceAcceptanceDecision, AnnounceAcceptanceInput,
+    AnnounceArrival, AnnounceRateAccounting,
 };
 use crate::routing::warmth::WarmestOf;
 use crate::routing::{
@@ -63,6 +63,54 @@ pub struct AnnounceVerifyOwed {
     pub arrived_at: InstantMillis,
     pub next_hop: NextHop,
     pub is_path_response: bool,
+}
+
+pub struct VerifiedAnnounce {
+    owed: AnnounceVerifyOwed,
+}
+
+pub struct InvalidAnnounce {
+    owed: AnnounceVerifyOwed,
+}
+
+pub enum AnnounceVerification {
+    Verified(VerifiedAnnounce),
+    Invalid(InvalidAnnounce),
+}
+
+impl AnnounceVerifyOwed {
+    #[must_use]
+    pub fn verify(self) -> AnnounceVerification {
+        let signature_is_valid = Announce::from_wire_unverified(&self.header, &self.payload)
+            .is_ok_and(|announce| announce.signature_is_valid());
+        if signature_is_valid {
+            AnnounceVerification::Verified(VerifiedAnnounce { owed: self })
+        } else {
+            AnnounceVerification::Invalid(InvalidAnnounce { owed: self })
+        }
+    }
+
+    /// Accepts a successful signature verdict from a trusted external crypto backend.
+    ///
+    /// This does not repeat Ed25519 verification. Runtime adapters must call it only after the
+    /// exact public key, signed material, and signature derived from this owed value have been
+    /// verified by their external backend.
+    #[must_use]
+    pub fn verified_by_external_backend(self) -> VerifiedAnnounce {
+        VerifiedAnnounce { owed: self }
+    }
+}
+
+impl VerifiedAnnounce {
+    pub(crate) fn into_owed(self) -> AnnounceVerifyOwed {
+        self.owed
+    }
+}
+
+impl InvalidAnnounce {
+    pub const fn source_interface(&self) -> InterfaceId {
+        self.owed.source_interface
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -943,9 +991,26 @@ mod tests {
             !forged_announce.signature_is_valid(),
             "the forgery is rejected by the verify"
         );
+        let forged_owed = AnnounceVerifyOwed {
+            payload: HeaplessVec::from_slice(&forged).expect("the forged payload keeps its bound"),
+            header: owed.header,
+            received_hops: owed.received_hops,
+            source_interface: owed.source_interface,
+            arrived_at: owed.arrived_at,
+            next_hop: owed.next_hop,
+            is_path_response: owed.is_path_response,
+        };
+        assert!(matches!(
+            forged_owed.verify(),
+            AnnounceVerification::Invalid(_)
+        ));
+        let verified = match owed.verify() {
+            AnnounceVerification::Verified(verified) => verified,
+            AnnounceVerification::Invalid(_) => panic!("the reference announce should verify"),
+        };
 
         state.resume_announce(
-            owed,
+            verified,
             AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             &mut |_| {},

@@ -1,6 +1,7 @@
 use crate::engine::{
-    EngineReaction, EngineState, InstantMillis, Journaled, OpenedResourceSpan, OwedWork,
-    ProofRequest, ResourceDecompressionCompleted, ResourceOpenCompleted, WakeSchedules,
+    AnnounceVerification, EngineReaction, EngineState, InstantMillis, Journaled,
+    OpenedResourceSpan, OwedWork, ProofRequest, ResourceDecompressionCompleted,
+    ResourceOpenCompleted, WakeSchedules,
 };
 use crate::identity::OpenedToken;
 use crate::interfaces::{FrameAccountingEvent, InterfaceIfac};
@@ -16,6 +17,7 @@ use super::crypto_pool::{
 use super::egress::{
     route_reaction, route_reaction_with_work, Egress, InterfacePacer, WireScratch,
 };
+use super::inbound_dispatch::InboundDispatch;
 use super::interface_topology::InterfaceTopology;
 use super::journal_delivery::JournalDispatch;
 use super::owed_work::PendingOwedWork;
@@ -87,6 +89,7 @@ where
     pub(super) journal: &'a mut JournalDispatch<J>,
     pub(super) crypto_pool: Option<&'a CryptoPool>,
     pub(super) owed_work: &'a mut PendingOwedWork,
+    pub(super) inbound: &'a mut InboundDispatch,
 }
 
 impl<S, H, J> CryptoDispatch<'_, S, H, J>
@@ -104,6 +107,7 @@ where
             journal,
             crypto_pool,
             owed_work: _,
+            inbound: _,
         } = self;
         let Some(link_id) = engine.owed_staged_seal_link() else {
             return;
@@ -120,6 +124,7 @@ where
                     host.fill_random(salt);
                 }
                 let job = StagedSealJob {
+                    command_id: view.command_id,
                     link_id,
                     key: view.key.cloned(),
                     sdu: view.sdu,
@@ -169,6 +174,7 @@ where
             journal,
             crypto_pool,
             owed_work,
+            inbound,
         } = self;
         let CryptoCompletion {
             worker,
@@ -217,6 +223,7 @@ where
                 ))
             }
             CryptoResult::LinkIdentityVerified { owed, verification } => {
+                let link_id = owed.link_id;
                 engine.resume_link_identity_verify(owed, verification, &mut |reaction| {
                     route_completed_reaction_without_work(
                         reaction,
@@ -228,6 +235,7 @@ where
                         now,
                     )
                 });
+                inbound.release_link_identity_barrier(link_id);
                 CryptoCompletionEffect::NoWakeChange
             }
             CryptoResult::TunnelSynthesizeVerified { owed, verification } => {
@@ -511,6 +519,7 @@ where
                 },
             )),
             CryptoResult::StagedSealed {
+                command_id,
                 link_id,
                 stream_nonce,
                 nonce_prefixed_bytes,
@@ -522,6 +531,7 @@ where
                 let names_len = outcome.map_or(0, |sealed| sealed.part_count * MAP_HASH_LEN);
                 engine.apply_offloaded_staged_seal(
                     OffloadedStagedSeal {
+                        command_id,
                         link_id,
                         stream_nonce,
                         nonce_prefixed_bytes,
@@ -566,10 +576,10 @@ where
                     ..WakeSchedules::UNCHANGED
                 })
             }
-            CryptoResult::AnnounceVerified { owed, valid } => {
-                if valid {
+            CryptoResult::AnnounceVerification(verification) => match verification {
+                AnnounceVerification::Verified(verified) => {
                     CryptoCompletionEffect::WakeSchedules(engine.resume_announce(
-                        owed,
+                        verified,
                         topology.interfaces.view(),
                         &mut |entropy| host.fill_random(entropy),
                         &mut |reaction| {
@@ -584,21 +594,22 @@ where
                             )
                         },
                     ))
-                } else {
+                }
+                AnnounceVerification::Invalid(invalid) => {
                     if let Some(recorder) =
-                        topology.frame_accounting_recorder(owed.source_interface)
+                        topology.frame_accounting_recorder(invalid.source_interface())
                     {
                         recorder.record(FrameAccountingEvent::ProtocolViolation);
                     }
                     CryptoCompletionEffect::NoWakeChange
                 }
-            }
-            CryptoResult::RemoteControlPairingAvailabilityVerified { owed, verification } => {
+            },
+            CryptoResult::RemoteControlPairingAvailabilityVerification(verification) => {
                 match verification {
-                    RemoteControlPairingAvailabilityVerification::Valid => {
+                    RemoteControlPairingAvailabilityVerification::Verified(verified) => {
                         CryptoCompletionEffect::WakeSchedules(
                             engine.resume_remote_control_pairing_availability(
-                                owed,
+                                verified,
                                 topology.interfaces.view(),
                                 &mut |reaction| {
                                     route_completed_reaction_without_work(
@@ -614,9 +625,9 @@ where
                             ),
                         )
                     }
-                    RemoteControlPairingAvailabilityVerification::Invalid => {
+                    RemoteControlPairingAvailabilityVerification::Invalid(invalid) => {
                         if let Some(recorder) =
-                            topology.frame_accounting_recorder(owed.source_interface())
+                            topology.frame_accounting_recorder(invalid.source_interface())
                         {
                             recorder.record(FrameAccountingEvent::ProtocolViolation);
                         }

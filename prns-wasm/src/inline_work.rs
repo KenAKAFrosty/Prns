@@ -10,16 +10,15 @@ use personal_rns::crypto::{
     ed25519_sign, ed25519_verify, x25519_diffie_hellman, x25519_keys_for_seal,
 };
 use personal_rns::engine::{
-    ChannelAckSignCompleted, ChannelAckVerification, CryptoOwed, Directive, EncryptCompleted,
-    EngineReaction, EngineState, IdentifySignCompleted, InstantMillis, LinkIdentityVerification,
-    LinkReceiptSignCompleted, NoOwedWork, OwedWork, ProofSignCompleted, ReceiptProofVerification,
-    ResourceDecompressionCompleted, ResourceOpenCompleted, TunnelSynthesizeSignCompleted,
-    TunnelSynthesizeVerification,
+    AnnounceVerification, ChannelAckSignCompleted, ChannelAckVerification, CryptoOwed, Directive,
+    EncryptCompleted, EngineReaction, EngineState, IdentifySignCompleted, InstantMillis,
+    LinkIdentityVerification, LinkReceiptSignCompleted, NoOwedWork, OwedWork, ProofSignCompleted,
+    ReceiptProofVerification, ResourceDecompressionCompleted, ResourceOpenCompleted,
+    TunnelSynthesizeSignCompleted, TunnelSynthesizeVerification,
 };
 use personal_rns::identity::{decrypt_token_in_place_with_ratchets, OpenedToken};
 use personal_rns::interfaces::AttachedInterfaces;
 use personal_rns::remote_control::RemoteControlPairingAvailabilityVerification;
-use personal_rns::routing::announce::Announce;
 use personal_rns::routing::links::handshake::{link_proof_signature_valid, link_proof_signed_data};
 use personal_rns::routing::links::resources::build_outgoing::BuildOutgoingResourceError;
 use personal_rns::routing::links::resources::send::ResourceBuildCompleted;
@@ -74,6 +73,28 @@ impl InlineReadyWorkQueue {
             },
         };
         self.work.push_back(ready);
+    }
+
+    pub(crate) fn take_selected_crypto(
+        &mut self,
+        mut selected: impl FnMut(&CryptoOwed) -> bool,
+    ) -> Vec<CryptoOwed> {
+        let pending = self.work.len();
+        let mut extracted = Vec::new();
+        for _ in 0..pending {
+            let Some(work) = self.work.pop_front() else {
+                break;
+            };
+            match work {
+                InlineReadyWork::Crypto(crypto) if selected(&crypto) => extracted.push(crypto),
+                work => self.work.push_back(work),
+            }
+        }
+        extracted
+    }
+
+    pub(crate) fn push_crypto(&mut self, crypto: CryptoOwed) {
+        self.work.push_back(InlineReadyWork::Crypto(crypto));
     }
 }
 
@@ -279,15 +300,16 @@ pub(crate) fn fulfill_ready_work(
                     engine.resume_announce_sign(owed.fulfill(), interfaces, sink);
                 }
                 CryptoOwed::AnnounceVerify(owed) => {
-                    if Announce::from_wire_unverified(&owed.header, &owed.payload)
-                        .is_ok_and(|announce| announce.signature_is_valid())
-                    {
-                        engine.resume_announce(owed, interfaces, fill_random, sink);
+                    if let AnnounceVerification::Verified(verified) = owed.verify() {
+                        engine.resume_announce(verified, interfaces, fill_random, sink);
                     }
                 }
                 CryptoOwed::RemoteControlPairingAvailabilityVerify(owed) => {
-                    if owed.verify() == RemoteControlPairingAvailabilityVerification::Valid {
-                        engine.resume_remote_control_pairing_availability(owed, interfaces, sink);
+                    if let RemoteControlPairingAvailabilityVerification::Verified(verified) =
+                        owed.verify()
+                    {
+                        engine
+                            .resume_remote_control_pairing_availability(verified, interfaces, sink);
                     }
                 }
             },

@@ -154,6 +154,7 @@ try {
     bluetoothContract: "Shared",
     bluetoothSession: "Bridged",
     bluetoothWorker: "Bridged",
+    parallelCrypto: "Verified",
     projection: "Reactive",
     admission: "RuntimeRejected:worker-admission",
     autoWifiAdmission: "Retained",

@@ -140,6 +140,15 @@ impl RemoteControlPairingAttemptId {
     pub const fn transcript(self) -> RemoteControlPairingTranscriptDigest {
         self.0
     }
+
+    #[must_use]
+    pub const fn confirmation_code(self) -> RemoteControlPairingConfirmationCode {
+        let [first, second, third, fourth, ..] = *self.0.as_bytes();
+        RemoteControlPairingConfirmationCode(
+            u32::from_le_bytes([first, second, third, fourth])
+                .wrapping_rem(PAIRING_CONFIRMATION_CODE_MODULUS),
+        )
+    }
 }
 
 impl From<&RemoteControlPairingTranscript> for RemoteControlPairingAttemptId {
@@ -228,11 +237,7 @@ impl RemoteControlPairingTranscript {
 
     #[must_use]
     pub fn confirmation_code(&self) -> RemoteControlPairingConfirmationCode {
-        let [first, second, third, fourth, ..] = self.digest.0;
-        RemoteControlPairingConfirmationCode(
-            u32::from_le_bytes([first, second, third, fourth])
-                .wrapping_rem(PAIRING_CONFIRMATION_CODE_MODULUS),
-        )
+        RemoteControlPairingAttemptId::from(self).confirmation_code()
     }
 
     #[must_use]

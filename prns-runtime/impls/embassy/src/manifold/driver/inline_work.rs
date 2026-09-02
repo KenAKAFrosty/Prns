@@ -1,16 +1,15 @@
 use crate::crypto::{ed25519_sign, ed25519_verify, x25519_diffie_hellman, x25519_keys_for_seal};
 use crate::engine::{
-    ChannelAckSignCompleted, ChannelAckVerification, CryptoOwed, EncryptCompleted, EngineReaction,
-    EngineState, IdentifySignCompleted, InstantMillis, Journaled, LinkIdentityVerification,
-    LinkReceiptSignCompleted, OwedWork, ProofRequest, ProofSignCompleted, ReceiptProofVerification,
-    ResourceDecompressionCompleted, ResourceOpenCompleted, TunnelSynthesizeSignCompleted,
-    TunnelSynthesizeVerification, WakeSchedules,
+    AnnounceVerification, ChannelAckSignCompleted, ChannelAckVerification, CryptoOwed,
+    EncryptCompleted, EngineReaction, EngineState, IdentifySignCompleted, InstantMillis, Journaled,
+    LinkIdentityVerification, LinkReceiptSignCompleted, OwedWork, ProofRequest, ProofSignCompleted,
+    ReceiptProofVerification, ResourceDecompressionCompleted, ResourceOpenCompleted,
+    TunnelSynthesizeSignCompleted, TunnelSynthesizeVerification, WakeSchedules,
 };
 use crate::identity::decrypt_token_in_place_with_ratchets;
 use crate::interfaces::{AttachedInterfaces, InterfaceId, InterfaceIfac, InterfaceStatus};
 use crate::manifold::Host;
 use crate::remote_control::RemoteControlPairingAvailabilityVerification;
-use crate::routing::announce::Announce;
 use crate::routing::links::handshake::{link_proof_signature_valid, link_proof_signed_data};
 use crate::routing::links::resources::build_outgoing::BuildOutgoingResourceError;
 use crate::routing::links::resources::send::ResourceBuildCompleted;
@@ -365,36 +364,38 @@ where
                         route_reaction(reaction, egress, ifacs, pacers, now, on_journaled);
                     });
                 }
-                CryptoOwed::AnnounceVerify(owed) => {
-                    let valid = Announce::from_wire_unverified(&owed.header, &owed.payload)
-                        .is_ok_and(|announce| announce.signature_is_valid());
-                    if valid {
+                CryptoOwed::AnnounceVerify(owed) => match owed.verify() {
+                    AnnounceVerification::Verified(verified) => {
                         wake.compose(engine.resume_announce(
-                            owed,
+                            verified,
                             interfaces,
                             &mut |entropy| host.fill_random(entropy),
                             &mut |reaction| {
                                 route_reaction(reaction, egress, ifacs, pacers, now, on_journaled);
                             },
                         ));
-                    } else {
-                        record_protocol_violation(frame_accounting_statuses, owed.source_interface);
                     }
-                }
+                    AnnounceVerification::Invalid(invalid) => {
+                        record_protocol_violation(
+                            frame_accounting_statuses,
+                            invalid.source_interface(),
+                        );
+                    }
+                },
                 CryptoOwed::RemoteControlPairingAvailabilityVerify(owed) => match owed.verify() {
-                    RemoteControlPairingAvailabilityVerification::Valid => {
+                    RemoteControlPairingAvailabilityVerification::Verified(verified) => {
                         wake.compose(engine.resume_remote_control_pairing_availability(
-                            owed,
+                            verified,
                             interfaces,
                             &mut |reaction| {
                                 route_reaction(reaction, egress, ifacs, pacers, now, on_journaled);
                             },
                         ));
                     }
-                    RemoteControlPairingAvailabilityVerification::Invalid => {
+                    RemoteControlPairingAvailabilityVerification::Invalid(invalid) => {
                         record_protocol_violation(
                             frame_accounting_statuses,
-                            owed.source_interface(),
+                            invalid.source_interface(),
                         );
                     }
                 },

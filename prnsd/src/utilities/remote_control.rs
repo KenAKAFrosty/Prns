@@ -1,5 +1,5 @@
 use personal_rns::remote_control::{
-    RemoteControlInitialAccess, RemoteControlNodeIdentitySecretsError,
+    RemoteControlInitialControllerGrants, RemoteControlNodeIdentitySecretsError,
     RemoteControlSelfAnnouncement, RemoteControlService,
 };
 use personal_rns::runtime::{OsEntropyError, OsRuntimeEntropy};
@@ -37,7 +37,7 @@ pub(super) fn transient_remote_control_service(
         .map_err(TransientRemoteControlIdentityError::Identity)?;
     Ok(RemoteControlService::new(
         identity_secrets,
-        RemoteControlInitialAccess::Nobody,
+        RemoteControlInitialControllerGrants::Nobody,
         RemoteControlSelfAnnouncement::Unavailable,
     ))
 }

@@ -11,6 +11,7 @@ import type {
   RouteSnapshot,
 } from "../contract.js";
 import type { InterfaceSnapshot, PrnsSnapshot } from "./snapshot.js";
+import { interfaceKindNameFromCode } from "./interface_kind.js";
 import { bitrateBps, hardwareMtu } from "./values.js";
 
 const PACKED_SNAPSHOT_MAGIC = Object.freeze([0x50, 0x53, 0x4e, 0x50]);
@@ -19,43 +20,6 @@ const MAXIMUM_SAFE_INTEGER_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
 const MINIMUM_INTERFACE_BYTES = 37;
 const MINIMUM_ROUTE_BYTES = 50;
 const DESTINATION_IDENTITY_BYTES = DESTINATION_HASH_LENGTH + IDENTITY_HASH_LENGTH;
-const RUNTIME_INTERFACE_KIND_NAMES = Object.freeze([
-  "loopback",
-  "tcp-client",
-  "tcp-server",
-  "udp",
-  "serial",
-  "usb-auto-host",
-  "usb-auto-device",
-  "auto-wifi",
-  "wifi-peer",
-  "local-server",
-  "local-client",
-  "tcp-server-peer",
-  "bluetooth-auto",
-  "bluetooth-peer",
-  "lora",
-  "kiss",
-  "ax25-kiss",
-  "pipe",
-  "rnode",
-  "backbone-server",
-  "backbone-server-peer",
-  "backbone-client",
-  "esp-now",
-  "websocket-client",
-  "websocket-server",
-  "websocket-server-peer",
-  "wifi-direct",
-  "wifi-direct-peer",
-  "wifi-aware",
-  "wifi-aware-peer",
-  "i2p",
-  "i2p-peer",
-  "weave",
-  "weave-peer",
-] as const);
-
 export function parsePackedSnapshot(bytes: Uint8Array): PrnsSnapshot {
   const reader = new PackedSnapshotReader(bytes);
   reader.magic(PACKED_SNAPSHOT_MAGIC);
@@ -117,9 +81,7 @@ function readInterface(reader: PackedSnapshotReader): InterfaceSnapshot {
   const kindCode = id[0];
   const snapshot: InterfaceSnapshot = {
     id,
-    kind: kindCode === undefined
-      ? "unknown"
-      : RUNTIME_INTERFACE_KIND_NAMES[kindCode] ?? "unknown",
+    kind: kindCode === undefined ? "unknown" : interfaceKindNameFromCode(kindCode),
     bitrateBps: bitrate,
     routes: reader.safeNumber("interface route count"),
     links: reader.safeNumber("interface link count"),

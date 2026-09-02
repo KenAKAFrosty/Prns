@@ -18,7 +18,7 @@ use crate::interfaces::{
 };
 use crate::manifold::interface_seam::{Interface, InterfaceSeam};
 use crate::remote_control::{
-    RemoteControlControllerIdentitySecret, RemoteControlInitialAccess,
+    RemoteControlControllerIdentitySecret, RemoteControlInitialControllerGrants,
     RemoteControlNodeIdentitySecrets, RemoteControlSelfAnnouncement, RemoteControlService,
     RemoteControlTargetIdentitySecret,
 };
@@ -65,6 +65,13 @@ impl Future for PollTrace {
             Poll::Pending
         }
     }
+}
+
+async fn successful_request_task(
+    task: impl Future<Output = ()>,
+) -> Result<(), crate::runtime::RemoteControlAuthorizationPersistenceFailure> {
+    task.await;
+    Ok(())
 }
 
 struct ProofLoopback {
@@ -219,8 +226,12 @@ async fn executor_local_tasks_rotate_their_first_poll_without_skipping_a_child()
     };
 
     assert_eq!(
-        run_executor_local_node_tasks(task(b'M', None), task(b'R', None), task(b'I', Some(3)))
-            .await,
+        run_executor_local_node_tasks(
+            task(b'M', None),
+            successful_request_task(task(b'R', None)),
+            task(b'I', Some(3)),
+        )
+        .await,
         Ok(()),
     );
     assert_eq!(
@@ -243,7 +254,7 @@ async fn executor_local_tasks_pair_the_hot_pipeline_without_repolling_dormant_re
     assert_eq!(
         run_executor_local_node_tasks(
             task(b'M', Some(3), true),
-            task(b'R', None, false),
+            successful_request_task(task(b'R', None, false)),
             task(b'I', None, false),
         )
         .await,
@@ -279,6 +290,16 @@ fn restore_diagnostics_report_seeded_refused_and_dropped_totals() {
             refused_count: 11,
             dropped_count: 12,
         },
+        remote_control_controller_grants: crate::runtime::RemoteControlAuthorizationSeedReport {
+            restored_count: 13,
+            refused_count: 14,
+            dropped_count: 15,
+        },
+        remote_control_target_accesses: crate::runtime::RemoteControlAuthorizationSeedReport {
+            restored_count: 16,
+            refused_count: 17,
+            dropped_count: 18,
+        },
     };
 
     let crate::runtime::Diagnostic::PersistenceRestored {
@@ -302,7 +323,7 @@ fn restore_diagnostics_report_seeded_refused_and_dropped_totals() {
             refused,
             dropped,
         ),
-        (1, 4, 7, 10, 26, 30)
+        (1, 4, 7, 10, 57, 63)
     );
 }
 
@@ -337,7 +358,7 @@ fn controller_and_target_identities_coexist_without_a_transport_identity() {
     let controller_identity = expected_identities.controller().identity_hash();
     let remote_control = RemoteControlService::new(
         remote_control_secrets,
-        RemoteControlInitialAccess::Nobody,
+        RemoteControlInitialControllerGrants::Nobody,
         RemoteControlSelfAnnouncement::Unavailable,
     );
     let node = PrnsNode::new(PrnsNodeRecipe {

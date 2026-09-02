@@ -10,7 +10,7 @@ import {
   hasCleanupFailures,
   unexpectedSessionFailure,
 } from "../session.js";
-import { PrnsValidationError, packetFrame } from "../values.js";
+import { PrnsValidationError, packetFrameView } from "../values.js";
 import type {
   InterfaceCleanupFailure,
   InterfaceCloseOutcome,
@@ -236,7 +236,7 @@ export class BrowserUsbAutoSession implements UsbAutoSession {
         if (this.#confirmed && bytes.length > 0) {
           const ingested = await this.#host.ingest(
             this.interfaceId,
-            packetFrame(bytes),
+            packetFrameView(bytes),
           );
           return ingested.tag === "Accepted" ? Tag("Handled") : ingested;
         }

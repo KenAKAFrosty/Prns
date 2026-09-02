@@ -81,6 +81,8 @@ fn automatic_session_releases_provisional_raw_and_recovers_as(framing: WebSocket
     assert!(session.release_raw_fallback().is_none());
     assert!(session.can_read_outbound());
     assert!(!session.can_stage_multiple_outbound());
+    assert!(!session.can_pass_raw_outbound());
+    assert!(!session.can_pass_raw_inbound());
     assert_eq!(
         session.stage_outbound(&first),
         WebSocketSessionOutboundAction::Queued
@@ -102,6 +104,8 @@ fn automatic_session_releases_provisional_raw_and_recovers_as(framing: WebSocket
     assert!(session.is_detecting());
     assert!(session.can_read_outbound());
     assert!(session.can_stage_multiple_outbound());
+    assert!(session.can_pass_raw_outbound());
+    assert!(!session.can_pass_raw_inbound());
     assert_eq!(
         session.stage_outbound(&second),
         WebSocketSessionOutboundAction::Send(WebSocketWireFraming::RawPacket)
@@ -120,10 +124,36 @@ fn automatic_session_releases_provisional_raw_and_recovers_as(framing: WebSocket
     assert_eq!(sink.as_slice(), inbound.as_slice());
     assert!(!session.is_detecting());
     assert!(session.can_stage_multiple_outbound());
+    assert!(!session.can_pass_raw_outbound());
+    assert!(!session.can_pass_raw_inbound());
     assert_eq!(
         session.stage_outbound(&second),
         WebSocketSessionOutboundAction::Send(framing)
     );
+}
+
+#[test]
+fn raw_session_passthrough_requires_resolved_raw_framing() {
+    let inbound = packet(b"inbound");
+    let mut automatic = WebSocketSessionFraming::new(WebSocketFramingSelection::Auto);
+    let mut offset = 0;
+    let mut sink = FrameBuffer::<FRAME_CAP>::new();
+    let outcome = automatic
+        .next_frame_into(&inbound, &mut offset, &mut sink)
+        .expect("raw framing detection succeeds");
+    assert!(matches!(
+        outcome,
+        WebSocketSessionFrameDecodeOutcome::ResolvedFrame(resolved)
+            if resolved.framing() == WebSocketWireFraming::RawPacket
+    ));
+    assert!(automatic.can_pass_raw_outbound());
+    assert!(automatic.can_pass_raw_inbound());
+
+    let fixed = WebSocketSessionFraming::new(WebSocketFramingSelection::Fixed(
+        WebSocketWireFraming::RawPacket,
+    ));
+    assert!(fixed.can_pass_raw_outbound());
+    assert!(fixed.can_pass_raw_inbound());
 }
 
 #[test]
