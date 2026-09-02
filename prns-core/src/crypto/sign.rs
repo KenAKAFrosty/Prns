@@ -112,10 +112,7 @@ pub fn ed25519_verify_batch(
         .iter()
         .map(|signature| Signature::from_bytes(&signature.0))
         .collect();
-    let verifying_keys: Vec<_> = verifiers
-        .iter()
-        .map(|verifier| verifier.key.clone())
-        .collect();
+    let verifying_keys: Vec<_> = verifiers.iter().map(|verifier| verifier.key).collect();
     ed25519_dalek::verify_batch(messages, &signatures, &verifying_keys)
         .map_err(|_| InvalidSignature)
 }

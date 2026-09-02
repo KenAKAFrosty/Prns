@@ -133,6 +133,7 @@ def plan_for_paths(paths: set[str]) -> tuple[Gate, ...]:
         or _has_prefix(
             paths,
             (
+                "personal-rns/",
                 "prns-core/",
                 "prns-interfaces/impls/tokio/",
                 "prns-runtime/core/",
@@ -156,6 +157,25 @@ def plan_for_paths(paths: set[str]) -> tuple[Gate, ...]:
                 ),
                 ROOT / "prns-runtime/impls/tokio",
                 (("RUSTFLAGS", "-D warnings --cfg aes_armv8"),),
+            )
+        )
+        gates.append(
+            Gate(
+                "Tokio umbrella feature-family Clippy",
+                (
+                    "cargo",
+                    "clippy",
+                    "-p",
+                    "personal-rns",
+                    "--features",
+                    "tokio-host,tcp,udp,wifi-auto,shared-instance",
+                    "--all-targets",
+                    "--locked",
+                    "--",
+                    "-D",
+                    "warnings",
+                ),
+                env=(("RUSTFLAGS", "-D warnings --cfg aes_armv8"),),
             )
         )
 
