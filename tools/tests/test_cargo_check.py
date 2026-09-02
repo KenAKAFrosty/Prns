@@ -114,6 +114,10 @@ tiers = ["release"]
     def test_pre_push_runs_the_canonical_repository_check(self) -> None:
         hook = (ROOT / ".githooks" / "pre-push").read_text(encoding="utf-8")
 
+        self.assertIn("run release.host-sdk.versions", hook)
+        self.assertIn("run release.host-sdk.distribution.check", hook)
+        self.assertIn("run repo.host-contract.check", hook)
+        self.assertIn('validation/run.py" verify', hook)
         self.assertIn('"${repo_root}/tools/prns" repo cargo-check', hook)
 
     def test_ci_checks_all_host_operating_systems_on_trunk_and_main(self) -> None:

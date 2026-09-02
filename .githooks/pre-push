@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Pre-push gate for repository hygiene and every host-compatible Cargo workspace.
+# Pre-push gate for repository hygiene, deterministic cross-language contracts,
+# validation-registry integrity, and every host-compatible Cargo workspace.
 #
 # Enable once per clone:   git config core.hooksPath .githooks
 # Bypass (discouraged):    git push --no-verify
@@ -26,6 +27,22 @@ if ! bash "${repo_root}/validation/hygiene/fmt-docs.sh"; then
     echo ""
     echo "✗ push blocked by the hygiene gate (see above)."
     echo "  fix formatting: cargo fmt --all   (and resolve any doc-link errors)"
+    exit 1
+fi
+
+if ! "${repo_root}/tools/prns" run release.host-sdk.versions \
+    || ! "${repo_root}/tools/prns" run release.host-sdk.distribution.check \
+    || ! "${repo_root}/tools/prns" run repo.host-contract.check; then
+    echo ""
+    echo "✗ push blocked by the host SDK contract gate (see above)."
+    echo "  synchronize release versions, package projections, and generated ABI artifacts."
+    exit 1
+fi
+
+if ! python3 "${repo_root}/validation/run.py" verify; then
+    echo ""
+    echo "✗ push blocked by the validation registry gate (see above)."
+    echo "  update validation/manifest.toml alongside the files and suites it tracks."
     exit 1
 fi
 
