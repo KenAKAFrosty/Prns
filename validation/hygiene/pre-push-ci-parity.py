@@ -160,26 +160,64 @@ def plan_for_paths(paths: set[str]) -> tuple[Gate, ...]:
             )
         )
 
-    dependency_surface = any(
-        path.endswith("Cargo.lock") and "/vendor/" not in path for path in paths
-    ) or bool(
+    lock_paths = sorted(
+        path
+        for path in paths
+        if path.endswith("Cargo.lock") and "/vendor/" not in path
+    )
+    dependency_policy_surface = bool(lock_paths) or bool(
         paths
         & {
             "about.toml",
             "deny.toml",
             "validation/security/deps-audit.sh",
+            "validation/security/license-policy-parity.py",
             "validation/security/npm-production-audit.py",
+        }
+    )
+    if dependency_policy_surface:
+        gates.append(
+            Gate(
+                "license policy parity",
+                ("python3", "validation/security/license-policy-parity.py"),
+            )
+        )
+
+    for lock_path in lock_paths:
+        manifest = ROOT / Path(lock_path).parent / "Cargo.toml"
+        if not manifest.is_file():
+            continue
+        gates.append(
+            Gate(
+                f"dependency policy ({lock_path})",
+                (
+                    "cargo",
+                    "deny",
+                    "--manifest-path",
+                    str(manifest),
+                    "--locked",
+                    "--exclude-dev",
+                    "check",
+                    "--config",
+                    str(ROOT / "deny.toml"),
+                    "advisories",
+                    "licenses",
+                    "sources",
+                    "bans",
+                ),
+            )
+        )
+
+    unsafe_surface = bool(lock_paths) or any(
+        path.endswith(".rs") or path.endswith("Cargo.toml") for path in paths
+    ) or bool(
+        paths
+        & {
+            "audits/unsafe-snapshot.json",
             "validation/security/unsafe-audit.py",
         }
     )
-    if dependency_surface:
-        gates.append(
-            Gate(
-                "release dependency audit",
-                ("bash", "validation/security/deps-audit.sh"),
-            )
-        )
-    elif any(path.endswith(".rs") for path in paths):
+    if unsafe_surface:
         gates.append(
             Gate(
                 "unsafe dependency inventory",

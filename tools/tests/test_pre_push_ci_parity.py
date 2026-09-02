@@ -35,16 +35,21 @@ class PrePushCiParityTests(unittest.TestCase):
         self.assertIn("JavaScript and TypeScript contract check", names)
         self.assertIn("JVM binding compile", names)
 
-    def test_lockfile_change_runs_the_exact_release_dependency_audit(self) -> None:
+    def test_lockfile_change_runs_scoped_policy_and_unsafe_checks(self) -> None:
         gates = parity.plan_for_paths({"prnsd/Cargo.lock"})
         names = {gate.name for gate in gates}
 
-        self.assertIn("release dependency audit", names)
-        self.assertNotIn("unsafe dependency inventory", names)
-        policy = next(gate for gate in gates if gate.name == "release dependency audit")
+        self.assertIn("license policy parity", names)
+        self.assertIn("dependency policy (prnsd/Cargo.lock)", names)
+        self.assertIn("unsafe dependency inventory", names)
+        policy = next(
+            gate
+            for gate in gates
+            if gate.name == "dependency policy (prnsd/Cargo.lock)"
+        )
         self.assertEqual(
-            policy.command,
-            ("bash", "validation/security/deps-audit.sh"),
+            policy.command[-4:],
+            ("advisories", "licenses", "sources", "bans"),
         )
 
     def test_embassy_change_runs_the_exact_embedded_matrix(self) -> None:
