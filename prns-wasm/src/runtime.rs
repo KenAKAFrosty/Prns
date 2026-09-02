@@ -990,10 +990,10 @@ impl PrnsRuntime {
             .protocol_crypto
             .settle(id, ProtocolCryptoKind::AnnounceVerify)
             .map_err(protocol_crypto_settlement_error)?;
-        let ProtocolCryptoOperation::AnnounceVerify { owed, .. } = operation else {
+        let ProtocolCryptoOperation::AnnounceVerify(operation) = operation else {
             return Err(JsValue::from_str("protocol crypto operation changed kind"));
         };
-        self.resume_protocol_announce(owed.verified_by_external_backend(), entropy);
+        self.resume_protocol_announce(operation.owed.verified_by_external_backend(), entropy);
         Ok(())
     }
 
@@ -1026,7 +1026,7 @@ impl PrnsRuntime {
             return Err(JsValue::from_str("protocol crypto operation changed kind"));
         };
         self.resume_protocol_link_proof(
-            owed,
+            *owed,
             X25519SharedSecret::from_external_diffie_hellman(shared_secret),
             now_ms,
             entropy,
@@ -1323,7 +1323,9 @@ impl PrnsRuntime {
                         match ProtocolCryptoOperation::announce(owed) {
                             Ok(operation) => operation,
                             Err(owed) => {
-                                capture.ready.push_crypto(CryptoOwed::AnnounceVerify(owed));
+                                capture
+                                    .ready
+                                    .push_crypto(CryptoOwed::AnnounceVerify(*owed));
                                 continue;
                             }
                         }
@@ -1855,9 +1857,9 @@ impl PrnsRuntime {
         entropy: &mut EntropyCursor,
     ) {
         match operation {
-            ProtocolCryptoOperation::AnnounceVerify { owed, .. } => {
+            ProtocolCryptoOperation::AnnounceVerify(operation) => {
                 if let personal_rns::engine::AnnounceVerification::Verified(verified) =
-                    owed.verify()
+                    operation.owed.verify()
                 {
                     self.resume_protocol_announce_with_entropy(verified, entropy);
                 }
@@ -1866,7 +1868,7 @@ impl PrnsRuntime {
                 if link_proof_signature_valid(&owed) {
                     let shared =
                         x25519_diffie_hellman(&owed.initiator_secret, &owed.responder_encryption);
-                    self.resume_protocol_link_proof_with_entropy(owed, shared, now_ms, entropy);
+                    self.resume_protocol_link_proof_with_entropy(*owed, shared, now_ms, entropy);
                 }
             }
         }

@@ -180,6 +180,32 @@ pub(super) fn runtime_operation_name(operation: RuntimeOperation) -> &'static st
         RuntimeOperation::SendToChannel => "send_to_channel",
         RuntimeOperation::AllowRequester => "allow_requester",
         RuntimeOperation::SendPlainPacket => "send_plain_packet",
+        RuntimeOperation::OpenRemoteControlPairing => "open_remote_control_pairing",
+        RuntimeOperation::CloseRemoteControlPairing => "close_remote_control_pairing",
+        RuntimeOperation::ApproveRemoteControlTargetPairing => {
+            "approve_remote_control_target_pairing"
+        }
+        RuntimeOperation::RejectRemoteControlTargetPairing => {
+            "reject_remote_control_target_pairing"
+        }
+        RuntimeOperation::SettleRemoteControlTargetPairingAuthorization => {
+            "settle_remote_control_target_pairing_authorization"
+        }
+        RuntimeOperation::BeginRemoteControlControllerPairing => {
+            "begin_remote_control_controller_pairing"
+        }
+        RuntimeOperation::RemoteControlControllerPairingRequest => {
+            "remote_control_controller_pairing_request"
+        }
+        RuntimeOperation::ApproveRemoteControlControllerPairing => {
+            "approve_remote_control_controller_pairing"
+        }
+        RuntimeOperation::RejectRemoteControlControllerPairing => {
+            "reject_remote_control_controller_pairing"
+        }
+        RuntimeOperation::SettleRemoteControlControllerPairingPersistence => {
+            "settle_remote_control_controller_pairing_persistence"
+        }
     }
 }
 
@@ -196,6 +222,8 @@ pub(super) fn runtime_operation_outcome_name(outcome: RuntimeOperationOutcome) -
         RuntimeOperationOutcome::Backpressure => "backpressure",
         RuntimeOperationOutcome::Untrackable => "untrackable",
         RuntimeOperationOutcome::ResponseTooLarge => "response_too_large",
+        RuntimeOperationOutcome::LinkClosed => "link_closed",
+        RuntimeOperationOutcome::ResponseTransferFailed => "response_transfer_failed",
     }
 }
 
@@ -223,6 +251,7 @@ pub(super) fn link_closure_name(reason: RuntimeLinkClosure) -> &'static str {
         RuntimeLinkClosure::Timeout => "timeout",
         RuntimeLinkClosure::PeerClosed => "peer_closed",
         RuntimeLinkClosure::MalformedRtt => "malformed_rtt",
+        RuntimeLinkClosure::LocallyClosed => "locally_closed",
     }
 }
 

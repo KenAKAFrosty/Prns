@@ -18,27 +18,31 @@ enum ProtocolCryptoState {
     Running,
 }
 
+pub(crate) struct ProtocolAnnounceVerifyOperation {
+    pub(crate) owed: AnnounceVerifyOwed,
+    public_key: [u8; Ed25519PublicKey::LEN],
+    message: Vec<u8>,
+    signature: [u8; Ed25519Signature::LEN],
+}
+
 pub(crate) enum ProtocolCryptoOperation {
-    AnnounceVerify {
-        owed: AnnounceVerifyOwed,
-        public_key: [u8; Ed25519PublicKey::LEN],
-        message: Vec<u8>,
-        signature: [u8; Ed25519Signature::LEN],
-    },
-    LinkProofVerify(LinkProofVerifyOwed),
+    AnnounceVerify(Box<ProtocolAnnounceVerifyOperation>),
+    LinkProofVerify(Box<LinkProofVerifyOwed>),
 }
 
 impl ProtocolCryptoOperation {
-    pub(crate) fn announce(owed: AnnounceVerifyOwed) -> Result<Self, AnnounceVerifyOwed> {
+    pub(crate) fn announce(
+        owed: AnnounceVerifyOwed,
+    ) -> Result<Self, Box<AnnounceVerifyOwed>> {
         let prepared = {
             let announce = match Announce::from_wire_unverified(&owed.header, &owed.payload) {
                 Ok(announce) => announce,
-                Err(_) => return Err(owed),
+                Err(_) => return Err(Box::new(owed)),
             };
             let mut message = vec![0; TRUNCATED_HASH_BYTE_LEN + BROADCAST_MTU];
             let signed_bytes = match announce.write_signed_material(&mut message) {
                 Ok(signed_bytes) => signed_bytes,
-                Err(_) => return Err(owed),
+                Err(_) => return Err(Box::new(owed)),
             };
             message.truncate(signed_bytes);
             (
@@ -47,29 +51,31 @@ impl ProtocolCryptoOperation {
                 announce.signature.0,
             )
         };
-        Ok(Self::AnnounceVerify {
+        Ok(Self::AnnounceVerify(Box::new(
+            ProtocolAnnounceVerifyOperation {
             owed,
             public_key: prepared.0,
             message: prepared.1,
             signature: prepared.2,
-        })
+            },
+        )))
     }
 
     pub(crate) fn link_proof(owed: LinkProofVerifyOwed) -> Self {
-        Self::LinkProofVerify(owed)
+        Self::LinkProofVerify(Box::new(owed))
     }
 
     fn kind(&self) -> ProtocolCryptoKind {
         match self {
-            Self::AnnounceVerify { .. } => ProtocolCryptoKind::AnnounceVerify,
+            Self::AnnounceVerify(_) => ProtocolCryptoKind::AnnounceVerify,
             Self::LinkProofVerify(_) => ProtocolCryptoKind::LinkProofVerify,
         }
     }
 
     pub(crate) fn into_crypto_owed(self) -> CryptoOwed {
         match self {
-            Self::AnnounceVerify { owed, .. } => CryptoOwed::AnnounceVerify(owed),
-            Self::LinkProofVerify(owed) => CryptoOwed::LinkProofVerify(owed),
+            Self::AnnounceVerify(operation) => CryptoOwed::AnnounceVerify(operation.owed),
+            Self::LinkProofVerify(owed) => CryptoOwed::LinkProofVerify(*owed),
         }
     }
 }
@@ -148,16 +154,11 @@ impl ProtocolCryptoQueue {
             .find(|pending| matches!(pending.state, ProtocolCryptoState::Queued))?;
         pending.state = ProtocolCryptoState::Running;
         Some(match &mut pending.operation {
-            ProtocolCryptoOperation::AnnounceVerify {
-                public_key,
-                message,
-                signature,
-                ..
-            } => ProtocolCryptoJob::AnnounceVerify {
+            ProtocolCryptoOperation::AnnounceVerify(operation) => ProtocolCryptoJob::AnnounceVerify {
                 id: pending.id,
-                public_key: *public_key,
-                message: core::mem::take(message),
-                signature: *signature,
+                public_key: operation.public_key,
+                message: core::mem::take(&mut operation.message),
+                signature: operation.signature,
             },
             ProtocolCryptoOperation::LinkProofVerify(owed) => ProtocolCryptoJob::LinkProofVerify {
                 id: pending.id,
