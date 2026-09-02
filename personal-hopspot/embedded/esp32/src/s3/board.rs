@@ -46,6 +46,8 @@ pub(crate) trait Esp32S3Board {
     const BOOT_BANNER: &'static str;
     const USB_INTERFACE_ID: InterfaceId;
     const MEMORY_PROFILE: &'static MemoryProfile;
+    #[cfg(feature = "remote-control-pairing")]
+    const REMOTE_CONTROL_PAIRING: bool = false;
     type Display: crate::display_runtime::S3BoardDisplay;
     type Battery: screen::BatterySource;
     type Gnss: GnssProvider;
