@@ -1,5 +1,5 @@
 use personal_rns::interfaces::lora::{
-    Frequency, MONTREAL_PROFILE, ModemPreset, Modulation, RadioProfile, Region, TxPower,
+    Frequency, ModemPreset, Modulation, RadioProfile, Region, TxPower, MONTREAL_PROFILE,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
