@@ -1138,6 +1138,35 @@ function decode_command_failure(kind::CommandFailureKind, detail::String)
         return CommandFailureBackendFailed(detail)
     kind == CommandFailureKindResponseTooLarge &&
         return CommandFailureResponseTooLarge()
+    kind == CommandFailureKindLinkClosed && return CommandFailureLinkClosed()
+    kind == CommandFailureKindResponseCancelledBySender &&
+        return CommandFailureResponseCancelledBySender()
+    kind == CommandFailureKindResponseHashmapBeyondPartCount &&
+        return CommandFailureResponseHashmapBeyondPartCount()
+    kind == CommandFailureKindResponseHashmapSkipsAhead &&
+        return CommandFailureResponseHashmapSkipsAhead()
+    kind == CommandFailureKindResponseHashmapTooLong &&
+        return CommandFailureResponseHashmapTooLong()
+    kind == CommandFailureKindResponseHashmapRagged &&
+        return CommandFailureResponseHashmapRagged()
+    kind == CommandFailureKindResponseRetriesExhausted &&
+        return CommandFailureResponseRetriesExhausted()
+    kind == CommandFailureKindResponseLinkVanished &&
+        return CommandFailureResponseLinkVanished()
+    kind == CommandFailureKindResponseTransferUnopenable &&
+        return CommandFailureResponseTransferUnopenable()
+    kind == CommandFailureKindResponseTransferCorrupt &&
+        return CommandFailureResponseTransferCorrupt()
+    kind == CommandFailureKindResponseProofUnsendable &&
+        return CommandFailureResponseProofUnsendable()
+    kind == CommandFailureKindResponseDecompressionFailed &&
+        return CommandFailureResponseDecompressionFailed()
+    kind == CommandFailureKindResponseDecompressionTimedOut &&
+        return CommandFailureResponseDecompressionTimedOut()
+    kind == CommandFailureKindResponseOpenTimedOut &&
+        return CommandFailureResponseOpenTimedOut()
+    kind == CommandFailureKindResponseMetadataOverrun &&
+        return CommandFailureResponseMetadataOverrun()
     throw(StatusFailure(:decode_command_failure, StatusBackendFailed))
 end
 

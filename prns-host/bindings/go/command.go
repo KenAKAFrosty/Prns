@@ -325,6 +325,36 @@ func decodeCommandFailure(kind CommandFailureKind, detail string) (CommandFailur
 		return CommandFailureBackendFailed{Detail: detail}, nil
 	case CommandFailureKindResponseTooLarge:
 		return CommandFailureResponseTooLarge{}, nil
+	case CommandFailureKindLinkClosed:
+		return CommandFailureLinkClosed{}, nil
+	case CommandFailureKindResponseCancelledBySender:
+		return CommandFailureResponseCancelledBySender{}, nil
+	case CommandFailureKindResponseHashmapBeyondPartCount:
+		return CommandFailureResponseHashmapBeyondPartCount{}, nil
+	case CommandFailureKindResponseHashmapSkipsAhead:
+		return CommandFailureResponseHashmapSkipsAhead{}, nil
+	case CommandFailureKindResponseHashmapTooLong:
+		return CommandFailureResponseHashmapTooLong{}, nil
+	case CommandFailureKindResponseHashmapRagged:
+		return CommandFailureResponseHashmapRagged{}, nil
+	case CommandFailureKindResponseRetriesExhausted:
+		return CommandFailureResponseRetriesExhausted{}, nil
+	case CommandFailureKindResponseLinkVanished:
+		return CommandFailureResponseLinkVanished{}, nil
+	case CommandFailureKindResponseTransferUnopenable:
+		return CommandFailureResponseTransferUnopenable{}, nil
+	case CommandFailureKindResponseTransferCorrupt:
+		return CommandFailureResponseTransferCorrupt{}, nil
+	case CommandFailureKindResponseProofUnsendable:
+		return CommandFailureResponseProofUnsendable{}, nil
+	case CommandFailureKindResponseDecompressionFailed:
+		return CommandFailureResponseDecompressionFailed{}, nil
+	case CommandFailureKindResponseDecompressionTimedOut:
+		return CommandFailureResponseDecompressionTimedOut{}, nil
+	case CommandFailureKindResponseOpenTimedOut:
+		return CommandFailureResponseOpenTimedOut{}, nil
+	case CommandFailureKindResponseMetadataOverrun:
+		return CommandFailureResponseMetadataOverrun{}, nil
 	default:
 		return nil, StatusError{
 			Operation: "decode command failure",

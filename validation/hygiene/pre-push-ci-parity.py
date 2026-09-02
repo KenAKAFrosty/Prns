@@ -193,6 +193,18 @@ def plan_for_paths(paths: set[str]) -> tuple[Gate, ...]:
             )
         )
 
+    if host_contract or _has_prefix(paths, ("prns-host/bindings/swift/",)):
+        gates.append(
+            Gate(
+                "Swift host contract smoke",
+                (
+                    "python3",
+                    "-m",
+                    "validation.interop.cases.host_swift_contract_smoke",
+                ),
+            )
+        )
+
     lock_paths = sorted(
         path
         for path in paths

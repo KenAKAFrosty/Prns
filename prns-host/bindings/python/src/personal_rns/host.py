@@ -882,6 +882,36 @@ def _decode_command_failure(
             return g.CommandFailureBackendFailed(detail)
         case g.CommandFailureKind.RESPONSE_TOO_LARGE:
             return g.CommandFailureResponseTooLarge()
+        case g.CommandFailureKind.LINK_CLOSED:
+            return g.CommandFailureLinkClosed()
+        case g.CommandFailureKind.RESPONSE_CANCELLED_BY_SENDER:
+            return g.CommandFailureResponseCancelledBySender()
+        case g.CommandFailureKind.RESPONSE_HASHMAP_BEYOND_PART_COUNT:
+            return g.CommandFailureResponseHashmapBeyondPartCount()
+        case g.CommandFailureKind.RESPONSE_HASHMAP_SKIPS_AHEAD:
+            return g.CommandFailureResponseHashmapSkipsAhead()
+        case g.CommandFailureKind.RESPONSE_HASHMAP_TOO_LONG:
+            return g.CommandFailureResponseHashmapTooLong()
+        case g.CommandFailureKind.RESPONSE_HASHMAP_RAGGED:
+            return g.CommandFailureResponseHashmapRagged()
+        case g.CommandFailureKind.RESPONSE_RETRIES_EXHAUSTED:
+            return g.CommandFailureResponseRetriesExhausted()
+        case g.CommandFailureKind.RESPONSE_LINK_VANISHED:
+            return g.CommandFailureResponseLinkVanished()
+        case g.CommandFailureKind.RESPONSE_TRANSFER_UNOPENABLE:
+            return g.CommandFailureResponseTransferUnopenable()
+        case g.CommandFailureKind.RESPONSE_TRANSFER_CORRUPT:
+            return g.CommandFailureResponseTransferCorrupt()
+        case g.CommandFailureKind.RESPONSE_PROOF_UNSENDABLE:
+            return g.CommandFailureResponseProofUnsendable()
+        case g.CommandFailureKind.RESPONSE_DECOMPRESSION_FAILED:
+            return g.CommandFailureResponseDecompressionFailed()
+        case g.CommandFailureKind.RESPONSE_DECOMPRESSION_TIMED_OUT:
+            return g.CommandFailureResponseDecompressionTimedOut()
+        case g.CommandFailureKind.RESPONSE_OPEN_TIMED_OUT:
+            return g.CommandFailureResponseOpenTimedOut()
+        case g.CommandFailureKind.RESPONSE_METADATA_OVERRUN:
+            return g.CommandFailureResponseMetadataOverrun()
     raise RuntimeError(f"unknown command failure {kind}")
 
 

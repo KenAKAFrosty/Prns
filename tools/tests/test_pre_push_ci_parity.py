@@ -35,6 +35,25 @@ class PrePushCiParityTests(unittest.TestCase):
         self.assertIn("JavaScript clean generated output", names)
         self.assertIn("JavaScript and TypeScript contract check", names)
         self.assertIn("JVM binding compile", names)
+        self.assertIn("Swift host contract smoke", names)
+
+    def test_swift_binding_change_runs_contract_smoke(self) -> None:
+        gates = parity.plan_for_paths(
+            {"prns-host/bindings/swift/Sources/PersonalRns/Command.swift"}
+        )
+        gate = next(
+            gate for gate in gates if gate.name == "Swift host contract smoke"
+        )
+
+        self.assertEqual(gate.cwd, ROOT)
+        self.assertEqual(
+            gate.command,
+            (
+                "python3",
+                "-m",
+                "validation.interop.cases.host_swift_contract_smoke",
+            ),
+        )
 
     def test_lockfile_change_runs_scoped_policy_and_unsafe_checks(self) -> None:
         gates = parity.plan_for_paths({"prnsd/Cargo.lock"})
