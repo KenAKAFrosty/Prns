@@ -179,6 +179,39 @@ def plan_for_paths(paths: set[str]) -> tuple[Gate, ...]:
             )
         )
 
+    integration_surface = (
+        "Cargo.toml" in paths
+        or "Cargo.lock" in paths
+        or _has_prefix(
+            paths,
+            (
+                "personal-rns/",
+                "prns-core/",
+                "prns-interfaces/impls/tokio/",
+                "prns-runtime/core/",
+                "prns-runtime/impls/tokio/",
+                "validation/integration/",
+            ),
+        )
+    )
+    if integration_surface:
+        gates.append(
+            Gate(
+                "validation integration capstones Clippy",
+                (
+                    "cargo",
+                    "clippy",
+                    "--all-targets",
+                    "--locked",
+                    "--",
+                    "-D",
+                    "warnings",
+                ),
+                ROOT / "validation/integration",
+                (("RUSTFLAGS", "-D warnings --cfg aes_armv8"),),
+            )
+        )
+
     host_contract = _has_prefix(
         paths,
         (

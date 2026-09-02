@@ -27,6 +27,7 @@ class PrePushCiParityTests(unittest.TestCase):
         self.assertIn("Node native binding Clippy", names)
         self.assertIn("Tokio runtime all-features Clippy", names)
         self.assertIn("Tokio umbrella feature-family Clippy", names)
+        self.assertIn("validation integration capstones Clippy", names)
         self.assertIn("embedded build matrix", names)
         self.assertIn("unsafe dependency inventory", names)
 
@@ -125,6 +126,31 @@ class PrePushCiParityTests(unittest.TestCase):
                 "personal-rns",
                 "--features",
                 "tokio-host,tcp,udp,wifi-auto,shared-instance",
+                "--all-targets",
+                "--locked",
+                "--",
+                "-D",
+                "warnings",
+            ),
+        )
+
+    def test_runtime_change_runs_validation_integration_capstones_clippy(self) -> None:
+        gates = parity.plan_for_paths(
+            {"prns-runtime/impls/tokio/src/manifold/driver/mod.rs"}
+        )
+        gate = next(
+            gate
+            for gate in gates
+            if gate.name == "validation integration capstones Clippy"
+        )
+
+        self.assertEqual(gate.cwd, ROOT / "validation/integration")
+        self.assertEqual(gate.env, (("RUSTFLAGS", "-D warnings --cfg aes_armv8"),))
+        self.assertEqual(
+            gate.command,
+            (
+                "cargo",
+                "clippy",
                 "--all-targets",
                 "--locked",
                 "--",
