@@ -153,15 +153,9 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     // The Option shims mirror ESP-NOW's: boards without an SX1262 keep every downstream card,
     // toggle, and sleep path compiling against `None` instead of forking the render loop.
     #[cfg(feature = "lora")]
-    let (lora_card_id, lora_card_status): (
-        Option<InterfaceId>,
-        Option<&'static EmbassyInterfaceStatus>,
-    ) = (Some(lora_id), Some(lora_status));
+    let lora_card_status: Option<&'static EmbassyInterfaceStatus> = Some(lora_status);
     #[cfg(not(feature = "lora"))]
-    let (lora_card_id, lora_card_status): (
-        Option<InterfaceId>,
-        Option<&'static EmbassyInterfaceStatus>,
-    ) = (None, None);
+    let lora_card_status: Option<&'static EmbassyInterfaceStatus> = None;
     // Reclaim the private R8 probe allocation before placing the live LoRa queue in PSRAM.
     // This is a no-op on boards whose PSRAM belongs to the global heap.
     #[cfg(feature = "lora")]
@@ -514,7 +508,6 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 tcp_card_config,
                 wifi_status.as_ref(),
                 &wifi_config,
-                lora_card_id,
                 espnow_card_id,
             );
             let now_ms = embassy_time::Instant::now().as_millis();
@@ -824,11 +817,13 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                             usb_status.toggle_enabled();
                                             handled = true;
                                         }
-                                        if !handled && Some(card.id()) == lora_card_id {
+                                        if !handled {
                                             if let Some(status) = lora_card_status {
-                                                show_toggle_notice(status.is_enabled());
-                                                status.toggle_enabled();
-                                                handled = true;
+                                                if card.id() == status.id() {
+                                                    show_toggle_notice(status.is_enabled());
+                                                    status.toggle_enabled();
+                                                    handled = true;
+                                                }
                                             }
                                         }
                                         if !handled {
