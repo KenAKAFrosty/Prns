@@ -369,6 +369,34 @@ class FlasherReproducibilityTests(unittest.TestCase):
             candidate_build.index('cp -R "$hosted_dist/." "$candidate/website/"'),
         )
 
+    def test_candidate_installs_locked_playground_dependency_graphs(self) -> None:
+        candidate_build = (SCRIPTS / "build-flasher-candidate.sh").read_text(
+            encoding="utf-8"
+        )
+        js_lock = '"$root/prns-js/package-lock.json"'
+        wasm_lock = '"$root/prns-wasm/package-lock.json"'
+        js_install = (
+            'npm --prefix "$root/prns-js" ci '
+            "--ignore-scripts --no-audit --no-fund"
+        )
+        wasm_install = (
+            'npm --prefix "$root/prns-wasm" ci '
+            "--ignore-scripts --no-audit --no-fund"
+        )
+        playground_stage = "stage-wasm-docs-browser-playground.sh"
+        self.assertIn(js_lock, candidate_build)
+        self.assertIn(wasm_lock, candidate_build)
+        self.assertIn(js_install, candidate_build)
+        self.assertIn(wasm_install, candidate_build)
+        self.assertLess(
+            candidate_build.index(js_install),
+            candidate_build.index(playground_stage),
+        )
+        self.assertLess(
+            candidate_build.index(wasm_install),
+            candidate_build.index(playground_stage),
+        )
+
     def test_candidate_rustdoc_is_deterministically_ordered_and_normalized(
         self,
     ) -> None:

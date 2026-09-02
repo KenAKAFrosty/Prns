@@ -154,6 +154,15 @@ export class PlaygroundBluetoothController {
           describeInterfaceCloseFailure(failure),
         );
       },
+      RuntimeRejected: (data) => {
+        const failure = Tag("RuntimeRejected", data);
+        this.#transition(Tag("CloseFailed", { session, failure }));
+        this.#view.record(
+          "Failure",
+          "Bluetooth close failed",
+          describeInterfaceCloseFailure(failure),
+        );
+      },
     });
   }
 

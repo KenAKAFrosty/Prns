@@ -46,6 +46,8 @@ fi
 for release_input in \
     "$root/Cargo.lock" \
     "$root/docs/website/package-lock.json" \
+    "$root/prns-js/package-lock.json" \
+    "$root/prns-wasm/package-lock.json" \
     "$root/LICENSE-APACHE" \
     "$root/LICENSE-MIT" \
     "$root/THIRD_PARTY_NOTICES.md" \
@@ -230,6 +232,7 @@ PRNS_API_DOCS_STAGED=1 \
 cargo run --locked --bin finalize_ssg -- "$hosted_dist"
 mkdir -p "$candidate/website/assets/flasher"
 cp -R "$hosted_dist/." "$candidate/website/"
+npm --prefix "$root/prns-js" ci --ignore-scripts --no-audit --no-fund
 npm --prefix "$root/prns-wasm" ci --ignore-scripts --no-audit --no-fund
 bash "$root/tools/build/stage-wasm-docs-browser-playground.sh" \
     "$candidate/website/browser-node-playground-console"
