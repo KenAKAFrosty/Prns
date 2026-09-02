@@ -1,4 +1,3 @@
-use crate::engine::CommandId;
 use crate::identity::IdentityPublicKeys;
 use crate::persistence::SnapshotSealError;
 use crate::remote_control::{
@@ -9,9 +8,6 @@ use crate::remote_control::{
 };
 
 use super::embedded_persistence::RemoteControlAuthorizationSnapshot;
-use super::remote_control_authorization_exchange::{
-    RemoteControlAuthorizationCommand, RemoteControlAuthorizationExchange,
-};
 use super::AssembledRemoteControl;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,120 +109,7 @@ pub enum RemoteControlPairingAuthorizationTransactionFailure {
     RuntimeState,
 }
 
-pub(super) enum RemoteControlPairingAuthorizationCommand {
-    Prepare {
-        id: CommandId,
-        attempt_id: RemoteControlPairingAttemptId,
-        authorization: RemoteControlPairingAuthorization,
-    },
-    SnapshotRollback {
-        id: CommandId,
-        attempt_id: RemoteControlPairingAttemptId,
-    },
-    Activate {
-        id: CommandId,
-        attempt_id: RemoteControlPairingAttemptId,
-    },
-    RollBack {
-        id: CommandId,
-        attempt_id: RemoteControlPairingAttemptId,
-    },
-    Release {
-        id: CommandId,
-        attempt_id: RemoteControlPairingAttemptId,
-    },
-}
-
-impl RemoteControlAuthorizationCommand for RemoteControlPairingAuthorizationCommand {
-    fn id(&self) -> CommandId {
-        match self {
-            Self::Prepare { id, .. }
-            | Self::SnapshotRollback { id, .. }
-            | Self::Activate { id, .. }
-            | Self::RollBack { id, .. }
-            | Self::Release { id, .. } => *id,
-        }
-    }
-}
-
-pub(super) enum RemoteControlPairingAuthorizationCompletion {
-    Prepared(
-        Result<
-            RemoteControlAuthorizationSnapshot,
-            RemoteControlPairingAuthorizationTransactionFailure,
-        >,
-    ),
-    RollbackSnapshot(
-        Result<
-            RemoteControlAuthorizationSnapshot,
-            RemoteControlPairingAuthorizationTransactionFailure,
-        >,
-    ),
-    Activated(Result<(), RemoteControlPairingAuthorizationTransactionFailure>),
-    RolledBack(
-        Result<
-            RemoteControlAuthorizationSnapshot,
-            RemoteControlPairingAuthorizationTransactionFailure,
-        >,
-    ),
-    Released(Result<(), RemoteControlPairingAuthorizationTransactionFailure>),
-}
-
-pub(super) type RemoteControlPairingAuthorizationExchange<M> = RemoteControlAuthorizationExchange<
-    M,
-    RemoteControlPairingAuthorizationCommand,
-    RemoteControlPairingAuthorizationCompletion,
->;
-
-pub(super) fn apply_remote_control_pairing_authorization_command(
-    remote_control: &mut AssembledRemoteControl,
-    state: &mut RemoteControlPairingAuthorizationTransactionState,
-    command: RemoteControlPairingAuthorizationCommand,
-) -> (CommandId, RemoteControlPairingAuthorizationCompletion) {
-    match command {
-        RemoteControlPairingAuthorizationCommand::Prepare {
-            id,
-            attempt_id,
-            authorization,
-        } => {
-            let result = prepare(remote_control, state, attempt_id, authorization);
-            (
-                id,
-                RemoteControlPairingAuthorizationCompletion::Prepared(result),
-            )
-        }
-        RemoteControlPairingAuthorizationCommand::Activate { id, attempt_id } => {
-            let result = activate(remote_control, state, attempt_id);
-            (
-                id,
-                RemoteControlPairingAuthorizationCompletion::Activated(result),
-            )
-        }
-        RemoteControlPairingAuthorizationCommand::SnapshotRollback { id, attempt_id } => {
-            let result = snapshot_rollback(remote_control, state, attempt_id);
-            (
-                id,
-                RemoteControlPairingAuthorizationCompletion::RollbackSnapshot(result),
-            )
-        }
-        RemoteControlPairingAuthorizationCommand::RollBack { id, attempt_id } => {
-            let result = roll_back(remote_control, state, attempt_id);
-            (
-                id,
-                RemoteControlPairingAuthorizationCompletion::RolledBack(result),
-            )
-        }
-        RemoteControlPairingAuthorizationCommand::Release { id, attempt_id } => {
-            let result = release(state, attempt_id);
-            (
-                id,
-                RemoteControlPairingAuthorizationCompletion::Released(result),
-            )
-        }
-    }
-}
-
-fn snapshot_rollback(
+pub(super) fn snapshot_rollback(
     remote_control: &AssembledRemoteControl,
     state: &RemoteControlPairingAuthorizationTransactionState,
     attempt_id: RemoteControlPairingAttemptId,
@@ -236,7 +119,7 @@ fn snapshot_rollback(
     authorization_snapshot(remote_control, transaction.mutation)
 }
 
-fn prepare(
+pub(super) fn prepare(
     remote_control: &mut AssembledRemoteControl,
     state: &mut RemoteControlPairingAuthorizationTransactionState,
     attempt_id: RemoteControlPairingAttemptId,
@@ -266,7 +149,7 @@ fn prepare(
     Ok(snapshot)
 }
 
-fn activate(
+pub(super) fn activate(
     remote_control: &mut AssembledRemoteControl,
     state: &mut RemoteControlPairingAuthorizationTransactionState,
     attempt_id: RemoteControlPairingAttemptId,
@@ -290,7 +173,7 @@ fn activate(
     Ok(())
 }
 
-fn roll_back(
+pub(super) fn roll_back(
     remote_control: &mut AssembledRemoteControl,
     state: &mut RemoteControlPairingAuthorizationTransactionState,
     attempt_id: RemoteControlPairingAttemptId,
@@ -319,7 +202,7 @@ fn roll_back(
     authorization_snapshot(remote_control, transaction.mutation)
 }
 
-fn release(
+pub(super) fn release(
     state: &mut RemoteControlPairingAuthorizationTransactionState,
     attempt_id: RemoteControlPairingAttemptId,
 ) -> Result<(), RemoteControlPairingAuthorizationTransactionFailure> {

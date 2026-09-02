@@ -1,4 +1,4 @@
-use embassy_futures::select::{select, Either};
+use embassy_futures::select::{select4, Either4};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::Receiver;
 use heapless::Vec as HeaplessVec;
@@ -16,9 +16,10 @@ use super::node_facade::PrnsNodeHandle;
 use super::remote_control_controller_grants::{
     RemoteControlControllerGrantCommand, RemoteControlControllerGrantCompletion,
 };
-use super::remote_control_pairing_authorizations::{
-    apply_remote_control_pairing_authorization_command,
-    RemoteControlPairingAuthorizationTransactionState,
+use super::remote_control_pairing_authorizations::RemoteControlPairingAuthorizationTransactionState;
+use super::remote_control_pairing_persistence::{
+    RemoteControlAuthorizationStoreExchange, RemoteControlPairingPersistenceEvents,
+    RemoteControlPairingPersistenceProgress, RemoteControlPairingPersistenceRequired,
 };
 use super::remote_control_target_accesses::{
     RemoteControlTargetAccessCommand, RemoteControlTargetAccessCompletion,
@@ -140,36 +141,64 @@ pub(super) async fn run_router<
     state: &St,
     remote_control: &mut AssembledRemoteControl,
     requests: Receiver<'_, M, RunnerRequest<REQUEST_BYTES>, REQUESTS>,
+    pairing_events: &RemoteControlPairingPersistenceEvents<M>,
+    authorization_stores: Option<&RemoteControlAuthorizationStoreExchange<M>>,
     commands: PrnsNodeHandle<'_, M, COMMANDS, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>,
 ) where
     R: RequestEndpointSet<St>,
     M: RawMutex,
 {
     let mut authorization_transaction = RemoteControlPairingAuthorizationTransactionState::new();
+    let mut pairing_persistence = RemoteControlPairingPersistenceProgress::new();
     loop {
-        match select(
-            commands.next_remote_control_pairing_authorization_command(),
-            select(
-                select(
-                    commands.next_remote_control_controller_grant_command(),
-                    commands.next_remote_control_target_access_command(),
-                ),
-                requests.receive(),
+        match select4(
+            next_pairing_persistence_input(
+                &pairing_persistence,
+                pairing_events,
+                authorization_stores,
             ),
+            commands.next_remote_control_controller_grant_command(),
+            commands.next_remote_control_target_access_command(),
+            requests.receive(),
         )
         .await
         {
-            Either::First(command) => {
-                let (id, completion) = apply_remote_control_pairing_authorization_command(
-                    remote_control,
-                    &mut authorization_transaction,
-                    command,
-                );
-                let _settled = commands.settle_remote_control_pairing_authorization(id, completion);
+            Either4::First(input) => {
+                let result = match input {
+                    RemoteControlPairingPersistenceInput::Required(required) => {
+                        pairing_persistence
+                            .accept_required(
+                                required,
+                                remote_control,
+                                &mut authorization_transaction,
+                                authorization_stores,
+                                commands,
+                            )
+                            .await
+                    }
+                    RemoteControlPairingPersistenceInput::StoreCompleted(stored) => {
+                        let Some(stores) = authorization_stores else {
+                            continue;
+                        };
+                        pairing_persistence
+                            .accept_store_completion(
+                                stored,
+                                remote_control,
+                                &mut authorization_transaction,
+                                stores,
+                                commands,
+                            )
+                            .await
+                    }
+                };
+                if let (Err(failure), Some(stores)) = (result, authorization_stores) {
+                    stores.report_failure(failure).await;
+                }
             }
-            Either::Second(Either::First(Either::First(
-                RemoteControlControllerGrantCommand::SetControllerGrant { id, grant },
-            ))) => {
+            Either4::Second(RemoteControlControllerGrantCommand::SetControllerGrant {
+                id,
+                grant,
+            }) => {
                 let outcome = if authorization_transaction.is_active() {
                     Err(super::SetRemoteControlControllerGrantServiceError::TransactionInProgress)
                 } else {
@@ -180,9 +209,10 @@ pub(super) async fn run_router<
                     RemoteControlControllerGrantCompletion::ControllerGrantSet(outcome),
                 );
             }
-            Either::Second(Either::First(Either::First(
-                RemoteControlControllerGrantCommand::RevokeController { id, controller },
-            ))) => {
+            Either4::Second(RemoteControlControllerGrantCommand::RevokeController {
+                id,
+                controller,
+            }) => {
                 let outcome = if authorization_transaction.is_active() {
                     Err(super::RevokeRemoteControlControllerServiceError::TransactionInProgress)
                 } else {
@@ -193,9 +223,7 @@ pub(super) async fn run_router<
                     RemoteControlControllerGrantCompletion::ControllerRevoked(outcome),
                 );
             }
-            Either::Second(Either::First(Either::Second(
-                RemoteControlTargetAccessCommand::Inventory { id },
-            ))) => {
+            Either4::Third(RemoteControlTargetAccessCommand::Inventory { id }) => {
                 let outcome = if authorization_transaction.is_active() {
                     Err(super::RemoteControlTargetInventoryServiceError::TransactionInProgress)
                 } else {
@@ -206,9 +234,7 @@ pub(super) async fn run_router<
                     RemoteControlTargetAccessCompletion::Inventory(outcome),
                 );
             }
-            Either::Second(Either::First(Either::Second(
-                RemoteControlTargetAccessCommand::ResolveTarget { id, target },
-            ))) => {
+            Either4::Third(RemoteControlTargetAccessCommand::ResolveTarget { id, target }) => {
                 let outcome = if authorization_transaction.is_active() {
                     Err(super::ResolveRemoteControlTargetServiceError::TransactionInProgress)
                 } else {
@@ -219,9 +245,7 @@ pub(super) async fn run_router<
                     RemoteControlTargetAccessCompletion::Resolved(outcome),
                 );
             }
-            Either::Second(Either::First(Either::Second(
-                RemoteControlTargetAccessCommand::SetTargetAccess { id, access },
-            ))) => {
+            Either4::Third(RemoteControlTargetAccessCommand::SetTargetAccess { id, access }) => {
                 let outcome = if authorization_transaction.is_active() {
                     Err(super::SetRemoteControlTargetAccessServiceError::TransactionInProgress)
                 } else {
@@ -232,9 +256,7 @@ pub(super) async fn run_router<
                     RemoteControlTargetAccessCompletion::AccessSet(outcome),
                 );
             }
-            Either::Second(Either::First(Either::Second(
-                RemoteControlTargetAccessCommand::ForgetTarget { id, target },
-            ))) => {
+            Either4::Third(RemoteControlTargetAccessCommand::ForgetTarget { id, target }) => {
                 let outcome = if authorization_transaction.is_active() {
                     Err(super::ForgetRemoteControlTargetServiceError::TransactionInProgress)
                 } else {
@@ -245,7 +267,7 @@ pub(super) async fn run_router<
                     RemoteControlTargetAccessCompletion::Forgotten(outcome),
                 );
             }
-            Either::Second(Either::Second(request)) => {
+            Either4::Fourth(request) => {
                 dispatch::<
                     St,
                     R,
@@ -262,6 +284,31 @@ pub(super) async fn run_router<
     }
 }
 
+enum RemoteControlPairingPersistenceInput {
+    Required(RemoteControlPairingPersistenceRequired),
+    StoreCompleted(Result<(), super::embedded_persistence::EmbeddedPersistenceFailure>),
+}
+
+#[inline(never)]
+async fn next_pairing_persistence_input<M: RawMutex>(
+    progress: &RemoteControlPairingPersistenceProgress,
+    events: &RemoteControlPairingPersistenceEvents<M>,
+    stores: Option<&RemoteControlAuthorizationStoreExchange<M>>,
+) -> RemoteControlPairingPersistenceInput {
+    if progress.is_ready() {
+        return RemoteControlPairingPersistenceInput::Required(events.receive().await);
+    }
+    if progress.is_waiting_for_store() {
+        if let Some(stores) = stores {
+            return RemoteControlPairingPersistenceInput::StoreCompleted(
+                stores.next_completion().await,
+            );
+        }
+    }
+    core::future::pending().await
+}
+
+#[inline(never)]
 async fn dispatch<
     St,
     R,
@@ -518,6 +565,7 @@ mod tests {
         let completions = crate::runtime::CompletionPool::<M, 0>::new();
         let handle = PrnsNodeHandle::new(commands.sender(), &completions);
         let requests = Channel::<M, RunnerRequest<16>, 1>::new();
+        let pairing_events = RemoteControlPairingPersistenceEvents::new();
         let mut engine = EngineState::<GrowableHeap>::default();
         let mut remote_control = crate::runtime::configure_remote_control_service(
             &mut engine,
@@ -531,6 +579,8 @@ mod tests {
             &(),
             &mut remote_control,
             requests.receiver(),
+            &pairing_events,
+            None,
             handle,
         );
         let exercise = async {
@@ -566,6 +616,7 @@ mod tests {
         let completions = crate::runtime::CompletionPool::<M, 0>::new();
         let handle = PrnsNodeHandle::new(commands.sender(), &completions);
         let requests = Channel::<M, RunnerRequest<16>, 1>::new();
+        let pairing_events = RemoteControlPairingPersistenceEvents::new();
         let mut remote_control = remote_control();
         let destination = remote_control.target_endpoint().unwrap().destination_hash();
         let path_hash = remote_control.request_endpoint_id().unwrap();
@@ -591,6 +642,8 @@ mod tests {
             &(),
             &mut remote_control,
             requests.receiver(),
+            &pairing_events,
+            None,
             handle,
         );
         let exercise = async {
@@ -642,6 +695,8 @@ mod tests {
         let completions = crate::runtime::CompletionPool::<M, 0>::new();
         let handle = PrnsNodeHandle::new(commands.sender(), &completions);
         let requests = Channel::<M, RunnerRequest<16>, 1>::new();
+        let pairing_events = RemoteControlPairingPersistenceEvents::new();
+        let authorization_stores = RemoteControlAuthorizationStoreExchange::new();
         let mut remote_control = remote_control();
         let attempt_id = super::super::node_facade::test_remote_control_pairing_attempt(0x77);
         let pairing_grant = super::super::node_facade::test_remote_control_grant(
@@ -650,32 +705,29 @@ mod tests {
         let app_grant = super::super::node_facade::test_remote_control_grant(
             RemoteControlRequestKind::AnnounceSelf,
         );
+        pairing_events.signal(RemoteControlPairingPersistenceRequired::ControllerGrant {
+            attempt_id,
+            grant: pairing_grant,
+        });
         let router = run_router::<(), (), M, 1, 0, 0, 0, 1, 16>(
             &(),
             &mut remote_control,
             requests.receiver(),
+            &pairing_events,
+            Some(&authorization_stores),
             handle,
         );
         let exercise = async {
-            let (prepared, (app_mutation, (target_inventory, target_resolution))) = join(
-                handle.prepare_remote_control_pairing_authorization(
-                    attempt_id,
-                    super::super::remote_control_pairing_authorizations::RemoteControlPairingAuthorization::ControllerGrant(
-                        pairing_grant,
-                    ),
-                ),
+            let (app_mutation, (target_inventory, target_resolution)) = join(
+                handle.set_remote_control_controller_grant(app_grant),
                 join(
-                    handle.set_remote_control_controller_grant(app_grant),
-                    join(
-                        handle.remote_control_target_inventory(),
-                        handle.resolve_remote_control_target(crate::identity::IdentityHash::new([
-                            0x78; 16
-                        ])),
-                    ),
+                    handle.remote_control_target_inventory(),
+                    handle.resolve_remote_control_target(crate::identity::IdentityHash::new(
+                        [0x78; 16],
+                    )),
                 ),
             )
             .await;
-            assert!(prepared.is_ok());
             assert_eq!(
                 app_mutation,
                 Err(SetRemoteControlControllerGrantControlError::Busy),
@@ -688,10 +740,6 @@ mod tests {
                 target_resolution,
                 Err(ResolveRemoteControlTargetControlError::Busy),
             );
-            handle
-                .release_remote_control_pairing_authorization(attempt_id)
-                .await
-                .unwrap();
         };
 
         match block_on(select(exercise, router)) {

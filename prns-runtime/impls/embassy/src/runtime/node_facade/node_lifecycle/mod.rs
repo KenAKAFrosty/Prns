@@ -20,9 +20,8 @@ use crate::remote_control::{RemoteControlEndpoint, RemoteControlNodeIdentities};
 use crate::storage::StorageLayout;
 
 use super::super::remote_control_pairing_persistence::{
-    run_remote_control_pairing_persistence, RemoteControlAuthorizationStoreExchange,
-    RemoteControlPairingManifoldPersistence, RemoteControlPairingPersistenceEvents,
-    RemoteControlPairingPersistenceRequired,
+    RemoteControlAuthorizationStoreExchange, RemoteControlPairingManifoldPersistence,
+    RemoteControlPairingPersistenceEvents, RemoteControlPairingPersistenceRequired,
 };
 use super::super::request_endpoints::RequestEndpointSet;
 use super::super::request_runner::{run_router, RunnerRequest};
@@ -598,11 +597,11 @@ where
             &state,
             &mut remote_control,
             request_channel.receiver(),
+            &pairing_persistence_events,
+            None,
             handle,
         );
-        let pairing_persistence =
-            run_remote_control_pairing_persistence(&pairing_persistence_events, None, handle);
-        join(join(join(manifold, router), pairing_persistence), drive).await;
+        join(join(manifold, router), drive).await;
     }
 
     /// Runs only the manifold for boards that schedule interfaces separately.
@@ -865,13 +864,15 @@ where
             RESPONSE_BYTES,
             ROUTED_REQUESTS,
             ROUTED_REQUEST_BYTES,
-        >(state, remote_control, request_channel.receiver(), *handle);
-        let pairing_persistence = run_remote_control_pairing_persistence(
+        >(
+            state,
+            remote_control,
+            request_channel.receiver(),
             &pairing_persistence_events,
             Some(&authorization_stores),
             *handle,
         );
-        join(join(manifold, router), pairing_persistence).await;
+        join(manifold, router).await;
     }
 }
 

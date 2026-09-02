@@ -33,11 +33,6 @@ use super::super::remote_control_controller_grants::{
     RemoteControlControllerGrantCommand, RemoteControlControllerGrantCompletion,
     RemoteControlControllerGrantExchange,
 };
-use super::super::remote_control_pairing_authorizations::{
-    RemoteControlPairingAuthorization, RemoteControlPairingAuthorizationCommand,
-    RemoteControlPairingAuthorizationCompletion, RemoteControlPairingAuthorizationExchange,
-    RemoteControlPairingAuthorizationTransactionFailure,
-};
 use super::super::remote_control_target_accesses::{
     RemoteControlTargetAccessCommand, RemoteControlTargetAccessCompletion,
     RemoteControlTargetAccessExchange,
@@ -74,7 +69,6 @@ pub struct CompletionPool<
     request_slots: [Signal<M, Settlement>; REQUEST_COMPLETIONS],
     remote_control_controller_grants: RemoteControlControllerGrantExchange<M>,
     remote_control_target_accesses: RemoteControlTargetAccessExchange<M>,
-    remote_control_pairing_authorizations: RemoteControlPairingAuthorizationExchange<M>,
     remote_control_pairing_settlement: RemoteControlPairingSettlementAwaiter<M>,
 }
 
@@ -228,7 +222,6 @@ impl<
             request_slots: [const { Signal::new() }; REQUEST_COMPLETIONS],
             remote_control_controller_grants: RemoteControlControllerGrantExchange::new(),
             remote_control_target_accesses: RemoteControlTargetAccessExchange::new(),
-            remote_control_pairing_authorizations: RemoteControlPairingAuthorizationExchange::new(),
             remote_control_pairing_settlement: RemoteControlPairingSettlementAwaiter::new(),
         }
     }
@@ -730,32 +723,6 @@ impl<
         result.map_err(RemoteControlPairingControlError::Failed)
     }
 
-    async fn run_remote_control_pairing_authorization_command(
-        &self,
-        build: impl FnOnce(CommandId) -> RemoteControlPairingAuthorizationCommand,
-    ) -> Result<
-        RemoteControlPairingAuthorizationCompletion,
-        RemoteControlPairingAuthorizationTransactionFailure,
-    > {
-        let id = self.pool.mint();
-        if !self
-            .pool
-            .remote_control_pairing_authorizations
-            .submit(build(id))
-        {
-            return Err(RemoteControlPairingAuthorizationTransactionFailure::RuntimeState);
-        }
-        let _guard = RemoteControlPairingAuthorizationSlotGuard {
-            pool: self.pool,
-            id,
-        };
-        Ok(self
-            .pool
-            .remote_control_pairing_authorizations
-            .completion(id)
-            .await)
-    }
-
     /// Responds inline; returns `false` when the body exceeds the link MDU or the command lane is full.
     pub fn respond_packed(&self, responder: RespondToken, packed: &[u8]) -> bool {
         match RespondData::from_slice(packed) {
@@ -959,139 +926,6 @@ impl<
             .remote_control_target_accesses
             .settle(id, completion)
     }
-
-    pub(in crate::runtime) async fn next_remote_control_pairing_authorization_command(
-        &self,
-    ) -> RemoteControlPairingAuthorizationCommand {
-        self.pool
-            .remote_control_pairing_authorizations
-            .next_command()
-            .await
-    }
-
-    pub(in crate::runtime) fn settle_remote_control_pairing_authorization(
-        &self,
-        id: CommandId,
-        completion: RemoteControlPairingAuthorizationCompletion,
-    ) -> bool {
-        self.pool
-            .remote_control_pairing_authorizations
-            .settle(id, completion)
-    }
-
-    pub(in crate::runtime) async fn prepare_remote_control_pairing_authorization(
-        &self,
-        attempt_id: crate::remote_control::RemoteControlPairingAttemptId,
-        authorization: RemoteControlPairingAuthorization,
-    ) -> Result<
-        super::super::embedded_persistence::RemoteControlAuthorizationSnapshot,
-        RemoteControlPairingAuthorizationTransactionFailure,
-    > {
-        match self
-            .run_remote_control_pairing_authorization_command(|id| {
-                RemoteControlPairingAuthorizationCommand::Prepare {
-                    id,
-                    attempt_id,
-                    authorization,
-                }
-            })
-            .await?
-        {
-            RemoteControlPairingAuthorizationCompletion::Prepared(result) => result,
-            RemoteControlPairingAuthorizationCompletion::RollbackSnapshot(_)
-            | RemoteControlPairingAuthorizationCompletion::Activated(_)
-            | RemoteControlPairingAuthorizationCompletion::RolledBack(_)
-            | RemoteControlPairingAuthorizationCompletion::Released(_) => {
-                Err(RemoteControlPairingAuthorizationTransactionFailure::RuntimeState)
-            }
-        }
-    }
-
-    pub(in crate::runtime) async fn snapshot_remote_control_pairing_authorization_rollback(
-        &self,
-        attempt_id: crate::remote_control::RemoteControlPairingAttemptId,
-    ) -> Result<
-        super::super::embedded_persistence::RemoteControlAuthorizationSnapshot,
-        RemoteControlPairingAuthorizationTransactionFailure,
-    > {
-        match self
-            .run_remote_control_pairing_authorization_command(|id| {
-                RemoteControlPairingAuthorizationCommand::SnapshotRollback { id, attempt_id }
-            })
-            .await?
-        {
-            RemoteControlPairingAuthorizationCompletion::RollbackSnapshot(result) => result,
-            RemoteControlPairingAuthorizationCompletion::Prepared(_)
-            | RemoteControlPairingAuthorizationCompletion::Activated(_)
-            | RemoteControlPairingAuthorizationCompletion::RolledBack(_)
-            | RemoteControlPairingAuthorizationCompletion::Released(_) => {
-                Err(RemoteControlPairingAuthorizationTransactionFailure::RuntimeState)
-            }
-        }
-    }
-
-    pub(in crate::runtime) async fn activate_remote_control_pairing_authorization(
-        &self,
-        attempt_id: crate::remote_control::RemoteControlPairingAttemptId,
-    ) -> Result<(), RemoteControlPairingAuthorizationTransactionFailure> {
-        match self
-            .run_remote_control_pairing_authorization_command(|id| {
-                RemoteControlPairingAuthorizationCommand::Activate { id, attempt_id }
-            })
-            .await?
-        {
-            RemoteControlPairingAuthorizationCompletion::Activated(result) => result,
-            RemoteControlPairingAuthorizationCompletion::Prepared(_)
-            | RemoteControlPairingAuthorizationCompletion::RollbackSnapshot(_)
-            | RemoteControlPairingAuthorizationCompletion::RolledBack(_)
-            | RemoteControlPairingAuthorizationCompletion::Released(_) => {
-                Err(RemoteControlPairingAuthorizationTransactionFailure::RuntimeState)
-            }
-        }
-    }
-
-    pub(in crate::runtime) async fn roll_back_remote_control_pairing_authorization(
-        &self,
-        attempt_id: crate::remote_control::RemoteControlPairingAttemptId,
-    ) -> Result<
-        super::super::embedded_persistence::RemoteControlAuthorizationSnapshot,
-        RemoteControlPairingAuthorizationTransactionFailure,
-    > {
-        match self
-            .run_remote_control_pairing_authorization_command(|id| {
-                RemoteControlPairingAuthorizationCommand::RollBack { id, attempt_id }
-            })
-            .await?
-        {
-            RemoteControlPairingAuthorizationCompletion::RolledBack(result) => result,
-            RemoteControlPairingAuthorizationCompletion::Prepared(_)
-            | RemoteControlPairingAuthorizationCompletion::RollbackSnapshot(_)
-            | RemoteControlPairingAuthorizationCompletion::Activated(_)
-            | RemoteControlPairingAuthorizationCompletion::Released(_) => {
-                Err(RemoteControlPairingAuthorizationTransactionFailure::RuntimeState)
-            }
-        }
-    }
-
-    pub(in crate::runtime) async fn release_remote_control_pairing_authorization(
-        &self,
-        attempt_id: crate::remote_control::RemoteControlPairingAttemptId,
-    ) -> Result<(), RemoteControlPairingAuthorizationTransactionFailure> {
-        match self
-            .run_remote_control_pairing_authorization_command(|id| {
-                RemoteControlPairingAuthorizationCommand::Release { id, attempt_id }
-            })
-            .await?
-        {
-            RemoteControlPairingAuthorizationCompletion::Released(result) => result,
-            RemoteControlPairingAuthorizationCompletion::Prepared(_)
-            | RemoteControlPairingAuthorizationCompletion::RollbackSnapshot(_)
-            | RemoteControlPairingAuthorizationCompletion::Activated(_)
-            | RemoteControlPairingAuthorizationCompletion::RolledBack(_) => {
-                Err(RemoteControlPairingAuthorizationTransactionFailure::RuntimeState)
-            }
-        }
-    }
 }
 
 struct RemoteControlPairingSettlementGuard<
@@ -1176,17 +1010,6 @@ struct RemoteControlTargetAccessSlotGuard<
     id: CommandId,
 }
 
-struct RemoteControlPairingAuthorizationSlotGuard<
-    'a,
-    M: RawMutex,
-    const COMPLETIONS: usize,
-    const REQUEST_COMPLETIONS: usize,
-    const RESPONSE_BYTES: usize,
-> {
-    pool: &'a CompletionPool<M, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>,
-    id: CommandId,
-}
-
 impl<
         M: RawMutex,
         const COMPLETIONS: usize,
@@ -1203,27 +1026,6 @@ impl<
 {
     fn drop(&mut self) {
         self.pool.remote_control_controller_grants.release(self.id);
-    }
-}
-
-impl<
-        M: RawMutex,
-        const COMPLETIONS: usize,
-        const REQUEST_COMPLETIONS: usize,
-        const RESPONSE_BYTES: usize,
-    > Drop
-    for RemoteControlPairingAuthorizationSlotGuard<
-        '_,
-        M,
-        COMPLETIONS,
-        REQUEST_COMPLETIONS,
-        RESPONSE_BYTES,
-    >
-{
-    fn drop(&mut self) {
-        self.pool
-            .remote_control_pairing_authorizations
-            .release(self.id);
     }
 }
 
