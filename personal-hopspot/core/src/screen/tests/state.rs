@@ -302,6 +302,45 @@ fn long_press_on_the_announce_item_returns_the_announce_action() {
 }
 
 #[test]
+#[cfg(feature = "remote-control-pairing")]
+fn remote_control_pairing_is_capability_gated_and_opens_then_cancels_from_the_screen() {
+    let cards = test_cards::<1>(CardKind::Usb);
+    let content = test_content(&cards);
+    let mut unavailable = test_ui_state();
+    unavailable.handle_input(InputEvent::LongPress, content);
+    assert_eq!(
+        unavailable
+            .global_menu_items()
+            .filter(|item| *item == GlobalMenuItem::PairRemoteControl)
+            .count(),
+        0
+    );
+
+    let mut state = test_ui_state_with_remote_control_pairing();
+    state.handle_input(InputEvent::LongPress, content);
+    state.handle_input(InputEvent::ShortPress, content);
+    assert_eq!(
+        state.global_menu_items().nth(1),
+        Some(GlobalMenuItem::PairRemoteControl)
+    );
+    assert_eq!(
+        state.handle_input(InputEvent::LongPress, content),
+        UiAction::OpenRemoteControlPairing
+    );
+    assert_eq!(state.mode, UiMode::RemoteControlPairing { approve: false });
+
+    let mut pairing = crate::RemoteControlTargetPairingState::new();
+    pairing.begin_opening();
+    pairing.opened(0x1234_ABCD, personal_rns::units::InstantMillis(60_000));
+    state.sync_remote_control(pairing, personal_rns::units::InstantMillis(10_000));
+    assert_eq!(
+        state.handle_input(InputEvent::LongPress, content),
+        UiAction::CloseRemoteControlPairing
+    );
+    assert!(state.global_selected());
+}
+
+#[test]
 fn long_press_on_limits_opens_the_paged_limits_page() {
     let cards = test_cards::<4>(CardKind::Usb);
     let content = test_content(&cards);

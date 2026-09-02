@@ -14,6 +14,7 @@ mod mobile;
 pub mod node_pages;
 mod persistence;
 mod power_publish;
+mod remote_control;
 #[cfg(feature = "embedded")]
 mod remote_control_executor;
 mod remote_control_inventory;
@@ -57,6 +58,12 @@ pub use prns_core::capabilities::positioning::{
 pub use prns_core::capabilities::power::{
     BatteryGauge, BatteryPercent, BatterySource, ChargingState, ExternalPowerState, NoBattery,
     PowerSnapshot,
+};
+pub use remote_control::{
+    RemoteControlEventHandoff, RemoteControlPairingAvailability, RemoteControlTargetPairingFailure,
+    RemoteControlTargetPairingPhase, RemoteControlTargetPairingState,
+    RemoteControlTargetPairingUpdate, StableTargetAnnouncementAction,
+    StableTargetAnnouncementStatus, StableTargetAnnouncer, STABLE_TARGET_ANNOUNCE_OFFSETS_MILLIS,
 };
 #[cfg(feature = "embedded")]
 pub use remote_control_executor::{

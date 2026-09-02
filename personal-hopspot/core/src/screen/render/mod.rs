@@ -21,6 +21,8 @@ use cards::{draw_card_peek, draw_card_with_selection, draw_footer, draw_global_r
 use glyphs::draw_title_bar;
 use gnss::draw_gnss_panel;
 use layout::*;
+#[cfg(feature = "remote-control-pairing")]
+use menus::draw_remote_control_pairing;
 use menus::subg::draw_subg_editor;
 use menus::{
     draw_global_menu, draw_interface_menu, draw_limits_page, draw_notice, draw_radio_confirm,
@@ -71,6 +73,12 @@ pub(super) fn draw<D: DrawTarget<Color = BinaryColor>>(
 
     if let UiMode::ConfirmSubGClear { confirm } = state.mode {
         draw_subg_clear_confirm(display, confirm);
+        return;
+    }
+
+    #[cfg(feature = "remote-control-pairing")]
+    if let UiMode::RemoteControlPairing { .. } = state.mode {
+        draw_remote_control_pairing(display, state);
         return;
     }
 
