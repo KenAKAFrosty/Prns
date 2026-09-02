@@ -572,6 +572,27 @@ jobs:
             audits/unsafe-snapshot.json
             personal-hopspot/mobile/android/dependencies/release-runtime.tsv
 
+  application-scaffold:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.18.0"
+          cache: npm
+          cache-dependency-path: applications/package-lock.json
+      - name: Install exact application toolchain
+        run: |
+          npm install --global npm@11.16.0
+          test "$(node --version)" = "v24.18.0"
+          test "$(npm --version)" = "11.16.0"
+          npm --prefix applications ci --ignore-scripts --no-audit --no-fund
+      - name: Verify application scaffold
+        run: python3 validation/run.py run --suite application-scaffold --expected-sha "$GITHUB_SHA"
+
   release-critical:
     name: Release critical
     if: always()
@@ -591,6 +612,7 @@ jobs:
       - windows-desktop
       - local-interop
       - deny
+      - application-scaffold
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
@@ -609,6 +631,7 @@ jobs:
       WINDOWS_RESULT: ${{ needs.windows-desktop.result }}
       INTEROP_RESULT: ${{ needs.local-interop.result }}
       DENY_RESULT: ${{ needs.deny.result }}
+      APPLICATION_SCAFFOLD_RESULT: ${{ needs.application-scaffold.result }}
     steps:
       - name: Require every release-critical lane
         run: |
@@ -627,6 +650,7 @@ jobs:
             "$APPLE_RESULT" \
             "$WINDOWS_RESULT" \
             "$INTEROP_RESULT" \
-            "$DENY_RESULT"; do
+            "$DENY_RESULT" \
+            "$APPLICATION_SCAFFOLD_RESULT"; do
             test "$result" = "success"
           done

@@ -1,0 +1,27 @@
+{
+  "name": "prns-applications",
+  "private": true,
+  "version": "0.0.0",
+  "packageManager": "npm@11.16.0",
+  "engines": {
+    "node": "^22.13.0 || ^24.3.0 || >=25.0.0"
+  },
+  "workspaces": [
+    "prns/app"
+  ],
+  "scripts": {
+    "start": "npm --prefix prns/app run start",
+    "start:web": "npm --prefix prns/app run start:web",
+    "versions:check": "npm --prefix prns/app run versions:check",
+    "format:check": "npm --prefix prns/app run format:check",
+    "lint": "npm --prefix prns/app run lint",
+    "typecheck": "npm --prefix prns/app run typecheck",
+    "routes:check": "npm --prefix prns/app run routes:check",
+    "config:check": "npm --prefix prns/app run config:check",
+    "expo:check": "npm --prefix prns/app run expo:check",
+    "doctor": "npm --prefix prns/app run doctor",
+    "test": "npm --prefix prns/app run test",
+    "export:web": "npm --prefix prns/app run export:web",
+    "verify": "npm --prefix prns/app run verify"
+  }
+}

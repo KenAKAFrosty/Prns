@@ -825,6 +825,32 @@ inputs = [
 artifacts = "validation-artifacts/results/wifi-direct-hwsim"
 
 [[suite]]
+id = "application-scaffold"
+domain = "platform"
+group = "application"
+tiers = ["pr"]
+platform = "any"
+toolchain = "node"
+timeout_seconds = 900
+command = ["npm", "--prefix", "applications", "run", "verify"]
+inputs = [
+  "applications/package.json",
+  "applications/package-lock.json",
+  "applications/prns/app/.gitignore",
+  "applications/prns/app/app.config.ts",
+  "applications/prns/app/biome.json",
+  "applications/prns/app/jest.config.cjs",
+  "applications/prns/app/package.json",
+  "applications/prns/app/tsconfig.json",
+  "applications/prns/app/tsconfig.test.json",
+  "applications/prns/app/tsconfig.tools.json",
+  "applications/prns/app/app",
+  "applications/prns/app/src",
+  "applications/prns/app/tools",
+]
+artifacts = "validation-artifacts/results/application-scaffold"
+
+[[suite]]
 id = "javascript-contract"
 domain = "platform"
 group = "wasm"

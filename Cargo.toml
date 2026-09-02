@@ -21,6 +21,7 @@ default-members = [
     "personal-hopspot/core",
 ]
 exclude = [
+    "applications",
     "prnsd",
     "prns-ffi",
     "prns-napi",
