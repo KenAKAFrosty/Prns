@@ -141,7 +141,7 @@ def plan_for_paths(paths: set[str]) -> tuple[Gate, ...]:
             continue
         gates.append(
             Gate(
-                f"RustSec advisories ({lock_path})",
+                f"dependency policy ({lock_path})",
                 (
                     "cargo",
                     "deny",
@@ -153,6 +153,9 @@ def plan_for_paths(paths: set[str]) -> tuple[Gate, ...]:
                     "--config",
                     str(ROOT / "deny.toml"),
                     "advisories",
+                    "licenses",
+                    "sources",
+                    "bans",
                 ),
             )
         )

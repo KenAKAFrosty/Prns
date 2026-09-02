@@ -33,11 +33,21 @@ class PrePushCiParityTests(unittest.TestCase):
         self.assertIn("JavaScript and TypeScript contract check", names)
         self.assertIn("JVM binding compile", names)
 
-    def test_lockfile_change_checks_only_its_workspace_for_advisories(self) -> None:
-        names = self.gate_names({"prnsd/Cargo.lock"})
+    def test_lockfile_change_checks_only_its_workspace_dependency_policy(self) -> None:
+        gates = parity.plan_for_paths({"prnsd/Cargo.lock"})
+        names = {gate.name for gate in gates}
 
-        self.assertIn("RustSec advisories (prnsd/Cargo.lock)", names)
-        self.assertNotIn("RustSec advisories (Cargo.lock)", names)
+        self.assertIn("dependency policy (prnsd/Cargo.lock)", names)
+        self.assertNotIn("dependency policy (Cargo.lock)", names)
+        policy = next(
+            gate
+            for gate in gates
+            if gate.name == "dependency policy (prnsd/Cargo.lock)"
+        )
+        self.assertEqual(
+            policy.command[-4:],
+            ("advisories", "licenses", "sources", "bans"),
+        )
 
     def test_documentation_change_has_no_additional_ci_lane(self) -> None:
         self.assertEqual(self.gate_names({"docs/architecture.md"}), set())
