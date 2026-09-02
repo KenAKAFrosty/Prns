@@ -1576,6 +1576,12 @@ group = "remote-control"
 tiers = ["release", "scheduled"]
 
 [[fuzz_target]]
+name = "remote_control_pairing_messages_parse"
+path = "fuzz_targets/remote_control_pairing_messages_parse.rs"
+group = "remote-control"
+tiers = ["release", "scheduled"]
+
+[[fuzz_target]]
 name = "remote_control_controller_grants_snapshot"
 path = "fuzz_targets/remote_control_controller_grants_snapshot.rs"
 group = "remote-control"
@@ -1720,19 +1726,25 @@ group = "remote-control"
 tiers = ["release", "scheduled"]
 
 [[kani]]
-name = "pairing_request_parse_terminates_for_every_bounded_wire_shape"
-source = "prns-core/src/remote_control/pairing/exchange/kani_proofs.rs"
+name = "pairing_request_wire_structure_parse_terminates_for_every_bounded_shape"
+source = "prns-core/src/remote_control/pairing/exchange/wire.rs"
 group = "remote-control"
 tiers = ["release", "scheduled"]
 
 [[kani]]
-name = "pairing_response_parse_terminates_for_every_bounded_wire_shape"
-source = "prns-core/src/remote_control/pairing/exchange/kani_proofs.rs"
+name = "pairing_response_wire_structure_parse_terminates_for_every_bounded_shape"
+source = "prns-core/src/remote_control/pairing/exchange/wire.rs"
 group = "remote-control"
 tiers = ["release", "scheduled"]
 
 [[kani]]
 name = "controller_attempt_deadlines_are_strictly_future_and_pairing_bounded"
 source = "prns-core/src/remote_control/pairing/controller_pairing/kani_proofs.rs"
+group = "remote-control"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "target_attempt_deadlines_are_strictly_future_and_pairing_bounded"
+source = "prns-core/src/remote_control/pairing/target_pairing/kani_proofs.rs"
 group = "remote-control"
 tiers = ["release", "scheduled"]

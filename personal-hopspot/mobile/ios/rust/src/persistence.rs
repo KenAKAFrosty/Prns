@@ -154,6 +154,7 @@ const fn region_name(region: RegionFlush) -> &'static str {
     match region {
         RegionFlush::Wrote => "wrote",
         RegionFlush::UnchangedSkipped => "unchanged",
+        RegionFlush::UnavailableSkipped => "unavailable",
     }
 }
 

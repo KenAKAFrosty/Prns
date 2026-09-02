@@ -12,7 +12,7 @@ use personal_rns::engine::{
 use personal_rns::identity::{decrypt_token_in_place_with_ratchets, OpenedToken};
 use personal_rns::interfaces::{AttachedInterfaces, InboundPacket};
 use personal_rns::remote_control::RemoteControlPairingAvailabilityVerification;
-use personal_rns::routing::announce::Announce;
+use personal_rns::routing::ingress::AnnounceVerification;
 use personal_rns::routing::links::handshake::{link_proof_signature_valid, link_proof_signed_data};
 use personal_rns::routing::links::resources::build_outgoing::BuildOutgoingResourceError;
 use personal_rns::routing::links::resources::send::ResourceBuildCompleted;
@@ -306,27 +306,27 @@ pub(super) fn feed_packet_inline(
                         capture.absorb(reaction, scratch)
                     });
                 }
-                CryptoOwed::AnnounceVerify(owed) => {
-                    if Announce::from_wire_unverified(&owed.header, &owed.payload)
-                        .is_ok_and(|announce| announce.signature_is_valid())
-                    {
+                CryptoOwed::AnnounceVerify(owed) => match owed.verify() {
+                    AnnounceVerification::Verified(verified) => {
                         engine.resume_announce(
-                            owed,
+                            verified,
                             interfaces,
                             &mut |bytes| entropy.fill(bytes),
                             &mut |reaction| capture.absorb(reaction, scratch),
                         );
                     }
-                }
-                CryptoOwed::RemoteControlPairingAvailabilityVerify(owed) => {
-                    if owed.verify() == RemoteControlPairingAvailabilityVerification::Valid {
+                    AnnounceVerification::Invalid(_) => {}
+                },
+                CryptoOwed::RemoteControlPairingAvailabilityVerify(owed) => match owed.verify() {
+                    RemoteControlPairingAvailabilityVerification::Verified(verified) => {
                         engine.resume_remote_control_pairing_availability(
-                            owed,
+                            verified,
                             interfaces,
                             &mut |reaction| capture.absorb(reaction, scratch),
                         );
                     }
-                }
+                    RemoteControlPairingAvailabilityVerification::Invalid(_) => {}
+                },
             },
             ReadyWork::ResourceBuildUnsupported { reservation } => {
                 engine.resume_resource_build(
