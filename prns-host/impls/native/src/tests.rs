@@ -1,5 +1,5 @@
 use super::*;
-use prns_host::{DestinationName, PrnsLimits, SingleDestinationConfig};
+use prns_host::{DestinationName, InterfaceHealth, PrnsLimits, SingleDestinationConfig};
 use std::fs;
 use std::sync::atomic::AtomicUsize;
 use std::time::{SystemTime, UNIX_EPOCH};
