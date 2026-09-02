@@ -1323,9 +1323,7 @@ impl PrnsRuntime {
                         match ProtocolCryptoOperation::announce(owed) {
                             Ok(operation) => operation,
                             Err(owed) => {
-                                capture
-                                    .ready
-                                    .push_crypto(CryptoOwed::AnnounceVerify(*owed));
+                                capture.ready.push_crypto(CryptoOwed::AnnounceVerify(*owed));
                                 continue;
                             }
                         }

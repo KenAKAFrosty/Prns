@@ -31,9 +31,7 @@ pub(crate) enum ProtocolCryptoOperation {
 }
 
 impl ProtocolCryptoOperation {
-    pub(crate) fn announce(
-        owed: AnnounceVerifyOwed,
-    ) -> Result<Self, Box<AnnounceVerifyOwed>> {
+    pub(crate) fn announce(owed: AnnounceVerifyOwed) -> Result<Self, Box<AnnounceVerifyOwed>> {
         let prepared = {
             let announce = match Announce::from_wire_unverified(&owed.header, &owed.payload) {
                 Ok(announce) => announce,
@@ -53,10 +51,10 @@ impl ProtocolCryptoOperation {
         };
         Ok(Self::AnnounceVerify(Box::new(
             ProtocolAnnounceVerifyOperation {
-            owed,
-            public_key: prepared.0,
-            message: prepared.1,
-            signature: prepared.2,
+                owed,
+                public_key: prepared.0,
+                message: prepared.1,
+                signature: prepared.2,
             },
         )))
     }
@@ -154,12 +152,14 @@ impl ProtocolCryptoQueue {
             .find(|pending| matches!(pending.state, ProtocolCryptoState::Queued))?;
         pending.state = ProtocolCryptoState::Running;
         Some(match &mut pending.operation {
-            ProtocolCryptoOperation::AnnounceVerify(operation) => ProtocolCryptoJob::AnnounceVerify {
-                id: pending.id,
-                public_key: operation.public_key,
-                message: core::mem::take(&mut operation.message),
-                signature: operation.signature,
-            },
+            ProtocolCryptoOperation::AnnounceVerify(operation) => {
+                ProtocolCryptoJob::AnnounceVerify {
+                    id: pending.id,
+                    public_key: operation.public_key,
+                    message: core::mem::take(&mut operation.message),
+                    signature: operation.signature,
+                }
+            }
             ProtocolCryptoOperation::LinkProofVerify(owed) => ProtocolCryptoJob::LinkProofVerify {
                 id: pending.id,
                 public_key: owed.responder_signing.0,
