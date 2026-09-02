@@ -27,10 +27,10 @@ dependencies, and checks advisories, licenses, sources, and bans with cargo-deny
 
 - RUSTSEC-2026-0204 is resolved by `crossbeam-epoch 0.9.20`.
 - RUSTSEC-2026-0194 and RUSTSEC-2026-0195 are resolved by `plist 1.10.0` and `quick-xml 0.41.0`.
-- `dirs`/`option-ext`, `serialport`, and `tokio-serial` were removed from the engine/application
-  graphs. The standalone hardware flasher intentionally carries exact-scoped `directories` and
-  `serialport` dependencies for its user cache and direct USB operation; that separate graph is
-  audited on every published operating system target.
+- `serialport` and `tokio-serial` were removed from the engine/application graphs. The macOS and
+  Windows tray faces intentionally carry `dirs`/`option-ext` through `tray-icon`, while the
+  standalone hardware flasher carries exact-scoped `directories` and `serialport` dependencies
+  for its user cache and direct USB operation. Those platform graphs are audited independently.
 - Linux does not instantiate tray-icon's GTK3/GLib path for either `prnsd` or the Hopspot desktop
   face. Both use the blocking StatusNotifier backend in `ksni 0.3.6`; tray-icon remains
   target-scoped to macOS and Windows.
@@ -38,9 +38,9 @@ dependencies, and checks advisories, licenses, sources, and bans with cargo-deny
 The allowlist in `deny.toml` is a permissive-by-default policy: every unlisted expression fails.
 GPL, LGPL, AGPL, and unknown licenses are not accepted. Package-scoped additions are `ksni 0.3.6`
 under Unlicense, `nrf-softdevice-s140 0.1.2` under the hash-pinned Nordic terms, and the exact
-`serialport 4.9.0` transport required by the mandated `espflash 4.5.0` library under file-level
-MPL-2.0. That narrow hardware boundary is shipped with its source/license notice; MPL is not
-accepted generally. The SoftDevice source remains restricted to revision
+`serialport 4.9.0` and `option-ext 0.2.0` dependencies under file-level MPL-2.0. Those narrow
+transport and tray boundaries are shipped with their source/license notices; MPL is not accepted
+generally. The SoftDevice source remains restricted to revision
 `47d6121c6e823120e8b883a7ac75f44ce7daa3aa`.
 
 ## Unsafe enforcement

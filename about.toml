@@ -26,6 +26,9 @@ accepted = ["LicenseRef-Nordic-SoftDevice"]
 [serialport]
 accepted = ["MPL-2.0"]
 
+[option-ext]
+accepted = ["MPL-2.0"]
+
 [nrf-softdevice-s140.clarify]
 license = "LicenseRef-Nordic-SoftDevice"
 override-git-commit = "47d6121c6e823120e8b883a7ac75f44ce7daa3aa"

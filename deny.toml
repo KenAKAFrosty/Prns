@@ -1,7 +1,7 @@
 # cargo-deny — turns three of our promises into CI-enforced guarantees instead of
 # review-time discipline:
-#   1. the permissive-by-default license claim — GPL/AGPL/LGPL fail, and the one required
-#      file-level MPL transport stays scoped to an exact package exception;
+#   1. the permissive-by-default license claim — GPL/AGPL/LGPL fail, and required
+#      file-level MPL dependencies stay scoped to exact package exceptions;
 #   2. no known-vulnerable dependencies (RUSTSEC advisory DB);
 #   3. no surprise dependency sources or yanked crates.
 #
@@ -41,6 +41,9 @@ exceptions = [
     # espflash 4.5.0's library serial engine requires serialport. Keep its file-level MPL
     # obligations quarantined to this exact transport crate instead of widening the policy.
     { allow = ["MPL-2.0"], crate = "serialport@4.9.0" },
+    # tray-icon 0.24.1 reaches platform configuration through dirs 6.0.0 and this small
+    # MPL-licensed option adapter. Keep the exception pinned instead of allowing MPL globally.
+    { allow = ["MPL-2.0"], crate = "option-ext@0.2.0" },
 ]
 
 # `unescaper` declares the malformed/deprecated SPDX expression "GPL-3.0/MIT". It is
