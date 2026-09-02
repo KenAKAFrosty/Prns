@@ -25,6 +25,8 @@ class PrePushCiParityTests(unittest.TestCase):
         self.assertIn("root Clippy", names)
         self.assertIn("prns-core external-allocation lane", names)
         self.assertIn("Node native binding Clippy", names)
+        self.assertIn("embedded build matrix", names)
+        self.assertIn("unsafe dependency inventory", names)
 
     def test_generated_contract_change_checks_both_language_consumers(self) -> None:
         names = self.gate_names({"prns-host/schema/host-contract-v1.json"})
@@ -33,21 +35,24 @@ class PrePushCiParityTests(unittest.TestCase):
         self.assertIn("JavaScript and TypeScript contract check", names)
         self.assertIn("JVM binding compile", names)
 
-    def test_lockfile_change_checks_only_its_workspace_dependency_policy(self) -> None:
+    def test_lockfile_change_runs_the_exact_release_dependency_audit(self) -> None:
         gates = parity.plan_for_paths({"prnsd/Cargo.lock"})
         names = {gate.name for gate in gates}
 
-        self.assertIn("dependency policy (prnsd/Cargo.lock)", names)
-        self.assertNotIn("dependency policy (Cargo.lock)", names)
-        policy = next(
-            gate
-            for gate in gates
-            if gate.name == "dependency policy (prnsd/Cargo.lock)"
-        )
+        self.assertIn("release dependency audit", names)
+        self.assertNotIn("unsafe dependency inventory", names)
+        policy = next(gate for gate in gates if gate.name == "release dependency audit")
         self.assertEqual(
-            policy.command[-4:],
-            ("advisories", "licenses", "sources", "bans"),
+            policy.command,
+            ("bash", "validation/security/deps-audit.sh"),
         )
+
+    def test_embassy_change_runs_the_exact_embedded_matrix(self) -> None:
+        names = self.gate_names(
+            {"prns-runtime/impls/embassy/src/runtime/request_runner.rs"}
+        )
+
+        self.assertIn("embedded build matrix", names)
 
     def test_documentation_change_has_no_additional_ci_lane(self) -> None:
         self.assertEqual(self.gate_names({"docs/architecture.md"}), set())

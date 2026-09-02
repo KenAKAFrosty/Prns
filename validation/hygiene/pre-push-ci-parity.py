@@ -80,6 +80,33 @@ def plan_for_paths(paths: set[str]) -> tuple[Gate, ...]:
             )
         )
 
+    embedded_surface = (
+        "Cargo.toml" in paths
+        or "Cargo.lock" in paths
+        or _has_prefix(
+            paths,
+            (
+                "personal-rns/",
+                "personal-hopspot/core/",
+                "personal-hopspot/embedded/esp32/",
+                "personal-hopspot/embedded/nrf52840/",
+                "prns-core/",
+                "prns-interfaces/impls/embassy/",
+                "prns-runtime/core/",
+                "prns-runtime/impls/embassy/",
+                "validation/platforms/embedded.sh",
+                "validation/platforms/no-std-esp-build.sh",
+            ),
+        )
+    )
+    if embedded_surface:
+        gates.append(
+            Gate(
+                "embedded build matrix",
+                ("bash", "validation/platforms/embedded.sh"),
+            )
+        )
+
     shared_native = _has_prefix(
         paths,
         (
@@ -133,30 +160,30 @@ def plan_for_paths(paths: set[str]) -> tuple[Gate, ...]:
             )
         )
 
-    for lock_path in sorted(path for path in paths if path.endswith("Cargo.lock")):
-        if "/vendor/" in lock_path:
-            continue
-        manifest = ROOT / Path(lock_path).parent / "Cargo.toml"
-        if not manifest.is_file():
-            continue
+    dependency_surface = any(
+        path.endswith("Cargo.lock") and "/vendor/" not in path for path in paths
+    ) or bool(
+        paths
+        & {
+            "about.toml",
+            "deny.toml",
+            "validation/security/deps-audit.sh",
+            "validation/security/npm-production-audit.py",
+            "validation/security/unsafe-audit.py",
+        }
+    )
+    if dependency_surface:
         gates.append(
             Gate(
-                f"dependency policy ({lock_path})",
-                (
-                    "cargo",
-                    "deny",
-                    "--manifest-path",
-                    str(manifest),
-                    "--locked",
-                    "--exclude-dev",
-                    "check",
-                    "--config",
-                    str(ROOT / "deny.toml"),
-                    "advisories",
-                    "licenses",
-                    "sources",
-                    "bans",
-                ),
+                "release dependency audit",
+                ("bash", "validation/security/deps-audit.sh"),
+            )
+        )
+    elif any(path.endswith(".rs") for path in paths):
+        gates.append(
+            Gate(
+                "unsafe dependency inventory",
+                ("python3", "validation/security/unsafe-audit.py"),
             )
         )
 
