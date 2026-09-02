@@ -38,5 +38,6 @@ pub use remote_control_pairing_persistence::{
     EmbeddedRemoteControlControllerPairingFinalization,
     EmbeddedRemoteControlPairingPersistenceFailure,
     EmbeddedRemoteControlPairingPersistenceOperation,
+    EmbeddedRemoteControlTargetPairingFinalization,
 };
 pub use shared_flash::SharedNorFlash;

@@ -53,6 +53,13 @@ pub enum EmbeddedRemoteControlControllerPairingFinalization {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmbeddedRemoteControlTargetPairingFinalization {
+    CompletionDispatched,
+    AuthorizationRollbackRequired,
+    AuthorizationFailureRecorded,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EmbeddedRemoteControlPairingPersistenceFailure {
     AuthorizationTransaction {
         attempt_id: RemoteControlPairingAttemptId,
@@ -75,8 +82,9 @@ pub enum EmbeddedRemoteControlPairingPersistenceFailure {
         failure: SettleRemoteControlControllerPairingPersistenceFailure,
     },
     UnexpectedTargetFinalization {
+        attempt_id: RemoteControlPairingAttemptId,
         operation: EmbeddedRemoteControlPairingPersistenceOperation,
-        finalization: RemoteControlTargetPairingFinalization,
+        finalization: EmbeddedRemoteControlTargetPairingFinalization,
     },
     UnexpectedControllerFinalization {
         attempt_id: RemoteControlPairingAttemptId,
@@ -478,6 +486,11 @@ pub(super) struct RemoteControlPairingPersistenceProgress {
     state: RemoteControlPairingPersistenceState,
 }
 
+// The initial-store state must own a fixed-capacity rollback snapshot until flash confirms the
+// projected authorization. This runtime is `no_std` and allocation-free, so heap-indirecting the
+// uncommon large variant is not available; retaining the tagged state avoids a second resident
+// snapshot buffer and keeps ownership explicit across the persistence continuation.
+#[allow(clippy::large_enum_variant)]
 enum RemoteControlPairingPersistenceState {
     Ready,
     WaitingInitialStore {
@@ -788,13 +801,10 @@ where
                     },
                 ) => ActivatedAuthorizationSettlement::RollBack { failure: None },
                 Ok(finalization) => ActivatedAuthorizationSettlement::RollBack {
-                    failure: Some(
-                        EmbeddedRemoteControlPairingPersistenceFailure::UnexpectedTargetFinalization {
-                            operation:
-                                EmbeddedRemoteControlPairingPersistenceOperation::SettlePersisted,
-                            finalization,
-                        },
-                    ),
+                    failure: Some(unexpected_target_finalization(
+                        EmbeddedRemoteControlPairingPersistenceOperation::SettlePersisted,
+                        finalization,
+                    )),
                 },
                 Err(failure) => ActivatedAuthorizationSettlement::RollBack {
                     failure: Some(target_settlement_failure(
@@ -931,12 +941,10 @@ where
                 Ok(RemoteControlTargetPairingFinalization::AuthorizationFailureRecorded {
                     ..
                 }) => Ok(()),
-                Ok(finalization) => Err(
-                    EmbeddedRemoteControlPairingPersistenceFailure::UnexpectedTargetFinalization {
-                        operation: EmbeddedRemoteControlPairingPersistenceOperation::SettleFailed,
-                        finalization,
-                    },
-                ),
+                Ok(finalization) => Err(unexpected_target_finalization(
+                    EmbeddedRemoteControlPairingPersistenceOperation::SettleFailed,
+                    finalization,
+                )),
                 Err(failure) => Err(target_settlement_failure(
                     attempt_id,
                     EmbeddedRemoteControlPairingPersistenceOperation::SettleFailed,
@@ -971,6 +979,36 @@ where
                 )),
             }
         }
+    }
+}
+
+fn unexpected_target_finalization(
+    operation: EmbeddedRemoteControlPairingPersistenceOperation,
+    finalization: RemoteControlTargetPairingFinalization,
+) -> EmbeddedRemoteControlPairingPersistenceFailure {
+    let (attempt_id, finalization) = match finalization {
+        RemoteControlTargetPairingFinalization::CompletionDispatched { attempt_id } => (
+            attempt_id,
+            EmbeddedRemoteControlTargetPairingFinalization::CompletionDispatched,
+        ),
+        RemoteControlTargetPairingFinalization::AuthorizationRollbackRequired {
+            attempt_id,
+            ..
+        } => (
+            attempt_id,
+            EmbeddedRemoteControlTargetPairingFinalization::AuthorizationRollbackRequired,
+        ),
+        RemoteControlTargetPairingFinalization::AuthorizationFailureRecorded {
+            attempt_id, ..
+        } => (
+            attempt_id,
+            EmbeddedRemoteControlTargetPairingFinalization::AuthorizationFailureRecorded,
+        ),
+    };
+    EmbeddedRemoteControlPairingPersistenceFailure::UnexpectedTargetFinalization {
+        attempt_id,
+        operation,
+        finalization,
     }
 }
 
