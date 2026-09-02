@@ -185,8 +185,10 @@ fn observe(diagnostic: EmbeddedPersistenceDiagnostic) {
                 retry_at.0
             );
         }
-        EmbeddedPersistenceDiagnostic::RemoteControlPairingFailed { .. } => {
-            log::error!("remote-control pairing persistence failed");
+        EmbeddedPersistenceDiagnostic::RemoteControlPairingFailed { failure } => {
+            #[cfg(all(target_arch = "xtensa", feature = "remote-control-pairing"))]
+            crate::s3::remote_control_pairing_persistence_failed(failure);
+            log::error!("remote-control pairing persistence failed: {failure:?}");
         }
     }
 }
