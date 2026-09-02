@@ -298,6 +298,37 @@ def plan_for_paths(paths: set[str]) -> tuple[Gate, ...]:
             )
         )
 
+    javascript_host_surface = (
+        "Cargo.toml" in paths
+        or "Cargo.lock" in paths
+        or _has_prefix(
+            paths,
+            (
+                ".github/workflows/napi.yml",
+                "personal-rns/",
+                "personal-hopspot/sdk/hopspot/",
+                "prns-config/",
+                "prns-core/",
+                "prns-ffi/",
+                "prns-host/",
+                "prns-interfaces/",
+                "prns-js/",
+                "prns-napi/",
+                "prns-runtime/",
+                "prns-wasm/",
+            ),
+        )
+    )
+    if javascript_host_surface:
+        gates.append(
+            Gate(
+                "JavaScript browser package smoke",
+                ("npm", "run", "test:browser:full"),
+                ROOT / "prns-js",
+                (("RUSTFLAGS", "-D warnings --cfg aes_armv8"),),
+            )
+        )
+
     host_contract = _has_prefix(
         paths,
         (

@@ -30,6 +30,7 @@ class PrePushCiParityTests(unittest.TestCase):
         self.assertIn("validation integration capstones Clippy", names)
         self.assertIn("prnsd all-features Clippy", names)
         self.assertIn("prns-wasm wasm32 Clippy", names)
+        self.assertIn("JavaScript browser package smoke", names)
         self.assertIn("embedded build matrix", names)
         self.assertIn("Embassy runtime Clippy", names)
         self.assertIn("unsafe dependency inventory", names)
@@ -223,6 +224,20 @@ class PrePushCiParityTests(unittest.TestCase):
                 "warnings",
             ),
         )
+
+    def test_runtime_change_runs_javascript_browser_package_smoke(self) -> None:
+        gates = parity.plan_for_paths(
+            {"prns-runtime/core/src/runtime/observability.rs"}
+        )
+        gate = next(
+            gate
+            for gate in gates
+            if gate.name == "JavaScript browser package smoke"
+        )
+
+        self.assertEqual(gate.cwd, ROOT / "prns-js")
+        self.assertEqual(gate.env, (("RUSTFLAGS", "-D warnings --cfg aes_armv8"),))
+        self.assertEqual(gate.command, ("npm", "run", "test:browser:full"))
 
     def test_documentation_change_has_no_additional_ci_lane(self) -> None:
         self.assertEqual(self.gate_names({"docs/architecture.md"}), set())
