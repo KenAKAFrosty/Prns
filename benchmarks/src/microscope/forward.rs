@@ -1,3 +1,4 @@
+use super::inline_work::{feed_packet_inline, issue_command_inline};
 use super::*;
 
 pub struct Forward {
@@ -75,7 +76,7 @@ impl Forward {
     }
 
     fn learn_routes(&mut self) {
-        let mut announce = Vec::with_capacity(1024);
+        let mut announce;
         let issued = IssuedCommand {
             id: CommandId(0),
             command: PrnsCommand::AnnounceNow(AnnounceNow {
@@ -89,22 +90,20 @@ impl Forward {
                 upstream,
                 upstream_entropy,
                 up_view,
+                scratch,
                 ..
             } = self;
-            upstream.ingest_command_into(
+            let mut capture = FeedCapture::default();
+            issue_command_inline(
+                upstream,
                 issued,
                 AttachedInterfaces::new(up_view),
                 SETUP_NOW,
-                &mut |bytes| upstream_entropy.fill(bytes),
-                &mut |reaction| {
-                    if let EngineReaction::Directive(
-                        Directive::Send { bytes, .. } | Directive::SendAnnounce { bytes, .. },
-                    ) = reaction
-                    {
-                        announce.extend_from_slice(bytes);
-                    }
-                },
+                upstream_entropy,
+                &mut capture,
+                scratch,
             );
+            announce = capture.only_frame("announce");
         }
         assert!(!announce.is_empty(), "upstream emitted its announce");
 
@@ -113,32 +112,24 @@ impl Forward {
                 relay,
                 relay_entropy,
                 relay_interfaces,
+                scratch,
                 ..
             } = self;
-            let mut heard = false;
-            relay.ingest_packet_into(
+            let mut capture = FeedCapture::default();
+            feed_packet_inline(
+                relay,
                 InboundPacket {
                     arrived_at: SETUP_NOW,
                     source_interface: IF_UP,
                     bytes: &mut announce,
                 },
-                IngestIo {
-                    interfaces: AttachedInterfaces::new(relay_interfaces),
-                    now: SETUP_NOW,
-                    fill_random: &mut |bytes| relay_entropy.fill(bytes),
-                    should_prove: &mut |_| true,
-                    should_accept_resource: &mut |_| false,
-                    sink: &mut |reaction| {
-                        if matches!(
-                            reaction,
-                            EngineReaction::Journaled(Journaled::AnnounceHeard { .. })
-                        ) {
-                            heard = true;
-                        }
-                    },
-                },
+                AttachedInterfaces::new(relay_interfaces),
+                SETUP_NOW,
+                relay_entropy,
+                &mut capture,
+                scratch,
             );
-            assert!(heard, "relay heard the upstream announce");
+            assert!(capture.announce_heard, "relay heard the upstream announce");
         }
         assert_eq!(self.relay.route_count(), 1, "relay learned the route");
 
@@ -176,32 +167,27 @@ impl Forward {
                 initiator,
                 initiator_entropy,
                 down_interfaces,
+                scratch,
                 ..
             } = self;
-            let mut heard = false;
-            initiator.ingest_packet_into(
+            let mut capture = FeedCapture::default();
+            feed_packet_inline(
+                initiator,
                 InboundPacket {
                     arrived_at: REBROADCAST_NOW,
                     source_interface: IF_DOWN,
                     bytes: &mut rebroadcast,
                 },
-                IngestIo {
-                    interfaces: AttachedInterfaces::new(down_interfaces),
-                    now: REBROADCAST_NOW,
-                    fill_random: &mut |bytes| initiator_entropy.fill(bytes),
-                    should_prove: &mut |_| true,
-                    should_accept_resource: &mut |_| false,
-                    sink: &mut |reaction| {
-                        if matches!(
-                            reaction,
-                            EngineReaction::Journaled(Journaled::AnnounceHeard { .. })
-                        ) {
-                            heard = true;
-                        }
-                    },
-                },
+                AttachedInterfaces::new(down_interfaces),
+                REBROADCAST_NOW,
+                initiator_entropy,
+                &mut capture,
+                scratch,
             );
-            assert!(heard, "initiator heard the relayed announce");
+            assert!(
+                capture.announce_heard,
+                "initiator heard the relayed announce"
+            );
         }
     }
 
@@ -219,20 +205,21 @@ impl Forward {
             initiator_entropy,
             down_interfaces,
             single,
+            scratch,
             ..
         } = self;
         single.clear();
-        initiator.ingest_command_into(
+        let mut capture = FeedCapture::default();
+        issue_command_inline(
+            initiator,
             issued,
             AttachedInterfaces::new(down_interfaces),
             FORWARD_NOW,
-            &mut |bytes| initiator_entropy.fill(bytes),
-            &mut |reaction| {
-                if let EngineReaction::Directive(Directive::Send { bytes, .. }) = reaction {
-                    single.extend_from_slice(bytes);
-                }
-            },
+            initiator_entropy,
+            &mut capture,
+            scratch,
         );
+        *single = capture.only_frame("single");
         assert!(
             !self.single.is_empty(),
             "initiator sealed a single via the relay"
