@@ -25,11 +25,19 @@ describe("foundation scaffold screens", () => {
   it("renders an honest placeholder without a synthetic result", () => {
     const view = render(<NotYetImplementedScreen entry={screenById("inbox.message")} />);
 
-    expect(view.getByText("Coming later")).toBeTruthy();
+    expect(view.getByText("Not yet implemented")).toBeTruthy();
     expect(view.getByText("View message details and delivery status.")).toBeTruthy();
-    expect(view.getByText("This feature is planned for a future update.")).toBeTruthy();
+    expect(view.getByText("Message details are not available yet.")).toBeTruthy();
+    expect(view.queryByText("This feature is planned for a future update.")).toBeNull();
     expect(view.queryByText(/success/iu)).toBeNull();
     expect(view.getByRole("button", { name: "Go back" })).toBeTruthy();
+  });
+
+  it("uses the selected catalog entry's limitation", () => {
+    const view = render(<NotYetImplementedScreen entry={screenById("contacts.merge")} />);
+
+    expect(view.getByText("Contact merging is not available yet.")).toBeTruthy();
+    expect(view.queryByText("Message details are not available yet.")).toBeNull();
   });
 
   it("reports an unsupported native provider without synthetic nodes", async () => {

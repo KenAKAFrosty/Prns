@@ -26,7 +26,7 @@ export function ShellLayout() {
       <ShellHeader />
       <View style={styles.shellBody}>
         {layout === "compact" ? null : <NavigationRail active={active} entries={entries} />}
-        <View style={styles.content}>
+        <View role="main" style={styles.content}>
           <Slot />
         </View>
         {layout === "wide" ? <ContextPanel active={active} /> : null}
@@ -41,6 +41,7 @@ function ShellHeader() {
   return (
     <View
       style={[styles.header, { backgroundColor: palette.surface, borderColor: palette.border }]}
+      role="banner"
     >
       <Text accessibilityRole="header" style={[styles.brand, { color: palette.text }]}>
         prns
@@ -61,6 +62,7 @@ function NavigationRail({
   return (
     <View
       accessibilityLabel="Primary navigation"
+      role="navigation"
       style={[styles.rail, { backgroundColor: palette.surface, borderColor: palette.border }]}
     >
       {entries.map((entry) => (
@@ -81,6 +83,7 @@ function BottomNavigation({
   return (
     <View
       accessibilityLabel="Primary navigation"
+      role="navigation"
       style={[
         styles.bottomNavigation,
         { backgroundColor: palette.surface, borderColor: palette.border },
@@ -111,8 +114,9 @@ function ShellNavigationItem({
   return (
     <Link href={entry.path} asChild>
       <Pressable
-        accessibilityRole="tab"
-        accessibilityState={{ selected: active }}
+        accessibilityLabel={active ? `${entry.label}, current page` : entry.label}
+        aria-current={active ? "page" : undefined}
+        role="link"
         style={compact ? styles.compactNavigationPressable : styles.navigationPressable}
       >
         <View
@@ -146,6 +150,7 @@ function ContextPanel({ active }: { readonly active: ScreenCatalogEntry | undefi
   return (
     <View
       accessibilityLabel="Workspace context"
+      role="complementary"
       style={[
         styles.contextPanel,
         { backgroundColor: palette.surface, borderColor: palette.border },

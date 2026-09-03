@@ -1,14 +1,13 @@
-import { useLocalSearchParams } from "expo-router";
-
+import { useLocalSearchParams, useRouter } from "expo-router";
+import type { ReactNode } from "react";
 import {
-  routeParamsAreValid,
-  screenById,
   type RawRouteParams,
+  routeParamsAreValid,
   type ScreenCatalogEntry,
   type ScreenId,
+  screenById,
 } from "@/navigation/catalog";
 import { Badge, BodyText, Button, Card, Screen, ScreenHeading } from "@/ui/primitives";
-import { useRouter } from "expo-router";
 
 export function NotFoundScreen({ backPath = "/inbox" }: { readonly backPath?: string }) {
   const router = useRouter();
@@ -28,17 +27,32 @@ export function NotYetImplementedScreen({ entry }: { readonly entry: ScreenCatal
   const router = useRouter();
   return (
     <Screen>
-      <Badge tone="warning">Coming later</Badge>
+      <Badge tone="warning">Not yet implemented</Badge>
       <ScreenHeading>{entry.label}</ScreenHeading>
       <Card>
         <BodyText>{entry.summary}</BodyText>
+        <BodyText muted>{entry.limitation}</BodyText>
       </Card>
-      <BodyText muted>This feature is planned for a future update.</BodyText>
       <Button tone="secondary" onPress={() => router.replace(entry.backPath)}>
         Go back
       </Button>
     </Screen>
   );
+}
+
+export function CatalogRouteGuard({
+  children,
+  screenId,
+}: {
+  readonly children: ReactNode;
+  readonly screenId: ScreenId;
+}) {
+  const entry = screenById(screenId);
+  const params: RawRouteParams = useLocalSearchParams();
+  if (!routeParamsAreValid(entry, params)) {
+    return <NotFoundScreen backPath={entry.backPath} />;
+  }
+  return children;
 }
 
 export function CatalogPlaceholderRoute({ screenId }: { readonly screenId: ScreenId }) {
