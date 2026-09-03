@@ -205,6 +205,10 @@ fn production_adapter_preserves_stale_route_failures_as_no_route() {
         classify_establish_link_failure(SendError::Failed(EstablishLinkFailure::Timeout)),
         DirectSendFailure::LinkFailed
     );
+    assert_eq!(
+        classify_establish_link_failure(SendError::NodeStopped),
+        DirectSendFailure::LocalNodeStopped
+    );
 }
 
 fn identity(secret: &[u8; IDENTITY_SECRET_KEY_LEN]) -> LocalLxmfIdentity {
@@ -504,6 +508,16 @@ async fn direct_send_retains_typed_single_attempt_failures() {
         vec![Call::HasRoute, Call::EstablishLink, Call::SendLinkPacket],
     )
     .await;
+    assert_failure(
+        true,
+        Ok(()),
+        Ok([0xa5; 16]),
+        Err(DirectSendFailure::LocalNodeStopped),
+        DirectSendFailure::LocalNodeStopped,
+        SendDirectTextOutcome::LocalNodeStopped,
+        vec![Call::HasRoute, Call::EstablishLink, Call::SendLinkPacket],
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -529,7 +543,7 @@ async fn stop_cancels_and_joins_inflight_send_and_worker() {
     service.stop().await.expect("cancelled tasks join promptly");
     assert_eq!(
         send.await.expect("send waiter observes cancellation"),
-        SendDirectTextOutcome::LinkFailed
+        SendDirectTextOutcome::LocalNodeStopped
     );
     assert!(fake.send_future_dropped.load(Ordering::Acquire));
     let stopped = service.snapshot().await;
@@ -540,7 +554,7 @@ async fn stop_cancels_and_joins_inflight_send_and_worker() {
     );
     assert_eq!(
         stopped.messages[0].failure,
-        Some(DirectSendFailure::LinkFailed)
+        Some(DirectSendFailure::LocalNodeStopped)
     );
 
     let worker_fake = Arc::new(FakeNetwork::default());

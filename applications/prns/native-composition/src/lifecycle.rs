@@ -1,3 +1,4 @@
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc as std_mpsc, Arc, Mutex, MutexGuard, OnceLock};
@@ -6,9 +7,9 @@ use std::time::{Duration, Instant};
 
 use personal_rns::node_introspection::DestinationIdentityQuery;
 use personal_rns::prelude::{
-    GrowableHeap, InitiateRemoteControlControllerPairing, ManuallyAttached,
-    PreConfiguredDestination, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
-    RemoteControlControllerPairingInitiationControl, RemoteControlPairingControl,
+    GrowableHeap, InitiateRemoteControlControllerPairing, ManuallyAttached, PrnsNode,
+    PrnsNodeHandle, PrnsNodeRecipe, RemoteControlControllerPairingInitiationControl,
+    RemoteControlPairingControl,
 };
 use personal_rns::remote_control::{
     RemoteControlInitialControllerGrants, RemoteControlPairingInvitationCode,
@@ -19,23 +20,28 @@ use personal_rns::runtime::{
     RemoteControlPairingControlError,
 };
 use personal_rns::wire::DestinationHash;
-use prns_core::identity::vault::{FileVault, FileVaultError, IdentityLabel, IdentityVault};
+use prns_core::identity::vault::{
+    FileVault, FileVaultError, IdentityLabel, IdentitySecretKey, IdentityVault,
+};
 use prns_core::identity::PrivateIdentityMaterial;
 use prns_host::{BackendInfo, BackendKind, Capability, InterfaceKind, PersistenceSnapshot};
 use prns_host_snapshot::{assemble_host_snapshot, HostInterfaceAttachment};
 use tokio::sync::{mpsc, watch};
+use tokio::task::JoinSet;
 
 use crate::contract::{
-    ContactDestinationInput, ContactListOutcome, ContactLookupOutcome, ContactMutationOutcome,
-    CreateManualContactInput, DescribeRemoteControlTargetInput, DevelopmentNodeFailure,
-    DevelopmentNodeFailureStage, DevelopmentNodeOperation, DevelopmentNodeOperationKind,
-    DevelopmentNodeRuntime, DevelopmentNodeSnapshot, DevelopmentNodeStartOutcome,
-    DevelopmentNodeStopOutcome, DevelopmentNodeStopStage, IdentityCreationOutcome,
-    IdentityImportPreviewOutcome, InitiateRemoteControlPairingInput, LocalHostState,
+    AnnounceLxmfOutcome, ContactDestinationInput, ContactListOutcome, ContactLookupOutcome,
+    ContactMutationOutcome, CreateManualContactInput, DescribeRemoteControlTargetInput,
+    DevelopmentNodeFailure, DevelopmentNodeFailureStage, DevelopmentNodeOperation,
+    DevelopmentNodeOperationKind, DevelopmentNodeRuntime, DevelopmentNodeSnapshot,
+    DevelopmentNodeStartInput, DevelopmentNodeStartOutcome, DevelopmentNodeStopOutcome,
+    DevelopmentNodeStopStage, IdentityCreationOutcome, IdentityImportPreviewOutcome,
+    InitiateRemoteControlPairingInput, ListLxmfMessagesInput, LocalHostState,
+    LxmfMessageListOutcome, LxmfPeerListOutcome, MeasureLxmfTextInput, MeasureLxmfTextOutcome,
     PrimaryIdentityState, RemoteControlDescribeFailureStage, RemoteControlDescribeOutcome,
     RemoteControlPairingCommandOutcome, RemoteControlPairingDecisionInput,
-    RemoteControlPairingFailureStage, RemoteControlPairingState, SetContactAliasInput,
-    SetContactPinnedInput, U64String,
+    RemoteControlPairingFailureStage, RemoteControlPairingState, SendDirectTextInput,
+    SendDirectTextOutcome, SetContactAliasInput, SetContactPinnedInput, U64String,
 };
 use crate::development_store::{DevelopmentStoreFailure, DevelopmentStoreOwner, StoreReply};
 use crate::directory::{DirectoryRequest, DirectoryResponse};
@@ -52,8 +58,11 @@ const COMMAND_TIMEOUT: Duration = Duration::from_secs(20);
 const HOST_INSPECTION_TIMEOUT: Duration = Duration::from_millis(1_500);
 const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(2);
 const DIRECTORY_TIMEOUT: Duration = Duration::from_secs(5);
+const LXMF_QUERY_TIMEOUT: Duration = Duration::from_secs(5);
+const LXMF_SEND_TIMEOUT: Duration = Duration::from_secs(60);
 const STOP_TIMEOUT: Duration = Duration::from_secs(25);
 const COMMAND_LANE_CAPACITY: usize = 8;
+const LXMF_SEND_TASK_CAPACITY: usize = 8;
 
 type ReadyResult = Result<DevelopmentNodeSnapshot, (DevelopmentNodeFailureStage, String)>;
 type WorkerResult = Result<(), (DevelopmentNodeStopStage, String)>;
@@ -95,10 +104,6 @@ impl ShutdownSignal {
         self.requested.store(true, Ordering::Release);
         let _ = self.sender.send(true);
     }
-
-    fn is_requested(&self) -> bool {
-        self.requested.load(Ordering::Acquire)
-    }
 }
 
 enum Command {
@@ -123,15 +128,28 @@ enum Command {
         [u8; 16],
         std_mpsc::SyncSender<Result<Option<[u8; 16]>, String>>,
     ),
+    ListLxmfPeers(std_mpsc::SyncSender<LxmfPeerListOutcome>),
+    ListLxmfMessages(
+        ListLxmfMessagesInput,
+        std_mpsc::SyncSender<LxmfMessageListOutcome>,
+    ),
+    MeasureLxmfText(
+        MeasureLxmfTextInput,
+        std_mpsc::SyncSender<MeasureLxmfTextOutcome>,
+    ),
+    AnnounceLxmf(std_mpsc::SyncSender<AnnounceLxmfOutcome>),
+    SendDirectText(
+        SendDirectTextInput,
+        std_mpsc::SyncSender<SendDirectTextOutcome>,
+    ),
 }
 
-enum HostAttachment {
+#[derive(Default)]
+struct HostAttachment {
     #[cfg(all(feature = "apple", any(target_os = "ios", target_os = "macos")))]
-    Apple {
-        attached: personal_rns::bluetooth_auto::AttachedBle,
-    },
-    #[cfg(not(all(feature = "apple", any(target_os = "ios", target_os = "macos"))))]
-    None,
+    bluetooth: Option<personal_rns::bluetooth_auto::AttachedBle>,
+    #[cfg(any(feature = "apple", feature = "host-test"))]
+    tcp: Option<personal_rns::runtime::AttachedInterface>,
 }
 
 #[must_use]
@@ -331,7 +349,46 @@ fn creation_failure(state: PrimaryIdentityState) -> IdentityCreationOutcome {
     }
 }
 
+fn load_primary_identity_secret(
+    state: &mut SupervisorState,
+    paths: &NodeStoragePaths,
+) -> Result<IdentitySecretKey, PrimaryIdentityState> {
+    let label = primary_label()?;
+    match identity_vault(state, paths)?.load(&label) {
+        Ok(Some(secret)) => Ok(secret),
+        Ok(None) => Err(PrimaryIdentityState::Missing),
+        Err(error) => Err(primary_vault_failure(error)),
+    }
+}
+
+fn validate_development_tcp_target(target: Option<&str>) -> Result<Option<String>, String> {
+    let Some(target) = target else {
+        return Ok(None);
+    };
+    let address = target.parse::<SocketAddr>().map_err(|_| {
+        "developmentTcpTarget must be an explicit IP address and port such as 192.0.2.1:4242"
+            .to_owned()
+    })?;
+    if address.port() == 0 {
+        return Err("developmentTcpTarget port must be from 1 through 65535".to_owned());
+    }
+    Ok(Some(address.to_string()))
+}
+
+#[cfg(test)]
 pub fn start(storage_root: &Path) -> DevelopmentNodeStartOutcome {
+    start_configured(
+        storage_root,
+        DevelopmentNodeStartInput {
+            development_tcp_target: None,
+        },
+    )
+}
+
+pub fn start_configured(
+    storage_root: &Path,
+    input: DevelopmentNodeStartInput,
+) -> DevelopmentNodeStartOutcome {
     let supervisor = supervisor();
     let mut state = supervisor.lock_state();
     if state.worker.is_some() {
@@ -363,6 +420,20 @@ pub fn start(storage_root: &Path) -> DevelopmentNodeStartOutcome {
             };
         }
     };
+    let development_tcp_target =
+        match validate_development_tcp_target(input.development_tcp_target.as_deref()) {
+            Ok(target) => target,
+            Err(detail) => {
+                supervisor.snapshots.fail(DevelopmentNodeFailure {
+                    stage: DevelopmentNodeFailureStage::Contract,
+                    detail: detail.clone(),
+                });
+                return DevelopmentNodeStartOutcome::Failed {
+                    stage: DevelopmentNodeFailureStage::Contract,
+                    detail,
+                };
+            }
+        };
 
     let primary_identity = inspect_identity_locked(&mut state, storage_root);
     supervisor
@@ -386,6 +457,32 @@ pub fn start(storage_root: &Path) -> DevelopmentNodeStartOutcome {
             detail,
         };
     }
+    let primary_identity_secret = match load_primary_identity_secret(&mut state, &paths) {
+        Ok(secret) => secret,
+        Err(primary_identity) => {
+            supervisor
+                .snapshots
+                .set_primary_identity(primary_identity.clone());
+            let detail = match primary_identity {
+                PrimaryIdentityState::Unavailable { detail } => detail,
+                PrimaryIdentityState::DevelopmentResetRequired { reason } => reason,
+                PrimaryIdentityState::Missing => {
+                    "Create or import a primary identity before starting the local node.".to_owned()
+                }
+                PrimaryIdentityState::Present { .. } => {
+                    "The primary identity could not be retained for LXMF signing.".to_owned()
+                }
+            };
+            supervisor.snapshots.fail(DevelopmentNodeFailure {
+                stage: DevelopmentNodeFailureStage::Identity,
+                detail: detail.clone(),
+            });
+            return DevelopmentNodeStartOutcome::Failed {
+                stage: DevelopmentNodeFailureStage::Identity,
+                detail,
+            };
+        }
+    };
     supervisor.snapshots.begin_generation(primary_identity);
     supervisor
         .operation_admitted
@@ -408,6 +505,8 @@ pub fn start(storage_root: &Path) -> DevelopmentNodeStartOutcome {
         .spawn(move || {
             let result = run_worker(
                 paths,
+                primary_identity_secret,
+                development_tcp_target,
                 command_rx,
                 worker_shutdown,
                 shutdown_rx,
@@ -563,6 +662,143 @@ pub fn describe(input: DescribeRemoteControlTargetInput) -> RemoteControlDescrib
             stage: RemoteControlDescribeFailureStage::Timeout,
             detail: "The native Describe command exceeded its bounded wait.".to_owned(),
         })
+}
+
+enum LxmfAdmissionFailure {
+    LocalNodeStopped,
+    Busy,
+}
+
+fn admit_lxmf<Output>(
+    command: impl FnOnce(std_mpsc::SyncSender<Output>) -> Command,
+) -> Result<std_mpsc::Receiver<Output>, LxmfAdmissionFailure> {
+    let Some(commands) = running_commands() else {
+        return Err(LxmfAdmissionFailure::LocalNodeStopped);
+    };
+    let (response_tx, response_rx) = std_mpsc::sync_channel(1);
+    match commands.try_send(command(response_tx)) {
+        Ok(()) => Ok(response_rx),
+        Err(mpsc::error::TrySendError::Full(_)) => Err(LxmfAdmissionFailure::Busy),
+        Err(mpsc::error::TrySendError::Closed(_)) => Err(LxmfAdmissionFailure::LocalNodeStopped),
+    }
+}
+
+const fn lxmf_send_has_capacity(active: usize) -> bool {
+    active < LXMF_SEND_TASK_CAPACITY
+}
+
+async fn dispatch_lxmf_message_list(
+    service: &prns_lxmf::direct::DirectLxmfService,
+    input: ListLxmfMessagesInput,
+    response: std_mpsc::SyncSender<LxmfMessageListOutcome>,
+) {
+    let snapshot = service.snapshot().await;
+    let _ = response.send(crate::lxmf::project_messages(&snapshot, input));
+}
+
+fn dispatch_lxmf_send(
+    service: &prns_lxmf::direct::DirectLxmfService,
+    send_tasks: &mut JoinSet<()>,
+    input: SendDirectTextInput,
+    response: std_mpsc::SyncSender<SendDirectTextOutcome>,
+    timestamp: u64,
+) {
+    if !lxmf_send_has_capacity(send_tasks.len()) {
+        let _ = response.send(SendDirectTextOutcome::Busy);
+        return;
+    }
+    let service = service.clone();
+    send_tasks.spawn(async move {
+        let outcome = service
+            .send_direct_text(
+                input.destination,
+                timestamp,
+                input.title.as_bytes(),
+                input.content.as_bytes(),
+            )
+            .await;
+        let _ = response.send(crate::lxmf::project_send_outcome(outcome));
+    });
+}
+
+#[must_use]
+pub fn list_lxmf_peers() -> LxmfPeerListOutcome {
+    let response = match admit_lxmf(Command::ListLxmfPeers) {
+        Ok(response) => response,
+        Err(LxmfAdmissionFailure::LocalNodeStopped) => {
+            return LxmfPeerListOutcome::LocalNodeStopped
+        }
+        Err(LxmfAdmissionFailure::Busy) => return LxmfPeerListOutcome::Busy,
+    };
+    match response.recv_timeout(LXMF_QUERY_TIMEOUT) {
+        Ok(outcome) => outcome,
+        Err(std_mpsc::RecvTimeoutError::Timeout) => LxmfPeerListOutcome::Busy,
+        Err(std_mpsc::RecvTimeoutError::Disconnected) => LxmfPeerListOutcome::LocalNodeStopped,
+    }
+}
+
+#[must_use]
+pub fn list_lxmf_messages(input: ListLxmfMessagesInput) -> LxmfMessageListOutcome {
+    let response = match admit_lxmf(|response| Command::ListLxmfMessages(input, response)) {
+        Ok(response) => response,
+        Err(LxmfAdmissionFailure::LocalNodeStopped) => {
+            return LxmfMessageListOutcome::LocalNodeStopped
+        }
+        Err(LxmfAdmissionFailure::Busy) => return LxmfMessageListOutcome::Busy,
+    };
+    match response.recv_timeout(LXMF_QUERY_TIMEOUT) {
+        Ok(outcome) => outcome,
+        Err(std_mpsc::RecvTimeoutError::Timeout) => LxmfMessageListOutcome::Busy,
+        Err(std_mpsc::RecvTimeoutError::Disconnected) => LxmfMessageListOutcome::LocalNodeStopped,
+    }
+}
+
+#[must_use]
+pub fn measure_lxmf_text(input: MeasureLxmfTextInput) -> MeasureLxmfTextOutcome {
+    let response = match admit_lxmf(|response| Command::MeasureLxmfText(input, response)) {
+        Ok(response) => response,
+        Err(LxmfAdmissionFailure::LocalNodeStopped) => {
+            return MeasureLxmfTextOutcome::LocalNodeStopped
+        }
+        Err(LxmfAdmissionFailure::Busy) => return MeasureLxmfTextOutcome::Busy,
+    };
+    match response.recv_timeout(LXMF_QUERY_TIMEOUT) {
+        Ok(outcome) => outcome,
+        Err(std_mpsc::RecvTimeoutError::Timeout) => MeasureLxmfTextOutcome::Busy,
+        Err(std_mpsc::RecvTimeoutError::Disconnected) => MeasureLxmfTextOutcome::LocalNodeStopped,
+    }
+}
+
+#[must_use]
+pub fn announce_lxmf() -> AnnounceLxmfOutcome {
+    let response = match admit_lxmf(Command::AnnounceLxmf) {
+        Ok(response) => response,
+        Err(LxmfAdmissionFailure::LocalNodeStopped) => {
+            return AnnounceLxmfOutcome::LocalNodeStopped
+        }
+        Err(LxmfAdmissionFailure::Busy) => return AnnounceLxmfOutcome::Busy,
+    };
+    match response.recv_timeout(LXMF_QUERY_TIMEOUT) {
+        Ok(outcome) => outcome,
+        Err(std_mpsc::RecvTimeoutError::Timeout) => AnnounceLxmfOutcome::Failed,
+        Err(std_mpsc::RecvTimeoutError::Disconnected) => AnnounceLxmfOutcome::LocalNodeStopped,
+    }
+}
+
+#[must_use]
+pub fn send_direct_text(input: SendDirectTextInput) -> SendDirectTextOutcome {
+    let response = match admit_lxmf(|response| Command::SendDirectText(input, response)) {
+        Ok(response) => response,
+        Err(LxmfAdmissionFailure::LocalNodeStopped) => {
+            return SendDirectTextOutcome::LocalNodeStopped
+        }
+        Err(LxmfAdmissionFailure::Busy) => return SendDirectTextOutcome::Busy,
+    };
+    match response.recv_timeout(LXMF_SEND_TIMEOUT) {
+        Ok(outcome) => outcome,
+        Err(std_mpsc::RecvTimeoutError::Timeout) => SendDirectTextOutcome::DeliveryTimedOut,
+        Err(std_mpsc::RecvTimeoutError::Disconnected) => SendDirectTextOutcome::LocalNodeStopped,
+    }
 }
 
 pub fn save_observed_destination(
@@ -1105,8 +1341,11 @@ fn join_finished_worker(worker: &mut Worker) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_worker(
     paths: NodeStoragePaths,
+    primary_identity_secret: IdentitySecretKey,
+    development_tcp_target: Option<String>,
     commands: mpsc::Receiver<Command>,
     shutdown: ShutdownSignal,
     shutdown_rx: watch::Receiver<bool>,
@@ -1124,6 +1363,8 @@ fn run_worker(
         })?;
     runtime.block_on(run_generation(
         paths,
+        primary_identity_secret,
+        development_tcp_target,
         commands,
         shutdown,
         shutdown_rx,
@@ -1133,11 +1374,14 @@ fn run_worker(
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_generation(
     paths: NodeStoragePaths,
+    primary_identity_secret: IdentitySecretKey,
+    development_tcp_target: Option<String>,
     commands: mpsc::Receiver<Command>,
     shutdown: ShutdownSignal,
-    mut shutdown_rx: watch::Receiver<bool>,
+    shutdown_rx: watch::Receiver<bool>,
     snapshots: Arc<SnapshotStore>,
     operation_admitted: Arc<AtomicBool>,
     ready: std_mpsc::SyncSender<ReadyResult>,
@@ -1203,44 +1447,111 @@ async fn run_generation(
         RemoteControlInitialControllerGrants::Nobody,
         RemoteControlSelfAnnouncement::Unavailable,
     );
+    let mut announce_app_data = [0_u8; 64];
+    let announce_len =
+        prns_lxmf::wire::encode_current_lxmf_announce(b"prns", &mut announce_app_data).map_err(
+            |error| {
+                boot_failure(
+                    &ready,
+                    &snapshots,
+                    DevelopmentNodeFailureStage::Contract,
+                    format!("could not encode the built-in LXMF announce: {error:?}"),
+                )
+            },
+        )?;
+    let (lxmf_identity, lxmf_destination) = prns_lxmf::direct::prepare_local_lxmf_destination(
+        primary_identity_secret,
+        &announce_app_data[..announce_len],
+    )
+    .map_err(|error| {
+        boot_failure(
+            &ready,
+            &snapshots,
+            DevelopmentNodeFailureStage::Contract,
+            format!("could not derive the built-in LXMF destination: {error:?}"),
+        )
+    })?;
+    let (pending_lxmf, lxmf_callbacks) =
+        prns_lxmf::direct::DirectLxmfService::prepare(lxmf_identity);
     let (event_tx, event_rx) = mpsc::channel(EVENT_LANE_CAPACITY);
     let overflowed = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let event_overflowed = Arc::clone(&overflowed);
+    let lxmf_events = lxmf_callbacks.clone();
     let node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         remote_control,
-        pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
+        pre_configured_destinations: [lxmf_destination],
         app_state: (),
         storage: GrowableHeap,
         request_endpoints: personal_rns::request_endpoints![],
         interfaces: ManuallyAttached,
         persistence,
-        on_event: move |event, _state: &()| send_event(&event_tx, &event_overflowed, event),
-    });
+        on_event: move |event, _state: &()| {
+            let _lxmf_outcome = lxmf_events.on_prns_event(&event);
+            send_event(&event_tx, &event_overflowed, event);
+        },
+    })
+    .with_accepted_announce_observer(lxmf_callbacks.accepted_announce_observer());
     let handle = node.handle();
     let clock = node.clock();
 
+    #[cfg(any(feature = "apple", feature = "host-test"))]
+    let mut host_attachment = HostAttachment::default();
+    #[cfg(not(any(feature = "apple", feature = "host-test")))]
+    let host_attachment = HostAttachment::default();
     #[cfg(all(feature = "apple", any(target_os = "ios", target_os = "macos")))]
-    let host_attachment = HostAttachment::Apple {
-        attached: handle.attach(prepared_bluetooth),
-    };
-    #[cfg(not(all(feature = "apple", any(target_os = "ios", target_os = "macos"))))]
-    let host_attachment = HostAttachment::None;
+    {
+        host_attachment.bluetooth = Some(handle.attach(prepared_bluetooth));
+    }
+    #[cfg(any(feature = "apple", feature = "host-test"))]
+    if let Some(target) = development_tcp_target {
+        host_attachment.tcp =
+            Some(handle.attach(personal_rns::tcp::TcpClientInterface::new(target)));
+    }
+    #[cfg(not(any(feature = "apple", feature = "host-test")))]
+    if development_tcp_target.is_some() {
+        return Err(boot_failure(
+            &ready,
+            &snapshots,
+            DevelopmentNodeFailureStage::Contract,
+            "this native build does not include the development TCP fixture".to_owned(),
+        ));
+    }
+
+    let lxmf_service = pending_lxmf
+        .start(Arc::new(prns_lxmf::direct::PrnsDirectNetwork::new(
+            handle.clone(),
+        )))
+        .map_err(|error| {
+            boot_failure(
+                &ready,
+                &snapshots,
+                DevelopmentNodeFailureStage::Runtime,
+                format!("could not start the LXMF service worker: {error:?}"),
+            )
+        })?;
+    let lxmf_refresh = lxmf_service.subscribe();
+    snapshots.refresh_lxmf(crate::lxmf::project_health(
+        lxmf_service.snapshot().await.health,
+    ));
 
     snapshots.update(|snapshot| {
         snapshot.controller_identity_fingerprint = Some(controller_identity_fingerprint);
-        if host_attachment.is_none() {
+        if host_attachment.bluetooth_is_none() {
             snapshot.pairing = RemoteControlPairingState::BluetoothUnavailable;
         }
     });
 
+    let (node_shutdown_tx, mut node_shutdown_rx) = watch::channel(false);
     let node_run = node.run_until(async {
-        if !*shutdown_rx.borrow() {
-            let _ = shutdown_rx.changed().await;
+        if !*node_shutdown_rx.borrow() {
+            let _ = node_shutdown_rx.changed().await;
         }
     });
     let actor = run_actor(
         handle,
+        lxmf_service,
+        lxmf_refresh,
         commands,
         event_rx,
         overflowed,
@@ -1249,12 +1560,13 @@ async fn run_generation(
         Arc::clone(&snapshots),
         Arc::clone(&operation_admitted),
         ready,
-        shutdown.clone(),
+        shutdown_rx,
     );
     tokio::pin!(node_run);
     tokio::pin!(actor);
     let result = tokio::select! {
         actor_result = &mut actor => {
+            let _changed = node_shutdown_tx.send(true);
             let node_result = node_run.await.map_err(|error| map_node_run_error(
                 error,
                 "the Prns node failed during shutdown",
@@ -1262,17 +1574,18 @@ async fn run_generation(
             actor_result.and(node_result)
         }
         node_result = &mut node_run => {
-            node_result.map_err(|error| map_node_run_error(
+            let node_result = node_result.map_err(|error| map_node_run_error(
                 error,
                 "the Prns node stopped unexpectedly",
-            ))?;
-            if shutdown.is_requested() {
-                Ok(())
-            } else {
-                Err((
+            ));
+            shutdown.request();
+            let actor_result = actor.await;
+            match node_result {
+                Err(failure) => Err(failure),
+                Ok(()) => actor_result.and(Err((
                     DevelopmentNodeStopStage::Node,
                     "The Prns node stopped before lifecycle shutdown completed.".to_owned(),
-                ))
+                ))),
             }
         }
     };
@@ -1349,15 +1662,64 @@ fn map_node_run_error(
 #[allow(clippy::too_many_arguments)]
 async fn run_actor(
     handle: PrnsNodeHandle,
-    mut commands: mpsc::Receiver<Command>,
-    mut events: mpsc::Receiver<OwnedNodeEvent>,
+    lxmf_service: prns_lxmf::direct::DirectLxmfService,
+    mut lxmf_refresh: watch::Receiver<u64>,
+    commands: mpsc::Receiver<Command>,
+    events: mpsc::Receiver<OwnedNodeEvent>,
     overflowed: Arc<std::sync::atomic::AtomicBool>,
     host_attachment: HostAttachment,
     clock: personal_rns::manifold::tokio::TokioClock,
     snapshots: Arc<SnapshotStore>,
     operation_admitted: Arc<AtomicBool>,
     ready: std_mpsc::SyncSender<ReadyResult>,
-    shutdown: ShutdownSignal,
+    shutdown_rx: watch::Receiver<bool>,
+) -> WorkerResult {
+    let mut send_tasks = JoinSet::new();
+    let result = run_actor_loop(
+        &handle,
+        &lxmf_service,
+        &mut lxmf_refresh,
+        &mut send_tasks,
+        commands,
+        events,
+        overflowed,
+        &host_attachment,
+        clock,
+        &snapshots,
+        &operation_admitted,
+        &ready,
+        shutdown_rx,
+    )
+    .await;
+
+    let stop_result = lxmf_service.stop().await.map_err(|_| {
+        (
+            DevelopmentNodeStopStage::Worker,
+            "The LXMF service did not finish bounded shutdown.".to_owned(),
+        )
+    });
+    send_tasks.shutdown().await;
+    snapshots.refresh_lxmf(crate::lxmf::project_health(
+        lxmf_service.snapshot().await.health,
+    ));
+    result.and(stop_result)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_actor_loop(
+    handle: &PrnsNodeHandle,
+    lxmf_service: &prns_lxmf::direct::DirectLxmfService,
+    lxmf_refresh: &mut watch::Receiver<u64>,
+    send_tasks: &mut JoinSet<()>,
+    mut commands: mpsc::Receiver<Command>,
+    mut events: mpsc::Receiver<OwnedNodeEvent>,
+    overflowed: Arc<std::sync::atomic::AtomicBool>,
+    host_attachment: &HostAttachment,
+    clock: personal_rns::manifold::tokio::TokioClock,
+    snapshots: &SnapshotStore,
+    operation_admitted: &AtomicBool,
+    ready: &std_mpsc::SyncSender<ReadyResult>,
+    mut shutdown_rx: watch::Receiver<bool>,
 ) -> WorkerResult {
     let mut controls = PairingControls::default();
     let mut persistence = PersistenceSnapshot::persistent();
@@ -1369,8 +1731,7 @@ async fn run_actor(
                 return Err("The native event lane closed before persistence restoration.");
             };
             apply_persistence_event(&event, &mut persistence);
-            if apply_event(event, &mut controls, &snapshots)
-                == AppliedNodeEvent::PersistenceRestored
+            if apply_event(event, &mut controls, snapshots) == AppliedNodeEvent::PersistenceRestored
             {
                 return Ok(());
             }
@@ -1384,7 +1745,6 @@ async fn run_actor(
                 DevelopmentNodeFailureStage::PersistenceRestore,
                 detail.clone(),
             )));
-            shutdown.request();
             return Err((DevelopmentNodeStopStage::Persistence, detail));
         }
         Err(_) => {
@@ -1394,23 +1754,22 @@ async fn run_actor(
                 DevelopmentNodeFailureStage::PersistenceRestore,
                 detail.clone(),
             )));
-            shutdown.request();
             return Err((DevelopmentNodeStopStage::Persistence, detail));
         }
     }
 
-    let _ = crate::remote_control::refresh_targets(&handle, &snapshots).await;
+    let _ = crate::remote_control::refresh_targets(handle, snapshots).await;
     snapshots.update(|snapshot| {
         snapshot.runtime = DevelopmentNodeRuntime::Running;
         snapshot.failure = None;
     });
     refresh_host_snapshot(
-        &handle,
-        &host_attachment,
+        handle,
+        host_attachment,
         &persistence,
         &mut host_revision,
         started,
-        &snapshots,
+        snapshots,
     )
     .await;
     let _ = ready.send(Ok(snapshots.read()));
@@ -1418,25 +1777,58 @@ async fn run_actor(
     let mut candidate_expiry = tokio::time::interval(Duration::from_millis(500));
     loop {
         if overflowed.swap(false, std::sync::atomic::Ordering::AcqRel) {
-            apply_overflow_failure(&snapshots);
+            apply_overflow_failure(snapshots);
         }
         tokio::select! {
+            changed = shutdown_rx.changed() => {
+                if changed.is_err() || *shutdown_rx.borrow() {
+                    commands.close();
+                    snapshots.set_runtime(DevelopmentNodeRuntime::Stopping);
+                    return Ok(());
+                }
+            }
+            changed = lxmf_refresh.changed() => {
+                if changed.is_err() {
+                    snapshots.fail(DevelopmentNodeFailure {
+                        stage: DevelopmentNodeFailureStage::Runtime,
+                        detail: "The LXMF refresh authority closed unexpectedly.".to_owned(),
+                    });
+                    return Err((
+                        DevelopmentNodeStopStage::Worker,
+                        "The native actor lost its LXMF refresh authority.".to_owned(),
+                    ));
+                }
+                snapshots.refresh_lxmf(crate::lxmf::project_health(
+                    lxmf_service.snapshot().await.health,
+                ));
+            }
+            completed = send_tasks.join_next(), if !send_tasks.is_empty() => {
+                if completed.is_some_and(|result| result.is_err()) {
+                    snapshots.fail(DevelopmentNodeFailure {
+                        stage: DevelopmentNodeFailureStage::Runtime,
+                        detail: "An LXMF send task stopped unexpectedly.".to_owned(),
+                    });
+                    return Err((
+                        DevelopmentNodeStopStage::Worker,
+                        "An LXMF send task stopped unexpectedly.".to_owned(),
+                    ));
+                }
+            }
             _ = candidate_expiry.tick() => {
-                expire_candidate(&mut controls, &snapshots, clock.now());
+                expire_candidate(&mut controls, snapshots, clock.now());
             }
             event = events.recv() => {
                 match event {
                     Some(event) => {
                         apply_persistence_event(&event, &mut persistence);
-                        if apply_event(event, &mut controls, &snapshots)
+                        if apply_event(event, &mut controls, snapshots)
                             == AppliedNodeEvent::TargetInventoryChanged
                         {
-                            if let Err(detail) = crate::remote_control::refresh_targets(&handle, &snapshots).await {
+                            if let Err(detail) = crate::remote_control::refresh_targets(handle, snapshots).await {
                                 snapshots.fail(DevelopmentNodeFailure {
                                     stage: DevelopmentNodeFailureStage::Node,
                                     detail: detail.clone(),
                                 });
-                                shutdown.request();
                                 return Err((DevelopmentNodeStopStage::Node, detail));
                             }
                         }
@@ -1447,7 +1839,6 @@ async fn run_actor(
                             stage: DevelopmentNodeFailureStage::Node,
                             detail: "The native event lane closed unexpectedly.".to_owned(),
                         });
-                        shutdown.request();
                         return Err((
                             DevelopmentNodeStopStage::Node,
                             "The native actor lost its Prns event producer.".to_owned(),
@@ -1458,32 +1849,32 @@ async fn run_actor(
             command = commands.recv() => match command {
                 Some(Command::Snapshot(response)) => {
                     refresh_host_snapshot(
-                        &handle,
-                        &host_attachment,
+                        handle,
+                        host_attachment,
                         &persistence,
                         &mut host_revision,
                         started,
-                        &snapshots,
+                        snapshots,
                     ).await;
                     let _ = response.send(snapshots.read());
                 }
                 Some(Command::Initiate(input, response)) => {
-                    let outcome = initiate_pairing(&handle, &mut controls, &snapshots, input).await;
+                    let outcome = initiate_pairing(handle, &mut controls, snapshots, input).await;
                     operation_admitted.store(false, Ordering::Release);
                     let _ = response.send(outcome);
                 }
                 Some(Command::Approve(input, response)) => {
-                    let outcome = approve_pairing(&handle, &mut controls, &snapshots, input).await;
+                    let outcome = approve_pairing(handle, &mut controls, snapshots, input).await;
                     operation_admitted.store(false, Ordering::Release);
                     let _ = response.send(outcome);
                 }
                 Some(Command::Reject(input, response)) => {
-                    let outcome = reject_pairing(&handle, &mut controls, &snapshots, input).await;
+                    let outcome = reject_pairing(handle, &mut controls, snapshots, input).await;
                     operation_admitted.store(false, Ordering::Release);
                     let _ = response.send(outcome);
                 }
                 Some(Command::Describe(input, response)) => {
-                    let outcome = crate::remote_control::describe(&handle, &snapshots, input).await;
+                    let outcome = crate::remote_control::describe(handle, snapshots, input).await;
                     operation_admitted.store(false, Ordering::Release);
                     let _ = response.send(outcome);
                 }
@@ -1502,10 +1893,35 @@ async fn run_actor(
                     });
                     let _ = response.send(identity);
                 }
+                Some(Command::ListLxmfPeers(response)) => {
+                    let snapshot = lxmf_service.snapshot().await;
+                    let _ = response.send(crate::lxmf::project_peers(&snapshot, clock.now().0));
+                }
+                Some(Command::ListLxmfMessages(input, response)) => {
+                    dispatch_lxmf_message_list(lxmf_service, input, response).await;
+                }
+                Some(Command::MeasureLxmfText(input, response)) => {
+                    let _ = response.send(crate::lxmf::measure_text(&input));
+                }
+                Some(Command::AnnounceLxmf(response)) => {
+                    let outcome = match lxmf_service.announce().await {
+                        Ok(()) => AnnounceLxmfOutcome::Announced,
+                        Err(_) => AnnounceLxmfOutcome::Failed,
+                    };
+                    let _ = response.send(outcome);
+                }
+                Some(Command::SendDirectText(input, response)) => {
+                    dispatch_lxmf_send(
+                        lxmf_service,
+                        send_tasks,
+                        input,
+                        response,
+                        wall_clock_millis(),
+                    );
+                }
                 None => {
                     commands.close();
                     snapshots.set_runtime(DevelopmentNodeRuntime::Stopping);
-                    shutdown.request();
                     return Ok(());
                 }
             }
@@ -1545,11 +1961,7 @@ async fn refresh_host_snapshot(
         interfaces,
         attachment.metadata(),
         engine,
-        BackendInfo::new(
-            BackendKind::Native,
-            [Capability::Bluetooth],
-            [InterfaceKind::AutomaticBluetoothLe],
-        ),
+        attachment.backend_info(),
         persistence.clone(),
         *revision,
         started.elapsed(),
@@ -1771,27 +2183,59 @@ async fn reject_pairing(
 }
 
 impl HostAttachment {
-    const fn is_none(&self) -> bool {
+    const fn bluetooth_is_none(&self) -> bool {
         #[cfg(all(feature = "apple", any(target_os = "ios", target_os = "macos")))]
         {
-            false
+            self.bluetooth.is_none()
         }
         #[cfg(not(all(feature = "apple", any(target_os = "ios", target_os = "macos"))))]
         {
-            matches!(self, Self::None)
+            true
         }
     }
 
     fn metadata(&self) -> Vec<HostInterfaceAttachment> {
-        match self {
-            #[cfg(all(feature = "apple", any(target_os = "ios", target_os = "macos")))]
-            Self::Apple { attached } => vec![HostInterfaceAttachment::new(
+        #[cfg(not(any(feature = "apple", feature = "host-test")))]
+        return Vec::new();
+
+        #[cfg(any(feature = "apple", feature = "host-test"))]
+        let mut attachments = Vec::new();
+        #[cfg(all(feature = "apple", any(target_os = "ios", target_os = "macos")))]
+        if let Some(attached) = self.bluetooth.as_ref() {
+            attachments.push(HostInterfaceAttachment::new(
                 attached.id(),
                 InterfaceKind::AutomaticBluetoothLe,
-            )],
-            #[cfg(not(all(feature = "apple", any(target_os = "ios", target_os = "macos"))))]
-            Self::None => Vec::new(),
+            ));
         }
+        #[cfg(any(feature = "apple", feature = "host-test"))]
+        if let Some(attached) = self.tcp.as_ref() {
+            attachments.push(HostInterfaceAttachment::new(
+                attached.id(),
+                InterfaceKind::TcpClient,
+            ));
+        }
+        #[cfg(any(feature = "apple", feature = "host-test"))]
+        attachments
+    }
+
+    fn backend_info(&self) -> BackendInfo {
+        #[cfg(any(feature = "apple", feature = "host-test"))]
+        {
+            let mut capabilities = vec![Capability::Bluetooth];
+            let mut interface_kinds = vec![InterfaceKind::AutomaticBluetoothLe];
+            if self.tcp.is_some() {
+                capabilities.push(Capability::TcpClient);
+                interface_kinds.push(InterfaceKind::TcpClient);
+            }
+            BackendInfo::new(BackendKind::Native, capabilities, interface_kinds)
+        }
+
+        #[cfg(not(any(feature = "apple", feature = "host-test")))]
+        BackendInfo::new(
+            BackendKind::Native,
+            [Capability::Bluetooth],
+            [InterfaceKind::AutomaticBluetoothLe],
+        )
     }
 }
 
@@ -1871,6 +2315,73 @@ fn wall_clock_millis() -> u64 {
 mod tests {
     use super::*;
 
+    #[derive(Default)]
+    struct PendingProofNetwork {
+        send_entered: tokio::sync::Notify,
+        release_send: tokio::sync::Notify,
+    }
+
+    impl prns_lxmf::direct::DirectNetwork for PendingProofNetwork {
+        fn has_route(
+            &self,
+            _destination: [u8; 16],
+        ) -> prns_lxmf::direct::DirectNetworkFuture<'_, bool> {
+            Box::pin(async { true })
+        }
+
+        fn request_path(
+            &self,
+            _destination: [u8; 16],
+        ) -> prns_lxmf::direct::DirectNetworkFuture<
+            '_,
+            Result<(), prns_lxmf::direct::DirectSendFailure>,
+        > {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn establish_link(
+            &self,
+            _destination: [u8; 16],
+        ) -> prns_lxmf::direct::DirectNetworkFuture<
+            '_,
+            Result<[u8; 16], prns_lxmf::direct::DirectSendFailure>,
+        > {
+            Box::pin(async { Ok([0xa5; 16]) })
+        }
+
+        fn send_link_packet(
+            &self,
+            _link: [u8; 16],
+            _complete_wire: Vec<u8>,
+        ) -> prns_lxmf::direct::DirectNetworkFuture<
+            '_,
+            Result<(), prns_lxmf::direct::DirectSendFailure>,
+        > {
+            Box::pin(async move {
+                self.send_entered.notify_one();
+                self.release_send.notified().await;
+                Ok(())
+            })
+        }
+
+        fn destination_public_key(
+            &self,
+            _destination: [u8; 16],
+        ) -> prns_lxmf::direct::DirectNetworkFuture<'_, Option<[u8; 64]>> {
+            Box::pin(async { None })
+        }
+
+        fn announce(
+            &self,
+            _destination: [u8; 16],
+        ) -> prns_lxmf::direct::DirectNetworkFuture<
+            '_,
+            Result<(), prns_lxmf::direct::DirectAnnounceFailure>,
+        > {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
     fn running_host_state() -> LocalHostState {
         LocalHostState::Running {
             host: Box::new(prns_host::HostSnapshot {
@@ -1929,6 +2440,147 @@ mod tests {
         assert!(parse_invitation_code("89abcdef").is_none());
         assert!(parse_invitation_code("123456").is_none());
         assert!(parse_invitation_code("123456789").is_none());
+    }
+
+    #[test]
+    fn development_tcp_target_requires_an_explicit_nonzero_ip_port() {
+        assert_eq!(validate_development_tcp_target(None), Ok(None));
+        assert_eq!(
+            validate_development_tcp_target(Some("192.0.2.1:4242")),
+            Ok(Some("192.0.2.1:4242".to_owned()))
+        );
+        assert_eq!(
+            validate_development_tcp_target(Some("[2001:db8::1]:4242")),
+            Ok(Some("[2001:db8::1]:4242".to_owned()))
+        );
+        for invalid in ["example.com:4242", "192.0.2.1", "192.0.2.1:0", ""] {
+            assert!(validate_development_tcp_target(Some(invalid)).is_err());
+        }
+    }
+
+    #[test]
+    fn tracked_lxmf_send_tasks_are_bounded() {
+        assert!(lxmf_send_has_capacity(0));
+        assert!(lxmf_send_has_capacity(LXMF_SEND_TASK_CAPACITY - 1));
+        assert!(!lxmf_send_has_capacity(LXMF_SEND_TASK_CAPACITY));
+        assert!(!lxmf_send_has_capacity(LXMF_SEND_TASK_CAPACITY + 1));
+    }
+
+    #[tokio::test]
+    async fn pending_lxmf_send_does_not_block_message_queries() {
+        use personal_rns::interfaces::InterfaceId;
+        use personal_rns::routing::announce::{
+            derive_single_destination_hash, AnnounceObservation,
+        };
+        use personal_rns::units::{HopCount, InstantMillis};
+
+        let local_identity = prns_lxmf::direct::LocalLxmfIdentity::from_secret_bytes(
+            &[0x31; personal_rns::identity::IDENTITY_SECRET_KEY_LEN],
+        )
+        .expect("the fixed LXMF destination name is valid");
+        let network = Arc::new(PendingProofNetwork::default());
+        let service = prns_lxmf::direct::DirectLxmfService::start(
+            local_identity,
+            Arc::clone(&network) as Arc<dyn prns_lxmf::direct::DirectNetwork>,
+        )
+        .expect("the test owns a Tokio runtime");
+        let callbacks = service.callbacks();
+        let peer_material = PrivateIdentityMaterial::from_bytes(
+            [0x52; personal_rns::identity::IDENTITY_SECRET_KEY_LEN],
+        );
+        let peer_destination = derive_single_destination_hash(
+            &peer_material.identity_hash(),
+            prns_lxmf::wire::LXMF_APP_NAME,
+            prns_lxmf::wire::LXMF_DELIVERY_ASPECTS,
+        )
+        .expect("the fixed LXMF destination name is valid");
+        let mut announce = [0_u8; 64];
+        let announce_len =
+            prns_lxmf::wire::encode_current_lxmf_announce(b"Pending peer", &mut announce)
+                .expect("the small announce fits");
+        let mut refresh = service.subscribe();
+        assert_eq!(
+            callbacks.on_accepted_announce(AnnounceObservation {
+                destination: peer_destination,
+                announced_identity: peer_material.identity_hash(),
+                hops: HopCount(1),
+                source_interface: InterfaceId::new([4, 1, 2, 3, 4, 5, 6, 7]),
+                arrived_at: InstantMillis(4_200),
+                app_data: &announce[..announce_len],
+                is_path_response: false,
+            }),
+            prns_lxmf::direct::CallbackOutcome::Enqueued
+        );
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if !service.snapshot().await.peers.is_empty() {
+                    break;
+                }
+                refresh
+                    .changed()
+                    .await
+                    .expect("the service remains running");
+            }
+        })
+        .await
+        .expect("the peer observation is consumed");
+
+        let (send_response, send_result) = std_mpsc::sync_channel(1);
+        let mut send_tasks = JoinSet::new();
+        dispatch_lxmf_send(
+            &service,
+            &mut send_tasks,
+            SendDirectTextInput {
+                destination: *peer_destination.as_bytes(),
+                title: "Proof gate".to_owned(),
+                content: "Still sending".to_owned(),
+            },
+            send_response,
+            1_700_000_000_000,
+        );
+        tokio::time::timeout(Duration::from_secs(1), network.send_entered.notified())
+            .await
+            .expect("the direct attempt reaches its pending proof gate");
+        assert!(matches!(
+            send_result.try_recv(),
+            Err(std_mpsc::TryRecvError::Empty)
+        ));
+
+        let (list_response, list_result) = std_mpsc::sync_channel(1);
+        dispatch_lxmf_message_list(
+            &service,
+            ListLxmfMessagesInput {
+                peer: Some(*peer_destination.as_bytes()),
+                before: None,
+                limit: 25,
+            },
+            list_response,
+        )
+        .await;
+        let LxmfMessageListOutcome::Listed { messages } = list_result
+            .try_recv()
+            .expect("the query completes while proof remains pending")
+        else {
+            panic!("the pending message query did not return a list");
+        };
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0].delivery_state,
+            crate::contract::LxmfDeliveryState::Sending
+        );
+        let local_record_id = messages[0].local_record_id.clone();
+
+        network.release_send.notify_one();
+        assert!(send_tasks
+            .join_next()
+            .await
+            .expect("the tracked send exists")
+            .is_ok());
+        assert_eq!(
+            send_result.try_recv().expect("proof settles the send call"),
+            SendDirectTextOutcome::Started { local_record_id }
+        );
+        service.stop().await.expect("the service stops promptly");
     }
 
     #[test]
@@ -2786,6 +3438,37 @@ mod tests {
         ));
         let running = snapshot();
         assert_eq!(running.runtime, DevelopmentNodeRuntime::Running);
+        assert_eq!(running.lxmf.state, crate::contract::LxmfHealthState::Ready);
+        assert_eq!(
+            list_lxmf_peers(),
+            LxmfPeerListOutcome::Listed { peers: vec![] }
+        );
+        assert_eq!(
+            list_lxmf_messages(ListLxmfMessagesInput {
+                peer: None,
+                before: None,
+                limit: 25,
+            }),
+            LxmfMessageListOutcome::Listed { messages: vec![] }
+        );
+        assert_eq!(
+            measure_lxmf_text(MeasureLxmfTextInput {
+                title: String::new(),
+                content: "x".repeat(319),
+            }),
+            MeasureLxmfTextOutcome::Measured {
+                wire_bytes: 431,
+                remaining_bytes: 0,
+            }
+        );
+        assert_eq!(
+            send_direct_text(SendDirectTextInput {
+                destination: [0x99; 16],
+                title: "Unknown peer".to_owned(),
+                content: "No message should be sent".to_owned(),
+            }),
+            SendDirectTextOutcome::PeerIdentityUnavailable
+        );
         let LocalHostState::Running { host } = running.local_host else {
             panic!("the running generation did not publish its canonical Host snapshot");
         };
@@ -2807,9 +3490,20 @@ mod tests {
         assert_eq!(bluetooth_record.len(), 40);
         assert_eq!(stop(), DevelopmentNodeStopOutcome::Stopped);
         assert!(matches!(
-            start(&storage),
+            start_configured(
+                &storage,
+                DevelopmentNodeStartInput {
+                    development_tcp_target: Some("127.0.0.1:9".to_owned()),
+                },
+            ),
             DevelopmentNodeStartOutcome::Started { .. }
         ));
+        let tcp_snapshot = snapshot();
+        let LocalHostState::Running { host } = tcp_snapshot.local_host else {
+            panic!("the TCP generation did not publish its Host snapshot");
+        };
+        assert!(host.backend.supports(Capability::TcpClient));
+        assert!(host.backend.supports_interface(InterfaceKind::TcpClient));
         assert_eq!(
             std::fs::read(&bluetooth_path).unwrap_or_default(),
             bluetooth_record

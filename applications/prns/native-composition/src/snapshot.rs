@@ -2,7 +2,7 @@ use std::sync::{Mutex, MutexGuard};
 
 use crate::contract::{
     DevelopmentNodeFailure, DevelopmentNodeRuntime, DevelopmentNodeSnapshot, LocalHostState,
-    PrimaryIdentityState, U64String,
+    LxmfHealth, PrimaryIdentityState, U64String,
 };
 
 pub struct SnapshotStore {
@@ -91,6 +91,14 @@ impl SnapshotStore {
             .saturating_add(1);
         snapshot.local_host = local_host;
         snapshot.revision = U64String::from(next);
+    }
+
+    /// Publish an LXMF refresh hint through the aggregate's existing revision.
+    ///
+    /// The health value can remain unchanged while peer or message query state
+    /// changes, so every service notification deliberately advances revision.
+    pub fn refresh_lxmf(&self, lxmf: LxmfHealth) {
+        self.update(|snapshot| snapshot.lxmf = lxmf);
     }
 
     pub fn fail(&self, failure: DevelopmentNodeFailure) {

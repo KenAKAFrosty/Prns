@@ -24,11 +24,19 @@ pub struct DevelopmentNodeSnapshot {
     pub runtime: DevelopmentNodeRuntime,
     pub primary_identity: PrimaryIdentityState,
     pub local_host: LocalHostState,
+    pub lxmf: LxmfHealth,
     pub controller_identity_fingerprint: Option<Vec<u8>>,
     pub pairing: RemoteControlPairingState,
     pub paired_targets: Vec<RemoteControlTargetSnapshot>,
     pub active_operation: Option<DevelopmentNodeOperation>,
     pub failure: Option<DevelopmentNodeFailure>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(rename_all = "camelCase")]
+pub struct DevelopmentNodeStartInput {
+    pub development_tcp_target: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -369,6 +377,251 @@ pub enum ContactListOutcome {
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
+pub enum LxmfText {
+    Utf8 {
+        value: String,
+    },
+    InvalidUtf8 {
+        #[ts(type = "Array<number>")]
+        bytes: Vec<u8>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct LxmfPeerSummary {
+    #[ts(type = "Array<number>")]
+    pub destination: [u8; 16],
+    pub display_name: Option<String>,
+    pub required_stamp_cost: Option<U64String>,
+    pub last_observed_age_millis: U64String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub enum LxmfDirection {
+    Inbound,
+    Outbound,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub enum LxmfVerification {
+    Verified,
+    SourceUnknown,
+    InvalidSignature,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub enum LxmfDeliveryFailure {
+    NoRoute,
+    LinkFailed,
+    DeliveryTimedOut,
+    LocalNodeStopped,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub enum LxmfDeliveryState {
+    Received,
+    Sending,
+    Delivered,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct LxmfMessage {
+    pub local_record_id: U64String,
+    #[ts(type = "Array<number>")]
+    pub message_id: [u8; 32],
+    #[ts(type = "Array<number>")]
+    pub source: [u8; 16],
+    #[ts(type = "Array<number>")]
+    pub destination: [u8; 16],
+    pub timestamp: U64String,
+    pub title: LxmfText,
+    pub content: LxmfText,
+    pub direction: LxmfDirection,
+    pub verification: LxmfVerification,
+    pub delivery_state: LxmfDeliveryState,
+    pub failure: Option<LxmfDeliveryFailure>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub enum LxmfHealthState {
+    Ready,
+    Degraded,
+    Stopped,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct LxmfHealth {
+    pub state: LxmfHealthState,
+    pub inbound_overflow_count: U64String,
+}
+
+impl LxmfHealth {
+    #[must_use]
+    pub fn stopped() -> Self {
+        Self {
+            state: LxmfHealthState::Stopped,
+            inbound_overflow_count: U64String::from(0),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(rename_all = "camelCase")]
+pub struct SendDirectTextInput {
+    #[ts(type = "Array<number>")]
+    pub destination: [u8; 16],
+    pub title: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(rename_all = "camelCase")]
+pub struct MeasureLxmfTextInput {
+    pub title: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(rename_all = "camelCase")]
+pub struct ListLxmfMessagesInput {
+    #[ts(type = "Array<number> | null")]
+    pub peer: Option<[u8; 16]>,
+    pub before: Option<U64String>,
+    pub limit: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+#[ts(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum LxmfPeerListOutcome {
+    Listed { peers: Vec<LxmfPeerSummary> },
+    LocalNodeStopped,
+    Busy,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+#[ts(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum LxmfMessageListOutcome {
+    Listed { messages: Vec<LxmfMessage> },
+    InvalidInput { detail: String },
+    LocalNodeStopped,
+    Busy,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+#[ts(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum AnnounceLxmfOutcome {
+    Announced,
+    LocalNodeStopped,
+    Busy,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+#[ts(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum SendDirectTextOutcome {
+    Started { local_record_id: U64String },
+    NeedsResource { wire_bytes: u32 },
+    UnsupportedRemoteStampRequirement,
+    PeerIdentityUnavailable,
+    NoRoute,
+    LinkFailed,
+    DeliveryTimedOut,
+    InvalidMessage,
+    LocalNodeStopped,
+    Busy,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+#[ts(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum MeasureLxmfTextOutcome {
+    Measured {
+        wire_bytes: u32,
+        remaining_bytes: u32,
+    },
+    NeedsResource {
+        wire_bytes: u32,
+    },
+    InvalidMessage,
+    LocalNodeStopped,
+    Busy,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+#[ts(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum RemoteControlPairingState {
     BluetoothUnavailable,
     Searching,
@@ -639,6 +892,12 @@ struct TaggedContractFixtures {
     contact_mutation_outcomes: Vec<ContactMutationOutcome>,
     contact_lookup_outcomes: Vec<ContactLookupOutcome>,
     contact_list_outcomes: Vec<ContactListOutcome>,
+    lxmf_texts: Vec<LxmfText>,
+    lxmf_peer_list_outcomes: Vec<LxmfPeerListOutcome>,
+    lxmf_message_list_outcomes: Vec<LxmfMessageListOutcome>,
+    announce_lxmf_outcomes: Vec<AnnounceLxmfOutcome>,
+    send_direct_text_outcomes: Vec<SendDirectTextOutcome>,
+    measure_lxmf_text_outcomes: Vec<MeasureLxmfTextOutcome>,
     pairing_states: Vec<RemoteControlPairingState>,
     start_outcomes: Vec<DevelopmentNodeStartOutcome>,
     stop_outcomes: Vec<DevelopmentNodeStopOutcome>,
@@ -657,6 +916,7 @@ impl DevelopmentNodeSnapshot {
             local_host: LocalHostState::Stopped {
                 last_start_failure: None,
             },
+            lxmf: LxmfHealth::stopped(),
             controller_identity_fingerprint: None,
             pairing: RemoteControlPairingState::Searching,
             paired_targets: Vec::new(),
@@ -692,6 +952,7 @@ pub fn export_typescript() -> String {
     }
     export!(U64String);
     export!(DevelopmentNodeRuntime);
+    export!(DevelopmentNodeStartInput);
     export!(PrimaryIdentityState);
     export!(LocalHostState);
     export!(IdentityImportPreviewOutcome);
@@ -704,6 +965,23 @@ pub fn export_typescript() -> String {
     export!(ContactMutationOutcome);
     export!(ContactLookupOutcome);
     export!(ContactListOutcome);
+    export!(LxmfText);
+    export!(LxmfPeerSummary);
+    export!(LxmfDirection);
+    export!(LxmfVerification);
+    export!(LxmfDeliveryFailure);
+    export!(LxmfDeliveryState);
+    export!(LxmfMessage);
+    export!(LxmfHealthState);
+    export!(LxmfHealth);
+    export!(SendDirectTextInput);
+    export!(MeasureLxmfTextInput);
+    export!(ListLxmfMessagesInput);
+    export!(LxmfPeerListOutcome);
+    export!(LxmfMessageListOutcome);
+    export!(AnnounceLxmfOutcome);
+    export!(SendDirectTextOutcome);
+    export!(MeasureLxmfTextOutcome);
     export!(RemoteControlRequestKind);
     export!(RemoteControlPairingCandidate);
     export!(RemoteControlPairingState);
@@ -737,6 +1015,12 @@ pub fn export_typescript() -> String {
          \treadonly contactMutationOutcomes: readonly ContactMutationOutcome[];\n\
          \treadonly contactLookupOutcomes: readonly ContactLookupOutcome[];\n\
          \treadonly contactListOutcomes: readonly ContactListOutcome[];\n\
+         \treadonly lxmfTexts: readonly LxmfText[];\n\
+         \treadonly lxmfPeerListOutcomes: readonly LxmfPeerListOutcome[];\n\
+         \treadonly lxmfMessageListOutcomes: readonly LxmfMessageListOutcome[];\n\
+         \treadonly announceLxmfOutcomes: readonly AnnounceLxmfOutcome[];\n\
+         \treadonly sendDirectTextOutcomes: readonly SendDirectTextOutcome[];\n\
+         \treadonly measureLxmfTextOutcomes: readonly MeasureLxmfTextOutcome[];\n\
          \treadonly pairingStates: readonly RemoteControlPairingState[];\n\
          \treadonly startOutcomes: readonly DevelopmentNodeStartOutcome[];\n\
          \treadonly stopOutcomes: readonly DevelopmentNodeStopOutcome[];\n\
@@ -877,6 +1161,82 @@ fn tagged_contract_fixtures() -> TaggedContractFixtures {
             reason: "list reset fixture".to_owned(),
         },
     ];
+    let lxmf_peer = LxmfPeerSummary {
+        destination: [0x91; 16],
+        display_name: Some("LXMF fixture".to_owned()),
+        required_stamp_cost: Some(U64String::from(u64::MAX)),
+        last_observed_age_millis: U64String::from(25),
+    };
+    let lxmf_message = LxmfMessage {
+        local_record_id: U64String::from(u64::MAX),
+        message_id: [0x92; 32],
+        source: [0x91; 16],
+        destination: [0x93; 16],
+        timestamp: U64String::from(1_700_000_000_123),
+        title: LxmfText::Utf8 {
+            value: "Title".to_owned(),
+        },
+        content: LxmfText::InvalidUtf8 {
+            bytes: vec![0xff, 0xfe],
+        },
+        direction: LxmfDirection::Inbound,
+        verification: LxmfVerification::InvalidSignature,
+        delivery_state: LxmfDeliveryState::Received,
+        failure: None,
+    };
+    let lxmf_texts = vec![
+        LxmfText::Utf8 {
+            value: "text fixture".to_owned(),
+        },
+        LxmfText::InvalidUtf8 { bytes: vec![0xff] },
+    ];
+    let lxmf_peer_list_outcomes = vec![
+        LxmfPeerListOutcome::Listed {
+            peers: vec![lxmf_peer],
+        },
+        LxmfPeerListOutcome::LocalNodeStopped,
+        LxmfPeerListOutcome::Busy,
+    ];
+    let lxmf_message_list_outcomes = vec![
+        LxmfMessageListOutcome::Listed {
+            messages: vec![lxmf_message],
+        },
+        LxmfMessageListOutcome::InvalidInput {
+            detail: "invalid LXMF query fixture".to_owned(),
+        },
+        LxmfMessageListOutcome::LocalNodeStopped,
+        LxmfMessageListOutcome::Busy,
+    ];
+    let announce_lxmf_outcomes = vec![
+        AnnounceLxmfOutcome::Announced,
+        AnnounceLxmfOutcome::LocalNodeStopped,
+        AnnounceLxmfOutcome::Busy,
+        AnnounceLxmfOutcome::Failed,
+    ];
+    let send_direct_text_outcomes = vec![
+        SendDirectTextOutcome::Started {
+            local_record_id: U64String::from(u64::MAX),
+        },
+        SendDirectTextOutcome::NeedsResource { wire_bytes: 432 },
+        SendDirectTextOutcome::UnsupportedRemoteStampRequirement,
+        SendDirectTextOutcome::PeerIdentityUnavailable,
+        SendDirectTextOutcome::NoRoute,
+        SendDirectTextOutcome::LinkFailed,
+        SendDirectTextOutcome::DeliveryTimedOut,
+        SendDirectTextOutcome::InvalidMessage,
+        SendDirectTextOutcome::LocalNodeStopped,
+        SendDirectTextOutcome::Busy,
+    ];
+    let measure_lxmf_text_outcomes = vec![
+        MeasureLxmfTextOutcome::Measured {
+            wire_bytes: 112,
+            remaining_bytes: 319,
+        },
+        MeasureLxmfTextOutcome::NeedsResource { wire_bytes: 432 },
+        MeasureLxmfTextOutcome::InvalidMessage,
+        MeasureLxmfTextOutcome::LocalNodeStopped,
+        MeasureLxmfTextOutcome::Busy,
+    ];
     let pairing_states = vec![
         RemoteControlPairingState::BluetoothUnavailable,
         RemoteControlPairingState::Searching,
@@ -971,6 +1331,12 @@ fn tagged_contract_fixtures() -> TaggedContractFixtures {
         contact_mutation_outcomes,
         contact_lookup_outcomes,
         contact_list_outcomes,
+        lxmf_texts,
+        lxmf_peer_list_outcomes,
+        lxmf_message_list_outcomes,
+        announce_lxmf_outcomes,
+        send_direct_text_outcomes,
+        measure_lxmf_text_outcomes,
         pairing_states,
         start_outcomes,
         stop_outcomes,
@@ -1068,6 +1434,12 @@ mod tests {
         assert_eq!(fixtures.contact_mutation_outcomes.len(), 12);
         assert_eq!(fixtures.contact_lookup_outcomes.len(), 4);
         assert_eq!(fixtures.contact_list_outcomes.len(), 3);
+        assert_eq!(fixtures.lxmf_texts.len(), 2);
+        assert_eq!(fixtures.lxmf_peer_list_outcomes.len(), 3);
+        assert_eq!(fixtures.lxmf_message_list_outcomes.len(), 4);
+        assert_eq!(fixtures.announce_lxmf_outcomes.len(), 4);
+        assert_eq!(fixtures.send_direct_text_outcomes.len(), 10);
+        assert_eq!(fixtures.measure_lxmf_text_outcomes.len(), 5);
         assert_eq!(fixtures.pairing_states.len(), 12);
         assert_eq!(fixtures.start_outcomes.len(), 3);
         assert_eq!(fixtures.stop_outcomes.len(), 3);

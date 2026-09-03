@@ -8,8 +8,9 @@ use serde::Serialize;
 
 use crate::contract::{
     ContactDestinationInput, CreateManualContactInput, DescribeRemoteControlTargetInput,
-    InitiateRemoteControlPairingInput, RemoteControlPairingDecisionInput, SetContactAliasInput,
-    SetContactPinnedInput, CONTRACT_FINGERPRINT, HOST_CONTRACT_FINGERPRINT,
+    DevelopmentNodeStartInput, InitiateRemoteControlPairingInput, ListLxmfMessagesInput,
+    MeasureLxmfTextInput, RemoteControlPairingDecisionInput, SendDirectTextInput,
+    SetContactAliasInput, SetContactPinnedInput, CONTRACT_FINGERPRINT, HOST_CONTRACT_FINGERPRINT,
 };
 use crate::lifecycle;
 
@@ -181,16 +182,91 @@ pub unsafe extern "C" fn prns_app_create_imported_identity(
 /// mutated concurrently. The length must not exceed
 /// [`PRNS_APP_MAX_PATH_BYTES`].
 #[no_mangle]
-pub unsafe extern "C" fn prns_app_start(path_ptr: *const u8, path_len: usize) -> PrnsAppBytes {
-    // SAFETY: The caller contract for this exported function is forwarded to
-    // `invoke_path`, which validates length and nullness before reading bytes.
-    unsafe { invoke_path(path_ptr, path_len, lifecycle::start) }
+pub unsafe extern "C" fn prns_app_start(
+    path_ptr: *const u8,
+    path_len: usize,
+    input_ptr: *const u8,
+    input_len: usize,
+) -> PrnsAppBytes {
+    // SAFETY: The caller contracts are forwarded to the bounded decoders.
+    unsafe {
+        invoke_path_json::<DevelopmentNodeStartInput, _, _>(
+            path_ptr,
+            path_len,
+            input_ptr,
+            input_len,
+            lifecycle::start_configured,
+        )
+    }
 }
 
 /// Read the current authoritative development-node snapshot.
 #[no_mangle]
 pub extern "C" fn prns_app_snapshot() -> PrnsAppBytes {
     invoke(|| Ok(lifecycle::snapshot()))
+}
+
+/// List compatible LXMF peers retained by the current native generation.
+#[no_mangle]
+pub extern "C" fn prns_app_list_lxmf_peers() -> PrnsAppBytes {
+    invoke(|| Ok(lifecycle::list_lxmf_peers()))
+}
+
+/// Measure one UTF-8 title/content pair against the direct Link-packet bound.
+///
+/// # Safety
+///
+/// The input buffer follows the JSON contract documented by
+/// [`prns_app_initiate_pairing`].
+#[no_mangle]
+pub unsafe extern "C" fn prns_app_measure_lxmf_text(
+    input_ptr: *const u8,
+    input_len: usize,
+) -> PrnsAppBytes {
+    // SAFETY: The caller contract is forwarded to the bounded JSON decoder.
+    unsafe {
+        invoke_json::<MeasureLxmfTextInput, _>(input_ptr, input_len, lifecycle::measure_lxmf_text)
+    }
+}
+
+/// Emit the registered current-form LXMF announce on all active interfaces.
+#[no_mangle]
+pub extern "C" fn prns_app_announce_lxmf() -> PrnsAppBytes {
+    invoke(|| Ok(lifecycle::announce_lxmf()))
+}
+
+/// Start one proof-gated direct LXMF text attempt.
+///
+/// # Safety
+///
+/// The input buffer follows the JSON contract documented by
+/// [`prns_app_initiate_pairing`].
+#[no_mangle]
+pub unsafe extern "C" fn prns_app_send_direct_text(
+    input_ptr: *const u8,
+    input_len: usize,
+) -> PrnsAppBytes {
+    // SAFETY: The caller contract is forwarded to the bounded JSON decoder.
+    unsafe {
+        invoke_json::<SendDirectTextInput, _>(input_ptr, input_len, lifecycle::send_direct_text)
+    }
+}
+
+/// List one bounded page of in-memory LXMF messages.
+///
+/// # Safety
+///
+/// The input buffer follows the JSON contract documented by
+/// [`prns_app_initiate_pairing`].
+#[no_mangle]
+pub unsafe extern "C" fn prns_app_list_lxmf_messages(
+    input_ptr: *const u8,
+    input_len: usize,
+) -> PrnsAppBytes {
+    // SAFETY: The caller contract is forwarded to the bounded JSON decoder.
+    unsafe {
+        invoke_json::<ListLxmfMessagesInput, _>(input_ptr, input_len, lifecycle::list_lxmf_messages)
+    }
 }
 
 /// Initiate controller pairing from a generated contract JSON input.

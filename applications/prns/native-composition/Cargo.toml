@@ -20,11 +20,12 @@ path = "src/bin/export_contract.rs"
 
 [features]
 default = []
-apple = ["personal-rns/bluetooth-auto"]
+apple = ["personal-rns/bluetooth-auto", "personal-rns/tcp"]
 host-test = ["personal-rns/tcp"]
 
 [dependencies]
 personal-rns = { path = "../../../personal-rns", default-features = false, features = ["tokio-host"] }
+prns-lxmf = { path = "../../services/lxmf", default-features = false, features = ["tokio-host"] }
 prns-core = { path = "../../../prns-core", default-features = false, features = ["std"] }
 prns-host = { path = "../../../prns-host/core" }
 prns-host-snapshot = { path = "../../../prns-host/impls/snapshot" }

@@ -58,6 +58,7 @@ pub enum DirectSendFailure {
     NoRoute,
     LinkFailed,
     DeliveryTimedOut,
+    LocalNodeStopped,
 }
 
 /// Failure to ask the owning node to emit the registered LXMF announce.
@@ -130,11 +131,17 @@ impl DirectNetwork for PrnsDirectNetwork {
         destination: [u8; 16],
     ) -> DirectNetworkFuture<'_, Result<(), DirectSendFailure>> {
         Box::pin(async move {
-            self.handle
+            match self
+                .handle
                 .request_path(DestinationHash::new(destination))
                 .await
-                .map(|_| ())
-                .map_err(|_| DirectSendFailure::NoRoute)
+            {
+                Ok(_) => Ok(()),
+                Err(personal_rns::runtime::RequestPathError::NodeStopped) => {
+                    Err(DirectSendFailure::LocalNodeStopped)
+                }
+                Err(_) => Err(DirectSendFailure::NoRoute),
+            }
         })
     }
 
@@ -164,6 +171,7 @@ impl DirectNetwork for PrnsDirectNetwork {
             {
                 Ok(receipt) if matches!(receipt.evidence, DeliveryEvidence::Proof(_)) => Ok(()),
                 Ok(_) => Err(DirectSendFailure::LinkFailed),
+                Err(SendError::NodeStopped) => Err(DirectSendFailure::LocalNodeStopped),
                 Err(SendError::Failed(SendToLinkFailure::Timeout)) => {
                     Err(DirectSendFailure::DeliveryTimedOut)
                 }
@@ -211,8 +219,8 @@ fn classify_establish_link_failure(failure: SendError<EstablishLinkFailure>) -> 
         | SendError::Failed(EstablishLinkFailure::WriteFailed(
             WriteEstablishLinkRejection::RouteVanished,
         )) => DirectSendFailure::NoRoute,
+        SendError::NodeStopped => DirectSendFailure::LocalNodeStopped,
         SendError::PayloadTooLarge
-        | SendError::NodeStopped
         | SendError::Busy
         | SendError::Failed(
             EstablishLinkFailure::Rejected(EstablishLinkRejection::NotDirectlyReachable)
@@ -342,6 +350,7 @@ pub enum SendDirectTextOutcome {
     NoRoute,
     LinkFailed,
     DeliveryTimedOut,
+    LocalNodeStopped,
     InvalidMessage,
 }
 
@@ -613,7 +622,7 @@ impl DirectLxmfService {
         content: &[u8],
     ) -> SendDirectTextOutcome {
         if self.shared.health.state() == LxmfHealthState::Stopped {
-            return SendDirectTextOutcome::InvalidMessage;
+            return SendDirectTextOutcome::LocalNodeStopped;
         }
         let peer = {
             let state = self.shared.state.lock().await;
@@ -646,7 +655,7 @@ impl DirectLxmfService {
         let exact_wire = output[..usize::from(prepared.wire_len())].to_vec();
         let admission = self.lifecycle.stop_lock.lock().await;
         if self.shared.health.state() == LxmfHealthState::Stopped {
-            return SendDirectTextOutcome::LinkFailed;
+            return SendDirectTextOutcome::LocalNodeStopped;
         }
         let local_record_id = {
             let mut state = self.shared.state.lock().await;
@@ -712,7 +721,9 @@ impl DirectLxmfService {
             completed
         };
         drop(admission);
-        let outcome = completed.await.unwrap_or(SendDirectTextOutcome::LinkFailed);
+        let outcome = completed
+            .await
+            .unwrap_or(SendDirectTextOutcome::LocalNodeStopped);
         let attempt = {
             let mut attempts = self.lifecycle.attempts();
             attempts.remove(&local_record_id)
@@ -748,7 +759,7 @@ impl DirectLxmfService {
         for message in &mut state.messages {
             if message.delivery_state == LxmfDeliveryState::Sending {
                 message.delivery_state = LxmfDeliveryState::Failed;
-                message.failure = Some(DirectSendFailure::LinkFailed);
+                message.failure = Some(DirectSendFailure::LocalNodeStopped);
                 changed = true;
             }
         }
@@ -776,6 +787,7 @@ const fn send_outcome(
         Err(DirectSendFailure::NoRoute) => SendDirectTextOutcome::NoRoute,
         Err(DirectSendFailure::LinkFailed) => SendDirectTextOutcome::LinkFailed,
         Err(DirectSendFailure::DeliveryTimedOut) => SendDirectTextOutcome::DeliveryTimedOut,
+        Err(DirectSendFailure::LocalNodeStopped) => SendDirectTextOutcome::LocalNodeStopped,
     }
 }
 

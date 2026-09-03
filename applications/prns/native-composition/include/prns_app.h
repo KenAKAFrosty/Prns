@@ -56,13 +56,32 @@ PrnsAppBytes prns_app_create_imported_identity(
     size_t input_len);
 
 /**
- * Start the development node. `path_ptr` must address `path_len` immutable
- * UTF-8 bytes for the duration of the call; the path is not NUL-terminated.
+ * Start the development node. `path_ptr` is the private storage path and
+ * `input_ptr` is DevelopmentNodeStartInput JSON. Neither is NUL-terminated.
  */
-PrnsAppBytes prns_app_start(const uint8_t *path_ptr, size_t path_len);
+PrnsAppBytes prns_app_start(const uint8_t *path_ptr, size_t path_len,
+                            const uint8_t *input_ptr, size_t input_len);
 
 /** Return the current authoritative development-node snapshot. */
 PrnsAppBytes prns_app_snapshot(void);
+
+/** List compatible LXMF peers retained by the current generation. */
+PrnsAppBytes prns_app_list_lxmf_peers(void);
+
+/** Measure UTF-8 title/content JSON against the direct Link-packet bound. */
+PrnsAppBytes prns_app_measure_lxmf_text(const uint8_t *input_ptr,
+                                        size_t input_len);
+
+/** Emit the registered current-form LXMF announce. */
+PrnsAppBytes prns_app_announce_lxmf(void);
+
+/** Start one proof-gated direct LXMF text attempt. */
+PrnsAppBytes prns_app_send_direct_text(const uint8_t *input_ptr,
+                                       size_t input_len);
+
+/** List one bounded page of in-memory LXMF messages. */
+PrnsAppBytes prns_app_list_lxmf_messages(const uint8_t *input_ptr,
+                                         size_t input_len);
 
 /**
  * Initiate pairing. `input_ptr` must address `input_len` immutable UTF-8 JSON

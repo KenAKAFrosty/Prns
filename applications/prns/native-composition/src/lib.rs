@@ -5,6 +5,7 @@ mod development_store;
 mod directory;
 pub mod ffi;
 mod lifecycle;
+mod lxmf;
 mod node;
 mod pairing;
 mod remote_control;
