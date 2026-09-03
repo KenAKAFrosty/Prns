@@ -284,7 +284,7 @@ impl SendPeripheralDelegate {
     }
 }
 
-enum Event {
+enum Event<L = GattLink> {
     CentralPowered,
     GattServicePublished,
     GattServicePublishFailed,
@@ -296,7 +296,7 @@ enum Event {
         address: BleAddress,
         rssi: Option<i8>,
     },
-    Inbound(GattLink),
+    Inbound(L),
 }
 
 #[derive(Debug)]
