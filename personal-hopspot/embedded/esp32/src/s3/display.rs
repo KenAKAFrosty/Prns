@@ -58,12 +58,11 @@ fn classify_card(
     tcp_id: Option<InterfaceId>,
     tcp_client: Option<&HopspotTcpClientConfig>,
     wifi_kind: screen::CardKind,
-    lora_id: Option<InterfaceId>,
     espnow_id: Option<InterfaceId>,
 ) -> Option<(screen::CardKind, screen::CardLabel)> {
     if id == usb_id {
         Some((screen::CardKind::Usb, screen::card_label("USB")))
-    } else if Some(id) == lora_id {
+    } else if id.kind() == Some(InterfaceKind::LoRa) {
         Some((screen::CardKind::LoRa, screen::card_label("LoRa")))
     } else if Some(id) == wifi_id {
         Some((wifi_kind, screen::card_label("LAN")))
@@ -199,7 +198,6 @@ pub(super) fn build_cards(
     tcp_client: Option<&HopspotTcpClientConfig>,
     wifi: Option<&AutoWifiStatus<MEMBERS>>,
     wifi_config: &HopspotWifiConfig,
-    lora_id: Option<InterfaceId>,
     espnow_id: Option<InterfaceId>,
 ) -> HVec<screen::Card, 8> {
     let wifi_kind = if !wifi_config.has_station() {
@@ -211,7 +209,7 @@ pub(super) fn build_cards(
     };
     screen::snapshots_to_cards(snapshots, |id| {
         classify_card(
-            id, usb_id, wifi_id, tcp_id, tcp_client, wifi_kind, lora_id, espnow_id,
+            id, usb_id, wifi_id, tcp_id, tcp_client, wifi_kind, espnow_id,
         )
     })
 }
