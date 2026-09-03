@@ -1,4 +1,6 @@
-use personal_rns::engine::SendRequestFailure;
+use personal_rns::engine::{
+    EstablishLinkFailure, EstablishLinkRejection, SendRequestFailure, WriteEstablishLinkRejection,
+};
 use personal_rns::identity::IdentityHash;
 use personal_rns::prelude::{
     ConnectRemoteControlTargetError, PrnsNodeHandle, RemoteControlError,
@@ -112,14 +114,56 @@ fn failed_connect(error: ConnectRemoteControlTargetError) -> RemoteControlDescri
             RemoteControlDescribeFailureStage::Inventory,
             "The selected target authorization could not be resolved.",
         ),
-        ConnectRemoteControlTargetError::EstablishLink(_) => failed(
-            RemoteControlDescribeFailureStage::Link,
-            "Prns could not establish a Link to the selected target.",
-        ),
+        ConnectRemoteControlTargetError::EstablishLink(error) => {
+            match classify_establish_link_failure(&error) {
+                EstablishLinkFailureClass::Route => failed(
+                    RemoteControlDescribeFailureStage::Route,
+                    "Prns has no current route to the selected target.",
+                ),
+                EstablishLinkFailureClass::Link => failed(
+                    RemoteControlDescribeFailureStage::Link,
+                    "Prns could not establish a Link to the selected target.",
+                ),
+                EstablishLinkFailureClass::Node => failed(
+                    RemoteControlDescribeFailureStage::Node,
+                    "The Prns node stopped while opening the target Link.",
+                ),
+            }
+        }
         ConnectRemoteControlTargetError::Identify(_) => failed(
             RemoteControlDescribeFailureStage::Identification,
             "Prns could not identify the controller on the target Link.",
         ),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EstablishLinkFailureClass {
+    Route,
+    Link,
+    Node,
+}
+
+pub(crate) fn classify_establish_link_failure(
+    error: &SendError<EstablishLinkFailure>,
+) -> EstablishLinkFailureClass {
+    match error {
+        SendError::Failed(EstablishLinkFailure::Rejected(
+            EstablishLinkRejection::NoRouteToDestination
+            | EstablishLinkRejection::NotDirectlyReachable,
+        ))
+        | SendError::Failed(EstablishLinkFailure::WriteFailed(
+            WriteEstablishLinkRejection::RouteVanished,
+        )) => EstablishLinkFailureClass::Route,
+        SendError::NodeStopped => EstablishLinkFailureClass::Node,
+        SendError::PayloadTooLarge
+        | SendError::Busy
+        | SendError::Failed(EstablishLinkFailure::WriteFailed(
+            WriteEstablishLinkRejection::Serialize
+            | WriteEstablishLinkRejection::LinkTableFull
+            | WriteEstablishLinkRejection::DuplicateLinkId,
+        ))
+        | SendError::Failed(EstablishLinkFailure::Timeout) => EstablishLinkFailureClass::Link,
     }
 }
 
@@ -178,6 +222,75 @@ mod tests {
         assert!(identity_hash(&[0; 15]).is_none());
         assert!(identity_hash(&[0; 16]).is_some());
         assert!(identity_hash(&[0; 17]).is_none());
+    }
+
+    #[test]
+    fn establish_link_failures_distinguish_route_from_link_failures() {
+        let route_failures = [
+            SendError::Failed(EstablishLinkFailure::Rejected(
+                EstablishLinkRejection::NoRouteToDestination,
+            )),
+            SendError::Failed(EstablishLinkFailure::Rejected(
+                EstablishLinkRejection::NotDirectlyReachable,
+            )),
+            SendError::Failed(EstablishLinkFailure::WriteFailed(
+                WriteEstablishLinkRejection::RouteVanished,
+            )),
+        ];
+        for failure in route_failures {
+            assert_eq!(
+                classify_establish_link_failure(&failure),
+                EstablishLinkFailureClass::Route
+            );
+            assert!(matches!(
+                failed_connect(ConnectRemoteControlTargetError::EstablishLink(failure)),
+                RemoteControlDescribeOutcome::Failed {
+                    stage: RemoteControlDescribeFailureStage::Route,
+                    ..
+                }
+            ));
+        }
+
+        let link_failures = [
+            SendError::Failed(EstablishLinkFailure::Timeout),
+            SendError::Failed(EstablishLinkFailure::WriteFailed(
+                WriteEstablishLinkRejection::Serialize,
+            )),
+            SendError::Failed(EstablishLinkFailure::WriteFailed(
+                WriteEstablishLinkRejection::LinkTableFull,
+            )),
+            SendError::Failed(EstablishLinkFailure::WriteFailed(
+                WriteEstablishLinkRejection::DuplicateLinkId,
+            )),
+            SendError::Busy,
+            SendError::PayloadTooLarge,
+        ];
+        for failure in link_failures {
+            assert_eq!(
+                classify_establish_link_failure(&failure),
+                EstablishLinkFailureClass::Link
+            );
+            assert!(matches!(
+                failed_connect(ConnectRemoteControlTargetError::EstablishLink(failure)),
+                RemoteControlDescribeOutcome::Failed {
+                    stage: RemoteControlDescribeFailureStage::Link,
+                    ..
+                }
+            ));
+        }
+
+        let node_stopped = SendError::NodeStopped;
+        assert_eq!(
+            classify_establish_link_failure(&node_stopped),
+            EstablishLinkFailureClass::Node
+        );
+        assert!(matches!(
+            failed_connect(ConnectRemoteControlTargetError::EstablishLink(node_stopped)),
+            RemoteControlDescribeOutcome::Failed {
+                stage: RemoteControlDescribeFailureStage::Node,
+                ..
+            }
+        ));
     }
 
     #[cfg(feature = "host-test")]

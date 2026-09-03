@@ -4,7 +4,7 @@ import { useState } from "react";
 
 import type { RuntimeCommandResult } from "@/native/development-runtime-context";
 import { useDevelopmentRuntime } from "@/native/development-runtime-context";
-import { screenById, type RawRouteParams, routeParamsAreValid } from "@/navigation/catalog";
+import { type RawRouteParams, routeParamsAreValid, screenById } from "@/navigation/catalog";
 import { NavigationLink } from "@/ui/navigation-link";
 import {
   Badge,
@@ -189,17 +189,21 @@ type DescribeFailureStage = Extract<
   { readonly type: "failed" }
 >["stage"];
 
-function describeFailureMessage(stage: DescribeFailureStage): string {
+export function describeFailureMessage(stage: DescribeFailureStage): string {
   switch (stage) {
     case "input":
     case "inventory":
       return "This paired node is no longer available.";
     case "route":
+      return "This node is not reachable yet. Keep it on and nearby, then try again.";
     case "link":
+      return "A secure connection to this node could not be opened. Try again.";
     case "identification":
+      return "The saved pairing could not be used with this node. Check that it is still paired, then try again.";
     case "request":
+      return "The node could not complete the connection check. Try again.";
     case "timeout":
-      return "The node could not be reached. Make sure it is on and connected, then try again.";
+      return "The node did not answer before the connection check timed out. Make sure it is on and nearby, then try again.";
     case "permission":
       return "This pairing does not allow the app to view node information.";
     case "node":
