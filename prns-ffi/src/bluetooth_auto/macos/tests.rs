@@ -19,14 +19,45 @@ use super::gatt_link::{
     gatt_inbound_channel, gatt_inbound_channel_with_budget, GattInboundSendError,
 };
 use super::gatt_write::{write_admission, GattWriteAdmission, GattWriteMode, GattWritePlan};
+use super::legacy_restoration_identifiers;
 use super::peripheral::{advertising_op, has_session_for_peer, AdvertisingOp};
 use super::MacosBleError;
 use super::{CoreBluetoothPeerId, MacosBleBackend};
+use super::{CoreBluetoothRestorationIdentifiers, CoreBluetoothRestorationIdentifiersError};
 
 fn peer_id(value: u16) -> CoreBluetoothPeerId {
     let mut bytes = [0; 16];
     bytes[..2].copy_from_slice(&value.to_le_bytes());
     CoreBluetoothPeerId(bytes)
+}
+
+#[test]
+fn restoration_identifiers_are_nonempty_and_distinct(
+) -> Result<(), CoreBluetoothRestorationIdentifiersError> {
+    assert_eq!(
+        CoreBluetoothRestorationIdentifiers::new("", "peripheral"),
+        Err(CoreBluetoothRestorationIdentifiersError::EmptyCentral)
+    );
+    assert_eq!(
+        CoreBluetoothRestorationIdentifiers::new("central", ""),
+        Err(CoreBluetoothRestorationIdentifiersError::EmptyPeripheral)
+    );
+    assert_eq!(
+        CoreBluetoothRestorationIdentifiers::new("shared", "shared"),
+        Err(CoreBluetoothRestorationIdentifiersError::Duplicate)
+    );
+
+    let identifiers = CoreBluetoothRestorationIdentifiers::new("central", "peripheral")?;
+    assert_eq!(identifiers.central(), "central");
+    assert_eq!(identifiers.peripheral(), "peripheral");
+    Ok(())
+}
+
+#[test]
+fn legacy_preparation_keeps_personal_hopspot_identifiers() {
+    let identifiers = legacy_restoration_identifiers();
+    assert_eq!(identifiers.central(), "com.personal.prns.ble.central");
+    assert_eq!(identifiers.peripheral(), "com.personal.prns.ble.peripheral");
 }
 
 #[test]

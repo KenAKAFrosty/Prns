@@ -13,6 +13,9 @@ mod tests;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
+#[cfg(any(test, target_os = "ios"))]
+use std::fmt;
+
 use objc2::msg_send;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
@@ -49,10 +52,92 @@ impl CoreBluetoothPeerId {
     }
 }
 
-#[cfg(target_os = "ios")]
+#[cfg(any(test, target_os = "ios"))]
 const CENTRAL_RESTORE_IDENTIFIER: &str = "com.personal.prns.ble.central";
-#[cfg(target_os = "ios")]
+#[cfg(any(test, target_os = "ios"))]
 const PERIPHERAL_RESTORE_IDENTIFIER: &str = "com.personal.prns.ble.peripheral";
+
+/// Stable, application-owned identifiers for the two CoreBluetooth managers used by Bluetooth
+/// Auto.
+///
+/// Passing these identifiers opts the caller into CoreBluetooth state preservation and
+/// restoration. The containing application is responsible for declaring the matching central and
+/// peripheral background modes and reinstantiating the managers with the same identifiers when
+/// iOS relaunches it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg(any(test, target_os = "ios"))]
+pub struct CoreBluetoothRestorationIdentifiers {
+    central: String,
+    peripheral: String,
+}
+
+#[cfg(any(test, target_os = "ios"))]
+impl CoreBluetoothRestorationIdentifiers {
+    pub fn new(
+        central: impl Into<String>,
+        peripheral: impl Into<String>,
+    ) -> Result<Self, CoreBluetoothRestorationIdentifiersError> {
+        let central = central.into();
+        if central.is_empty() {
+            return Err(CoreBluetoothRestorationIdentifiersError::EmptyCentral);
+        }
+        let peripheral = peripheral.into();
+        if peripheral.is_empty() {
+            return Err(CoreBluetoothRestorationIdentifiersError::EmptyPeripheral);
+        }
+        if central == peripheral {
+            return Err(CoreBluetoothRestorationIdentifiersError::Duplicate);
+        }
+        Ok(Self {
+            central,
+            peripheral,
+        })
+    }
+
+    #[must_use]
+    pub fn central(&self) -> &str {
+        &self.central
+    }
+
+    #[must_use]
+    pub fn peripheral(&self) -> &str {
+        &self.peripheral
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg(any(test, target_os = "ios"))]
+pub enum CoreBluetoothRestorationIdentifiersError {
+    EmptyCentral,
+    EmptyPeripheral,
+    Duplicate,
+}
+
+#[cfg(any(test, target_os = "ios"))]
+impl fmt::Display for CoreBluetoothRestorationIdentifiersError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyCentral => formatter
+                .write_str("the CoreBluetooth central restoration identifier must not be empty"),
+            Self::EmptyPeripheral => formatter
+                .write_str("the CoreBluetooth peripheral restoration identifier must not be empty"),
+            Self::Duplicate => formatter.write_str(
+                "the CoreBluetooth central and peripheral restoration identifiers must differ",
+            ),
+        }
+    }
+}
+
+#[cfg(any(test, target_os = "ios"))]
+impl std::error::Error for CoreBluetoothRestorationIdentifiersError {}
+
+#[cfg(any(test, target_os = "ios"))]
+fn legacy_restoration_identifiers() -> CoreBluetoothRestorationIdentifiers {
+    CoreBluetoothRestorationIdentifiers {
+        central: CENTRAL_RESTORE_IDENTIFIER.to_owned(),
+        peripheral: PERIPHERAL_RESTORE_IDENTIFIER.to_owned(),
+    }
+}
 
 fn cbuuid(uuid: BleUuid) -> Retained<CBUUID> {
     match uuid {
@@ -121,22 +206,22 @@ fn scan_options() -> Retained<NSDictionary<NSString, AnyObject>> {
 }
 
 #[cfg(target_os = "ios")]
-fn central_manager_options() -> Retained<NSDictionary<NSString, AnyObject>> {
+fn central_manager_options(identifier: &str) -> Retained<NSDictionary<NSString, AnyObject>> {
     use objc2_core_bluetooth::CBCentralManagerOptionRestoreIdentifierKey;
     // SAFETY: CoreBluetooth exports this NSString constant with process lifetime.
     let key: &NSString = unsafe { CBCentralManagerOptionRestoreIdentifierKey };
-    let value = NSString::from_str(CENTRAL_RESTORE_IDENTIFIER);
+    let value = NSString::from_str(identifier);
     let value_ref: &NSString = &value;
     let value_obj: &AnyObject = value_ref;
     NSDictionary::from_slices(&[key], &[value_obj])
 }
 
 #[cfg(target_os = "ios")]
-fn peripheral_manager_options() -> Retained<NSDictionary<NSString, AnyObject>> {
+fn peripheral_manager_options(identifier: &str) -> Retained<NSDictionary<NSString, AnyObject>> {
     use objc2_core_bluetooth::CBPeripheralManagerOptionRestoreIdentifierKey;
     // SAFETY: CoreBluetooth exports this NSString constant with process lifetime.
     let key: &NSString = unsafe { CBPeripheralManagerOptionRestoreIdentifierKey };
-    let value = NSString::from_str(PERIPHERAL_RESTORE_IDENTIFIER);
+    let value = NSString::from_str(identifier);
     let value_ref: &NSString = &value;
     let value_obj: &AnyObject = value_ref;
     NSDictionary::from_slices(&[key], &[value_obj])

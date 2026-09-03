@@ -8,6 +8,11 @@ use prns_runtime::runtime::{Attachable, Fleet, InterfaceSupervisor, PrnsNodeHand
 
 use super::BluetoothAutoStatus;
 
+#[cfg(target_os = "ios")]
+pub use prns_ffi::bluetooth_auto::macos::{
+    CoreBluetoothRestorationIdentifiers, CoreBluetoothRestorationIdentifiersError,
+};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AutoBle {
     identity: BleIdentity,
@@ -44,7 +49,25 @@ impl AutoBle {
     pub async fn prepare(
         identity: BleIdentity,
     ) -> Result<PreparedAutoBle, prns_ffi::bluetooth_auto::macos::MacosBleError> {
-        let manager_preparation = AppleManagerPreparation::RestorationAware;
+        let manager_preparation = AppleManagerPreparation::LegacyRestorationAware;
+        let backend = manager_preparation.prepare(identity).await?;
+        Ok(PreparedAutoBle::new(
+            identity,
+            manager_preparation,
+            Some(backend),
+        ))
+    }
+
+    /// Creates restoration-aware CoreBluetooth managers using identifiers supplied by the
+    /// application that owns their lifecycle.
+    ///
+    /// The selected identifiers are retained for every later readiness retry.
+    #[cfg(target_os = "ios")]
+    pub async fn prepare_with_restoration(
+        identity: BleIdentity,
+        identifiers: CoreBluetoothRestorationIdentifiers,
+    ) -> Result<PreparedAutoBle, prns_ffi::bluetooth_auto::macos::MacosBleError> {
+        let manager_preparation = AppleManagerPreparation::RestorationAware(identifiers);
         let backend = manager_preparation.prepare(identity).await?;
         Ok(PreparedAutoBle::new(
             identity,
@@ -76,7 +99,25 @@ impl AutoBle {
     /// core node and every other transport remain available.
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     pub fn unavailable(identity: BleIdentity) -> PreparedAutoBle {
-        PreparedAutoBle::new(identity, AppleManagerPreparation::RestorationAware, None)
+        PreparedAutoBle::new(
+            identity,
+            AppleManagerPreparation::LegacyRestorationAware,
+            None,
+        )
+    }
+
+    /// Produces a failed-but-supervised restoration-aware Bluetooth LE attachment when native
+    /// manager preparation itself cannot be started. Retries reuse the caller's identifiers.
+    #[cfg(target_os = "ios")]
+    pub fn unavailable_with_restoration(
+        identity: BleIdentity,
+        identifiers: CoreBluetoothRestorationIdentifiers,
+    ) -> PreparedAutoBle {
+        PreparedAutoBle::new(
+            identity,
+            AppleManagerPreparation::RestorationAware(identifiers),
+            None,
+        )
     }
 
     /// Produces a failed-but-supervised foreground-only Bluetooth LE attachment when native
@@ -89,16 +130,18 @@ impl AutoBle {
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum AppleManagerPreparation {
-    RestorationAware,
+    LegacyRestorationAware,
+    #[cfg(target_os = "ios")]
+    RestorationAware(CoreBluetoothRestorationIdentifiers),
     ForegroundOnly,
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 impl AppleManagerPreparation {
     async fn prepare(
-        self,
+        &self,
         identity: BleIdentity,
     ) -> Result<
         prns_ffi::bluetooth_auto::macos::PreparedMacosBleBackend,
@@ -107,7 +150,11 @@ impl AppleManagerPreparation {
         use prns_ffi::bluetooth_auto::macos::MacosBleBackend;
 
         match self {
-            Self::RestorationAware => MacosBleBackend::prepare(identity).await,
+            Self::LegacyRestorationAware => MacosBleBackend::prepare(identity).await,
+            #[cfg(target_os = "ios")]
+            Self::RestorationAware(identifiers) => {
+                MacosBleBackend::prepare_with_restoration(identity, identifiers.clone()).await
+            }
             Self::ForegroundOnly => MacosBleBackend::prepare_foreground(identity).await,
         }
     }
@@ -645,7 +692,7 @@ mod tests {
         let restoration_aware = AutoBle::unavailable(identity);
         assert_eq!(
             restoration_aware.manager_preparation,
-            AppleManagerPreparation::RestorationAware
+            AppleManagerPreparation::LegacyRestorationAware
         );
         assert!(restoration_aware.backend.is_none());
     }
