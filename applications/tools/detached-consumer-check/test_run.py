@@ -20,6 +20,32 @@ SPEC.loader.exec_module(mobility)
 
 
 class DetachedConsumerCheckTests(unittest.TestCase):
+    @staticmethod
+    def cargo_compatibility(paths: dict[str, str]) -> dict[str, object]:
+        return {
+            "prns": {
+                "rustPackages": {
+                    "direct": list(paths),
+                    "source": [
+                        {"name": name, "path": path, "version": "0.0.0"}
+                        for name, path in paths.items()
+                    ],
+                }
+            }
+        }
+
+    @staticmethod
+    def npm_compatibility() -> dict[str, object]:
+        return {
+            "prns": {
+                "javascriptContract": {
+                    "package": "personal-rns",
+                    "sourcePath": "prns-js",
+                    "consumers": ["prns/app/package.json", "sdk/expo/package.json"],
+                }
+            }
+        }
+
     def test_cargo_rewrite_replaces_only_reviewed_base_packages(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             repository = pathlib.Path(temporary)
@@ -49,7 +75,11 @@ class DetachedConsumerCheckTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            rewrites = mobility.cargo_rewrite_plan(applications, repository)
+            rewrites = mobility.cargo_rewrite_plan(
+                applications,
+                repository,
+                self.cargo_compatibility(dependencies),
+            )
             revision = "1" * 40
             mobility.rewrite_cargo_dependencies(
                 applications,
@@ -64,6 +94,33 @@ class DetachedConsumerCheckTests(unittest.TestCase):
             self.assertEqual(rendered.count(f'rev = "{revision}"'), 4)
             mobility.reject_external_cargo_paths(applications)
 
+    def test_cargo_scanner_rejects_unhandled_dependency_table(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = pathlib.Path(temporary)
+            applications = repository / "applications"
+            crate = applications / "service"
+            dependency = repository / "personal-rns"
+            crate.mkdir(parents=True)
+            dependency.mkdir()
+            (dependency / "Cargo.toml").write_text(
+                '[package]\nname = "personal-rns"\nversion = "0.0.0"\n',
+                encoding="utf-8",
+            )
+            (crate / "Cargo.toml").write_text(
+                '[package]\nname = "fixture"\nversion = "0.0.0"\n'
+                '[dependencies.personal-rns]\npath = "../../personal-rns"\n',
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                mobility.QualificationFailure, "unsupported or unreviewed declaration"
+            ):
+                mobility.cargo_rewrite_plan(
+                    applications,
+                    repository,
+                    self.cargo_compatibility({"personal-rns": "personal-rns"}),
+                )
+
     def test_external_cargo_path_is_rejected_after_staging(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             applications = pathlib.Path(temporary) / "applications"
@@ -75,9 +132,63 @@ class DetachedConsumerCheckTests(unittest.TestCase):
                 encoding="utf-8",
             )
             with self.assertRaisesRegex(
-                mobility.QualificationFailure, "Cargo path escapes detached applications"
+                mobility.QualificationFailure,
+                "Cargo path escapes detached applications",
             ):
                 mobility.reject_external_cargo_paths(applications)
+
+    def test_cargo_lock_refresh_only_allows_exact_git_sources(self) -> None:
+        revision = "1" * 40
+        git_url = "file:///exact/prns.git"
+        before = b"""version = 4
+
+[[package]]
+name = "personal-rns"
+version = "0.0.0"
+dependencies = ["serde"]
+
+[[package]]
+name = "serde"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "abc"
+"""
+        after = f"""version = 4
+
+[[package]]
+name = "personal-rns"
+version = "0.0.0"
+source = "git+file:///exact/prns.git?rev={revision}#{revision}"
+dependencies = ["serde"]
+
+[[package]]
+name = "serde"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "abc"
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            lock = pathlib.Path(temporary) / "Cargo.lock"
+            lock.write_text(after, encoding="utf-8")
+            packages = {
+                "personal-rns": mobility.RustPackage(
+                    name="personal-rns",
+                    path=pathlib.PurePosixPath("personal-rns"),
+                    version="0.0.0",
+                )
+            }
+            mobility.validate_cargo_lock_refresh(
+                before, lock, packages, git_url, revision
+            )
+            lock.write_text(
+                after.replace('checksum = "abc"', 'checksum = "def"'), encoding="utf-8"
+            )
+            with self.assertRaisesRegex(
+                mobility.QualificationFailure, "changed serde@1.0.0"
+            ):
+                mobility.validate_cargo_lock_refresh(
+                    before, lock, packages, git_url, revision
+                )
 
     def test_npm_workspaces_share_one_export_local_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -105,11 +216,30 @@ class DetachedConsumerCheckTests(unittest.TestCase):
             artifact.parent.mkdir()
             artifact.write_bytes(b"fixture")
 
-            rewrites = mobility.npm_rewrite_plan(applications, repository)
-            selection = mobility.rewrite_npm_dependencies(applications, rewrites, artifact)
+            rewrites = mobility.npm_rewrite_plan(
+                applications, repository, self.npm_compatibility()
+            )
+            selection = mobility.rewrite_npm_dependencies(
+                applications, rewrites, artifact
+            )
 
             self.assertEqual(selection, "file:../../vendor/personal-rns.tgz")
             mobility.reject_external_npm_paths(applications)
+
+    def test_npm_scanner_rejects_local_override_outside_export(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            applications = pathlib.Path(temporary) / "applications"
+            package = applications / "app"
+            package.mkdir(parents=True)
+            (package / "package.json").write_text(
+                json.dumps({"overrides": {"example": "link:../../../outside"}}),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                mobility.QualificationFailure, "npm local path escapes"
+            ):
+                mobility.reject_external_npm_paths(applications)
 
     def test_tracked_symlink_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -126,7 +256,8 @@ class DetachedConsumerCheckTests(unittest.TestCase):
             subprocess.run(("git", "add", "applications"), cwd=repository, check=True)
 
             with self.assertRaisesRegex(
-                mobility.QualificationFailure, "tracked application symlinks are forbidden"
+                mobility.QualificationFailure,
+                "tracked application symlinks are forbidden",
             ):
                 mobility.reject_tracked_symlinks(repository)
 

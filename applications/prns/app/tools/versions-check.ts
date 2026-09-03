@@ -1,12 +1,14 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 type JsonRecord = Readonly<Record<string, unknown>>;
 
 const appRoot = fileURLToPath(new URL("..", import.meta.url));
 const workspaceRoot = fileURLToPath(new URL("../../..", import.meta.url));
-const personalRnsSelection = process.env.PRNS_PERSONAL_RNS_SPEC ?? "file:../../../prns-js";
+const localPersonalRnsSelection = "file:../../../prns-js";
 
 const expectedDependencies = {
   "@expo/metro-runtime": "~57.0.15",
@@ -20,7 +22,7 @@ const expectedDependencies = {
   "expo-router": "~57.0.18",
   "expo-status-bar": "~57.0.1",
   effect: "4.0.0-rc.112",
-  "personal-rns": personalRnsSelection,
+  "personal-rns": localPersonalRnsSelection,
   react: "19.2.3",
   "react-dom": "19.2.3",
   "react-native": "0.86.3",
@@ -74,6 +76,46 @@ function stringRecord(value: unknown, owner: string): Readonly<Record<string, st
   return result;
 }
 
+function personalRnsSelection(appPackage: JsonRecord): string {
+  const dependencies = stringRecord(appPackage.dependencies, "dependencies");
+  const selection = dependencies["personal-rns"];
+  if (selection === localPersonalRnsSelection) {
+    return selection;
+  }
+
+  const compatibility = parseJsonFile(`${workspaceRoot}/release/compatibility.json`);
+  const prns = compatibility.prns;
+  if (!isRecord(prns) || !isRecord(prns.javascriptContract)) {
+    return fail("release/compatibility.json must declare prns.javascriptContract");
+  }
+  const packageName = prns.javascriptContract.package;
+  const packageVersion = prns.javascriptContract.version;
+  const expectedSha256 = prns.javascriptContract.artifactSha256;
+  if (
+    typeof packageName !== "string" ||
+    typeof packageVersion !== "string" ||
+    typeof expectedSha256 !== "string" ||
+    !/^[0-9a-f]{64}$/u.test(expectedSha256)
+  ) {
+    return fail("release/compatibility.json has an invalid JavaScript artifact record");
+  }
+  const detachedSelection = `file:../../vendor/${packageName}-${packageVersion}.tgz`;
+  if (selection !== detachedSelection) {
+    return fail(
+      `dependencies.personal-rns must be ${localPersonalRnsSelection} or the recorded ` +
+        `detached artifact ${detachedSelection}, received ${String(selection)}`,
+    );
+  }
+  const artifact = resolve(appRoot, selection.slice("file:".length));
+  const actualSha256 = createHash("sha256").update(readFileSync(artifact)).digest("hex");
+  if (actualSha256 !== expectedSha256) {
+    return fail(
+      `detached personal-rns artifact has SHA-256 ${actualSha256}, expected ${expectedSha256}`,
+    );
+  }
+  return selection;
+}
+
 function assertSelections(
   owner: string,
   actual: Readonly<Record<string, string>>,
@@ -121,12 +163,12 @@ function collectVersions(node: JsonRecord, packageName: string, versions: Set<st
 
 const appPackage = parseJsonFile(`${appRoot}/package.json`);
 const workspacePackage = parseJsonFile(`${workspaceRoot}/package.json`);
+const selectedPersonalRns = personalRnsSelection(appPackage);
 
-assertSelections(
-  "dependencies",
-  stringRecord(appPackage.dependencies, "dependencies"),
-  expectedDependencies,
-);
+assertSelections("dependencies", stringRecord(appPackage.dependencies, "dependencies"), {
+  ...expectedDependencies,
+  "personal-rns": selectedPersonalRns,
+});
 assertSelections(
   "devDependencies",
   stringRecord(appPackage.devDependencies, "devDependencies"),
