@@ -59,6 +59,17 @@ pub(in crate::screen) fn menu_item_text_right(label: &str) -> i32 {
     MENU_TEXT_X + label.chars().count() as i32 * menu_item_char_width(label)
 }
 
+#[cfg(feature = "remote-control-pairing")]
+pub(in crate::screen) const fn pairing_status_lines(
+    status: StableTargetAnnouncementStatus,
+) -> (&'static str, Option<&'static str>) {
+    match status {
+        StableTargetAnnouncementStatus::Idle => ("reachability", Some("queued")),
+        StableTargetAnnouncementStatus::Succeeded => ("reachability", Some("sent")),
+        StableTargetAnnouncementStatus::Failed => ("announce failed", None),
+    }
+}
+
 fn draw_menu_item<D: DrawTarget<Color = BinaryColor>>(
     display: &mut D,
     y: i32,
@@ -362,12 +373,11 @@ pub(super) fn draw_remote_control_pairing<D: DrawTarget<Color = BinaryColor>>(
         }
         RemoteControlTargetPairingPhase::Persisted => {
             draw_body(display, MENU_ITEM_TOP, "Paired");
-            let reachability = match pairing.stable_announcement() {
-                StableTargetAnnouncementStatus::Idle => "reachability queued",
-                StableTargetAnnouncementStatus::Succeeded => "reachability sent",
-                StableTargetAnnouncementStatus::Failed => "announce failed",
-            };
+            let (reachability, status) = pairing_status_lines(pairing.stable_announcement());
             draw_small(display, MENU_ITEM_TOP + 16, reachability);
+            if let Some(status) = status {
+                draw_small(display, MENU_ITEM_TOP + 23, status);
+            }
             draw_small(display, MENU_ITEM_TOP + 32, "hold close");
         }
         RemoteControlTargetPairingPhase::Rejected => {
