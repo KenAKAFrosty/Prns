@@ -58,6 +58,9 @@ use crate::snapshot::SnapshotStore;
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(20);
+const PAIRING_APPROVAL_TIMEOUT: Duration = Duration::from_millis(
+    personal_rns::remote_control::MAX_REMOTE_CONTROL_PAIRING_ATTEMPT_TIMEOUT.0 + 5_000,
+);
 const HOST_INSPECTION_TIMEOUT: Duration = Duration::from_millis(1_500);
 const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(2);
 const DIRECTORY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -653,15 +656,19 @@ fn snapshot_with_supervisor(supervisor: &Supervisor) -> DevelopmentNodeSnapshot 
 }
 
 pub fn initiate(input: InitiateRemoteControlPairingInput) -> RemoteControlPairingCommandOutcome {
-    call_pairing(|response| Command::Initiate(input, response))
+    call_pairing(COMMAND_TIMEOUT, |response| {
+        Command::Initiate(input, response)
+    })
 }
 
 pub fn approve(input: RemoteControlPairingDecisionInput) -> RemoteControlPairingCommandOutcome {
-    call_pairing(|response| Command::Approve(input, response))
+    call_pairing(PAIRING_APPROVAL_TIMEOUT, |response| {
+        Command::Approve(input, response)
+    })
 }
 
 pub fn reject(input: RemoteControlPairingDecisionInput) -> RemoteControlPairingCommandOutcome {
-    call_pairing(|response| Command::Reject(input, response))
+    call_pairing(COMMAND_TIMEOUT, |response| Command::Reject(input, response))
 }
 
 pub fn describe(input: DescribeRemoteControlTargetInput) -> RemoteControlDescribeOutcome {
@@ -1733,6 +1740,7 @@ fn running_commands() -> Option<mpsc::Sender<Command>> {
 }
 
 fn call_pairing(
+    timeout: Duration,
     command: impl FnOnce(std_mpsc::SyncSender<RemoteControlPairingCommandOutcome>) -> Command,
 ) -> RemoteControlPairingCommandOutcome {
     let Some(commands) = running_commands() else {
@@ -1768,7 +1776,7 @@ fn call_pairing(
         }
     }
     response_rx
-        .recv_timeout(COMMAND_TIMEOUT)
+        .recv_timeout(timeout)
         .unwrap_or_else(|_| {
             pairing_failed(
                 RemoteControlPairingFailureStage::Node,
@@ -3434,6 +3442,16 @@ mod tests {
         assert!(parse_invitation_code("89abcdef").is_none());
         assert!(parse_invitation_code("123456").is_none());
         assert!(parse_invitation_code("123456789").is_none());
+    }
+
+    #[test]
+    fn approval_wait_covers_the_longest_protocol_attempt() {
+        let longest_attempt = Duration::from_millis(
+            personal_rns::remote_control::MAX_REMOTE_CONTROL_PAIRING_ATTEMPT_TIMEOUT.0,
+        );
+
+        assert!(PAIRING_APPROVAL_TIMEOUT > longest_attempt);
+        assert!(PAIRING_APPROVAL_TIMEOUT > COMMAND_TIMEOUT);
     }
 
     #[test]
