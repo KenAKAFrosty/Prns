@@ -40,9 +40,12 @@ use crate::routing::links::resources::{
 };
 use crate::routing::links::LinkId;
 #[cfg(feature = "runtime-metrics")]
-use crate::runtime::CryptoMetricsSnapshot;
+use crate::runtime::{CryptoMetricsSnapshot, CryptoWorkClassMetricsSnapshot};
 
-use super::host_protocol::{HostResourceMetadata, HostResourcePayload};
+use super::host_protocol::{
+    HostResourceDigestPreparation, HostResourceMetadata, HostResourcePayload,
+};
+use super::scheduling_policy::{SchedulerPolicy, MAX_INTERACTIVE_CRYPTO_BATCH};
 
 /// How the host runtime runs the engine's asymmetric crypto. `Pooled` offloads verify/seal/sign/decrypt to worker threads and keeps the manifold hot; `Inline` runs them on the manifold thread (the embedded shape, and the mobile default).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -210,6 +213,7 @@ pub(super) struct ResourceBuildJob {
     pub(super) data: HostResourcePayload,
     pub(super) compressed_candidate: Option<HostResourcePayload>,
     pub(super) metadata: HostResourceMetadata,
+    pub(super) digest: HostResourceDigestPreparation,
     pub(super) seal_iv: [u8; 16],
     pub(super) nonces: [[u8; RESOURCE_NONCE_LEN]; SALT_REROLL_CAP + 1],
 }
@@ -253,6 +257,16 @@ pub(super) enum CryptoJob {
     SignAnnounce(AnnounceSignOwed),
     VerifyAnnounce(AnnounceVerifyOwed),
     VerifyRemoteControlPairingAvailability(RemoteControlPairingAvailabilityVerifyOwed),
+    #[cfg(test)]
+    ScheduledTest(ScheduledTestJob),
+}
+
+#[cfg(test)]
+pub(super) struct ScheduledTestJob {
+    pub(super) id: u8,
+    pub(super) class: CryptoJobClass,
+    pub(super) started: Option<std::sync::mpsc::Sender<()>>,
+    pub(super) release: Option<std::sync::mpsc::Receiver<()>>,
 }
 
 pub(super) enum SignatureVerifyJob {
@@ -337,10 +351,21 @@ impl LinkSignJob {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CryptoJobClass {
+pub(super) enum CryptoJobClass {
     Verify,
     Latency,
     Bulk,
+}
+
+#[cfg(feature = "runtime-metrics")]
+impl CryptoJobClass {
+    const fn index(self) -> usize {
+        match self {
+            Self::Verify => 0,
+            Self::Latency => 1,
+            Self::Bulk => 2,
+        }
+    }
 }
 
 const BULK_BYTES_PER_WORK_UNIT: usize = 8 * 1024;
@@ -380,10 +405,15 @@ impl CryptoJob {
     }
 
     fn owes_packet_verdict(&self) -> bool {
-        !matches!(self, Self::BuildResource(_) | Self::SealStaged(_))
+        match self {
+            Self::BuildResource(_) | Self::SealStaged(_) => false,
+            #[cfg(test)]
+            Self::ScheduledTest(_) => false,
+            _ => true,
+        }
     }
 
-    fn scheduling_class(&self) -> CryptoJobClass {
+    pub(super) fn scheduling_class(&self) -> CryptoJobClass {
         match self {
             Self::VerifySignature(_) => CryptoJobClass::Verify,
             Self::BuildResource(_)
@@ -402,13 +432,15 @@ impl CryptoJob {
             | Self::SignAnnounce(_)
             | Self::VerifyAnnounce(_)
             | Self::VerifyRemoteControlPairingAvailability(_) => CryptoJobClass::Latency,
+            #[cfg(test)]
+            Self::ScheduledTest(job) => job.class,
         }
     }
 
     /// A deliberately coarse service-time estimate. One unit is approximately one small
     /// asymmetric operation; bulk jobs add a unit per 8 KiB so a resource-sized seal cannot look
     /// equivalent to a receipt verification merely because both occupy one ring slot.
-    fn estimated_work(&self) -> usize {
+    pub(super) fn estimated_work(&self) -> usize {
         match self {
             Self::BuildResource(job) => 1 + job.data.len().div_ceil(BULK_BYTES_PER_WORK_UNIT),
             Self::DecompressResource(job) => {
@@ -425,6 +457,8 @@ impl CryptoJob {
             | Self::SignAnnounce(_)
             | Self::VerifyAnnounce(_)
             | Self::VerifyRemoteControlPairingAvailability(_) => 1,
+            #[cfg(test)]
+            Self::ScheduledTest(_) => 1,
         }
     }
 }
@@ -433,11 +467,125 @@ struct ScheduledCryptoJob {
     job: CryptoJob,
     class: CryptoJobClass,
     work: usize,
+    timing: JobTiming,
 }
 
 struct ScheduledCryptoResult {
     result: CryptoResult,
+    class: CryptoJobClass,
     work: usize,
+    timing: CompletedJobTiming,
+}
+
+struct JobTiming {
+    #[cfg(feature = "runtime-metrics")]
+    submitted_at: std::time::Instant,
+}
+
+impl JobTiming {
+    fn submitted() -> Self {
+        Self {
+            #[cfg(feature = "runtime-metrics")]
+            submitted_at: std::time::Instant::now(),
+        }
+    }
+
+    fn start(self) -> JobExecutionTimer {
+        JobExecutionTimer {
+            #[cfg(feature = "runtime-metrics")]
+            queue_wait_micros: elapsed_micros(self.submitted_at),
+            #[cfg(feature = "runtime-metrics")]
+            started_at: std::time::Instant::now(),
+        }
+    }
+}
+
+struct JobExecutionTimer {
+    #[cfg(feature = "runtime-metrics")]
+    queue_wait_micros: u64,
+    #[cfg(feature = "runtime-metrics")]
+    started_at: std::time::Instant,
+}
+
+impl JobExecutionTimer {
+    fn finish(self) -> CompletedJobTiming {
+        CompletedJobTiming {
+            #[cfg(feature = "runtime-metrics")]
+            queue_wait_micros: self.queue_wait_micros,
+            #[cfg(feature = "runtime-metrics")]
+            service_micros: elapsed_micros(self.started_at),
+        }
+    }
+}
+
+pub(super) struct CompletedJobTiming {
+    #[cfg(feature = "runtime-metrics")]
+    queue_wait_micros: u64,
+    #[cfg(feature = "runtime-metrics")]
+    service_micros: u64,
+}
+
+impl CompletedJobTiming {
+    pub(super) fn unmeasured() -> Self {
+        Self {
+            #[cfg(feature = "runtime-metrics")]
+            queue_wait_micros: 0,
+            #[cfg(feature = "runtime-metrics")]
+            service_micros: 0,
+        }
+    }
+}
+
+#[cfg(feature = "runtime-metrics")]
+#[derive(Default)]
+struct CryptoWorkClassMetrics {
+    submitted_jobs: Cell<u64>,
+    completed_jobs: Cell<u64>,
+    outstanding_work: Cell<u64>,
+    maximum_outstanding_work: Cell<u64>,
+    maximum_queue_wait_micros: Cell<u64>,
+    maximum_service_micros: Cell<u64>,
+}
+
+#[cfg(feature = "runtime-metrics")]
+impl CryptoWorkClassMetrics {
+    fn submit(&self, work: usize) {
+        let work = u64::try_from(work).unwrap_or(u64::MAX);
+        self.submitted_jobs
+            .set(self.submitted_jobs.get().saturating_add(1));
+        let outstanding = self.outstanding_work.get().saturating_add(work);
+        self.outstanding_work.set(outstanding);
+        self.maximum_outstanding_work
+            .set(self.maximum_outstanding_work.get().max(outstanding));
+    }
+
+    fn complete(&self, work: usize, timing: &CompletedJobTiming) {
+        self.completed_jobs
+            .set(self.completed_jobs.get().saturating_add(1));
+        self.outstanding_work.set(
+            self.outstanding_work
+                .get()
+                .saturating_sub(u64::try_from(work).unwrap_or(u64::MAX)),
+        );
+        self.maximum_queue_wait_micros.set(
+            self.maximum_queue_wait_micros
+                .get()
+                .max(timing.queue_wait_micros),
+        );
+        self.maximum_service_micros
+            .set(self.maximum_service_micros.get().max(timing.service_micros));
+    }
+
+    fn snapshot(&self) -> CryptoWorkClassMetricsSnapshot {
+        CryptoWorkClassMetricsSnapshot {
+            submitted_jobs: self.submitted_jobs.get(),
+            completed_jobs: self.completed_jobs.get(),
+            outstanding_work: self.outstanding_work.get(),
+            maximum_outstanding_work: self.maximum_outstanding_work.get(),
+            maximum_queue_wait_micros: self.maximum_queue_wait_micros.get(),
+            maximum_service_micros: self.maximum_service_micros.get(),
+        }
+    }
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -514,6 +662,8 @@ pub(super) enum CryptoResult {
         state: StreamedOpen,
         opened: OpenedSpanResult,
     },
+    #[cfg(test)]
+    ScheduledTest(u8),
 }
 
 impl CryptoResult {
@@ -530,7 +680,9 @@ impl CryptoResult {
 pub(super) struct CryptoCompletion {
     pub(super) worker: Option<usize>,
     pub(super) result: CryptoResult,
+    pub(super) class: CryptoJobClass,
     pub(super) work: usize,
+    pub(super) timing: CompletedJobTiming,
 }
 
 struct CryptoPoolState {
@@ -541,13 +693,14 @@ struct CryptoPoolState {
     /// Armed only while the manifold can actually sleep waiting for a completion. Workers keep
     /// payloads in their SPSC rings and enter Tokio's wake path only on this state transition.
     completion_wake_armed: AtomicBool,
+    warm_worker: AtomicUsize,
     backpressure_depth: usize,
     shutdown: AtomicBool,
 }
 
 struct CryptoWorker {
-    /// The manifold owns this producer and the worker owns its matching consumer.
-    job_producer: RefCell<Option<Producer<ScheduledCryptoJob>>>,
+    interactive_job_producer: RefCell<Option<Producer<ScheduledCryptoJob>>>,
+    bulk_job_producer: RefCell<Option<Producer<ScheduledCryptoJob>>>,
     /// The worker owns this ring's producer and the manifold owns this consumer.
     result_consumer: RefCell<Option<Consumer<ScheduledCryptoResult>>>,
     /// Set only across the worker's final empty-ring observation and park. Active workers observe
@@ -564,6 +717,7 @@ pub(super) struct CryptoPool {
     state: Arc<CryptoPoolState>,
     workers: Vec<CryptoWorker>,
     verify_batch_target: usize,
+    maximum_outstanding_work: usize,
     next_equal_load: Cell<usize>,
     next_completion: Cell<usize>,
     #[cfg(feature = "runtime-metrics")]
@@ -574,6 +728,10 @@ pub(super) struct CryptoPool {
     maximum_queue_depth: Cell<usize>,
     #[cfg(feature = "runtime-metrics")]
     backpressure_deferrals: Cell<u64>,
+    #[cfg(feature = "runtime-metrics")]
+    work_backpressure_deferrals: Cell<u64>,
+    #[cfg(feature = "runtime-metrics")]
+    work_class_metrics: [CryptoWorkClassMetrics; 3],
     packet_verdicts_owed: Cell<usize>,
     packet_verdict_hot_turns: Cell<usize>,
 }
@@ -585,18 +743,31 @@ impl CryptoPool {
     // still guaranteeing that an idle manifold returns to parking.
     const PACKET_VERDICT_HOT_TURNS: usize = 512;
 
-    pub(super) fn spawn(workers: usize, completion_wake: Arc<Notify>) -> Option<Self> {
+    #[cfg(test)]
+    fn spawn(workers: usize, completion_wake: Arc<Notify>) -> Option<Self> {
+        Self::spawn_with_policy(workers, completion_wake, SchedulerPolicy::production())
+    }
+
+    pub(super) fn spawn_with_policy(
+        workers: usize,
+        completion_wake: Arc<Notify>,
+        scheduler_policy: SchedulerPolicy,
+    ) -> Option<Self> {
         let worker_count = workers.max(1);
         let state = Arc::new(CryptoPoolState {
             queued_jobs: AtomicUsize::new(0),
             ready_results: AtomicUsize::new(0),
             completion_wake_armed: AtomicBool::new(false),
+            warm_worker: AtomicUsize::new(NO_WARM_WORKER),
             backpressure_depth: crypto_backpressure_depth(workers),
             shutdown: AtomicBool::new(false),
         });
         let mut worker_slots: Vec<CryptoWorker> = Vec::with_capacity(worker_count);
         for worker in 0..worker_count {
-            let (job_producer, job_consumer) = RingBuffer::new(CRYPTO_WORKER_JOB_RING_DEPTH);
+            let (interactive_job_producer, interactive_job_consumer) =
+                RingBuffer::new(CRYPTO_WORKER_JOB_RING_DEPTH);
+            let (bulk_job_producer, bulk_job_consumer) =
+                RingBuffer::new(CRYPTO_WORKER_JOB_RING_DEPTH);
             let (result_producer, result_consumer) =
                 RingBuffer::new(CRYPTO_WORKER_RESULT_RING_DEPTH);
             let worker_state = state.clone();
@@ -606,16 +777,20 @@ impl CryptoPool {
             match std::thread::Builder::new()
                 .name(format!("prns-crypto-{worker}"))
                 .spawn(move || {
-                    crypto_worker(
-                        &worker_state,
-                        job_consumer,
-                        result_producer,
-                        &worker_completion_wake,
-                        &worker_wake_armed,
-                    );
+                    crypto_worker(CryptoWorkerRun {
+                        worker,
+                        state: &worker_state,
+                        interactive_jobs: interactive_job_consumer,
+                        bulk_jobs: bulk_job_consumer,
+                        results: result_producer,
+                        completion_wake: &worker_completion_wake,
+                        wake_armed: &worker_wake_armed,
+                        scheduler_policy,
+                    });
                 }) {
                 Ok(handle) => worker_slots.push(CryptoWorker {
-                    job_producer: RefCell::new(Some(job_producer)),
+                    interactive_job_producer: RefCell::new(Some(interactive_job_producer)),
+                    bulk_job_producer: RefCell::new(Some(bulk_job_producer)),
                     result_consumer: RefCell::new(Some(result_consumer)),
                     wake_armed,
                     handle: Some(handle),
@@ -644,6 +819,7 @@ impl CryptoPool {
             state,
             workers: worker_slots,
             verify_batch_target: verify_batch_target(worker_count, performance_cores()),
+            maximum_outstanding_work: crypto_backpressure_work(worker_count),
             next_equal_load: Cell::new(0),
             next_completion: Cell::new(0),
             #[cfg(feature = "runtime-metrics")]
@@ -654,6 +830,10 @@ impl CryptoPool {
             maximum_queue_depth: Cell::new(0),
             #[cfg(feature = "runtime-metrics")]
             backpressure_deferrals: Cell::new(0),
+            #[cfg(feature = "runtime-metrics")]
+            work_backpressure_deferrals: Cell::new(0),
+            #[cfg(feature = "runtime-metrics")]
+            work_class_metrics: std::array::from_fn(|_| CryptoWorkClassMetrics::default()),
             packet_verdicts_owed: Cell::new(0),
             packet_verdict_hot_turns: Cell::new(0),
         })
@@ -669,8 +849,15 @@ impl CryptoPool {
             .queued_jobs
             .fetch_add(1, Ordering::Release)
             .saturating_add(1);
-        let worker =
-            self.push_scheduled_job(selected_worker, ScheduledCryptoJob { job, class, work });
+        let worker = self.push_scheduled_job(
+            selected_worker,
+            ScheduledCryptoJob {
+                job,
+                class,
+                work,
+                timing: JobTiming::submitted(),
+            },
+        );
         self.record_submitted_to_worker(worker, class, work);
         self.wake_worker_if_armed(worker);
         if owes_packet_verdict {
@@ -724,6 +911,7 @@ impl CryptoPool {
                     job: CryptoJob::SignLink(sign),
                     class,
                     work,
+                    timing: JobTiming::submitted(),
                 },
             );
             self.record_submitted_to_worker(worker, class, work);
@@ -765,7 +953,12 @@ impl CryptoPool {
         loop {
             let mut worker = selected_worker;
             for _ in 0..self.workers.len() {
-                let pushed = match self.workers[worker].job_producer.borrow_mut().as_mut() {
+                let producer = if pending.class == CryptoJobClass::Bulk {
+                    &self.workers[worker].bulk_job_producer
+                } else {
+                    &self.workers[worker].interactive_job_producer
+                };
+                let pushed = match producer.borrow_mut().as_mut() {
                     Some(producer) => producer.push(pending),
                     None => Err(PushError::Full(pending)),
                 };
@@ -794,6 +987,8 @@ impl CryptoPool {
             slot.tail_class.set(Some(class));
             slot.tail_run.set(1);
         }
+        #[cfg(feature = "runtime-metrics")]
+        self.work_class_metrics[class.index()].submit(work);
     }
 
     fn wake_worker_if_armed(&self, worker: usize) {
@@ -823,6 +1018,15 @@ impl CryptoPool {
             if load < least_loaded.1 {
                 least_loaded = (worker, load);
             }
+        }
+        let warm_worker = self.state.warm_worker.load(Ordering::Acquire);
+        if warm_worker < worker_count
+            && self.workers[warm_worker].outstanding_work.get() == least_loaded.1
+        {
+            least_loaded = (
+                warm_worker,
+                self.workers[warm_worker].outstanding_work.get(),
+            );
         }
         self.next_equal_load
             .set(if least_loaded.0 + 1 == worker_count {
@@ -857,7 +1061,13 @@ impl CryptoPool {
             .map_or(least_loaded.0, |(worker, _)| worker)
     }
 
-    pub(super) fn record_completed(&self, worker: usize, work: usize) {
+    pub(super) fn record_completed(
+        &self,
+        worker: usize,
+        _class: CryptoJobClass,
+        work: usize,
+        _timing: &CompletedJobTiming,
+    ) {
         if let Some(slot) = self.workers.get(worker) {
             let outstanding = slot.outstanding_jobs.get();
             debug_assert!(outstanding > 0, "a worker completed a job it did not own");
@@ -870,8 +1080,11 @@ impl CryptoPool {
             }
         }
         #[cfg(feature = "runtime-metrics")]
-        self.completed_jobs
-            .set(self.completed_jobs.get().saturating_add(1));
+        {
+            self.completed_jobs
+                .set(self.completed_jobs.get().saturating_add(1));
+            self.work_class_metrics[_class.index()].complete(work, _timing);
+        }
     }
 
     pub(super) fn pop_completion(&self) -> Option<CryptoCompletion> {
@@ -896,7 +1109,9 @@ impl CryptoPool {
                 return Some(CryptoCompletion {
                     worker: Some(worker),
                     result: scheduled.result,
+                    class: scheduled.class,
                     work: scheduled.work,
+                    timing: scheduled.timing,
                 });
             }
             worker += 1;
@@ -954,6 +1169,22 @@ impl CryptoPool {
         has_capacity
     }
 
+    pub(super) fn has_work_capacity(&self, additional: usize) -> bool {
+        let outstanding = self
+            .workers
+            .iter()
+            .map(|worker| worker.outstanding_work.get())
+            .fold(0usize, usize::saturating_add);
+        let has_capacity = outstanding == 0
+            || outstanding.saturating_add(additional) <= self.maximum_outstanding_work;
+        #[cfg(feature = "runtime-metrics")]
+        if !has_capacity {
+            self.work_backpressure_deferrals
+                .set(self.work_backpressure_deferrals.get().saturating_add(1));
+        }
+        has_capacity
+    }
+
     pub(super) fn take_packet_verdict_hot_turn(&self) -> bool {
         if self.packet_verdicts_owed.get() > 0 {
             return true;
@@ -983,7 +1214,11 @@ impl CryptoPool {
             queue_depth: bounded_u32(self.state.queued_jobs.load(Ordering::Acquire)),
             maximum_queue_depth: bounded_u32(self.maximum_queue_depth.get()),
             backpressure_deferrals: self.backpressure_deferrals.get(),
+            work_backpressure_deferrals: self.work_backpressure_deferrals.get(),
             packet_verdicts_owed: bounded_u32(self.packet_verdicts_owed.get()),
+            verify: self.work_class_metrics[CryptoJobClass::Verify.index()].snapshot(),
+            latency: self.work_class_metrics[CryptoJobClass::Latency.index()].snapshot(),
+            bulk: self.work_class_metrics[CryptoJobClass::Bulk.index()].snapshot(),
         }
     }
 }
@@ -991,6 +1226,11 @@ impl CryptoPool {
 #[cfg(feature = "runtime-metrics")]
 fn bounded_u32(value: usize) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+#[cfg(feature = "runtime-metrics")]
+fn elapsed_micros(started_at: std::time::Instant) -> u64 {
+    u64::try_from(started_at.elapsed().as_micros()).unwrap_or(u64::MAX)
 }
 
 impl Drop for CryptoPool {
@@ -1005,7 +1245,8 @@ impl Drop for CryptoPool {
             if let Some(handle) = worker.handle.take() {
                 let _ = handle.join();
             }
-            worker.job_producer.get_mut().take();
+            worker.interactive_job_producer.get_mut().take();
+            worker.bulk_job_producer.get_mut().take();
             worker.result_consumer.get_mut().take();
         }
         self.state.queued_jobs.store(0, Ordering::Release);
@@ -1019,30 +1260,65 @@ const MAX_CRYPTO_QUEUE_DEPTH: usize = 64;
 const CRYPTO_WORKER_JOB_RING_DEPTH: usize = 16;
 // Claim only the jobs visible at the start of a worker pass, then execute the first immediately.
 // This amortizes the SPSC ring's head publication without coalescing or delaying a lone job.
-const CRYPTO_WORKER_BATCH_DEPTH: usize = 8;
-const CRYPTO_WORKER_ACTIVITY_GRACE_TURNS: usize = 16;
+const NO_WARM_WORKER: usize = usize::MAX;
 
-struct WorkerActivityGrace {
-    remaining_turns: usize,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WorkerIdleStep {
+    Poll,
+    Spin,
+    Park,
 }
 
-impl WorkerActivityGrace {
+struct WorkerIdleBackoff {
+    hot_turns: usize,
+    spin_turns: usize,
+}
+
+impl WorkerIdleBackoff {
     const fn cold() -> Self {
-        Self { remaining_turns: 0 }
-    }
-
-    fn refresh(&mut self) {
-        self.remaining_turns = CRYPTO_WORKER_ACTIVITY_GRACE_TURNS;
-    }
-
-    fn take_turn(&mut self) -> bool {
-        if self.remaining_turns == 0 {
-            return false;
+        Self {
+            hot_turns: 0,
+            spin_turns: 0,
         }
-        self.remaining_turns -= 1;
-        true
+    }
+
+    fn refresh(&mut self, scheduler_policy: SchedulerPolicy) {
+        self.hot_turns = scheduler_policy.worker_hot_idle_turns();
+        self.spin_turns = scheduler_policy.worker_spin_idle_turns();
+    }
+
+    fn next_step(&mut self) -> WorkerIdleStep {
+        if self.hot_turns > 0 {
+            self.hot_turns -= 1;
+            return WorkerIdleStep::Poll;
+        }
+        if self.spin_turns > 0 {
+            self.spin_turns -= 1;
+            return WorkerIdleStep::Spin;
+        }
+        WorkerIdleStep::Park
     }
 }
+
+fn claim_warm_worker(state: &CryptoPoolState, worker: usize) -> bool {
+    let current = state.warm_worker.load(Ordering::Acquire);
+    current == worker
+        || (current == NO_WARM_WORKER
+            && state
+                .warm_worker
+                .compare_exchange(NO_WARM_WORKER, worker, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok())
+}
+
+fn release_warm_worker(state: &CryptoPoolState, worker: usize) {
+    let _ = state.warm_worker.compare_exchange(
+        worker,
+        NO_WARM_WORKER,
+        Ordering::AcqRel,
+        Ordering::Acquire,
+    );
+}
+
 // A bad signature makes batch verification do work that the exact per-job fallback must repeat.
 // Cool down locally so sustained hostile input pays at most one speculative batch per window.
 const CRYPTO_BATCH_FAILURE_COOLDOWN_JOBS: usize = 32;
@@ -1050,6 +1326,7 @@ const CRYPTO_BATCH_FAILURE_COOLDOWN_JOBS: usize = 32;
 // submitting it. This is storage headroom only; admission remains governed by the much smaller
 // `crypto_backpressure_depth` above.
 const CRYPTO_WORKER_RESULT_RING_DEPTH: usize = 128;
+const CRYPTO_WORK_PER_WORKER: usize = 256;
 
 fn crypto_backpressure_depth(workers: usize) -> usize {
     workers
@@ -1057,12 +1334,16 @@ fn crypto_backpressure_depth(workers: usize) -> usize {
         .clamp(MIN_CRYPTO_QUEUE_DEPTH, MAX_CRYPTO_QUEUE_DEPTH)
 }
 
+fn crypto_backpressure_work(workers: usize) -> usize {
+    workers.max(1).saturating_mul(CRYPTO_WORK_PER_WORKER)
+}
+
 fn verify_batch_target(workers: usize, performance_cores: Option<usize>) -> usize {
     let workers = workers.max(1);
     let effective_parallelism = performance_cores.unwrap_or(workers).clamp(1, workers);
     crypto_backpressure_depth(workers)
         .div_ceil(effective_parallelism)
-        .clamp(2, CRYPTO_WORKER_BATCH_DEPTH)
+        .clamp(2, MAX_INTERACTIVE_CRYPTO_BATCH)
 }
 
 const WORKER_VERIFIER_CACHE_DEPTH: usize = 8;
@@ -1217,6 +1498,16 @@ fn run_crypto_job(job: CryptoJob, verifier_cache: &mut WorkerVerifierCache) -> C
         CryptoJob::VerifyRemoteControlPairingAvailability(owed) => {
             CryptoResult::RemoteControlPairingAvailabilityVerification(owed.verify())
         }
+        #[cfg(test)]
+        CryptoJob::ScheduledTest(mut job) => {
+            if let Some(started) = job.started.take() {
+                let _ = started.send(());
+            }
+            if let Some(release) = job.release.take() {
+                let _ = release.recv();
+            }
+            CryptoResult::ScheduledTest(job.id)
+        }
     }
 }
 
@@ -1231,6 +1522,7 @@ pub(super) fn run_resource_build_job(job: ResourceBuildJob) -> CryptoResult {
         data,
         compressed_candidate,
         metadata,
+        digest,
         seal_iv,
         nonces,
     } = job;
@@ -1239,21 +1531,33 @@ pub(super) fn run_resource_build_job(job: ResourceBuildJob) -> CryptoResult {
     let mut transfer = vec![0u8; shape.transfer_bytes()];
     let mut names = vec![0u8; shape.part_count() * MAP_HASH_LEN];
     let mut fresh_nonces = nonces.into_iter();
-    let outcome = plan.execute(
-        &ResourceBody {
-            data: data.as_slice(),
-            compressed_candidate: compressed_candidate
-                .as_ref()
-                .map(HostResourcePayload::as_slice),
-            metadata: metadata.as_engine(),
-        },
-        &seal_iv,
-        || fresh_nonces.next().unwrap_or_default(),
-        BuildRegions {
-            transfer: &mut transfer,
-            hashmap: &mut names,
-        },
-    );
+    let body = ResourceBody {
+        data: data.as_slice(),
+        compressed_candidate: compressed_candidate
+            .as_ref()
+            .map(HostResourcePayload::as_slice),
+        metadata: metadata.as_engine(),
+    };
+    let regions = BuildRegions {
+        transfer: &mut transfer,
+        hashmap: &mut names,
+    };
+    let outcome = match digest {
+        HostResourceDigestPreparation::Calculate => plan.execute(
+            &body,
+            &seal_iv,
+            || fresh_nonces.next().unwrap_or_default(),
+            regions,
+        ),
+        #[cfg(feature = "parallel-resource-hash")]
+        HostResourceDigestPreparation::Prepared(prepared) => plan.execute_with_prepared_digest(
+            &body,
+            prepared,
+            &seal_iv,
+            || fresh_nonces.next().unwrap_or_default(),
+            regions,
+        ),
+    };
     CryptoResult::ResourceBuilt {
         reservation,
         request_data: data,
@@ -1287,158 +1591,260 @@ fn cached_verifier<'a>(
     cache[0].as_ref()
 }
 
-fn crypto_worker(
-    state: &CryptoPoolState,
-    mut jobs: Consumer<ScheduledCryptoJob>,
-    mut results: Producer<ScheduledCryptoResult>,
-    completion_wake: &Notify,
-    wake_armed: &AtomicBool,
-) {
+struct CryptoWorkerRun<'a> {
+    worker: usize,
+    state: &'a CryptoPoolState,
+    interactive_jobs: Consumer<ScheduledCryptoJob>,
+    bulk_jobs: Consumer<ScheduledCryptoJob>,
+    results: Producer<ScheduledCryptoResult>,
+    completion_wake: &'a Notify,
+    wake_armed: &'a AtomicBool,
+    scheduler_policy: SchedulerPolicy,
+}
+
+fn crypto_worker(run: CryptoWorkerRun<'_>) {
+    let CryptoWorkerRun {
+        worker,
+        state,
+        mut interactive_jobs,
+        mut bulk_jobs,
+        mut results,
+        completion_wake,
+        wake_armed,
+        scheduler_policy,
+    } = run;
     let mut verifier_cache = core::array::from_fn(|_| None);
     let mut batch_failure_cooldown = 0usize;
-    let mut activity_grace = WorkerActivityGrace::cold();
+    let mut idle_backoff = WorkerIdleBackoff::cold();
     loop {
         if state.shutdown.load(Ordering::Acquire) {
             return;
         }
-        let available = jobs.slots().min(CRYPTO_WORKER_BATCH_DEPTH);
-        if available == 0 {
-            if activity_grace.take_turn() {
-                std::thread::yield_now();
+        let interactive_available = interactive_jobs
+            .slots()
+            .min(scheduler_policy.interactive_batch());
+        if interactive_available > 0 {
+            let Ok(chunk) = interactive_jobs.read_chunk(interactive_available) else {
                 continue;
+            };
+            if claim_warm_worker(state, worker) {
+                idle_backoff.refresh(scheduler_policy);
             }
-            // Arm before the second ring observation so a concurrent producer either sees the
-            // arm and wakes us or leaves a job that prevents the park. `Thread::unpark` permits
-            // cover the final interval between that observation and entering the kernel.
-            wake_armed.store(true, Ordering::Release);
-            if jobs.slots() == 0 && !state.shutdown.load(Ordering::Acquire) {
-                std::thread::park();
+            state
+                .queued_jobs
+                .fetch_sub(interactive_available, Ordering::Release);
+            if !run_worker_jobs(
+                chunk.into_iter(),
+                &mut verifier_cache,
+                &mut batch_failure_cooldown,
+                state,
+                &mut results,
+                completion_wake,
+            ) {
+                return;
             }
-            wake_armed.store(false, Ordering::Release);
             continue;
         }
-        let Ok(chunk) = jobs.read_chunk(available) else {
+        let bulk_available = bulk_jobs.slots().min(1);
+        if bulk_available > 0 {
+            let Ok(chunk) = bulk_jobs.read_chunk(bulk_available) else {
+                continue;
+            };
+            if claim_warm_worker(state, worker) {
+                idle_backoff.refresh(scheduler_policy);
+            }
+            state
+                .queued_jobs
+                .fetch_sub(bulk_available, Ordering::Release);
+            if !run_worker_jobs(
+                chunk.into_iter(),
+                &mut verifier_cache,
+                &mut batch_failure_cooldown,
+                state,
+                &mut results,
+                completion_wake,
+            ) {
+                return;
+            }
             continue;
-        };
-        activity_grace.refresh();
-        state.queued_jobs.fetch_sub(available, Ordering::Release);
-        let mut jobs = chunk.into_iter().peekable();
-        while let Some(scheduled) = jobs.next() {
-            let ScheduledCryptoJob { job, class, work } = scheduled;
-            match job {
-                CryptoJob::VerifySignature(job) => {
-                    if !matches!(
-                        jobs.peek(),
-                        Some(ScheduledCryptoJob {
-                            job: CryptoJob::VerifySignature(_),
-                            ..
-                        })
+        }
+        match idle_backoff.next_step() {
+            WorkerIdleStep::Poll => continue,
+            WorkerIdleStep::Spin => {
+                core::hint::spin_loop();
+                continue;
+            }
+            WorkerIdleStep::Park => {}
+        }
+        release_warm_worker(state, worker);
+        wake_armed.store(true, Ordering::Release);
+        if interactive_jobs.slots() == 0
+            && bulk_jobs.slots() == 0
+            && !state.shutdown.load(Ordering::Acquire)
+        {
+            std::thread::park();
+        }
+        wake_armed.store(false, Ordering::Release);
+    }
+}
+
+fn run_worker_jobs(
+    jobs: impl Iterator<Item = ScheduledCryptoJob>,
+    verifier_cache: &mut WorkerVerifierCache,
+    batch_failure_cooldown: &mut usize,
+    state: &CryptoPoolState,
+    results: &mut Producer<ScheduledCryptoResult>,
+    completion_wake: &Notify,
+) -> bool {
+    let mut jobs = jobs.peekable();
+    while let Some(scheduled) = jobs.next() {
+        let ScheduledCryptoJob {
+            job,
+            class,
+            work,
+            timing,
+        } = scheduled;
+        match job {
+            CryptoJob::VerifySignature(job) => {
+                if !matches!(
+                    jobs.peek(),
+                    Some(ScheduledCryptoJob {
+                        job: CryptoJob::VerifySignature(_),
+                        ..
+                    })
+                ) {
+                    if !run_and_publish_crypto_job(
+                        ScheduledCryptoJob {
+                            job: CryptoJob::VerifySignature(job),
+                            class,
+                            work,
+                            timing,
+                        },
+                        verifier_cache,
+                        state,
+                        results,
+                        completion_wake,
                     ) {
-                        if !run_and_publish_crypto_job(
-                            ScheduledCryptoJob {
-                                job: CryptoJob::VerifySignature(job),
-                                class,
-                                work,
-                            },
-                            &mut verifier_cache,
-                            state,
-                            &mut results,
-                            completion_wake,
-                        ) {
-                            return;
-                        }
-                        continue;
+                        return false;
                     }
-                    let mut verification_jobs = HeaplessVec::new();
+                    continue;
+                }
+                let mut verification_jobs = HeaplessVec::new();
+                if verification_jobs
+                    .push(ScheduledVerifyJob {
+                        job,
+                        work,
+                        timing: timing.start(),
+                    })
+                    .is_err()
+                {
+                    return false;
+                }
+                while let Some(ScheduledCryptoJob {
+                    job: CryptoJob::VerifySignature(job),
+                    work,
+                    timing,
+                    ..
+                }) =
+                    jobs.next_if(|scheduled| matches!(scheduled.job, CryptoJob::VerifySignature(_)))
+                {
                     if verification_jobs
-                        .push(ScheduledVerifyJob { job, work })
+                        .push(ScheduledVerifyJob {
+                            job,
+                            work,
+                            timing: timing.start(),
+                        })
                         .is_err()
                     {
-                        return;
-                    }
-                    while let Some(ScheduledCryptoJob {
-                        job: CryptoJob::VerifySignature(job),
-                        work,
-                        ..
-                    }) = jobs
-                        .next_if(|scheduled| matches!(scheduled.job, CryptoJob::VerifySignature(_)))
-                    {
-                        if verification_jobs
-                            .push(ScheduledVerifyJob { job, work })
-                            .is_err()
-                        {
-                            return;
-                        }
-                    }
-                    if !run_and_publish_verification_jobs(
-                        verification_jobs,
-                        &mut verifier_cache,
-                        &mut batch_failure_cooldown,
-                        state,
-                        &mut results,
-                        completion_wake,
-                    ) {
-                        return;
+                        return false;
                     }
                 }
-                CryptoJob::SignLink(job) => {
-                    let mut sign_jobs = HeaplessVec::new();
-                    if sign_jobs.push(ScheduledLinkSignJob { job, work }).is_err() {
-                        return;
-                    }
-                    while let Some(ScheduledCryptoJob {
-                        job: CryptoJob::SignLink(job),
+                if !run_and_publish_verification_jobs(
+                    verification_jobs,
+                    verifier_cache,
+                    batch_failure_cooldown,
+                    state,
+                    results,
+                    completion_wake,
+                ) {
+                    return false;
+                }
+            }
+            CryptoJob::SignLink(job) => {
+                let mut sign_jobs = HeaplessVec::new();
+                if sign_jobs
+                    .push(ScheduledLinkSignJob {
+                        job,
                         work,
-                        ..
-                    }) =
-                        jobs.next_if(|scheduled| matches!(scheduled.job, CryptoJob::SignLink(_)))
+                        timing: timing.start(),
+                    })
+                    .is_err()
+                {
+                    return false;
+                }
+                while let Some(ScheduledCryptoJob {
+                    job: CryptoJob::SignLink(job),
+                    work,
+                    timing,
+                    ..
+                }) = jobs.next_if(|scheduled| matches!(scheduled.job, CryptoJob::SignLink(_)))
+                {
+                    if sign_jobs
+                        .push(ScheduledLinkSignJob {
+                            job,
+                            work,
+                            timing: timing.start(),
+                        })
+                        .is_err()
                     {
-                        if sign_jobs.push(ScheduledLinkSignJob { job, work }).is_err() {
-                            return;
-                        }
-                    }
-                    if !run_and_publish_link_sign_jobs(
-                        sign_jobs,
-                        state,
-                        &mut results,
-                        completion_wake,
-                    ) {
-                        return;
+                        return false;
                     }
                 }
-                job => {
-                    if !run_and_publish_crypto_job(
-                        ScheduledCryptoJob { job, class, work },
-                        &mut verifier_cache,
-                        state,
-                        &mut results,
-                        completion_wake,
-                    ) {
-                        return;
-                    }
+                if !run_and_publish_link_sign_jobs(sign_jobs, state, results, completion_wake) {
+                    return false;
+                }
+            }
+            job => {
+                if !run_and_publish_crypto_job(
+                    ScheduledCryptoJob {
+                        job,
+                        class,
+                        work,
+                        timing,
+                    },
+                    verifier_cache,
+                    state,
+                    results,
+                    completion_wake,
+                ) {
+                    return false;
                 }
             }
         }
     }
+    true
 }
 
 struct ScheduledLinkSignJob {
     job: LinkSignJob,
     work: usize,
+    timing: JobExecutionTimer,
 }
 
 fn run_and_publish_link_sign_jobs(
-    jobs: HeaplessVec<ScheduledLinkSignJob, CRYPTO_WORKER_BATCH_DEPTH>,
+    jobs: HeaplessVec<ScheduledLinkSignJob, MAX_INTERACTIVE_CRYPTO_BATCH>,
     state: &CryptoPoolState,
     results: &mut Producer<ScheduledCryptoResult>,
     completion_wake: &Notify,
 ) -> bool {
-    let mut completed = HeaplessVec::<ScheduledCryptoResult, CRYPTO_WORKER_BATCH_DEPTH>::new();
-    for ScheduledLinkSignJob { job, work } in jobs {
+    let mut completed = HeaplessVec::<ScheduledCryptoResult, MAX_INTERACTIVE_CRYPTO_BATCH>::new();
+    for ScheduledLinkSignJob { job, work, timing } in jobs {
         if completed
             .push(ScheduledCryptoResult {
                 result: run_link_sign_job(job).into(),
+                class: CryptoJobClass::Latency,
                 work,
+                timing: timing.finish(),
             })
             .is_err()
         {
@@ -1494,10 +1900,11 @@ pub(super) fn run_link_sign_job(job: LinkSignJob) -> LinkSignCompleted {
 struct ScheduledVerifyJob {
     job: SignatureVerifyJob,
     work: usize,
+    timing: JobExecutionTimer,
 }
 
 fn run_and_publish_verification_jobs(
-    jobs: HeaplessVec<ScheduledVerifyJob, CRYPTO_WORKER_BATCH_DEPTH>,
+    jobs: HeaplessVec<ScheduledVerifyJob, MAX_INTERACTIVE_CRYPTO_BATCH>,
     verifier_cache: &mut WorkerVerifierCache,
     batch_failure_cooldown: &mut usize,
     state: &CryptoPoolState,
@@ -1519,7 +1926,7 @@ fn run_and_publish_verification_jobs(
     };
 
     for scheduled in jobs {
-        let ScheduledVerifyJob { job, work } = scheduled;
+        let ScheduledVerifyJob { job, work, timing } = scheduled;
         let valid = if batch_valid {
             true
         } else {
@@ -1527,7 +1934,15 @@ fn run_and_publish_verification_jobs(
             cached_verifier(verifier_cache, public)
                 .is_some_and(|verifier| verifier.verify(message, signature).is_ok())
         };
-        if !publish_crypto_result(job.complete(valid), work, state, results, completion_wake) {
+        if !publish_crypto_result(
+            job.complete(valid),
+            CryptoJobClass::Verify,
+            work,
+            state,
+            results,
+            completion_wake,
+            timing.finish(),
+        ) {
             return false;
         }
     }
@@ -1545,10 +1960,10 @@ fn verify_job_batch(
         cached_verifier(verifier_cache, public)?;
     }
 
-    let mut messages: HeaplessVec<&[u8], CRYPTO_WORKER_BATCH_DEPTH> = HeaplessVec::new();
-    let mut signatures: HeaplessVec<Ed25519Signature, CRYPTO_WORKER_BATCH_DEPTH> =
+    let mut messages: HeaplessVec<&[u8], MAX_INTERACTIVE_CRYPTO_BATCH> = HeaplessVec::new();
+    let mut signatures: HeaplessVec<Ed25519Signature, MAX_INTERACTIVE_CRYPTO_BATCH> =
         HeaplessVec::new();
-    let mut verifiers: HeaplessVec<&Ed25519Verifier, CRYPTO_WORKER_BATCH_DEPTH> =
+    let mut verifiers: HeaplessVec<&Ed25519Verifier, MAX_INTERACTIVE_CRYPTO_BATCH> =
         HeaplessVec::new();
     for ScheduledVerifyJob { job, .. } in jobs {
         let (public, message, signature) = job.inputs();
@@ -1576,19 +1991,40 @@ fn run_and_publish_crypto_job(
     results: &mut Producer<ScheduledCryptoResult>,
     completion_wake: &Notify,
 ) -> bool {
-    let ScheduledCryptoJob { job, work, .. } = scheduled;
+    let ScheduledCryptoJob {
+        job,
+        class,
+        work,
+        timing,
+    } = scheduled;
+    let timing = timing.start();
     let result = run_crypto_job(job, verifier_cache);
-    publish_crypto_result(result, work, state, results, completion_wake)
+    publish_crypto_result(
+        result,
+        class,
+        work,
+        state,
+        results,
+        completion_wake,
+        timing.finish(),
+    )
 }
 
 fn publish_crypto_result(
     result: CryptoResult,
+    class: CryptoJobClass,
     work: usize,
     state: &CryptoPoolState,
     results: &mut Producer<ScheduledCryptoResult>,
     completion_wake: &Notify,
+    timing: CompletedJobTiming,
 ) -> bool {
-    let mut pending = ScheduledCryptoResult { result, work };
+    let mut pending = ScheduledCryptoResult {
+        result,
+        class,
+        work,
+        timing,
+    };
     // Reserve readiness before publishing into the ring. The manifold may be draining a different
     // worker concurrently; counting first prevents it from observing an uncounted result between
     // the ring's publish and a later atomic increment.
@@ -1613,7 +2049,7 @@ fn publish_crypto_result(
 }
 
 fn publish_crypto_results(
-    pending: HeaplessVec<ScheduledCryptoResult, CRYPTO_WORKER_BATCH_DEPTH>,
+    pending: HeaplessVec<ScheduledCryptoResult, MAX_INTERACTIVE_CRYPTO_BATCH>,
     state: &CryptoPoolState,
     results: &mut Producer<ScheduledCryptoResult>,
     completion_wake: &Notify,

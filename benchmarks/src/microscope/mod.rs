@@ -58,6 +58,7 @@ struct FeedCapture {
     announce_heard: bool,
     link_established: Option<LinkEstablished>,
     resource_received: bool,
+    single_deliveries: u64,
 }
 
 impl FeedCapture {
@@ -88,6 +89,9 @@ impl FeedCapture {
             }
             EngineReaction::Journaled(Journaled::ResourceReceived { .. }) => {
                 self.resource_received = true;
+            }
+            EngineReaction::Journaled(Journaled::Delivered(Delivery::Single(_))) => {
+                self.single_deliveries += 1;
             }
             _ => {}
         }

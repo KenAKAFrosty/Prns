@@ -22,7 +22,8 @@ use crate::identity::held::HoldIdentityError;
 use crate::identity::{IdentityHash, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::InterfaceId;
 use crate::manifold::driver::{
-    self as manifold_driver, CryptoPoolConfig, Egress, HostCommand, TokioClock, TokioHost,
+    self as manifold_driver, CryptoPoolConfig, Egress, HostCommand, SchedulerPolicy, TokioClock,
+    TokioHost,
 };
 use crate::remote_control::{RemoteControlEndpoint, RemoteControlNodeIdentities};
 use crate::routing::announce::AnnounceObservation;
@@ -88,6 +89,7 @@ pub struct PrnsNode<St, R, F, S: StorageLayout> {
     iface_build_rx: UnboundedReceiver<DriverMsg>,
     accepted_announce_observer: Option<AcceptedAnnounceObserver>,
     pub(super) crypto_pool: CryptoPoolConfig,
+    scheduler_policy: SchedulerPolicy,
     persistence: Option<persistence::NodePersistence>,
 }
 
@@ -472,6 +474,7 @@ where
             iface_build_rx,
             accepted_announce_observer: None,
             crypto_pool: CryptoPoolConfig::host_default(),
+            scheduler_policy: SchedulerPolicy::production(),
             persistence: node_persistence,
         }
     }
@@ -576,6 +579,13 @@ where
     #[must_use]
     pub fn with_crypto_pool(mut self, crypto_pool: CryptoPoolConfig) -> Self {
         self.crypto_pool = crypto_pool;
+        self
+    }
+
+    #[cfg(feature = "scheduler-tuning")]
+    #[must_use]
+    pub fn with_scheduler_policy(mut self, scheduler_policy: SchedulerPolicy) -> Self {
+        self.scheduler_policy = scheduler_policy;
         self
     }
 
@@ -728,6 +738,7 @@ where
             iface_build_rx,
             mut accepted_announce_observer,
             crypto_pool,
+            scheduler_policy,
             persistence: _,
         } = self;
         let AssembledNode {
@@ -820,6 +831,7 @@ where
                 },
                 store,
                 crypto_pool,
+                scheduler_policy,
                 crate::manifold::AppDeciders {
                     should_prove,
                     should_accept_resource: move |offer| admission_decider.permits(offer),

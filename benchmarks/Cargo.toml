@@ -20,6 +20,7 @@ parallel-resource-hash = ["personal-rns/parallel-resource-hash"]
 dhat-heap = ["dep:dhat"]
 # Explicit opt-in for the deterministic microscope that needs an installed Valgrind runner.
 callgrind = []
+scheduler-probe = ["personal-rns/runtime-metrics", "personal-rns/scheduler-tuning"]
 
 [lib]
 name = "benchmarks"
@@ -100,6 +101,18 @@ bench = false
 name = "render_results"
 path = "src/bin/render_results.rs"
 bench = false
+
+[[bin]]
+name = "scheduler_hol_probe"
+path = "src/bin/scheduler_hol_probe.rs"
+bench = false
+required-features = ["scheduler-probe"]
+
+[[bin]]
+name = "scheduler_sweep"
+path = "src/bin/scheduler_sweep.rs"
+bench = false
+required-features = ["scheduler-probe"]
 
 # --- Microscope: drive the engine directly, no I/O — the control baseline for crypto work ---
 [[bench]]

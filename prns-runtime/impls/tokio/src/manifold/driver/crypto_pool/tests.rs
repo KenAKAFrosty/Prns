@@ -46,16 +46,38 @@ fn packet_verdict_hotness_is_outstanding_or_a_bounded_activity_budget() {
 }
 
 #[test]
-fn worker_activity_grace_requires_work_and_expires_deterministically() {
-    let mut grace = WorkerActivityGrace::cold();
-    assert!(!grace.take_turn());
+fn worker_idle_backoff_walks_poll_spin_and_park_phases() {
+    let mut backoff = WorkerIdleBackoff::cold();
+    assert_eq!(backoff.next_step(), WorkerIdleStep::Park);
 
-    grace.refresh();
-    for _ in 0..CRYPTO_WORKER_ACTIVITY_GRACE_TURNS {
-        assert!(grace.take_turn());
+    let policy = SchedulerPolicy::production();
+    backoff.refresh(policy);
+    for _ in 0..policy.worker_hot_idle_turns() {
+        assert_eq!(backoff.next_step(), WorkerIdleStep::Poll);
     }
-    assert!(!grace.take_turn());
-    assert!(!grace.take_turn());
+    for _ in 0..policy.worker_spin_idle_turns() {
+        assert_eq!(backoff.next_step(), WorkerIdleStep::Spin);
+    }
+    assert_eq!(backoff.next_step(), WorkerIdleStep::Park);
+    assert_eq!(backoff.next_step(), WorkerIdleStep::Park);
+}
+
+#[test]
+fn only_one_worker_owns_the_warm_idle_phase() {
+    let pool = CryptoPool::spawn(2, Arc::new(Notify::new())).expect("workers spawn");
+
+    assert!(claim_warm_worker(&pool.state, 0));
+    assert!(!claim_warm_worker(&pool.state, 1));
+    release_warm_worker(&pool.state, 0);
+    assert!(claim_warm_worker(&pool.state, 1));
+}
+
+#[test]
+fn equal_load_prefers_the_worker_that_is_already_warm() {
+    let pool = CryptoPool::spawn(4, Arc::new(Notify::new())).expect("workers spawn");
+    pool.state.warm_worker.store(2, Ordering::Release);
+
+    assert_eq!(pool.worker_for(CryptoJobClass::Latency, 1), 2);
 }
 
 #[test]
@@ -79,8 +101,14 @@ fn crypto_backpressure_depth_is_bounded_across_worker_counts() {
 
 #[test]
 fn verification_batch_target_uses_effective_parallelism_without_exceeding_worker_capacity() {
-    assert_eq!(verify_batch_target(1, Some(4)), CRYPTO_WORKER_BATCH_DEPTH);
-    assert_eq!(verify_batch_target(2, Some(4)), CRYPTO_WORKER_BATCH_DEPTH);
+    assert_eq!(
+        verify_batch_target(1, Some(4)),
+        MAX_INTERACTIVE_CRYPTO_BATCH
+    );
+    assert_eq!(
+        verify_batch_target(2, Some(4)),
+        MAX_INTERACTIVE_CRYPTO_BATCH
+    );
     assert_eq!(verify_batch_target(4, Some(4)), 4);
     assert_eq!(verify_batch_target(6, Some(4)), 4);
     assert_eq!(verify_batch_target(8, None), 2);
@@ -137,6 +165,60 @@ fn equal_load_rotation_visits_each_worker_without_division() {
     assert_eq!(pool.worker_for(CryptoJobClass::Latency, 1), 1);
 }
 
+#[test]
+fn interactive_work_overtakes_queued_bulk_work() {
+    let pool = CryptoPool::spawn(1, Arc::new(Notify::new())).expect("worker spawns");
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    pool.submit(CryptoJob::ScheduledTest(ScheduledTestJob {
+        id: 1,
+        class: CryptoJobClass::Bulk,
+        started: Some(started_tx),
+        release: Some(release_rx),
+    }));
+    started_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("the first bulk job starts");
+    pool.submit(CryptoJob::ScheduledTest(ScheduledTestJob {
+        id: 2,
+        class: CryptoJobClass::Bulk,
+        started: None,
+        release: None,
+    }));
+    pool.submit(CryptoJob::ScheduledTest(ScheduledTestJob {
+        id: 3,
+        class: CryptoJobClass::Latency,
+        started: None,
+        release: None,
+    }));
+    release_tx.send(()).expect("the bulk job remains live");
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    let mut order = Vec::new();
+    while order.len() < 3 {
+        if let Some(completion) = pool.pop_completion() {
+            let CryptoResult::ScheduledTest(id) = completion.result else {
+                panic!("the test submits only scheduled test jobs");
+            };
+            order.push(id);
+            pool.record_completed(
+                completion.worker.expect("pool completion"),
+                completion.class,
+                completion.work,
+                &completion.timing,
+            );
+        } else {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "all scheduled jobs complete"
+            );
+            std::thread::yield_now();
+        }
+    }
+
+    assert_eq!(order, vec![1, 3, 2]);
+}
+
 #[cfg(feature = "runtime-metrics")]
 #[test]
 fn crypto_metrics_are_bounded_snapshots() {
@@ -146,13 +228,22 @@ fn crypto_metrics_are_bounded_snapshots() {
     assert!(!pool.has_queue_capacity(usize::MAX));
     pool.workers[0].outstanding_jobs.set(1);
     pool.workers[0].outstanding_work.set(1);
-    pool.record_completed(0, 1);
+    pool.record_completed(
+        0,
+        CryptoJobClass::Latency,
+        1,
+        &CompletedJobTiming::unmeasured(),
+    );
 
     assert_eq!(
         pool.metrics_snapshot(),
         CryptoMetricsSnapshot {
             completed_jobs: 1,
             backpressure_deferrals: 1,
+            latency: crate::runtime::CryptoWorkClassMetricsSnapshot {
+                completed_jobs: 1,
+                ..Default::default()
+            },
             ..CryptoMetricsSnapshot::default()
         }
     );
@@ -203,7 +294,12 @@ async fn completion_wake_carries_no_payload_and_result_moves_through_worker_ring
             verification: ReceiptProofVerification::Valid,
         } if owed.claim.command_id() == CommandId(7)
     ));
-    pool.record_completed(completion.worker.expect("pool completion"), completion.work);
+    pool.record_completed(
+        completion.worker.expect("pool completion"),
+        completion.class,
+        completion.work,
+        &completion.timing,
+    );
     pool.packet_verdict_settled();
     assert!(!pool.has_completion());
 }
@@ -245,7 +341,12 @@ async fn link_receipt_signing_moves_metadata_and_signature_through_the_worker_ri
     assert_eq!(completed.packet_hash, packet_hash);
     ed25519_verify(&public, packet_hash.as_bytes(), &completed.signature)
         .expect("worker returns the exact valid receipt signature");
-    pool.record_completed(completion.worker.expect("pool completion"), completion.work);
+    pool.record_completed(
+        completion.worker.expect("pool completion"),
+        completion.class,
+        completion.work,
+        &completion.timing,
+    );
     pool.packet_verdict_settled();
 }
 
@@ -286,7 +387,12 @@ async fn channel_ack_signing_moves_metadata_and_signature_through_the_worker_rin
     assert_eq!(completed.packet_hash, packet_hash);
     ed25519_verify(&public, packet_hash.as_bytes(), &completed.signature)
         .expect("worker returns the exact valid ACK signature");
-    pool.record_completed(completion.worker.expect("pool completion"), completion.work);
+    pool.record_completed(
+        completion.worker.expect("pool completion"),
+        completion.class,
+        completion.work,
+        &completion.timing,
+    );
     pool.packet_verdict_settled();
 }
 
@@ -336,7 +442,12 @@ async fn already_ready_link_receipts_move_as_one_worker_batch() {
             &completed.signature,
         )
         .expect("every batched receipt keeps its exact signature semantics");
-        pool.record_completed(completion.worker.expect("pool completion"), completion.work);
+        pool.record_completed(
+            completion.worker.expect("pool completion"),
+            completion.class,
+            completion.work,
+            &completion.timing,
+        );
         pool.packet_verdict_settled();
     }
     assert!(!pool.has_completion());
@@ -420,7 +531,12 @@ fn parked_worker_arm_is_cleared_by_submission_without_losing_the_job() {
         );
         std::thread::yield_now();
     };
-    pool.record_completed(completion.worker.expect("pool completion"), completion.work);
+    pool.record_completed(
+        completion.worker.expect("pool completion"),
+        completion.class,
+        completion.work,
+        &completion.timing,
+    );
     pool.packet_verdict_settled();
 }
 
@@ -457,7 +573,12 @@ fn command_sized_burst_backpressures_without_dropping_jobs_or_results() {
                     ..
                 }
             ));
-            pool.record_completed(completion.worker.expect("pool completion"), completion.work);
+            pool.record_completed(
+                completion.worker.expect("pool completion"),
+                completion.class,
+                completion.work,
+                &completion.timing,
+            );
             pool.packet_verdict_settled();
             completed += 1;
         } else {
@@ -475,7 +596,7 @@ fn command_sized_burst_backpressures_without_dropping_jobs_or_results() {
 fn batch_rejection_falls_back_to_exact_per_job_verdicts() {
     use crate::crypto::{ed25519_public_key, ed25519_sign, Ed25519SecretKey};
 
-    const JOBS: usize = CRYPTO_WORKER_BATCH_DEPTH;
+    const JOBS: usize = MAX_INTERACTIVE_CRYPTO_BATCH;
     const INVALID_JOB: usize = 3;
     let secret = Ed25519SecretKey::new([0x63; 32]);
     let signing_key = IdentitySigningPublicKey::new(ed25519_public_key(&secret));
@@ -514,7 +635,12 @@ fn batch_rejection_falls_back_to_exact_per_job_verdicts() {
                     ReceiptProofVerification::Valid
                 }
             );
-            pool.record_completed(completion.worker.expect("pool completion"), completion.work);
+            pool.record_completed(
+                completion.worker.expect("pool completion"),
+                completion.class,
+                completion.work,
+                &completion.timing,
+            );
             pool.packet_verdict_settled();
             completed += 1;
         } else {
@@ -531,7 +657,8 @@ fn weak_keys_never_enter_batch_verification() {
     let mut compressed_identity = [0u8; Ed25519PublicKey::LEN];
     compressed_identity[0] = 1;
     let signing_key = IdentitySigningPublicKey::new(Ed25519PublicKey(compressed_identity));
-    let mut jobs: HeaplessVec<ScheduledVerifyJob, CRYPTO_WORKER_BATCH_DEPTH> = HeaplessVec::new();
+    let mut jobs: HeaplessVec<ScheduledVerifyJob, MAX_INTERACTIVE_CRYPTO_BATCH> =
+        HeaplessVec::new();
     for id in 0..2 {
         assert!(jobs
             .push(ScheduledVerifyJob {
@@ -542,6 +669,7 @@ fn weak_keys_never_enter_batch_verification() {
                     Ed25519Signature([0u8; Ed25519Signature::LEN]),
                 )),
                 work: 1,
+                timing: JobTiming::submitted().start(),
             })
             .is_ok());
     }

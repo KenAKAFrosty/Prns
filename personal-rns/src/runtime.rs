@@ -43,11 +43,12 @@ pub use prns_runtime::runtime::{
 pub use prns_runtime::runtime::{
     AnnounceBackpressureCounts, AnnounceBackpressureEvent, AnnounceEgressCounts,
     AnnounceEgressMetricsSnapshot, AnnounceEgressOutcome, AnnounceOriginCounts,
-    CryptoMetricsSnapshot, EgressInterfaceKindCounts, EgressLaneMetricsSnapshot,
-    EgressMetricsSnapshot, InterfaceAnnounceEgressMetricsSnapshot, ReliabilityMetricsSnapshot,
-    RuntimeLinkClosure, RuntimeLinkClosureCounts, RuntimeMetricsSnapshot, RuntimeOperation,
-    RuntimeOperationCounts, RuntimeOperationOutcome, RuntimeResourceFailure,
-    RuntimeResourceFailureCounts, RuntimeRouteRemoval, RuntimeRouteRemovalCounts,
+    CryptoMetricsSnapshot, CryptoWorkClassMetricsSnapshot, EgressInterfaceKindCounts,
+    EgressLaneMetricsSnapshot, EgressMetricsSnapshot, InterfaceAnnounceEgressMetricsSnapshot,
+    ManifoldMetricsSnapshot, ReliabilityMetricsSnapshot, RuntimeLinkClosure,
+    RuntimeLinkClosureCounts, RuntimeMetricsSnapshot, RuntimeOperation, RuntimeOperationCounts,
+    RuntimeOperationOutcome, RuntimeResourceFailure, RuntimeResourceFailureCounts,
+    RuntimeRouteRemoval, RuntimeRouteRemovalCounts,
 };
 
 #[cfg(feature = "rnx")]
@@ -79,6 +80,11 @@ pub use prns_runtime_tokio::runtime::{
     ResourceReceiveError, ResourceSendError, ResponseSendError, RouteSeedProgress, RouteSeedReport,
     RuntimeRequestHandlerError, SaveOnLearn, SaveOnLearnWiring, SegmentCompression,
     SharedInstanceIdentityError, StreamId, Subscription, TunnelSeedReport, AUTO_COMPRESS_MAX_LEN,
+};
+
+#[cfg(all(feature = "tokio-host", feature = "scheduler-tuning"))]
+pub use prns_runtime_tokio::runtime::{
+    SchedulerPolicy, SchedulerPolicyError, SchedulerPolicyInput,
 };
 
 #[cfg(all(feature = "rnx", feature = "tokio-host"))]

@@ -19,6 +19,8 @@ mod tracing_events;
 pub use prns_runtime::runtime::*;
 
 pub use crate::manifold::driver::{CryptoPoolConfig, PoolWorkers};
+#[cfg(feature = "scheduler-tuning")]
+pub use crate::manifold::driver::{SchedulerPolicy, SchedulerPolicyError, SchedulerPolicyInput};
 pub(crate) use destination_identity_retention::{
     apply_destination_identity_retention_command, settle_destination_identity_retention,
     DestinationIdentityRetentionHostCommand,

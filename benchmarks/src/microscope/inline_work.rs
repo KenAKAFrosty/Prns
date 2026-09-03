@@ -7,7 +7,8 @@ use personal_rns::engine::{
     EngineReaction, EngineState, IdentifySignCompleted, IngestIo, InstantMillis,
     LinkIdentityVerification, LinkReceiptSignCompleted, NoOwedWork, OwedWork, ProofSignCompleted,
     ReceiptProofVerification, ResourceDecompressionCompleted, ResourceOpenCompleted,
-    TunnelSynthesizeSignCompleted, TunnelSynthesizeVerification,
+    TunnelSynthesizeSignCompleted, TunnelSynthesizeVerification, WholeResourceOpenCompleted,
+    WholeResourceOpenOutcome, WholeResourceOpenReservation,
 };
 use personal_rns::identity::{decrypt_token_in_place_with_ratchets, OpenedToken};
 use personal_rns::interfaces::{AttachedInterfaces, InboundPacket};
@@ -15,7 +16,9 @@ use personal_rns::remote_control::RemoteControlPairingAvailabilityVerification;
 use personal_rns::routing::ingress::AnnounceVerification;
 use personal_rns::routing::links::handshake::{link_proof_signature_valid, link_proof_signed_data};
 use personal_rns::routing::links::resources::build_outgoing::BuildOutgoingResourceError;
-use personal_rns::routing::links::resources::send::ResourceBuildCompleted;
+use personal_rns::routing::links::resources::send::{
+    ResourceBuildCompleted, ResourceSealCompleted, ResourceSealOutcome, ResourceSealReservation,
+};
 use personal_rns::routing::links::resources::table::ResourceBuildReservation;
 use personal_rns::routing::links::resources::ResourceHash;
 use personal_rns::routing::links::LinkId;
@@ -29,7 +32,13 @@ enum ReadyWork {
     ResourceBuildUnsupported {
         reservation: ResourceBuildReservation,
     },
+    ResourceSealUnsupported {
+        reservation: ResourceSealReservation,
+    },
     ResourceOpen(ResourceOpenCompleted<'static>),
+    WholeResourceOpenUnsupported {
+        reservation: WholeResourceOpenReservation,
+    },
     ResourceDecompressionUnsupported {
         link_id: LinkId,
         hash: ResourceHash,
@@ -52,7 +61,13 @@ fn route_or_capture_work(
                 OwedWork::ResourceBuild(owed) => ReadyWork::ResourceBuildUnsupported {
                     reservation: owed.reservation(),
                 },
+                OwedWork::ResourceSeal(owed) => ReadyWork::ResourceSealUnsupported {
+                    reservation: owed.plan().reservation(),
+                },
                 OwedWork::ResourceOpen(owed) => ReadyWork::ResourceOpen(owed.fulfill_inline()),
+                OwedWork::WholeResourceOpen(owed) => ReadyWork::WholeResourceOpenUnsupported {
+                    reservation: owed.plan().reservation(),
+                },
                 OwedWork::ResourceDecompression(owed) => {
                     ReadyWork::ResourceDecompressionUnsupported {
                         link_id: owed.link_id,
@@ -344,10 +359,31 @@ pub(super) fn feed_packet_inline(
                     },
                 );
             }
+            ReadyWork::ResourceSealUnsupported { reservation } => {
+                engine.resume_resource_seal(
+                    ResourceSealCompleted {
+                        reservation,
+                        outcome: ResourceSealOutcome::Unavailable,
+                    },
+                    now,
+                    &mut |bytes| entropy.fill(bytes),
+                    &mut |reaction| route_or_capture_work(reaction, capture, scratch, &mut ready),
+                );
+            }
             ReadyWork::ResourceOpen(completed) => {
                 engine.resume_resource_open(completed, now, &mut |reaction| {
                     route_or_capture_work(reaction, capture, scratch, &mut ready)
                 });
+            }
+            ReadyWork::WholeResourceOpenUnsupported { reservation } => {
+                engine.resume_whole_resource_open(
+                    WholeResourceOpenCompleted {
+                        reservation,
+                        outcome: WholeResourceOpenOutcome::Unavailable,
+                    },
+                    now,
+                    &mut |reaction| route_or_capture_work(reaction, capture, scratch, &mut ready),
+                );
             }
             ReadyWork::ResourceDecompressionUnsupported { link_id, hash } => {
                 engine.resume_resource_decompression(

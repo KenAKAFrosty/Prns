@@ -93,13 +93,6 @@ pub(super) struct InboundDispatch {
     link_identity_barriers: std::vec::Vec<(InterfaceId, LinkId)>,
 }
 
-// The minimum sixteen-job admission depth exposes at most fifteen link signs while retaining
-// room for the next packet's possible second crypto job. Split that common backlog across the
-// manifold (seven immediate proofs) and the pool (up to eight jobs). Seven remains a fixed latency
-// bound on larger hosts; their additional backlog goes to their larger pool instead of blocking
-// the manifold. Neither side waits for work, and a lone signature stays entirely inline.
-const INLINE_LINK_SIGN_TRANCHE: usize = 7;
-
 impl InboundDispatch {
     pub(super) fn new(frame_capacity: usize) -> Self {
         Self {
@@ -146,7 +139,10 @@ impl InboundDispatch {
         }
     }
 
-    pub(super) fn process<S, H, J, P, A>(&mut self, context: InboundContext<'_, S, H, J, P, A>)
+    pub(super) fn process<S, H, J, P, A>(
+        &mut self,
+        context: InboundContext<'_, S, H, J, P, A>,
+    ) -> usize
     where
         S: StorageLayout,
         H: Host,
@@ -166,6 +162,7 @@ impl InboundDispatch {
             should_prove,
             should_accept_resource,
             max_frames_per_lane,
+            max_frames_total,
             owed_work,
             now,
         } = context;
@@ -176,7 +173,11 @@ impl InboundDispatch {
             inline_link_signs,
             link_identity_barriers,
         } = self;
-        for &source in ready_lanes.iter() {
+        let mut processed_frames = 0;
+        'lanes: for &source in ready_lanes.iter() {
+            if processed_frames == max_frames_total {
+                break;
+            }
             if !link_identity_barriers.is_empty()
                 && link_identity_barriers
                     .iter()
@@ -196,10 +197,13 @@ impl InboundDispatch {
             };
             lane.acknowledge();
             for _ in 0..max_frames_per_lane {
+                if processed_frames == max_frames_total {
+                    break;
+                }
                 if crypto_pool.is_some_and(|pool| {
                     !pool.has_queue_capacity(
                         owed_work
-                            .len()
+                            .pool_jobs_len()
                             .saturating_add(link_signs.len())
                             .saturating_add(2),
                     )
@@ -222,6 +226,7 @@ impl InboundDispatch {
                                     recorder.record(FrameAccountingEvent::ProtocolViolation);
                                 }
                                 lane.release();
+                                processed_frames += 1;
                                 continue;
                             }
                             Err(
@@ -230,6 +235,7 @@ impl InboundDispatch {
                                 | IfacUnmaskError::OutputTooSmall { .. },
                             ) => {
                                 lane.release();
+                                processed_frames += 1;
                                 continue;
                             }
                         }
@@ -281,6 +287,7 @@ impl InboundDispatch {
                     });
                 }
                 lane.release();
+                processed_frames += 1;
                 merge_wake_schedules_delta(
                     wake_schedules,
                     ingest_report.wake_schedules,
@@ -296,11 +303,7 @@ impl InboundDispatch {
                 }
             }
             {
-                let inline_signs = if crypto_pool.is_some() {
-                    INLINE_LINK_SIGN_TRANCHE
-                } else {
-                    usize::MAX
-                };
+                let inline_signs = crypto_pool.map_or(usize::MAX, |_| 0);
                 for _ in 0..inline_signs {
                     let Some(sign) = link_signs.pop() else {
                         break;
@@ -361,6 +364,9 @@ impl InboundDispatch {
                     }
                 }
             }
+            if processed_frames == max_frames_total {
+                break 'lanes;
+            }
         }
         ready_lanes.retain(|source| {
             topology
@@ -369,6 +375,10 @@ impl InboundDispatch {
                 .find(|(id, _)| id == source)
                 .is_some_and(|(_, lane)| lane.try_peek().is_some())
         });
+        if ready_lanes.len() > 1 {
+            ready_lanes.rotate_left(1);
+        }
+        processed_frames
     }
 }
 
@@ -391,6 +401,7 @@ where
     pub(super) should_prove: &'a mut P,
     pub(super) should_accept_resource: &'a mut A,
     pub(super) max_frames_per_lane: usize,
+    pub(super) max_frames_total: usize,
     pub(super) owed_work: &'a mut PendingOwedWork,
     pub(super) now: InstantMillis,
 }

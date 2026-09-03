@@ -114,8 +114,9 @@ cfg_if::cfg_if! {
         pub use metrics::{
             AnnounceBackpressureCounts, AnnounceBackpressureEvent, AnnounceEgressCounts,
             AnnounceEgressMetricsSnapshot, AnnounceEgressOutcome, AnnounceOriginCounts,
-            CryptoMetricsSnapshot, EgressInterfaceKindCounts, EgressLaneMetricsSnapshot,
-            EgressMetricsSnapshot, InterfaceAnnounceEgressMetricsSnapshot, RuntimeMetricsSnapshot,
+            CryptoMetricsSnapshot, CryptoWorkClassMetricsSnapshot, EgressInterfaceKindCounts,
+            EgressLaneMetricsSnapshot, EgressMetricsSnapshot, InterfaceAnnounceEgressMetricsSnapshot,
+            ManifoldMetricsSnapshot, RuntimeMetricsSnapshot,
         };
         pub use observability::{
             ReliabilityMetricsSnapshot, RuntimeLinkClosure, RuntimeLinkClosureCounts,

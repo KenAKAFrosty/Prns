@@ -120,10 +120,12 @@ where
         let CryptoCompletion {
             worker,
             result,
+            class,
             work,
+            timing,
         } = completion;
         if let (Some(pool), Some(worker)) = (crypto_pool, worker) {
-            pool.record_completed(worker, work);
+            pool.record_completed(worker, class, work, &timing);
             if result.settles_packet_verdict() {
                 pool.packet_verdict_settled();
             }
@@ -582,6 +584,8 @@ where
                     }
                 }
             }
+            #[cfg(test)]
+            CryptoResult::ScheduledTest(_) => CryptoCompletionEffect::NoWakeChange,
             CryptoResult::SpanOpened {
                 link_id,
                 hash,

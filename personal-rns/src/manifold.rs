@@ -17,6 +17,11 @@ pub mod tokio {
         StreamInbound, TokioClock, TokioGrantConsumer, TokioGrantProducer, TokioHost,
         TokioInterfaceSeam, TokioInterfaceStatus,
     };
+
+    #[cfg(feature = "scheduler-tuning")]
+    pub use prns_runtime_tokio::manifold::driver::{
+        SchedulerPolicy, SchedulerPolicyError, SchedulerPolicyInput,
+    };
 }
 
 #[cfg(feature = "embassy-host")]

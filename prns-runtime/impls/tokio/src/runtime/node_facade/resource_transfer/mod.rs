@@ -1,18 +1,26 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 
+use futures_util::future::{ready, Either};
+use futures_util::stream::{FuturesOrdered, StreamExt};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot};
 
-use crate::engine::{RespondFailure, SendResourceFailure, Settlement};
+use crate::engine::{RespondFailure, SendResourceFailure, SendResourceRejection, Settlement};
 use crate::manifold::compression;
 use crate::manifold::driver::{
-    HostCommand, HostResourceMetadata, HostResourcePayload, ResourceInbound,
-    SendResourceSegmentHostCommand,
+    HostCommand, HostResourceDigestPreparation, HostResourceMetadata, HostResourcePayload,
+    ResourceInbound, SendResourceSegmentHostCommand,
 };
 use crate::routing::links::request::RequestId;
+#[cfg(feature = "parallel-resource-hash")]
 use crate::routing::links::resources::{
-    sealed_transfer_bytes, ResourceHash, ResourceSendPlan, ResourceStrategy, MAX_EFFICIENT_SIZE,
+    build_outgoing::{prepare_outgoing_resource_digest, PARALLEL_RESOURCE_MIN_BYTES},
+    ResourceBody, ResourceMetadata,
+};
+use crate::routing::links::resources::{
+    sealed_transfer_bytes, ResourceHash, ResourceSegmentPlan, ResourceSendPlan, ResourceStrategy,
+    MAX_EFFICIENT_SIZE,
 };
 use crate::routing::links::LinkId;
 use crate::wire::DestinationHash;
@@ -73,12 +81,75 @@ pub enum ResourceReceiveError {
 }
 
 pub(super) const ENGINE_SEGMENT_LANES: usize = 2;
+const RESOURCE_PREPROCESS_LANES: usize = 2;
 
 struct PendingSegment {
     settled: oneshot::Receiver<Settlement>,
     logical_len: u64,
     physical_len: u64,
     segment_index: u64,
+}
+
+struct PreparedSegment {
+    plan: ResourceSegmentPlan,
+    data: std::vec::Vec<u8>,
+    compressed_candidate: Option<HostResourcePayload>,
+    digest: HostResourceDigestPreparation,
+}
+
+enum SegmentDigestWork {
+    Calculate,
+    #[cfg(feature = "parallel-resource-hash")]
+    Prepare,
+}
+
+impl SegmentDigestWork {
+    fn for_uncompressed_bytes(_uncompressed_bytes: u64) -> Self {
+        #[cfg(feature = "parallel-resource-hash")]
+        if _uncompressed_bytes >= PARALLEL_RESOURCE_MIN_BYTES as u64 {
+            return Self::Prepare;
+        }
+        Self::Calculate
+    }
+
+    fn requires_worker(&self) -> bool {
+        match self {
+            Self::Calculate => false,
+            #[cfg(feature = "parallel-resource-hash")]
+            Self::Prepare => true,
+        }
+    }
+}
+
+fn finish_segment_preparation(
+    plan: ResourceSegmentPlan,
+    data: std::vec::Vec<u8>,
+    compressed_candidate: Option<HostResourcePayload>,
+    _packed_metadata: Option<&[u8]>,
+    digest_work: SegmentDigestWork,
+) -> Result<
+    PreparedSegment,
+    crate::routing::links::resources::build_outgoing::BuildOutgoingResourceError,
+> {
+    let digest = match digest_work {
+        SegmentDigestWork::Calculate => HostResourceDigestPreparation::Calculate,
+        #[cfg(feature = "parallel-resource-hash")]
+        SegmentDigestWork::Prepare => HostResourceDigestPreparation::Prepared(
+            prepare_outgoing_resource_digest(&ResourceBody {
+                data: &data,
+                compressed_candidate: compressed_candidate
+                    .as_ref()
+                    .map(HostResourcePayload::as_slice),
+                metadata: _packed_metadata.map_or(ResourceMetadata::None, ResourceMetadata::Packed),
+            })?,
+        ),
+    };
+    Ok(PreparedSegment {
+        plan,
+        data,
+        compressed_candidate,
+        digest,
+    })
 }
 
 pub(super) struct ResourceStreamOptions {
@@ -244,11 +315,72 @@ impl PrnsNodeHandle {
             VecDeque::with_capacity(max_in_flight_segments);
         let mut transferred = 0u64;
         let mut physical_transferred = 0u64;
-        for segment_index in 1..=total_segments {
-            let segment = plan
-                .segment(segment_index)
-                .ok_or(ResourceSendError::UnrepresentableLength)?;
-            let this_segment = segment.data_end.saturating_sub(segment.data_start);
+        let mut preparing = FuturesOrdered::new();
+        let mut next_segment_index = 1;
+        while next_segment_index <= total_segments || !preparing.is_empty() {
+            while next_segment_index <= total_segments
+                && preparing.len() < RESOURCE_PREPROCESS_LANES
+            {
+                let segment = plan
+                    .segment(next_segment_index)
+                    .ok_or(ResourceSendError::UnrepresentableLength)?;
+                let this_segment = segment.data_end.saturating_sub(segment.data_start);
+                let mut data = std::vec![0u8; this_segment as usize];
+                source
+                    .read_exact(&mut data)
+                    .await
+                    .map_err(ResourceSendError::Source)?;
+                let first_segment_block = (next_segment_index == 1)
+                    .then(|| packed_metadata.clone())
+                    .flatten();
+                let attempt = match compression {
+                    SegmentCompression::Attempt {
+                        up_to_byte_len: up_to,
+                    } => segment.stream_bytes <= up_to,
+                    SegmentCompression::Never => false,
+                };
+                let digest_work = SegmentDigestWork::for_uncompressed_bytes(segment.stream_bytes);
+                let preparing_segment = if attempt || digest_work.requires_worker() {
+                    Either::Left(tokio::task::spawn_blocking(move || {
+                        let compressed_candidate = attempt
+                            .then(|| {
+                                compression::compress_resource_candidate(
+                                    &data,
+                                    first_segment_block.as_deref(),
+                                )
+                                .map(HostResourcePayload::from)
+                            })
+                            .flatten();
+                        finish_segment_preparation(
+                            segment,
+                            data,
+                            compressed_candidate,
+                            first_segment_block.as_deref(),
+                            digest_work,
+                        )
+                    }))
+                } else {
+                    Either::Right(ready(Ok(finish_segment_preparation(
+                        segment,
+                        data,
+                        None,
+                        first_segment_block.as_deref(),
+                        digest_work,
+                    ))))
+                };
+                preparing.push_back(preparing_segment);
+                next_segment_index += 1;
+            }
+            let prepared = preparing
+                .next()
+                .await
+                .ok_or(ResourceSendError::NodeStopped)?
+                .map_err(|_| ResourceSendError::NodeStopped)?
+                .map_err(|error| {
+                    ResourceSendError::Rejected(SendResourceFailure::Rejected(
+                        SendResourceRejection::Build(error),
+                    ))
+                })?;
             if in_flight.len() == max_in_flight_segments {
                 if let Some(pending) = in_flight.pop_front() {
                     settle_sent_segment(pending.settled, answers_request.is_some()).await?;
@@ -266,35 +398,8 @@ impl PrnsNodeHandle {
                     }
                 }
             }
-            let mut chunk = std::vec![0u8; this_segment as usize];
-            source
-                .read_exact(&mut chunk)
-                .await
-                .map_err(ResourceSendError::Source)?;
-            let first_segment_block = (segment_index == 1)
-                .then(|| packed_metadata.clone())
-                .flatten();
-            let segment_payload_len = segment.stream_bytes;
-            let attempt = match compression {
-                SegmentCompression::Attempt {
-                    up_to_byte_len: up_to,
-                } => segment_payload_len <= up_to,
-                SegmentCompression::Never => false,
-            };
-            let (chunk, compressed_candidate) = if attempt {
-                tokio::task::spawn_blocking(move || {
-                    let candidate = compression::compress_resource_candidate(
-                        &chunk,
-                        first_segment_block.as_deref(),
-                    )
-                    .map(HostResourcePayload::from);
-                    (chunk, candidate)
-                })
-                .await
-                .map_err(|_| ResourceSendError::NodeStopped)?
-            } else {
-                (chunk, None)
-            };
+            let segment_index = prepared.plan.segment.index;
+            let segment_payload_len = prepared.plan.stream_bytes;
             let metadata = match (&packed_metadata, segment_index) {
                 (None, _) => HostResourceMetadata::None,
                 (Some(packed), 1) => HostResourceMetadata::Packed(packed.clone().into()),
@@ -303,7 +408,8 @@ impl PrnsNodeHandle {
                 },
             };
             let physical_len = sealed_transfer_bytes(
-                compressed_candidate
+                prepared
+                    .compressed_candidate
                     .as_ref()
                     .map_or(segment_payload_len as usize, HostResourcePayload::len),
             ) as u64;
@@ -314,13 +420,14 @@ impl PrnsNodeHandle {
                     SendResourceSegmentHostCommand {
                         id,
                         link_id,
-                        data: chunk.into(),
-                        compressed_candidate,
+                        data: prepared.data.into(),
+                        compressed_candidate: prepared.compressed_candidate,
                         metadata,
+                        digest: prepared.digest,
                         request_id: answers_request,
-                        segment_index: segment.segment.index,
-                        total_segments: segment.segment.total_segments,
-                        total_data_bytes: segment.segment.total_data_bytes,
+                        segment_index: prepared.plan.segment.index,
+                        total_segments: prepared.plan.segment.total_segments,
+                        total_data_bytes: prepared.plan.segment.total_data_bytes,
                         completion,
                     },
                 ))

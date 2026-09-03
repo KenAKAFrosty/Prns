@@ -23,7 +23,9 @@ use super::egress::{
     clear_announce_queues, route_reaction, route_reaction_with_work, Egress, InterfacePacer,
     WireScratch,
 };
-use super::host_protocol::{HostCommand, HostResourcePayload, RequestAnyHostCommand};
+use super::host_protocol::{
+    HostCommand, HostResourceDigestPreparation, HostResourcePayload, RequestAnyHostCommand,
+};
 use super::interface_topology::InterfaceTopology;
 use super::journal_delivery::JournalDispatch;
 use super::owed_work::PendingOwedWork;
@@ -101,6 +103,8 @@ where
     pub(super) journal: &'a mut JournalDispatch<J>,
     pub(super) crypto_pool: Option<&'a CryptoPool>,
     pub(super) owed_work: &'a mut PendingOwedWork,
+    #[cfg(feature = "runtime-metrics")]
+    pub(super) manifold_metrics: &'a super::scheduling_metrics::ManifoldMetrics,
 }
 
 impl<S, H, J> CommandDispatch<'_, S, H, J>
@@ -118,9 +122,11 @@ where
             journal,
             crypto_pool,
             owed_work,
+            #[cfg(feature = "runtime-metrics")]
+            manifold_metrics,
         } = self;
-        macro_rules! defer_whole_resource {
-            ($send:expr, $segment:expr) => {{
+        macro_rules! defer_resource {
+            ($send:expr, $segment:expr, $digest:expr) => {{
                 let correlation = $send.request_id.map_or(
                     ResourceCorrelation::Unsolicited,
                     ResourceCorrelation::Response,
@@ -176,6 +182,7 @@ where
                         $send.data,
                         $send.compressed_candidate,
                         $send.metadata,
+                        $digest,
                     );
                 }
                 CommandEffect::UNCHANGED
@@ -278,7 +285,7 @@ where
             HostCommand::SendResource(send) => match crypto_pool {
                 Some(_) => {
                     let segment = ResourceSegment::whole(send.data.len() as u64);
-                    defer_whole_resource!(send, segment)
+                    defer_resource!(send, segment, HostResourceDigestPreparation::Calculate)
                 }
                 None => CommandEffect::Delta(
                     engine.ingest_send_resource_into(
@@ -316,15 +323,14 @@ where
             },
             HostCommand::SendResourceSegment(send) => {
                 journal.register_completion(send.id, send.completion);
-                if let Some(_) =
-                    crypto_pool.filter(|_| send.segment_index == 1 && send.total_segments == 1)
-                {
+                if crypto_pool.is_some() {
                     let segment = ResourceSegment {
                         index: send.segment_index,
                         total_segments: send.total_segments,
                         total_data_bytes: send.total_data_bytes,
                     };
-                    defer_whole_resource!(send, segment)
+                    let digest = send.digest;
+                    defer_resource!(send, segment, digest)
                 } else {
                     CommandEffect::Delta(
                         engine.ingest_send_resource_segment_into(
@@ -781,6 +787,7 @@ where
                     engine: engine.metrics_snapshot(),
                     egress: topology.egress.metrics_snapshot(&topology.pacers, now),
                     crypto: crypto_pool.map(CryptoPool::metrics_snapshot),
+                    manifold: manifold_metrics.snapshot(),
                     reliability: journal.reliability_metrics(),
                 });
                 CommandEffect::UNCHANGED

@@ -1,3 +1,4 @@
+use super::inline_work::feed_packet_inline;
 use super::*;
 
 pub struct Cycle {
@@ -80,30 +81,22 @@ impl Cycle {
         );
         assert!(!announce.is_empty(), "responder emitted its announce");
 
-        let mut heard = false;
-        cycle.initiator.ingest_packet_into(
+        let mut capture = FeedCapture::default();
+        let mut scratch = Vec::new();
+        feed_packet_inline(
+            &mut cycle.initiator,
             InboundPacket {
                 arrived_at: NOW,
                 source_interface: WIRE,
                 bytes: &mut announce,
             },
-            IngestIo {
-                interfaces: AttachedInterfaces::new(&cycle.interfaces),
-                now: NOW,
-                fill_random: &mut |bytes| cycle.initiator_entropy.fill(bytes),
-                should_prove: &mut |_| true,
-                should_accept_resource: &mut |_| false,
-                sink: &mut |reaction| {
-                    if matches!(
-                        reaction,
-                        EngineReaction::Journaled(Journaled::AnnounceHeard { .. })
-                    ) {
-                        heard = true;
-                    }
-                },
-            },
+            AttachedInterfaces::new(&cycle.interfaces),
+            NOW,
+            &mut cycle.initiator_entropy,
+            &mut capture,
+            &mut scratch,
         );
-        assert!(heard, "initiator learned the destination");
+        assert!(capture.announce_heard, "initiator learned the destination");
         cycle
     }
 
@@ -139,7 +132,6 @@ impl Cycle {
     }
 
     pub fn deliver_prove(&mut self) {
-        let mut delivered = false;
         let Self {
             responder,
             responder_entropy,
@@ -148,32 +140,27 @@ impl Cycle {
             proof,
             ..
         } = self;
-        proof.clear();
-        responder.ingest_packet_into(
+        let mut capture = FeedCapture::default();
+        let mut scratch = Vec::new();
+        feed_packet_inline(
+            responder,
             InboundPacket {
                 arrived_at: NOW,
                 source_interface: WIRE,
                 bytes: sealed,
             },
-            IngestIo {
-                interfaces: AttachedInterfaces::new(interfaces),
-                now: NOW,
-                fill_random: &mut |bytes| responder_entropy.fill(bytes),
-                should_prove: &mut |_| true,
-                should_accept_resource: &mut |_| false,
-                sink: &mut |reaction| match reaction {
-                    EngineReaction::Journaled(Journaled::Delivered(Delivery::Single(_))) => {
-                        delivered = true;
-                    }
-                    EngineReaction::Directive(Directive::Send { bytes, .. }) => {
-                        proof.extend_from_slice(bytes);
-                    }
-                    _ => {}
-                },
-            },
+            AttachedInterfaces::new(interfaces),
+            NOW,
+            responder_entropy,
+            &mut capture,
+            &mut scratch,
         );
-        assert!(delivered, "responder delivered the single");
-        assert!(!self.proof.is_empty(), "responder proved the single");
+        assert_eq!(
+            capture.single_deliveries, 1,
+            "responder delivered the single"
+        );
+        assert_eq!(capture.frames.len(), 1, "responder proved the single");
+        *proof = capture.frames.pop().unwrap();
     }
 
     pub fn settle(&mut self) {
@@ -183,37 +170,34 @@ impl Cycle {
     }
 
     pub fn settle_frame(&mut self, proof: &mut [u8]) {
-        let mut settled = false;
         let Self {
             initiator,
             initiator_entropy,
             interfaces,
             ..
         } = self;
-        initiator.ingest_packet_into(
+        let mut capture = FeedCapture::default();
+        let mut scratch = Vec::new();
+        feed_packet_inline(
+            initiator,
             InboundPacket {
                 arrived_at: NOW,
                 source_interface: WIRE,
                 bytes: proof,
             },
-            IngestIo {
-                interfaces: AttachedInterfaces::new(interfaces),
-                now: NOW,
-                fill_random: &mut |bytes| initiator_entropy.fill(bytes),
-                should_prove: &mut |_| true,
-                should_accept_resource: &mut |_| false,
-                sink: &mut |reaction| {
-                    if let EngineReaction::Journaled(Journaled::CommandSettled {
-                        settlement: Settlement::SendSinglePacket(Ok(_)),
-                        ..
-                    }) = reaction
-                    {
-                        settled = true;
-                    }
-                },
-            },
+            AttachedInterfaces::new(interfaces),
+            NOW,
+            initiator_entropy,
+            &mut capture,
+            &mut scratch,
         );
-        assert!(settled, "proof verified and the receipt settled");
+        assert!(
+            capture
+                .settlements
+                .iter()
+                .any(|(_, settlement)| matches!(settlement, Settlement::SendSinglePacket(Ok(_)))),
+            "proof verified and the receipt settled",
+        );
     }
 }
 

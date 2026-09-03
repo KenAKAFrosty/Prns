@@ -320,13 +320,42 @@ pub struct EgressMetricsSnapshot {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CryptoWorkClassMetricsSnapshot {
+    pub submitted_jobs: u64,
+    pub completed_jobs: u64,
+    pub outstanding_work: u64,
+    pub maximum_outstanding_work: u64,
+    pub maximum_queue_wait_micros: u64,
+    pub maximum_service_micros: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CryptoMetricsSnapshot {
     pub submitted_jobs: u64,
     pub completed_jobs: u64,
     pub queue_depth: u32,
     pub maximum_queue_depth: u32,
     pub backpressure_deferrals: u64,
+    pub work_backpressure_deferrals: u64,
     pub packet_verdicts_owed: u32,
+    pub verify: CryptoWorkClassMetricsSnapshot,
+    pub latency: CryptoWorkClassMetricsSnapshot,
+    pub bulk: CryptoWorkClassMetricsSnapshot,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ManifoldMetricsSnapshot {
+    pub turns: u64,
+    pub maximum_turn_micros: u64,
+    pub budget_yields: u64,
+    pub maximum_completion_batch: u32,
+    pub maximum_inbound_batch: u32,
+    pub maximum_command_batch: u32,
+    pub maximum_owed_work_batch: u32,
+    pub inline_jobs: u64,
+    pub maximum_inline_work_micros: u64,
+    pub maximum_timer_lateness_ms: u64,
+    pub maximum_pacer_lateness_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -335,6 +364,7 @@ pub struct RuntimeMetricsSnapshot {
     pub engine: EngineMetricsSnapshot,
     pub egress: EgressMetricsSnapshot,
     pub crypto: Option<CryptoMetricsSnapshot>,
+    pub manifold: ManifoldMetricsSnapshot,
     pub reliability: ReliabilityMetricsSnapshot,
 }
 

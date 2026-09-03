@@ -28,6 +28,10 @@ use crate::routing::links::resources::build_outgoing::{
     write_hashmap_without_collision, BuildOutgoingResourceError, BuildRegions, BuiltResource,
     HashmapWriteOutcome, SealedStagedResource, SALT_REROLL_CAP, STAGED_STREAM_OFFSET,
 };
+#[cfg(feature = "parallel-resource-hash")]
+use crate::routing::links::resources::build_outgoing::{
+    build_outgoing_resource_with_prepared_digest, PreparedResourceDigest,
+};
 use crate::routing::links::resources::control::{
     parse_cancel_plaintext, parse_part_request_plaintext, parse_proof_plaintext,
     write_cancel_plaintext,
@@ -87,6 +91,26 @@ impl ResourceBuildPlan {
         regions: BuildRegions<'_>,
     ) -> Result<BuiltResource, BuildOutgoingResourceError> {
         build_outgoing_resource(body, &self.key, seal_iv, fresh_nonce, self.sdu, regions)
+    }
+
+    #[cfg(feature = "parallel-resource-hash")]
+    pub fn execute_with_prepared_digest(
+        &self,
+        body: &ResourceBody<'_>,
+        prepared_digest: PreparedResourceDigest,
+        seal_iv: &[u8; 16],
+        fresh_nonce: impl FnMut() -> [u8; RESOURCE_NONCE_LEN],
+        regions: BuildRegions<'_>,
+    ) -> Result<BuiltResource, BuildOutgoingResourceError> {
+        build_outgoing_resource_with_prepared_digest(
+            body,
+            prepared_digest,
+            &self.key,
+            seal_iv,
+            fresh_nonce,
+            self.sdu,
+            regions,
+        )
     }
 }
 
@@ -349,9 +373,6 @@ impl<S: StorageLayout> EngineState<S> {
         )
     }
 
-    /// Validate and reserve a single-segment resource without performing its bulk crypto. Pooled
-    /// hosts use this as the first half of an owning continuation; inline callers retain
-    /// [`ingest_send_resource_segment_into`](Self::ingest_send_resource_segment_into).
     pub fn request_resource_build<'a>(
         &mut self,
         send: &ResourceSend<'a>,
@@ -366,10 +387,6 @@ impl<S: StorageLayout> EngineState<S> {
                 settlement: resource_settlement(correlation, Err(failure)),
             }));
         };
-        if segment.index != 1 || segment.total_segments != 1 {
-            settle(sink, SendResourceFailure::Sequencing);
-            return;
-        }
         let validated = match self.validate_outgoing_resource_send(send, segment) {
             Ok(validated) => validated,
             Err(failure) => {
@@ -377,7 +394,6 @@ impl<S: StorageLayout> EngineState<S> {
                 return;
             }
         };
-        debug_assert_eq!(validated.lane, TrackLane::Live);
         let key = match self.links.active_view(&link_id) {
             ActiveLinkLookup::Active(link) => link.key.cloned(),
             ActiveLinkLookup::Inactive | ActiveLinkLookup::Absent => {
@@ -403,6 +419,7 @@ impl<S: StorageLayout> EngineState<S> {
                 correlation,
                 segment,
             },
+            validated.lane,
             shape,
             validated.uncompressed_data_bytes,
         ) {
@@ -534,6 +551,7 @@ impl<S: StorageLayout> EngineState<S> {
     where
         F: FnMut(&mut [u8]),
     {
+        let lane = reservation.lane;
         let hash = match landing {
             ResourceBuildLanding::Stale => {
                 return crate::engine::WakeSchedules::UNCHANGED;
@@ -548,14 +566,27 @@ impl<S: StorageLayout> EngineState<S> {
                         ))),
                     ),
                 }));
+                if lane == TrackLane::Live {
+                    self.fail_staged_continuation(&reservation.link_id, sink);
+                }
                 return crate::engine::WakeSchedules::UNCHANGED;
             }
             ResourceBuildLanding::Built(hash) => hash,
         };
+        if lane == TrackLane::Staged {
+            self.promote_staged_resource(&reservation.link_id, now, fill_random, sink);
+            return crate::engine::WakeSchedules {
+                resource_deadlines: self.resource_deadlines_wake(),
+                ..crate::engine::WakeSchedules::UNCHANGED
+            };
+        }
         let Some(index) = self.outgoing_resources.lookup(&reservation.link_id, &hash) else {
             return crate::engine::WakeSchedules::UNCHANGED;
         };
         let state = *self.outgoing_resources.state(index);
+        if state.segment_index == 1 && state.total_segments > 1 {
+            self.outgoing_assemblies.begin(reservation.link_id, hash);
+        }
         let ActiveLinkLookup::Active(link) = self.links.active_view(&reservation.link_id) else {
             self.outgoing_resources.remove(&reservation.link_id, &hash);
             sink(EngineReaction::Journaled(Journaled::CommandSettled {
@@ -1438,6 +1469,7 @@ impl<S: StorageLayout> EngineState<S> {
         sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) {
         let state = self.outgoing_resources.state(index);
+        let link_id = *self.outgoing_resources.link_at(index);
         let id = state.command_id;
         let correlation = state.correlation;
         self.outgoing_resources.remove_at(index);
@@ -1450,6 +1482,7 @@ impl<S: StorageLayout> EngineState<S> {
                 ))),
             ),
         }));
+        self.fail_staged_continuation(&link_id, sink);
     }
 
     pub fn request_resource_seal(
@@ -1683,8 +1716,11 @@ impl<S: StorageLayout> EngineState<S> {
         F: FnMut(&mut [u8]),
     {
         let link_occupied = (0..self.outgoing_resources.len()).any(|index| {
+            let state = self.outgoing_resources.state(index);
             self.outgoing_resources.link_at(index) == link_id
-                && !self.outgoing_resources.state(index).status.is_staged()
+                && !state.status.is_staged()
+                && !(state.status == OutgoingResourceStatus::Building
+                    && state.pending_build_lane == Some(TrackLane::Staged))
         });
         if link_occupied {
             return;
@@ -2496,6 +2532,145 @@ mod tests {
         assert!(inline.settlements.is_empty());
         assert!(deferred.settlements.is_empty());
         assert_eq!(deferred.frames, inline.frames);
+    }
+
+    #[test]
+    fn owning_split_builds_keep_the_second_segment_off_wire() {
+        let mut engine = heap_sender_with_active_link();
+        let first_data = b"first split segment";
+        let first = ResourceSend {
+            id: CommandId(71),
+            link_id: link_id(),
+            body: ResourceBody {
+                data: first_data,
+                compressed_candidate: None,
+                metadata: ResourceMetadata::None,
+            },
+            correlation: ResourceCorrelation::Unsolicited,
+        };
+        let mut first_owed = None;
+        engine.request_resource_build(
+            &first,
+            ResourceSegment {
+                index: 1,
+                total_segments: 2,
+                total_data_bytes: 39,
+            },
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::Fulfill(OwedWork::ResourceBuild(
+                    owed,
+                ))) = reaction
+                {
+                    first_owed = Some(owed);
+                }
+            },
+        );
+        let first_owed = first_owed.expect("the live build is delegated");
+        let first_shape = first_owed.shape();
+        let first_reservation = first_owed.reservation();
+        let mut first_transfer = std::vec![0; first_shape.transfer_bytes()];
+        let mut first_names = std::vec![0; first_shape.part_count() * MAP_HASH_LEN];
+        let first_outcome = first_owed.execute(
+            &[0xA5; 16],
+            || [0xA5; RESOURCE_NONCE_LEN],
+            BuildRegions {
+                transfer: &mut first_transfer,
+                hashmap: &mut first_names,
+            },
+        );
+        let mut first_frames = std::vec::Vec::new();
+        engine.resume_resource_build(
+            ResourceBuildCompleted {
+                reservation: first_reservation,
+                transfer: &first_transfer,
+                names: &first_names,
+                request_data: first_data,
+                outcome: first_outcome,
+            },
+            InstantMillis(1_500),
+            &mut |bytes: &mut [u8]| bytes.fill(0xA5),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
+                    if let Some(frame) = filled_frame(fill) {
+                        first_frames.push(frame);
+                    }
+                }
+            },
+        );
+        assert_eq!(first_frames.len(), 1);
+
+        let second_data = b"second split segment";
+        let second = ResourceSend {
+            id: CommandId(72),
+            link_id: link_id(),
+            body: ResourceBody {
+                data: second_data,
+                compressed_candidate: None,
+                metadata: ResourceMetadata::None,
+            },
+            correlation: ResourceCorrelation::Unsolicited,
+        };
+        let mut second_owed = None;
+        engine.request_resource_build(
+            &second,
+            ResourceSegment {
+                index: 2,
+                total_segments: 2,
+                total_data_bytes: 39,
+            },
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::Fulfill(OwedWork::ResourceBuild(
+                    owed,
+                ))) = reaction
+                {
+                    second_owed = Some(owed);
+                }
+            },
+        );
+        let second_owed = second_owed.expect("the staged build is delegated");
+        let second_shape = second_owed.shape();
+        let second_reservation = second_owed.reservation();
+        let mut second_transfer = std::vec![0; second_shape.transfer_bytes()];
+        let mut second_names = std::vec![0; second_shape.part_count() * MAP_HASH_LEN];
+        let second_outcome = second_owed.execute(
+            &[0xB6; 16],
+            || [0xB6; RESOURCE_NONCE_LEN],
+            BuildRegions {
+                transfer: &mut second_transfer,
+                hashmap: &mut second_names,
+            },
+        );
+        let mut second_frames = std::vec::Vec::new();
+        engine.resume_resource_build(
+            ResourceBuildCompleted {
+                reservation: second_reservation,
+                transfer: &second_transfer,
+                names: &second_names,
+                request_data: second_data,
+                outcome: second_outcome,
+            },
+            InstantMillis(1_501),
+            &mut |bytes: &mut [u8]| bytes.fill(0xB6),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
+                    if let Some(frame) = filled_frame(fill) {
+                        second_frames.push(frame);
+                    }
+                }
+            },
+        );
+
+        assert!(second_frames.is_empty());
+        assert_eq!(engine.outgoing_resources.len(), 2);
+        assert_eq!(
+            (0..engine.outgoing_resources.len())
+                .map(|index| engine.outgoing_resources.state(index).status)
+                .collect::<std::vec::Vec<_>>(),
+            std::vec![
+                OutgoingResourceStatus::Advertised,
+                OutgoingResourceStatus::StagedSealed,
+            ],
+        );
     }
 
     #[test]
@@ -3972,6 +4147,74 @@ mod tests {
             live,
             "the landing patch must address the follower itself — the lowest staged row is the sealing one",
         );
+    }
+
+    #[test]
+    fn a_failed_sealing_segment_drains_its_queued_follower() {
+        let mut engine = heap_sender_with_active_link();
+        let data = four_part_payload();
+        let segment = |index| ResourceSegment {
+            index,
+            total_segments: 3,
+            total_data_bytes: 5_000,
+        };
+        let first = send_segment(&mut engine, 7, &data, segment(1));
+        let live = advertised_hash(&first.frames[0].1);
+        let second_data = b"the follower rides sealed and silent! ".repeat(40);
+        send_segment(&mut engine, 8, &second_data, segment(2));
+
+        let live_index = engine.outgoing_resources.lookup(&link_id(), &live).unwrap();
+        let names = engine.outgoing_resources.names_flat(live_index).to_vec();
+        let mut served = feed(&mut engine, &request_frame(&live, None, &names), 2_000);
+        let job = served.seals.pop().unwrap();
+        let proof = engine.outgoing_resources.state(live_index).expected_proof;
+        let proven = feed(&mut engine, &proof_frame(&live, &proof), 2_500);
+        assert!(proven.frames.is_empty());
+
+        let third = send_segment(&mut engine, 9, &data, segment(3));
+        assert!(third.frames.is_empty());
+        assert!(third.settlements.is_empty());
+
+        let mut settlements = std::vec::Vec::new();
+        let landing = engine.resume_resource_seal(
+            ResourceSealCompleted {
+                reservation: job.plan.reservation(),
+                outcome: ResourceSealOutcome::Built {
+                    sealed: &[],
+                    names: &[],
+                    outcome: Err(BuildOutgoingResourceError::SaltRerollsExhausted),
+                },
+            },
+            InstantMillis(3_000),
+            &mut |_| {},
+            &mut |reaction| {
+                if let EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) =
+                    reaction
+                {
+                    settlements.push((id, settlement));
+                }
+            },
+        );
+
+        assert_eq!(landing, ResourceSealLanding::Applied);
+        assert_eq!(settlements.len(), 2);
+        assert!(matches!(
+            settlements[0],
+            (
+                CommandId(8),
+                Settlement::SendResource(Err(SendResourceFailure::Rejected(
+                    SendResourceRejection::Build(BuildOutgoingResourceError::SaltRerollsExhausted,),
+                ))),
+            ),
+        ));
+        assert!(matches!(
+            settlements[1],
+            (
+                CommandId(9),
+                Settlement::SendResource(Err(SendResourceFailure::PredecessorFailed)),
+            ),
+        ));
+        assert!(engine.outgoing_resources.is_empty());
     }
 
     fn receiver_cancel_frame(hash: &ResourceHash) -> std::vec::Vec<u8> {

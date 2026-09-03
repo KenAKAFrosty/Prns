@@ -122,6 +122,7 @@ pub struct ResourceBuildReservation {
     pub link_id: LinkId,
     pub command_id: CommandId,
     pub correlation: ResourceCorrelation,
+    pub(crate) lane: TrackLane,
     generation: ResourceBuildGeneration,
 }
 
@@ -158,6 +159,7 @@ pub struct OutgoingResourceState {
     pub scope_start: usize,
     pub sent_part_count: usize,
     pub status: OutgoingResourceStatus,
+    pub pending_build_lane: Option<TrackLane>,
     pub seal_generation: Option<ResourceSealGeneration>,
     pub retries_left: u8,
     pub command_id: CommandId,
@@ -183,6 +185,7 @@ impl Default for OutgoingResourceState {
             scope_start: 0,
             sent_part_count: 0,
             status: OutgoingResourceStatus::Advertised,
+            pending_build_lane: None,
             seal_generation: None,
             retries_left: 0,
             command_id: CommandId(0),
@@ -528,6 +531,7 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
                         TrackLane::Live => OutgoingResourceStatus::Advertised,
                         TrackLane::Staged => OutgoingResourceStatus::StagedSealed,
                     },
+                    pending_build_lane: None,
                     seal_generation: None,
                     retries_left: 0,
                     command_id,
@@ -557,6 +561,7 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
     pub fn reserve_build(
         &mut self,
         command: TrackedCommand,
+        lane: TrackLane,
         shape: ResourceBufferShape,
         uncompressed_data_bytes: u64,
     ) -> Result<ResourceBuildReservation, TrackOutgoingResourceError> {
@@ -580,6 +585,7 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
                     sdu,
                     part_count: shape.part_count(),
                     status: OutgoingResourceStatus::Building,
+                    pending_build_lane: Some(lane),
                     command_id,
                     correlation,
                     ..OutgoingResourceState::default()
@@ -592,6 +598,7 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
             link_id,
             command_id,
             correlation,
+            lane,
             generation,
         })
     }
@@ -632,7 +639,7 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
         buffers.part_names[..expected_part_count]
             .as_flattened_mut()
             .copy_from_slice(names);
-        self.finish_build(index, built)
+        self.finish_build(index, built, ticket.lane)
     }
 
     fn reserved_build_index(&self, reservation: ResourceBuildReservation) -> Option<usize> {
@@ -646,7 +653,12 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
         })
     }
 
-    fn finish_build(&mut self, index: usize, built: BuiltResource) -> ResourceBuildLanding {
+    fn finish_build(
+        &mut self,
+        index: usize,
+        built: BuiltResource,
+        lane: TrackLane,
+    ) -> ResourceBuildLanding {
         let reserved = self.table.states()[index];
         self.table
             .set_identity(index, OutgoingResourceIdentity::Ready(built.hash));
@@ -665,7 +677,11 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
             sdu: reserved.sdu,
             scope_start: 0,
             sent_part_count: 0,
-            status: OutgoingResourceStatus::Advertised,
+            status: match lane {
+                TrackLane::Live => OutgoingResourceStatus::Advertised,
+                TrackLane::Staged => OutgoingResourceStatus::StagedSealed,
+            },
+            pending_build_lane: None,
             seal_generation: None,
             retries_left: 0,
             command_id: reserved.command_id,
@@ -752,7 +768,10 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
             .zip(self.table.states())
             .enumerate()
         {
-            if candidate != link_id || !state.status.is_staged() {
+            let staged = state.status.is_staged()
+                || (state.status == OutgoingResourceStatus::Building
+                    && state.pending_build_lane == Some(TrackLane::Staged));
+            if candidate != link_id || !staged {
                 continue;
             }
             if lowest.is_none_or(|(_, segment)| state.segment_index < segment) {
@@ -1499,6 +1518,7 @@ mod tests {
                     correlation: ResourceCorrelation::Unsolicited,
                     segment: ResourceSegment::whole(930),
                 },
+                TrackLane::Live,
                 shape(928, 464),
                 930,
             )
