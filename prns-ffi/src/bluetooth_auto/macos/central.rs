@@ -1,11 +1,11 @@
 use core::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
 use objc2::rc::Retained;
-use objc2::runtime::AnyObject;
+use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{define_class, msg_send, AllocAnyThread, DefinedClass, Message};
 use objc2_core_bluetooth::{
     CBCentralManager, CBCentralManagerDelegate, CBCentralManagerRestoredStatePeripheralsKey,
@@ -22,7 +22,7 @@ use super::discovery::{
     advertisement_candidate_strength, discover_disposition, DiscoverDisposition, DiscoveryGuard,
     PeripheralLinkState, SessionPresence, StaleCancellation, StaleLinkRecovery,
 };
-use super::gatt_link::GattInboundSender;
+use super::gatt_link::{GattInboundSender, GATT_INBOUND_BUDGET_BYTES};
 use super::gatt_write::{
     write_admission, GattWriteAdmission, GattWriteMode, GattWriteRequest, GattWriteTarget,
     PendingAcknowledgedWrite,
@@ -66,6 +66,55 @@ pub(super) enum DialCompletion {
     Ready(DialChars),
     Failed,
     Rejected,
+}
+
+pub(super) const CENTRAL_CONTROL_INBOUND_CAPACITY: usize = 8;
+
+/// Value notifications received after CoreBluetooth restores a peripheral but before the Host
+/// admits its central-role session. A buffer overflow marks the handoff failed: silently skipping
+/// a control message or framed-data fragment could corrupt the restored protocol stream.
+#[derive(Default)]
+pub(super) struct RestoredCallbackBuffer {
+    controls: VecDeque<Control>,
+    data: VecDeque<Box<[u8]>>,
+    charged_data_bytes: usize,
+    failed: bool,
+}
+
+impl RestoredCallbackBuffer {
+    pub(super) fn buffer_control(&mut self, control: Control) -> bool {
+        if self.failed || self.controls.len() >= CENTRAL_CONTROL_INBOUND_CAPACITY {
+            self.fail();
+            return false;
+        }
+        self.controls.push_back(control);
+        true
+    }
+
+    pub(super) fn buffer_data(&mut self, data: Box<[u8]>) -> bool {
+        if self.failed {
+            return false;
+        }
+        let charge = data.len().max(1);
+        let Some(charged_data_bytes) = self.charged_data_bytes.checked_add(charge) else {
+            self.fail();
+            return false;
+        };
+        if charged_data_bytes > GATT_INBOUND_BUDGET_BYTES {
+            self.fail();
+            return false;
+        }
+        self.charged_data_bytes = charged_data_bytes;
+        self.data.push_back(data);
+        true
+    }
+
+    fn fail(&mut self) {
+        self.failed = true;
+        self.controls.clear();
+        self.data.clear();
+        self.charged_data_bytes = 0;
+    }
 }
 
 enum ColumbaReadiness {
@@ -191,6 +240,23 @@ impl CentralPeerSession {
         }
     }
 
+    pub(super) fn restore_callbacks(&mut self, callbacks: RestoredCallbackBuffer) -> bool {
+        if callbacks.failed {
+            return false;
+        }
+        for control in callbacks.controls {
+            if self.control_tx.try_send(control).is_err() {
+                return false;
+            }
+        }
+        for data in callbacks.data {
+            if self.data_tx.try_send(data).is_err() {
+                return false;
+            }
+        }
+        true
+    }
+
     fn complete_columba(
         &mut self,
         write: GattWriteTarget,
@@ -287,6 +353,7 @@ pub(super) struct CentralDelegateIvars {
     peripherals: PeripheralTable,
     restored: RestoredPeripherals,
     scan_activity: Arc<AtomicBool>,
+    pending_restored_callbacks: RefCell<HashMap<CoreBluetoothPeerId, RestoredCallbackBuffer>>,
     sessions: RefCell<HashMap<CoreBluetoothPeerId, CentralPeerSession>>,
     discovery_guard: RefCell<DiscoveryGuard>,
 }
@@ -330,6 +397,20 @@ define_class!(
                     "bluetooth: restored peripheral {:02x?} from a background relaunch — re-adopting",
                     address.octets()
                 );
+                self.ivars()
+                    .pending_restored_callbacks
+                    .borrow_mut()
+                    .entry(peer_id)
+                    .or_default();
+                // CoreBluetooth may deliver the value notification that caused this relaunch as
+                // soon as the restoration delegate method returns. Install the peripheral
+                // delegate now and buffer those values until the Host admits this central-role
+                // session. Discovery, subscriptions, and identity reads are re-driven afterward.
+                // SAFETY: CoreBluetooth supplied this retained peripheral on the manager's serial
+                // queue, and `self` remains retained as the manager delegate.
+                unsafe {
+                    peripheral.setDelegate(Some(ProtocolObject::from_ref(self)));
+                }
                 if let Ok(mut map) = self.ivars().peripherals.lock() {
                     map.insert(peer_id, (SendPeripheral(peripheral.retain()), None));
                 }
@@ -452,7 +533,9 @@ define_class!(
                 .discovery_guard
                 .borrow_mut()
                 .clear_stale_cancellation(peer_id);
-            crate::diagnostic_log::warn!("bluetooth: dialed peripheral disconnected: {error:?}");
+            crate::diagnostic_log::warn!(
+                "bluetooth: central-role peripheral disconnected: {error:?}"
+            );
             self.fail_peer(peer_id);
         }
     }
@@ -686,17 +769,27 @@ define_class!(
             if cbuuid_eq(&updated_uuid, &data_uuid())
                 || cbuuid_eq(&updated_uuid, &columba_tx_uuid())
             {
-                let enqueue_error =
-                    self.ivars()
-                        .sessions
-                        .borrow()
-                        .get(&peer_id)
-                        .and_then(|session| {
-                            session
-                                .data_tx
-                                .try_send(Box::from(&value.to_vec()[..]))
-                                .err()
-                        });
+                let data = value.to_vec().into_boxed_slice();
+                if let Some(restored) = self
+                    .ivars()
+                    .pending_restored_callbacks
+                    .borrow_mut()
+                    .get_mut(&peer_id)
+                {
+                    if !restored.buffer_data(data) {
+                        crate::diagnostic_log::warn!(
+                            "bluetooth: restored GATT notification buffer exceeded for {:02x?}",
+                            peer_id.address().octets()
+                        );
+                    }
+                    return;
+                }
+                let enqueue_error = self
+                    .ivars()
+                    .sessions
+                    .borrow()
+                    .get(&peer_id)
+                    .and_then(|session| session.data_tx.try_send(data).err());
                 if let Some(error) = enqueue_error {
                     crate::diagnostic_log::warn!(
                         "bluetooth: GATT notification inbox failed for {:02x?}: {error:?}",
@@ -722,6 +815,20 @@ define_class!(
             let Some(control) = Control::decode(&value.to_vec()) else {
                 return;
             };
+            if let Some(restored) = self
+                .ivars()
+                .pending_restored_callbacks
+                .borrow_mut()
+                .get_mut(&peer_id)
+            {
+                if !restored.buffer_control(control) {
+                    crate::diagnostic_log::warn!(
+                        "bluetooth: restored control buffer exceeded for {:02x?}",
+                        peer_id.address().octets()
+                    );
+                }
+                return;
+            }
             if let Some(session) = self.ivars().sessions.borrow().get(&peer_id) {
                 let _ = session.control_tx.try_send(control);
             }
@@ -777,6 +884,7 @@ impl CentralDelegate {
             peripherals,
             restored,
             scan_activity,
+            pending_restored_callbacks: RefCell::new(HashMap::new()),
             sessions: RefCell::new(HashMap::new()),
             discovery_guard: RefCell::new(DiscoveryGuard::default()),
         });
@@ -788,14 +896,32 @@ impl CentralDelegate {
     pub(super) fn begin_session(
         &self,
         peer_id: CoreBluetoothPeerId,
-        session: CentralPeerSession,
+        mut session: CentralPeerSession,
     ) -> bool {
         if self.ivars().sessions.borrow().contains_key(&peer_id) {
             session.reject();
             return false;
         }
+        if let Some(callbacks) = self
+            .ivars()
+            .pending_restored_callbacks
+            .borrow_mut()
+            .remove(&peer_id)
+        {
+            if !session.restore_callbacks(callbacks) {
+                session.fail();
+                return false;
+            }
+        }
         self.ivars().sessions.borrow_mut().insert(peer_id, session);
         true
+    }
+
+    pub(super) fn discard_restored_callbacks(&self, peer_id: CoreBluetoothPeerId) {
+        self.ivars()
+            .pending_restored_callbacks
+            .borrow_mut()
+            .remove(&peer_id);
     }
 
     pub(super) fn remove_session(&self, peer_id: CoreBluetoothPeerId) {
@@ -894,6 +1020,7 @@ impl CentralDelegate {
     }
 
     fn fail_peer(&self, peer_id: CoreBluetoothPeerId) {
+        self.discard_restored_callbacks(peer_id);
         self.remove_session(peer_id);
     }
 }

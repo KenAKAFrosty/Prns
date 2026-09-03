@@ -10,13 +10,16 @@ use tokio::sync::{mpsc, oneshot};
 use super::backend::{
     dial_admission, scan_lease, scan_op, DialAdmission, ScanLease, ScanOp, StartupReadiness,
 };
-use super::central::CentralPeerSession;
+use super::central::{
+    CentralPeerSession, RestoredCallbackBuffer, CENTRAL_CONTROL_INBOUND_CAPACITY,
+};
 use super::discovery::{
     candidate_strength, discover_disposition, CandidateStrength, DiscoverDisposition,
     DiscoveryGuard, PeripheralLinkState, SessionPresence, StaleCancellation, StaleLinkRecovery,
 };
 use super::gatt_link::{
     gatt_inbound_channel, gatt_inbound_channel_with_budget, GattInboundSendError,
+    GATT_INBOUND_BUDGET_BYTES,
 };
 use super::gatt_write::{write_admission, GattWriteAdmission, GattWriteMode, GattWritePlan};
 use super::legacy_restoration_identifiers;
@@ -290,6 +293,51 @@ fn role_cleanup_only_selects_a_session_after_its_data_receiver_closes() {
     assert!(!session.data_receiver_closed());
     drop(data_rx);
     assert!(session.data_receiver_closed());
+}
+
+#[tokio::test]
+async fn restored_value_callbacks_are_handed_to_the_admitted_session() {
+    let control = Control::decode(&[0x03, 0x01]).expect("valid close control");
+    let mut callbacks = RestoredCallbackBuffer::default();
+    assert!(callbacks.buffer_control(control));
+    assert!(callbacks.buffer_data(Box::from(&[1, 2, 3][..])));
+
+    let (control_tx, mut control_rx) = mpsc::channel(CENTRAL_CONTROL_INBOUND_CAPACITY);
+    let (completion_tx, _completion_rx) = oneshot::channel();
+    let (data_tx, mut data_rx) = gatt_inbound_channel();
+    let mut session = CentralPeerSession::new(
+        prns_core::interfaces::bluetooth_auto::BleAddress::new([1; 6]),
+        control_tx,
+        completion_tx,
+        data_tx,
+    );
+
+    assert!(session.restore_callbacks(callbacks));
+    assert_eq!(control_rx.try_recv(), Ok(control));
+    assert_eq!(&*data_rx.recv().await.unwrap(), &[1, 2, 3]);
+}
+
+#[test]
+fn restored_callback_overflow_fails_instead_of_skipping_protocol_input() {
+    let control = Control::decode(&[0x03, 0x01]).expect("valid close control");
+    let mut controls = RestoredCallbackBuffer::default();
+    for _ in 0..CENTRAL_CONTROL_INBOUND_CAPACITY {
+        assert!(controls.buffer_control(control));
+    }
+    assert!(!controls.buffer_control(control));
+    let (control_tx, _control_rx) = mpsc::channel(CENTRAL_CONTROL_INBOUND_CAPACITY);
+    let (completion_tx, _completion_rx) = oneshot::channel();
+    let (data_tx, _data_rx) = gatt_inbound_channel();
+    let mut session = CentralPeerSession::new(
+        prns_core::interfaces::bluetooth_auto::BleAddress::new([1; 6]),
+        control_tx,
+        completion_tx,
+        data_tx,
+    );
+    assert!(!session.restore_callbacks(controls));
+
+    let mut data = RestoredCallbackBuffer::default();
+    assert!(!data.buffer_data(vec![0; GATT_INBOUND_BUDGET_BYTES + 1].into_boxed_slice()));
 }
 
 #[tokio::test]
