@@ -4,7 +4,7 @@ import type {
   DevelopmentRuntimeStartError,
   EffectDevelopmentRuntime,
 } from "@prns-internal/expo";
-import { fireEvent, render, waitFor } from "@testing-library/react-native";
+import { act, fireEvent, render, waitFor } from "@testing-library/react-native";
 import { Effect } from "effect";
 import { destinationHash, identityHash, interfaceId } from "personal-rns/contract";
 import { type ReactNode, useEffect } from "react";
@@ -28,12 +28,28 @@ jest.mock("expo-router", () => ({
 const observedDestination = destinationHash(new Uint8Array(16).fill(0x33));
 const observedIdentity = identityHash(new Uint8Array(16).fill(0x44));
 type PairingState = DevelopmentNodeSnapshot["pairing"];
+type PairingCandidates = DevelopmentNodeSnapshot["pairingCandidates"];
+
+function pairingCandidate(
+  candidateId: string,
+  displayName: string | null,
+  expiresInMillis = 90_000n,
+): PairingCandidates[number] {
+  return {
+    candidateId,
+    displayName,
+    observedAtMillis: 1n,
+    expiresAtMillis: 2n,
+    expiresInMillis,
+  };
+}
 
 function snapshot(
   revision: bigint,
   includeObservation = false,
   pairing: PairingState = { type: "searching" },
   pairedTargets: DevelopmentNodeSnapshot["pairedTargets"] = [],
+  pairingCandidates: PairingCandidates = [],
 ): DevelopmentNodeSnapshot {
   return {
     contractFingerprint: "test-contract",
@@ -90,6 +106,7 @@ function snapshot(
     lxmf: { state: "ready", inboundOverflowCount: 0n },
     controllerIdentityFingerprint: null,
     pairing,
+    pairingCandidates,
     pairedTargets,
     activeOperation: null,
     failure: null,
@@ -102,15 +119,17 @@ function fakeProvider(
   includeObservation = false,
   pairing: PairingState = { type: "searching" },
   pairedTargets: DevelopmentNodeSnapshot["pairedTargets"] = [],
+  pairingCandidates: PairingCandidates = [],
 ): RuntimeProvider {
-  const initial = snapshot(2n, includeObservation, pairing, pairedTargets);
+  const initial = snapshot(2n, includeObservation, pairing, pairedTargets, pairingCandidates);
   const runtime: DevelopmentRuntime = {
     inspectDevelopmentIdentity: async () => initial.primaryIdentity,
     previewIdentityImport: async () => ({ type: "invalidLength" }),
     createGeneratedIdentity: async () => ({ type: "alreadyExists" }),
     createImportedIdentity: async () => ({ type: "alreadyExists" }),
     startDevelopmentNode: async () => ({ type: "started", snapshot: initial }),
-    readDevelopmentNodeSnapshot: async () => snapshot(1n, false, pairing, pairedTargets),
+    readDevelopmentNodeSnapshot: async () =>
+      snapshot(1n, false, pairing, pairedTargets, pairingCandidates),
     initiateRemoteControlPairing: async () => ({ type: "busy" }),
     approveRemoteControlPairing: async () => ({ type: "busy" }),
     rejectRemoteControlPairing: async () => ({ type: "busy" }),
@@ -161,7 +180,9 @@ function fakeProvider(
       Effect.acquireRelease(
         Effect.sync(() => {
           options.onSnapshot(initial);
-          options.onSnapshot(snapshot(1n, includeObservation, pairing, pairedTargets));
+          options.onSnapshot(
+            snapshot(1n, includeObservation, pairing, pairedTargets, pairingCandidates),
+          );
           return { runtime: effectRuntime, initialSnapshot: initial };
         }),
         () => Effect.promise(runtime.stopDevelopmentNode).pipe(Effect.asVoid),
@@ -321,23 +342,306 @@ describe("Foundation 1 Nodes runtime binding", () => {
     await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
   });
 
+  it("lists nearby nodes and submits the invitation for the explicit selection", async () => {
+    const stop = jest.fn();
+    const initiateRemoteControlPairing = jest.fn(async () => ({ type: "busy" as const }));
+    const candidates = [
+      pairingCandidate("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "Kitchen node"),
+      pairingCandidate("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "Workshop node", 42_000n),
+    ];
+    const view = render(
+      <DevelopmentRuntimeProvider
+        provider={fakeProvider(
+          stop,
+          { initiateRemoteControlPairing },
+          false,
+          { type: "searching" },
+          [],
+          candidates,
+        )}
+        refreshIntervalMillis={50}
+      >
+        <PairNodeScreen selectedCandidateId={undefined} />
+      </DevelopmentRuntimeProvider>,
+    );
+
+    await waitFor(() => expect(view.getByText("Nearby nodes")).toBeTruthy());
+    expect(view.getByText("Kitchen node")).toBeTruthy();
+    expect(view.getByText("Workshop node")).toBeTruthy();
+    expect(view.getByText("42 seconds remaining")).toBeTruthy();
+    expect(view.queryByLabelText("Invitation code")).toBeNull();
+
+    fireEvent.press(view.getByLabelText("Select Workshop node BBBBBBBB"));
+    await waitFor(() => expect(view.getByLabelText("Invitation code")).toBeTruthy());
+    fireEvent.changeText(view.getByLabelText("Invitation code"), "d8509492");
+    fireEvent.press(view.getByRole("button", { name: "Submit invitation" }));
+
+    await waitFor(() =>
+      expect(initiateRemoteControlPairing).toHaveBeenCalledWith({
+        candidateId: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        invitationCode: "D8509492",
+      }),
+    );
+    view.unmount();
+    await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
+  });
+
+  it("automatically selects the only nearby node", async () => {
+    const stop = jest.fn();
+    const onlyCandidate = pairingCandidate("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "Kitchen node");
+    const view = render(
+      <DevelopmentRuntimeProvider
+        provider={fakeProvider(stop, {}, false, { type: "searching" }, [], [onlyCandidate])}
+        refreshIntervalMillis={50}
+      >
+        <PairNodeScreen selectedCandidateId={undefined} />
+      </DevelopmentRuntimeProvider>,
+    );
+
+    await waitFor(() => expect(view.getByLabelText("Selected Kitchen node AAAAAAAA")).toBeTruthy());
+    expect(view.getByLabelText("Invitation code")).toBeTruthy();
+    view.unmount();
+    await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
+  });
+
+  it("honors a live route selection without switching to another observed node", async () => {
+    const stop = jest.fn();
+    const initiateRemoteControlPairing = jest.fn(async () => ({ type: "busy" as const }));
+    const candidates = [
+      pairingCandidate("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "Kitchen node"),
+      pairingCandidate("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "Workshop node"),
+    ];
+    const view = render(
+      <DevelopmentRuntimeProvider
+        provider={fakeProvider(
+          stop,
+          { initiateRemoteControlPairing },
+          false,
+          { type: "searching" },
+          [],
+          candidates,
+        )}
+        refreshIntervalMillis={50}
+      >
+        <PairNodeScreen selectedCandidateId="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" />
+      </DevelopmentRuntimeProvider>,
+    );
+
+    await waitFor(() =>
+      expect(view.getByLabelText("Selected Workshop node BBBBBBBB")).toBeTruthy(),
+    );
+    fireEvent.changeText(view.getByLabelText("Invitation code"), "1234abcd");
+    fireEvent.press(view.getByRole("button", { name: "Submit invitation" }));
+    await waitFor(() =>
+      expect(initiateRemoteControlPairing).toHaveBeenCalledWith({
+        candidateId: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        invitationCode: "1234ABCD",
+      }),
+    );
+    view.unmount();
+    await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
+  });
+
+  it("keeps the invitation when the selected node observation refreshes", async () => {
+    const stop = jest.fn();
+    const candidateId = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const initial = pairingCandidate(candidateId, "Kitchen node", 42_000n);
+    const refreshed = {
+      ...initial,
+      observedAtMillis: 2n,
+      expiresAtMillis: 3n,
+      expiresInMillis: 90_000n,
+    };
+    const readDevelopmentNodeSnapshot = jest.fn(async () =>
+      snapshot(3n, false, { type: "searching" }, [], [refreshed]),
+    );
+    let runtimeView: DevelopmentRuntimeView | undefined;
+    const view = render(
+      <DevelopmentRuntimeProvider
+        provider={fakeProvider(
+          stop,
+          { readDevelopmentNodeSnapshot },
+          false,
+          { type: "searching" },
+          [],
+          [initial],
+        )}
+        refreshIntervalMillis={10}
+      >
+        <PairNodeScreen selectedCandidateId={candidateId} />
+        <RuntimeViewProbe
+          publish={(next) => {
+            runtimeView = next;
+          }}
+        />
+      </DevelopmentRuntimeProvider>,
+    );
+
+    await waitFor(() => expect(view.getByLabelText("Invitation code")).toBeTruthy());
+    fireEvent.changeText(view.getByLabelText("Invitation code"), "d8509492");
+    await act(async () => {
+      await runtimeView?.refreshSnapshot();
+    });
+
+    expect(readDevelopmentNodeSnapshot).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(view.getByText("2 minutes remaining")).toBeTruthy());
+    expect(view.getByLabelText("Invitation code").props.value).toBe("D8509492");
+    view.unmount();
+    await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
+  });
+
+  it("keeps an expired selection visible while leaving other nodes selectable", async () => {
+    const stop = jest.fn();
+    const candidates = [pairingCandidate("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", null)];
+    const view = render(
+      <DevelopmentRuntimeProvider
+        provider={fakeProvider(stop, {}, false, { type: "searching" }, [], candidates)}
+        refreshIntervalMillis={50}
+      >
+        <PairNodeScreen selectedCandidateId="cccccccccccccccccccccccccccccccc" />
+      </DevelopmentRuntimeProvider>,
+    );
+
+    await waitFor(() => expect(view.getByText("Node no longer available")).toBeTruthy());
+    expect(view.getByText("Nearby node")).toBeTruthy();
+    expect(view.getByText("2 minutes remaining")).toBeTruthy();
+    expect(view.queryByLabelText("Invitation code")).toBeNull();
+
+    fireEvent.press(view.getByLabelText("Select Nearby node BBBBBBBB"));
+    await waitFor(() => expect(view.getByText("Ready to pair")).toBeTruthy());
+    expect(view.getByLabelText("Invitation code")).toBeTruthy();
+    view.unmount();
+    await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
+  });
+
+  it("leaves another observed node selectable after a terminal pairing result", async () => {
+    const terminalStates = [
+      { type: "rejected", detail: "internal rejection" },
+      { type: "expired", detail: "internal expiry" },
+      { type: "failed", stage: "request", detail: "internal request failure" },
+      { type: "paired", attemptId: "attempt-a" },
+    ] as const satisfies readonly PairingState[];
+    const candidateB = pairingCandidate("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "Workshop node");
+
+    for (const pairing of terminalStates) {
+      const stop = jest.fn();
+      const view = render(
+        <DevelopmentRuntimeProvider
+          provider={fakeProvider(stop, {}, false, pairing, [], [candidateB])}
+          refreshIntervalMillis={50}
+        >
+          <PairNodeScreen selectedCandidateId="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" />
+        </DevelopmentRuntimeProvider>,
+      );
+
+      await waitFor(() => expect(view.getByText("Workshop node")).toBeTruthy());
+      await waitFor(() =>
+        expect(view.getByLabelText("Selected Workshop node BBBBBBBB")).toBeTruthy(),
+      );
+      expect(view.queryByText("Node no longer available")).toBeNull();
+      expect(view.getByLabelText("Invitation code")).toBeTruthy();
+      view.unmount();
+      await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
+    }
+  });
+
+  it("shows one failed submission after selecting another node from a terminal result", async () => {
+    const stop = jest.fn();
+    const initiateRemoteControlPairing = jest.fn(async () => ({ type: "busy" as const }));
+    const candidateB = pairingCandidate("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "Workshop node");
+    const view = render(
+      <DevelopmentRuntimeProvider
+        provider={fakeProvider(
+          stop,
+          { initiateRemoteControlPairing },
+          false,
+          { type: "paired", attemptId: "attempt-a" },
+          [],
+          [candidateB],
+        )}
+        refreshIntervalMillis={50}
+      >
+        <PairNodeScreen selectedCandidateId="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" />
+      </DevelopmentRuntimeProvider>,
+    );
+
+    await waitFor(() => expect(view.getByText("Workshop node")).toBeTruthy());
+    await waitFor(() =>
+      expect(view.getByLabelText("Selected Workshop node BBBBBBBB")).toBeTruthy(),
+    );
+    fireEvent.changeText(view.getByLabelText("Invitation code"), "1234abcd");
+    fireEvent.press(view.getByRole("button", { name: "Submit invitation" }));
+
+    await waitFor(() =>
+      expect(
+        view.getAllByText("Another node operation is in progress. Try again shortly."),
+      ).toHaveLength(1),
+    );
+    expect(initiateRemoteControlPairing).toHaveBeenCalledWith({
+      candidateId: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      invitationCode: "1234ABCD",
+    });
+    view.unmount();
+    await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
+  });
+
+  it("keeps the selected node fixed while its invitation is being submitted", async () => {
+    const stop = jest.fn();
+    let finishInitiation!: (outcome: { readonly type: "busy" }) => void;
+    const initiateRemoteControlPairing = jest.fn(
+      () =>
+        new Promise<{ readonly type: "busy" }>((resolve) => {
+          finishInitiation = resolve;
+        }),
+    );
+    const candidates = [
+      pairingCandidate("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "Kitchen node"),
+      pairingCandidate("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "Workshop node"),
+    ];
+    const view = render(
+      <DevelopmentRuntimeProvider
+        provider={fakeProvider(
+          stop,
+          { initiateRemoteControlPairing },
+          false,
+          { type: "searching" },
+          [],
+          candidates,
+        )}
+        refreshIntervalMillis={50}
+      >
+        <PairNodeScreen selectedCandidateId="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" />
+      </DevelopmentRuntimeProvider>,
+    );
+
+    await waitFor(() => expect(view.getByLabelText("Invitation code")).toBeTruthy());
+    fireEvent.changeText(view.getByLabelText("Invitation code"), "1234abcd");
+    fireEvent.press(view.getByRole("button", { name: "Submit invitation" }));
+    await waitFor(() => expect(initiateRemoteControlPairing).toHaveBeenCalledTimes(1));
+
+    expect(view.getByLabelText("Invitation code").props.editable).toBe(false);
+    fireEvent.press(view.getByLabelText("Select Workshop node BBBBBBBB"));
+    expect(view.getByLabelText("Selected Kitchen node AAAAAAAA")).toBeTruthy();
+    expect(view.queryByLabelText("Selected Workshop node BBBBBBBB")).toBeNull();
+    expect(initiateRemoteControlPairing).toHaveBeenCalledWith({
+      candidateId: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      invitationCode: "1234ABCD",
+    });
+
+    finishInitiation({ type: "busy" });
+    await waitFor(() =>
+      expect(
+        view.getByText("Another node operation is in progress. Try again shortly."),
+      ).toBeTruthy(),
+    );
+    view.unmount();
+    await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
+  });
+
   it("keeps every pairing step board-neutral and free of protocol narration", async () => {
     const pairingViews = [
       [{ type: "bluetoothUnavailable" }, "Bluetooth unavailable"],
       [{ type: "searching" }, "Looking for nearby nodes"],
-      [
-        {
-          type: "candidateObserved",
-          candidate: {
-            candidateId: "candidate-1",
-            endpoint: observedDestination,
-            observedAtMillis: 1n,
-            expiresAtMillis: 2n,
-            publicAppData: new Uint8Array(),
-          },
-        },
-        "Node found",
-      ],
       [{ type: "invitationSubmitted", candidateId: "candidate-1" }, "Invitation sent"],
       [
         {
@@ -370,9 +674,64 @@ describe("Foundation 1 Nodes runtime binding", () => {
       );
 
       await waitFor(() => expect(view.getByText(expectedCopy)).toBeTruthy());
+      if (pairing.type === "confirmationRequired") {
+        expect(view.getByText("44".repeat(16))).toBeTruthy();
+      }
       expect(JSON.stringify(view.toJSON())).not.toMatch(
         /E290|signed availability|upstream RemoteControl/iu,
       );
+      view.unmount();
+      await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
+    }
+  });
+
+  it("gives a distinct user remedy for every pairing failure stage", async () => {
+    const failures = [
+      ["input", "Check the invitation and try again."],
+      ["candidate", "The node is no longer available. Reopen pairing on the node and try again."],
+      [
+        "route",
+        "No connection path to the node is available yet. Keep its pairing screen open and try again.",
+      ],
+      [
+        "link",
+        "A secure connection to the node could not be opened. Make sure it is on and nearby, then try again.",
+      ],
+      [
+        "identification",
+        "The node could not verify this device. Reopen pairing on the node and try again.",
+      ],
+      ["timeout", "The node did not respond in time. Reopen pairing and try again."],
+      [
+        "request",
+        "The node could not complete the pairing request. Keep both devices nearby and try again.",
+      ],
+      ["confirmation", "Confirmation could not be completed. Check both devices and try again."],
+      ["persistence", "Pairing could not be saved. Try again."],
+      ["expired", "The node is no longer available. Reopen pairing on the node and try again."],
+      ["node", "This device went offline during pairing. Wait a moment and try again."],
+    ] as const satisfies readonly (readonly [
+      Extract<PairingState, { readonly type: "failed" }>["stage"],
+      string,
+    ])[];
+
+    for (const [stage, expectedCopy] of failures) {
+      const stop = jest.fn();
+      const view = render(
+        <DevelopmentRuntimeProvider
+          provider={fakeProvider(stop, {}, false, {
+            type: "failed",
+            stage,
+            detail: "internal protocol detail",
+          })}
+          refreshIntervalMillis={50}
+        >
+          <PairNodeScreen selectedCandidateId={undefined} />
+        </DevelopmentRuntimeProvider>,
+      );
+
+      await waitFor(() => expect(view.getByText(expectedCopy)).toBeTruthy());
+      expect(view.queryByText("internal protocol detail")).toBeNull();
       view.unmount();
       await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
     }
@@ -413,9 +772,7 @@ describe("Foundation 1 Nodes runtime binding", () => {
 
     await waitFor(() => expect(view.getByText("Could not check node")).toBeTruthy());
     expect(
-      view.getByText(
-        "The node could not be reached. Make sure it is on and connected, then try again.",
-      ),
+      view.getByText("A secure connection to this node could not be opened. Try again."),
     ).toBeTruthy();
     expect(
       view.queryAllByText(/E290|signed availability|upstream RemoteControl|bounded event lane/iu),

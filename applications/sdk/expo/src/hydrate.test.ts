@@ -62,16 +62,16 @@ describe("generated native payload hydration", () => {
         },
       },
       controllerIdentityFingerprint,
-      pairing: {
-        type: "candidateObserved" as const,
-        candidate: {
+      pairing: { type: "searching" as const },
+      pairingCandidates: [
+        {
           candidateId: "candidate",
-          endpoint: destination,
+          displayName: "Fixture node",
           observedAtMillis: "9007199254740991",
           expiresAtMillis: "9007199254740992",
-          publicAppData: [0, 127, 255],
+          expiresInMillis: "30000",
         },
-      },
+      ],
       pairedTargets: [
         {
           targetIdentityFingerprint,
@@ -87,8 +87,9 @@ describe("generated native payload hydration", () => {
     const hydrated = hydrateGenerated(wire);
 
     expect(hydrated.revision).toBe(18_446_744_073_709_551_615n);
-    expect(hydrated.pairing.candidate.observedAtMillis).toBe(9_007_199_254_740_991n);
-    expect(hydrated.pairing.candidate.expiresAtMillis).toBe(9_007_199_254_740_992n);
+    expect(hydrated.pairingCandidates[0]?.observedAtMillis).toBe(9_007_199_254_740_991n);
+    expect(hydrated.pairingCandidates[0]?.expiresAtMillis).toBe(9_007_199_254_740_992n);
+    expect(hydrated.pairingCandidates[0]?.expiresInMillis).toBe(30_000n);
     expect(hydrated.activeOperation.startedAtMillis).toBe(0n);
     expect(hydrated.primaryIdentity.identityHash).toBeInstanceOf(Uint8Array);
     expect(hydrated.localHost.host.revision).toBe(7n);
@@ -97,8 +98,6 @@ describe("generated native payload hydration", () => {
     expect(hydrated.localHost.host.routes[0]?.expiresAtMillis).toBe(13);
     expect(hydrated.localHost.host.routes[0]?.viaIdentity).toBeInstanceOf(Uint8Array);
     expect(hydrated.localHost.host.destinationIdentities[0]?.identity).toBeInstanceOf(Uint8Array);
-    expect(hydrated.pairing.candidate.endpoint).toBeInstanceOf(Uint8Array);
-    expect(hydrated.pairing.candidate.publicAppData).toEqual(Uint8Array.of(0, 127, 255));
     expect(hydrated.pairedTargets[0]?.targetIdentityFingerprint).toBeInstanceOf(Uint8Array);
 
     targetIdentityFingerprint[0] = 255;
@@ -113,9 +112,9 @@ describe("generated native payload hydration", () => {
   );
 
   test("rejects non-byte values before Uint8Array can coerce them", () => {
-    expect(() => hydrateGenerated({ publicAppData: [0, 256] })).toThrow(NativePayloadError);
-    expect(() => hydrateGenerated({ publicAppData: [0, 1.5] })).toThrow(NativePayloadError);
-    expect(() => hydrateGenerated({ publicAppData: [0, "1"] })).toThrow(NativePayloadError);
+    expect(() => hydrateGenerated({ bytes: [0, 256] })).toThrow(NativePayloadError);
+    expect(() => hydrateGenerated({ bytes: [0, 1.5] })).toThrow(NativePayloadError);
+    expect(() => hydrateGenerated({ bytes: [0, "1"] })).toThrow(NativePayloadError);
   });
 
   test.each([31, 33])("rejects a %i-byte LXMF message ID", (length) => {

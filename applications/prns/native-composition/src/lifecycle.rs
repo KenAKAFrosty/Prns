@@ -51,7 +51,8 @@ use crate::directory::{DirectoryRequest, DirectoryResponse};
 use crate::node::{prepare_storage, reset_storage, NodeStoragePaths};
 use crate::pairing::{
     apply_event, apply_overflow_failure, apply_persistence_event, attempt_id_string,
-    expire_candidate, send_event, AppliedNodeEvent, OwnedNodeEvent, PairingControls,
+    expire_candidates, publish_candidate_resolution, remove_selected_candidate, send_event,
+    AppliedNodeEvent, OwnedNodeEvent, PairingCandidateResolution, PairingControls,
     EVENT_LANE_CAPACITY,
 };
 use crate::snapshot::SnapshotStore;
@@ -1775,14 +1776,12 @@ fn call_pairing(
             );
         }
     }
-    response_rx
-        .recv_timeout(timeout)
-        .unwrap_or_else(|_| {
-            pairing_failed(
-                RemoteControlPairingFailureStage::Node,
-                "The native pairing command exceeded its bounded wait.",
-            )
-        })
+    response_rx.recv_timeout(timeout).unwrap_or_else(|_| {
+        pairing_failed(
+            RemoteControlPairingFailureStage::Node,
+            "The native pairing command exceeded its bounded wait.",
+        )
+    })
 }
 
 fn finish_failed_start(
@@ -2226,7 +2225,8 @@ async fn run_actor_loop(
                 return Err("The native event lane closed before persistence restoration.");
             };
             apply_persistence_event(&event, &mut persistence);
-            if apply_event(event, &mut controls, snapshots) == AppliedNodeEvent::PersistenceRestored
+            if apply_event(event, &mut controls, snapshots, clock.now())
+                == AppliedNodeEvent::PersistenceRestored
             {
                 return Ok(());
             }
@@ -2282,7 +2282,7 @@ async fn run_actor_loop(
     let mut retry_lxmf_health = false;
     loop {
         if overflowed.swap(false, std::sync::atomic::Ordering::AcqRel) {
-            apply_overflow_failure(snapshots);
+            apply_overflow_failure(&mut controls, snapshots);
         }
         tokio::select! {
             changed = shutdown_rx.changed() => {
@@ -2326,13 +2326,13 @@ async fn run_actor_loop(
                 }
             }
             _ = candidate_expiry.tick() => {
-                expire_candidate(&mut controls, snapshots, clock.now());
+                expire_candidates(&mut controls, snapshots, clock.now());
             }
             event = events.recv() => {
                 match event {
                     Some(event) => {
                         apply_persistence_event(&event, &mut persistence);
-                        if apply_event(event, &mut controls, snapshots)
+                        if apply_event(event, &mut controls, snapshots, clock.now())
                             == AppliedNodeEvent::TargetInventoryChanged
                         {
                             if let Err(detail) = crate::remote_control::refresh_targets(handle, snapshots).await {
@@ -2370,7 +2370,11 @@ async fn run_actor_loop(
                     let _ = response.send(snapshots.read());
                 }
                 Some(Command::Initiate(input, response)) => {
-                    let outcome = initiate_pairing(handle, &mut controls, snapshots, input).await;
+                    let outcome = if controls.pairing_in_progress() {
+                        RemoteControlPairingCommandOutcome::Busy
+                    } else {
+                        initiate_pairing(handle, &mut controls, snapshots, clock.now(), input).await
+                    };
                     operation_admitted.store(false, Ordering::Release);
                     let _ = response.send(outcome);
                 }
@@ -2385,7 +2389,11 @@ async fn run_actor_loop(
                     let _ = response.send(outcome);
                 }
                 Some(Command::Describe(input, response)) => {
-                    let outcome = crate::remote_control::describe(handle, snapshots, input).await;
+                    let outcome = if controls.pairing_in_progress() {
+                        RemoteControlDescribeOutcome::Busy
+                    } else {
+                        crate::remote_control::describe(handle, snapshots, input).await
+                    };
                     operation_admitted.store(false, Ordering::Release);
                     let _ = response.send(outcome);
                 }
@@ -2656,6 +2664,7 @@ async fn initiate_pairing(
     handle: &PrnsNodeHandle,
     controls: &mut PairingControls,
     snapshots: &SnapshotStore,
+    now: personal_rns::units::InstantMillis,
     input: InitiateRemoteControlPairingInput,
 ) -> RemoteControlPairingCommandOutcome {
     let invitation_code = match parse_invitation_code(&input.invitation_code) {
@@ -2667,20 +2676,26 @@ async fn initiate_pairing(
             )
         }
     };
-    let Some(candidate) = controls.candidate.as_ref() else {
-        return pairing_failed(
-            RemoteControlPairingFailureStage::Candidate,
-            "No current signed pairing candidate is retained.",
-        );
+    let resolution = controls.resolve_candidate(&input.candidate_id, now);
+    let (endpoint, expires_at) = match resolution {
+        PairingCandidateResolution::Retained {
+            endpoint,
+            expires_at,
+        } => (endpoint, expires_at),
+        PairingCandidateResolution::Missing => {
+            return pairing_failed(
+                RemoteControlPairingFailureStage::Candidate,
+                "The selected pairing session is no longer available.",
+            )
+        }
+        PairingCandidateResolution::Expired => {
+            publish_candidate_resolution(controls, snapshots, now, resolution);
+            return pairing_failed(
+                RemoteControlPairingFailureStage::Expired,
+                "The selected pairing session expired.",
+            );
+        }
     };
-    if candidate.candidate_id != input.candidate_id {
-        return pairing_failed(
-            RemoteControlPairingFailureStage::Candidate,
-            "The pairing candidate is stale or does not match the retained observation.",
-        );
-    }
-    let endpoint = candidate.endpoint;
-    let expires_at = candidate.expires_at;
     let retained_candidate = snapshots.read().pairing;
     controls.retain_initiation(input.candidate_id.clone());
     snapshots.update(|snapshot| {
@@ -2732,16 +2747,7 @@ async fn initiate_pairing(
             RemoteControlPairingCommandOutcome::Busy
         }
         Err(error) => {
-            let stage = match error {
-                personal_rns::runtime::InitiateRemoteControlControllerPairingError::EstablishLink(_) => RemoteControlPairingFailureStage::Link,
-                personal_rns::runtime::InitiateRemoteControlControllerPairingError::Identify { .. } => RemoteControlPairingFailureStage::Identification,
-                personal_rns::runtime::InitiateRemoteControlControllerPairingError::ResponseExpired { .. } => RemoteControlPairingFailureStage::Expired,
-                personal_rns::runtime::InitiateRemoteControlControllerPairingError::Request { .. }
-                | personal_rns::runtime::InitiateRemoteControlControllerPairingError::ResponseNotAdvanced { .. } => RemoteControlPairingFailureStage::Request,
-                personal_rns::runtime::InitiateRemoteControlControllerPairingError::Begin { .. } => RemoteControlPairingFailureStage::Confirmation,
-                personal_rns::runtime::InitiateRemoteControlControllerPairingError::NodeStopped { .. }
-                | personal_rns::runtime::InitiateRemoteControlControllerPairingError::Busy { .. } => RemoteControlPairingFailureStage::Node,
-            };
+            let stage = classify_pairing_initiation_failure(&error);
             pairing_failed_visible(
                 controls,
                 snapshots,
@@ -2752,25 +2758,71 @@ async fn initiate_pairing(
     }
 }
 
+fn classify_pairing_initiation_failure(
+    error: &personal_rns::runtime::InitiateRemoteControlControllerPairingError,
+) -> RemoteControlPairingFailureStage {
+    use personal_rns::runtime::InitiateRemoteControlControllerPairingError;
+
+    match error {
+        InitiateRemoteControlControllerPairingError::EstablishLink(failure) => {
+            match crate::remote_control::classify_establish_link_failure(failure) {
+                crate::remote_control::EstablishLinkFailureClass::Route => {
+                    RemoteControlPairingFailureStage::Route
+                }
+                crate::remote_control::EstablishLinkFailureClass::Link => {
+                    RemoteControlPairingFailureStage::Link
+                }
+                crate::remote_control::EstablishLinkFailureClass::Node => {
+                    RemoteControlPairingFailureStage::Node
+                }
+            }
+        }
+        InitiateRemoteControlControllerPairingError::Identify { .. } => {
+            RemoteControlPairingFailureStage::Identification
+        }
+        InitiateRemoteControlControllerPairingError::ResponseExpired { .. } => {
+            RemoteControlPairingFailureStage::Expired
+        }
+        InitiateRemoteControlControllerPairingError::Request { failure, .. } => {
+            classify_pairing_request_failure(failure.cause)
+        }
+        InitiateRemoteControlControllerPairingError::ResponseNotAdvanced { .. }
+        | InitiateRemoteControlControllerPairingError::Begin { .. } => {
+            RemoteControlPairingFailureStage::Confirmation
+        }
+        InitiateRemoteControlControllerPairingError::NodeStopped { .. }
+        | InitiateRemoteControlControllerPairingError::Busy { .. } => {
+            RemoteControlPairingFailureStage::Node
+        }
+    }
+}
+
+const fn classify_pairing_request_failure(
+    cause: personal_rns::engine::RemoteControlControllerPairingRequestFailureCause,
+) -> RemoteControlPairingFailureStage {
+    match cause {
+        personal_rns::engine::RemoteControlControllerPairingRequestFailureCause::Request(
+            personal_rns::engine::SendRequestFailure::Timeout,
+        ) => RemoteControlPairingFailureStage::Timeout,
+        personal_rns::engine::RemoteControlControllerPairingRequestFailureCause::Request(_)
+        | personal_rns::engine::RemoteControlControllerPairingRequestFailureCause::ResourceResponseUnsupported => {
+            RemoteControlPairingFailureStage::Request
+        }
+    }
+}
+
 async fn approve_pairing(
     handle: &PrnsNodeHandle,
     controls: &mut PairingControls,
     snapshots: &SnapshotStore,
     input: RemoteControlPairingDecisionInput,
 ) -> RemoteControlPairingCommandOutcome {
-    let Some(confirmation) = controls.confirmation.as_ref() else {
+    let Some(confirmation) = controls.take_confirmation_for_decision(&input.attempt_id) else {
         return pairing_failed(
             RemoteControlPairingFailureStage::Confirmation,
             "No RemoteControl confirmation is awaiting approval.",
         );
     };
-    let expected = attempt_id_string(confirmation.confirmation().attempt_id());
-    if input.attempt_id != expected {
-        return pairing_failed(
-            RemoteControlPairingFailureStage::Confirmation,
-            "The approval does not match the retained pairing attempt.",
-        );
-    }
     let approval = confirmation.approval();
     let retained_confirmation = snapshots.read().pairing;
     snapshots.update(|snapshot| {
@@ -2793,6 +2845,7 @@ async fn approve_pairing(
             }
         }
         Err(RemoteControlPairingControlError::Busy) => {
+            controls.restore_confirmation(confirmation);
             snapshots.update(|snapshot| snapshot.pairing = retained_confirmation);
             RemoteControlPairingCommandOutcome::Busy
         }
@@ -2817,27 +2870,21 @@ async fn reject_pairing(
     snapshots: &SnapshotStore,
     input: RemoteControlPairingDecisionInput,
 ) -> RemoteControlPairingCommandOutcome {
-    let Some(confirmation) = controls.confirmation.as_ref() else {
+    let Some(confirmation) = controls.take_confirmation_for_decision(&input.attempt_id) else {
         return pairing_failed(
             RemoteControlPairingFailureStage::Confirmation,
             "No RemoteControl confirmation is awaiting rejection.",
         );
     };
-    let expected = attempt_id_string(confirmation.confirmation().attempt_id());
-    if input.attempt_id != expected {
-        return pairing_failed(
-            RemoteControlPairingFailureStage::Confirmation,
-            "The rejection does not match the retained pairing attempt.",
-        );
-    }
     let rejection = confirmation.rejection();
     match handle
         .reject_remote_control_controller_pairing(rejection)
         .await
     {
         Ok(_) => {
-            controls.clear_attempt();
+            let selected_candidate_id = controls.clear_attempt();
             snapshots.update(|snapshot| {
+                remove_selected_candidate(snapshot, selected_candidate_id.as_deref());
                 snapshot.pairing = RemoteControlPairingState::Rejected {
                     detail: "The controller rejected the pairing confirmation.".to_owned(),
                 };
@@ -2847,7 +2894,10 @@ async fn reject_pairing(
                 snapshot: Box::new(snapshots.read()),
             }
         }
-        Err(RemoteControlPairingControlError::Busy) => RemoteControlPairingCommandOutcome::Busy,
+        Err(RemoteControlPairingControlError::Busy) => {
+            controls.restore_confirmation(confirmation);
+            RemoteControlPairingCommandOutcome::Busy
+        }
         Err(RemoteControlPairingControlError::NodeStopped) => pairing_failed_visible(
             controls,
             snapshots,
@@ -2949,8 +2999,9 @@ fn pairing_failed_visible(
     stage: RemoteControlPairingFailureStage,
     detail: &str,
 ) -> RemoteControlPairingCommandOutcome {
-    controls.clear_attempt();
+    let selected_candidate_id = controls.clear_attempt();
     snapshots.update(|snapshot| {
+        remove_selected_candidate(snapshot, selected_candidate_id.as_deref());
         snapshot.pairing = RemoteControlPairingState::Failed {
             stage,
             detail: detail.to_owned(),
@@ -3442,6 +3493,36 @@ mod tests {
         assert!(parse_invitation_code("89abcdef").is_none());
         assert!(parse_invitation_code("123456").is_none());
         assert!(parse_invitation_code("123456789").is_none());
+    }
+
+    #[test]
+    fn pairing_request_timeout_has_a_distinct_failure_stage() {
+        use personal_rns::engine::{
+            RemoteControlControllerPairingRequestFailureCause, SendRequestFailure,
+        };
+
+        assert_eq!(
+            classify_pairing_request_failure(
+                RemoteControlControllerPairingRequestFailureCause::Request(
+                    SendRequestFailure::Timeout,
+                ),
+            ),
+            RemoteControlPairingFailureStage::Timeout
+        );
+        assert_eq!(
+            classify_pairing_request_failure(
+                RemoteControlControllerPairingRequestFailureCause::Request(
+                    SendRequestFailure::WriteFailed,
+                ),
+            ),
+            RemoteControlPairingFailureStage::Request
+        );
+        assert_eq!(
+            classify_pairing_request_failure(
+                RemoteControlControllerPairingRequestFailureCause::ResourceResponseUnsupported,
+            ),
+            RemoteControlPairingFailureStage::Request
+        );
     }
 
     #[test]
@@ -4369,17 +4450,32 @@ mod tests {
     }
 
     #[test]
-    fn fatal_pairing_commands_clear_control_state_and_project_the_failure() {
+    fn fatal_pairing_commands_remove_only_the_selected_discovery_candidate() {
         let endpoint = personal_rns::remote_control::RemoteControlPairingIdentity::new(
             personal_rns::identity::IdentityHash::new([0x42; 16]),
         )
         .endpoint();
+        let other_endpoint = personal_rns::remote_control::RemoteControlPairingIdentity::new(
+            personal_rns::identity::IdentityHash::new([0x43; 16]),
+        )
+        .endpoint();
         let mut controls = PairingControls {
-            candidate: Some(crate::pairing::PairingCandidateControl {
-                candidate_id: "candidate".to_owned(),
-                endpoint,
-                expires_at: personal_rns::units::InstantMillis(10),
-            }),
+            candidates: vec![
+                crate::pairing::PairingCandidateControl {
+                    candidate_id: "candidate".to_owned(),
+                    endpoint,
+                    display_name: Some("Candidate".to_owned()),
+                    observed_at: personal_rns::units::InstantMillis(1),
+                    expires_at: personal_rns::units::InstantMillis(10),
+                },
+                crate::pairing::PairingCandidateControl {
+                    candidate_id: "other".to_owned(),
+                    endpoint: other_endpoint,
+                    display_name: Some("Other".to_owned()),
+                    observed_at: personal_rns::units::InstantMillis(2),
+                    expires_at: personal_rns::units::InstantMillis(10),
+                },
+            ],
             initiated_candidate_id: Some("candidate".to_owned()),
             active_attempt_id: Some("attempt".to_owned()),
             ..PairingControls::default()
@@ -4406,7 +4502,8 @@ mod tests {
                 detail: "link failed".to_owned(),
             }
         );
-        assert!(controls.candidate.is_none());
+        assert_eq!(controls.candidates.len(), 1);
+        assert_eq!(controls.candidates[0].candidate_id, "other");
         assert!(controls.confirmation.is_none());
         assert!(controls.initiated_candidate_id.is_none());
         assert!(controls.active_attempt_id.is_none());

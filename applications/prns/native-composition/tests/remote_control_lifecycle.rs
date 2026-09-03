@@ -281,6 +281,22 @@ async fn rejection_expiry_and_stale_decisions() {
             if matches!(snapshot.pairing, RemoteControlPairingState::Rejected { .. })
                 && snapshot.active_operation.is_none()
     ));
+    for duplicate in [
+        app_reject(first.id.clone()).await,
+        app_approve(first.id.clone()).await,
+    ] {
+        assert!(matches!(
+            duplicate,
+            RemoteControlPairingCommandOutcome::Failed {
+                stage: RemoteControlPairingFailureStage::Confirmation,
+                ..
+            }
+        ));
+        assert!(matches!(
+            app_snapshot().await.pairing,
+            RemoteControlPairingState::Rejected { .. }
+        ));
+    }
     assert_links_retired(&target).await;
     target.close_pairing().await;
 
@@ -479,20 +495,17 @@ async fn begin_pairing(
     let opened = target
         .open_pairing(permissions, pairing_window, attempt_timeout)
         .await;
-    let candidate_snapshot = wait_for_snapshot(|snapshot| {
-        matches!(
-            &snapshot.pairing,
-            RemoteControlPairingState::CandidateObserved { .. }
-        )
-    })
-    .await;
-    let RemoteControlPairingState::CandidateObserved { candidate } = candidate_snapshot.pairing
-    else {
-        panic!("application aggregate did not retain the TCP pairing candidate");
-    };
+    let candidate_snapshot =
+        wait_for_snapshot(|snapshot| !snapshot.pairing_candidates.is_empty()).await;
+    let candidate = candidate_snapshot
+        .pairing_candidates
+        .into_iter()
+        .next()
+        .expect("application aggregate retains the TCP pairing candidate");
+    let candidate_id = candidate.candidate_id;
     assert!(matches!(
         app_initiate(InitiateRemoteControlPairingInput {
-            candidate_id: candidate.candidate_id,
+            candidate_id: candidate_id.clone(),
             invitation_code: opened.invitation_code.to_string(),
         })
         .await,
@@ -510,6 +523,22 @@ async fn begin_pairing(
     else {
         panic!("application aggregate did not project the pairing confirmation");
     };
+    let retained = app_snapshot().await;
+    assert!(matches!(
+        app_initiate(InitiateRemoteControlPairingInput {
+            candidate_id,
+            invitation_code: opened.invitation_code.to_string(),
+        })
+        .await,
+        RemoteControlPairingCommandOutcome::Busy
+    ));
+    assert!(matches!(
+        app_describe(target.identity_fingerprint.clone()).await,
+        RemoteControlDescribeOutcome::Busy
+    ));
+    let after_conflicts = app_snapshot().await;
+    assert_eq!(after_conflicts.pairing, retained.pairing);
+    assert_eq!(after_conflicts.active_operation, retained.active_operation);
     let target_confirmation = target.next_confirmation().await;
     assert_eq!(
         attempt_id,
@@ -529,11 +558,28 @@ async fn begin_pairing(
 
 async fn approve_pairing(target: &TargetHarness, attempt: PairingAttempt) {
     target.approve(attempt.target_confirmation).await;
+    let attempt_id = attempt.id;
     assert!(matches!(
-        app_approve(attempt.id.clone()).await,
+        app_approve(attempt_id.clone()).await,
         RemoteControlPairingCommandOutcome::Accepted { snapshot }
             if matches!(snapshot.pairing, RemoteControlPairingState::Persisting { .. })
     ));
+    for duplicate in [
+        app_approve(attempt_id.clone()).await,
+        app_reject(attempt_id.clone()).await,
+    ] {
+        assert!(matches!(
+            duplicate,
+            RemoteControlPairingCommandOutcome::Failed {
+                stage: RemoteControlPairingFailureStage::Confirmation,
+                ..
+            }
+        ));
+        assert!(matches!(
+            app_snapshot().await.pairing,
+            RemoteControlPairingState::Persisting { .. } | RemoteControlPairingState::Paired { .. }
+        ));
+    }
     wait_for_snapshot(|snapshot| {
         matches!(snapshot.pairing, RemoteControlPairingState::Paired { .. })
     })

@@ -16,14 +16,15 @@ type IdentityByteKey =
   | "identityHash"
   | "targetIdentityFingerprint"
   | "viaIdentity";
-type DestinationByteKey = "destination" | "endpoint" | "peer" | "source";
+type DestinationByteKey = "destination" | "peer" | "source";
 type InterfaceByteKey = "interfaceId";
-type OpaqueByteKey = "bytes" | "messageId" | "publicAppData";
+type OpaqueByteKey = "bytes" | "messageId";
 type U64Key =
   | "before"
   | "cancelledAt"
   | "deliveredAt"
   | "expiresAtMillis"
+  | "expiresInMillis"
   | "failedAttempts"
   | "inboundOverflowCount"
   | "lastObservedAgeMillis"
@@ -73,11 +74,12 @@ const identityByteKeys = new Set<string>([
   "targetIdentityFingerprint",
   "viaIdentity",
 ]);
-const destinationByteKeys = new Set<string>(["destination", "endpoint", "peer", "source"]);
+const destinationByteKeys = new Set<string>(["destination", "peer", "source"]);
 const u64Keys = new Set<string>([
   "before",
   "cancelledAt",
   "deliveredAt",
+  "expiresInMillis",
   "failedAttempts",
   "inboundOverflowCount",
   "lastObservedAgeMillis",
@@ -164,7 +166,7 @@ function hydrateValue(value: unknown, path: string, key: string | undefined): un
       throw new NativePayloadError(path, "expected a Prns interface ID", { cause });
     }
   }
-  if (key === "bytes" || key === "publicAppData") {
+  if (key === "bytes") {
     if (value === null) {
       return null;
     }

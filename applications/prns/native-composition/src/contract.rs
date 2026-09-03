@@ -27,6 +27,7 @@ pub struct DevelopmentNodeSnapshot {
     pub lxmf: LxmfHealth,
     pub controller_identity_fingerprint: Option<Vec<u8>>,
     pub pairing: RemoteControlPairingState,
+    pub pairing_candidates: Vec<RemoteControlPairingCandidate>,
     pub paired_targets: Vec<RemoteControlTargetSnapshot>,
     pub active_operation: Option<DevelopmentNodeOperation>,
     pub failure: Option<DevelopmentNodeFailure>,
@@ -696,9 +697,6 @@ pub enum MeasureLxmfTextOutcome {
 pub enum RemoteControlPairingState {
     BluetoothUnavailable,
     Searching,
-    CandidateObserved {
-        candidate: RemoteControlPairingCandidate,
-    },
     InvitationSubmitted {
         candidate_id: String,
     },
@@ -735,10 +733,10 @@ pub enum RemoteControlPairingState {
 #[ts(rename_all = "camelCase")]
 pub struct RemoteControlPairingCandidate {
     pub candidate_id: String,
-    pub endpoint: Vec<u8>,
+    pub display_name: Option<String>,
     pub observed_at_millis: U64String,
     pub expires_at_millis: U64String,
-    pub public_app_data: Vec<u8>,
+    pub expires_in_millis: U64String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -807,6 +805,7 @@ pub enum RemoteControlPairingFailureStage {
     Link,
     Identification,
     Request,
+    Timeout,
     Confirmation,
     Persistence,
     Expired,
@@ -972,6 +971,7 @@ struct TaggedContractFixtures {
     retry_lxmf_message_outcomes: Vec<RetryLxmfMessageOutcome>,
     cancel_lxmf_message_outcomes: Vec<CancelLxmfMessageOutcome>,
     measure_lxmf_text_outcomes: Vec<MeasureLxmfTextOutcome>,
+    pairing_candidates: Vec<RemoteControlPairingCandidate>,
     pairing_states: Vec<RemoteControlPairingState>,
     start_outcomes: Vec<DevelopmentNodeStartOutcome>,
     stop_outcomes: Vec<DevelopmentNodeStopOutcome>,
@@ -993,6 +993,7 @@ impl DevelopmentNodeSnapshot {
             lxmf: LxmfHealth::stopped(),
             controller_identity_fingerprint: None,
             pairing: RemoteControlPairingState::Searching,
+            pairing_candidates: Vec::new(),
             paired_targets: Vec::new(),
             active_operation: None,
             failure: None,
@@ -1102,6 +1103,7 @@ pub fn export_typescript() -> String {
          \treadonly retryLxmfMessageOutcomes: readonly RetryLxmfMessageOutcome[];\n\
          \treadonly cancelLxmfMessageOutcomes: readonly CancelLxmfMessageOutcome[];\n\
          \treadonly measureLxmfTextOutcomes: readonly MeasureLxmfTextOutcome[];\n\
+         \treadonly pairingCandidates: readonly RemoteControlPairingCandidate[];\n\
          \treadonly pairingStates: readonly RemoteControlPairingState[];\n\
          \treadonly startOutcomes: readonly DevelopmentNodeStartOutcome[];\n\
          \treadonly stopOutcomes: readonly DevelopmentNodeStopOutcome[];\n\
@@ -1140,6 +1142,24 @@ fn tagged_contract_fixtures() -> TaggedContractFixtures {
     snapshot.revision = U64String::from(u64::MAX);
     snapshot.controller_identity_fingerprint = Some(vec![0x33; 16]);
     snapshot.paired_targets.push(target.clone());
+
+    let pairing_candidates = vec![
+        RemoteControlPairingCandidate {
+            candidate_id: "candidate-fixture".to_owned(),
+            display_name: Some("Fixture node".to_owned()),
+            observed_at_millis: U64String::from((1_u64 << 53) - 1),
+            expires_at_millis: U64String::from(1_u64 << 53),
+            expires_in_millis: U64String::from(1),
+        },
+        RemoteControlPairingCandidate {
+            candidate_id: "unnamed-candidate-fixture".to_owned(),
+            display_name: None,
+            observed_at_millis: U64String::from(17),
+            expires_at_millis: U64String::from(99),
+            expires_in_millis: U64String::from(82),
+        },
+    ];
+    snapshot.pairing_candidates.clone_from(&pairing_candidates);
 
     let primary_identity_states = vec![
         PrimaryIdentityState::Missing,
@@ -1380,15 +1400,6 @@ fn tagged_contract_fixtures() -> TaggedContractFixtures {
     let pairing_states = vec![
         RemoteControlPairingState::BluetoothUnavailable,
         RemoteControlPairingState::Searching,
-        RemoteControlPairingState::CandidateObserved {
-            candidate: RemoteControlPairingCandidate {
-                candidate_id: "candidate-fixture".to_owned(),
-                endpoint: destination,
-                observed_at_millis: U64String::from((1_u64 << 53) - 1),
-                expires_at_millis: U64String::from(1_u64 << 53),
-                public_app_data: vec![0, 127, 255],
-            },
-        },
         RemoteControlPairingState::InvitationSubmitted {
             candidate_id: "candidate-fixture".to_owned(),
         },
@@ -1480,6 +1491,7 @@ fn tagged_contract_fixtures() -> TaggedContractFixtures {
         retry_lxmf_message_outcomes,
         cancel_lxmf_message_outcomes,
         measure_lxmf_text_outcomes,
+        pairing_candidates,
         pairing_states,
         start_outcomes,
         stop_outcomes,
@@ -1586,7 +1598,8 @@ mod tests {
         assert_eq!(fixtures.retry_lxmf_message_outcomes.len(), 5);
         assert_eq!(fixtures.cancel_lxmf_message_outcomes.len(), 7);
         assert_eq!(fixtures.measure_lxmf_text_outcomes.len(), 5);
-        assert_eq!(fixtures.pairing_states.len(), 12);
+        assert_eq!(fixtures.pairing_candidates.len(), 2);
+        assert_eq!(fixtures.pairing_states.len(), 11);
         assert_eq!(fixtures.start_outcomes.len(), 3);
         assert_eq!(fixtures.stop_outcomes.len(), 3);
         assert_eq!(fixtures.pairing_outcomes.len(), 3);
@@ -1597,5 +1610,8 @@ mod tests {
         assert!(encoded.contains("\"9007199254740992\""));
         assert!(encoded.contains("\"expiresAtMillis\":13"));
         assert!(encoded.contains("\"interfaceId\":[68,68,68,68,68,68,68,68]"));
+        assert!(encoded.contains("\"displayName\":\"Fixture node\""));
+        assert!(encoded.contains("\"displayName\":null"));
+        assert!(!encoded.contains("\"publicAppData\""));
     }
 }

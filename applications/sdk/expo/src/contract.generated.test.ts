@@ -120,10 +120,25 @@ describe("Rust-generated contract fixtures", () => {
       "localNodeStopped",
       "busy",
     ]);
+    expect(NATIVE_CONTRACT_FIXTURES.pairingCandidates).toEqual([
+      {
+        candidateId: "candidate-fixture",
+        displayName: "Fixture node",
+        observedAtMillis: "9007199254740991",
+        expiresAtMillis: "9007199254740992",
+        expiresInMillis: "1",
+      },
+      {
+        candidateId: "unnamed-candidate-fixture",
+        displayName: null,
+        observedAtMillis: "17",
+        expiresAtMillis: "99",
+        expiresInMillis: "82",
+      },
+    ]);
     expect(NATIVE_CONTRACT_FIXTURES.pairingStates.map(({ type }) => type)).toEqual([
       "bluetoothUnavailable",
       "searching",
-      "candidateObserved",
       "invitationSubmitted",
       "confirmationRequired",
       "awaitingTargetApproval",

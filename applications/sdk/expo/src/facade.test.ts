@@ -16,6 +16,7 @@ const snapshot = {
   lxmf: { state: "stopped", inboundOverflowCount: "0" },
   controllerIdentityFingerprint: null,
   pairing: { type: "searching" },
+  pairingCandidates: [],
   pairedTargets: [],
   activeOperation: null,
   failure: null,
@@ -73,6 +74,36 @@ describe("development runtime facade", () => {
     expect(native.contractFingerprint).toHaveBeenCalledTimes(1);
     expect(native.hostContractFingerprint).toHaveBeenCalledTimes(1);
     expect(native.start).toHaveBeenCalledWith(JSON.stringify({ developmentTcpTarget: null }));
+  });
+
+  test("hydrates the generated multi-candidate catalog through the runtime facade", async () => {
+    const native = fakeNative({
+      snapshot: jest.fn(async () =>
+        JSON.stringify({
+          ...snapshot,
+          pairingCandidates: NATIVE_CONTRACT_FIXTURES.pairingCandidates,
+        }),
+      ),
+    });
+
+    const current = await createDevelopmentRuntime(native).readDevelopmentNodeSnapshot();
+
+    expect(current.pairingCandidates).toEqual([
+      {
+        candidateId: "candidate-fixture",
+        displayName: "Fixture node",
+        observedAtMillis: 9_007_199_254_740_991n,
+        expiresAtMillis: 9_007_199_254_740_992n,
+        expiresInMillis: 1n,
+      },
+      {
+        candidateId: "unnamed-candidate-fixture",
+        displayName: null,
+        observedAtMillis: 17n,
+        expiresAtMillis: 99n,
+        expiresInMillis: 82n,
+      },
+    ]);
   });
 
   test("hydrates every canonical Host scalar from the Rust-generated running fixture", async () => {

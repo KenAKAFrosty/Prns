@@ -19,6 +19,7 @@ function snapshot(revision: bigint): DevelopmentNodeSnapshot {
     lxmf: { state: "stopped", inboundOverflowCount: 0n },
     controllerIdentityFingerprint: null,
     pairing: { type: "searching" },
+    pairingCandidates: [],
     pairedTargets: [],
     activeOperation: null,
     failure: null,

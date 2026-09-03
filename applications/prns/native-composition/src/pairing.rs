@@ -16,19 +16,43 @@ use crate::contract::{
 use crate::snapshot::SnapshotStore;
 
 pub const EVENT_LANE_CAPACITY: usize = 16;
+pub const PAIRING_CANDIDATE_CAPACITY: usize = 8;
+const MAX_PAIRING_DISPLAY_NAME_CHARS: usize = 64;
 
+#[derive(Clone)]
 pub struct PairingCandidateControl {
     pub candidate_id: String,
     pub endpoint: RemoteControlPairingEndpoint,
+    pub display_name: Option<String>,
+    pub observed_at: InstantMillis,
     pub expires_at: InstantMillis,
 }
 
 #[derive(Default)]
 pub struct PairingControls {
-    pub candidate: Option<PairingCandidateControl>,
+    pub candidates: Vec<PairingCandidateControl>,
+    pub(crate) expired_candidate_ids: Vec<String>,
     pub confirmation: Option<RemoteControlControllerPairingConfirmation>,
     pub initiated_candidate_id: Option<String>,
     pub active_attempt_id: Option<String>,
+    pub attempt_phase: Option<PairingAttemptPhase>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PairingAttemptPhase {
+    AwaitingConfirmation,
+    ConfirmationReady,
+    DecisionSubmitted,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PairingCandidateResolution {
+    Retained {
+        endpoint: RemoteControlPairingEndpoint,
+        expires_at: InstantMillis,
+    },
+    Missing,
+    Expired,
 }
 
 pub enum OwnedNodeEvent {
@@ -128,6 +152,7 @@ pub fn apply_event(
     event: OwnedNodeEvent,
     controls: &mut PairingControls,
     snapshots: &SnapshotStore,
+    now: InstantMillis,
 ) -> AppliedNodeEvent {
     match event {
         OwnedNodeEvent::PersistenceRestored => return AppliedNodeEvent::PersistenceRestored,
@@ -138,26 +163,18 @@ pub fn apply_event(
             expires_at,
             public_app_data,
         } => {
-            if controls.initiated_candidate_id.is_some() || controls.active_attempt_id.is_some() {
-                return AppliedNodeEvent::None;
-            }
             let candidate_id = bytes_hex(endpoint.destination_hash().as_bytes());
-            controls.candidate = Some(PairingCandidateControl {
-                candidate_id: candidate_id.clone(),
-                endpoint,
-                expires_at,
-            });
-            snapshots.update(|snapshot| {
-                snapshot.pairing = RemoteControlPairingState::CandidateObserved {
-                    candidate: RemoteControlPairingCandidate {
-                        candidate_id,
-                        endpoint: endpoint.destination_hash().as_bytes().to_vec(),
-                        observed_at_millis: U64String::from(observed_at.0),
-                        expires_at_millis: U64String::from(expires_at.0),
-                        public_app_data,
-                    },
-                };
-            });
+            controls.upsert_candidate(
+                PairingCandidateControl {
+                    candidate_id,
+                    endpoint,
+                    display_name: safe_display_name(&public_app_data),
+                    observed_at,
+                    expires_at,
+                },
+                now,
+            );
+            controls.publish_candidates(snapshots, now);
         }
         OwnedNodeEvent::ControllerConfirmation(confirmation) => {
             let observed_attempt = confirmation.confirmation().attempt_id();
@@ -186,15 +203,16 @@ pub fn apply_event(
                     permissions,
                 };
             });
-            controls.confirmation = Some(confirmation);
+            controls.retain_confirmation(confirmation);
         }
         OwnedNodeEvent::ControllerAuthorizationPersisted(attempt_id) => {
             let observed_attempt_id = attempt_id_string(attempt_id);
             if controls.active_attempt_id.as_deref() != Some(observed_attempt_id.as_str()) {
                 return AppliedNodeEvent::None;
             }
-            controls.clear_attempt();
+            let selected_candidate_id = controls.clear_attempt();
             snapshots.update(|snapshot| {
+                remove_selected_candidate(snapshot, selected_candidate_id.as_deref());
                 snapshot.pairing = RemoteControlPairingState::Paired {
                     attempt_id: observed_attempt_id,
                 };
@@ -207,8 +225,9 @@ pub fn apply_event(
             if controls.active_attempt_id.as_deref() != Some(observed_attempt_id.as_str()) {
                 return AppliedNodeEvent::None;
             }
-            controls.clear_attempt();
+            let selected_candidate_id = controls.clear_attempt();
             snapshots.update(|snapshot| {
+                remove_selected_candidate(snapshot, selected_candidate_id.as_deref());
                 snapshot.pairing = RemoteControlPairingState::Failed {
                     stage: crate::contract::RemoteControlPairingFailureStage::Persistence,
                     detail: "The paired target authorization could not be persisted.".to_owned(),
@@ -220,8 +239,9 @@ pub fn apply_event(
             if !controls.matches_terminal(attempt_id) {
                 return AppliedNodeEvent::None;
             }
-            controls.clear_attempt();
+            let selected_candidate_id = controls.clear_attempt();
             snapshots.update(|snapshot| {
+                remove_selected_candidate(snapshot, selected_candidate_id.as_deref());
                 snapshot.pairing = RemoteControlPairingState::Expired {
                     detail: "The retained upstream pairing attempt expired.".to_owned(),
                 };
@@ -232,8 +252,9 @@ pub fn apply_event(
             if !controls.matches_terminal(attempt_id) {
                 return AppliedNodeEvent::None;
             }
-            controls.clear_attempt();
+            let selected_candidate_id = controls.clear_attempt();
             snapshots.update(|snapshot| {
+                remove_selected_candidate(snapshot, selected_candidate_id.as_deref());
                 snapshot.pairing = RemoteControlPairingState::Failed {
                     stage: crate::contract::RemoteControlPairingFailureStage::Link,
                     detail: "The upstream pairing Link closed before authorization persisted."
@@ -286,28 +307,186 @@ const fn host_flush_cause(cause: PersistenceFlushCause) -> prns_host::Persistenc
 }
 
 impl PairingControls {
+    fn upsert_candidate(&mut self, candidate: PairingCandidateControl, now: InstantMillis) -> bool {
+        self.prune_expired(now);
+        if candidate.expires_at <= now {
+            self.remember_expired(candidate.candidate_id);
+            return false;
+        }
+        self.expired_candidate_ids
+            .retain(|candidate_id| candidate_id != &candidate.candidate_id);
+
+        if let Some(retained) = self
+            .candidates
+            .iter_mut()
+            .find(|retained| retained.candidate_id == candidate.candidate_id)
+        {
+            let is_fresher = candidate.observed_at > retained.observed_at
+                || (candidate.observed_at == retained.observed_at
+                    && candidate.expires_at > retained.expires_at);
+            if is_fresher {
+                *retained = candidate;
+                return true;
+            }
+            return false;
+        }
+
+        let candidate_id = candidate.candidate_id.clone();
+        self.candidates.push(candidate);
+        self.candidates.sort_unstable_by(candidate_retention_order);
+        self.candidates.truncate(PAIRING_CANDIDATE_CAPACITY);
+        self.candidates
+            .iter()
+            .any(|candidate| candidate.candidate_id == candidate_id)
+    }
+
+    pub fn resolve_candidate(
+        &mut self,
+        candidate_id: &str,
+        now: InstantMillis,
+    ) -> PairingCandidateResolution {
+        let Some(position) = self
+            .candidates
+            .iter()
+            .position(|candidate| candidate.candidate_id == candidate_id)
+        else {
+            return if self
+                .expired_candidate_ids
+                .iter()
+                .any(|expired| expired == candidate_id)
+            {
+                PairingCandidateResolution::Expired
+            } else {
+                PairingCandidateResolution::Missing
+            };
+        };
+        if self.candidates[position].expires_at <= now {
+            let expired = self.candidates.remove(position);
+            self.remember_expired(expired.candidate_id);
+            return PairingCandidateResolution::Expired;
+        }
+        let candidate = &self.candidates[position];
+        PairingCandidateResolution::Retained {
+            endpoint: candidate.endpoint,
+            expires_at: candidate.expires_at,
+        }
+    }
+
+    fn publish_candidates(&self, snapshots: &SnapshotStore, now: InstantMillis) {
+        let candidates = self.projected_candidates(now);
+        let current = snapshots.read();
+        if current.pairing_candidates == candidates {
+            return;
+        }
+        snapshots.update(|snapshot| {
+            snapshot.pairing_candidates = candidates;
+        });
+    }
+
+    fn projected_candidates(&self, now: InstantMillis) -> Vec<RemoteControlPairingCandidate> {
+        let mut retained = self.candidates.iter().collect::<Vec<_>>();
+        retained.sort_unstable_by(|left, right| {
+            right
+                .observed_at
+                .0
+                .cmp(&left.observed_at.0)
+                .then_with(|| right.expires_at.0.cmp(&left.expires_at.0))
+                .then_with(|| left.candidate_id.cmp(&right.candidate_id))
+        });
+        retained
+            .into_iter()
+            .map(|candidate| RemoteControlPairingCandidate {
+                candidate_id: candidate.candidate_id.clone(),
+                display_name: candidate.display_name.clone(),
+                observed_at_millis: U64String::from(candidate.observed_at.0),
+                expires_at_millis: U64String::from(candidate.expires_at.0),
+                expires_in_millis: U64String::from(candidate.expires_at.0.saturating_sub(now.0)),
+            })
+            .collect()
+    }
+
+    fn prune_expired(&mut self, now: InstantMillis) {
+        let mut retained = Vec::with_capacity(self.candidates.len());
+        for candidate in std::mem::take(&mut self.candidates) {
+            if candidate.expires_at <= now {
+                self.remember_expired(candidate.candidate_id);
+            } else {
+                retained.push(candidate);
+            }
+        }
+        self.candidates = retained;
+    }
+
+    fn remember_expired(&mut self, candidate_id: String) {
+        self.expired_candidate_ids
+            .retain(|retained| retained != &candidate_id);
+        self.expired_candidate_ids.push(candidate_id);
+        if self.expired_candidate_ids.len() > PAIRING_CANDIDATE_CAPACITY {
+            self.expired_candidate_ids.remove(0);
+        }
+    }
+
     pub fn retain_initiation(&mut self, candidate_id: String) {
         self.initiated_candidate_id = Some(candidate_id);
         self.confirmation = None;
         self.active_attempt_id = None;
+        self.attempt_phase = None;
     }
 
     pub fn retain_attempt(&mut self, attempt_id: String) {
-        self.candidate = None;
         self.active_attempt_id = Some(attempt_id);
+        self.attempt_phase = Some(PairingAttemptPhase::AwaitingConfirmation);
+    }
+
+    pub fn pairing_in_progress(&self) -> bool {
+        self.initiated_candidate_id.is_some() || self.active_attempt_id.is_some()
+    }
+
+    pub fn take_confirmation_for_decision(
+        &mut self,
+        attempt_id: &str,
+    ) -> Option<RemoteControlControllerPairingConfirmation> {
+        if self.attempt_phase != Some(PairingAttemptPhase::ConfirmationReady) {
+            return None;
+        }
+        let confirmation = self.confirmation.as_ref()?;
+        if attempt_id_string(confirmation.confirmation().attempt_id()) != attempt_id {
+            return None;
+        }
+        self.attempt_phase = Some(PairingAttemptPhase::DecisionSubmitted);
+        self.confirmation.take()
+    }
+
+    pub fn restore_confirmation(
+        &mut self,
+        confirmation: RemoteControlControllerPairingConfirmation,
+    ) {
+        self.confirmation = Some(confirmation);
+        self.attempt_phase = Some(PairingAttemptPhase::ConfirmationReady);
+    }
+
+    fn retain_confirmation(&mut self, confirmation: RemoteControlControllerPairingConfirmation) {
+        self.confirmation = Some(confirmation);
+        self.attempt_phase = Some(PairingAttemptPhase::ConfirmationReady);
     }
 
     pub fn cancel_initiation(&mut self) {
         self.confirmation = None;
         self.initiated_candidate_id = None;
         self.active_attempt_id = None;
+        self.attempt_phase = None;
     }
 
-    pub fn clear_attempt(&mut self) {
-        self.candidate = None;
+    pub fn clear_attempt(&mut self) -> Option<String> {
+        let selected_candidate_id = self.initiated_candidate_id.take();
+        if let Some(candidate_id) = selected_candidate_id.as_deref() {
+            self.candidates
+                .retain(|candidate| candidate.candidate_id != candidate_id);
+        }
         self.confirmation = None;
-        self.initiated_candidate_id = None;
         self.active_attempt_id = None;
+        self.attempt_phase = None;
+        selected_candidate_id
     }
 
     fn matches_terminal(&self, attempt_id: Option<RemoteControlPairingAttemptId>) -> bool {
@@ -317,6 +496,8 @@ impl PairingControls {
 
     fn matches_confirmation_id(&self, observed_attempt_id: &str) -> bool {
         self.active_attempt_id.as_deref() == Some(observed_attempt_id)
+            && self.attempt_phase == Some(PairingAttemptPhase::AwaitingConfirmation)
+            && self.confirmation.is_none()
     }
 
     fn matches_terminal_id(&self, attempt_id: Option<&str>) -> bool {
@@ -329,31 +510,70 @@ impl PairingControls {
     }
 }
 
-pub fn expire_candidate(
+pub fn expire_candidates(
     controls: &mut PairingControls,
     snapshots: &SnapshotStore,
     now: InstantMillis,
 ) {
-    let Some(candidate) = controls.candidate.as_ref() else {
-        return;
-    };
-    if candidate.expires_at > now {
+    let retained_count = controls.candidates.len();
+    if retained_count == 0 {
         return;
     }
-    let candidate_id = candidate.candidate_id.clone();
-    controls.candidate = None;
-    snapshots.update(|snapshot| {
-        if matches!(
-            &snapshot.pairing,
-            RemoteControlPairingState::CandidateObserved { candidate }
-                if candidate.candidate_id == candidate_id
-        ) {
-            snapshot.pairing = RemoteControlPairingState::Expired {
-                detail: "The signed pairing availability observation expired.".to_owned(),
-            };
-            snapshot.active_operation = None;
-        }
-    });
+    controls.prune_expired(now);
+    controls.publish_candidates(snapshots, now);
+}
+
+pub fn publish_candidate_resolution(
+    controls: &PairingControls,
+    snapshots: &SnapshotStore,
+    now: InstantMillis,
+    resolution: PairingCandidateResolution,
+) {
+    controls.publish_candidates(snapshots, now);
+    if resolution == PairingCandidateResolution::Expired {
+        snapshots.update(|snapshot| {
+            if snapshot.active_operation.is_none() {
+                snapshot.pairing = RemoteControlPairingState::Expired {
+                    detail: "The selected pairing session expired.".to_owned(),
+                };
+                snapshot.active_operation = None;
+            }
+        });
+    }
+}
+
+fn candidate_retention_order(
+    left: &PairingCandidateControl,
+    right: &PairingCandidateControl,
+) -> std::cmp::Ordering {
+    right
+        .expires_at
+        .0
+        .cmp(&left.expires_at.0)
+        .then_with(|| right.observed_at.0.cmp(&left.observed_at.0))
+        .then_with(|| left.candidate_id.cmp(&right.candidate_id))
+}
+
+fn safe_display_name(public_app_data: &[u8]) -> Option<String> {
+    let decoded = std::str::from_utf8(public_app_data).ok()?.trim();
+    if decoded.is_empty()
+        || decoded.chars().any(char::is_control)
+        || decoded.chars().count() > MAX_PAIRING_DISPLAY_NAME_CHARS
+    {
+        return None;
+    }
+    Some(decoded.to_owned())
+}
+
+pub(crate) fn remove_selected_candidate(
+    snapshot: &mut crate::contract::DevelopmentNodeSnapshot,
+    candidate_id: Option<&str>,
+) {
+    if let Some(candidate_id) = candidate_id {
+        snapshot
+            .pairing_candidates
+            .retain(|candidate| candidate.candidate_id != candidate_id);
+    }
 }
 
 fn aborted_attempt_id(
@@ -368,8 +588,12 @@ fn aborted_attempt_id(
     }
 }
 
-pub fn apply_overflow_failure(snapshots: &SnapshotStore) {
+pub fn apply_overflow_failure(controls: &mut PairingControls, snapshots: &SnapshotStore) {
+    controls.candidates.clear();
+    controls.expired_candidate_ids.clear();
+    controls.cancel_initiation();
     snapshots.update(|snapshot| {
+        snapshot.pairing_candidates.clear();
         snapshot.pairing = RemoteControlPairingState::Failed {
             stage: crate::contract::RemoteControlPairingFailureStage::Node,
             detail: "The bounded native event lane overflowed; pairing state is no longer authoritative."
@@ -477,6 +701,51 @@ mod tests {
     }
 
     #[test]
+    fn event_lane_overflow_invalidates_the_attempt_and_ignores_late_terminal_events() {
+        let attempt = pairing_attempt_id(0x31);
+        let attempt_id = attempt_id_string(attempt);
+        let mut controls = PairingControls::default();
+        controls.upsert_candidate(candidate(0x41, 1, 100, b"Candidate"), InstantMillis(1));
+        controls.retain_initiation("candidate".to_owned());
+        controls.retain_attempt(attempt_id);
+        let snapshots = SnapshotStore::new();
+
+        apply_overflow_failure(&mut controls, &snapshots);
+
+        assert!(controls.candidates.is_empty());
+        assert!(controls.expired_candidate_ids.is_empty());
+        assert!(!controls.pairing_in_progress());
+        assert!(controls.confirmation.is_none());
+        assert!(controls.attempt_phase.is_none());
+        assert!(matches!(
+            snapshots.read().pairing,
+            RemoteControlPairingState::Failed {
+                stage: crate::contract::RemoteControlPairingFailureStage::Node,
+                ..
+            }
+        ));
+
+        assert_eq!(
+            apply_event(
+                OwnedNodeEvent::ControllerExpired {
+                    attempt_id: Some(attempt),
+                },
+                &mut controls,
+                &snapshots,
+                InstantMillis(2),
+            ),
+            AppliedNodeEvent::None
+        );
+        assert!(matches!(
+            snapshots.read().pairing,
+            RemoteControlPairingState::Failed {
+                stage: crate::contract::RemoteControlPairingFailureStage::Node,
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn confirmations_only_match_the_exact_active_attempt() {
         let mut controls = PairingControls::default();
         assert!(!controls.matches_confirmation_id("current"));
@@ -487,6 +756,9 @@ mod tests {
         controls.retain_attempt("current".to_owned());
         assert!(!controls.matches_confirmation_id("stale"));
         assert!(controls.matches_confirmation_id("current"));
+
+        controls.attempt_phase = Some(PairingAttemptPhase::DecisionSubmitted);
+        assert!(!controls.matches_confirmation_id("current"));
     }
 
     #[test]
@@ -519,7 +791,7 @@ mod tests {
         ))
         .expect("typed persistence failure is captured");
         assert_eq!(
-            apply_event(stale, &mut controls, &snapshots),
+            apply_event(stale, &mut controls, &snapshots, InstantMillis(1)),
             AppliedNodeEvent::None
         );
         assert_eq!(
@@ -541,7 +813,7 @@ mod tests {
         ))
         .expect("typed persistence failure is captured");
         assert_eq!(
-            apply_event(active, &mut controls, &snapshots),
+            apply_event(active, &mut controls, &snapshots, InstantMillis(1)),
             AppliedNodeEvent::None
         );
         assert!(controls.active_attempt_id.is_none());
@@ -561,41 +833,304 @@ mod tests {
     }
 
     #[test]
-    fn signed_candidate_expires_at_its_upstream_deadline() {
-        let endpoint = personal_rns::remote_control::RemoteControlPairingIdentity::new(
-            personal_rns::identity::IdentityHash::new([0x42; 16]),
-        )
-        .endpoint();
-        let candidate_id = bytes_hex(endpoint.destination_hash().as_bytes());
-        let mut controls = PairingControls {
-            candidate: Some(PairingCandidateControl {
-                candidate_id: candidate_id.clone(),
-                endpoint,
-                expires_at: InstantMillis(5),
-            }),
-            ..PairingControls::default()
-        };
+    fn candidates_are_bounded_projected_and_expire_individually() {
+        let mut controls = PairingControls::default();
         let snapshots = SnapshotStore::new();
+
+        apply_candidate(&mut controls, &snapshots, 0x41, 1, 5, b" First ", 1);
+        apply_candidate(&mut controls, &snapshots, 0x42, 2, 10, b"Second", 2);
+        let projected = snapshots.read().pairing_candidates;
+        assert_eq!(projected.len(), 2);
+        assert_eq!(projected[0].display_name.as_deref(), Some("Second"));
+        assert_eq!(projected[0].expires_in_millis, U64String::from(8));
+        assert_eq!(projected[1].display_name.as_deref(), Some("First"));
+
+        expire_candidates(&mut controls, &snapshots, InstantMillis(5));
+        assert_eq!(controls.candidates.len(), 1);
+        let retained = snapshots.read();
+        assert_eq!(retained.pairing_candidates.len(), 1);
+        assert!(matches!(
+            retained.pairing,
+            RemoteControlPairingState::Searching
+        ));
+        assert_eq!(
+            retained.pairing_candidates[0].expires_in_millis,
+            U64String::from(5)
+        );
+
+        expire_candidates(&mut controls, &snapshots, InstantMillis(10));
+        assert!(controls.candidates.is_empty());
+        assert!(snapshots.read().pairing_candidates.is_empty());
+        assert!(matches!(
+            snapshots.read().pairing,
+            RemoteControlPairingState::Searching
+        ));
+    }
+
+    #[test]
+    fn candidate_refresh_replaces_only_a_fresher_observation() {
+        let mut controls = PairingControls::default();
+        let snapshots = SnapshotStore::new();
+        apply_candidate(&mut controls, &snapshots, 0x42, 10, 100, b"Original", 10);
+        apply_candidate(&mut controls, &snapshots, 0x42, 9, 200, b"Stale", 10);
+        let stale_ignored = snapshots.read().pairing_candidates;
+        assert_eq!(stale_ignored[0].display_name.as_deref(), Some("Original"));
+        assert_eq!(stale_ignored[0].observed_at_millis, U64String::from(10));
+        assert_eq!(stale_ignored[0].expires_at_millis, U64String::from(100));
+
+        apply_candidate(&mut controls, &snapshots, 0x42, 11, 120, b" Refreshed ", 11);
+        let refreshed = snapshots.read().pairing_candidates;
+        assert_eq!(refreshed.len(), 1);
+        assert_eq!(refreshed[0].display_name.as_deref(), Some("Refreshed"));
+        assert_eq!(refreshed[0].observed_at_millis, U64String::from(11));
+        assert_eq!(refreshed[0].expires_at_millis, U64String::from(120));
+    }
+
+    #[test]
+    fn candidate_display_name_accepts_only_trimmed_control_free_utf8() {
+        assert_eq!(
+            safe_display_name(b"  Trail node  ").as_deref(),
+            Some("Trail node")
+        );
+        assert_eq!(safe_display_name(b" \t\n "), None);
+        assert_eq!(safe_display_name(b"line\nbreak"), None);
+        assert_eq!(safe_display_name(&[0xff]), None);
+        assert_eq!(safe_display_name(&[b'a'; 65]), None);
+    }
+
+    #[test]
+    fn worse_ninth_candidate_is_not_retained() {
+        let mut controls = PairingControls::default();
+        let snapshots = SnapshotStore::new();
+        for fill in 1..=PAIRING_CANDIDATE_CAPACITY as u8 {
+            apply_candidate(
+                &mut controls,
+                &snapshots,
+                fill,
+                u64::from(fill),
+                100 + u64::from(fill),
+                b"",
+                1,
+            );
+        }
+        let worse = candidate(0xf0, 90, 100, b"");
+        let worse_id = worse.candidate_id.clone();
+        controls.upsert_candidate(worse, InstantMillis(1));
+
+        assert_eq!(controls.candidates.len(), PAIRING_CANDIDATE_CAPACITY);
+        assert!(!controls
+            .candidates
+            .iter()
+            .any(|candidate| candidate.candidate_id == worse_id));
+    }
+
+    #[test]
+    fn better_ninth_candidate_evicts_the_deterministic_worst() {
+        let mut controls = PairingControls::default();
+        let mut worst_id = String::new();
+        for fill in 1..=PAIRING_CANDIDATE_CAPACITY as u8 {
+            let candidate = candidate(fill, u64::from(fill), 100 + u64::from(fill), b"");
+            if fill == 1 {
+                worst_id.clone_from(&candidate.candidate_id);
+            }
+            controls.upsert_candidate(candidate, InstantMillis(1));
+        }
+        let better = candidate(0xf0, 90, 200, b"");
+        let better_id = better.candidate_id.clone();
+        controls.upsert_candidate(better, InstantMillis(1));
+
+        assert_eq!(controls.candidates.len(), PAIRING_CANDIDATE_CAPACITY);
+        assert!(!controls
+            .candidates
+            .iter()
+            .any(|candidate| candidate.candidate_id == worst_id));
+        assert!(controls
+            .candidates
+            .iter()
+            .any(|candidate| candidate.candidate_id == better_id));
+    }
+
+    #[test]
+    fn exact_candidate_selection_is_not_overwritten_by_later_observations() {
+        let mut controls = PairingControls::default();
+        let snapshots = SnapshotStore::new();
+        let first = candidate(0x41, 1, 100, b"First");
+        let second = candidate(0x42, 2, 100, b"Second");
+        let second_id = second.candidate_id.clone();
+        let second_endpoint = second.endpoint;
+        controls.upsert_candidate(first, InstantMillis(2));
+        controls.upsert_candidate(second, InstantMillis(2));
+
+        assert_eq!(
+            controls.resolve_candidate(&second_id, InstantMillis(2)),
+            PairingCandidateResolution::Retained {
+                endpoint: second_endpoint,
+                expires_at: InstantMillis(100),
+            }
+        );
+        controls.retain_initiation(second_id.clone());
+        apply_candidate(&mut controls, &snapshots, 0x43, 3, 200, b"Third", 3);
+        controls.retain_attempt("active-attempt".to_owned());
+        apply_candidate(&mut controls, &snapshots, 0x44, 4, 250, b"Fourth", 4);
+
+        assert_eq!(
+            controls.initiated_candidate_id.as_deref(),
+            Some(second_id.as_str())
+        );
+        assert_eq!(
+            controls.active_attempt_id.as_deref(),
+            Some("active-attempt")
+        );
+    }
+
+    #[test]
+    fn finishing_one_candidate_retains_another_for_exact_selection() {
+        let mut controls = PairingControls::default();
+        let snapshots = SnapshotStore::new();
+        let first = candidate(0x41, 1, 100, b"First");
+        let first_id = first.candidate_id.clone();
+        let second = candidate(0x42, 2, 120, b"Second");
+        let second_id = second.candidate_id.clone();
+        let second_endpoint = second.endpoint;
+        controls.upsert_candidate(first, InstantMillis(2));
+        controls.upsert_candidate(second, InstantMillis(2));
+        controls.publish_candidates(&snapshots, InstantMillis(2));
+
+        controls.retain_initiation(first_id.clone());
+        controls.retain_attempt("attempt".to_owned());
+        let removed = controls.clear_attempt();
+        controls.publish_candidates(&snapshots, InstantMillis(3));
+
+        assert_eq!(removed.as_deref(), Some(first_id.as_str()));
+        assert_eq!(snapshots.read().pairing_candidates.len(), 1);
+        assert_eq!(
+            controls.resolve_candidate(&second_id, InstantMillis(3)),
+            PairingCandidateResolution::Retained {
+                endpoint: second_endpoint,
+                expires_at: InstantMillis(120),
+            }
+        );
+    }
+
+    #[test]
+    fn candidate_resolution_distinguishes_missing_and_expired() {
+        let mut controls = PairingControls::default();
+        assert_eq!(
+            controls.resolve_candidate("missing", InstantMillis(1)),
+            PairingCandidateResolution::Missing
+        );
+        let expired = candidate(0x42, 1, 5, b"");
+        let expired_id = expired.candidate_id.clone();
+        controls.upsert_candidate(expired, InstantMillis(1));
+        assert_eq!(
+            controls.resolve_candidate(&expired_id, InstantMillis(5)),
+            PairingCandidateResolution::Expired
+        );
+
+        let snapshots = SnapshotStore::new();
+        let pruned = candidate(0x43, 1, 5, b"");
+        let pruned_id = pruned.candidate_id.clone();
+        controls.upsert_candidate(pruned, InstantMillis(1));
+        expire_candidates(&mut controls, &snapshots, InstantMillis(5));
+        assert_eq!(
+            controls.resolve_candidate(&pruned_id, InstantMillis(6)),
+            PairingCandidateResolution::Expired
+        );
+    }
+
+    #[test]
+    fn fresh_candidate_preserves_terminal_pairing_states() {
+        for terminal in [
+            RemoteControlPairingState::Failed {
+                stage: crate::contract::RemoteControlPairingFailureStage::Request,
+                detail: "old failure".to_owned(),
+            },
+            RemoteControlPairingState::Paired {
+                attempt_id: "completed".to_owned(),
+            },
+        ] {
+            let mut controls = PairingControls::default();
+            let snapshots = SnapshotStore::new();
+            let expected = terminal.clone();
+            snapshots.update(|snapshot| snapshot.pairing = terminal);
+
+            apply_candidate(&mut controls, &snapshots, 0x42, 5, 100, b"Recovered", 5);
+
+            let retained = snapshots.read();
+            assert_eq!(retained.pairing, expected);
+            assert_eq!(retained.pairing_candidates.len(), 1);
+        }
+    }
+
+    #[test]
+    fn candidate_updates_do_not_clear_a_terminal_state() {
+        let mut controls = PairingControls::default();
+        let snapshots = SnapshotStore::new();
+        apply_candidate(&mut controls, &snapshots, 0x42, 10, 100, b"Current", 10);
         snapshots.update(|snapshot| {
-            snapshot.pairing = RemoteControlPairingState::CandidateObserved {
-                candidate: RemoteControlPairingCandidate {
-                    candidate_id,
-                    endpoint: endpoint.destination_hash().as_bytes().to_vec(),
-                    observed_at_millis: U64String::from(1),
-                    expires_at_millis: U64String::from(5),
-                    public_app_data: Vec::new(),
-                },
+            snapshot.pairing = RemoteControlPairingState::Paired {
+                attempt_id: "completed".to_owned(),
             };
         });
 
-        expire_candidate(&mut controls, &snapshots, InstantMillis(4));
-        assert!(controls.candidate.is_some());
-        expire_candidate(&mut controls, &snapshots, InstantMillis(5));
-        assert!(controls.candidate.is_none());
+        apply_candidate(&mut controls, &snapshots, 0x42, 10, 100, b"Current", 11);
         assert!(matches!(
             snapshots.read().pairing,
-            RemoteControlPairingState::Expired { .. }
+            RemoteControlPairingState::Paired { .. }
         ));
+        apply_candidate(&mut controls, &snapshots, 0x42, 9, 200, b"Stale", 11);
+        assert!(matches!(
+            snapshots.read().pairing,
+            RemoteControlPairingState::Paired { .. }
+        ));
+
+        apply_candidate(&mut controls, &snapshots, 0x42, 11, 120, b"Fresh", 11);
+        assert!(matches!(
+            snapshots.read().pairing,
+            RemoteControlPairingState::Paired { .. }
+        ));
+    }
+
+    fn apply_candidate(
+        controls: &mut PairingControls,
+        snapshots: &SnapshotStore,
+        fill: u8,
+        observed_at: u64,
+        expires_at: u64,
+        public_app_data: &[u8],
+        now: u64,
+    ) {
+        let candidate = candidate(fill, observed_at, expires_at, public_app_data);
+        apply_event(
+            OwnedNodeEvent::PairingAvailable {
+                endpoint: candidate.endpoint,
+                observed_at: candidate.observed_at,
+                expires_at: candidate.expires_at,
+                public_app_data: public_app_data.to_vec(),
+            },
+            controls,
+            snapshots,
+            InstantMillis(now),
+        );
+    }
+
+    fn candidate(
+        fill: u8,
+        observed_at: u64,
+        expires_at: u64,
+        public_app_data: &[u8],
+    ) -> PairingCandidateControl {
+        let endpoint = personal_rns::remote_control::RemoteControlPairingIdentity::new(
+            personal_rns::identity::IdentityHash::new([fill; 16]),
+        )
+        .endpoint();
+        PairingCandidateControl {
+            candidate_id: bytes_hex(endpoint.destination_hash().as_bytes()),
+            endpoint,
+            display_name: safe_display_name(public_app_data),
+            observed_at: InstantMillis(observed_at),
+            expires_at: InstantMillis(expires_at),
+        }
     }
 
     fn pairing_attempt_id(fill: u8) -> RemoteControlPairingAttemptId {
