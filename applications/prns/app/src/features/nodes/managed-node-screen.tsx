@@ -36,11 +36,10 @@ export function ManagedNodeScreen() {
   if (runtime.phase === "unavailable") {
     return (
       <Screen>
-        <Badge tone="warning">Native runtime unavailable</Badge>
-        <ScreenHeading>Managed node</ScreenHeading>
+        <Badge tone="warning">Node management unavailable</Badge>
+        <ScreenHeading>Manage node</ScreenHeading>
         <BodyText>
-          The {runtime.availability.platform} provider cannot load a persisted target inventory or
-          issue Describe. No fixture result is shown.
+          Node management is not available on {runtime.availability.platform} yet.
         </BodyText>
         <NavigationLink href="/nodes">Back to Nodes</NavigationLink>
       </Screen>
@@ -50,9 +49,9 @@ export function ManagedNodeScreen() {
   if (runtime.phase === "starting") {
     return (
       <Screen>
-        <Badge>Starting</Badge>
-        <ScreenHeading>Managed node</ScreenHeading>
-        <BodyText>Waiting for persistence restore before resolving the requested target.</BodyText>
+        <Badge>Getting ready</Badge>
+        <ScreenHeading>Manage node</ScreenHeading>
+        <BodyText>Loading node details…</BodyText>
         <NavigationLink href="/nodes">Back to Nodes</NavigationLink>
       </Screen>
     );
@@ -61,10 +60,10 @@ export function ManagedNodeScreen() {
   if (runtime.phase === "failed") {
     return (
       <Screen>
-        <Badge tone="warning">Local node failed</Badge>
-        <ScreenHeading>Managed node</ScreenHeading>
+        <Badge tone="warning">This device&apos;s node failed</Badge>
+        <ScreenHeading>Manage node</ScreenHeading>
         <BodyText>
-          {runtime.lifecycleFailure ?? "The native provider did not return a reason."}
+          This device&apos;s node could not start. Open its diagnostics for more details.
         </BodyText>
         <NavigationLink href="/nodes">Back to Nodes</NavigationLink>
       </Screen>
@@ -93,18 +92,15 @@ export function ManagedNodeScreen() {
 
   return (
     <Screen>
-      <Badge>Persisted RemoteControl target</Badge>
-      <ScreenHeading>Managed node</ScreenHeading>
+      <Badge>Paired node</Badge>
+      <ScreenHeading>Manage node</ScreenHeading>
       <Card>
-        <Subheading>Target identity</Subheading>
-        <KeyValue label="Fingerprint" value={formatBytes(target.targetIdentityFingerprint)} />
+        <Subheading>Node details</Subheading>
+        <KeyValue label="Node ID" value={formatBytes(target.targetIdentityFingerprint)} />
         <KeyValue label="Destination" value={formatBytes(target.destination)} />
+        <KeyValue label="Controller" value={formatBytes(target.controllerIdentityFingerprint)} />
         <KeyValue
-          label="Controller fingerprint"
-          value={formatBytes(target.controllerIdentityFingerprint)}
-        />
-        <KeyValue
-          label="Permitted requests"
+          label="Available actions"
           value={
             target.permittedRequests.length === 0
               ? "None"
@@ -113,20 +109,13 @@ export function ManagedNodeScreen() {
         />
       </Card>
       <Card>
-        <Subheading>Connection and Describe</Subheading>
-        <KeyValue
-          label="Connection"
-          value={
-            describing
-              ? "Opening target link and requesting Describe"
-              : "Idle — no target link is retained"
-          }
-        />
+        <Subheading>Connection</Subheading>
+        <KeyValue label="Status" value={describing ? "Checking node…" : "Ready to check"} />
         {canDescribe ? null : (
-          <BodyText>This persisted authorization does not permit Describe.</BodyText>
+          <BodyText>This pairing does not allow the app to view node information.</BodyText>
         )}
         <Button disabled={!canDescribe || pending || describing} onPress={() => void describe()}>
-          {pending || describing ? "Describing…" : "Connect and Describe"}
+          {pending || describing ? "Checking…" : "Check node connection"}
         </Button>
       </Card>
 
@@ -144,9 +133,9 @@ function DescribeResult({
   if (result.type === "operationFailure") {
     return (
       <Card>
-        <Subheading>Describe failed</Subheading>
-        <Badge tone="warning">Native operation failed</Badge>
-        <BodyText>{result.detail}</BodyText>
+        <Subheading>Connection failed</Subheading>
+        <Badge tone="warning">Could not reach node</Badge>
+        <BodyText>Something went wrong while checking the node. Try again.</BodyText>
       </Card>
     );
   }
@@ -154,27 +143,27 @@ function DescribeResult({
     case "busy":
       return (
         <Card>
-          <Subheading>Describe not started</Subheading>
-          <Badge tone="warning">Runtime busy</Badge>
-          <BodyText>Another pairing or target operation is active.</BodyText>
+          <Subheading>Connection not started</Subheading>
+          <Badge tone="warning">Another operation is in progress</Badge>
+          <BodyText>Wait for the other operation to finish, then try again.</BodyText>
         </Card>
       );
     case "failed":
       return (
         <Card>
-          <Subheading>Describe failed</Subheading>
-          <Badge tone="warning">{result.outcome.stage}</Badge>
-          <BodyText>{result.outcome.detail}</BodyText>
+          <Subheading>Connection failed</Subheading>
+          <Badge tone="warning">Could not check node</Badge>
+          <BodyText>{describeFailureMessage(result.outcome.stage)}</BodyText>
         </Card>
       );
     case "described":
       return (
         <Card>
-          <Subheading>Describe result</Subheading>
-          <Badge>Real response received; link closed</Badge>
-          <KeyValue label="Round-trip time" value={`${result.outcome.rttMillis.toString()} ms`} />
+          <Subheading>Node reached</Subheading>
+          <Badge>Connected</Badge>
+          <KeyValue label="Response time" value={`${result.outcome.rttMillis.toString()} ms`} />
           <KeyValue
-            label="Available requests"
+            label="Available actions"
             value={
               result.outcome.availableRequests.length === 0
                 ? "None"
@@ -182,15 +171,38 @@ function DescribeResult({
             }
           />
           <KeyValue
-            label="Target fingerprint"
+            label="Node ID"
             value={formatBytes(result.outcome.target.targetIdentityFingerprint)}
           />
           <KeyValue label="Destination" value={formatBytes(result.outcome.target.destination)} />
           <KeyValue
-            label="Controller fingerprint"
+            label="Controller"
             value={formatBytes(result.outcome.target.controllerIdentityFingerprint)}
           />
         </Card>
       );
+  }
+}
+
+type DescribeFailureStage = Extract<
+  RemoteControlDescribeOutcome,
+  { readonly type: "failed" }
+>["stage"];
+
+function describeFailureMessage(stage: DescribeFailureStage): string {
+  switch (stage) {
+    case "input":
+    case "inventory":
+      return "This paired node is no longer available.";
+    case "route":
+    case "link":
+    case "identification":
+    case "request":
+    case "timeout":
+      return "The node could not be reached. Make sure it is on and connected, then try again.";
+    case "permission":
+      return "This pairing does not allow the app to view node information.";
+    case "node":
+      return "This device went offline before the check finished.";
   }
 }

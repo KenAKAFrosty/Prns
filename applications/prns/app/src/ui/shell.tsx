@@ -160,16 +160,13 @@ function ContextPanel({ active }: { readonly active: ScreenCatalogEntry | undefi
       </Text>
       {active?.section === "nodes" ? (
         <>
-          <Text style={[styles.contextLabel, { color: palette.textMuted }]}>Node data</Text>
-          <Text style={[styles.contextValue, { color: palette.text }]}>Native snapshots</Text>
+          <Text style={[styles.contextLabel, { color: palette.textMuted }]}>Nodes</Text>
+          <Text style={[styles.contextValue, { color: palette.text }]}>Live status</Text>
           <Text style={[styles.contextHint, { color: palette.textMuted }]}>
-            Managed targets appear only after upstream authorization persistence.
+            Paired nodes appear here after pairing is complete.
           </Text>
         </>
       ) : null}
-      <Text style={[styles.contextHint, { color: palette.textMuted }]}>
-        Layout follows available width. Changing this window does not change the active route.
-      </Text>
     </View>
   );
 }

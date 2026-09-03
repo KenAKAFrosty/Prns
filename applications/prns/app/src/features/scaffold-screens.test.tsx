@@ -25,10 +25,9 @@ describe("foundation scaffold screens", () => {
   it("renders an honest placeholder without a synthetic result", () => {
     const view = render(<NotYetImplementedScreen entry={screenById("inbox.message")} />);
 
-    expect(view.getByText("Not yet implemented")).toBeTruthy();
-    expect(
-      view.getByText("The dedicated message inspector route is not implemented yet."),
-    ).toBeTruthy();
+    expect(view.getByText("Coming later")).toBeTruthy();
+    expect(view.getByText("View message details and delivery status.")).toBeTruthy();
+    expect(view.getByText("This feature is planned for a future update.")).toBeTruthy();
     expect(view.queryByText(/success/iu)).toBeNull();
     expect(view.getByRole("button", { name: "Go back" })).toBeTruthy();
   });
@@ -40,10 +39,8 @@ describe("foundation scaffold screens", () => {
       </DevelopmentRuntimeProvider>,
     );
 
-    await waitFor(() => expect(view.getByText("Native runtime unavailable")).toBeTruthy());
-    expect(
-      view.getByText(/No target inventory or pairing result is being simulated/iu),
-    ).toBeTruthy();
+    await waitFor(() => expect(view.getByText("Nodes unavailable")).toBeTruthy());
+    expect(view.getByText("Node management is not available on this platform yet.")).toBeTruthy();
     expect(view.queryByText("Fixture target")).toBeNull();
   });
 });

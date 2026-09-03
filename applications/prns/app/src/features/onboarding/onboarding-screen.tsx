@@ -62,12 +62,11 @@ function Welcome() {
   const router = useRouter();
   return (
     <Screen>
-      <Badge>Local development node</Badge>
+      <Badge>Get started</Badge>
       <ScreenHeading>Welcome to prns</ScreenHeading>
       <BodyText>
-        Create a new Reticulum identity or import one raw 64-byte identity credential. The identity
-        stays in this app&apos;s disposable development storage and is required before the local
-        node starts.
+        Create a new Reticulum identity or import one from a file. Your identity stays on this
+        device and lets prns connect to the network.
       </BodyText>
       <CardStack>
         <Button onPress={() => router.push("/onboarding/create")}>Create a new identity</Button>
@@ -75,12 +74,10 @@ function Welcome() {
           Import an existing identity
         </Button>
         <Button tone="secondary" onPress={() => router.push("/recovery")}>
-          Inspect or reset development data
+          Recovery options
         </Button>
       </CardStack>
-      <BodyText muted>
-        This development flow does not provide export, backup, recovery, or secure-custody claims.
-      </BodyText>
+      <BodyText muted>Identity export and backup are not available in this preview.</BodyText>
     </Screen>
   );
 }
@@ -100,8 +97,8 @@ function CreateIdentity() {
     setFailure(null);
     try {
       setOutcome(await runtimeProvider.runtime.createGeneratedIdentity());
-    } catch (error) {
-      setFailure(error instanceof Error ? error.message : String(error));
+    } catch {
+      setFailure("Identity could not be created. Try again.");
     } finally {
       setPending(false);
     }
@@ -112,8 +109,7 @@ function CreateIdentity() {
       <Badge>Create identity</Badge>
       <ScreenHeading>Create a new identity</ScreenHeading>
       <BodyText>
-        Rust generates the private material from the operating system&apos;s cryptographic random
-        source and stores it only after this explicit action.
+        Your identity will be generated securely on this device and saved when you continue.
       </BodyText>
       {unavailable ? <PlatformUnavailable /> : null}
       <CreationResult outcome={outcome} failure={failure} />
@@ -176,19 +172,18 @@ function ImportIdentity() {
       }
       setIdentity(bytes);
       setPreviewHash(preview.identityHash);
-    } catch (error) {
+    } catch {
       setIdentity(null);
       setPreviewHash(null);
-      setFailure(error instanceof Error ? error.message : String(error));
+      setFailure("The identity file could not be read.");
     } finally {
       if (cachedCredential !== null) {
         try {
           cachedCredential.delete();
-        } catch (error) {
+        } catch {
           setIdentity(null);
           setPreviewHash(null);
-          const detail = error instanceof Error ? error.message : String(error);
-          setFailure(`Could not remove the temporary credential copy: ${detail}`);
+          setFailure("The temporary identity file could not be removed. Choose the file again.");
         }
       }
       setPending(null);
@@ -207,8 +202,8 @@ function ImportIdentity() {
       if (result.type === "created") {
         setIdentity(null);
       }
-    } catch (error) {
-      setFailure(error instanceof Error ? error.message : String(error));
+    } catch {
+      setFailure("Identity could not be imported. Try again.");
     } finally {
       setPending(null);
     }
@@ -219,9 +214,7 @@ function ImportIdentity() {
       <Badge>Import identity</Badge>
       <ScreenHeading>Import an existing identity</ScreenHeading>
       <BodyText>
-        Select a raw 64-byte Reticulum private identity credential. TypeScript keeps the selected
-        bytes only in this screen&apos;s memory; Rust derives the preview hash and validates the
-        bytes again before storing them.
+        Choose a Reticulum identity file, then check the identity hash before importing it.
       </BodyText>
       {unavailable ? <PlatformUnavailable /> : null}
       {previewHash === null ? null : (
@@ -237,7 +230,7 @@ function ImportIdentity() {
         ) : (
           <>
             <Button disabled={pending !== null || unavailable} onPress={() => void pick()}>
-              {pending === "pick" ? "Reading…" : "Choose raw credential"}
+              {pending === "pick" ? "Reading…" : "Choose identity file"}
             </Button>
             <Button
               disabled={identity === null || pending !== null}
@@ -266,7 +259,7 @@ function CreationResult({
   if (failure !== null) {
     return (
       <Card>
-        <Badge tone="warning">Native operation failed</Badge>
+        <Badge tone="warning">Identity action failed</Badge>
         <BodyText>{failure}</BodyText>
       </Card>
     );
@@ -285,8 +278,8 @@ function CreationResult({
     case "alreadyExists":
       return (
         <Card>
-          <Badge>A primary identity already exists</Badge>
-          <BodyText>The existing identity remains the sole source of truth.</BodyText>
+          <Badge>This app already has an identity</Badge>
+          <BodyText>The existing identity will continue to be used.</BodyText>
         </Card>
       );
     case "invalidLength":
@@ -300,14 +293,14 @@ function CreationResult({
       return (
         <Card>
           <Badge tone="warning">Identity storage unavailable</Badge>
-          <BodyText>{outcome.detail}</BodyText>
+          <BodyText>Identity storage is unavailable. Try again.</BodyText>
         </Card>
       );
     case "developmentResetRequired":
       return (
         <Card>
-          <Badge tone="warning">Development reset required</Badge>
-          <BodyText>{outcome.reason}</BodyText>
+          <Badge tone="warning">App reset required</Badge>
+          <BodyText>Reset app data before continuing identity setup.</BodyText>
         </Card>
       );
   }
@@ -316,11 +309,8 @@ function CreationResult({
 function PlatformUnavailable() {
   return (
     <Card>
-      <Badge tone="warning">iOS development build required</Badge>
-      <BodyText>
-        Identity creation and import are not implemented for this platform. No synthetic identity
-        will be substituted.
-      </BodyText>
+      <Badge tone="warning">Identity setup unavailable</Badge>
+      <BodyText>Identity setup is not available on this platform yet.</BodyText>
     </Card>
   );
 }

@@ -178,8 +178,8 @@ export function DevelopmentRuntimeProvider({
       type: "operationFailure",
       detail:
         selectedProvider.availability.type === "unavailable"
-          ? `The ${selectedProvider.availability.platform} native runtime is not implemented.`
-          : "The native development node has not finished starting.",
+          ? `This feature is not available on ${selectedProvider.availability.platform} yet.`
+          : "This device is still getting ready.",
     }),
     [selectedProvider.availability],
   );

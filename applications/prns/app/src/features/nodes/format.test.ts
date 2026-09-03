@@ -6,7 +6,8 @@ describe("Nodes presentation formatting", () => {
   });
 
   it("labels generated closed values exhaustively", () => {
-    expect(formatRequestKind("announceSelf")).toBe("Announce self");
+    expect(formatRequestKind("announceSelf")).toBe("Share node address");
+    expect(formatRequestKind("describe")).toBe("View node information");
     expect(formatRuntime("stopping")).toBe("Stopping");
   });
 });

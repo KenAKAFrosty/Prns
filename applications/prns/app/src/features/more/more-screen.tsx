@@ -23,10 +23,7 @@ export function MoreScreen() {
     <Screen>
       <Badge>Development preview</Badge>
       <ScreenHeading>More</ScreenHeading>
-      <BodyText>
-        Open implemented Settings and Help here. Identities, Interfaces, Notifications, and Activity
-        remain clearly labelled placeholders when unavailable features are shown.
-      </BodyText>
+      <BodyText>Manage identities, connections, notifications, settings, and help.</BodyText>
       <CardStack>
         {entries.map((entry) => (
           <NavigationLink key={entry.id} href={entry.path}>

@@ -176,31 +176,29 @@ beforeEach(() => {
 });
 
 describe("durable LXMF screens", () => {
-  test("states the foreground, custody, and announce preconditions", async () => {
+  test("states messaging limits and address sharing in user language", async () => {
     const screen = render(<InboxScreen />);
 
     expect(await screen.findByText("Saved alias")).toBeTruthy();
+    expect(screen.getByText("New messages arrive only while prns is open.")).toBeTruthy();
     expect(
       screen.getByText(
-        "Receipt is foreground-only: suspending the app can stop new messages. Managed nodes do not collect mail for this phone's installation identity.",
-      ),
-    ).toBeTruthy();
-    expect(
-      screen.getByText(
-        "Before exchanging messages, use Announce LXMF destination. Peers need this installation's lxmf.delivery announce to learn its identity and validate its source signatures.",
+        "Before exchanging messages with a new contact, share this device's messaging address.",
       ),
     ).toBeTruthy();
   });
 
-  test("describes degraded mailbox health without inventing an inbound overflow", async () => {
+  test("describes degraded messaging health without implementation details", async () => {
     mockActiveSnapshot = {
       ...mockSnapshot,
       lxmf: { state: "degraded", inboundOverflowCount: 0n },
     };
     const screen = render(<InboxScreen />);
 
-    expect(await screen.findByText(/durable mailbox access is degraded/u)).toBeTruthy();
-    expect(screen.queryByText(/proven inbound carrier/u)).toBeNull();
+    expect(
+      await screen.findByText("Messages may be delayed until the connection recovers."),
+    ).toBeTruthy();
+    expect(screen.queryByText(/callback overflow|mailbox access/iu)).toBeNull();
   });
 
   test("uses saved alias before announced name and shows aggregate health", async () => {
@@ -225,14 +223,14 @@ describe("durable LXMF screens", () => {
       expect(screen.getByText(/Invalid UTF-8 \(2 bytes: ff fe\)/u)).toBeTruthy();
     });
     expect(screen.getByText("Unverified — invalid signature")).toBeTruthy();
-    expect(screen.getByText("Received")).toBeTruthy();
+    expect(screen.getAllByText("Received")).toHaveLength(2);
 
-    fireEvent.changeText(screen.getByLabelText("LXMF title"), "Hello");
-    fireEvent.changeText(screen.getByLabelText("LXMF message"), "Proof please");
+    fireEvent.changeText(screen.getByLabelText("Message title"), "Hello");
+    fireEvent.changeText(screen.getByLabelText("Message"), "Proof please");
     await waitFor(() => {
-      expect(screen.getByText(/140 encoded bytes/u)).toBeTruthy();
+      expect(screen.getByText("Ready to send.")).toBeTruthy();
     });
-    fireEvent.press(screen.getByText("Send direct message"));
+    fireEvent.press(screen.getByText("Send message"));
 
     await waitFor(() => {
       expect(mockSendDirectText).toHaveBeenCalledWith({
@@ -241,7 +239,7 @@ describe("durable LXMF screens", () => {
         content: "Proof please",
       });
     });
-    expect(await screen.findByText(/Saved record 2 to the durable queue/u)).toBeTruthy();
+    expect(await screen.findByText("Message queued.")).toBeTruthy();
     expect(screen.queryByText(/^Delivered$/u)).toBeNull();
   });
 
@@ -251,12 +249,12 @@ describe("durable LXMF screens", () => {
     ).join("");
     const screen = render(<ComposeScreen initialDestination={destination} />);
 
-    fireEvent.changeText(screen.getByLabelText("LXMF title"), "Hello");
-    fireEvent.changeText(screen.getByLabelText("LXMF message"), "Proof please");
+    fireEvent.changeText(screen.getByLabelText("Message title"), "Hello");
+    fireEvent.changeText(screen.getByLabelText("Message"), "Proof please");
     await waitFor(() => {
-      expect(screen.getByText(/140 encoded bytes/u)).toBeTruthy();
+      expect(screen.getByText("Ready to send.")).toBeTruthy();
     });
-    fireEvent.press(screen.getByText("Send direct message"));
+    fireEvent.press(screen.getByText("Send message"));
 
     await waitFor(() => {
       expect(mockReplace).toHaveBeenCalledWith({
@@ -276,15 +274,13 @@ describe("durable LXMF screens", () => {
     ).join("");
     const screen = render(<ComposeScreen initialDestination={destination} />);
 
-    fireEvent.changeText(screen.getByLabelText("LXMF message"), "No observed peer");
+    fireEvent.changeText(screen.getByLabelText("Message"), "No observed peer");
     await waitFor(() => {
-      expect(screen.getByText(/140 encoded bytes/u)).toBeTruthy();
+      expect(screen.getByText("Ready to send.")).toBeTruthy();
     });
-    fireEvent.press(screen.getByText("Send direct message"));
+    fireEvent.press(screen.getByText("Send message"));
 
-    expect(
-      await screen.findByText("No compatible authenticated announce is available for this peer."),
-    ).toBeTruthy();
+    expect(await screen.findByText("This address is not ready to receive messages.")).toBeTruthy();
     expect(screen.getByText("Compose")).toBeTruthy();
     expect(mockReplace).not.toHaveBeenCalled();
   });
@@ -297,13 +293,11 @@ describe("durable LXMF screens", () => {
     const screen = render(<ConversationScreen destination={mockDestination} />);
 
     expect(await screen.findByText(/Failed after 1 failed attempt/u)).toBeTruthy();
-    fireEvent.press(screen.getByText("Retry exact stored message"));
+    fireEvent.press(screen.getByText("Retry message"));
 
     await waitFor(() => expect(mockRetryLxmfMessage).toHaveBeenCalledWith(7n));
     expect(mockSendDirectText).not.toHaveBeenCalled();
-    expect(
-      await screen.findByText("Record 7 was requeued with its exact stored wire."),
-    ).toBeTruthy();
+    expect(await screen.findByText("Message queued to retry.")).toBeTruthy();
   });
 
   test("cancels a queued durable record by id", async () => {
@@ -313,11 +307,11 @@ describe("durable LXMF screens", () => {
     });
     const screen = render(<ConversationScreen destination={mockDestination} />);
 
-    expect(await screen.findByText(/Queued — stored durably/u)).toBeTruthy();
+    expect(await screen.findByText("Queued")).toBeTruthy();
     fireEvent.press(screen.getByText("Cancel queued message"));
 
     await waitFor(() => expect(mockCancelLxmfMessage).toHaveBeenCalledWith(8n));
-    expect(await screen.findByText("Record 8 was cancelled.")).toBeTruthy();
+    expect(await screen.findByText("Message cancelled.")).toBeTruthy();
   });
 
   test("lists durable rows and exposes exact retry while node startup has failed", async () => {
@@ -331,8 +325,8 @@ describe("durable LXMF screens", () => {
     const screen = render(<ConversationScreen destination={mockDestination} />);
 
     expect(await screen.findByText("Retry me")).toBeTruthy();
-    expect(screen.getByText("Mailbox offline")).toBeTruthy();
-    expect(screen.getByText("Retry exact stored message")).toBeTruthy();
+    expect(screen.getByText("Messaging offline")).toBeTruthy();
+    expect(screen.getByText("Retry message")).toBeTruthy();
     expect(screen.queryByText("New message")).toBeNull();
     expect(mockListLxmfPeers).not.toHaveBeenCalled();
     expect(mockListLxmfMessages).toHaveBeenCalledWith({

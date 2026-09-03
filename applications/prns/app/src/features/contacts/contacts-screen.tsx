@@ -40,8 +40,8 @@ export function ContactsScreen() {
     setFailure(null);
     try {
       setOutcome(await contactRuntime.runtime.listContacts());
-    } catch (error) {
-      setFailure(formatThrown(error));
+    } catch {
+      setFailure("Contacts could not be loaded. Try again.");
     } finally {
       setPending(false);
     }
@@ -53,11 +53,11 @@ export function ContactsScreen() {
 
   return (
     <Screen>
-      <Badge>Local directory</Badge>
+      <Badge>On this device</Badge>
       <ScreenHeading>Contacts</ScreenHeading>
       <BodyText>
-        Saved destinations are read directly from the application-owned Rust directory. Live
-        observations remain in the local Host until you deliberately save one.
+        Contacts stay on this device. Nodes discovered on the network are added only when you choose
+        to save them.
       </BodyText>
       {contactRuntime.runtime === null ? (
         <NativeContactsUnavailable platform={contactRuntime.availability.platform} />
@@ -80,24 +80,21 @@ function ContactListResult({ outcome }: { readonly outcome: ContactListOutcome |
     return (
       <Card>
         <Badge>Loading</Badge>
-        <BodyText muted>Opening the persisted contact table.</BodyText>
+        <BodyText muted>Loading saved contacts…</BodyText>
       </Card>
     );
   }
   if (outcome.type === "developmentUnavailable") {
-    return <FailureCard detail={outcome.detail} />;
+    return <FailureCard detail="Contacts could not be loaded. Try again." />;
   }
   if (outcome.type === "developmentResetRequired") {
-    return <ResetRequiredCard reason={outcome.reason} />;
+    return <ResetRequiredCard />;
   }
   if (outcome.contacts.length === 0) {
     return (
       <Card>
         <Badge>No saved contacts</Badge>
-        <BodyText>
-          Add a manual destination here, or save an authenticated observation while the local node
-          is running.
-        </BodyText>
+        <BodyText>Add a contact manually, or save a node you discover on the network.</BodyText>
       </Card>
     );
   }
@@ -152,8 +149,8 @@ export function ContactDetailScreen({ destination }: { readonly destination: Des
       } else {
         setContact(null);
       }
-    } catch (error) {
-      setFailure(formatThrown(error));
+    } catch {
+      setFailure("The contact could not be loaded. Try again.");
     } finally {
       setPending(false);
     }
@@ -168,7 +165,7 @@ export function ContactDetailScreen({ destination }: { readonly destination: Des
   ) => {
     const activeRuntime = contactRuntime.runtime;
     if (activeRuntime === null) {
-      setFailure("The native contact runtime is unavailable.");
+      setFailure("Contacts are unavailable.");
       return;
     }
     setPending(true);
@@ -183,8 +180,8 @@ export function ContactDetailScreen({ destination }: { readonly destination: Des
       } else if (next.type === "deleted") {
         router.replace("/contacts");
       }
-    } catch (error) {
-      setFailure(formatThrown(error));
+    } catch {
+      setFailure("The contact could not be updated. Try again.");
     } finally {
       setPending(false);
     }
@@ -198,9 +195,9 @@ export function ContactDetailScreen({ destination }: { readonly destination: Des
       {contactRuntime.runtime === null ? (
         <NativeContactsUnavailable platform={contactRuntime.availability.platform} />
       ) : lookup?.type === "developmentResetRequired" ? (
-        <ResetRequiredCard reason={lookup.reason} />
+        <ResetRequiredCard />
       ) : lookup?.type === "developmentUnavailable" ? (
-        <FailureCard detail={lookup.detail} />
+        <FailureCard detail="The contact could not be loaded. Try again." />
       ) : lookup?.type === "notFound" ? (
         <Card>
           <Badge tone="warning">Not found</Badge>
@@ -301,8 +298,8 @@ export function AddContactScreen() {
         };
         router.replace(href);
       }
-    } catch (error) {
-      setFailure(formatThrown(error));
+    } catch {
+      setFailure("The contact could not be saved. Try again.");
     } finally {
       setPending(false);
     }
@@ -313,8 +310,8 @@ export function AddContactScreen() {
       <Badge>Manual entry</Badge>
       <ScreenHeading>Add contact</ScreenHeading>
       <BodyText>
-        Enter a destination directly. An identity is optional, but Rust will not allow this contact
-        to be pinned until one is known.
+        Enter a destination and, optionally, an identity. A contact needs an identity before it can
+        be pinned.
       </BodyText>
       {contactRuntime.runtime === null ? (
         <NativeContactsUnavailable platform={contactRuntime.availability.platform} />
@@ -348,8 +345,7 @@ export function AddContactScreen() {
       {failure === null ? null : <FailureCard detail={failure} />}
       <MutationResult outcome={outcome} />
       <BodyText muted>
-        To save a network-authenticated association, use Save as contact beside an observation on
-        the running local-node screen.
+        You can also save a verified destination from Nodes &gt; This device.
       </BodyText>
       <NavigationLink href="/contacts">Back to Contacts</NavigationLink>
     </Screen>
@@ -392,10 +388,10 @@ function MutationResult({ outcome }: { readonly outcome: ContactMutationOutcome 
     return null;
   }
   if (outcome.type === "developmentUnavailable") {
-    return <FailureCard detail={outcome.detail} />;
+    return <FailureCard detail="The contact could not be updated. Try again." />;
   }
   if (outcome.type === "developmentResetRequired") {
-    return <ResetRequiredCard reason={outcome.reason} />;
+    return <ResetRequiredCard />;
   }
   const messages: Record<
     Exclude<ContactMutationOutcome["type"], "developmentUnavailable" | "developmentResetRequired">,
@@ -404,13 +400,13 @@ function MutationResult({ outcome }: { readonly outcome: ContactMutationOutcome 
     saved: "Contact saved.",
     updated: "Contact updated.",
     deleted: "Contact deleted.",
-    existing: "This authenticated association was already saved.",
+    existing: "This verified destination was already saved.",
     alreadyExists: "This destination is already saved.",
     notFound: "The contact no longer exists.",
     localNodeStopped: "The local node is not running.",
-    notObserved: "The running node has no authenticated identity for this destination.",
-    identityConflict: "The saved identity differs from the authenticated observation.",
-    missingIdentity: "Add or observe an identity before pinning this contact.",
+    notObserved: "This destination is no longer visible on the network.",
+    identityConflict: "The saved identity differs from the verified network identity.",
+    missingIdentity: "Add or discover an identity before pinning this contact.",
   };
   return (
     <Card>
@@ -430,11 +426,8 @@ function MutationResult({ outcome }: { readonly outcome: ContactMutationOutcome 
 function NativeContactsUnavailable({ platform }: { readonly platform: string }) {
   return (
     <Card>
-      <Badge tone="warning">Native directory unavailable</Badge>
-      <BodyText>
-        The {platform} build has no application-owned native contact provider. No contacts are being
-        simulated or stored by this screen.
-      </BodyText>
+      <Badge tone="warning">Contacts unavailable</Badge>
+      <BodyText>Contacts are not available on {platform} yet.</BodyText>
     </Card>
   );
 }
@@ -442,24 +435,20 @@ function NativeContactsUnavailable({ platform }: { readonly platform: string }) 
 function FailureCard({ detail }: { readonly detail: string }) {
   return (
     <Card>
-      <Badge tone="warning">Directory unavailable</Badge>
+      <Badge tone="warning">Contacts unavailable</Badge>
       <BodyText>{detail}</BodyText>
     </Card>
   );
 }
 
-function ResetRequiredCard({ reason }: { readonly reason: string }) {
+function ResetRequiredCard() {
   return (
     <Card>
-      <Badge tone="warning">Development reset required</Badge>
-      <BodyText>{reason}</BodyText>
-      <NavigationLink href="/recovery">Open development recovery</NavigationLink>
+      <Badge tone="warning">App reset required</Badge>
+      <BodyText>This app&apos;s data needs to be reset before contacts can be used.</BodyText>
+      <NavigationLink href="/recovery">Open recovery</NavigationLink>
     </Card>
   );
-}
-
-function formatThrown(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 const styles = StyleSheet.create({

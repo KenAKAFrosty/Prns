@@ -42,7 +42,7 @@ describe("development identity recovery", () => {
       expect(view.getByText("primary identity directory is temporarily locked")).toBeTruthy(),
     );
     expect(view.getByText("Identity storage unavailable")).toBeTruthy();
-    expect(view.queryByRole("button", { name: "Reset development data" })).toBeNull();
+    expect(view.queryByRole("button", { name: "Reset app data" })).toBeNull();
     expect(view.getByRole("button", { name: "Retry inspection" })).toBeTruthy();
   });
 
@@ -61,14 +61,14 @@ describe("development identity recovery", () => {
     await waitFor(() =>
       expect(view.getByText("primary identity holds 63 bytes instead of 64")).toBeTruthy(),
     );
-    fireEvent.press(view.getByRole("button", { name: "Reset development data" }));
+    fireEvent.press(view.getByRole("button", { name: "Reset app data" }));
 
     await waitFor(() => expect(mockResetNativeData).toHaveBeenCalledTimes(1));
     expect(mockResetScaffoldData).toHaveBeenCalledTimes(1);
     expect(mockReplace).toHaveBeenCalledWith("/onboarding/welcome");
     expect(alert).toHaveBeenCalledWith(
-      "Reset development data?",
-      "This permanently removes the malformed primary identity, local preview preferences, Bluetooth and RemoteControl identities and authorization state, saved contacts, and all Inbox and Outbox messages from this development install.",
+      "Reset app data?",
+      "This permanently removes your primary identity, paired-node access, saved contacts, messages, and app preferences from this device.",
       expect.any(Array),
     );
     alert.mockRestore();
@@ -79,7 +79,7 @@ describe("development identity recovery", () => {
     const view = render(<RecoveryScreen />);
 
     await waitFor(() => expect(view.getByText("native inspection disconnected")).toBeTruthy());
-    expect(view.getByText("Identity inspection failed")).toBeTruthy();
+    expect(view.getByText("Could not check identity")).toBeTruthy();
     expect(view.getByRole("button", { name: "Retry inspection" })).toBeTruthy();
   });
 });

@@ -5,9 +5,9 @@ export function formatBytes(bytes: Uint8Array): string {
 export function formatRequestKind(kind: "announceSelf" | "describe"): string {
   switch (kind) {
     case "announceSelf":
-      return "Announce self";
+      return "Share node address";
     case "describe":
-      return "Describe";
+      return "View node information";
   }
 }
 

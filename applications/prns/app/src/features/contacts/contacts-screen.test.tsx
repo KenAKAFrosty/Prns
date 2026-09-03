@@ -138,7 +138,7 @@ describe("contact screens", () => {
     fireEvent.press(view.getByRole("button", { name: "Pin contact" }));
     await waitFor(() =>
       expect(
-        view.getByText("Add or observe an identity before pinning this contact."),
+        view.getByText("Add or discover an identity before pinning this contact."),
       ).toBeTruthy(),
     );
     expect(setContactPinned).toHaveBeenCalledWith(destination, true);
@@ -155,7 +155,7 @@ describe("contact screens", () => {
       </ContactRuntimeProvider>,
     );
 
-    expect(view.getByText("Native directory unavailable")).toBeTruthy();
-    expect(view.getByText(/No contacts are being simulated or stored/iu)).toBeTruthy();
+    expect(view.getByText("Contacts unavailable")).toBeTruthy();
+    expect(view.getByText("Contacts are not available on web yet.")).toBeTruthy();
   });
 });

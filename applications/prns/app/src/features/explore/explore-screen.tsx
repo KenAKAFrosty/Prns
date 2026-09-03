@@ -8,30 +8,23 @@ export function ExploreScreen() {
     <Screen>
       <Badge>Development preview</Badge>
       <ScreenHeading>Explore</ScreenHeading>
-      <BodyText>
-        Planned Reticulum experiences stay discoverable without pretending their services are
-        available.
-      </BodyText>
+      <BodyText>Explore services available through your Reticulum network.</BodyText>
       {state.showUnavailableFeatures ? (
         <>
           <Card>
             <Subheading>NomadNet</Subheading>
-            <BodyText muted>No request, safe parser, or page cache is compiled.</BodyText>
-            <NavigationLink href="/explore/nomadnet">Open placeholder</NavigationLink>
+            <BodyText muted>NomadNet browsing is coming later.</BodyText>
+            <NavigationLink href="/explore/nomadnet">View details</NavigationLink>
           </Card>
           <Card>
             <Subheading>Location</Subheading>
-            <BodyText muted>
-              No permission, position, sharing, or map operation is compiled.
-            </BodyText>
-            <NavigationLink href="/explore/location">Open placeholder</NavigationLink>
+            <BodyText muted>Location sharing is coming later.</BodyText>
+            <NavigationLink href="/explore/location">View details</NavigationLink>
           </Card>
         </>
       ) : (
         <Card>
-          <BodyText muted>
-            Planned unavailable entries are hidden. Restore them from Settings.
-          </BodyText>
+          <BodyText muted>Upcoming features are hidden. You can show them in Settings.</BodyText>
         </Card>
       )}
     </Screen>

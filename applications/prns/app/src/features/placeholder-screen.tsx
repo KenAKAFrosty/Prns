@@ -15,11 +15,8 @@ export function NotFoundScreen({ backPath = "/inbox" }: { readonly backPath?: st
   return (
     <Screen>
       <Badge tone="warning">Not found</Badge>
-      <ScreenHeading>This route is not available</ScreenHeading>
-      <BodyText>
-        The address is unknown or contains an invalid, empty, or repeated parameter. No command was
-        issued.
-      </BodyText>
+      <ScreenHeading>This page is not available</ScreenHeading>
+      <BodyText>The link may be incomplete or no longer valid.</BodyText>
       <Button tone="secondary" onPress={() => router.replace(backPath)}>
         Return to a safe screen
       </Button>
@@ -31,16 +28,12 @@ export function NotYetImplementedScreen({ entry }: { readonly entry: ScreenCatal
   const router = useRouter();
   return (
     <Screen>
-      <Badge tone="warning">Not yet implemented</Badge>
+      <Badge tone="warning">Coming later</Badge>
       <ScreenHeading>{entry.label}</ScreenHeading>
       <Card>
         <BodyText>{entry.summary}</BodyText>
-        <BodyText muted>{entry.limitation}</BodyText>
       </Card>
-      <BodyText muted>
-        This route is retained so planned navigation stays visible. It has no mock protocol result,
-        command, or fallback service.
-      </BodyText>
+      <BodyText muted>This feature is planned for a future update.</BodyText>
       <Button tone="secondary" onPress={() => router.replace(entry.backPath)}>
         Go back
       </Button>

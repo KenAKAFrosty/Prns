@@ -16,7 +16,7 @@ import {
   useDevelopmentRuntime,
 } from "@/native/development-runtime-context";
 import type { RuntimeProvider } from "@/native/runtime-provider.types";
-import { NodesScreen } from "./nodes-screen";
+import { LocalNodeScreen, NodesScreen } from "./nodes-screen";
 import { PairNodeScreen } from "./pair-node-screen";
 
 jest.mock("expo-router", () => ({
@@ -25,8 +25,13 @@ jest.mock("expo-router", () => ({
 
 const observedDestination = destinationHash(new Uint8Array(16).fill(0x33));
 const observedIdentity = identityHash(new Uint8Array(16).fill(0x44));
+type PairingState = DevelopmentNodeSnapshot["pairing"];
 
-function snapshot(revision: bigint, includeObservation = false): DevelopmentNodeSnapshot {
+function snapshot(
+  revision: bigint,
+  includeObservation = false,
+  pairing: PairingState = { type: "searching" },
+): DevelopmentNodeSnapshot {
   return {
     contractFingerprint: "test-contract",
     revision,
@@ -81,7 +86,7 @@ function snapshot(revision: bigint, includeObservation = false): DevelopmentNode
     },
     lxmf: { state: "ready", inboundOverflowCount: 0n },
     controllerIdentityFingerprint: null,
-    pairing: { type: "searching" },
+    pairing,
     pairedTargets: [],
     activeOperation: null,
     failure: null,
@@ -92,15 +97,16 @@ function fakeProvider(
   stop: jest.Mock,
   overrides: Partial<DevelopmentRuntime> = {},
   includeObservation = false,
+  pairing: PairingState = { type: "searching" },
 ): RuntimeProvider {
-  const initial = snapshot(2n, includeObservation);
+  const initial = snapshot(2n, includeObservation, pairing);
   const runtime: DevelopmentRuntime = {
     inspectDevelopmentIdentity: async () => initial.primaryIdentity,
     previewIdentityImport: async () => ({ type: "invalidLength" }),
     createGeneratedIdentity: async () => ({ type: "alreadyExists" }),
     createImportedIdentity: async () => ({ type: "alreadyExists" }),
     startDevelopmentNode: async () => ({ type: "started", snapshot: initial }),
-    readDevelopmentNodeSnapshot: async () => snapshot(1n),
+    readDevelopmentNodeSnapshot: async () => snapshot(1n, false, pairing),
     initiateRemoteControlPairing: async () => ({ type: "busy" }),
     approveRemoteControlPairing: async () => ({ type: "busy" }),
     rejectRemoteControlPairing: async () => ({ type: "busy" }),
@@ -151,7 +157,7 @@ function fakeProvider(
       Effect.acquireRelease(
         Effect.sync(() => {
           options.onSnapshot(initial);
-          options.onSnapshot(snapshot(1n, includeObservation));
+          options.onSnapshot(snapshot(1n, includeObservation, pairing));
           return { runtime: effectRuntime, initialSnapshot: initial };
         }),
         () => Effect.promise(runtime.stopDevelopmentNode).pipe(Effect.asVoid),
@@ -180,7 +186,7 @@ describe("Foundation 1 Nodes runtime binding", () => {
     expect(routeConsumesDevelopmentSnapshot("/network/interfaces")).toBe(false);
   });
 
-  it("renders the typed native startup detail instead of an empty tagged-error message", async () => {
+  it("retains startup diagnostics without exposing them on the Nodes screen", async () => {
     const stop = jest.fn();
     const base = fakeProvider(stop);
     const failure = Object.assign(new Error(), {
@@ -192,14 +198,22 @@ describe("Foundation 1 Nodes runtime binding", () => {
       ...base,
       acquire: () => Effect.fail(failure),
     };
+    const publish = jest.fn<void, [DevelopmentRuntimeView]>();
     const view = render(
       <DevelopmentRuntimeProvider provider={provider}>
         <NodesScreen />
+        <RuntimeViewProbe publish={publish} />
       </DevelopmentRuntimeProvider>,
     );
 
+    await waitFor(() => expect(view.getByText("This device's node failed to start")).toBeTruthy());
+    expect(view.queryByText("Bluetooth is unavailable in this simulator.")).toBeNull();
     await waitFor(() =>
-      expect(view.getByText("Bluetooth is unavailable in this simulator.")).toBeTruthy(),
+      expect(publish).toHaveBeenCalledWith(
+        expect.objectContaining({
+          lifecycleFailure: "Bluetooth is unavailable in this simulator.",
+        }),
+      ),
     );
   });
 
@@ -277,16 +291,15 @@ describe("Foundation 1 Nodes runtime binding", () => {
       </DevelopmentRuntimeProvider>,
     );
 
-    await waitFor(() => expect(view.getAllByText("Running")).toHaveLength(2));
-    expect(view.getByText("No persisted targets")).toBeTruthy();
-    expect(view.getAllByText("2")).toHaveLength(2);
-    expect(view.getByText("Native")).toBeTruthy();
+    await waitFor(() => expect(view.getByText("No paired nodes")).toBeTruthy());
+    expect(view.getByText("View this device")).toBeTruthy();
+    expect(view.queryByText("Host runtime")).toBeNull();
 
     view.unmount();
     await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
   });
 
-  it("renders the observed searching state without claiming a pairing result", async () => {
+  it("renders the searching state in board-neutral user language", async () => {
     const stop = jest.fn();
     const view = render(
       <DevelopmentRuntimeProvider provider={fakeProvider(stop)} refreshIntervalMillis={50}>
@@ -294,15 +307,73 @@ describe("Foundation 1 Nodes runtime binding", () => {
       </DevelopmentRuntimeProvider>,
     );
 
-    await waitFor(() => expect(view.getByText("Searching")).toBeTruthy());
-    expect(view.getByText("Waiting for signed availability")).toBeTruthy();
-    expect(view.getByText("Connected")).toBeTruthy();
-    expect(view.queryByText("Authorization persisted")).toBeNull();
+    await waitFor(() => expect(view.getByText("Looking for nearby nodes")).toBeTruthy());
+    expect(view.getByText("Searching")).toBeTruthy();
+    expect(JSON.stringify(view.toJSON())).not.toMatch(
+      /E290|signed availability|upstream RemoteControl/iu,
+    );
+    expect(view.queryByText("Ready")).toBeNull();
     view.unmount();
     await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
   });
 
-  it("saves a live authenticated observation through the native contact operation", async () => {
+  it("keeps every pairing step board-neutral and free of protocol narration", async () => {
+    const pairingViews = [
+      [{ type: "bluetoothUnavailable" }, "Bluetooth unavailable"],
+      [{ type: "searching" }, "Looking for nearby nodes"],
+      [
+        {
+          type: "candidateObserved",
+          candidate: {
+            candidateId: "candidate-1",
+            endpoint: observedDestination,
+            observedAtMillis: 1n,
+            expiresAtMillis: 2n,
+            publicAppData: new Uint8Array(),
+          },
+        },
+        "Node found",
+      ],
+      [{ type: "invitationSubmitted", candidateId: "candidate-1" }, "Invitation sent"],
+      [
+        {
+          type: "confirmationRequired",
+          attemptId: "attempt-1",
+          confirmationCode: "123456",
+          targetIdentityFingerprint: observedIdentity,
+          permissions: ["describe"],
+        },
+        "Confirmation required",
+      ],
+      [{ type: "awaitingTargetApproval", attemptId: "attempt-1" }, "Waiting for the node"],
+      [{ type: "persisting", attemptId: "attempt-1" }, "Finishing pairing"],
+      [{ type: "paired", attemptId: "attempt-1" }, "Paired"],
+      [{ type: "rejected", detail: "upstream RemoteControl rejected" }, "Rejected"],
+      [{ type: "expired", detail: "signed availability expired" }, "Expired"],
+      [{ type: "failed", stage: "link", detail: "E290 link failure" }, "Pairing failed"],
+    ] as const satisfies readonly (readonly [PairingState, string])[];
+
+    for (const [pairing, expectedCopy] of pairingViews) {
+      const stop = jest.fn();
+      const view = render(
+        <DevelopmentRuntimeProvider
+          provider={fakeProvider(stop, {}, false, pairing)}
+          refreshIntervalMillis={50}
+        >
+          <PairNodeScreen selectedCandidateId={undefined} />
+        </DevelopmentRuntimeProvider>,
+      );
+
+      await waitFor(() => expect(view.getByText(expectedCopy)).toBeTruthy());
+      expect(JSON.stringify(view.toJSON())).not.toMatch(
+        /E290|signed availability|upstream RemoteControl/iu,
+      );
+      view.unmount();
+      await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
+    }
+  });
+
+  it("saves a live authenticated observation from device diagnostics", async () => {
     const stop = jest.fn();
     const saveObservedDestination = jest.fn(async () => ({
       type: "saved" as const,
@@ -318,7 +389,7 @@ describe("Foundation 1 Nodes runtime binding", () => {
         provider={fakeProvider(stop, { saveObservedDestination }, true)}
         refreshIntervalMillis={50}
       >
-        <NodesScreen />
+        <LocalNodeScreen />
       </DevelopmentRuntimeProvider>,
     );
 
@@ -326,7 +397,7 @@ describe("Foundation 1 Nodes runtime binding", () => {
     fireEvent.press(view.getByRole("button", { name: "Save as contact" }));
 
     await waitFor(() => expect(saveObservedDestination).toHaveBeenCalledWith(observedDestination));
-    expect(view.getByText("The authenticated association was saved.")).toBeTruthy();
+    expect(view.getByText("The verified destination was saved.")).toBeTruthy();
     expect(view.getByText("Open saved contact")).toBeTruthy();
 
     view.unmount();

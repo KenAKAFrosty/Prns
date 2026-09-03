@@ -8,24 +8,19 @@ export function HelpScreen() {
       <Card>
         <Subheading>What works</Subheading>
         <BodyText>
-          Responsive navigation, native identity onboarding, local-node Host inspection, Bluetooth
-          Auto, upstream RemoteControl pairing and Describe, native saved contacts, a durable
-          direct-LXMF Inbox and Outbox, local UI preferences, and confirmed development reset.
+          Create or import an identity, pair and check nodes over Bluetooth, save contacts, exchange
+          direct messages, inspect this device&apos;s network status, and reset preview data.
         </BodyText>
       </Card>
       <Card>
-        <Subheading>What does not work yet</Subheading>
+        <Subheading>Coming later</Subheading>
         <BodyText>
-          The dedicated message inspector, contact merging, separate identity and interface views,
-          interface mutation, controller-grant inspection, NomadNet, location, notifications and
-          background delivery, storage and retained-recovery inspection, activity diagnostics, and
-          non-iOS native runtimes remain placeholders.
+          Message details, contact merging, identity and connection management, remote-access
+          controls, NomadNet, location, notifications, background delivery, storage details,
+          recovery tools, activity history, and support for more platforms.
         </BodyText>
       </Card>
-      <BodyText muted>
-        Development data is disposable. Displayed identity hashes and network observations are live
-        Reticulum values, but this build provides no backup, recovery, or continuity promise.
-      </BodyText>
+      <BodyText muted>Preview data can be reset and cannot be backed up or recovered yet.</BodyText>
     </Screen>
   );
 }

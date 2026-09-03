@@ -34,68 +34,54 @@ export function NodesScreen() {
 
   return (
     <Screen>
-      <Badge>Native development runtime</Badge>
+      <Badge>Your network</Badge>
       <ScreenHeading>Nodes</ScreenHeading>
-      <BodyText>
-        The installation-local controller and its persisted RemoteControl targets come directly from
-        the app-owned Rust node.
-      </BodyText>
+      <BodyText>Manage this device and the nodes paired with it.</BodyText>
 
       {runtime.phase === "unavailable" ? (
         <Card>
-          <Subheading>Native runtime unavailable</Subheading>
-          <Badge tone="warning">Not implemented on {runtime.availability.platform}</Badge>
-          <BodyText>
-            This platform has no native development-node provider. No target inventory or pairing
-            result is being simulated.
-          </BodyText>
+          <Subheading>Nodes unavailable</Subheading>
+          <Badge tone="warning">Not supported on {runtime.availability.platform}</Badge>
+          <BodyText>Node management is not available on this platform yet.</BodyText>
         </Card>
       ) : null}
 
       {runtime.phase === "starting" ? (
         <Card>
-          <Subheading>Local node</Subheading>
+          <Subheading>Getting ready</Subheading>
           <Badge>Starting</Badge>
-          <BodyText muted>
-            Opening private persistence and waiting for the Rust node's bounded readiness signal.
-          </BodyText>
+          <BodyText muted>Loading your nodes…</BodyText>
         </Card>
       ) : null}
 
       {runtime.phase === "failed" ? (
         <Card>
-          <Subheading>Local node failed to start</Subheading>
+          <Subheading>This device&apos;s node failed to start</Subheading>
           <Badge tone="warning">Startup failed</Badge>
           <BodyText>
-            {runtime.lifecycleFailure ?? "The native provider did not return a reason."}
+            This device&apos;s node could not start. Open its diagnostics for more details.
           </BodyText>
         </Card>
       ) : null}
 
       {runtime.snapshot === null ? null : (
         <>
-          <LocalNodeCards snapshot={runtime.snapshot} />
           <Card>
             {runtime.backgroundFailure === null ? null : (
-              <BodyText>Snapshot refresh failed: {runtime.backgroundFailure}</BodyText>
+              <BodyText>Automatic refresh failed. Try refreshing again.</BodyText>
             )}
-            {refreshFailure === null ? null : (
-              <BodyText>Manual refresh failed: {refreshFailure}</BodyText>
-            )}
+            {refreshFailure === null ? null : <BodyText>Refresh failed. Try again.</BodyText>}
             <Button disabled={refreshing} onPress={() => void refresh()} tone="secondary">
               {refreshing ? "Refreshing…" : "Refresh now"}
             </Button>
-            <NavigationLink href="/nodes/local">Open local-node details</NavigationLink>
+            <NavigationLink href="/nodes/local">View this device</NavigationLink>
           </Card>
 
-          <Subheading>Persisted managed targets</Subheading>
+          <Subheading>Paired nodes</Subheading>
           {runtime.snapshot.pairedTargets.length === 0 ? (
             <Card>
-              <Badge>No persisted targets</Badge>
-              <BodyText>
-                A target appears here only after controller authorization has been persisted by the
-                upstream RemoteControl flow.
-              </BodyText>
+              <Badge>No paired nodes</Badge>
+              <BodyText>Pair a node to manage it from this device.</BodyText>
             </Card>
           ) : (
             runtime.snapshot.pairedTargets.map((target) => {
@@ -106,19 +92,19 @@ export function NodesScreen() {
               };
               return (
                 <Card key={targetId}>
-                  <Subheading>RemoteControl target</Subheading>
-                  <Badge>Persisted authorization</Badge>
-                  <KeyValue label="Target fingerprint" value={targetId} />
+                  <Subheading>Paired node</Subheading>
+                  <Badge>Ready</Badge>
+                  <KeyValue label="Node ID" value={targetId} />
                   <KeyValue label="Destination" value={formatBytes(target.destination)} />
                   <KeyValue
-                    label="Permitted requests"
+                    label="Available actions"
                     value={
                       target.permittedRequests.length === 0
                         ? "None"
                         : target.permittedRequests.map(formatRequestKind).join(", ")
                     }
                   />
-                  <NavigationLink href={managedHref}>Manage this target</NavigationLink>
+                  <NavigationLink href={managedHref}>Manage node</NavigationLink>
                 </Card>
               );
             })
@@ -128,7 +114,7 @@ export function NodesScreen() {
 
       <CardStack>
         <NavigationLink href="/nodes/pair">Pair a node</NavigationLink>
-        <NavigationLink href="/nodes/local/grants">Controller grants</NavigationLink>
+        <NavigationLink href="/nodes/local/grants">Remote access</NavigationLink>
       </CardStack>
     </Screen>
   );
@@ -138,12 +124,12 @@ export function LocalNodeScreen() {
   const runtime = useDevelopmentRuntime();
   return (
     <Screen>
-      <Badge>Canonical Host snapshot</Badge>
-      <ScreenHeading>Local node</ScreenHeading>
+      <Badge>Node diagnostics</Badge>
+      <ScreenHeading>This device</ScreenHeading>
       {runtime.snapshot === null ? (
         <Card>
           <Badge tone={runtime.phase === "failed" ? "warning" : "neutral"}>{runtime.phase}</Badge>
-          <BodyText>{runtime.lifecycleFailure ?? "Waiting for the native node snapshot."}</BodyText>
+          <BodyText>{runtime.lifecycleFailure ?? "Waiting for node details."}</BodyText>
         </Card>
       ) : (
         <LocalNodeCards snapshot={runtime.snapshot} />
@@ -163,14 +149,14 @@ function LocalNodeCards({ snapshot }: { readonly snapshot: DevelopmentNodeSnapsh
         </Badge>
         <PrimaryIdentity identity={snapshot.primaryIdentity} />
         <KeyValue
-          label="RemoteControl controller"
+          label="Controller identity"
           value={
             snapshot.controllerIdentityFingerprint === null
               ? "Not available"
               : formatBytes(snapshot.controllerIdentityFingerprint)
           }
         />
-        <KeyValue label="App snapshot revision" value={snapshot.revision.toString()} />
+        <KeyValue label="Status revision" value={snapshot.revision.toString()} />
         {snapshot.failure === null ? null : (
           <BodyText>
             {snapshot.failure.stage}: {snapshot.failure.detail}
@@ -252,7 +238,7 @@ function HostCards({ localHost }: { readonly localHost: DevelopmentNodeSnapshot[
       <Subheading>Interfaces</Subheading>
       {host.interfaces.length === 0 ? (
         <Card>
-          <Badge tone="warning">No attached interface projected</Badge>
+          <Badge tone="warning">No interfaces attached</Badge>
         </Card>
       ) : (
         host.interfaces.map((networkInterface) => (
@@ -295,7 +281,7 @@ function HostCards({ localHost }: { readonly localHost: DevelopmentNodeSnapshot[
           </Card>
         ))
       )}
-      <Subheading>Authenticated destination identities</Subheading>
+      <Subheading>Verified network identities</Subheading>
       {host.destinationIdentities.length === 0 ? (
         <Card>
           <Badge>No authenticated observations</Badge>
@@ -358,15 +344,15 @@ function ObservedIdentityCard({ association }: { readonly association: Authentic
 function observedSaveMessage(outcome: ContactMutationOutcome): string {
   switch (outcome.type) {
     case "saved":
-      return "The authenticated association was saved.";
+      return "The verified destination was saved.";
     case "updated":
-      return "The authenticated identity was added to the saved contact.";
+      return "The verified identity was added to the saved contact.";
     case "existing":
-      return "This authenticated association was already saved.";
+      return "This verified destination was already saved.";
     case "identityConflict":
       return `The saved identity ${formatBytes(outcome.existing)} differs from the observation ${formatBytes(outcome.attempted)}.`;
     case "notObserved":
-      return "The association is no longer present in the live node.";
+      return "This destination is no longer visible on the network.";
     case "localNodeStopped":
       return "The local node stopped before this association could be saved.";
     case "developmentUnavailable":

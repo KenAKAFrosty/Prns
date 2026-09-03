@@ -52,10 +52,7 @@ export default function BootstrapRoute() {
 
   return (
     <View style={[styles.loading, { backgroundColor: palette.background }]}>
-      <ActivityIndicator
-        accessibilityLabel="Inspecting development identity"
-        color={palette.accent}
-      />
+      <ActivityIndicator accessibilityLabel="Loading prns" color={palette.accent} />
     </View>
   );
 }

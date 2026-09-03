@@ -39,7 +39,7 @@ export function RecoveryScreen() {
     if (!("runtime" in runtimeProvider)) {
       setInspection({
         type: "inspectionFailed",
-        detail: `Native development identity inspection is unavailable on ${runtimeProvider.availability.platform}.`,
+        detail: `Identity recovery is not available on ${runtimeProvider.availability.platform} yet.`,
       });
       return;
     }
@@ -88,8 +88,8 @@ export function RecoveryScreen() {
 
   const confirmReset = () => {
     Alert.alert(
-      "Reset development data?",
-      "This permanently removes the malformed primary identity, local preview preferences, Bluetooth and RemoteControl identities and authorization state, saved contacts, and all Inbox and Outbox messages from this development install.",
+      "Reset app data?",
+      "This permanently removes your primary identity, paired-node access, saved contacts, messages, and app preferences from this device.",
       [
         { text: "Cancel", style: "cancel" },
         { text: "Reset", style: "destructive", onPress: () => void reset() },
@@ -99,8 +99,8 @@ export function RecoveryScreen() {
 
   return (
     <Screen>
-      <Badge>Development identity</Badge>
-      <ScreenHeading>Identity inspection and reset</ScreenHeading>
+      <Badge>Identity</Badge>
+      <ScreenHeading>Recovery</ScreenHeading>
       <RecoveryStateCard inspection={inspection} />
       {resetFailure === null ? null : (
         <Card>
@@ -111,7 +111,7 @@ export function RecoveryScreen() {
       <CardStack>
         {inspection.type === "developmentResetRequired" ? (
           <Button disabled={resetting} onPress={confirmReset} tone="destructive">
-            {resetting ? "Resetting…" : "Reset development data"}
+            {resetting ? "Resetting…" : "Reset app data"}
           </Button>
         ) : null}
         {inspection.type === "unavailable" || inspection.type === "inspectionFailed" ? (
@@ -129,8 +129,7 @@ export function RecoveryScreen() {
         ) : null}
       </CardStack>
       <BodyText muted>
-        Reset is destructive. This development build provides no identity repair, export, backup, or
-        retained recovery workflow.
+        Reset is permanent. Identity repair, export, and backup are not available in this preview.
       </BodyText>
     </Screen>
   );
@@ -141,8 +140,8 @@ function RecoveryStateCard({ inspection }: { readonly inspection: RecoveryState 
     case "loading":
       return (
         <Card>
-          <Badge>Inspecting</Badge>
-          <BodyText>Reading the Rust-owned primary identity state.</BodyText>
+          <Badge>Checking identity</Badge>
+          <BodyText>Checking the primary identity…</BodyText>
         </Card>
       );
     case "missing":
@@ -172,14 +171,14 @@ function RecoveryStateCard({ inspection }: { readonly inspection: RecoveryState 
     case "developmentResetRequired":
       return (
         <Card>
-          <Badge tone="warning">Development reset required</Badge>
+          <Badge tone="warning">App reset required</Badge>
           <BodyText>{inspection.reason}</BodyText>
         </Card>
       );
     case "inspectionFailed":
       return (
         <Card>
-          <Badge tone="warning">Identity inspection failed</Badge>
+          <Badge tone="warning">Could not check identity</Badge>
           <BodyText>{inspection.detail}</BodyText>
         </Card>
       );

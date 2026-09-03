@@ -62,16 +62,16 @@ export function deliveryLabel(message: LxmfMessage): string {
       return "Received";
     case "queued":
       return message.deliveryState.failedAttempts === 0n
-        ? "Queued — stored durably and awaiting send"
-        : `Queued — stored durably after ${attemptLabel(message.deliveryState.failedAttempts)}`;
+        ? "Queued"
+        : `Queued after ${attemptLabel(message.deliveryState.failedAttempts)}`;
     case "sending":
       return message.deliveryState.failedAttempts === 0n
-        ? "Sending — waiting for transport proof"
-        : `Sending after ${attemptLabel(message.deliveryState.failedAttempts)} — waiting for transport proof`;
+        ? "Sending"
+        : `Sending after ${attemptLabel(message.deliveryState.failedAttempts)}`;
     case "delivered":
       return message.deliveryState.rtt === null
-        ? `Delivered — transport proof received at ${timestampLabel(message.deliveryState.deliveredAt)}`
-        : `Delivered — transport proof received in ${message.deliveryState.rtt.toString()} ms at ${timestampLabel(message.deliveryState.deliveredAt)}`;
+        ? `Delivered at ${timestampLabel(message.deliveryState.deliveredAt)}`
+        : `Delivered in ${message.deliveryState.rtt.toString()} ms at ${timestampLabel(message.deliveryState.deliveredAt)}`;
     case "failed":
       return `Failed after ${attemptLabel(message.deliveryState.failedAttempts)} — ${failureLabel(message.deliveryState.lastFailure)}`;
     case "cancelled":
@@ -109,10 +109,10 @@ function failureLabel(failure: LxmfDeliveryFailure): string {
     case "noRoute":
       return "no route";
     case "linkFailed":
-      return "Link failed";
+      return "connection failed";
     case "deliveryTimedOut":
-      return "delivery proof timed out";
+      return "delivery timed out";
     case "localNodeStopped":
-      return "local node stopped";
+      return "this device went offline";
   }
 }

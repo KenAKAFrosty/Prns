@@ -26,7 +26,7 @@ export function SettingsScreen() {
 
   const reset = async () => {
     if (!("runtime" in runtimeProvider)) {
-      setResetFailure("Native development data reset is available only in the iOS build.");
+      setResetFailure("Reset is not available on this platform yet.");
       return;
     }
     setResetting(true);
@@ -34,13 +34,13 @@ export function SettingsScreen() {
     try {
       const outcome = await runtimeProvider.runtime.resetDevelopmentData();
       if (outcome.type === "failed") {
-        setResetFailure(`${outcome.stage}: ${outcome.detail}`);
+        setResetFailure("App data could not be reset. Try again.");
         return;
       }
       await resetDevelopmentData();
       router.replace("/onboarding/welcome");
-    } catch (error) {
-      setResetFailure(error instanceof Error ? error.message : String(error));
+    } catch {
+      setResetFailure("App data could not be reset. Try again.");
     } finally {
       setResetting(false);
     }
@@ -48,8 +48,8 @@ export function SettingsScreen() {
 
   const confirmReset = () => {
     Alert.alert(
-      "Reset development data?",
-      "This stops the local node and permanently removes local preview preferences, the primary and Bluetooth identities, RemoteControl identities and authorization state, saved contacts, and all Inbox and Outbox messages from this development install.",
+      "Reset app data?",
+      "This permanently removes your primary identity, paired-node access, saved contacts, messages, and app preferences from this device.",
       [
         { text: "Cancel", style: "cancel" },
         { text: "Reset", style: "destructive", onPress: () => void reset() },
@@ -62,11 +62,11 @@ export function SettingsScreen() {
       <Badge>Development preview</Badge>
       <ScreenHeading>Settings</ScreenHeading>
       <Card>
-        <Subheading>Planned features</Subheading>
+        <Subheading>Upcoming features</Subheading>
         <Pressable
           accessibilityRole="switch"
           accessibilityState={{ checked: state.showUnavailableFeatures }}
-          accessibilityLabel="Show unavailable features"
+          accessibilityLabel="Show upcoming features"
           onPress={() => {
             void updateScaffoldState((current) => ({
               ...current,
@@ -83,10 +83,10 @@ export function SettingsScreen() {
         >
           <View style={styles.toggleCopy}>
             <Text style={[styles.toggleLabel, { color: palette.text }]}>
-              Show unavailable features
+              Show upcoming features
             </Text>
             <Text style={[styles.toggleHint, { color: palette.textMuted }]}>
-              Honest placeholders remain routable when hidden.
+              Include pages for features that are still being built.
             </Text>
           </View>
           <Text style={[styles.toggleValue, { color: palette.text }]}>
@@ -95,10 +95,10 @@ export function SettingsScreen() {
         </Pressable>
       </Card>
       <Card>
-        <Subheading>Development controls</Subheading>
+        <Subheading>Preview data</Subheading>
         <BodyText muted>
-          Reset stops the native node before deleting only this app&apos;s disposable
-          prns/development root, then returns to onboarding.
+          Reset removes this app&apos;s identity, paired nodes, contacts, messages, and preferences
+          from this device.
         </BodyText>
         <CardStack>
           <Button
@@ -106,7 +106,7 @@ export function SettingsScreen() {
             tone="destructive"
             onPress={confirmReset}
           >
-            {resetting ? "Resetting…" : "Reset development data"}
+            {resetting ? "Resetting…" : "Reset app data"}
           </Button>
         </CardStack>
         {resetFailure === null ? null : <BodyText>{resetFailure}</BodyText>}

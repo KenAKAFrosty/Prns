@@ -11,13 +11,12 @@ export function AboutScreen() {
         <KeyValue label="Application" value={Constants.expoConfig?.name ?? "prns dev"} />
         <KeyValue label="Application version" value={Constants.expoConfig?.version ?? "0.0.0"} />
         <KeyValue label="Native identifier" value="rs.reticulum.prns.dev" />
-        <KeyValue label="Runtime" value="Rust-owned iOS development node" />
+        <KeyValue label="Platform" value="iOS preview" />
       </Card>
       <BodyText>
-        This build includes the Rust-owned primary identity vault, local Host inspection, Bluetooth
-        Auto, upstream RemoteControl pairing and Describe, a native saved-contact directory, and a
-        durable direct-LXMF Inbox and Outbox. Delivery is foreground-only, and the native
-        capabilities are iOS-only. The canonical production identifier remains rs.reticulum.prns.
+        This preview can create or import an identity, pair and check nodes over Bluetooth, save
+        contacts, exchange direct messages, and show this device&apos;s network status. New messages
+        arrive only while the app is open.
       </BodyText>
     </Screen>
   );

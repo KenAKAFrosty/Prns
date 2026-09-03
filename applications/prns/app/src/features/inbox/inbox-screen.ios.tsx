@@ -90,8 +90,8 @@ function useLxmfData(peer: DestinationHash | null): LxmfData {
     if (contactRuntime.runtime !== null) {
       try {
         applyContactResult(await contactRuntime.runtime.listContacts(), setContacts);
-      } catch (error) {
-        setFailure(formatThrown(error));
+      } catch {
+        setFailure("Contacts could not be loaded.");
       }
     }
     setPending(false);
@@ -127,7 +127,9 @@ export function InboxScreen() {
     setCommand(null);
     const result = await development.announceLxmf();
     setCommand(
-      result.type === "operationFailure" ? result.detail : announceOutcomeLabel(result.outcome),
+      result.type === "operationFailure"
+        ? "The messaging address could not be shared."
+        : announceOutcomeLabel(result.outcome),
     );
     setAnnouncing(false);
     await development.refreshSnapshot();
@@ -140,20 +142,12 @@ export function InboxScreen() {
 
   return (
     <Screen>
-      <Badge>Durable direct LXMF</Badge>
+      <Badge>Messages</Badge>
       <ScreenHeading>Inbox</ScreenHeading>
-      <BodyText>
-        Messages are stored in the application mailbox. Listing, exact-wire retry, and cancellation
-        remain available while the local node is stopped; sending and peer discovery require a
-        running generation.
-      </BodyText>
+      <BodyText>Messages stay on this device and remain available while it is offline.</BodyText>
+      <BodyText muted>New messages arrive only while prns is open.</BodyText>
       <BodyText muted>
-        Receipt is foreground-only: suspending the app can stop new messages. Managed nodes do not
-        collect mail for this phone's installation identity.
-      </BodyText>
-      <BodyText muted>
-        Before exchanging messages, use Announce LXMF destination. Peers need this installation's
-        lxmf.delivery announce to learn its identity and validate its source signatures.
+        Before exchanging messages with a new contact, share this device&apos;s messaging address.
       </BodyText>
       <LxmfHealthCard />
       {development.availability.type !== "available" ? (
@@ -163,20 +157,19 @@ export function InboxScreen() {
           {nodeRunning ? null : (
             <Card>
               <Badge tone="warning">
-                {development.phase === "starting" ? "Starting" : "Mailbox offline"}
+                {development.phase === "starting" ? "Getting ready" : "Messaging offline"}
               </Badge>
               <BodyText>
-                {development.lifecycleFailure ??
-                  (development.phase === "starting"
-                    ? "Waiting for persistence restoration before network attempts resume."
-                    : "The local node is stopped. Durable messages remain available.")}
+                {development.phase === "starting"
+                  ? "Messaging will be available in a moment."
+                  : "Saved messages remain available. See Nodes > This device for diagnostic details."}
               </BodyText>
             </Card>
           )}
           <View style={styles.actions}>
             {nodeRunning ? (
               <Button disabled={announcing} onPress={() => void announce()}>
-                {announcing ? "Announcing…" : "Announce LXMF destination"}
+                {announcing ? "Sharing…" : "Share messaging address"}
               </Button>
             ) : null}
             <Button disabled={data.pending} onPress={() => void data.refresh()} tone="secondary">
@@ -194,8 +187,8 @@ export function InboxScreen() {
               <Badge>No conversations</Badge>
               <BodyText>
                 {nodeRunning
-                  ? "Wait for a compatible lxmf.delivery announce from the controlled peer, then open the composer."
-                  : "No durable messages are stored in this development mailbox."}
+                  ? "Share your messaging address or start a conversation by destination."
+                  : "No messages are saved on this device."}
               </BodyText>
             </Card>
           ) : (
@@ -217,10 +210,10 @@ export function InboxScreen() {
                   <Subheading>{peerLabel(destination, data.peers, data.contacts)}</Subheading>
                   <KeyValue label="Destination" value={encoded} />
                   <KeyValue
-                    label="Last observed"
+                    label="Last seen"
                     value={
                       compatiblePeer === undefined
-                        ? "No compatible announce retained"
+                        ? "Not recently seen"
                         : `${compatiblePeer.lastObservedAgeMillis.toString()} ms ago`
                     }
                   />
@@ -236,10 +229,10 @@ export function InboxScreen() {
             })
           )}
           {nodeRunning ? (
-            <NavigationLink href="/inbox/compose">Compose by destination</NavigationLink>
+            <NavigationLink href="/inbox/compose">New message</NavigationLink>
           ) : (
             <BodyText muted>
-              Start the local node to discover peers or compose a new message.
+              Start this device&apos;s node to find contacts or write a new message.
             </BodyText>
           )}
         </>
@@ -266,7 +259,7 @@ export function ConversationScreen({ destination }: { readonly destination: Dest
         : await development.cancelLxmfMessage(localRecordId);
     setMutationStatus(
       result.type === "operationFailure"
-        ? result.detail
+        ? `Could not ${kind} this message. Try again.`
         : mailboxMutationLabel(kind, result.outcome),
     );
     await data.refresh();
@@ -284,28 +277,26 @@ export function ConversationScreen({ destination }: { readonly destination: Dest
   }
   return (
     <Screen>
-      <Badge>Durable conversation</Badge>
+      <Badge>Messages</Badge>
       <ScreenHeading>{peerLabel(destination, data.peers, data.contacts)}</ScreenHeading>
       <KeyValue label="Destination" value={encoded} />
       {nodeRunning ? null : (
         <Card>
           <Badge tone="warning">
-            {development.phase === "starting" ? "Starting" : "Mailbox offline"}
+            {development.phase === "starting" ? "Getting ready" : "Messaging offline"}
           </Badge>
           <BodyText>
-            {development.lifecycleFailure ??
-              (development.phase === "starting"
-                ? "Waiting for persistence restoration before network attempts resume."
-                : "The local node is stopped. You can still inspect, retry, or cancel durable records.")}
+            {development.phase === "starting"
+              ? "Messaging will be available in a moment."
+              : "You can still read saved messages, retry failed messages, or cancel queued messages."}
           </BodyText>
         </Card>
       )}
       {peer?.requiredStampCost === null || peer?.requiredStampCost === undefined ? null : (
         <Card>
-          <Badge tone="warning">Unsupported stamp requirement</Badge>
+          <Badge tone="warning">Sending unavailable</Badge>
           <BodyText>
-            This peer requires stamp cost {peer.requiredStampCost.toString()}; direct send is
-            visible but unavailable in this slice.
+            This contact requires a messaging feature that prns does not support yet.
           </BodyText>
         </Card>
       )}
@@ -323,7 +314,7 @@ export function ConversationScreen({ destination }: { readonly destination: Dest
       <Subheading>Messages</Subheading>
       {data.messages.length === 0 ? (
         <Card>
-          <BodyText muted>No durable messages are stored for this destination.</BodyText>
+          <BodyText muted>No messages with this contact yet.</BodyText>
         </Card>
       ) : (
         data.messages.map((message) => (
@@ -375,10 +366,10 @@ export function ComposeScreen({
       <Screen>
         <ScreenHeading>Compose</ScreenHeading>
         <Card>
-          <Badge>{development.phase === "starting" ? "Starting" : "Local node stopped"}</Badge>
+          <Badge>{development.phase === "starting" ? "Getting ready" : "Messaging offline"}</Badge>
           <BodyText>
-            {development.lifecycleFailure ??
-              "Start the local node before composing a new direct message."}
+            Start this device&apos;s node before writing a message. See Nodes &gt; This device for
+            diagnostic details.
           </BodyText>
         </Card>
         <NavigationLink href="/inbox">Back to Inbox</NavigationLink>
@@ -388,14 +379,13 @@ export function ComposeScreen({
 
   return (
     <Screen>
-      <Badge>Direct LXMF</Badge>
+      <Badge>New message</Badge>
       <ScreenHeading>Compose</ScreenHeading>
       <BodyText>
-        Enter an observed lxmf.delivery destination. Native Rust measures and signs the complete
-        wire once, commits it to the durable queue, and reports delivery only after transport proof.
+        Enter the 32-character destination for the person or device you want to reach.
       </BodyText>
       <TextInput
-        accessibilityLabel="LXMF destination hash"
+        accessibilityLabel="Message destination"
         autoCapitalize="none"
         autoCorrect={false}
         onChangeText={setDestinationText}
@@ -466,7 +456,7 @@ function Composer({
         return;
       }
       if (result.type === "operationFailure") {
-        setMeasureFailure(result.detail);
+        setMeasureFailure("Try editing the message again.");
         setMeasurement(null);
       } else {
         setMeasureFailure(null);
@@ -488,7 +478,7 @@ function Composer({
       content: nextContent,
     });
     if (result.type === "operationFailure") {
-      setSendFailure(result.detail);
+      setSendFailure("Try again.");
     } else {
       setSendOutcome(result.outcome);
       if (result.outcome.type === "accepted") {
@@ -505,7 +495,7 @@ function Composer({
     <Card>
       <Subheading>New message</Subheading>
       <TextInput
-        accessibilityLabel="LXMF title"
+        accessibilityLabel="Message title"
         onChangeText={setTitle}
         placeholder="Title"
         placeholderTextColor={palette.textMuted}
@@ -520,7 +510,7 @@ function Composer({
         value={title}
       />
       <TextInput
-        accessibilityLabel="LXMF message"
+        accessibilityLabel="Message"
         multiline
         onChangeText={setContent}
         placeholder="Message"
@@ -543,9 +533,9 @@ function Composer({
         }
         onPress={() => void send()}
       >
-        {sending ? "Saving to durable queue…" : "Send direct message"}
+        {sending ? "Sending…" : "Send message"}
       </Button>
-      {sendFailure === null ? null : <BodyText>Native send unavailable: {sendFailure}</BodyText>}
+      {sendFailure === null ? null : <BodyText>Could not send: {sendFailure}</BodyText>}
       <SendResult outcome={sendOutcome} />
     </Card>
   );
@@ -569,7 +559,7 @@ function MessageCard({
   return (
     <Card>
       <Badge tone={unverified || !title.validUtf8 || !content.validUtf8 ? "warning" : "neutral"}>
-        {message.direction === "inbound" ? "Inbound" : "Outbound"}
+        {message.direction === "inbound" ? "Received" : "Sent"}
       </Badge>
       <Subheading>{title.text.length === 0 ? "Untitled" : title.text}</Subheading>
       <BodyText>{content.text}</BodyText>
@@ -579,7 +569,7 @@ function MessageCard({
       <KeyValue label="Message ID" value={formatContactHash(message.messageId)} />
       {onRetry === undefined ? null : (
         <Button disabled={pending} onPress={() => void onRetry()} tone="secondary">
-          {pending ? "Retrying…" : "Retry exact stored message"}
+          {pending ? "Retrying…" : "Retry message"}
         </Button>
       )}
       {onCancel === undefined ? null : (
@@ -599,31 +589,22 @@ function Measurement({
   readonly failure: string | null;
 }) {
   if (failure !== null) {
-    return <BodyText muted>Native measurement unavailable: {failure}</BodyText>;
+    return <BodyText muted>Could not check message size: {failure}</BodyText>;
   }
   if (outcome === null) {
-    return <BodyText muted>Measuring complete LXMF wire…</BodyText>;
+    return <BodyText muted>Checking message size…</BodyText>;
   }
   switch (outcome.type) {
     case "measured":
-      return (
-        <BodyText muted>
-          {outcome.wireBytes} encoded bytes · {outcome.remainingBytes} bytes remain for direct Link
-          DATA
-        </BodyText>
-      );
+      return <BodyText muted>Ready to send.</BodyText>;
     case "needsResource":
-      return (
-        <BodyText>
-          {outcome.wireBytes} encoded bytes requires a Resource, which is not implemented.
-        </BodyText>
-      );
+      return <BodyText>This message is too large for direct delivery.</BodyText>;
     case "invalidMessage":
-      return <BodyText>Native LXMF measurement rejected this message.</BodyText>;
+      return <BodyText>This message cannot be sent.</BodyText>;
     case "localNodeStopped":
-      return <BodyText>Start the local node before measuring.</BodyText>;
+      return <BodyText>Start this device&apos;s node before sending.</BodyText>;
     case "busy":
-      return <BodyText>Native LXMF command lane is busy; measurement will retry on edit.</BodyText>;
+      return <BodyText>Another messaging action is in progress.</BodyText>;
   }
 }
 
@@ -633,26 +614,21 @@ function SendResult({ outcome }: { readonly outcome: SendDirectTextOutcome | nul
   }
   switch (outcome.type) {
     case "accepted":
-      return (
-        <BodyText>
-          Saved record {outcome.localRecordId.toString()} to the durable queue. Delivery still
-          requires transport proof.
-        </BodyText>
-      );
+      return <BodyText>Message queued.</BodyText>;
     case "needsResource":
-      return <BodyText>{outcome.wireBytes} bytes needs an unsupported Resource carrier.</BodyText>;
+      return <BodyText>This message is too large for direct delivery.</BodyText>;
     case "unsupportedRemoteStampRequirement":
       return (
         <BodyText>
-          This peer requires unsupported LXMF stamp cost {outcome.requiredStampCost.toString()}.
+          This contact requires a messaging feature that prns does not support yet.
         </BodyText>
       );
     case "peerIdentityUnavailable":
-      return <BodyText>No compatible authenticated announce is available for this peer.</BodyText>;
+      return <BodyText>This address is not ready to receive messages.</BodyText>;
     case "developmentUnavailable":
-      return <BodyText>Durable send unavailable: {outcome.detail}</BodyText>;
+      return <BodyText>Sending is not available right now.</BodyText>;
     case "developmentResetRequired":
-      return <BodyText>Reset development data before sending: {outcome.reason}</BodyText>;
+      return <BodyText>Reset app data before sending.</BodyText>;
   }
 }
 
@@ -662,23 +638,23 @@ function mailboxMutationLabel(
 ): string {
   switch (outcome.type) {
     case "accepted":
-      return `Record ${outcome.localRecordId.toString()} was requeued with its exact stored wire.`;
+      return "Message queued to retry.";
     case "cancelled":
-      return `Record ${outcome.localRecordId.toString()} was cancelled.`;
+      return "Message cancelled.";
     case "notFound":
-      return `The record no longer exists, so ${kind} was not applied.`;
+      return `The message no longer exists, so it could not be ${kind === "retry" ? "retried" : "cancelled"}.`;
     case "notFailed":
-      return `Retry was not applied because the record is ${outcome.current.type}.`;
+      return `This message cannot be retried because it is ${outcome.current.type}.`;
     case "alreadyDelivered":
-      return "Cancellation lost the race to transport proof; the record is delivered.";
+      return "This message was delivered before it could be cancelled.";
     case "alreadyCancelled":
-      return "The record was already cancelled.";
+      return "This message was already cancelled.";
     case "notCancellable":
-      return `Cancellation was not applied because the record is ${outcome.current.type}.`;
+      return `This message cannot be cancelled because it is ${outcome.current.type}.`;
     case "developmentUnavailable":
-      return `Durable mailbox ${kind} unavailable: ${outcome.detail}`;
+      return `Could not ${kind} this message. Try again.`;
     case "developmentResetRequired":
-      return `Reset development data before mailbox ${kind}: ${outcome.reason}`;
+      return "Reset app data before trying again.";
   }
 }
 
@@ -694,17 +670,10 @@ function LxmfHealthCard() {
         : "Stopped");
   return (
     <Card>
-      <Subheading>LXMF service</Subheading>
+      <Subheading>Messaging status</Subheading>
       <KeyValue label="State" value={state} />
-      <KeyValue
-        label="Inbound callback overflow"
-        value={health?.inboundOverflowCount.toString() ?? "0"}
-      />
       {health?.state === "degraded" ? (
-        <BodyText>
-          LXMF processing or durable mailbox access is degraded; authoritative records may lag until
-          the condition recovers.
-        </BodyText>
+        <BodyText>Messages may be delayed until the connection recovers.</BodyText>
       ) : null}
     </Card>
   );
@@ -733,14 +702,14 @@ function applyPeerResult(
   fail: (detail: string) => void,
 ): void {
   if (result.type === "operationFailure") {
-    fail(result.detail);
+    fail("Contacts could not be found right now.");
   } else if (result.outcome.type === "listed") {
     publish(result.outcome.peers);
   } else {
     fail(
       result.outcome.type === "busy"
-        ? "The bounded LXMF query lane is busy."
-        : "The local node is stopped.",
+        ? "Another messaging action is in progress."
+        : "Messaging is offline.",
     );
   }
 }
@@ -751,15 +720,15 @@ function applyMessageResult(
   fail: (detail: string) => void,
 ): void {
   if (result.type === "operationFailure") {
-    fail(result.detail);
+    fail("Messages could not be loaded. Try again.");
   } else if (result.outcome.type === "listed") {
     publish(result.outcome.messages);
   } else if (result.outcome.type === "invalidInput") {
-    fail(result.outcome.detail);
+    fail("Messages could not be loaded for this destination.");
   } else if (result.outcome.type === "developmentUnavailable") {
-    fail(result.outcome.detail);
+    fail("Messages are not available right now.");
   } else if (result.outcome.type === "developmentResetRequired") {
-    fail(`Reset development data to reopen the mailbox: ${result.outcome.reason}`);
+    fail("Reset app data to use messaging again.");
   }
 }
 
@@ -775,24 +744,21 @@ function applyContactResult(
 function announceOutcomeLabel(outcome: AnnounceLxmfOutcome): string {
   switch (outcome.type) {
     case "announced":
-      return "The local lxmf.delivery destination was announced.";
+      return "Messaging address shared.";
     case "localNodeStopped":
-      return "The local node stopped before the announcement.";
+      return "This device went offline before its address could be shared.";
     case "busy":
-      return "The bounded native LXMF command lane is busy.";
+      return "Another messaging action is in progress.";
     case "failed":
-      return "The local node rejected the LXMF announcement.";
+      return "The messaging address could not be shared.";
   }
 }
 
 function UnavailableCard({ platform }: { readonly platform: string }) {
   return (
     <Card>
-      <Badge tone="warning">iOS only</Badge>
-      <BodyText>
-        The native LXMF aggregate is not implemented for {platform}. No synthetic messages are
-        shown.
-      </BodyText>
+      <Badge tone="warning">Messaging unavailable</Badge>
+      <BodyText>Messaging is not available on {platform} yet.</BodyText>
     </Card>
   );
 }
@@ -800,14 +766,10 @@ function UnavailableCard({ platform }: { readonly platform: string }) {
 function FailureCard({ detail }: { readonly detail: string }) {
   return (
     <Card>
-      <Badge tone="warning">LXMF unavailable</Badge>
+      <Badge tone="warning">Messaging unavailable</Badge>
       <BodyText>{detail}</BodyText>
     </Card>
   );
-}
-
-function formatThrown(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 const styles = StyleSheet.create({

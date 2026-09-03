@@ -32,40 +32,42 @@ jest.mock("@/state/scaffold-state-context", () => ({
   }),
 }));
 
-describe("development capability copy", () => {
+describe("preview capability copy", () => {
   beforeEach(() => {
     jest.clearAllMocks();
   });
 
-  it("names native contacts and the durable mailbox without claiming placeholders work", () => {
+  it("describes available features without implementation or board jargon", () => {
     const about = render(<AboutScreen />);
     expect(
       about.getByText(
-        /a native saved-contact directory, and a durable direct-LXMF Inbox and Outbox/u,
+        /pair and check nodes over Bluetooth, save contacts, exchange direct messages/u,
       ),
     ).toBeTruthy();
-    expect(about.queryByText(/Mailbox and contact services are not present/u)).toBeNull();
+    expect(JSON.stringify(about.toJSON())).not.toMatch(
+      /E290|signed availability|upstream RemoteControl/iu,
+    );
     about.unmount();
 
     const help = render(<HelpScreen />);
     expect(
-      help.getByText(/native saved contacts, a durable direct-LXMF Inbox and Outbox/u),
-    ).toBeTruthy();
-    expect(
       help.getByText(
-        /dedicated message inspector, contact merging, separate identity and interface views/u,
+        /pair and check nodes over Bluetooth, save contacts, exchange direct messages/u,
       ),
     ).toBeTruthy();
-    expect(help.queryByText(/^Messages, contacts,/u)).toBeNull();
+    expect(
+      help.getByText(/Message details, contact merging, identity and connection management/u),
+    ).toBeTruthy();
+    expect(JSON.stringify(help.toJSON())).not.toMatch(
+      /E290|signed availability|upstream RemoteControl/iu,
+    );
   });
 
-  it("labels the unavailable More destinations as placeholders", () => {
+  it("introduces More without narrating scaffold state", () => {
     const view = render(<MoreScreen />);
 
     expect(
-      view.getByText(
-        "Open implemented Settings and Help here. Identities, Interfaces, Notifications, and Activity remain clearly labelled placeholders when unavailable features are shown.",
-      ),
+      view.getByText("Manage identities, connections, notifications, settings, and help."),
     ).toBeTruthy();
   });
 
@@ -73,12 +75,15 @@ describe("development capability copy", () => {
     const alert = jest.spyOn(Alert, "alert").mockImplementation();
     const view = render(<SettingsScreen />);
 
-    fireEvent.press(view.getByRole("button", { name: "Reset development data" }));
+    fireEvent.press(view.getByRole("button", { name: "Reset app data" }));
 
     expect(alert).toHaveBeenCalledWith(
-      "Reset development data?",
-      "This stops the local node and permanently removes local preview preferences, the primary and Bluetooth identities, RemoteControl identities and authorization state, saved contacts, and all Inbox and Outbox messages from this development install.",
+      "Reset app data?",
+      "This permanently removes your primary identity, paired-node access, saved contacts, messages, and app preferences from this device.",
       expect.any(Array),
+    );
+    expect(JSON.stringify(view.toJSON())).not.toMatch(
+      /E290|signed availability|upstream RemoteControl/iu,
     );
     alert.mockRestore();
   });

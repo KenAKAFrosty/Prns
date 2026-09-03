@@ -56,18 +56,17 @@ describe("screen catalog", () => {
 
   it("distinguishes implemented native state from remaining placeholders", () => {
     expect(screenById("more.index")).toMatchObject({
-      summary: "Open implemented settings and help alongside planned operational areas.",
-      limitation:
-        "Identities, interfaces, notifications, and activity remain labelled placeholders.",
+      summary: "Open identities, connections, notifications, settings, and help.",
+      limitation: "Some areas are still being built.",
     });
     expect(screenById("notifications.settings").limitation).toBe(
-      "Durable iOS message state is visible in Inbox; platform notifications and background delivery are not implemented.",
+      "Notifications and background message delivery are not available yet.",
     );
     expect(screenById("settings.storage").limitation).toBe(
-      "Rust-owned iOS contacts and mailbox state exist, but a dedicated storage-inspection view is not implemented.",
+      "Storage details are not available yet.",
     );
     expect(screenById("help.index").summary).toBe(
-      "Understand the implemented iOS capabilities and remaining placeholder routes.",
+      "See what works in this preview and what is coming later.",
     );
   });
 });

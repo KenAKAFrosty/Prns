@@ -78,7 +78,7 @@ describe("identity onboarding", () => {
     mockCreateImportedIdentity.mockResolvedValue({ type: "created", identityHash });
     const view = render(<OnboardingScreen step="import" />);
 
-    fireEvent.press(view.getByRole("button", { name: "Choose raw credential" }));
+    fireEvent.press(view.getByRole("button", { name: "Choose identity file" }));
     await waitFor(() => expect(view.getByText("33333333333333333333333333333333")).toBeTruthy());
     fireEvent.press(view.getByRole("button", { name: "Confirm and import" }));
     await waitFor(() =>

@@ -20,7 +20,7 @@ import {
   Subheading,
 } from "@/ui/primitives";
 import { radius, space, useAppPalette } from "@/ui/theme";
-import { formatBytes, formatRequestKind } from "./format";
+import { formatRequestKind } from "./format";
 
 type RemoteControlPairingState = DevelopmentNodeSnapshot["pairing"];
 
@@ -70,98 +70,65 @@ export function PairNodeScreen({
 
   return (
     <Screen>
-      <Badge>Upstream RemoteControl pairing</Badge>
+      <Badge>Secure pairing</Badge>
       <ScreenHeading>Pair a node</ScreenHeading>
       <BodyText>
-        Open Pair Remote Control on the E290, then use only the invitation and confirmation values
-        shown by the two devices.
+        Open the pairing screen on the node you want to add. Enter the invitation shown there, then
+        compare the confirmation code on both devices.
       </BodyText>
 
       {runtime.phase === "unavailable" ? (
         <Card>
-          <Subheading>Bluetooth unavailable</Subheading>
-          <Badge tone="warning">No {runtime.availability.platform} native provider</Badge>
-          <BodyText>
-            Pairing cannot run on this platform, and this screen does not manufacture candidates or
-            authorization state.
-          </BodyText>
+          <Subheading>Pairing unavailable</Subheading>
+          <Badge tone="warning">Not supported on {runtime.availability.platform}</Badge>
+          <BodyText>Node pairing is not available on this platform yet.</BodyText>
         </Card>
       ) : null}
 
       {runtime.phase === "starting" ? (
         <Card>
-          <Subheading>Starting the local node</Subheading>
+          <Subheading>Getting ready</Subheading>
           <Badge>Starting</Badge>
-          <BodyText muted>
-            Waiting for persistence restore before pairing commands are admitted.
-          </BodyText>
+          <BodyText muted>Pairing will be available in a moment.</BodyText>
         </Card>
       ) : null}
 
       {runtime.phase === "failed" ? (
         <Card>
-          <Subheading>Local node failed to start</Subheading>
+          <Subheading>This device&apos;s node failed to start</Subheading>
           <Badge tone="warning">Pairing unavailable</Badge>
           <BodyText>
-            {runtime.lifecycleFailure ?? "The native provider did not return a reason."}
+            Pairing cannot start because this device&apos;s node is unavailable. Open its
+            diagnostics for more details.
           </BodyText>
         </Card>
       ) : null}
 
       {runtime.snapshot === null ? null : (
-        <>
-          <Card>
-            <Subheading>Transport readiness</Subheading>
-            <KeyValue label="Bluetooth Auto" value={formatBluetoothHost(runtime.snapshot)} />
-            <KeyValue label="Snapshot revision" value={runtime.snapshot.revision.toString()} />
-          </Card>
-          <PairingStateCard
-            commandFailure={commandFailure}
-            invitationCode={invitationCode}
-            onApprove={(state) => void decide("approve", state)}
-            onInvitationCode={(value) =>
-              setInvitationCode(
-                value
-                  .replaceAll(/[^0-9a-f]/giu, "")
-                  .toUpperCase()
-                  .slice(0, 8),
-              )
-            }
-            onInitiate={(state) => void initiate(state)}
-            onReject={(state) => void decide("reject", state)}
-            palette={palette}
-            pairing={runtime.snapshot.pairing}
-            pending={pending}
-            selectedCandidateId={selectedCandidateId}
-          />
-        </>
+        <PairingStateCard
+          commandFailure={commandFailure}
+          invitationCode={invitationCode}
+          onApprove={(state) => void decide("approve", state)}
+          onInvitationCode={(value) =>
+            setInvitationCode(
+              value
+                .replaceAll(/[^0-9a-f]/giu, "")
+                .toUpperCase()
+                .slice(0, 8),
+            )
+          }
+          onInitiate={(state) => void initiate(state)}
+          onReject={(state) => void decide("reject", state)}
+          palette={palette}
+          pairing={runtime.snapshot.pairing}
+          pending={pending}
+          selectedCandidateId={selectedCandidateId}
+        />
       )}
 
       <NavigationLink href="/nodes">Back to Nodes</NavigationLink>
     </Screen>
   );
-}
-
-function formatBluetoothHost(snapshot: DevelopmentNodeSnapshot): string {
-  if (snapshot.localHost.type !== "running") {
-    switch (snapshot.localHost.type) {
-      case "stopped":
-        return "Host stopped";
-      case "unavailable":
-        return `Host unavailable — ${snapshot.localHost.detail}`;
-      case "developmentResetRequired":
-        return `Development reset required — ${snapshot.localHost.reason}`;
-    }
-  }
-  const bluetooth = snapshot.localHost.host.interfaces.find(
-    (networkInterface) => networkInterface.kind === "AutomaticBluetoothLe",
-  );
-  if (bluetooth === undefined) {
-    return "Not attached";
-  }
-  return bluetooth.failureDetail === undefined
-    ? bluetooth.health
-    : `${bluetooth.health} — ${bluetooth.failureDetail}`;
 }
 
 function PairingStateCard({
@@ -201,19 +168,16 @@ function PairingStateCard({
         <Card>
           <Subheading>Bluetooth unavailable</Subheading>
           <Badge tone="warning">Cannot search</Badge>
-          <BodyText>Bluetooth Auto is not ready, so no pairing candidate is available.</BodyText>
+          <BodyText>Turn on Bluetooth and make sure prns has permission to use it.</BodyText>
           {feedback}
         </Card>
       );
     case "searching":
       return (
         <Card>
-          <Subheading>Searching</Subheading>
-          <Badge>Waiting for signed availability</Badge>
-          <BodyText>
-            Keep the E290 pairing window open. Only a currently observed, unexpired candidate can
-            accept an invitation.
-          </BodyText>
+          <Subheading>Looking for nearby nodes</Subheading>
+          <Badge>Searching</Badge>
+          <BodyText>Open the pairing screen on the node you want to add.</BodyText>
           {feedback}
         </Card>
       );
@@ -222,29 +186,15 @@ function PairingStateCard({
         selectedCandidateId === undefined || selectedCandidateId === pairing.candidate.candidateId;
       return (
         <Card>
-          <Subheading>Candidate observed</Subheading>
+          <Subheading>Node found</Subheading>
           <Badge tone={selectedCandidateIsCurrent ? "neutral" : "warning"}>
-            {selectedCandidateIsCurrent ? "Signed availability" : "Requested candidate is stale"}
+            {selectedCandidateIsCurrent ? "Ready to pair" : "Node no longer available"}
           </Badge>
-          <KeyValue label="Candidate ID" value={pairing.candidate.candidateId} />
-          <KeyValue label="Endpoint" value={formatBytes(pairing.candidate.endpoint)} />
-          <KeyValue label="Observed (ms)" value={pairing.candidate.observedAtMillis.toString()} />
-          <KeyValue label="Expires (ms)" value={pairing.candidate.expiresAtMillis.toString()} />
-          <KeyValue
-            label="Public app data"
-            value={
-              pairing.candidate.publicAppData.length === 0
-                ? "Empty"
-                : formatBytes(pairing.candidate.publicAppData)
-            }
-          />
           {selectedCandidateIsCurrent ? (
             <>
-              <BodyText>
-                Enter the exact eight-character hexadecimal invitation from the E290.
-              </BodyText>
+              <BodyText>Enter the 8-character invitation shown on the node.</BodyText>
               <TextInput
-                accessibilityLabel="E290 invitation code"
+                accessibilityLabel="Invitation code"
                 autoCapitalize="characters"
                 autoCorrect={false}
                 maxLength={8}
@@ -269,10 +219,7 @@ function PairingStateCard({
               </Button>
             </>
           ) : (
-            <BodyText>
-              The candidate named by this route is no longer current. Return to Nodes and reopen
-              pairing before submitting any invitation.
-            </BodyText>
+            <BodyText>This node is no longer available. Go back and try pairing again.</BodyText>
           )}
           {feedback}
         </Card>
@@ -281,10 +228,9 @@ function PairingStateCard({
     case "invitationSubmitted":
       return (
         <Card>
-          <Subheading>Invitation submitted</Subheading>
-          <Badge>Not paired yet</Badge>
-          <KeyValue label="Candidate ID" value={pairing.candidateId} />
-          <BodyText>Waiting for the upstream pairing exchange to produce a confirmation.</BodyText>
+          <Subheading>Invitation sent</Subheading>
+          <Badge>Waiting for confirmation</Badge>
+          <BodyText>Check both devices for a confirmation code.</BodyText>
           {feedback}
         </Card>
       );
@@ -294,23 +240,15 @@ function PairingStateCard({
           <Subheading>Confirmation required</Subheading>
           <Badge tone="warning">Compare both devices</Badge>
           <KeyValue label="Confirmation code" value={pairing.confirmationCode} />
-          <KeyValue label="Attempt ID" value={pairing.attemptId} />
           <KeyValue
-            label="Target fingerprint"
-            value={formatBytes(pairing.targetIdentityFingerprint)}
-          />
-          <KeyValue
-            label="Requested permissions"
+            label="Access requested"
             value={
               pairing.permissions.length === 0
                 ? "None"
                 : pairing.permissions.map(formatRequestKind).join(", ")
             }
           />
-          <BodyText>
-            Approve only if this confirmation code exactly matches the code on the E290. Approval
-            here is not success; the E290 must also approve and both records must persist.
-          </BodyText>
+          <BodyText>Approve only if this code exactly matches the code shown on the node.</BodyText>
           <CardStack>
             <Button disabled={pending !== null} onPress={() => onApprove(pairing)}>
               {pending === "approve" ? "Approving…" : "Codes match — approve"}
@@ -329,24 +267,18 @@ function PairingStateCard({
     case "awaitingTargetApproval":
       return (
         <Card>
-          <Subheading>Awaiting target approval</Subheading>
-          <Badge>Not paired yet</Badge>
-          <KeyValue label="Attempt ID" value={pairing.attemptId} />
-          <BodyText>
-            Your local approval was accepted. Approve the same attempt on the E290.
-          </BodyText>
+          <Subheading>Waiting for the node</Subheading>
+          <Badge>Approve on the node</Badge>
+          <BodyText>Approve pairing on the node to continue.</BodyText>
           {feedback}
         </Card>
       );
     case "persisting":
       return (
         <Card>
-          <Subheading>Persisting on both devices</Subheading>
-          <Badge>Not paired yet</Badge>
-          <KeyValue label="Attempt ID" value={pairing.attemptId} />
-          <BodyText>
-            Both approvals have completed, but durable authorization has not yet been confirmed.
-          </BodyText>
+          <Subheading>Finishing pairing</Subheading>
+          <Badge>Saving</Badge>
+          <BodyText>Saving this connection on both devices.</BodyText>
           {feedback}
         </Card>
       );
@@ -354,28 +286,30 @@ function PairingStateCard({
       return (
         <Card>
           <Subheading>Paired</Subheading>
-          <Badge>Authorization persisted</Badge>
-          <KeyValue label="Attempt ID" value={pairing.attemptId} />
-          <BodyText>
-            The controller-side persisted-target inventory now owns this relationship.
-          </BodyText>
+          <Badge>Ready</Badge>
+          <BodyText>This node is now available in Nodes.</BodyText>
           {feedback}
         </Card>
       );
     case "rejected":
-      return <TerminalPairingCard detail={pairing.detail} label="Rejected" />;
-    case "expired":
-      return <TerminalPairingCard detail={pairing.detail} label="Expired" />;
-    case "cancelled":
-      return (
-        <TerminalPairingCard detail="The active pairing attempt was cancelled." label="Cancelled" />
-      );
-    case "failed":
       return (
         <TerminalPairingCard
-          detail={`${pairing.stage}: ${pairing.detail}`}
-          label="Pairing failed"
+          detail="Pairing was declined on one of the devices."
+          label="Rejected"
         />
+      );
+    case "expired":
+      return (
+        <TerminalPairingCard
+          detail="The invitation expired. Reopen pairing on the node and try again."
+          label="Expired"
+        />
+      );
+    case "cancelled":
+      return <TerminalPairingCard detail="Pairing was cancelled." label="Cancelled" />;
+    case "failed":
+      return (
+        <TerminalPairingCard detail={pairingFailureMessage(pairing.stage)} label="Pairing failed" />
       );
   }
 }
@@ -400,15 +334,41 @@ function pairingCommandFailure(
   result: RuntimeCommandResult<RemoteControlPairingCommandOutcome>,
 ): string | null {
   if (result.type === "operationFailure") {
-    return result.detail;
+    return "Pairing could not continue. Try again.";
   }
   switch (result.outcome.type) {
     case "accepted":
       return null;
     case "busy":
-      return "Another native pairing or target operation is already active.";
+      return "Another node operation is in progress. Try again shortly.";
     case "failed":
-      return `${result.outcome.stage}: ${result.outcome.detail}`;
+      return pairingFailureMessage(result.outcome.stage);
+  }
+}
+
+type PairingFailureStage = Extract<
+  RemoteControlPairingCommandOutcome,
+  { readonly type: "failed" }
+>["stage"];
+
+function pairingFailureMessage(stage: PairingFailureStage): string {
+  switch (stage) {
+    case "input":
+      return "Check the invitation and try again.";
+    case "candidate":
+    case "expired":
+      return "The node is no longer available. Reopen pairing on the node and try again.";
+    case "route":
+    case "link":
+    case "identification":
+    case "request":
+      return "The node could not be reached. Keep its pairing screen open and try again.";
+    case "confirmation":
+      return "Confirmation could not be completed. Check both devices and try again.";
+    case "persistence":
+      return "Pairing could not be saved. Try again.";
+    case "node":
+      return "This device went offline during pairing. Wait a moment and try again.";
   }
 }
 
