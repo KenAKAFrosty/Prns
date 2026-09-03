@@ -74,6 +74,44 @@ const LXMF_SEND_TASK_CAPACITY: usize = 8;
 type ReadyResult = Result<DevelopmentNodeSnapshot, (DevelopmentNodeFailureStage, String)>;
 type WorkerResult = Result<(), (DevelopmentNodeStopStage, String)>;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum AppleBluetoothPreparation {
+    ForegroundOnly,
+    Restoration {
+        central: String,
+        peripheral: String,
+    },
+}
+
+impl AppleBluetoothPreparation {
+    fn validate(&self) -> Result<(), String> {
+        let Self::Restoration {
+            central,
+            peripheral,
+        } = self
+        else {
+            return Ok(());
+        };
+        if central.is_empty() {
+            return Err(
+                "central CoreBluetooth restoration identifier must not be empty".to_owned(),
+            );
+        }
+        if peripheral.is_empty() {
+            return Err(
+                "peripheral CoreBluetooth restoration identifier must not be empty".to_owned(),
+            );
+        }
+        if central == peripheral {
+            return Err(
+                "central and peripheral CoreBluetooth restoration identifiers must differ"
+                    .to_owned(),
+            );
+        }
+        Ok(())
+    }
+}
+
 struct Supervisor {
     snapshots: Arc<SnapshotStore>,
     operation_admitted: Arc<AtomicBool>,
@@ -400,13 +438,36 @@ pub fn start_configured(
     storage_root: &Path,
     input: DevelopmentNodeStartInput,
 ) -> DevelopmentNodeStartOutcome {
-    start_configured_with_supervisor(supervisor(), storage_root, input)
+    start_configured_with_supervisor(
+        supervisor(),
+        storage_root,
+        input,
+        AppleBluetoothPreparation::ForegroundOnly,
+    )
+}
+
+pub(crate) fn start_configured_with_apple_restoration(
+    storage_root: &Path,
+    input: DevelopmentNodeStartInput,
+    central_identifier: String,
+    peripheral_identifier: String,
+) -> DevelopmentNodeStartOutcome {
+    start_configured_with_supervisor(
+        supervisor(),
+        storage_root,
+        input,
+        AppleBluetoothPreparation::Restoration {
+            central: central_identifier,
+            peripheral: peripheral_identifier,
+        },
+    )
 }
 
 fn start_configured_with_supervisor(
     supervisor: &Supervisor,
     storage_root: &Path,
     input: DevelopmentNodeStartInput,
+    bluetooth_preparation: AppleBluetoothPreparation,
 ) -> DevelopmentNodeStartOutcome {
     let mut state = supervisor.lock_state();
     reap_completed_worker_locked(supervisor, &mut state);
@@ -423,6 +484,17 @@ fn start_configured_with_supervisor(
                 stage: DevelopmentNodeFailureStage::Runtime,
                 detail: "A native node generation still owns the process lifecycle.".to_owned(),
             },
+        };
+    }
+
+    if let Err(detail) = bluetooth_preparation.validate() {
+        supervisor.snapshots.fail(DevelopmentNodeFailure {
+            stage: DevelopmentNodeFailureStage::Contract,
+            detail: detail.clone(),
+        });
+        return DevelopmentNodeStartOutcome::Failed {
+            stage: DevelopmentNodeFailureStage::Contract,
+            detail,
         };
     }
 
@@ -551,6 +623,7 @@ fn start_configured_with_supervisor(
                 primary_identity_secret,
                 mailbox_submitter,
                 development_tcp_target,
+                bluetooth_preparation,
                 command_rx,
                 worker_shutdown,
                 shutdown_rx,
@@ -1826,6 +1899,7 @@ fn run_worker(
     primary_identity_secret: IdentitySecretKey,
     mailbox_submitter: Arc<dyn prns_lxmf::mailbox::MailboxSubmitter>,
     development_tcp_target: Option<String>,
+    bluetooth_preparation: AppleBluetoothPreparation,
     commands: mpsc::Receiver<Command>,
     shutdown: ShutdownSignal,
     shutdown_rx: watch::Receiver<bool>,
@@ -1846,6 +1920,7 @@ fn run_worker(
         primary_identity_secret,
         mailbox_submitter,
         development_tcp_target,
+        bluetooth_preparation,
         commands,
         shutdown,
         shutdown_rx,
@@ -1861,6 +1936,7 @@ async fn run_generation(
     primary_identity_secret: IdentitySecretKey,
     mailbox_submitter: Arc<dyn prns_lxmf::mailbox::MailboxSubmitter>,
     development_tcp_target: Option<String>,
+    bluetooth_preparation: AppleBluetoothPreparation,
     commands: mpsc::Receiver<Command>,
     shutdown: ShutdownSignal,
     shutdown_rx: watch::Receiver<bool>,
@@ -1907,7 +1983,47 @@ async fn run_generation(
         )
     })?;
 
-    #[cfg(all(feature = "apple", any(target_os = "ios", target_os = "macos")))]
+    #[cfg(all(feature = "apple", target_os = "ios"))]
+    let prepared_bluetooth = match bluetooth_preparation {
+        AppleBluetoothPreparation::ForegroundOnly => {
+            match personal_rns::bluetooth_auto::AutoBle::prepare_foreground(bluetooth_identity).await
+            {
+                Ok(prepared) => prepared,
+                Err(_) => personal_rns::bluetooth_auto::AutoBle::unavailable_foreground(
+                    bluetooth_identity,
+                ),
+            }
+        }
+        AppleBluetoothPreparation::Restoration {
+            central,
+            peripheral,
+        } => {
+            let restoration = personal_rns::bluetooth_auto::CoreBluetoothRestorationIdentifiers::new(
+                central, peripheral,
+            )
+            .map_err(|error| {
+                boot_failure(
+                    &ready,
+                    &snapshots,
+                    DevelopmentNodeFailureStage::Contract,
+                    error.to_string(),
+                )
+            })?;
+            match personal_rns::bluetooth_auto::AutoBle::prepare_with_restoration(
+                bluetooth_identity,
+                restoration.clone(),
+            )
+            .await
+            {
+                Ok(prepared) => prepared,
+                Err(_) => personal_rns::bluetooth_auto::AutoBle::unavailable_with_restoration(
+                    bluetooth_identity,
+                    restoration,
+                ),
+            }
+        }
+    };
+    #[cfg(all(feature = "apple", target_os = "macos"))]
     let prepared_bluetooth =
         match personal_rns::bluetooth_auto::AutoBle::prepare_foreground(bluetooth_identity).await {
             Ok(prepared) => prepared,
@@ -1915,8 +2031,10 @@ async fn run_generation(
                 personal_rns::bluetooth_auto::AutoBle::unavailable_foreground(bluetooth_identity)
             }
         };
+    #[cfg(all(feature = "apple", target_os = "macos"))]
+    let _ = bluetooth_preparation;
     #[cfg(not(all(feature = "apple", any(target_os = "ios", target_os = "macos"))))]
-    let _ = bluetooth_identity;
+    let _ = (bluetooth_identity, bluetooth_preparation);
 
     let persistence = NodePersistence::custom_dir(&paths.network).map_err(|error| {
         boot_failure(
@@ -3808,6 +3926,79 @@ mod tests {
     }
 
     #[test]
+    fn apple_restoration_identifiers_are_nonempty_and_role_distinct() {
+        assert!(AppleBluetoothPreparation::Restoration {
+                central: "rs.reticulum.prns.dev.bluetooth-auto.central.v1".to_owned(),
+                peripheral: "rs.reticulum.prns.dev.bluetooth-auto.peripheral.v1".to_owned(),
+            }
+        .validate()
+        .is_ok());
+        for invalid in [
+            AppleBluetoothPreparation::Restoration {
+                central: String::new(),
+                peripheral: "peripheral".to_owned(),
+            },
+            AppleBluetoothPreparation::Restoration {
+                central: "central".to_owned(),
+                peripheral: String::new(),
+            },
+            AppleBluetoothPreparation::Restoration {
+                central: "shared".to_owned(),
+                peripheral: "shared".to_owned(),
+            },
+        ] {
+            assert!(invalid.validate().is_err());
+        }
+    }
+
+    #[test]
+    fn invalid_restoration_configuration_cannot_overwrite_a_running_generation() {
+        let supervisor = Supervisor {
+            snapshots: Arc::new(SnapshotStore::new()),
+            operation_admitted: Arc::new(AtomicBool::new(false)),
+            state: Mutex::new(SupervisorState::default()),
+        };
+        supervisor
+            .snapshots
+            .set_runtime(DevelopmentNodeRuntime::Running);
+        let (commands, _commands_rx) = mpsc::channel(1);
+        let (shutdown_tx, _shutdown_rx) = watch::channel(false);
+        let (_done_tx, done) = std_mpsc::channel();
+        supervisor.lock_state().worker = Some(Worker {
+            commands,
+            shutdown: ShutdownSignal {
+                sender: shutdown_tx,
+                requested: Arc::new(AtomicBool::new(false)),
+            },
+            done,
+            join: None,
+            storage_root: PathBuf::from("/tmp/prns/running"),
+        });
+
+        let outcome = start_configured_with_supervisor(
+            &supervisor,
+            Path::new("/tmp/prns/running"),
+            DevelopmentNodeStartInput {
+                development_tcp_target: None,
+            },
+            AppleBluetoothPreparation::Restoration {
+                central: "shared".to_owned(),
+                peripheral: "shared".to_owned(),
+            },
+        );
+
+        assert!(matches!(
+            outcome,
+            DevelopmentNodeStartOutcome::AlreadyRunning { .. }
+        ));
+        assert_eq!(
+            supervisor.snapshots.read().runtime,
+            DevelopmentNodeRuntime::Running
+        );
+        supervisor.lock_state().worker = None;
+    }
+
+    #[test]
     fn tracked_lxmf_send_tasks_are_bounded() {
         assert!(lxmf_send_has_capacity(0));
         assert!(lxmf_send_has_capacity(LXMF_SEND_TASK_CAPACITY - 1));
@@ -4126,6 +4317,7 @@ mod tests {
                 DevelopmentNodeStartInput {
                     development_tcp_target: None,
                 },
+                AppleBluetoothPreparation::ForegroundOnly,
             ),
             DevelopmentNodeStartOutcome::Started { .. }
         ));

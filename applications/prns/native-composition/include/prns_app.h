@@ -14,6 +14,9 @@ extern "C" {
 /** Maximum byte length accepted for a generated contract JSON input. */
 #define PRNS_APP_MAX_INPUT_BYTES 65536U
 
+/** Maximum UTF-8 byte length accepted for a CoreBluetooth restoration identifier. */
+#define PRNS_APP_MAX_RESTORATION_IDENTIFIER_BYTES 1024U
+
 /**
  * Owned, length-delimited UTF-8 JSON returned by the application ABI.
  *
@@ -61,6 +64,17 @@ PrnsAppBytes prns_app_create_imported_identity(
  */
 PrnsAppBytes prns_app_start(const uint8_t *path_ptr, size_t path_len,
                             const uint8_t *input_ptr, size_t input_len);
+
+/**
+ * Start the development node with stable, application-owned CoreBluetooth
+ * restoration identifiers. All buffers are length-delimited UTF-8; the
+ * central and peripheral identifiers must be nonempty and distinct.
+ */
+PrnsAppBytes prns_app_start_with_apple_restoration(
+    const uint8_t *path_ptr, size_t path_len, const uint8_t *input_ptr,
+    size_t input_len, const uint8_t *central_identifier_ptr,
+    size_t central_identifier_len, const uint8_t *peripheral_identifier_ptr,
+    size_t peripheral_identifier_len);
 
 /** Return the current authoritative development-node snapshot. */
 PrnsAppBytes prns_app_snapshot(void);
