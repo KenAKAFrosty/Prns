@@ -95,7 +95,7 @@ def pinned_python() -> pathlib.Path:
     executable = venv / "bin" / "python"
     if not executable.is_file():
         raise RuntimeError(
-            f"pinned LXMF Python is missing at {executable}; run applications/services/lxmf/scripts/verify.sh first"
+            f"pinned LXMF Python is missing at {executable}; run ./tools/prns build lxmf verify first"
         )
     return executable
 

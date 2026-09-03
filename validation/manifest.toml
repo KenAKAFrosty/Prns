@@ -916,8 +916,11 @@ tiers = ["pr", "release", "scheduled"]
 platform = "linux"
 toolchain = "stable"
 timeout_seconds = 1800
-command = ["bash", "applications/services/lxmf/scripts/verify.sh"]
+command = ["./tools/prns", "build", "lxmf", "verify"]
 inputs = [
+  "tools/prns",
+  "tools/tasks.toml",
+  "tools/build/verify-lxmf-application.sh",
   "applications/Cargo.toml",
   "applications/Cargo.lock",
   "applications/services/lxmf-wire/Cargo.toml",
@@ -930,7 +933,6 @@ inputs = [
   "applications/services/lxmf/tests",
   "applications/services/lxmf/examples",
   "applications/services/lxmf/interop",
-  "applications/services/lxmf/scripts/verify.sh",
   "personal-rns/Cargo.toml",
   "personal-rns/src",
   "prns-core/Cargo.toml",
