@@ -212,14 +212,18 @@ impl TargetHarness {
             .await
             .expect("target announces its stable endpoint");
         let endpoint = self.endpoint;
-        wait_for_snapshot(|snapshot| {
-            let LocalHostState::Running { host } = &snapshot.local_host else {
-                return false;
-            };
-            host.destination_identities
-                .iter()
-                .any(|identity| identity.destination.as_bytes() == endpoint.as_bytes())
-        })
+        wait_for_snapshot(
+            "target announcement is visible to the application",
+            EXCHANGE_TIMEOUT,
+            |snapshot| {
+                let LocalHostState::Running { host } = &snapshot.local_host else {
+                    return false;
+                };
+                host.destination_identities
+                    .iter()
+                    .any(|identity| identity.destination.as_bytes() == endpoint.as_bytes())
+            },
+        )
         .await;
     }
 
@@ -351,10 +355,11 @@ async fn rejection_expiry_and_stale_decisions() {
         DurationMillis(1_000),
     )
     .await;
-    let expired_snapshot = wait_for_snapshot(|snapshot| {
-        matches!(snapshot.pairing, RemoteControlPairingState::Expired { .. })
-    })
-    .await;
+    let expired_snapshot =
+        wait_for_snapshot("pairing attempt expires", EXCHANGE_TIMEOUT, |snapshot| {
+            matches!(snapshot.pairing, RemoteControlPairingState::Expired { .. })
+        })
+        .await;
     assert!(expired_snapshot.active_operation.is_none());
     assert_links_retired(&target).await;
     assert!(matches!(
@@ -468,15 +473,19 @@ async fn persistence_failure() {
         RemoteControlPairingCommandOutcome::Accepted { snapshot }
             if matches!(snapshot.pairing, RemoteControlPairingState::Persisting { .. })
     ));
-    let failed = wait_for_snapshot(|snapshot| {
-        matches!(
-            snapshot.pairing,
-            RemoteControlPairingState::Failed {
-                stage: RemoteControlPairingFailureStage::Persistence,
-                ..
-            }
-        )
-    })
+    let failed = wait_for_snapshot(
+        "persistence failure is projected",
+        EXCHANGE_TIMEOUT,
+        |snapshot| {
+            matches!(
+                snapshot.pairing,
+                RemoteControlPairingState::Failed {
+                    stage: RemoteControlPairingFailureStage::Persistence,
+                    ..
+                }
+            )
+        },
+    )
     .await;
     assert_eq!(failed.runtime, DevelopmentNodeRuntime::Running);
     assert!(failed.active_operation.is_none());
@@ -495,8 +504,12 @@ async fn begin_pairing(
     let opened = target
         .open_pairing(permissions, pairing_window, attempt_timeout)
         .await;
-    let candidate_snapshot =
-        wait_for_snapshot(|snapshot| !snapshot.pairing_candidates.is_empty()).await;
+    let candidate_snapshot = wait_for_snapshot(
+        "pairing availability becomes a candidate",
+        EXCHANGE_TIMEOUT,
+        |snapshot| !snapshot.pairing_candidates.is_empty(),
+    )
+    .await;
     let candidate = candidate_snapshot
         .pairing_candidates
         .into_iter()
@@ -511,12 +524,16 @@ async fn begin_pairing(
         .await,
         RemoteControlPairingCommandOutcome::Accepted { .. }
     ));
-    let confirmation_snapshot = wait_for_snapshot(|snapshot| {
-        matches!(
-            snapshot.pairing,
-            RemoteControlPairingState::ConfirmationRequired { .. }
-        )
-    })
+    let confirmation_snapshot = wait_for_snapshot(
+        "pairing confirmation is projected",
+        EXCHANGE_TIMEOUT,
+        |snapshot| {
+            matches!(
+                snapshot.pairing,
+                RemoteControlPairingState::ConfirmationRequired { .. }
+            )
+        },
+    )
     .await;
     let RemoteControlPairingState::ConfirmationRequired { attempt_id, .. } =
         confirmation_snapshot.pairing
@@ -580,9 +597,11 @@ async fn approve_pairing(target: &TargetHarness, attempt: PairingAttempt) {
             RemoteControlPairingState::Persisting { .. } | RemoteControlPairingState::Paired { .. }
         ));
     }
-    wait_for_snapshot(|snapshot| {
-        matches!(snapshot.pairing, RemoteControlPairingState::Paired { .. })
-    })
+    wait_for_snapshot(
+        "pairing persistence completes",
+        EXCHANGE_TIMEOUT,
+        |snapshot| matches!(snapshot.pairing, RemoteControlPairingState::Paired { .. }),
+    )
     .await;
 }
 
@@ -648,19 +667,33 @@ async fn app_describe(target_identity_fingerprint: Vec<u8>) -> RemoteControlDesc
 }
 
 async fn wait_for_snapshot(
+    expectation: &str,
+    timeout: Duration,
     predicate: impl Fn(&DevelopmentNodeSnapshot) -> bool,
 ) -> DevelopmentNodeSnapshot {
-    tokio::time::timeout(EXCHANGE_TIMEOUT, async {
-        loop {
-            let snapshot = app_snapshot().await;
-            if predicate(&snapshot) {
-                return snapshot;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+    let deadline = tokio::time::Instant::now() + timeout;
+    let mut last_snapshot = None;
+    loop {
+        let snapshot = match tokio::time::timeout_at(deadline, app_snapshot()).await {
+            Ok(snapshot) => snapshot,
+            Err(_) => panic!(
+                "application projection did not reach `{expectation}` within {timeout:?}; last snapshot: {last_snapshot:#?}"
+            ),
+        };
+        if predicate(&snapshot) {
+            return snapshot;
         }
-    })
-    .await
-    .expect("application projection reaches the expected state")
+        last_snapshot = Some(snapshot);
+        tokio::time::sleep_until(
+            deadline.min(tokio::time::Instant::now() + Duration::from_millis(25)),
+        )
+        .await;
+        if tokio::time::Instant::now() >= deadline {
+            panic!(
+                "application projection did not reach `{expectation}` within {timeout:?}; last snapshot: {last_snapshot:#?}"
+            );
+        }
+    }
 }
 
 async fn assert_links_retired(target: &TargetHarness) {
