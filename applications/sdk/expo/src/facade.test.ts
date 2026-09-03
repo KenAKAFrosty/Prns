@@ -44,11 +44,13 @@ function fakeNative(overrides: Partial<PrnsAppNativeModule> = {}): PrnsAppNative
     listContacts: jest.fn(async () => JSON.stringify({ type: "listed", contacts: [] })),
     listLxmfPeers: jest.fn(async () => JSON.stringify({ type: "listed", peers: [] })),
     listLxmfMessages: jest.fn(async () => JSON.stringify({ type: "listed", messages: [] })),
+    retryLxmfMessage: jest.fn(async () => JSON.stringify({ type: "notFound" })),
+    cancelLxmfMessage: jest.fn(async () => JSON.stringify({ type: "notFound" })),
     announceLxmf: jest.fn(async () => JSON.stringify({ type: "announced" })),
     measureLxmfText: jest.fn(async () =>
       JSON.stringify({ type: "measured", wireBytes: 113, remainingBytes: 318 }),
     ),
-    sendDirectText: jest.fn(async () => JSON.stringify({ type: "started", localRecordId: "1" })),
+    sendDirectText: jest.fn(async () => JSON.stringify({ type: "accepted", localRecordId: "1" })),
     stop: jest.fn(async () => JSON.stringify({ type: "alreadyStopped" })),
     reset: jest.fn(async () => JSON.stringify({ type: "alreadyStopped" })),
     ...overrides,
@@ -293,18 +295,43 @@ describe("development runtime facade", () => {
             content: { type: "invalidUtf8", bytes: [0xff] },
             direction: "inbound",
             verification: "sourceUnknown",
-            deliveryState: "received",
-            failure: null,
+            deliveryState: {
+              type: "failed",
+              failedAttempts: "9007199254740992",
+              lastFailure: "deliveryTimedOut",
+            },
           },
         ],
       }),
     );
     const sendDirectText = jest.fn(async () =>
-      JSON.stringify({ type: "started", localRecordId: "9" }),
+      JSON.stringify({ type: "accepted", localRecordId: "9" }),
     );
-    const runtime = createDevelopmentRuntime(fakeNative({ listLxmfMessages, sendDirectText }));
+    const retryLxmfMessage = jest.fn(async () =>
+      JSON.stringify({ type: "accepted", localRecordId: "10" }),
+    );
+    const cancelLxmfMessage = jest.fn(async () =>
+      JSON.stringify({
+        type: "notCancellable",
+        current: {
+          type: "delivered",
+          deliveredAt: "18446744073709551615",
+          rtt: "23",
+        },
+      }),
+    );
+    const runtime = createDevelopmentRuntime(
+      fakeNative({
+        listLxmfMessages,
+        retryLxmfMessage,
+        cancelLxmfMessage,
+        sendDirectText,
+      }),
+    );
 
     const listed = await runtime.listLxmfMessages({ peer, before: 9n, limit: 25 });
+    const retried = await runtime.retryLxmfMessage(10n);
+    const cancelled = await runtime.cancelLxmfMessage(11n);
     const sent = await runtime.sendDirectText({
       destination: peer,
       title: "Hello",
@@ -314,6 +341,8 @@ describe("development runtime facade", () => {
     expect(listLxmfMessages).toHaveBeenCalledWith(
       JSON.stringify({ peer: Array.from(peer), before: "9", limit: 25 }),
     );
+    expect(retryLxmfMessage).toHaveBeenCalledWith(JSON.stringify({ localRecordId: "10" }));
+    expect(cancelLxmfMessage).toHaveBeenCalledWith(JSON.stringify({ localRecordId: "11" }));
     expect(sendDirectText).toHaveBeenCalledWith(
       JSON.stringify({
         destination: Array.from(peer),
@@ -321,7 +350,16 @@ describe("development runtime facade", () => {
         content: "World",
       }),
     );
-    expect(sent).toEqual({ type: "started", localRecordId: 9n });
+    expect(sent).toEqual({ type: "accepted", localRecordId: 9n });
+    expect(retried).toEqual({ type: "accepted", localRecordId: 10n });
+    expect(cancelled).toEqual({
+      type: "notCancellable",
+      current: {
+        type: "delivered",
+        deliveredAt: 18_446_744_073_709_551_615n,
+        rtt: 23n,
+      },
+    });
     expect(listed.type).toBe("listed");
     if (listed.type !== "listed") {
       throw new Error("LXMF fixture was not listed");
@@ -332,6 +370,11 @@ describe("development runtime facade", () => {
     expect(listed.messages[0]?.content).toEqual({
       type: "invalidUtf8",
       bytes: Uint8Array.of(0xff),
+    });
+    expect(listed.messages[0]?.deliveryState).toEqual({
+      type: "failed",
+      failedAttempts: 9_007_199_254_740_992n,
+      lastFailure: "deliveryTimedOut",
     });
   });
 });

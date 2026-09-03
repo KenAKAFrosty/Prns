@@ -120,7 +120,15 @@ public final class PrnsAppModule: Module {
     }.runOnQueue(Self.nativeQueue)
 
     AsyncFunction("listLxmfMessages") { (inputJSON: String) throws -> String in
-      try Self.invokeJSON(inputJSON, operation: prns_app_list_lxmf_messages)
+      try Self.invokePathJSON(inputJSON, operation: prns_app_list_lxmf_messages)
+    }.runOnQueue(Self.nativeQueue)
+
+    AsyncFunction("retryLxmfMessage") { (inputJSON: String) throws -> String in
+      try Self.invokePathJSON(inputJSON, operation: prns_app_retry_lxmf_message)
+    }.runOnQueue(Self.nativeQueue)
+
+    AsyncFunction("cancelLxmfMessage") { (inputJSON: String) throws -> String in
+      try Self.invokePathJSON(inputJSON, operation: prns_app_cancel_lxmf_message)
     }.runOnQueue(Self.nativeQueue)
 
     AsyncFunction("announceLxmf") { () throws -> String in

@@ -155,6 +155,38 @@ describe("generated native payload hydration", () => {
     expect(hydrated.attempted).toBeInstanceOf(Uint8Array);
   });
 
+  test("hydrates every durable LXMF delivery timestamp and attempt count as bigint", () => {
+    const hydrated = hydrateGenerated({
+      queued: { type: "queued", failedAttempts: "18446744073709551615" },
+      sending: { type: "sending", failedAttempts: "9007199254740992" },
+      delivered: {
+        type: "delivered",
+        deliveredAt: "1700000000123",
+        rtt: "23",
+      },
+      deliveredWithoutRtt: {
+        type: "delivered",
+        deliveredAt: "1700000000124",
+        rtt: null,
+      },
+      cancelled: { type: "cancelled", cancelledAt: "1700000000456" },
+    });
+
+    expect(hydrated.queued.failedAttempts).toBe(18_446_744_073_709_551_615n);
+    expect(hydrated.sending.failedAttempts).toBe(9_007_199_254_740_992n);
+    expect(hydrated.delivered.deliveredAt).toBe(1_700_000_000_123n);
+    expect(hydrated.delivered.rtt).toBe(23n);
+    expect(hydrated.deliveredWithoutRtt.rtt).toBeNull();
+    expect(hydrated.cancelled.cancelledAt).toBe(1_700_000_000_456n);
+  });
+
+  test.each(["failedAttempts", "deliveredAt", "rtt", "cancelledAt"])(
+    "rejects a non-canonical durable LXMF u64 in %s",
+    (key) => {
+      expect(() => hydrateGenerated({ [key]: "01" })).toThrow(NativePayloadError);
+    },
+  );
+
   test("keeps Host route deadlines as safe numbers while pairing deadlines are bigint", () => {
     expect(hydrateGenerated({ expiresAtMillis: "13" }).expiresAtMillis).toBe(13n);
     expect(hydrateGenerated({ routes: [{ expiresAtMillis: 13 }] }).routes[0]?.expiresAtMillis).toBe(

@@ -14,7 +14,7 @@ assert.match(
 );
 assert.equal(
   swift.match(/\.runOnQueue\(Self\.nativeQueue\)/g)?.length,
-  26,
+  28,
   "every Expo bridge function must use the native operation queue",
 );
 assert.match(
@@ -47,6 +47,8 @@ for (const abiName of [
   "prns_app_list_contacts",
   "prns_app_list_lxmf_peers",
   "prns_app_list_lxmf_messages",
+  "prns_app_retry_lxmf_message",
+  "prns_app_cancel_lxmf_message",
   "prns_app_announce_lxmf",
   "prns_app_measure_lxmf_text",
   "prns_app_send_direct_text",
@@ -55,6 +57,20 @@ for (const abiName of [
   "prns_app_bytes_free",
 ]) {
   assert.match(swift, new RegExp(`\\b${abiName}\\b`), `Swift bridge must call ${abiName}`);
+}
+
+for (const [method, abiName] of [
+  ["listLxmfMessages", "prns_app_list_lxmf_messages"],
+  ["retryLxmfMessage", "prns_app_retry_lxmf_message"],
+  ["cancelLxmfMessage", "prns_app_cancel_lxmf_message"],
+]) {
+  assert.match(
+    swift,
+    new RegExp(
+      `AsyncFunction\\("${method}"\\)[\\s\\S]*?invokePathJSON\\(inputJSON, operation: ${abiName}\\)`,
+    ),
+    `${method} must pass the application path with its JSON input`,
+  );
 }
 
 assert.match(

@@ -58,7 +58,9 @@ pub type MailboxFuture<'a> =
 ///
 /// Implementations must not open another database. A native aggregate typically
 /// implements this by placing the request on the same bounded lane used by its
-/// contact operations.
+/// contact operations. Once the returned future admits a mutation to that owner,
+/// dropping the future is not cancellation: the caller or its lifecycle owner
+/// must retain it through the definitive commit or failure reply.
 pub trait MailboxSubmitter: Send + Sync + 'static {
     fn submit(&self, request: MailboxRequest) -> MailboxFuture<'_>;
 }
@@ -1252,16 +1254,40 @@ struct DurableShared {
     clock: Arc<dyn MailboxClock>,
     peers: Mutex<BTreeMap<[u8; 16], LxmfPeer>>,
     health: Arc<LaneHealth>,
-    mailbox_health: StdMutex<MailboxProjectionHealth>,
+    mailbox_health: StdMutex<MailboxHealthTracker>,
     refresh: watch::Sender<u64>,
+}
+
+#[derive(Default)]
+struct MailboxHealthTracker {
+    read_failure: Option<MailboxProjectionHealth>,
+    write_failure: Option<MailboxProjectionHealth>,
+}
+
+impl MailboxHealthTracker {
+    fn projection(&self) -> MailboxProjectionHealth {
+        for failure in [&self.write_failure, &self.read_failure]
+            .into_iter()
+            .flatten()
+        {
+            if matches!(failure, MailboxProjectionHealth::ResetRequired(_)) {
+                return failure.clone();
+            }
+        }
+        self.write_failure
+            .as_ref()
+            .or(self.read_failure.as_ref())
+            .cloned()
+            .unwrap_or(MailboxProjectionHealth::Ready)
+    }
 }
 
 struct DurableLifecycle {
     shutdown: watch::Sender<bool>,
     activated: AtomicBool,
-    stopped: AtomicBool,
+    stopped: Arc<AtomicBool>,
     stop_complete: AtomicBool,
-    transition: Mutex<()>,
+    transition: Arc<Mutex<()>>,
     worker: StdMutex<Option<JoinHandle<()>>>,
     attempts: StdMutex<BTreeMap<AttemptKey, JoinHandle<()>>>,
     pending_attempts: StdMutex<Vec<DurableLxmfMessage>>,
@@ -1408,20 +1434,21 @@ impl DurableDirectLxmfService {
             .submit(MailboxRequest::InsertOutbound(message))
             .await
         {
-            Ok(reply) => {
-                self.shared.set_mailbox_ready();
-                reply
-            }
+            Ok(reply) => reply,
             Err(failure) => {
-                self.shared.set_mailbox_failure(&failure);
+                self.shared.set_mailbox_write_failure(&failure);
                 return send_failure_outcome(failure);
             }
         };
         let MailboxReply::OutboundInserted { message, .. } = reply else {
+            self.shared.set_unexpected_mailbox_write_failure(
+                "the mailbox owner returned an unexpected insert reply",
+            );
             return DurableSendDirectTextOutcome::DevelopmentUnavailable {
                 detail: "the mailbox owner returned an unexpected insert reply".to_owned(),
             };
         };
+        self.shared.set_mailbox_write_ready();
         self.shared.notify();
         let local_record_id = message.local_record_id;
         schedule_attempt(&self.shared, &self.lifecycle, message);
@@ -1440,30 +1467,37 @@ impl DurableDirectLxmfService {
             .submit(MailboxRequest::Retry { local_record_id })
             .await
         {
-            Ok(reply) => {
-                self.shared.set_mailbox_ready();
-                reply
-            }
+            Ok(reply) => reply,
             Err(failure) => {
-                self.shared.set_mailbox_failure(&failure);
+                self.shared.set_mailbox_write_failure(&failure);
                 return retry_failure_outcome(failure);
             }
         };
         let MailboxReply::Retry(transition) = reply else {
+            self.shared.set_unexpected_mailbox_write_failure(
+                "the mailbox owner returned an unexpected retry reply",
+            );
             return RetryLxmfMessageOutcome::DevelopmentUnavailable {
                 detail: "the mailbox owner returned an unexpected retry reply".to_owned(),
             };
         };
         match transition {
             RetryTransition::Accepted { message, .. } => {
+                self.shared.set_mailbox_write_ready();
                 self.shared.notify();
                 schedule_attempt(&self.shared, &self.lifecycle, message);
                 RetryLxmfMessageOutcome::Accepted { local_record_id }
             }
-            RetryTransition::NotFound => RetryLxmfMessageOutcome::NotFound,
-            RetryTransition::NotFailed { current } => RetryLxmfMessageOutcome::NotFailed {
-                current: self.project_current_state(local_record_id, current),
-            },
+            RetryTransition::NotFound => {
+                self.shared.set_mailbox_read_ready();
+                RetryLxmfMessageOutcome::NotFound
+            }
+            RetryTransition::NotFailed { current } => {
+                self.shared.set_mailbox_read_ready();
+                RetryLxmfMessageOutcome::NotFailed {
+                    current: self.project_current_state(local_record_id, current),
+                }
+            }
         }
     }
 
@@ -1486,22 +1520,23 @@ impl DurableDirectLxmfService {
             })
             .await
         {
-            Ok(reply) => {
-                self.shared.set_mailbox_ready();
-                reply
-            }
+            Ok(reply) => reply,
             Err(failure) => {
-                self.shared.set_mailbox_failure(&failure);
+                self.shared.set_mailbox_write_failure(&failure);
                 return cancel_failure_outcome(failure);
             }
         };
         let MailboxReply::Cancel(transition) = reply else {
+            self.shared.set_unexpected_mailbox_write_failure(
+                "the mailbox owner returned an unexpected cancel reply",
+            );
             return CancelLxmfMessageOutcome::DevelopmentUnavailable {
                 detail: "the mailbox owner returned an unexpected cancel reply".to_owned(),
             };
         };
         match transition {
             CancelTransition::Cancelled { message, .. } => {
+                self.shared.set_mailbox_write_ready();
                 self.shared.notify();
                 if let Some(generation) = message.generation() {
                     let key = AttemptKey {
@@ -1520,10 +1555,20 @@ impl DurableDirectLxmfService {
                 }
                 CancelLxmfMessageOutcome::Cancelled { local_record_id }
             }
-            CancelTransition::NotFound => CancelLxmfMessageOutcome::NotFound,
-            CancelTransition::AlreadyDelivered => CancelLxmfMessageOutcome::AlreadyDelivered,
-            CancelTransition::AlreadyCancelled => CancelLxmfMessageOutcome::AlreadyCancelled,
+            CancelTransition::NotFound => {
+                self.shared.set_mailbox_read_ready();
+                CancelLxmfMessageOutcome::NotFound
+            }
+            CancelTransition::AlreadyDelivered => {
+                self.shared.set_mailbox_read_ready();
+                CancelLxmfMessageOutcome::AlreadyDelivered
+            }
+            CancelTransition::AlreadyCancelled => {
+                self.shared.set_mailbox_read_ready();
+                CancelLxmfMessageOutcome::AlreadyCancelled
+            }
             CancelTransition::NotCancellable { current } => {
+                self.shared.set_mailbox_read_ready();
                 CancelLxmfMessageOutcome::NotCancellable { current }
             }
         }
@@ -1582,11 +1627,11 @@ impl DurableDirectLxmfService {
             .await;
         let reply = match reply {
             Ok(reply) => {
-                self.shared.set_mailbox_ready();
+                self.shared.set_mailbox_read_ready();
                 reply
             }
             Err(failure) => {
-                self.shared.set_mailbox_failure(&failure);
+                self.shared.set_mailbox_read_failure(&failure);
                 return Err(failure);
             }
         };
@@ -1595,6 +1640,9 @@ impl DurableDirectLxmfService {
             revision,
         } = reply
         else {
+            self.shared.set_unexpected_mailbox_read_failure(
+                "the mailbox owner returned an unexpected list reply",
+            );
             return Err(MailboxFailure::unavailable(
                 "the mailbox owner returned an unexpected list reply",
             ));
@@ -1627,6 +1675,16 @@ impl DurableDirectLxmfService {
         self.lifecycle.activated.store(false, Ordering::Release);
         self.shared.health.stop();
         let _changed = self.lifecycle.shutdown.send(true);
+        let _transition = tokio::time::timeout(STOP_JOIN_TIMEOUT, self.lifecycle.transition.lock())
+            .await
+            .map_err(|_| DirectServiceStopError::JoinTimedOut)?;
+        if self.lifecycle.stop_complete.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        // Every durable mutation, including callback-owned inbound insertion,
+        // holds the transition gate through its owner reply. Reaching this
+        // point proves that aborting the remaining tasks cannot discard an
+        // already-admitted commit or storage failure.
         {
             let attempts = self.lifecycle.attempts();
             for attempt in attempts.values() {
@@ -1638,12 +1696,6 @@ impl DurableDirectLxmfService {
             if let Some(worker) = worker.as_ref() {
                 worker.abort();
             }
-        }
-        let _transition = tokio::time::timeout(STOP_JOIN_TIMEOUT, self.lifecycle.transition.lock())
-            .await
-            .map_err(|_| DirectServiceStopError::JoinTimedOut)?;
-        if self.lifecycle.stop_complete.load(Ordering::Acquire) {
-            return Ok(());
         }
         self.lifecycle.pending_attempts().clear();
         let deadline = tokio::time::Instant::now() + STOP_JOIN_TIMEOUT;
@@ -1728,7 +1780,7 @@ impl PendingDurableDirectLxmfService {
             clock,
             peers: Mutex::new(BTreeMap::new()),
             health: callbacks.health.clone(),
-            mailbox_health: StdMutex::new(MailboxProjectionHealth::Ready),
+            mailbox_health: StdMutex::new(MailboxHealthTracker::default()),
             refresh,
         });
         let queued = match shared.mailbox.submit(MailboxRequest::ListQueued).await {
@@ -1742,17 +1794,21 @@ impl PendingDurableDirectLxmfService {
             shared.health.stop();
             return Err(DurableDirectServiceStartError::UnexpectedMailboxReply);
         };
+        let stopped = Arc::new(AtomicBool::new(false));
+        let transition = Arc::new(Mutex::new(()));
         let worker = runtime.spawn(run_durable_worker(
             shared.clone(),
+            Arc::clone(&stopped),
+            Arc::clone(&transition),
             receiver,
             shutdown_receiver,
         ));
         let lifecycle = Arc::new(DurableLifecycle {
             shutdown,
             activated: AtomicBool::new(false),
-            stopped: AtomicBool::new(false),
+            stopped,
             stop_complete: AtomicBool::new(false),
-            transition: Mutex::new(()),
+            transition,
             worker: StdMutex::new(Some(worker)),
             attempts: StdMutex::new(BTreeMap::new()),
             pending_attempts: StdMutex::new(messages),
@@ -1776,15 +1832,63 @@ impl DurableShared {
         self.mailbox_health
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
+            .projection()
     }
 
-    fn set_mailbox_ready(&self) {
-        self.set_mailbox_health(MailboxProjectionHealth::Ready);
+    fn set_mailbox_read_ready(&self) {
+        self.update_mailbox_health(|health| {
+            if !matches!(
+                health.read_failure.as_ref(),
+                Some(MailboxProjectionHealth::ResetRequired(_))
+            ) {
+                health.read_failure = None;
+            }
+        });
     }
 
-    fn set_mailbox_failure(&self, failure: &MailboxFailure) {
-        let health = match failure {
+    fn set_mailbox_write_ready(&self) {
+        self.update_mailbox_health(|health| {
+            if !matches!(
+                health.read_failure.as_ref(),
+                Some(MailboxProjectionHealth::ResetRequired(_))
+            ) {
+                health.read_failure = None;
+            }
+            if !matches!(
+                health.write_failure.as_ref(),
+                Some(MailboxProjectionHealth::ResetRequired(_))
+            ) {
+                health.write_failure = None;
+            }
+        });
+    }
+
+    fn set_mailbox_read_failure(&self, failure: &MailboxFailure) {
+        let failure = Self::project_mailbox_failure(failure);
+        self.update_mailbox_health(|health| {
+            if !matches!(
+                health.read_failure.as_ref(),
+                Some(MailboxProjectionHealth::ResetRequired(_))
+            ) {
+                health.read_failure = Some(failure);
+            }
+        });
+    }
+
+    fn set_mailbox_write_failure(&self, failure: &MailboxFailure) {
+        let failure = Self::project_mailbox_failure(failure);
+        self.update_mailbox_health(|health| {
+            if !matches!(
+                health.write_failure.as_ref(),
+                Some(MailboxProjectionHealth::ResetRequired(_))
+            ) {
+                health.write_failure = Some(failure);
+            }
+        });
+    }
+
+    fn project_mailbox_failure(failure: &MailboxFailure) -> MailboxProjectionHealth {
+        match failure {
             MailboxFailure::Busy => MailboxProjectionHealth::Busy,
             MailboxFailure::Unavailable(detail) => {
                 MailboxProjectionHealth::Unavailable(detail.clone())
@@ -1792,17 +1896,25 @@ impl DurableShared {
             MailboxFailure::ResetRequired(reason) => {
                 MailboxProjectionHealth::ResetRequired(reason.clone())
             }
-        };
-        self.set_mailbox_health(health);
+        }
     }
 
-    fn set_mailbox_health(&self, next: MailboxProjectionHealth) {
+    fn set_unexpected_mailbox_write_failure(&self, detail: &str) {
+        self.set_mailbox_write_failure(&MailboxFailure::unavailable(detail));
+    }
+
+    fn set_unexpected_mailbox_read_failure(&self, detail: &str) {
+        self.set_mailbox_read_failure(&MailboxFailure::unavailable(detail));
+    }
+
+    fn update_mailbox_health(&self, update: impl FnOnce(&mut MailboxHealthTracker)) {
         let mut current = self
             .mailbox_health
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if *current != next {
-            *current = next;
+        let before = current.projection();
+        update(&mut current);
+        if current.projection() != before {
             drop(current);
             self.notify();
         }
@@ -1924,26 +2036,26 @@ async fn settle_durable_attempt(
             .await
         {
             Ok(MailboxReply::Completion(CompletionTransition::Applied { .. })) => {
-                shared.set_mailbox_ready();
+                shared.set_mailbox_write_ready();
                 shared.notify();
                 false
             }
             Ok(MailboxReply::Completion(CompletionTransition::Stale { .. })) => {
-                shared.set_mailbox_ready();
+                shared.set_mailbox_read_ready();
                 false
             }
             Ok(_) => {
-                shared.set_mailbox_health(MailboxProjectionHealth::Unavailable(
-                    "the mailbox owner returned an unexpected completion reply".to_owned(),
-                ));
+                shared.set_unexpected_mailbox_write_failure(
+                    "the mailbox owner returned an unexpected completion reply",
+                );
                 true
             }
             Err(failure @ (MailboxFailure::Busy | MailboxFailure::Unavailable(_))) => {
-                shared.set_mailbox_failure(&failure);
+                shared.set_mailbox_write_failure(&failure);
                 true
             }
             Err(failure @ MailboxFailure::ResetRequired(_)) => {
-                shared.set_mailbox_failure(&failure);
+                shared.set_mailbox_write_failure(&failure);
                 false
             }
         };
@@ -1972,6 +2084,8 @@ fn remove_active_attempt(shared: &DurableShared, lifecycle: &DurableLifecycle, k
 
 async fn run_durable_worker(
     shared: Arc<DurableShared>,
+    stopped: Arc<AtomicBool>,
+    transition: Arc<Mutex<()>>,
     mut jobs: mpsc::Receiver<Job>,
     mut shutdown: watch::Receiver<bool>,
 ) {
@@ -1987,7 +2101,7 @@ async fn run_durable_worker(
                     shared.health.stop();
                     return;
                 };
-                process_durable_job(&shared, job).await;
+                process_durable_job(&shared, &stopped, &transition, job).await;
                 if jobs.capacity() > 0 {
                     shared.health.recover();
                 }
@@ -1996,7 +2110,12 @@ async fn run_durable_worker(
     }
 }
 
-async fn process_durable_job(shared: &Arc<DurableShared>, job: Job) {
+async fn process_durable_job(
+    shared: &Arc<DurableShared>,
+    stopped: &AtomicBool,
+    transition: &Mutex<()>,
+    job: Job,
+) {
     match job {
         Job::Peer(job) => {
             let Ok(announce) = parse_lxmf_announce(&job.app_data, MAX_DISPLAY_NAME_BYTES) else {
@@ -2021,11 +2140,16 @@ async fn process_durable_job(shared: &Arc<DurableShared>, job: Job) {
             );
             shared.notify();
         }
-        Job::Inbound(job) => process_durable_inbound(shared, job.wire).await,
+        Job::Inbound(job) => process_durable_inbound(shared, stopped, transition, job.wire).await,
     }
 }
 
-async fn process_durable_inbound(shared: &Arc<DurableShared>, wire: Vec<u8>) {
+async fn process_durable_inbound(
+    shared: &Arc<DurableShared>,
+    stopped: &AtomicBool,
+    transition: &Mutex<()>,
+    wire: Vec<u8>,
+) {
     let Ok(message) = MessageView::parse_ingress(
         CarrierIngress::LinkDataContextNone {
             expected_destination: &shared.local_destination,
@@ -2060,22 +2184,26 @@ async fn process_durable_inbound(shared: &Arc<DurableShared>, wire: Vec<u8>) {
         exact_wire: wire,
         verification,
     };
+    let _transition = transition.lock().await;
+    if stopped.load(Ordering::Acquire) {
+        return;
+    }
     match shared
         .mailbox
         .submit(MailboxRequest::InsertInbound(inbound))
         .await
     {
         Ok(MailboxReply::Inbound(InboundInsertOutcome::Inserted { .. })) => {
-            shared.set_mailbox_ready();
+            shared.set_mailbox_write_ready();
             shared.notify();
         }
         Ok(MailboxReply::Inbound(InboundInsertOutcome::Duplicate { .. })) => {
-            shared.set_mailbox_ready();
+            shared.set_mailbox_read_ready();
         }
-        Ok(_) => shared.set_mailbox_health(MailboxProjectionHealth::Unavailable(
-            "the mailbox owner returned an unexpected inbound reply".to_owned(),
-        )),
-        Err(failure) => shared.set_mailbox_failure(&failure),
+        Ok(_) => shared.set_unexpected_mailbox_write_failure(
+            "the mailbox owner returned an unexpected inbound reply",
+        ),
+        Err(failure) => shared.set_mailbox_write_failure(&failure),
     }
 }
 
@@ -2184,6 +2312,70 @@ mod tests {
                     {
                         return Err(MailboxFailure::Busy);
                     }
+                }
+                execute_mailbox_request(&self.database, request)
+            })
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    enum RejectedWrite {
+        CompleteAttempt,
+        InsertInbound,
+    }
+
+    struct PersistentWriteFailureSubmitter {
+        database: Arc<Database>,
+        rejected: RejectedWrite,
+        failure: MailboxFailure,
+    }
+
+    impl MailboxSubmitter for PersistentWriteFailureSubmitter {
+        fn submit(&self, request: MailboxRequest) -> MailboxFuture<'_> {
+            Box::pin(async move {
+                let rejected = matches!(
+                    (&self.rejected, &request),
+                    (
+                        RejectedWrite::CompleteAttempt,
+                        MailboxRequest::CompleteAttempt { .. }
+                    ) | (
+                        RejectedWrite::InsertInbound,
+                        MailboxRequest::InsertInbound(_)
+                    )
+                );
+                if rejected {
+                    return Err(self.failure.clone());
+                }
+                execute_mailbox_request(&self.database, request)
+            })
+        }
+    }
+
+    struct GatedWriteFailureSubmitter {
+        database: Arc<Database>,
+        rejected: RejectedWrite,
+        failure: MailboxFailure,
+        entered: Notify,
+        release: Notify,
+    }
+
+    impl MailboxSubmitter for GatedWriteFailureSubmitter {
+        fn submit(&self, request: MailboxRequest) -> MailboxFuture<'_> {
+            Box::pin(async move {
+                let rejected = matches!(
+                    (&self.rejected, &request),
+                    (
+                        RejectedWrite::CompleteAttempt,
+                        MailboxRequest::CompleteAttempt { .. }
+                    ) | (
+                        RejectedWrite::InsertInbound,
+                        MailboxRequest::InsertInbound(_)
+                    )
+                );
+                if rejected {
+                    self.entered.notify_one();
+                    self.release.notified().await;
+                    return Err(self.failure.clone());
                 }
                 execute_mailbox_request(&self.database, request)
             })
@@ -2942,9 +3134,215 @@ mod tests {
         .await;
 
         assert_eq!(delivered.durable_revision, 2);
+        assert_eq!(delivered.mailbox_health, MailboxProjectionHealth::Ready);
         assert!(submitter.completion_submissions.load(Ordering::Acquire) >= 2);
         assert_eq!(network.sent_wires.lock().unwrap().len(), 1);
         service.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn successful_reads_do_not_hide_a_persistent_completion_write_failure() {
+        let (_root, database) = open_database();
+        let submitter = Arc::new(PersistentWriteFailureSubmitter {
+            database: Arc::new(database),
+            rejected: RejectedWrite::CompleteAttempt,
+            failure: MailboxFailure::Unavailable("disk full".to_owned()),
+        });
+        let network = Arc::new(DurableFakeNetwork::default());
+        let identity = LocalLxmfIdentity::from_secret_bytes(&LOCAL_SECRET).unwrap();
+        let (pending, _callbacks) = DurableDirectLxmfService::prepare(identity);
+        let service = pending
+            .start(network, submitter, Arc::new(FixedClock(9_999)))
+            .await
+            .unwrap();
+        let destination = learn_durable_peer(&service).await;
+
+        assert_eq!(
+            service
+                .send_direct_text(
+                    destination,
+                    1_700_000_006_700,
+                    b"settle",
+                    b"persistent failure",
+                )
+                .await,
+            DurableSendDirectTextOutcome::Accepted { local_record_id: 1 }
+        );
+        let degraded = wait_for_durable_snapshot(&service, |snapshot| {
+            matches!(
+                snapshot.mailbox_health,
+                MailboxProjectionHealth::Unavailable(ref detail) if detail == "disk full"
+            )
+        })
+        .await;
+        assert!(matches!(
+            degraded.messages[0].delivery_state,
+            DurableLxmfDeliveryState::Sending { .. }
+        ));
+
+        let read_again = service.snapshot(all_messages()).await.unwrap();
+        assert_eq!(
+            read_again.mailbox_health,
+            MailboxProjectionHealth::Unavailable("disk full".to_owned())
+        );
+        service.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn successful_reads_do_not_hide_a_rejected_inbound_write() {
+        let (_root, database) = open_database();
+        let submitter = Arc::new(PersistentWriteFailureSubmitter {
+            database: Arc::new(database),
+            rejected: RejectedWrite::InsertInbound,
+            failure: MailboxFailure::Unavailable("inbound store unavailable".to_owned()),
+        });
+        let network = Arc::new(DurableFakeNetwork::default());
+        let (peer, peer_destination) = peer_facts();
+        network.add_public_key(peer_destination, &peer);
+        let identity = LocalLxmfIdentity::from_secret_bytes(&LOCAL_SECRET).unwrap();
+        let (pending, _callbacks) = DurableDirectLxmfService::prepare(identity);
+        let service = pending
+            .start(network, submitter, Arc::new(FixedClock(9_999)))
+            .await
+            .unwrap();
+        let signer = LocalLxmfIdentity::from_secret_bytes(&PEER_SECRET).unwrap();
+        let mut output = [0_u8; MAX_BASIC_LXMF_WIRE_BYTES];
+        let prepared = compose_basic_direct_lxmf(
+            service.local_destination(),
+            peer_destination,
+            1_700_000_006_800,
+            b"inbound",
+            b"rejected",
+            None,
+            &signer,
+            &mut output,
+        )
+        .unwrap();
+        let wire = &output[..usize::from(prepared.wire_len())];
+
+        assert_eq!(
+            service.callbacks().on_prns_event(&link_event(wire)),
+            CallbackOutcome::Enqueued
+        );
+        let degraded = wait_for_durable_snapshot(&service, |snapshot| {
+            matches!(
+                snapshot.mailbox_health,
+                MailboxProjectionHealth::Unavailable(ref detail)
+                    if detail == "inbound store unavailable"
+            )
+        })
+        .await;
+        assert!(degraded.messages.is_empty());
+
+        let read_again = service.snapshot(all_messages()).await.unwrap();
+        assert_eq!(
+            read_again.mailbox_health,
+            MailboxProjectionHealth::Unavailable("inbound store unavailable".to_owned())
+        );
+        service.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn stop_retains_an_admitted_completion_failure_past_its_bounded_wait() {
+        let (_root, database) = open_database();
+        let submitter = Arc::new(GatedWriteFailureSubmitter {
+            database: Arc::new(database),
+            rejected: RejectedWrite::CompleteAttempt,
+            failure: MailboxFailure::ResetRequired("completion record is corrupt".to_owned()),
+            entered: Notify::new(),
+            release: Notify::new(),
+        });
+        let network = Arc::new(DurableFakeNetwork::default());
+        let identity = LocalLxmfIdentity::from_secret_bytes(&LOCAL_SECRET).unwrap();
+        let (pending, _callbacks) = DurableDirectLxmfService::prepare(identity);
+        let service = pending
+            .start(network, submitter.clone(), Arc::new(FixedClock(9_999)))
+            .await
+            .unwrap();
+        let destination = learn_durable_peer(&service).await;
+
+        assert_eq!(
+            service
+                .send_direct_text(
+                    destination,
+                    1_700_000_006_900,
+                    b"settle",
+                    b"retained through stop",
+                )
+                .await,
+            DurableSendDirectTextOutcome::Accepted { local_record_id: 1 }
+        );
+        submitter.entered.notified().await;
+        assert_eq!(
+            service.stop().await,
+            Err(DirectServiceStopError::JoinTimedOut)
+        );
+
+        submitter.release.notify_one();
+        service.stop().await.unwrap();
+        let stopped = service.snapshot(all_messages()).await.unwrap();
+        assert_eq!(
+            stopped.mailbox_health,
+            MailboxProjectionHealth::ResetRequired("completion record is corrupt".to_owned())
+        );
+        assert!(matches!(
+            stopped.messages[0].delivery_state,
+            DurableLxmfDeliveryState::Queued { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn stop_retains_an_admitted_inbound_failure_past_its_bounded_wait() {
+        let (_root, database) = open_database();
+        let submitter = Arc::new(GatedWriteFailureSubmitter {
+            database: Arc::new(database),
+            rejected: RejectedWrite::InsertInbound,
+            failure: MailboxFailure::ResetRequired("inbound record is corrupt".to_owned()),
+            entered: Notify::new(),
+            release: Notify::new(),
+        });
+        let network = Arc::new(DurableFakeNetwork::default());
+        let (peer, peer_destination) = peer_facts();
+        network.add_public_key(peer_destination, &peer);
+        let identity = LocalLxmfIdentity::from_secret_bytes(&LOCAL_SECRET).unwrap();
+        let (pending, _callbacks) = DurableDirectLxmfService::prepare(identity);
+        let service = pending
+            .start(network, submitter.clone(), Arc::new(FixedClock(9_999)))
+            .await
+            .unwrap();
+        let signer = LocalLxmfIdentity::from_secret_bytes(&PEER_SECRET).unwrap();
+        let mut output = [0_u8; MAX_BASIC_LXMF_WIRE_BYTES];
+        let prepared = compose_basic_direct_lxmf(
+            service.local_destination(),
+            peer_destination,
+            1_700_000_007_000,
+            b"inbound",
+            b"retained through stop",
+            None,
+            &signer,
+            &mut output,
+        )
+        .unwrap();
+        let wire = &output[..usize::from(prepared.wire_len())];
+
+        assert_eq!(
+            service.callbacks().on_prns_event(&link_event(wire)),
+            CallbackOutcome::Enqueued
+        );
+        submitter.entered.notified().await;
+        assert_eq!(
+            service.stop().await,
+            Err(DirectServiceStopError::JoinTimedOut)
+        );
+
+        submitter.release.notify_one();
+        service.stop().await.unwrap();
+        let stopped = service.snapshot(all_messages()).await.unwrap();
+        assert_eq!(
+            stopped.mailbox_health,
+            MailboxProjectionHealth::ResetRequired("inbound record is corrupt".to_owned())
+        );
+        assert!(stopped.messages.is_empty());
     }
 
     #[tokio::test]

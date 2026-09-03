@@ -10,7 +10,7 @@ describe("Rust-generated contract fixtures", () => {
     }
   });
 
-  test("covers every consumed tagged variant through in-memory LXMF L2", () => {
+  test("covers every consumed tagged variant through durable LXMF L3", () => {
     expect(NATIVE_CONTRACT_FIXTURES.primaryIdentityStates.map(({ type }) => type)).toEqual([
       "missing",
       "present",
@@ -64,6 +64,14 @@ describe("Rust-generated contract fixtures", () => {
       "utf8",
       "invalidUtf8",
     ]);
+    expect(NATIVE_CONTRACT_FIXTURES.lxmfDeliveryStates.map(({ type }) => type)).toEqual([
+      "received",
+      "queued",
+      "sending",
+      "delivered",
+      "failed",
+      "cancelled",
+    ]);
     expect(NATIVE_CONTRACT_FIXTURES.lxmfPeerListOutcomes.map(({ type }) => type)).toEqual([
       "listed",
       "localNodeStopped",
@@ -72,8 +80,8 @@ describe("Rust-generated contract fixtures", () => {
     expect(NATIVE_CONTRACT_FIXTURES.lxmfMessageListOutcomes.map(({ type }) => type)).toEqual([
       "listed",
       "invalidInput",
-      "localNodeStopped",
-      "busy",
+      "developmentUnavailable",
+      "developmentResetRequired",
     ]);
     expect(NATIVE_CONTRACT_FIXTURES.announceLxmfOutcomes.map(({ type }) => type)).toEqual([
       "announced",
@@ -82,16 +90,28 @@ describe("Rust-generated contract fixtures", () => {
       "failed",
     ]);
     expect(NATIVE_CONTRACT_FIXTURES.sendDirectTextOutcomes.map(({ type }) => type)).toEqual([
-      "started",
+      "accepted",
       "needsResource",
       "unsupportedRemoteStampRequirement",
       "peerIdentityUnavailable",
-      "noRoute",
-      "linkFailed",
-      "deliveryTimedOut",
-      "invalidMessage",
-      "localNodeStopped",
-      "busy",
+      "developmentUnavailable",
+      "developmentResetRequired",
+    ]);
+    expect(NATIVE_CONTRACT_FIXTURES.retryLxmfMessageOutcomes.map(({ type }) => type)).toEqual([
+      "accepted",
+      "notFound",
+      "notFailed",
+      "developmentUnavailable",
+      "developmentResetRequired",
+    ]);
+    expect(NATIVE_CONTRACT_FIXTURES.cancelLxmfMessageOutcomes.map(({ type }) => type)).toEqual([
+      "cancelled",
+      "notFound",
+      "alreadyDelivered",
+      "alreadyCancelled",
+      "notCancellable",
+      "developmentUnavailable",
+      "developmentResetRequired",
     ]);
     expect(NATIVE_CONTRACT_FIXTURES.measureLxmfTextOutcomes.map(({ type }) => type)).toEqual([
       "measured",

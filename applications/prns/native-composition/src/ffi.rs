@@ -7,10 +7,11 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use crate::contract::{
-    ContactDestinationInput, CreateManualContactInput, DescribeRemoteControlTargetInput,
-    DevelopmentNodeStartInput, InitiateRemoteControlPairingInput, ListLxmfMessagesInput,
-    MeasureLxmfTextInput, RemoteControlPairingDecisionInput, SendDirectTextInput,
-    SetContactAliasInput, SetContactPinnedInput, CONTRACT_FINGERPRINT, HOST_CONTRACT_FINGERPRINT,
+    CancelLxmfMessageInput, ContactDestinationInput, CreateManualContactInput,
+    DescribeRemoteControlTargetInput, DevelopmentNodeStartInput, InitiateRemoteControlPairingInput,
+    ListLxmfMessagesInput, MeasureLxmfTextInput, RemoteControlPairingDecisionInput,
+    RetryLxmfMessageInput, SendDirectTextInput, SetContactAliasInput, SetContactPinnedInput,
+    CONTRACT_FINGERPRINT, HOST_CONTRACT_FINGERPRINT,
 };
 use crate::lifecycle;
 
@@ -252,7 +253,7 @@ pub unsafe extern "C" fn prns_app_send_direct_text(
     }
 }
 
-/// List one bounded page of in-memory LXMF messages.
+/// List one bounded page of durable LXMF messages.
 ///
 /// # Safety
 ///
@@ -260,12 +261,68 @@ pub unsafe extern "C" fn prns_app_send_direct_text(
 /// [`prns_app_initiate_pairing`].
 #[no_mangle]
 pub unsafe extern "C" fn prns_app_list_lxmf_messages(
+    path_ptr: *const u8,
+    path_len: usize,
     input_ptr: *const u8,
     input_len: usize,
 ) -> PrnsAppBytes {
-    // SAFETY: The caller contract is forwarded to the bounded JSON decoder.
+    // SAFETY: The caller contracts are forwarded to the bounded decoders.
     unsafe {
-        invoke_json::<ListLxmfMessagesInput, _>(input_ptr, input_len, lifecycle::list_lxmf_messages)
+        invoke_path_json::<ListLxmfMessagesInput, _, _>(
+            path_ptr,
+            path_len,
+            input_ptr,
+            input_len,
+            lifecycle::list_lxmf_messages,
+        )
+    }
+}
+
+/// Requeue one failed durable LXMF record without recomposing its wire.
+///
+/// # Safety
+///
+/// The path and input buffers follow [`prns_app_start`].
+#[no_mangle]
+pub unsafe extern "C" fn prns_app_retry_lxmf_message(
+    path_ptr: *const u8,
+    path_len: usize,
+    input_ptr: *const u8,
+    input_len: usize,
+) -> PrnsAppBytes {
+    // SAFETY: The caller contracts are forwarded to the bounded decoders.
+    unsafe {
+        invoke_path_json::<RetryLxmfMessageInput, _, _>(
+            path_ptr,
+            path_len,
+            input_ptr,
+            input_len,
+            lifecycle::retry_lxmf_message,
+        )
+    }
+}
+
+/// Cancel one queued durable LXMF record using a Rust-owned timestamp.
+///
+/// # Safety
+///
+/// The path and input buffers follow [`prns_app_start`].
+#[no_mangle]
+pub unsafe extern "C" fn prns_app_cancel_lxmf_message(
+    path_ptr: *const u8,
+    path_len: usize,
+    input_ptr: *const u8,
+    input_len: usize,
+) -> PrnsAppBytes {
+    // SAFETY: The caller contracts are forwarded to the bounded decoders.
+    unsafe {
+        invoke_path_json::<CancelLxmfMessageInput, _, _>(
+            path_ptr,
+            path_len,
+            input_ptr,
+            input_len,
+            lifecycle::cancel_lxmf_message,
+        )
     }
 }
 
@@ -997,6 +1054,48 @@ mod tests {
             )
         };
         assert_eq!(parse_and_free(accepted), json!({ "type": "accepted" }));
+    }
+
+    #[test]
+    fn durable_mailbox_commands_forward_the_storage_path_and_exact_record_id() {
+        let path = b"/tmp/prns/durable-mailbox";
+        let encoded = br#"{"localRecordId":"18446744073709551615"}"#;
+        // SAFETY: Both fixed test buffers remain readable and immutable for the call.
+        let retried = unsafe {
+            invoke_path_json::<RetryLxmfMessageInput, _, _>(
+                path.as_ptr(),
+                path.len(),
+                encoded.as_ptr(),
+                encoded.len(),
+                |decoded_path, input| {
+                    assert_eq!(decoded_path, Path::new("/tmp/prns/durable-mailbox"));
+                    assert_eq!(input.local_record_id.0, u64::MAX.to_string());
+                    json!({ "type": "accepted", "localRecordId": input.local_record_id.0 })
+                },
+            )
+        };
+        assert_eq!(
+            parse_and_free(retried),
+            json!({ "type": "accepted", "localRecordId": u64::MAX.to_string() })
+        );
+
+        // SAFETY: Both fixed test buffers remain readable and immutable for the call.
+        let cancelled = unsafe {
+            invoke_path_json::<CancelLxmfMessageInput, _, _>(
+                path.as_ptr(),
+                path.len(),
+                encoded.as_ptr(),
+                encoded.len(),
+                |decoded_path, input| {
+                    assert_eq!(decoded_path, Path::new("/tmp/prns/durable-mailbox"));
+                    json!({ "type": "cancelled", "localRecordId": input.local_record_id.0 })
+                },
+            )
+        };
+        assert_eq!(
+            parse_and_free(cancelled),
+            json!({ "type": "cancelled", "localRecordId": u64::MAX.to_string() })
+        );
     }
 
     #[test]

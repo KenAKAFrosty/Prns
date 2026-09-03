@@ -75,13 +75,24 @@ PrnsAppBytes prns_app_measure_lxmf_text(const uint8_t *input_ptr,
 /** Emit the registered current-form LXMF announce. */
 PrnsAppBytes prns_app_announce_lxmf(void);
 
-/** Start one proof-gated direct LXMF text attempt. */
+/** Commit one direct LXMF text message to the durable queue. */
 PrnsAppBytes prns_app_send_direct_text(const uint8_t *input_ptr,
                                        size_t input_len);
 
-/** List one bounded page of in-memory LXMF messages. */
-PrnsAppBytes prns_app_list_lxmf_messages(const uint8_t *input_ptr,
-                                         size_t input_len);
+/** List one bounded page of durable LXMF messages, including while stopped. */
+PrnsAppBytes prns_app_list_lxmf_messages(
+    const uint8_t *path_ptr, size_t path_len, const uint8_t *input_ptr,
+    size_t input_len);
+
+/** Requeue a failed durable LXMF record using its exact stored wire. */
+PrnsAppBytes prns_app_retry_lxmf_message(
+    const uint8_t *path_ptr, size_t path_len, const uint8_t *input_ptr,
+    size_t input_len);
+
+/** Cancel a queued durable LXMF record using a Rust-owned timestamp. */
+PrnsAppBytes prns_app_cancel_lxmf_message(
+    const uint8_t *path_ptr, size_t path_len, const uint8_t *input_ptr,
+    size_t input_len);
 
 /**
  * Initiate pairing. `input_ptr` must address `input_len` immutable UTF-8 JSON

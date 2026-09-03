@@ -425,14 +425,36 @@ pub enum LxmfDeliveryFailure {
     LocalNodeStopped,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+#[ts(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum LxmfDeliveryState {
     Received,
-    Sending,
-    Delivered,
-    Failed,
+    Queued {
+        failed_attempts: U64String,
+    },
+    Sending {
+        failed_attempts: U64String,
+    },
+    Delivered {
+        delivered_at: U64String,
+        rtt: Option<U64String>,
+    },
+    Failed {
+        failed_attempts: U64String,
+        last_failure: LxmfDeliveryFailure,
+    },
+    Cancelled {
+        cancelled_at: U64String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -452,7 +474,6 @@ pub struct LxmfMessage {
     pub direction: LxmfDirection,
     pub verification: LxmfVerification,
     pub delivery_state: LxmfDeliveryState,
-    pub failure: Option<LxmfDeliveryFailure>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -511,6 +532,20 @@ pub struct ListLxmfMessagesInput {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(rename_all = "camelCase")]
+pub struct RetryLxmfMessageInput {
+    pub local_record_id: U64String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(rename_all = "camelCase")]
+pub struct CancelLxmfMessageInput {
+    pub local_record_id: U64String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(
     tag = "type",
     rename_all = "camelCase",
@@ -541,8 +576,8 @@ pub enum LxmfPeerListOutcome {
 pub enum LxmfMessageListOutcome {
     Listed { messages: Vec<LxmfMessage> },
     InvalidInput { detail: String },
-    LocalNodeStopped,
-    Busy,
+    DevelopmentUnavailable { detail: String },
+    DevelopmentResetRequired { reason: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -575,16 +610,52 @@ pub enum AnnounceLxmfOutcome {
     rename_all_fields = "camelCase"
 )]
 pub enum SendDirectTextOutcome {
-    Started { local_record_id: U64String },
+    Accepted { local_record_id: U64String },
     NeedsResource { wire_bytes: u32 },
-    UnsupportedRemoteStampRequirement,
+    UnsupportedRemoteStampRequirement { required_stamp_cost: U64String },
     PeerIdentityUnavailable,
-    NoRoute,
-    LinkFailed,
-    DeliveryTimedOut,
-    InvalidMessage,
-    LocalNodeStopped,
-    Busy,
+    DevelopmentUnavailable { detail: String },
+    DevelopmentResetRequired { reason: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+#[ts(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum RetryLxmfMessageOutcome {
+    Accepted { local_record_id: U64String },
+    NotFound,
+    NotFailed { current: LxmfDeliveryState },
+    DevelopmentUnavailable { detail: String },
+    DevelopmentResetRequired { reason: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+#[ts(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum CancelLxmfMessageOutcome {
+    Cancelled { local_record_id: U64String },
+    NotFound,
+    AlreadyDelivered,
+    AlreadyCancelled,
+    NotCancellable { current: LxmfDeliveryState },
+    DevelopmentUnavailable { detail: String },
+    DevelopmentResetRequired { reason: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -893,10 +964,13 @@ struct TaggedContractFixtures {
     contact_lookup_outcomes: Vec<ContactLookupOutcome>,
     contact_list_outcomes: Vec<ContactListOutcome>,
     lxmf_texts: Vec<LxmfText>,
+    lxmf_delivery_states: Vec<LxmfDeliveryState>,
     lxmf_peer_list_outcomes: Vec<LxmfPeerListOutcome>,
     lxmf_message_list_outcomes: Vec<LxmfMessageListOutcome>,
     announce_lxmf_outcomes: Vec<AnnounceLxmfOutcome>,
     send_direct_text_outcomes: Vec<SendDirectTextOutcome>,
+    retry_lxmf_message_outcomes: Vec<RetryLxmfMessageOutcome>,
+    cancel_lxmf_message_outcomes: Vec<CancelLxmfMessageOutcome>,
     measure_lxmf_text_outcomes: Vec<MeasureLxmfTextOutcome>,
     pairing_states: Vec<RemoteControlPairingState>,
     start_outcomes: Vec<DevelopmentNodeStartOutcome>,
@@ -977,10 +1051,14 @@ pub fn export_typescript() -> String {
     export!(SendDirectTextInput);
     export!(MeasureLxmfTextInput);
     export!(ListLxmfMessagesInput);
+    export!(RetryLxmfMessageInput);
+    export!(CancelLxmfMessageInput);
     export!(LxmfPeerListOutcome);
     export!(LxmfMessageListOutcome);
     export!(AnnounceLxmfOutcome);
     export!(SendDirectTextOutcome);
+    export!(RetryLxmfMessageOutcome);
+    export!(CancelLxmfMessageOutcome);
     export!(MeasureLxmfTextOutcome);
     export!(RemoteControlRequestKind);
     export!(RemoteControlPairingCandidate);
@@ -1016,10 +1094,13 @@ pub fn export_typescript() -> String {
          \treadonly contactLookupOutcomes: readonly ContactLookupOutcome[];\n\
          \treadonly contactListOutcomes: readonly ContactListOutcome[];\n\
          \treadonly lxmfTexts: readonly LxmfText[];\n\
+         \treadonly lxmfDeliveryStates: readonly LxmfDeliveryState[];\n\
          \treadonly lxmfPeerListOutcomes: readonly LxmfPeerListOutcome[];\n\
          \treadonly lxmfMessageListOutcomes: readonly LxmfMessageListOutcome[];\n\
          \treadonly announceLxmfOutcomes: readonly AnnounceLxmfOutcome[];\n\
          \treadonly sendDirectTextOutcomes: readonly SendDirectTextOutcome[];\n\
+         \treadonly retryLxmfMessageOutcomes: readonly RetryLxmfMessageOutcome[];\n\
+         \treadonly cancelLxmfMessageOutcomes: readonly CancelLxmfMessageOutcome[];\n\
          \treadonly measureLxmfTextOutcomes: readonly MeasureLxmfTextOutcome[];\n\
          \treadonly pairingStates: readonly RemoteControlPairingState[];\n\
          \treadonly startOutcomes: readonly DevelopmentNodeStartOutcome[];\n\
@@ -1182,13 +1263,32 @@ fn tagged_contract_fixtures() -> TaggedContractFixtures {
         direction: LxmfDirection::Inbound,
         verification: LxmfVerification::InvalidSignature,
         delivery_state: LxmfDeliveryState::Received,
-        failure: None,
     };
     let lxmf_texts = vec![
         LxmfText::Utf8 {
             value: "text fixture".to_owned(),
         },
         LxmfText::InvalidUtf8 { bytes: vec![0xff] },
+    ];
+    let lxmf_delivery_states = vec![
+        LxmfDeliveryState::Received,
+        LxmfDeliveryState::Queued {
+            failed_attempts: U64String::from(u64::MAX),
+        },
+        LxmfDeliveryState::Sending {
+            failed_attempts: U64String::from(1_u64 << 53),
+        },
+        LxmfDeliveryState::Delivered {
+            delivered_at: U64String::from(u64::MAX),
+            rtt: Some(U64String::from(23)),
+        },
+        LxmfDeliveryState::Failed {
+            failed_attempts: U64String::from(3),
+            last_failure: LxmfDeliveryFailure::DeliveryTimedOut,
+        },
+        LxmfDeliveryState::Cancelled {
+            cancelled_at: U64String::from(1_700_000_000_456),
+        },
     ];
     let lxmf_peer_list_outcomes = vec![
         LxmfPeerListOutcome::Listed {
@@ -1204,8 +1304,12 @@ fn tagged_contract_fixtures() -> TaggedContractFixtures {
         LxmfMessageListOutcome::InvalidInput {
             detail: "invalid LXMF query fixture".to_owned(),
         },
-        LxmfMessageListOutcome::LocalNodeStopped,
-        LxmfMessageListOutcome::Busy,
+        LxmfMessageListOutcome::DevelopmentUnavailable {
+            detail: "mailbox unavailable fixture".to_owned(),
+        },
+        LxmfMessageListOutcome::DevelopmentResetRequired {
+            reason: "mailbox reset fixture".to_owned(),
+        },
     ];
     let announce_lxmf_outcomes = vec![
         AnnounceLxmfOutcome::Announced,
@@ -1214,18 +1318,54 @@ fn tagged_contract_fixtures() -> TaggedContractFixtures {
         AnnounceLxmfOutcome::Failed,
     ];
     let send_direct_text_outcomes = vec![
-        SendDirectTextOutcome::Started {
+        SendDirectTextOutcome::Accepted {
             local_record_id: U64String::from(u64::MAX),
         },
         SendDirectTextOutcome::NeedsResource { wire_bytes: 432 },
-        SendDirectTextOutcome::UnsupportedRemoteStampRequirement,
+        SendDirectTextOutcome::UnsupportedRemoteStampRequirement {
+            required_stamp_cost: U64String::from(8),
+        },
         SendDirectTextOutcome::PeerIdentityUnavailable,
-        SendDirectTextOutcome::NoRoute,
-        SendDirectTextOutcome::LinkFailed,
-        SendDirectTextOutcome::DeliveryTimedOut,
-        SendDirectTextOutcome::InvalidMessage,
-        SendDirectTextOutcome::LocalNodeStopped,
-        SendDirectTextOutcome::Busy,
+        SendDirectTextOutcome::DevelopmentUnavailable {
+            detail: "send unavailable fixture".to_owned(),
+        },
+        SendDirectTextOutcome::DevelopmentResetRequired {
+            reason: "send reset fixture".to_owned(),
+        },
+    ];
+    let retry_lxmf_message_outcomes = vec![
+        RetryLxmfMessageOutcome::Accepted {
+            local_record_id: U64String::from(u64::MAX),
+        },
+        RetryLxmfMessageOutcome::NotFound,
+        RetryLxmfMessageOutcome::NotFailed {
+            current: LxmfDeliveryState::Sending {
+                failed_attempts: U64String::from(2),
+            },
+        },
+        RetryLxmfMessageOutcome::DevelopmentUnavailable {
+            detail: "retry unavailable fixture".to_owned(),
+        },
+        RetryLxmfMessageOutcome::DevelopmentResetRequired {
+            reason: "retry reset fixture".to_owned(),
+        },
+    ];
+    let cancel_lxmf_message_outcomes = vec![
+        CancelLxmfMessageOutcome::Cancelled {
+            local_record_id: U64String::from(u64::MAX),
+        },
+        CancelLxmfMessageOutcome::NotFound,
+        CancelLxmfMessageOutcome::AlreadyDelivered,
+        CancelLxmfMessageOutcome::AlreadyCancelled,
+        CancelLxmfMessageOutcome::NotCancellable {
+            current: LxmfDeliveryState::Received,
+        },
+        CancelLxmfMessageOutcome::DevelopmentUnavailable {
+            detail: "cancel unavailable fixture".to_owned(),
+        },
+        CancelLxmfMessageOutcome::DevelopmentResetRequired {
+            reason: "cancel reset fixture".to_owned(),
+        },
     ];
     let measure_lxmf_text_outcomes = vec![
         MeasureLxmfTextOutcome::Measured {
@@ -1332,10 +1472,13 @@ fn tagged_contract_fixtures() -> TaggedContractFixtures {
         contact_lookup_outcomes,
         contact_list_outcomes,
         lxmf_texts,
+        lxmf_delivery_states,
         lxmf_peer_list_outcomes,
         lxmf_message_list_outcomes,
         announce_lxmf_outcomes,
         send_direct_text_outcomes,
+        retry_lxmf_message_outcomes,
+        cancel_lxmf_message_outcomes,
         measure_lxmf_text_outcomes,
         pairing_states,
         start_outcomes,
@@ -1435,10 +1578,13 @@ mod tests {
         assert_eq!(fixtures.contact_lookup_outcomes.len(), 4);
         assert_eq!(fixtures.contact_list_outcomes.len(), 3);
         assert_eq!(fixtures.lxmf_texts.len(), 2);
+        assert_eq!(fixtures.lxmf_delivery_states.len(), 6);
         assert_eq!(fixtures.lxmf_peer_list_outcomes.len(), 3);
         assert_eq!(fixtures.lxmf_message_list_outcomes.len(), 4);
         assert_eq!(fixtures.announce_lxmf_outcomes.len(), 4);
-        assert_eq!(fixtures.send_direct_text_outcomes.len(), 10);
+        assert_eq!(fixtures.send_direct_text_outcomes.len(), 6);
+        assert_eq!(fixtures.retry_lxmf_message_outcomes.len(), 5);
+        assert_eq!(fixtures.cancel_lxmf_message_outcomes.len(), 7);
         assert_eq!(fixtures.measure_lxmf_text_outcomes.len(), 5);
         assert_eq!(fixtures.pairing_states.len(), 12);
         assert_eq!(fixtures.start_outcomes.len(), 3);

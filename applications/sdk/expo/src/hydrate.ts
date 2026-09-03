@@ -21,13 +21,17 @@ type InterfaceByteKey = "interfaceId";
 type OpaqueByteKey = "bytes" | "messageId" | "publicAppData";
 type U64Key =
   | "before"
+  | "cancelledAt"
+  | "deliveredAt"
   | "expiresAtMillis"
+  | "failedAttempts"
   | "inboundOverflowCount"
   | "lastObservedAgeMillis"
   | "localRecordId"
   | "observedAtMillis"
   | "requiredStampCost"
   | "revision"
+  | "rtt"
   | "rttMillis"
   | "rxBytes"
   | "startedAtMillis"
@@ -72,12 +76,16 @@ const identityByteKeys = new Set<string>([
 const destinationByteKeys = new Set<string>(["destination", "endpoint", "peer", "source"]);
 const u64Keys = new Set<string>([
   "before",
+  "cancelledAt",
+  "deliveredAt",
+  "failedAttempts",
   "inboundOverflowCount",
   "lastObservedAgeMillis",
   "localRecordId",
   "observedAtMillis",
   "requiredStampCost",
   "revision",
+  "rtt",
   "rttMillis",
   "rxBytes",
   "startedAtMillis",

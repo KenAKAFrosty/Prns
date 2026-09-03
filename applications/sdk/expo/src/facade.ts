@@ -1,6 +1,8 @@
 import { HOST_CONTRACT_FINGERPRINT, NATIVE_CONTRACT_FINGERPRINT } from "./contract.generated";
 import type {
   AnnounceLxmfOutcome as WireAnnounceLxmfOutcome,
+  CancelLxmfMessageInput as WireCancelLxmfMessageInput,
+  CancelLxmfMessageOutcome as WireCancelLxmfMessageOutcome,
   Contact as WireContact,
   ContactListOutcome as WireContactListOutcome,
   ContactLookupOutcome as WireContactLookupOutcome,
@@ -17,16 +19,22 @@ import type {
   InitiateRemoteControlPairingInput as WireInitiateRemoteControlPairingInput,
   ListLxmfMessagesInput as WireListLxmfMessagesInput,
   LxmfHealth as WireLxmfHealth,
+  LxmfDeliveryFailure as WireLxmfDeliveryFailure,
+  LxmfDeliveryState as WireLxmfDeliveryState,
+  LxmfDirection as WireLxmfDirection,
   LxmfMessage as WireLxmfMessage,
   LxmfMessageListOutcome as WireLxmfMessageListOutcome,
   LxmfPeerListOutcome as WireLxmfPeerListOutcome,
   LxmfPeerSummary as WireLxmfPeerSummary,
   LxmfText as WireLxmfText,
+  LxmfVerification as WireLxmfVerification,
   MeasureLxmfTextInput as WireMeasureLxmfTextInput,
   MeasureLxmfTextOutcome as WireMeasureLxmfTextOutcome,
   RemoteControlDescribeOutcome as WireRemoteControlDescribeOutcome,
   RemoteControlPairingCommandOutcome as WireRemoteControlPairingCommandOutcome,
   RemoteControlPairingDecisionInput as WireRemoteControlPairingDecisionInput,
+  RetryLxmfMessageInput as WireRetryLxmfMessageInput,
+  RetryLxmfMessageOutcome as WireRetryLxmfMessageOutcome,
   SetContactAliasInput as WireSetContactAliasInput,
   SetContactPinnedInput as WireSetContactPinnedInput,
   SendDirectTextInput as WireSendDirectTextInput,
@@ -60,9 +68,13 @@ export type ContactMutationOutcome = Hydrated<WireContactMutationOutcome>;
 export type ContactLookupOutcome = Hydrated<WireContactLookupOutcome>;
 export type ContactListOutcome = Hydrated<WireContactListOutcome>;
 export type LxmfHealth = Hydrated<WireLxmfHealth>;
+export type LxmfDeliveryFailure = Hydrated<WireLxmfDeliveryFailure>;
+export type LxmfDeliveryState = Hydrated<WireLxmfDeliveryState>;
+export type LxmfDirection = Hydrated<WireLxmfDirection>;
 export type LxmfMessage = Hydrated<WireLxmfMessage>;
 export type LxmfPeerSummary = Hydrated<WireLxmfPeerSummary>;
 export type LxmfText = Hydrated<WireLxmfText>;
+export type LxmfVerification = Hydrated<WireLxmfVerification>;
 export type ListLxmfMessagesInput = Hydrated<WireListLxmfMessagesInput>;
 export type LxmfMessageListOutcome = Hydrated<WireLxmfMessageListOutcome>;
 export type LxmfPeerListOutcome = Hydrated<WireLxmfPeerListOutcome>;
@@ -71,6 +83,8 @@ export type MeasureLxmfTextInput = Hydrated<WireMeasureLxmfTextInput>;
 export type MeasureLxmfTextOutcome = Hydrated<WireMeasureLxmfTextOutcome>;
 export type SendDirectTextInput = Hydrated<WireSendDirectTextInput>;
 export type SendDirectTextOutcome = Hydrated<WireSendDirectTextOutcome>;
+export type RetryLxmfMessageOutcome = Hydrated<WireRetryLxmfMessageOutcome>;
+export type CancelLxmfMessageOutcome = Hydrated<WireCancelLxmfMessageOutcome>;
 
 export type DevelopmentRuntime = {
   readonly inspectDevelopmentIdentity: () => Promise<PrimaryIdentityState>;
@@ -114,6 +128,8 @@ export type DevelopmentRuntime = {
   readonly listContacts: () => Promise<ContactListOutcome>;
   readonly listLxmfPeers: () => Promise<LxmfPeerListOutcome>;
   readonly listLxmfMessages: (input: ListLxmfMessagesInput) => Promise<LxmfMessageListOutcome>;
+  readonly retryLxmfMessage: (localRecordId: bigint) => Promise<RetryLxmfMessageOutcome>;
+  readonly cancelLxmfMessage: (localRecordId: bigint) => Promise<CancelLxmfMessageOutcome>;
   readonly announceLxmf: () => Promise<AnnounceLxmfOutcome>;
   readonly measureLxmfText: (input: MeasureLxmfTextInput) => Promise<MeasureLxmfTextOutcome>;
   readonly sendDirectText: (input: SendDirectTextInput) => Promise<SendDirectTextOutcome>;
@@ -267,6 +283,22 @@ export function createDevelopmentRuntime(nativeModule: PrnsAppNativeModule): Dev
             before: input.before === null ? null : input.before.toString(),
             limit: input.limit,
           } satisfies WireListLxmfMessagesInput),
+        ),
+      ),
+    retryLxmfMessage: (localRecordId) =>
+      read(() =>
+        nativeModule.retryLxmfMessage(
+          JSON.stringify({
+            localRecordId: localRecordId.toString(),
+          } satisfies WireRetryLxmfMessageInput),
+        ),
+      ),
+    cancelLxmfMessage: (localRecordId) =>
+      read(() =>
+        nativeModule.cancelLxmfMessage(
+          JSON.stringify({
+            localRecordId: localRecordId.toString(),
+          } satisfies WireCancelLxmfMessageInput),
         ),
       ),
     announceLxmf: () => read(() => nativeModule.announceLxmf()),

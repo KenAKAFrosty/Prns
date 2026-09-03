@@ -30,20 +30,23 @@ use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
 
 use crate::contract::{
-    AnnounceLxmfOutcome, ContactDestinationInput, ContactListOutcome, ContactLookupOutcome,
-    ContactMutationOutcome, CreateManualContactInput, DescribeRemoteControlTargetInput,
-    DevelopmentNodeFailure, DevelopmentNodeFailureStage, DevelopmentNodeOperation,
-    DevelopmentNodeOperationKind, DevelopmentNodeRuntime, DevelopmentNodeSnapshot,
-    DevelopmentNodeStartInput, DevelopmentNodeStartOutcome, DevelopmentNodeStopOutcome,
-    DevelopmentNodeStopStage, IdentityCreationOutcome, IdentityImportPreviewOutcome,
-    InitiateRemoteControlPairingInput, ListLxmfMessagesInput, LocalHostState,
-    LxmfMessageListOutcome, LxmfPeerListOutcome, MeasureLxmfTextInput, MeasureLxmfTextOutcome,
-    PrimaryIdentityState, RemoteControlDescribeFailureStage, RemoteControlDescribeOutcome,
-    RemoteControlPairingCommandOutcome, RemoteControlPairingDecisionInput,
-    RemoteControlPairingFailureStage, RemoteControlPairingState, SendDirectTextInput,
-    SendDirectTextOutcome, SetContactAliasInput, SetContactPinnedInput, U64String,
+    AnnounceLxmfOutcome, CancelLxmfMessageInput, CancelLxmfMessageOutcome, ContactDestinationInput,
+    ContactListOutcome, ContactLookupOutcome, ContactMutationOutcome, CreateManualContactInput,
+    DescribeRemoteControlTargetInput, DevelopmentNodeFailure, DevelopmentNodeFailureStage,
+    DevelopmentNodeOperation, DevelopmentNodeOperationKind, DevelopmentNodeRuntime,
+    DevelopmentNodeSnapshot, DevelopmentNodeStartInput, DevelopmentNodeStartOutcome,
+    DevelopmentNodeStopOutcome, DevelopmentNodeStopStage, IdentityCreationOutcome,
+    IdentityImportPreviewOutcome, InitiateRemoteControlPairingInput, ListLxmfMessagesInput,
+    LocalHostState, LxmfMessageListOutcome, LxmfPeerListOutcome, MeasureLxmfTextInput,
+    MeasureLxmfTextOutcome, PrimaryIdentityState, RemoteControlDescribeFailureStage,
+    RemoteControlDescribeOutcome, RemoteControlPairingCommandOutcome,
+    RemoteControlPairingDecisionInput, RemoteControlPairingFailureStage, RemoteControlPairingState,
+    RetryLxmfMessageInput, RetryLxmfMessageOutcome, SendDirectTextInput, SendDirectTextOutcome,
+    SetContactAliasInput, SetContactPinnedInput, U64String,
 };
-use crate::development_store::{DevelopmentStoreFailure, DevelopmentStoreOwner, StoreReply};
+use crate::development_store::{
+    DevelopmentStoreFailure, DevelopmentStoreOwner, MailboxStoreReply, StoreReply,
+};
 use crate::directory::{DirectoryRequest, DirectoryResponse};
 use crate::node::{prepare_storage, reset_storage, NodeStoragePaths};
 use crate::pairing::{
@@ -59,7 +62,7 @@ const HOST_INSPECTION_TIMEOUT: Duration = Duration::from_millis(1_500);
 const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(2);
 const DIRECTORY_TIMEOUT: Duration = Duration::from_secs(5);
 const LXMF_QUERY_TIMEOUT: Duration = Duration::from_secs(5);
-const LXMF_SEND_TIMEOUT: Duration = Duration::from_secs(60);
+const LXMF_HEALTH_RETRY_DELAY: Duration = Duration::from_millis(250);
 const STOP_TIMEOUT: Duration = Duration::from_secs(25);
 const COMMAND_LANE_CAPACITY: usize = 8;
 const LXMF_SEND_TASK_CAPACITY: usize = 8;
@@ -130,9 +133,11 @@ enum Command {
     ),
     ListLxmfPeers(std_mpsc::SyncSender<LxmfPeerListOutcome>),
     ListLxmfMessages(
-        ListLxmfMessagesInput,
+        prns_lxmf::mailbox::MailboxListRequest,
         std_mpsc::SyncSender<LxmfMessageListOutcome>,
     ),
+    RetryLxmfMessage(u64, std_mpsc::SyncSender<RetryLxmfMessageOutcome>),
+    CancelLxmfMessage(u64, u64, std_mpsc::SyncSender<CancelLxmfMessageOutcome>),
     MeasureLxmfText(
         MeasureLxmfTextInput,
         std_mpsc::SyncSender<MeasureLxmfTextOutcome>,
@@ -156,6 +161,7 @@ struct HostAttachment {
 pub fn inspect_identity(storage_root: &Path) -> PrimaryIdentityState {
     let supervisor = supervisor();
     let mut state = supervisor.lock_state();
+    reap_completed_worker_locked(supervisor, &mut state);
     let result = inspect_identity_locked(&mut state, storage_root);
     supervisor.snapshots.set_primary_identity(result.clone());
     result
@@ -187,6 +193,7 @@ enum IdentityCreation<'a> {
 fn create_identity(storage_root: &Path, creation: IdentityCreation<'_>) -> IdentityCreationOutcome {
     let supervisor = supervisor();
     let mut state = supervisor.lock_state();
+    reap_completed_worker_locked(supervisor, &mut state);
     let paths = match prepare_storage(storage_root) {
         Ok(paths) => paths,
         Err(detail) => return IdentityCreationOutcome::Unavailable { detail },
@@ -389,8 +396,16 @@ pub fn start_configured(
     storage_root: &Path,
     input: DevelopmentNodeStartInput,
 ) -> DevelopmentNodeStartOutcome {
-    let supervisor = supervisor();
+    start_configured_with_supervisor(supervisor(), storage_root, input)
+}
+
+fn start_configured_with_supervisor(
+    supervisor: &Supervisor,
+    storage_root: &Path,
+    input: DevelopmentNodeStartInput,
+) -> DevelopmentNodeStartOutcome {
     let mut state = supervisor.lock_state();
+    reap_completed_worker_locked(supervisor, &mut state);
     if state.worker.is_some() {
         let snapshot = supervisor.snapshots.read();
         return match snapshot.runtime {
@@ -483,6 +498,30 @@ pub fn start_configured(
             };
         }
     };
+    let mailbox_submitter = match ensure_application_owner_locked(&mut state, &paths) {
+        Ok(owner) => owner.mailbox_submitter(),
+        Err(failure) => {
+            let detail = match failure {
+                DevelopmentStoreFailure::Unavailable(detail) => detail,
+                DevelopmentStoreFailure::ResetRequired(reason) => {
+                    supervisor
+                        .snapshots
+                        .set_local_host(LocalHostState::DevelopmentResetRequired {
+                            reason: reason.clone(),
+                        });
+                    reason
+                }
+            };
+            supervisor.snapshots.fail(DevelopmentNodeFailure {
+                stage: DevelopmentNodeFailureStage::Storage,
+                detail: detail.clone(),
+            });
+            return DevelopmentNodeStartOutcome::Failed {
+                stage: DevelopmentNodeFailureStage::Storage,
+                detail,
+            };
+        }
+    };
     supervisor.snapshots.begin_generation(primary_identity);
     supervisor
         .operation_admitted
@@ -506,6 +545,7 @@ pub fn start_configured(
             let result = run_worker(
                 paths,
                 primary_identity_secret,
+                mailbox_submitter,
                 development_tcp_target,
                 command_rx,
                 worker_shutdown,
@@ -581,7 +621,8 @@ pub fn snapshot() -> DevelopmentNodeSnapshot {
 }
 
 fn snapshot_with_supervisor(supervisor: &Supervisor) -> DevelopmentNodeSnapshot {
-    let state = supervisor.lock_state();
+    let mut state = supervisor.lock_state();
+    reap_completed_worker_locked(supervisor, &mut state);
     let current = supervisor.snapshots.read();
     if current.runtime != DevelopmentNodeRuntime::Running {
         return current;
@@ -669,6 +710,74 @@ enum LxmfAdmissionFailure {
     Busy,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DurableMailboxAccess {
+    RunningGeneration,
+    Offline,
+    GenerationTransition,
+}
+
+const fn durable_mailbox_access(
+    runtime: DevelopmentNodeRuntime,
+    worker_present: bool,
+) -> DurableMailboxAccess {
+    match (runtime, worker_present) {
+        (DevelopmentNodeRuntime::Running, true) => DurableMailboxAccess::RunningGeneration,
+        (DevelopmentNodeRuntime::Stopped | DevelopmentNodeRuntime::Failed, false) => {
+            DurableMailboxAccess::Offline
+        }
+        (
+            DevelopmentNodeRuntime::Stopped
+            | DevelopmentNodeRuntime::Starting
+            | DevelopmentNodeRuntime::Running
+            | DevelopmentNodeRuntime::Stopping
+            | DevelopmentNodeRuntime::Failed,
+            _,
+        ) => DurableMailboxAccess::GenerationTransition,
+    }
+}
+
+fn reap_completed_worker_locked(supervisor: &Supervisor, state: &mut SupervisorState) {
+    let Some(worker) = state.worker.as_mut() else {
+        return;
+    };
+    if !worker
+        .join
+        .as_ref()
+        .is_some_and(std::thread::JoinHandle::is_finished)
+    {
+        return;
+    }
+
+    let result = worker.done.try_recv();
+    join_finished_worker(worker);
+    state.worker = None;
+    supervisor
+        .operation_admitted
+        .store(false, Ordering::Release);
+
+    let snapshot_failed = supervisor.snapshots.read().runtime == DevelopmentNodeRuntime::Failed;
+    match result {
+        Ok(Ok(())) if !snapshot_failed => supervisor.snapshots.stopped(),
+        Ok(Err((stage, detail))) if !snapshot_failed => {
+            supervisor.snapshots.fail(DevelopmentNodeFailure {
+                stage: failure_stage_for_stop(stage),
+                detail,
+            });
+        }
+        Err(std_mpsc::TryRecvError::Empty | std_mpsc::TryRecvError::Disconnected)
+            if !snapshot_failed =>
+        {
+            supervisor.snapshots.fail(DevelopmentNodeFailure {
+                stage: DevelopmentNodeFailureStage::Runtime,
+                detail: "The native worker exited without publishing its terminal result."
+                    .to_owned(),
+            });
+        }
+        Ok(Ok(())) | Ok(Err(_)) | Err(_) => {}
+    }
+}
+
 fn admit_lxmf<Output>(
     command: impl FnOnce(std_mpsc::SyncSender<Output>) -> Command,
 ) -> Result<std_mpsc::Receiver<Output>, LxmfAdmissionFailure> {
@@ -688,23 +797,28 @@ const fn lxmf_send_has_capacity(active: usize) -> bool {
 }
 
 async fn dispatch_lxmf_message_list(
-    service: &prns_lxmf::direct::DirectLxmfService,
-    input: ListLxmfMessagesInput,
+    service: &prns_lxmf::mailbox::DurableDirectLxmfService,
+    request: prns_lxmf::mailbox::MailboxListRequest,
     response: std_mpsc::SyncSender<LxmfMessageListOutcome>,
 ) {
-    let snapshot = service.snapshot().await;
-    let _ = response.send(crate::lxmf::project_messages(&snapshot, input));
+    let outcome = match service.snapshot(request).await {
+        Ok(snapshot) => crate::lxmf::project_messages(&snapshot.messages),
+        Err(failure) => crate::lxmf::message_list_failure(failure),
+    };
+    let _ = response.send(outcome);
 }
 
 fn dispatch_lxmf_send(
-    service: &prns_lxmf::direct::DirectLxmfService,
+    service: &prns_lxmf::mailbox::DurableDirectLxmfService,
     send_tasks: &mut JoinSet<()>,
     input: SendDirectTextInput,
     response: std_mpsc::SyncSender<SendDirectTextOutcome>,
     timestamp: u64,
 ) {
     if !lxmf_send_has_capacity(send_tasks.len()) {
-        let _ = response.send(SendDirectTextOutcome::Busy);
+        let _ = response.send(SendDirectTextOutcome::DevelopmentUnavailable {
+            detail: "The bounded LXMF response lane is full.".to_owned(),
+        });
         return;
     }
     let service = service.clone();
@@ -738,19 +852,339 @@ pub fn list_lxmf_peers() -> LxmfPeerListOutcome {
 }
 
 #[must_use]
-pub fn list_lxmf_messages(input: ListLxmfMessagesInput) -> LxmfMessageListOutcome {
-    let response = match admit_lxmf(|response| Command::ListLxmfMessages(input, response)) {
-        Ok(response) => response,
-        Err(LxmfAdmissionFailure::LocalNodeStopped) => {
-            return LxmfMessageListOutcome::LocalNodeStopped
-        }
-        Err(LxmfAdmissionFailure::Busy) => return LxmfMessageListOutcome::Busy,
+pub fn list_lxmf_messages(
+    storage_root: &Path,
+    input: ListLxmfMessagesInput,
+) -> LxmfMessageListOutcome {
+    list_lxmf_messages_with_supervisor(supervisor(), storage_root, input)
+}
+
+fn list_lxmf_messages_with_supervisor(
+    supervisor: &Supervisor,
+    storage_root: &Path,
+    input: ListLxmfMessagesInput,
+) -> LxmfMessageListOutcome {
+    let request = match crate::lxmf::mailbox_list_request(input) {
+        Ok(request) => request,
+        Err(outcome) => return outcome,
     };
-    match response.recv_timeout(LXMF_QUERY_TIMEOUT) {
-        Ok(outcome) => outcome,
-        Err(std_mpsc::RecvTimeoutError::Timeout) => LxmfMessageListOutcome::Busy,
-        Err(std_mpsc::RecvTimeoutError::Disconnected) => LxmfMessageListOutcome::LocalNodeStopped,
+    let paths = match prepare_storage(storage_root) {
+        Ok(paths) => paths,
+        Err(detail) => return LxmfMessageListOutcome::DevelopmentUnavailable { detail },
+    };
+    let mut state = supervisor.lock_state();
+    reap_completed_worker_locked(supervisor, &mut state);
+    if state
+        .worker
+        .as_ref()
+        .is_some_and(|worker| worker.storage_root != paths.root)
+    {
+        return LxmfMessageListOutcome::DevelopmentUnavailable {
+            detail: "The active native generation owns a different development root.".to_owned(),
+        };
     }
+    match durable_mailbox_access(supervisor.snapshots.read().runtime, state.worker.is_some()) {
+        DurableMailboxAccess::RunningGeneration => {}
+        DurableMailboxAccess::Offline => {
+            let receiver = match admit_mailbox_locked(
+                &mut state,
+                &paths,
+                prns_lxmf::mailbox::MailboxRequest::List(request),
+            ) {
+                Ok(receiver) => receiver,
+                Err(failure) => return crate::lxmf::message_list_failure(failure),
+            };
+            drop(state);
+            return match receiver.recv_timeout(LXMF_QUERY_TIMEOUT) {
+                Ok(Ok(prns_lxmf::mailbox::MailboxReply::Listed { messages, .. })) => {
+                    crate::lxmf::project_messages(&messages)
+                }
+                Ok(Ok(_)) => LxmfMessageListOutcome::DevelopmentUnavailable {
+                    detail: "The development database returned an unexpected mailbox result."
+                        .to_owned(),
+                },
+                Ok(Err(failure)) => crate::lxmf::message_list_failure(failure),
+                Err(_) => LxmfMessageListOutcome::DevelopmentUnavailable {
+                    detail: "The durable LXMF query exceeded its bounded wait.".to_owned(),
+                },
+            };
+        }
+        DurableMailboxAccess::GenerationTransition => {
+            return LxmfMessageListOutcome::DevelopmentUnavailable {
+                detail: "The local node generation is transitioning; durable mailbox access is not yet available."
+                    .to_owned(),
+            };
+        }
+    }
+    {
+        let Some(commands) = state.worker.as_ref().map(|worker| worker.commands.clone()) else {
+            return LxmfMessageListOutcome::DevelopmentUnavailable {
+                detail: "The running native generation has no command authority.".to_owned(),
+            };
+        };
+        drop(state);
+        let (response, receiver) = std_mpsc::sync_channel(1);
+        match commands.try_send(Command::ListLxmfMessages(request, response)) {
+            Ok(()) => receiver
+                .recv_timeout(LXMF_QUERY_TIMEOUT)
+                .unwrap_or_else(|_| LxmfMessageListOutcome::DevelopmentUnavailable {
+                    detail: "The durable LXMF query exceeded its bounded wait.".to_owned(),
+                }),
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                LxmfMessageListOutcome::DevelopmentUnavailable {
+                    detail: "The native LXMF command lane is full.".to_owned(),
+                }
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                LxmfMessageListOutcome::DevelopmentUnavailable {
+                    detail: "The local node stopped before the query was admitted.".to_owned(),
+                }
+            }
+        }
+    }
+}
+
+#[must_use]
+pub fn retry_lxmf_message(
+    storage_root: &Path,
+    input: RetryLxmfMessageInput,
+) -> RetryLxmfMessageOutcome {
+    retry_lxmf_message_with_supervisor(supervisor(), storage_root, input)
+}
+
+fn retry_lxmf_message_with_supervisor(
+    supervisor: &Supervisor,
+    storage_root: &Path,
+    input: RetryLxmfMessageInput,
+) -> RetryLxmfMessageOutcome {
+    let Some(local_record_id) = crate::lxmf::parse_canonical_u64(&input.local_record_id.0) else {
+        return RetryLxmfMessageOutcome::DevelopmentUnavailable {
+            detail: "localRecordId must be a canonical unsigned 64-bit decimal string".to_owned(),
+        };
+    };
+    let paths = match prepare_storage(storage_root) {
+        Ok(paths) => paths,
+        Err(detail) => return RetryLxmfMessageOutcome::DevelopmentUnavailable { detail },
+    };
+    let mut state = supervisor.lock_state();
+    reap_completed_worker_locked(supervisor, &mut state);
+    if state
+        .worker
+        .as_ref()
+        .is_some_and(|worker| worker.storage_root != paths.root)
+    {
+        return RetryLxmfMessageOutcome::DevelopmentUnavailable {
+            detail: "The active native generation owns a different development root.".to_owned(),
+        };
+    }
+    match durable_mailbox_access(supervisor.snapshots.read().runtime, state.worker.is_some()) {
+        DurableMailboxAccess::RunningGeneration => {}
+        DurableMailboxAccess::Offline => {
+            let receiver = match admit_mailbox_locked(
+                &mut state,
+                &paths,
+                prns_lxmf::mailbox::MailboxRequest::Retry { local_record_id },
+            ) {
+                Ok(receiver) => receiver,
+                Err(failure) => return crate::lxmf::retry_failure(failure),
+            };
+            drop(state);
+            return match receiver.recv() {
+                Ok(Ok(prns_lxmf::mailbox::MailboxReply::Retry(transition))) => {
+                    project_offline_retry_transition(transition)
+                }
+                Ok(Ok(_)) => RetryLxmfMessageOutcome::DevelopmentUnavailable {
+                    detail: "The development database returned an unexpected retry result."
+                        .to_owned(),
+                },
+                Ok(Err(failure)) => crate::lxmf::retry_failure(failure),
+                Err(_) => RetryLxmfMessageOutcome::DevelopmentUnavailable {
+                    detail: "The development database owner stopped without reporting the durable retry."
+                        .to_owned(),
+                },
+            };
+        }
+        DurableMailboxAccess::GenerationTransition => {
+            return RetryLxmfMessageOutcome::DevelopmentUnavailable {
+                detail: "The local node generation is transitioning; durable mailbox retry is not yet available."
+                    .to_owned(),
+            };
+        }
+    }
+    {
+        let Some(commands) = state.worker.as_ref().map(|worker| worker.commands.clone()) else {
+            return RetryLxmfMessageOutcome::DevelopmentUnavailable {
+                detail: "The running native generation has no command authority.".to_owned(),
+            };
+        };
+        drop(state);
+        let (response, receiver) = std_mpsc::sync_channel(1);
+        match commands.try_send(Command::RetryLxmfMessage(local_record_id, response)) {
+            Ok(()) => receiver.recv().unwrap_or_else(|_| {
+                RetryLxmfMessageOutcome::DevelopmentUnavailable {
+                    detail:
+                        "The native LXMF response owner stopped without reporting the durable retry."
+                            .to_owned(),
+                }
+            }),
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                RetryLxmfMessageOutcome::DevelopmentUnavailable {
+                    detail: "The native LXMF command lane is full.".to_owned(),
+                }
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                RetryLxmfMessageOutcome::DevelopmentUnavailable {
+                    detail: "The local node stopped before retry was admitted.".to_owned(),
+                }
+            }
+        }
+    }
+}
+
+#[must_use]
+pub fn cancel_lxmf_message(
+    storage_root: &Path,
+    input: CancelLxmfMessageInput,
+) -> CancelLxmfMessageOutcome {
+    cancel_lxmf_message_with_supervisor(supervisor(), storage_root, input)
+}
+
+fn cancel_lxmf_message_with_supervisor(
+    supervisor: &Supervisor,
+    storage_root: &Path,
+    input: CancelLxmfMessageInput,
+) -> CancelLxmfMessageOutcome {
+    let Some(local_record_id) = crate::lxmf::parse_canonical_u64(&input.local_record_id.0) else {
+        return CancelLxmfMessageOutcome::DevelopmentUnavailable {
+            detail: "localRecordId must be a canonical unsigned 64-bit decimal string".to_owned(),
+        };
+    };
+    let cancelled_at_millis = wall_clock_millis();
+    let paths = match prepare_storage(storage_root) {
+        Ok(paths) => paths,
+        Err(detail) => return CancelLxmfMessageOutcome::DevelopmentUnavailable { detail },
+    };
+    let mut state = supervisor.lock_state();
+    reap_completed_worker_locked(supervisor, &mut state);
+    if state
+        .worker
+        .as_ref()
+        .is_some_and(|worker| worker.storage_root != paths.root)
+    {
+        return CancelLxmfMessageOutcome::DevelopmentUnavailable {
+            detail: "The active native generation owns a different development root.".to_owned(),
+        };
+    }
+    match durable_mailbox_access(supervisor.snapshots.read().runtime, state.worker.is_some()) {
+        DurableMailboxAccess::RunningGeneration => {}
+        DurableMailboxAccess::Offline => {
+            let receiver = match admit_mailbox_locked(
+                &mut state,
+                &paths,
+                prns_lxmf::mailbox::MailboxRequest::Cancel {
+                    local_record_id,
+                    cancelled_at_millis,
+                },
+            ) {
+                Ok(receiver) => receiver,
+                Err(failure) => return crate::lxmf::cancel_failure(failure),
+            };
+            drop(state);
+            return match receiver.recv() {
+                Ok(Ok(prns_lxmf::mailbox::MailboxReply::Cancel(transition))) => {
+                    project_offline_cancel_transition(transition)
+                }
+                Ok(Ok(_)) => CancelLxmfMessageOutcome::DevelopmentUnavailable {
+                    detail: "The development database returned an unexpected cancellation result."
+                        .to_owned(),
+                },
+                Ok(Err(failure)) => crate::lxmf::cancel_failure(failure),
+                Err(_) => CancelLxmfMessageOutcome::DevelopmentUnavailable {
+                    detail: "The development database owner stopped without reporting the durable cancellation."
+                        .to_owned(),
+                },
+            };
+        }
+        DurableMailboxAccess::GenerationTransition => {
+            return CancelLxmfMessageOutcome::DevelopmentUnavailable {
+                detail: "The local node generation is transitioning; durable mailbox cancellation is not yet available."
+                    .to_owned(),
+            };
+        }
+    }
+    {
+        let Some(commands) = state.worker.as_ref().map(|worker| worker.commands.clone()) else {
+            return CancelLxmfMessageOutcome::DevelopmentUnavailable {
+                detail: "The running native generation has no command authority.".to_owned(),
+            };
+        };
+        drop(state);
+        let (response, receiver) = std_mpsc::sync_channel(1);
+        match commands.try_send(Command::CancelLxmfMessage(
+            local_record_id,
+            cancelled_at_millis,
+            response,
+        )) {
+            Ok(()) => receiver.recv().unwrap_or_else(|_| {
+                CancelLxmfMessageOutcome::DevelopmentUnavailable {
+                    detail: "The native LXMF response owner stopped without reporting the durable cancellation."
+                        .to_owned(),
+                }
+            }),
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                CancelLxmfMessageOutcome::DevelopmentUnavailable {
+                    detail: "The native LXMF command lane is full.".to_owned(),
+                }
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                CancelLxmfMessageOutcome::DevelopmentUnavailable {
+                    detail: "The local node stopped before cancellation was admitted.".to_owned(),
+                }
+            }
+        }
+    }
+}
+
+fn project_offline_retry_transition(
+    transition: prns_lxmf::mailbox::RetryTransition,
+) -> RetryLxmfMessageOutcome {
+    crate::lxmf::project_retry_outcome(match transition {
+        prns_lxmf::mailbox::RetryTransition::Accepted { message, .. } => {
+            prns_lxmf::mailbox::RetryLxmfMessageOutcome::Accepted {
+                local_record_id: message.local_record_id,
+            }
+        }
+        prns_lxmf::mailbox::RetryTransition::NotFound => {
+            prns_lxmf::mailbox::RetryLxmfMessageOutcome::NotFound
+        }
+        prns_lxmf::mailbox::RetryTransition::NotFailed { current } => {
+            prns_lxmf::mailbox::RetryLxmfMessageOutcome::NotFailed { current }
+        }
+    })
+}
+
+fn project_offline_cancel_transition(
+    transition: prns_lxmf::mailbox::CancelTransition,
+) -> CancelLxmfMessageOutcome {
+    crate::lxmf::project_cancel_outcome(match transition {
+        prns_lxmf::mailbox::CancelTransition::Cancelled { message, .. } => {
+            prns_lxmf::mailbox::CancelLxmfMessageOutcome::Cancelled {
+                local_record_id: message.local_record_id,
+            }
+        }
+        prns_lxmf::mailbox::CancelTransition::NotFound => {
+            prns_lxmf::mailbox::CancelLxmfMessageOutcome::NotFound
+        }
+        prns_lxmf::mailbox::CancelTransition::AlreadyDelivered => {
+            prns_lxmf::mailbox::CancelLxmfMessageOutcome::AlreadyDelivered
+        }
+        prns_lxmf::mailbox::CancelTransition::AlreadyCancelled => {
+            prns_lxmf::mailbox::CancelLxmfMessageOutcome::AlreadyCancelled
+        }
+        prns_lxmf::mailbox::CancelTransition::NotCancellable { current } => {
+            prns_lxmf::mailbox::CancelLxmfMessageOutcome::NotCancellable { current }
+        }
+    })
 }
 
 #[must_use]
@@ -790,14 +1224,32 @@ pub fn send_direct_text(input: SendDirectTextInput) -> SendDirectTextOutcome {
     let response = match admit_lxmf(|response| Command::SendDirectText(input, response)) {
         Ok(response) => response,
         Err(LxmfAdmissionFailure::LocalNodeStopped) => {
-            return SendDirectTextOutcome::LocalNodeStopped
+            return SendDirectTextOutcome::DevelopmentUnavailable {
+                detail: "The local node is not running; peer eligibility is generation-bound."
+                    .to_owned(),
+            }
         }
-        Err(LxmfAdmissionFailure::Busy) => return SendDirectTextOutcome::Busy,
+        Err(LxmfAdmissionFailure::Busy) => {
+            return SendDirectTextOutcome::DevelopmentUnavailable {
+                detail: "The native LXMF command lane is full.".to_owned(),
+            }
+        }
     };
-    match response.recv_timeout(LXMF_SEND_TIMEOUT) {
+    // After admission, only the database owner can determine whether the unique
+    // insert committed. A synthetic timeout would let a caller retry an insert
+    // that may later commit and create a duplicate durable message.
+    wait_for_admitted_lxmf_send(response)
+}
+
+fn wait_for_admitted_lxmf_send(
+    response: std_mpsc::Receiver<SendDirectTextOutcome>,
+) -> SendDirectTextOutcome {
+    match response.recv() {
         Ok(outcome) => outcome,
-        Err(std_mpsc::RecvTimeoutError::Timeout) => SendDirectTextOutcome::DeliveryTimedOut,
-        Err(std_mpsc::RecvTimeoutError::Disconnected) => SendDirectTextOutcome::LocalNodeStopped,
+        Err(_) => SendDirectTextOutcome::DevelopmentUnavailable {
+            detail: "The native LXMF response owner stopped without reporting the queue commit."
+                .to_owned(),
+        },
     }
 }
 
@@ -813,7 +1265,8 @@ fn save_observed_destination_with_supervisor(
     storage_root: &Path,
     input: ContactDestinationInput,
 ) -> ContactMutationOutcome {
-    let state = supervisor.lock_state();
+    let mut state = supervisor.lock_state();
+    reap_completed_worker_locked(supervisor, &mut state);
     if supervisor.snapshots.read().runtime != DevelopmentNodeRuntime::Running {
         return ContactMutationOutcome::LocalNodeStopped;
     }
@@ -859,6 +1312,7 @@ fn save_observed_destination_with_supervisor(
         }
     };
     let mut state = supervisor.lock_state();
+    reap_completed_worker_locked(supervisor, &mut state);
     let same_generation = supervisor.snapshots.read().runtime == DevelopmentNodeRuntime::Running
         && state.worker.as_ref().is_some_and(|worker| {
             worker.storage_root == paths.root && worker.commands.same_channel(&generation_commands)
@@ -1002,6 +1456,7 @@ fn admit_directory(
 ) -> Result<std_mpsc::Receiver<StoreReply>, DevelopmentStoreFailure> {
     let supervisor = supervisor();
     let mut state = supervisor.lock_state();
+    reap_completed_worker_locked(supervisor, &mut state);
     let paths = prepare_storage(storage_root).map_err(DevelopmentStoreFailure::unavailable)?;
     admit_directory_locked(&mut state, &paths, request)
 }
@@ -1011,6 +1466,13 @@ fn admit_directory_locked(
     paths: &NodeStoragePaths,
     request: DirectoryRequest,
 ) -> Result<std_mpsc::Receiver<StoreReply>, DevelopmentStoreFailure> {
+    ensure_application_owner_locked(state, paths)?.admit(request)
+}
+
+fn ensure_application_owner_locked<'a>(
+    state: &'a mut SupervisorState,
+    paths: &NodeStoragePaths,
+) -> Result<&'a DevelopmentStoreOwner, DevelopmentStoreFailure> {
     if state
         .worker
         .as_ref()
@@ -1047,15 +1509,26 @@ fn admit_directory_locked(
             &paths.application,
         )?);
     }
-    state
-        .application_owner
-        .as_ref()
-        .ok_or_else(|| {
-            DevelopmentStoreFailure::unavailable(
-                "the development database owner was not initialized",
-            )
+    state.application_owner.as_ref().ok_or_else(|| {
+        DevelopmentStoreFailure::unavailable("the development database owner was not initialized")
+    })
+}
+
+fn admit_mailbox_locked(
+    state: &mut SupervisorState,
+    paths: &NodeStoragePaths,
+    request: prns_lxmf::mailbox::MailboxRequest,
+) -> Result<std_mpsc::Receiver<MailboxStoreReply>, prns_lxmf::mailbox::MailboxFailure> {
+    ensure_application_owner_locked(state, paths)
+        .map_err(|failure| match failure {
+            DevelopmentStoreFailure::Unavailable(detail) => {
+                prns_lxmf::mailbox::MailboxFailure::Unavailable(detail)
+            }
+            DevelopmentStoreFailure::ResetRequired(reason) => {
+                prns_lxmf::mailbox::MailboxFailure::ResetRequired(reason)
+            }
         })?
-        .admit(request)
+        .admit_mailbox(request)
 }
 
 fn mutation_store_failure(failure: DevelopmentStoreFailure) -> ContactMutationOutcome {
@@ -1171,7 +1644,13 @@ fn request_worker_shutdown(worker: &Worker) {
 }
 
 pub fn reset(storage_root: &Path) -> DevelopmentNodeStopOutcome {
-    let supervisor = supervisor();
+    reset_with_supervisor(supervisor(), storage_root)
+}
+
+fn reset_with_supervisor(
+    supervisor: &Supervisor,
+    storage_root: &Path,
+) -> DevelopmentNodeStopOutcome {
     let mut state = supervisor.lock_state();
     let owned_roots = [
         state.worker.as_ref().map(|worker| &worker.storage_root),
@@ -1198,14 +1677,9 @@ pub fn reset(storage_root: &Path) -> DevelopmentNodeStopOutcome {
     if !matches!(
         stop_outcome,
         DevelopmentNodeStopOutcome::Stopped | DevelopmentNodeStopOutcome::AlreadyStopped
-    ) && state.worker.is_some()
-    {
+    ) {
         return stop_outcome;
     }
-    let reset_outcome = match stop_outcome {
-        DevelopmentNodeStopOutcome::Failed { .. } => DevelopmentNodeStopOutcome::Stopped,
-        outcome => outcome,
-    };
     if let Some(owner) = state.application_owner.take() {
         if let Err(failure) = owner.close() {
             let detail = match failure {
@@ -1222,7 +1696,7 @@ pub fn reset(storage_root: &Path) -> DevelopmentNodeStopOutcome {
     match reset_storage(storage_root) {
         Ok(()) => {
             supervisor.snapshots.reset();
-            reset_outcome
+            stop_outcome
         }
         Err(detail) => DevelopmentNodeStopOutcome::Failed {
             stage: DevelopmentNodeStopStage::Persistence,
@@ -1250,14 +1724,12 @@ impl Supervisor {
 
 fn running_commands() -> Option<mpsc::Sender<Command>> {
     let supervisor = supervisor();
+    let mut state = supervisor.lock_state();
+    reap_completed_worker_locked(supervisor, &mut state);
     if supervisor.snapshots.read().runtime != DevelopmentNodeRuntime::Running {
         return None;
     }
-    supervisor
-        .lock_state()
-        .worker
-        .as_ref()
-        .map(|worker| worker.commands.clone())
+    state.worker.as_ref().map(|worker| worker.commands.clone())
 }
 
 fn call_pairing(
@@ -1345,6 +1817,7 @@ fn join_finished_worker(worker: &mut Worker) {
 fn run_worker(
     paths: NodeStoragePaths,
     primary_identity_secret: IdentitySecretKey,
+    mailbox_submitter: Arc<dyn prns_lxmf::mailbox::MailboxSubmitter>,
     development_tcp_target: Option<String>,
     commands: mpsc::Receiver<Command>,
     shutdown: ShutdownSignal,
@@ -1364,6 +1837,7 @@ fn run_worker(
     runtime.block_on(run_generation(
         paths,
         primary_identity_secret,
+        mailbox_submitter,
         development_tcp_target,
         commands,
         shutdown,
@@ -1378,6 +1852,7 @@ fn run_worker(
 async fn run_generation(
     paths: NodeStoragePaths,
     primary_identity_secret: IdentitySecretKey,
+    mailbox_submitter: Arc<dyn prns_lxmf::mailbox::MailboxSubmitter>,
     development_tcp_target: Option<String>,
     commands: mpsc::Receiver<Command>,
     shutdown: ShutdownSignal,
@@ -1472,7 +1947,7 @@ async fn run_generation(
         )
     })?;
     let (pending_lxmf, lxmf_callbacks) =
-        prns_lxmf::direct::DirectLxmfService::prepare(lxmf_identity);
+        prns_lxmf::mailbox::DurableDirectLxmfService::prepare(lxmf_identity);
     let (event_tx, event_rx) = mpsc::channel(EVENT_LANE_CAPACITY);
     let overflowed = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let event_overflowed = Arc::clone(&overflowed);
@@ -1519,9 +1994,12 @@ async fn run_generation(
     }
 
     let lxmf_service = pending_lxmf
-        .start(Arc::new(prns_lxmf::direct::PrnsDirectNetwork::new(
-            handle.clone(),
-        )))
+        .start_paused(
+            Arc::new(prns_lxmf::direct::PrnsDirectNetwork::new(handle.clone())),
+            mailbox_submitter,
+            Arc::new(prns_lxmf::mailbox::SystemMailboxClock),
+        )
+        .await
         .map_err(|error| {
             boot_failure(
                 &ready,
@@ -1531,9 +2009,18 @@ async fn run_generation(
             )
         })?;
     let lxmf_refresh = lxmf_service.subscribe();
-    snapshots.refresh_lxmf(crate::lxmf::project_health(
-        lxmf_service.snapshot().await.health,
-    ));
+    refresh_lxmf_health(&lxmf_service, &snapshots)
+        .await
+        .map(|_| ())
+        .map_err(|failure| {
+            let detail = lxmf_storage_failure_detail(&snapshots, &failure);
+            boot_failure(
+                &ready,
+                &snapshots,
+                DevelopmentNodeFailureStage::Storage,
+                detail,
+            )
+        })?;
 
     snapshots.update(|snapshot| {
         snapshot.controller_identity_fingerprint = Some(controller_identity_fingerprint);
@@ -1662,7 +2149,7 @@ fn map_node_run_error(
 #[allow(clippy::too_many_arguments)]
 async fn run_actor(
     handle: PrnsNodeHandle,
-    lxmf_service: prns_lxmf::direct::DirectLxmfService,
+    lxmf_service: prns_lxmf::mailbox::DurableDirectLxmfService,
     mut lxmf_refresh: watch::Receiver<u64>,
     commands: mpsc::Receiver<Command>,
     events: mpsc::Receiver<OwnedNodeEvent>,
@@ -1692,23 +2179,21 @@ async fn run_actor(
     )
     .await;
 
-    let stop_result = lxmf_service.stop().await.map_err(|_| {
-        (
-            DevelopmentNodeStopStage::Worker,
-            "The LXMF service did not finish bounded shutdown.".to_owned(),
-        )
-    });
-    send_tasks.shutdown().await;
-    snapshots.refresh_lxmf(crate::lxmf::project_health(
-        lxmf_service.snapshot().await.health,
-    ));
-    result.and(stop_result)
+    let lxmf_stop_result = stop_lxmf_service_and_drain(&lxmf_service, &mut send_tasks).await;
+    let health_result = refresh_lxmf_health(&lxmf_service, &snapshots)
+        .await
+        .map(|_| ())
+        .map_err(|failure| {
+            let detail = publish_lxmf_storage_failure(&snapshots, &failure);
+            (DevelopmentNodeStopStage::Persistence, detail)
+        });
+    result.and(lxmf_stop_result).and(health_result)
 }
 
 #[allow(clippy::too_many_arguments)]
 async fn run_actor_loop(
     handle: &PrnsNodeHandle,
-    lxmf_service: &prns_lxmf::direct::DirectLxmfService,
+    lxmf_service: &prns_lxmf::mailbox::DurableDirectLxmfService,
     lxmf_refresh: &mut watch::Receiver<u64>,
     send_tasks: &mut JoinSet<()>,
     mut commands: mpsc::Receiver<Command>,
@@ -1758,6 +2243,13 @@ async fn run_actor_loop(
         }
     }
 
+    if !lxmf_service.activate_queued_attempts().await {
+        let detail =
+            "The durable LXMF service stopped before queued attempts were activated.".to_owned();
+        let _ = ready.send(Err((DevelopmentNodeFailureStage::Runtime, detail.clone())));
+        return Err((DevelopmentNodeStopStage::Worker, detail));
+    }
+
     let _ = crate::remote_control::refresh_targets(handle, snapshots).await;
     snapshots.update(|snapshot| {
         snapshot.runtime = DevelopmentNodeRuntime::Running;
@@ -1775,6 +2267,9 @@ async fn run_actor_loop(
     let _ = ready.send(Ok(snapshots.read()));
 
     let mut candidate_expiry = tokio::time::interval(Duration::from_millis(500));
+    let mut lxmf_health_retry = tokio::time::interval(LXMF_HEALTH_RETRY_DELAY);
+    lxmf_health_retry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut retry_lxmf_health = false;
     loop {
         if overflowed.swap(false, std::sync::atomic::Ordering::AcqRel) {
             apply_overflow_failure(snapshots);
@@ -1798,9 +2293,13 @@ async fn run_actor_loop(
                         "The native actor lost its LXMF refresh authority.".to_owned(),
                     ));
                 }
-                snapshots.refresh_lxmf(crate::lxmf::project_health(
-                    lxmf_service.snapshot().await.health,
-                ));
+                retry_lxmf_health = refresh_running_lxmf_health(lxmf_service, snapshots).await?;
+                if retry_lxmf_health {
+                    lxmf_health_retry.reset();
+                }
+            }
+            _ = lxmf_health_retry.tick(), if retry_lxmf_health => {
+                retry_lxmf_health = refresh_running_lxmf_health(lxmf_service, snapshots).await?;
             }
             completed = send_tasks.join_next(), if !send_tasks.is_empty() => {
                 if completed.is_some_and(|result| result.is_err()) {
@@ -1894,11 +2393,36 @@ async fn run_actor_loop(
                     let _ = response.send(identity);
                 }
                 Some(Command::ListLxmfPeers(response)) => {
-                    let snapshot = lxmf_service.snapshot().await;
-                    let _ = response.send(crate::lxmf::project_peers(&snapshot, clock.now().0));
+                    let outcome = match lxmf_service
+                        .snapshot(prns_lxmf::mailbox::MailboxListRequest {
+                            peer: None,
+                            direction: None,
+                            before: None,
+                            limit: 1,
+                        })
+                        .await
+                    {
+                        Ok(snapshot) => crate::lxmf::project_peers(&snapshot, clock.now().0),
+                        Err(_) => LxmfPeerListOutcome::Busy,
+                    };
+                    let _ = response.send(outcome);
                 }
-                Some(Command::ListLxmfMessages(input, response)) => {
-                    dispatch_lxmf_message_list(lxmf_service, input, response).await;
+                Some(Command::ListLxmfMessages(request, response)) => {
+                    dispatch_lxmf_message_list(lxmf_service, request, response).await;
+                }
+                Some(Command::RetryLxmfMessage(local_record_id, response)) => {
+                    let outcome = lxmf_service.retry_lxmf_message(local_record_id).await;
+                    let _ = response.send(crate::lxmf::project_retry_outcome(outcome));
+                }
+                Some(Command::CancelLxmfMessage(
+                    local_record_id,
+                    cancelled_at_millis,
+                    response,
+                )) => {
+                    let outcome = lxmf_service
+                        .cancel_lxmf_message(local_record_id, cancelled_at_millis)
+                        .await;
+                    let _ = response.send(crate::lxmf::project_cancel_outcome(outcome));
                 }
                 Some(Command::MeasureLxmfText(input, response)) => {
                     let _ = response.send(crate::lxmf::measure_text(&input));
@@ -1927,6 +2451,132 @@ async fn run_actor_loop(
             }
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LxmfHealthRefresh {
+    Current,
+    RetryNeeded,
+}
+
+async fn refresh_lxmf_health(
+    service: &prns_lxmf::mailbox::DurableDirectLxmfService,
+    snapshots: &SnapshotStore,
+) -> Result<LxmfHealthRefresh, prns_lxmf::mailbox::MailboxFailure> {
+    let snapshot = match service
+        .snapshot(prns_lxmf::mailbox::MailboxListRequest {
+            peer: None,
+            direction: None,
+            before: None,
+            limit: 1,
+        })
+        .await
+    {
+        Ok(snapshot) => snapshot,
+        Err(
+            prns_lxmf::mailbox::MailboxFailure::Busy
+            | prns_lxmf::mailbox::MailboxFailure::Unavailable(_),
+        ) => {
+            snapshots.set_lxmf_degraded();
+            return Ok(LxmfHealthRefresh::RetryNeeded);
+        }
+        Err(failure @ prns_lxmf::mailbox::MailboxFailure::ResetRequired(_)) => {
+            return Err(failure);
+        }
+    };
+    match crate::lxmf::project_health(&snapshot) {
+        Ok(health) => {
+            snapshots.refresh_lxmf(health);
+            Ok(LxmfHealthRefresh::Current)
+        }
+        Err(
+            prns_lxmf::mailbox::MailboxFailure::Busy
+            | prns_lxmf::mailbox::MailboxFailure::Unavailable(_),
+        ) => {
+            snapshots.set_lxmf_degraded();
+            Ok(LxmfHealthRefresh::RetryNeeded)
+        }
+        Err(failure @ prns_lxmf::mailbox::MailboxFailure::ResetRequired(_)) => Err(failure),
+    }
+}
+
+async fn refresh_running_lxmf_health(
+    service: &prns_lxmf::mailbox::DurableDirectLxmfService,
+    snapshots: &SnapshotStore,
+) -> Result<bool, (DevelopmentNodeStopStage, String)> {
+    match refresh_lxmf_health(service, snapshots).await {
+        Ok(LxmfHealthRefresh::Current) => Ok(false),
+        Ok(LxmfHealthRefresh::RetryNeeded) => Ok(true),
+        Err(failure) => {
+            let detail = publish_lxmf_storage_failure(snapshots, &failure);
+            Err((DevelopmentNodeStopStage::Persistence, detail))
+        }
+    }
+}
+
+fn lxmf_storage_failure_detail(
+    snapshots: &SnapshotStore,
+    failure: &prns_lxmf::mailbox::MailboxFailure,
+) -> String {
+    match failure {
+        prns_lxmf::mailbox::MailboxFailure::Busy => {
+            "The bounded development database lane is full.".to_owned()
+        }
+        prns_lxmf::mailbox::MailboxFailure::Unavailable(detail) => detail.clone(),
+        prns_lxmf::mailbox::MailboxFailure::ResetRequired(reason) => {
+            snapshots.set_local_host(LocalHostState::DevelopmentResetRequired {
+                reason: reason.clone(),
+            });
+            reason.clone()
+        }
+    }
+}
+
+fn publish_lxmf_storage_failure(
+    snapshots: &SnapshotStore,
+    failure: &prns_lxmf::mailbox::MailboxFailure,
+) -> String {
+    let detail = lxmf_storage_failure_detail(snapshots, failure);
+    snapshots.fail(DevelopmentNodeFailure {
+        stage: DevelopmentNodeFailureStage::Storage,
+        detail: detail.clone(),
+    });
+    detail
+}
+
+async fn drain_lxmf_response_tasks(send_tasks: &mut JoinSet<()>) -> WorkerResult {
+    // These wrappers own already-admitted insert outcomes. Generation shutdown
+    // may time out independently, but it must not abort a wrapper while the
+    // application store can still report a definitive commit result.
+    let mut first_failure = None;
+    while let Some(completed) = send_tasks.join_next().await {
+        if completed.is_err() && first_failure.is_none() {
+            first_failure = Some((
+                DevelopmentNodeStopStage::Worker,
+                "An LXMF response task stopped before reporting its committed result.".to_owned(),
+            ));
+        }
+    }
+    first_failure.map_or(Ok(()), Err)
+}
+
+async fn stop_lxmf_service_and_drain(
+    service: &prns_lxmf::mailbox::DurableDirectLxmfService,
+    send_tasks: &mut JoinSet<()>,
+) -> WorkerResult {
+    let first_stop_result = service.stop().await;
+    let response_result = drain_lxmf_response_tasks(send_tasks).await;
+    let stop_result = match first_stop_result {
+        Ok(()) => Ok(()),
+        Err(_) => service.stop().await.map_err(|_| {
+            (
+                DevelopmentNodeStopStage::Worker,
+                "The LXMF service did not finish bounded shutdown after admitted responses drained."
+                    .to_owned(),
+            )
+        }),
+    };
+    stop_result.and(response_result)
 }
 
 async fn refresh_host_snapshot(
@@ -2319,6 +2969,96 @@ mod tests {
     struct PendingProofNetwork {
         send_entered: tokio::sync::Notify,
         release_send: tokio::sync::Notify,
+        send_count: std::sync::atomic::AtomicUsize,
+    }
+
+    struct BlockingInsertSubmitter {
+        inner: Arc<dyn prns_lxmf::mailbox::MailboxSubmitter>,
+        insert_entered: tokio::sync::Notify,
+        release_insert: tokio::sync::Notify,
+    }
+
+    impl BlockingInsertSubmitter {
+        fn new(inner: Arc<dyn prns_lxmf::mailbox::MailboxSubmitter>) -> Self {
+            Self {
+                inner,
+                insert_entered: tokio::sync::Notify::new(),
+                release_insert: tokio::sync::Notify::new(),
+            }
+        }
+    }
+
+    impl prns_lxmf::mailbox::MailboxSubmitter for BlockingInsertSubmitter {
+        fn submit(
+            &self,
+            request: prns_lxmf::mailbox::MailboxRequest,
+        ) -> prns_lxmf::mailbox::MailboxFuture<'_> {
+            Box::pin(async move {
+                if matches!(
+                    &request,
+                    prns_lxmf::mailbox::MailboxRequest::InsertOutbound(_)
+                ) {
+                    self.insert_entered.notify_one();
+                    self.release_insert.notified().await;
+                }
+                self.inner.submit(request).await
+            })
+        }
+    }
+
+    struct ResetCompletionSubmitter {
+        inner: Arc<dyn prns_lxmf::mailbox::MailboxSubmitter>,
+    }
+
+    impl prns_lxmf::mailbox::MailboxSubmitter for ResetCompletionSubmitter {
+        fn submit(
+            &self,
+            request: prns_lxmf::mailbox::MailboxRequest,
+        ) -> prns_lxmf::mailbox::MailboxFuture<'_> {
+            Box::pin(async move {
+                if matches!(
+                    &request,
+                    prns_lxmf::mailbox::MailboxRequest::CompleteAttempt { .. }
+                ) {
+                    return Err(prns_lxmf::mailbox::MailboxFailure::ResetRequired(
+                        "mailbox record became unreadable".to_owned(),
+                    ));
+                }
+                self.inner.submit(request).await
+            })
+        }
+    }
+
+    struct TransientListFailureSubmitter {
+        inner: Arc<dyn prns_lxmf::mailbox::MailboxSubmitter>,
+        remaining_failures: std::sync::atomic::AtomicUsize,
+    }
+
+    impl prns_lxmf::mailbox::MailboxSubmitter for TransientListFailureSubmitter {
+        fn submit(
+            &self,
+            request: prns_lxmf::mailbox::MailboxRequest,
+        ) -> prns_lxmf::mailbox::MailboxFuture<'_> {
+            Box::pin(async move {
+                if matches!(&request, prns_lxmf::mailbox::MailboxRequest::List(_)) {
+                    let remaining = self.remaining_failures.fetch_update(
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                        |remaining| remaining.checked_sub(1),
+                    );
+                    if let Ok(remaining) = remaining {
+                        return Err(if remaining == 2 {
+                            prns_lxmf::mailbox::MailboxFailure::Busy
+                        } else {
+                            prns_lxmf::mailbox::MailboxFailure::Unavailable(
+                                "transient mailbox read failure".to_owned(),
+                            )
+                        });
+                    }
+                }
+                self.inner.submit(request).await
+            })
+        }
     }
 
     impl prns_lxmf::direct::DirectNetwork for PendingProofNetwork {
@@ -2355,12 +3095,13 @@ mod tests {
             _complete_wire: Vec<u8>,
         ) -> prns_lxmf::direct::DirectNetworkFuture<
             '_,
-            Result<(), prns_lxmf::direct::DirectSendFailure>,
+            Result<prns_lxmf::direct::DirectDeliveryReceipt, prns_lxmf::direct::DirectSendFailure>,
         > {
             Box::pin(async move {
+                self.send_count.fetch_add(1, Ordering::AcqRel);
                 self.send_entered.notify_one();
                 self.release_send.notified().await;
-                Ok(())
+                Ok(prns_lxmf::direct::DirectDeliveryReceipt { rtt_millis: 23 })
             })
         }
 
@@ -2433,6 +3174,234 @@ mod tests {
         }
     }
 
+    fn seed_failed_outbound_message(
+        supervisor: &Supervisor,
+        paths: &NodeStoragePaths,
+        destination: [u8; 16],
+    ) {
+        let identity = prns_lxmf::direct::LocalLxmfIdentity::from_secret_bytes(
+            &[0x71; personal_rns::identity::IDENTITY_SECRET_KEY_LEN],
+        )
+        .expect("the fixed LXMF destination name is valid");
+        let source = identity.destination();
+        let mut encoded = [0_u8; prns_lxmf::wire::MAX_BASIC_LXMF_WIRE_BYTES];
+        let prepared = prns_lxmf::wire::compose_basic_direct_lxmf(
+            destination,
+            source,
+            1_700_000_009_000,
+            b"Offline",
+            b"Exact wire",
+            None,
+            &identity,
+            &mut encoded,
+        )
+        .expect("the small direct message fits");
+        let inserted = {
+            let mut state = supervisor.lock_state();
+            ensure_application_owner_locked(&mut state, paths)
+                .expect("application owner")
+                .admit_mailbox(prns_lxmf::mailbox::MailboxRequest::InsertOutbound(
+                    prns_lxmf::mailbox::NewOutboundMessage {
+                        message_id: prepared.message_id(),
+                        source,
+                        destination,
+                        timestamp_unix_ms: 1_700_000_009_000,
+                        title: b"Offline".to_vec(),
+                        content: b"Exact wire".to_vec(),
+                        exact_wire: encoded[..usize::from(prepared.wire_len())].to_vec(),
+                    },
+                ))
+                .expect("insert admission")
+        }
+        .recv()
+        .expect("insert reply")
+        .expect("insert succeeds");
+        assert!(matches!(
+            inserted,
+            prns_lxmf::mailbox::MailboxReply::OutboundInserted { .. }
+        ));
+        {
+            let mut state = supervisor.lock_state();
+            ensure_application_owner_locked(&mut state, paths)
+                .expect("application owner")
+                .admit_mailbox(prns_lxmf::mailbox::MailboxRequest::CompleteAttempt {
+                    key: prns_lxmf::mailbox::AttemptKey {
+                        local_record_id: 1,
+                        generation: 1,
+                    },
+                    completion: prns_lxmf::mailbox::AttemptCompletion::Failed {
+                        failure: prns_lxmf::direct::DirectSendFailure::DeliveryTimedOut,
+                    },
+                })
+                .expect("failure admission")
+        }
+        .recv()
+        .expect("failure reply")
+        .expect("failure succeeds");
+    }
+
+    fn install_finished_failed_worker(supervisor: &Supervisor, paths: &NodeStoragePaths) {
+        let (done_tx, done) = std_mpsc::sync_channel(1);
+        let join = std::thread::spawn(move || {
+            done_tx
+                .send(Err((
+                    DevelopmentNodeStopStage::Node,
+                    "node stopped unexpectedly".to_owned(),
+                )))
+                .expect("terminal worker result");
+        });
+        while !join.is_finished() {
+            std::thread::yield_now();
+        }
+        let (commands, _commands_rx) = mpsc::channel(1);
+        let (shutdown_sender, _shutdown_rx) = watch::channel(false);
+        supervisor.lock_state().worker = Some(Worker {
+            commands,
+            shutdown: ShutdownSignal {
+                sender: shutdown_sender,
+                requested: Arc::new(AtomicBool::new(false)),
+            },
+            done,
+            join: Some(join),
+            storage_root: paths.root.clone(),
+        });
+    }
+
+    fn assert_offline_list_retry_cancel(
+        supervisor: &Supervisor,
+        storage: &Path,
+        destination: [u8; 16],
+    ) {
+        let list_input = ListLxmfMessagesInput {
+            peer: Some(destination),
+            before: None,
+            limit: 25,
+        };
+        let LxmfMessageListOutcome::Listed { messages } =
+            list_lxmf_messages_with_supervisor(supervisor, storage, list_input.clone())
+        else {
+            panic!("the offline mailbox did not return its durable row");
+        };
+        assert!(matches!(
+            messages[0].delivery_state,
+            crate::contract::LxmfDeliveryState::Failed {
+                failed_attempts: U64String(ref value),
+                last_failure: crate::contract::LxmfDeliveryFailure::DeliveryTimedOut,
+            } if value == "1"
+        ));
+
+        assert_eq!(
+            retry_lxmf_message_with_supervisor(
+                supervisor,
+                storage,
+                RetryLxmfMessageInput {
+                    local_record_id: U64String::from(1),
+                },
+            ),
+            RetryLxmfMessageOutcome::Accepted {
+                local_record_id: U64String::from(1),
+            }
+        );
+        let LxmfMessageListOutcome::Listed { messages } =
+            list_lxmf_messages_with_supervisor(supervisor, storage, list_input.clone())
+        else {
+            panic!("the retried mailbox row was not listed");
+        };
+        assert_eq!(
+            messages[0].delivery_state,
+            crate::contract::LxmfDeliveryState::Queued {
+                failed_attempts: U64String::from(1),
+            }
+        );
+
+        assert_eq!(
+            cancel_lxmf_message_with_supervisor(
+                supervisor,
+                storage,
+                CancelLxmfMessageInput {
+                    local_record_id: U64String::from(1),
+                },
+            ),
+            CancelLxmfMessageOutcome::Cancelled {
+                local_record_id: U64String::from(1),
+            }
+        );
+        let LxmfMessageListOutcome::Listed { messages } =
+            list_lxmf_messages_with_supervisor(supervisor, storage, list_input)
+        else {
+            panic!("the cancelled mailbox row was not listed");
+        };
+        assert!(matches!(
+            messages[0].delivery_state,
+            crate::contract::LxmfDeliveryState::Cancelled { .. }
+        ));
+    }
+
+    async fn learn_pending_peer(
+        service: &prns_lxmf::mailbox::DurableDirectLxmfService,
+    ) -> [u8; 16] {
+        use personal_rns::interfaces::InterfaceId;
+        use personal_rns::routing::announce::{
+            derive_single_destination_hash, AnnounceObservation,
+        };
+        use personal_rns::units::{HopCount, InstantMillis};
+
+        let peer_material = PrivateIdentityMaterial::from_bytes(
+            [0x52; personal_rns::identity::IDENTITY_SECRET_KEY_LEN],
+        );
+        let peer_destination = derive_single_destination_hash(
+            &peer_material.identity_hash(),
+            prns_lxmf::wire::LXMF_APP_NAME,
+            prns_lxmf::wire::LXMF_DELIVERY_ASPECTS,
+        )
+        .expect("the fixed LXMF destination name is valid");
+        let mut announce = [0_u8; 64];
+        let announce_len =
+            prns_lxmf::wire::encode_current_lxmf_announce(b"Pending peer", &mut announce)
+                .expect("the small announce fits");
+        let mut refresh = service.subscribe();
+        assert_eq!(
+            service
+                .callbacks()
+                .on_accepted_announce(AnnounceObservation {
+                    destination: peer_destination,
+                    announced_identity: peer_material.identity_hash(),
+                    hops: HopCount(1),
+                    source_interface: InterfaceId::new([4, 1, 2, 3, 4, 5, 6, 7]),
+                    arrived_at: InstantMillis(4_200),
+                    app_data: &announce[..announce_len],
+                    is_path_response: false,
+                }),
+            prns_lxmf::direct::CallbackOutcome::Enqueued
+        );
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if service
+                    .snapshot(prns_lxmf::mailbox::MailboxListRequest {
+                        peer: None,
+                        direction: None,
+                        before: None,
+                        limit: 25,
+                    })
+                    .await
+                    .expect("the mailbox query succeeds")
+                    .peers
+                    .is_empty()
+                {
+                    refresh
+                        .changed()
+                        .await
+                        .expect("the service remains running");
+                } else {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("the peer observation is consumed");
+        *peer_destination.as_bytes()
+    }
+
     #[test]
     fn invitation_input_is_exact_uppercase_hex() {
         assert!(parse_invitation_code("00000000").is_some());
@@ -2466,64 +3435,415 @@ mod tests {
         assert!(!lxmf_send_has_capacity(LXMF_SEND_TASK_CAPACITY + 1));
     }
 
-    #[tokio::test]
-    async fn pending_lxmf_send_does_not_block_message_queries() {
-        use personal_rns::interfaces::InterfaceId;
-        use personal_rns::routing::announce::{
-            derive_single_destination_hash, AnnounceObservation,
-        };
-        use personal_rns::units::{HopCount, InstantMillis};
+    #[test]
+    fn admitted_send_waiter_requires_a_definitive_commit_outcome() {
+        let (response, receiver) = std_mpsc::sync_channel(1);
+        let waiter = std::thread::spawn(move || wait_for_admitted_lxmf_send(receiver));
+        std::thread::sleep(Duration::from_millis(25));
+        assert!(!waiter.is_finished());
 
+        response
+            .send(SendDirectTextOutcome::Accepted {
+                local_record_id: U64String::from(7),
+            })
+            .expect("publish definitive commit outcome");
+        assert_eq!(
+            waiter.join().expect("waiter joins"),
+            SendDirectTextOutcome::Accepted {
+                local_record_id: U64String::from(7),
+            }
+        );
+    }
+
+    #[test]
+    fn durable_mailbox_bypasses_the_generation_only_when_no_worker_exists() {
+        assert_eq!(
+            durable_mailbox_access(DevelopmentNodeRuntime::Running, true),
+            DurableMailboxAccess::RunningGeneration
+        );
+        for runtime in [
+            DevelopmentNodeRuntime::Stopped,
+            DevelopmentNodeRuntime::Failed,
+        ] {
+            assert_eq!(
+                durable_mailbox_access(runtime, false),
+                DurableMailboxAccess::Offline
+            );
+        }
+        for runtime in [
+            DevelopmentNodeRuntime::Stopped,
+            DevelopmentNodeRuntime::Starting,
+            DevelopmentNodeRuntime::Running,
+            DevelopmentNodeRuntime::Stopping,
+            DevelopmentNodeRuntime::Failed,
+        ] {
+            assert_eq!(
+                durable_mailbox_access(runtime, runtime != DevelopmentNodeRuntime::Running),
+                DurableMailboxAccess::GenerationTransition
+            );
+        }
+    }
+
+    #[test]
+    fn stopped_generation_lists_retries_and_cancels_through_the_store_owner() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let storage = temporary.path().join("prns").join("development");
+        let paths = prepare_storage(&storage).expect("private storage");
+        let supervisor = Supervisor {
+            snapshots: Arc::new(SnapshotStore::new()),
+            operation_admitted: Arc::new(AtomicBool::new(false)),
+            state: Mutex::new(SupervisorState::default()),
+        };
+        let destination = [0x42; 16];
+        seed_failed_outbound_message(&supervisor, &paths, destination);
+        assert_offline_list_retry_cancel(&supervisor, &storage, destination);
+
+        supervisor
+            .lock_state()
+            .application_owner
+            .take()
+            .expect("offline operations opened one application owner")
+            .close()
+            .expect("application owner closes");
+    }
+
+    #[test]
+    fn admitted_offline_mutations_wait_for_their_definitive_store_outcomes() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let storage = temporary.path().join("prns").join("development");
+        let paths = prepare_storage(&storage).expect("private storage");
+        let supervisor = Arc::new(Supervisor {
+            snapshots: Arc::new(SnapshotStore::new()),
+            operation_admitted: Arc::new(AtomicBool::new(false)),
+            state: Mutex::new(SupervisorState::default()),
+        });
+        let destination = [0x42; 16];
+        seed_failed_outbound_message(&supervisor, &paths, destination);
+
+        let (retry_entered_tx, retry_entered_rx) = std_mpsc::sync_channel(1);
+        let (retry_release_tx, retry_release_rx) = std_mpsc::sync_channel(1);
+        supervisor
+            .lock_state()
+            .application_owner
+            .as_ref()
+            .expect("application owner")
+            .admit_test_barrier(retry_entered_tx, retry_release_rx)
+            .expect("retry barrier admission");
+        retry_entered_rx
+            .recv()
+            .expect("owner entered retry barrier");
+        let retry_supervisor = Arc::clone(&supervisor);
+        let retry_storage = storage.clone();
+        let retry = std::thread::spawn(move || {
+            retry_lxmf_message_with_supervisor(
+                &retry_supervisor,
+                &retry_storage,
+                RetryLxmfMessageInput {
+                    local_record_id: U64String::from(1),
+                },
+            )
+        });
+        std::thread::sleep(LXMF_QUERY_TIMEOUT + Duration::from_millis(25));
+        assert!(!retry.is_finished());
+        retry_release_tx.send(()).expect("release retry");
+        assert_eq!(
+            retry.join().expect("retry waiter joins"),
+            RetryLxmfMessageOutcome::Accepted {
+                local_record_id: U64String::from(1),
+            }
+        );
+
+        let (cancel_entered_tx, cancel_entered_rx) = std_mpsc::sync_channel(1);
+        let (cancel_release_tx, cancel_release_rx) = std_mpsc::sync_channel(1);
+        supervisor
+            .lock_state()
+            .application_owner
+            .as_ref()
+            .expect("application owner")
+            .admit_test_barrier(cancel_entered_tx, cancel_release_rx)
+            .expect("cancel barrier admission");
+        cancel_entered_rx
+            .recv()
+            .expect("owner entered cancel barrier");
+        let cancel_supervisor = Arc::clone(&supervisor);
+        let cancel_storage = storage.clone();
+        let cancel = std::thread::spawn(move || {
+            cancel_lxmf_message_with_supervisor(
+                &cancel_supervisor,
+                &cancel_storage,
+                CancelLxmfMessageInput {
+                    local_record_id: U64String::from(1),
+                },
+            )
+        });
+        std::thread::sleep(LXMF_QUERY_TIMEOUT + Duration::from_millis(25));
+        assert!(!cancel.is_finished());
+        cancel_release_tx.send(()).expect("release cancel");
+        assert_eq!(
+            cancel.join().expect("cancel waiter joins"),
+            CancelLxmfMessageOutcome::Cancelled {
+                local_record_id: U64String::from(1),
+            }
+        );
+
+        let LxmfMessageListOutcome::Listed { messages } = list_lxmf_messages_with_supervisor(
+            &supervisor,
+            &storage,
+            ListLxmfMessagesInput {
+                peer: Some(destination),
+                before: None,
+                limit: 25,
+            },
+        ) else {
+            panic!("the cancelled mailbox row was not listed");
+        };
+        assert!(matches!(
+            messages[0].delivery_state,
+            crate::contract::LxmfDeliveryState::Cancelled { .. }
+        ));
+        supervisor
+            .lock_state()
+            .application_owner
+            .take()
+            .expect("application owner")
+            .close()
+            .expect("application owner closes");
+    }
+
+    #[test]
+    fn terminal_failed_worker_is_reaped_before_offline_mailbox_access() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let storage = temporary.path().join("prns").join("development");
+        let paths = prepare_storage(&storage).expect("private storage");
+        let supervisor = Supervisor {
+            snapshots: Arc::new(SnapshotStore::new()),
+            operation_admitted: Arc::new(AtomicBool::new(true)),
+            state: Mutex::new(SupervisorState::default()),
+        };
+        let destination = [0x42; 16];
+        seed_failed_outbound_message(&supervisor, &paths, destination);
+
+        supervisor
+            .snapshots
+            .set_runtime(DevelopmentNodeRuntime::Running);
+        supervisor.snapshots.set_local_host(running_host_state());
+        settle_worker_result(
+            &supervisor.operation_admitted,
+            &supervisor.snapshots,
+            &Err((
+                DevelopmentNodeStopStage::Node,
+                "node stopped unexpectedly".to_owned(),
+            )),
+        );
+        let failure_snapshot = supervisor.snapshots.read();
+        let list_input = ListLxmfMessagesInput {
+            peer: Some(destination),
+            before: None,
+            limit: 25,
+        };
+
+        install_finished_failed_worker(&supervisor, &paths);
+        let LxmfMessageListOutcome::Listed { messages } =
+            list_lxmf_messages_with_supervisor(&supervisor, &storage, list_input.clone())
+        else {
+            panic!("the failed generation stranded its durable row");
+        };
+        assert!(matches!(
+            messages[0].delivery_state,
+            crate::contract::LxmfDeliveryState::Failed { .. }
+        ));
+        assert!(supervisor.lock_state().worker.is_none());
+        assert_eq!(supervisor.snapshots.read(), failure_snapshot);
+
+        install_finished_failed_worker(&supervisor, &paths);
+        assert_eq!(
+            retry_lxmf_message_with_supervisor(
+                &supervisor,
+                &storage,
+                RetryLxmfMessageInput {
+                    local_record_id: U64String::from(1),
+                },
+            ),
+            RetryLxmfMessageOutcome::Accepted {
+                local_record_id: U64String::from(1),
+            }
+        );
+        assert!(supervisor.lock_state().worker.is_none());
+        assert_eq!(supervisor.snapshots.read(), failure_snapshot);
+
+        install_finished_failed_worker(&supervisor, &paths);
+        assert_eq!(
+            cancel_lxmf_message_with_supervisor(
+                &supervisor,
+                &storage,
+                CancelLxmfMessageInput {
+                    local_record_id: U64String::from(1),
+                },
+            ),
+            CancelLxmfMessageOutcome::Cancelled {
+                local_record_id: U64String::from(1),
+            }
+        );
+        assert!(supervisor.lock_state().worker.is_none());
+        assert_eq!(supervisor.snapshots.read(), failure_snapshot);
+
+        let LxmfMessageListOutcome::Listed { messages } =
+            list_lxmf_messages_with_supervisor(&supervisor, &storage, list_input)
+        else {
+            panic!("the cancelled mailbox row was not listed");
+        };
+        assert!(matches!(
+            messages[0].delivery_state,
+            crate::contract::LxmfDeliveryState::Cancelled { .. }
+        ));
+        supervisor
+            .lock_state()
+            .application_owner
+            .take()
+            .expect("offline operations retained one application owner")
+            .close()
+            .expect("application owner closes");
+    }
+
+    #[test]
+    fn terminal_failed_worker_does_not_block_a_direct_restart() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let storage = temporary.path().join("prns").join("development");
+        let paths = prepare_storage(&storage).expect("private storage");
+        let supervisor = Supervisor {
+            snapshots: Arc::new(SnapshotStore::new()),
+            operation_admitted: Arc::new(AtomicBool::new(true)),
+            state: Mutex::new(SupervisorState::default()),
+        };
+        {
+            let mut state = supervisor.lock_state();
+            identity_vault(&mut state, &paths)
+                .expect("identity vault")
+                .store(
+                    &primary_label().expect("primary label"),
+                    &[0x42; personal_rns::identity::IDENTITY_SECRET_KEY_LEN],
+                )
+                .expect("primary identity");
+        }
+        supervisor
+            .snapshots
+            .set_runtime(DevelopmentNodeRuntime::Running);
+        supervisor.snapshots.set_local_host(running_host_state());
+        settle_worker_result(
+            &supervisor.operation_admitted,
+            &supervisor.snapshots,
+            &Err((
+                DevelopmentNodeStopStage::Node,
+                "node stopped unexpectedly".to_owned(),
+            )),
+        );
+        install_finished_failed_worker(&supervisor, &paths);
+
+        assert!(matches!(
+            start_configured_with_supervisor(
+                &supervisor,
+                &storage,
+                DevelopmentNodeStartInput {
+                    development_tcp_target: None,
+                },
+            ),
+            DevelopmentNodeStartOutcome::Started { .. }
+        ));
+        assert_eq!(
+            supervisor.snapshots.read().runtime,
+            DevelopmentNodeRuntime::Running
+        );
+        let mut state = supervisor.lock_state();
+        assert_eq!(
+            stop_locked(&supervisor, &mut state),
+            DevelopmentNodeStopOutcome::Stopped
+        );
+        state
+            .application_owner
+            .take()
+            .expect("restart retained the application owner")
+            .close()
+            .expect("application owner closes");
+    }
+
+    #[test]
+    fn reset_preserves_the_owner_and_files_after_a_reported_stop_failure() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let storage = temporary.path().join("prns").join("development");
+        let paths = prepare_storage(&storage).expect("private storage");
+        let owner = DevelopmentStoreOwner::open(&paths.root, &paths.application)
+            .expect("application owner");
+        let (commands, _commands_rx) = mpsc::channel(1);
+        let (shutdown_sender, _shutdown_rx) = watch::channel(false);
+        let (done_tx, done) = std_mpsc::sync_channel(1);
+        done_tx
+            .send(Err((
+                DevelopmentNodeStopStage::Worker,
+                "reported worker failure".to_owned(),
+            )))
+            .expect("seed worker result");
+        let supervisor = Supervisor {
+            snapshots: Arc::new(SnapshotStore::new()),
+            operation_admitted: Arc::new(AtomicBool::new(false)),
+            state: Mutex::new(SupervisorState {
+                worker: Some(Worker {
+                    commands,
+                    shutdown: ShutdownSignal {
+                        sender: shutdown_sender,
+                        requested: Arc::new(AtomicBool::new(false)),
+                    },
+                    done,
+                    join: Some(std::thread::spawn(|| {})),
+                    storage_root: paths.root.clone(),
+                }),
+                application_owner: Some(owner),
+                identity_owner: None,
+            }),
+        };
+        supervisor
+            .snapshots
+            .set_runtime(DevelopmentNodeRuntime::Running);
+
+        assert!(matches!(
+            reset_with_supervisor(&supervisor, &storage),
+            DevelopmentNodeStopOutcome::Failed {
+                stage: DevelopmentNodeStopStage::Worker,
+                ..
+            }
+        ));
+        assert!(paths.application.exists());
+        assert!(supervisor.lock_state().application_owner.is_some());
+        assert!(supervisor.lock_state().worker.is_none());
+
+        assert_eq!(
+            reset_with_supervisor(&supervisor, &storage),
+            DevelopmentNodeStopOutcome::AlreadyStopped
+        );
+        assert!(!storage.exists());
+        assert!(supervisor.lock_state().application_owner.is_none());
+    }
+
+    #[tokio::test]
+    async fn durable_lxmf_send_accepts_and_queries_before_pending_proof() {
         let local_identity = prns_lxmf::direct::LocalLxmfIdentity::from_secret_bytes(
             &[0x31; personal_rns::identity::IDENTITY_SECRET_KEY_LEN],
         )
         .expect("the fixed LXMF destination name is valid");
+        let root = tempfile::tempdir().expect("temporary application root");
+        let database_path = root.path().join("application.redb");
+        let owner = DevelopmentStoreOwner::open(root.path(), &database_path)
+            .expect("the application owner opens");
         let network = Arc::new(PendingProofNetwork::default());
-        let service = prns_lxmf::direct::DirectLxmfService::start(
-            local_identity,
-            Arc::clone(&network) as Arc<dyn prns_lxmf::direct::DirectNetwork>,
-        )
-        .expect("the test owns a Tokio runtime");
-        let callbacks = service.callbacks();
-        let peer_material = PrivateIdentityMaterial::from_bytes(
-            [0x52; personal_rns::identity::IDENTITY_SECRET_KEY_LEN],
-        );
-        let peer_destination = derive_single_destination_hash(
-            &peer_material.identity_hash(),
-            prns_lxmf::wire::LXMF_APP_NAME,
-            prns_lxmf::wire::LXMF_DELIVERY_ASPECTS,
-        )
-        .expect("the fixed LXMF destination name is valid");
-        let mut announce = [0_u8; 64];
-        let announce_len =
-            prns_lxmf::wire::encode_current_lxmf_announce(b"Pending peer", &mut announce)
-                .expect("the small announce fits");
-        let mut refresh = service.subscribe();
-        assert_eq!(
-            callbacks.on_accepted_announce(AnnounceObservation {
-                destination: peer_destination,
-                announced_identity: peer_material.identity_hash(),
-                hops: HopCount(1),
-                source_interface: InterfaceId::new([4, 1, 2, 3, 4, 5, 6, 7]),
-                arrived_at: InstantMillis(4_200),
-                app_data: &announce[..announce_len],
-                is_path_response: false,
-            }),
-            prns_lxmf::direct::CallbackOutcome::Enqueued
-        );
-        tokio::time::timeout(Duration::from_secs(1), async {
-            loop {
-                if !service.snapshot().await.peers.is_empty() {
-                    break;
-                }
-                refresh
-                    .changed()
-                    .await
-                    .expect("the service remains running");
-            }
-        })
-        .await
-        .expect("the peer observation is consumed");
+        let (pending, _) = prns_lxmf::mailbox::DurableDirectLxmfService::prepare(local_identity);
+        let service = pending
+            .start(
+                Arc::clone(&network) as Arc<dyn prns_lxmf::direct::DirectNetwork>,
+                owner.mailbox_submitter(),
+                Arc::new(prns_lxmf::mailbox::SystemMailboxClock),
+            )
+            .await
+            .expect("the test owns a Tokio runtime");
+        let peer_destination = learn_pending_peer(&service).await;
 
         let (send_response, send_result) = std_mpsc::sync_channel(1);
         let mut send_tasks = JoinSet::new();
@@ -2531,7 +3851,7 @@ mod tests {
             &service,
             &mut send_tasks,
             SendDirectTextInput {
-                destination: *peer_destination.as_bytes(),
+                destination: peer_destination,
                 title: "Proof gate".to_owned(),
                 content: "Still sending".to_owned(),
             },
@@ -2541,16 +3861,24 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(1), network.send_entered.notified())
             .await
             .expect("the direct attempt reaches its pending proof gate");
-        assert!(matches!(
-            send_result.try_recv(),
-            Err(std_mpsc::TryRecvError::Empty)
-        ));
+        let accepted = send_result
+            .recv_timeout(Duration::from_secs(1))
+            .expect("queue acceptance does not await proof");
+        let SendDirectTextOutcome::Accepted { local_record_id } = accepted else {
+            panic!("the durable send was not accepted: {accepted:?}");
+        };
+        assert!(send_tasks
+            .join_next()
+            .await
+            .expect("the tracked response wrapper exists")
+            .is_ok());
 
         let (list_response, list_result) = std_mpsc::sync_channel(1);
         dispatch_lxmf_message_list(
             &service,
-            ListLxmfMessagesInput {
-                peer: Some(*peer_destination.as_bytes()),
+            prns_lxmf::mailbox::MailboxListRequest {
+                peer: Some(peer_destination),
+                direction: None,
                 before: None,
                 limit: 25,
             },
@@ -2566,21 +3894,319 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(
             messages[0].delivery_state,
-            crate::contract::LxmfDeliveryState::Sending
+            crate::contract::LxmfDeliveryState::Sending {
+                failed_attempts: U64String::from(0)
+            }
         );
-        let local_record_id = messages[0].local_record_id.clone();
+        assert_eq!(messages[0].local_record_id, local_record_id);
 
         network.release_send.notify_one();
-        assert!(send_tasks
-            .join_next()
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                let snapshot = service
+                    .snapshot(prns_lxmf::mailbox::MailboxListRequest {
+                        peer: None,
+                        direction: None,
+                        before: None,
+                        limit: 25,
+                    })
+                    .await
+                    .expect("the mailbox query succeeds");
+                if matches!(
+                    snapshot.messages[0].delivery_state,
+                    prns_lxmf::mailbox::DurableLxmfDeliveryState::Delivered { .. }
+                ) {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("proof settlement is persisted");
+        service.stop().await.expect("the service stops promptly");
+        owner.close().expect("the owner closes after the service");
+    }
+
+    #[tokio::test]
+    async fn admitted_insert_survives_stop_and_response_drain_boundaries() {
+        let local_identity = prns_lxmf::direct::LocalLxmfIdentity::from_secret_bytes(
+            &[0x31; personal_rns::identity::IDENTITY_SECRET_KEY_LEN],
+        )
+        .expect("the fixed LXMF destination name is valid");
+        let root = tempfile::tempdir().expect("temporary application root");
+        let database_path = root.path().join("application.redb");
+        let owner = DevelopmentStoreOwner::open(root.path(), &database_path)
+            .expect("the application owner opens");
+        let blocking_submitter = Arc::new(BlockingInsertSubmitter::new(owner.mailbox_submitter()));
+        let network = Arc::new(PendingProofNetwork::default());
+        let (pending, _) = prns_lxmf::mailbox::DurableDirectLxmfService::prepare(local_identity);
+        let service = pending
+            .start(
+                Arc::clone(&network) as Arc<dyn prns_lxmf::direct::DirectNetwork>,
+                Arc::clone(&blocking_submitter) as Arc<dyn prns_lxmf::mailbox::MailboxSubmitter>,
+                Arc::new(prns_lxmf::mailbox::SystemMailboxClock),
+            )
             .await
-            .expect("the tracked send exists")
-            .is_ok());
+            .expect("the test owns a Tokio runtime");
+        let peer_destination = learn_pending_peer(&service).await;
+        let (send_response, send_result) = std_mpsc::sync_channel(1);
+        let mut send_tasks = JoinSet::new();
+        dispatch_lxmf_send(
+            &service,
+            &mut send_tasks,
+            SendDirectTextInput {
+                destination: peer_destination,
+                title: "Retain response".to_owned(),
+                content: "Commit exactly once".to_owned(),
+            },
+            send_response,
+            1_700_000_000_500,
+        );
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            blocking_submitter.insert_entered.notified(),
+        )
+        .await
+        .expect("the insert reaches its durable owner boundary");
+
+        let mut shutdown = Box::pin(stop_lxmf_service_and_drain(&service, &mut send_tasks));
+        let old_stop_and_drain_boundaries =
+            prns_lxmf::direct::STOP_JOIN_TIMEOUT + LXMF_QUERY_TIMEOUT + Duration::from_millis(25);
+        assert!(
+            tokio::time::timeout(old_stop_and_drain_boundaries, &mut shutdown)
+                .await
+                .is_err()
+        );
+        assert!(matches!(
+            send_result.try_recv(),
+            Err(std_mpsc::TryRecvError::Empty)
+        ));
+
+        blocking_submitter.release_insert.notify_one();
         assert_eq!(
-            send_result.try_recv().expect("proof settles the send call"),
-            SendDirectTextOutcome::Started { local_record_id }
+            tokio::time::timeout(Duration::from_secs(1), &mut shutdown)
+                .await
+                .expect("retained response wrapper and service complete"),
+            Ok(())
+        );
+        drop(shutdown);
+        assert_eq!(
+            send_result
+                .recv_timeout(Duration::from_secs(1))
+                .expect("the committed insert reports its definitive outcome"),
+            SendDirectTextOutcome::Accepted {
+                local_record_id: U64String::from(1),
+            }
+        );
+        assert_eq!(network.send_count.load(Ordering::Acquire), 0);
+
+        let listed = owner
+            .admit_mailbox(prns_lxmf::mailbox::MailboxRequest::List(
+                prns_lxmf::mailbox::MailboxListRequest {
+                    peer: None,
+                    direction: None,
+                    before: None,
+                    limit: 25,
+                },
+            ))
+            .expect("list admission")
+            .recv()
+            .expect("list response")
+            .expect("list succeeds");
+        let prns_lxmf::mailbox::MailboxReply::Listed { messages, .. } = listed else {
+            panic!("unexpected mailbox reply");
+        };
+        assert_eq!(messages.len(), 1);
+        assert!(matches!(
+            messages[0].delivery_state,
+            prns_lxmf::mailbox::DurableLxmfDeliveryState::Queued { .. }
+        ));
+        owner.close().expect("the owner closes after the service");
+    }
+
+    #[tokio::test]
+    async fn async_mailbox_corruption_preserves_the_typed_reset_affordance() {
+        let local_identity = prns_lxmf::direct::LocalLxmfIdentity::from_secret_bytes(
+            &[0x31; personal_rns::identity::IDENTITY_SECRET_KEY_LEN],
+        )
+        .expect("the fixed LXMF destination name is valid");
+        let root = tempfile::tempdir().expect("temporary application root");
+        let database_path = root.path().join("application.redb");
+        let owner = DevelopmentStoreOwner::open(root.path(), &database_path)
+            .expect("the application owner opens");
+        let submitter = Arc::new(ResetCompletionSubmitter {
+            inner: owner.mailbox_submitter(),
+        });
+        let network = Arc::new(PendingProofNetwork::default());
+        let (pending, _) = prns_lxmf::mailbox::DurableDirectLxmfService::prepare(local_identity);
+        let service = pending
+            .start(
+                Arc::clone(&network) as Arc<dyn prns_lxmf::direct::DirectNetwork>,
+                submitter as Arc<dyn prns_lxmf::mailbox::MailboxSubmitter>,
+                Arc::new(prns_lxmf::mailbox::SystemMailboxClock),
+            )
+            .await
+            .expect("the test owns a Tokio runtime");
+        let peer_destination = learn_pending_peer(&service).await;
+
+        assert_eq!(
+            service
+                .send_direct_text(
+                    peer_destination,
+                    1_700_000_000_700,
+                    b"Corruption",
+                    b"Preserve reset affordance",
+                )
+                .await,
+            prns_lxmf::mailbox::DurableSendDirectTextOutcome::Accepted { local_record_id: 1 }
+        );
+        tokio::time::timeout(Duration::from_secs(1), network.send_entered.notified())
+            .await
+            .expect("the attempt reaches the proof boundary");
+        network.release_send.notify_one();
+        let failure = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                let snapshot = service
+                    .snapshot(prns_lxmf::mailbox::MailboxListRequest {
+                        peer: None,
+                        direction: None,
+                        before: None,
+                        limit: 25,
+                    })
+                    .await
+                    .expect("the read remains available");
+                if let prns_lxmf::mailbox::MailboxProjectionHealth::ResetRequired(reason) =
+                    snapshot.mailbox_health
+                {
+                    break prns_lxmf::mailbox::MailboxFailure::ResetRequired(reason);
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the asynchronous corruption becomes visible");
+        assert_eq!(
+            service
+                .send_direct_text(
+                    peer_destination,
+                    1_700_000_000_701,
+                    b"Later write",
+                    b"Cannot clear corruption",
+                )
+                .await,
+            prns_lxmf::mailbox::DurableSendDirectTextOutcome::Accepted { local_record_id: 2 }
+        );
+        assert!(matches!(
+            service
+                .snapshot(prns_lxmf::mailbox::MailboxListRequest {
+                    peer: None,
+                    direction: None,
+                    before: None,
+                    limit: 25,
+                })
+                .await
+                .expect("the read remains available")
+                .mailbox_health,
+            prns_lxmf::mailbox::MailboxProjectionHealth::ResetRequired(ref reason)
+                if reason == "mailbox record became unreadable"
+        ));
+
+        let snapshots = SnapshotStore::new();
+        snapshots.set_runtime(DevelopmentNodeRuntime::Running);
+        snapshots.set_local_host(running_host_state());
+        assert_eq!(
+            refresh_lxmf_health(&service, &snapshots).await,
+            Err(failure.clone())
+        );
+        assert_eq!(
+            publish_lxmf_storage_failure(&snapshots, &failure),
+            "mailbox record became unreadable"
+        );
+        let failed = snapshots.read();
+        assert_eq!(failed.runtime, DevelopmentNodeRuntime::Failed);
+        assert_eq!(
+            failed.local_host,
+            LocalHostState::DevelopmentResetRequired {
+                reason: "mailbox record became unreadable".to_owned(),
+            }
+        );
+        assert_eq!(
+            failed.failure,
+            Some(DevelopmentNodeFailure {
+                stage: DevelopmentNodeFailureStage::Storage,
+                detail: "mailbox record became unreadable".to_owned(),
+            })
         );
         service.stop().await.expect("the service stops promptly");
+        owner.close().expect("the owner closes after the service");
+    }
+
+    #[tokio::test]
+    async fn transient_mailbox_refresh_failures_degrade_and_retry_without_stopping() {
+        let local_identity = prns_lxmf::direct::LocalLxmfIdentity::from_secret_bytes(
+            &[0x31; personal_rns::identity::IDENTITY_SECRET_KEY_LEN],
+        )
+        .expect("the fixed LXMF destination name is valid");
+        let root = tempfile::tempdir().expect("temporary application root");
+        let database_path = root.path().join("application.redb");
+        let owner = DevelopmentStoreOwner::open(root.path(), &database_path)
+            .expect("the application owner opens");
+        let submitter = Arc::new(TransientListFailureSubmitter {
+            inner: owner.mailbox_submitter(),
+            remaining_failures: std::sync::atomic::AtomicUsize::new(2),
+        });
+        let network = Arc::new(PendingProofNetwork::default());
+        let (pending, _) = prns_lxmf::mailbox::DurableDirectLxmfService::prepare(local_identity);
+        let service = pending
+            .start(
+                network,
+                submitter as Arc<dyn prns_lxmf::mailbox::MailboxSubmitter>,
+                Arc::new(prns_lxmf::mailbox::SystemMailboxClock),
+            )
+            .await
+            .expect("the test owns a Tokio runtime");
+        let snapshots = SnapshotStore::new();
+        snapshots.set_runtime(DevelopmentNodeRuntime::Running);
+        snapshots.set_local_host(running_host_state());
+        snapshots.refresh_lxmf(crate::contract::LxmfHealth {
+            state: crate::contract::LxmfHealthState::Ready,
+            inbound_overflow_count: U64String::from(7),
+        });
+
+        assert_eq!(
+            refresh_running_lxmf_health(&service, &snapshots).await,
+            Ok(true)
+        );
+        let busy = snapshots.read();
+        assert_eq!(busy.runtime, DevelopmentNodeRuntime::Running);
+        assert_eq!(busy.lxmf.state, crate::contract::LxmfHealthState::Degraded);
+        assert_eq!(busy.lxmf.inbound_overflow_count, U64String::from(7));
+        assert_eq!(busy.failure, None);
+
+        assert_eq!(
+            refresh_running_lxmf_health(&service, &snapshots).await,
+            Ok(true)
+        );
+        let unavailable = snapshots.read();
+        assert_eq!(unavailable.runtime, DevelopmentNodeRuntime::Running);
+        assert_eq!(unavailable.revision, busy.revision);
+        assert_eq!(unavailable.failure, None);
+
+        assert_eq!(
+            refresh_running_lxmf_health(&service, &snapshots).await,
+            Ok(false)
+        );
+        let recovered = snapshots.read();
+        assert_eq!(recovered.runtime, DevelopmentNodeRuntime::Running);
+        assert_eq!(
+            recovered.lxmf.state,
+            crate::contract::LxmfHealthState::Ready
+        );
+        assert_eq!(recovered.lxmf.inbound_overflow_count, U64String::from(0));
+        assert_eq!(recovered.failure, None);
+
+        service.stop().await.expect("the service stops promptly");
+        owner.close().expect("the owner closes after the service");
     }
 
     #[test]
@@ -3444,11 +5070,14 @@ mod tests {
             LxmfPeerListOutcome::Listed { peers: vec![] }
         );
         assert_eq!(
-            list_lxmf_messages(ListLxmfMessagesInput {
-                peer: None,
-                before: None,
-                limit: 25,
-            }),
+            list_lxmf_messages(
+                &storage,
+                ListLxmfMessagesInput {
+                    peer: None,
+                    before: None,
+                    limit: 25,
+                },
+            ),
             LxmfMessageListOutcome::Listed { messages: vec![] }
         );
         assert_eq!(
