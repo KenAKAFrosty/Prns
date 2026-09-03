@@ -6,11 +6,14 @@ code.
 
 ## Audited baseline
 
-- Prns baseline: `68ee3156d268152d77f5e5a2ece3578ba6473d4e`
-  (`upstream/trunk`).
-- The current branch's `prns-js/src/browser`, `prns-js/src/worker_wire`, and
-  Tokio shared-instance sources were byte-identical to that baseline when this
-  checkpoint ran.
+- Original Prns baseline: `68ee3156d268152d77f5e5a2ece3578ba6473d4e`.
+- Re-review baseline: `5126c94fc21e0c5fb20f2478a1621c7ef5cce1a9`
+  (`upstream/trunk`, `Derive default interface gravity from bitrate`).
+- Between those revisions, `prns-js/src/browser`, `prns-js/src/worker_wire`, and
+  the Tokio shared-instance sources remained byte-identical. The only audited
+  shared-instance change makes its default gravity derive from its bitrate
+  instead of using zero. That policy correction does not change worker lane
+  ownership, shared-instance election, or the direct Tauri composition below.
 - `upstream/main` pointed to
   `1f069678691ad093a857049c6cd07850b20c2f59`. Its difference from the audited
   trunk snapshot was limited to release metadata, dependency-policy
