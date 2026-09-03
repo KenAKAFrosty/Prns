@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
 import re
 import subprocess
@@ -114,7 +115,13 @@ def check(prns_root: pathlib.Path, require_head: bool) -> dict[str, Any]:
 
 def arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--prns-root", type=pathlib.Path, required=True)
+    parser.add_argument(
+        "--prns-root",
+        type=pathlib.Path,
+        default=pathlib.Path(
+            os.environ.get("PRNS_COMPATIBILITY_PRNS_ROOT", APPLICATIONS_ROOT.parent)
+        ),
+    )
     parser.add_argument("--require-head", action="store_true")
     return parser.parse_args()
 

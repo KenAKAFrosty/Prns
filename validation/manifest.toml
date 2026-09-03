@@ -894,6 +894,8 @@ inputs = [
   "applications/Cargo.lock",
   "applications/package.json",
   "applications/package-lock.json",
+  "applications/ci/check_compatibility.py",
+  "applications/release/compatibility.json",
   "personal-rns",
   "prns-core",
   "prns-host/core",
@@ -946,6 +948,29 @@ inputs = [
   "prns-runtime/impls/tokio/src",
 ]
 artifacts = "validation-artifacts/results/application-lxmf-direct"
+
+[[suite]]
+id = "application-detached-mobility"
+domain = "platform"
+group = "application"
+tiers = ["pr", "release", "scheduled"]
+platform = "linux"
+toolchain = "stable"
+timeout_seconds = 3600
+command = ["npm", "--prefix", "applications", "run", "mobility:verify"]
+inputs = [
+  "applications",
+  "personal-rns",
+  "prns-core",
+  "prns-host/core",
+  "prns-host/impls/snapshot",
+  "prns-host/schema/host-contract-v1.json",
+  "prns-interfaces/impls/tokio",
+  "prns-js",
+  "prns-runtime/core",
+  "prns-runtime/impls/tokio",
+]
+artifacts = "validation-artifacts/results/application-detached-mobility"
 
 [[suite]]
 id = "javascript-contract"

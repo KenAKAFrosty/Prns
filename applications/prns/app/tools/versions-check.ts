@@ -6,6 +6,7 @@ type JsonRecord = Readonly<Record<string, unknown>>;
 
 const appRoot = fileURLToPath(new URL("..", import.meta.url));
 const workspaceRoot = fileURLToPath(new URL("../../..", import.meta.url));
+const personalRnsSelection = process.env.PRNS_PERSONAL_RNS_SPEC ?? "file:../../../prns-js";
 
 const expectedDependencies = {
   "@expo/metro-runtime": "~57.0.15",
@@ -19,7 +20,7 @@ const expectedDependencies = {
   "expo-router": "~57.0.18",
   "expo-status-bar": "~57.0.1",
   effect: "4.0.0-rc.112",
-  "personal-rns": "file:../../../prns-js",
+  "personal-rns": personalRnsSelection,
   react: "19.2.3",
   "react-dom": "19.2.3",
   "react-native": "0.86.3",

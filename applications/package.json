@@ -17,8 +17,12 @@
   "scripts": {
     "api:generate": "node sdk/expo/scripts/generate-contract.mjs",
     "api:check": "node sdk/expo/scripts/generate-contract.mjs --check",
+    "compatibility:check": "python3 ci/check_compatibility.py",
+    "mobility:test": "python3 -m unittest discover --start-directory tools/detached-consumer-check --pattern 'test_*.py' --verbose",
+    "mobility:verify": "bash ci/verify_detached.sh",
+    "lxmf:verify": "bash ci/verify_lxmf.sh",
     "native:test": "cargo test --locked --manifest-path Cargo.toml -p prns-app-native --features host-test",
-    "native:verify": "npm run api:check && npm run native:test && npm --prefix sdk/expo run verify",
+    "native:verify": "npm run compatibility:check && npm run api:check && npm run native:test && npm --prefix sdk/expo run verify",
     "native:ios:archives": "env PLATFORM_NAME=iphonesimulator ARCHS=arm64 bash sdk/expo/ios/build-rust.sh && env PLATFORM_NAME=iphoneos ARCHS=arm64 bash sdk/expo/ios/build-rust.sh",
     "native:ios:client": "bash sdk/expo/ios/build-development-client.sh",
     "native:ios:device": "bash sdk/expo/ios/build-development-client.sh --device",
@@ -35,6 +39,6 @@
     "doctor": "npm --prefix prns/app run doctor",
     "test": "npm --prefix sdk/expo run test && npm --prefix prns/app run test",
     "export:web": "npm --prefix prns/app run export:web",
-    "verify": "npm run api:check && npm run native:test && npm --prefix sdk/expo run verify && npm --prefix prns/app run verify"
+    "verify": "npm run mobility:test && npm run compatibility:check && npm run api:check && npm run native:test && npm --prefix sdk/expo run verify && npm --prefix prns/app run verify"
   }
 }
