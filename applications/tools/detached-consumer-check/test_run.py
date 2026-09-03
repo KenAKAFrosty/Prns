@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 MODULE_PATH = pathlib.Path(__file__).with_name("run.py")
@@ -194,6 +195,20 @@ checksum = "abc"
                 mobility.validate_cargo_lock_refresh(
                     before, lock, packages, git_url, revision
                 )
+
+    def test_cargo_metadata_resolves_optional_dependency_sources(self) -> None:
+        completed = subprocess.CompletedProcess(
+            args=["cargo", "metadata"], returncode=0, stdout="{}"
+        )
+        with mock.patch.object(mobility, "run", return_value=completed) as invoked:
+            self.assertEqual(
+                mobility.cargo_metadata(pathlib.Path("/applications"), {}, locked=True),
+                {},
+            )
+
+        arguments = tuple(invoked.call_args.args[0])
+        self.assertEqual(arguments[:3], ("cargo", "metadata", "--all-features"))
+        self.assertIn("--locked", arguments)
 
     def test_npm_workspaces_share_one_export_local_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

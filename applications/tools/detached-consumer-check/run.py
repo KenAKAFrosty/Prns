@@ -1097,7 +1097,14 @@ def validate_cargo_lock_refresh(
 def cargo_metadata(
     applications_root: pathlib.Path, environment: dict[str, str], *, locked: bool
 ) -> dict[str, Any]:
-    arguments: list[str | os.PathLike[str]] = ["cargo", "metadata"]
+    # The source scanner reviews every external dependency declaration, including
+    # optional platform dependencies. Resolve all features here so each reviewed
+    # declaration also appears in the graph whose exact Git source we validate.
+    arguments: list[str | os.PathLike[str]] = [
+        "cargo",
+        "metadata",
+        "--all-features",
+    ]
     if locked:
         arguments.append("--locked")
     arguments.extend(
