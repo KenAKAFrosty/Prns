@@ -777,16 +777,26 @@ impl<S: StorageLayout> EngineState<S> {
                     fill_random,
                     sink,
                 );
-                if let Ok(RemoteControlControllerPairingFinalization::Completed {
-                    attempt_id,
-                    ..
-                }) = &result
-                {
-                    sink(EngineReaction::Journaled(
+                match &result {
+                    Ok(RemoteControlControllerPairingFinalization::Completed {
+                        attempt_id,
+                        ..
+                    }) => sink(EngineReaction::Journaled(
                         Journaled::RemoteControlControllerPairingAuthorizationPersisted {
                             attempt_id: *attempt_id,
                         },
-                    ));
+                    )),
+                    Ok(
+                        RemoteControlControllerPairingFinalization::PersistenceFailureRecorded {
+                            attempt_id,
+                            ..
+                        },
+                    ) => sink(EngineReaction::Journaled(
+                        Journaled::RemoteControlControllerPairingAuthorizationPersistenceFailed {
+                            attempt_id: *attempt_id,
+                        },
+                    )),
+                    Err(_) => {}
                 }
                 settle(
                     sink,
