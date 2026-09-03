@@ -107,6 +107,16 @@ async fn main() {
             .establish_link(receiver_hash)
             .await
             .expect("establish localhost link");
+        let mut resource_links = Vec::with_capacity(config.resource_streams.get());
+        resource_links.push(link_id);
+        for _ in 1..config.resource_streams.get() {
+            resource_links.push(
+                sender_handle
+                    .establish_link(receiver_hash)
+                    .await
+                    .expect("establish additional localhost link"),
+            );
+        }
 
         run_probes(&sender_handle, link_id, WARMUP_PROBES).await;
         let usage_before = process_usage();
@@ -120,24 +130,33 @@ async fn main() {
             .await
             .expect("receiver runtime metrics are available");
 
-        let resource_sender = sender_handle.clone();
         let resource_started = std::time::Instant::now();
-        let resource = tokio::spawn(async move {
-            resource_sender
-                .send_resource_with_compression(
-                    link_id,
-                    RESOURCE_BYTES,
-                    tokio::io::repeat(0xA5).take(RESOURCE_BYTES),
-                    SegmentCompression::Never,
-                )
-                .await
-        });
+        let resource_stream_count = config.resource_streams.get() as u64;
+        let resource_bytes_per_stream = RESOURCE_BYTES / resource_stream_count;
+        let streams_with_extra_byte = RESOURCE_BYTES % resource_stream_count;
+        let mut resources = tokio::task::JoinSet::new();
+        for (stream, resource_link) in (0..resource_stream_count).zip(resource_links) {
+            let resource_sender = sender_handle.clone();
+            let resource_bytes =
+                resource_bytes_per_stream + u64::from(stream < streams_with_extra_byte);
+            resources.spawn(async move {
+                resource_sender
+                    .send_resource_with_compression(
+                        resource_link,
+                        resource_bytes,
+                        tokio::io::repeat(0xA5).take(resource_bytes),
+                        SegmentCompression::Never,
+                    )
+                    .await
+            });
+        }
         tokio::task::yield_now().await;
         let mixed = run_probes(&sender_handle, link_id, PROBE_COUNT).await;
-        resource
-            .await
-            .expect("resource task remains live")
-            .expect("resource transfer settles");
+        while let Some(resource) = resources.join_next().await {
+            resource
+                .expect("resource task remains live")
+                .expect("resource transfer settles");
+        }
         let resource_micros = elapsed_micros(resource_started);
         let after = sender_handle
             .metrics_snapshot()
@@ -198,6 +217,7 @@ async fn main() {
 struct ProbeConfig {
     scheduler_policy: SchedulerPolicy,
     workers: ProbeWorkers,
+    resource_streams: NonZeroUsize,
 }
 
 #[derive(Clone, Copy)]
@@ -278,6 +298,7 @@ enum ProbeArgumentError {
     InvalidInteger { argument: String, value: String },
     ZeroNotAllowed { argument: String },
     InvalidWorkerSelection { value: String },
+    TooManyResourceStreams { value: usize },
     InvalidPolicy(SchedulerPolicyError),
 }
 
@@ -298,6 +319,12 @@ impl fmt::Display for ProbeArgumentError {
                     "workers must be auto or a positive integer, got {value:?}"
                 )
             }
+            Self::TooManyResourceStreams { value } => {
+                write!(
+                    formatter,
+                    "resource stream count {value} exceeds total resource bytes"
+                )
+            }
             Self::InvalidPolicy(error) => error.fmt(formatter),
         }
     }
@@ -308,6 +335,7 @@ impl std::error::Error for ProbeArgumentError {}
 fn parse_arguments() -> Result<ProbeConfig, ProbeArgumentError> {
     let mut values = PolicyValues::production();
     let mut workers = ProbeWorkers::Auto;
+    let mut resource_streams = NonZeroUsize::MIN;
     let mut arguments = std::env::args().skip(1);
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
@@ -353,6 +381,13 @@ fn parse_arguments() -> Result<ProbeConfig, ProbeArgumentError> {
             "--workers" => {
                 workers = parse_workers(next_value(&argument, &mut arguments)?)?;
             }
+            "--resource-streams" => {
+                let parsed = parse_positive(&argument, next_value(&argument, &mut arguments)?)?;
+                if u64::try_from(parsed).map_or(true, |count| count > RESOURCE_BYTES) {
+                    return Err(ProbeArgumentError::TooManyResourceStreams { value: parsed });
+                }
+                resource_streams = NonZeroUsize::new(parsed).expect("validated positive above");
+            }
             _ => return Err(ProbeArgumentError::UnknownArgument { argument }),
         }
     }
@@ -362,6 +397,7 @@ fn parse_arguments() -> Result<ProbeConfig, ProbeArgumentError> {
     Ok(ProbeConfig {
         scheduler_policy,
         workers,
+        resource_streams,
     })
 }
 
@@ -414,8 +450,9 @@ fn nonzero(value: usize) -> NonZeroUsize {
 fn print_policy(config: &ProbeConfig) {
     let policy = config.scheduler_policy;
     println!(
-        "POLICY workers={} turn_work={} completion_batch={} inbound_total={} inbound_per_lane={} command_batch={} owed_work_batch={} hot_turns={} worker_hot_idle_turns={} worker_spin_idle_turns={} interactive_batch={}",
+        "POLICY workers={} resource_streams={} turn_work={} completion_batch={} inbound_total={} inbound_per_lane={} command_batch={} owed_work_batch={} hot_turns={} worker_hot_idle_turns={} worker_spin_idle_turns={} interactive_batch={}",
         config.workers,
+        config.resource_streams,
         policy.turn_work(),
         policy.completion_batch(),
         policy.inbound_total(),
