@@ -255,8 +255,8 @@ impl Drop for NativeThread {
     }
 }
 
-/// Restoration-aware CoreBluetooth managers whose delegates and serial queue already exist, while
-/// radio authorization, service publication, and L2CAP readiness remain asynchronous.
+/// Prepared CoreBluetooth managers whose delegates and serial queue already exist, while radio
+/// authorization, service publication, and L2CAP readiness remain asynchronous.
 pub struct PreparedMacosBleBackend {
     native_thread: NativeThread,
     events: tokio_mpsc::UnboundedReceiver<Event>,
@@ -266,13 +266,50 @@ pub struct PreparedMacosBleBackend {
     handles: Handles,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ManagerPreparation {
+    RestorationAware,
+    ForegroundOnly,
+}
+
+impl ManagerPreparation {
+    const fn uses_state_restoration(self) -> bool {
+        matches!(self, Self::RestorationAware)
+    }
+}
+
 impl MacosBleBackend {
     #[cfg(target_os = "ios")]
     pub const MAX_PEERS: usize = 7;
     #[cfg(target_os = "macos")]
     pub const MAX_PEERS: usize = 8;
 
+    /// Creates CoreBluetooth managers with the existing iOS restoration identifiers.
+    ///
+    /// Applications using this path are responsible for the matching background modes and
+    /// restoration lifecycle. Use [`Self::prepare_foreground`] when the owner intentionally has no
+    /// CoreBluetooth state-restoration contract.
     pub async fn prepare(identity: BleIdentity) -> Result<PreparedMacosBleBackend, MacosBleError> {
+        Self::prepare_with(identity, ManagerPreparation::RestorationAware).await
+    }
+
+    /// Creates CoreBluetooth managers without opting into iOS state restoration.
+    ///
+    /// Central and peripheral operation remain available while the application is running, but
+    /// CoreBluetooth will not preserve or restore these managers after process termination.
+    pub async fn prepare_foreground(
+        identity: BleIdentity,
+    ) -> Result<PreparedMacosBleBackend, MacosBleError> {
+        Self::prepare_with(identity, ManagerPreparation::ForegroundOnly).await
+    }
+
+    async fn prepare_with(
+        identity: BleIdentity,
+        manager_preparation: ManagerPreparation,
+    ) -> Result<PreparedMacosBleBackend, MacosBleError> {
+        let uses_state_restoration = manager_preparation.uses_state_restoration();
+        #[cfg(not(target_os = "ios"))]
+        let _ = uses_state_restoration;
         let (events_tx, events_rx) = tokio_mpsc::unbounded_channel::<Event>();
         let (keepalive, shutdown_rx) = sync_mpsc::channel::<()>();
         let (handles_tx, handles_rx) = oneshot::channel::<Handles>();
@@ -297,7 +334,7 @@ impl MacosBleBackend {
                 );
                 let central_proto = ProtocolObject::from_ref(&*central_delegate);
                 #[cfg(target_os = "ios")]
-                let central_options = Some(central_manager_options());
+                let central_options = uses_state_restoration.then(central_manager_options);
                 #[cfg(not(target_os = "ios"))]
                 let central_options: Option<
                     Retained<NSDictionary<NSString, AnyObject>>,
@@ -317,7 +354,7 @@ impl MacosBleBackend {
                     PeripheralDelegate::new(events_tx, queue.clone(), identity);
                 let peripheral_proto = ProtocolObject::from_ref(&*peripheral_delegate);
                 #[cfg(target_os = "ios")]
-                let peripheral_options = Some(peripheral_manager_options());
+                let peripheral_options = uses_state_restoration.then(peripheral_manager_options);
                 #[cfg(not(target_os = "ios"))]
                 let peripheral_options: Option<
                     Retained<NSDictionary<NSString, AnyObject>>,
@@ -666,6 +703,12 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
 mod native_thread_tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[test]
+    fn foreground_preparation_does_not_request_state_restoration() {
+        assert!(!ManagerPreparation::ForegroundOnly.uses_state_restoration());
+        assert!(ManagerPreparation::RestorationAware.uses_state_restoration());
+    }
 
     #[test]
     fn dropping_owner_stops_and_joins_native_thread() {
