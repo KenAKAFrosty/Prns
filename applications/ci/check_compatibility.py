@@ -69,6 +69,8 @@ def load_compatibility(path: pathlib.Path = COMPATIBILITY_PATH) -> dict[str, Any
             raise fail(
                 f"qualification.{key} must be an exact major.minor.patch version"
             )
+    if string_value(qualification, "rustToolchain", "qualification") != "stable":
+        raise fail("qualification.rustToolchain must be stable")
     string_array(qualification, "rustComponents", "qualification")
     string_array(qualification, "rustTargets", "qualification")
     prns = object_value(document.get("prns"), "prns")

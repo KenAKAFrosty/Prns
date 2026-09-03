@@ -138,15 +138,27 @@ def require_qualification_toolchains(
         string_value(qualification, "rustMinimum", "compatibility.qualification"),
         "compatibility Rust minimum",
     )
+    rust_toolchain = string_value(
+        qualification, "rustToolchain", "compatibility.qualification"
+    )
     rustc = run(
-        ("rustc", "--version"), cwd=repository_root, capture=True
+        ("rustup", "run", rust_toolchain, "rustc", "--version"),
+        cwd=repository_root,
+        capture=True,
     ).stdout.strip()
     if parsed_version(rustc, "rustc") < expected_rust:
         raise fail(
             f"Rust {'.'.join(map(str, expected_rust))} or newer is required, received {rustc}"
         )
     installed_components = run(
-        ("rustup", "component", "list", "--installed"),
+        (
+            "rustup",
+            "component",
+            "list",
+            "--toolchain",
+            rust_toolchain,
+            "--installed",
+        ),
         cwd=repository_root,
         capture=True,
     ).stdout.splitlines()
@@ -160,7 +172,14 @@ def require_qualification_toolchains(
             raise fail(f"required Rust component is not installed: {component}")
     installed_targets = set(
         run(
-            ("rustup", "target", "list", "--installed"),
+            (
+                "rustup",
+                "target",
+                "list",
+                "--toolchain",
+                rust_toolchain,
+                "--installed",
+            ),
             cwd=repository_root,
             capture=True,
         ).stdout.splitlines()
@@ -176,7 +195,9 @@ def require_qualification_toolchains(
 
 
 def controlled_environment(
-    work: pathlib.Path, applications_root: pathlib.Path
+    work: pathlib.Path,
+    applications_root: pathlib.Path,
+    compatibility: dict[str, Any],
 ) -> dict[str, str]:
     environment = os.environ.copy()
     forbidden_prefixes = ("CARGO_", "NPM_CONFIG_", "PRNS_", "RUST", "UV_")
@@ -194,6 +215,9 @@ def controlled_environment(
     npm_user_config.write_text("", encoding="utf-8")
     npm_global_config = work / "npm-global.npmrc"
     npm_global_config.write_text("", encoding="utf-8")
+    qualification = object_value(
+        compatibility["qualification"], "compatibility.qualification"
+    )
     environment.update(
         {
             "CARGO_HOME": os.fspath(cargo_home),
@@ -205,6 +229,9 @@ def controlled_environment(
             "NPM_CONFIG_GLOBALCONFIG": os.fspath(npm_global_config),
             "NPM_CONFIG_USERCONFIG": os.fspath(npm_user_config),
             "RUST_MIN_STACK": str(16 * 1024 * 1024),
+            "RUSTUP_TOOLCHAIN": string_value(
+                qualification, "rustToolchain", "compatibility.qualification"
+            ),
             "UV_CACHE_DIR": os.fspath(uv_cache),
         }
     )
@@ -262,6 +289,11 @@ def load_compatibility() -> dict[str, Any]:
             is None
         ):
             raise fail(f"compatibility.qualification.{key} must be major.minor.patch")
+    if (
+        string_value(qualification, "rustToolchain", "compatibility.qualification")
+        != "stable"
+    ):
+        raise fail("compatibility.qualification.rustToolchain must be stable")
     string_array(qualification, "rustComponents", "compatibility.qualification")
     string_array(qualification, "rustTargets", "compatibility.qualification")
     prns = object_value(document.get("prns"), "compatibility.prns")
@@ -1411,7 +1443,7 @@ def qualify(
         work.mkdir(parents=True)
     try:
         applications_root = export_applications(repository_root, work)
-        environment = controlled_environment(work, applications_root)
+        environment = controlled_environment(work, applications_root, compatibility)
         prns_root = work / "prns-source"
         checkout_prns(git_url, revision, prns_root, environment)
         run(
