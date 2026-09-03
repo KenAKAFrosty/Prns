@@ -11,7 +11,7 @@
   },
   "prns": {
     "repository": "https://github.com/KenAKAFrosty/Prns.git",
-    "revision": "aedb3634dea3b929de392b1bf480ae8549b85c91",
+    "revision": "0a650127e3026af6d347f8e696d3cfdb1c3d3536",
     "hostContract": {
       "id": "prns-host/v1",
       "schemaPath": "prns-host/schema/host-contract-v1.json",
@@ -23,7 +23,8 @@
         "personal-rns",
         "prns-core",
         "prns-host",
-        "prns-host-snapshot"
+        "prns-host-snapshot",
+        "prns-interfaces-tokio"
       ],
       "source": [
         { "name": "personal-rns", "path": "personal-rns", "version": "0.3.7" },
