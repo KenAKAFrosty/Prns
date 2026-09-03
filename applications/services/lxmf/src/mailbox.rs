@@ -1258,11 +1258,13 @@ struct DurableShared {
 
 struct DurableLifecycle {
     shutdown: watch::Sender<bool>,
+    activated: AtomicBool,
     stopped: AtomicBool,
     stop_complete: AtomicBool,
     transition: Mutex<()>,
     worker: StdMutex<Option<JoinHandle<()>>>,
     attempts: StdMutex<BTreeMap<AttemptKey, JoinHandle<()>>>,
+    pending_attempts: StdMutex<Vec<DurableLxmfMessage>>,
 }
 
 impl DurableLifecycle {
@@ -1274,6 +1276,12 @@ impl DurableLifecycle {
 
     fn attempts(&self) -> StdMutexGuard<'_, BTreeMap<AttemptKey, JoinHandle<()>>> {
         self.attempts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn pending_attempts(&self) -> StdMutexGuard<'_, Vec<DurableLxmfMessage>> {
+        self.pending_attempts
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
@@ -1297,6 +1305,10 @@ impl Drop for DurableLifecycle {
         for (_key, attempt) in attempts {
             attempt.abort();
         }
+        self.pending_attempts
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
     }
 }
 
@@ -1412,9 +1424,7 @@ impl DurableDirectLxmfService {
         };
         self.shared.notify();
         let local_record_id = message.local_record_id;
-        if !self.lifecycle.stopped.load(Ordering::Acquire) {
-            spawn_attempt(&self.shared, &self.lifecycle, message);
-        }
+        schedule_attempt(&self.shared, &self.lifecycle, message);
         DurableSendDirectTextOutcome::Accepted { local_record_id }
     }
 
@@ -1447,15 +1457,13 @@ impl DurableDirectLxmfService {
         match transition {
             RetryTransition::Accepted { message, .. } => {
                 self.shared.notify();
-                if !self.lifecycle.stopped.load(Ordering::Acquire) {
-                    spawn_attempt(&self.shared, &self.lifecycle, message);
-                }
+                schedule_attempt(&self.shared, &self.lifecycle, message);
                 RetryLxmfMessageOutcome::Accepted { local_record_id }
             }
             RetryTransition::NotFound => RetryLxmfMessageOutcome::NotFound,
-            RetryTransition::NotFailed { current } => {
-                RetryLxmfMessageOutcome::NotFailed { current }
-            }
+            RetryTransition::NotFailed { current } => RetryLxmfMessageOutcome::NotFailed {
+                current: self.project_current_state(local_record_id, current),
+            },
         }
     }
 
@@ -1505,6 +1513,10 @@ impl DurableDirectLxmfService {
                         attempt.abort();
                         self.shared.notify();
                     }
+                    self.lifecycle.pending_attempts().retain(|pending| {
+                        pending.local_record_id != local_record_id
+                            || pending.generation() != Some(generation)
+                    });
                 }
                 CancelLxmfMessageOutcome::Cancelled { local_record_id }
             }
@@ -1515,6 +1527,46 @@ impl DurableDirectLxmfService {
                 CancelLxmfMessageOutcome::NotCancellable { current }
             }
         }
+    }
+
+    fn project_current_state(
+        &self,
+        local_record_id: u64,
+        current: DurableLxmfDeliveryState,
+    ) -> DurableLxmfDeliveryState {
+        let DurableLxmfDeliveryState::Queued { failed_attempts } = current else {
+            return current;
+        };
+        if self
+            .lifecycle
+            .attempts()
+            .keys()
+            .any(|key| key.local_record_id == local_record_id)
+        {
+            DurableLxmfDeliveryState::Sending { failed_attempts }
+        } else {
+            current
+        }
+    }
+
+    /// Enable queued network attempts after the owning node restores persistence.
+    ///
+    /// This is idempotent. Rows accepted while paused remain durably `Queued` and
+    /// join the same activation batch; stopping before activation never touches
+    /// their durable state.
+    pub async fn activate_queued_attempts(&self) -> bool {
+        let _transition = self.lifecycle.transition.lock().await;
+        if self.lifecycle.stopped.load(Ordering::Acquire) {
+            return false;
+        }
+        if self.lifecycle.activated.swap(true, Ordering::AcqRel) {
+            return true;
+        }
+        let pending = mem::take(&mut *self.lifecycle.pending_attempts());
+        for message in pending {
+            spawn_attempt(&self.shared, &self.lifecycle, message);
+        }
+        true
     }
 
     /// Query committed records and overlay only matching active generations as `Sending`.
@@ -1572,6 +1624,7 @@ impl DurableDirectLxmfService {
             return Ok(());
         }
         self.lifecycle.stopped.store(true, Ordering::Release);
+        self.lifecycle.activated.store(false, Ordering::Release);
         self.shared.health.stop();
         let _changed = self.lifecycle.shutdown.send(true);
         {
@@ -1592,6 +1645,7 @@ impl DurableDirectLxmfService {
         if self.lifecycle.stop_complete.load(Ordering::Acquire) {
             return Ok(());
         }
+        self.lifecycle.pending_attempts().clear();
         let deadline = tokio::time::Instant::now() + STOP_JOIN_TIMEOUT;
 
         let worker = self.lifecycle.worker().take();
@@ -1627,8 +1681,25 @@ impl DurableDirectLxmfService {
 }
 
 impl PendingDurableDirectLxmfService {
-    /// Start the prepared service and register every surviving queued generation.
+    /// Start the prepared service and immediately activate queued generations.
+    ///
+    /// Aggregate owners with a persistence-restored readiness barrier must use
+    /// [`Self::start_paused`] and call
+    /// [`DurableDirectLxmfService::activate_queued_attempts`] after that barrier.
     pub async fn start(
+        self,
+        network: Arc<dyn DirectNetwork>,
+        mailbox: Arc<dyn MailboxSubmitter>,
+        clock: Arc<dyn MailboxClock>,
+    ) -> Result<DurableDirectLxmfService, DurableDirectServiceStartError> {
+        let service = self.start_paused(network, mailbox, clock).await?;
+        let activated = service.activate_queued_attempts().await;
+        debug_assert!(activated, "a newly started service must activate");
+        Ok(service)
+    }
+
+    /// Start the callback worker but keep every network attempt paused.
+    pub async fn start_paused(
         self,
         network: Arc<dyn DirectNetwork>,
         mailbox: Arc<dyn MailboxSubmitter>,
@@ -1678,23 +1749,19 @@ impl PendingDurableDirectLxmfService {
         ));
         let lifecycle = Arc::new(DurableLifecycle {
             shutdown,
+            activated: AtomicBool::new(false),
             stopped: AtomicBool::new(false),
             stop_complete: AtomicBool::new(false),
             transition: Mutex::new(()),
             worker: StdMutex::new(Some(worker)),
             attempts: StdMutex::new(BTreeMap::new()),
+            pending_attempts: StdMutex::new(messages),
         });
-        let service = DurableDirectLxmfService {
+        Ok(DurableDirectLxmfService {
             shared,
             lifecycle,
             callbacks,
-        };
-        let _transition = service.lifecycle.transition.lock().await;
-        for message in messages {
-            spawn_attempt(&service.shared, &service.lifecycle, message);
-        }
-        drop(_transition);
-        Ok(service)
+        })
     }
 }
 
@@ -1811,6 +1878,21 @@ fn spawn_attempt(
     let _task_alive = registered.send(());
     drop(attempts);
     shared.notify();
+}
+
+fn schedule_attempt(
+    shared: &Arc<DurableShared>,
+    lifecycle: &Arc<DurableLifecycle>,
+    message: DurableLxmfMessage,
+) {
+    if lifecycle.stopped.load(Ordering::Acquire) {
+        return;
+    }
+    if lifecycle.activated.load(Ordering::Acquire) {
+        spawn_attempt(shared, lifecycle, message);
+    } else {
+        lifecycle.pending_attempts().push(message);
+    }
 }
 
 async fn settle_durable_attempt(
@@ -2795,6 +2877,12 @@ mod tests {
         ));
         assert_eq!(sending.durable_revision, 1);
         assert_eq!(sending.projection_revision, before + 2);
+        assert_eq!(
+            service.retry_lxmf_message(1).await,
+            RetryLxmfMessageOutcome::NotFailed {
+                current: DurableLxmfDeliveryState::Sending { failed_attempts: 0 }
+            }
+        );
 
         network.release_send();
         let delivered = wait_for_durable_snapshot(&service, |snapshot| {
@@ -2951,6 +3039,63 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn paused_start_keeps_reopened_and_new_rows_queued_until_activation() {
+        let (_root, database, submitter) = shared_database();
+        let MailboxReply::OutboundInserted { .. } = execute_mailbox_request(
+            &database,
+            MailboxRequest::InsertOutbound(outbound(1_700_000_007_500)),
+        )
+        .unwrap() else {
+            panic!("unexpected insert reply");
+        };
+        let network = Arc::new(DurableFakeNetwork::default());
+        let identity = LocalLxmfIdentity::from_secret_bytes(&LOCAL_SECRET).unwrap();
+        let (pending, _callbacks) = DurableDirectLxmfService::prepare(identity);
+        let service = pending
+            .start_paused(network.clone(), submitter, Arc::new(FixedClock(9_999)))
+            .await
+            .unwrap();
+
+        tokio::task::yield_now().await;
+        assert!(network.sent_wires.lock().unwrap().is_empty());
+        assert!(matches!(
+            service.snapshot(all_messages()).await.unwrap().messages[0].delivery_state,
+            DurableLxmfDeliveryState::Queued { failed_attempts: 0 }
+        ));
+
+        let destination = learn_durable_peer(&service).await;
+        assert_eq!(
+            service
+                .send_direct_text(
+                    destination,
+                    1_700_000_007_600,
+                    b"paused",
+                    b"accepted while paused",
+                )
+                .await,
+            DurableSendDirectTextOutcome::Accepted { local_record_id: 2 }
+        );
+        tokio::task::yield_now().await;
+        assert!(network.sent_wires.lock().unwrap().is_empty());
+
+        assert!(service.activate_queued_attempts().await);
+        let settled = wait_for_durable_snapshot(&service, |snapshot| {
+            snapshot.messages.iter().all(|message| {
+                matches!(
+                    message.delivery_state,
+                    DurableLxmfDeliveryState::Delivered { .. }
+                )
+            })
+        })
+        .await;
+        assert_eq!(settled.messages.len(), 2);
+        assert_eq!(network.sent_wires.lock().unwrap().len(), 2);
+        assert!(service.activate_queued_attempts().await);
+        service.stop().await.unwrap();
+        assert!(!service.activate_queued_attempts().await);
+    }
+
+    #[tokio::test]
     async fn durable_retry_is_byte_identical_and_cancel_wins_before_late_proof() {
         let (_root, _database, submitter) = shared_database();
         let network = Arc::new(DurableFakeNetwork::default());
@@ -3025,7 +3170,7 @@ mod tests {
         .unwrap();
         let wire = output[..usize::from(prepared.wire_len())].to_vec();
         assert_eq!(
-            service.callbacks().on_prns_event(link_event(&wire)),
+            service.callbacks().on_prns_event(&link_event(&wire)),
             CallbackOutcome::Enqueued
         );
         let first =
@@ -3034,7 +3179,7 @@ mod tests {
         assert_eq!(first.messages[0].verification, LxmfVerification::Verified);
 
         assert_eq!(
-            service.callbacks().on_prns_event(link_event(&wire)),
+            service.callbacks().on_prns_event(&link_event(&wire)),
             CallbackOutcome::Enqueued
         );
         tokio::time::sleep(Duration::from_millis(30)).await;
