@@ -10,7 +10,6 @@ use crate::interfaces::{
 };
 use crate::manifold::wake_schedule::merge_wake_schedules_delta;
 use crate::manifold::Host;
-use crate::routing::dedup::PacketHash;
 use crate::routing::links::resources::receive::part_hash::ResourcePartHashPlan;
 use crate::routing::links::resources::ResourceOffer;
 use crate::routing::links::LinkId;
@@ -289,15 +288,12 @@ impl InboundDispatch {
                     None => (slot.frame_mut(), IngressBufferSource::GrantSlot),
                 };
                 let packet_span = IngressPacketSpan::of(bytes);
-                let packet = ClassifiedInboundPacket::classify(InboundPacket {
+                let mut packet = ClassifiedInboundPacket::classify(InboundPacket {
                     arrived_at: now,
                     source_interface: source,
                     bytes,
                 });
-                let packet_hash = packet.packet_hash();
-                if let Some(packet_hash) = packet_hash {
-                    retain_packet_phy(packet_phy_store, packet_hash, packet_phy);
-                }
+                retain_packet_phy(packet_phy_store, &mut packet, packet_phy);
                 let mut deferred_resource_part_hash = None;
                 let ingest_report = engine.ingest_classified_into_report(
                     packet,
@@ -478,13 +474,16 @@ where
 
 fn retain_packet_phy(
     store: Option<&InterfaceStore>,
-    packet_hash: PacketHash,
+    packet: &mut ClassifiedInboundPacket<'_>,
     packet_phy: PacketPhyStats,
 ) {
     if packet_phy.is_empty() {
         return;
     }
     let Some(store) = store else {
+        return;
+    };
+    let Some(packet_hash) = packet.resolve_packet_hash() else {
         return;
     };
     store.remember_packet_phy(packet_hash, packet_phy);
@@ -495,6 +494,7 @@ mod tests {
     use super::*;
     use crate::engine::test_support::{bytes_from_hex, RNS_1_4_2_ANNOUNCE};
     use crate::interfaces::{RssiDbm, SignalQualityTenthsPercent, SnrQuarterDb};
+    use crate::routing::dedup::PacketHash;
 
     #[test]
     fn link_identity_verdict_blocks_only_its_ingress_lane_until_completion() {
@@ -523,19 +523,20 @@ mod tests {
         let store = InterfaceStore::new();
         let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         let expected = PacketHash::of_wire_packet(&raw).expect("the fixture is a wire packet");
-        let packet = ClassifiedInboundPacket::classify(InboundPacket {
+        let mut packet = ClassifiedInboundPacket::classify(InboundPacket {
             arrived_at: crate::engine::InstantMillis(7),
             source_interface: InterfaceId::new([0xC7; 8]),
             bytes: &mut raw,
         });
-        let packet_hash = packet.packet_hash().expect("the packet was classified");
         let packet_phy = PacketPhyStats {
             rssi: Some(RssiDbm::new(-103)),
             snr: Some(SnrQuarterDb::new(-11)),
             quality: SignalQualityTenthsPercent::new(731),
         };
 
-        retain_packet_phy(Some(&store), packet_hash, packet_phy);
+        retain_packet_phy(Some(&store), &mut packet, packet_phy);
+
+        let packet_hash = packet.packet_hash().expect("the packet was classified");
 
         assert_eq!(packet_hash, expected);
         assert_eq!(store.packet_phy(packet_hash), Some(packet_phy));

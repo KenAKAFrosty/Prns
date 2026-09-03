@@ -1,4 +1,4 @@
-use super::classification::DataPacket;
+use super::classification::{DataPacket, DataPacketHash};
 use super::dispatch::IngressCryptoMode;
 use super::forward::PacketToForward;
 #[cfg(test)]
@@ -87,7 +87,7 @@ impl<S: StorageLayout> EngineState<S> {
     pub(super) fn ingest_link_addressed<'p>(
         &mut self,
         data: DataPacket<'p>,
-        packet_hash: PacketHash,
+        mut packet_hash: DataPacketHash,
         received_hops: u8,
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
@@ -127,13 +127,20 @@ impl<S: StorageLayout> EngineState<S> {
                 self.ingest_link_rtt(link_id, data.payload, source_interface, arrived_at)
             }
             WireContext::None => {
+                let packet_hash = packet_hash.resolve(&data);
                 self.ingest_link_data(data, packet_hash, source_interface, arrived_at)
             }
             WireContext::KeepAlive => self.ingest_keepalive(link_id, data.payload, arrived_at),
             WireContext::LinkClose => self.ingest_link_close(data, arrived_at),
             WireContext::LinkIdentify => self.ingest_link_identify(data, arrived_at),
-            WireContext::Request => self.ingest_request_over_link(data, packet_hash, arrived_at),
-            WireContext::Response => self.ingest_response_over_link(data, packet_hash, arrived_at),
+            WireContext::Request => {
+                let packet_hash = packet_hash.resolve(&data);
+                self.ingest_request_over_link(data, packet_hash, arrived_at)
+            }
+            WireContext::Response => {
+                let packet_hash = packet_hash.resolve(&data);
+                self.ingest_response_over_link(data, packet_hash, arrived_at)
+            }
             WireContext::ResourceRequest => self.ingest_resource_request(data, arrived_at),
             WireContext::ResourceAdvertisement => {
                 self.ingest_resource_advertisement(data, arrived_at)
@@ -146,7 +153,10 @@ impl<S: StorageLayout> EngineState<S> {
             WireContext::ResourceReceiverCancel => {
                 self.ingest_resource_receiver_cancel(data, arrived_at)
             }
-            WireContext::Channel => self.ingest_channel_data(data, packet_hash, arrived_at),
+            WireContext::Channel => {
+                let packet_hash = packet_hash.resolve(&data);
+                self.ingest_channel_data(data, packet_hash, arrived_at)
+            }
             WireContext::ResourceProof
             | WireContext::CacheRequest
             | WireContext::PathResponse

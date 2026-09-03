@@ -127,9 +127,9 @@ pub use crate::routing::delivery::send_single::{
 };
 pub use crate::routing::ingress::{
     AcceptedAnnounce, AnnounceIngest, AnnounceVerification, AnnounceVerifyOwed,
-    ClassifiedInboundPacket, DataPacket, DecryptOwed, IgnoreReason, IngestPacketOutcome, Ingress,
-    InvalidAnnounce, LinkRttOwed, PacketToForward, ProtocolViolationKind, RatchetDecryptOwed,
-    RebroadcastDecision, VerifiedAnnounce,
+    ClassifiedInboundPacket, DataPacket, DataPacketHash, DecryptOwed, IgnoreReason,
+    IngestPacketOutcome, Ingress, InvalidAnnounce, LinkRttOwed, PacketToForward,
+    ProtocolViolationKind, RatchetDecryptOwed, RebroadcastDecision, VerifiedAnnounce,
 };
 pub use crate::routing::links::channel::send::{ChannelAckVerification, ChannelAckVerifyOwed};
 pub use crate::routing::links::data::{

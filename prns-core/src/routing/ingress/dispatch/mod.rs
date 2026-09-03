@@ -220,7 +220,7 @@ impl<S: StorageLayout> EngineState<S> {
             }
 
             Ingress::Data {
-                packet_hash,
+                mut packet_hash,
                 data,
                 received_hops,
                 source_interface,
@@ -281,7 +281,9 @@ impl<S: StorageLayout> EngineState<S> {
                 }
 
                 if data.header.destination_type == DestinationType::Single
-                    && self.packet_hash_history.remember(packet_hash)
+                    && self
+                        .packet_hash_history
+                        .remember(packet_hash.resolve(&data))
                         == RememberPacketOutcome::AlreadyKnown
                 {
                     return IngestPacketOutcome::Ignored(IgnoreReason::Duplicate);
@@ -307,6 +309,7 @@ impl<S: StorageLayout> EngineState<S> {
                         )));
 
                 if is_in_transport_through_us || is_shared_client_transit {
+                    let packet_hash = packet_hash.resolve(&data);
                     let DataPacket { header, payload } = data;
                     return match self.maybe_forward(
                         header,
@@ -323,6 +326,7 @@ impl<S: StorageLayout> EngineState<S> {
                         None => IngestPacketOutcome::Ignored(IgnoreReason::NoRoute),
                     };
                 }
+                let packet_hash = packet_hash.resolve(&data);
                 match self.maybe_upstream_delivery(
                     data,
                     packet_hash,

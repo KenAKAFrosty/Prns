@@ -202,12 +202,12 @@ pub(crate) async fn run_pooled<
                             None => frame,
                         };
                         let now = host.now();
-                        let packet = ClassifiedInboundPacket::classify(InboundPacket {
+                        let mut packet = ClassifiedInboundPacket::classify(InboundPacket {
                             arrived_at: now,
                             source_interface: source,
                             bytes,
                         });
-                        retain_packet_phy(store, &packet, packet_phy);
+                        retain_packet_phy(store, &mut packet, packet_phy);
                         let mut owed_work = InlineOwedWorkQueue::new();
                         let report = engine.ingest_classified_into_report(
                             packet,
