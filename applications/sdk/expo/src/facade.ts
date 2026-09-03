@@ -1,5 +1,11 @@
 import { HOST_CONTRACT_FINGERPRINT, NATIVE_CONTRACT_FINGERPRINT } from "./contract.generated";
 import type {
+  Contact as WireContact,
+  ContactListOutcome as WireContactListOutcome,
+  ContactLookupOutcome as WireContactLookupOutcome,
+  ContactMutationOutcome as WireContactMutationOutcome,
+  ContactDestinationInput as WireContactDestinationInput,
+  CreateManualContactInput as WireCreateManualContactInput,
   DescribeRemoteControlTargetInput as WireDescribeRemoteControlTargetInput,
   DevelopmentNodeSnapshot as WireDevelopmentNodeSnapshot,
   DevelopmentNodeStartOutcome as WireDevelopmentNodeStartOutcome,
@@ -10,8 +16,11 @@ import type {
   RemoteControlDescribeOutcome as WireRemoteControlDescribeOutcome,
   RemoteControlPairingCommandOutcome as WireRemoteControlPairingCommandOutcome,
   RemoteControlPairingDecisionInput as WireRemoteControlPairingDecisionInput,
+  SetContactAliasInput as WireSetContactAliasInput,
+  SetContactPinnedInput as WireSetContactPinnedInput,
   PrimaryIdentityState as WirePrimaryIdentityState,
 } from "./contract.generated";
+import type { DestinationHash, IdentityHash } from "personal-rns/contract";
 import { hydrateGenerated, NativePayloadError, type Hydrated } from "./hydrate";
 import type { PrnsAppNativeModule } from "./native";
 
@@ -32,6 +41,10 @@ export type DescribeRemoteControlTargetInput = Hydrated<WireDescribeRemoteContro
 export type PrimaryIdentityState = Hydrated<WirePrimaryIdentityState>;
 export type IdentityImportPreviewOutcome = Hydrated<WireIdentityImportPreviewOutcome>;
 export type IdentityCreationOutcome = Hydrated<WireIdentityCreationOutcome>;
+export type Contact = Hydrated<WireContact>;
+export type ContactMutationOutcome = Hydrated<WireContactMutationOutcome>;
+export type ContactLookupOutcome = Hydrated<WireContactLookupOutcome>;
+export type ContactListOutcome = Hydrated<WireContactListOutcome>;
 
 export type DevelopmentRuntime = {
   readonly inspectDevelopmentIdentity: () => Promise<PrimaryIdentityState>;
@@ -52,6 +65,25 @@ export type DevelopmentRuntime = {
   readonly describeRemoteControlTarget: (
     input: DescribeRemoteControlTargetInput,
   ) => Promise<RemoteControlDescribeOutcome>;
+  readonly saveObservedDestination: (
+    destination: DestinationHash,
+  ) => Promise<ContactMutationOutcome>;
+  readonly createManualContact: (
+    destination: DestinationHash,
+    identity: IdentityHash | null,
+    alias: string | null,
+  ) => Promise<ContactMutationOutcome>;
+  readonly setContactAlias: (
+    destination: DestinationHash,
+    alias: string | null,
+  ) => Promise<ContactMutationOutcome>;
+  readonly setContactPinned: (
+    destination: DestinationHash,
+    pinned: boolean,
+  ) => Promise<ContactMutationOutcome>;
+  readonly deleteContact: (destination: DestinationHash) => Promise<ContactMutationOutcome>;
+  readonly getContact: (destination: DestinationHash) => Promise<ContactLookupOutcome>;
+  readonly listContacts: () => Promise<ContactListOutcome>;
   readonly stopDevelopmentNode: () => Promise<DevelopmentNodeStopOutcome>;
   readonly resetDevelopmentData: () => Promise<DevelopmentNodeStopOutcome>;
 };
@@ -133,6 +165,59 @@ export function createDevelopmentRuntime(nativeModule: PrnsAppNativeModule): Dev
           } satisfies WireDescribeRemoteControlTargetInput),
         ),
       ),
+    saveObservedDestination: (destination) =>
+      read(() =>
+        nativeModule.saveObservedDestination(
+          JSON.stringify({
+            destination: Array.from(destination),
+          } satisfies WireContactDestinationInput),
+        ),
+      ),
+    createManualContact: (destination, identity, alias) =>
+      read(() =>
+        nativeModule.createManualContact(
+          JSON.stringify({
+            destination: Array.from(destination),
+            identity: identity === null ? null : Array.from(identity),
+            alias,
+          } satisfies WireCreateManualContactInput),
+        ),
+      ),
+    setContactAlias: (destination, alias) =>
+      read(() =>
+        nativeModule.setContactAlias(
+          JSON.stringify({
+            destination: Array.from(destination),
+            alias,
+          } satisfies WireSetContactAliasInput),
+        ),
+      ),
+    setContactPinned: (destination, pinned) =>
+      read(() =>
+        nativeModule.setContactPinned(
+          JSON.stringify({
+            destination: Array.from(destination),
+            pinned,
+          } satisfies WireSetContactPinnedInput),
+        ),
+      ),
+    deleteContact: (destination) =>
+      read(() =>
+        nativeModule.deleteContact(
+          JSON.stringify({
+            destination: Array.from(destination),
+          } satisfies WireContactDestinationInput),
+        ),
+      ),
+    getContact: (destination) =>
+      read(() =>
+        nativeModule.getContact(
+          JSON.stringify({
+            destination: Array.from(destination),
+          } satisfies WireContactDestinationInput),
+        ),
+      ),
+    listContacts: () => read(() => nativeModule.listContacts()),
     stopDevelopmentNode: () => read(() => nativeModule.stop()),
     resetDevelopmentData: () => read(() => nativeModule.reset()),
   };

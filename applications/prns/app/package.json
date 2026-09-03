@@ -32,6 +32,7 @@
     "expo-router": "~57.0.18",
     "expo-status-bar": "~57.0.1",
     "effect": "4.0.0-rc.112",
+    "personal-rns": "file:../../../prns-js",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.3",

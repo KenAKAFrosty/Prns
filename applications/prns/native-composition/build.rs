@@ -15,7 +15,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_fingerprint = fingerprint(&std::fs::read(manifest.join(CONTRACT_SOURCE))?);
     let host_fingerprint = fingerprint(&std::fs::read(manifest.join(HOST_CONTRACT_SOURCE))?);
     println!(
-        "cargo:rustc-env=PRNS_APP_CONTRACT_FINGERPRINT=prns-app-native/local-node-0/{:016x}",
+        "cargo:rustc-env=PRNS_APP_CONTRACT_FINGERPRINT=prns-app-native/local-node-1/{:016x}",
         app_fingerprint
     );
     println!(

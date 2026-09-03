@@ -87,6 +87,37 @@ public final class PrnsAppModule: Module {
       try Self.invokeJSON(inputJSON, operation: prns_app_describe_target)
     }.runOnQueue(Self.nativeQueue)
 
+    AsyncFunction("saveObservedDestination") { (inputJSON: String) throws -> String in
+      try Self.invokePathJSON(inputJSON, operation: prns_app_save_observed_destination)
+    }.runOnQueue(Self.nativeQueue)
+
+    AsyncFunction("createManualContact") { (inputJSON: String) throws -> String in
+      try Self.invokePathJSON(inputJSON, operation: prns_app_create_manual_contact)
+    }.runOnQueue(Self.nativeQueue)
+
+    AsyncFunction("setContactAlias") { (inputJSON: String) throws -> String in
+      try Self.invokePathJSON(inputJSON, operation: prns_app_set_contact_alias)
+    }.runOnQueue(Self.nativeQueue)
+
+    AsyncFunction("setContactPinned") { (inputJSON: String) throws -> String in
+      try Self.invokePathJSON(inputJSON, operation: prns_app_set_contact_pinned)
+    }.runOnQueue(Self.nativeQueue)
+
+    AsyncFunction("deleteContact") { (inputJSON: String) throws -> String in
+      try Self.invokePathJSON(inputJSON, operation: prns_app_delete_contact)
+    }.runOnQueue(Self.nativeQueue)
+
+    AsyncFunction("getContact") { (inputJSON: String) throws -> String in
+      try Self.invokePathJSON(inputJSON, operation: prns_app_get_contact)
+    }.runOnQueue(Self.nativeQueue)
+
+    AsyncFunction("listContacts") { () throws -> String in
+      let storageURL = try Self.developmentStorageURL(create: true)
+      return try Self.withUtf8Bytes(storageURL.path) { pointer, count in
+        try Self.consume(prns_app_list_contacts(pointer, count))
+      }
+    }.runOnQueue(Self.nativeQueue)
+
     AsyncFunction("stop") { () throws -> String in
       try Self.consume(prns_app_stop())
     }.runOnQueue(Self.nativeQueue)
@@ -147,6 +178,23 @@ public final class PrnsAppModule: Module {
   ) throws -> String {
     try withUtf8Bytes(inputJSON) { pointer, count in
       try consume(operation(pointer, count))
+    }
+  }
+
+  private static func invokePathJSON(
+    _ inputJSON: String,
+    operation: (
+      UnsafePointer<UInt8>?,
+      Int,
+      UnsafePointer<UInt8>?,
+      Int
+    ) -> PrnsAppBytes
+  ) throws -> String {
+    let storageURL = try developmentStorageURL(create: true)
+    return try withUtf8Bytes(storageURL.path) { pathPointer, pathCount in
+      try withUtf8Bytes(inputJSON) { inputPointer, inputCount in
+        try consume(operation(pathPointer, pathCount, inputPointer, inputCount))
+      }
     }
   }
 

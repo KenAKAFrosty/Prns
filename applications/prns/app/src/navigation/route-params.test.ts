@@ -38,19 +38,19 @@ describe("route parameter validation", () => {
     expect(routeParamsAreValid(entry, { step: ["welcome", "complete"] })).toBe(false);
   });
 
-  it("validates required enums and rejects undeclared companions", () => {
+  it("keeps manual contact creation parameter-free", () => {
     const entry = screenById("contacts.add");
 
-    expect(routeParamsAreValid(entry, { source: "manual" })).toBe(true);
-    expect(
-      routeParamsAreValid(entry, {
-        source: "observed",
-        observedDestination: "destination-1",
-      }),
-    ).toBe(true);
+    expect(routeParamsAreValid(entry, {})).toBe(true);
+    expect(routeParamsAreValid(entry, { source: "manual" })).toBe(false);
+  });
+
+  it("addresses contact details by one destination parameter", () => {
+    const entry = screenById("contacts.entry");
+
+    expect(routeParamsAreValid(entry, { destination: "00".repeat(16) })).toBe(true);
     expect(routeParamsAreValid(entry, {})).toBe(false);
-    expect(routeParamsAreValid(entry, { source: "future" })).toBe(false);
-    expect(routeParamsAreValid(entry, { source: "scan", extra: "value" })).toBe(false);
+    expect(routeParamsAreValid(entry, { destination: ["00".repeat(16)] })).toBe(false);
   });
 
   it("accepts only complete union literals or prefixes", () => {

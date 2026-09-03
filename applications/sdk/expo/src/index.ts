@@ -6,6 +6,10 @@ export type * as WireContract from "./contract.generated";
 export {
   NativeBridgeError,
   NativeContractMismatchError,
+  type Contact,
+  type ContactListOutcome,
+  type ContactLookupOutcome,
+  type ContactMutationOutcome,
   type DescribeRemoteControlTargetInput,
   type DevelopmentNodeSnapshot,
   type DevelopmentNodeStartOutcome,
@@ -37,15 +41,22 @@ export const developmentRuntime = createDevelopmentRuntime(nativePrnsApp);
 
 export const {
   approveRemoteControlPairing,
+  createManualContact,
   createGeneratedIdentity,
   createImportedIdentity,
   describeRemoteControlTarget,
+  deleteContact,
+  getContact,
   inspectDevelopmentIdentity,
   initiateRemoteControlPairing,
+  listContacts,
   previewIdentityImport,
   readDevelopmentNodeSnapshot,
   rejectRemoteControlPairing,
   resetDevelopmentData,
+  saveObservedDestination,
+  setContactAlias,
+  setContactPinned,
   startDevelopmentNode,
   stopDevelopmentNode,
 } = developmentRuntime;

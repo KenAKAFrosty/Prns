@@ -1,4 +1,5 @@
 import type {
+  ContactMutationOutcome,
   DescribeRemoteControlTargetInput,
   DevelopmentNodeSnapshot,
   DevelopmentRuntimeFailure,
@@ -8,6 +9,7 @@ import type {
   RemoteControlPairingCommandOutcome,
   RemoteControlPairingDecisionInput,
 } from "@prns-internal/expo";
+import type { DestinationHash } from "personal-rns/contract";
 import { Effect, Exit, Scope } from "effect";
 import {
   createContext,
@@ -46,6 +48,9 @@ export type DevelopmentRuntimeView = {
   readonly describeTarget: (
     input: DescribeRemoteControlTargetInput,
   ) => Promise<RuntimeCommandResult<RemoteControlDescribeOutcome>>;
+  readonly saveObservedDestination: (
+    destination: DestinationHash,
+  ) => Promise<RuntimeCommandResult<ContactMutationOutcome>>;
 };
 
 type DevelopmentRuntimeProviderProps = PropsWithChildren<{
@@ -215,6 +220,23 @@ export function DevelopmentRuntimeProvider({
     [publishSnapshot, run],
   );
 
+  const saveObservedDestination = useCallback(
+    async (destination: DestinationHash): Promise<RuntimeCommandResult<ContactMutationOutcome>> => {
+      if (!("runtime" in selectedProvider) || session.current === null) {
+        return unavailableResult();
+      }
+      try {
+        return {
+          type: "outcome",
+          outcome: await selectedProvider.runtime.saveObservedDestination(destination),
+        };
+      } catch (failure) {
+        return { type: "operationFailure", detail: formatFailure(failure) };
+      }
+    },
+    [selectedProvider, unavailableResult],
+  );
+
   const value = useMemo<DevelopmentRuntimeView>(
     () => ({
       availability: selectedProvider.availability,
@@ -227,6 +249,7 @@ export function DevelopmentRuntimeProvider({
       approvePairing,
       rejectPairing,
       describeTarget,
+      saveObservedDestination,
     }),
     [
       approvePairing,
@@ -237,6 +260,7 @@ export function DevelopmentRuntimeProvider({
       phase,
       refreshSnapshot,
       rejectPairing,
+      saveObservedDestination,
       selectedProvider.availability,
       snapshot,
     ],

@@ -8,6 +8,7 @@ pub struct NodeStoragePaths {
     pub remote_control_identities: PathBuf,
     pub bluetooth_identity: PathBuf,
     pub network: PathBuf,
+    pub application: PathBuf,
 }
 
 pub fn prepare_storage(root: &Path) -> Result<NodeStoragePaths, String> {
@@ -25,6 +26,7 @@ pub fn prepare_storage(root: &Path) -> Result<NodeStoragePaths, String> {
         remote_control_identities: identities.join("remote-control"),
         bluetooth_identity: identities.join("bluetooth-auto.identity"),
         network: root.join("network"),
+        application: root.join("application.redb"),
         identities,
         root,
     })

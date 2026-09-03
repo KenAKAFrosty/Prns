@@ -10,6 +10,8 @@ import {
 
 type IdentityByteKey =
   | "controllerIdentityFingerprint"
+  | "attempted"
+  | "existing"
   | "identity"
   | "identityHash"
   | "targetIdentityFingerprint"
@@ -50,6 +52,8 @@ export type Hydrated<Value> = Value extends HostSnapshot
 
 const identityByteKeys = new Set<string>([
   "controllerIdentityFingerprint",
+  "attempted",
+  "existing",
   "identity",
   "identityHash",
   "targetIdentityFingerprint",

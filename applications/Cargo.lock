@@ -1102,6 +1102,7 @@ dependencies = [
  "prns-core",
  "prns-host",
  "prns-host-snapshot",
+ "redb",
  "serde",
  "serde_json",
  "tempfile",
@@ -1295,6 +1296,15 @@ name = "rand_core"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
+
+[[package]]
+name = "redb"
+version = "4.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "de6c3b63e007e90ce536ec2ae4690826136a20ec8dbbbb400daef1bb999d2e36"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "roaring"

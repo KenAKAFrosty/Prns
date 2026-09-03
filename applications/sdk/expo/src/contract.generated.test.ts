@@ -10,7 +10,7 @@ describe("Rust-generated contract fixtures", () => {
     }
   });
 
-  test("covers every consumed tagged variant in local-node L0", () => {
+  test("covers every consumed tagged variant through local-node L1", () => {
     expect(NATIVE_CONTRACT_FIXTURES.primaryIdentityStates.map(({ type }) => type)).toEqual([
       "missing",
       "present",
@@ -33,6 +33,31 @@ describe("Rust-generated contract fixtures", () => {
       "alreadyExists",
       "invalidLength",
       "unavailable",
+      "developmentResetRequired",
+    ]);
+    expect(NATIVE_CONTRACT_FIXTURES.contactMutationOutcomes.map(({ type }) => type)).toEqual([
+      "saved",
+      "updated",
+      "deleted",
+      "existing",
+      "alreadyExists",
+      "notFound",
+      "localNodeStopped",
+      "notObserved",
+      "identityConflict",
+      "missingIdentity",
+      "developmentUnavailable",
+      "developmentResetRequired",
+    ]);
+    expect(NATIVE_CONTRACT_FIXTURES.contactLookupOutcomes.map(({ type }) => type)).toEqual([
+      "found",
+      "notFound",
+      "developmentUnavailable",
+      "developmentResetRequired",
+    ]);
+    expect(NATIVE_CONTRACT_FIXTURES.contactListOutcomes.map(({ type }) => type)).toEqual([
+      "listed",
+      "developmentUnavailable",
       "developmentResetRequired",
     ]);
     expect(NATIVE_CONTRACT_FIXTURES.pairingStates.map(({ type }) => type)).toEqual([

@@ -1,7 +1,7 @@
 // route-id: contacts.index
 
-import { CatalogPlaceholderRoute } from "@/features/placeholder-screen";
+import { ContactsScreen } from "@/features/contacts/contacts-screen";
 
 export default function ContactsRoute() {
-  return <CatalogPlaceholderRoute screenId="contacts.index" />;
+  return <ContactsScreen />;
 }

@@ -1,4 +1,4 @@
-import { identityHash } from "personal-rns/contract";
+import { destinationHash, identityHash } from "personal-rns/contract";
 import {
   HOST_CONTRACT_FINGERPRINT,
   NATIVE_CONTRACT_FINGERPRINT,
@@ -34,6 +34,13 @@ function fakeNative(overrides: Partial<PrnsAppNativeModule> = {}): PrnsAppNative
     approvePairing: jest.fn(async () => JSON.stringify({ type: "busy" })),
     rejectPairing: jest.fn(async () => JSON.stringify({ type: "busy" })),
     describeTarget: jest.fn(async () => JSON.stringify({ type: "busy" })),
+    saveObservedDestination: jest.fn(async () => JSON.stringify({ type: "notObserved" })),
+    createManualContact: jest.fn(async () => JSON.stringify({ type: "notFound" })),
+    setContactAlias: jest.fn(async () => JSON.stringify({ type: "notFound" })),
+    setContactPinned: jest.fn(async () => JSON.stringify({ type: "notFound" })),
+    deleteContact: jest.fn(async () => JSON.stringify({ type: "notFound" })),
+    getContact: jest.fn(async () => JSON.stringify({ type: "notFound" })),
+    listContacts: jest.fn(async () => JSON.stringify({ type: "listed", contacts: [] })),
     stop: jest.fn(async () => JSON.stringify({ type: "alreadyStopped" })),
     reset: jest.fn(async () => JSON.stringify({ type: "alreadyStopped" })),
     ...overrides,
@@ -223,5 +230,41 @@ describe("development runtime facade", () => {
     expect(createImportedIdentity).toHaveBeenCalledWith(Array.from(identity));
     expect(preview.type === "valid" ? preview.identityHash : null).toBeInstanceOf(Uint8Array);
     expect(created.type === "created" ? created.identityHash : null).toBeInstanceOf(Uint8Array);
+  });
+
+  test("serializes every contact input explicitly and hydrates contact identities", async () => {
+    const destination = destinationHash(Uint8Array.from({ length: 16 }, (_, index) => index));
+    const identity = identityHash(Uint8Array.from({ length: 16 }, (_, index) => index + 16));
+    const createManualContact = jest.fn(async () =>
+      JSON.stringify({
+        type: "saved",
+        contact: {
+          destination: Array.from(destination),
+          identity: Array.from(identity),
+          alias: null,
+          pinned: false,
+        },
+      }),
+    );
+    const setContactAlias = jest.fn(async () => JSON.stringify({ type: "notFound" }));
+    const runtime = createDevelopmentRuntime(fakeNative({ createManualContact, setContactAlias }));
+
+    const created = await runtime.createManualContact(destination, identity, null);
+    await runtime.setContactAlias(destination, null);
+
+    expect(createManualContact).toHaveBeenCalledWith(
+      JSON.stringify({
+        destination: Array.from(destination),
+        identity: Array.from(identity),
+        alias: null,
+      }),
+    );
+    expect(setContactAlias).toHaveBeenCalledWith(
+      JSON.stringify({ destination: Array.from(destination), alias: null }),
+    );
+    expect(created.type === "saved" ? created.contact.destination : null).toBeInstanceOf(
+      Uint8Array,
+    );
+    expect(created.type === "saved" ? created.contact.identity : null).toBeInstanceOf(Uint8Array);
   });
 });

@@ -14,7 +14,7 @@ assert.match(
 );
 assert.equal(
   swift.match(/\.runOnQueue\(Self\.nativeQueue\)/g)?.length,
-  14,
+  21,
   "every Expo bridge function must use the native operation queue",
 );
 assert.match(
@@ -38,6 +38,13 @@ for (const abiName of [
   "prns_app_approve_pairing",
   "prns_app_reject_pairing",
   "prns_app_describe_target",
+  "prns_app_save_observed_destination",
+  "prns_app_create_manual_contact",
+  "prns_app_set_contact_alias",
+  "prns_app_set_contact_pinned",
+  "prns_app_delete_contact",
+  "prns_app_get_contact",
+  "prns_app_list_contacts",
   "prns_app_stop",
   "prns_app_reset",
   "prns_app_bytes_free",

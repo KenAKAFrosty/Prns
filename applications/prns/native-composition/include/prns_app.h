@@ -93,6 +93,38 @@ PrnsAppBytes prns_app_reject_pairing(const uint8_t *input_ptr,
 PrnsAppBytes prns_app_describe_target(const uint8_t *input_ptr,
                                       size_t input_len);
 
+/** Save a destination after Rust confirms its live authenticated identity. */
+PrnsAppBytes prns_app_save_observed_destination(
+    const uint8_t *path_ptr, size_t path_len, const uint8_t *input_ptr,
+    size_t input_len);
+
+/** Create one manually entered contact. */
+PrnsAppBytes prns_app_create_manual_contact(
+    const uint8_t *path_ptr, size_t path_len, const uint8_t *input_ptr,
+    size_t input_len);
+
+/** Set or clear one saved contact alias. */
+PrnsAppBytes prns_app_set_contact_alias(
+    const uint8_t *path_ptr, size_t path_len, const uint8_t *input_ptr,
+    size_t input_len);
+
+/** Set one saved contact's pin state. */
+PrnsAppBytes prns_app_set_contact_pinned(
+    const uint8_t *path_ptr, size_t path_len, const uint8_t *input_ptr,
+    size_t input_len);
+
+/** Delete one saved contact. */
+PrnsAppBytes prns_app_delete_contact(const uint8_t *path_ptr, size_t path_len,
+                                     const uint8_t *input_ptr,
+                                     size_t input_len);
+
+/** Read one saved contact. */
+PrnsAppBytes prns_app_get_contact(const uint8_t *path_ptr, size_t path_len,
+                                  const uint8_t *input_ptr, size_t input_len);
+
+/** List all saved contacts in raw destination-byte order. */
+PrnsAppBytes prns_app_list_contacts(const uint8_t *path_ptr, size_t path_len);
+
 /** Stop the development node and wait for its generated stop outcome. */
 PrnsAppBytes prns_app_stop(void);
 

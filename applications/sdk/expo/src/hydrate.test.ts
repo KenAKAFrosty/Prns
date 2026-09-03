@@ -126,6 +126,24 @@ describe("generated native payload hydration", () => {
     expect(() => hydrateGenerated({ interfaceId: Array(7).fill(0) })).toThrow(NativePayloadError);
   });
 
+  test("hydrates contact and identity-conflict fields with their canonical brands", () => {
+    const hydrated = hydrateGenerated({
+      contact: {
+        destination: Array(16).fill(1),
+        identity: Array(16).fill(2),
+        alias: null,
+        pinned: true,
+      },
+      existing: Array(16).fill(3),
+      attempted: Array(16).fill(4),
+    });
+
+    expect(hydrated.contact.destination).toBeInstanceOf(Uint8Array);
+    expect(hydrated.contact.identity).toBeInstanceOf(Uint8Array);
+    expect(hydrated.existing).toBeInstanceOf(Uint8Array);
+    expect(hydrated.attempted).toBeInstanceOf(Uint8Array);
+  });
+
   test("keeps Host route deadlines as safe numbers while pairing deadlines are bigint", () => {
     expect(hydrateGenerated({ expiresAtMillis: "13" }).expiresAtMillis).toBe(13n);
     expect(hydrateGenerated({ routes: [{ expiresAtMillis: 13 }] }).routes[0]?.expiresAtMillis).toBe(

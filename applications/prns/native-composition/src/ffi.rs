@@ -7,8 +7,9 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use crate::contract::{
-    DescribeRemoteControlTargetInput, InitiateRemoteControlPairingInput,
-    RemoteControlPairingDecisionInput, CONTRACT_FINGERPRINT, HOST_CONTRACT_FINGERPRINT,
+    ContactDestinationInput, CreateManualContactInput, DescribeRemoteControlTargetInput,
+    InitiateRemoteControlPairingInput, RemoteControlPairingDecisionInput, SetContactAliasInput,
+    SetContactPinnedInput, CONTRACT_FINGERPRINT, HOST_CONTRACT_FINGERPRINT,
 };
 use crate::lifecycle;
 
@@ -280,6 +281,170 @@ pub unsafe extern "C" fn prns_app_describe_target(
     }
 }
 
+/// Save a destination whose authenticated identity is known by the running node.
+///
+/// # Safety
+///
+/// The path and JSON input buffers must satisfy the bounds and readable-buffer
+/// contracts documented by [`prns_app_start`] and [`prns_app_initiate_pairing`].
+#[no_mangle]
+pub unsafe extern "C" fn prns_app_save_observed_destination(
+    path_ptr: *const u8,
+    path_len: usize,
+    input_ptr: *const u8,
+    input_len: usize,
+) -> PrnsAppBytes {
+    // SAFETY: The caller contracts are forwarded to the bounded decoders.
+    unsafe {
+        invoke_path_json::<ContactDestinationInput, _, _>(
+            path_ptr,
+            path_len,
+            input_ptr,
+            input_len,
+            lifecycle::save_observed_destination,
+        )
+    }
+}
+
+/// Create one manually entered contact.
+///
+/// # Safety
+///
+/// The path and JSON input buffers must satisfy the bounds and readable-buffer
+/// contracts documented by [`prns_app_start`] and [`prns_app_initiate_pairing`].
+#[no_mangle]
+pub unsafe extern "C" fn prns_app_create_manual_contact(
+    path_ptr: *const u8,
+    path_len: usize,
+    input_ptr: *const u8,
+    input_len: usize,
+) -> PrnsAppBytes {
+    // SAFETY: The caller contracts are forwarded to the bounded decoders.
+    unsafe {
+        invoke_path_json::<CreateManualContactInput, _, _>(
+            path_ptr,
+            path_len,
+            input_ptr,
+            input_len,
+            lifecycle::create_manual_contact,
+        )
+    }
+}
+
+/// Set or clear a saved contact alias.
+///
+/// # Safety
+///
+/// The path and JSON input buffers must satisfy the bounds and readable-buffer
+/// contracts documented by [`prns_app_start`] and [`prns_app_initiate_pairing`].
+#[no_mangle]
+pub unsafe extern "C" fn prns_app_set_contact_alias(
+    path_ptr: *const u8,
+    path_len: usize,
+    input_ptr: *const u8,
+    input_len: usize,
+) -> PrnsAppBytes {
+    // SAFETY: The caller contracts are forwarded to the bounded decoders.
+    unsafe {
+        invoke_path_json::<SetContactAliasInput, _, _>(
+            path_ptr,
+            path_len,
+            input_ptr,
+            input_len,
+            lifecycle::set_contact_alias,
+        )
+    }
+}
+
+/// Set a saved contact's pin state.
+///
+/// # Safety
+///
+/// The path and JSON input buffers must satisfy the bounds and readable-buffer
+/// contracts documented by [`prns_app_start`] and [`prns_app_initiate_pairing`].
+#[no_mangle]
+pub unsafe extern "C" fn prns_app_set_contact_pinned(
+    path_ptr: *const u8,
+    path_len: usize,
+    input_ptr: *const u8,
+    input_len: usize,
+) -> PrnsAppBytes {
+    // SAFETY: The caller contracts are forwarded to the bounded decoders.
+    unsafe {
+        invoke_path_json::<SetContactPinnedInput, _, _>(
+            path_ptr,
+            path_len,
+            input_ptr,
+            input_len,
+            lifecycle::set_contact_pinned,
+        )
+    }
+}
+
+/// Delete one saved contact.
+///
+/// # Safety
+///
+/// The path and JSON input buffers must satisfy the bounds and readable-buffer
+/// contracts documented by [`prns_app_start`] and [`prns_app_initiate_pairing`].
+#[no_mangle]
+pub unsafe extern "C" fn prns_app_delete_contact(
+    path_ptr: *const u8,
+    path_len: usize,
+    input_ptr: *const u8,
+    input_len: usize,
+) -> PrnsAppBytes {
+    // SAFETY: The caller contracts are forwarded to the bounded decoders.
+    unsafe {
+        invoke_path_json::<ContactDestinationInput, _, _>(
+            path_ptr,
+            path_len,
+            input_ptr,
+            input_len,
+            lifecycle::delete_contact,
+        )
+    }
+}
+
+/// Read one saved contact.
+///
+/// # Safety
+///
+/// The path and JSON input buffers must satisfy the bounds and readable-buffer
+/// contracts documented by [`prns_app_start`] and [`prns_app_initiate_pairing`].
+#[no_mangle]
+pub unsafe extern "C" fn prns_app_get_contact(
+    path_ptr: *const u8,
+    path_len: usize,
+    input_ptr: *const u8,
+    input_len: usize,
+) -> PrnsAppBytes {
+    // SAFETY: The caller contracts are forwarded to the bounded decoders.
+    unsafe {
+        invoke_path_json::<ContactDestinationInput, _, _>(
+            path_ptr,
+            path_len,
+            input_ptr,
+            input_len,
+            lifecycle::get_contact,
+        )
+    }
+}
+
+/// List every saved contact in destination-byte order.
+///
+/// # Safety
+///
+/// The path buffer follows the same contract as [`prns_app_start`].
+#[no_mangle]
+pub unsafe extern "C" fn prns_app_list_contacts(
+    path_ptr: *const u8,
+    path_len: usize,
+) -> PrnsAppBytes {
+    // SAFETY: The caller contract is forwarded to the bounded path decoder.
+    unsafe { invoke_path(path_ptr, path_len, lifecycle::list_contacts) }
+}
+
 /// Stop the development node and return its generated stop outcome.
 #[no_mangle]
 pub extern "C" fn prns_app_stop() -> PrnsAppBytes {
@@ -405,6 +570,49 @@ where
             .map_err(|_| BridgeFailure::invalid_input("storage path is not valid UTF-8"))?;
         // SAFETY: `optional_bytes` checks the independent credential buffer.
         let input = unsafe { optional_bytes(input_ptr, input_len)? };
+        Ok(operation(Path::new(path), input))
+    })
+}
+
+unsafe fn invoke_path_json<Input, Output, Operation>(
+    path_ptr: *const u8,
+    path_len: usize,
+    input_ptr: *const u8,
+    input_len: usize,
+    operation: Operation,
+) -> PrnsAppBytes
+where
+    Input: DeserializeOwned,
+    Output: Serialize,
+    Operation: FnOnce(&Path, Input) -> Output,
+{
+    invoke(|| {
+        // SAFETY: The caller contracts are checked before either slice is formed.
+        let path_bytes = unsafe {
+            required_bytes(
+                path_ptr,
+                path_len,
+                PRNS_APP_MAX_PATH_BYTES,
+                "storage path must not be empty",
+                "storage path pointer is null",
+                "storage path exceeds the ABI size limit",
+            )
+        }?;
+        let path = str::from_utf8(path_bytes)
+            .map_err(|_| BridgeFailure::invalid_input("storage path is not valid UTF-8"))?;
+        // SAFETY: The independent JSON buffer uses the same bounded input contract.
+        let input_bytes = unsafe {
+            required_bytes(
+                input_ptr,
+                input_len,
+                PRNS_APP_MAX_INPUT_BYTES,
+                "contract input must not be empty",
+                "contract input pointer is null",
+                "contract input exceeds the ABI size limit",
+            )
+        }?;
+        let input = serde_json::from_slice(input_bytes)
+            .map_err(|_| BridgeFailure::invalid_input("contract input is not valid JSON"))?;
         Ok(operation(Path::new(path), input))
     })
 }
@@ -670,6 +878,49 @@ mod tests {
             )
         };
         assert_eq!(parse_and_free(output), json!({ "type": "busy" }));
+    }
+
+    #[test]
+    fn manual_contact_requires_explicit_nullable_fields_on_the_wire() {
+        let path = b"/tmp/prns/development";
+        let missing_alias = br#"{"destination":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"identity":null}"#;
+        // SAFETY: Both fixed test buffers remain readable for the call.
+        let rejected = unsafe {
+            invoke_path_json::<CreateManualContactInput, _, _>(
+                path.as_ptr(),
+                path.len(),
+                missing_alias.as_ptr(),
+                missing_alias.len(),
+                |_, _| json!({ "unreachable": true }),
+            )
+        };
+        assert_eq!(
+            parse_and_free(rejected),
+            json!({
+                "type": "bridgeFailure",
+                "kind": "invalidInput",
+                "detail": "contract input is not valid JSON"
+            })
+        );
+
+        let explicit_nulls =
+            br#"{"destination":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"identity":null,"alias":null}"#;
+        // SAFETY: Both fixed test buffers remain readable for the call.
+        let accepted = unsafe {
+            invoke_path_json::<CreateManualContactInput, _, _>(
+                path.as_ptr(),
+                path.len(),
+                explicit_nulls.as_ptr(),
+                explicit_nulls.len(),
+                |decoded_path, input| {
+                    assert_eq!(decoded_path, Path::new("/tmp/prns/development"));
+                    assert_eq!(input.identity, None);
+                    assert_eq!(input.alias, None);
+                    json!({ "type": "accepted" })
+                },
+            )
+        };
+        assert_eq!(parse_and_free(accepted), json!({ "type": "accepted" }));
     }
 
     #[test]

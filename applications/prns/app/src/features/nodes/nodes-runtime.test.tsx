@@ -3,9 +3,9 @@ import type {
   DevelopmentRuntime,
   EffectDevelopmentRuntime,
 } from "@prns-internal/expo";
-import { render, waitFor } from "@testing-library/react-native";
+import { fireEvent, render, waitFor } from "@testing-library/react-native";
 import { Effect } from "effect";
-import { identityHash, interfaceId } from "personal-rns/contract";
+import { destinationHash, identityHash, interfaceId } from "personal-rns/contract";
 import type { ReactNode } from "react";
 
 import { DevelopmentRuntimeProvider } from "@/native/development-runtime-context";
@@ -17,7 +17,10 @@ jest.mock("expo-router", () => ({
   Link: ({ children }: { readonly children: ReactNode }) => children,
 }));
 
-function snapshot(revision: bigint): DevelopmentNodeSnapshot {
+const observedDestination = destinationHash(new Uint8Array(16).fill(0x33));
+const observedIdentity = identityHash(new Uint8Array(16).fill(0x44));
+
+function snapshot(revision: bigint, includeObservation = false): DevelopmentNodeSnapshot {
   return {
     contractFingerprint: "test-contract",
     revision,
@@ -47,7 +50,9 @@ function snapshot(revision: bigint): DevelopmentNodeSnapshot {
         ],
         routes: [],
         activeLinkCount: 0,
-        destinationIdentities: [],
+        destinationIdentities: includeObservation
+          ? [{ destination: observedDestination, identity: observedIdentity }]
+          : [],
         runtime: {
           running: true,
           uptimeMillis: 5,
@@ -76,8 +81,12 @@ function snapshot(revision: bigint): DevelopmentNodeSnapshot {
   };
 }
 
-function fakeProvider(stop: jest.Mock): RuntimeProvider {
-  const initial = snapshot(2n);
+function fakeProvider(
+  stop: jest.Mock,
+  overrides: Partial<DevelopmentRuntime> = {},
+  includeObservation = false,
+): RuntimeProvider {
+  const initial = snapshot(2n, includeObservation);
   const runtime: DevelopmentRuntime = {
     inspectDevelopmentIdentity: async () => initial.primaryIdentity,
     previewIdentityImport: async () => ({ type: "invalidLength" }),
@@ -89,11 +98,19 @@ function fakeProvider(stop: jest.Mock): RuntimeProvider {
     approveRemoteControlPairing: async () => ({ type: "busy" }),
     rejectRemoteControlPairing: async () => ({ type: "busy" }),
     describeRemoteControlTarget: async () => ({ type: "busy" }),
+    saveObservedDestination: async () => ({ type: "notObserved" }),
+    createManualContact: async () => ({ type: "notFound" }),
+    setContactAlias: async () => ({ type: "notFound" }),
+    setContactPinned: async () => ({ type: "notFound" }),
+    deleteContact: async () => ({ type: "notFound" }),
+    getContact: async () => ({ type: "notFound" }),
+    listContacts: async () => ({ type: "listed", contacts: [] }),
     stopDevelopmentNode: async () => {
       stop();
       return { type: "stopped" };
     },
     resetDevelopmentData: async () => ({ type: "alreadyStopped" }),
+    ...overrides,
   };
   const effectRuntime: EffectDevelopmentRuntime = {
     startDevelopmentNode: Effect.promise(runtime.startDevelopmentNode),
@@ -116,7 +133,7 @@ function fakeProvider(stop: jest.Mock): RuntimeProvider {
       Effect.acquireRelease(
         Effect.sync(() => {
           options.onSnapshot(initial);
-          options.onSnapshot(snapshot(1n));
+          options.onSnapshot(snapshot(1n, includeObservation));
           return { runtime: effectRuntime, initialSnapshot: initial };
         }),
         () => Effect.promise(runtime.stopDevelopmentNode).pipe(Effect.asVoid),
@@ -154,6 +171,37 @@ describe("Foundation 1 Nodes runtime binding", () => {
     expect(view.getByText("Waiting for signed availability")).toBeTruthy();
     expect(view.getByText("Connected")).toBeTruthy();
     expect(view.queryByText("Authorization persisted")).toBeNull();
+    view.unmount();
+    await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
+  });
+
+  it("saves a live authenticated observation through the native contact operation", async () => {
+    const stop = jest.fn();
+    const saveObservedDestination = jest.fn(async () => ({
+      type: "saved" as const,
+      contact: {
+        destination: observedDestination,
+        identity: observedIdentity,
+        alias: null,
+        pinned: false,
+      },
+    }));
+    const view = render(
+      <DevelopmentRuntimeProvider
+        provider={fakeProvider(stop, { saveObservedDestination }, true)}
+        refreshIntervalMillis={50}
+      >
+        <NodesScreen />
+      </DevelopmentRuntimeProvider>,
+    );
+
+    await waitFor(() => expect(view.getByRole("button", { name: "Save as contact" })).toBeTruthy());
+    fireEvent.press(view.getByRole("button", { name: "Save as contact" }));
+
+    await waitFor(() => expect(saveObservedDestination).toHaveBeenCalledWith(observedDestination));
+    expect(view.getByText("The authenticated association was saved.")).toBeTruthy();
+    expect(view.getByText("Open saved contact")).toBeTruthy();
+
     view.unmount();
     await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
   });

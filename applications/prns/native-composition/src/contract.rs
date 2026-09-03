@@ -1,5 +1,5 @@
 use serde::ser::SerializeStruct;
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use ts_rs::{Config, TS};
 
 pub const CONTRACT_FINGERPRINT: &str = env!("PRNS_APP_CONTRACT_FINGERPRINT");
@@ -152,6 +152,209 @@ pub enum IdentityCreationOutcome {
     AlreadyExists,
     InvalidLength,
     Unavailable { detail: String },
+    DevelopmentResetRequired { reason: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(rename_all = "camelCase")]
+pub struct Contact {
+    #[ts(type = "Array<number>")]
+    pub destination: [u8; 16],
+    pub alias: Option<String>,
+    #[ts(type = "Array<number> | null")]
+    pub identity: Option<[u8; 16]>,
+    pub pinned: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(rename_all = "camelCase")]
+pub struct ContactDestinationInput {
+    #[ts(type = "Array<number>")]
+    pub destination: [u8; 16],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(rename_all = "camelCase")]
+pub struct CreateManualContactInput {
+    #[ts(type = "Array<number>")]
+    pub destination: [u8; 16],
+    #[ts(type = "Array<number> | null")]
+    pub identity: Option<[u8; 16]>,
+    pub alias: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(rename_all = "camelCase")]
+pub struct SetContactAliasInput {
+    #[ts(type = "Array<number>")]
+    pub destination: [u8; 16],
+    pub alias: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(rename_all = "camelCase")]
+pub struct SetContactPinnedInput {
+    #[ts(type = "Array<number>")]
+    pub destination: [u8; 16],
+    pub pinned: bool,
+}
+
+#[derive(Default)]
+enum RequiredNullable<T> {
+    #[default]
+    Missing,
+    Present(Option<T>),
+}
+
+impl<'de, T> Deserialize<'de> for RequiredNullable<T>
+where
+    T: Deserialize<'de>,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Option::<T>::deserialize(deserializer).map(Self::Present)
+    }
+}
+
+impl<T> RequiredNullable<T> {
+    fn into_required<E>(self, field: &'static str) -> Result<Option<T>, E>
+    where
+        E: serde::de::Error,
+    {
+        match self {
+            Self::Missing => Err(E::missing_field(field)),
+            Self::Present(value) => Ok(value),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CreateManualContactInputWire {
+    destination: [u8; 16],
+    #[serde(default)]
+    identity: RequiredNullable<[u8; 16]>,
+    #[serde(default)]
+    alias: RequiredNullable<String>,
+}
+
+impl<'de> Deserialize<'de> for CreateManualContactInput {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = CreateManualContactInputWire::deserialize(deserializer)?;
+        Ok(Self {
+            destination: wire.destination,
+            identity: wire.identity.into_required("identity")?,
+            alias: wire.alias.into_required("alias")?,
+        })
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SetContactAliasInputWire {
+    destination: [u8; 16],
+    #[serde(default)]
+    alias: RequiredNullable<String>,
+}
+
+impl<'de> Deserialize<'de> for SetContactAliasInput {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = SetContactAliasInputWire::deserialize(deserializer)?;
+        Ok(Self {
+            destination: wire.destination,
+            alias: wire.alias.into_required("alias")?,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+#[ts(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ContactMutationOutcome {
+    Saved {
+        contact: Contact,
+    },
+    Updated {
+        contact: Contact,
+    },
+    Deleted,
+    Existing {
+        contact: Contact,
+    },
+    AlreadyExists {
+        contact: Contact,
+    },
+    NotFound,
+    LocalNodeStopped,
+    NotObserved,
+    IdentityConflict {
+        #[ts(type = "Array<number>")]
+        existing: [u8; 16],
+        #[ts(type = "Array<number>")]
+        attempted: [u8; 16],
+    },
+    MissingIdentity,
+    DevelopmentUnavailable {
+        detail: String,
+    },
+    DevelopmentResetRequired {
+        reason: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+#[ts(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ContactLookupOutcome {
+    Found { contact: Contact },
+    NotFound,
+    DevelopmentUnavailable { detail: String },
+    DevelopmentResetRequired { reason: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+#[ts(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ContactListOutcome {
+    Listed { contacts: Vec<Contact> },
+    DevelopmentUnavailable { detail: String },
     DevelopmentResetRequired { reason: String },
 }
 
@@ -432,6 +635,10 @@ struct TaggedContractFixtures {
     local_host_states: Vec<LocalHostState>,
     identity_import_preview_outcomes: Vec<IdentityImportPreviewOutcome>,
     identity_creation_outcomes: Vec<IdentityCreationOutcome>,
+    contacts: Vec<Contact>,
+    contact_mutation_outcomes: Vec<ContactMutationOutcome>,
+    contact_lookup_outcomes: Vec<ContactLookupOutcome>,
+    contact_list_outcomes: Vec<ContactListOutcome>,
     pairing_states: Vec<RemoteControlPairingState>,
     start_outcomes: Vec<DevelopmentNodeStartOutcome>,
     stop_outcomes: Vec<DevelopmentNodeStopOutcome>,
@@ -489,6 +696,14 @@ pub fn export_typescript() -> String {
     export!(LocalHostState);
     export!(IdentityImportPreviewOutcome);
     export!(IdentityCreationOutcome);
+    export!(Contact);
+    export!(ContactDestinationInput);
+    export!(CreateManualContactInput);
+    export!(SetContactAliasInput);
+    export!(SetContactPinnedInput);
+    export!(ContactMutationOutcome);
+    export!(ContactLookupOutcome);
+    export!(ContactListOutcome);
     export!(RemoteControlRequestKind);
     export!(RemoteControlPairingCandidate);
     export!(RemoteControlPairingState);
@@ -518,6 +733,10 @@ pub fn export_typescript() -> String {
          \treadonly localHostStates: readonly unknown[];\n\
          \treadonly identityImportPreviewOutcomes: readonly IdentityImportPreviewOutcome[];\n\
          \treadonly identityCreationOutcomes: readonly IdentityCreationOutcome[];\n\
+         \treadonly contacts: readonly Contact[];\n\
+         \treadonly contactMutationOutcomes: readonly ContactMutationOutcome[];\n\
+         \treadonly contactLookupOutcomes: readonly ContactLookupOutcome[];\n\
+         \treadonly contactListOutcomes: readonly ContactListOutcome[];\n\
          \treadonly pairingStates: readonly RemoteControlPairingState[];\n\
          \treadonly startOutcomes: readonly DevelopmentNodeStartOutcome[];\n\
          \treadonly stopOutcomes: readonly DevelopmentNodeStopOutcome[];\n\
@@ -531,6 +750,18 @@ pub fn export_typescript() -> String {
 fn tagged_contract_fixtures() -> TaggedContractFixtures {
     let hash = vec![0x11; 16];
     let destination = vec![0x22; 16];
+    let contact = Contact {
+        destination: [0x44; 16],
+        alias: Some("Fixture contact".to_owned()),
+        identity: Some([0x55; 16]),
+        pinned: true,
+    };
+    let contact_without_identity = Contact {
+        destination: [0x66; 16],
+        alias: None,
+        identity: None,
+        pinned: false,
+    };
     let target = RemoteControlTargetSnapshot {
         target_identity_fingerprint: hash.clone(),
         destination: destination.clone(),
@@ -591,6 +822,59 @@ fn tagged_contract_fixtures() -> TaggedContractFixtures {
         },
         IdentityCreationOutcome::DevelopmentResetRequired {
             reason: "create reset fixture".to_owned(),
+        },
+    ];
+    let contacts = vec![contact.clone(), contact_without_identity];
+    let contact_mutation_outcomes = vec![
+        ContactMutationOutcome::Saved {
+            contact: contact.clone(),
+        },
+        ContactMutationOutcome::Updated {
+            contact: contact.clone(),
+        },
+        ContactMutationOutcome::Deleted,
+        ContactMutationOutcome::Existing {
+            contact: contact.clone(),
+        },
+        ContactMutationOutcome::AlreadyExists {
+            contact: contact.clone(),
+        },
+        ContactMutationOutcome::NotFound,
+        ContactMutationOutcome::LocalNodeStopped,
+        ContactMutationOutcome::NotObserved,
+        ContactMutationOutcome::IdentityConflict {
+            existing: [0x77; 16],
+            attempted: [0x88; 16],
+        },
+        ContactMutationOutcome::MissingIdentity,
+        ContactMutationOutcome::DevelopmentUnavailable {
+            detail: "contact unavailable fixture".to_owned(),
+        },
+        ContactMutationOutcome::DevelopmentResetRequired {
+            reason: "contact reset fixture".to_owned(),
+        },
+    ];
+    let contact_lookup_outcomes = vec![
+        ContactLookupOutcome::Found {
+            contact: contact.clone(),
+        },
+        ContactLookupOutcome::NotFound,
+        ContactLookupOutcome::DevelopmentUnavailable {
+            detail: "lookup unavailable fixture".to_owned(),
+        },
+        ContactLookupOutcome::DevelopmentResetRequired {
+            reason: "lookup reset fixture".to_owned(),
+        },
+    ];
+    let contact_list_outcomes = vec![
+        ContactListOutcome::Listed {
+            contacts: vec![contact],
+        },
+        ContactListOutcome::DevelopmentUnavailable {
+            detail: "list unavailable fixture".to_owned(),
+        },
+        ContactListOutcome::DevelopmentResetRequired {
+            reason: "list reset fixture".to_owned(),
         },
     ];
     let pairing_states = vec![
@@ -683,6 +967,10 @@ fn tagged_contract_fixtures() -> TaggedContractFixtures {
         local_host_states,
         identity_import_preview_outcomes,
         identity_creation_outcomes,
+        contacts,
+        contact_mutation_outcomes,
+        contact_lookup_outcomes,
+        contact_list_outcomes,
         pairing_states,
         start_outcomes,
         stop_outcomes,
@@ -776,6 +1064,10 @@ mod tests {
         assert_eq!(fixtures.local_host_states.len(), 5);
         assert_eq!(fixtures.identity_import_preview_outcomes.len(), 2);
         assert_eq!(fixtures.identity_creation_outcomes.len(), 5);
+        assert_eq!(fixtures.contacts.len(), 2);
+        assert_eq!(fixtures.contact_mutation_outcomes.len(), 12);
+        assert_eq!(fixtures.contact_lookup_outcomes.len(), 4);
+        assert_eq!(fixtures.contact_list_outcomes.len(), 3);
         assert_eq!(fixtures.pairing_states.len(), 12);
         assert_eq!(fixtures.start_outcomes.len(), 3);
         assert_eq!(fixtures.stop_outcomes.len(), 3);

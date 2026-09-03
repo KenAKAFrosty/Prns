@@ -13,6 +13,13 @@ export type PrnsAppNativeModule = {
   readonly approvePairing: (inputJson: string) => Promise<string>;
   readonly rejectPairing: (inputJson: string) => Promise<string>;
   readonly describeTarget: (inputJson: string) => Promise<string>;
+  readonly saveObservedDestination: (inputJson: string) => Promise<string>;
+  readonly createManualContact: (inputJson: string) => Promise<string>;
+  readonly setContactAlias: (inputJson: string) => Promise<string>;
+  readonly setContactPinned: (inputJson: string) => Promise<string>;
+  readonly deleteContact: (inputJson: string) => Promise<string>;
+  readonly getContact: (inputJson: string) => Promise<string>;
+  readonly listContacts: () => Promise<string>;
   readonly stop: () => Promise<string>;
   readonly reset: () => Promise<string>;
 };

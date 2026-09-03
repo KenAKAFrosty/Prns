@@ -4,6 +4,7 @@ use std::sync::{mpsc as std_mpsc, Arc, Mutex, MutexGuard, OnceLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+use personal_rns::node_introspection::DestinationIdentityQuery;
 use personal_rns::prelude::{
     GrowableHeap, InitiateRemoteControlControllerPairing, ManuallyAttached,
     PreConfiguredDestination, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
@@ -17,6 +18,7 @@ use personal_rns::runtime::{
     LocalIdentityFileError, NodePersistence, RemoteControlIdentityDirectory,
     RemoteControlPairingControlError,
 };
+use personal_rns::wire::DestinationHash;
 use prns_core::identity::vault::{FileVault, FileVaultError, IdentityLabel, IdentityVault};
 use prns_core::identity::PrivateIdentityMaterial;
 use prns_host::{BackendInfo, BackendKind, Capability, InterfaceKind, PersistenceSnapshot};
@@ -24,15 +26,19 @@ use prns_host_snapshot::{assemble_host_snapshot, HostInterfaceAttachment};
 use tokio::sync::{mpsc, watch};
 
 use crate::contract::{
-    DescribeRemoteControlTargetInput, DevelopmentNodeFailure, DevelopmentNodeFailureStage,
-    DevelopmentNodeOperation, DevelopmentNodeOperationKind, DevelopmentNodeRuntime,
-    DevelopmentNodeSnapshot, DevelopmentNodeStartOutcome, DevelopmentNodeStopOutcome,
-    DevelopmentNodeStopStage, IdentityCreationOutcome, IdentityImportPreviewOutcome,
-    InitiateRemoteControlPairingInput, LocalHostState, PrimaryIdentityState,
-    RemoteControlDescribeFailureStage, RemoteControlDescribeOutcome,
+    ContactDestinationInput, ContactListOutcome, ContactLookupOutcome, ContactMutationOutcome,
+    CreateManualContactInput, DescribeRemoteControlTargetInput, DevelopmentNodeFailure,
+    DevelopmentNodeFailureStage, DevelopmentNodeOperation, DevelopmentNodeOperationKind,
+    DevelopmentNodeRuntime, DevelopmentNodeSnapshot, DevelopmentNodeStartOutcome,
+    DevelopmentNodeStopOutcome, DevelopmentNodeStopStage, IdentityCreationOutcome,
+    IdentityImportPreviewOutcome, InitiateRemoteControlPairingInput, LocalHostState,
+    PrimaryIdentityState, RemoteControlDescribeFailureStage, RemoteControlDescribeOutcome,
     RemoteControlPairingCommandOutcome, RemoteControlPairingDecisionInput,
-    RemoteControlPairingFailureStage, RemoteControlPairingState, U64String,
+    RemoteControlPairingFailureStage, RemoteControlPairingState, SetContactAliasInput,
+    SetContactPinnedInput, U64String,
 };
+use crate::development_store::{DevelopmentStoreFailure, DevelopmentStoreOwner, StoreReply};
+use crate::directory::{DirectoryRequest, DirectoryResponse};
 use crate::node::{prepare_storage, reset_storage, NodeStoragePaths};
 use crate::pairing::{
     apply_event, apply_overflow_failure, apply_persistence_event, attempt_id_string,
@@ -45,6 +51,7 @@ const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(20);
 const HOST_INSPECTION_TIMEOUT: Duration = Duration::from_millis(1_500);
 const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(2);
+const DIRECTORY_TIMEOUT: Duration = Duration::from_secs(5);
 const STOP_TIMEOUT: Duration = Duration::from_secs(25);
 const COMMAND_LANE_CAPACITY: usize = 8;
 
@@ -60,6 +67,7 @@ struct Supervisor {
 #[derive(Default)]
 struct SupervisorState {
     worker: Option<Worker>,
+    application_owner: Option<DevelopmentStoreOwner>,
     identity_owner: Option<IdentityOwner>,
 }
 
@@ -110,6 +118,10 @@ enum Command {
     Describe(
         DescribeRemoteControlTargetInput,
         std_mpsc::SyncSender<RemoteControlDescribeOutcome>,
+    ),
+    ObservedIdentity(
+        [u8; 16],
+        std_mpsc::SyncSender<Result<Option<[u8; 16]>, String>>,
     ),
 }
 
@@ -236,6 +248,27 @@ fn identity_vault<'a>(
     state: &'a mut SupervisorState,
     paths: &NodeStoragePaths,
 ) -> Result<&'a mut FileVault, PrimaryIdentityState> {
+    if state
+        .application_owner
+        .as_ref()
+        .is_some_and(|owner| owner.root != paths.root)
+    {
+        if state.worker.is_some() {
+            return Err(PrimaryIdentityState::Unavailable {
+                detail: "the active native aggregate owns a different development root".to_owned(),
+            });
+        }
+        if let Some(owner) = state.application_owner.take() {
+            owner.close().map_err(|failure| match failure {
+                DevelopmentStoreFailure::Unavailable(detail) => {
+                    PrimaryIdentityState::Unavailable { detail }
+                }
+                DevelopmentStoreFailure::ResetRequired(reason) => {
+                    PrimaryIdentityState::DevelopmentResetRequired { reason }
+                }
+            })?;
+        }
+    }
     if state
         .identity_owner
         .as_ref()
@@ -532,6 +565,296 @@ pub fn describe(input: DescribeRemoteControlTargetInput) -> RemoteControlDescrib
         })
 }
 
+pub fn save_observed_destination(
+    storage_root: &Path,
+    input: ContactDestinationInput,
+) -> ContactMutationOutcome {
+    save_observed_destination_with_supervisor(supervisor(), storage_root, input)
+}
+
+fn save_observed_destination_with_supervisor(
+    supervisor: &Supervisor,
+    storage_root: &Path,
+    input: ContactDestinationInput,
+) -> ContactMutationOutcome {
+    let state = supervisor.lock_state();
+    if supervisor.snapshots.read().runtime != DevelopmentNodeRuntime::Running {
+        return ContactMutationOutcome::LocalNodeStopped;
+    }
+    let Some(worker) = state.worker.as_ref() else {
+        return ContactMutationOutcome::LocalNodeStopped;
+    };
+    let paths = match prepare_storage(storage_root) {
+        Ok(paths) => paths,
+        Err(detail) => return ContactMutationOutcome::DevelopmentUnavailable { detail },
+    };
+    if paths.root != worker.storage_root {
+        return ContactMutationOutcome::DevelopmentUnavailable {
+            detail: "The running native generation owns a different development root.".to_owned(),
+        };
+    }
+    let generation_commands = worker.commands.clone();
+    let (identity_tx, identity_rx) = std_mpsc::sync_channel(1);
+    match generation_commands.try_send(Command::ObservedIdentity(input.destination, identity_tx)) {
+        Ok(()) => {}
+        Err(mpsc::error::TrySendError::Full(_)) => {
+            return ContactMutationOutcome::DevelopmentUnavailable {
+                detail: "The local observation command lane is full.".to_owned(),
+            };
+        }
+        Err(mpsc::error::TrySendError::Closed(_)) => {
+            return ContactMutationOutcome::DevelopmentUnavailable {
+                detail: "The local node stopped before the observation was admitted.".to_owned(),
+            };
+        }
+    }
+    drop(state);
+    let identity = match identity_rx.recv_timeout(HOST_INSPECTION_TIMEOUT + Duration::from_secs(1))
+    {
+        Ok(Ok(Some(identity))) => identity,
+        Ok(Ok(None)) => return ContactMutationOutcome::NotObserved,
+        Ok(Err(detail)) => {
+            return ContactMutationOutcome::DevelopmentUnavailable { detail };
+        }
+        Err(_) => {
+            return ContactMutationOutcome::DevelopmentUnavailable {
+                detail: "The local observation command exceeded its bounded wait.".to_owned(),
+            };
+        }
+    };
+    let mut state = supervisor.lock_state();
+    let same_generation = supervisor.snapshots.read().runtime == DevelopmentNodeRuntime::Running
+        && state.worker.as_ref().is_some_and(|worker| {
+            worker.storage_root == paths.root && worker.commands.same_channel(&generation_commands)
+        });
+    if !same_generation {
+        return ContactMutationOutcome::DevelopmentUnavailable {
+            detail: "The observed association belongs to a native generation that has stopped."
+                .to_owned(),
+        };
+    }
+    let response = match admit_directory_locked(
+        &mut state,
+        &paths,
+        DirectoryRequest::SaveObserved {
+            destination: input.destination,
+            identity,
+        },
+    ) {
+        Ok(response) => response,
+        Err(failure) => return mutation_store_failure(failure),
+    };
+    drop(state);
+    receive_mutation(response)
+}
+
+pub fn create_manual_contact(
+    storage_root: &Path,
+    input: CreateManualContactInput,
+) -> ContactMutationOutcome {
+    call_contact_mutation(
+        storage_root,
+        DirectoryRequest::CreateManual {
+            destination: input.destination,
+            identity: input.identity,
+            alias: input.alias,
+        },
+    )
+}
+
+pub fn set_contact_alias(
+    storage_root: &Path,
+    input: SetContactAliasInput,
+) -> ContactMutationOutcome {
+    call_contact_mutation(
+        storage_root,
+        DirectoryRequest::SetAlias {
+            destination: input.destination,
+            alias: input.alias,
+        },
+    )
+}
+
+pub fn set_contact_pinned(
+    storage_root: &Path,
+    input: SetContactPinnedInput,
+) -> ContactMutationOutcome {
+    call_contact_mutation(
+        storage_root,
+        DirectoryRequest::SetPinned {
+            destination: input.destination,
+            pinned: input.pinned,
+        },
+    )
+}
+
+pub fn delete_contact(
+    storage_root: &Path,
+    input: ContactDestinationInput,
+) -> ContactMutationOutcome {
+    call_contact_mutation(
+        storage_root,
+        DirectoryRequest::Delete {
+            destination: input.destination,
+        },
+    )
+}
+
+pub fn get_contact(storage_root: &Path, input: ContactDestinationInput) -> ContactLookupOutcome {
+    let response = match admit_directory(
+        storage_root,
+        DirectoryRequest::Get {
+            destination: input.destination,
+        },
+    ) {
+        Ok(response) => response,
+        Err(failure) => return lookup_store_failure(failure),
+    };
+    match response.recv_timeout(DIRECTORY_TIMEOUT) {
+        Ok(Ok(DirectoryResponse::Lookup(outcome))) => outcome,
+        Ok(Ok(_)) => ContactLookupOutcome::DevelopmentUnavailable {
+            detail: "The development database returned an unexpected contact result.".to_owned(),
+        },
+        Ok(Err(failure)) => lookup_store_failure(failure),
+        Err(_) => ContactLookupOutcome::DevelopmentUnavailable {
+            detail: "The development contact lookup exceeded its bounded wait.".to_owned(),
+        },
+    }
+}
+
+pub fn list_contacts(storage_root: &Path) -> ContactListOutcome {
+    let response = match admit_directory(storage_root, DirectoryRequest::List) {
+        Ok(response) => response,
+        Err(failure) => return list_store_failure(failure),
+    };
+    match response.recv_timeout(DIRECTORY_TIMEOUT) {
+        Ok(Ok(DirectoryResponse::List(outcome))) => outcome,
+        Ok(Ok(_)) => ContactListOutcome::DevelopmentUnavailable {
+            detail: "The development database returned an unexpected contact result.".to_owned(),
+        },
+        Ok(Err(failure)) => list_store_failure(failure),
+        Err(_) => ContactListOutcome::DevelopmentUnavailable {
+            detail: "The development contact list exceeded its bounded wait.".to_owned(),
+        },
+    }
+}
+
+fn call_contact_mutation(storage_root: &Path, request: DirectoryRequest) -> ContactMutationOutcome {
+    let response = match admit_directory(storage_root, request) {
+        Ok(response) => response,
+        Err(failure) => return mutation_store_failure(failure),
+    };
+    receive_mutation(response)
+}
+
+fn receive_mutation(response: std_mpsc::Receiver<StoreReply>) -> ContactMutationOutcome {
+    match response.recv_timeout(DIRECTORY_TIMEOUT) {
+        Ok(Ok(DirectoryResponse::Mutation(outcome))) => outcome,
+        Ok(Ok(_)) => ContactMutationOutcome::DevelopmentUnavailable {
+            detail: "The development database returned an unexpected contact result.".to_owned(),
+        },
+        Ok(Err(failure)) => mutation_store_failure(failure),
+        Err(_) => ContactMutationOutcome::DevelopmentUnavailable {
+            detail: "The development contact mutation exceeded its bounded wait.".to_owned(),
+        },
+    }
+}
+
+fn admit_directory(
+    storage_root: &Path,
+    request: DirectoryRequest,
+) -> Result<std_mpsc::Receiver<StoreReply>, DevelopmentStoreFailure> {
+    let supervisor = supervisor();
+    let mut state = supervisor.lock_state();
+    let paths = prepare_storage(storage_root).map_err(DevelopmentStoreFailure::unavailable)?;
+    admit_directory_locked(&mut state, &paths, request)
+}
+
+fn admit_directory_locked(
+    state: &mut SupervisorState,
+    paths: &NodeStoragePaths,
+    request: DirectoryRequest,
+) -> Result<std_mpsc::Receiver<StoreReply>, DevelopmentStoreFailure> {
+    if state
+        .worker
+        .as_ref()
+        .is_some_and(|worker| worker.storage_root != paths.root)
+    {
+        return Err(DevelopmentStoreFailure::unavailable(
+            "the active native generation owns a different development root",
+        ));
+    }
+    if state
+        .identity_owner
+        .as_ref()
+        .is_some_and(|owner| owner.root != paths.root)
+    {
+        state.identity_owner = None;
+    }
+    if state
+        .application_owner
+        .as_ref()
+        .is_some_and(|owner| owner.root != paths.root)
+    {
+        if state.worker.is_some() {
+            return Err(DevelopmentStoreFailure::unavailable(
+                "the active development database owns a different development root",
+            ));
+        }
+        if let Some(owner) = state.application_owner.take() {
+            owner.close()?;
+        }
+    }
+    if state.application_owner.is_none() {
+        state.application_owner = Some(DevelopmentStoreOwner::open(
+            &paths.root,
+            &paths.application,
+        )?);
+    }
+    state
+        .application_owner
+        .as_ref()
+        .ok_or_else(|| {
+            DevelopmentStoreFailure::unavailable(
+                "the development database owner was not initialized",
+            )
+        })?
+        .admit(request)
+}
+
+fn mutation_store_failure(failure: DevelopmentStoreFailure) -> ContactMutationOutcome {
+    match failure {
+        DevelopmentStoreFailure::Unavailable(detail) => {
+            ContactMutationOutcome::DevelopmentUnavailable { detail }
+        }
+        DevelopmentStoreFailure::ResetRequired(reason) => {
+            ContactMutationOutcome::DevelopmentResetRequired { reason }
+        }
+    }
+}
+
+fn lookup_store_failure(failure: DevelopmentStoreFailure) -> ContactLookupOutcome {
+    match failure {
+        DevelopmentStoreFailure::Unavailable(detail) => {
+            ContactLookupOutcome::DevelopmentUnavailable { detail }
+        }
+        DevelopmentStoreFailure::ResetRequired(reason) => {
+            ContactLookupOutcome::DevelopmentResetRequired { reason }
+        }
+    }
+}
+
+fn list_store_failure(failure: DevelopmentStoreFailure) -> ContactListOutcome {
+    match failure {
+        DevelopmentStoreFailure::Unavailable(detail) => {
+            ContactListOutcome::DevelopmentUnavailable { detail }
+        }
+        DevelopmentStoreFailure::ResetRequired(reason) => {
+            ContactListOutcome::DevelopmentResetRequired { reason }
+        }
+    }
+}
+
 pub fn stop() -> DevelopmentNodeStopOutcome {
     let supervisor = supervisor();
     let mut state = supervisor.lock_state();
@@ -614,18 +937,23 @@ fn request_worker_shutdown(worker: &Worker) {
 pub fn reset(storage_root: &Path) -> DevelopmentNodeStopOutcome {
     let supervisor = supervisor();
     let mut state = supervisor.lock_state();
-    let active_root = state
-        .worker
-        .as_ref()
-        .map(|worker| worker.storage_root.clone());
-    if let Some(active_root) = active_root {
+    let owned_roots = [
+        state.worker.as_ref().map(|worker| &worker.storage_root),
+        state.application_owner.as_ref().map(|owner| &owner.root),
+        state.identity_owner.as_ref().map(|owner| &owner.root),
+    ];
+    if owned_roots.into_iter().flatten().next().is_some() {
         let requested_root = storage_root
             .canonicalize()
             .unwrap_or_else(|_| storage_root.to_path_buf());
-        if requested_root != active_root {
+        if owned_roots
+            .into_iter()
+            .flatten()
+            .any(|owned_root| requested_root != *owned_root)
+        {
             return DevelopmentNodeStopOutcome::Failed {
                 stage: DevelopmentNodeStopStage::Persistence,
-                detail: "Reset must name the private directory owned by the active generation."
+                detail: "Reset must name the private directory owned by the native aggregate."
                     .to_owned(),
             };
         }
@@ -642,6 +970,18 @@ pub fn reset(storage_root: &Path) -> DevelopmentNodeStopOutcome {
         DevelopmentNodeStopOutcome::Failed { .. } => DevelopmentNodeStopOutcome::Stopped,
         outcome => outcome,
     };
+    if let Some(owner) = state.application_owner.take() {
+        if let Err(failure) = owner.close() {
+            let detail = match failure {
+                DevelopmentStoreFailure::Unavailable(detail) => detail,
+                DevelopmentStoreFailure::ResetRequired(reason) => reason,
+            };
+            return DevelopmentNodeStopOutcome::Failed {
+                stage: DevelopmentNodeStopStage::Persistence,
+                detail,
+            };
+        }
+    }
     state.identity_owner = None;
     match reset_storage(storage_root) {
         Ok(()) => {
@@ -1146,6 +1486,21 @@ async fn run_actor(
                     let outcome = crate::remote_control::describe(&handle, &snapshots, input).await;
                     operation_admitted.store(false, Ordering::Release);
                     let _ = response.send(outcome);
+                }
+                Some(Command::ObservedIdentity(destination, response)) => {
+                    let identity = tokio::time::timeout(
+                        HOST_INSPECTION_TIMEOUT,
+                        handle.destination_identity(DestinationIdentityQuery::Destination(
+                            DestinationHash::new(destination),
+                        )),
+                    )
+                    .await
+                    .map(|snapshot| snapshot.map(|snapshot| *snapshot.identity.as_bytes()))
+                    .map_err(|_| {
+                        "The local destination-identity query exceeded its bounded wait."
+                            .to_owned()
+                    });
+                    let _ = response.send(identity);
                 }
                 None => {
                     commands.close();
@@ -1754,6 +2109,7 @@ mod tests {
                 join: Some(join),
                 storage_root: PathBuf::from("/tmp/prns/development"),
             }),
+            application_owner: None,
             identity_owner: None,
         };
 
@@ -1872,6 +2228,284 @@ mod tests {
     }
 
     #[test]
+    fn observed_save_rechecks_generation_after_waiting_outside_the_supervisor_lock() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let storage = temporary.path().join("prns").join("development");
+        let paths = prepare_storage(&storage).expect("private storage");
+        let supervisor = Arc::new(Supervisor {
+            snapshots: Arc::new(SnapshotStore::new()),
+            operation_admitted: Arc::new(AtomicBool::new(false)),
+            state: Mutex::new(SupervisorState::default()),
+        });
+        supervisor
+            .snapshots
+            .set_runtime(DevelopmentNodeRuntime::Running);
+
+        let (old_commands, mut old_command_rx) = mpsc::channel(1);
+        let (query_started_tx, query_started_rx) = std_mpsc::sync_channel(1);
+        let (release_query_tx, release_query_rx) = std_mpsc::sync_channel(1);
+        let actor = std::thread::spawn(move || {
+            let Some(Command::ObservedIdentity(destination, response)) =
+                old_command_rx.blocking_recv()
+            else {
+                panic!("observed identity command was not admitted");
+            };
+            assert_eq!(destination, [4; 16]);
+            query_started_tx.send(()).expect("publish query start");
+            release_query_rx.recv().expect("release identity response");
+            response
+                .send(Ok(Some([5; 16])))
+                .expect("publish identity response");
+        });
+        let (shutdown_sender, _shutdown_rx) = watch::channel(false);
+        let (_done_tx, done) = std_mpsc::sync_channel(1);
+        supervisor.lock_state().worker = Some(Worker {
+            commands: old_commands,
+            shutdown: ShutdownSignal {
+                sender: shutdown_sender,
+                requested: Arc::new(AtomicBool::new(false)),
+            },
+            done,
+            join: None,
+            storage_root: paths.root.clone(),
+        });
+
+        let (result_tx, result_rx) = std_mpsc::sync_channel(1);
+        let save_supervisor = Arc::clone(&supervisor);
+        let save_storage = storage.clone();
+        let save = std::thread::spawn(move || {
+            result_tx
+                .send(save_observed_destination_with_supervisor(
+                    &save_supervisor,
+                    &save_storage,
+                    ContactDestinationInput {
+                        destination: [4; 16],
+                    },
+                ))
+                .expect("publish save result");
+        });
+        query_started_rx.recv().expect("identity query started");
+
+        let (new_commands, _new_command_rx) = mpsc::channel(1);
+        let (new_shutdown_sender, _new_shutdown_rx) = watch::channel(false);
+        let (_new_done_tx, new_done) = std_mpsc::sync_channel(1);
+        supervisor.lock_state().worker = Some(Worker {
+            commands: new_commands,
+            shutdown: ShutdownSignal {
+                sender: new_shutdown_sender,
+                requested: Arc::new(AtomicBool::new(false)),
+            },
+            done: new_done,
+            join: None,
+            storage_root: paths.root,
+        });
+        release_query_tx.send(()).expect("release identity query");
+
+        assert!(matches!(
+            result_rx.recv().expect("save result"),
+            ContactMutationOutcome::DevelopmentUnavailable { .. }
+        ));
+        assert!(supervisor.lock_state().application_owner.is_none());
+        assert!(!storage.join("application.redb").exists());
+        save.join().expect("save thread");
+        actor.join().expect("actor thread");
+    }
+
+    #[test]
+    fn observed_save_persists_the_generation_identity_and_reopens() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let storage = temporary.path().join("prns").join("development");
+        let paths = prepare_storage(&storage).expect("private storage");
+        let supervisor = Supervisor {
+            snapshots: Arc::new(SnapshotStore::new()),
+            operation_admitted: Arc::new(AtomicBool::new(false)),
+            state: Mutex::new(SupervisorState::default()),
+        };
+        supervisor
+            .snapshots
+            .set_runtime(DevelopmentNodeRuntime::Running);
+
+        let destination = [0x31; 16];
+        let identity = [0x42; 16];
+        let (commands, mut command_rx) = mpsc::channel(1);
+        let actor = std::thread::spawn(move || {
+            let Some(Command::ObservedIdentity(observed_destination, response)) =
+                command_rx.blocking_recv()
+            else {
+                panic!("observed identity command was not admitted");
+            };
+            assert_eq!(observed_destination, destination);
+            response
+                .send(Ok(Some(identity)))
+                .expect("publish identity response");
+        });
+        let (shutdown_sender, _shutdown_rx) = watch::channel(false);
+        let (_done_tx, done) = std_mpsc::sync_channel(1);
+        supervisor.lock_state().worker = Some(Worker {
+            commands,
+            shutdown: ShutdownSignal {
+                sender: shutdown_sender,
+                requested: Arc::new(AtomicBool::new(false)),
+            },
+            done,
+            join: None,
+            storage_root: paths.root.clone(),
+        });
+
+        assert!(matches!(
+            save_observed_destination_with_supervisor(
+                &supervisor,
+                &storage,
+                ContactDestinationInput { destination },
+            ),
+            ContactMutationOutcome::Saved { contact }
+                if contact.destination == destination
+                    && contact.identity == Some(identity)
+                    && contact.alias.is_none()
+                    && !contact.pinned
+        ));
+        actor.join().expect("actor thread");
+
+        let owner = supervisor
+            .lock_state()
+            .application_owner
+            .take()
+            .expect("save opened the application database");
+        owner.close().expect("close application database");
+        let reopened = DevelopmentStoreOwner::open(&paths.root, &paths.application)
+            .expect("reopen application database");
+        let reply = reopened
+            .admit(DirectoryRequest::Get { destination })
+            .expect("admit contact lookup")
+            .recv()
+            .expect("receive contact lookup")
+            .expect("contact lookup succeeds");
+        assert!(matches!(
+            reply,
+            DirectoryResponse::Lookup(ContactLookupOutcome::Found { contact })
+                if contact.destination == destination && contact.identity == Some(identity)
+        ));
+        reopened.close().expect("close reopened database");
+    }
+
+    #[test]
+    fn stopped_root_transition_closes_the_old_application_owner() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let first_storage = temporary
+            .path()
+            .join("first")
+            .join("prns")
+            .join("development");
+        let second_storage = temporary
+            .path()
+            .join("second")
+            .join("prns")
+            .join("development");
+        let first_paths = prepare_storage(&first_storage).expect("first private storage");
+        let second_paths = prepare_storage(&second_storage).expect("second private storage");
+        let mut state = SupervisorState {
+            worker: None,
+            application_owner: Some(
+                DevelopmentStoreOwner::open(&first_paths.root, &first_paths.application)
+                    .expect("first application owner"),
+            ),
+            identity_owner: None,
+        };
+
+        assert_eq!(
+            inspect_identity_locked(&mut state, &second_storage),
+            PrimaryIdentityState::Missing
+        );
+        assert!(state.application_owner.is_none());
+        assert_eq!(
+            state.identity_owner.as_ref().map(|owner| &owner.root),
+            Some(&second_paths.root)
+        );
+        redb::Database::open(&first_paths.application)
+            .expect("the old application owner was closed before the root changed");
+    }
+
+    #[test]
+    fn running_root_transition_rejects_without_dropping_owned_state() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let first_storage = temporary
+            .path()
+            .join("first")
+            .join("prns")
+            .join("development");
+        let second_storage = temporary
+            .path()
+            .join("second")
+            .join("prns")
+            .join("development");
+        let first_paths = prepare_storage(&first_storage).expect("first private storage");
+        let second_paths = prepare_storage(&second_storage).expect("second private storage");
+        let (commands, _command_rx) = mpsc::channel(1);
+        let (shutdown_sender, _shutdown_rx) = watch::channel(false);
+        let (_done_tx, done) = std_mpsc::sync_channel(1);
+        let mut state = SupervisorState {
+            worker: Some(Worker {
+                commands,
+                shutdown: ShutdownSignal {
+                    sender: shutdown_sender,
+                    requested: Arc::new(AtomicBool::new(false)),
+                },
+                done,
+                join: None,
+                storage_root: first_paths.root.clone(),
+            }),
+            application_owner: Some(
+                DevelopmentStoreOwner::open(&first_paths.root, &first_paths.application)
+                    .expect("first application owner"),
+            ),
+            identity_owner: Some(IdentityOwner {
+                root: first_paths.root.clone(),
+                vault: FileVault::new(&first_paths.identities),
+            }),
+        };
+
+        assert!(matches!(
+            admit_directory_locked(&mut state, &second_paths, DirectoryRequest::List),
+            Err(DevelopmentStoreFailure::Unavailable(_))
+        ));
+        assert!(matches!(
+            inspect_identity_locked(&mut state, &second_storage),
+            PrimaryIdentityState::Unavailable { .. }
+        ));
+        assert_eq!(
+            state.worker.as_ref().map(|worker| &worker.storage_root),
+            Some(&first_paths.root)
+        );
+        assert_eq!(
+            state.application_owner.as_ref().map(|owner| &owner.root),
+            Some(&first_paths.root)
+        );
+        assert_eq!(
+            state.identity_owner.as_ref().map(|owner| &owner.root),
+            Some(&first_paths.root)
+        );
+        let response = state
+            .application_owner
+            .as_ref()
+            .expect("application owner was retained")
+            .admit(DirectoryRequest::List)
+            .expect("retained owner accepts work");
+        assert!(matches!(
+            response.recv().expect("receive retained owner response"),
+            Ok(DirectoryResponse::List(ContactListOutcome::Listed { contacts }))
+                if contacts.is_empty()
+        ));
+
+        state.worker = None;
+        state
+            .application_owner
+            .take()
+            .expect("application owner remains present")
+            .close()
+            .expect("close retained owner");
+    }
+
+    #[test]
     fn stop_uses_priority_shutdown_when_the_snapshot_lane_is_saturated() {
         let supervisor = Supervisor {
             snapshots: Arc::new(SnapshotStore::new()),
@@ -1926,6 +2560,7 @@ mod tests {
                 join: Some(join),
                 storage_root: PathBuf::from("/tmp/prns/development"),
             }),
+            application_owner: None,
             identity_owner: None,
         };
 
@@ -1991,6 +2626,7 @@ mod tests {
                 join: Some(join),
                 storage_root: PathBuf::from("/tmp/prns/development"),
             }),
+            application_owner: None,
             identity_owner: None,
         };
 
@@ -2104,6 +2740,45 @@ mod tests {
             inspect_identity(&storage),
             PrimaryIdentityState::Present { identity_hash }
         );
+        let contact_destination = [0x24; 16];
+        assert_eq!(
+            save_observed_destination(
+                &storage,
+                ContactDestinationInput {
+                    destination: contact_destination,
+                },
+            ),
+            ContactMutationOutcome::LocalNodeStopped
+        );
+        assert!(matches!(
+            create_manual_contact(
+                &storage,
+                CreateManualContactInput {
+                    destination: contact_destination,
+                    identity: None,
+                    alias: Some(" Offline contact ".to_owned()),
+                },
+            ),
+            ContactMutationOutcome::Saved { .. }
+        ));
+        let wrong_storage = temporary
+            .path()
+            .join("wrong")
+            .join("prns")
+            .join("development");
+        assert!(matches!(
+            reset(&wrong_storage),
+            DevelopmentNodeStopOutcome::Failed {
+                stage: DevelopmentNodeStopStage::Persistence,
+                ..
+            }
+        ));
+        assert!(storage.exists());
+        assert!(matches!(
+            list_contacts(&storage),
+            ContactListOutcome::Listed { contacts }
+                if contacts.len() == 1 && contacts[0].destination == contact_destination
+        ));
 
         assert!(matches!(
             start(&storage),
@@ -2152,6 +2827,10 @@ mod tests {
             supervisor().snapshots.read().local_host,
             LocalHostState::DevelopmentResetRequired { .. }
         ));
+        assert!(matches!(
+            list_contacts(&storage),
+            ContactListOutcome::Listed { contacts } if contacts.len() == 1
+        ));
         let reset_guard = supervisor().lock_state();
         let (reset_tx, reset_rx) = std_mpsc::sync_channel(1);
         let reset_storage = storage.clone();
@@ -2177,6 +2856,10 @@ mod tests {
         let _ = reset_thread.join();
         assert!(!storage.exists());
         assert_eq!(inspect_identity(&storage), PrimaryIdentityState::Missing);
+        assert_eq!(
+            list_contacts(&storage),
+            ContactListOutcome::Listed { contacts: vec![] }
+        );
         let generated_hash = match create_generated_identity(&storage) {
             IdentityCreationOutcome::Created { identity_hash } => identity_hash,
             _ => Vec::new(),

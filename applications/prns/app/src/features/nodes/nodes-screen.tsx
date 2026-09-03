@@ -1,4 +1,4 @@
-import type { DevelopmentNodeSnapshot } from "@prns-internal/expo";
+import type { ContactMutationOutcome, DevelopmentNodeSnapshot } from "@prns-internal/expo";
 import type { Href } from "expo-router";
 import { useState } from "react";
 
@@ -301,13 +301,85 @@ function HostCards({ localHost }: { readonly localHost: DevelopmentNodeSnapshot[
           <Badge>No authenticated observations</Badge>
         </Card>
       ) : (
-        host.destinationIdentities.map((association) => (
-          <Card key={formatBytes(association.destination)}>
-            <KeyValue label="Destination" value={formatBytes(association.destination)} />
-            <KeyValue label="Identity" value={formatBytes(association.identity)} />
-          </Card>
-        ))
+        host.destinationIdentities.map((association) => {
+          const associationKey = `${formatBytes(association.destination)}:${formatBytes(association.identity)}`;
+          return <ObservedIdentityCard association={association} key={associationKey} />;
+        })
       )}
     </>
   );
+}
+
+type AuthenticatedAssociation = Extract<
+  DevelopmentNodeSnapshot["localHost"],
+  { readonly type: "running" }
+>["host"]["destinationIdentities"][number];
+
+function ObservedIdentityCard({ association }: { readonly association: AuthenticatedAssociation }) {
+  const runtime = useDevelopmentRuntime();
+  const [outcome, setOutcome] = useState<ContactMutationOutcome | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  const destination = formatBytes(association.destination);
+  const contactHref: Href = {
+    pathname: "/contacts/[destination]",
+    params: { destination },
+  };
+
+  const save = async () => {
+    setPending(true);
+    setFailure(null);
+    const result = await runtime.saveObservedDestination(association.destination);
+    if (result.type === "operationFailure") {
+      setFailure(result.detail);
+    } else {
+      setOutcome(result.outcome);
+    }
+    setPending(false);
+  };
+
+  const saved =
+    outcome?.type === "saved" || outcome?.type === "updated" || outcome?.type === "existing";
+
+  return (
+    <Card>
+      <KeyValue label="Destination" value={destination} />
+      <KeyValue label="Identity" value={formatBytes(association.identity)} />
+      <Button disabled={pending} onPress={() => void save()}>
+        {pending ? "Saving…" : "Save as contact"}
+      </Button>
+      {failure === null ? null : <BodyText>{failure}</BodyText>}
+      {outcome === null ? null : <BodyText>{observedSaveMessage(outcome)}</BodyText>}
+      {saved ? <NavigationLink href={contactHref}>Open saved contact</NavigationLink> : null}
+    </Card>
+  );
+}
+
+function observedSaveMessage(outcome: ContactMutationOutcome): string {
+  switch (outcome.type) {
+    case "saved":
+      return "The authenticated association was saved.";
+    case "updated":
+      return "The authenticated identity was added to the saved contact.";
+    case "existing":
+      return "This authenticated association was already saved.";
+    case "identityConflict":
+      return `The saved identity ${formatBytes(outcome.existing)} differs from the observation ${formatBytes(outcome.attempted)}.`;
+    case "notObserved":
+      return "The association is no longer present in the live node.";
+    case "localNodeStopped":
+      return "The local node stopped before this association could be saved.";
+    case "developmentUnavailable":
+      return outcome.detail;
+    case "developmentResetRequired":
+      return `Development reset required: ${outcome.reason}`;
+    case "alreadyExists":
+      return "This destination is already saved.";
+    case "missingIdentity":
+      return "The destination does not have an authenticated identity.";
+    case "deleted":
+      return "The contact was deleted.";
+    case "notFound":
+      return "The contact was not found.";
+  }
 }
