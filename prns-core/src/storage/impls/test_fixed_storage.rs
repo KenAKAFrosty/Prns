@@ -55,6 +55,7 @@ pub struct TestFixedStorage<
     const MAX_PENDING_PATH_REQUESTS: usize,
     const MAX_SEEN_PATH_REQUESTS: usize,
     const MAX_LINKS: usize,
+    const MAX_REQUEST_HANDLERS: usize = MAX_UPSTREAM_APP_DESTINATIONS,
 >;
 
 impl<
@@ -70,6 +71,7 @@ impl<
         const MAX_PENDING_PATH_REQUESTS: usize,
         const MAX_SEEN_PATH_REQUESTS: usize,
         const MAX_LINKS: usize,
+        const MAX_REQUEST_HANDLERS: usize,
     > StorageLayout
     for TestFixedStorage<
         MAX_TRACKED_DESTINATIONS,
@@ -84,6 +86,7 @@ impl<
         MAX_PENDING_PATH_REQUESTS,
         MAX_SEEN_PATH_REQUESTS,
         MAX_LINKS,
+        MAX_REQUEST_HANDLERS,
     >
 {
     const LIMITS: DisplayedStorageLimits = DisplayedStorageLimits {
@@ -141,7 +144,7 @@ impl<
         PackedAppDataArena<ANNOUNCE_APP_DATA_ARENA_BYTES, MAX_PENDING_PATH_REQUESTS>;
     type DestinationAnnounceLimits = FixedDestinationAnnounceLimitTable<MAX_TRACKED_DESTINATIONS>;
     type GroupKeys = FixedGroupKeyTable<MAX_UPSTREAM_APP_DESTINATIONS>;
-    type RequestHandlers = FixedRequestHandlerTable<MAX_UPSTREAM_APP_DESTINATIONS>;
+    type RequestHandlers = FixedRequestHandlerTable<MAX_REQUEST_HANDLERS>;
     type TransportedLinks = FixedTransportedLinkTable<MAX_LINKS>;
     type Links = FixedLinkTable<MAX_LINKS>;
     type OutgoingResources = FixedResourceTable<
