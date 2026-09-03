@@ -129,14 +129,10 @@ impl<'a> Ingress<'a> {
         if !wire_hop_count_is_valid(header.hops) {
             return Self::Malformed;
         }
+        let Ok(packet_hash) = PacketHash::of_wire_packet(bytes) else {
+            return Self::Malformed;
+        };
         let (_, payload) = bytes.split_at_mut(payload_offset);
-        let packet_hash = PacketHash::of_fields(
-            header.destination_type,
-            header.packet_type,
-            &header.address,
-            header.context,
-            payload,
-        );
 
         let received_hops = local_adjusted_hops(header.hops.saturating_add(1), source_interface);
 
