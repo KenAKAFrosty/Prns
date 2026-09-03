@@ -1902,9 +1902,11 @@ async fn run_generation(
 
     #[cfg(all(feature = "apple", any(target_os = "ios", target_os = "macos")))]
     let prepared_bluetooth =
-        match personal_rns::bluetooth_auto::AutoBle::prepare(bluetooth_identity).await {
+        match personal_rns::bluetooth_auto::AutoBle::prepare_foreground(bluetooth_identity).await {
             Ok(prepared) => prepared,
-            Err(_) => personal_rns::bluetooth_auto::AutoBle::unavailable(bluetooth_identity),
+            Err(_) => {
+                personal_rns::bluetooth_auto::AutoBle::unavailable_foreground(bluetooth_identity)
+            }
         };
     #[cfg(not(all(feature = "apple", any(target_os = "ios", target_os = "macos"))))]
     let _ = bluetooth_identity;
