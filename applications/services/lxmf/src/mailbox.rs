@@ -3518,11 +3518,9 @@ mod tests {
             assert!(attempt.await.unwrap_err().is_cancelled());
         }
         first.stop().await.unwrap();
-        let MailboxReply::Listed { messages, .. } = execute_mailbox_request(
-            &sender_database,
-            MailboxRequest::List(all_messages()),
-        )
-        .unwrap()
+        let MailboxReply::Listed { messages, .. } =
+            execute_mailbox_request(&sender_database, MailboxRequest::List(all_messages()))
+                .unwrap()
         else {
             panic!("unexpected list reply");
         };
