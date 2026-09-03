@@ -298,7 +298,7 @@ enum ManagerPreparation {
     RestorationAware(CoreBluetoothRestorationIdentifiers),
     #[cfg(not(target_os = "ios"))]
     PlatformDefault,
-    ForegroundOnly,
+    WithoutRestoration,
 }
 
 impl ManagerPreparation {
@@ -306,7 +306,7 @@ impl ManagerPreparation {
     fn restoration_identifiers(&self) -> Option<&CoreBluetoothRestorationIdentifiers> {
         match self {
             Self::RestorationAware(identifiers) => Some(identifiers),
-            Self::ForegroundOnly => None,
+            Self::WithoutRestoration => None,
         }
     }
 }
@@ -320,8 +320,8 @@ impl MacosBleBackend {
     /// Creates CoreBluetooth managers with the existing iOS restoration identifiers.
     ///
     /// Applications using this path are responsible for the matching background modes and
-    /// restoration lifecycle. Use [`Self::prepare_foreground`] when the owner intentionally has no
-    /// CoreBluetooth state-restoration contract.
+    /// restoration lifecycle. Use [`Self::prepare_without_restoration`] when the owner
+    /// intentionally has no CoreBluetooth state-restoration contract.
     pub async fn prepare(identity: BleIdentity) -> Result<PreparedMacosBleBackend, MacosBleError> {
         #[cfg(target_os = "ios")]
         let manager_preparation =
@@ -348,10 +348,10 @@ impl MacosBleBackend {
     ///
     /// Central and peripheral operation remain available while the application is running, but
     /// CoreBluetooth will not preserve or restore these managers after process termination.
-    pub async fn prepare_foreground(
+    pub async fn prepare_without_restoration(
         identity: BleIdentity,
     ) -> Result<PreparedMacosBleBackend, MacosBleError> {
-        Self::prepare_with(identity, ManagerPreparation::ForegroundOnly).await
+        Self::prepare_with(identity, ManagerPreparation::WithoutRestoration).await
     }
 
     async fn prepare_with(
@@ -765,9 +765,9 @@ mod native_thread_tests {
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn foreground_preparation_is_distinct_from_the_platform_default() {
+    fn preparation_without_restoration_is_distinct_from_the_platform_default() {
         assert_ne!(
-            ManagerPreparation::ForegroundOnly,
+            ManagerPreparation::WithoutRestoration,
             ManagerPreparation::PlatformDefault
         );
     }
