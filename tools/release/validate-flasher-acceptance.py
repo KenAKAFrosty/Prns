@@ -52,7 +52,7 @@ TOP_LEVEL_FIELDS = {
     "installation_smoke",
 }
 MAINTAINER_OVERRIDE_SCHEMA = 4
-MAINTAINER_OVERRIDE_VERSION = "0.3.7"
+MAINTAINER_OVERRIDE_VERSIONS = frozenset(("0.3.7", "0.3.7-hotfix.5"))
 HOTFIX_ACCEPTANCE_SCHEMA = 6
 OVERRIDE_TOP_LEVEL_FIELDS = {"schema", "candidate", "maintainer_override"}
 OVERRIDE_FIELDS = {"basis", "approved_by", "approved_at"}
@@ -867,9 +867,10 @@ def validate_maintainer_override(
         arguments.prerelease_published_at,
         errors,
     )
-    if version != MAINTAINER_OVERRIDE_VERSION:
+    if version not in MAINTAINER_OVERRIDE_VERSIONS:
+        supported_versions = ", ".join(sorted(MAINTAINER_OVERRIDE_VERSIONS))
         errors.append(
-            f"maintainer override is restricted to version {MAINTAINER_OVERRIDE_VERSION}"
+            f"maintainer override is restricted to versions: {supported_versions}"
         )
     override = acceptance.get("maintainer_override")
     if not isinstance(override, dict):
@@ -1141,7 +1142,11 @@ def validate(arguments: argparse.Namespace, now: datetime | None = None) -> list
     version_value = manifest.get("release")
     version = version_value.get("version") if isinstance(version_value, dict) else ""
     hotfix_spec: HotfixSpec | None = None
-    if acceptance.get("schema") == HOTFIX_ACCEPTANCE_SCHEMA:
+    acceptance_schema = acceptance.get("schema")
+    if acceptance_schema in {
+        HOTFIX_ACCEPTANCE_SCHEMA,
+        MAINTAINER_OVERRIDE_SCHEMA,
+    }:
         try:
             hotfix_spec = verify_hotfix_candidate(
                 Path(__file__).resolve().parents[2],
@@ -1149,11 +1154,18 @@ def validate(arguments: argparse.Namespace, now: datetime | None = None) -> list
             )
         except ValueError as error:
             errors.append(str(error))
-        if hotfix_spec is None:
+        if acceptance_schema == HOTFIX_ACCEPTANCE_SCHEMA and hotfix_spec is None:
             errors.append("schema-6 acceptance requires a scoped hotfix candidate")
     roster_version = hotfix_spec.roster_version if hotfix_spec is not None else str(version)
     tester_roster, roster_errors = validate_roster(roster, roster_version)
     errors.extend(f"signed tester roster: {error}" for error in roster_errors)
+    if acceptance_schema == MAINTAINER_OVERRIDE_SCHEMA:
+        errors.extend(
+            validate_maintainer_override(
+                acceptance, roster, manifest, arguments, published_at, current
+            )
+        )
+        return errors
     if hotfix_spec is not None:
         errors.extend(
             validate_hotfix_acceptance(
@@ -1165,13 +1177,6 @@ def validate(arguments: argparse.Namespace, now: datetime | None = None) -> list
                 hotfix_spec,
                 published_at,
                 current,
-            )
-        )
-        return errors
-    if acceptance.get("schema") == MAINTAINER_OVERRIDE_SCHEMA:
-        errors.extend(
-            validate_maintainer_override(
-                acceptance, roster, manifest, arguments, published_at, current
             )
         )
         return errors

@@ -28,6 +28,12 @@ under `hardware_deferrals` has no physical run: the release owner must copy the 
 follow-up unchanged, then set `approved_by` and an `approved_at` timestamp no earlier than the public
 prerelease. This records a deliberate deferred check; it never counts as hardware evidence.
 
+Schema 4 is a version-bound release-owner exception, not a general emergency switch. The validator
+names every eligible immutable release identity, binds the override to the exact signed candidate,
+requires a post-publication approval time and nonempty content-addressed supplemental evidence, and
+rejects every version not explicitly listed. Its basis states which normal observations were waived
+and must not claim that an unperformed post-publication check passed.
+
 ## Physical runs
 
 `runs` contains one result for every board and surface (`web` or `cli`) plus separate S140 6.1.1

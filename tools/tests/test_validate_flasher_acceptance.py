@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "release" / "validate-flasher-acceptance.py"
@@ -861,7 +862,9 @@ class AcceptanceValidatorTests(unittest.TestCase):
         self.assertTrue(any("unknown fields: ['maintainer_override']" in error for error in errors))
         self.assertTrue(any("acceptance runs must be an array" in error for error in errors))
 
-    def override_acceptance(self) -> dict:
+    def override_acceptance(
+        self, version: str = "0.3.7", roster_version: str | None = None
+    ) -> dict:
         record = {
             "schema": 4,
             "candidate": self.acceptance["candidate"],
@@ -871,12 +874,12 @@ class AcceptanceValidatorTests(unittest.TestCase):
                 "approved_at": COMPLETED_AT,
             },
         }
-        record["candidate"]["version"] = "0.3.7"
-        self.manifest_document["release"]["version"] = "0.3.7"
+        record["candidate"]["version"] = version
+        self.manifest_document["release"]["version"] = version
         self.manifest_path.write_text(
             json.dumps(self.manifest_document, sort_keys=True) + "\n", encoding="utf-8"
         )
-        self.roster["release"]["version"] = "0.3.7"
+        self.roster["release"]["version"] = roster_version or version
         self.roster_path.write_text(
             json.dumps(self.roster, sort_keys=True) + "\n", encoding="utf-8"
         )
@@ -887,6 +890,30 @@ class AcceptanceValidatorTests(unittest.TestCase):
 
     def test_version_bound_maintainer_override_accepts_reviewed_evidence(self) -> None:
         self.assertEqual(self.validate(self.override_acceptance()), [])
+
+    def test_version_bound_maintainer_override_accepts_emergency_hotfix(self) -> None:
+        version = "0.3.7-hotfix.5"
+        record = self.override_acceptance(version, "0.3.7")
+        spec = HotfixSpec(
+            path=self.root / f"{version}.json",
+            version=version,
+            base_version="0.3.7-hotfix.4",
+            base_source_commit="b" * 40,
+            base_manifest_sha256="c" * 64,
+            base_release_record_sha256="d" * 64,
+            base_signed_candidate_sha256="e" * 64,
+            changed_boards=("heltec-v4", "heltec-v4-r8", "t-beam-supreme"),
+            physical_boards=("heltec-v4",),
+            deferred_hardware=(),
+            surfaces=("cli",),
+            required_scenarios=("full-erase-first-boot",),
+            required_checks=("hardware-trng-enabled-before-identity-generation",),
+            summary="Fixture emergency entropy hotfix.",
+        )
+        with mock.patch.object(
+            VALIDATOR, "verify_hotfix_candidate", return_value=spec
+        ):
+            self.assertEqual(self.validate(record), [])
 
     def test_version_bound_maintainer_override_rejects_other_versions(self) -> None:
         record = self.override_acceptance()
@@ -899,7 +926,7 @@ class AcceptanceValidatorTests(unittest.TestCase):
             self.manifest_path.read_bytes()
         ).hexdigest()
         self.assertTrue(
-            any("restricted to version 0.3.7" in error for error in self.validate(record))
+            any("restricted to versions:" in error for error in self.validate(record))
         )
 
     def test_version_bound_maintainer_override_requires_release_owner(self) -> None:
