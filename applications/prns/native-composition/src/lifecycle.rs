@@ -5118,26 +5118,53 @@ mod tests {
         let bluetooth_record = std::fs::read(&bluetooth_path).unwrap_or_default();
         assert_eq!(bluetooth_record.len(), 40);
         assert_eq!(stop(), DevelopmentNodeStopOutcome::Stopped);
-        assert!(matches!(
-            start_configured(
-                &storage,
-                DevelopmentNodeStartInput {
-                    development_tcp_target: Some("127.0.0.1:9".to_owned()),
-                },
-            ),
-            DevelopmentNodeStartOutcome::Started { .. }
-        ));
-        let tcp_snapshot = snapshot();
-        let LocalHostState::Running { host } = tcp_snapshot.local_host else {
-            panic!("the TCP generation did not publish its Host snapshot");
-        };
-        assert!(host.backend.supports(Capability::TcpClient));
-        assert!(host.backend.supports_interface(InterfaceKind::TcpClient));
-        assert_eq!(
-            std::fs::read(&bluetooth_path).unwrap_or_default(),
-            bluetooth_record
-        );
-        assert_eq!(stop(), DevelopmentNodeStopOutcome::Stopped);
+        #[cfg(any(feature = "apple", feature = "host-test"))]
+        {
+            assert!(matches!(
+                start_configured(
+                    &storage,
+                    DevelopmentNodeStartInput {
+                        development_tcp_target: Some("127.0.0.1:9".to_owned()),
+                    },
+                ),
+                DevelopmentNodeStartOutcome::Started { .. }
+            ));
+            let tcp_snapshot = snapshot();
+            let LocalHostState::Running { host } = tcp_snapshot.local_host else {
+                panic!("the TCP generation did not publish its Host snapshot");
+            };
+            assert!(host.backend.supports(Capability::TcpClient));
+            assert!(host.backend.supports_interface(InterfaceKind::TcpClient));
+            assert_eq!(
+                std::fs::read(&bluetooth_path).unwrap_or_default(),
+                bluetooth_record
+            );
+            assert_eq!(stop(), DevelopmentNodeStopOutcome::Stopped);
+        }
+        #[cfg(not(any(feature = "apple", feature = "host-test")))]
+        {
+            assert!(matches!(
+                start_configured(
+                    &storage,
+                    DevelopmentNodeStartInput {
+                        development_tcp_target: Some("127.0.0.1:9".to_owned()),
+                    },
+                ),
+                DevelopmentNodeStartOutcome::Failed {
+                    stage: DevelopmentNodeFailureStage::Contract,
+                    ..
+                }
+            ));
+            assert!(matches!(
+                start(&storage),
+                DevelopmentNodeStartOutcome::Started { .. }
+            ));
+            assert_eq!(
+                std::fs::read(&bluetooth_path).unwrap_or_default(),
+                bluetooth_record
+            );
+            assert_eq!(stop(), DevelopmentNodeStopOutcome::Stopped);
+        }
         std::fs::write(&bluetooth_path, [0_u8; 40]).expect("malformed Bluetooth record");
         assert!(matches!(
             start(&storage),
