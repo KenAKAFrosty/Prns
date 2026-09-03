@@ -9,8 +9,8 @@ EXPO_EXECUTABLE="${APPLICATIONS_DIRECTORY}/node_modules/.bin/expo"
 INFO_PLIST="${IOS_DIRECTORY}/prnsdev/Info.plist"
 WORKSPACE="${IOS_DIRECTORY}/prnsdev.xcworkspace"
 SCHEME="prnsdev"
-DERIVED_DATA="${PRNS_IOS_DERIVED_DATA:-${APPLICATIONS_DIRECTORY}/target/ios-development-client}"
 METRO_PORT="${PRNS_IOS_METRO_PORT:-8088}"
+EXPECTED_BUNDLE_IDENTIFIER="rs.reticulum.prns.dev"
 BLUETOOTH_USAGE="prns uses Bluetooth to connect to nearby Reticulum nodes."
 LOCAL_NETWORK_USAGE="prns uses the local network for an explicitly configured development LXMF peer."
 
@@ -19,10 +19,33 @@ fail() {
   exit 1
 }
 
+case "${1:-}" in
+  "") MODE="simulator" ;;
+  --device) MODE="device" ;;
+  *) fail "usage: build-development-client.sh [--device]" ;;
+esac
+(( $# <= 1 )) || fail "usage: build-development-client.sh [--device]"
+
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "build-development-client.sh: Apple toolchain unavailable; skipping the iOS development client"
   exit 0
 fi
+
+DEVICE_ID=""
+DEVELOPMENT_TEAM=""
+DEFAULT_DERIVED_DATA="${APPLICATIONS_DIRECTORY}/target/ios-development-client"
+if [[ "${MODE}" == "device" ]]; then
+  DEVICE_ID="${PRNS_IOS_DEVICE_UDID:-}"
+  DEVELOPMENT_TEAM="${PRNS_IOS_DEVELOPMENT_TEAM:-}"
+  DEFAULT_DERIVED_DATA="${APPLICATIONS_DIRECTORY}/target/ios-development-device"
+  [[ -n "${DEVICE_ID}" ]] || fail "PRNS_IOS_DEVICE_UDID is required with --device"
+  [[ "${DEVICE_ID}" =~ ^[[:alnum:]-]+$ ]] ||
+    fail "PRNS_IOS_DEVICE_UDID must contain only letters, numbers, and hyphens"
+  [[ -n "${DEVELOPMENT_TEAM}" ]] || fail "PRNS_IOS_DEVELOPMENT_TEAM is required with --device"
+  [[ "${DEVELOPMENT_TEAM}" =~ ^[[:alnum:]]+$ ]] ||
+    fail "PRNS_IOS_DEVELOPMENT_TEAM must contain only letters and numbers"
+fi
+DERIVED_DATA="${PRNS_IOS_DERIVED_DATA:-${DEFAULT_DERIVED_DATA}}"
 
 for executable in curl node xcodebuild xcrun plutil; do
   command -v "${executable}" >/dev/null || fail "${executable} is required"
@@ -60,6 +83,45 @@ echo "build-development-client.sh: installing CocoaPods dependencies"
 )
 [[ -d "${WORKSPACE}" ]] || fail "CocoaPods did not generate ${WORKSPACE}"
 grep -Fq "PrnsApp" "${IOS_DIRECTORY}/Podfile.lock" || fail "PrnsApp was not autolinked"
+
+assert_development_client_metadata() {
+  local app_bundle="$1"
+  local built_info_plist="${app_bundle}/Info.plist"
+
+  [[ -d "${app_bundle}" ]] || fail "development client was not produced at ${app_bundle}"
+  [[ "$(plutil -extract CFBundleIdentifier raw "${built_info_plist}")" == "${EXPECTED_BUNDLE_IDENTIFIER}" ]] ||
+    fail "development client has the wrong bundle identifier"
+  [[ "$(plutil -extract RCTMetroPort raw "${built_info_plist}")" == "${METRO_PORT}" ]] ||
+    fail "development client does not contain the requested Metro port ${METRO_PORT}"
+}
+
+if [[ "${MODE}" == "device" ]]; then
+  DESTINATION="platform=iOS,id=${DEVICE_ID}"
+  echo "build-development-client.sh: building ${SCHEME} for ${DESTINATION}"
+  env -u LIBRARY_PATH xcodebuild -quiet \
+    -workspace "${WORKSPACE}" \
+    -scheme "${SCHEME}" \
+    -configuration Debug \
+    -destination "${DESTINATION}" \
+    -destination-timeout 60 \
+    -derivedDataPath "${DERIVED_DATA}" \
+    CODE_SIGN_STYLE=Automatic \
+    DEVELOPMENT_TEAM="${DEVELOPMENT_TEAM}" \
+    RCT_METRO_PORT="${METRO_PORT}" \
+    build
+
+  APP_BUNDLE="${DERIVED_DATA}/Build/Products/Debug-iphoneos/prnsdev.app"
+  assert_development_client_metadata "${APP_BUNDLE}"
+  PACKAGER_IP_FILE="${APP_BUNDLE}/ip.txt"
+  [[ -f "${PACKAGER_IP_FILE}" ]] || fail "development client does not contain ip.txt"
+  PACKAGER_HOST="$(<"${PACKAGER_IP_FILE}")"
+  [[ -n "${PACKAGER_HOST//[[:space:]]/}" ]] || fail "development client contains an empty ip.txt"
+
+  echo "build-development-client.sh: installing on explicitly selected device ${DEVICE_ID}"
+  xcrun devicectl device install app --device "${DEVICE_ID}" "${APP_BUNDLE}"
+  echo "IOS_DEVELOPMENT_DEVICE_OK app=${APP_BUNDLE} device=${DEVICE_ID} metro_port=${METRO_PORT}"
+  exit 0
+fi
 
 SIMULATOR_SELECTION="$({
   xcrun simctl list devices available --json |
@@ -100,10 +162,7 @@ env -u LIBRARY_PATH xcodebuild -quiet \
   build
 
 APP_BUNDLE="${DERIVED_DATA}/Build/Products/Debug-iphonesimulator/prnsdev.app"
-BUILT_INFO_PLIST="${APP_BUNDLE}/Info.plist"
-[[ -d "${APP_BUNDLE}" ]] || fail "development client was not produced at ${APP_BUNDLE}"
-[[ "$(plutil -extract CFBundleIdentifier raw "${BUILT_INFO_PLIST}")" == "rs.reticulum.prns.dev" ]] ||
-  fail "development client has the wrong bundle identifier"
+assert_development_client_metadata "${APP_BUNDLE}"
 
 echo "build-development-client.sh: installing and launching on ${SIMULATOR_NAME} (${SIMULATOR_ID})"
 xcrun simctl boot "${SIMULATOR_ID}" 2>/dev/null || true

@@ -6,6 +6,13 @@ import { fileURLToPath } from "node:url";
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const swift = readFileSync(resolve(packageRoot, "ios/PrnsAppModule.swift"), "utf8");
 const podspec = readFileSync(resolve(packageRoot, "ios/PrnsApp.podspec"), "utf8");
+const developmentClient = readFileSync(
+  resolve(packageRoot, "ios/build-development-client.sh"),
+  "utf8",
+);
+const applicationsPackage = JSON.parse(
+  readFileSync(resolve(packageRoot, "../../package.json"), "utf8"),
+);
 
 assert.match(
   swift,
@@ -88,7 +95,72 @@ assert.match(
   /PRNS_IOS_NATIVE_SMOKE_OK contract=.*starts=2 snapshots=5 stops=2 cleanup=reset/,
   "the named simulator gate must exercise the real native lifecycle and cleanup",
 );
+assert.equal(
+  applicationsPackage.scripts["native:ios:device"],
+  "bash sdk/expo/ios/build-development-client.sh --device",
+  "the physical development-client helper must be registered explicitly",
+);
+assert.match(
+  developmentClient,
+  /\[\[ -n "\$\{DEVICE_ID\}" \]\] \|\| fail "PRNS_IOS_DEVICE_UDID is required with --device"/,
+  "physical builds must require an explicit device identifier",
+);
+assert.match(
+  developmentClient,
+  /\[\[ -n "\$\{DEVELOPMENT_TEAM\}" \]\] \|\| fail "PRNS_IOS_DEVELOPMENT_TEAM is required with --device"/,
+  "physical builds must require an explicit development team",
+);
+assert.match(
+  developmentClient,
+  /DESTINATION="platform=iOS,id=\$\{DEVICE_ID\}"/,
+  "physical builds must select only the requested device",
+);
+assert.match(
+  developmentClient,
+  /DEVELOPMENT_TEAM="\$\{DEVELOPMENT_TEAM\}"[\s\S]*RCT_METRO_PORT="\$\{METRO_PORT\}"/,
+  "physical builds must pass signing ownership and the validated Metro port to xcodebuild",
+);
+assert.match(
+  developmentClient,
+  /\[\[ "\$\{METRO_PORT\}" =~ \^\[0-9\]\+\$ \]\] \|\| fail "PRNS_IOS_METRO_PORT must be an integer"/,
+  "development-client builds must validate the Metro port syntax",
+);
+assert.match(
+  developmentClient,
+  /METRO_PORT >= 1024 && METRO_PORT <= 65535/,
+  "development-client builds must validate the Metro port range",
+);
+assert.equal(
+  developmentClient.match(/assert_development_client_metadata "\$\{APP_BUNDLE\}"/g)?.length,
+  2,
+  "simulator and physical builds must both validate compiled bundle metadata",
+);
+assert.match(
+  developmentClient,
+  /plutil -extract CFBundleIdentifier raw "\$\{built_info_plist\}"/,
+  "compiled development clients must contain the expected bundle identifier",
+);
+assert.match(
+  developmentClient,
+  /plutil -extract RCTMetroPort raw "\$\{built_info_plist\}"/,
+  "compiled development clients must contain the requested Metro port",
+);
+assert.match(
+  developmentClient,
+  /\[\[ -f "\$\{PACKAGER_IP_FILE\}" \]\] \|\| fail "development client does not contain ip\.txt"/,
+  "physical installation must require a generated packager-host file",
+);
+assert.match(
+  developmentClient,
+  /\[\[ -n "\$\{PACKAGER_HOST\/\/\[\[:space:\]\]\/\}" \]\] \|\| fail "development client contains an empty ip\.txt"/,
+  "physical installation must reject an empty packager host",
+);
+assert.match(
+  developmentClient,
+  /xcrun devicectl device install app --device "\$\{DEVICE_ID\}" "\$\{APP_BUNDLE\}"/,
+  "physical installation must target only the requested device",
+);
 
 console.log(
-  "ios:check: concurrent native calls, barrier teardown, ABI, storage, and linkage are exact",
+  "ios:check: native bridge, lifecycle, linkage, and iOS development-client contracts are exact",
 );

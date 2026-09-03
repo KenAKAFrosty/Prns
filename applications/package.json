@@ -21,6 +21,7 @@
     "native:verify": "npm run api:check && npm run native:test && npm --prefix sdk/expo run verify",
     "native:ios:archives": "env PLATFORM_NAME=iphonesimulator ARCHS=arm64 bash sdk/expo/ios/build-rust.sh && env PLATFORM_NAME=iphoneos ARCHS=arm64 bash sdk/expo/ios/build-rust.sh",
     "native:ios:client": "bash sdk/expo/ios/build-development-client.sh",
+    "native:ios:device": "bash sdk/expo/ios/build-development-client.sh --device",
     "native:ios": "npm run native:ios:archives && npm run native:ios:client",
     "start": "npm --prefix prns/app run start",
     "start:web": "npm --prefix prns/app run start:web",
