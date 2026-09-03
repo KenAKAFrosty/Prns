@@ -737,6 +737,7 @@ mod native_thread_tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn foreground_preparation_is_distinct_from_the_platform_default() {
         assert_ne!(
