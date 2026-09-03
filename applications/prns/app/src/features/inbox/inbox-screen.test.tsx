@@ -191,7 +191,7 @@ describe("durable LXMF screens", () => {
     const screen = render(<InboxScreen />);
 
     expect(await screen.findByText("Saved alias")).toBeTruthy();
-    expect(screen.getByText("New messages arrive only while prns is open.")).toBeTruthy();
+    expect(screen.getByText("Keep prns open for reliable message delivery.")).toBeTruthy();
     expect(
       screen.getByText(
         "Before exchanging messages with a new contact, share this device's messaging address.",

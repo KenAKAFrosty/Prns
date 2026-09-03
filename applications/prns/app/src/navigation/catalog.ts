@@ -109,7 +109,7 @@ export const screenCatalog = [
     deepLink: "external-navigation",
     availability: "implementedScaffold",
     summary: "Read and manage messages saved on this device.",
-    limitation: "Messaging is available only on iOS and only while prns is open.",
+    limitation: "Messaging is available on iOS. Keep prns open for reliable delivery.",
     backPath: "/inbox",
     params: noParams,
     phoneRootOrder: 0,

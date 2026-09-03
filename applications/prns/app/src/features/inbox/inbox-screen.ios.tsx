@@ -146,7 +146,7 @@ export function InboxScreen() {
       <Badge>Messages</Badge>
       <ScreenHeading>Inbox</ScreenHeading>
       <BodyText>Messages stay on this device and remain available while it is offline.</BodyText>
-      <BodyText muted>New messages arrive only while prns is open.</BodyText>
+      <BodyText muted>Keep prns open for reliable message delivery.</BodyText>
       <BodyText muted>
         Before exchanging messages with a new contact, share this device&apos;s messaging address.
       </BodyText>
