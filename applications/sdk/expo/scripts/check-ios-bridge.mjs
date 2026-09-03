@@ -149,6 +149,11 @@ assert.match(
 );
 assert.match(
   developmentClient,
+  /-allowProvisioningUpdates[\s\S]*CODE_SIGN_STYLE=Automatic/,
+  "automatic device signing must allow Xcode to update the development profile",
+);
+assert.match(
+  developmentClient,
   /\[\[ "\$\{METRO_PORT\}" =~ \^\[0-9\]\+\$ \]\] \|\| fail "PRNS_IOS_METRO_PORT must be an integer"/,
   "development-client builds must validate the Metro port syntax",
 );

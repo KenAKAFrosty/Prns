@@ -127,6 +127,7 @@ if [[ "${MODE}" == "device" ]]; then
     -destination "${DESTINATION}" \
     -destination-timeout 60 \
     -derivedDataPath "${DERIVED_DATA}" \
+    -allowProvisioningUpdates \
     CODE_SIGN_STYLE=Automatic \
     DEVELOPMENT_TEAM="${DEVELOPMENT_TEAM}" \
     RCT_METRO_PORT="${METRO_PORT}" \
