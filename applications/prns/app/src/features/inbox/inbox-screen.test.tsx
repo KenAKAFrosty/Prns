@@ -3,12 +3,14 @@ import type {
   DevelopmentNodeSnapshot,
   LxmfMessage,
   LxmfPeerSummary,
+  SendDirectTextOutcome,
 } from "@prns-internal/expo";
 import { fireEvent, render, waitFor } from "@testing-library/react-native";
 import { destinationHash } from "personal-rns/contract";
 import type { ReactNode } from "react";
 
-import { ConversationScreen, InboxScreen } from "./inbox-screen.ios";
+import type { RuntimeCommandResult } from "@/native/development-runtime-context";
+import { ComposeScreen, ConversationScreen, InboxScreen } from "./inbox-screen.ios";
 
 const mockReplace = jest.fn();
 const mockDestination = destinationHash(Uint8Array.from({ length: 16 }, (_, index) => index));
@@ -63,10 +65,12 @@ const mockMeasureLxmfText = jest.fn(async () => ({
   type: "outcome" as const,
   outcome: { type: "measured" as const, wireBytes: 140, remainingBytes: 291 },
 }));
-const mockSendDirectText = jest.fn(async () => ({
-  type: "outcome" as const,
-  outcome: { type: "started" as const, localRecordId: 2n },
-}));
+const mockSendDirectText = jest.fn(
+  async (): Promise<RuntimeCommandResult<SendDirectTextOutcome>> => ({
+    type: "outcome",
+    outcome: { type: "started", localRecordId: 2n },
+  }),
+);
 const mockRefreshSnapshot = jest.fn(async () => ({
   type: "outcome" as const,
   outcome: mockSnapshot,
@@ -154,5 +158,49 @@ describe("in-memory LXMF screens", () => {
     });
     expect(await screen.findByText(/Started record 2/u)).toBeTruthy();
     expect(screen.queryByText(/^Delivered$/u)).toBeNull();
+  });
+
+  test("navigates from compose only after native starts a visible record", async () => {
+    const destination = Array.from(mockDestination, (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    ).join("");
+    const screen = render(<ComposeScreen initialDestination={destination} />);
+
+    fireEvent.changeText(screen.getByLabelText("LXMF title"), "Hello");
+    fireEvent.changeText(screen.getByLabelText("LXMF message"), "Proof please");
+    await waitFor(() => {
+      expect(screen.getByText(/140 encoded bytes/u)).toBeTruthy();
+    });
+    fireEvent.press(screen.getByText("Send direct message"));
+
+    await waitFor(() => {
+      expect(mockReplace).toHaveBeenCalledWith({
+        pathname: "/inbox/conversation/[destination]",
+        params: { destination },
+      });
+    });
+  });
+
+  test("keeps compose visible with an honest non-record send outcome", async () => {
+    mockSendDirectText.mockResolvedValueOnce({
+      type: "outcome",
+      outcome: { type: "peerIdentityUnavailable" },
+    });
+    const destination = Array.from(mockDestination, (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    ).join("");
+    const screen = render(<ComposeScreen initialDestination={destination} />);
+
+    fireEvent.changeText(screen.getByLabelText("LXMF message"), "No observed peer");
+    await waitFor(() => {
+      expect(screen.getByText(/140 encoded bytes/u)).toBeTruthy();
+    });
+    fireEvent.press(screen.getByText("Send direct message"));
+
+    expect(
+      await screen.findByText("No compatible authenticated announce is available for this peer."),
+    ).toBeTruthy();
+    expect(screen.getByText("Compose")).toBeTruthy();
+    expect(mockReplace).not.toHaveBeenCalled();
   });
 });

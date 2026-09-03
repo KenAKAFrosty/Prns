@@ -355,7 +355,10 @@ export function ComposeScreen({
         <>
           <Composer
             destination={destination}
-            onSettled={async () => {
+            onSettled={async (result) => {
+              if (result.type !== "outcome" || result.outcome.type !== "started") {
+                return;
+              }
               const href: Href = {
                 pathname: "/inbox/conversation/[destination]",
                 params: { destination: formatContactHash(destination) },
@@ -383,7 +386,7 @@ function Composer({
   onSettled,
 }: {
   readonly destination: DestinationHash;
-  readonly onSettled: () => Promise<void>;
+  readonly onSettled: (result: RuntimeCommandResult<SendDirectTextOutcome>) => Promise<void>;
 }) {
   const development = useDevelopmentRuntime();
   const palette = useAppPalette();
@@ -392,6 +395,7 @@ function Composer({
   const [measurement, setMeasurement] = useState<MeasureLxmfTextOutcome | null>(null);
   const [measureFailure, setMeasureFailure] = useState<string | null>(null);
   const [sendOutcome, setSendOutcome] = useState<SendDirectTextOutcome | null>(null);
+  const [sendFailure, setSendFailure] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
 
   useEffect(() => {
@@ -416,13 +420,14 @@ function Composer({
   const send = async (nextTitle = title, nextContent = content) => {
     setSending(true);
     setSendOutcome(null);
+    setSendFailure(null);
     const result = await development.sendDirectText({
       destination,
       title: nextTitle,
       content: nextContent,
     });
     if (result.type === "operationFailure") {
-      setMeasureFailure(result.detail);
+      setSendFailure(result.detail);
     } else {
       setSendOutcome(result.outcome);
       if (result.outcome.type === "started") {
@@ -432,7 +437,7 @@ function Composer({
     }
     setSending(false);
     await development.refreshSnapshot();
-    await onSettled();
+    await onSettled(result);
   };
 
   return (
@@ -479,6 +484,7 @@ function Composer({
       >
         {sending ? "Sending — awaiting proof…" : "Send direct message"}
       </Button>
+      {sendFailure === null ? null : <BodyText>Native send unavailable: {sendFailure}</BodyText>}
       <SendResult outcome={sendOutcome} />
     </Card>
   );
