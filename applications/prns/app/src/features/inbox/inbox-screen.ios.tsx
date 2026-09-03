@@ -597,9 +597,17 @@ function Measurement({
   }
   switch (outcome.type) {
     case "measured":
-      return <BodyText muted>Ready to send.</BodyText>;
+      return (
+        <BodyText muted>
+          {outcome.wireBytes} bytes used · {outcome.remainingBytes} bytes available
+        </BodyText>
+      );
     case "needsResource":
-      return <BodyText>This message is too large for direct delivery.</BodyText>;
+      return (
+        <BodyText>
+          {outcome.wireBytes} bytes used. This message is too large for direct delivery.
+        </BodyText>
+      );
     case "invalidMessage":
       return <BodyText>This message cannot be sent.</BodyText>;
     case "localNodeStopped":

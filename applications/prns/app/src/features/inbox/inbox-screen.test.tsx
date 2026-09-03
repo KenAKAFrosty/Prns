@@ -4,6 +4,7 @@ import type {
   LxmfMessage,
   LxmfMessageListOutcome,
   LxmfPeerSummary,
+  MeasureLxmfTextOutcome,
   SendDirectTextOutcome,
 } from "@prns-internal/expo";
 import { fireEvent, render, waitFor } from "@testing-library/react-native";
@@ -71,6 +72,7 @@ const mockSnapshot: DevelopmentNodeSnapshot = {
   lxmf: { state: "ready", inboundOverflowCount: 0n },
   controllerIdentityFingerprint: null,
   pairing: { type: "searching" },
+  pairingCandidates: [],
   pairedTargets: [],
   activeOperation: null,
   failure: null,
@@ -86,10 +88,12 @@ const mockListLxmfMessages = jest.fn(
     outcome: { type: "listed", messages: [mockMessage] },
   }),
 );
-const mockMeasureLxmfText = jest.fn(async () => ({
-  type: "outcome" as const,
-  outcome: { type: "measured" as const, wireBytes: 140, remainingBytes: 291 },
-}));
+const mockMeasureLxmfText = jest.fn(
+  async (): Promise<RuntimeCommandResult<MeasureLxmfTextOutcome>> => ({
+    type: "outcome",
+    outcome: { type: "measured", wireBytes: 140, remainingBytes: 291 },
+  }),
+);
 const mockSendDirectText = jest.fn(
   async (): Promise<RuntimeCommandResult<SendDirectTextOutcome>> => ({
     type: "outcome",
@@ -176,6 +180,10 @@ beforeEach(() => {
     type: "outcome",
     outcome: { type: "accepted", localRecordId: 2n },
   });
+  mockMeasureLxmfText.mockResolvedValue({
+    type: "outcome",
+    outcome: { type: "measured", wireBytes: 140, remainingBytes: 291 },
+  });
 });
 
 describe("durable LXMF screens", () => {
@@ -247,7 +255,7 @@ describe("durable LXMF screens", () => {
     fireEvent.changeText(screen.getByLabelText("Message title"), "Hello");
     fireEvent.changeText(screen.getByLabelText("Message"), "Proof please");
     await waitFor(() => {
-      expect(screen.getByText("Ready to send.")).toBeTruthy();
+      expect(screen.getByText("140 bytes used · 291 bytes available")).toBeTruthy();
     });
     fireEvent.press(screen.getByText("Send message"));
 
@@ -262,6 +270,23 @@ describe("durable LXMF screens", () => {
     expect(screen.queryByText(/^Delivered$/u)).toBeNull();
   });
 
+  test("shows the measured byte budget and blocks an oversized direct message", async () => {
+    mockMeasureLxmfText.mockResolvedValue({
+      type: "outcome",
+      outcome: { type: "needsResource", wireBytes: 432 },
+    });
+    const screen = render(<ConversationScreen destination={mockDestination} />);
+
+    fireEvent.changeText(screen.getByLabelText("Message"), "Too large");
+    expect(
+      await screen.findByText("432 bytes used. This message is too large for direct delivery."),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Send message" }).props.accessibilityState).toEqual(
+      expect.objectContaining({ disabled: true }),
+    );
+    expect(mockSendDirectText).not.toHaveBeenCalled();
+  });
+
   test("navigates from compose only after native durably accepts a visible record", async () => {
     const destination = Array.from(mockDestination, (byte) =>
       byte.toString(16).padStart(2, "0"),
@@ -271,7 +296,7 @@ describe("durable LXMF screens", () => {
     fireEvent.changeText(screen.getByLabelText("Message title"), "Hello");
     fireEvent.changeText(screen.getByLabelText("Message"), "Proof please");
     await waitFor(() => {
-      expect(screen.getByText("Ready to send.")).toBeTruthy();
+      expect(screen.getByText("140 bytes used · 291 bytes available")).toBeTruthy();
     });
     fireEvent.press(screen.getByText("Send message"));
 
@@ -295,7 +320,7 @@ describe("durable LXMF screens", () => {
 
     fireEvent.changeText(screen.getByLabelText("Message"), "No observed peer");
     await waitFor(() => {
-      expect(screen.getByText("Ready to send.")).toBeTruthy();
+      expect(screen.getByText("140 bytes used · 291 bytes available")).toBeTruthy();
     });
     fireEvent.press(screen.getByText("Send message"));
 
