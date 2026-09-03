@@ -11,7 +11,7 @@ describe("screen catalog", () => {
     expect(new Set(routeFiles).size).toBe(34);
   });
 
-  it("marks only the fourteen honest presentation slices as implemented", () => {
+  it("marks only the seventeen honest presentation slices as implemented", () => {
     expect(
       screenCatalog
         .filter(({ availability }) => availability === "implementedScaffold")
@@ -19,6 +19,9 @@ describe("screen catalog", () => {
     ).toEqual([
       "installation.onboarding",
       "installation.recovery",
+      "inbox.index",
+      "inbox.conversation",
+      "inbox.compose",
       "contacts.index",
       "contacts.entry",
       "contacts.add",
@@ -43,6 +46,7 @@ describe("screen catalog", () => {
       "more.index",
     ]);
     expect(navigationEntries("phone", false).map(({ id }) => id)).toEqual([
+      "inbox.index",
       "contacts.index",
       "nodes.index",
       "explore.index",

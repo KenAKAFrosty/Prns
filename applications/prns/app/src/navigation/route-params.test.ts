@@ -11,11 +11,12 @@ describe("route parameter validation", () => {
   it("requires one non-empty scalar and rejects repeated values", () => {
     const entry = screenById("inbox.conversation");
 
-    expect(routeParamsAreValid(entry, { conversationId: "conversation-1" })).toBe(true);
+    expect(routeParamsAreValid(entry, { destination: "00".repeat(16) })).toBe(true);
     expect(routeParamsAreValid(entry, {})).toBe(false);
-    expect(routeParamsAreValid(entry, { conversationId: "" })).toBe(false);
-    expect(routeParamsAreValid(entry, { conversationId: "   " })).toBe(false);
-    expect(routeParamsAreValid(entry, { conversationId: ["conversation-1"] })).toBe(false);
+    expect(routeParamsAreValid(entry, { destination: "not-a-destination" })).toBe(false);
+    expect(routeParamsAreValid(entry, { destination: "" })).toBe(false);
+    expect(routeParamsAreValid(entry, { destination: "   " })).toBe(false);
+    expect(routeParamsAreValid(entry, { destination: ["00".repeat(16)] })).toBe(false);
   });
 
   it("accepts only declared onboarding steps as a single optional value", () => {
@@ -53,15 +54,14 @@ describe("route parameter validation", () => {
     expect(routeParamsAreValid(entry, { destination: ["00".repeat(16)] })).toBe(false);
   });
 
-  it("accepts only complete union literals or prefixes", () => {
+  it("accepts only exact optional compose destinations and declared union values", () => {
     const compose = screenById("inbox.compose");
     const location = screenById("location.map");
 
     expect(routeParamsAreValid(compose, {})).toBe(true);
-    expect(routeParamsAreValid(compose, { target: "destination:abc" })).toBe(true);
-    expect(routeParamsAreValid(compose, { target: "directory:abc" })).toBe(true);
-    expect(routeParamsAreValid(compose, { target: "destination:" })).toBe(false);
-    expect(routeParamsAreValid(compose, { target: "identity:abc" })).toBe(false);
+    expect(routeParamsAreValid(compose, { destination: "00".repeat(16) })).toBe(true);
+    expect(routeParamsAreValid(compose, { destination: "destination:abc" })).toBe(false);
+    expect(routeParamsAreValid(compose, { destination: "00".repeat(15) })).toBe(false);
 
     expect(routeParamsAreValid(location, { focus: "local" })).toBe(true);
     expect(routeParamsAreValid(location, { focus: "directory:abc" })).toBe(true);

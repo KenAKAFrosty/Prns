@@ -23,10 +23,12 @@ describe("foundation scaffold screens", () => {
   });
 
   it("renders an honest placeholder without a synthetic result", () => {
-    const view = render(<NotYetImplementedScreen entry={screenById("inbox.index")} />);
+    const view = render(<NotYetImplementedScreen entry={screenById("inbox.message")} />);
 
     expect(view.getByText("Not yet implemented")).toBeTruthy();
-    expect(view.getByText("LXMF and mailbox services have not been added.")).toBeTruthy();
+    expect(
+      view.getByText("No generated message record or delivery evidence exists yet."),
+    ).toBeTruthy();
     expect(view.queryByText(/success/iu)).toBeNull();
     expect(view.getByRole("button", { name: "Go back" })).toBeTruthy();
   });

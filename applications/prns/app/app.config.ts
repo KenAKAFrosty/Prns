@@ -45,6 +45,8 @@ export default ({ config }: ConfigContext): ExpoConfig => {
         ...config.ios?.infoPlist,
         NSBluetoothAlwaysUsageDescription:
           "prns uses Bluetooth to connect to nearby Reticulum nodes.",
+        NSLocalNetworkUsageDescription:
+          "prns uses the local network for an explicitly configured development LXMF peer.",
       },
       supportsTablet: true,
     },

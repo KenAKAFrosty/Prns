@@ -2,12 +2,21 @@ import type {
   ContactMutationOutcome,
   DescribeRemoteControlTargetInput,
   DevelopmentNodeSnapshot,
+  DevelopmentRuntime,
   DevelopmentRuntimeFailure,
   DevelopmentRuntimeSession,
   InitiateRemoteControlPairingInput,
+  ListLxmfMessagesInput,
+  LxmfMessageListOutcome,
+  LxmfPeerListOutcome,
+  MeasureLxmfTextInput,
+  MeasureLxmfTextOutcome,
+  AnnounceLxmfOutcome,
   RemoteControlDescribeOutcome,
   RemoteControlPairingCommandOutcome,
   RemoteControlPairingDecisionInput,
+  SendDirectTextInput,
+  SendDirectTextOutcome,
 } from "@prns-internal/expo";
 import type { DestinationHash } from "personal-rns/contract";
 import { Effect, Exit, Scope } from "effect";
@@ -51,6 +60,17 @@ export type DevelopmentRuntimeView = {
   readonly saveObservedDestination: (
     destination: DestinationHash,
   ) => Promise<RuntimeCommandResult<ContactMutationOutcome>>;
+  readonly listLxmfPeers: () => Promise<RuntimeCommandResult<LxmfPeerListOutcome>>;
+  readonly listLxmfMessages: (
+    input: ListLxmfMessagesInput,
+  ) => Promise<RuntimeCommandResult<LxmfMessageListOutcome>>;
+  readonly announceLxmf: () => Promise<RuntimeCommandResult<AnnounceLxmfOutcome>>;
+  readonly measureLxmfText: (
+    input: MeasureLxmfTextInput,
+  ) => Promise<RuntimeCommandResult<MeasureLxmfTextOutcome>>;
+  readonly sendDirectText: (
+    input: SendDirectTextInput,
+  ) => Promise<RuntimeCommandResult<SendDirectTextOutcome>>;
 };
 
 type DevelopmentRuntimeProviderProps = PropsWithChildren<{
@@ -237,6 +257,47 @@ export function DevelopmentRuntimeProvider({
     [selectedProvider, unavailableResult],
   );
 
+  const runDirect = useCallback(
+    async <Outcome,>(
+      operation: (runtime: DevelopmentRuntime) => Promise<Outcome>,
+    ): Promise<RuntimeCommandResult<Outcome>> => {
+      if (!("runtime" in selectedProvider) || session.current === null) {
+        return unavailableResult();
+      }
+      try {
+        return { type: "outcome", outcome: await operation(selectedProvider.runtime) };
+      } catch (failure) {
+        return { type: "operationFailure", detail: formatFailure(failure) };
+      }
+    },
+    [selectedProvider, unavailableResult],
+  );
+
+  const listLxmfPeers = useCallback(
+    () => runDirect((runtime) => runtime.listLxmfPeers()),
+    [runDirect],
+  );
+
+  const listLxmfMessages = useCallback(
+    (input: ListLxmfMessagesInput) => runDirect((runtime) => runtime.listLxmfMessages(input)),
+    [runDirect],
+  );
+
+  const announceLxmf = useCallback(
+    () => runDirect((runtime) => runtime.announceLxmf()),
+    [runDirect],
+  );
+
+  const measureLxmfText = useCallback(
+    (input: MeasureLxmfTextInput) => runDirect((runtime) => runtime.measureLxmfText(input)),
+    [runDirect],
+  );
+
+  const sendDirectText = useCallback(
+    (input: SendDirectTextInput) => runDirect((runtime) => runtime.sendDirectText(input)),
+    [runDirect],
+  );
+
   const value = useMemo<DevelopmentRuntimeView>(
     () => ({
       availability: selectedProvider.availability,
@@ -250,6 +311,11 @@ export function DevelopmentRuntimeProvider({
       rejectPairing,
       describeTarget,
       saveObservedDestination,
+      listLxmfPeers,
+      listLxmfMessages,
+      announceLxmf,
+      measureLxmfText,
+      sendDirectText,
     }),
     [
       approvePairing,
@@ -261,6 +327,11 @@ export function DevelopmentRuntimeProvider({
       refreshSnapshot,
       rejectPairing,
       saveObservedDestination,
+      listLxmfPeers,
+      listLxmfMessages,
+      announceLxmf,
+      measureLxmfText,
+      sendDirectText,
       selectedProvider.availability,
       snapshot,
     ],

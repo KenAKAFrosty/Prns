@@ -73,6 +73,7 @@ function snapshot(revision: bigint, includeObservation = false): DevelopmentNode
         },
       },
     },
+    lxmf: { state: "ready", inboundOverflowCount: 0n },
     controllerIdentityFingerprint: null,
     pairing: { type: "searching" },
     pairedTargets: [],
@@ -105,6 +106,15 @@ function fakeProvider(
     deleteContact: async () => ({ type: "notFound" }),
     getContact: async () => ({ type: "notFound" }),
     listContacts: async () => ({ type: "listed", contacts: [] }),
+    listLxmfPeers: async () => ({ type: "listed", peers: [] }),
+    listLxmfMessages: async () => ({ type: "listed", messages: [] }),
+    announceLxmf: async () => ({ type: "announced" }),
+    measureLxmfText: async () => ({
+      type: "measured",
+      wireBytes: 113,
+      remainingBytes: 318,
+    }),
+    sendDirectText: async () => ({ type: "started", localRecordId: 1n }),
     stopDevelopmentNode: async () => {
       stop();
       return { type: "stopped" };
@@ -113,7 +123,7 @@ function fakeProvider(
     ...overrides,
   };
   const effectRuntime: EffectDevelopmentRuntime = {
-    startDevelopmentNode: Effect.promise(runtime.startDevelopmentNode),
+    startDevelopmentNode: (input) => Effect.promise(() => runtime.startDevelopmentNode(input)),
     readDevelopmentNodeSnapshot: Effect.promise(runtime.readDevelopmentNodeSnapshot),
     initiateRemoteControlPairing: (input) =>
       Effect.promise(() => runtime.initiateRemoteControlPairing(input)),

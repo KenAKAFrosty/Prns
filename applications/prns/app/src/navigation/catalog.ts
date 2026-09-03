@@ -11,6 +11,7 @@ type ScalarParam = {
   readonly kind: "scalar";
   readonly name: string;
   readonly required: boolean;
+  readonly format?: "destinationHash";
 };
 
 type EnumParam = {
@@ -106,9 +107,9 @@ export const screenCatalog = [
     phonePlacement: "Inbox tab root",
     widePlacement: "Inbox rail root",
     deepLink: "external-navigation",
-    availability: "notYetImplemented",
-    summary: "Read conversations and durable delivery state.",
-    limitation: "LXMF and mailbox services have not been added.",
+    availability: "implementedScaffold",
+    summary: "Read direct LXMF conversations from the running in-memory native service.",
+    limitation: "The native LXMF service is iOS-only and messages are cleared on restart.",
     backPath: "/inbox",
     params: noParams,
     phoneRootOrder: 0,
@@ -116,18 +117,18 @@ export const screenCatalog = [
   },
   {
     id: "inbox.conversation",
-    path: "/inbox/conversation/:conversationId",
-    routeFiles: ["app/(shell)/inbox/conversation/[conversationId].tsx"],
+    path: "/inbox/conversation/:destination",
+    routeFiles: ["app/(shell)/inbox/conversation/[destination].tsx"],
     label: "Conversation",
     section: "inbox",
     phonePlacement: "Push from Inbox",
     widePlacement: "Inbox detail pane",
     deepLink: "app-issued",
-    availability: "notYetImplemented",
-    summary: "Inspect messages for one conversation.",
-    limitation: "No generated conversation type or mailbox query exists yet.",
+    availability: "implementedScaffold",
+    summary: "Inspect in-memory messages and compose direct text for one destination.",
+    limitation: "Retry creates a new message; durable exact-wire retry begins in LXM3.",
     backPath: "/inbox",
-    params: [{ kind: "scalar", name: "conversationId", required: true }],
+    params: [{ kind: "scalar", name: "destination", required: true, format: "destinationHash" }],
   },
   {
     id: "inbox.message",
@@ -153,18 +154,11 @@ export const screenCatalog = [
     phonePlacement: "Full-screen composer",
     widePlacement: "Composer detail pane",
     deepLink: "external-navigation",
-    availability: "notYetImplemented",
-    summary: "Compose a direct LXMF message.",
-    limitation: "No send operation exists; this screen never simulates delivery.",
+    availability: "implementedScaffold",
+    summary: "Compose, measure, and proof-gate one direct LXMF text message.",
+    limitation: "Only the direct Link-packet carrier is implemented on iOS.",
     backPath: "/inbox",
-    params: [
-      {
-        kind: "union",
-        name: "target",
-        required: false,
-        prefixes: ["destination:", "directory:"],
-      },
-    ],
+    params: [{ kind: "scalar", name: "destination", required: false, format: "destinationHash" }],
   },
   {
     id: "contacts.index",
@@ -198,7 +192,7 @@ export const screenCatalog = [
     limitation:
       "Contacts have no synthetic entry IDs, merge history, or automatic network updates.",
     backPath: "/contacts",
-    params: [{ kind: "scalar", name: "destination", required: true }],
+    params: [{ kind: "scalar", name: "destination", required: true, format: "destinationHash" }],
   },
   {
     id: "contacts.add",
@@ -631,7 +625,7 @@ function isNonEmptySingle(value: string | string[] | undefined): value is string
 
 function valueMatches(rule: RouteParamRule, value: string): boolean {
   if (rule.kind === "scalar") {
-    return true;
+    return rule.format === "destinationHash" ? /^[0-9a-fA-F]{32}$/u.test(value) : true;
   }
   if (rule.kind === "enum") {
     return rule.values.includes(value);

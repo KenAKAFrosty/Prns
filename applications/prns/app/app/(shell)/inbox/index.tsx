@@ -1,7 +1,7 @@
 // route-id: inbox.index
 
-import { CatalogPlaceholderRoute } from "@/features/placeholder-screen";
+import { InboxScreen } from "@/features/inbox/inbox-screen";
 
 export default function InboxRoute() {
-  return <CatalogPlaceholderRoute screenId="inbox.index" />;
+  return <InboxScreen />;
 }

@@ -5,6 +5,8 @@ type JsonRecord = Readonly<Record<string, unknown>>;
 
 const appRoot = fileURLToPath(new URL("..", import.meta.url));
 const bluetoothUsageDescription = "prns uses Bluetooth to connect to nearby Reticulum nodes.";
+const localNetworkUsageDescription =
+  "prns uses the local network for an explicitly configured development LXMF peer.";
 
 function fail(message: string): never {
   throw new Error(`config:check: ${message}`);
@@ -58,6 +60,11 @@ function assertVariant(
       `${variant}.ios.infoPlist.NSBluetoothAlwaysUsageDescription must be the tracked product copy`,
     );
   }
+  if (infoPlist.NSLocalNetworkUsageDescription !== localNetworkUsageDescription) {
+    fail(
+      `${variant}.ios.infoPlist.NSLocalNetworkUsageDescription must be the tracked development fixture copy`,
+    );
+  }
   if (infoPlist.UIBackgroundModes !== undefined) {
     fail(`${variant}.ios.infoPlist must not claim Bluetooth background execution`);
   }
@@ -83,4 +90,6 @@ if (invalid.status === 0) {
   fail("PRNS_APP_VARIANT=preview must be rejected");
 }
 
-console.log("config:check: coordinates and foreground-only Bluetooth declaration are exact");
+console.log(
+  "config:check: coordinates, local-network fixture copy, and foreground-only declarations are exact",
+);
