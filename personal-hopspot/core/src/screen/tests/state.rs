@@ -290,6 +290,21 @@ fn remote_control_pairing_is_capability_gated_and_opens_then_cancels_from_the_sc
 }
 
 #[test]
+#[cfg(feature = "remote-control-pairing")]
+fn remote_control_pairing_menu_label_fits_the_display() {
+    let state = test_ui_state_with_remote_control_pairing();
+    let label = state.global_menu_item_label(GlobalMenuItem::PairRemoteControl);
+
+    assert_eq!(label, "Pair remote");
+    assert_eq!(menu_item_char_width(label), FONT_4X6_CHAR_W);
+    assert!(
+        menu_item_text_right(label) <= WIDTH,
+        "{label:?} ends at x={} beyond the {WIDTH}px display",
+        menu_item_text_right(label)
+    );
+}
+
+#[test]
 fn long_press_on_limits_opens_the_paged_limits_page() {
     let cards = test_cards::<4>(CardKind::Usb);
     let content = test_content(&cards);

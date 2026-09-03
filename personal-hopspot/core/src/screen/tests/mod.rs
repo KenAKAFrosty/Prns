@@ -35,8 +35,8 @@ use super::render::layout::{
 };
 use super::render::menus::lora::{LORA_DOT_X, LORA_EDITOR_TOP};
 use super::render::menus::{
-    draw_interface_menu, limits_row_drawable, limits_row_text, menu_item_text_right,
-    station_uplink_action_label,
+    draw_interface_menu, limits_row_drawable, limits_row_text, menu_item_char_width,
+    menu_item_text_right, station_uplink_action_label,
 };
 use super::render::metrics::{
     compact_numeric_width, draw_compact_number, fmt_activity_age, fmt_bytes, fmt_count,
