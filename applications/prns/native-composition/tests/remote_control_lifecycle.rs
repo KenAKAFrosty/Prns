@@ -355,12 +355,25 @@ async fn rejection_expiry_and_stale_decisions() {
         DurationMillis(1_000),
     )
     .await;
-    let expired_snapshot =
-        wait_for_snapshot("pairing attempt expires", EXCHANGE_TIMEOUT, |snapshot| {
-            matches!(snapshot.pairing, RemoteControlPairingState::Expired { .. })
-        })
-        .await;
-    assert!(expired_snapshot.active_operation.is_none());
+    // The target starts the shared attempt timeout before the controller receives
+    // the offer. At the boundary it may therefore retire the Link before the
+    // controller's own expiry wake fires; both events terminate the same attempt.
+    let terminal_snapshot = wait_for_snapshot(
+        "unapproved pairing attempt reaches an expiry terminal state",
+        EXCHANGE_TIMEOUT,
+        |snapshot| {
+            matches!(
+                snapshot.pairing,
+                RemoteControlPairingState::Expired { .. }
+                    | RemoteControlPairingState::Failed {
+                        stage: RemoteControlPairingFailureStage::Link,
+                        ..
+                    }
+            )
+        },
+    )
+    .await;
+    assert!(terminal_snapshot.active_operation.is_none());
     assert_links_retired(&target).await;
     assert!(matches!(
         app_reject(expired.id).await,
