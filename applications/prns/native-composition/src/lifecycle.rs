@@ -2295,10 +2295,12 @@ async fn run_actor_loop(
                         "The native actor lost its LXMF refresh authority.".to_owned(),
                     ));
                 }
-                retry_lxmf_health = refresh_running_lxmf_health(lxmf_service, snapshots).await?;
-                if retry_lxmf_health {
-                    lxmf_health_retry.reset();
-                }
+                refresh_running_lxmf_health_after_change(
+                    lxmf_service,
+                    snapshots,
+                    &mut retry_lxmf_health,
+                    &mut lxmf_health_retry,
+                ).await?;
             }
             _ = lxmf_health_retry.tick(), if retry_lxmf_health => {
                 retry_lxmf_health = refresh_running_lxmf_health(lxmf_service, snapshots).await?;
@@ -2514,6 +2516,25 @@ async fn refresh_running_lxmf_health(
             Err((DevelopmentNodeStopStage::Persistence, detail))
         }
     }
+}
+
+async fn refresh_running_lxmf_health_after_change(
+    service: &prns_lxmf::mailbox::DurableDirectLxmfService,
+    snapshots: &SnapshotStore,
+    retry_pending: &mut bool,
+    retry_timer: &mut tokio::time::Interval,
+) -> WorkerResult {
+    // A transient snapshot failure updates the service health and therefore
+    // feeds this watch lane. Once a delayed retry is armed, consume those hints
+    // without reading again or pushing the retry deadline forward.
+    if *retry_pending {
+        return Ok(());
+    }
+    *retry_pending = refresh_running_lxmf_health(service, snapshots).await?;
+    if *retry_pending {
+        retry_timer.reset();
+    }
+    Ok(())
 }
 
 fn lxmf_storage_failure_detail(
@@ -3034,6 +3055,7 @@ mod tests {
     struct TransientListFailureSubmitter {
         inner: Arc<dyn prns_lxmf::mailbox::MailboxSubmitter>,
         remaining_failures: std::sync::atomic::AtomicUsize,
+        list_submissions: std::sync::atomic::AtomicUsize,
     }
 
     impl prns_lxmf::mailbox::MailboxSubmitter for TransientListFailureSubmitter {
@@ -3043,6 +3065,7 @@ mod tests {
         ) -> prns_lxmf::mailbox::MailboxFuture<'_> {
             Box::pin(async move {
                 if matches!(&request, prns_lxmf::mailbox::MailboxRequest::List(_)) {
+                    self.list_submissions.fetch_add(1, Ordering::AcqRel);
                     let remaining = self.remaining_failures.fetch_update(
                         Ordering::AcqRel,
                         Ordering::Acquire,
@@ -4156,6 +4179,7 @@ mod tests {
         let submitter = Arc::new(TransientListFailureSubmitter {
             inner: owner.mailbox_submitter(),
             remaining_failures: std::sync::atomic::AtomicUsize::new(2),
+            list_submissions: std::sync::atomic::AtomicUsize::new(0),
         });
         let network = Arc::new(PendingProofNetwork::default());
         let (pending, _) = prns_lxmf::mailbox::DurableDirectLxmfService::prepare(local_identity);
@@ -4205,6 +4229,121 @@ mod tests {
             crate::contract::LxmfHealthState::Ready
         );
         assert_eq!(recovered.lxmf.inbound_overflow_count, U64String::from(0));
+        assert_eq!(recovered.failure, None);
+
+        service.stop().await.expect("the service stops promptly");
+        owner.close().expect("the owner closes after the service");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn delayed_mailbox_health_retry_coalesces_feedback_and_services_actor_input() {
+        let local_identity = prns_lxmf::direct::LocalLxmfIdentity::from_secret_bytes(
+            &[0x31; personal_rns::identity::IDENTITY_SECRET_KEY_LEN],
+        )
+        .expect("the fixed LXMF destination name is valid");
+        let root = tempfile::tempdir().expect("temporary application root");
+        let database_path = root.path().join("application.redb");
+        let owner = DevelopmentStoreOwner::open(root.path(), &database_path)
+            .expect("the application owner opens");
+        let submitter = Arc::new(TransientListFailureSubmitter {
+            inner: owner.mailbox_submitter(),
+            remaining_failures: std::sync::atomic::AtomicUsize::new(2),
+            list_submissions: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let network = Arc::new(PendingProofNetwork::default());
+        let (pending, _) = prns_lxmf::mailbox::DurableDirectLxmfService::prepare(local_identity);
+        let service = pending
+            .start(
+                network,
+                Arc::clone(&submitter) as Arc<dyn prns_lxmf::mailbox::MailboxSubmitter>,
+                Arc::new(prns_lxmf::mailbox::SystemMailboxClock),
+            )
+            .await
+            .expect("the test owns a Tokio runtime");
+        let snapshots = SnapshotStore::new();
+        snapshots.set_runtime(DevelopmentNodeRuntime::Running);
+        snapshots.set_local_host(running_host_state());
+        snapshots.refresh_lxmf(crate::contract::LxmfHealth {
+            state: crate::contract::LxmfHealthState::Ready,
+            inbound_overflow_count: U64String::from(7),
+        });
+        let mut refresh = service.subscribe();
+        let mut retry_timer = tokio::time::interval(LXMF_HEALTH_RETRY_DELAY);
+        retry_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut retry_pending = false;
+
+        refresh_running_lxmf_health_after_change(
+            &service,
+            &snapshots,
+            &mut retry_pending,
+            &mut retry_timer,
+        )
+        .await
+        .expect("a transient failure does not stop the actor");
+        assert!(retry_pending);
+        assert_eq!(submitter.list_submissions.load(Ordering::Acquire), 1);
+
+        let (actor_input, mut actor_commands) = tokio::sync::mpsc::channel(1);
+        actor_input
+            .send(())
+            .await
+            .expect("the command lane is open");
+        let mut command_processed = false;
+        for _ in 0..2 {
+            tokio::select! {
+                biased;
+                changed = refresh.changed() => {
+                    changed.expect("the service remains running");
+                    refresh_running_lxmf_health_after_change(
+                        &service,
+                        &snapshots,
+                        &mut retry_pending,
+                        &mut retry_timer,
+                    ).await.expect("feedback is coalesced");
+                }
+                command = actor_commands.recv() => {
+                    command_processed = command.is_some();
+                    break;
+                }
+            }
+        }
+        assert!(command_processed);
+        assert_eq!(submitter.list_submissions.load(Ordering::Acquire), 1);
+
+        tokio::time::advance(LXMF_HEALTH_RETRY_DELAY).await;
+        retry_timer.tick().await;
+        retry_pending = refresh_running_lxmf_health(&service, &snapshots)
+            .await
+            .expect("the unavailable retry remains nonfatal");
+        assert!(retry_pending);
+        assert_eq!(submitter.list_submissions.load(Ordering::Acquire), 2);
+        refresh
+            .changed()
+            .await
+            .expect("the service remains running");
+        refresh_running_lxmf_health_after_change(
+            &service,
+            &snapshots,
+            &mut retry_pending,
+            &mut retry_timer,
+        )
+        .await
+        .expect("retry feedback is coalesced");
+        assert_eq!(submitter.list_submissions.load(Ordering::Acquire), 2);
+
+        tokio::time::advance(LXMF_HEALTH_RETRY_DELAY).await;
+        retry_timer.tick().await;
+        retry_pending = refresh_running_lxmf_health(&service, &snapshots)
+            .await
+            .expect("the delayed retry recovers");
+        assert!(!retry_pending);
+        assert_eq!(submitter.list_submissions.load(Ordering::Acquire), 3);
+        let recovered = snapshots.read();
+        assert_eq!(recovered.runtime, DevelopmentNodeRuntime::Running);
+        assert_eq!(
+            recovered.lxmf.state,
+            crate::contract::LxmfHealthState::Ready
+        );
         assert_eq!(recovered.failure, None);
 
         service.stop().await.expect("the service stops promptly");
