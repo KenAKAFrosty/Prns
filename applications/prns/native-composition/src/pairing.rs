@@ -44,6 +44,7 @@ pub enum OwnedNodeEvent {
     },
     ControllerConfirmation(RemoteControlControllerPairingConfirmation),
     ControllerAuthorizationPersisted(RemoteControlPairingAttemptId),
+    ControllerAuthorizationPersistenceFailed(RemoteControlPairingAttemptId),
     ControllerExpired {
         attempt_id: Option<RemoteControlPairingAttemptId>,
     },
@@ -89,6 +90,11 @@ pub fn capture_event(event: PrnsEvent<'_>) -> Option<OwnedNodeEvent> {
         PrnsEvent::Message(Message::RemoteControlControllerPairingAuthorizationPersisted {
             attempt_id,
         }) => Some(OwnedNodeEvent::ControllerAuthorizationPersisted(attempt_id)),
+        PrnsEvent::Message(
+            Message::RemoteControlControllerPairingAuthorizationPersistenceFailed { attempt_id },
+        ) => Some(OwnedNodeEvent::ControllerAuthorizationPersistenceFailed(
+            attempt_id,
+        )),
         PrnsEvent::Message(Message::RemoteControlControllerPairingExpired { aborted }) => {
             Some(OwnedNodeEvent::ControllerExpired {
                 attempt_id: aborted_attempt_id(aborted),
@@ -196,6 +202,20 @@ pub fn apply_event(
             });
             return AppliedNodeEvent::TargetInventoryChanged;
         }
+        OwnedNodeEvent::ControllerAuthorizationPersistenceFailed(attempt_id) => {
+            let observed_attempt_id = attempt_id_string(attempt_id);
+            if controls.active_attempt_id.as_deref() != Some(observed_attempt_id.as_str()) {
+                return AppliedNodeEvent::None;
+            }
+            controls.clear_attempt();
+            snapshots.update(|snapshot| {
+                snapshot.pairing = RemoteControlPairingState::Failed {
+                    stage: crate::contract::RemoteControlPairingFailureStage::Persistence,
+                    detail: "The paired target authorization could not be persisted.".to_owned(),
+                };
+                snapshot.active_operation = None;
+            });
+        }
         OwnedNodeEvent::ControllerExpired { attempt_id } => {
             if !controls.matches_terminal(attempt_id) {
                 return AppliedNodeEvent::None;
@@ -249,6 +269,7 @@ pub fn apply_persistence_event(
         OwnedNodeEvent::PairingAvailable { .. }
         | OwnedNodeEvent::ControllerConfirmation(_)
         | OwnedNodeEvent::ControllerAuthorizationPersisted(_)
+        | OwnedNodeEvent::ControllerAuthorizationPersistenceFailed(_)
         | OwnedNodeEvent::ControllerExpired { .. }
         | OwnedNodeEvent::ControllerLinkClosed { .. } => {}
     }
@@ -469,6 +490,77 @@ mod tests {
     }
 
     #[test]
+    fn controller_persistence_failure_capture_only_changes_the_exact_active_attempt() {
+        let active_attempt = pairing_attempt_id(0x31);
+        let stale_attempt = pairing_attempt_id(0x41);
+        let active_attempt_id = attempt_id_string(active_attempt);
+        assert_ne!(attempt_id_string(stale_attempt), active_attempt_id);
+
+        let mut controls = PairingControls {
+            active_attempt_id: Some(active_attempt_id.clone()),
+            ..PairingControls::default()
+        };
+        let snapshots = SnapshotStore::new();
+        snapshots.set_runtime(crate::contract::DevelopmentNodeRuntime::Running);
+        snapshots.update(|snapshot| {
+            snapshot.pairing = RemoteControlPairingState::Persisting {
+                attempt_id: active_attempt_id.clone(),
+            };
+            snapshot.active_operation = Some(crate::contract::DevelopmentNodeOperation {
+                kind: crate::contract::DevelopmentNodeOperationKind::Pairing,
+                started_at_millis: U64String::from(7),
+            });
+        });
+
+        let stale = capture_event(PrnsEvent::Message(
+            Message::RemoteControlControllerPairingAuthorizationPersistenceFailed {
+                attempt_id: stale_attempt,
+            },
+        ))
+        .expect("typed persistence failure is captured");
+        assert_eq!(
+            apply_event(stale, &mut controls, &snapshots),
+            AppliedNodeEvent::None
+        );
+        assert_eq!(
+            controls.active_attempt_id.as_deref(),
+            Some(active_attempt_id.as_str())
+        );
+        let after_stale = snapshots.read();
+        assert!(matches!(
+            after_stale.pairing,
+            RemoteControlPairingState::Persisting { ref attempt_id }
+                if attempt_id == &active_attempt_id
+        ));
+        assert!(after_stale.active_operation.is_some());
+
+        let active = capture_event(PrnsEvent::Message(
+            Message::RemoteControlControllerPairingAuthorizationPersistenceFailed {
+                attempt_id: active_attempt,
+            },
+        ))
+        .expect("typed persistence failure is captured");
+        assert_eq!(
+            apply_event(active, &mut controls, &snapshots),
+            AppliedNodeEvent::None
+        );
+        assert!(controls.active_attempt_id.is_none());
+        let projected = snapshots.read();
+        assert_eq!(
+            projected.runtime,
+            crate::contract::DevelopmentNodeRuntime::Running
+        );
+        assert!(matches!(
+            projected.pairing,
+            RemoteControlPairingState::Failed {
+                stage: crate::contract::RemoteControlPairingFailureStage::Persistence,
+                ..
+            }
+        ));
+        assert!(projected.active_operation.is_none());
+    }
+
+    #[test]
     fn signed_candidate_expires_at_its_upstream_deadline() {
         let endpoint = personal_rns::remote_control::RemoteControlPairingIdentity::new(
             personal_rns::identity::IdentityHash::new([0x42; 16]),
@@ -504,5 +596,48 @@ mod tests {
             snapshots.read().pairing,
             RemoteControlPairingState::Expired { .. }
         ));
+    }
+
+    fn pairing_attempt_id(fill: u8) -> RemoteControlPairingAttemptId {
+        use personal_rns::identity::in_memory::InMemoryNodeIdentity;
+        use personal_rns::identity::vault::IdentitySecretKey;
+        use personal_rns::identity::{IdentityHash, IdentityPublicKeys, IdentitySigner};
+        use personal_rns::remote_control::{
+            RemoteControlControllerIdentity, RemoteControlPairingAttemptTimeout,
+            RemoteControlPairingBegin, RemoteControlPairingContext, RemoteControlPairingIdentity,
+            RemoteControlPairingInvitationCode, RemoteControlPairingPermissions,
+            RemoteControlPairingPreparedOffer,
+        };
+        use personal_rns::routing::links::LinkId;
+        use personal_rns::units::DurationMillis;
+
+        let controller_signer = InMemoryNodeIdentity::from_secret_key_bytes(
+            &IdentitySecretKey::new([fill; personal_rns::identity::IDENTITY_SECRET_KEY_LEN]),
+        );
+        let controller = RemoteControlControllerIdentity::new(IdentityPublicKeys {
+            encryption: controller_signer.encryption_public_key(),
+            signing: controller_signer.signing_public_key(),
+        });
+        let target_signer = InMemoryNodeIdentity::from_secret_key_bytes(&IdentitySecretKey::new(
+            [fill.wrapping_add(1); personal_rns::identity::IDENTITY_SECRET_KEY_LEN],
+        ));
+        let endpoint = RemoteControlPairingIdentity::new(IdentityHash::new([fill; 16])).endpoint();
+        let context =
+            RemoteControlPairingContext::new(endpoint, LinkId::new([fill.wrapping_add(2); 16]));
+        let begin = RemoteControlPairingBegin::new(
+            controller,
+            endpoint,
+            RemoteControlPairingInvitationCode::from_value(u32::from(fill)),
+        );
+        let prepared = RemoteControlPairingPreparedOffer::new(
+            &target_signer,
+            context,
+            &begin,
+            RemoteControlPairingPermissions::try_from(RemoteControlRequestSet::all())
+                .expect("nonempty permissions"),
+            RemoteControlPairingAttemptTimeout::try_from(DurationMillis(5_000))
+                .expect("valid attempt timeout"),
+        );
+        RemoteControlPairingAttemptId::from(prepared.transcript())
     }
 }

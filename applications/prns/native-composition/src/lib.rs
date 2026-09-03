@@ -10,3 +10,12 @@ mod node;
 mod pairing;
 mod remote_control;
 mod snapshot;
+
+#[cfg(feature = "host-test")]
+#[doc(hidden)]
+pub mod host_test {
+    pub use crate::lifecycle::{
+        approve, create_generated_identity, describe, initiate, reject, snapshot, start_configured,
+        stop,
+    };
+}
