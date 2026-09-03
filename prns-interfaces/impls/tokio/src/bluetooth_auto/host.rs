@@ -44,30 +44,91 @@ impl AutoBle {
     pub async fn prepare(
         identity: BleIdentity,
     ) -> Result<PreparedAutoBle, prns_ffi::bluetooth_auto::macos::MacosBleError> {
-        let backend = prns_ffi::bluetooth_auto::macos::MacosBleBackend::prepare(identity).await?;
-        Ok(PreparedAutoBle {
+        let manager_preparation = AppleManagerPreparation::RestorationAware;
+        let backend = manager_preparation.prepare(identity).await?;
+        Ok(PreparedAutoBle::new(
             identity,
-            policy: prns_runtime::interfaces::bluetooth_auto::defaults_for_bitrate(
-                prns_runtime::interfaces::bluetooth_auto::BLE_BITRATE_GUESS_BPS,
-            )
-            .configured(ConfiguredInterfacePolicy::default()),
-            status: BluetoothAutoStatus::new(),
-            backend: Some(backend),
-        })
+            manager_preparation,
+            Some(backend),
+        ))
+    }
+
+    /// Creates foreground-only CoreBluetooth managers immediately while leaving radio
+    /// authorization and service readiness to the attached asynchronous supervisor.
+    ///
+    /// This path does not opt into CoreBluetooth state restoration. The selected preparation mode
+    /// is retained for every later readiness retry.
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub async fn prepare_foreground(
+        identity: BleIdentity,
+    ) -> Result<PreparedAutoBle, prns_ffi::bluetooth_auto::macos::MacosBleError> {
+        let manager_preparation = AppleManagerPreparation::ForegroundOnly;
+        let backend = manager_preparation.prepare(identity).await?;
+        Ok(PreparedAutoBle::new(
+            identity,
+            manager_preparation,
+            Some(backend),
+        ))
     }
 
     /// Produces a failed-but-supervised Bluetooth LE attachment when native manager preparation itself
-    /// cannot be started. The core node and every other transport remain available.
+    /// cannot be started. Retries retain the restoration-aware behavior of [`Self::prepare`]. The
+    /// core node and every other transport remain available.
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     pub fn unavailable(identity: BleIdentity) -> PreparedAutoBle {
-        PreparedAutoBle {
+        PreparedAutoBle::new(identity, AppleManagerPreparation::RestorationAware, None)
+    }
+
+    /// Produces a failed-but-supervised foreground-only Bluetooth LE attachment when native
+    /// manager preparation itself cannot be started. The core node and every other transport
+    /// remain available, and retries never opt into state restoration.
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub fn unavailable_foreground(identity: BleIdentity) -> PreparedAutoBle {
+        PreparedAutoBle::new(identity, AppleManagerPreparation::ForegroundOnly, None)
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AppleManagerPreparation {
+    RestorationAware,
+    ForegroundOnly,
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+impl AppleManagerPreparation {
+    async fn prepare(
+        self,
+        identity: BleIdentity,
+    ) -> Result<
+        prns_ffi::bluetooth_auto::macos::PreparedMacosBleBackend,
+        prns_ffi::bluetooth_auto::macos::MacosBleError,
+    > {
+        use prns_ffi::bluetooth_auto::macos::MacosBleBackend;
+
+        match self {
+            Self::RestorationAware => MacosBleBackend::prepare(identity).await,
+            Self::ForegroundOnly => MacosBleBackend::prepare_foreground(identity).await,
+        }
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+impl PreparedAutoBle {
+    fn new(
+        identity: BleIdentity,
+        manager_preparation: AppleManagerPreparation,
+        backend: Option<prns_ffi::bluetooth_auto::macos::PreparedMacosBleBackend>,
+    ) -> Self {
+        Self {
             identity,
             policy: prns_runtime::interfaces::bluetooth_auto::defaults_for_bitrate(
                 prns_runtime::interfaces::bluetooth_auto::BLE_BITRATE_GUESS_BPS,
             )
             .configured(ConfiguredInterfacePolicy::default()),
             status: BluetoothAutoStatus::new(),
-            backend: None,
+            manager_preparation,
+            backend,
         }
     }
 }
@@ -84,6 +145,7 @@ pub struct PreparedAutoBle {
     identity: BleIdentity,
     policy: EffectiveInterfacePolicy,
     status: BluetoothAutoStatus,
+    manager_preparation: AppleManagerPreparation,
     backend: Option<prns_ffi::bluetooth_auto::macos::PreparedMacosBleBackend>,
 }
 
@@ -167,6 +229,7 @@ impl Attachable for PreparedAutoBle {
             identity: self.identity,
             policy: self.policy,
             status: self.status,
+            manager_preparation: self.manager_preparation,
             backend: self.backend,
         });
         AttachedBle { status }
@@ -184,6 +247,7 @@ impl Attachable for PreparedAutoBle {
                 identity: self.identity,
                 policy: self.policy,
                 status: self.status,
+                manager_preparation: self.manager_preparation,
                 backend: self.backend,
             },
             ifac,
@@ -198,6 +262,7 @@ struct PreparedPlatformBluetooth {
     identity: BleIdentity,
     policy: EffectiveInterfacePolicy,
     status: BluetoothAutoStatus,
+    manager_preparation: AppleManagerPreparation,
     backend: Option<prns_ffi::bluetooth_auto::macos::PreparedMacosBleBackend>,
 }
 
@@ -232,6 +297,7 @@ impl InterfaceSupervisor for PreparedPlatformBluetooth {
             self.identity,
             self.status,
             self.policy,
+            self.manager_preparation,
             self.backend,
         )
         .await;
@@ -244,6 +310,7 @@ async fn run_prepared_platform_bluetooth(
     ble_identity: BleIdentity,
     status: BluetoothAutoStatus,
     policy: EffectiveInterfacePolicy,
+    manager_preparation: AppleManagerPreparation,
     backend: Option<prns_ffi::bluetooth_auto::macos::PreparedMacosBleBackend>,
 ) {
     use super::BluetoothAuto;
@@ -256,7 +323,7 @@ async fn run_prepared_platform_bluetooth(
     loop {
         let candidate = match prepared.take() {
             Some(backend) => backend,
-            None => match MacosBleBackend::prepare(ble_identity).await {
+            None => match manager_preparation.prepare(ble_identity).await {
                 Ok(backend) => backend,
                 Err(error) => {
                     status.mark_failed(Some("Bluetooth native manager unavailable"));
@@ -563,6 +630,25 @@ mod tests {
         ManuallyAttached, NoPersistence, PreConfiguredDestination, PrnsNode, PrnsNodeRecipe,
     };
     use prns_runtime::storage::GrowableHeap;
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    #[test]
+    fn unavailable_preparation_retains_the_selected_retry_mode() {
+        let identity = BleIdentity::new([0x30; 16]);
+        let foreground = AutoBle::unavailable_foreground(identity);
+        assert_eq!(
+            foreground.manager_preparation,
+            AppleManagerPreparation::ForegroundOnly
+        );
+        assert!(foreground.backend.is_none());
+
+        let restoration_aware = AutoBle::unavailable(identity);
+        assert_eq!(
+            restoration_aware.manager_preparation,
+            AppleManagerPreparation::RestorationAware
+        );
+        assert!(restoration_aware.backend.is_none());
+    }
 
     #[test]
     fn auto_ble_registers_before_platform_backend_initialization() {
