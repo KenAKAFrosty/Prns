@@ -11,35 +11,30 @@ import time
 import LXMF
 import RNS
 
+from tcp_fixture import environment_listen_ip, server_configuration
+
 
 EXPECTED_FROM_RUST = b"rust-to-python"
 SENT_FROM_PYTHON = b"python-to-rust"
 PEER_SECRET = bytes([0x52]) * 64
 
 
-def configuration(port: int) -> str:
-    return (
-        "[reticulum]\n"
-        "enable_transport = No\n"
-        "share_instance = No\n"
-        "panic_on_interface_error = No\n"
-        "[logging]\n"
-        "loglevel = 2\n"
-        "[interfaces]\n"
-        "[[LXMF TCP Server]]\n"
-        "type = TCPServerInterface\n"
-        "enabled = Yes\n"
-        "listen_ip = 127.0.0.1\n"
-        f"listen_port = {port}\n"
-    )
-
-
 def main() -> int:
     port = int(os.environ["PRNS_LXMF_TCP_PORT"])
+    listen_ip = environment_listen_ip(os.environ)
     config_dir = pathlib.Path(os.environ["PRNS_LXMF_CONFIG_DIR"])
     config_dir.mkdir(parents=True, exist_ok=True)
-    config_dir.joinpath("config").write_text(configuration(port), encoding="utf-8")
+    config_dir.joinpath("config").write_text(
+        server_configuration(port, listen_ip), encoding="utf-8"
+    )
     loglevel = int(os.environ.get("PRNS_LXMF_PYTHON_LOGLEVEL", RNS.LOG_ERROR))
+    exchange_timeout_seconds = float(
+        os.environ.get("PRNS_LXMF_EXCHANGE_TIMEOUT_SECONDS", "45")
+    )
+    if not 1 <= exchange_timeout_seconds <= 3600:
+        raise RuntimeError(
+            "PRNS_LXMF_EXCHANGE_TIMEOUT_SECONDS must be from 1 through 3600"
+        )
     RNS.Reticulum(configdir=str(config_dir), loglevel=loglevel)
 
     identity = RNS.Identity.from_bytes(PEER_SECRET)
@@ -104,7 +99,7 @@ def main() -> int:
 
     RNS.Transport.register_announce_handler(RustDeliverySeeker())
     print(f"PINNED_PYTHON_LXMF_UP {delivery.hash.hex()}", flush=True)
-    deadline = time.time() + 45
+    deadline = time.time() + exchange_timeout_seconds
     last_announce = 0.0
     last_progress = 0.0
     while time.time() < deadline:

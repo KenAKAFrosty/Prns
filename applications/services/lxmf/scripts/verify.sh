@@ -11,6 +11,7 @@ requirements="${repository_root}/applications/services/lxmf-wire/interop/python/
 vector_generator="${repository_root}/applications/services/lxmf-wire/interop/python/generate_lxmf_1_1_0_vectors.py"
 vector_tests="${repository_root}/applications/services/lxmf-wire/interop/python"
 live_harness="${repository_root}/applications/services/lxmf/interop/python/run_live_tcp_lxmf.py"
+live_fixture_tests="${repository_root}/applications/services/lxmf/interop/python"
 
 if [[ ! -x "${lxmf_venv}/bin/python" ]]; then
   if command -v uv >/dev/null 2>&1; then
@@ -68,6 +69,10 @@ cargo clippy --locked \
 "${lxmf_venv}/bin/python" "${vector_generator}" --check
 "${lxmf_venv}/bin/python" -m unittest discover \
   --start-directory "${vector_tests}" \
+  --pattern 'test_*.py' \
+  --verbose
+"${lxmf_venv}/bin/python" -m unittest discover \
+  --start-directory "${live_fixture_tests}" \
   --pattern 'test_*.py' \
   --verbose
 "${lxmf_venv}/bin/python" "${live_harness}"

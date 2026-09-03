@@ -11,6 +11,8 @@ import tempfile
 import time
 from pathlib import Path
 
+from tcp_fixture import DEFAULT_LISTEN_IP, LISTEN_IP_ENV, WILDCARD_OPT_IN_ENV
+
 
 ROOT = Path(__file__).resolve().parents[5]
 PEER = Path(__file__).with_name("live_tcp_lxmf_peer.py")
@@ -79,6 +81,8 @@ def main() -> int:
         environment["PYTHONIOENCODING"] = "utf-8:strict"
         environment["PRNS_LXMF_TCP_PORT"] = str(port)
         environment["PRNS_LXMF_CONFIG_DIR"] = str(work / "rns")
+        environment[LISTEN_IP_ENV] = DEFAULT_LISTEN_IP
+        environment.pop(WILDCARD_OPT_IN_ENV, None)
         try:
             with python_log.open("wb") as output:
                 python_process = subprocess.Popen(
