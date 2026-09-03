@@ -154,6 +154,21 @@ public final class PrnsAppModule: Module {
       }
     }.runOnQueue(Self.nativeQueue)
 
+    #if targetEnvironment(simulator)
+    OnCreate {
+      guard ProcessInfo.processInfo.environment["PRNS_IOS_NATIVE_SMOKE"] == "1" else {
+        return
+      }
+      Self.nativeQueue.async(flags: .barrier) {
+        do {
+          try Self.runSimulatorLifecycleSmoke()
+        } catch {
+          Self.writeSimulatorSmokeMarker("PRNS_IOS_NATIVE_SMOKE_FAILED detail=\(error)")
+        }
+      }
+    }
+    #endif
+
     OnDestroy {
       Self.stopForTeardown()
     }
@@ -260,6 +275,146 @@ public final class PrnsAppModule: Module {
     }
     return json
   }
+
+  #if targetEnvironment(simulator)
+  private static func runSimulatorLifecycleSmoke() throws {
+    let fileManager = FileManager.default
+    let temporaryRoot = fileManager.temporaryDirectory
+      .appendingPathComponent("prns-native-smoke-\(UUID().uuidString)", isDirectory: true)
+    let storageURL = temporaryRoot
+      .appendingPathComponent("prns", isDirectory: true)
+      .appendingPathComponent("development", isDirectory: true)
+    try fileManager.createDirectory(at: storageURL, withIntermediateDirectories: true)
+    defer {
+      try? fileManager.removeItem(at: temporaryRoot)
+    }
+
+    let contract = try contractFingerprint()
+    let hostContract = try hostContractFingerprint()
+    guard !contract.isEmpty, !hostContract.isEmpty else {
+      throw PrnsAppException("Native contract fingerprints must not be empty.")
+    }
+    let identity = try withUtf8Bytes(storageURL.path) { pointer, count in
+      try consume(prns_app_create_generated_identity(pointer, count))
+    }
+    try requireTag(identity, operation: "identity", expected: "created")
+
+    let startInput = #"{"developmentTcpTarget":null}"#
+    for generation in 1 ... 2 {
+      let started = try invokePathJSON(
+        startInput,
+        storageURL: storageURL,
+        operation: prns_app_start
+      )
+      try requireTag(started, operation: "start \(generation)", expected: "started")
+
+      let snapshotStartedAt = Date()
+      let firstSnapshot = try consume(prns_app_snapshot())
+      let secondSnapshot = try consume(prns_app_snapshot())
+      guard Date().timeIntervalSince(snapshotStartedAt) < 5 else {
+        throw PrnsAppException("Native snapshot reads exceeded the simulator smoke bound.")
+      }
+      try requireField(
+        firstSnapshot,
+        operation: "snapshot \(generation).1",
+        key: "runtime",
+        expected: "running"
+      )
+      try requireField(
+        secondSnapshot,
+        operation: "snapshot \(generation).2",
+        key: "runtime",
+        expected: "running"
+      )
+
+      let stopped = try consume(prns_app_stop())
+      try requireTag(stopped, operation: "stop \(generation)", expected: "stopped")
+    }
+
+    let bluetoothIdentity = storageURL
+      .appendingPathComponent("identities", isDirectory: true)
+      .appendingPathComponent("bluetooth-auto.identity")
+    try Data(repeating: 0, count: 40).write(to: bluetoothIdentity)
+    let failedStart = try invokePathJSON(
+      startInput,
+      storageURL: storageURL,
+      operation: prns_app_start
+    )
+    try requireTag(failedStart, operation: "malformed identity start", expected: "failed")
+    try requireField(
+      failedStart,
+      operation: "malformed identity start",
+      key: "stage",
+      expected: "identity"
+    )
+
+    let failedSnapshot = try consume(prns_app_snapshot())
+    try requireField(
+      failedSnapshot,
+      operation: "failed startup snapshot",
+      key: "runtime",
+      expected: "failed"
+    )
+    let reset = try withUtf8Bytes(storageURL.path) { pointer, count in
+      try consume(prns_app_reset(pointer, count))
+    }
+    try requireTag(reset, operation: "failed startup reset", expected: "alreadyStopped")
+    guard !fileManager.fileExists(atPath: storageURL.path) else {
+      throw PrnsAppException("Simulator smoke storage survived reset.")
+    }
+
+    writeSimulatorSmokeMarker(
+      "PRNS_IOS_NATIVE_SMOKE_OK contract=\(contract) starts=2 snapshots=5 stops=2 cleanup=reset"
+    )
+  }
+
+  private static func invokePathJSON(
+    _ inputJSON: String,
+    storageURL: URL,
+    operation: (
+      UnsafePointer<UInt8>?,
+      Int,
+      UnsafePointer<UInt8>?,
+      Int
+    ) -> PrnsAppBytes
+  ) throws -> String {
+    try withUtf8Bytes(storageURL.path) { pathPointer, pathCount in
+      try withUtf8Bytes(inputJSON) { inputPointer, inputCount in
+        try consume(operation(pathPointer, pathCount, inputPointer, inputCount))
+      }
+    }
+  }
+
+  private static func requireTag(
+    _ json: String,
+    operation: String,
+    expected: String
+  ) throws {
+    try requireField(json, operation: operation, key: "type", expected: expected)
+  }
+
+  private static func requireField(
+    _ json: String,
+    operation: String,
+    key: String,
+    expected: String
+  ) throws {
+    guard
+      let data = json.data(using: .utf8),
+      let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+      object[key] as? String == expected
+    else {
+      throw PrnsAppException("\(operation) did not return \(key)=\(expected).")
+    }
+  }
+
+  private static func writeSimulatorSmokeMarker(_ marker: String) {
+    guard let data = "\(marker)\n".data(using: .utf8) else {
+      return
+    }
+    FileHandle.standardError.write(data)
+  }
+  #endif
 
   private static func stopForTeardown() {
     nativeQueue.sync(flags: .barrier) {

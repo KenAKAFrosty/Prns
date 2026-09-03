@@ -83,6 +83,11 @@ assert.match(
   /"\$\{PODS_CONFIGURATION_BUILD_DIR\}"/,
   "the app target and Rust build phase must share one archive directory",
 );
+assert.match(
+  swift,
+  /PRNS_IOS_NATIVE_SMOKE_OK contract=.*starts=2 snapshots=5 stops=2 cleanup=reset/,
+  "the named simulator gate must exercise the real native lifecycle and cleanup",
+);
 
 console.log(
   "ios:check: concurrent native calls, barrier teardown, ABI, storage, and linkage are exact",

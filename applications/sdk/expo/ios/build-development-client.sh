@@ -10,6 +10,7 @@ INFO_PLIST="${IOS_DIRECTORY}/prnsdev/Info.plist"
 WORKSPACE="${IOS_DIRECTORY}/prnsdev.xcworkspace"
 SCHEME="prnsdev"
 DERIVED_DATA="${PRNS_IOS_DERIVED_DATA:-${APPLICATIONS_DIRECTORY}/target/ios-development-client}"
+METRO_PORT="${PRNS_IOS_METRO_PORT:-8088}"
 BLUETOOTH_USAGE="prns uses Bluetooth to connect to nearby Reticulum nodes."
 LOCAL_NETWORK_USAGE="prns uses the local network for an explicitly configured development LXMF peer."
 
@@ -23,10 +24,13 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 0
 fi
 
-for executable in xcodebuild xcrun plutil; do
+for executable in curl node xcodebuild xcrun plutil; do
   command -v "${executable}" >/dev/null || fail "${executable} is required"
 done
 [[ -x "${EXPO_EXECUTABLE}" ]] || fail "run npm ci in ${APPLICATIONS_DIRECTORY} first"
+[[ "${METRO_PORT}" =~ ^[0-9]+$ ]] || fail "PRNS_IOS_METRO_PORT must be an integer"
+((METRO_PORT >= 1024 && METRO_PORT <= 65535)) ||
+  fail "PRNS_IOS_METRO_PORT must be from 1024 through 65535"
 
 POD_EXECUTABLE="${PRNS_POD_EXECUTABLE:-$(command -v pod || true)}"
 [[ -n "${POD_EXECUTABLE}" ]] || fail "CocoaPods is required"
@@ -92,6 +96,7 @@ env -u LIBRARY_PATH xcodebuild -quiet \
   -destination "${DESTINATION}" \
   -derivedDataPath "${DERIVED_DATA}" \
   CODE_SIGNING_ALLOWED=NO \
+  RCT_METRO_PORT="${METRO_PORT}" \
   build
 
 APP_BUNDLE="${DERIVED_DATA}/Build/Products/Debug-iphonesimulator/prnsdev.app"
@@ -105,6 +110,76 @@ xcrun simctl boot "${SIMULATOR_ID}" 2>/dev/null || true
 xcrun simctl bootstatus "${SIMULATOR_ID}" -b
 xcrun simctl terminate "${SIMULATOR_ID}" rs.reticulum.prns.dev 2>/dev/null || true
 xcrun simctl install "${SIMULATOR_ID}" "${APP_BUNDLE}"
-xcrun simctl launch "${SIMULATOR_ID}" rs.reticulum.prns.dev
 
+SMOKE_LOG_DIRECTORY="$(mktemp -d "${TMPDIR:-/tmp}/prns-ios-native-smoke.XXXXXX")"
+METRO_LOG="${SMOKE_LOG_DIRECTORY}/metro.log"
+SMOKE_STDOUT="${SMOKE_LOG_DIRECTORY}/app.stdout"
+SMOKE_STDERR="${SMOKE_LOG_DIRECTORY}/app.stderr"
+METRO_PID=""
+LAUNCH_PID=""
+cleanup() {
+  if [[ -n "${LAUNCH_PID}" ]]; then
+    kill "${LAUNCH_PID}" 2>/dev/null || true
+    wait "${LAUNCH_PID}" 2>/dev/null || true
+  fi
+  if [[ -n "${METRO_PID}" ]]; then
+    kill "${METRO_PID}" 2>/dev/null || true
+    wait "${METRO_PID}" 2>/dev/null || true
+  fi
+  rm -f "${METRO_LOG}" "${SMOKE_STDOUT}" "${SMOKE_STDERR}"
+  rmdir "${SMOKE_LOG_DIRECTORY}" 2>/dev/null || true
+}
+trap cleanup EXIT
+
+echo "build-development-client.sh: starting isolated Metro on port ${METRO_PORT}"
+(
+  cd "${APP_DIRECTORY}"
+  exec env CI=1 "${EXPO_EXECUTABLE}" start --localhost --port "${METRO_PORT}"
+) >"${METRO_LOG}" 2>&1 &
+METRO_PID="$!"
+metro_ready=false
+for _attempt in {1..30}; do
+  if curl --fail --silent "http://localhost:${METRO_PORT}/status" | grep -Fq "packager-status:running"; then
+    metro_ready=true
+    break
+  fi
+  if ! kill -0 "${METRO_PID}" 2>/dev/null; then
+    tail -80 "${METRO_LOG}" >&2 || true
+    fail "isolated Metro stopped before becoming ready"
+  fi
+  sleep 1
+done
+if [[ "${metro_ready}" != true ]]; then
+  tail -80 "${METRO_LOG}" >&2 || true
+  fail "isolated Metro did not become ready"
+fi
+
+SIMCTL_CHILD_PRNS_IOS_NATIVE_SMOKE=1 xcrun simctl launch \
+  --terminate-running-process \
+  --console \
+  "${SIMULATOR_ID}" \
+  rs.reticulum.prns.dev >"${SMOKE_STDOUT}" 2>"${SMOKE_STDERR}" &
+LAUNCH_PID="$!"
+
+smoke_passed=false
+for _attempt in {1..30}; do
+  if grep -Fq "PRNS_IOS_NATIVE_SMOKE_OK" "${SMOKE_STDOUT}" "${SMOKE_STDERR}" 2>/dev/null; then
+    smoke_passed=true
+    break
+  fi
+  if grep -Fq "PRNS_IOS_NATIVE_SMOKE_FAILED" "${SMOKE_STDOUT}" "${SMOKE_STDERR}" 2>/dev/null; then
+    break
+  fi
+  if ! kill -0 "${LAUNCH_PID}" 2>/dev/null; then
+    break
+  fi
+  sleep 1
+done
+if [[ "${smoke_passed}" != true ]]; then
+  tail -80 "${SMOKE_STDOUT}" "${SMOKE_STDERR}" >&2 || true
+  fail "the simulator native lifecycle smoke did not pass"
+fi
+
+SMOKE_MARKER="$(grep -F "PRNS_IOS_NATIVE_SMOKE_OK" "${SMOKE_STDOUT}" "${SMOKE_STDERR}" | tail -1)"
+echo "${SMOKE_MARKER}"
 echo "IOS_DEVELOPMENT_CLIENT_OK app=${APP_BUNDLE} simulator=${SIMULATOR_ID} name=${SIMULATOR_NAME}"
