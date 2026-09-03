@@ -53,6 +53,26 @@ fn settle_forwards_a_settlement_nobody_awaits() {
     );
 }
 
+#[test]
+fn controller_pairing_persistence_failure_reaches_the_application_lane() {
+    let mut delivery = JournalDelivery::default();
+    let attempt_id =
+        crate::remote_control::RemoteControlPairingAttemptId::from_test_transcript_digest_bytes(
+            [0xA3; 32],
+        );
+
+    let forwarded = delivery.route(
+        Journaled::RemoteControlControllerPairingAuthorizationPersistenceFailed { attempt_id },
+    );
+
+    assert!(matches!(
+        forwarded,
+        Some(Journaled::RemoteControlControllerPairingAuthorizationPersistenceFailed {
+            attempt_id: observed,
+        }) if observed == attempt_id
+    ));
+}
+
 const RES_LINK: LinkId = LinkId::new([0x44; 16]);
 
 fn resource_delivery() -> (JournalDelivery, mpsc::UnboundedReceiver<ResourceInbound>) {

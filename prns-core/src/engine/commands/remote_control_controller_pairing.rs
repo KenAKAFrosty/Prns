@@ -922,12 +922,23 @@ mod tests {
         packed
     }
 
-    fn execute(
+    #[derive(Debug, Default, PartialEq, Eq)]
+    struct ControllerPairingAuthorizationPersistenceEvents {
+        persisted: std::vec::Vec<RemoteControlPairingAttemptId>,
+        failed: std::vec::Vec<RemoteControlPairingAttemptId>,
+    }
+
+    fn execute_observing_controller_pairing_persistence(
         engine: &mut EngineState<TestStorageLayout>,
         command: PrnsCommand,
         now: InstantMillis,
-    ) -> (Settlement, WakeSchedules) {
+    ) -> (
+        Settlement,
+        WakeSchedules,
+        ControllerPairingAuthorizationPersistenceEvents,
+    ) {
         let mut settled = None;
+        let mut persistence_events = ControllerPairingAuthorizationPersistenceEvents::default();
         let schedules = engine.ingest_command_into(
             IssuedCommand {
                 id: CommandId(0xC1),
@@ -941,12 +952,30 @@ mod tests {
                     id: CommandId(0xC1),
                     settlement,
                 }) => settled = Some(settlement),
+                EngineReaction::Journaled(
+                    Journaled::RemoteControlControllerPairingAuthorizationPersisted { attempt_id },
+                ) => persistence_events.persisted.push(attempt_id),
+                EngineReaction::Journaled(
+                    Journaled::RemoteControlControllerPairingAuthorizationPersistenceFailed {
+                        attempt_id,
+                    },
+                ) => persistence_events.failed.push(attempt_id),
                 EngineReaction::Journaled(Journaled::CommandSettled { .. })
                 | EngineReaction::Journaled(_)
                 | EngineReaction::Directive(_) => {}
             },
         );
-        (settled.unwrap(), schedules)
+        (settled.unwrap(), schedules, persistence_events)
+    }
+
+    fn execute(
+        engine: &mut EngineState<TestStorageLayout>,
+        command: PrnsCommand,
+        now: InstantMillis,
+    ) -> (Settlement, WakeSchedules) {
+        let (settlement, schedules, _) =
+            execute_observing_controller_pairing_persistence(engine, command, now);
+        (settlement, schedules)
     }
 
     fn dispatch_begin_request(
@@ -1492,8 +1521,12 @@ mod tests {
             persistence: RemoteControlControllerPairingPersistence::Persisted,
         };
 
-        let (settlement, schedules) =
-            execute(&mut engine, command.into_command(), InstantMillis(4_000));
+        let (settlement, schedules, persistence_events) =
+            execute_observing_controller_pairing_persistence(
+                &mut engine,
+                command.into_command(),
+                InstantMillis(4_000),
+            );
         let Settlement::SettleRemoteControlControllerPairingPersistence(Ok(
             RemoteControlControllerPairingFinalization::Completed {
                 attempt_id: completed,
@@ -1514,6 +1547,13 @@ mod tests {
             RemoteControlControllerPairingView::Idle,
         );
         assert_eq!(schedules.remote_control_pairing, WakeSchedule::Idle);
+        assert_eq!(
+            persistence_events,
+            ControllerPairingAuthorizationPersistenceEvents {
+                persisted: std::vec![attempt_id],
+                failed: std::vec![],
+            },
+        );
 
         let (repeated, repeated_schedules) =
             execute(&mut engine, command.into_command(), InstantMillis(4_001));
@@ -1536,15 +1576,16 @@ mod tests {
         let mut engine = engine_with_active_link();
         let (attempt_id, target_identity, permitted_requests) = awaiting_persistence(&mut engine);
 
-        let (settlement, schedules) = execute(
-            &mut engine,
-            SettleRemoteControlControllerPairingPersistence {
-                attempt_id,
-                persistence: RemoteControlControllerPairingPersistence::Failed,
-            }
-            .into_command(),
-            InstantMillis(4_000),
-        );
+        let (settlement, schedules, persistence_events) =
+            execute_observing_controller_pairing_persistence(
+                &mut engine,
+                SettleRemoteControlControllerPairingPersistence {
+                    attempt_id,
+                    persistence: RemoteControlControllerPairingPersistence::Failed,
+                }
+                .into_command(),
+                InstantMillis(4_000),
+            );
         let Settlement::SettleRemoteControlControllerPairingPersistence(Ok(
             RemoteControlControllerPairingFinalization::PersistenceFailureRecorded {
                 attempt_id: failed,
@@ -1565,6 +1606,13 @@ mod tests {
             RemoteControlControllerPairingView::Idle,
         );
         assert_eq!(schedules.remote_control_pairing, WakeSchedule::Idle);
+        assert_eq!(
+            persistence_events,
+            ControllerPairingAuthorizationPersistenceEvents {
+                persisted: std::vec![],
+                failed: std::vec![attempt_id],
+            },
+        );
     }
 
     #[test]
