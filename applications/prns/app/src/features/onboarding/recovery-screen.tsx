@@ -37,10 +37,7 @@ export function RecoveryScreen() {
       setResetFailure(null);
     }
     if (!("runtime" in runtimeProvider)) {
-      setInspection({
-        type: "inspectionFailed",
-        detail: `Identity recovery is not available on ${runtimeProvider.availability.platform} yet.`,
-      });
+      setInspection({ type: "inspectionFailed" });
       return;
     }
     const runtime = runtimeProvider.runtime;
