@@ -246,6 +246,24 @@ checksum = "abc"
             ):
                 mobility.reject_external_npm_paths(applications)
 
+    def test_npm_lock_content_ignores_only_derived_classification(self) -> None:
+        original = {
+            "version": "1.2.3",
+            "resolved": "https://registry.example/package.tgz",
+            "integrity": "sha512-example",
+            "dev": True,
+        }
+        reclassified = {
+            "version": "1.2.3",
+            "resolved": "https://registry.example/package.tgz",
+            "integrity": "sha512-example",
+            "devOptional": True,
+        }
+        changed = {**reclassified, "version": "1.2.4"}
+
+        self.assertTrue(mobility.same_npm_package_content(original, reclassified))
+        self.assertFalse(mobility.same_npm_package_content(original, changed))
+
     def test_tracked_symlink_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             repository = pathlib.Path(temporary)

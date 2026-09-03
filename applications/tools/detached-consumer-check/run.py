@@ -1160,6 +1160,17 @@ def packed_metadata(artifact: pathlib.Path) -> dict[str, Any]:
         return object_value(json.load(package_file), "packed personal-rns package.json")
 
 
+def same_npm_package_content(
+    original: dict[str, Any], candidate: dict[str, Any]
+) -> bool:
+    original_content = copy.deepcopy(original)
+    candidate_content = copy.deepcopy(candidate)
+    for derived_flag in ("dev", "devOptional", "optional"):
+        original_content.pop(derived_flag, None)
+        candidate_content.pop(derived_flag, None)
+    return original_content == candidate_content
+
+
 def validate_npm_lock_refresh(
     before_bytes: bytes,
     applications_root: pathlib.Path,
@@ -1240,7 +1251,8 @@ def validate_npm_lock_refresh(
         if key in allowed_changes:
             continue
         if before_packages[key] != after_packages[key]:
-            raise fail(f"detached npm resolution changed existing lock entry {key}")
+            if not same_npm_package_content(before_packages[key], after_packages[key]):
+                raise fail(f"detached npm resolution changed existing lock entry {key}")
     for consumer in consumer_keys:
         expected_consumer = copy.deepcopy(
             object_value(
@@ -1282,6 +1294,22 @@ def validate_npm_lock_refresh(
             raise fail(
                 f"detached npm dependency {dependency} did not resolve exact version {version}"
             )
+
+    # npm recalculates dev/optional classification across much of the graph when
+    # a linked workspace dependency becomes a tarball. Those flags do not select
+    # package content, and npm ci accepts the original classifications. Preserve
+    # every pre-existing entry byte-for-byte except the reviewed consumers and
+    # artifact so the detached proof does not bless a broad lockfile rewrite.
+    normalized = copy.deepcopy(after)
+    normalized_packages = object_value(
+        normalized.get("packages"), "normalized package-lock packages"
+    )
+    for key in set(before_packages) & set(after_packages):
+        if key not in allowed_changes:
+            normalized_packages[key] = before_packages[key]
+    (applications_root / "package-lock.json").write_text(
+        f"{json.dumps(normalized, indent=2)}\n", encoding="utf-8"
+    )
 
 
 def validate_npm_resolution(
