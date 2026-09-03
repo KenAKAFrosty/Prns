@@ -65,6 +65,7 @@ cargo_manifests = [
     "Cargo.toml",
     "applications/Cargo.toml",
     "applications/prns/native-composition/Cargo.toml",
+    "applications/services/lxmf/Cargo.toml",
     "applications/services/lxmf-wire/Cargo.toml",
     "benchmarks/Cargo.toml",
     "docs/command/Cargo.toml",
@@ -906,6 +907,41 @@ inputs = [
   "applications/sdk/expo",
 ]
 artifacts = "validation-artifacts/results/application-native-foundation"
+
+[[suite]]
+id = "application-lxmf-direct"
+domain = "platform"
+group = "application"
+tiers = ["pr", "release", "scheduled"]
+platform = "linux"
+toolchain = "stable"
+timeout_seconds = 1800
+command = ["bash", "applications/services/lxmf/scripts/verify.sh"]
+inputs = [
+  "applications/Cargo.toml",
+  "applications/Cargo.lock",
+  "applications/services/lxmf-wire/Cargo.toml",
+  "applications/services/lxmf-wire/PROVENANCE.md",
+  "applications/services/lxmf-wire/src",
+  "applications/services/lxmf-wire/tests",
+  "applications/services/lxmf-wire/interop",
+  "applications/services/lxmf/Cargo.toml",
+  "applications/services/lxmf/src",
+  "applications/services/lxmf/examples",
+  "applications/services/lxmf/interop",
+  "applications/services/lxmf/scripts/verify.sh",
+  "personal-rns/Cargo.toml",
+  "personal-rns/src",
+  "prns-core/Cargo.toml",
+  "prns-core/src",
+  "prns-interfaces/impls/tokio/Cargo.toml",
+  "prns-interfaces/impls/tokio/src",
+  "prns-runtime/core/Cargo.toml",
+  "prns-runtime/core/src",
+  "prns-runtime/impls/tokio/Cargo.toml",
+  "prns-runtime/impls/tokio/src",
+]
+artifacts = "validation-artifacts/results/application-lxmf-direct"
 
 [[suite]]
 id = "javascript-contract"
