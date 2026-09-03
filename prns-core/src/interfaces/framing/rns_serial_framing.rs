@@ -16,19 +16,31 @@ pub const fn max_encoded_len(payload_len: usize) -> usize {
 
 #[cfg(target_pointer_width = "64")]
 fn find_special(haystack: &[u8]) -> Option<usize> {
-    const ONES: u128 = 0x0101_0101_0101_0101_0101_0101_0101_0101;
-    const HIGHS: u128 = 0x8080_8080_8080_8080_8080_8080_8080_8080;
-    const FLAG_REP: u128 = (FLAG as u128) * ONES;
-    const ESC_REP: u128 = (ESC as u128) * ONES;
+    const ONES: u64 = 0x0101_0101_0101_0101;
+    const HIGHS: u64 = 0x8080_8080_8080_8080;
+    const FLAG_REP: u64 = (FLAG as u64) * ONES;
+    const ESC_REP: u64 = (ESC as u64) * ONES;
 
     let (chunks, _) = haystack.as_chunks::<16>();
     for (chunk_index, chunk) in chunks.iter().enumerate() {
         let word = u128::from_le_bytes(*chunk);
-        let f = word ^ FLAG_REP;
-        let e = word ^ ESC_REP;
-        let marks = ((f.wrapping_sub(ONES) & !f) | (e.wrapping_sub(ONES) & !e)) & HIGHS;
-        if marks != 0 {
-            return Some(chunk_index * 16 + (marks.trailing_zeros() / 8) as usize);
+        let low = word as u64;
+        let low_flag = low ^ FLAG_REP;
+        let low_escape = low ^ ESC_REP;
+        let low_marks = ((low_flag.wrapping_sub(ONES) & !low_flag)
+            | (low_escape.wrapping_sub(ONES) & !low_escape))
+            & HIGHS;
+        if low_marks != 0 {
+            return Some(chunk_index * 16 + (low_marks.trailing_zeros() / 8) as usize);
+        }
+        let high = (word >> 64) as u64;
+        let high_flag = high ^ FLAG_REP;
+        let high_escape = high ^ ESC_REP;
+        let high_marks = ((high_flag.wrapping_sub(ONES) & !high_flag)
+            | (high_escape.wrapping_sub(ONES) & !high_escape))
+            & HIGHS;
+        if high_marks != 0 {
+            return Some(chunk_index * 16 + 8 + (high_marks.trailing_zeros() / 8) as usize);
         }
     }
     let scanned = chunks.len() * 16;
