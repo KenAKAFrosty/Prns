@@ -84,6 +84,7 @@ export type EffectDevelopmentRuntime = {
 export type DevelopmentRuntimeScopeOptions = {
   readonly refreshIntervalMillis?: number;
   readonly developmentTcpTarget?: DevelopmentNodeStartInput["developmentTcpTarget"];
+  readonly shouldRefresh?: () => boolean;
   readonly onSnapshot: (snapshot: DevelopmentNodeSnapshot) => void;
   readonly onBackgroundFailure: (failure: DevelopmentRuntimeFailure) => void;
 };
@@ -159,6 +160,9 @@ export function scopedDevelopmentRuntime(
 
     const refreshIteration = Effect.gen(function* () {
       yield* Effect.sleep(intervalResult);
+      if (options.shouldRefresh?.() === false) {
+        return;
+      }
       const snapshot = yield* effectRuntime.readDevelopmentNodeSnapshot;
       if (snapshot.revision > latestRevision) {
         latestRevision = snapshot.revision;

@@ -114,6 +114,33 @@ describe("Effect development runtime orchestration", () => {
     });
   });
 
+  test("keeps the node owned while pausing snapshot reads outside consuming screens", async () => {
+    let refreshActive = false;
+    const readDevelopmentNodeSnapshot = jest.fn(async () => snapshot(2n));
+    const stopDevelopmentNode = jest.fn(async () => ({ type: "stopped" as const }));
+    const runtime = fakeRuntime({ readDevelopmentNodeSnapshot, stopDevelopmentNode });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* scopedDevelopmentRuntime(runtime, {
+            refreshIntervalMillis: 50,
+            shouldRefresh: () => refreshActive,
+            onSnapshot: () => undefined,
+            onBackgroundFailure: () => undefined,
+          });
+          yield* Effect.sleep(120);
+          expect(readDevelopmentNodeSnapshot).not.toHaveBeenCalled();
+          refreshActive = true;
+          yield* Effect.sleep(120);
+          expect(readDevelopmentNodeSnapshot).toHaveBeenCalled();
+        }),
+      ),
+    );
+
+    expect(stopDevelopmentNode).toHaveBeenCalledTimes(1);
+  });
+
   test("stops after a typed startup rejection before failing acquisition", async () => {
     const stopDevelopmentNode = jest.fn(async () => ({ type: "stopped" as const }));
     const runtime = fakeRuntime({

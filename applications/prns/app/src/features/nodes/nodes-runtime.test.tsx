@@ -11,6 +11,7 @@ import { type ReactNode, useEffect } from "react";
 
 import {
   DevelopmentRuntimeProvider,
+  routeConsumesDevelopmentSnapshot,
   type DevelopmentRuntimeView,
   useDevelopmentRuntime,
 } from "@/native/development-runtime-context";
@@ -169,6 +170,16 @@ function RuntimeViewProbe({
 }
 
 describe("Foundation 1 Nodes runtime binding", () => {
+  it("polls snapshots only for visible Nodes and Inbox routes", () => {
+    expect(routeConsumesDevelopmentSnapshot("/nodes")).toBe(true);
+    expect(routeConsumesDevelopmentSnapshot("/nodes/pair")).toBe(true);
+    expect(routeConsumesDevelopmentSnapshot("/inbox")).toBe(true);
+    expect(routeConsumesDevelopmentSnapshot("/inbox/0011")).toBe(true);
+    expect(routeConsumesDevelopmentSnapshot("/")).toBe(false);
+    expect(routeConsumesDevelopmentSnapshot("/settings")).toBe(false);
+    expect(routeConsumesDevelopmentSnapshot("/network/interfaces")).toBe(false);
+  });
+
   it("renders the typed native startup detail instead of an empty tagged-error message", async () => {
     const stop = jest.fn();
     const base = fakeProvider(stop);

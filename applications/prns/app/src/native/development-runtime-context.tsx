@@ -84,6 +84,7 @@ export type DevelopmentRuntimeView = {
 type DevelopmentRuntimeProviderProps = PropsWithChildren<{
   readonly provider?: RuntimeProvider;
   readonly refreshIntervalMillis?: number;
+  readonly refreshActive?: boolean;
 }>;
 
 const DevelopmentRuntimeContext = createContext<DevelopmentRuntimeView | null>(null);
@@ -92,6 +93,7 @@ export function DevelopmentRuntimeProvider({
   children,
   provider,
   refreshIntervalMillis = 750,
+  refreshActive = true,
 }: DevelopmentRuntimeProviderProps) {
   const selectedProvider = provider ?? runtimeProvider;
   const [phase, setPhase] = useState<DevelopmentRuntimeView["phase"]>(
@@ -102,6 +104,8 @@ export function DevelopmentRuntimeProvider({
   const [backgroundFailure, setBackgroundFailure] = useState<string | null>(null);
   const session = useRef<DevelopmentRuntimeSession | null>(null);
   const latestRevision = useRef<bigint | null>(null);
+  const refreshActiveState = useRef(refreshActive);
+  refreshActiveState.current = refreshActive;
 
   const publishSnapshot = useCallback((next: DevelopmentNodeSnapshot) => {
     if (latestRevision.current !== null && next.revision <= latestRevision.current) {
@@ -130,6 +134,7 @@ export function DevelopmentRuntimeProvider({
     const acquisition = availableProvider
       .acquire({
         refreshIntervalMillis,
+        shouldRefresh: () => refreshActiveState.current,
         onSnapshot: (next) => {
           if (mounted) {
             publishSnapshot(next);
@@ -376,6 +381,15 @@ export function DevelopmentRuntimeProvider({
     <DevelopmentRuntimeContext.Provider value={value}>
       {children}
     </DevelopmentRuntimeContext.Provider>
+  );
+}
+
+export function routeConsumesDevelopmentSnapshot(pathname: string): boolean {
+  return (
+    pathname === "/nodes" ||
+    pathname.startsWith("/nodes/") ||
+    pathname === "/inbox" ||
+    pathname.startsWith("/inbox/")
   );
 }
 
