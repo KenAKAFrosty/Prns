@@ -76,16 +76,16 @@ impl AutoBle {
         ))
     }
 
-    /// Creates foreground-only CoreBluetooth managers immediately while leaving radio
-    /// authorization and service readiness to the attached asynchronous supervisor.
+    /// Creates CoreBluetooth managers without state restoration while leaving radio authorization
+    /// and service readiness to the attached asynchronous supervisor.
     ///
     /// This path does not opt into CoreBluetooth state restoration. The selected preparation mode
     /// is retained for every later readiness retry.
     #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub async fn prepare_foreground(
+    pub async fn prepare_without_restoration(
         identity: BleIdentity,
     ) -> Result<PreparedAutoBle, prns_ffi::bluetooth_auto::macos::MacosBleError> {
-        let manager_preparation = AppleManagerPreparation::ForegroundOnly;
+        let manager_preparation = AppleManagerPreparation::WithoutRestoration;
         let backend = manager_preparation.prepare(identity).await?;
         Ok(PreparedAutoBle::new(
             identity,
@@ -120,12 +120,12 @@ impl AutoBle {
         )
     }
 
-    /// Produces a failed-but-supervised foreground-only Bluetooth LE attachment when native
-    /// manager preparation itself cannot be started. The core node and every other transport
-    /// remain available, and retries never opt into state restoration.
+    /// Produces a failed-but-supervised Bluetooth LE attachment without state restoration when
+    /// native manager preparation itself cannot be started. The core node and every other
+    /// transport remain available, and retries never opt into state restoration.
     #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub fn unavailable_foreground(identity: BleIdentity) -> PreparedAutoBle {
-        PreparedAutoBle::new(identity, AppleManagerPreparation::ForegroundOnly, None)
+    pub fn unavailable_without_restoration(identity: BleIdentity) -> PreparedAutoBle {
+        PreparedAutoBle::new(identity, AppleManagerPreparation::WithoutRestoration, None)
     }
 }
 
@@ -135,7 +135,7 @@ enum AppleManagerPreparation {
     LegacyRestorationAware,
     #[cfg(target_os = "ios")]
     RestorationAware(CoreBluetoothRestorationIdentifiers),
-    ForegroundOnly,
+    WithoutRestoration,
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -155,7 +155,9 @@ impl AppleManagerPreparation {
             Self::RestorationAware(identifiers) => {
                 MacosBleBackend::prepare_with_restoration(identity, identifiers.clone()).await
             }
-            Self::ForegroundOnly => MacosBleBackend::prepare_foreground(identity).await,
+            Self::WithoutRestoration => {
+                MacosBleBackend::prepare_without_restoration(identity).await
+            }
         }
     }
 }
@@ -682,12 +684,12 @@ mod tests {
     #[test]
     fn unavailable_preparation_retains_the_selected_retry_mode() {
         let identity = BleIdentity::new([0x30; 16]);
-        let foreground = AutoBle::unavailable_foreground(identity);
+        let without_restoration = AutoBle::unavailable_without_restoration(identity);
         assert_eq!(
-            foreground.manager_preparation,
-            AppleManagerPreparation::ForegroundOnly
+            without_restoration.manager_preparation,
+            AppleManagerPreparation::WithoutRestoration
         );
-        assert!(foreground.backend.is_none());
+        assert!(without_restoration.backend.is_none());
 
         let restoration_aware = AutoBle::unavailable(identity);
         assert_eq!(
