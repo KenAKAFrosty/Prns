@@ -11,9 +11,6 @@ use crate::routing::links::resources::{
 };
 use crate::routing::links::LinkKey;
 
-#[cfg(feature = "parallel-resource-hash")]
-const MAP_HASH_BATCH_CAPACITY: usize = 32;
-
 /// RNS 1.4.2 `Resource.__init__`'s keep-when-smaller rule, shared so a staging caller picks the same stream a build would.
 pub fn winning_candidate(
     compressed_candidate: Option<&[u8]>,
@@ -410,104 +407,21 @@ pub(crate) fn write_hashmap_without_collision(
     salt_nonce: &SaltNonce,
     hashmap: &mut [u8],
 ) -> HashmapWriteOutcome {
-    #[cfg(feature = "parallel-resource-hash")]
-    {
-        let lane_width = tape_sha256::lane_width();
-        let part_count = sealed.len().div_ceil(sdu);
-        if lane_width > 1 && lane_width <= MAP_HASH_BATCH_CAPACITY && part_count >= lane_width {
-            return write_hashmap_in_batches(sealed, sdu, salt_nonce, hashmap, lane_width);
-        }
-    }
-
-    write_hashmap_serial(sealed, sdu, salt_nonce, hashmap)
-}
-
-fn write_hashmap_serial(
-    sealed: &[u8],
-    sdu: usize,
-    salt_nonce: &SaltNonce,
-    hashmap: &mut [u8],
-) -> HashmapWriteOutcome {
     for (index, part) in sealed.chunks(sdu).enumerate() {
         let name = map_hash(part, salt_nonce);
-        if matches!(
-            write_map_hash_name(index, name, hashmap),
-            HashmapWriteOutcome::Collided
-        ) {
-            return HashmapWriteOutcome::Collided;
-        }
-    }
-    HashmapWriteOutcome::DidNotCollide
-}
-
-#[cfg(feature = "parallel-resource-hash")]
-fn write_hashmap_in_batches(
-    sealed: &[u8],
-    sdu: usize,
-    salt_nonce: &SaltNonce,
-    hashmap: &mut [u8],
-    lane_width: usize,
-) -> HashmapWriteOutcome {
-    let mut parts = sealed.chunks(sdu);
-    let mut messages = [tape_sha256::Message::new(&[]); MAP_HASH_BATCH_CAPACITY];
-    let mut digests = [[0u8; 32]; MAP_HASH_BATCH_CAPACITY];
-    let mut first_index = 0;
-
-    loop {
-        let mut batch_len = 0;
-        while batch_len < MAP_HASH_BATCH_CAPACITY {
-            let Some(part) = parts.next() else {
-                break;
-            };
-            messages[batch_len] = tape_sha256::Message::pair(&[], part, salt_nonce.as_bytes());
-            batch_len += 1;
-        }
-        if batch_len < lane_width {
-            for (batch_index, message) in messages[..batch_len].iter().enumerate() {
-                let name = map_hash(message.body, salt_nonce);
-                let index = first_index + batch_index;
-                if matches!(
-                    write_map_hash_name(index, name, hashmap),
-                    HashmapWriteOutcome::Collided
-                ) {
-                    return HashmapWriteOutcome::Collided;
-                }
-            }
-            return HashmapWriteOutcome::DidNotCollide;
-        }
-
-        tape_sha256::hash_messages(&messages[..batch_len], &mut digests[..batch_len]);
-        for (batch_index, digest) in digests[..batch_len].iter().enumerate() {
-            let name = [digest[0], digest[1], digest[2], digest[3]];
-            let index = first_index + batch_index;
-            if matches!(
-                write_map_hash_name(index, name, hashmap),
-                HashmapWriteOutcome::Collided
-            ) {
+        let name_word = u32::from_ne_bytes(name);
+        let offset = index * MAP_HASH_LEN;
+        let guard_start = index.saturating_sub(COLLISION_GUARD_SIZE);
+        for previous in guard_start..index {
+            let previous_offset = previous * MAP_HASH_LEN;
+            if map_hash_name_word(&hashmap[previous_offset..previous_offset + MAP_HASH_LEN])
+                == name_word
+            {
                 return HashmapWriteOutcome::Collided;
             }
         }
-        first_index += batch_len;
+        hashmap[offset..offset + MAP_HASH_LEN].copy_from_slice(&name);
     }
-}
-
-fn write_map_hash_name(
-    index: usize,
-    name: [u8; MAP_HASH_LEN],
-    hashmap: &mut [u8],
-) -> HashmapWriteOutcome {
-    let name_word = u32::from_ne_bytes(name);
-    let offset = index * MAP_HASH_LEN;
-    let guard_start = index.saturating_sub(COLLISION_GUARD_SIZE);
-    for previous in guard_start..index {
-        let previous_offset = previous * MAP_HASH_LEN;
-        if map_hash_name_word(&hashmap[previous_offset..previous_offset + MAP_HASH_LEN])
-            == name_word
-        {
-            return HashmapWriteOutcome::Collided;
-        }
-    }
-    hashmap[offset..offset + MAP_HASH_LEN].copy_from_slice(&name);
     HashmapWriteOutcome::DidNotCollide
 }
 
@@ -1033,27 +947,6 @@ mod tests {
     fn the_sdu_arithmetic_matches_the_reference() {
         assert_eq!(resource_sdu(BROADCAST_MTU), 464);
         assert_eq!(resource_sdu(BROADCAST_MTU), crate::wire::BROADCAST_MDU);
-    }
-
-    #[cfg(feature = "parallel-resource-hash")]
-    #[test]
-    fn batched_hashmap_matches_independent_map_hashes() {
-        let sdu = 73;
-        let sealed: std::vec::Vec<_> = (0..sdu * 8 + 11)
-            .map(|index| (index as u8).wrapping_mul(29).wrapping_add(7))
-            .collect();
-        let salt_nonce = SaltNonce::new(SALT_NONCE);
-        let expected: std::vec::Vec<_> = sealed
-            .chunks(sdu)
-            .flat_map(|part| map_hash(part, &salt_nonce))
-            .collect();
-        let mut actual = std::vec![0u8; expected.len()];
-
-        assert!(matches!(
-            write_hashmap_in_batches(&sealed, sdu, &salt_nonce, &mut actual, 4),
-            HashmapWriteOutcome::DidNotCollide
-        ));
-        assert_eq!(actual, expected);
     }
 
     /// umsgpack.packb({"name": "case.bin", "flag": 7}). The reference prepends `struct.pack(">I", 21)[1:]` and feeds bz2 the whole 1384-byte composite.

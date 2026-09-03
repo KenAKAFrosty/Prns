@@ -47,7 +47,7 @@ stream-compression = ["std"]
 # Gives capable fixed-storage targets one 256 KiB outgoing static-response window. Incoming
 # resource limits are deliberately unchanged.
 large-static-responses = []
-parallel-resource-hash = ["std", "dep:tape-sha256"]
+parallel-resource-hash = ["std"]
 parallel-persistence = ["std", "dep:rayon"]
 # Compiles `engine::test_support` (the shared engine fixtures) outside `cfg(test)` so `prns-runtime`'s manifold tests can drive the same announces and descriptors. Never enabled by a shipping build; `prns-runtime` turns it on as a dev-dependency feature.
 test-support = ["std"]
@@ -87,7 +87,6 @@ heapless = { version = "0.8", default-features = false }
 allocator-api2 = { version = "0.3", optional = true, default-features = false, features = ["alloc"] }
 
 rayon = { version = "1", optional = true }
-tape-sha256 = { version = "0.2.1", optional = true }
 crc32fast = { version = "1", optional = true }
 roaring = { version = "=0.11.4", optional = true, default-features = false }
 rmp = { version = "0.8", optional = true, default-features = false }
