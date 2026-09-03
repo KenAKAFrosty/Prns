@@ -2284,13 +2284,17 @@ async fn run_generation(
         Some(prepared) => prepared,
         None => match bluetooth_preparation.preparation {
             AppleBluetoothPreparation::WithoutRestoration => {
-                match personal_rns::bluetooth_auto::AutoBle::prepare_foreground(bluetooth_identity)
-                    .await
+                match personal_rns::bluetooth_auto::AutoBle::prepare_without_restoration(
+                    bluetooth_identity,
+                )
+                .await
                 {
                     Ok(prepared) => prepared,
-                    Err(_) => personal_rns::bluetooth_auto::AutoBle::unavailable_foreground(
-                        bluetooth_identity,
-                    ),
+                    Err(_) => {
+                        personal_rns::bluetooth_auto::AutoBle::unavailable_without_restoration(
+                            bluetooth_identity,
+                        )
+                    }
                 }
             }
             AppleBluetoothPreparation::Restoration {
@@ -2326,11 +2330,13 @@ async fn run_generation(
     };
     #[cfg(all(feature = "apple", target_os = "macos"))]
     let prepared_bluetooth =
-        match personal_rns::bluetooth_auto::AutoBle::prepare_foreground(bluetooth_identity).await {
+        match personal_rns::bluetooth_auto::AutoBle::prepare_without_restoration(bluetooth_identity)
+            .await
+        {
             Ok(prepared) => prepared,
-            Err(_) => {
-                personal_rns::bluetooth_auto::AutoBle::unavailable_foreground(bluetooth_identity)
-            }
+            Err(_) => personal_rns::bluetooth_auto::AutoBle::unavailable_without_restoration(
+                bluetooth_identity,
+            ),
         };
     #[cfg(all(feature = "apple", target_os = "macos"))]
     let _ = bluetooth_preparation.preparation;
