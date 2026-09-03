@@ -11,10 +11,6 @@ import {
 const completedState: ScaffoldState = {
   ...DEFAULT_SCAFFOLD_STATE,
   showUnavailableFeatures: false,
-  onboardingPreview: {
-    status: "completed",
-    selectedIdentityFixtureId: "identity.imported-preview",
-  },
 };
 
 describe("scaffold state storage", () => {
@@ -52,7 +48,7 @@ describe("scaffold state storage", () => {
     const warning = jest.spyOn(console, "warn").mockImplementation(() => undefined);
     await AsyncStorage.setItem(
       SCAFFOLD_STORAGE_KEY,
-      JSON.stringify({ ...completedState, scaffoldSchema: 2 }),
+      JSON.stringify({ ...completedState, scaffoldSchema: 1 }),
     );
     jest.clearAllMocks();
 

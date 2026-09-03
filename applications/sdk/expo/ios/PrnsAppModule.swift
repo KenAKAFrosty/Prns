@@ -20,6 +20,46 @@ public final class PrnsAppModule: Module {
       try Self.contractFingerprint()
     }.runOnQueue(Self.nativeQueue)
 
+    AsyncFunction("hostContractFingerprint") { () throws -> String in
+      try Self.hostContractFingerprint()
+    }.runOnQueue(Self.nativeQueue)
+
+    AsyncFunction("inspectIdentity") { () throws -> String in
+      let storageURL = try Self.developmentStorageURL(create: true)
+      return try Self.withUtf8Bytes(storageURL.path) { pointer, count in
+        try Self.consume(prns_app_inspect_identity(pointer, count))
+      }
+    }.runOnQueue(Self.nativeQueue)
+
+    AsyncFunction("previewIdentityImport") { (identity: [UInt8]) throws -> String in
+      try Self.withBytes(identity) { pointer, count in
+        try Self.consume(prns_app_preview_identity_import(pointer, count))
+      }
+    }.runOnQueue(Self.nativeQueue)
+
+    AsyncFunction("createGeneratedIdentity") { () throws -> String in
+      let storageURL = try Self.developmentStorageURL(create: true)
+      return try Self.withUtf8Bytes(storageURL.path) { pointer, count in
+        try Self.consume(prns_app_create_generated_identity(pointer, count))
+      }
+    }.runOnQueue(Self.nativeQueue)
+
+    AsyncFunction("createImportedIdentity") { (identity: [UInt8]) throws -> String in
+      let storageURL = try Self.developmentStorageURL(create: true)
+      return try Self.withUtf8Bytes(storageURL.path) { pathPointer, pathCount in
+        try Self.withBytes(identity) { identityPointer, identityCount in
+          try Self.consume(
+            prns_app_create_imported_identity(
+              pathPointer,
+              pathCount,
+              identityPointer,
+              identityCount
+            )
+          )
+        }
+      }
+    }.runOnQueue(Self.nativeQueue)
+
     AsyncFunction("start") { () throws -> String in
       let storageURL = try Self.developmentStorageURL(create: true)
       return try Self.withUtf8Bytes(storageURL.path) { pointer, count in
@@ -70,6 +110,13 @@ public final class PrnsAppModule: Module {
     return String(cString: pointer)
   }
 
+  private static func hostContractFingerprint() throws -> String {
+    guard let pointer = prns_app_host_contract_fingerprint() else {
+      throw PrnsAppException("Native Host contract fingerprint pointer is null.")
+    }
+    return String(cString: pointer)
+  }
+
   private static func developmentStorageURL(create: Bool) throws -> URL {
     do {
       let applicationSupport = try FileManager.default.url(
@@ -109,6 +156,15 @@ public final class PrnsAppModule: Module {
   ) rethrows -> Result {
     let bytes = Array(value.utf8)
     return try bytes.withUnsafeBytes { rawBuffer in
+      try operation(rawBuffer.bindMemory(to: UInt8.self).baseAddress, rawBuffer.count)
+    }
+  }
+
+  private static func withBytes<Result>(
+    _ bytes: [UInt8],
+    operation: (UnsafePointer<UInt8>?, Int) throws -> Result
+  ) rethrows -> Result {
+    try bytes.withUnsafeBytes { rawBuffer in
       try operation(rawBuffer.bindMemory(to: UInt8.self).baseAddress, rawBuffer.count)
     }
   }

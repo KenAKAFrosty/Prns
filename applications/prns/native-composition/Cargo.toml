@@ -25,6 +25,9 @@ host-test = ["personal-rns/tcp"]
 
 [dependencies]
 personal-rns = { path = "../../../personal-rns", default-features = false, features = ["tokio-host"] }
+prns-core = { path = "../../../prns-core", default-features = false, features = ["std"] }
+prns-host = { path = "../../../prns-host/core" }
+prns-host-snapshot = { path = "../../../prns-host/impls/snapshot" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread", "sync", "time"] }

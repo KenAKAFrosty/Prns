@@ -1099,6 +1099,9 @@ name = "prns-app-native"
 version = "0.1.0"
 dependencies = [
  "personal-rns",
+ "prns-core",
+ "prns-host",
+ "prns-host-snapshot",
  "serde",
  "serde_json",
  "tempfile",
@@ -1144,6 +1147,23 @@ dependencies = [
  "prns-core",
  "tokio",
  "windows",
+]
+
+[[package]]
+name = "prns-host"
+version = "0.3.7"
+dependencies = [
+ "prns-runtime",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "prns-host-snapshot"
+version = "0.3.7"
+dependencies = [
+ "personal-rns",
+ "prns-host",
 ]
 
 [[package]]

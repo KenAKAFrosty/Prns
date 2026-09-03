@@ -11,11 +11,12 @@ export function AboutScreen() {
         <KeyValue label="Application" value={Constants.expoConfig?.name ?? "prns dev"} />
         <KeyValue label="Application version" value={Constants.expoConfig?.version ?? "0.0.0"} />
         <KeyValue label="Native identifier" value="rs.reticulum.prns.dev" />
-        <KeyValue label="Runtime" value="Presentation scaffold only" />
+        <KeyValue label="Runtime" value="Rust-owned iOS development node" />
       </Card>
       <BodyText>
-        This build has no Rust Host, RemoteControl provider, identity vault, mailbox, or durable
-        application service. The canonical production identifier remains rs.reticulum.prns.
+        This build includes the Rust-owned primary identity vault, local Host inspection, Bluetooth
+        Auto, and upstream RemoteControl flow. Mailbox and contact services are not present. The
+        canonical production identifier remains rs.reticulum.prns.
       </BodyText>
     </Screen>
   );

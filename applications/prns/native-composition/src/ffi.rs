@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use crate::contract::{
     DescribeRemoteControlTargetInput, InitiateRemoteControlPairingInput,
-    RemoteControlPairingDecisionInput, CONTRACT_FINGERPRINT,
+    RemoteControlPairingDecisionInput, CONTRACT_FINGERPRINT, HOST_CONTRACT_FINGERPRINT,
 };
 use crate::lifecycle;
 
@@ -21,6 +21,17 @@ pub const PRNS_APP_MAX_INPUT_BYTES: usize = 64 * 1024;
 const CONTRACT_FINGERPRINT_C: [u8; CONTRACT_FINGERPRINT.len() + 1] = {
     let source = CONTRACT_FINGERPRINT.as_bytes();
     let mut result = [0; CONTRACT_FINGERPRINT.len() + 1];
+    let mut index = 0;
+    while index < source.len() {
+        result[index] = source[index];
+        index += 1;
+    }
+    result
+};
+
+const HOST_CONTRACT_FINGERPRINT_C: [u8; HOST_CONTRACT_FINGERPRINT.len() + 1] = {
+    let source = HOST_CONTRACT_FINGERPRINT.as_bytes();
+    let mut result = [0; HOST_CONTRACT_FINGERPRINT.len() + 1];
     let mut index = 0;
     while index < source.len() {
         result[index] = source[index];
@@ -82,6 +93,82 @@ impl BridgeFailure {
 #[no_mangle]
 pub extern "C" fn prns_app_contract_fingerprint() -> *const c_char {
     CONTRACT_FINGERPRINT_C.as_ptr().cast()
+}
+
+/// Return the immutable, NUL-terminated canonical Host-contract fingerprint.
+///
+/// The returned pointer is borrowed static storage and must not be freed.
+#[no_mangle]
+pub extern "C" fn prns_app_host_contract_fingerprint() -> *const c_char {
+    HOST_CONTRACT_FINGERPRINT_C.as_ptr().cast()
+}
+
+/// Inspect the application-owned primary identity.
+///
+/// # Safety
+///
+/// The path buffer follows the same contract as [`prns_app_start`].
+#[no_mangle]
+pub unsafe extern "C" fn prns_app_inspect_identity(
+    path_ptr: *const u8,
+    path_len: usize,
+) -> PrnsAppBytes {
+    // SAFETY: The caller contract is forwarded to the bounded path decoder.
+    unsafe { invoke_path(path_ptr, path_len, lifecycle::inspect_identity) }
+}
+
+/// Preview the identity hash derived from a raw credential without storing it.
+///
+/// # Safety
+///
+/// A non-null buffer must remain readable for the call. Empty input is a valid
+/// domain input and returns `invalidLength`.
+#[no_mangle]
+pub unsafe extern "C" fn prns_app_preview_identity_import(
+    input_ptr: *const u8,
+    input_len: usize,
+) -> PrnsAppBytes {
+    // SAFETY: The caller contract is forwarded to the bounded byte decoder.
+    unsafe { invoke_bytes(input_ptr, input_len, lifecycle::preview_identity_import) }
+}
+
+/// Generate and store the application-owned primary identity.
+///
+/// # Safety
+///
+/// The path buffer follows the same contract as [`prns_app_start`].
+#[no_mangle]
+pub unsafe extern "C" fn prns_app_create_generated_identity(
+    path_ptr: *const u8,
+    path_len: usize,
+) -> PrnsAppBytes {
+    // SAFETY: The caller contract is forwarded to the bounded path decoder.
+    unsafe { invoke_path(path_ptr, path_len, lifecycle::create_generated_identity) }
+}
+
+/// Validate and store a raw application-owned primary identity.
+///
+/// # Safety
+///
+/// Both non-empty buffers must remain readable for the call. Empty credential
+/// input is a valid domain input and returns `invalidLength`.
+#[no_mangle]
+pub unsafe extern "C" fn prns_app_create_imported_identity(
+    path_ptr: *const u8,
+    path_len: usize,
+    input_ptr: *const u8,
+    input_len: usize,
+) -> PrnsAppBytes {
+    // SAFETY: The caller contracts are forwarded to the bounded decoders.
+    unsafe {
+        invoke_path_bytes(
+            path_ptr,
+            path_len,
+            input_ptr,
+            input_len,
+            lifecycle::create_imported_identity,
+        )
+    }
 }
 
 /// Start the development node using an application-private storage directory.
@@ -277,6 +364,73 @@ where
     })
 }
 
+unsafe fn invoke_bytes<T>(
+    input_ptr: *const u8,
+    input_len: usize,
+    operation: impl FnOnce(&[u8]) -> T,
+) -> PrnsAppBytes
+where
+    T: Serialize,
+{
+    invoke(|| {
+        // SAFETY: `invoke_bytes` carries the caller's readable-buffer contract.
+        let bytes = unsafe { optional_bytes(input_ptr, input_len)? };
+        Ok(operation(bytes))
+    })
+}
+
+unsafe fn invoke_path_bytes<T>(
+    path_ptr: *const u8,
+    path_len: usize,
+    input_ptr: *const u8,
+    input_len: usize,
+    operation: impl FnOnce(&Path, &[u8]) -> T,
+) -> PrnsAppBytes
+where
+    T: Serialize,
+{
+    invoke(|| {
+        // SAFETY: The caller contracts are checked before either slice is formed.
+        let path_bytes = unsafe {
+            required_bytes(
+                path_ptr,
+                path_len,
+                PRNS_APP_MAX_PATH_BYTES,
+                "storage path must not be empty",
+                "storage path pointer is null",
+                "storage path exceeds the ABI size limit",
+            )
+        }?;
+        let path = str::from_utf8(path_bytes)
+            .map_err(|_| BridgeFailure::invalid_input("storage path is not valid UTF-8"))?;
+        // SAFETY: `optional_bytes` checks the independent credential buffer.
+        let input = unsafe { optional_bytes(input_ptr, input_len)? };
+        Ok(operation(Path::new(path), input))
+    })
+}
+
+unsafe fn optional_bytes<'a>(
+    input_ptr: *const u8,
+    input_len: usize,
+) -> Result<&'a [u8], BridgeFailure> {
+    if input_len == 0 {
+        return Ok(&[]);
+    }
+    if input_len > PRNS_APP_MAX_INPUT_BYTES {
+        return Err(BridgeFailure::invalid_input(
+            "identity input exceeds the ABI size limit",
+        ));
+    }
+    if input_ptr.is_null() {
+        return Err(BridgeFailure::invalid_input(
+            "identity input pointer is null",
+        ));
+    }
+    // SAFETY: The caller guarantees this checked non-null pointer is readable
+    // for `input_len` bytes for the duration of the call.
+    Ok(unsafe { slice::from_raw_parts(input_ptr, input_len) })
+}
+
 unsafe fn invoke_json<Input, Output>(
     input_ptr: *const u8,
     input_len: usize,
@@ -374,6 +528,22 @@ mod tests {
         // SAFETY: The function returns a borrowed static NUL-terminated array.
         let fingerprint = unsafe { CStr::from_ptr(pointer) };
         assert_eq!(fingerprint.to_bytes(), CONTRACT_FINGERPRINT.as_bytes());
+
+        let host_pointer = prns_app_host_contract_fingerprint();
+        assert!(!host_pointer.is_null());
+        // SAFETY: The function returns a borrowed static NUL-terminated array.
+        let host_fingerprint = unsafe { CStr::from_ptr(host_pointer) };
+        assert_eq!(
+            host_fingerprint.to_bytes(),
+            HOST_CONTRACT_FINGERPRINT.as_bytes()
+        );
+    }
+
+    #[test]
+    fn empty_identity_bytes_are_a_domain_result_not_a_bridge_failure() {
+        // SAFETY: Null plus zero length is the documented empty identity input.
+        let output = unsafe { invoke_bytes(ptr::null(), 0, lifecycle::preview_identity_import) };
+        assert_eq!(parse_and_free(output), json!({ "type": "invalidLength" }));
     }
 
     #[test]

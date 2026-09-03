@@ -1,13 +1,16 @@
-import { NATIVE_CONTRACT_FINGERPRINT } from "./contract.generated";
+import { HOST_CONTRACT_FINGERPRINT, NATIVE_CONTRACT_FINGERPRINT } from "./contract.generated";
 import type {
   DescribeRemoteControlTargetInput as WireDescribeRemoteControlTargetInput,
   DevelopmentNodeSnapshot as WireDevelopmentNodeSnapshot,
   DevelopmentNodeStartOutcome as WireDevelopmentNodeStartOutcome,
   DevelopmentNodeStopOutcome as WireDevelopmentNodeStopOutcome,
+  IdentityCreationOutcome as WireIdentityCreationOutcome,
+  IdentityImportPreviewOutcome as WireIdentityImportPreviewOutcome,
   InitiateRemoteControlPairingInput as WireInitiateRemoteControlPairingInput,
   RemoteControlDescribeOutcome as WireRemoteControlDescribeOutcome,
   RemoteControlPairingCommandOutcome as WireRemoteControlPairingCommandOutcome,
   RemoteControlPairingDecisionInput as WireRemoteControlPairingDecisionInput,
+  PrimaryIdentityState as WirePrimaryIdentityState,
 } from "./contract.generated";
 import { hydrateGenerated, NativePayloadError, type Hydrated } from "./hydrate";
 import type { PrnsAppNativeModule } from "./native";
@@ -26,8 +29,15 @@ export type RemoteControlDescribeOutcome = Hydrated<WireRemoteControlDescribeOut
 export type InitiateRemoteControlPairingInput = Hydrated<WireInitiateRemoteControlPairingInput>;
 export type RemoteControlPairingDecisionInput = Hydrated<WireRemoteControlPairingDecisionInput>;
 export type DescribeRemoteControlTargetInput = Hydrated<WireDescribeRemoteControlTargetInput>;
+export type PrimaryIdentityState = Hydrated<WirePrimaryIdentityState>;
+export type IdentityImportPreviewOutcome = Hydrated<WireIdentityImportPreviewOutcome>;
+export type IdentityCreationOutcome = Hydrated<WireIdentityCreationOutcome>;
 
 export type DevelopmentRuntime = {
+  readonly inspectDevelopmentIdentity: () => Promise<PrimaryIdentityState>;
+  readonly previewIdentityImport: (identity: Uint8Array) => Promise<IdentityImportPreviewOutcome>;
+  readonly createGeneratedIdentity: () => Promise<IdentityCreationOutcome>;
+  readonly createImportedIdentity: (identity: Uint8Array) => Promise<IdentityCreationOutcome>;
   readonly startDevelopmentNode: () => Promise<DevelopmentNodeStartOutcome>;
   readonly readDevelopmentNodeSnapshot: () => Promise<DevelopmentNodeSnapshot>;
   readonly initiateRemoteControlPairing: (
@@ -73,11 +83,16 @@ export function createDevelopmentRuntime(nativeModule: PrnsAppNativeModule): Dev
 
   const verifyContract = (): Promise<void> => {
     if (handshake === undefined) {
-      handshake = nativeModule
-        .contractFingerprint()
-        .then((actual) => {
-          if (actual !== NATIVE_CONTRACT_FINGERPRINT) {
-            throw new NativeContractMismatchError(NATIVE_CONTRACT_FINGERPRINT, actual);
+      handshake = Promise.all([
+        nativeModule.contractFingerprint(),
+        nativeModule.hostContractFingerprint(),
+      ])
+        .then(([appActual, hostActual]) => {
+          if (appActual !== NATIVE_CONTRACT_FINGERPRINT) {
+            throw new NativeContractMismatchError(NATIVE_CONTRACT_FINGERPRINT, appActual);
+          }
+          if (hostActual !== HOST_CONTRACT_FINGERPRINT) {
+            throw new NativeContractMismatchError(HOST_CONTRACT_FINGERPRINT, hostActual);
           }
         })
         .catch((error: unknown) => {
@@ -96,6 +111,12 @@ export function createDevelopmentRuntime(nativeModule: PrnsAppNativeModule): Dev
   };
 
   return {
+    inspectDevelopmentIdentity: () => read(() => nativeModule.inspectIdentity()),
+    previewIdentityImport: (identity) =>
+      read(() => nativeModule.previewIdentityImport(Array.from(identity))),
+    createGeneratedIdentity: () => read(() => nativeModule.createGeneratedIdentity()),
+    createImportedIdentity: (identity) =>
+      read(() => nativeModule.createImportedIdentity(Array.from(identity))),
     startDevelopmentNode: () => read(() => nativeModule.start()),
     readDevelopmentNodeSnapshot: () => read(() => nativeModule.snapshot()),
     initiateRemoteControlPairing: (input) =>

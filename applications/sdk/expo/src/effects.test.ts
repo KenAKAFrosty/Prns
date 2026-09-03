@@ -14,7 +14,8 @@ function snapshot(revision: bigint): DevelopmentNodeSnapshot {
     contractFingerprint: "prns-app-native/foundation-1/test",
     revision,
     runtime: "running",
-    bluetooth: { type: "ready" },
+    primaryIdentity: { type: "missing" },
+    localHost: { type: "stopped", lastStartFailure: null },
     controllerIdentityFingerprint: null,
     pairing: { type: "searching" },
     pairedTargets: [],
@@ -25,6 +26,10 @@ function snapshot(revision: bigint): DevelopmentNodeSnapshot {
 
 function fakeRuntime(overrides: Partial<DevelopmentRuntime> = {}): DevelopmentRuntime {
   return {
+    inspectDevelopmentIdentity: jest.fn(async () => ({ type: "missing" as const })),
+    previewIdentityImport: jest.fn(async () => ({ type: "invalidLength" as const })),
+    createGeneratedIdentity: jest.fn(async () => ({ type: "alreadyExists" as const })),
+    createImportedIdentity: jest.fn(async () => ({ type: "alreadyExists" as const })),
     startDevelopmentNode: jest.fn(async () => ({
       type: "started" as const,
       snapshot: snapshot(1n),

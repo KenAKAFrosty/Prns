@@ -1,8 +1,8 @@
 use std::sync::{Mutex, MutexGuard};
 
 use crate::contract::{
-    BluetoothState, DevelopmentNodeFailure, DevelopmentNodeRuntime, DevelopmentNodeSnapshot,
-    U64String,
+    DevelopmentNodeFailure, DevelopmentNodeRuntime, DevelopmentNodeSnapshot, LocalHostState,
+    PrimaryIdentityState, U64String,
 };
 
 pub struct SnapshotStore {
@@ -44,9 +44,9 @@ impl SnapshotStore {
         self.update(|snapshot| snapshot.runtime = runtime);
     }
 
-    pub fn set_bluetooth(&self, bluetooth: BluetoothState) {
+    pub fn set_primary_identity(&self, primary_identity: PrimaryIdentityState) {
         let mut snapshot = self.lock();
-        if snapshot.bluetooth == bluetooth {
+        if snapshot.primary_identity == primary_identity {
             return;
         }
         let next = snapshot
@@ -55,28 +55,78 @@ impl SnapshotStore {
             .parse::<u64>()
             .unwrap_or_default()
             .saturating_add(1);
-        snapshot.bluetooth = bluetooth;
+        snapshot.primary_identity = primary_identity;
+        snapshot.revision = U64String::from(next);
+    }
+
+    pub fn set_local_host(&self, local_host: LocalHostState) {
+        let mut snapshot = self.lock();
+        if snapshot.local_host == local_host {
+            return;
+        }
+        let next = snapshot
+            .revision
+            .0
+            .parse::<u64>()
+            .unwrap_or_default()
+            .saturating_add(1);
+        snapshot.local_host = local_host;
+        snapshot.revision = U64String::from(next);
+    }
+
+    pub fn set_local_host_unavailable_if_running(&self, detail: String) {
+        let mut snapshot = self.lock();
+        if snapshot.runtime != DevelopmentNodeRuntime::Running {
+            return;
+        }
+        let local_host = LocalHostState::Unavailable { detail };
+        if snapshot.local_host == local_host {
+            return;
+        }
+        let next = snapshot
+            .revision
+            .0
+            .parse::<u64>()
+            .unwrap_or_default()
+            .saturating_add(1);
+        snapshot.local_host = local_host;
         snapshot.revision = U64String::from(next);
     }
 
     pub fn fail(&self, failure: DevelopmentNodeFailure) {
         self.update(|snapshot| {
             snapshot.runtime = DevelopmentNodeRuntime::Failed;
+            if !matches!(
+                &snapshot.local_host,
+                LocalHostState::DevelopmentResetRequired { .. }
+            ) {
+                snapshot.local_host = LocalHostState::Stopped {
+                    last_start_failure: Some(failure.detail.clone()),
+                };
+            }
             snapshot.failure = Some(failure);
             snapshot.active_operation = None;
         });
     }
 
-    pub fn begin_generation(&self, bluetooth: BluetoothState) {
+    pub fn begin_generation(&self, primary_identity: PrimaryIdentityState) {
         self.update(|snapshot| {
             let mut next = DevelopmentNodeSnapshot::stopped();
             next.runtime = DevelopmentNodeRuntime::Starting;
-            next.bluetooth = bluetooth;
+            next.primary_identity = primary_identity;
             *snapshot = next;
         });
     }
 
     pub fn stopped(&self) {
+        self.update(|snapshot| {
+            let primary_identity = snapshot.primary_identity.clone();
+            *snapshot = DevelopmentNodeSnapshot::stopped();
+            snapshot.primary_identity = primary_identity;
+        });
+    }
+
+    pub fn reset(&self) {
         self.update(|snapshot| *snapshot = DevelopmentNodeSnapshot::stopped());
     }
 }
@@ -99,5 +149,31 @@ mod tests {
         let snapshot = store.read();
         assert_eq!(snapshot.revision, U64String::from(2));
         assert_eq!(snapshot.runtime, DevelopmentNodeRuntime::Running);
+    }
+
+    #[test]
+    fn snapshot_unavailability_only_replaces_a_running_generation() {
+        let store = SnapshotStore::new();
+        store.set_local_host_unavailable_if_running("stale failure".to_owned());
+        assert!(matches!(
+            store.read().local_host,
+            LocalHostState::Stopped { .. }
+        ));
+
+        store.set_runtime(DevelopmentNodeRuntime::Running);
+        store.set_local_host_unavailable_if_running("active failure".to_owned());
+        assert_eq!(
+            store.read().local_host,
+            LocalHostState::Unavailable {
+                detail: "active failure".to_owned(),
+            }
+        );
+
+        store.stopped();
+        store.set_local_host_unavailable_if_running("late failure".to_owned());
+        assert!(matches!(
+            store.read().local_host,
+            LocalHostState::Stopped { .. }
+        ));
     }
 }

@@ -1,3 +1,4 @@
+import type { DevelopmentNodeSnapshot } from "@prns-internal/expo";
 import type { Href } from "expo-router";
 import { useState } from "react";
 
@@ -14,7 +15,7 @@ import {
   ScreenHeading,
   Subheading,
 } from "@/ui/primitives";
-import { formatBluetooth, formatBytes, formatRequestKind, formatRuntime } from "./format";
+import { formatBytes, formatRequestKind, formatRuntime } from "./format";
 
 export function NodesScreen() {
   const runtime = useDevelopmentRuntime();
@@ -73,26 +74,8 @@ export function NodesScreen() {
 
       {runtime.snapshot === null ? null : (
         <>
+          <LocalNodeCards snapshot={runtime.snapshot} />
           <Card>
-            <Subheading>Local node</Subheading>
-            <Badge tone={runtime.snapshot.runtime === "failed" ? "warning" : "neutral"}>
-              {formatRuntime(runtime.snapshot.runtime)}
-            </Badge>
-            <KeyValue label="Bluetooth Auto" value={formatBluetooth(runtime.snapshot.bluetooth)} />
-            <KeyValue
-              label="Controller fingerprint"
-              value={
-                runtime.snapshot.controllerIdentityFingerprint === null
-                  ? "Not available"
-                  : formatBytes(runtime.snapshot.controllerIdentityFingerprint)
-              }
-            />
-            <KeyValue label="Snapshot revision" value={runtime.snapshot.revision.toString()} />
-            {runtime.snapshot.failure === null ? null : (
-              <BodyText>
-                {runtime.snapshot.failure.stage}: {runtime.snapshot.failure.detail}
-              </BodyText>
-            )}
             {runtime.backgroundFailure === null ? null : (
               <BodyText>Snapshot refresh failed: {runtime.backgroundFailure}</BodyText>
             )}
@@ -102,7 +85,7 @@ export function NodesScreen() {
             <Button disabled={refreshing} onPress={() => void refresh()} tone="secondary">
               {refreshing ? "Refreshing…" : "Refresh now"}
             </Button>
-            <NavigationLink href="/nodes/local">Open local-node placeholder</NavigationLink>
+            <NavigationLink href="/nodes/local">Open local-node details</NavigationLink>
           </Card>
 
           <Subheading>Persisted managed targets</Subheading>
@@ -148,5 +131,183 @@ export function NodesScreen() {
         <NavigationLink href="/nodes/local/grants">Controller grants</NavigationLink>
       </CardStack>
     </Screen>
+  );
+}
+
+export function LocalNodeScreen() {
+  const runtime = useDevelopmentRuntime();
+  return (
+    <Screen>
+      <Badge>Canonical Host snapshot</Badge>
+      <ScreenHeading>Local node</ScreenHeading>
+      {runtime.snapshot === null ? (
+        <Card>
+          <Badge tone={runtime.phase === "failed" ? "warning" : "neutral"}>{runtime.phase}</Badge>
+          <BodyText>{runtime.lifecycleFailure ?? "Waiting for the native node snapshot."}</BodyText>
+        </Card>
+      ) : (
+        <LocalNodeCards snapshot={runtime.snapshot} />
+      )}
+      <NavigationLink href="/nodes">Back to Nodes</NavigationLink>
+    </Screen>
+  );
+}
+
+function LocalNodeCards({ snapshot }: { readonly snapshot: DevelopmentNodeSnapshot }) {
+  return (
+    <>
+      <Card>
+        <Subheading>Identity and lifecycle</Subheading>
+        <Badge tone={snapshot.runtime === "failed" ? "warning" : "neutral"}>
+          {formatRuntime(snapshot.runtime)}
+        </Badge>
+        <PrimaryIdentity identity={snapshot.primaryIdentity} />
+        <KeyValue
+          label="RemoteControl controller"
+          value={
+            snapshot.controllerIdentityFingerprint === null
+              ? "Not available"
+              : formatBytes(snapshot.controllerIdentityFingerprint)
+          }
+        />
+        <KeyValue label="App snapshot revision" value={snapshot.revision.toString()} />
+        {snapshot.failure === null ? null : (
+          <BodyText>
+            {snapshot.failure.stage}: {snapshot.failure.detail}
+          </BodyText>
+        )}
+      </Card>
+      <HostCards localHost={snapshot.localHost} />
+    </>
+  );
+}
+
+function PrimaryIdentity({
+  identity,
+}: {
+  readonly identity: DevelopmentNodeSnapshot["primaryIdentity"];
+}) {
+  switch (identity.type) {
+    case "missing":
+      return <KeyValue label="Primary identity" value="Missing" />;
+    case "present":
+      return <KeyValue label="Primary identity" value={formatBytes(identity.identityHash)} />;
+    case "unavailable":
+      return <KeyValue label="Primary identity" value={`Unavailable — ${identity.detail}`} />;
+    case "developmentResetRequired":
+      return <KeyValue label="Primary identity" value={`Reset required — ${identity.reason}`} />;
+  }
+}
+
+function HostCards({ localHost }: { readonly localHost: DevelopmentNodeSnapshot["localHost"] }) {
+  if (localHost.type === "stopped") {
+    return (
+      <Card>
+        <Subheading>Host</Subheading>
+        <Badge>Stopped</Badge>
+        {localHost.lastStartFailure === null ? null : (
+          <BodyText>{localHost.lastStartFailure}</BodyText>
+        )}
+      </Card>
+    );
+  }
+  if (localHost.type === "unavailable" || localHost.type === "developmentResetRequired") {
+    return (
+      <Card>
+        <Subheading>Host</Subheading>
+        <Badge tone="warning">
+          {localHost.type === "unavailable" ? "Inspection unavailable" : "Reset required"}
+        </Badge>
+        <BodyText>
+          {localHost.type === "unavailable" ? localHost.detail : localHost.reason}
+        </BodyText>
+      </Card>
+    );
+  }
+
+  const host = localHost.host;
+  return (
+    <>
+      <Card>
+        <Subheading>Host runtime</Subheading>
+        <Badge>{host.runtime.running ? "Running" : "Stopped"}</Badge>
+        <KeyValue label="Backend" value={host.backend.backend} />
+        <KeyValue label="Capabilities" value={host.backend.capabilities.join(", ") || "None"} />
+        <KeyValue label="Host revision" value={host.revision.toString()} />
+        <KeyValue label="Uptime" value={`${host.runtime.uptimeMillis} ms`} />
+        <KeyValue label="Traffic received" value={`${host.runtime.rxBytes.toString()} bytes`} />
+        <KeyValue label="Traffic sent" value={`${host.runtime.txBytes.toString()} bytes`} />
+        <KeyValue label="Routes" value={host.runtime.routeCount.toString()} />
+        <KeyValue label="Active links" value={host.activeLinkCount.toString()} />
+      </Card>
+      <Card>
+        <Subheading>Persistence</Subheading>
+        <KeyValue label="Persistent" value={host.persistence.persistent ? "Yes" : "No"} />
+        <KeyValue label="Restored" value={host.persistence.restored ? "Yes" : "No"} />
+        <KeyValue label="Last flush" value={host.persistence.lastFlushCause ?? "Not observed"} />
+        {host.persistence.lastFailureDetail === undefined ? null : (
+          <BodyText>{host.persistence.lastFailureDetail}</BodyText>
+        )}
+      </Card>
+      <Subheading>Interfaces</Subheading>
+      {host.interfaces.length === 0 ? (
+        <Card>
+          <Badge tone="warning">No attached interface projected</Badge>
+        </Card>
+      ) : (
+        host.interfaces.map((networkInterface) => (
+          <Card key={formatBytes(networkInterface.interfaceId)}>
+            <Subheading>{networkInterface.name ?? networkInterface.kind ?? "Interface"}</Subheading>
+            <Badge
+              tone={
+                networkInterface.health === "Failed" || networkInterface.health === "Disabled"
+                  ? "warning"
+                  : "neutral"
+              }
+            >
+              {networkInterface.health}
+            </Badge>
+            <KeyValue label="Interface ID" value={formatBytes(networkInterface.interfaceId)} />
+            <KeyValue label="Received" value={`${networkInterface.rxBytes.toString()} bytes`} />
+            <KeyValue label="Sent" value={`${networkInterface.txBytes.toString()} bytes`} />
+            {networkInterface.failureDetail === undefined ? null : (
+              <BodyText>{networkInterface.failureDetail}</BodyText>
+            )}
+          </Card>
+        ))
+      )}
+      <Subheading>Routes</Subheading>
+      {host.routes.length === 0 ? (
+        <Card>
+          <Badge>No live routes</Badge>
+        </Card>
+      ) : (
+        host.routes.map((route) => (
+          <Card key={formatBytes(route.destination)}>
+            <KeyValue label="Destination" value={formatBytes(route.destination)} />
+            <KeyValue label="Hops" value={route.hops.toString()} />
+            <KeyValue label="Interface ID" value={formatBytes(route.interfaceId)} />
+            <KeyValue
+              label="Via identity"
+              value={route.viaIdentity === undefined ? "Direct" : formatBytes(route.viaIdentity)}
+            />
+            <KeyValue label="Expires" value={`${route.expiresAtMillis} ms`} />
+          </Card>
+        ))
+      )}
+      <Subheading>Authenticated destination identities</Subheading>
+      {host.destinationIdentities.length === 0 ? (
+        <Card>
+          <Badge>No authenticated observations</Badge>
+        </Card>
+      ) : (
+        host.destinationIdentities.map((association) => (
+          <Card key={formatBytes(association.destination)}>
+            <KeyValue label="Destination" value={formatBytes(association.destination)} />
+            <KeyValue label="Identity" value={formatBytes(association.identity)} />
+          </Card>
+        ))
+      )}
+    </>
   );
 }

@@ -14,7 +14,7 @@ assert.match(
 );
 assert.equal(
   swift.match(/\.runOnQueue\(Self\.nativeQueue\)/g)?.length,
-  9,
+  14,
   "every Expo bridge function must use the native operation queue",
 );
 assert.match(
@@ -27,6 +27,11 @@ assert.match(swift, /\.appendingPathComponent\("development", isDirectory: true\
 
 for (const abiName of [
   "prns_app_contract_fingerprint",
+  "prns_app_host_contract_fingerprint",
+  "prns_app_inspect_identity",
+  "prns_app_preview_identity_import",
+  "prns_app_create_generated_identity",
+  "prns_app_create_imported_identity",
   "prns_app_start",
   "prns_app_snapshot",
   "prns_app_initiate_pairing",

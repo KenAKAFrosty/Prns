@@ -20,7 +20,7 @@ import {
   Subheading,
 } from "@/ui/primitives";
 import { radius, space, useAppPalette } from "@/ui/theme";
-import { formatBluetooth, formatBytes, formatRequestKind } from "./format";
+import { formatBytes, formatRequestKind } from "./format";
 
 type RemoteControlPairingState = DevelopmentNodeSnapshot["pairing"];
 
@@ -112,7 +112,7 @@ export function PairNodeScreen({
         <>
           <Card>
             <Subheading>Transport readiness</Subheading>
-            <KeyValue label="Bluetooth Auto" value={formatBluetooth(runtime.snapshot.bluetooth)} />
+            <KeyValue label="Bluetooth Auto" value={formatBluetoothHost(runtime.snapshot)} />
             <KeyValue label="Snapshot revision" value={runtime.snapshot.revision.toString()} />
           </Card>
           <PairingStateCard
@@ -140,6 +140,28 @@ export function PairNodeScreen({
       <NavigationLink href="/nodes">Back to Nodes</NavigationLink>
     </Screen>
   );
+}
+
+function formatBluetoothHost(snapshot: DevelopmentNodeSnapshot): string {
+  if (snapshot.localHost.type !== "running") {
+    switch (snapshot.localHost.type) {
+      case "stopped":
+        return "Host stopped";
+      case "unavailable":
+        return `Host unavailable — ${snapshot.localHost.detail}`;
+      case "developmentResetRequired":
+        return `Development reset required — ${snapshot.localHost.reason}`;
+    }
+  }
+  const bluetooth = snapshot.localHost.host.interfaces.find(
+    (networkInterface) => networkInterface.kind === "AutomaticBluetoothLe",
+  );
+  if (bluetooth === undefined) {
+    return "Not attached";
+  }
+  return bluetooth.failureDetail === undefined
+    ? bluetooth.health
+    : `${bluetooth.health} — ${bluetooth.failureDetail}`;
 }
 
 function PairingStateCard({

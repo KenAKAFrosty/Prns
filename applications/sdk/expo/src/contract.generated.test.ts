@@ -1,60 +1,39 @@
-import {
-  NATIVE_CONTRACT_FIXTURES,
-  type BluetoothState,
-  type DevelopmentNodeStartOutcome,
-  type DevelopmentNodeStopOutcome,
-  type RemoteControlDescribeOutcome,
-  type RemoteControlPairingCommandOutcome,
-  type RemoteControlPairingState,
-} from "./contract.generated";
-
-function fixturesOf<Union>(fixtures: readonly Union[]): readonly Union[] {
-  return fixtures;
-}
-
-const fixtureGroups = [
-  ["BluetoothState", fixturesOf<BluetoothState>(NATIVE_CONTRACT_FIXTURES.bluetoothStates)],
-  [
-    "RemoteControlPairingState",
-    fixturesOf<RemoteControlPairingState>(NATIVE_CONTRACT_FIXTURES.pairingStates),
-  ],
-  [
-    "DevelopmentNodeStartOutcome",
-    fixturesOf<DevelopmentNodeStartOutcome>(NATIVE_CONTRACT_FIXTURES.startOutcomes),
-  ],
-  [
-    "DevelopmentNodeStopOutcome",
-    fixturesOf<DevelopmentNodeStopOutcome>(NATIVE_CONTRACT_FIXTURES.stopOutcomes),
-  ],
-  [
-    "RemoteControlPairingCommandOutcome",
-    fixturesOf<RemoteControlPairingCommandOutcome>(NATIVE_CONTRACT_FIXTURES.pairingOutcomes),
-  ],
-  [
-    "RemoteControlDescribeOutcome",
-    fixturesOf<RemoteControlDescribeOutcome>(NATIVE_CONTRACT_FIXTURES.describeOutcomes),
-  ],
-] as const;
+import { NATIVE_CONTRACT_FIXTURES } from "./contract.generated";
 
 describe("Rust-generated contract fixtures", () => {
-  test.each(fixtureGroups)(
-    "%s fixtures survive the exact JSON bridge projection",
-    (_name, fixtures) => {
+  test("every fixture survives the exact JSON bridge projection", () => {
+    for (const fixtures of Object.values(NATIVE_CONTRACT_FIXTURES)) {
       for (const expected of fixtures) {
         const parsed: unknown = JSON.parse(JSON.stringify(expected));
         expect(parsed).toEqual(expected);
       }
-    },
-  );
+    }
+  });
 
-  test("covers every closed tagged variant expected by foundation.1", () => {
-    expect(NATIVE_CONTRACT_FIXTURES.bluetoothStates.map(({ type }) => type)).toEqual([
-      "notCompiled",
-      "preparing",
+  test("covers every consumed tagged variant in local-node L0", () => {
+    expect(NATIVE_CONTRACT_FIXTURES.primaryIdentityStates.map(({ type }) => type)).toEqual([
+      "missing",
+      "present",
       "unavailable",
-      "ready",
-      "degraded",
-      "disabled",
+      "developmentResetRequired",
+    ]);
+    expect(NATIVE_CONTRACT_FIXTURES.localHostStates.map(({ type }) => type)).toEqual([
+      "stopped",
+      "stopped",
+      "running",
+      "unavailable",
+      "developmentResetRequired",
+    ]);
+    expect(NATIVE_CONTRACT_FIXTURES.identityImportPreviewOutcomes.map(({ type }) => type)).toEqual([
+      "valid",
+      "invalidLength",
+    ]);
+    expect(NATIVE_CONTRACT_FIXTURES.identityCreationOutcomes.map(({ type }) => type)).toEqual([
+      "created",
+      "alreadyExists",
+      "invalidLength",
+      "unavailable",
+      "developmentResetRequired",
     ]);
     expect(NATIVE_CONTRACT_FIXTURES.pairingStates.map(({ type }) => type)).toEqual([
       "bluetoothUnavailable",

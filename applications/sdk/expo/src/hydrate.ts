@@ -2,13 +2,29 @@ import {
   destinationHash,
   identityHash,
   type DestinationHash,
+  type HostSnapshot,
   type IdentityHash,
+  interfaceId,
+  type InterfaceId,
 } from "personal-rns/contract";
 
-type IdentityByteKey = "controllerIdentityFingerprint" | "targetIdentityFingerprint";
+type IdentityByteKey =
+  | "controllerIdentityFingerprint"
+  | "identity"
+  | "identityHash"
+  | "targetIdentityFingerprint"
+  | "viaIdentity";
 type DestinationByteKey = "destination" | "endpoint";
+type InterfaceByteKey = "interfaceId";
 type OpaqueByteKey = "publicAppData";
-type U64Key = "expiresAtMillis" | "observedAtMillis" | "revision" | "rttMillis" | "startedAtMillis";
+type U64Key =
+  | "expiresAtMillis"
+  | "observedAtMillis"
+  | "revision"
+  | "rttMillis"
+  | "rxBytes"
+  | "startedAtMillis"
+  | "txBytes";
 
 type HydratedIdentity<Value> = null extends Value ? IdentityHash | null : IdentityHash;
 
@@ -16,29 +32,45 @@ type HydratedProperty<Key extends PropertyKey, Value> = Key extends IdentityByte
   ? HydratedIdentity<Value>
   : Key extends DestinationByteKey
     ? DestinationHash
-    : Key extends OpaqueByteKey
-      ? Uint8Array
-      : Key extends U64Key
-        ? bigint
-        : Hydrated<Value>;
+    : Key extends InterfaceByteKey
+      ? InterfaceId
+      : Key extends OpaqueByteKey
+        ? Uint8Array
+        : Key extends U64Key
+          ? bigint
+          : Hydrated<Value>;
 
-export type Hydrated<Value> = Value extends readonly (infer Item)[]
-  ? readonly Hydrated<Item>[]
-  : Value extends object
-    ? { readonly [Key in keyof Value]: HydratedProperty<Key, Value[Key]> }
-    : Value;
+export type Hydrated<Value> = Value extends HostSnapshot
+  ? HostSnapshot
+  : Value extends readonly (infer Item)[]
+    ? readonly Hydrated<Item>[]
+    : Value extends object
+      ? { readonly [Key in keyof Value]: HydratedProperty<Key, Value[Key]> }
+      : Value;
 
 const identityByteKeys = new Set<string>([
   "controllerIdentityFingerprint",
+  "identity",
+  "identityHash",
   "targetIdentityFingerprint",
+  "viaIdentity",
 ]);
 const destinationByteKeys = new Set<string>(["destination", "endpoint"]);
 const u64Keys = new Set<string>([
-  "expiresAtMillis",
   "observedAtMillis",
   "revision",
   "rttMillis",
+  "rxBytes",
   "startedAtMillis",
+  "txBytes",
+]);
+const safeUintKeys = new Set<string>([
+  "expiresAtMillis",
+  "lastRouteActivityAtMillis",
+  "learnedAtMillis",
+  "rxBps",
+  "txBps",
+  "uptimeMillis",
 ]);
 const maximumU64 = 18_446_744_073_709_551_615n;
 const canonicalUnsignedDecimal = /^(0|[1-9][0-9]*)$/;
@@ -58,6 +90,9 @@ export function hydrateGenerated<Value>(value: Value): Hydrated<Value> {
 }
 
 function hydrateValue(value: unknown, path: string, key: string | undefined): unknown {
+  if (key === "expiresAtMillis" && !isHostRoutePath(path)) {
+    return hydrateU64(value, path);
+  }
   if (key !== undefined && u64Keys.has(key)) {
     return hydrateU64(value, path);
   }
@@ -80,8 +115,19 @@ function hydrateValue(value: unknown, path: string, key: string | undefined): un
       throw new NativePayloadError(path, "expected a Prns destination hash", { cause });
     }
   }
+  if (key === "interfaceId") {
+    const bytes = hydrateBytes(value, path);
+    try {
+      return interfaceId(bytes);
+    } catch (cause) {
+      throw new NativePayloadError(path, "expected a Prns interface ID", { cause });
+    }
+  }
   if (key === "publicAppData") {
     return hydrateBytes(value, path);
+  }
+  if (key !== undefined && safeUintKeys.has(key)) {
+    return hydrateSafeUint(value, path);
   }
   if (Array.isArray(value)) {
     return value.map((item, index) => hydrateValue(item, `${path}[${index}]`, undefined));
@@ -95,6 +141,10 @@ function hydrateValue(value: unknown, path: string, key: string | undefined): un
     );
   }
   return value;
+}
+
+function isHostRoutePath(path: string): boolean {
+  return /\.routes\[[0-9]+\]\.expiresAtMillis$/.test(path);
 }
 
 function hydrateBytes(value: unknown, path: string): Uint8Array {
@@ -118,4 +168,11 @@ function hydrateU64(value: unknown, path: string): bigint {
     throw new NativePayloadError(path, "unsigned decimal exceeds u64::MAX");
   }
   return parsed;
+}
+
+function hydrateSafeUint(value: unknown, path: string): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new NativePayloadError(path, "expected a non-negative safe integer");
+  }
+  return value;
 }

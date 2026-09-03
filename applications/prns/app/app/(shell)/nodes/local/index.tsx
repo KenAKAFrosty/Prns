@@ -1,7 +1,7 @@
 // route-id: nodes.local
 
-import { CatalogPlaceholderRoute } from "@/features/placeholder-screen";
+import { LocalNodeScreen } from "@/features/nodes/nodes-screen";
 
 export default function LocalNodeRoute() {
-  return <CatalogPlaceholderRoute screenId="nodes.local" />;
+  return <LocalNodeScreen />;
 }

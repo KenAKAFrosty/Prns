@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc as std_mpsc, Arc, Mutex, MutexGuard, OnceLock};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use personal_rns::prelude::{
     GrowableHeap, InitiateRemoteControlControllerPairing, ManuallyAttached,
@@ -14,28 +14,37 @@ use personal_rns::remote_control::{
     RemoteControlSelfAnnouncement, RemoteControlService,
 };
 use personal_rns::runtime::{
-    NodePersistence, RemoteControlIdentityDirectory, RemoteControlPairingControlError,
+    LocalIdentityFileError, NodePersistence, RemoteControlIdentityDirectory,
+    RemoteControlPairingControlError,
 };
-use tokio::sync::{mpsc, oneshot};
+use prns_core::identity::vault::{FileVault, FileVaultError, IdentityLabel, IdentityVault};
+use prns_core::identity::PrivateIdentityMaterial;
+use prns_host::{BackendInfo, BackendKind, Capability, InterfaceKind, PersistenceSnapshot};
+use prns_host_snapshot::{assemble_host_snapshot, HostInterfaceAttachment};
+use tokio::sync::{mpsc, watch};
 
 use crate::contract::{
-    BluetoothState, DescribeRemoteControlTargetInput, DevelopmentNodeFailure,
-    DevelopmentNodeFailureStage, DevelopmentNodeOperation, DevelopmentNodeOperationKind,
-    DevelopmentNodeRuntime, DevelopmentNodeSnapshot, DevelopmentNodeStartOutcome,
-    DevelopmentNodeStopOutcome, DevelopmentNodeStopStage, InitiateRemoteControlPairingInput,
+    DescribeRemoteControlTargetInput, DevelopmentNodeFailure, DevelopmentNodeFailureStage,
+    DevelopmentNodeOperation, DevelopmentNodeOperationKind, DevelopmentNodeRuntime,
+    DevelopmentNodeSnapshot, DevelopmentNodeStartOutcome, DevelopmentNodeStopOutcome,
+    DevelopmentNodeStopStage, IdentityCreationOutcome, IdentityImportPreviewOutcome,
+    InitiateRemoteControlPairingInput, LocalHostState, PrimaryIdentityState,
     RemoteControlDescribeFailureStage, RemoteControlDescribeOutcome,
     RemoteControlPairingCommandOutcome, RemoteControlPairingDecisionInput,
     RemoteControlPairingFailureStage, RemoteControlPairingState, U64String,
 };
 use crate::node::{prepare_storage, reset_storage, NodeStoragePaths};
 use crate::pairing::{
-    apply_event, apply_overflow_failure, attempt_id_string, expire_candidate, send_event,
-    AppliedNodeEvent, OwnedNodeEvent, PairingControls, EVENT_LANE_CAPACITY,
+    apply_event, apply_overflow_failure, apply_persistence_event, attempt_id_string,
+    expire_candidate, send_event, AppliedNodeEvent, OwnedNodeEvent, PairingControls,
+    EVENT_LANE_CAPACITY,
 };
 use crate::snapshot::SnapshotStore;
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(20);
+const HOST_INSPECTION_TIMEOUT: Duration = Duration::from_millis(1_500);
+const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(2);
 const STOP_TIMEOUT: Duration = Duration::from_secs(25);
 const COMMAND_LANE_CAPACITY: usize = 8;
 
@@ -51,18 +60,41 @@ struct Supervisor {
 #[derive(Default)]
 struct SupervisorState {
     worker: Option<Worker>,
+    identity_owner: Option<IdentityOwner>,
+}
+
+struct IdentityOwner {
+    root: PathBuf,
+    vault: FileVault,
 }
 
 struct Worker {
     commands: mpsc::Sender<Command>,
+    shutdown: ShutdownSignal,
     done: std_mpsc::Receiver<WorkerResult>,
     join: Option<JoinHandle<()>>,
     storage_root: PathBuf,
-    stop_requested: bool,
-    terminal_failure: Option<(DevelopmentNodeStopStage, String)>,
+}
+
+#[derive(Clone)]
+struct ShutdownSignal {
+    sender: watch::Sender<bool>,
+    requested: Arc<AtomicBool>,
+}
+
+impl ShutdownSignal {
+    fn request(&self) {
+        self.requested.store(true, Ordering::Release);
+        let _ = self.sender.send(true);
+    }
+
+    fn is_requested(&self) -> bool {
+        self.requested.load(Ordering::Acquire)
+    }
 }
 
 enum Command {
+    Snapshot(std_mpsc::SyncSender<DevelopmentNodeSnapshot>),
     Initiate(
         InitiateRemoteControlPairingInput,
         std_mpsc::SyncSender<RemoteControlPairingCommandOutcome>,
@@ -79,17 +111,191 @@ enum Command {
         DescribeRemoteControlTargetInput,
         std_mpsc::SyncSender<RemoteControlDescribeOutcome>,
     ),
-    Shutdown,
 }
 
-enum BluetoothMonitor {
+enum HostAttachment {
     #[cfg(all(feature = "apple", any(target_os = "ios", target_os = "macos")))]
     Apple {
-        status: personal_rns::bluetooth_auto::BluetoothAutoStatus,
-        preparation_failure: Option<String>,
+        attached: personal_rns::bluetooth_auto::AttachedBle,
     },
     #[cfg(not(all(feature = "apple", any(target_os = "ios", target_os = "macos"))))]
-    NotCompiled,
+    None,
+}
+
+#[must_use]
+pub fn inspect_identity(storage_root: &Path) -> PrimaryIdentityState {
+    let supervisor = supervisor();
+    let mut state = supervisor.lock_state();
+    let result = inspect_identity_locked(&mut state, storage_root);
+    supervisor.snapshots.set_primary_identity(result.clone());
+    result
+}
+
+#[must_use]
+pub fn preview_identity_import(bytes: &[u8]) -> IdentityImportPreviewOutcome {
+    let Ok(material) = PrivateIdentityMaterial::from_slice(bytes) else {
+        return IdentityImportPreviewOutcome::InvalidLength;
+    };
+    IdentityImportPreviewOutcome::Valid {
+        identity_hash: material.identity_hash().as_bytes().to_vec(),
+    }
+}
+
+pub fn create_generated_identity(storage_root: &Path) -> IdentityCreationOutcome {
+    create_identity(storage_root, IdentityCreation::Generate)
+}
+
+pub fn create_imported_identity(storage_root: &Path, bytes: &[u8]) -> IdentityCreationOutcome {
+    create_identity(storage_root, IdentityCreation::Import(bytes))
+}
+
+enum IdentityCreation<'a> {
+    Generate,
+    Import(&'a [u8]),
+}
+
+fn create_identity(storage_root: &Path, creation: IdentityCreation<'_>) -> IdentityCreationOutcome {
+    let supervisor = supervisor();
+    let mut state = supervisor.lock_state();
+    let paths = match prepare_storage(storage_root) {
+        Ok(paths) => paths,
+        Err(detail) => return IdentityCreationOutcome::Unavailable { detail },
+    };
+    let vault = match identity_vault(&mut state, &paths) {
+        Ok(vault) => vault,
+        Err(state) => return creation_failure(state),
+    };
+    let label = match primary_label() {
+        Ok(label) => label,
+        Err(state) => return creation_failure(state),
+    };
+    match vault.load(&label) {
+        Ok(Some(_)) => IdentityCreationOutcome::AlreadyExists,
+        Ok(None) => {
+            let material = match creation {
+                IdentityCreation::Generate => match personal_rns::try_generate_identity_secret() {
+                    Ok(secret) => PrivateIdentityMaterial::from(secret),
+                    Err(error) => {
+                        return IdentityCreationOutcome::Unavailable {
+                            detail: format!("could not generate identity material: {error}"),
+                        }
+                    }
+                },
+                IdentityCreation::Import(bytes) => {
+                    let Ok(material) = PrivateIdentityMaterial::from_slice(bytes) else {
+                        return IdentityCreationOutcome::InvalidLength;
+                    };
+                    material
+                }
+            };
+            match vault.store(&label, material.as_bytes()) {
+                Ok(()) => {
+                    let identity_hash = material.identity_hash().as_bytes().to_vec();
+                    let primary = PrimaryIdentityState::Present {
+                        identity_hash: identity_hash.clone(),
+                    };
+                    supervisor.snapshots.set_primary_identity(primary);
+                    IdentityCreationOutcome::Created { identity_hash }
+                }
+                Err(error) => creation_failure(primary_vault_failure(error)),
+            }
+        }
+        Err(error) => creation_failure(primary_vault_failure(error)),
+    }
+}
+
+fn inspect_identity_locked(
+    state: &mut SupervisorState,
+    storage_root: &Path,
+) -> PrimaryIdentityState {
+    let paths = match prepare_storage(storage_root) {
+        Ok(paths) => paths,
+        Err(detail) => return PrimaryIdentityState::Unavailable { detail },
+    };
+    let vault = match identity_vault(state, &paths) {
+        Ok(vault) => vault,
+        Err(state) => return state,
+    };
+    let label = match primary_label() {
+        Ok(label) => label,
+        Err(state) => return state,
+    };
+    match vault.load(&label) {
+        Ok(Some(secret)) => {
+            let material = PrivateIdentityMaterial::from(secret);
+            PrimaryIdentityState::Present {
+                identity_hash: material.identity_hash().as_bytes().to_vec(),
+            }
+        }
+        Ok(None) => PrimaryIdentityState::Missing,
+        Err(error) => primary_vault_failure(error),
+    }
+}
+
+fn identity_vault<'a>(
+    state: &'a mut SupervisorState,
+    paths: &NodeStoragePaths,
+) -> Result<&'a mut FileVault, PrimaryIdentityState> {
+    if state
+        .identity_owner
+        .as_ref()
+        .is_some_and(|owner| owner.root != paths.root)
+    {
+        if state.worker.is_some() {
+            return Err(PrimaryIdentityState::Unavailable {
+                detail: "the active native generation owns a different development root".to_owned(),
+            });
+        }
+        state.identity_owner = None;
+    }
+    let owner = state.identity_owner.get_or_insert_with(|| IdentityOwner {
+        root: paths.root.clone(),
+        vault: FileVault::new(&paths.identities),
+    });
+    Ok(&mut owner.vault)
+}
+
+fn primary_label() -> Result<IdentityLabel, PrimaryIdentityState> {
+    IdentityLabel::new("primary").map_err(|_| PrimaryIdentityState::Unavailable {
+        detail: "the built-in primary identity label is invalid".to_owned(),
+    })
+}
+
+fn primary_vault_failure(error: FileVaultError) -> PrimaryIdentityState {
+    match error {
+        FileVaultError::MalformedLength { found } => {
+            PrimaryIdentityState::DevelopmentResetRequired {
+                reason: format!("primary identity holds {found} bytes instead of 64"),
+            }
+        }
+        FileVaultError::BlobOutgrewBuffer {
+            blob_len,
+            buffer_len,
+        } => PrimaryIdentityState::DevelopmentResetRequired {
+            reason: format!(
+                "primary identity blob holds {blob_len} bytes but its buffer holds {buffer_len}"
+            ),
+        },
+        FileVaultError::Io(error) => PrimaryIdentityState::Unavailable {
+            detail: format!("could not access the primary identity: {error}"),
+        },
+    }
+}
+
+fn creation_failure(state: PrimaryIdentityState) -> IdentityCreationOutcome {
+    match state {
+        PrimaryIdentityState::DevelopmentResetRequired { reason } => {
+            IdentityCreationOutcome::DevelopmentResetRequired { reason }
+        }
+        PrimaryIdentityState::Unavailable { detail } => {
+            IdentityCreationOutcome::Unavailable { detail }
+        }
+        PrimaryIdentityState::Missing | PrimaryIdentityState::Present { .. } => {
+            IdentityCreationOutcome::Unavailable {
+                detail: "identity creation reached an inconsistent state".to_owned(),
+            }
+        }
+    }
 }
 
 pub fn start(storage_root: &Path) -> DevelopmentNodeStartOutcome {
@@ -125,15 +331,29 @@ pub fn start(storage_root: &Path) -> DevelopmentNodeStartOutcome {
         }
     };
 
-    let initial_bluetooth = if cfg!(all(
-        feature = "apple",
-        any(target_os = "ios", target_os = "macos")
-    )) {
-        BluetoothState::Preparing
-    } else {
-        BluetoothState::NotCompiled
+    let primary_identity = inspect_identity_locked(&mut state, storage_root);
+    supervisor
+        .snapshots
+        .set_primary_identity(primary_identity.clone());
+    let identity_failure = match &primary_identity {
+        PrimaryIdentityState::Present { .. } => None,
+        PrimaryIdentityState::Missing => {
+            Some("Create or import a primary identity before starting the local node.".to_owned())
+        }
+        PrimaryIdentityState::Unavailable { detail } => Some(detail.clone()),
+        PrimaryIdentityState::DevelopmentResetRequired { reason } => Some(reason.clone()),
     };
-    supervisor.snapshots.begin_generation(initial_bluetooth);
+    if let Some(detail) = identity_failure {
+        supervisor.snapshots.fail(DevelopmentNodeFailure {
+            stage: DevelopmentNodeFailureStage::Identity,
+            detail: detail.clone(),
+        });
+        return DevelopmentNodeStartOutcome::Failed {
+            stage: DevelopmentNodeFailureStage::Identity,
+            detail,
+        };
+    }
+    supervisor.snapshots.begin_generation(primary_identity);
     supervisor
         .operation_admitted
         .store(false, Ordering::Release);
@@ -141,15 +361,23 @@ pub fn start(storage_root: &Path) -> DevelopmentNodeStartOutcome {
     let (ready_tx, ready_rx) = std_mpsc::sync_channel(1);
     let (done_tx, done_rx) = std_mpsc::sync_channel(1);
     let (command_tx, command_rx) = mpsc::channel(COMMAND_LANE_CAPACITY);
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let shutdown = ShutdownSignal {
+        sender: shutdown_tx,
+        requested: Arc::new(AtomicBool::new(false)),
+    };
     let snapshots = Arc::clone(&supervisor.snapshots);
     let operation_admitted = Arc::clone(&supervisor.operation_admitted);
     let storage_for_worker = paths.root.clone();
+    let worker_shutdown = shutdown.clone();
     let join = std::thread::Builder::new()
         .name("prns-app-native".to_owned())
         .spawn(move || {
             let result = run_worker(
                 paths,
                 command_rx,
+                worker_shutdown,
+                shutdown_rx,
                 snapshots,
                 Arc::clone(&operation_admitted),
                 ready_tx,
@@ -173,30 +401,27 @@ pub fn start(storage_root: &Path) -> DevelopmentNodeStartOutcome {
     };
     state.worker = Some(Worker {
         commands: command_tx,
+        shutdown,
         done: done_rx,
         join: Some(join),
         storage_root: storage_for_worker,
-        stop_requested: false,
-        terminal_failure: None,
     });
 
     match ready_rx.recv_timeout(STARTUP_TIMEOUT + Duration::from_secs(2)) {
         Ok(Ok(snapshot)) => DevelopmentNodeStartOutcome::Started { snapshot },
         Ok(Err((stage, detail))) => {
-            finish_failed_start(&mut state, stage, detail.clone());
+            finish_failed_start(supervisor, &mut state, stage, detail.clone());
             DevelopmentNodeStartOutcome::Failed { stage, detail }
         }
         Err(std_mpsc::RecvTimeoutError::Timeout) => {
             let detail = "The native node did not restore persistence before the startup deadline."
                 .to_owned();
-            supervisor.snapshots.fail(DevelopmentNodeFailure {
-                stage: DevelopmentNodeFailureStage::PersistenceRestore,
-                detail: detail.clone(),
-            });
-            if let Some(worker) = state.worker.as_mut() {
-                let _ = worker.commands.try_send(Command::Shutdown);
-                worker.stop_requested = true;
-            }
+            finish_failed_start(
+                supervisor,
+                &mut state,
+                DevelopmentNodeFailureStage::PersistenceRestore,
+                detail.clone(),
+            );
             DevelopmentNodeStartOutcome::Failed {
                 stage: DevelopmentNodeFailureStage::PersistenceRestore,
                 detail,
@@ -205,6 +430,7 @@ pub fn start(storage_root: &Path) -> DevelopmentNodeStartOutcome {
         Err(std_mpsc::RecvTimeoutError::Disconnected) => {
             let detail = "The native node worker exited before publishing readiness.".to_owned();
             finish_failed_start(
+                supervisor,
                 &mut state,
                 DevelopmentNodeFailureStage::Node,
                 detail.clone(),
@@ -219,7 +445,38 @@ pub fn start(storage_root: &Path) -> DevelopmentNodeStartOutcome {
 
 #[must_use]
 pub fn snapshot() -> DevelopmentNodeSnapshot {
-    supervisor().snapshots.read()
+    snapshot_with_supervisor(supervisor())
+}
+
+fn snapshot_with_supervisor(supervisor: &Supervisor) -> DevelopmentNodeSnapshot {
+    let state = supervisor.lock_state();
+    let current = supervisor.snapshots.read();
+    if current.runtime != DevelopmentNodeRuntime::Running {
+        return current;
+    }
+    let Some(worker) = state.worker.as_ref() else {
+        return current;
+    };
+    let (response_tx, response_rx) = std_mpsc::sync_channel(1);
+    if worker
+        .commands
+        .try_send(Command::Snapshot(response_tx))
+        .is_err()
+    {
+        supervisor.snapshots.set_local_host_unavailable_if_running(
+            "The local Host snapshot command could not be admitted.".to_owned(),
+        );
+        return supervisor.snapshots.read();
+    }
+    match response_rx.recv_timeout(SNAPSHOT_TIMEOUT) {
+        Ok(snapshot) => snapshot,
+        Err(_) => {
+            supervisor.snapshots.set_local_host_unavailable_if_running(
+                "The local Host snapshot command exceeded its bounded wait.".to_owned(),
+            );
+            supervisor.snapshots.read()
+        }
+    }
 }
 
 pub fn initiate(input: InitiateRemoteControlPairingInput) -> RemoteControlPairingCommandOutcome {
@@ -278,15 +535,13 @@ pub fn describe(input: DescribeRemoteControlTargetInput) -> RemoteControlDescrib
 pub fn stop() -> DevelopmentNodeStopOutcome {
     let supervisor = supervisor();
     let mut state = supervisor.lock_state();
+    stop_locked(supervisor, &mut state)
+}
+
+fn stop_locked(supervisor: &Supervisor, state: &mut SupervisorState) -> DevelopmentNodeStopOutcome {
     let Some(worker) = state.worker.as_mut() else {
         return DevelopmentNodeStopOutcome::AlreadyStopped;
     };
-    if let Some((stage, detail)) = &worker.terminal_failure {
-        return DevelopmentNodeStopOutcome::Failed {
-            stage: *stage,
-            detail: detail.clone(),
-        };
-    }
 
     supervisor
         .snapshots
@@ -297,19 +552,7 @@ pub fn stop() -> DevelopmentNodeStopOutcome {
             started_at_millis: U64String::from(wall_clock_millis()),
         });
     });
-    if !worker.stop_requested {
-        match worker.commands.try_send(Command::Shutdown) {
-            Ok(()) => worker.stop_requested = true,
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                return DevelopmentNodeStopOutcome::Failed {
-                    stage: DevelopmentNodeStopStage::CommandAdmission,
-                    detail: "The native command lane is busy; shutdown was not admitted."
-                        .to_owned(),
-                }
-            }
-            Err(mpsc::error::TrySendError::Closed(_)) => worker.stop_requested = true,
-        }
-    }
+    request_worker_shutdown(worker);
 
     let result = worker.done.recv_timeout(STOP_TIMEOUT);
     match result {
@@ -324,17 +567,38 @@ pub fn stop() -> DevelopmentNodeStopOutcome {
         }
         Ok(Err((stage, detail))) => {
             join_finished_worker(worker);
-            worker.terminal_failure = Some((stage, detail.clone()));
+            state.worker = None;
+            supervisor
+                .operation_admitted
+                .store(false, Ordering::Release);
+            supervisor.snapshots.fail(DevelopmentNodeFailure {
+                stage: failure_stage_for_stop(stage),
+                detail: detail.clone(),
+            });
             DevelopmentNodeStopOutcome::Failed { stage, detail }
         }
-        Err(std_mpsc::RecvTimeoutError::Timeout) => DevelopmentNodeStopOutcome::Failed {
-            stage: DevelopmentNodeStopStage::Worker,
-            detail: "The native worker did not finish bounded shutdown.".to_owned(),
-        },
+        Err(std_mpsc::RecvTimeoutError::Timeout) => {
+            let detail = "The native worker did not finish bounded shutdown.".to_owned();
+            supervisor.snapshots.fail(DevelopmentNodeFailure {
+                stage: DevelopmentNodeFailureStage::Runtime,
+                detail: detail.clone(),
+            });
+            DevelopmentNodeStopOutcome::Failed {
+                stage: DevelopmentNodeStopStage::Worker,
+                detail,
+            }
+        }
         Err(std_mpsc::RecvTimeoutError::Disconnected) => {
             join_finished_worker(worker);
             let detail = "The native worker exited without a shutdown result.".to_owned();
-            worker.terminal_failure = Some((DevelopmentNodeStopStage::Worker, detail.clone()));
+            state.worker = None;
+            supervisor
+                .operation_admitted
+                .store(false, Ordering::Release);
+            supervisor.snapshots.fail(DevelopmentNodeFailure {
+                stage: DevelopmentNodeFailureStage::Runtime,
+                detail: detail.clone(),
+            });
             DevelopmentNodeStopOutcome::Failed {
                 stage: DevelopmentNodeStopStage::Worker,
                 detail,
@@ -343,14 +607,17 @@ pub fn stop() -> DevelopmentNodeStopOutcome {
     }
 }
 
+fn request_worker_shutdown(worker: &Worker) {
+    worker.shutdown.request();
+}
+
 pub fn reset(storage_root: &Path) -> DevelopmentNodeStopOutcome {
-    let active_root = {
-        let state = supervisor().lock_state();
-        state
-            .worker
-            .as_ref()
-            .map(|worker| worker.storage_root.clone())
-    };
+    let supervisor = supervisor();
+    let mut state = supervisor.lock_state();
+    let active_root = state
+        .worker
+        .as_ref()
+        .map(|worker| worker.storage_root.clone());
     if let Some(active_root) = active_root {
         let requested_root = storage_root
             .canonicalize()
@@ -363,35 +630,23 @@ pub fn reset(storage_root: &Path) -> DevelopmentNodeStopOutcome {
             };
         }
     }
-    let terminal_worker_reaped = {
-        let mut state = supervisor().lock_state();
-        let safe_to_clear = state
-            .worker
-            .as_ref()
-            .is_some_and(|worker| worker.join.is_none() && worker.terminal_failure.is_some());
-        if safe_to_clear {
-            state.worker = None;
-        }
-        safe_to_clear
-    };
-    let stop_outcome = if terminal_worker_reaped {
-        supervisor()
-            .operation_admitted
-            .store(false, Ordering::Release);
-        DevelopmentNodeStopOutcome::Stopped
-    } else {
-        stop()
-    };
+    let stop_outcome = stop_locked(supervisor, &mut state);
     if !matches!(
         stop_outcome,
         DevelopmentNodeStopOutcome::Stopped | DevelopmentNodeStopOutcome::AlreadyStopped
-    ) {
+    ) && state.worker.is_some()
+    {
         return stop_outcome;
     }
+    let reset_outcome = match stop_outcome {
+        DevelopmentNodeStopOutcome::Failed { .. } => DevelopmentNodeStopOutcome::Stopped,
+        outcome => outcome,
+    };
+    state.identity_owner = None;
     match reset_storage(storage_root) {
         Ok(()) => {
-            supervisor().snapshots.stopped();
-            stop_outcome
+            supervisor.snapshots.reset();
+            reset_outcome
         }
         Err(detail) => DevelopmentNodeStopOutcome::Failed {
             stage: DevelopmentNodeStopStage::Persistence,
@@ -475,14 +730,14 @@ fn call_pairing(
 }
 
 fn finish_failed_start(
+    supervisor: &Supervisor,
     state: &mut SupervisorState,
     stage: DevelopmentNodeFailureStage,
     detail: String,
 ) {
     let mut worker_finished = false;
     if let Some(worker) = state.worker.as_mut() {
-        let _ = worker.commands.try_send(Command::Shutdown);
-        worker.stop_requested = true;
+        request_worker_shutdown(worker);
         match worker.done.recv_timeout(STOP_TIMEOUT) {
             Ok(_) | Err(std_mpsc::RecvTimeoutError::Disconnected) => {
                 join_finished_worker(worker);
@@ -496,7 +751,6 @@ fn finish_failed_start(
     if worker_finished {
         state.worker = None;
     }
-    let supervisor = supervisor();
     supervisor
         .operation_admitted
         .store(false, Ordering::Release);
@@ -514,6 +768,8 @@ fn join_finished_worker(worker: &mut Worker) {
 fn run_worker(
     paths: NodeStoragePaths,
     commands: mpsc::Receiver<Command>,
+    shutdown: ShutdownSignal,
+    shutdown_rx: watch::Receiver<bool>,
     snapshots: Arc<SnapshotStore>,
     operation_admitted: Arc<AtomicBool>,
     ready: std_mpsc::SyncSender<ReadyResult>,
@@ -529,6 +785,8 @@ fn run_worker(
     runtime.block_on(run_generation(
         paths,
         commands,
+        shutdown,
+        shutdown_rx,
         snapshots,
         operation_admitted,
         ready,
@@ -538,6 +796,8 @@ fn run_worker(
 async fn run_generation(
     paths: NodeStoragePaths,
     commands: mpsc::Receiver<Command>,
+    shutdown: ShutdownSignal,
+    mut shutdown_rx: watch::Receiver<bool>,
     snapshots: Arc<SnapshotStore>,
     operation_admitted: Arc<AtomicBool>,
     ready: std_mpsc::SyncSender<ReadyResult>,
@@ -562,24 +822,30 @@ async fn run_generation(
     let (identity_secrets, _) = bootstrap.into_parts();
     let bluetooth_identity = personal_rns::load_or_create_ble_identity(&paths.bluetooth_identity)
         .map_err(|error| {
+        let detail = format!("could not load the installation Bluetooth identity: {error}");
+        if matches!(
+            error,
+            LocalIdentityFileError::Malformed { .. }
+                | LocalIdentityFileError::EmptyBleIdentity
+                | LocalIdentityFileError::InvalidBleIdentity(_)
+        ) {
+            snapshots.set_local_host(LocalHostState::DevelopmentResetRequired {
+                reason: detail.clone(),
+            });
+        }
         boot_failure(
             &ready,
             &snapshots,
             DevelopmentNodeFailureStage::Identity,
-            format!("could not load the installation Bluetooth identity: {error}"),
+            detail,
         )
     })?;
 
     #[cfg(all(feature = "apple", any(target_os = "ios", target_os = "macos")))]
-    let (prepared_bluetooth, preparation_failure) =
+    let prepared_bluetooth =
         match personal_rns::bluetooth_auto::AutoBle::prepare(bluetooth_identity).await {
-            Ok(prepared) => (prepared, None),
-            Err(error) => (
-                personal_rns::bluetooth_auto::AutoBle::unavailable(bluetooth_identity),
-                Some(format!(
-                    "CoreBluetooth manager preparation failed: {error:?}"
-                )),
-            ),
+            Ok(prepared) => prepared,
+            Err(_) => personal_rns::bluetooth_auto::AutoBle::unavailable(bluetooth_identity),
         };
     #[cfg(not(all(feature = "apple", any(target_os = "ios", target_os = "macos"))))]
     let _ = bluetooth_identity;
@@ -615,41 +881,35 @@ async fn run_generation(
     let clock = node.clock();
 
     #[cfg(all(feature = "apple", any(target_os = "ios", target_os = "macos")))]
-    let bluetooth = {
-        let attached = handle.attach(prepared_bluetooth);
-        BluetoothMonitor::Apple {
-            status: attached.status(),
-            preparation_failure,
-        }
+    let host_attachment = HostAttachment::Apple {
+        attached: handle.attach(prepared_bluetooth),
     };
     #[cfg(not(all(feature = "apple", any(target_os = "ios", target_os = "macos"))))]
-    let bluetooth = BluetoothMonitor::NotCompiled;
+    let host_attachment = HostAttachment::None;
 
     snapshots.update(|snapshot| {
         snapshot.controller_identity_fingerprint = Some(controller_identity_fingerprint);
-        snapshot.bluetooth = bluetooth.snapshot();
-        if bluetooth.is_not_compiled() {
+        if host_attachment.is_none() {
             snapshot.pairing = RemoteControlPairingState::BluetoothUnavailable;
         }
     });
 
-    let (shutdown_tx, shutdown_rx) = oneshot::channel();
-    let shutdown_requested = Arc::new(AtomicBool::new(false));
     let node_run = node.run_until(async {
-        let _ = shutdown_rx.await;
+        if !*shutdown_rx.borrow() {
+            let _ = shutdown_rx.changed().await;
+        }
     });
     let actor = run_actor(
         handle,
         commands,
         event_rx,
         overflowed,
-        bluetooth,
+        host_attachment,
         clock,
         Arc::clone(&snapshots),
         Arc::clone(&operation_admitted),
-        Arc::clone(&shutdown_requested),
         ready,
-        shutdown_tx,
+        shutdown.clone(),
     );
     tokio::pin!(node_run);
     tokio::pin!(actor);
@@ -666,7 +926,7 @@ async fn run_generation(
                 error,
                 "the Prns node stopped unexpectedly",
             ))?;
-            if shutdown_requested.load(Ordering::Acquire) {
+            if shutdown.is_requested() {
                 Ok(())
             } else {
                 Err((
@@ -700,6 +960,14 @@ fn settle_worker_result(
                 };
             }
             snapshot.runtime = DevelopmentNodeRuntime::Failed;
+            if !matches!(
+                &snapshot.local_host,
+                LocalHostState::DevelopmentResetRequired { .. }
+            ) {
+                snapshot.local_host = LocalHostState::Stopped {
+                    last_start_failure: Some(detail.clone()),
+                };
+            }
             snapshot.failure = Some(DevelopmentNodeFailure {
                 stage: failure_stage_for_stop(*stage),
                 detail: detail.clone(),
@@ -744,20 +1012,23 @@ async fn run_actor(
     mut commands: mpsc::Receiver<Command>,
     mut events: mpsc::Receiver<OwnedNodeEvent>,
     overflowed: Arc<std::sync::atomic::AtomicBool>,
-    bluetooth: BluetoothMonitor,
+    host_attachment: HostAttachment,
     clock: personal_rns::manifold::tokio::TokioClock,
     snapshots: Arc<SnapshotStore>,
     operation_admitted: Arc<AtomicBool>,
-    shutdown_requested: Arc<AtomicBool>,
     ready: std_mpsc::SyncSender<ReadyResult>,
-    shutdown: oneshot::Sender<()>,
+    shutdown: ShutdownSignal,
 ) -> WorkerResult {
     let mut controls = PairingControls::default();
+    let mut persistence = PersistenceSnapshot::persistent();
+    let started = Instant::now();
+    let mut host_revision = 0_u64;
     let startup = async {
         loop {
             let Some(event) = events.recv().await else {
                 return Err("The native event lane closed before persistence restoration.");
             };
+            apply_persistence_event(&event, &mut persistence);
             if apply_event(event, &mut controls, &snapshots)
                 == AppliedNodeEvent::PersistenceRestored
             {
@@ -773,8 +1044,7 @@ async fn run_actor(
                 DevelopmentNodeFailureStage::PersistenceRestore,
                 detail.clone(),
             )));
-            shutdown_requested.store(true, Ordering::Release);
-            let _ = shutdown.send(());
+            shutdown.request();
             return Err((DevelopmentNodeStopStage::Persistence, detail));
         }
         Err(_) => {
@@ -784,8 +1054,7 @@ async fn run_actor(
                 DevelopmentNodeFailureStage::PersistenceRestore,
                 detail.clone(),
             )));
-            shutdown_requested.store(true, Ordering::Release);
-            let _ = shutdown.send(());
+            shutdown.request();
             return Err((DevelopmentNodeStopStage::Persistence, detail));
         }
     }
@@ -793,24 +1062,32 @@ async fn run_actor(
     let _ = crate::remote_control::refresh_targets(&handle, &snapshots).await;
     snapshots.update(|snapshot| {
         snapshot.runtime = DevelopmentNodeRuntime::Running;
-        snapshot.bluetooth = bluetooth.snapshot();
         snapshot.failure = None;
     });
+    refresh_host_snapshot(
+        &handle,
+        &host_attachment,
+        &persistence,
+        &mut host_revision,
+        started,
+        &snapshots,
+    )
+    .await;
     let _ = ready.send(Ok(snapshots.read()));
 
-    let mut bluetooth_refresh = tokio::time::interval(Duration::from_millis(500));
+    let mut candidate_expiry = tokio::time::interval(Duration::from_millis(500));
     loop {
         if overflowed.swap(false, std::sync::atomic::Ordering::AcqRel) {
             apply_overflow_failure(&snapshots);
         }
         tokio::select! {
-            _ = bluetooth_refresh.tick() => {
-                snapshots.set_bluetooth(bluetooth.snapshot());
+            _ = candidate_expiry.tick() => {
                 expire_candidate(&mut controls, &snapshots, clock.now());
             }
             event = events.recv() => {
                 match event {
                     Some(event) => {
+                        apply_persistence_event(&event, &mut persistence);
                         if apply_event(event, &mut controls, &snapshots)
                             == AppliedNodeEvent::TargetInventoryChanged
                         {
@@ -819,8 +1096,7 @@ async fn run_actor(
                                     stage: DevelopmentNodeFailureStage::Node,
                                     detail: detail.clone(),
                                 });
-                                shutdown_requested.store(true, Ordering::Release);
-                                let _ = shutdown.send(());
+                                shutdown.request();
                                 return Err((DevelopmentNodeStopStage::Node, detail));
                             }
                         }
@@ -831,8 +1107,7 @@ async fn run_actor(
                             stage: DevelopmentNodeFailureStage::Node,
                             detail: "The native event lane closed unexpectedly.".to_owned(),
                         });
-                        shutdown_requested.store(true, Ordering::Release);
-                        let _ = shutdown.send(());
+                        shutdown.request();
                         return Err((
                             DevelopmentNodeStopStage::Node,
                             "The native actor lost its Prns event producer.".to_owned(),
@@ -841,6 +1116,17 @@ async fn run_actor(
                 }
             }
             command = commands.recv() => match command {
+                Some(Command::Snapshot(response)) => {
+                    refresh_host_snapshot(
+                        &handle,
+                        &host_attachment,
+                        &persistence,
+                        &mut host_revision,
+                        started,
+                        &snapshots,
+                    ).await;
+                    let _ = response.send(snapshots.read());
+                }
                 Some(Command::Initiate(input, response)) => {
                     let outcome = initiate_pairing(&handle, &mut controls, &snapshots, input).await;
                     operation_admitted.store(false, Ordering::Release);
@@ -861,16 +1147,61 @@ async fn run_actor(
                     operation_admitted.store(false, Ordering::Release);
                     let _ = response.send(outcome);
                 }
-                Some(Command::Shutdown) | None => {
+                None => {
                     commands.close();
                     snapshots.set_runtime(DevelopmentNodeRuntime::Stopping);
-                    shutdown_requested.store(true, Ordering::Release);
-                    let _ = shutdown.send(());
+                    shutdown.request();
                     return Ok(());
                 }
             }
         }
     }
+}
+
+async fn refresh_host_snapshot(
+    handle: &PrnsNodeHandle,
+    attachment: &HostAttachment,
+    persistence: &PersistenceSnapshot,
+    revision: &mut u64,
+    started: Instant,
+    snapshots: &SnapshotStore,
+) {
+    let interfaces = handle.interface_inventory();
+    let engine =
+        match tokio::time::timeout(HOST_INSPECTION_TIMEOUT, handle.engine_inspection_snapshot())
+            .await
+        {
+            Ok(Some(engine)) => engine,
+            Ok(None) => {
+                snapshots.set_local_host_unavailable_if_running(
+                    "The local node inspection lane is unavailable.".to_owned(),
+                );
+                return;
+            }
+            Err(_) => {
+                snapshots.set_local_host_unavailable_if_running(
+                    "The local node inspection lane exceeded its bounded wait.".to_owned(),
+                );
+                return;
+            }
+        };
+    *revision = revision.saturating_add(1);
+    let host = assemble_host_snapshot(
+        interfaces,
+        attachment.metadata(),
+        engine,
+        BackendInfo::new(
+            BackendKind::Native,
+            [Capability::Bluetooth],
+            [InterfaceKind::AutomaticBluetoothLe],
+        ),
+        persistence.clone(),
+        *revision,
+        started.elapsed(),
+    );
+    snapshots.set_local_host(LocalHostState::Running {
+        host: Box::new(host),
+    });
 }
 
 async fn initiate_pairing(
@@ -1084,48 +1415,27 @@ async fn reject_pairing(
     }
 }
 
-impl BluetoothMonitor {
-    const fn is_not_compiled(&self) -> bool {
+impl HostAttachment {
+    const fn is_none(&self) -> bool {
         #[cfg(all(feature = "apple", any(target_os = "ios", target_os = "macos")))]
         {
             false
         }
         #[cfg(not(all(feature = "apple", any(target_os = "ios", target_os = "macos"))))]
         {
-            matches!(self, Self::NotCompiled)
+            matches!(self, Self::None)
         }
     }
 
-    fn snapshot(&self) -> BluetoothState {
+    fn metadata(&self) -> Vec<HostInterfaceAttachment> {
         match self {
             #[cfg(all(feature = "apple", any(target_os = "ios", target_os = "macos")))]
-            Self::Apple {
-                status,
-                preparation_failure,
-            } => {
-                use personal_rns::interfaces::{ConnectionState, InterfaceStatus};
-                match status.connection() {
-                    ConnectionState::Connected => BluetoothState::Ready,
-                    ConnectionState::Degraded | ConnectionState::Reconnecting => {
-                        BluetoothState::Degraded {
-                            detail: "Bluetooth Auto is reconnecting or recently lost a peer."
-                                .to_owned(),
-                        }
-                    }
-                    ConnectionState::Failed => BluetoothState::Unavailable {
-                        detail: preparation_failure.clone().unwrap_or_else(|| {
-                            "Bluetooth Auto reported an unavailable platform backend.".to_owned()
-                        }),
-                    },
-                    ConnectionState::Disabled => BluetoothState::Disabled,
-                    ConnectionState::Initializing => BluetoothState::Preparing,
-                    ConnectionState::Disconnected | ConnectionState::Unknown => {
-                        BluetoothState::Ready
-                    }
-                }
-            }
+            Self::Apple { attached } => vec![HostInterfaceAttachment::new(
+                attached.id(),
+                InterfaceKind::AutomaticBluetoothLe,
+            )],
             #[cfg(not(all(feature = "apple", any(target_os = "ios", target_os = "macos"))))]
-            Self::NotCompiled => BluetoothState::NotCompiled,
+            Self::None => Vec::new(),
         }
     }
 }
@@ -1206,6 +1516,37 @@ fn wall_clock_millis() -> u64 {
 mod tests {
     use super::*;
 
+    fn running_host_state() -> LocalHostState {
+        LocalHostState::Running {
+            host: Box::new(prns_host::HostSnapshot {
+                revision: 1,
+                backend: BackendInfo::new(
+                    BackendKind::Native,
+                    [Capability::Bluetooth],
+                    [InterfaceKind::AutomaticBluetoothLe],
+                ),
+                interfaces: Vec::new(),
+                routes: Vec::new(),
+                active_link_count: 0,
+                destination_identities: Vec::new(),
+                runtime: prns_host::RuntimeHealthSnapshot {
+                    running: true,
+                    uptime_millis: 1,
+                    interface_count: 0,
+                    online_interface_count: 0,
+                    route_count: 0,
+                    link_count: 0,
+                    transported_link_count: 0,
+                    rx_bytes: 0,
+                    tx_bytes: 0,
+                    rx_bps: 0,
+                    tx_bps: 0,
+                },
+                persistence: PersistenceSnapshot::persistent(),
+            }),
+        }
+    }
+
     fn seed_active_pairing(snapshots: &SnapshotStore, pairing: RemoteControlPairingState) {
         snapshots.update(|snapshot| {
             snapshot.runtime = DevelopmentNodeRuntime::Running;
@@ -1215,6 +1556,15 @@ mod tests {
                 started_at_millis: U64String::from(7),
             });
         });
+    }
+
+    fn host_revision(snapshot: &DevelopmentNodeSnapshot) -> u64 {
+        match &snapshot.local_host {
+            LocalHostState::Running { host } => host.revision,
+            LocalHostState::Stopped { .. }
+            | LocalHostState::Unavailable { .. }
+            | LocalHostState::DevelopmentResetRequired { .. } => 0,
+        }
     }
 
     #[test]
@@ -1326,6 +1676,7 @@ mod tests {
             permissions: vec![crate::contract::RemoteControlRequestKind::Describe],
         };
         seed_active_pairing(&snapshots, pairing.clone());
+        snapshots.set_local_host(running_host_state());
         let admitted = AtomicBool::new(true);
         let result = Err((DevelopmentNodeStopStage::Node, "node stopped".to_owned()));
 
@@ -1334,6 +1685,12 @@ mod tests {
         assert!(!admitted.load(Ordering::Acquire));
         let snapshot = snapshots.read();
         assert_eq!(snapshot.runtime, DevelopmentNodeRuntime::Failed);
+        assert_eq!(
+            snapshot.local_host,
+            LocalHostState::Stopped {
+                last_start_failure: Some("node stopped".to_owned()),
+            }
+        );
         assert_eq!(snapshot.pairing, pairing);
         assert_eq!(
             snapshot.failure,
@@ -1346,16 +1703,492 @@ mod tests {
     }
 
     #[test]
-    fn a_node_generation_stops_and_restarts_with_the_same_private_state() {
+    fn terminal_failure_preserves_a_reset_required_host() {
+        let snapshots = SnapshotStore::new();
+        snapshots.set_local_host(LocalHostState::DevelopmentResetRequired {
+            reason: "malformed persisted Bluetooth identity".to_owned(),
+        });
+
+        settle_worker_result(
+            &AtomicBool::new(true),
+            &snapshots,
+            &Err((DevelopmentNodeStopStage::Node, "node stopped".to_owned())),
+        );
+
+        assert!(matches!(
+            snapshots.read().local_host,
+            LocalHostState::DevelopmentResetRequired { .. }
+        ));
+    }
+
+    #[test]
+    fn failed_start_cleanup_joins_and_clears_a_shutdown_responsive_worker() {
+        let supervisor = Supervisor {
+            snapshots: Arc::new(SnapshotStore::new()),
+            operation_admitted: Arc::new(AtomicBool::new(true)),
+            state: Mutex::new(SupervisorState::default()),
+        };
+        let (commands, _command_rx) = mpsc::channel(1);
+        let (shutdown_sender, mut shutdown_rx) = watch::channel(false);
+        let shutdown = ShutdownSignal {
+            sender: shutdown_sender,
+            requested: Arc::new(AtomicBool::new(false)),
+        };
+        let (done_tx, done) = std_mpsc::sync_channel(1);
+        let join = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("test runtime");
+            runtime.block_on(async {
+                shutdown_rx.changed().await.expect("shutdown signal");
+                assert!(*shutdown_rx.borrow());
+            });
+            let _ = done_tx.send(Ok(()));
+        });
+        let mut state = SupervisorState {
+            worker: Some(Worker {
+                commands,
+                shutdown,
+                done,
+                join: Some(join),
+                storage_root: PathBuf::from("/tmp/prns/development"),
+            }),
+            identity_owner: None,
+        };
+
+        finish_failed_start(
+            &supervisor,
+            &mut state,
+            DevelopmentNodeFailureStage::PersistenceRestore,
+            "readiness stalled".to_owned(),
+        );
+
+        assert!(state.worker.is_none());
+        assert!(!supervisor.operation_admitted.load(Ordering::Acquire));
+        assert_eq!(
+            supervisor.snapshots.read().failure,
+            Some(DevelopmentNodeFailure {
+                stage: DevelopmentNodeFailureStage::PersistenceRestore,
+                detail: "readiness stalled".to_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn snapshot_failure_settles_before_a_concurrent_lifecycle_reset() {
+        let supervisor = Arc::new(Supervisor {
+            snapshots: Arc::new(SnapshotStore::new()),
+            operation_admitted: Arc::new(AtomicBool::new(false)),
+            state: Mutex::new(SupervisorState::default()),
+        });
+        supervisor
+            .snapshots
+            .set_runtime(DevelopmentNodeRuntime::Running);
+        supervisor.snapshots.set_local_host(running_host_state());
+
+        let (commands, mut command_rx) = mpsc::channel(1);
+        let (shutdown_sender, _shutdown_rx) = watch::channel(false);
+        let shutdown = ShutdownSignal {
+            sender: shutdown_sender,
+            requested: Arc::new(AtomicBool::new(false)),
+        };
+        let (done_tx, done) = std_mpsc::sync_channel(1);
+        let (inspection_started_tx, inspection_started_rx) = std_mpsc::sync_channel(1);
+        let (release_inspection_tx, release_inspection_rx) = std_mpsc::sync_channel(1);
+        let join = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("test runtime");
+            runtime.block_on(async {
+                let Some(Command::Snapshot(response)) = command_rx.recv().await else {
+                    panic!("snapshot command was not admitted");
+                };
+                inspection_started_tx
+                    .send(())
+                    .expect("publish inspection start");
+                release_inspection_rx
+                    .recv()
+                    .expect("release stalled inspection");
+                drop(response);
+            });
+            let _ = done_tx.send(Ok(()));
+        });
+        supervisor.lock_state().worker = Some(Worker {
+            commands,
+            shutdown,
+            done,
+            join: Some(join),
+            storage_root: PathBuf::from("/tmp/prns/development"),
+        });
+
+        let snapshot_supervisor = Arc::clone(&supervisor);
+        let snapshot_thread =
+            std::thread::spawn(move || snapshot_with_supervisor(&snapshot_supervisor));
+        inspection_started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("snapshot inspection started");
+
+        let reset_supervisor = Arc::clone(&supervisor);
+        let (reset_done_tx, reset_done_rx) = std_mpsc::sync_channel(1);
+        let reset_thread = std::thread::spawn(move || {
+            let mut state = reset_supervisor.lock_state();
+            let worker = state.worker.as_mut().expect("active worker");
+            assert!(matches!(
+                worker.done.recv_timeout(Duration::from_secs(1)),
+                Ok(Ok(()))
+            ));
+            join_finished_worker(worker);
+            state.worker = None;
+            reset_supervisor.snapshots.reset();
+            reset_done_tx.send(()).expect("publish reset completion");
+        });
+
+        assert!(matches!(
+            reset_done_rx.recv_timeout(Duration::from_millis(25)),
+            Err(std_mpsc::RecvTimeoutError::Timeout)
+        ));
+        release_inspection_tx
+            .send(())
+            .expect("release stalled inspection");
+        let snapshot = snapshot_thread.join().expect("snapshot thread");
+        assert!(matches!(
+            snapshot.local_host,
+            LocalHostState::Unavailable { .. }
+        ));
+        reset_done_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("reset completed");
+        reset_thread.join().expect("reset thread");
+        assert_eq!(
+            supervisor.snapshots.read().runtime,
+            DevelopmentNodeRuntime::Stopped
+        );
+        assert!(matches!(
+            supervisor.snapshots.read().local_host,
+            LocalHostState::Stopped { .. }
+        ));
+    }
+
+    #[test]
+    fn stop_uses_priority_shutdown_when_the_snapshot_lane_is_saturated() {
+        let supervisor = Supervisor {
+            snapshots: Arc::new(SnapshotStore::new()),
+            operation_admitted: Arc::new(AtomicBool::new(false)),
+            state: Mutex::new(SupervisorState::default()),
+        };
+        supervisor
+            .snapshots
+            .set_runtime(DevelopmentNodeRuntime::Running);
+        supervisor.snapshots.set_local_host(running_host_state());
+
+        let (commands, mut command_rx) = mpsc::channel(1);
+        let (shutdown_sender, mut shutdown_rx) = watch::channel(false);
+        let shutdown_requested = Arc::new(AtomicBool::new(false));
+        let shutdown_requested_for_assertion = Arc::clone(&shutdown_requested);
+        let shutdown = ShutdownSignal {
+            sender: shutdown_sender,
+            requested: shutdown_requested,
+        };
+        let (done_tx, done) = std_mpsc::sync_channel(1);
+        let (inspection_started_tx, inspection_started_rx) = std_mpsc::sync_channel(1);
+        let join = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("test runtime");
+            runtime.block_on(async {
+                let stalled_snapshot = command_rx.recv().await.expect("snapshot command");
+                inspection_started_tx
+                    .send(())
+                    .expect("publish inspection start");
+                shutdown_rx.changed().await.expect("priority shutdown");
+                assert!(*shutdown_rx.borrow());
+                drop(stalled_snapshot);
+            });
+            let _ = done_tx.send(Ok(()));
+        });
+        let (first_response, first_result) = std_mpsc::sync_channel(1);
+        assert!(commands.try_send(Command::Snapshot(first_response)).is_ok());
+        inspection_started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("snapshot inspection started");
+        let (queued_response, queued_result) = std_mpsc::sync_channel(1);
+        assert!(commands
+            .try_send(Command::Snapshot(queued_response))
+            .is_ok());
+        let mut state = SupervisorState {
+            worker: Some(Worker {
+                commands,
+                shutdown,
+                done,
+                join: Some(join),
+                storage_root: PathBuf::from("/tmp/prns/development"),
+            }),
+            identity_owner: None,
+        };
+
+        assert_eq!(
+            stop_locked(&supervisor, &mut state),
+            DevelopmentNodeStopOutcome::Stopped
+        );
+
+        assert!(state.worker.is_none());
+        assert!(shutdown_requested_for_assertion.load(Ordering::Acquire));
+        assert!(matches!(
+            first_result.recv_timeout(Duration::from_millis(25)),
+            Err(std_mpsc::RecvTimeoutError::Disconnected)
+        ));
+        assert!(matches!(
+            queued_result.recv_timeout(Duration::from_millis(25)),
+            Err(std_mpsc::RecvTimeoutError::Disconnected)
+        ));
+        supervisor
+            .snapshots
+            .set_local_host_unavailable_if_running("late snapshot failure".to_owned());
+        assert!(matches!(
+            supervisor.snapshots.read().local_host,
+            LocalHostState::Stopped { .. }
+        ));
+    }
+
+    #[test]
+    fn stop_reaps_an_already_terminal_worker_and_preserves_failure_state() {
+        let supervisor = Supervisor {
+            snapshots: Arc::new(SnapshotStore::new()),
+            operation_admitted: Arc::new(AtomicBool::new(true)),
+            state: Mutex::new(SupervisorState::default()),
+        };
+        supervisor
+            .snapshots
+            .set_runtime(DevelopmentNodeRuntime::Running);
+        supervisor.snapshots.set_local_host(running_host_state());
+        let terminal = Err((
+            DevelopmentNodeStopStage::Node,
+            "node stopped unexpectedly".to_owned(),
+        ));
+        settle_worker_result(
+            &supervisor.operation_admitted,
+            &supervisor.snapshots,
+            &terminal,
+        );
+
+        let (commands, _command_rx) = mpsc::channel(1);
+        let (shutdown_sender, _shutdown_rx) = watch::channel(false);
+        let shutdown = ShutdownSignal {
+            sender: shutdown_sender,
+            requested: Arc::new(AtomicBool::new(false)),
+        };
+        let (done_tx, done) = std_mpsc::sync_channel(1);
+        done_tx.send(terminal).expect("terminal worker result");
+        let join = std::thread::spawn(|| {});
+        let mut state = SupervisorState {
+            worker: Some(Worker {
+                commands,
+                shutdown,
+                done,
+                join: Some(join),
+                storage_root: PathBuf::from("/tmp/prns/development"),
+            }),
+            identity_owner: None,
+        };
+
+        assert_eq!(
+            stop_locked(&supervisor, &mut state),
+            DevelopmentNodeStopOutcome::Failed {
+                stage: DevelopmentNodeStopStage::Node,
+                detail: "node stopped unexpectedly".to_owned(),
+            }
+        );
+        assert!(state.worker.is_none());
+        let snapshot = supervisor.snapshots.read();
+        assert_eq!(snapshot.runtime, DevelopmentNodeRuntime::Failed);
+        assert!(snapshot.active_operation.is_none());
+        assert_eq!(
+            snapshot.local_host,
+            LocalHostState::Stopped {
+                last_start_failure: Some("node stopped unexpectedly".to_owned()),
+            }
+        );
+    }
+
+    #[test]
+    fn primary_vault_malformed_and_operational_failures_are_distinct() {
         let temporary = tempfile::tempdir().expect("temporary directory");
         let storage = temporary.path().join("prns").join("development");
+        let paths = prepare_storage(&storage).expect("private storage");
+        std::fs::write(paths.identities.join("primary"), [0_u8; 63])
+            .expect("malformed primary identity");
+        let mut state = SupervisorState::default();
+
+        assert!(matches!(
+            inspect_identity_locked(&mut state, &storage),
+            PrimaryIdentityState::DevelopmentResetRequired { .. }
+        ));
+        assert!(matches!(
+            primary_vault_failure(FileVaultError::Io(std::io::Error::other(
+                "identity store unavailable"
+            ))),
+            PrimaryIdentityState::Unavailable { detail }
+                if detail.contains("identity store unavailable")
+        ));
+
+        #[cfg(unix)]
+        {
+            let unavailable_storage = temporary
+                .path()
+                .join("unavailable")
+                .join("prns")
+                .join("development");
+            let unavailable_paths = prepare_storage(&unavailable_storage).expect("private storage");
+            std::os::unix::fs::symlink("primary", unavailable_paths.identities.join("primary"))
+                .expect("identity symlink loop");
+            let mut unavailable_state = SupervisorState::default();
+            assert!(matches!(
+                inspect_identity_locked(&mut unavailable_state, &unavailable_storage),
+                PrimaryIdentityState::Unavailable { .. }
+            ));
+        }
+    }
+
+    #[test]
+    fn identity_and_node_reopen_reset_and_recreate_in_one_process() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let storage = temporary.path().join("prns").join("development");
+        let imported = [0x42; 64];
+
+        assert_eq!(
+            preview_identity_import(&imported[..63]),
+            IdentityImportPreviewOutcome::InvalidLength
+        );
+        let preview = preview_identity_import(&imported);
+        let identity_hash = match preview {
+            IdentityImportPreviewOutcome::Valid { identity_hash } => identity_hash,
+            IdentityImportPreviewOutcome::InvalidLength => Vec::new(),
+        };
+        assert_eq!(identity_hash.len(), 16);
+        assert_eq!(inspect_identity(&storage), PrimaryIdentityState::Missing);
+        let (creation_tx, creation_rx) = std_mpsc::channel();
+        std::thread::scope(|scope| {
+            for _ in 0..2 {
+                let sender = creation_tx.clone();
+                let storage = &storage;
+                scope.spawn(move || {
+                    let _ = sender.send(create_imported_identity(storage, &imported));
+                });
+            }
+        });
+        drop(creation_tx);
+        let creations = creation_rx.into_iter().collect::<Vec<_>>();
+        assert_eq!(creations.len(), 2);
+        assert_eq!(
+            creations
+                .iter()
+                .filter(|outcome| matches!(outcome, IdentityCreationOutcome::Created { .. }))
+                .count(),
+            1
+        );
+        assert_eq!(
+            creations
+                .iter()
+                .filter(|outcome| matches!(outcome, IdentityCreationOutcome::AlreadyExists))
+                .count(),
+            1
+        );
+        assert_eq!(
+            create_generated_identity(&storage),
+            IdentityCreationOutcome::AlreadyExists
+        );
+        assert_eq!(
+            inspect_identity(&storage),
+            PrimaryIdentityState::Present { identity_hash }
+        );
 
         assert!(matches!(
             start(&storage),
             DevelopmentNodeStartOutcome::Started { .. }
         ));
-        assert_eq!(snapshot().runtime, DevelopmentNodeRuntime::Running);
+        let running = snapshot();
+        assert_eq!(running.runtime, DevelopmentNodeRuntime::Running);
+        let LocalHostState::Running { host } = running.local_host else {
+            panic!("the running generation did not publish its canonical Host snapshot");
+        };
+        assert_eq!(host.backend.backend(), BackendKind::Native);
+        assert!(host.backend.supports(Capability::Bluetooth));
+        assert_eq!(host.backend.capabilities().len(), 1);
+        assert!(host.persistence.persistent);
+        assert!(host.persistence.restored);
+        assert!(host.revision >= 1);
+        let captured_revision = host.revision;
+        std::thread::sleep(Duration::from_millis(550));
+        assert_eq!(
+            host_revision(&supervisor().snapshots.read()),
+            captured_revision
+        );
+        assert!(host_revision(&snapshot()) > captured_revision);
+        let bluetooth_path = storage.join("identities").join("bluetooth-auto.identity");
+        let bluetooth_record = std::fs::read(&bluetooth_path).unwrap_or_default();
+        assert_eq!(bluetooth_record.len(), 40);
         assert_eq!(stop(), DevelopmentNodeStopOutcome::Stopped);
+        assert!(matches!(
+            start(&storage),
+            DevelopmentNodeStartOutcome::Started { .. }
+        ));
+        assert_eq!(
+            std::fs::read(&bluetooth_path).unwrap_or_default(),
+            bluetooth_record
+        );
+        assert_eq!(stop(), DevelopmentNodeStopOutcome::Stopped);
+        std::fs::write(&bluetooth_path, [0_u8; 40]).expect("malformed Bluetooth record");
+        assert!(matches!(
+            start(&storage),
+            DevelopmentNodeStartOutcome::Failed {
+                stage: DevelopmentNodeFailureStage::Identity,
+                ..
+            }
+        ));
+        assert!(matches!(
+            supervisor().snapshots.read().local_host,
+            LocalHostState::DevelopmentResetRequired { .. }
+        ));
+        let reset_guard = supervisor().lock_state();
+        let (reset_tx, reset_rx) = std_mpsc::sync_channel(1);
+        let reset_storage = storage.clone();
+        let reset_thread = std::thread::spawn(move || {
+            let _ = reset_tx.send(reset(&reset_storage));
+        });
+        assert!(matches!(
+            reset_rx.recv_timeout(Duration::from_millis(25)),
+            Err(std_mpsc::RecvTimeoutError::Timeout)
+        ));
+        drop(reset_guard);
+        let reset_outcome =
+            reset_rx
+                .recv_timeout(STOP_TIMEOUT)
+                .unwrap_or(DevelopmentNodeStopOutcome::Failed {
+                    stage: DevelopmentNodeStopStage::Worker,
+                    detail: "reset thread did not settle".to_owned(),
+                });
+        assert!(matches!(
+            reset_outcome,
+            DevelopmentNodeStopOutcome::AlreadyStopped
+        ));
+        let _ = reset_thread.join();
+        assert!(!storage.exists());
+        assert_eq!(inspect_identity(&storage), PrimaryIdentityState::Missing);
+        let generated_hash = match create_generated_identity(&storage) {
+            IdentityCreationOutcome::Created { identity_hash } => identity_hash,
+            _ => Vec::new(),
+        };
+        assert_eq!(generated_hash.len(), 16);
+        supervisor().lock_state().identity_owner = None;
+        assert_eq!(
+            inspect_identity(&storage),
+            PrimaryIdentityState::Present {
+                identity_hash: generated_hash,
+            }
+        );
         assert!(matches!(
             start(&storage),
             DevelopmentNodeStartOutcome::Started { .. }
@@ -1365,6 +2198,5 @@ mod tests {
             reset(&storage),
             DevelopmentNodeStopOutcome::AlreadyStopped
         ));
-        assert!(!storage.exists());
     }
 }

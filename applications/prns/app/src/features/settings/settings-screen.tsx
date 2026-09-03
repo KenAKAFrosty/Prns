@@ -1,8 +1,9 @@
 import { useRouter } from "expo-router";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useState } from "react";
+import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 
+import { runtimeProvider } from "@/native/runtime-provider";
 import { useScaffoldState } from "@/state/scaffold-state-context";
-import { identityFixture } from "@/testkit/fixtures";
 import { NavigationLink } from "@/ui/navigation-link";
 import {
   Badge,
@@ -10,7 +11,6 @@ import {
   Button,
   Card,
   CardStack,
-  KeyValue,
   Screen,
   ScreenHeading,
   Subheading,
@@ -20,9 +20,42 @@ import { radius, space, useAppPalette } from "@/ui/theme";
 export function SettingsScreen() {
   const router = useRouter();
   const palette = useAppPalette();
-  const { resetDevelopmentData, setOnboardingMode, state, updateScaffoldState } =
-    useScaffoldState();
-  const selectedIdentity = identityFixture(state.onboardingPreview.selectedIdentityFixtureId);
+  const { resetDevelopmentData, state, updateScaffoldState } = useScaffoldState();
+  const [resetting, setResetting] = useState(false);
+  const [resetFailure, setResetFailure] = useState<string | null>(null);
+
+  const reset = async () => {
+    if (!("runtime" in runtimeProvider)) {
+      setResetFailure("Native development data reset is available only in the iOS build.");
+      return;
+    }
+    setResetting(true);
+    setResetFailure(null);
+    try {
+      const outcome = await runtimeProvider.runtime.resetDevelopmentData();
+      if (outcome.type === "failed") {
+        setResetFailure(`${outcome.stage}: ${outcome.detail}`);
+        return;
+      }
+      await resetDevelopmentData();
+      router.replace("/onboarding/welcome");
+    } catch (error) {
+      setResetFailure(error instanceof Error ? error.message : String(error));
+    } finally {
+      setResetting(false);
+    }
+  };
+
+  const confirmReset = () => {
+    Alert.alert(
+      "Reset development data?",
+      "This stops the local node and permanently removes the primary identity, Bluetooth identity, RemoteControl identities and authorization state from this development install.",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Reset", style: "destructive", onPress: () => void reset() },
+      ],
+    );
+  };
 
   return (
     <Screen>
@@ -62,74 +95,21 @@ export function SettingsScreen() {
         </Pressable>
       </Card>
       <Card>
-        <Subheading>Fixture identity</Subheading>
-        {selectedIdentity === undefined ? (
-          <BodyText muted>No identity fixture selected.</BodyText>
-        ) : (
-          <>
-            <KeyValue label="Selection" value={selectedIdentity.label} />
-            <KeyValue label="Fingerprint" value={selectedIdentity.fingerprint} />
-          </>
-        )}
-        <CardStack>
-          <Button
-            tone="secondary"
-            onPress={() => {
-              void updateScaffoldState((current) => ({
-                ...current,
-                onboardingPreview: {
-                  status: "completed",
-                  selectedIdentityFixtureId: "identity.generated-preview",
-                },
-              }));
-            }}
-          >
-            Use generated identity preview
-          </Button>
-          <Button
-            tone="secondary"
-            onPress={() => {
-              void updateScaffoldState((current) => ({
-                ...current,
-                onboardingPreview: {
-                  status: "completed",
-                  selectedIdentityFixtureId: "identity.imported-preview",
-                },
-              }));
-            }}
-          >
-            Use imported identity preview
-          </Button>
-        </CardStack>
-      </Card>
-      <Card>
         <Subheading>Development controls</Subheading>
         <BodyText muted>
-          Reopening onboarding does not discard the current preview. Reset removes only the prns
-          scaffold key and returns to welcome.
+          Reset stops the native node before deleting only this app&apos;s disposable
+          prns/development root, then returns to onboarding.
         </BodyText>
         <CardStack>
           <Button
-            tone="secondary"
-            onPress={() => {
-              setOnboardingMode(null);
-              router.push("/onboarding/welcome");
-            }}
-          >
-            Reopen onboarding
-          </Button>
-          <Button tone="secondary" onPress={() => router.replace("/nodes")}>
-            Jump to fixture shell
-          </Button>
-          <Button
+            disabled={resetting || runtimeProvider.availability.type !== "available"}
             tone="destructive"
-            onPress={() => {
-              void resetDevelopmentData().then(() => router.replace("/onboarding/welcome"));
-            }}
+            onPress={confirmReset}
           >
-            Reset development data
+            {resetting ? "Resetting…" : "Reset development data"}
           </Button>
         </CardStack>
+        {resetFailure === null ? null : <BodyText>{resetFailure}</BodyText>}
       </Card>
       <CardStack>
         <NavigationLink href="/more/settings/storage">Storage</NavigationLink>

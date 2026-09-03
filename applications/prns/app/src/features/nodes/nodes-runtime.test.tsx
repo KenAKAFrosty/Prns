@@ -5,6 +5,7 @@ import type {
 } from "@prns-internal/expo";
 import { render, waitFor } from "@testing-library/react-native";
 import { Effect } from "effect";
+import { identityHash, interfaceId } from "personal-rns/contract";
 import type { ReactNode } from "react";
 
 import { DevelopmentRuntimeProvider } from "@/native/development-runtime-context";
@@ -21,7 +22,52 @@ function snapshot(revision: bigint): DevelopmentNodeSnapshot {
     contractFingerprint: "test-contract",
     revision,
     runtime: "running",
-    bluetooth: { type: "ready" },
+    primaryIdentity: { type: "present", identityHash: identityHash(new Uint8Array(16).fill(0x11)) },
+    localHost: {
+      type: "running",
+      host: {
+        revision,
+        backend: {
+          backend: "Native",
+          capabilities: ["Bluetooth"],
+          interfaceKinds: ["AutomaticBluetoothLe"],
+        },
+        interfaces: [
+          {
+            interfaceId: interfaceId(new Uint8Array(8).fill(0x22)),
+            name: "Bluetooth Auto",
+            kind: "AutomaticBluetoothLe",
+            health: "Connected",
+            rxBytes: 3n,
+            txBytes: 4n,
+            routeCount: 0,
+            linkCount: 0,
+            transportedLinkCount: 0,
+          },
+        ],
+        routes: [],
+        activeLinkCount: 0,
+        destinationIdentities: [],
+        runtime: {
+          running: true,
+          uptimeMillis: 5,
+          interfaceCount: 1,
+          onlineInterfaceCount: 1,
+          routeCount: 0,
+          linkCount: 0,
+          transportedLinkCount: 0,
+          rxBytes: 3n,
+          txBytes: 4n,
+          rxBps: 0,
+          txBps: 0,
+        },
+        persistence: {
+          persistent: true,
+          restored: true,
+          lastFlushCause: "Startup",
+        },
+      },
+    },
     controllerIdentityFingerprint: null,
     pairing: { type: "searching" },
     pairedTargets: [],
@@ -33,6 +79,10 @@ function snapshot(revision: bigint): DevelopmentNodeSnapshot {
 function fakeProvider(stop: jest.Mock): RuntimeProvider {
   const initial = snapshot(2n);
   const runtime: DevelopmentRuntime = {
+    inspectDevelopmentIdentity: async () => initial.primaryIdentity,
+    previewIdentityImport: async () => ({ type: "invalidLength" }),
+    createGeneratedIdentity: async () => ({ type: "alreadyExists" }),
+    createImportedIdentity: async () => ({ type: "alreadyExists" }),
     startDevelopmentNode: async () => ({ type: "started", snapshot: initial }),
     readDevelopmentNodeSnapshot: async () => snapshot(1n),
     initiateRemoteControlPairing: async () => ({ type: "busy" }),
@@ -83,9 +133,10 @@ describe("Foundation 1 Nodes runtime binding", () => {
       </DevelopmentRuntimeProvider>,
     );
 
-    await waitFor(() => expect(view.getByText("Running")).toBeTruthy());
+    await waitFor(() => expect(view.getAllByText("Running")).toHaveLength(2));
     expect(view.getByText("No persisted targets")).toBeTruthy();
-    expect(view.getByText("2")).toBeTruthy();
+    expect(view.getAllByText("2")).toHaveLength(2);
+    expect(view.getByText("Native")).toBeTruthy();
 
     view.unmount();
     await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
@@ -101,6 +152,7 @@ describe("Foundation 1 Nodes runtime binding", () => {
 
     await waitFor(() => expect(view.getByText("Searching")).toBeTruthy());
     expect(view.getByText("Waiting for signed availability")).toBeTruthy();
+    expect(view.getByText("Connected")).toBeTruthy();
     expect(view.queryByText("Authorization persisted")).toBeNull();
     view.unmount();
     await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));

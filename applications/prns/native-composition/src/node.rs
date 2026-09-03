@@ -1,9 +1,10 @@
 use std::path::{Component, Path, PathBuf};
 
-const PRIVATE_STORAGE_SUFFIX: [&str; 2] = ["prns", "development"];
+const PRIVATE_STORAGE_SUFFIX: &str = "prns/development";
 
 pub struct NodeStoragePaths {
     pub root: PathBuf,
+    pub identities: PathBuf,
     pub remote_control_identities: PathBuf,
     pub bluetooth_identity: PathBuf,
     pub network: PathBuf,
@@ -16,6 +17,7 @@ pub fn prepare_storage(root: &Path) -> Result<NodeStoragePaths, String> {
     let root = root
         .canonicalize()
         .map_err(|error| format!("could not resolve the private application directory: {error}"))?;
+    validate_resolved_private_root(&root)?;
     let identities = root.join("identities");
     std::fs::create_dir_all(&identities)
         .map_err(|error| format!("could not create the identity directory: {error}"))?;
@@ -23,13 +25,24 @@ pub fn prepare_storage(root: &Path) -> Result<NodeStoragePaths, String> {
         remote_control_identities: identities.join("remote-control"),
         bluetooth_identity: identities.join("bluetooth-auto.identity"),
         network: root.join("network"),
+        identities,
         root,
     })
 }
 
 pub fn reset_storage(root: &Path) -> Result<(), String> {
     validate_private_root(root)?;
-    match std::fs::remove_dir_all(root) {
+    let resolved = match root.canonicalize() {
+        Ok(resolved) => resolved,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(format!(
+                "could not resolve the private development directory: {error}"
+            ))
+        }
+    };
+    validate_resolved_private_root(&resolved)?;
+    match std::fs::remove_dir_all(resolved) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(format!(
@@ -42,17 +55,28 @@ fn validate_private_root(root: &Path) -> Result<(), String> {
     if !root.is_absolute() {
         return Err("the native storage directory must be absolute".to_owned());
     }
-    let normal_components: Vec<_> = root
-        .components()
-        .filter_map(|component| match component {
-            Component::Normal(value) => value.to_str(),
-            _ => None,
-        })
-        .collect();
-    if !normal_components.ends_with(&PRIVATE_STORAGE_SUFFIX) {
+    for component in root.components() {
+        match component {
+            Component::RootDir | Component::Normal(_) => {}
+            Component::Prefix(_) if cfg!(windows) => {}
+            Component::Prefix(_) | Component::CurDir | Component::ParentDir => {
+                return Err(
+                    "the native storage directory must not contain relative path components"
+                        .to_owned(),
+                )
+            }
+        }
+    }
+    if !root.ends_with(PRIVATE_STORAGE_SUFFIX) {
         return Err("the native storage directory must end in prns/development".to_owned());
     }
     Ok(())
+}
+
+fn validate_resolved_private_root(root: &Path) -> Result<(), String> {
+    validate_private_root(root).map_err(|_| {
+        "the resolved native storage directory must end in prns/development".to_owned()
+    })
 }
 
 #[cfg(test)]
@@ -64,6 +88,26 @@ mod tests {
         assert!(validate_private_root(Path::new("prns/development")).is_err());
         assert!(validate_private_root(Path::new("/")).is_err());
         assert!(validate_private_root(Path::new("/tmp/development")).is_err());
+        assert!(validate_private_root(Path::new("/tmp/prns/development/../..")).is_err());
         assert!(validate_private_root(Path::new("/tmp/prns/development")).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reset_scope_rejects_a_resolved_symlink_escape() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let escaped = temporary.path().join("escaped").join("development");
+        std::fs::create_dir_all(&escaped).expect("escaped directory");
+        let requested_parent = temporary.path().join("requested");
+        std::fs::create_dir_all(&requested_parent).expect("requested parent");
+        std::os::unix::fs::symlink(
+            escaped.parent().expect("escaped parent"),
+            requested_parent.join("prns"),
+        )
+        .expect("storage symlink");
+        let requested = requested_parent.join("prns").join("development");
+
+        assert!(reset_storage(&requested).is_err());
+        assert!(escaped.exists());
     }
 }

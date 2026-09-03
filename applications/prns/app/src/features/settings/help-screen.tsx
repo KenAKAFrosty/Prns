@@ -8,20 +8,20 @@ export function HelpScreen() {
       <Card>
         <Subheading>What works</Subheading>
         <BodyText>
-          Responsive navigation, preview onboarding, clearly synthetic fixture selection, local UI
-          preferences, and one-key development reset.
+          Responsive navigation, native identity onboarding, local-node Host inspection, local UI
+          preferences, and confirmed development reset.
         </BodyText>
       </Card>
       <Card>
         <Subheading>What does not work yet</Subheading>
         <BodyText>
-          Networking, identities, pairing, messages, contacts, interfaces, NomadNet, location,
-          notifications, and recovery are not implemented by this scaffold.
+          Messages, contacts, interface mutation, NomadNet, location, notifications, recovery, and
+          non-iOS native runtimes are not implemented by this development build.
         </BodyText>
       </Card>
       <BodyText muted>
-        Development data is disposable. Do not treat fixture names or fingerprints as Reticulum
-        material.
+        Development data is disposable. Displayed identity hashes and network observations are live
+        Reticulum values, but this build provides no backup, recovery, or continuity promise.
       </BodyText>
     </Screen>
   );

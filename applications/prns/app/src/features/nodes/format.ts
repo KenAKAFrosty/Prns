@@ -25,24 +25,3 @@ export function formatRuntime(runtime: "failed" | "running" | "starting" | "stop
       return "Stopping";
   }
 }
-
-export function formatBluetooth(
-  bluetooth:
-    | { readonly type: "degraded" | "unavailable"; readonly detail: string }
-    | { readonly type: "disabled" | "notCompiled" | "preparing" | "ready" },
-): string {
-  switch (bluetooth.type) {
-    case "degraded":
-      return `Degraded — ${bluetooth.detail}`;
-    case "disabled":
-      return "Disabled";
-    case "notCompiled":
-      return "Not compiled for this platform";
-    case "preparing":
-      return "Preparing";
-    case "ready":
-      return "Ready";
-    case "unavailable":
-      return `Unavailable — ${bluetooth.detail}`;
-  }
-}

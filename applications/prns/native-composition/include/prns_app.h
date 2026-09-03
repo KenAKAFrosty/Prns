@@ -35,6 +35,26 @@ typedef struct PrnsAppBytes {
  */
 const char *prns_app_contract_fingerprint(void);
 
+/** Return the immutable canonical Host-contract fingerprint. */
+const char *prns_app_host_contract_fingerprint(void);
+
+/** Inspect the primary identity stored below the private development root. */
+PrnsAppBytes prns_app_inspect_identity(const uint8_t *path_ptr,
+                                       size_t path_len);
+
+/** Preview a raw identity credential without persisting it. */
+PrnsAppBytes prns_app_preview_identity_import(const uint8_t *input_ptr,
+                                              size_t input_len);
+
+/** Generate and persist the primary identity. */
+PrnsAppBytes prns_app_create_generated_identity(const uint8_t *path_ptr,
+                                                size_t path_len);
+
+/** Validate and persist one raw identity credential. */
+PrnsAppBytes prns_app_create_imported_identity(
+    const uint8_t *path_ptr, size_t path_len, const uint8_t *input_ptr,
+    size_t input_len);
+
 /**
  * Start the development node. `path_ptr` must address `path_len` immutable
  * UTF-8 bytes for the duration of the call; the path is not NUL-terminated.

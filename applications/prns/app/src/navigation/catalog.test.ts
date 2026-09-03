@@ -11,14 +11,16 @@ describe("screen catalog", () => {
     expect(new Set(routeFiles).size).toBe(34);
   });
 
-  it("marks only the nine honest presentation slices as implemented", () => {
+  it("marks only the eleven honest presentation slices as implemented", () => {
     expect(
       screenCatalog
         .filter(({ availability }) => availability === "implementedScaffold")
         .map(({ id }) => id),
     ).toEqual([
       "installation.onboarding",
+      "installation.recovery",
       "nodes.index",
+      "nodes.local",
       "nodes.managed",
       "nodes.pair",
       "explore.index",

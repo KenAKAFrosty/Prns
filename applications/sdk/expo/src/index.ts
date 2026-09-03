@@ -1,7 +1,7 @@
 import { createDevelopmentRuntime } from "./facade";
 import nativePrnsApp from "./native";
 
-export { NATIVE_CONTRACT_FINGERPRINT } from "./contract.generated";
+export { HOST_CONTRACT_FINGERPRINT, NATIVE_CONTRACT_FINGERPRINT } from "./contract.generated";
 export type * as WireContract from "./contract.generated";
 export {
   NativeBridgeError,
@@ -11,7 +11,10 @@ export {
   type DevelopmentNodeStartOutcome,
   type DevelopmentNodeStopOutcome,
   type DevelopmentRuntime,
+  type IdentityCreationOutcome,
+  type IdentityImportPreviewOutcome,
   type InitiateRemoteControlPairingInput,
+  type PrimaryIdentityState,
   type RemoteControlDescribeOutcome,
   type RemoteControlPairingCommandOutcome,
   type RemoteControlPairingDecisionInput,
@@ -34,8 +37,12 @@ export const developmentRuntime = createDevelopmentRuntime(nativePrnsApp);
 
 export const {
   approveRemoteControlPairing,
+  createGeneratedIdentity,
+  createImportedIdentity,
   describeRemoteControlTarget,
+  inspectDevelopmentIdentity,
   initiateRemoteControlPairing,
+  previewIdentityImport,
   readDevelopmentNodeSnapshot,
   rejectRemoteControlPairing,
   resetDevelopmentData,

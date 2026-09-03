@@ -24,8 +24,8 @@ describe("route parameter validation", () => {
     expect(routeParamsAreValid(entry, {})).toBe(true);
     for (const step of [
       "welcome",
-      "identity-choice",
-      "identity-review",
+      "create",
+      "import",
       "retention",
       "provision",
       "interfaces",

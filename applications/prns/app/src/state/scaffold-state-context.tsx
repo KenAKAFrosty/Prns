@@ -10,27 +10,19 @@ import {
 } from "react";
 import {
   DEFAULT_SCAFFOLD_STATE,
-  type IdentityPreviewFixtureId,
   loadScaffoldState,
   resetScaffoldState,
   type ScaffoldState,
   saveScaffoldState,
 } from "./scaffold-state";
 
-export type OnboardingMode = "import" | "create";
 export type ScaffoldStateStatus = "loading" | "ready";
 export type ScaffoldStateUpdater = (current: ScaffoldState) => ScaffoldState;
 
 export type ScaffoldStateContextValue = {
   readonly status: ScaffoldStateStatus;
   readonly state: ScaffoldState;
-  readonly onboardingMode: OnboardingMode | null;
-  readonly setOnboardingMode: (mode: OnboardingMode | null) => void;
   readonly updateScaffoldState: (updater: ScaffoldStateUpdater) => Promise<ScaffoldState>;
-  readonly completeOnboardingPreview: (
-    selectedIdentityFixtureId: IdentityPreviewFixtureId,
-  ) => Promise<ScaffoldState>;
-  readonly skipOnboardingPreview: () => Promise<ScaffoldState>;
   readonly resetDevelopmentData: () => Promise<void>;
 };
 
@@ -39,10 +31,6 @@ const ScaffoldStateContext = createContext<ScaffoldStateContextValue | null>(nul
 export type ScaffoldStateProviderProps = {
   readonly children: ReactNode;
 };
-
-function identityFixtureForMode(mode: OnboardingMode): IdentityPreviewFixtureId {
-  return mode === "create" ? "identity.generated-preview" : "identity.imported-preview";
-}
 
 function logLoadFailure(error: unknown): void {
   if (typeof __DEV__ !== "undefined" && __DEV__) {
@@ -54,9 +42,7 @@ function logLoadFailure(error: unknown): void {
 export function ScaffoldStateProvider({ children }: ScaffoldStateProviderProps) {
   const [status, setStatus] = useState<ScaffoldStateStatus>("loading");
   const [state, setState] = useState<ScaffoldState>(DEFAULT_SCAFFOLD_STATE);
-  const [onboardingMode, setOnboardingModeState] = useState<OnboardingMode | null>(null);
   const stateRef = useRef<ScaffoldState>(DEFAULT_SCAFFOLD_STATE);
-  const onboardingModeRef = useRef<OnboardingMode | null>(null);
   const readyRef = useRef(false);
   const operationQueueRef = useRef<Promise<void>>(Promise.resolve());
 
@@ -104,11 +90,6 @@ export function ScaffoldStateProvider({ children }: ScaffoldStateProviderProps) 
     return result;
   }, []);
 
-  const setOnboardingMode = useCallback((mode: OnboardingMode | null) => {
-    onboardingModeRef.current = mode;
-    setOnboardingModeState(mode);
-  }, []);
-
   const updateScaffoldState = useCallback(
     (updater: ScaffoldStateUpdater): Promise<ScaffoldState> => {
       if (!readyRef.current) {
@@ -126,41 +107,6 @@ export function ScaffoldStateProvider({ children }: ScaffoldStateProviderProps) 
     [enqueue],
   );
 
-  const completeOnboardingPreview = useCallback(
-    async (selectedIdentityFixtureId: IdentityPreviewFixtureId): Promise<ScaffoldState> => {
-      const mode = onboardingModeRef.current;
-      if (mode === null) {
-        throw new Error("Choose an onboarding preview mode before completing onboarding.");
-      }
-      if (selectedIdentityFixtureId !== identityFixtureForMode(mode)) {
-        throw new Error("The identity fixture does not match the selected onboarding mode.");
-      }
-
-      const updated = await updateScaffoldState((current) => ({
-        ...current,
-        onboardingPreview: {
-          status: "completed",
-          selectedIdentityFixtureId,
-        },
-      }));
-      setOnboardingMode(null);
-      return updated;
-    },
-    [setOnboardingMode, updateScaffoldState],
-  );
-
-  const skipOnboardingPreview = useCallback(async (): Promise<ScaffoldState> => {
-    const updated = await updateScaffoldState((current) => ({
-      ...current,
-      onboardingPreview: {
-        status: "skipped",
-        selectedIdentityFixtureId: null,
-      },
-    }));
-    setOnboardingMode(null);
-    return updated;
-  }, [setOnboardingMode, updateScaffoldState]);
-
   const resetDevelopmentData = useCallback((): Promise<void> => {
     if (!readyRef.current) {
       return Promise.reject(new Error("Scaffold state is not ready."));
@@ -170,31 +116,17 @@ export function ScaffoldStateProvider({ children }: ScaffoldStateProviderProps) 
       await resetScaffoldState();
       stateRef.current = DEFAULT_SCAFFOLD_STATE;
       setState(DEFAULT_SCAFFOLD_STATE);
-      setOnboardingMode(null);
     });
-  }, [enqueue, setOnboardingMode]);
+  }, [enqueue]);
 
   const value = useMemo<ScaffoldStateContextValue>(
     () => ({
       status,
       state,
-      onboardingMode,
-      setOnboardingMode,
       updateScaffoldState,
-      completeOnboardingPreview,
-      skipOnboardingPreview,
       resetDevelopmentData,
     }),
-    [
-      completeOnboardingPreview,
-      onboardingMode,
-      resetDevelopmentData,
-      setOnboardingMode,
-      skipOnboardingPreview,
-      state,
-      status,
-      updateScaffoldState,
-    ],
+    [resetDevelopmentData, state, status, updateScaffoldState],
   );
 
   return <ScaffoldStateContext.Provider value={value}>{children}</ScaffoldStateContext.Provider>;

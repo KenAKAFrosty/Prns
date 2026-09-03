@@ -1,7 +1,7 @@
 // route-id: installation.recovery
 
-import { CatalogPlaceholderRoute } from "@/features/placeholder-screen";
+import { RecoveryScreen } from "@/features/onboarding/recovery-screen";
 
 export default function RecoveryRoute() {
-  return <CatalogPlaceholderRoute screenId="installation.recovery" />;
+  return <RecoveryScreen />;
 }

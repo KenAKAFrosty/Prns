@@ -6,6 +6,7 @@ use personal_rns::remote_control::{
     RemoteControlPairingEndpoint, RemoteControlRequestSet,
 };
 use personal_rns::units::InstantMillis;
+use prns_core::engine::{PersistenceFlushCause, PersistenceFlushTarget};
 use tokio::sync::mpsc;
 
 use crate::contract::{
@@ -32,6 +33,9 @@ pub struct PairingControls {
 
 pub enum OwnedNodeEvent {
     PersistenceRestored,
+    PersistenceFlushed {
+        cause: PersistenceFlushCause,
+    },
     PairingAvailable {
         endpoint: RemoteControlPairingEndpoint,
         observed_at: InstantMillis,
@@ -46,7 +50,10 @@ pub enum OwnedNodeEvent {
     ControllerLinkClosed {
         attempt_id: Option<RemoteControlPairingAttemptId>,
     },
-    PersistenceFailed,
+    PersistenceFailed {
+        cause: PersistenceFlushCause,
+        target: PersistenceFlushTarget,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -61,9 +68,13 @@ pub fn capture_event(event: PrnsEvent<'_>) -> Option<OwnedNodeEvent> {
         PrnsEvent::Diagnostic(personal_rns::Diagnostic::PersistenceRestored { .. }) => {
             Some(OwnedNodeEvent::PersistenceRestored)
         }
-        PrnsEvent::Diagnostic(personal_rns::Diagnostic::PersistenceFlushFailed { .. }) => {
-            Some(OwnedNodeEvent::PersistenceFailed)
+        PrnsEvent::Diagnostic(personal_rns::Diagnostic::PersistenceFlushed { cause, .. }) => {
+            Some(OwnedNodeEvent::PersistenceFlushed { cause })
         }
+        PrnsEvent::Diagnostic(personal_rns::Diagnostic::PersistenceFlushFailed {
+            cause,
+            target,
+        }) => Some(OwnedNodeEvent::PersistenceFailed { cause, target }),
         PrnsEvent::Message(Message::RemoteControlPairingAvailable(observation)) => {
             Some(OwnedNodeEvent::PairingAvailable {
                 endpoint: observation.endpoint(),
@@ -114,6 +125,7 @@ pub fn apply_event(
 ) -> AppliedNodeEvent {
     match event {
         OwnedNodeEvent::PersistenceRestored => return AppliedNodeEvent::PersistenceRestored,
+        OwnedNodeEvent::PersistenceFlushed { .. } => {}
         OwnedNodeEvent::PairingAvailable {
             endpoint,
             observed_at,
@@ -210,12 +222,46 @@ pub fn apply_event(
                 snapshot.active_operation = None;
             });
         }
-        OwnedNodeEvent::PersistenceFailed => snapshots.fail(DevelopmentNodeFailure {
+        OwnedNodeEvent::PersistenceFailed { .. } => snapshots.fail(DevelopmentNodeFailure {
             stage: DevelopmentNodeFailureStage::PersistenceRestore,
             detail: "Prns reported a persistence flush failure.".to_owned(),
         }),
     }
     AppliedNodeEvent::None
+}
+
+pub fn apply_persistence_event(
+    event: &OwnedNodeEvent,
+    persistence: &mut prns_host::PersistenceSnapshot,
+) {
+    match event {
+        OwnedNodeEvent::PersistenceRestored => {
+            persistence.restored = true;
+            persistence.last_failure_detail = None;
+        }
+        OwnedNodeEvent::PersistenceFlushed { cause } => {
+            persistence.last_flush_cause = Some(host_flush_cause(*cause));
+            persistence.last_failure_detail = None;
+        }
+        OwnedNodeEvent::PersistenceFailed { cause, target } => {
+            persistence.last_failure_detail = Some(format!("{cause:?}:{target:?}"));
+        }
+        OwnedNodeEvent::PairingAvailable { .. }
+        | OwnedNodeEvent::ControllerConfirmation(_)
+        | OwnedNodeEvent::ControllerAuthorizationPersisted(_)
+        | OwnedNodeEvent::ControllerExpired { .. }
+        | OwnedNodeEvent::ControllerLinkClosed { .. } => {}
+    }
+}
+
+const fn host_flush_cause(cause: PersistenceFlushCause) -> prns_host::PersistenceFlushCause {
+    match cause {
+        PersistenceFlushCause::Startup => prns_host::PersistenceFlushCause::Startup,
+        PersistenceFlushCause::Interval => prns_host::PersistenceFlushCause::Interval,
+        PersistenceFlushCause::RouteChange => prns_host::PersistenceFlushCause::RouteChange,
+        PersistenceFlushCause::RatchetRotation => prns_host::PersistenceFlushCause::RatchetRotation,
+        PersistenceFlushCause::Shutdown => prns_host::PersistenceFlushCause::Shutdown,
+    }
 }
 
 impl PairingControls {
@@ -360,6 +406,37 @@ mod tests {
                 RemoteControlRequestKind::Describe,
                 RemoteControlRequestKind::AnnounceSelf
             ]
+        );
+    }
+
+    #[test]
+    fn persistence_projection_tracks_restore_flush_and_failure_before_filtering() {
+        let mut persistence = prns_host::PersistenceSnapshot::persistent();
+        apply_persistence_event(&OwnedNodeEvent::PersistenceRestored, &mut persistence);
+        assert!(persistence.restored);
+
+        apply_persistence_event(
+            &OwnedNodeEvent::PersistenceFlushed {
+                cause: PersistenceFlushCause::Startup,
+            },
+            &mut persistence,
+        );
+        assert_eq!(
+            persistence.last_flush_cause,
+            Some(prns_host::PersistenceFlushCause::Startup)
+        );
+        assert!(persistence.last_failure_detail.is_none());
+
+        apply_persistence_event(
+            &OwnedNodeEvent::PersistenceFailed {
+                cause: PersistenceFlushCause::Shutdown,
+                target: PersistenceFlushTarget::RoutingState,
+            },
+            &mut persistence,
+        );
+        assert_eq!(
+            persistence.last_failure_detail.as_deref(),
+            Some("Shutdown:RoutingState")
         );
     }
 
