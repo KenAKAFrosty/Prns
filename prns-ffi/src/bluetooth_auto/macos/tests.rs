@@ -8,7 +8,8 @@ use prns_core::interfaces::bluetooth_auto::{
 use tokio::sync::{mpsc, oneshot};
 
 use super::backend::{
-    dial_admission, scan_lease, scan_op, DialAdmission, ScanLease, ScanOp, StartupReadiness,
+    dial_admission, pop_unseen_startup_sighting, scan_lease, scan_op, stage_startup_event,
+    DialAdmission, ScanLease, ScanOp, StartupBacklog, StartupProgress, StartupReadiness,
 };
 use super::central::{
     CentralPeerSession, RestoredCallbackBuffer, CENTRAL_CONTROL_INBOUND_CAPACITY,
@@ -24,6 +25,7 @@ use super::gatt_link::{
 use super::gatt_write::{write_admission, GattWriteAdmission, GattWriteMode, GattWritePlan};
 use super::legacy_restoration_identifiers;
 use super::peripheral::{advertising_op, has_session_for_peer, AdvertisingOp};
+use super::Event;
 use super::MacosBleError;
 use super::{CoreBluetoothPeerId, MacosBleBackend};
 use super::{CoreBluetoothRestorationIdentifiers, CoreBluetoothRestorationIdentifiersError};
@@ -201,6 +203,167 @@ fn startup_requires_central_gatt_and_l2cap_readiness() {
 
     readiness.note_gatt_service_published();
     assert_eq!(readiness.ready_psm().map(|psm| psm.get()), Some(0x0081));
+}
+
+#[test]
+fn startup_preserves_operational_events_until_final_readiness() {
+    let first = prns_core::interfaces::bluetooth_auto::BleAddress::new([1; 6]);
+    let mut readiness = StartupReadiness::default();
+    let mut backlog = StartupBacklog::<u8>::default();
+
+    assert!(matches!(
+        stage_startup_event(&mut readiness, &mut backlog, Event::Inbound(7), 2, 4,),
+        Ok(StartupProgress::Waiting)
+    ));
+    assert!(matches!(
+        stage_startup_event(
+            &mut readiness,
+            &mut backlog,
+            Event::Sighting {
+                address: first,
+                rssi: Some(-80),
+            },
+            2,
+            4,
+        ),
+        Ok(StartupProgress::Waiting)
+    ));
+    for event in [Event::<u8>::CentralPowered, Event::GattServicePublished] {
+        assert!(matches!(
+            stage_startup_event(&mut readiness, &mut backlog, event, 2, 4),
+            Ok(StartupProgress::Waiting)
+        ));
+    }
+    assert!(matches!(
+        stage_startup_event(
+            &mut readiness,
+            &mut backlog,
+            Event::Sighting {
+                address: first,
+                rssi: Some(-62),
+            },
+            2,
+            4,
+        ),
+        Ok(StartupProgress::Waiting)
+    ));
+    assert!(matches!(
+        stage_startup_event(
+            &mut readiness,
+            &mut backlog,
+            Event::L2capPublished { psm: 0x0081 },
+            2,
+            4,
+        ),
+        Ok(StartupProgress::Ready(psm)) if psm.get() == 0x0081
+    ));
+
+    assert_eq!(backlog.pop_inbound(), Some(7));
+    assert_eq!(backlog.pop_sighting(), Some((first, Some(-62))));
+}
+
+#[test]
+fn startup_backlog_bounds_inbound_and_evicts_least_recent_sighting() {
+    let first = prns_core::interfaces::bluetooth_auto::BleAddress::new([1; 6]);
+    let second = prns_core::interfaces::bluetooth_auto::BleAddress::new([2; 6]);
+    let third = prns_core::interfaces::bluetooth_auto::BleAddress::new([3; 6]);
+    let mut readiness = StartupReadiness::default();
+    let mut backlog = StartupBacklog::default();
+
+    for link in [1, 2] {
+        assert!(matches!(
+            stage_startup_event(&mut readiness, &mut backlog, Event::Inbound(link), 2, 2,),
+            Ok(StartupProgress::Waiting)
+        ));
+    }
+    assert!(matches!(
+        stage_startup_event(&mut readiness, &mut backlog, Event::Inbound(3), 2, 2,),
+        Ok(StartupProgress::InboundOverflow(3))
+    ));
+
+    for (address, rssi) in [(first, -80), (second, -70), (first, -60)] {
+        assert!(matches!(
+            stage_startup_event(
+                &mut readiness,
+                &mut backlog,
+                Event::Sighting {
+                    address,
+                    rssi: Some(rssi),
+                },
+                2,
+                2,
+            ),
+            Ok(StartupProgress::Waiting)
+        ));
+    }
+    assert!(matches!(
+        stage_startup_event(
+            &mut readiness,
+            &mut backlog,
+            Event::Sighting {
+                address: third,
+                rssi: Some(-50),
+            },
+            2,
+            2,
+        ),
+        Ok(StartupProgress::SightingEvicted { address, rssi })
+            if address == second && rssi == Some(-70)
+    ));
+    assert_eq!(backlog.pop_inbound(), Some(1));
+    assert_eq!(backlog.pop_inbound(), Some(2));
+    assert_eq!(backlog.pop_sighting(), Some((first, Some(-60))));
+    assert_eq!(backlog.pop_sighting(), Some((third, Some(-50))));
+}
+
+#[test]
+fn startup_sighting_api_skips_addresses_already_reported() {
+    let already_seen = prns_core::interfaces::bluetooth_auto::BleAddress::new([1; 6]);
+    let next = prns_core::interfaces::bluetooth_auto::BleAddress::new([2; 6]);
+    let mut readiness = StartupReadiness::default();
+    let mut backlog = StartupBacklog::<u8>::default();
+
+    for address in [already_seen, next] {
+        assert!(matches!(
+            stage_startup_event(
+                &mut readiness,
+                &mut backlog,
+                Event::Sighting {
+                    address,
+                    rssi: Some(-60),
+                },
+                2,
+                4,
+            ),
+            Ok(StartupProgress::Waiting)
+        ));
+    }
+
+    let mut seen = std::collections::HashSet::from([*already_seen.octets()]);
+    assert_eq!(
+        pop_unseen_startup_sighting(&mut backlog, &mut seen),
+        Some(next)
+    );
+    assert_eq!(pop_unseen_startup_sighting(&mut backlog, &mut seen), None);
+}
+
+#[test]
+fn startup_publish_failures_remain_fatal() {
+    for event in [
+        Event::<u8>::GattServicePublishFailed,
+        Event::L2capPublishFailed,
+    ] {
+        assert!(matches!(
+            stage_startup_event(
+                &mut StartupReadiness::default(),
+                &mut StartupBacklog::default(),
+                event,
+                2,
+                4,
+            ),
+            Err(MacosBleError::PublishFailed)
+        ));
+    }
 }
 
 #[test]
