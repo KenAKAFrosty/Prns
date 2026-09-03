@@ -30,11 +30,17 @@ final class PrnsAppLifecycleCoordinator: NSObject {
     guard centralRestoration || peripheralRestoration else {
       return
     }
-    startNativeRuntime(application: application)
+    prepareAndStartNativeRuntime(application: application)
   }
 
   nonisolated private static func restorationLaunchIdentifiers(_ value: Any?) -> [String] {
-    value as? [String] ?? []
+    if let identifiers = value as? [String] {
+      return identifiers
+    }
+    guard let identifiers = value as? NSArray else {
+      return []
+    }
+    return identifiers.compactMap { $0 as? String }
   }
 
   private func waitForProtectedData(application: UIApplication) {
@@ -63,7 +69,26 @@ final class PrnsAppLifecycleCoordinator: NSObject {
     guard let application = notification.object as? UIApplication else {
       return
     }
-    startNativeRuntime(application: application)
+    prepareAndStartNativeRuntime(application: application)
+  }
+
+  private func prepareAndStartNativeRuntime(application: UIApplication) {
+    do {
+      let outcome = try PrnsAppModule.prepareBluetoothRestoration()
+      let summary = Self.outcomeSummary(outcome)
+      Self.log("prepare outcome=\(summary.type) stage=\(summary.stage ?? "none")")
+      switch summary.type {
+      case "prepared", "alreadyPrepared":
+        startNativeRuntime(application: application)
+      case "alreadyRunning":
+        return
+      default:
+        retryAfterProtectedDataIfNeeded(application: application)
+      }
+    } catch {
+      Self.log("prepare bridge failed")
+      retryAfterProtectedDataIfNeeded(application: application)
+    }
   }
 
   private func startNativeRuntime(application: UIApplication) {

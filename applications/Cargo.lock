@@ -1102,6 +1102,7 @@ dependencies = [
  "prns-core",
  "prns-host",
  "prns-host-snapshot",
+ "prns-interfaces-tokio",
  "prns-lxmf",
  "redb",
  "serde",

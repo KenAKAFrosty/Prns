@@ -66,6 +66,17 @@ PrnsAppBytes prns_app_start(const uint8_t *path_ptr, size_t path_len,
                             const uint8_t *input_ptr, size_t input_len);
 
 /**
+ * Synchronously create the application-owned CoreBluetooth restoration
+ * managers and delegates without waiting for full node readiness. A matching
+ * restoring start atomically consumes the retained prepared owner.
+ */
+PrnsAppBytes prns_app_prepare_apple_bluetooth_restoration(
+    const uint8_t *path_ptr, size_t path_len,
+    const uint8_t *central_identifier_ptr, size_t central_identifier_len,
+    const uint8_t *peripheral_identifier_ptr,
+    size_t peripheral_identifier_len);
+
+/**
  * Start the development node with stable, application-owned CoreBluetooth
  * restoration identifiers. All buffers are length-delimited UTF-8; the
  * central and peripheral identifiers must be nonempty and distinct.

@@ -41,8 +41,28 @@ assert.doesNotMatch(
   "Expo module teardown must not stop process-owned Rust",
 );
 assert.match(coordinator, /nativeQueue\.async\(flags: \.barrier\)/);
+assert.match(
+  coordinator,
+  /prepareAndStartNativeRuntime[\s\S]*?prepareBluetoothRestoration\(\)[\s\S]*?case "prepared", "alreadyPrepared":[\s\S]*?startNativeRuntime/,
+  "restoration launch must synchronously prepare managers before enqueuing full startup",
+);
+assert.match(
+  coordinator,
+  /restorationLaunchIdentifiers[\s\S]*?as\? \[String\][\s\S]*?as\? NSArray[\s\S]*?compactMap/,
+  "restoration launch identifiers must accept native Swift arrays and bridged NSArray values",
+);
 assert.match(swift, /\.appendingPathComponent\("prns", isDirectory: true\)/);
 assert.match(swift, /\.appendingPathComponent\("development", isDirectory: true\)/);
+assert.match(
+  swift,
+  /private static func restorationStorageURL\(\)[\s\S]*?migrateExistingContents: false/,
+  "early restoration must avoid recursively migrating the existing storage tree",
+);
+assert.match(
+  swift,
+  /static func prepareBluetoothRestoration\(\)[\s\S]*?prns_app_prepare_apple_bluetooth_restoration/,
+  "the synchronous restoration hook must call the preparation-only native ABI",
+);
 assert.match(swift, /FileProtectionType\.completeUntilFirstUserAuthentication/);
 assert.match(swift, /isExcludedFromBackup = true/);
 assert.match(swift, /isSymbolicLink == true[\s\S]*skipDescendants\(\)/);
@@ -67,6 +87,7 @@ for (const abiName of [
   "prns_app_preview_identity_import",
   "prns_app_create_generated_identity",
   "prns_app_create_imported_identity",
+  "prns_app_prepare_apple_bluetooth_restoration",
   "prns_app_start_with_apple_restoration",
   "prns_app_snapshot",
   "prns_app_initiate_pairing",

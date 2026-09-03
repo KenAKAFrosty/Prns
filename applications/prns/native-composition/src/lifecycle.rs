@@ -5,6 +5,8 @@ use std::sync::{mpsc as std_mpsc, Arc, Mutex, MutexGuard, OnceLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+#[cfg(any(test, all(feature = "apple", target_os = "ios")))]
+use personal_rns::interfaces::bluetooth_auto::BleIdentity;
 use personal_rns::node_introspection::DestinationIdentityQuery;
 use personal_rns::prelude::{
     GrowableHeap, InitiateRemoteControlControllerPairing, ManuallyAttached, PrnsNode,
@@ -26,23 +28,27 @@ use prns_core::identity::vault::{
 use prns_core::identity::PrivateIdentityMaterial;
 use prns_host::{BackendInfo, BackendKind, Capability, InterfaceKind, PersistenceSnapshot};
 use prns_host_snapshot::{assemble_host_snapshot, HostInterfaceAttachment};
+#[cfg(all(feature = "apple", target_os = "ios"))]
+use prns_interfaces_tokio::bluetooth_auto::PreparedAutoBle;
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
 
 use crate::contract::{
-    AnnounceLxmfOutcome, CancelLxmfMessageInput, CancelLxmfMessageOutcome, ContactDestinationInput,
-    ContactListOutcome, ContactLookupOutcome, ContactMutationOutcome, CreateManualContactInput,
-    DescribeRemoteControlTargetInput, DevelopmentNodeFailure, DevelopmentNodeFailureStage,
-    DevelopmentNodeOperation, DevelopmentNodeOperationKind, DevelopmentNodeRuntime,
-    DevelopmentNodeSnapshot, DevelopmentNodeStartInput, DevelopmentNodeStartOutcome,
-    DevelopmentNodeStopOutcome, DevelopmentNodeStopStage, IdentityCreationOutcome,
-    IdentityImportPreviewOutcome, InitiateRemoteControlPairingInput, ListLxmfMessagesInput,
-    LocalHostState, LxmfMessageListOutcome, LxmfPeerListOutcome, MeasureLxmfTextInput,
-    MeasureLxmfTextOutcome, PrimaryIdentityState, RemoteControlDescribeFailureStage,
-    RemoteControlDescribeOutcome, RemoteControlPairingCommandOutcome,
-    RemoteControlPairingDecisionInput, RemoteControlPairingFailureStage, RemoteControlPairingState,
-    RetryLxmfMessageInput, RetryLxmfMessageOutcome, SendDirectTextInput, SendDirectTextOutcome,
-    SetContactAliasInput, SetContactPinnedInput, U64String,
+    AnnounceLxmfOutcome, AppleBluetoothRestorationPreparationFailureStage,
+    AppleBluetoothRestorationPreparationOutcome, CancelLxmfMessageInput, CancelLxmfMessageOutcome,
+    ContactDestinationInput, ContactListOutcome, ContactLookupOutcome, ContactMutationOutcome,
+    CreateManualContactInput, DescribeRemoteControlTargetInput, DevelopmentNodeFailure,
+    DevelopmentNodeFailureStage, DevelopmentNodeOperation, DevelopmentNodeOperationKind,
+    DevelopmentNodeRuntime, DevelopmentNodeSnapshot, DevelopmentNodeStartInput,
+    DevelopmentNodeStartOutcome, DevelopmentNodeStopOutcome, DevelopmentNodeStopStage,
+    IdentityCreationOutcome, IdentityImportPreviewOutcome, InitiateRemoteControlPairingInput,
+    ListLxmfMessagesInput, LocalHostState, LxmfMessageListOutcome, LxmfPeerListOutcome,
+    MeasureLxmfTextInput, MeasureLxmfTextOutcome, PrimaryIdentityState,
+    RemoteControlDescribeFailureStage, RemoteControlDescribeOutcome,
+    RemoteControlPairingCommandOutcome, RemoteControlPairingDecisionInput,
+    RemoteControlPairingFailureStage, RemoteControlPairingState, RetryLxmfMessageInput,
+    RetryLxmfMessageOutcome, SendDirectTextInput, SendDirectTextOutcome, SetContactAliasInput,
+    SetContactPinnedInput, U64String,
 };
 use crate::development_store::{
     DevelopmentStoreFailure, DevelopmentStoreOwner, MailboxStoreReply, StoreReply,
@@ -76,11 +82,8 @@ type WorkerResult = Result<(), (DevelopmentNodeStopStage, String)>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum AppleBluetoothPreparation {
-    ForegroundOnly,
-    Restoration {
-        central: String,
-        peripheral: String,
-    },
+    WithoutRestoration,
+    Restoration { central: String, peripheral: String },
 }
 
 impl AppleBluetoothPreparation {
@@ -112,6 +115,30 @@ impl AppleBluetoothPreparation {
     }
 }
 
+#[cfg(any(test, all(feature = "apple", target_os = "ios")))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct AppleBluetoothOwnerKey {
+    storage_root: PathBuf,
+    preparation: AppleBluetoothPreparation,
+    identity: BleIdentity,
+}
+
+#[cfg(any(test, all(feature = "apple", target_os = "ios")))]
+struct PreparedAppleBluetoothOwner<T> {
+    key: AppleBluetoothOwnerKey,
+    prepared: T,
+}
+
+struct WorkerBluetoothPreparation {
+    preparation: AppleBluetoothPreparation,
+    #[cfg(all(feature = "apple", target_os = "ios"))]
+    owner_key: AppleBluetoothOwnerKey,
+    #[cfg(all(feature = "apple", target_os = "ios"))]
+    identity: BleIdentity,
+    #[cfg(all(feature = "apple", target_os = "ios"))]
+    prepared: Option<PreparedAutoBle>,
+}
+
 struct Supervisor {
     snapshots: Arc<SnapshotStore>,
     operation_admitted: Arc<AtomicBool>,
@@ -123,6 +150,8 @@ struct SupervisorState {
     worker: Option<Worker>,
     application_owner: Option<DevelopmentStoreOwner>,
     identity_owner: Option<IdentityOwner>,
+    #[cfg(all(feature = "apple", target_os = "ios"))]
+    pending_apple_bluetooth: Option<PreparedAppleBluetoothOwner<PreparedAutoBle>>,
 }
 
 struct IdentityOwner {
@@ -136,6 +165,8 @@ struct Worker {
     done: std_mpsc::Receiver<WorkerResult>,
     join: Option<JoinHandle<()>>,
     storage_root: PathBuf,
+    #[cfg(all(feature = "apple", target_os = "ios"))]
+    bluetooth_owner_key: AppleBluetoothOwnerKey,
 }
 
 #[derive(Clone)]
@@ -424,6 +455,174 @@ fn validate_development_tcp_target(target: Option<&str>) -> Result<Option<String
     Ok(Some(address.to_string()))
 }
 
+#[cfg(any(test, all(feature = "apple", target_os = "ios")))]
+fn take_matching_prepared_owner<T>(
+    pending: &mut Option<PreparedAppleBluetoothOwner<T>>,
+    requested: &AppleBluetoothOwnerKey,
+) -> Result<Option<T>, String> {
+    let Some(owner) = pending.as_ref() else {
+        return Ok(None);
+    };
+    if owner.key != *requested {
+        return Err(
+            "The prepared CoreBluetooth owner does not match this storage root, restoration configuration, and Bluetooth identity."
+                .to_owned(),
+        );
+    }
+    Ok(pending.take().map(|owner| owner.prepared))
+}
+
+#[cfg(any(test, all(feature = "apple", target_os = "ios")))]
+fn discard_prepared_owner<T>(pending: &mut Option<PreparedAppleBluetoothOwner<T>>) {
+    *pending = None;
+}
+
+fn apple_bluetooth_preparation_failed(
+    stage: AppleBluetoothRestorationPreparationFailureStage,
+    detail: impl Into<String>,
+) -> AppleBluetoothRestorationPreparationOutcome {
+    AppleBluetoothRestorationPreparationOutcome::Failed {
+        stage,
+        detail: detail.into(),
+    }
+}
+
+pub(crate) fn prepare_apple_bluetooth_restoration(
+    storage_root: &Path,
+    central_identifier: String,
+    peripheral_identifier: String,
+) -> AppleBluetoothRestorationPreparationOutcome {
+    let preparation = AppleBluetoothPreparation::Restoration {
+        central: central_identifier,
+        peripheral: peripheral_identifier,
+    };
+    if let Err(detail) = preparation.validate() {
+        return apple_bluetooth_preparation_failed(
+            AppleBluetoothRestorationPreparationFailureStage::Contract,
+            detail,
+        );
+    }
+
+    prepare_apple_bluetooth_restoration_with_supervisor(supervisor(), storage_root, preparation)
+}
+
+#[cfg(all(feature = "apple", target_os = "ios"))]
+fn prepare_apple_bluetooth_restoration_with_supervisor(
+    supervisor: &Supervisor,
+    storage_root: &Path,
+    preparation: AppleBluetoothPreparation,
+) -> AppleBluetoothRestorationPreparationOutcome {
+    let mut state = supervisor.lock_state();
+    reap_completed_worker_locked(supervisor, &mut state);
+
+    let paths = match prepare_storage(storage_root) {
+        Ok(paths) => paths,
+        Err(detail) => {
+            return apple_bluetooth_preparation_failed(
+                AppleBluetoothRestorationPreparationFailureStage::Storage,
+                detail,
+            )
+        }
+    };
+    let identity = match personal_rns::load_or_create_ble_identity(&paths.bluetooth_identity) {
+        Ok(identity) => identity,
+        Err(error) => {
+            return apple_bluetooth_preparation_failed(
+                AppleBluetoothRestorationPreparationFailureStage::Identity,
+                format!("could not load the installation Bluetooth identity: {error}"),
+            )
+        }
+    };
+    let requested = AppleBluetoothOwnerKey {
+        storage_root: paths.root,
+        preparation: preparation.clone(),
+        identity,
+    };
+
+    if let Some(worker) = state.worker.as_ref() {
+        return if worker.bluetooth_owner_key == requested {
+            AppleBluetoothRestorationPreparationOutcome::AlreadyRunning
+        } else {
+            apple_bluetooth_preparation_failed(
+                AppleBluetoothRestorationPreparationFailureStage::Contract,
+                "A different CoreBluetooth owner is already active in this process.",
+            )
+        };
+    }
+    if let Some(owner) = state.pending_apple_bluetooth.as_ref() {
+        return if owner.key == requested {
+            AppleBluetoothRestorationPreparationOutcome::AlreadyPrepared
+        } else {
+            apple_bluetooth_preparation_failed(
+                AppleBluetoothRestorationPreparationFailureStage::Contract,
+                "A different CoreBluetooth owner is already prepared in this process.",
+            )
+        };
+    }
+
+    let AppleBluetoothPreparation::Restoration {
+        central,
+        peripheral,
+    } = preparation
+    else {
+        return apple_bluetooth_preparation_failed(
+            AppleBluetoothRestorationPreparationFailureStage::Contract,
+            "CoreBluetooth restoration preparation requires restoration identifiers.",
+        );
+    };
+    let identifiers = match personal_rns::bluetooth_auto::CoreBluetoothRestorationIdentifiers::new(
+        central, peripheral,
+    ) {
+        Ok(identifiers) => identifiers,
+        Err(error) => {
+            return apple_bluetooth_preparation_failed(
+                AppleBluetoothRestorationPreparationFailureStage::Contract,
+                error.to_string(),
+            )
+        }
+    };
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            return apple_bluetooth_preparation_failed(
+                AppleBluetoothRestorationPreparationFailureStage::Runtime,
+                format!("could not create the Bluetooth preparation runtime: {error}"),
+            )
+        }
+    };
+    let prepared = match runtime.block_on(
+        personal_rns::bluetooth_auto::AutoBle::prepare_with_restoration(identity, identifiers),
+    ) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            return apple_bluetooth_preparation_failed(
+                AppleBluetoothRestorationPreparationFailureStage::Runtime,
+                format!("could not create the CoreBluetooth restoration managers: {error:?}"),
+            )
+        }
+    };
+    state.pending_apple_bluetooth = Some(PreparedAppleBluetoothOwner {
+        key: requested,
+        prepared,
+    });
+    AppleBluetoothRestorationPreparationOutcome::Prepared
+}
+
+#[cfg(not(all(feature = "apple", target_os = "ios")))]
+fn prepare_apple_bluetooth_restoration_with_supervisor(
+    _supervisor: &Supervisor,
+    _storage_root: &Path,
+    _preparation: AppleBluetoothPreparation,
+) -> AppleBluetoothRestorationPreparationOutcome {
+    apple_bluetooth_preparation_failed(
+        AppleBluetoothRestorationPreparationFailureStage::Runtime,
+        "CoreBluetooth restoration preparation is only available in the iOS Apple build.",
+    )
+}
+
 #[cfg(test)]
 pub fn start(storage_root: &Path) -> DevelopmentNodeStartOutcome {
     start_configured(
@@ -442,7 +641,7 @@ pub fn start_configured(
         supervisor(),
         storage_root,
         input,
-        AppleBluetoothPreparation::ForegroundOnly,
+        AppleBluetoothPreparation::WithoutRestoration,
     )
 }
 
@@ -511,6 +710,56 @@ fn start_configured_with_supervisor(
             };
         }
     };
+    #[cfg(all(feature = "apple", target_os = "ios"))]
+    let bluetooth_identity =
+        match personal_rns::load_or_create_ble_identity(&paths.bluetooth_identity) {
+            Ok(identity) => identity,
+            Err(error) => {
+                let detail = format!("could not load the installation Bluetooth identity: {error}");
+                if matches!(
+                    error,
+                    LocalIdentityFileError::Malformed { .. }
+                        | LocalIdentityFileError::EmptyBleIdentity
+                        | LocalIdentityFileError::InvalidBleIdentity(_)
+                ) {
+                    supervisor
+                        .snapshots
+                        .set_local_host(LocalHostState::DevelopmentResetRequired {
+                            reason: detail.clone(),
+                        });
+                }
+                supervisor.snapshots.fail(DevelopmentNodeFailure {
+                    stage: DevelopmentNodeFailureStage::Identity,
+                    detail: detail.clone(),
+                });
+                return DevelopmentNodeStartOutcome::Failed {
+                    stage: DevelopmentNodeFailureStage::Identity,
+                    detail,
+                };
+            }
+        };
+    #[cfg(all(feature = "apple", target_os = "ios"))]
+    let bluetooth_owner_key = AppleBluetoothOwnerKey {
+        storage_root: paths.root.clone(),
+        preparation: bluetooth_preparation.clone(),
+        identity: bluetooth_identity,
+    };
+    #[cfg(all(feature = "apple", target_os = "ios"))]
+    if state
+        .pending_apple_bluetooth
+        .as_ref()
+        .is_some_and(|owner| owner.key != bluetooth_owner_key)
+    {
+        let detail = "The prepared CoreBluetooth owner does not match this full start.".to_owned();
+        supervisor.snapshots.fail(DevelopmentNodeFailure {
+            stage: DevelopmentNodeFailureStage::Contract,
+            detail: detail.clone(),
+        });
+        return DevelopmentNodeStartOutcome::Failed {
+            stage: DevelopmentNodeFailureStage::Contract,
+            detail,
+        };
+    }
     let development_tcp_target =
         match validate_development_tcp_target(input.development_tcp_target.as_deref()) {
             Ok(target) => target,
@@ -598,6 +847,34 @@ fn start_configured_with_supervisor(
             };
         }
     };
+    #[cfg(all(feature = "apple", target_os = "ios"))]
+    let prepared_bluetooth = match take_matching_prepared_owner(
+        &mut state.pending_apple_bluetooth,
+        &bluetooth_owner_key,
+    ) {
+        Ok(prepared) => prepared,
+        Err(detail) => {
+            supervisor.snapshots.fail(DevelopmentNodeFailure {
+                stage: DevelopmentNodeFailureStage::Contract,
+                detail: detail.clone(),
+            });
+            return DevelopmentNodeStartOutcome::Failed {
+                stage: DevelopmentNodeFailureStage::Contract,
+                detail,
+            };
+        }
+    };
+    #[cfg(all(feature = "apple", target_os = "ios"))]
+    let worker_bluetooth_preparation = WorkerBluetoothPreparation {
+        preparation: bluetooth_preparation,
+        owner_key: bluetooth_owner_key.clone(),
+        identity: bluetooth_identity,
+        prepared: prepared_bluetooth,
+    };
+    #[cfg(not(all(feature = "apple", target_os = "ios")))]
+    let worker_bluetooth_preparation = WorkerBluetoothPreparation {
+        preparation: bluetooth_preparation,
+    };
     supervisor.snapshots.begin_generation(primary_identity);
     supervisor
         .operation_admitted
@@ -614,6 +891,8 @@ fn start_configured_with_supervisor(
     let snapshots = Arc::clone(&supervisor.snapshots);
     let operation_admitted = Arc::clone(&supervisor.operation_admitted);
     let storage_for_worker = paths.root.clone();
+    #[cfg(all(feature = "apple", target_os = "ios"))]
+    let bluetooth_owner_key_for_worker = worker_bluetooth_preparation.owner_key.clone();
     let worker_shutdown = shutdown.clone();
     let join = std::thread::Builder::new()
         .name("prns-app-native".to_owned())
@@ -623,7 +902,7 @@ fn start_configured_with_supervisor(
                 primary_identity_secret,
                 mailbox_submitter,
                 development_tcp_target,
-                bluetooth_preparation,
+                worker_bluetooth_preparation,
                 command_rx,
                 worker_shutdown,
                 shutdown_rx,
@@ -654,6 +933,8 @@ fn start_configured_with_supervisor(
         done: done_rx,
         join: Some(join),
         storage_root: storage_for_worker,
+        #[cfg(all(feature = "apple", target_os = "ios"))]
+        bluetooth_owner_key: bluetooth_owner_key_for_worker,
     });
 
     match ready_rx.recv_timeout(STARTUP_TIMEOUT + Duration::from_secs(2)) {
@@ -1652,6 +1933,10 @@ pub fn stop() -> DevelopmentNodeStopOutcome {
 }
 
 fn stop_locked(supervisor: &Supervisor, state: &mut SupervisorState) -> DevelopmentNodeStopOutcome {
+    #[cfg(all(feature = "apple", target_os = "ios"))]
+    {
+        discard_prepared_owner(&mut state.pending_apple_bluetooth);
+    }
     let Some(worker) = state.worker.as_mut() else {
         return DevelopmentNodeStopOutcome::AlreadyStopped;
     };
@@ -1733,10 +2018,18 @@ fn reset_with_supervisor(
     storage_root: &Path,
 ) -> DevelopmentNodeStopOutcome {
     let mut state = supervisor.lock_state();
+    #[cfg(all(feature = "apple", target_os = "ios"))]
+    let pending_bluetooth_root = state
+        .pending_apple_bluetooth
+        .as_ref()
+        .map(|owner| &owner.key.storage_root);
+    #[cfg(not(all(feature = "apple", target_os = "ios")))]
+    let pending_bluetooth_root: Option<&PathBuf> = None;
     let owned_roots = [
         state.worker.as_ref().map(|worker| &worker.storage_root),
         state.application_owner.as_ref().map(|owner| &owner.root),
         state.identity_owner.as_ref().map(|owner| &owner.root),
+        pending_bluetooth_root,
     ];
     if owned_roots.into_iter().flatten().next().is_some() {
         let requested_root = storage_root
@@ -1899,7 +2192,7 @@ fn run_worker(
     primary_identity_secret: IdentitySecretKey,
     mailbox_submitter: Arc<dyn prns_lxmf::mailbox::MailboxSubmitter>,
     development_tcp_target: Option<String>,
-    bluetooth_preparation: AppleBluetoothPreparation,
+    bluetooth_preparation: WorkerBluetoothPreparation,
     commands: mpsc::Receiver<Command>,
     shutdown: ShutdownSignal,
     shutdown_rx: watch::Receiver<bool>,
@@ -1936,7 +2229,7 @@ async fn run_generation(
     primary_identity_secret: IdentitySecretKey,
     mailbox_submitter: Arc<dyn prns_lxmf::mailbox::MailboxSubmitter>,
     development_tcp_target: Option<String>,
-    bluetooth_preparation: AppleBluetoothPreparation,
+    bluetooth_preparation: WorkerBluetoothPreparation,
     commands: mpsc::Receiver<Command>,
     shutdown: ShutdownSignal,
     shutdown_rx: watch::Receiver<bool>,
@@ -1962,6 +2255,9 @@ async fn run_generation(
         .as_bytes()
         .to_vec();
     let (identity_secrets, _) = bootstrap.into_parts();
+    #[cfg(all(feature = "apple", target_os = "ios"))]
+    let bluetooth_identity = bluetooth_preparation.identity;
+    #[cfg(not(all(feature = "apple", target_os = "ios")))]
     let bluetooth_identity = personal_rns::load_or_create_ble_identity(&paths.bluetooth_identity)
         .map_err(|error| {
         let detail = format!("could not load the installation Bluetooth identity: {error}");
@@ -1984,44 +2280,49 @@ async fn run_generation(
     })?;
 
     #[cfg(all(feature = "apple", target_os = "ios"))]
-    let prepared_bluetooth = match bluetooth_preparation {
-        AppleBluetoothPreparation::ForegroundOnly => {
-            match personal_rns::bluetooth_auto::AutoBle::prepare_foreground(bluetooth_identity).await
-            {
-                Ok(prepared) => prepared,
-                Err(_) => personal_rns::bluetooth_auto::AutoBle::unavailable_foreground(
-                    bluetooth_identity,
-                ),
+    let prepared_bluetooth = match bluetooth_preparation.prepared {
+        Some(prepared) => prepared,
+        None => match bluetooth_preparation.preparation {
+            AppleBluetoothPreparation::WithoutRestoration => {
+                match personal_rns::bluetooth_auto::AutoBle::prepare_foreground(bluetooth_identity)
+                    .await
+                {
+                    Ok(prepared) => prepared,
+                    Err(_) => personal_rns::bluetooth_auto::AutoBle::unavailable_foreground(
+                        bluetooth_identity,
+                    ),
+                }
             }
-        }
-        AppleBluetoothPreparation::Restoration {
-            central,
-            peripheral,
-        } => {
-            let restoration = personal_rns::bluetooth_auto::CoreBluetoothRestorationIdentifiers::new(
-                central, peripheral,
-            )
-            .map_err(|error| {
-                boot_failure(
-                    &ready,
-                    &snapshots,
-                    DevelopmentNodeFailureStage::Contract,
-                    error.to_string(),
+            AppleBluetoothPreparation::Restoration {
+                central,
+                peripheral,
+            } => {
+                let restoration =
+                    personal_rns::bluetooth_auto::CoreBluetoothRestorationIdentifiers::new(
+                        central, peripheral,
+                    )
+                    .map_err(|error| {
+                        boot_failure(
+                            &ready,
+                            &snapshots,
+                            DevelopmentNodeFailureStage::Contract,
+                            error.to_string(),
+                        )
+                    })?;
+                match personal_rns::bluetooth_auto::AutoBle::prepare_with_restoration(
+                    bluetooth_identity,
+                    restoration.clone(),
                 )
-            })?;
-            match personal_rns::bluetooth_auto::AutoBle::prepare_with_restoration(
-                bluetooth_identity,
-                restoration.clone(),
-            )
-            .await
-            {
-                Ok(prepared) => prepared,
-                Err(_) => personal_rns::bluetooth_auto::AutoBle::unavailable_with_restoration(
-                    bluetooth_identity,
-                    restoration,
-                ),
+                .await
+                {
+                    Ok(prepared) => prepared,
+                    Err(_) => personal_rns::bluetooth_auto::AutoBle::unavailable_with_restoration(
+                        bluetooth_identity,
+                        restoration,
+                    ),
+                }
             }
-        }
+        },
     };
     #[cfg(all(feature = "apple", target_os = "macos"))]
     let prepared_bluetooth =
@@ -2032,9 +2333,9 @@ async fn run_generation(
             }
         };
     #[cfg(all(feature = "apple", target_os = "macos"))]
-    let _ = bluetooth_preparation;
+    let _ = bluetooth_preparation.preparation;
     #[cfg(not(all(feature = "apple", any(target_os = "ios", target_os = "macos"))))]
-    let _ = (bluetooth_identity, bluetooth_preparation);
+    let _ = (bluetooth_identity, bluetooth_preparation.preparation);
 
     let persistence = NodePersistence::custom_dir(&paths.network).map_err(|error| {
         boot_failure(
@@ -3928,9 +4229,9 @@ mod tests {
     #[test]
     fn apple_restoration_identifiers_are_nonempty_and_role_distinct() {
         assert!(AppleBluetoothPreparation::Restoration {
-                central: "rs.reticulum.prns.dev.bluetooth-auto.central.v1".to_owned(),
-                peripheral: "rs.reticulum.prns.dev.bluetooth-auto.peripheral.v1".to_owned(),
-            }
+            central: "rs.reticulum.prns.dev.bluetooth-auto.central.v1".to_owned(),
+            peripheral: "rs.reticulum.prns.dev.bluetooth-auto.peripheral.v1".to_owned(),
+        }
         .validate()
         .is_ok());
         for invalid in [
@@ -3949,6 +4250,86 @@ mod tests {
         ] {
             assert!(invalid.validate().is_err());
         }
+    }
+
+    fn apple_owner_key(
+        root: &str,
+        central: &str,
+        peripheral: &str,
+        identity: u8,
+    ) -> AppleBluetoothOwnerKey {
+        AppleBluetoothOwnerKey {
+            storage_root: PathBuf::from(root),
+            preparation: AppleBluetoothPreparation::Restoration {
+                central: central.to_owned(),
+                peripheral: peripheral.to_owned(),
+            },
+            identity: BleIdentity::new([identity; 16]),
+        }
+    }
+
+    #[test]
+    fn prepared_apple_bluetooth_handoff_is_exact_and_single_use() {
+        let expected = apple_owner_key("/tmp/prns/development", "central", "peripheral", 0x41);
+        let mut pending = Some(PreparedAppleBluetoothOwner {
+            key: expected.clone(),
+            prepared: "single owner",
+        });
+
+        for mismatch in [
+            apple_owner_key("/different/prns/development", "central", "peripheral", 0x41),
+            apple_owner_key(
+                "/tmp/prns/development",
+                "different-central",
+                "peripheral",
+                0x41,
+            ),
+            apple_owner_key("/tmp/prns/development", "central", "peripheral", 0x42),
+        ] {
+            assert!(take_matching_prepared_owner(&mut pending, &mismatch).is_err());
+            assert!(
+                pending.is_some(),
+                "a mismatch must preserve the existing owner"
+            );
+        }
+
+        assert_eq!(
+            take_matching_prepared_owner(&mut pending, &expected),
+            Ok(Some("single owner"))
+        );
+        assert!(pending.is_none());
+        assert_eq!(
+            take_matching_prepared_owner(&mut pending, &expected),
+            Ok(None)
+        );
+    }
+
+    #[test]
+    fn stop_discard_helper_drops_a_pending_apple_bluetooth_owner() {
+        let mut pending = Some(PreparedAppleBluetoothOwner {
+            key: apple_owner_key("/tmp/prns/development", "central", "peripheral", 0x41),
+            prepared: "pending owner",
+        });
+
+        discard_prepared_owner(&mut pending);
+
+        assert!(pending.is_none());
+    }
+
+    #[test]
+    fn invalid_early_restoration_configuration_fails_before_platform_work() {
+        assert_eq!(
+            prepare_apple_bluetooth_restoration(
+                Path::new("/tmp/prns/development"),
+                "shared".to_owned(),
+                "shared".to_owned(),
+            ),
+            AppleBluetoothRestorationPreparationOutcome::Failed {
+                stage: AppleBluetoothRestorationPreparationFailureStage::Contract,
+                detail: "central and peripheral CoreBluetooth restoration identifiers must differ"
+                    .to_owned(),
+            }
+        );
     }
 
     #[test]
@@ -4317,7 +4698,7 @@ mod tests {
                 DevelopmentNodeStartInput {
                     development_tcp_target: None,
                 },
-                AppleBluetoothPreparation::ForegroundOnly,
+                AppleBluetoothPreparation::WithoutRestoration,
             ),
             DevelopmentNodeStartOutcome::Started { .. }
         ));

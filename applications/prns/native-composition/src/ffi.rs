@@ -204,6 +204,38 @@ pub unsafe extern "C" fn prns_app_start(
     }
 }
 
+/// Prepare the application-owned CoreBluetooth restoration managers before full node startup.
+///
+/// This call returns only after the managers and their delegates exist. The resulting owner stays
+/// in the process supervisor until a matching restoring start consumes it, or stop/reset drops it.
+///
+/// # Safety
+///
+/// The path and restoration-identifier buffers follow
+/// [`prns_app_start_with_apple_restoration`].
+#[no_mangle]
+pub unsafe extern "C" fn prns_app_prepare_apple_bluetooth_restoration(
+    path_ptr: *const u8,
+    path_len: usize,
+    central_identifier_ptr: *const u8,
+    central_identifier_len: usize,
+    peripheral_identifier_ptr: *const u8,
+    peripheral_identifier_len: usize,
+) -> PrnsAppBytes {
+    // SAFETY: The caller contracts are forwarded to the bounded independent decoders.
+    unsafe {
+        invoke_path_two_strings(
+            path_ptr,
+            path_len,
+            central_identifier_ptr,
+            central_identifier_len,
+            peripheral_identifier_ptr,
+            peripheral_identifier_len,
+            lifecycle::prepare_apple_bluetooth_restoration,
+        )
+    }
+}
+
 /// Start the development node with application-owned CoreBluetooth restoration identifiers.
 ///
 /// # Safety
@@ -870,6 +902,70 @@ where
     })
 }
 
+unsafe fn invoke_path_two_strings<Output, Operation>(
+    path_ptr: *const u8,
+    path_len: usize,
+    first_ptr: *const u8,
+    first_len: usize,
+    second_ptr: *const u8,
+    second_len: usize,
+    operation: Operation,
+) -> PrnsAppBytes
+where
+    Output: Serialize,
+    Operation: FnOnce(&Path, String, String) -> Output,
+{
+    invoke(|| {
+        // SAFETY: Each buffer has an independent readable-buffer contract and is checked before a
+        // slice is formed.
+        let path_bytes = unsafe {
+            required_bytes(
+                path_ptr,
+                path_len,
+                PRNS_APP_MAX_PATH_BYTES,
+                "storage path must not be empty",
+                "storage path pointer is null",
+                "storage path exceeds the ABI size limit",
+            )
+        }?;
+        let path = str::from_utf8(path_bytes)
+            .map_err(|_| BridgeFailure::invalid_input("storage path is not valid UTF-8"))?;
+        // SAFETY: Both identifier buffers have independent checked bounds and nullness.
+        let first_bytes = unsafe {
+            required_bytes(
+                first_ptr,
+                first_len,
+                PRNS_APP_MAX_RESTORATION_IDENTIFIER_BYTES,
+                "central restoration identifier must not be empty",
+                "central restoration identifier pointer is null",
+                "central restoration identifier exceeds the ABI size limit",
+            )
+        }?;
+        let first = str::from_utf8(first_bytes).map_err(|_| {
+            BridgeFailure::invalid_input("central restoration identifier is not valid UTF-8")
+        })?;
+        // SAFETY: The second identifier buffer is checked independently from the first.
+        let second_bytes = unsafe {
+            required_bytes(
+                second_ptr,
+                second_len,
+                PRNS_APP_MAX_RESTORATION_IDENTIFIER_BYTES,
+                "peripheral restoration identifier must not be empty",
+                "peripheral restoration identifier pointer is null",
+                "peripheral restoration identifier exceeds the ABI size limit",
+            )
+        }?;
+        let second = str::from_utf8(second_bytes).map_err(|_| {
+            BridgeFailure::invalid_input("peripheral restoration identifier is not valid UTF-8")
+        })?;
+        Ok(operation(
+            Path::new(path),
+            first.to_owned(),
+            second.to_owned(),
+        ))
+    })
+}
+
 unsafe fn optional_bytes<'a>(
     input_ptr: *const u8,
     input_len: usize,
@@ -1182,6 +1278,53 @@ mod tests {
                 "type": "bridgeFailure",
                 "kind": "invalidInput",
                 "detail": "central restoration identifier must not be empty"
+            })
+        );
+    }
+
+    #[test]
+    fn restoration_preparation_buffers_reach_the_operation_exactly() {
+        let path = b"/tmp/prns/development";
+        let central = b"rs.reticulum.prns.dev.bluetooth-auto.central.v1";
+        let peripheral = b"rs.reticulum.prns.dev.bluetooth-auto.peripheral.v1";
+        // SAFETY: All fixed test buffers remain readable and immutable for the call.
+        let output = unsafe {
+            invoke_path_two_strings(
+                path.as_ptr(),
+                path.len(),
+                central.as_ptr(),
+                central.len(),
+                peripheral.as_ptr(),
+                peripheral.len(),
+                |decoded_path, decoded_central, decoded_peripheral| {
+                    assert_eq!(decoded_path, Path::new("/tmp/prns/development"));
+                    assert_eq!(decoded_central.as_bytes(), central);
+                    assert_eq!(decoded_peripheral.as_bytes(), peripheral);
+                    json!({ "type": "prepared" })
+                },
+            )
+        };
+        assert_eq!(parse_and_free(output), json!({ "type": "prepared" }));
+
+        // SAFETY: The other buffers remain valid; null plus zero is intentionally invalid for the
+        // required peripheral identifier.
+        let empty_peripheral = unsafe {
+            invoke_path_two_strings(
+                path.as_ptr(),
+                path.len(),
+                central.as_ptr(),
+                central.len(),
+                ptr::null(),
+                0,
+                |_, _, _| json!({ "unreachable": true }),
+            )
+        };
+        assert_eq!(
+            parse_and_free(empty_peripheral),
+            json!({
+                "type": "bridgeFailure",
+                "kind": "invalidInput",
+                "detail": "peripheral restoration identifier must not be empty"
             })
         );
     }

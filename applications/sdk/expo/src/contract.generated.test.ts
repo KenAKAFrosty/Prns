@@ -149,6 +149,9 @@ describe("Rust-generated contract fixtures", () => {
       "cancelled",
       "failed",
     ]);
+    expect(
+      NATIVE_CONTRACT_FIXTURES.appleBluetoothRestorationPreparationOutcomes.map(({ type }) => type),
+    ).toEqual(["prepared", "alreadyPrepared", "alreadyRunning", "failed"]);
     expect(NATIVE_CONTRACT_FIXTURES.startOutcomes.map(({ type }) => type)).toEqual([
       "started",
       "alreadyRunning",

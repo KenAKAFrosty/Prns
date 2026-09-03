@@ -211,6 +211,27 @@ public final class PrnsAppModule: Module {
     }
   }
 
+  static func prepareBluetoothRestoration() throws -> String {
+    let storageURL = try restorationStorageURL()
+    let identifiers = try restorationIdentifiers()
+    return try withUtf8Bytes(storageURL.path) { pathPointer, pathCount in
+      try withUtf8Bytes(identifiers.central) { centralPointer, centralCount in
+        try withUtf8Bytes(identifiers.peripheral) { peripheralPointer, peripheralCount in
+          try consume(
+            prns_app_prepare_apple_bluetooth_restoration(
+              pathPointer,
+              pathCount,
+              centralPointer,
+              centralCount,
+              peripheralPointer,
+              peripheralCount
+            )
+          )
+        }
+      }
+    }
+  }
+
   private static func contractFingerprint() throws -> String {
     guard let pointer = prns_app_contract_fingerprint() else {
       throw PrnsAppException("Native contract fingerprint pointer is null.")
@@ -247,6 +268,17 @@ public final class PrnsAppModule: Module {
   }
 
   static func developmentStorageURL(create: Bool) throws -> URL {
+    try storageURL(create: create, migrateExistingContents: true)
+  }
+
+  private static func restorationStorageURL() throws -> URL {
+    try storageURL(create: true, migrateExistingContents: false)
+  }
+
+  private static func storageURL(
+    create: Bool,
+    migrateExistingContents: Bool
+  ) throws -> URL {
     do {
       let fileManager = FileManager.default
       let applicationSupport = try fileManager.url(
@@ -265,7 +297,11 @@ public final class PrnsAppModule: Module {
         )
       }
       if fileManager.fileExists(atPath: storageURL.path) {
-        try prepareStoragePolicy(at: storageURL, fileManager: fileManager)
+        if migrateExistingContents {
+          try prepareStoragePolicy(at: storageURL, fileManager: fileManager)
+        } else {
+          try prepareStorageRootPolicy(at: storageURL, fileManager: fileManager)
+        }
       }
       return storageURL
     } catch {
@@ -288,11 +324,7 @@ public final class PrnsAppModule: Module {
     }
     preparedStorageIdentifiers.removeValue(forKey: storageURL.path)
 
-    try applyProtection(to: storageURL, fileManager: fileManager)
-    var rootValues = URLResourceValues()
-    rootValues.isExcludedFromBackup = true
-    var mutableStorageURL = storageURL
-    try mutableStorageURL.setResourceValues(rootValues)
+    try prepareStorageRootPolicyUnlocked(at: storageURL, fileManager: fileManager)
 
     let keys: [URLResourceKey] = [.isSymbolicLinkKey]
     var traversalError: Error?
@@ -323,6 +355,26 @@ public final class PrnsAppModule: Module {
     if let resourceIdentifier {
       preparedStorageIdentifiers[storageURL.path] = resourceIdentifier
     }
+  }
+
+  private static func prepareStorageRootPolicy(
+    at storageURL: URL,
+    fileManager: FileManager
+  ) throws {
+    storagePreparationLock.lock()
+    defer { storagePreparationLock.unlock() }
+    try prepareStorageRootPolicyUnlocked(at: storageURL, fileManager: fileManager)
+  }
+
+  private static func prepareStorageRootPolicyUnlocked(
+    at storageURL: URL,
+    fileManager: FileManager
+  ) throws {
+    try applyProtection(to: storageURL, fileManager: fileManager)
+    var rootValues = URLResourceValues()
+    rootValues.isExcludedFromBackup = true
+    var mutableStorageURL = storageURL
+    try mutableStorageURL.setResourceValues(rootValues)
   }
 
   private static func applyProtection(to url: URL, fileManager: FileManager) throws {

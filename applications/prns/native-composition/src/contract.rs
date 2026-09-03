@@ -798,6 +798,37 @@ pub enum DevelopmentNodeFailureStage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename_all = "camelCase")]
+pub enum AppleBluetoothRestorationPreparationFailureStage {
+    Contract,
+    Storage,
+    Identity,
+    Runtime,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+#[ts(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum AppleBluetoothRestorationPreparationOutcome {
+    Prepared,
+    AlreadyPrepared,
+    AlreadyRunning,
+    Failed {
+        stage: AppleBluetoothRestorationPreparationFailureStage,
+        detail: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
 pub enum RemoteControlPairingFailureStage {
     Input,
     Candidate,
@@ -973,6 +1004,8 @@ struct TaggedContractFixtures {
     measure_lxmf_text_outcomes: Vec<MeasureLxmfTextOutcome>,
     pairing_candidates: Vec<RemoteControlPairingCandidate>,
     pairing_states: Vec<RemoteControlPairingState>,
+    apple_bluetooth_restoration_preparation_outcomes:
+        Vec<AppleBluetoothRestorationPreparationOutcome>,
     start_outcomes: Vec<DevelopmentNodeStartOutcome>,
     stop_outcomes: Vec<DevelopmentNodeStopOutcome>,
     pairing_outcomes: Vec<RemoteControlPairingCommandOutcome>,
@@ -1069,6 +1102,8 @@ pub fn export_typescript() -> String {
     export!(DevelopmentNodeOperation);
     export!(DevelopmentNodeFailureStage);
     export!(DevelopmentNodeFailure);
+    export!(AppleBluetoothRestorationPreparationFailureStage);
+    export!(AppleBluetoothRestorationPreparationOutcome);
     export!(RemoteControlPairingFailureStage);
     export!(DevelopmentNodeStopStage);
     export!(RemoteControlDescribeFailureStage);
@@ -1105,6 +1140,7 @@ pub fn export_typescript() -> String {
          \treadonly measureLxmfTextOutcomes: readonly MeasureLxmfTextOutcome[];\n\
          \treadonly pairingCandidates: readonly RemoteControlPairingCandidate[];\n\
          \treadonly pairingStates: readonly RemoteControlPairingState[];\n\
+         \treadonly appleBluetoothRestorationPreparationOutcomes: readonly AppleBluetoothRestorationPreparationOutcome[];\n\
          \treadonly startOutcomes: readonly DevelopmentNodeStartOutcome[];\n\
          \treadonly stopOutcomes: readonly DevelopmentNodeStopOutcome[];\n\
          \treadonly pairingOutcomes: readonly RemoteControlPairingCommandOutcome[];\n\
@@ -1442,6 +1478,15 @@ fn tagged_contract_fixtures() -> TaggedContractFixtures {
             detail: "start failure fixture".to_owned(),
         },
     ];
+    let apple_bluetooth_restoration_preparation_outcomes = vec![
+        AppleBluetoothRestorationPreparationOutcome::Prepared,
+        AppleBluetoothRestorationPreparationOutcome::AlreadyPrepared,
+        AppleBluetoothRestorationPreparationOutcome::AlreadyRunning,
+        AppleBluetoothRestorationPreparationOutcome::Failed {
+            stage: AppleBluetoothRestorationPreparationFailureStage::Runtime,
+            detail: "Bluetooth restoration preparation failure fixture".to_owned(),
+        },
+    ];
     let stop_outcomes = vec![
         DevelopmentNodeStopOutcome::Stopped,
         DevelopmentNodeStopOutcome::AlreadyStopped,
@@ -1493,6 +1538,7 @@ fn tagged_contract_fixtures() -> TaggedContractFixtures {
         measure_lxmf_text_outcomes,
         pairing_candidates,
         pairing_states,
+        apple_bluetooth_restoration_preparation_outcomes,
         start_outcomes,
         stop_outcomes,
         pairing_outcomes,
