@@ -11,8 +11,19 @@ final class PrnsAppLifecycleCoordinator: NSObject {
     application: UIApplication,
     options: [UIApplication.LaunchOptionsKey: Any]?
   ) {
-    let centralRestoration = options?[.bluetoothCentrals] != nil
-    let peripheralRestoration = options?[.bluetoothPeripherals] != nil
+    let identifiers: (central: String, peripheral: String)
+    do {
+      identifiers = try PrnsAppModule.restorationIdentifiers()
+    } catch {
+      Self.log("configuration failed")
+      return
+    }
+    let centralRestoration = Self.restorationLaunchIdentifiers(
+      options?[.bluetoothCentrals]
+    ).contains(identifiers.central)
+    let peripheralRestoration = Self.restorationLaunchIdentifiers(
+      options?[.bluetoothPeripherals]
+    ).contains(identifiers.peripheral)
     Self.log(
       "launch centralRestoration=\(centralRestoration) peripheralRestoration=\(peripheralRestoration) protectedData=\(application.isProtectedDataAvailable)"
     )
@@ -20,6 +31,10 @@ final class PrnsAppLifecycleCoordinator: NSObject {
       return
     }
     startNativeRuntime(application: application)
+  }
+
+  nonisolated private static func restorationLaunchIdentifiers(_ value: Any?) -> [String] {
+    value as? [String] ?? []
   }
 
   private func waitForProtectedData(application: UIApplication) {

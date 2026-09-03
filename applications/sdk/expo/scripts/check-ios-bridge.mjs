@@ -50,6 +50,8 @@ assert.deepEqual(moduleConfig.apple?.appDelegateSubscribers, ["PrnsAppDelegateSu
 assert.match(subscriber, /willFinishLaunchingWithOptions/);
 assert.match(coordinator, /\.bluetoothCentrals/);
 assert.match(coordinator, /\.bluetoothPeripherals/);
+assert.match(coordinator, /\.contains\(identifiers\.central\)/);
+assert.match(coordinator, /\.contains\(identifiers\.peripheral\)/);
 assert.match(coordinator, /guard centralRestoration \|\| peripheralRestoration/);
 assert.match(swift, /"developmentTcpTarget": NSNull\(\)/);
 assert.doesNotMatch(

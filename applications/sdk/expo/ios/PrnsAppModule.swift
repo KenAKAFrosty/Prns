@@ -225,7 +225,7 @@ public final class PrnsAppModule: Module {
     return String(cString: pointer)
   }
 
-  private static func restorationIdentifiers() throws -> (central: String, peripheral: String) {
+  static func restorationIdentifiers() throws -> (central: String, peripheral: String) {
     let centralKey = "PRNSCoreBluetoothCentralRestorationIdentifier"
     let peripheralKey = "PRNSCoreBluetoothPeripheralRestorationIdentifier"
     guard
