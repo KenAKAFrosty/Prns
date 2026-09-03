@@ -35,13 +35,13 @@ use super::render::layout::{
     MENU_HEADER_Y, MENU_ITEM_STEP, MENU_ITEM_TOP, MENU_MARK_X, MENU_REASON_X, NAME_BACKING_X,
     NAME_BACKING_Y, NAME_ICON_X, NAME_LINE_Y, STAT_ICON_X, STAT_TEXT_X, WIDTH,
 };
-#[cfg(feature = "remote-control-pairing")]
-use super::render::menus::menu_item_char_width;
 use super::render::menus::subg::{SUBG_DOT_X, SUBG_EDITOR_TOP};
 use super::render::menus::{
     draw_interface_menu, limits_row_drawable, limits_row_text, menu_item_text_right,
     station_uplink_action_label,
 };
+#[cfg(feature = "remote-control-pairing")]
+use super::render::menus::{menu_item_char_width, pairing_status_lines};
 use super::render::metrics::{
     compact_numeric_width, draw_compact_number, fmt_activity_age, fmt_bytes, fmt_count,
     fmt_rate_bytes_per_sec,
