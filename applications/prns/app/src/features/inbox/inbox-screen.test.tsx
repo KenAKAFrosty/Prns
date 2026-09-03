@@ -2,6 +2,7 @@ import type {
   Contact,
   DevelopmentNodeSnapshot,
   LxmfMessage,
+  LxmfMessageListOutcome,
   LxmfPeerSummary,
   SendDirectTextOutcome,
 } from "@prns-internal/expo";
@@ -79,10 +80,12 @@ const mockListLxmfPeers = jest.fn(async () => ({
   type: "outcome" as const,
   outcome: { type: "listed" as const, peers: [mockPeer] },
 }));
-const mockListLxmfMessages = jest.fn(async () => ({
-  type: "outcome" as const,
-  outcome: { type: "listed" as const, messages: [mockMessage] },
-}));
+const mockListLxmfMessages = jest.fn(
+  async (): Promise<RuntimeCommandResult<LxmfMessageListOutcome>> => ({
+    type: "outcome",
+    outcome: { type: "listed", messages: [mockMessage] },
+  }),
+);
 const mockMeasureLxmfText = jest.fn(async () => ({
   type: "outcome" as const,
   outcome: { type: "measured" as const, wireBytes: 140, remainingBytes: 291 },
@@ -199,6 +202,22 @@ describe("durable LXMF screens", () => {
       await screen.findByText("Messages may be delayed until the connection recovers."),
     ).toBeTruthy();
     expect(screen.queryByText(/callback overflow|mailbox access/iu)).toBeNull();
+  });
+
+  test("does not expose native mailbox-list failure details", async () => {
+    mockListLxmfMessages.mockResolvedValue({
+      type: "outcome",
+      outcome: {
+        type: "developmentUnavailable",
+        detail: "E290 upstream RemoteControl signed availability mailbox generation mismatch",
+      },
+    });
+    const screen = render(<InboxScreen />);
+
+    expect(await screen.findByText("Messages are not available right now.")).toBeTruthy();
+    expect(
+      screen.queryAllByText(/E290|signed availability|upstream RemoteControl|mailbox generation/iu),
+    ).toHaveLength(0);
   });
 
   test("uses saved alias before announced name and shows aggregate health", async () => {

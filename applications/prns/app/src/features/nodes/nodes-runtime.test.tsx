@@ -11,16 +11,18 @@ import { type ReactNode, useEffect } from "react";
 
 import {
   DevelopmentRuntimeProvider,
-  routeConsumesDevelopmentSnapshot,
   type DevelopmentRuntimeView,
+  routeConsumesDevelopmentSnapshot,
   useDevelopmentRuntime,
 } from "@/native/development-runtime-context";
 import type { RuntimeProvider } from "@/native/runtime-provider.types";
+import { ManagedNodeScreen } from "./managed-node-screen";
 import { LocalNodeScreen, NodesScreen } from "./nodes-screen";
 import { PairNodeScreen } from "./pair-node-screen";
 
 jest.mock("expo-router", () => ({
   Link: ({ children }: { readonly children: ReactNode }) => children,
+  useLocalSearchParams: () => ({ nodeId: "44444444444444444444444444444444" }),
 }));
 
 const observedDestination = destinationHash(new Uint8Array(16).fill(0x33));
@@ -31,6 +33,7 @@ function snapshot(
   revision: bigint,
   includeObservation = false,
   pairing: PairingState = { type: "searching" },
+  pairedTargets: DevelopmentNodeSnapshot["pairedTargets"] = [],
 ): DevelopmentNodeSnapshot {
   return {
     contractFingerprint: "test-contract",
@@ -87,7 +90,7 @@ function snapshot(
     lxmf: { state: "ready", inboundOverflowCount: 0n },
     controllerIdentityFingerprint: null,
     pairing,
-    pairedTargets: [],
+    pairedTargets,
     activeOperation: null,
     failure: null,
   };
@@ -98,15 +101,16 @@ function fakeProvider(
   overrides: Partial<DevelopmentRuntime> = {},
   includeObservation = false,
   pairing: PairingState = { type: "searching" },
+  pairedTargets: DevelopmentNodeSnapshot["pairedTargets"] = [],
 ): RuntimeProvider {
-  const initial = snapshot(2n, includeObservation, pairing);
+  const initial = snapshot(2n, includeObservation, pairing, pairedTargets);
   const runtime: DevelopmentRuntime = {
     inspectDevelopmentIdentity: async () => initial.primaryIdentity,
     previewIdentityImport: async () => ({ type: "invalidLength" }),
     createGeneratedIdentity: async () => ({ type: "alreadyExists" }),
     createImportedIdentity: async () => ({ type: "alreadyExists" }),
     startDevelopmentNode: async () => ({ type: "started", snapshot: initial }),
-    readDevelopmentNodeSnapshot: async () => snapshot(1n, false, pairing),
+    readDevelopmentNodeSnapshot: async () => snapshot(1n, false, pairing, pairedTargets),
     initiateRemoteControlPairing: async () => ({ type: "busy" }),
     approveRemoteControlPairing: async () => ({ type: "busy" }),
     rejectRemoteControlPairing: async () => ({ type: "busy" }),
@@ -157,7 +161,7 @@ function fakeProvider(
       Effect.acquireRelease(
         Effect.sync(() => {
           options.onSnapshot(initial);
-          options.onSnapshot(snapshot(1n, includeObservation, pairing));
+          options.onSnapshot(snapshot(1n, includeObservation, pairing, pairedTargets));
           return { runtime: effectRuntime, initialSnapshot: initial };
         }),
         () => Effect.promise(runtime.stopDevelopmentNode).pipe(Effect.asVoid),
@@ -372,6 +376,56 @@ describe("Foundation 1 Nodes runtime binding", () => {
       view.unmount();
       await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
     }
+  });
+
+  it("does not expose native failure details when checking a managed node", async () => {
+    const stop = jest.fn();
+    const describeRemoteControlTarget = jest.fn(async () => ({
+      type: "failed" as const,
+      stage: "link" as const,
+      detail: "E290 upstream RemoteControl lost signed availability on its bounded event lane",
+    }));
+    const target = {
+      targetIdentityFingerprint: observedIdentity,
+      destination: observedDestination,
+      controllerIdentityFingerprint: identityHash(new Uint8Array(16).fill(0x55)),
+      permittedRequests: ["describe" as const],
+    };
+    const view = render(
+      <DevelopmentRuntimeProvider
+        provider={fakeProvider(
+          stop,
+          { describeRemoteControlTarget },
+          false,
+          { type: "searching" },
+          [target],
+        )}
+        refreshIntervalMillis={50}
+      >
+        <ManagedNodeScreen />
+      </DevelopmentRuntimeProvider>,
+    );
+
+    await waitFor(() =>
+      expect(view.getByRole("button", { name: "Check node connection" })).toBeTruthy(),
+    );
+    fireEvent.press(view.getByRole("button", { name: "Check node connection" }));
+
+    await waitFor(() => expect(view.getByText("Could not check node")).toBeTruthy());
+    expect(
+      view.getByText(
+        "The node could not be reached. Make sure it is on and connected, then try again.",
+      ),
+    ).toBeTruthy();
+    expect(
+      view.queryAllByText(/E290|signed availability|upstream RemoteControl|bounded event lane/iu),
+    ).toHaveLength(0);
+    expect(describeRemoteControlTarget).toHaveBeenCalledWith({
+      targetIdentityFingerprint: observedIdentity,
+    });
+
+    view.unmount();
+    await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
   });
 
   it("saves a live authenticated observation from device diagnostics", async () => {

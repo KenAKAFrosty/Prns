@@ -100,6 +100,20 @@ describe("contact screens", () => {
     expect(listContacts).toHaveBeenCalledTimes(1);
   });
 
+  it("does not expose native contact-list failure details", async () => {
+    const listContacts = jest.fn(async () => ({
+      type: "developmentUnavailable" as const,
+      detail: "E290 upstream RemoteControl signed availability database owner stopped",
+    }));
+    const view = withRuntime(fakeRuntime({ listContacts }), <ContactsScreen />);
+
+    expect(await view.findByText("Contacts could not be loaded. Try again.")).toBeTruthy();
+    expect(
+      view.queryAllByText(/E290|signed availability|upstream RemoteControl|database owner/iu),
+    ).toHaveLength(0);
+    expect(listContacts).toHaveBeenCalledTimes(1);
+  });
+
   it("passes explicit nullable manual fields and routes by destination hash", async () => {
     const createManualContact = jest.fn(async () => ({
       type: "saved" as const,
