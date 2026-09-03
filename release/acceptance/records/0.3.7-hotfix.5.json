@@ -1,0 +1,18 @@
+{
+  "candidate": {
+    "channel": "stable",
+    "manifest_sha256": "310f4790622b04407555ab79a49d12c50858c48d70b08b569339a8700ef04f30",
+    "manifest_signature_sha256": "ab169e7474534d84e5eca6e1b1a6352d11fa6e858ec25818eebbdbf4131419e9",
+    "prerelease_published_at": "2026-09-03T02:21:30Z",
+    "signed_candidate_sha256": "89f72d9cb7d0f3e812ad924f1b6674d03a7e73c12884e2987585e0e81f1265ff",
+    "signing_key_id": "1BF5C4D8B140811A",
+    "source_commit": "b4e6010e3f67ebe3f1183de1516066561a7a4281",
+    "version": "0.3.7-hotfix.5"
+  },
+  "maintainer_override": {
+    "approved_at": "2026-09-03T02:29:21Z",
+    "approved_by": "github:KenAKAFrosty",
+    "basis": "Emergency stable promotion is approved for exact public 0.3.7-hotfix.5 because delay leaves ESP32-S3 identities exposed. Before publication, physical Heltec V4 checks covered full erase, two boots, fresh node and Auto-BLE identity creation and retention, Wi-Fi/DHCP/TCP, LoRa, BLE, ESP-NOW, persistence, watchdog, and runtime entropy. The post-publication repeat is waived only for this immutable candidate; committed R8 and T-Beam deferrals remain, and no unperformed post-publication run is claimed."
+  },
+  "schema": 4
+}
