@@ -34,6 +34,8 @@ use super::render::layout::{
     NAME_BACKING_Y, NAME_ICON_X, NAME_LINE_Y, STAT_ICON_X, STAT_TEXT_X, WIDTH,
 };
 use super::render::menus::lora::{LORA_DOT_X, LORA_EDITOR_TOP};
+#[cfg(feature = "remote-control-pairing")]
+use super::render::menus::pairing_status_lines;
 use super::render::menus::{
     draw_interface_menu, limits_row_drawable, limits_row_text, menu_item_char_width,
     menu_item_text_right, station_uplink_action_label,

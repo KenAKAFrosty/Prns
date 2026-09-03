@@ -273,6 +273,30 @@ fn render_shows_global_menu() {
 }
 
 #[test]
+#[cfg(feature = "remote-control-pairing")]
+fn paired_status_lines_fit_the_narrow_display() {
+    use crate::StableTargetAnnouncementStatus::{Failed, Idle, Succeeded};
+
+    let cases = [
+        (Idle, ("reachability", Some("queued"))),
+        (Succeeded, ("reachability", Some("sent"))),
+        (Failed, ("announce failed", None)),
+    ];
+
+    for (status, expected) in cases {
+        let lines = pairing_status_lines(status);
+        assert_eq!(lines, expected);
+        for line in [Some(lines.0), lines.1].into_iter().flatten() {
+            let right = MENU_REASON_X + line.chars().count() as i32 * FONT_4X6_CHAR_W;
+            assert!(
+                right <= WIDTH,
+                "{line:?} ends at x={right} beyond the {WIDTH}px display"
+            );
+        }
+    }
+}
+
+#[test]
 fn render_shows_selected_interface_menu() {
     let mut display = MockDisplay::new();
     display.set_allow_overdraw(true);
