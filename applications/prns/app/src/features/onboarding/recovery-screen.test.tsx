@@ -31,16 +31,20 @@ describe("development identity recovery", () => {
     jest.clearAllMocks();
   });
 
-  it("preserves operational unavailability detail without suggesting reset", async () => {
+  it("redacts operational unavailability detail without suggesting reset", async () => {
     mockInspectDevelopmentIdentity.mockResolvedValue({
       type: "unavailable",
       detail: "primary identity directory is temporarily locked",
     });
     const view = render(<RecoveryScreen />);
 
-    await waitFor(() =>
-      expect(view.getByText("primary identity directory is temporarily locked")).toBeTruthy(),
-    );
+    await waitFor(() => expect(view.getByText("Identity storage unavailable")).toBeTruthy());
+    expect(view.queryByText("primary identity directory is temporarily locked")).toBeNull();
+    expect(
+      view.getByText(
+        "Identity storage is temporarily unavailable. Your data has not been changed. Try again.",
+      ),
+    ).toBeTruthy();
     expect(view.getByText("Identity storage unavailable")).toBeTruthy();
     expect(view.queryByRole("button", { name: "Reset app data" })).toBeNull();
     expect(view.getByRole("button", { name: "Retry inspection" })).toBeTruthy();
@@ -58,9 +62,8 @@ describe("development identity recovery", () => {
     });
     const view = render(<RecoveryScreen />);
 
-    await waitFor(() =>
-      expect(view.getByText("primary identity holds 63 bytes instead of 64")).toBeTruthy(),
-    );
+    await waitFor(() => expect(view.getByText("App reset required")).toBeTruthy());
+    expect(view.queryByText("primary identity holds 63 bytes instead of 64")).toBeNull();
     fireEvent.press(view.getByRole("button", { name: "Reset app data" }));
 
     await waitFor(() => expect(mockResetNativeData).toHaveBeenCalledTimes(1));
@@ -74,12 +77,15 @@ describe("development identity recovery", () => {
     alert.mockRestore();
   });
 
-  it("shows a rejected inspection and offers retry", async () => {
+  it("redacts a rejected inspection and offers retry", async () => {
     mockInspectDevelopmentIdentity.mockRejectedValue(new Error("native inspection disconnected"));
     const view = render(<RecoveryScreen />);
 
-    await waitFor(() => expect(view.getByText("native inspection disconnected")).toBeTruthy());
-    expect(view.getByText("Could not check identity")).toBeTruthy();
+    await waitFor(() => expect(view.getByText("Could not check identity")).toBeTruthy());
+    expect(view.queryByText("native inspection disconnected")).toBeNull();
+    expect(
+      view.getByText("Your identity could not be checked. Your data has not been changed."),
+    ).toBeTruthy();
     expect(view.getByRole("button", { name: "Retry inspection" })).toBeTruthy();
   });
 });

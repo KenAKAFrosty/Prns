@@ -20,7 +20,7 @@ import {
 
 type RecoveryState =
   | { readonly type: "loading" }
-  | { readonly type: "inspectionFailed"; readonly detail: string }
+  | { readonly type: "inspectionFailed" }
   | PrimaryIdentityState;
 
 export function RecoveryScreen() {
@@ -52,12 +52,9 @@ export function RecoveryScreen() {
           setInspection(identity);
         }
       })
-      .catch((error: unknown) => {
+      .catch(() => {
         if (active) {
-          setInspection({
-            type: "inspectionFailed",
-            detail: error instanceof Error ? error.message : String(error),
-          });
+          setInspection({ type: "inspectionFailed" });
         }
       });
     return () => {
@@ -74,13 +71,13 @@ export function RecoveryScreen() {
     try {
       const outcome = await runtimeProvider.runtime.resetDevelopmentData();
       if (outcome.type === "failed") {
-        setResetFailure(`${outcome.stage}: ${outcome.detail}`);
+        setResetFailure("App data could not be reset. Nothing else was changed. Try again.");
         return;
       }
       await resetScaffoldData();
       router.replace("/onboarding/welcome");
-    } catch (error) {
-      setResetFailure(error instanceof Error ? error.message : String(error));
+    } catch {
+      setResetFailure("App data could not be reset. Nothing else was changed. Try again.");
     } finally {
       setResetting(false);
     }
@@ -162,9 +159,8 @@ function RecoveryStateCard({ inspection }: { readonly inspection: RecoveryState 
       return (
         <Card>
           <Badge tone="warning">Identity storage unavailable</Badge>
-          <BodyText>{inspection.detail}</BodyText>
-          <BodyText muted>
-            Operational storage failures do not suggest deleting identity data.
+          <BodyText>
+            Identity storage is temporarily unavailable. Your data has not been changed. Try again.
           </BodyText>
         </Card>
       );
@@ -172,14 +168,16 @@ function RecoveryStateCard({ inspection }: { readonly inspection: RecoveryState 
       return (
         <Card>
           <Badge tone="warning">App reset required</Badge>
-          <BodyText>{inspection.reason}</BodyText>
+          <BodyText>
+            Stored app data cannot be opened safely. You can reset this preview and start again.
+          </BodyText>
         </Card>
       );
     case "inspectionFailed":
       return (
         <Card>
           <Badge tone="warning">Could not check identity</Badge>
-          <BodyText>{inspection.detail}</BodyText>
+          <BodyText>Your identity could not be checked. Your data has not been changed.</BodyText>
         </Card>
       );
   }
