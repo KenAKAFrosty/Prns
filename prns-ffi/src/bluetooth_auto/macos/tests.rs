@@ -207,18 +207,19 @@ fn dial_admission_is_scoped_to_the_target_peer() {
     let inbound_sessions = HashMap::from([(inbound_peer, ())]);
 
     assert_eq!(
-        dial_admission(true, false, true),
+        dial_admission(true, false, true, false),
         DialAdmission::YieldToSystemConnection
     );
     assert_eq!(
-        dial_admission(true, false, false),
+        dial_admission(true, false, false, false),
         DialAdmission::CancelStaleSystemConnection
     );
     assert_eq!(
         dial_admission(
             true,
             has_session_for_peer(&inbound_sessions, inbound_peer),
-            false
+            false,
+            false,
         ),
         DialAdmission::YieldToInboundSession
     );
@@ -226,7 +227,8 @@ fn dial_admission_is_scoped_to_the_target_peer() {
         dial_admission(
             false,
             has_session_for_peer(&inbound_sessions, inbound_peer),
-            false
+            false,
+            false,
         ),
         DialAdmission::YieldToInboundSession
     );
@@ -234,9 +236,30 @@ fn dial_admission_is_scoped_to_the_target_peer() {
         dial_admission(
             false,
             has_session_for_peer(&inbound_sessions, unrelated_peer),
-            false
+            false,
+            false,
         ),
         DialAdmission::AttachCentralSession
+    );
+}
+
+#[test]
+fn dial_admission_resumes_only_restored_system_connections() {
+    assert_eq!(
+        dial_admission(true, false, false, true),
+        DialAdmission::ResumeRestoredSession
+    );
+    assert_eq!(
+        dial_admission(false, false, false, true),
+        DialAdmission::AttachCentralSession
+    );
+    assert_eq!(
+        dial_admission(true, true, false, true),
+        DialAdmission::YieldToInboundSession
+    );
+    assert_eq!(
+        dial_admission(true, true, false, false),
+        DialAdmission::YieldToInboundSession
     );
 }
 
