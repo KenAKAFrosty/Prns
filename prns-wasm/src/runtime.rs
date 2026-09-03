@@ -27,7 +27,7 @@ use personal_rns::routing::links::resources::{
     ResourceSendPlan, ResourceSendPlanError, ResourceStrategy, MAX_EFFICIENT_SIZE,
 };
 use personal_rns::routing::links::resources::send::{
-    ResourceSealCompleted, ResourceSealLanding, ResourceSealOutcome,
+    ResourceSealCompleted, ResourceSealLanding, ResourceSealOutcome, UnavailableResourceSeal,
 };
 use personal_rns::routing::links::LinkId;
 use personal_rns::routing::request_handlers::{RequestPathHash, RequestPolicy};
@@ -962,7 +962,9 @@ impl PrnsRuntime {
                     BrowserWorkCompletion::ResourceSealUnavailable => self.engine.resume_resource_seal(
                         ResourceSealCompleted {
                             reservation,
-                            outcome: ResourceSealOutcome::Unavailable,
+                            outcome: ResourceSealOutcome::Unavailable(
+                                UnavailableResourceSeal::Resident,
+                            ),
                         },
                         InstantMillis(now_ms),
                         &mut |out| entropy.fill(out),
@@ -1602,7 +1604,9 @@ impl PrnsRuntime {
                     self.engine.resume_resource_seal(
                         ResourceSealCompleted {
                             reservation: plan.reservation(),
-                            outcome: ResourceSealOutcome::Unavailable,
+                            outcome: ResourceSealOutcome::Unavailable(
+                                UnavailableResourceSeal::Resident,
+                            ),
                         },
                         InstantMillis(now_ms),
                         &mut |out| entropy.fill(out),

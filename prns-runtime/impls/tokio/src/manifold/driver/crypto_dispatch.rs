@@ -7,9 +7,9 @@ use crate::identity::OpenedToken;
 use crate::interfaces::{FrameAccountingEvent, InterfaceIfac};
 use crate::manifold::Host;
 use crate::routing::links::resources::send::{
-    ResourceBuildCompleted, ResourceSealCompleted, ResourceSealOutcome,
+    ResourceBuildCompleted, ResourceSealBuffers, ResourceSealCompleted, ResourceSealOutcome,
 };
-use crate::routing::links::resources::MAP_HASH_LEN;
+use crate::routing::links::resources::table::ResourceBuildTransfer;
 use crate::storage::StorageLayout;
 
 use super::crypto_pool::{CryptoCompletion, CryptoPool, CryptoResult, OpenedSpanResult};
@@ -417,7 +417,7 @@ where
             } => CryptoCompletionEffect::WakeSchedules(engine.resume_resource_build(
                 ResourceBuildCompleted {
                     reservation,
-                    transfer: &transfer,
+                    transfer: ResourceBuildTransfer::Owned(transfer),
                     names: &names,
                     request_data: request_data.as_slice(),
                     outcome,
@@ -467,14 +467,14 @@ where
                 names,
                 outcome,
             } => {
-                let sealed_len = outcome.map_or(0, |sealed| sealed.sealed_transfer_bytes);
-                let names_len = outcome.map_or(0, |sealed| sealed.part_count * MAP_HASH_LEN);
                 engine.resume_resource_seal(
                     ResourceSealCompleted {
                         reservation,
                         outcome: ResourceSealOutcome::Built {
-                            sealed: &transfer[..sealed_len],
-                            names: &names[..names_len],
+                            buffers: ResourceSealBuffers::Owned {
+                                sealed: transfer,
+                                names,
+                            },
                             outcome,
                         },
                     },

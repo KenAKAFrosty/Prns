@@ -17,6 +17,7 @@ use crate::runtime::{
     AnnounceBackpressureEvent, AnnounceEgressOutcome, EgressLaneMetricsSnapshot,
     EgressMetricsSnapshot,
 };
+use crate::wire::{WireContext, WirePacketHeader};
 
 use super::TokioGrantProducer;
 
@@ -54,6 +55,19 @@ pub(super) enum EgressEnqueueOutcome {
     LaneMissing,
 }
 
+#[derive(Clone, Copy)]
+enum EgressQueue {
+    Expedited,
+    Bulk,
+}
+
+fn egress_queue(frame: &[u8]) -> EgressQueue {
+    match WirePacketHeader::parse(frame) {
+        Ok((header, _)) if header.context == WireContext::Resource => EgressQueue::Bulk,
+        Ok(_) | Err(_) => EgressQueue::Expedited,
+    }
+}
+
 impl Egress {
     #[must_use]
     pub fn new(lanes: std::vec::Vec<(InterfaceId, TokioGrantProducer)>) -> Self {
@@ -85,12 +99,21 @@ impl Egress {
     }
 
     pub(super) fn enqueue(&mut self, target: InterfaceId, bytes: &[u8]) -> EgressEnqueueOutcome {
-        let outcome = self.try_enqueue(target, bytes);
+        let outcome = self.try_enqueue_as(target, bytes, egress_queue(bytes));
         self.record_generic_enqueue_outcome(outcome);
         outcome
     }
 
     fn try_enqueue(&mut self, target: InterfaceId, bytes: &[u8]) -> EgressEnqueueOutcome {
+        self.try_enqueue_as(target, bytes, egress_queue(bytes))
+    }
+
+    fn try_enqueue_as(
+        &mut self,
+        target: InterfaceId,
+        bytes: &[u8],
+        queue: EgressQueue,
+    ) -> EgressEnqueueOutcome {
         for lane in &mut self.lanes {
             if lane.id != target {
                 continue;
@@ -100,7 +123,10 @@ impl Egress {
                 None => return EgressEnqueueOutcome::LaneFull,
                 Some(slot) => {
                     slot.fill(bytes);
-                    lane.producer.commit();
+                    match queue {
+                        EgressQueue::Expedited => lane.producer.commit_expedited(),
+                        EgressQueue::Bulk => lane.producer.commit(),
+                    }
 
                     #[cfg(feature = "runtime-metrics")]
                     {
@@ -227,7 +253,10 @@ impl Egress {
                     }
                     if let Some(len) = fill(&mut slot.bytes[..hint]) {
                         slot.len = len.min(hint);
-                        lane.producer.commit();
+                        match egress_queue(slot.frame()) {
+                            EgressQueue::Expedited => lane.producer.commit_expedited(),
+                            EgressQueue::Bulk => lane.producer.commit(),
+                        }
                         #[cfg(feature = "runtime-metrics")]
                         {
                             self.metrics.enqueued_frames =
@@ -560,11 +589,14 @@ fn emit_for_wire(
     match ifac_for(ifacs, target) {
         Some(entry) => {
             if let Some(len) = fill(&mut scratch.emit) {
+                let queue = egress_queue(&scratch.emit[..len]);
                 if let Ok(masked_len) = entry
                     .context
                     .try_mask_outbound(&scratch.emit[..len], &mut scratch.masked)
                 {
-                    egress.enqueue(target, &scratch.masked[..masked_len]);
+                    let outcome =
+                        egress.try_enqueue_as(target, &scratch.masked[..masked_len], queue);
+                    egress.record_generic_enqueue_outcome(outcome);
                 } else {
                     egress.record_ifac_rejection();
                 }
@@ -592,7 +624,9 @@ fn enqueue_for_wire(
     match ifac_for(ifacs, target) {
         Some(entry) => match entry.context.try_mask_outbound(bytes, masked) {
             Ok(masked_len) => {
-                egress.enqueue(target, &masked[..masked_len]);
+                let outcome =
+                    egress.try_enqueue_as(target, &masked[..masked_len], egress_queue(bytes));
+                egress.record_generic_enqueue_outcome(outcome);
             }
             Err(_) => egress.record_ifac_rejection(),
         },

@@ -177,8 +177,10 @@ where
                     },
                 );
                 if let Some(plan) = plan {
+                    let workspace = engine.take_resource_build_workspace(plan.reservation());
                     owed_work.push_resource_build(
                         plan,
+                        workspace,
                         $send.data,
                         $send.compressed_candidate,
                         $send.metadata,

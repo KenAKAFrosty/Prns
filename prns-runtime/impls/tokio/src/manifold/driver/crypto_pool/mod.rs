@@ -33,7 +33,9 @@ use crate::routing::links::resources::build_outgoing::{
     seal_staged_resource, BuildOutgoingResourceError, BuildRegions, BuiltResource,
     SealedStagedResource, SALT_REROLL_CAP,
 };
-use crate::routing::links::resources::send::{ResourceBuildPlan, ResourceSealPlan};
+use crate::routing::links::resources::send::{
+    ResourceBuildPlan, ResourceBuildWorkspace, ResourceSealPlan,
+};
 use crate::routing::links::resources::streamed_open::StreamedOpen;
 use crate::routing::links::resources::{
     sealed_transfer_bytes, ResourceBody, ResourceHash, MAP_HASH_LEN, RESOURCE_NONCE_LEN,
@@ -210,6 +212,7 @@ pub(super) struct StagedSealJob {
 
 pub(super) struct ResourceBuildJob {
     pub(super) plan: ResourceBuildPlan,
+    pub(super) workspace: ResourceBuildWorkspace,
     pub(super) data: HostResourcePayload,
     pub(super) compressed_candidate: Option<HostResourcePayload>,
     pub(super) metadata: HostResourceMetadata,
@@ -1519,6 +1522,7 @@ pub(super) fn run_crypto_job_inline(job: CryptoJob) -> CryptoResult {
 pub(super) fn run_resource_build_job(job: ResourceBuildJob) -> CryptoResult {
     let ResourceBuildJob {
         plan,
+        workspace,
         data,
         compressed_candidate,
         metadata,
@@ -1528,7 +1532,10 @@ pub(super) fn run_resource_build_job(job: ResourceBuildJob) -> CryptoResult {
     } = job;
     let shape = plan.shape();
     let reservation = plan.reservation();
-    let mut transfer = vec![0u8; shape.transfer_bytes()];
+    let mut transfer = match workspace {
+        ResourceBuildWorkspace::Allocate => vec![0u8; shape.transfer_bytes()],
+        ResourceBuildWorkspace::Owned(transfer) => transfer,
+    };
     let mut names = vec![0u8; shape.part_count() * MAP_HASH_LEN];
     let mut fresh_nonces = nonces.into_iter();
     let body = ResourceBody {

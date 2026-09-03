@@ -18,8 +18,11 @@ use personal_rns::routing::links::handshake::{link_proof_signature_valid, link_p
 use personal_rns::routing::links::resources::build_outgoing::BuildOutgoingResourceError;
 use personal_rns::routing::links::resources::send::{
     ResourceBuildCompleted, ResourceSealCompleted, ResourceSealOutcome, ResourceSealReservation,
+    UnavailableResourceSeal,
 };
-use personal_rns::routing::links::resources::table::ResourceBuildReservation;
+use personal_rns::routing::links::resources::table::{
+    ResourceBuildReservation, ResourceBuildTransfer,
+};
 use personal_rns::routing::links::resources::ResourceHash;
 use personal_rns::routing::links::LinkId;
 use personal_rns::storage::GrowableHeap;
@@ -347,7 +350,7 @@ pub(super) fn feed_packet_inline(
                 engine.resume_resource_build(
                     ResourceBuildCompleted {
                         reservation,
-                        transfer: &[],
+                        transfer: ResourceBuildTransfer::Borrowed(&[]),
                         names: &[],
                         request_data: &[],
                         outcome: Err(BuildOutgoingResourceError::BufferShapeMismatch),
@@ -363,7 +366,9 @@ pub(super) fn feed_packet_inline(
                 engine.resume_resource_seal(
                     ResourceSealCompleted {
                         reservation,
-                        outcome: ResourceSealOutcome::Unavailable,
+                        outcome: ResourceSealOutcome::Unavailable(
+                            UnavailableResourceSeal::Resident,
+                        ),
                     },
                     now,
                     &mut |bytes| entropy.fill(bytes),

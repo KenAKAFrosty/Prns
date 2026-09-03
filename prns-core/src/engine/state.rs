@@ -15,6 +15,7 @@ use crate::routing::delivery::receipts::Receipts;
 use crate::routing::group_keys::GroupKeys;
 use crate::routing::links::resources::assembly::{IncomingAssemblies, OutgoingAssemblies};
 use crate::routing::links::resources::pending::PendingResourceOffers;
+use crate::routing::links::resources::send::ResourceSealWorkspacePolicy;
 use crate::routing::links::resources::streamed_open::ResourceOpenLane;
 use crate::routing::links::resources::table::{IncomingResources, OutgoingResources};
 #[cfg(feature = "alloc")]
@@ -232,6 +233,7 @@ pub struct EngineState<S: StorageLayout> {
     pub(crate) outgoing_resources: OutgoingResources<S::OutgoingResources>,
     pub(crate) incoming_resources: IncomingResources<S::IncomingResources>,
     pub(crate) pending_resource_offers: PendingResourceOffers<S::PendingResourceOffers>,
+    pub resource_seal_workspace_policy: ResourceSealWorkspacePolicy,
     pub resource_open_lane: ResourceOpenLane,
     pub(crate) incoming_assemblies: IncomingAssemblies<S::IncomingAssemblies>,
     pub(crate) outgoing_assemblies: OutgoingAssemblies<S::OutgoingAssemblies>,
@@ -298,6 +300,7 @@ impl<S: StorageLayout> Default for EngineState<S> {
             outgoing_resources: OutgoingResources::default(),
             incoming_resources: IncomingResources::default(),
             pending_resource_offers: PendingResourceOffers::default(),
+            resource_seal_workspace_policy: ResourceSealWorkspacePolicy::default(),
             resource_open_lane: ResourceOpenLane::default(),
             incoming_assemblies: IncomingAssemblies::default(),
             outgoing_assemblies: OutgoingAssemblies::default(),
@@ -401,6 +404,10 @@ impl<S: StorageLayout> EngineState<S> {
             write!(outgoing_resources, OutgoingResources::default());
             write!(incoming_resources, IncomingResources::default());
             write!(pending_resource_offers, PendingResourceOffers::default());
+            write!(
+                resource_seal_workspace_policy,
+                ResourceSealWorkspacePolicy::default()
+            );
             write!(resource_open_lane, ResourceOpenLane::default());
             write!(incoming_assemblies, IncomingAssemblies::default());
             write!(outgoing_assemblies, OutgoingAssemblies::default());

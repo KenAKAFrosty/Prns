@@ -2,7 +2,9 @@ use std::collections::VecDeque;
 
 use crate::engine::{CryptoOwed, OpenedResourceSpan, OwedWork, ResourceOpenOwed};
 use crate::manifold::Host;
-use crate::routing::links::resources::send::{ResourceBuildPlan, ResourceSealPlan};
+use crate::routing::links::resources::send::{
+    ResourceBuildPlan, ResourceBuildWorkspace, ResourceSealPlan,
+};
 use crate::routing::links::resources::ResourceMetadata;
 
 use super::crypto_pool::{
@@ -15,6 +17,7 @@ use super::host_protocol::{
 
 struct PendingResourceBuild {
     plan: ResourceBuildPlan,
+    workspace: ResourceBuildWorkspace,
     data: HostResourcePayload,
     compressed_candidate: Option<HostResourcePayload>,
     metadata: HostResourceMetadata,
@@ -85,6 +88,7 @@ impl PendingOwedWork {
                 let plan = owed.into_plan();
                 self.push_resource_build(
                     plan,
+                    ResourceBuildWorkspace::Allocate,
                     data,
                     compressed_candidate,
                     metadata,
@@ -92,8 +96,7 @@ impl PendingOwedWork {
                 );
             }
             OwedWork::ResourceSeal(owed) => {
-                let plaintext = owed.workspace().to_vec();
-                let plan = owed.into_plan();
+                let (plan, plaintext) = owed.into_owned_parts();
                 self.bulk
                     .push_back(PendingJob::ResourceSeal(PendingResourceSeal {
                         plan,
@@ -164,6 +167,7 @@ impl PendingOwedWork {
     pub(super) fn push_resource_build(
         &mut self,
         plan: ResourceBuildPlan,
+        workspace: ResourceBuildWorkspace,
         data: HostResourcePayload,
         compressed_candidate: Option<HostResourcePayload>,
         metadata: HostResourceMetadata,
@@ -172,6 +176,7 @@ impl PendingOwedWork {
         self.bulk
             .push_back(PendingJob::ResourceBuild(PendingResourceBuild {
                 plan,
+                workspace,
                 data,
                 compressed_candidate,
                 metadata,
@@ -216,6 +221,7 @@ impl PendingOwedWork {
                     }
                     CryptoJob::BuildResource(Box::new(ResourceBuildJob {
                         plan: pending.plan,
+                        workspace: pending.workspace,
                         data: pending.data,
                         compressed_candidate: pending.compressed_candidate,
                         metadata: pending.metadata,

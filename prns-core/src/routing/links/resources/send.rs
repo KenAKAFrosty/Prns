@@ -39,8 +39,11 @@ use crate::routing::links::resources::control::{
 use crate::routing::links::resources::serve_outgoing::{plan_hashmap_update, serve_part_indices};
 use crate::routing::links::resources::table::{
     OutgoingResourceStatus, PartSendOutcome, ResourceBuildLanding, ResourceBuildReservation,
-    ResourceSealGeneration, TrackLane, TrackOutgoingResourceError, TrackedCommand,
+    ResourceBuildTransfer, ResourceSealGeneration, StagedResourceTransfer, TrackLane,
+    TrackOutgoingResourceError, TrackedCommand,
 };
+#[cfg(feature = "alloc")]
+use crate::routing::links::resources::table::{ResourceTransferDetach, ResourceTransferRestore};
 use crate::routing::links::resources::{
     resource_sdu, ResourceBody, ResourceBufferShape, ResourceCorrelation, ResourceHash,
     ResourceMetadata, ResourcePartRequest, ResourceSegment, ResourceSend, HASHMAP_MAX_LEN,
@@ -159,13 +162,19 @@ impl ResourceBuildOwed<'_> {
 /// call and are ignored if the reservation disappeared while crypto was running.
 pub struct ResourceBuildCompleted<'a> {
     pub reservation: ResourceBuildReservation,
-    pub transfer: &'a [u8],
+    pub transfer: ResourceBuildTransfer<'a>,
     pub names: &'a [u8],
     pub request_data: &'a [u8],
     pub outcome: Result<
         crate::routing::links::resources::build_outgoing::BuiltResource,
         BuildOutgoingResourceError,
     >,
+}
+
+#[cfg(feature = "alloc")]
+pub enum ResourceBuildWorkspace {
+    Allocate,
+    Owned(alloc::vec::Vec<u8>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -180,6 +189,13 @@ pub struct ResourceSealPlan {
     sdu: usize,
     total_segments: u64,
     nonce_prefixed_bytes: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ResourceSealWorkspacePolicy {
+    #[default]
+    Borrowed,
+    TransferOwnership,
 }
 
 impl ResourceSealPlan {
@@ -218,7 +234,7 @@ impl ResourceSealPlan {
 
 pub struct ResourceSealOwed<'a> {
     plan: ResourceSealPlan,
-    workspace: &'a [u8],
+    workspace: StagedResourceTransfer<'a>,
 }
 
 impl ResourceSealOwed<'_> {
@@ -227,22 +243,45 @@ impl ResourceSealOwed<'_> {
     }
 
     pub fn workspace(&self) -> &[u8] {
-        self.workspace
+        let byte_len = 16 + self.plan.nonce_prefixed_bytes;
+        match &self.workspace {
+            StagedResourceTransfer::Borrowed(bytes) => &bytes[..byte_len],
+            #[cfg(feature = "alloc")]
+            StagedResourceTransfer::Owned(bytes) => &bytes[..byte_len],
+        }
     }
 
     pub fn nonce_prefixed_plaintext(&self) -> &[u8] {
-        &self.workspace[16..16 + self.plan.nonce_prefixed_bytes]
+        &self.workspace()[16..16 + self.plan.nonce_prefixed_bytes]
     }
 
-    pub fn into_plan(self) -> ResourceSealPlan {
-        self.plan
+    #[cfg(feature = "alloc")]
+    pub fn into_owned_parts(self) -> (ResourceSealPlan, alloc::vec::Vec<u8>) {
+        (self.plan, self.workspace.into_owned())
     }
+}
+
+pub enum ResourceSealBuffers<'a> {
+    Borrowed {
+        sealed: &'a [u8],
+        names: &'a [u8],
+    },
+    #[cfg(feature = "alloc")]
+    Owned {
+        sealed: alloc::vec::Vec<u8>,
+        names: alloc::vec::Vec<u8>,
+    },
+}
+
+pub enum UnavailableResourceSeal {
+    Resident,
+    #[cfg(feature = "alloc")]
+    Owned(alloc::vec::Vec<u8>),
 }
 
 pub enum ResourceSealOutcome<'a> {
     Built {
-        sealed: &'a [u8],
-        names: &'a [u8],
+        buffers: ResourceSealBuffers<'a>,
         outcome: Result<SealedStagedResource, BuildOutgoingResourceError>,
     },
     Sealed {
@@ -255,7 +294,7 @@ pub enum ResourceSealOutcome<'a> {
         hash: ResourceHash,
         expected_proof: crate::routing::links::resources::ResourceProof,
     },
-    Unavailable,
+    Unavailable(UnavailableResourceSeal),
 }
 
 pub struct ResourceSealCompleted<'a> {
@@ -354,6 +393,17 @@ fn static_response_stream_capacity(transfer_capacity: usize) -> usize {
 }
 
 impl<S: StorageLayout> EngineState<S> {
+    #[cfg(feature = "alloc")]
+    pub fn take_resource_build_workspace(
+        &mut self,
+        reservation: ResourceBuildReservation,
+    ) -> ResourceBuildWorkspace {
+        match self.outgoing_resources.detach_build_transfer(reservation) {
+            ResourceTransferDetach::Unavailable => ResourceBuildWorkspace::Allocate,
+            ResourceTransferDetach::Detached(transfer) => ResourceBuildWorkspace::Owned(transfer),
+        }
+    }
+
     pub fn ingest_send_resource_into<F>(
         &mut self,
         send: &ResourceSend<'_>,
@@ -1518,7 +1568,14 @@ impl<S: StorageLayout> EngineState<S> {
             state.status = OutgoingResourceStatus::StagedSealing;
             state.seal_generation = Some(generation);
         }
-        let workspace = self.outgoing_resources.staged_plaintext(index);
+        let workspace = match self.resource_seal_workspace_policy {
+            ResourceSealWorkspacePolicy::Borrowed => {
+                StagedResourceTransfer::Borrowed(self.outgoing_resources.staged_plaintext(index))
+            }
+            ResourceSealWorkspacePolicy::TransferOwnership => {
+                self.outgoing_resources.take_staged_transfer(index)
+            }
+        };
         sink(EngineReaction::Directive(Directive::Fulfill(
             OwedWork::ResourceSeal(ResourceSealOwed {
                 plan: ResourceSealPlan {
@@ -1553,37 +1610,53 @@ impl<S: StorageLayout> EngineState<S> {
             return ResourceSealLanding::Stale;
         };
         let landing = match completed.outcome {
-            ResourceSealOutcome::Built {
-                sealed,
-                names,
-                outcome,
-            } => {
-                match outcome {
-                    Ok(sealed_resource) => {
-                        let state = *self.outgoing_resources.state(index);
-                        let Some(stream_bytes) =
-                            state.staged_plaintext_bytes.checked_sub(RESOURCE_NONCE_LEN)
-                        else {
-                            return ResourceSealLanding::Invalid;
-                        };
-                        if state.sdu == 0 {
-                            return ResourceSealLanding::Invalid;
-                        }
-                        let expected_sealed_bytes =
-                            crate::routing::links::resources::sealed_transfer_bytes(stream_bytes);
-                        let expected_part_count = expected_sealed_bytes.div_ceil(state.sdu);
-                        let Some(expected_name_bytes) =
-                            expected_part_count.checked_mul(MAP_HASH_LEN)
-                        else {
-                            return ResourceSealLanding::Invalid;
-                        };
-                        if sealed_resource.sealed_transfer_bytes != expected_sealed_bytes
-                            || sealed_resource.part_count != expected_part_count
-                            || sealed.len() != expected_sealed_bytes
-                            || names.len() != expected_name_bytes
-                        {
-                            return ResourceSealLanding::Invalid;
-                        }
+            ResourceSealOutcome::Built { buffers, outcome } => {
+                let sealed_resource = match outcome {
+                    Ok(sealed_resource) => sealed_resource,
+                    Err(error) => {
+                        self.fail_staged_seal(index, error, sink);
+                        return ResourceSealLanding::Applied;
+                    }
+                };
+                let state = *self.outgoing_resources.state(index);
+                let Some(stream_bytes) =
+                    state.staged_plaintext_bytes.checked_sub(RESOURCE_NONCE_LEN)
+                else {
+                    return ResourceSealLanding::Invalid;
+                };
+                if state.sdu == 0 {
+                    return ResourceSealLanding::Invalid;
+                }
+                let expected_sealed_bytes =
+                    crate::routing::links::resources::sealed_transfer_bytes(stream_bytes);
+                let expected_part_count = expected_sealed_bytes.div_ceil(state.sdu);
+                let Some(expected_name_bytes) = expected_part_count.checked_mul(MAP_HASH_LEN)
+                else {
+                    return ResourceSealLanding::Invalid;
+                };
+                let (sealed_bytes, name_bytes) = match &buffers {
+                    ResourceSealBuffers::Borrowed { sealed, names } => (sealed.len(), names.len()),
+                    #[cfg(feature = "alloc")]
+                    ResourceSealBuffers::Owned { sealed, names } => (sealed.len(), names.len()),
+                };
+                if sealed_resource.sealed_transfer_bytes != expected_sealed_bytes
+                    || sealed_resource.part_count != expected_part_count
+                    || sealed_bytes != expected_sealed_bytes
+                    || name_bytes != expected_name_bytes
+                {
+                    #[cfg(feature = "alloc")]
+                    if matches!(buffers, ResourceSealBuffers::Owned { .. }) {
+                        self.fail_staged_seal(
+                            index,
+                            BuildOutgoingResourceError::BufferShapeMismatch,
+                            sink,
+                        );
+                        return ResourceSealLanding::Applied;
+                    }
+                    return ResourceSealLanding::Invalid;
+                }
+                match buffers {
+                    ResourceSealBuffers::Borrowed { sealed, names } => {
                         let regions = self.outgoing_resources.seal_regions_mut(index);
                         if regions.transfer.len() < expected_sealed_bytes
                             || regions.hashmap.len() < expected_name_bytes
@@ -1592,10 +1665,32 @@ impl<S: StorageLayout> EngineState<S> {
                         }
                         regions.transfer[..sealed.len()].copy_from_slice(sealed);
                         regions.hashmap[..names.len()].copy_from_slice(names);
-                        self.record_staged_seal(index, &sealed_resource);
                     }
-                    Err(error) => self.fail_staged_seal(index, error, sink),
+                    #[cfg(feature = "alloc")]
+                    ResourceSealBuffers::Owned { sealed, names } => {
+                        match self
+                            .outgoing_resources
+                            .restore_staged_transfer(index, sealed)
+                        {
+                            ResourceTransferRestore::Restored => {}
+                            ResourceTransferRestore::Unsupported(sealed) => {
+                                let regions = self.outgoing_resources.seal_regions_mut(index);
+                                regions.transfer[..sealed.len()].copy_from_slice(&sealed);
+                            }
+                            ResourceTransferRestore::ShapeMismatch(_) => {
+                                self.fail_staged_seal(
+                                    index,
+                                    BuildOutgoingResourceError::BufferShapeMismatch,
+                                    sink,
+                                );
+                                return ResourceSealLanding::Applied;
+                            }
+                        }
+                        let regions = self.outgoing_resources.seal_regions_mut(index);
+                        regions.hashmap[..names.len()].copy_from_slice(&names);
+                    }
                 }
+                self.record_staged_seal(index, &sealed_resource);
                 ResourceSealLanding::Applied
             }
             ResourceSealOutcome::Sealed { sealed, salts } => {
@@ -1690,7 +1785,33 @@ impl<S: StorageLayout> EngineState<S> {
                 );
                 ResourceSealLanding::Applied
             }
-            ResourceSealOutcome::Unavailable => {
+            ResourceSealOutcome::Unavailable(unavailable) => {
+                match unavailable {
+                    UnavailableResourceSeal::Resident => {
+                        if !self.outgoing_resources.staged_transfer_is_resident(index) {
+                            return ResourceSealLanding::Invalid;
+                        }
+                    }
+                    #[cfg(feature = "alloc")]
+                    UnavailableResourceSeal::Owned(transfer) => {
+                        match self
+                            .outgoing_resources
+                            .restore_staged_transfer(index, transfer)
+                        {
+                            ResourceTransferRestore::Restored => {}
+                            ResourceTransferRestore::Unsupported(transfer) => {
+                                let regions = self.outgoing_resources.seal_regions_mut(index);
+                                if regions.transfer.len() != transfer.len() {
+                                    return ResourceSealLanding::Invalid;
+                                }
+                                regions.transfer.copy_from_slice(&transfer);
+                            }
+                            ResourceTransferRestore::ShapeMismatch(_) => {
+                                return ResourceSealLanding::Invalid;
+                            }
+                        }
+                    }
+                }
                 let state = self.outgoing_resources.state_mut(index);
                 state.status = OutgoingResourceStatus::Staged;
                 state.seal_generation = None;
@@ -2210,6 +2331,7 @@ mod tests {
     /// Staging needs a second outgoing row, which the deliberately tight fixed test layout does not carry; the heap layout is the shape every staging host actually runs.
     pub(crate) fn heap_sender_with_active_link() -> EngineState<crate::storage::GrowableHeap> {
         let mut engine = EngineState::<crate::storage::GrowableHeap>::default();
+        engine.resource_seal_workspace_policy = ResourceSealWorkspacePolicy::TransferOwnership;
         install_active_link(&mut engine);
         engine
     }
@@ -2383,10 +2505,8 @@ mod tests {
             if let EngineReaction::Directive(Directive::Fulfill(OwedWork::ResourceSeal(owed))) =
                 reaction
             {
-                job = Some(OwnedSealJob {
-                    workspace: owed.workspace().to_vec(),
-                    plan: owed.into_plan(),
-                });
+                let (plan, workspace) = owed.into_owned_parts();
+                job = Some(OwnedSealJob { plan, workspace });
             }
         });
         job
@@ -2509,7 +2629,7 @@ mod tests {
         deferred_engine.resume_resource_build(
             ResourceBuildCompleted {
                 reservation,
-                transfer: &transfer,
+                transfer: ResourceBuildTransfer::Borrowed(&transfer),
                 names: &names,
                 request_data: &plaintext,
                 outcome,
@@ -2582,7 +2702,7 @@ mod tests {
         engine.resume_resource_build(
             ResourceBuildCompleted {
                 reservation: first_reservation,
-                transfer: &first_transfer,
+                transfer: ResourceBuildTransfer::Borrowed(&first_transfer),
                 names: &first_names,
                 request_data: first_data,
                 outcome: first_outcome,
@@ -2644,7 +2764,7 @@ mod tests {
         engine.resume_resource_build(
             ResourceBuildCompleted {
                 reservation: second_reservation,
-                transfer: &second_transfer,
+                transfer: ResourceBuildTransfer::Borrowed(&second_transfer),
                 names: &second_names,
                 request_data: second_data,
                 outcome: second_outcome,
@@ -2670,6 +2790,73 @@ mod tests {
                 OutgoingResourceStatus::Advertised,
                 OutgoingResourceStatus::StagedSealed,
             ],
+        );
+    }
+
+    #[test]
+    fn an_owning_build_restores_the_reserved_transfer_allocation() {
+        let mut engine = heap_sender_with_active_link();
+        let data = [0x42; 2_048];
+        let send = ResourceSend {
+            id: CommandId(73),
+            link_id: link_id(),
+            body: ResourceBody {
+                data: &data,
+                compressed_candidate: None,
+                metadata: ResourceMetadata::None,
+            },
+            correlation: ResourceCorrelation::Unsolicited,
+        };
+        let mut owed = None;
+        engine.request_resource_build(
+            &send,
+            ResourceSegment::whole(data.len() as u64),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::Fulfill(OwedWork::ResourceBuild(
+                    resource,
+                ))) = reaction
+                {
+                    owed = Some(resource);
+                }
+            },
+        );
+        let owed = owed.expect("the build is delegated");
+        let reservation = owed.reservation();
+        let mut transfer = match engine.take_resource_build_workspace(reservation) {
+            ResourceBuildWorkspace::Allocate => panic!("heap build workspace is transferable"),
+            ResourceBuildWorkspace::Owned(transfer) => transfer,
+        };
+        let allocation = transfer.as_ptr();
+        let mut names = std::vec![0; owed.shape().part_count() * MAP_HASH_LEN];
+        let outcome = owed.execute(
+            &[0xA5; 16],
+            || [0xB6; RESOURCE_NONCE_LEN],
+            BuildRegions {
+                transfer: &mut transfer,
+                hashmap: &mut names,
+            },
+        );
+        let hash = outcome.as_ref().unwrap().hash;
+        engine.resume_resource_build(
+            ResourceBuildCompleted {
+                reservation,
+                transfer: ResourceBuildTransfer::Owned(transfer),
+                names: &names,
+                request_data: &data,
+                outcome,
+            },
+            InstantMillis(1_500),
+            &mut |bytes: &mut [u8]| bytes.fill(0xC7),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
+                    let _ = filled_frame(fill);
+                }
+            },
+        );
+        let index = engine.outgoing_resources.lookup(&link_id(), &hash).unwrap();
+        assert_eq!(
+            engine.outgoing_resources.sealed_transfer(index).as_ptr(),
+            allocation,
         );
     }
 
@@ -2892,7 +3079,9 @@ mod tests {
         let first_landing = engine.resume_resource_seal(
             ResourceSealCompleted {
                 reservation: first_job.plan.reservation(),
-                outcome: ResourceSealOutcome::Unavailable,
+                outcome: ResourceSealOutcome::Unavailable(UnavailableResourceSeal::Owned(
+                    first_job.workspace,
+                )),
             },
             InstantMillis(1_600),
             &mut |bytes: &mut [u8]| bytes.fill(0xB5),
@@ -2925,7 +3114,9 @@ mod tests {
             engine.resume_resource_seal(
                 ResourceSealCompleted {
                     reservation: second_job.plan.reservation(),
-                    outcome: ResourceSealOutcome::Unavailable,
+                    outcome: ResourceSealOutcome::Unavailable(UnavailableResourceSeal::Owned(
+                        second_job.workspace,
+                    )),
                 },
                 InstantMillis(1_801),
                 &mut |bytes: &mut [u8]| bytes.fill(0xB7),
@@ -3475,10 +3666,8 @@ mod tests {
                         capture.settlements.push((id, settlement));
                     }
                     EngineReaction::Directive(Directive::Fulfill(OwedWork::ResourceSeal(owed))) => {
-                        capture.seals.push(OwnedSealJob {
-                            workspace: owed.workspace().to_vec(),
-                            plan: owed.into_plan(),
-                        });
+                        let (plan, workspace) = owed.into_owned_parts();
+                        capture.seals.push(OwnedSealJob { plan, workspace });
                     }
                     _ => {}
                 },
@@ -3847,7 +4036,9 @@ mod tests {
             let landing = engine.resume_resource_seal(
                 ResourceSealCompleted {
                     reservation: job.plan.reservation(),
-                    outcome: ResourceSealOutcome::Unavailable,
+                    outcome: ResourceSealOutcome::Unavailable(UnavailableResourceSeal::Owned(
+                        job.workspace,
+                    )),
                 },
                 InstantMillis(2_000),
                 &mut |bytes: &mut [u8]| bytes.fill(0xB2),
@@ -4084,8 +4275,10 @@ mod tests {
             ResourceSealCompleted {
                 reservation,
                 outcome: ResourceSealOutcome::Built {
-                    sealed: &transfer[..sealed_meta.sealed_transfer_bytes],
-                    names: &worker_names[..sealed_meta.part_count * MAP_HASH_LEN],
+                    buffers: ResourceSealBuffers::Owned {
+                        sealed: transfer,
+                        names: worker_names,
+                    },
                     outcome: Ok(sealed_meta),
                 },
             },
@@ -4113,7 +4306,7 @@ mod tests {
             engine.resume_resource_seal(
                 ResourceSealCompleted {
                     reservation,
-                    outcome: ResourceSealOutcome::Unavailable,
+                    outcome: ResourceSealOutcome::Unavailable(UnavailableResourceSeal::Resident),
                 },
                 InstantMillis(3_001),
                 &mut |_| {},
@@ -4180,8 +4373,10 @@ mod tests {
             ResourceSealCompleted {
                 reservation: job.plan.reservation(),
                 outcome: ResourceSealOutcome::Built {
-                    sealed: &[],
-                    names: &[],
+                    buffers: ResourceSealBuffers::Owned {
+                        sealed: job.workspace,
+                        names: std::vec::Vec::new(),
+                    },
                     outcome: Err(BuildOutgoingResourceError::SaltRerollsExhausted),
                 },
             },

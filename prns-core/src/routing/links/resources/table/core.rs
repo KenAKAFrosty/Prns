@@ -12,6 +12,8 @@ use crate::routing::links::resources::{
     PART_TIMEOUT_FACTOR, RESOURCE_NONCE_LEN, WINDOW_MAX_SLOW, WINDOW_MIN, WINDOW_START,
 };
 use crate::routing::links::LinkId;
+#[cfg(feature = "alloc")]
+use alloc::vec::Vec;
 use core::num::NonZeroU64;
 
 /// Splits a row's state by storage class: the `Copy` bookkeeping struct implements this, naming the non-`Copy` working state its table stores in a parallel column beside it. The incoming side tracks its streamed open's [`OpenProgress`] there; the outgoing side parks nothing.
@@ -289,6 +291,51 @@ pub struct ResourceBuffers<'a> {
     pub part_flags: &'a mut [bool],
 }
 
+#[cfg(feature = "alloc")]
+pub enum ResourceTransferDetach {
+    Unavailable,
+    Detached(Vec<u8>),
+}
+
+#[cfg(feature = "alloc")]
+pub enum ResourceTransferRestore {
+    Restored,
+    Unsupported(Vec<u8>),
+    ShapeMismatch(Vec<u8>),
+}
+
+pub enum ResourceBuildTransfer<'a> {
+    Borrowed(&'a [u8]),
+    #[cfg(feature = "alloc")]
+    Owned(Vec<u8>),
+}
+
+impl ResourceBuildTransfer<'_> {
+    pub fn as_slice(&self) -> &[u8] {
+        match self {
+            Self::Borrowed(bytes) => bytes,
+            #[cfg(feature = "alloc")]
+            Self::Owned(bytes) => bytes,
+        }
+    }
+}
+
+pub enum StagedResourceTransfer<'a> {
+    Borrowed(&'a [u8]),
+    #[cfg(feature = "alloc")]
+    Owned(Vec<u8>),
+}
+
+impl StagedResourceTransfer<'_> {
+    #[cfg(feature = "alloc")]
+    pub fn into_owned(self) -> Vec<u8> {
+        match self {
+            Self::Borrowed(bytes) => bytes.to_vec(),
+            Self::Owned(bytes) => bytes,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResourceTablePushError {
     TableFull,
@@ -347,6 +394,16 @@ pub trait ResourceTable<State: ResourceRowState> {
         index: usize,
     ) -> (&mut [u8], &mut State::StreamedOpenSlot);
 
+    #[cfg(feature = "alloc")]
+    fn detach_transfer(&mut self, _index: usize) -> ResourceTransferDetach {
+        ResourceTransferDetach::Unavailable
+    }
+
+    #[cfg(feature = "alloc")]
+    fn restore_transfer(&mut self, _index: usize, transfer: Vec<u8>) -> ResourceTransferRestore {
+        ResourceTransferRestore::Unsupported(transfer)
+    }
+
     /// Classify a validated row shape without reserving it. The pending-offer
     /// scheduler uses this to distinguish burst pressure from an offer that
     /// can never fit this storage recipe.
@@ -359,6 +416,7 @@ pub trait ResourceTable<State: ResourceRowState> {
         state: State,
         shape: ResourceBufferShape,
     ) -> Result<usize, ResourceTablePushError>;
+
     fn swap_remove(&mut self, index: usize);
 }
 
@@ -607,7 +665,7 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
     pub fn land_built_resource(
         &mut self,
         ticket: ResourceBuildReservation,
-        transfer: &[u8],
+        transfer: ResourceBuildTransfer<'_>,
         names: &[u8],
         outcome: Result<BuiltResource, BuildOutgoingResourceError>,
     ) -> ResourceBuildLanding {
@@ -627,15 +685,37 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
         let expected_part_count = reserved.part_count;
         let valid = built.sealed_transfer_bytes == expected_transfer_bytes
             && built.part_count == expected_part_count
-            && transfer.len() == expected_transfer_bytes
+            && transfer.as_slice().len() == expected_transfer_bytes
             && names.len() == expected_part_count.saturating_mul(MAP_HASH_LEN);
         if !valid {
             self.table.swap_remove(index);
             self.refresh_earliest_timeout();
             return ResourceBuildLanding::Failed(BuildOutgoingResourceError::BufferShapeMismatch);
         }
+        match transfer {
+            ResourceBuildTransfer::Borrowed(transfer) => {
+                self.table.buffers_mut(index).transfer[..expected_transfer_bytes]
+                    .copy_from_slice(transfer);
+            }
+            #[cfg(feature = "alloc")]
+            ResourceBuildTransfer::Owned(transfer) => {
+                match self.table.restore_transfer(index, transfer) {
+                    ResourceTransferRestore::Restored => {}
+                    ResourceTransferRestore::Unsupported(transfer) => {
+                        self.table.buffers_mut(index).transfer[..expected_transfer_bytes]
+                            .copy_from_slice(&transfer);
+                    }
+                    ResourceTransferRestore::ShapeMismatch(_) => {
+                        self.table.swap_remove(index);
+                        self.refresh_earliest_timeout();
+                        return ResourceBuildLanding::Failed(
+                            BuildOutgoingResourceError::BufferShapeMismatch,
+                        );
+                    }
+                }
+            }
+        }
         let buffers = self.table.buffers_mut(index);
-        buffers.transfer[..expected_transfer_bytes].copy_from_slice(transfer);
         buffers.part_names[..expected_part_count]
             .as_flattened_mut()
             .copy_from_slice(names);
@@ -651,6 +731,17 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
                     == OutgoingResourceIdentity::Building(reservation.generation)
                 && state.status == OutgoingResourceStatus::Building
         })
+    }
+
+    #[cfg(feature = "alloc")]
+    pub fn detach_build_transfer(
+        &mut self,
+        reservation: ResourceBuildReservation,
+    ) -> ResourceTransferDetach {
+        let Some(index) = self.reserved_build_index(reservation) else {
+            return ResourceTransferDetach::Unavailable;
+        };
+        self.table.detach_transfer(index)
     }
 
     fn finish_build(
@@ -740,7 +831,6 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
                 shape,
             )
             .map_err(track_push_error)?;
-
         prefill(self.table.buffers_mut(index).transfer);
         *self.table.state_mut(index) = OutgoingResourceState {
             staged_plaintext_bytes: RESOURCE_NONCE_LEN + stream_len,
@@ -837,6 +927,27 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
     pub fn staged_plaintext(&self, index: usize) -> &[u8] {
         let len = 16 + self.table.states()[index].staged_plaintext_bytes;
         &self.table.transfer(index)[..len]
+    }
+
+    pub fn staged_transfer_is_resident(&self, index: usize) -> bool {
+        !self.table.transfer(index).is_empty()
+    }
+
+    pub fn take_staged_transfer(&mut self, index: usize) -> StagedResourceTransfer<'_> {
+        #[cfg(feature = "alloc")]
+        if let ResourceTransferDetach::Detached(transfer) = self.table.detach_transfer(index) {
+            return StagedResourceTransfer::Owned(transfer);
+        }
+        StagedResourceTransfer::Borrowed(self.staged_plaintext(index))
+    }
+
+    #[cfg(feature = "alloc")]
+    pub fn restore_staged_transfer(
+        &mut self,
+        index: usize,
+        transfer: Vec<u8>,
+    ) -> ResourceTransferRestore {
+        self.table.restore_transfer(index, transfer)
     }
 
     pub fn sealed_transfer(&self, index: usize) -> &[u8] {
@@ -1578,7 +1689,12 @@ mod tests {
         let names = [0xCD; 2 * MAP_HASH_LEN];
 
         assert_eq!(
-            outgoing.land_built_resource(first, &transfer, &names, Ok(fabricated(0xAB, 928, 2)),),
+            outgoing.land_built_resource(
+                first,
+                ResourceBuildTransfer::Borrowed(&transfer),
+                &names,
+                Ok(fabricated(0xAB, 928, 2)),
+            ),
             ResourceBuildLanding::Stale,
             "an old completion must not land in a replacement row with the same command ID",
         );
@@ -1586,7 +1702,7 @@ mod tests {
         assert_eq!(
             outgoing.land_built_resource(
                 replacement,
-                &transfer,
+                ResourceBuildTransfer::Borrowed(&transfer),
                 &names,
                 Ok(fabricated(0xAB, 928, 2)),
             ),
@@ -1603,7 +1719,7 @@ mod tests {
         assert_eq!(
             outgoing.land_built_resource(
                 replacement,
-                &transfer,
+                ResourceBuildTransfer::Borrowed(&transfer),
                 &names,
                 Ok(fabricated(0xAB, 928, 2)),
             ),
@@ -1621,7 +1737,7 @@ mod tests {
         assert_eq!(
             outgoing.land_built_resource(
                 reservation,
-                &[0xAB; 928],
+                ResourceBuildTransfer::Borrowed(&[0xAB; 928]),
                 &[0xCD; 2 * MAP_HASH_LEN],
                 Ok(fabricated(0xAB, 928, 2)),
             ),
@@ -1637,7 +1753,7 @@ mod tests {
         assert_eq!(
             outgoing.land_built_resource(
                 failed,
-                &[],
+                ResourceBuildTransfer::Borrowed(&[]),
                 &[],
                 Err(BuildOutgoingResourceError::SaltRerollsExhausted),
             ),
@@ -1649,7 +1765,7 @@ mod tests {
         assert_eq!(
             outgoing.land_built_resource(
                 misshapen,
-                &[0; 927],
+                ResourceBuildTransfer::Borrowed(&[0; 927]),
                 &[0; 2 * MAP_HASH_LEN],
                 Ok(fabricated(0xAB, 928, 2)),
             ),

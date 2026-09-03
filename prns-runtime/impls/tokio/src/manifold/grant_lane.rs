@@ -7,7 +7,8 @@ use tokio::sync::Notify;
 
 pub fn tokio_grant_lane(slot_cap: usize, depth: usize) -> (TokioGrantProducer, TokioGrantConsumer) {
     let depth = depth.max(1);
-    let (filled, filled_slots) = RingBuffer::new(depth);
+    let (expedited, expedited_slots) = RingBuffer::new(depth);
+    let (regular, regular_slots) = RingBuffer::new(depth);
     let (mut free_slots, free) = RingBuffer::new(depth);
     for _ in 0..depth {
         let _ = free_slots.push(HeapFrameSlot::empty(slot_cap));
@@ -20,7 +21,8 @@ pub fn tokio_grant_lane(slot_cap: usize, depth: usize) -> (TokioGrantProducer, T
     (
         TokioGrantProducer {
             free,
-            filled,
+            expedited,
+            regular,
             capacity: depth,
             granted: None,
             filled_ready: filled_ready.clone(),
@@ -30,7 +32,8 @@ pub fn tokio_grant_lane(slot_cap: usize, depth: usize) -> (TokioGrantProducer, T
             announced: announced.clone(),
         },
         TokioGrantConsumer {
-            filled: filled_slots,
+            expedited: expedited_slots,
+            regular: regular_slots,
             free: free_slots,
             peeked: None,
             filled_ready,
@@ -38,6 +41,7 @@ pub fn tokio_grant_lane(slot_cap: usize, depth: usize) -> (TokioGrantProducer, T
             producer_parked,
             consumer_parked,
             announced,
+            expedited_streak: 0,
         },
     )
 }
@@ -114,7 +118,8 @@ impl FrameSink for HeapFrameSlot {
 
 pub struct TokioGrantProducer {
     free: Consumer<HeapFrameSlot>,
-    filled: Producer<HeapFrameSlot>,
+    expedited: Producer<HeapFrameSlot>,
+    regular: Producer<HeapFrameSlot>,
     capacity: usize,
     pub(super) granted: Option<HeapFrameSlot>,
     filled_ready: Arc<Notify>,
@@ -164,16 +169,25 @@ impl TokioGrantProducer {
     }
 
     pub fn commit(&mut self) {
+        self.commit_to(GrantQueue::Regular);
+    }
+
+    pub(super) fn commit_expedited(&mut self) {
+        self.commit_to(GrantQueue::Expedited);
+    }
+
+    fn commit_to(&mut self, queue: GrantQueue) {
         if let Some(slot) = self.granted.take() {
-            match self.filled.push(slot) {
-                Ok(()) => {
-                    if self.consumer_parked.load(Ordering::Acquire)
-                        && self.consumer_parked.swap(false, Ordering::AcqRel)
-                    {
-                        self.filled_ready.notify_one();
-                    }
+            let committed = match queue {
+                GrantQueue::Expedited => self.expedited.push(slot).is_ok(),
+                GrantQueue::Regular => self.regular.push(slot).is_ok(),
+            };
+            if committed {
+                if self.consumer_parked.load(Ordering::Acquire)
+                    && self.consumer_parked.swap(false, Ordering::AcqRel)
+                {
+                    self.filled_ready.notify_one();
                 }
-                Err(PushError::Full(_)) => {}
             }
         }
     }
@@ -184,7 +198,8 @@ impl TokioGrantProducer {
 }
 
 pub struct TokioGrantConsumer {
-    filled: Consumer<HeapFrameSlot>,
+    expedited: Consumer<HeapFrameSlot>,
+    regular: Consumer<HeapFrameSlot>,
     free: Producer<HeapFrameSlot>,
     peeked: Option<HeapFrameSlot>,
     filled_ready: Arc<Notify>,
@@ -192,12 +207,20 @@ pub struct TokioGrantConsumer {
     producer_parked: Arc<AtomicBool>,
     consumer_parked: Arc<AtomicBool>,
     announced: Arc<AtomicBool>,
+    expedited_streak: usize,
+}
+
+const EXPEDITED_BURST: usize = 8;
+
+enum GrantQueue {
+    Expedited,
+    Regular,
 }
 
 impl TokioGrantConsumer {
     pub fn try_peek(&mut self) -> Option<&mut HeapFrameSlot> {
         if self.peeked.is_none() {
-            self.peeked = self.filled.pop().ok();
+            self.peeked = self.pop_next();
         }
         self.peeked.as_mut()
     }
@@ -207,22 +230,38 @@ impl TokioGrantConsumer {
             if let Some(slot) = self.peeked.take() {
                 return self.peeked.insert(slot);
             }
-            match self.filled.pop() {
-                Ok(slot) => self.peeked = Some(slot),
-                Err(PopError::Empty) => {
+            match self.pop_next() {
+                Some(slot) => self.peeked = Some(slot),
+                None => {
                     // See `grant`: the post-arm recheck closes the empty-to-filled race without
                     // paying Tokio's wake machinery while this consumer is actively draining.
                     self.consumer_parked.store(true, Ordering::Release);
-                    match self.filled.pop() {
-                        Ok(slot) => {
+                    match self.pop_next() {
+                        Some(slot) => {
                             self.consumer_parked.store(false, Ordering::Release);
                             self.peeked = Some(slot);
                         }
-                        Err(PopError::Empty) => self.filled_ready.notified().await,
+                        None => self.filled_ready.notified().await,
                     }
                 }
             }
         }
+    }
+
+    fn pop_next(&mut self) -> Option<HeapFrameSlot> {
+        if self.expedited_streak < EXPEDITED_BURST {
+            if let Ok(slot) = self.expedited.pop() {
+                self.expedited_streak += 1;
+                return Some(slot);
+            }
+        }
+        if let Ok(slot) = self.regular.pop() {
+            self.expedited_streak = 0;
+            return Some(slot);
+        }
+        let slot = self.expedited.pop().ok()?;
+        self.expedited_streak = EXPEDITED_BURST;
+        Some(slot)
     }
 
     pub fn release(&mut self) {
@@ -265,6 +304,27 @@ mod tests {
             assert_eq!(consumer.try_peek().expect("frame available").frame(), frame);
             consumer.release();
         }
+        assert!(consumer.try_peek().is_none());
+    }
+
+    #[test]
+    fn expedited_frames_overtake_regular_frames_with_a_bounded_streak() {
+        let (mut producer, mut consumer) = tokio_grant_lane(64, 10);
+        producer.try_grant().unwrap().fill(b"regular");
+        producer.commit();
+        for index in 0..9u8 {
+            producer.try_grant().unwrap().fill(&[index]);
+            producer.commit_expedited();
+        }
+
+        for index in 0..8u8 {
+            assert_eq!(consumer.try_peek().unwrap().frame(), &[index]);
+            consumer.release();
+        }
+        assert_eq!(consumer.try_peek().unwrap().frame(), b"regular");
+        consumer.release();
+        assert_eq!(consumer.try_peek().unwrap().frame(), &[8]);
+        consumer.release();
         assert!(consumer.try_peek().is_none());
     }
 

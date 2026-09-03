@@ -20,6 +20,42 @@ use crate::runtime::{
 
 use super::super::interface_status::TokioInterfaceStatus;
 
+#[test]
+fn link_traffic_overtakes_buffered_resource_parts() {
+    let id = InterfaceId::new([0x90; 8]);
+    let (producer, mut consumer) = tokio_grant_lane(64, 2);
+    let mut egress = Egress::new(std::vec![(id, producer)]);
+    let mut resource_part = [0u8; 19];
+    resource_part[18] = WireContext::Resource.to_byte();
+    let mut link_traffic = [0u8; 19];
+    link_traffic[18] = WireContext::None.to_byte();
+
+    assert_eq!(
+        egress.enqueue(id, &resource_part),
+        EgressEnqueueOutcome::Enqueued
+    );
+    assert_eq!(
+        egress.enqueue(id, &link_traffic),
+        EgressEnqueueOutcome::Enqueued
+    );
+
+    assert_eq!(
+        WirePacketHeader::parse(consumer.try_peek().unwrap().frame())
+            .unwrap()
+            .0
+            .context,
+        WireContext::None
+    );
+    consumer.release();
+    assert_eq!(
+        WirePacketHeader::parse(consumer.try_peek().unwrap().frame())
+            .unwrap()
+            .0
+            .context,
+        WireContext::Resource
+    );
+}
+
 #[cfg(feature = "runtime-metrics")]
 #[test]
 fn egress_metrics_distinguish_enqueued_full_and_missing_lanes() {

@@ -7,8 +7,8 @@ use std::num::NonZeroUsize;
 use personal_rns::prelude::*;
 use personal_rns::routing::links::LinkId;
 use personal_rns::runtime::{
-    CryptoMetricsSnapshot, CryptoPoolConfig, ManifoldMetricsSnapshot, PoolWorkers, SchedulerPolicy,
-    SchedulerPolicyError, SchedulerPolicyInput, SegmentCompression,
+    CryptoMetricsSnapshot, CryptoPoolConfig, EgressMetricsSnapshot, ManifoldMetricsSnapshot,
+    PoolWorkers, SchedulerPolicy, SchedulerPolicyError, SchedulerPolicyInput, SegmentCompression,
 };
 use tokio::io::AsyncReadExt as _;
 
@@ -166,6 +166,8 @@ async fn main() {
             after.crypto.unwrap_or_default(),
             before.manifold,
             after.manifold,
+            before.egress,
+            after.egress,
         );
         print_metrics(
             "receiver",
@@ -173,6 +175,8 @@ async fn main() {
             receiver_after.crypto.unwrap_or_default(),
             receiver_before.manifold,
             receiver_after.manifold,
+            receiver_before.egress,
+            receiver_after.egress,
         );
     };
 
@@ -503,9 +507,11 @@ fn print_metrics(
     after_crypto: CryptoMetricsSnapshot,
     before_manifold: ManifoldMetricsSnapshot,
     after_manifold: ManifoldMetricsSnapshot,
+    before_egress: EgressMetricsSnapshot,
+    after_egress: EgressMetricsSnapshot,
 ) {
     println!(
-        "METRICS role={role} bulk_jobs={} bulk_queue_wait_max_micros={} bulk_service_max_micros={} latency_jobs={} latency_queue_wait_max_micros={} latency_service_max_micros={} verify_jobs={} verify_queue_wait_max_micros={} verify_service_max_micros={} work_deferrals={} turns={} budget_yields={} turn_max_micros={} completion_batch_max={} inbound_batch_max={} command_batch_max={} owed_batch_max={} timer_lateness_max_ms={} pacer_lateness_max_ms={}",
+        "METRICS role={role} bulk_jobs={} bulk_queue_wait_max_micros={} bulk_service_max_micros={} latency_jobs={} latency_queue_wait_max_micros={} latency_service_max_micros={} verify_jobs={} verify_queue_wait_max_micros={} verify_service_max_micros={} work_deferrals={} turns={} budget_yields={} turn_max_micros={} completion_batch_max={} inbound_batch_max={} command_batch_max={} owed_batch_max={} timer_lateness_max_ms={} pacer_lateness_max_ms={} egress_frames={} egress_full_drops={}",
         after_crypto
             .bulk
             .completed_jobs
@@ -538,6 +544,12 @@ fn print_metrics(
         after_manifold.maximum_owed_work_batch,
         after_manifold.maximum_timer_lateness_ms,
         after_manifold.maximum_pacer_lateness_ms,
+        after_egress
+            .enqueued_frames
+            .saturating_sub(before_egress.enqueued_frames),
+        after_egress
+            .full_lane_drops
+            .saturating_sub(before_egress.full_lane_drops),
     );
 }
 

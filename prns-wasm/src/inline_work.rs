@@ -26,11 +26,12 @@ use personal_rns::routing::links::resources::build_outgoing::{
 };
 use personal_rns::routing::links::resources::send::{
     ResourceBuildCompleted, ResourceBuildPlan, ResourceSealCompleted, ResourceSealOutcome,
-    ResourceSealPlan,
+    ResourceSealPlan, UnavailableResourceSeal,
 };
 use personal_rns::routing::links::resources::{
     ResourceBody, ResourceHash, ResourceMetadata, MAP_HASH_LEN, RESOURCE_NONCE_LEN,
 };
+use personal_rns::routing::links::resources::table::ResourceBuildTransfer;
 use personal_rns::routing::links::LinkId;
 use personal_rns::routing::proof::ProofRequest;
 use personal_rns::storage::GrowableHeap;
@@ -120,9 +121,9 @@ impl InlineReadyWorkQueue {
                 }
             }
             OwedWork::ResourceSeal(owed) => {
-                let workspace = owed.workspace().to_vec();
+                let (plan, workspace) = owed.into_owned_parts();
                 InlineReadyWork::ResourceSeal {
-                    plan: owed.into_plan(),
+                    plan,
                     workspace,
                 }
             }
@@ -421,7 +422,9 @@ pub(crate) fn fulfill_ready_work(
                 engine.resume_resource_seal(
                     ResourceSealCompleted {
                         reservation: plan.reservation(),
-                        outcome: ResourceSealOutcome::Unavailable,
+                        outcome: ResourceSealOutcome::Unavailable(
+                            UnavailableResourceSeal::Resident,
+                        ),
                     },
                     now,
                     fill_random,
@@ -460,7 +463,7 @@ pub(crate) fn fulfill_ready_work(
                 engine.resume_resource_build(
                     ResourceBuildCompleted {
                         reservation,
-                        transfer: &transfer,
+                        transfer: ResourceBuildTransfer::Borrowed(&transfer),
                         names: &names,
                         request_data: &data,
                         outcome,
