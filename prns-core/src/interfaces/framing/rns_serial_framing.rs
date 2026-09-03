@@ -181,14 +181,13 @@ impl RnsSerialScanner {
                     find_special(&input[*offset..]).map_or(input.len(), |at| *offset + at);
                 let run_len = run_end - *offset;
                 if run_len != 0 {
-                    let free = sink.free_capacity();
-                    if run_len <= free {
-                        let run = &input[*offset..run_end];
-                        let _ = sink.extend_from_slice(run);
+                    let run = &input[*offset..run_end];
+                    if sink.extend_from_slice(run).is_ok() {
                         *offset = run_end;
                         continue;
                     }
 
+                    let free = sink.free_capacity();
                     *offset += free + 1;
                     sink.clear();
                     self.reset();
