@@ -3554,6 +3554,44 @@ fn wall_clock_millis() -> u64 {
 mod tests {
     use super::*;
 
+    fn test_worker(
+        commands: mpsc::Sender<Command>,
+        shutdown: ShutdownSignal,
+        done: std_mpsc::Receiver<WorkerResult>,
+        join: Option<JoinHandle<()>>,
+        storage_root: PathBuf,
+    ) -> Worker {
+        #[cfg(all(feature = "apple", target_os = "ios"))]
+        let bluetooth_owner_key = AppleBluetoothOwnerKey {
+            storage_root: storage_root.clone(),
+            preparation: AppleBluetoothPreparation::WithoutRestoration,
+            identity: BleIdentity::new([0xa5; 16]),
+        };
+        Worker {
+            commands,
+            shutdown,
+            done,
+            join,
+            storage_root,
+            #[cfg(all(feature = "apple", target_os = "ios"))]
+            bluetooth_owner_key,
+        }
+    }
+
+    fn test_supervisor_state(
+        worker: Option<Worker>,
+        application_owner: Option<DevelopmentStoreOwner>,
+        identity_owner: Option<IdentityOwner>,
+    ) -> SupervisorState {
+        SupervisorState {
+            worker,
+            application_owner,
+            identity_owner,
+            #[cfg(all(feature = "apple", target_os = "ios"))]
+            pending_apple_bluetooth: None,
+        }
+    }
+
     #[derive(Default)]
     struct PendingProofNetwork {
         send_entered: tokio::sync::Notify,
@@ -3846,16 +3884,16 @@ mod tests {
         }
         let (commands, _commands_rx) = mpsc::channel(1);
         let (shutdown_sender, _shutdown_rx) = watch::channel(false);
-        supervisor.lock_state().worker = Some(Worker {
+        supervisor.lock_state().worker = Some(test_worker(
             commands,
-            shutdown: ShutdownSignal {
+            ShutdownSignal {
                 sender: shutdown_sender,
                 requested: Arc::new(AtomicBool::new(false)),
             },
             done,
-            join: Some(join),
-            storage_root: paths.root.clone(),
-        });
+            Some(join),
+            paths.root.clone(),
+        ));
     }
 
     fn assert_offline_list_retry_cancel(
@@ -4351,16 +4389,16 @@ mod tests {
         let (commands, _commands_rx) = mpsc::channel(1);
         let (shutdown_tx, _shutdown_rx) = watch::channel(false);
         let (_done_tx, done) = std_mpsc::channel();
-        supervisor.lock_state().worker = Some(Worker {
+        supervisor.lock_state().worker = Some(test_worker(
             commands,
-            shutdown: ShutdownSignal {
+            ShutdownSignal {
                 sender: shutdown_tx,
                 requested: Arc::new(AtomicBool::new(false)),
             },
             done,
-            join: None,
-            storage_root: PathBuf::from("/tmp/prns/running"),
-        });
+            None,
+            PathBuf::from("/tmp/prns/running"),
+        ));
 
         let outcome = start_configured_with_supervisor(
             &supervisor,
@@ -4744,20 +4782,20 @@ mod tests {
         let supervisor = Supervisor {
             snapshots: Arc::new(SnapshotStore::new()),
             operation_admitted: Arc::new(AtomicBool::new(false)),
-            state: Mutex::new(SupervisorState {
-                worker: Some(Worker {
+            state: Mutex::new(test_supervisor_state(
+                Some(test_worker(
                     commands,
-                    shutdown: ShutdownSignal {
+                    ShutdownSignal {
                         sender: shutdown_sender,
                         requested: Arc::new(AtomicBool::new(false)),
                     },
                     done,
-                    join: Some(std::thread::spawn(|| {})),
-                    storage_root: paths.root.clone(),
-                }),
-                application_owner: Some(owner),
-                identity_owner: None,
-            }),
+                    Some(std::thread::spawn(|| {})),
+                    paths.root.clone(),
+                )),
+                Some(owner),
+                None,
+            )),
         };
         supervisor
             .snapshots
@@ -5470,17 +5508,17 @@ mod tests {
             });
             let _ = done_tx.send(Ok(()));
         });
-        let mut state = SupervisorState {
-            worker: Some(Worker {
+        let mut state = test_supervisor_state(
+            Some(test_worker(
                 commands,
                 shutdown,
                 done,
-                join: Some(join),
-                storage_root: PathBuf::from("/tmp/prns/development"),
-            }),
-            application_owner: None,
-            identity_owner: None,
-        };
+                Some(join),
+                PathBuf::from("/tmp/prns/development"),
+            )),
+            None,
+            None,
+        );
 
         finish_failed_start(
             &supervisor,
@@ -5540,13 +5578,13 @@ mod tests {
             });
             let _ = done_tx.send(Ok(()));
         });
-        supervisor.lock_state().worker = Some(Worker {
+        supervisor.lock_state().worker = Some(test_worker(
             commands,
             shutdown,
             done,
-            join: Some(join),
-            storage_root: PathBuf::from("/tmp/prns/development"),
-        });
+            Some(join),
+            PathBuf::from("/tmp/prns/development"),
+        ));
 
         let snapshot_supervisor = Arc::clone(&supervisor);
         let snapshot_thread =
@@ -5628,16 +5666,16 @@ mod tests {
         });
         let (shutdown_sender, _shutdown_rx) = watch::channel(false);
         let (_done_tx, done) = std_mpsc::sync_channel(1);
-        supervisor.lock_state().worker = Some(Worker {
-            commands: old_commands,
-            shutdown: ShutdownSignal {
+        supervisor.lock_state().worker = Some(test_worker(
+            old_commands,
+            ShutdownSignal {
                 sender: shutdown_sender,
                 requested: Arc::new(AtomicBool::new(false)),
             },
             done,
-            join: None,
-            storage_root: paths.root.clone(),
-        });
+            None,
+            paths.root.clone(),
+        ));
 
         let (result_tx, result_rx) = std_mpsc::sync_channel(1);
         let save_supervisor = Arc::clone(&supervisor);
@@ -5658,16 +5696,16 @@ mod tests {
         let (new_commands, _new_command_rx) = mpsc::channel(1);
         let (new_shutdown_sender, _new_shutdown_rx) = watch::channel(false);
         let (_new_done_tx, new_done) = std_mpsc::sync_channel(1);
-        supervisor.lock_state().worker = Some(Worker {
-            commands: new_commands,
-            shutdown: ShutdownSignal {
+        supervisor.lock_state().worker = Some(test_worker(
+            new_commands,
+            ShutdownSignal {
                 sender: new_shutdown_sender,
                 requested: Arc::new(AtomicBool::new(false)),
             },
-            done: new_done,
-            join: None,
-            storage_root: paths.root,
-        });
+            new_done,
+            None,
+            paths.root,
+        ));
         release_query_tx.send(()).expect("release identity query");
 
         assert!(matches!(
@@ -5710,16 +5748,16 @@ mod tests {
         });
         let (shutdown_sender, _shutdown_rx) = watch::channel(false);
         let (_done_tx, done) = std_mpsc::sync_channel(1);
-        supervisor.lock_state().worker = Some(Worker {
+        supervisor.lock_state().worker = Some(test_worker(
             commands,
-            shutdown: ShutdownSignal {
+            ShutdownSignal {
                 sender: shutdown_sender,
                 requested: Arc::new(AtomicBool::new(false)),
             },
             done,
-            join: None,
-            storage_root: paths.root.clone(),
-        });
+            None,
+            paths.root.clone(),
+        ));
 
         assert!(matches!(
             save_observed_destination_with_supervisor(
@@ -5772,14 +5810,14 @@ mod tests {
             .join("development");
         let first_paths = prepare_storage(&first_storage).expect("first private storage");
         let second_paths = prepare_storage(&second_storage).expect("second private storage");
-        let mut state = SupervisorState {
-            worker: None,
-            application_owner: Some(
+        let mut state = test_supervisor_state(
+            None,
+            Some(
                 DevelopmentStoreOwner::open(&first_paths.root, &first_paths.application)
                     .expect("first application owner"),
             ),
-            identity_owner: None,
-        };
+            None,
+        );
 
         assert_eq!(
             inspect_identity_locked(&mut state, &second_storage),
@@ -5812,26 +5850,26 @@ mod tests {
         let (commands, _command_rx) = mpsc::channel(1);
         let (shutdown_sender, _shutdown_rx) = watch::channel(false);
         let (_done_tx, done) = std_mpsc::sync_channel(1);
-        let mut state = SupervisorState {
-            worker: Some(Worker {
+        let mut state = test_supervisor_state(
+            Some(test_worker(
                 commands,
-                shutdown: ShutdownSignal {
+                ShutdownSignal {
                     sender: shutdown_sender,
                     requested: Arc::new(AtomicBool::new(false)),
                 },
                 done,
-                join: None,
-                storage_root: first_paths.root.clone(),
-            }),
-            application_owner: Some(
+                None,
+                first_paths.root.clone(),
+            )),
+            Some(
                 DevelopmentStoreOwner::open(&first_paths.root, &first_paths.application)
                     .expect("first application owner"),
             ),
-            identity_owner: Some(IdentityOwner {
+            Some(IdentityOwner {
                 root: first_paths.root.clone(),
                 vault: FileVault::new(&first_paths.identities),
             }),
-        };
+        );
 
         assert!(matches!(
             admit_directory_locked(&mut state, &second_paths, DirectoryRequest::List),
@@ -5921,17 +5959,17 @@ mod tests {
         assert!(commands
             .try_send(Command::Snapshot(queued_response))
             .is_ok());
-        let mut state = SupervisorState {
-            worker: Some(Worker {
+        let mut state = test_supervisor_state(
+            Some(test_worker(
                 commands,
                 shutdown,
                 done,
-                join: Some(join),
-                storage_root: PathBuf::from("/tmp/prns/development"),
-            }),
-            application_owner: None,
-            identity_owner: None,
-        };
+                Some(join),
+                PathBuf::from("/tmp/prns/development"),
+            )),
+            None,
+            None,
+        );
 
         assert_eq!(
             stop_locked(&supervisor, &mut state),
@@ -5987,17 +6025,17 @@ mod tests {
         let (done_tx, done) = std_mpsc::sync_channel(1);
         done_tx.send(terminal).expect("terminal worker result");
         let join = std::thread::spawn(|| {});
-        let mut state = SupervisorState {
-            worker: Some(Worker {
+        let mut state = test_supervisor_state(
+            Some(test_worker(
                 commands,
                 shutdown,
                 done,
-                join: Some(join),
-                storage_root: PathBuf::from("/tmp/prns/development"),
-            }),
-            application_owner: None,
-            identity_owner: None,
-        };
+                Some(join),
+                PathBuf::from("/tmp/prns/development"),
+            )),
+            None,
+            None,
+        );
 
         assert_eq!(
             stop_locked(&supervisor, &mut state),
