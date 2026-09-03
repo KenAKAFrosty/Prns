@@ -388,16 +388,17 @@ export function useDevelopmentRuntime(): DevelopmentRuntimeView {
 }
 
 function formatFailure(failure: DevelopmentRuntimeFailure | unknown): string {
-  if (failure instanceof Error) {
-    return failure.message;
-  }
   if (
     failure !== null &&
     typeof failure === "object" &&
     "detail" in failure &&
-    typeof failure.detail === "string"
+    typeof failure.detail === "string" &&
+    failure.detail.length > 0
   ) {
     return failure.detail;
+  }
+  if (failure instanceof Error) {
+    return failure.message.length > 0 ? failure.message : failure.name;
   }
   return String(failure);
 }

@@ -662,5 +662,5 @@ export function navigationEntries(
   return screenCatalog
     .filter((entry) => orderFor(entry) !== undefined)
     .filter((entry) => showUnavailableFeatures || entry.availability === "implementedScaffold")
-    .toSorted((left, right) => (orderFor(left) ?? 0) - (orderFor(right) ?? 0));
+    .sort((left, right) => (orderFor(left) ?? 0) - (orderFor(right) ?? 0));
 }

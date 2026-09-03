@@ -1,6 +1,7 @@
 import type {
   DevelopmentNodeSnapshot,
   DevelopmentRuntime,
+  DevelopmentRuntimeStartError,
   EffectDevelopmentRuntime,
 } from "@prns-internal/expo";
 import { fireEvent, render, waitFor } from "@testing-library/react-native";
@@ -168,6 +169,29 @@ function RuntimeViewProbe({
 }
 
 describe("Foundation 1 Nodes runtime binding", () => {
+  it("renders the typed native startup detail instead of an empty tagged-error message", async () => {
+    const stop = jest.fn();
+    const base = fakeProvider(stop);
+    const failure = Object.assign(new Error(), {
+      _tag: "DevelopmentRuntimeStartError",
+      stage: "bluetooth",
+      detail: "Bluetooth is unavailable in this simulator.",
+    }) as unknown as DevelopmentRuntimeStartError;
+    const provider: RuntimeProvider = {
+      ...base,
+      acquire: () => Effect.fail(failure),
+    };
+    const view = render(
+      <DevelopmentRuntimeProvider provider={provider}>
+        <NodesScreen />
+      </DevelopmentRuntimeProvider>,
+    );
+
+    await waitFor(() =>
+      expect(view.getByText("Bluetooth is unavailable in this simulator.")).toBeTruthy(),
+    );
+  });
+
   it("keeps durable mailbox commands available after generation acquisition fails", async () => {
     const stop = jest.fn();
     const base = fakeProvider(stop);

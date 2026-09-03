@@ -714,7 +714,7 @@ function conversationDestinations(
     const destination = messagePeer(message);
     destinations.set(formatContactHash(destination), destination);
   }
-  return [...destinations.values()].toSorted((left, right) =>
+  return [...destinations.values()].sort((left, right) =>
     formatContactHash(left).localeCompare(formatContactHash(right)),
   );
 }

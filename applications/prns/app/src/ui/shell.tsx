@@ -19,7 +19,7 @@ export function ShellLayout() {
   const pathname = usePathname();
   const active = entries
     .filter((entry) => pathname === entry.path || pathname.startsWith(`${entry.path}/`))
-    .toSorted((left, right) => right.path.length - left.path.length)[0];
+    .sort((left, right) => right.path.length - left.path.length)[0];
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: useAppPalette().background }]}>
