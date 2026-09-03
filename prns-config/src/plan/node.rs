@@ -4,7 +4,7 @@ use std::time::Duration;
 use prns_core::identity::IdentityHash;
 use prns_core::interface_discovery::{
     AutoConnectPolicy, AutoConnectRoutingPolicy, DiscoverySourcePolicy, InterfaceDiscoveryPolicy,
-    DEFAULT_STAMP_COST,
+    AUTOCONNECT_BITRATE, DEFAULT_STAMP_COST,
 };
 use prns_core::interfaces::{BitrateBps, InterfaceGravity};
 use prns_core::routing::links::resources::ResourceMemoryLimits;
@@ -288,9 +288,8 @@ pub(super) fn build_plan(config: &ReferenceConfig) -> Result<DaemonPlan, Vec<Pla
         global_common_policy(config).map_err(|error| vec![PlanningError::Global(error)])?;
     let announce_rate =
         global_announce_rate(config).map_err(|error| vec![PlanningError::Global(error)])?;
-    let default_gravity = InterfaceGravity::new(
-        global_i64(&config.globals, global_key::DEFAULT_GRAVITY).unwrap_or(0),
-    );
+    let default_gravity =
+        global_i64(&config.globals, global_key::DEFAULT_GRAVITY).map(InterfaceGravity::new);
     for interface in &config.interfaces {
         if matches!(interface.params, ReferenceConfigParams::RnodeMulti { .. }) {
             match rnode_multi::plan(
@@ -516,7 +515,11 @@ fn discovery_policy(config: &ReferenceConfig) -> InterfaceDiscoveryPolicy {
         DiscoverySourcePolicy::from_sources(config.discovery.interface_sources.clone()),
         AutoConnectPolicy::from_maximum(config.discovery.auto_connect_limit.unwrap_or(0)),
         AutoConnectRoutingPolicy {
-            gravity: InterfaceGravity::new(config.discovery.auto_connect_gravity.unwrap_or(0)),
+            gravity: config
+                .discovery
+                .auto_connect_gravity
+                .map(InterfaceGravity::new)
+                .unwrap_or_else(|| InterfaceGravity::from_bitrate(AUTOCONNECT_BITRATE)),
             announces_to_internal: config
                 .discovery
                 .auto_connect_announces_to_internal

@@ -4,6 +4,12 @@ use super::*;
 fn every_host_constructible_medium_maps() {
     let plan = plan_of(STOCK);
     assert_eq!(plan.interfaces.len(), 5);
+    for interface in &plan.interfaces {
+        assert_eq!(
+            interface.policy.gravity,
+            InterfaceGravity::from_bitrate(interface.policy.bitrate)
+        );
+    }
     let PlannedMedium::AutoWifi(auto) = &named(&plan, "Default Interface").medium else {
         panic!("AutoInterface medium expected")
     };

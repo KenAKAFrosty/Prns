@@ -49,7 +49,10 @@ fn zero_discovery_controls_use_the_stock_stamp_and_disable_autoconnect() {
     assert_eq!(policy.required_stamp_cost(), DEFAULT_STAMP_COST);
     assert_eq!(policy.sources().allow_list(), None);
     assert_eq!(policy.auto_connect().maximum(), None);
-    assert_eq!(policy.auto_connect_gravity(), InterfaceGravity::ZERO);
+    assert_eq!(
+        policy.auto_connect_gravity(),
+        InterfaceGravity::from_bitrate(prns_core::interface_discovery::AUTOCONNECT_BITRATE)
+    );
     assert!(!policy.auto_connect_announces_to_internal());
 }
 

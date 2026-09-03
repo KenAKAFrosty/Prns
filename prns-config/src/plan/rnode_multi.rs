@@ -83,7 +83,7 @@ pub(super) fn plan(
     interface: &ReferenceInterface,
     global_common: InterfaceCommonPolicy,
     global_announce_rate: Option<AnnounceRateLimit>,
-    default_gravity: InterfaceGravity,
+    default_gravity: Option<InterfaceGravity>,
     transport_enabled: bool,
 ) -> Result<Vec<PlannedInterface>, PlanFailure> {
     let ReferenceConfigParams::RnodeMulti {
@@ -130,7 +130,7 @@ fn plan_member(
     parent: RNodeMultiDevicePlan,
     global_common: InterfaceCommonPolicy,
     global_announce_rate: Option<AnnounceRateLimit>,
-    default_gravity: InterfaceGravity,
+    default_gravity: Option<InterfaceGravity>,
     transport_enabled: bool,
 ) -> Result<PlannedInterface, PlanErrorKind> {
     let member = RNodeMultiMemberPlan {
@@ -309,6 +309,8 @@ mod tests {
         assert!(low.policy.common.path_request_egress.enabled);
         assert_eq!(low.policy.bitrate.get(), 3_125);
         assert_eq!(high.policy.bitrate.get(), 29_622);
+        assert_eq!(low.policy.gravity.get(), 3_125);
+        assert_eq!(high.policy.gravity.get(), 29_622);
         assert_eq!(low.policy.mtu.resolve(low.policy.bitrate), Some(508));
         assert_eq!(high.policy.mtu.resolve(high.policy.bitrate), Some(508));
         assert_eq!(low.policy.capabilities.egress, EgressCapability::Disabled);
@@ -349,6 +351,7 @@ mod tests {
         let high = named(&plan, "Dual[High]");
         for member in [low, high] {
             assert_eq!(member.policy.bitrate.get(), 500_000);
+            assert_eq!(member.policy.gravity.get(), 500_000);
             assert_eq!(member.policy.mtu.resolve(member.policy.bitrate), Some(508));
             assert_eq!(
                 member.policy.capabilities.egress,

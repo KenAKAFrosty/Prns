@@ -12,11 +12,10 @@ use prns_core::interface_discovery::{
     DiscoveryCoordinatorAction, DiscoveryCoordinatorEvent, DiscoveryCoordinatorOutput,
     DiscoveryDecryptionError, DiscoveryEndpointReservationError, DiscoveryIngressEligibility,
     DiscoveryIngressFilter, DiscoveryNotApplicable, DiscoveryRecord, DiscoveryRejection,
-    InterfaceDiscoveryPolicy,
+    InterfaceDiscoveryPolicy, AUTOCONNECT_BITRATE,
 };
 use prns_core::interfaces::{
-    BitrateBps, ConfiguredInterfacePolicy, InterfaceCommonPolicy, InterfaceId, InterfaceStatus,
-    ReportsStatus,
+    ConfiguredInterfacePolicy, InterfaceCommonPolicy, InterfaceId, InterfaceStatus, ReportsStatus,
 };
 use prns_core::interfaces::{IfacContext, IfacSize};
 use prns_core::routing::announce::AnnounceObservation;
@@ -36,7 +35,6 @@ use crate::tcp::TcpClientInterface;
 const OBSERVATION_QUEUE_DEPTH: usize = 64;
 const MONITOR_INTERVAL: Duration = Duration::from_secs(5);
 const RECONNECT_POLICY: ReconnectPolicy = ReconnectPolicy::STANDARD;
-const AUTOCONNECT_BITRATE: BitrateBps = BitrateBps::guess(5_000_000);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiscoveryIngressOutcome {

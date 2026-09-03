@@ -121,7 +121,9 @@ fn enabled_policy(maximum: usize) -> InterfaceDiscoveryPolicy {
         DiscoverySourcePolicy::from_sources(Vec::new()),
         AutoConnectPolicy::from_maximum(maximum),
         AutoConnectRoutingPolicy {
-            gravity: crate::interfaces::InterfaceGravity::ZERO,
+            gravity: crate::interfaces::InterfaceGravity::from_bitrate(
+                crate::interface_discovery::AUTOCONNECT_BITRATE,
+            ),
             announces_to_internal: false,
         },
     )
@@ -398,7 +400,9 @@ fn seeding_discards_records_below_the_effective_stamp_policy() {
         DiscoverySourcePolicy::from_sources(Vec::new()),
         AutoConnectPolicy::from_maximum(1),
         AutoConnectRoutingPolicy {
-            gravity: crate::interfaces::InterfaceGravity::ZERO,
+            gravity: crate::interfaces::InterfaceGravity::from_bitrate(
+                crate::interface_discovery::AUTOCONNECT_BITRATE,
+            ),
             announces_to_internal: false,
         },
     ));
@@ -426,7 +430,9 @@ fn seeding_discards_records_below_the_effective_stamp_policy() {
         DiscoverySourcePolicy::from_sources(Vec::new()),
         AutoConnectPolicy::from_maximum(1),
         AutoConnectRoutingPolicy {
-            gravity: crate::interfaces::InterfaceGravity::ZERO,
+            gravity: crate::interfaces::InterfaceGravity::from_bitrate(
+                crate::interface_discovery::AUTOCONNECT_BITRATE,
+            ),
             announces_to_internal: false,
         },
     ));

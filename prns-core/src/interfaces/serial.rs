@@ -20,7 +20,7 @@ pub fn defaults_for_bitrate(bitrate: BitrateBps) -> InterfaceDefaults {
             egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
         },
         mode: InterfaceMode::PointToPoint,
-        gravity: crate::interfaces::InterfaceGravity::ZERO,
+        gravity: crate::interfaces::InterfaceGravityDefault::FromBitrate,
         mtu: MtuPolicy::fixed(SERIAL_HW_MTU),
         announce_rate_limit: None,
         bitrate,

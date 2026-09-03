@@ -392,7 +392,7 @@ impl InterfaceSettingSpec {
                 "Overrides the interface bitrate used for pacing, MTU selection, and route costs."
             }
             interface_key::GRAVITY => {
-                "Prefers this interface when equally fresh valid announce evidence arrives through multiple paths."
+                "Overrides the routing preference automatically derived from this interface's effective bitrate."
             }
             interface_key::ANNOUNCE_CAP => {
                 "Limits announcement traffic to a percentage of this interface's bitrate."
@@ -616,7 +616,7 @@ impl InterfaceSettingSpec {
             }
             interface_key::INTERFACE_MODE => Some("full"),
             interface_key::OUTGOING => Some("Yes"),
-            interface_key::GRAVITY => Some("0"),
+            interface_key::GRAVITY => Some("effective bitrate"),
             interface_key::ANNOUNCE_CAP => Some("2%"),
             interface_key::NETWORK_NAME | interface_key::PASS_PHRASE => Some("not set"),
             interface_key::IFAC_SIZE
