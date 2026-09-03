@@ -248,7 +248,10 @@ function PairingStateCard({
                 : pairing.permissions.map(formatRequestKind).join(", ")
             }
           />
-          <BodyText>Approve only if this code exactly matches the code shown on the node.</BodyText>
+          <BodyText>
+            If the codes match, approve on the node first, then approve here. Otherwise, reject
+            pairing.
+          </BodyText>
           <CardStack>
             <Button disabled={pending !== null} onPress={() => onApprove(pairing)}>
               {pending === "approve" ? "Approving…" : "Codes match — approve"}
