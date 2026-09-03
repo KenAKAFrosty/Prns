@@ -80,6 +80,8 @@ mod flash;
 mod identity;
 #[cfg(any(target_arch = "riscv32", target_arch = "xtensa"))]
 mod persistence;
+#[cfg(all(feature = "remote-control-pairing", any(test, target_arch = "xtensa")))]
+mod remote_control_composition;
 
 #[cfg(any(test, target_arch = "xtensa"))]
 mod station_recovery;
