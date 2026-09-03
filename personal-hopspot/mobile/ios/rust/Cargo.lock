@@ -1479,6 +1479,7 @@ dependencies = [
  "hkdf",
  "hmac",
  "hybrid-array",
+ "memchr",
  "prns-macros",
  "rand_core",
  "rayon",

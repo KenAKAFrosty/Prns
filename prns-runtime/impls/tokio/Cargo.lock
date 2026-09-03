@@ -535,6 +535,7 @@ dependencies = [
  "hmac",
  "hybrid-array",
  "md-5",
+ "memchr",
  "prns-macros",
  "rand_core",
  "rayon",

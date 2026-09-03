@@ -38,7 +38,7 @@ interface-discovery = ["alloc", "dep:rmp"]
 interface-discovery-archive = ["interface-discovery", "std", "dep:serde", "dep:serde_json"]
 # Place fixed-capacity bulk in a caller-chosen heap region (PSRAM) via a custom `Allocator`: pulls the `allocator_api2` backport and unlocks the allocator-generic `FixedHeap*` columns + the `Esp32S3` prepackage. Off by default. Ordinary hosts never link the backport; they use the inline or growable residences.
 external-alloc = ["alloc", "dep:allocator-api2"]
-std = ["alloc", "dep:roaring", "dep:crc32fast"]
+std = ["alloc", "dep:roaring", "dep:crc32fast", "dep:memchr", "memchr/std"]
 std-sync-host = ["std"]
 tokio-host = ["std"]
 embassy-host = []
@@ -90,6 +90,7 @@ rayon = { version = "1", optional = true }
 crc32fast = { version = "1", optional = true }
 roaring = { version = "=0.11.4", optional = true, default-features = false }
 rmp = { version = "0.8", optional = true, default-features = false }
+memchr = { version = "2.8", optional = true, default-features = false }
 serde = { version = "1", optional = true, features = ["derive"] }
 serde_json = { version = "1", optional = true }
 

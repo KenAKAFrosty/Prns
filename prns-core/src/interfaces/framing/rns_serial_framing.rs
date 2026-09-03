@@ -14,7 +14,12 @@ pub const fn max_encoded_len(payload_len: usize) -> usize {
     2 + 2 * payload_len
 }
 
-#[cfg(target_pointer_width = "64")]
+#[cfg(feature = "std")]
+fn find_special(haystack: &[u8]) -> Option<usize> {
+    memchr::memchr2(FLAG, ESC, haystack)
+}
+
+#[cfg(all(not(feature = "std"), target_pointer_width = "64"))]
 fn find_special(haystack: &[u8]) -> Option<usize> {
     const ONES: u64 = 0x0101_0101_0101_0101;
     const HIGHS: u64 = 0x8080_8080_8080_8080;
@@ -50,7 +55,7 @@ fn find_special(haystack: &[u8]) -> Option<usize> {
         .map(|offset| scanned + offset)
 }
 
-#[cfg(not(target_pointer_width = "64"))]
+#[cfg(all(not(feature = "std"), not(target_pointer_width = "64")))]
 fn find_special(haystack: &[u8]) -> Option<usize> {
     const ONES: u64 = 0x0101_0101_0101_0101;
     const HIGHS: u64 = 0x8080_8080_8080_8080;

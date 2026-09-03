@@ -3072,6 +3072,7 @@ dependencies = [
  "hybrid-array",
  "keyring",
  "md-5 0.11.0",
+ "memchr",
  "prns-macros",
  "proptest",
  "rand_core 0.10.1",
