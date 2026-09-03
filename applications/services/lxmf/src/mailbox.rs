@@ -3437,6 +3437,145 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn restart_after_proof_before_delivered_commit_resends_and_receiver_deduplicates() {
+        let (_sender_root, sender_database) = open_database();
+        let sender_database = Arc::new(sender_database);
+        let stalled_completion = Arc::new(GatedWriteFailureSubmitter {
+            database: sender_database.clone(),
+            rejected: RejectedWrite::CompleteAttempt,
+            failure: MailboxFailure::ResetRequired("must not settle before the crash".to_owned()),
+            entered: Notify::new(),
+            release: Notify::new(),
+        });
+        let first_network = Arc::new(DurableFakeNetwork::default());
+        let sender_identity = LocalLxmfIdentity::from_secret_bytes(&LOCAL_SECRET).unwrap();
+        let (pending, _) = DurableDirectLxmfService::prepare(sender_identity);
+        let first = pending
+            .start(
+                first_network.clone(),
+                stalled_completion.clone(),
+                Arc::new(FixedClock(9_999)),
+            )
+            .await
+            .unwrap();
+        let receiver_destination = learn_durable_peer(&first).await;
+        assert_eq!(
+            first
+                .send_direct_text(
+                    receiver_destination,
+                    1_700_000_007_250,
+                    b"proof crash",
+                    b"deduplicate the replay",
+                )
+                .await,
+            DurableSendDirectTextOutcome::Accepted { local_record_id: 1 }
+        );
+
+        // Reaching CompleteAttempt proves that the transport proof was returned,
+        // while the gate keeps the local Delivered transition uncommitted.
+        stalled_completion.entered.notified().await;
+        let first_wire = first_network.sent_wires.lock().unwrap()[0].clone();
+
+        let (_receiver_root, _receiver_database, receiver_submitter) = shared_database();
+        let receiver_network = Arc::new(DurableFakeNetwork::default());
+        let sender_material = PrivateIdentityMaterial::from_bytes(LOCAL_SECRET);
+        let sender_destination = derive_single_destination_hash(
+            &sender_material.identity_hash(),
+            prns_lxmf_wire::LXMF_APP_NAME,
+            prns_lxmf_wire::LXMF_DELIVERY_ASPECTS,
+        )
+        .unwrap();
+        receiver_network.add_public_key(*sender_destination.as_bytes(), &sender_material);
+        let receiver_identity = LocalLxmfIdentity::from_secret_bytes(&PEER_SECRET).unwrap();
+        let (receiver_pending, _) = DurableDirectLxmfService::prepare(receiver_identity);
+        let receiver = receiver_pending
+            .start(
+                receiver_network,
+                receiver_submitter,
+                Arc::new(FixedClock(9_999)),
+            )
+            .await
+            .unwrap();
+        assert_eq!(receiver.local_destination(), receiver_destination);
+        assert_eq!(
+            receiver.callbacks().on_prns_event(&link_event(&first_wire)),
+            CallbackOutcome::Enqueued
+        );
+        let received_once =
+            wait_for_durable_snapshot(&receiver, |snapshot| snapshot.messages.len() == 1).await;
+        assert_eq!(received_once.durable_revision, 1);
+        assert_eq!(
+            received_once.messages[0].verification,
+            LxmfVerification::Verified
+        );
+
+        // Model abrupt process loss at the exact crash boundary. The blocked
+        // local completion never reaches redb, so reopening must see Queued.
+        let attempts = mem::take(&mut *first.lifecycle.attempts());
+        assert_eq!(attempts.len(), 1);
+        for (_key, attempt) in attempts {
+            attempt.abort();
+            assert!(attempt.await.unwrap_err().is_cancelled());
+        }
+        first.stop().await.unwrap();
+        let MailboxReply::Listed { messages, .. } = execute_mailbox_request(
+            &sender_database,
+            MailboxRequest::List(all_messages()),
+        )
+        .unwrap()
+        else {
+            panic!("unexpected list reply");
+        };
+        assert!(matches!(
+            messages[0].delivery_state,
+            DurableLxmfDeliveryState::Queued { failed_attempts: 0 }
+        ));
+
+        let restarted_network = Arc::new(DurableFakeNetwork::default());
+        let restarted_submitter = Arc::new(DatabaseSubmitter {
+            database: sender_database,
+        });
+        let restarted = start_durable(restarted_network.clone(), restarted_submitter).await;
+        let delivered = wait_for_durable_snapshot(&restarted, |snapshot| {
+            matches!(
+                snapshot.messages[0].delivery_state,
+                DurableLxmfDeliveryState::Delivered { .. }
+            )
+        })
+        .await;
+        assert_eq!(restarted_network.sent_wires.lock().unwrap()[0], first_wire);
+        assert_eq!(delivered.messages[0].exact_wire, first_wire);
+
+        assert_eq!(
+            receiver.callbacks().on_prns_event(&link_event(&first_wire)),
+            CallbackOutcome::Enqueued
+        );
+        let announce = current_announce();
+        assert_eq!(
+            receiver
+                .callbacks()
+                .on_accepted_announce(accepted_observation(
+                    *sender_destination.as_bytes(),
+                    sender_material.identity_hash(),
+                    &announce,
+                )),
+            CallbackOutcome::Enqueued
+        );
+        let deduplicated =
+            wait_for_durable_snapshot(&receiver, |snapshot| !snapshot.peers.is_empty()).await;
+        assert_eq!(deduplicated.messages.len(), 1);
+        assert_eq!(deduplicated.durable_revision, 1);
+        assert_eq!(
+            deduplicated.messages[0].message_id,
+            delivered.messages[0].message_id
+        );
+        assert_eq!(deduplicated.messages[0].exact_wire, first_wire);
+
+        restarted.stop().await.unwrap();
+        receiver.stop().await.unwrap();
+    }
+
+    #[tokio::test]
     async fn paused_start_keeps_reopened_and_new_rows_queued_until_activation() {
         let (_root, database, submitter) = shared_database();
         let MailboxReply::OutboundInserted { .. } = execute_mailbox_request(
