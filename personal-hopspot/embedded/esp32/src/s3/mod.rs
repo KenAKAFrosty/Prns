@@ -444,6 +444,11 @@ fn firmware_on_event(event: PrnsEvent<'_>, _state: &RemoteControlHandle) {
         }) => {
             remote_control_authorization_persisted(attempt_id);
         }
+        PrnsEvent::Message(Message::RemoteControlTargetPairingExpiredDuringAuthorization {
+            attempt_id,
+        }) => {
+            let _ = update_remote_control_state(|state| state.expired(Some(attempt_id)));
+        }
         PrnsEvent::Message(Message::RemoteControlTargetPairingExpired { aborted }) => {
             let attempt_id = aborted.attempt_id();
             let _ = update_remote_control_state(|state| state.expired(Some(attempt_id)));

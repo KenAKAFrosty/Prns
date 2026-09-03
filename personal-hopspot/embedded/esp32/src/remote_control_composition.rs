@@ -478,4 +478,33 @@ mod tests {
             Some(RemoteControlTargetPairingFailure::Persistence)
         );
     }
+
+    #[test]
+    fn expiry_during_authorization_replaces_the_visible_state_and_wakes_the_ui() {
+        let attempt_id = 0xA5_u8;
+        let mut composition = RemoteControlComposition::new();
+        composition.update_pairing(|state| {
+            state.confirmation_required(attempt_id, 123_456, InstantMillis(30_000))
+        });
+        composition.update_pairing(|state| state.authorizing(attempt_id));
+        assert_eq!(
+            composition.take_current_pairing().phase(),
+            RemoteControlTargetPairingPhase::Authorizing,
+        );
+
+        let (update, effects) = composition
+            .update_pairing(|state| state.expired(Some(attempt_id)))
+            .into_parts();
+
+        assert_eq!(update, RemoteControlTargetPairingUpdate::Changed);
+        assert!(effects.wake_ui());
+        assert!(!effects.wake_announcer());
+        assert!(!effects.close_pairing());
+        assert!(composition.pairing_wake_pending());
+        let pairing = composition.take_current_pairing();
+        assert_eq!(pairing.phase(), RemoteControlTargetPairingPhase::Expired);
+        assert_eq!(pairing.attempt_id(), Some(attempt_id));
+        assert_eq!(pairing.failure(), None);
+        assert!(!composition.pairing_wake_pending());
+    }
 }
