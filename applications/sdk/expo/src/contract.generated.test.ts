@@ -10,7 +10,7 @@ describe("Rust-generated contract fixtures", () => {
     }
   });
 
-  test("covers every consumed tagged variant through local-node L1", () => {
+  test("covers every consumed tagged variant through in-memory LXMF L2", () => {
     expect(NATIVE_CONTRACT_FIXTURES.primaryIdentityStates.map(({ type }) => type)).toEqual([
       "missing",
       "present",
@@ -59,6 +59,46 @@ describe("Rust-generated contract fixtures", () => {
       "listed",
       "developmentUnavailable",
       "developmentResetRequired",
+    ]);
+    expect(NATIVE_CONTRACT_FIXTURES.lxmfTexts.map(({ type }) => type)).toEqual([
+      "utf8",
+      "invalidUtf8",
+    ]);
+    expect(NATIVE_CONTRACT_FIXTURES.lxmfPeerListOutcomes.map(({ type }) => type)).toEqual([
+      "listed",
+      "localNodeStopped",
+      "busy",
+    ]);
+    expect(NATIVE_CONTRACT_FIXTURES.lxmfMessageListOutcomes.map(({ type }) => type)).toEqual([
+      "listed",
+      "invalidInput",
+      "localNodeStopped",
+      "busy",
+    ]);
+    expect(NATIVE_CONTRACT_FIXTURES.announceLxmfOutcomes.map(({ type }) => type)).toEqual([
+      "announced",
+      "localNodeStopped",
+      "busy",
+      "failed",
+    ]);
+    expect(NATIVE_CONTRACT_FIXTURES.sendDirectTextOutcomes.map(({ type }) => type)).toEqual([
+      "started",
+      "needsResource",
+      "unsupportedRemoteStampRequirement",
+      "peerIdentityUnavailable",
+      "noRoute",
+      "linkFailed",
+      "deliveryTimedOut",
+      "invalidMessage",
+      "localNodeStopped",
+      "busy",
+    ]);
+    expect(NATIVE_CONTRACT_FIXTURES.measureLxmfTextOutcomes.map(({ type }) => type)).toEqual([
+      "measured",
+      "needsResource",
+      "invalidMessage",
+      "localNodeStopped",
+      "busy",
     ]);
     expect(NATIVE_CONTRACT_FIXTURES.pairingStates.map(({ type }) => type)).toEqual([
       "bluetoothUnavailable",

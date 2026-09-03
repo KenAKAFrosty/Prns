@@ -118,6 +118,17 @@ describe("generated native payload hydration", () => {
     expect(() => hydrateGenerated({ publicAppData: [0, "1"] })).toThrow(NativePayloadError);
   });
 
+  test.each([31, 33])("rejects a %i-byte LXMF message ID", (length) => {
+    expect(() => hydrateGenerated({ messageId: Array(length).fill(0) })).toThrow(
+      NativePayloadError,
+    );
+  });
+
+  test("keeps invalid UTF-8 diagnostic bytes variable-length", () => {
+    expect(hydrateGenerated({ bytes: [0xff] }).bytes).toEqual(Uint8Array.of(0xff));
+    expect(hydrateGenerated({ bytes: Array(64).fill(0x80) }).bytes).toHaveLength(64);
+  });
+
   test("delegates fixed hash lengths to the provider-neutral Prns contract", () => {
     expect(() => hydrateGenerated({ targetIdentityFingerprint: Array(15).fill(0) })).toThrow(
       NativePayloadError,

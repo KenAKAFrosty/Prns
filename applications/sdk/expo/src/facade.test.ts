@@ -13,6 +13,7 @@ const snapshot = {
   runtime: "stopped",
   primaryIdentity: { type: "missing" },
   localHost: { type: "stopped", lastStartFailure: null },
+  lxmf: { state: "stopped", inboundOverflowCount: "0" },
   controllerIdentityFingerprint: null,
   pairing: { type: "searching" },
   pairedTargets: [],
@@ -41,6 +42,13 @@ function fakeNative(overrides: Partial<PrnsAppNativeModule> = {}): PrnsAppNative
     deleteContact: jest.fn(async () => JSON.stringify({ type: "notFound" })),
     getContact: jest.fn(async () => JSON.stringify({ type: "notFound" })),
     listContacts: jest.fn(async () => JSON.stringify({ type: "listed", contacts: [] })),
+    listLxmfPeers: jest.fn(async () => JSON.stringify({ type: "listed", peers: [] })),
+    listLxmfMessages: jest.fn(async () => JSON.stringify({ type: "listed", messages: [] })),
+    announceLxmf: jest.fn(async () => JSON.stringify({ type: "announced" })),
+    measureLxmfText: jest.fn(async () =>
+      JSON.stringify({ type: "measured", wireBytes: 113, remainingBytes: 318 }),
+    ),
+    sendDirectText: jest.fn(async () => JSON.stringify({ type: "started", localRecordId: "1" })),
     stop: jest.fn(async () => JSON.stringify({ type: "alreadyStopped" })),
     reset: jest.fn(async () => JSON.stringify({ type: "alreadyStopped" })),
     ...overrides,
@@ -52,7 +60,7 @@ describe("development runtime facade", () => {
     const native = fakeNative();
     const runtime = createDevelopmentRuntime(native);
 
-    const started = await runtime.startDevelopmentNode();
+    const started = await runtime.startDevelopmentNode({ developmentTcpTarget: null });
     const current = await runtime.readDevelopmentNodeSnapshot();
 
     expect(started.type).toBe("started");
@@ -62,6 +70,7 @@ describe("development runtime facade", () => {
     expect(current.revision).toBe(0n);
     expect(native.contractFingerprint).toHaveBeenCalledTimes(1);
     expect(native.hostContractFingerprint).toHaveBeenCalledTimes(1);
+    expect(native.start).toHaveBeenCalledWith(JSON.stringify({ developmentTcpTarget: null }));
   });
 
   test("hydrates every canonical Host scalar from the Rust-generated running fixture", async () => {
@@ -164,9 +173,9 @@ describe("development runtime facade", () => {
     const native = fakeNative({ contractFingerprint: jest.fn(async () => "stale-contract") });
     const runtime = createDevelopmentRuntime(native);
 
-    await expect(runtime.startDevelopmentNode()).rejects.toBeInstanceOf(
-      NativeContractMismatchError,
-    );
+    await expect(
+      runtime.startDevelopmentNode({ developmentTcpTarget: null }),
+    ).rejects.toBeInstanceOf(NativeContractMismatchError);
     expect(native.start).not.toHaveBeenCalled();
   });
 
@@ -266,5 +275,63 @@ describe("development runtime facade", () => {
       Uint8Array,
     );
     expect(created.type === "saved" ? created.contact.identity : null).toBeInstanceOf(Uint8Array);
+  });
+
+  test("serializes LXMF inputs and hydrates message bytes and exact u64 values", async () => {
+    const peer = destinationHash(Uint8Array.from({ length: 16 }, (_, index) => index));
+    const listLxmfMessages = jest.fn(async () =>
+      JSON.stringify({
+        type: "listed",
+        messages: [
+          {
+            localRecordId: "18446744073709551615",
+            messageId: Array(32).fill(0x44),
+            source: Array.from(peer),
+            destination: Array.from(peer),
+            timestamp: "1700000000000",
+            title: { type: "utf8", value: "Hello" },
+            content: { type: "invalidUtf8", bytes: [0xff] },
+            direction: "inbound",
+            verification: "sourceUnknown",
+            deliveryState: "received",
+            failure: null,
+          },
+        ],
+      }),
+    );
+    const sendDirectText = jest.fn(async () =>
+      JSON.stringify({ type: "started", localRecordId: "9" }),
+    );
+    const runtime = createDevelopmentRuntime(fakeNative({ listLxmfMessages, sendDirectText }));
+
+    const listed = await runtime.listLxmfMessages({ peer, before: 9n, limit: 25 });
+    const sent = await runtime.sendDirectText({
+      destination: peer,
+      title: "Hello",
+      content: "World",
+    });
+
+    expect(listLxmfMessages).toHaveBeenCalledWith(
+      JSON.stringify({ peer: Array.from(peer), before: "9", limit: 25 }),
+    );
+    expect(sendDirectText).toHaveBeenCalledWith(
+      JSON.stringify({
+        destination: Array.from(peer),
+        title: "Hello",
+        content: "World",
+      }),
+    );
+    expect(sent).toEqual({ type: "started", localRecordId: 9n });
+    expect(listed.type).toBe("listed");
+    if (listed.type !== "listed") {
+      throw new Error("LXMF fixture was not listed");
+    }
+    expect(listed.messages[0]?.localRecordId).toBe(18_446_744_073_709_551_615n);
+    expect(listed.messages[0]?.messageId).toEqual(Uint8Array.from({ length: 32 }, () => 0x44));
+    expect(listed.messages[0]?.source).toEqual(peer);
+    expect(listed.messages[0]?.content).toEqual({
+      type: "invalidUtf8",
+      bytes: Uint8Array.of(0xff),
+    });
   });
 });

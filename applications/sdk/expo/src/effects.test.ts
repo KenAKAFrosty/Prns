@@ -16,6 +16,7 @@ function snapshot(revision: bigint): DevelopmentNodeSnapshot {
     runtime: "running",
     primaryIdentity: { type: "missing" },
     localHost: { type: "stopped", lastStartFailure: null },
+    lxmf: { state: "stopped", inboundOverflowCount: 0n },
     controllerIdentityFingerprint: null,
     pairing: { type: "searching" },
     pairedTargets: [],
@@ -46,6 +47,15 @@ function fakeRuntime(overrides: Partial<DevelopmentRuntime> = {}): DevelopmentRu
     deleteContact: jest.fn(async () => ({ type: "notFound" as const })),
     getContact: jest.fn(async () => ({ type: "notFound" as const })),
     listContacts: jest.fn(async () => ({ type: "listed" as const, contacts: [] })),
+    listLxmfPeers: jest.fn(async () => ({ type: "listed" as const, peers: [] })),
+    listLxmfMessages: jest.fn(async () => ({ type: "listed" as const, messages: [] })),
+    announceLxmf: jest.fn(async () => ({ type: "announced" as const })),
+    measureLxmfText: jest.fn(async () => ({
+      type: "measured" as const,
+      wireBytes: 113,
+      remainingBytes: 318,
+    })),
+    sendDirectText: jest.fn(async () => ({ type: "started" as const, localRecordId: 1n })),
     stopDevelopmentNode: jest.fn(async () => ({ type: "stopped" as const })),
     resetDevelopmentData: jest.fn(async () => ({ type: "alreadyStopped" as const })),
     ...overrides,
@@ -77,10 +87,29 @@ describe("Effect development runtime orchestration", () => {
 
     expect(observed).toEqual([1n, 2n]);
     expect(failures).toEqual([]);
+    expect(runtime.startDevelopmentNode).toHaveBeenCalledWith({ developmentTcpTarget: null });
     expect(stopDevelopmentNode).toHaveBeenCalledTimes(1);
     const readsAfterClose = readDevelopmentNodeSnapshot.mock.calls.length;
     await new Promise((resolve) => setTimeout(resolve, 80));
     expect(readDevelopmentNodeSnapshot).toHaveBeenCalledTimes(readsAfterClose);
+  });
+
+  test("forwards the explicit development TCP target only through scoped startup", async () => {
+    const runtime = fakeRuntime();
+
+    await Effect.runPromise(
+      Effect.scoped(
+        scopedDevelopmentRuntime(runtime, {
+          developmentTcpTarget: "192.0.2.1:4242",
+          onSnapshot: () => undefined,
+          onBackgroundFailure: () => undefined,
+        }),
+      ),
+    );
+
+    expect(runtime.startDevelopmentNode).toHaveBeenCalledWith({
+      developmentTcpTarget: "192.0.2.1:4242",
+    });
   });
 
   test("stops after a typed startup rejection before failing acquisition", async () => {

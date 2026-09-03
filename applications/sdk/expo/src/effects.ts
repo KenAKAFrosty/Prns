@@ -2,6 +2,7 @@ import { Data, Effect, type Scope } from "effect";
 import type {
   DescribeRemoteControlTargetInput,
   DevelopmentNodeSnapshot,
+  DevelopmentNodeStartInput,
   DevelopmentNodeStartOutcome,
   DevelopmentNodeStopOutcome,
   DevelopmentRuntime,
@@ -51,10 +52,9 @@ export type DevelopmentRuntimeFailure =
   | DevelopmentRuntimeStopError;
 
 export type EffectDevelopmentRuntime = {
-  readonly startDevelopmentNode: Effect.Effect<
-    DevelopmentNodeStartOutcome,
-    DevelopmentRuntimeOperationError
-  >;
+  readonly startDevelopmentNode: (
+    input: DevelopmentNodeStartInput,
+  ) => Effect.Effect<DevelopmentNodeStartOutcome, DevelopmentRuntimeOperationError>;
   readonly readDevelopmentNodeSnapshot: Effect.Effect<
     DevelopmentNodeSnapshot,
     DevelopmentRuntimeOperationError
@@ -83,6 +83,7 @@ export type EffectDevelopmentRuntime = {
 
 export type DevelopmentRuntimeScopeOptions = {
   readonly refreshIntervalMillis?: number;
+  readonly developmentTcpTarget?: DevelopmentNodeStartInput["developmentTcpTarget"];
   readonly onSnapshot: (snapshot: DevelopmentNodeSnapshot) => void;
   readonly onBackgroundFailure: (failure: DevelopmentRuntimeFailure) => void;
 };
@@ -100,7 +101,8 @@ export function makeEffectDevelopmentRuntime(
   runtime: DevelopmentRuntime,
 ): EffectDevelopmentRuntime {
   return {
-    startDevelopmentNode: runtimeCall("start", runtime.startDevelopmentNode),
+    startDevelopmentNode: (input) =>
+      runtimeCall("start", () => runtime.startDevelopmentNode(input)),
     readDevelopmentNodeSnapshot: runtimeCall("snapshot", runtime.readDevelopmentNodeSnapshot),
     initiateRemoteControlPairing: (input) =>
       runtimeCall("initiatePairing", () => runtime.initiateRemoteControlPairing(input)),
@@ -133,9 +135,11 @@ export function scopedDevelopmentRuntime(
   const release = releaseRuntime(effectRuntime, options.onBackgroundFailure);
 
   const acquire = Effect.gen(function* () {
-    const outcome = yield* effectRuntime.startDevelopmentNode.pipe(
-      Effect.catch((failure) => release.pipe(Effect.andThen(Effect.fail(failure)))),
-    );
+    const outcome = yield* effectRuntime
+      .startDevelopmentNode({
+        developmentTcpTarget: options.developmentTcpTarget ?? null,
+      })
+      .pipe(Effect.catch((failure) => release.pipe(Effect.andThen(Effect.fail(failure)))));
     if (outcome.type === "failed") {
       yield* release;
       return yield* Effect.fail(

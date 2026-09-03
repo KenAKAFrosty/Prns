@@ -1,5 +1,6 @@
 import { HOST_CONTRACT_FINGERPRINT, NATIVE_CONTRACT_FINGERPRINT } from "./contract.generated";
 import type {
+  AnnounceLxmfOutcome as WireAnnounceLxmfOutcome,
   Contact as WireContact,
   ContactListOutcome as WireContactListOutcome,
   ContactLookupOutcome as WireContactLookupOutcome,
@@ -8,16 +9,28 @@ import type {
   CreateManualContactInput as WireCreateManualContactInput,
   DescribeRemoteControlTargetInput as WireDescribeRemoteControlTargetInput,
   DevelopmentNodeSnapshot as WireDevelopmentNodeSnapshot,
+  DevelopmentNodeStartInput as WireDevelopmentNodeStartInput,
   DevelopmentNodeStartOutcome as WireDevelopmentNodeStartOutcome,
   DevelopmentNodeStopOutcome as WireDevelopmentNodeStopOutcome,
   IdentityCreationOutcome as WireIdentityCreationOutcome,
   IdentityImportPreviewOutcome as WireIdentityImportPreviewOutcome,
   InitiateRemoteControlPairingInput as WireInitiateRemoteControlPairingInput,
+  ListLxmfMessagesInput as WireListLxmfMessagesInput,
+  LxmfHealth as WireLxmfHealth,
+  LxmfMessage as WireLxmfMessage,
+  LxmfMessageListOutcome as WireLxmfMessageListOutcome,
+  LxmfPeerListOutcome as WireLxmfPeerListOutcome,
+  LxmfPeerSummary as WireLxmfPeerSummary,
+  LxmfText as WireLxmfText,
+  MeasureLxmfTextInput as WireMeasureLxmfTextInput,
+  MeasureLxmfTextOutcome as WireMeasureLxmfTextOutcome,
   RemoteControlDescribeOutcome as WireRemoteControlDescribeOutcome,
   RemoteControlPairingCommandOutcome as WireRemoteControlPairingCommandOutcome,
   RemoteControlPairingDecisionInput as WireRemoteControlPairingDecisionInput,
   SetContactAliasInput as WireSetContactAliasInput,
   SetContactPinnedInput as WireSetContactPinnedInput,
+  SendDirectTextInput as WireSendDirectTextInput,
+  SendDirectTextOutcome as WireSendDirectTextOutcome,
   PrimaryIdentityState as WirePrimaryIdentityState,
 } from "./contract.generated";
 import type { DestinationHash, IdentityHash } from "personal-rns/contract";
@@ -31,6 +44,7 @@ type BridgeFailure = {
 };
 
 export type DevelopmentNodeSnapshot = Hydrated<WireDevelopmentNodeSnapshot>;
+export type DevelopmentNodeStartInput = Hydrated<WireDevelopmentNodeStartInput>;
 export type DevelopmentNodeStartOutcome = Hydrated<WireDevelopmentNodeStartOutcome>;
 export type DevelopmentNodeStopOutcome = Hydrated<WireDevelopmentNodeStopOutcome>;
 export type RemoteControlPairingCommandOutcome = Hydrated<WireRemoteControlPairingCommandOutcome>;
@@ -45,13 +59,27 @@ export type Contact = Hydrated<WireContact>;
 export type ContactMutationOutcome = Hydrated<WireContactMutationOutcome>;
 export type ContactLookupOutcome = Hydrated<WireContactLookupOutcome>;
 export type ContactListOutcome = Hydrated<WireContactListOutcome>;
+export type LxmfHealth = Hydrated<WireLxmfHealth>;
+export type LxmfMessage = Hydrated<WireLxmfMessage>;
+export type LxmfPeerSummary = Hydrated<WireLxmfPeerSummary>;
+export type LxmfText = Hydrated<WireLxmfText>;
+export type ListLxmfMessagesInput = Hydrated<WireListLxmfMessagesInput>;
+export type LxmfMessageListOutcome = Hydrated<WireLxmfMessageListOutcome>;
+export type LxmfPeerListOutcome = Hydrated<WireLxmfPeerListOutcome>;
+export type AnnounceLxmfOutcome = Hydrated<WireAnnounceLxmfOutcome>;
+export type MeasureLxmfTextInput = Hydrated<WireMeasureLxmfTextInput>;
+export type MeasureLxmfTextOutcome = Hydrated<WireMeasureLxmfTextOutcome>;
+export type SendDirectTextInput = Hydrated<WireSendDirectTextInput>;
+export type SendDirectTextOutcome = Hydrated<WireSendDirectTextOutcome>;
 
 export type DevelopmentRuntime = {
   readonly inspectDevelopmentIdentity: () => Promise<PrimaryIdentityState>;
   readonly previewIdentityImport: (identity: Uint8Array) => Promise<IdentityImportPreviewOutcome>;
   readonly createGeneratedIdentity: () => Promise<IdentityCreationOutcome>;
   readonly createImportedIdentity: (identity: Uint8Array) => Promise<IdentityCreationOutcome>;
-  readonly startDevelopmentNode: () => Promise<DevelopmentNodeStartOutcome>;
+  readonly startDevelopmentNode: (
+    input: DevelopmentNodeStartInput,
+  ) => Promise<DevelopmentNodeStartOutcome>;
   readonly readDevelopmentNodeSnapshot: () => Promise<DevelopmentNodeSnapshot>;
   readonly initiateRemoteControlPairing: (
     input: InitiateRemoteControlPairingInput,
@@ -84,6 +112,11 @@ export type DevelopmentRuntime = {
   readonly deleteContact: (destination: DestinationHash) => Promise<ContactMutationOutcome>;
   readonly getContact: (destination: DestinationHash) => Promise<ContactLookupOutcome>;
   readonly listContacts: () => Promise<ContactListOutcome>;
+  readonly listLxmfPeers: () => Promise<LxmfPeerListOutcome>;
+  readonly listLxmfMessages: (input: ListLxmfMessagesInput) => Promise<LxmfMessageListOutcome>;
+  readonly announceLxmf: () => Promise<AnnounceLxmfOutcome>;
+  readonly measureLxmfText: (input: MeasureLxmfTextInput) => Promise<MeasureLxmfTextOutcome>;
+  readonly sendDirectText: (input: SendDirectTextInput) => Promise<SendDirectTextOutcome>;
   readonly stopDevelopmentNode: () => Promise<DevelopmentNodeStopOutcome>;
   readonly resetDevelopmentData: () => Promise<DevelopmentNodeStopOutcome>;
 };
@@ -149,7 +182,14 @@ export function createDevelopmentRuntime(nativeModule: PrnsAppNativeModule): Dev
     createGeneratedIdentity: () => read(() => nativeModule.createGeneratedIdentity()),
     createImportedIdentity: (identity) =>
       read(() => nativeModule.createImportedIdentity(Array.from(identity))),
-    startDevelopmentNode: () => read(() => nativeModule.start()),
+    startDevelopmentNode: (input) =>
+      read(() =>
+        nativeModule.start(
+          JSON.stringify({
+            developmentTcpTarget: input.developmentTcpTarget,
+          } satisfies WireDevelopmentNodeStartInput),
+        ),
+      ),
     readDevelopmentNodeSnapshot: () => read(() => nativeModule.snapshot()),
     initiateRemoteControlPairing: (input) =>
       read(() => nativeModule.initiatePairing(JSON.stringify(input))),
@@ -218,6 +258,37 @@ export function createDevelopmentRuntime(nativeModule: PrnsAppNativeModule): Dev
         ),
       ),
     listContacts: () => read(() => nativeModule.listContacts()),
+    listLxmfPeers: () => read(() => nativeModule.listLxmfPeers()),
+    listLxmfMessages: (input) =>
+      read(() =>
+        nativeModule.listLxmfMessages(
+          JSON.stringify({
+            peer: input.peer === null ? null : Array.from(input.peer),
+            before: input.before === null ? null : input.before.toString(),
+            limit: input.limit,
+          } satisfies WireListLxmfMessagesInput),
+        ),
+      ),
+    announceLxmf: () => read(() => nativeModule.announceLxmf()),
+    measureLxmfText: (input) =>
+      read(() =>
+        nativeModule.measureLxmfText(
+          JSON.stringify({
+            title: input.title,
+            content: input.content,
+          } satisfies WireMeasureLxmfTextInput),
+        ),
+      ),
+    sendDirectText: (input) =>
+      read(() =>
+        nativeModule.sendDirectText(
+          JSON.stringify({
+            destination: Array.from(input.destination),
+            title: input.title,
+            content: input.content,
+          } satisfies WireSendDirectTextInput),
+        ),
+      ),
     stopDevelopmentNode: () => read(() => nativeModule.stop()),
     resetDevelopmentData: () => read(() => nativeModule.reset()),
   };

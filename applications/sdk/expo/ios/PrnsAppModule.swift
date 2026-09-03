@@ -60,11 +60,8 @@ public final class PrnsAppModule: Module {
       }
     }.runOnQueue(Self.nativeQueue)
 
-    AsyncFunction("start") { () throws -> String in
-      let storageURL = try Self.developmentStorageURL(create: true)
-      return try Self.withUtf8Bytes(storageURL.path) { pointer, count in
-        try Self.consume(prns_app_start(pointer, count))
-      }
+    AsyncFunction("start") { (inputJSON: String) throws -> String in
+      try Self.invokePathJSON(inputJSON, operation: prns_app_start)
     }.runOnQueue(Self.nativeQueue)
 
     AsyncFunction("snapshot") { () throws -> String in
@@ -116,6 +113,26 @@ public final class PrnsAppModule: Module {
       return try Self.withUtf8Bytes(storageURL.path) { pointer, count in
         try Self.consume(prns_app_list_contacts(pointer, count))
       }
+    }.runOnQueue(Self.nativeQueue)
+
+    AsyncFunction("listLxmfPeers") { () throws -> String in
+      try Self.consume(prns_app_list_lxmf_peers())
+    }.runOnQueue(Self.nativeQueue)
+
+    AsyncFunction("listLxmfMessages") { (inputJSON: String) throws -> String in
+      try Self.invokeJSON(inputJSON, operation: prns_app_list_lxmf_messages)
+    }.runOnQueue(Self.nativeQueue)
+
+    AsyncFunction("announceLxmf") { () throws -> String in
+      try Self.consume(prns_app_announce_lxmf())
+    }.runOnQueue(Self.nativeQueue)
+
+    AsyncFunction("measureLxmfText") { (inputJSON: String) throws -> String in
+      try Self.invokeJSON(inputJSON, operation: prns_app_measure_lxmf_text)
+    }.runOnQueue(Self.nativeQueue)
+
+    AsyncFunction("sendDirectText") { (inputJSON: String) throws -> String in
+      try Self.invokeJSON(inputJSON, operation: prns_app_send_direct_text)
     }.runOnQueue(Self.nativeQueue)
 
     AsyncFunction("stop") { () throws -> String in
