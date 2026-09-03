@@ -47,6 +47,14 @@ pub(super) fn is_system_connected(
         .any(|peripheral| core_bluetooth_peer_id(&peripheral) == peer_id)
 }
 
+pub(super) fn discover_prns_services(peripheral: &CBPeripheral) {
+    let uuid = service_uuid();
+    let services = NSArray::from_slice(&[&*uuid]);
+    // SAFETY: callers hold a live peripheral on the CoreBluetooth serial dispatch queue, and
+    // `services` is a correctly typed, retained NSArray for the duration of the message.
+    unsafe { peripheral.discoverServices(Some(&services)) };
+}
+
 pub(super) struct DialChars {
     pub(super) peer_protocol: PeerProtocol,
     pub(super) peer_identity: Option<BleIdentity>,
@@ -418,11 +426,7 @@ define_class!(
             crate::diagnostic_log::debug!(
                 "bluetooth: dial connected over LE, discovering Prns service"
             );
-            let uuid = service_uuid();
-            let services = NSArray::from_slice(&[&*uuid]);
-            // SAFETY: `peripheral` is live for this callback and `services` is a correctly typed,
-            // retained NSArray for the duration of the Objective-C message.
-            unsafe { peripheral.discoverServices(Some(&services)) };
+            discover_prns_services(peripheral);
         }
 
         #[unsafe(method(centralManager:didFailToConnectPeripheral:error:))]
