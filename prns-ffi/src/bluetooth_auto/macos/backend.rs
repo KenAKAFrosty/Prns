@@ -23,7 +23,7 @@ use prns_core::interfaces::bluetooth_auto::{BleAddress, BleIdentity, Control, Ps
 
 use super::central::{
     cancel_system_connection, discover_prns_services, is_system_connected, CentralDelegate,
-    CentralPeerSession, DialCommand, DialCompletion,
+    CentralPeerSession, DialCommand, DialCompletion, CENTRAL_CONTROL_INBOUND_CAPACITY,
 };
 use super::gatt_link::{gatt_inbound_channel, ControlPlane, GattLink};
 use super::peripheral::PeripheralDelegate;
@@ -198,6 +198,7 @@ fn begin_dial(command: DialCommand, target_has_inbound_session: bool, restored_c
                 "bluetooth: yielding dial to {:02x?} — a live central session already owns this peer",
                 peer_id.address().octets()
             );
+            delegate.discard_restored_callbacks(peer_id);
             session.reject();
             return;
         }
@@ -206,6 +207,7 @@ fn begin_dial(command: DialCommand, target_has_inbound_session: bool, restored_c
                 "bluetooth: yielding dial to {:02x?} — this peer already owns an inbound peripheral session",
                 peer_id.address().octets()
             );
+            delegate.discard_restored_callbacks(peer_id);
             session.reject();
             return;
         }
@@ -688,7 +690,8 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
                 .spawn(async move { DialTaskOutcome::Failed { address } });
             return DialOutcome::Started;
         };
-        let (control_tx, control_rx) = tokio_mpsc::channel::<Control>(8);
+        let (control_tx, control_rx) =
+            tokio_mpsc::channel::<Control>(CENTRAL_CONTROL_INBOUND_CAPACITY);
         let (completion_tx, completion_rx) = oneshot::channel::<DialCompletion>();
         let (data_inbound_tx, data_inbound_rx) = gatt_inbound_channel();
         let command = DialCommand {
