@@ -23,9 +23,9 @@ from tcp_fixture import (
 )
 
 
-ROOT = pathlib.Path(__file__).resolve().parents[5]
+APPLICATIONS_ROOT = pathlib.Path(__file__).resolve().parents[4]
 PEER = pathlib.Path(__file__).with_name("live_tcp_lxmf_peer.py")
-DEFAULT_VENV = ROOT / "applications" / "target" / "interop" / "lxmf-1.1.0"
+DEFAULT_VENV = APPLICATIONS_ROOT / "target" / "interop" / "lxmf-1.1.0"
 PHYSICAL_SEQUENCE = (
     "In the app, announce the local lxmf.delivery destination; wait for a line "
     f"beginning with {RUST_OBSERVED_MARKER}; then send the Rust test message."
@@ -95,7 +95,7 @@ def pinned_python() -> pathlib.Path:
     executable = venv / "bin" / "python"
     if not executable.is_file():
         raise RuntimeError(
-            f"pinned LXMF Python is missing at {executable}; run ./tools/prns build lxmf verify first"
+            f"pinned LXMF Python is missing at {executable}; run npm run lxmf:verify first"
         )
     return executable
 
@@ -137,7 +137,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             process = subprocess.Popen(
                 [str(pinned_python()), str(PEER)],
-                cwd=ROOT,
+                cwd=APPLICATIONS_ROOT,
                 env=environment,
             )
             return process.wait()

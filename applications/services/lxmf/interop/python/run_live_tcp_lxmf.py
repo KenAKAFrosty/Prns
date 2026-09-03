@@ -19,9 +19,9 @@ from tcp_fixture import (
 )
 
 
-ROOT = Path(__file__).resolve().parents[5]
+APPLICATIONS_ROOT = Path(__file__).resolve().parents[4]
 PEER = Path(__file__).with_name("live_tcp_lxmf_peer.py")
-MANIFEST = ROOT / "applications/services/lxmf/Cargo.toml"
+MANIFEST = APPLICATIONS_ROOT / "services/lxmf/Cargo.toml"
 READY = "PINNED_PYTHON_LXMF_UP"
 PYTHON_SUCCESS = "PINNED_PYTHON_LXMF_OK inbound=verified outbound=proof links=two"
 RUST_SUCCESS = "PRNS_LXMF_LIVE_OK inbound=verified outbound=proof links=two"
@@ -92,7 +92,7 @@ def main() -> int:
             with python_log.open("wb") as output:
                 python_process = subprocess.Popen(
                     [sys.executable, str(PEER)],
-                    cwd=ROOT,
+                    cwd=APPLICATIONS_ROOT,
                     env=environment,
                     stdout=output,
                     stderr=subprocess.STDOUT,
@@ -120,7 +120,7 @@ def main() -> int:
                         "--example",
                         "live_tcp_peer",
                     ],
-                    cwd=ROOT,
+                    cwd=APPLICATIONS_ROOT,
                     env=rust_environment,
                     stdout=output,
                     stderr=subprocess.STDOUT,

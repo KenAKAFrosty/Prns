@@ -921,6 +921,7 @@ inputs = [
   "tools/prns",
   "tools/tasks.toml",
   "tools/build/verify-lxmf-application.sh",
+  "applications/ci/verify_lxmf.sh",
   "applications/Cargo.toml",
   "applications/Cargo.lock",
   "applications/services/lxmf-wire/Cargo.toml",
