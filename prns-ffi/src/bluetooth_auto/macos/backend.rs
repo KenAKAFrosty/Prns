@@ -22,7 +22,8 @@ use prns_core::interfaces::bluetooth_auto::{
 use prns_core::interfaces::bluetooth_auto::{BleAddress, BleIdentity, Control, Psm};
 
 use super::central::{
-    is_system_connected, CentralDelegate, CentralPeerSession, DialCommand, DialCompletion,
+    discover_prns_services, is_system_connected, CentralDelegate, CentralPeerSession, DialCommand,
+    DialCompletion,
 };
 use super::gatt_link::{gatt_inbound_channel, ControlPlane, GattLink};
 use super::peripheral::PeripheralDelegate;
@@ -32,8 +33,8 @@ use super::{
     CoreBluetoothRestorationIdentifiers,
 };
 use super::{
-    start_scan, Event, MacosBleError, PeripheralTable, RestoredPeripherals, SendCentralDelegate,
-    SendCentralManager, SendPeripheral, SendPeripheralDelegate,
+    start_scan, CoreBluetoothPeerId, Event, MacosBleError, PeripheralTable, RestoredPeripherals,
+    SendCentralDelegate, SendCentralManager, SendPeripheral, SendPeripheralDelegate,
 };
 
 const POWER_ON_TIMEOUT: Duration = Duration::from_secs(10);
@@ -114,6 +115,9 @@ impl StartupReadiness {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum DialAdmission {
     AttachCentralSession,
+    /// CoreBluetooth restored this central-role connection for the application. Reattach the
+    /// delegate and session, then resume discovery without issuing another connection request.
+    ResumeRestoredSession,
     YieldToSystemConnection,
     /// The target peer already owns an inbound peripheral session. Dialing that same peer as a
     /// central would create the dual-role link that handshake policy is trying to eliminate.
@@ -123,11 +127,16 @@ pub(super) enum DialAdmission {
 pub(super) const fn dial_admission(
     already_system_connected: bool,
     target_has_inbound_session: bool,
+    restored_connection: bool,
 ) -> DialAdmission {
-    if already_system_connected {
-        DialAdmission::YieldToSystemConnection
-    } else if target_has_inbound_session {
+    if target_has_inbound_session {
         DialAdmission::YieldToInboundSession
+    } else if already_system_connected {
+        if restored_connection {
+            DialAdmission::ResumeRestoredSession
+        } else {
+            DialAdmission::YieldToSystemConnection
+        }
     } else {
         DialAdmission::AttachCentralSession
     }
@@ -165,7 +174,7 @@ fn apply_scanning(central: SendCentralManager, enabled: bool, restart: bool) {
     }
 }
 
-fn begin_dial(command: DialCommand, target_has_inbound_session: bool) {
+fn begin_dial(command: DialCommand, target_has_inbound_session: bool, restored_connection: bool) {
     let DialCommand {
         central,
         delegate,
@@ -173,13 +182,15 @@ fn begin_dial(command: DialCommand, target_has_inbound_session: bool) {
         peer_id,
         session,
     } = command;
-    match dial_admission(
+    let admission = dial_admission(
         is_system_connected(&central, peer_id),
         target_has_inbound_session,
-    ) {
+        restored_connection,
+    );
+    let resume_restored = match admission {
         DialAdmission::YieldToSystemConnection => {
             crate::diagnostic_log::debug!(
-                "bluetooth: yielding dial to {:02x?} — peer is already connected system-wide; inbound session retains connection ownership",
+                "bluetooth: yielding dial to {:02x?} — peer is already connected system-wide outside this manager's restored state",
                 peer_id.address().octets()
             );
             session.reject();
@@ -193,8 +204,9 @@ fn begin_dial(command: DialCommand, target_has_inbound_session: bool) {
             session.reject();
             return;
         }
-        DialAdmission::AttachCentralSession => {}
-    }
+        DialAdmission::AttachCentralSession => false,
+        DialAdmission::ResumeRestoredSession => true,
+    };
     // SAFETY: both retained Objective-C objects stay alive for the delegate assignment, which runs
     // on the CoreBluetooth serial dispatch queue.
     unsafe {
@@ -203,9 +215,17 @@ fn begin_dial(command: DialCommand, target_has_inbound_session: bool) {
     if !delegate.begin_session(peer_id, session) {
         return;
     }
-    // SAFETY: the retained manager and peripheral are owned by this queue-confined command, and
-    // CoreBluetooth connection calls are serialized on their dispatch queue.
-    unsafe { central.connectPeripheral_options(&peripheral, None) };
+    if resume_restored {
+        crate::diagnostic_log::debug!(
+            "bluetooth: resumed restored connection to {:02x?}, discovering Prns service",
+            peer_id.address().octets()
+        );
+        discover_prns_services(&peripheral);
+    } else {
+        // SAFETY: the retained manager and peripheral are owned by this queue-confined command,
+        // and CoreBluetooth connection calls are serialized on their dispatch queue.
+        unsafe { central.connectPeripheral_options(&peripheral, None) };
+    }
 }
 
 struct Handles {
@@ -235,6 +255,9 @@ pub struct MacosBleBackend {
     peripheral_delegate: SendPeripheralDelegate,
     peripherals: PeripheralTable,
     restored: RestoredPeripherals,
+    /// Restored peers whose synthesized sighting has been handed to the Host. The first dial
+    /// consumes the marker so later system-owned connections keep the ordinary admission policy.
+    restored_connections: HashSet<CoreBluetoothPeerId>,
     dials: JoinSet<DialTaskOutcome>,
     queue: DispatchRetained<DispatchQueue>,
     scan_enabled: bool,
@@ -518,6 +541,7 @@ impl PreparedMacosBleBackend {
             peripheral_delegate,
             peripherals: self.peripherals,
             restored: self.restored,
+            restored_connections: HashSet::new(),
             dials: JoinSet::new(),
             queue,
             scan_enabled: false,
@@ -560,6 +584,7 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
                 .ok()
                 .and_then(|mut queue| queue.pop_front())
             {
+                self.restored_connections.insert(peer_id);
                 return BleEvent::Sighting {
                     address: peer_id.address(),
                     rssi: None,
@@ -654,11 +679,12 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
             peer_id,
             session: CentralPeerSession::new(address, control_tx, completion_tx, data_inbound_tx),
         };
+        let restored_connection = self.restored_connections.remove(&peer_id);
         crate::diagnostic_log::debug!("bluetooth: dialing {token:02x?} over LE (central role)");
         let peripheral_for_admission = SendPeripheralDelegate(self.peripheral_delegate.0.clone());
         self.queue.exec_async(move || {
             let target_has_inbound_session = peripheral_for_admission.has_inbound_session(peer_id);
-            begin_dial(command, target_has_inbound_session);
+            begin_dial(command, target_has_inbound_session, restored_connection);
         });
         let send_peripheral = SendPeripheral(peripheral);
         let send_peripheral_manager = SendPeripheralDelegate(self.peripheral_delegate.0.clone());
