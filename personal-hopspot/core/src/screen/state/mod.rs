@@ -679,7 +679,7 @@ impl UiState {
         match item {
             GlobalMenuItem::Announce => "Announce",
             #[cfg(feature = "remote-control-pairing")]
-            GlobalMenuItem::PairRemoteControl => "Pair Remote Control",
+            GlobalMenuItem::PairRemoteControl => "Pair remote",
             GlobalMenuItem::Limits => "Limits",
             GlobalMenuItem::Gnss if self.gnss_visible => "GPS Off",
             GlobalMenuItem::Gnss => "GPS On",
