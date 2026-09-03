@@ -2802,11 +2802,90 @@ const fn classify_pairing_request_failure(
 ) -> RemoteControlPairingFailureStage {
     match cause {
         personal_rns::engine::RemoteControlControllerPairingRequestFailureCause::Request(
-            personal_rns::engine::SendRequestFailure::Timeout,
-        ) => RemoteControlPairingFailureStage::Timeout,
-        personal_rns::engine::RemoteControlControllerPairingRequestFailureCause::Request(_)
-        | personal_rns::engine::RemoteControlControllerPairingRequestFailureCause::ResourceResponseUnsupported => {
+            failure,
+        ) => match crate::remote_control::classify_send_request_failure(failure) {
+            crate::remote_control::SendRequestFailureClass::Timeout => {
+                RemoteControlPairingFailureStage::Timeout
+            }
+            crate::remote_control::SendRequestFailureClass::Link => {
+                RemoteControlPairingFailureStage::Link
+            }
+            crate::remote_control::SendRequestFailureClass::Request => {
+                RemoteControlPairingFailureStage::Request
+            }
+        },
+        personal_rns::engine::RemoteControlControllerPairingRequestFailureCause::ResourceResponseUnsupported => {
             RemoteControlPairingFailureStage::Request
+        }
+    }
+}
+
+fn classify_pairing_approval_failure(
+    failure: &personal_rns::runtime::ApproveRemoteControlControllerPairingControlFailure,
+) -> RemoteControlPairingFailureStage {
+    use personal_rns::engine::ApproveRemoteControlControllerPairingFailure;
+    use personal_rns::remote_control::FailRemoteControlControllerPairingRequestOutcome;
+    use personal_rns::runtime::ApproveRemoteControlControllerPairingControlFailure;
+
+    match failure {
+        ApproveRemoteControlControllerPairingControlFailure::Approve(
+            ApproveRemoteControlControllerPairingFailure::Expired { .. },
+        ) => RemoteControlPairingFailureStage::Expired,
+        ApproveRemoteControlControllerPairingControlFailure::Approve(
+            ApproveRemoteControlControllerPairingFailure::PersistenceInProgress { .. },
+        ) => RemoteControlPairingFailureStage::Persistence,
+        ApproveRemoteControlControllerPairingControlFailure::Approve(
+            ApproveRemoteControlControllerPairingFailure::NoActiveAttempt
+            | ApproveRemoteControlControllerPairingFailure::OfferNotReceived
+            | ApproveRemoteControlControllerPairingFailure::AttemptMismatch { .. },
+        ) => RemoteControlPairingFailureStage::Confirmation,
+        ApproveRemoteControlControllerPairingControlFailure::Approve(
+            ApproveRemoteControlControllerPairingFailure::RequestBuild { .. },
+        ) => RemoteControlPairingFailureStage::Request,
+        ApproveRemoteControlControllerPairingControlFailure::Request(request)
+            if matches!(
+                request.exchange,
+                FailRemoteControlControllerPairingRequestOutcome::PersistenceInProgress { .. }
+            ) =>
+        {
+            RemoteControlPairingFailureStage::Persistence
+        }
+        ApproveRemoteControlControllerPairingControlFailure::Request(request) => {
+            classify_pairing_request_failure(request.cause)
+        }
+    }
+}
+
+const fn pairing_approval_failure_detail(stage: RemoteControlPairingFailureStage) -> &'static str {
+    match stage {
+        RemoteControlPairingFailureStage::Expired => {
+            "The pairing attempt expired before approval completed."
+        }
+        RemoteControlPairingFailureStage::Timeout => {
+            "The node did not finish pairing before the approval timed out."
+        }
+        RemoteControlPairingFailureStage::Route => {
+            "No connection path to the node was available during approval."
+        }
+        RemoteControlPairingFailureStage::Link => {
+            "The connection to the node closed before pairing finished."
+        }
+        RemoteControlPairingFailureStage::Persistence => {
+            "Pairing could not advance while authorization was being saved."
+        }
+        RemoteControlPairingFailureStage::Request => {
+            "The node could not complete the pairing approval request."
+        }
+        RemoteControlPairingFailureStage::Confirmation => {
+            "The active pairing confirmation is no longer available."
+        }
+        RemoteControlPairingFailureStage::Node => {
+            "This device went offline while pairing was being approved."
+        }
+        RemoteControlPairingFailureStage::Input
+        | RemoteControlPairingFailureStage::Candidate
+        | RemoteControlPairingFailureStage::Identification => {
+            "Pairing approval could not be completed."
         }
     }
 }
@@ -2855,12 +2934,15 @@ async fn approve_pairing(
             RemoteControlPairingFailureStage::Node,
             "The Prns node stopped while approving the pairing attempt.",
         ),
-        Err(RemoteControlPairingControlError::Failed(_)) => pairing_failed_visible(
-            controls,
-            snapshots,
-            RemoteControlPairingFailureStage::Confirmation,
-            "The upstream RemoteControl approval failed.",
-        ),
+        Err(RemoteControlPairingControlError::Failed(failure)) => {
+            let stage = classify_pairing_approval_failure(&failure);
+            pairing_failed_visible(
+                controls,
+                snapshots,
+                stage,
+                pairing_approval_failure_detail(stage),
+            )
+        }
     }
 }
 
@@ -3523,6 +3605,180 @@ mod tests {
             ),
             RemoteControlPairingFailureStage::Request
         );
+    }
+
+    #[test]
+    fn approval_failures_preserve_actionable_failure_stages() {
+        use personal_rns::engine::{
+            ApproveRemoteControlControllerPairingFailure,
+            RemoteControlControllerPairingRequestBuildError,
+            RemoteControlControllerPairingRequestFailure,
+            RemoteControlControllerPairingRequestFailureCause, SendRequestFailure,
+        };
+        use personal_rns::remote_control::{
+            FailRemoteControlControllerPairingRequestOutcome, RemoteControlControllerPairingAborted,
+        };
+        use personal_rns::runtime::ApproveRemoteControlControllerPairingControlFailure;
+
+        let (attempt_id, context) = pairing_attempt_fixture(0xA4);
+        let aborted = RemoteControlControllerPairingAborted::AwaitingCompletion {
+            attempt_id,
+            context,
+        };
+        let cases = [
+            (
+                ApproveRemoteControlControllerPairingControlFailure::Request(
+                    RemoteControlControllerPairingRequestFailure {
+                        cause: RemoteControlControllerPairingRequestFailureCause::Request(
+                            SendRequestFailure::Timeout,
+                        ),
+                        exchange: FailRemoteControlControllerPairingRequestOutcome::Aborted {
+                            aborted,
+                        },
+                    },
+                ),
+                RemoteControlPairingFailureStage::Timeout,
+                "The node did not finish pairing before the approval timed out.",
+            ),
+            (
+                ApproveRemoteControlControllerPairingControlFailure::Request(
+                    RemoteControlControllerPairingRequestFailure {
+                        cause: RemoteControlControllerPairingRequestFailureCause::Request(
+                            SendRequestFailure::LinkClosed,
+                        ),
+                        exchange: FailRemoteControlControllerPairingRequestOutcome::Aborted {
+                            aborted,
+                        },
+                    },
+                ),
+                RemoteControlPairingFailureStage::Link,
+                "The connection to the node closed before pairing finished.",
+            ),
+            (
+                ApproveRemoteControlControllerPairingControlFailure::Request(
+                    RemoteControlControllerPairingRequestFailure {
+                        cause: RemoteControlControllerPairingRequestFailureCause::ResourceResponseUnsupported,
+                        exchange: FailRemoteControlControllerPairingRequestOutcome::NoActiveAttempt,
+                    },
+                ),
+                RemoteControlPairingFailureStage::Request,
+                "The node could not complete the pairing approval request.",
+            ),
+            (
+                ApproveRemoteControlControllerPairingControlFailure::Approve(
+                    ApproveRemoteControlControllerPairingFailure::Expired {
+                        expired: aborted,
+                        retired_link: context.link_id(),
+                    },
+                ),
+                RemoteControlPairingFailureStage::Expired,
+                "The pairing attempt expired before approval completed.",
+            ),
+            (
+                ApproveRemoteControlControllerPairingControlFailure::Approve(
+                    ApproveRemoteControlControllerPairingFailure::PersistenceInProgress {
+                        attempt_id,
+                    },
+                ),
+                RemoteControlPairingFailureStage::Persistence,
+                "Pairing could not advance while authorization was being saved.",
+            ),
+            (
+                ApproveRemoteControlControllerPairingControlFailure::Request(
+                    RemoteControlControllerPairingRequestFailure {
+                        cause: RemoteControlControllerPairingRequestFailureCause::Request(
+                            SendRequestFailure::WriteFailed,
+                        ),
+                        exchange:
+                            FailRemoteControlControllerPairingRequestOutcome::PersistenceInProgress {
+                                attempt_id,
+                            },
+                    },
+                ),
+                RemoteControlPairingFailureStage::Persistence,
+                "Pairing could not advance while authorization was being saved.",
+            ),
+            (
+                ApproveRemoteControlControllerPairingControlFailure::Approve(
+                    ApproveRemoteControlControllerPairingFailure::NoActiveAttempt,
+                ),
+                RemoteControlPairingFailureStage::Confirmation,
+                "The active pairing confirmation is no longer available.",
+            ),
+            (
+                ApproveRemoteControlControllerPairingControlFailure::Approve(
+                    ApproveRemoteControlControllerPairingFailure::RequestBuild {
+                        failure: RemoteControlControllerPairingRequestBuildError::Capacity {
+                            required: 2,
+                            maximum: 1,
+                        },
+                        rollback: FailRemoteControlControllerPairingRequestOutcome::NoActiveAttempt,
+                    },
+                ),
+                RemoteControlPairingFailureStage::Request,
+                "The node could not complete the pairing approval request.",
+            ),
+        ];
+
+        for (failure, expected_stage, expected_detail) in cases {
+            let stage = classify_pairing_approval_failure(&failure);
+            assert_eq!(stage, expected_stage);
+            assert_eq!(pairing_approval_failure_detail(stage), expected_detail);
+            assert!(!expected_detail.contains("RemoteControl"));
+            assert!(!expected_detail.contains("upstream"));
+        }
+    }
+
+    fn pairing_attempt_fixture(
+        fill: u8,
+    ) -> (
+        personal_rns::remote_control::RemoteControlPairingAttemptId,
+        personal_rns::remote_control::RemoteControlPairingContext,
+    ) {
+        use personal_rns::identity::in_memory::InMemoryNodeIdentity;
+        use personal_rns::identity::vault::IdentitySecretKey;
+        use personal_rns::identity::{IdentityHash, IdentityPublicKeys, IdentitySigner};
+        use personal_rns::remote_control::{
+            RemoteControlControllerIdentity, RemoteControlPairingAttemptId,
+            RemoteControlPairingAttemptTimeout, RemoteControlPairingBegin,
+            RemoteControlPairingContext, RemoteControlPairingIdentity,
+            RemoteControlPairingInvitationCode, RemoteControlPairingPermissions,
+            RemoteControlPairingPreparedOffer, RemoteControlRequestSet,
+        };
+        use personal_rns::routing::links::LinkId;
+        use personal_rns::units::DurationMillis;
+
+        let controller_signer = InMemoryNodeIdentity::from_secret_key_bytes(
+            &IdentitySecretKey::new([fill; personal_rns::identity::IDENTITY_SECRET_KEY_LEN]),
+        );
+        let controller = RemoteControlControllerIdentity::new(IdentityPublicKeys {
+            encryption: controller_signer.encryption_public_key(),
+            signing: controller_signer.signing_public_key(),
+        });
+        let target_signer = InMemoryNodeIdentity::from_secret_key_bytes(&IdentitySecretKey::new(
+            [fill.wrapping_add(1); personal_rns::identity::IDENTITY_SECRET_KEY_LEN],
+        ));
+        let endpoint = RemoteControlPairingIdentity::new(IdentityHash::new([fill; 16])).endpoint();
+        let context =
+            RemoteControlPairingContext::new(endpoint, LinkId::new([fill.wrapping_add(2); 16]));
+        let begin = RemoteControlPairingBegin::new(
+            controller,
+            endpoint,
+            RemoteControlPairingInvitationCode::from_value(u32::from(fill)),
+        );
+        let prepared = RemoteControlPairingPreparedOffer::new(
+            &target_signer,
+            context,
+            &begin,
+            RemoteControlPairingPermissions::try_from(RemoteControlRequestSet::all())
+                .expect("nonempty permissions"),
+            RemoteControlPairingAttemptTimeout::try_from(DurationMillis(5_000))
+                .expect("valid attempt timeout"),
+        );
+        (
+            RemoteControlPairingAttemptId::from(prepared.transcript()),
+            context,
+        )
     }
 
     #[test]

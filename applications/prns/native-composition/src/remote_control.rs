@@ -1,5 +1,6 @@
 use personal_rns::engine::{
-    EstablishLinkFailure, EstablishLinkRejection, SendRequestFailure, WriteEstablishLinkRejection,
+    EstablishLinkFailure, EstablishLinkRejection, SendRequestFailure, SendRequestRejection,
+    WriteEstablishLinkRejection,
 };
 use personal_rns::identity::IdentityHash;
 use personal_rns::prelude::{
@@ -167,6 +168,33 @@ pub(crate) fn classify_establish_link_failure(
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SendRequestFailureClass {
+    Timeout,
+    Link,
+    Request,
+}
+
+pub(crate) const fn classify_send_request_failure(
+    failure: SendRequestFailure,
+) -> SendRequestFailureClass {
+    match failure {
+        SendRequestFailure::Timeout => SendRequestFailureClass::Timeout,
+        SendRequestFailure::Rejected(
+            SendRequestRejection::NoSuchLink | SendRequestRejection::LinkNotActive,
+        )
+        | SendRequestFailure::LinkClosed
+        | SendRequestFailure::ResponseTransferFailed(
+            prns_core::routing::links::resources::ResourceFailureCause::LinkVanished,
+        ) => SendRequestFailureClass::Link,
+        SendRequestFailure::WriteFailed
+        | SendRequestFailure::Culled
+        | SendRequestFailure::ResponseTooLarge
+        | SendRequestFailure::ResponseTransferFailed(_)
+        | SendRequestFailure::ResourceCapacity => SendRequestFailureClass::Request,
+    }
+}
+
 fn failed_operation(error: RemoteControlTargetOperationError) -> RemoteControlDescribeOutcome {
     match error {
         RemoteControlTargetOperationError::NotPermitted(_) => failed(
@@ -174,11 +202,21 @@ fn failed_operation(error: RemoteControlTargetOperationError) -> RemoteControlDe
             "The persisted target grant does not permit Describe.",
         ),
         RemoteControlTargetOperationError::Exchange(RemoteControlError::Request(
-            SendError::Failed(SendRequestFailure::Timeout),
-        )) => failed(
-            RemoteControlDescribeFailureStage::Timeout,
-            "The upstream Link-default request timeout elapsed.",
-        ),
+            SendError::Failed(failure),
+        )) => match classify_send_request_failure(failure) {
+            SendRequestFailureClass::Timeout => failed(
+                RemoteControlDescribeFailureStage::Timeout,
+                "The node did not respond before the request timed out.",
+            ),
+            SendRequestFailureClass::Link => failed(
+                RemoteControlDescribeFailureStage::Link,
+                "The connection to the node closed before the request completed.",
+            ),
+            SendRequestFailureClass::Request => failed(
+                RemoteControlDescribeFailureStage::Request,
+                "The node could not complete the Describe request.",
+            ),
+        },
         RemoteControlTargetOperationError::Exchange(RemoteControlError::Request(
             SendError::NodeStopped,
         )) => failed(
@@ -291,6 +329,38 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn request_failures_distinguish_timeout_link_and_request_failures() {
+        assert_eq!(
+            classify_send_request_failure(SendRequestFailure::Timeout),
+            SendRequestFailureClass::Timeout
+        );
+        for failure in [
+            SendRequestFailure::Rejected(SendRequestRejection::NoSuchLink),
+            SendRequestFailure::Rejected(SendRequestRejection::LinkNotActive),
+            SendRequestFailure::LinkClosed,
+            SendRequestFailure::ResponseTransferFailed(
+                prns_core::routing::links::resources::ResourceFailureCause::LinkVanished,
+            ),
+        ] {
+            assert_eq!(
+                classify_send_request_failure(failure),
+                SendRequestFailureClass::Link
+            );
+        }
+        for failure in [
+            SendRequestFailure::WriteFailed,
+            SendRequestFailure::Culled,
+            SendRequestFailure::ResponseTooLarge,
+            SendRequestFailure::ResourceCapacity,
+        ] {
+            assert_eq!(
+                classify_send_request_failure(failure),
+                SendRequestFailureClass::Request
+            );
+        }
     }
 
     #[cfg(feature = "host-test")]
