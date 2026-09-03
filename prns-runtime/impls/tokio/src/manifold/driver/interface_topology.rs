@@ -9,7 +9,7 @@ use crate::storage::StorageLayout;
 
 use super::egress::{Egress, InterfacePacer};
 use super::host_protocol::AddInterfaceCommand;
-use super::TokioGrantConsumer;
+use super::{HeapFrameSlot, TokioGrantConsumer};
 
 pub(super) struct InterfaceTopology {
     pub(super) interfaces: IndexedAttachedInterfaces,
@@ -137,5 +137,11 @@ impl InterfaceTopology {
             .iter()
             .find(|recorder| recorder.id() == source)
             .cloned()
+    }
+
+    pub(super) fn return_inbound_slot(&mut self, source: InterfaceId, slot: HeapFrameSlot) {
+        if let Some((_, lane)) = self.inbound_lanes.iter_mut().find(|(id, _)| *id == source) {
+            lane.return_slot(slot);
+        }
     }
 }

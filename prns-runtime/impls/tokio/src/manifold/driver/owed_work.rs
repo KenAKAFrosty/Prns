@@ -2,6 +2,9 @@ use std::collections::VecDeque;
 
 use crate::engine::{CryptoOwed, OpenedResourceSpan, OwedWork, ResourceOpenOwed};
 use crate::manifold::Host;
+use crate::routing::links::resources::receive::part_hash::{
+    ResourcePartHashOwed, ResourcePartHashPlan,
+};
 use crate::routing::links::resources::send::{
     ResourceBuildPlan, ResourceBuildWorkspace, ResourceSealPlan,
 };
@@ -9,11 +12,12 @@ use crate::routing::links::resources::ResourceMetadata;
 
 use super::crypto_pool::{
     run_crypto_job_inline, CryptoJob, CryptoPool, CryptoResult, OpenSpanJob, OpenedSpanResult,
-    ResourceBuildJob, ResourceDecompressionJob,
+    ResourceBuildJob, ResourceDecompressionJob, ResourcePartHashBuffer, ResourcePartHashJob,
 };
 use super::host_protocol::{
     HostResourceDigestPreparation, HostResourceMetadata, HostResourcePayload,
 };
+use super::HeapFrameSlot;
 
 struct PendingResourceBuild {
     plan: ResourceBuildPlan,
@@ -40,6 +44,7 @@ enum PendingJob {
 enum PendingLane {
     Interactive,
     Bulk,
+    ResourcePartHash,
 }
 
 /// Runtime-owned work waiting for the current engine call to release its borrows.
@@ -52,6 +57,7 @@ pub(super) struct PendingOwedWork {
     completed: VecDeque<CryptoResult>,
     interactive: VecDeque<PendingJob>,
     bulk: VecDeque<PendingJob>,
+    resource_part_hash: VecDeque<PendingJob>,
 }
 
 impl PendingOwedWork {
@@ -60,11 +66,12 @@ impl PendingOwedWork {
             completed: VecDeque::new(),
             interactive: VecDeque::new(),
             bulk: VecDeque::new(),
+            resource_part_hash: VecDeque::new(),
         }
     }
 
     pub(super) fn pool_jobs_len(&self) -> usize {
-        self.interactive.len() + self.bulk.len()
+        self.interactive.len() + self.bulk.len() + self.resource_part_hash.len()
     }
 
     pub(super) fn push(&mut self, work: OwedWork<'_>, pool: Option<&CryptoPool>) {
@@ -103,6 +110,7 @@ impl PendingOwedWork {
                         plaintext,
                     }));
             }
+            OwedWork::ResourcePartHash(owed) => self.push_resource_part_hash(owed),
             OwedWork::ResourceOpen(owed) => self.push_resource_open(owed, pool),
             OwedWork::WholeResourceOpen(owed) => {
                 self.completed
@@ -164,6 +172,43 @@ impl PendingOwedWork {
         self.push_ready(CryptoJob::from_owed(owed));
     }
 
+    fn push_resource_part_hash(&mut self, owed: ResourcePartHashOwed<'_>) {
+        let (plan, part) = owed.into_parts();
+        self.push_resource_part_hash_job(plan, ResourcePartHashBuffer::Copied(part.to_vec()));
+    }
+
+    pub(super) fn push_resource_part_hash_grant_slot(
+        &mut self,
+        plan: ResourcePartHashPlan,
+        source: crate::interfaces::InterfaceId,
+        frame: HeapFrameSlot,
+        part: std::ops::Range<usize>,
+    ) {
+        self.push_resource_part_hash_job(
+            plan,
+            ResourcePartHashBuffer::GrantSlot {
+                source,
+                frame,
+                part,
+            },
+        );
+    }
+
+    pub(super) fn push_resource_part_hash_copy(&mut self, plan: ResourcePartHashPlan, part: &[u8]) {
+        self.push_resource_part_hash_job(plan, ResourcePartHashBuffer::Copied(part.to_vec()));
+    }
+
+    fn push_resource_part_hash_job(
+        &mut self,
+        plan: ResourcePartHashPlan,
+        buffer: ResourcePartHashBuffer,
+    ) {
+        self.resource_part_hash
+            .push_back(PendingJob::Ready(CryptoJob::HashResourcePart(Box::new(
+                ResourcePartHashJob { plan, buffer },
+            ))));
+    }
+
     pub(super) fn push_resource_build(
         &mut self,
         plan: ResourceBuildPlan,
@@ -205,7 +250,15 @@ impl PendingOwedWork {
                 .interactive
                 .pop_front()
                 .map(|job| (PendingLane::Interactive, job))
-                .or_else(|| self.bulk.pop_front().map(|job| (PendingLane::Bulk, job)));
+                .or_else(|| self.bulk.pop_front().map(|job| (PendingLane::Bulk, job)))
+                .or_else(|| {
+                    if pool.is_some_and(|pool| !pool.has_resource_part_hash_capacity()) {
+                        return None;
+                    }
+                    self.resource_part_hash
+                        .pop_front()
+                        .map(|job| (PendingLane::ResourcePartHash, job))
+                });
             let Some((lane, pending)) = next else {
                 break;
             };
@@ -274,6 +327,7 @@ impl PendingOwedWork {
         match lane {
             PendingLane::Interactive => self.interactive.push_back(job),
             PendingLane::Bulk => self.bulk.push_back(job),
+            PendingLane::ResourcePartHash => self.resource_part_hash.push_back(job),
         }
     }
 
@@ -281,6 +335,7 @@ impl PendingOwedWork {
         match lane {
             PendingLane::Interactive => self.interactive.push_front(job),
             PendingLane::Bulk => self.bulk.push_front(job),
+            PendingLane::ResourcePartHash => self.resource_part_hash.push_front(job),
         }
     }
 }

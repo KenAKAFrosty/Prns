@@ -13,6 +13,7 @@ use crate::manifold::Host;
 use crate::remote_control::RemoteControlPairingAvailabilityVerification;
 use crate::routing::links::handshake::{link_proof_signature_valid, link_proof_signed_data};
 use crate::routing::links::resources::build_outgoing::BuildOutgoingResourceError;
+use crate::routing::links::resources::receive::part_hash::ResourcePartHashResult;
 use crate::routing::links::resources::send::{
     ResourceBuildCompleted, ResourceSealCompleted, ResourceSealOutcome, ResourceSealReservation,
     UnavailableResourceSeal,
@@ -22,7 +23,7 @@ use crate::routing::links::resources::ResourceHash;
 use crate::routing::links::LinkId;
 use crate::storage::StorageLayout;
 use crate::wire::BROADCAST_MTU;
-use heapless::Deque;
+use heapless::{Deque, Vec};
 
 use super::egress::{route_reaction, route_reaction_with_work, InterfacePacer, ManifoldEgress};
 use super::interface_status::EmbassyInterfaceStatus;
@@ -39,6 +40,10 @@ pub(super) enum InlineReadyWork {
     },
     ResourceSealUnsupported {
         reservation: ResourceSealReservation,
+    },
+    ResourcePartHash {
+        result: ResourcePartHashResult,
+        part: Vec<u8, BROADCAST_MTU>,
     },
     ResourceOpen(ResourceOpenCompleted<'static>),
     WholeResourceOpenUnsupported {
@@ -75,6 +80,15 @@ pub(super) fn route_and_capture_owed_work(
             OwedWork::ResourceSeal(owed) => InlineReadyWork::ResourceSealUnsupported {
                 reservation: owed.plan().reservation(),
             },
+            OwedWork::ResourcePartHash(owed) => {
+                let (plan, source) = owed.into_parts();
+                let part = Vec::from_slice(source)
+                    .expect("resource part exceeded the Embassy ingress capacity");
+                InlineReadyWork::ResourcePartHash {
+                    result: plan.calculate(&part),
+                    part,
+                }
+            }
             OwedWork::ResourceOpen(owed) => InlineReadyWork::ResourceOpen(owed.fulfill_inline()),
             OwedWork::WholeResourceOpen(owed) => InlineReadyWork::WholeResourceOpenUnsupported {
                 reservation: owed.plan().reservation(),
@@ -454,6 +468,24 @@ where
                         );
                     },
                 );
+            }
+            InlineReadyWork::ResourcePartHash { result, part } => {
+                wake.compose(engine.resume_resource_part_hash(
+                    result.completed(&part),
+                    now,
+                    &mut |entropy| host.fill_random(entropy),
+                    &mut |reaction| {
+                        route_and_capture_owed_work(
+                            reaction,
+                            egress,
+                            ifacs,
+                            pacers,
+                            now,
+                            on_journaled,
+                            &mut pending,
+                        );
+                    },
+                ));
             }
             InlineReadyWork::ResourceOpen(completed) => {
                 wake.compose(

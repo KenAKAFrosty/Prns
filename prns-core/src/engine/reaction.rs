@@ -17,6 +17,7 @@ use crate::routing::links::establish::EstablishLinkOwed;
 use crate::routing::links::handshake::{LinkProofSignOwed, LinkProofVerifyOwed};
 use crate::routing::links::identify::{IdentifySignOwed, LinkIdentityVerifyOwed};
 use crate::routing::links::request::RequestId;
+use crate::routing::links::resources::receive::part_hash::ResourcePartHashOwed;
 use crate::routing::links::resources::send::{ResourceBuildOwed, ResourceSealOwed};
 use crate::routing::links::resources::streamed_open::StreamedOpen;
 use crate::routing::links::resources::table::ResourceOpenGeneration;
@@ -76,6 +77,7 @@ pub enum OwedWork<'a> {
     Crypto(CryptoOwed),
     ResourceBuild(ResourceBuildOwed<'a>),
     ResourceSeal(ResourceSealOwed<'a>),
+    ResourcePartHash(ResourcePartHashOwed<'a>),
     ResourceOpen(ResourceOpenOwed<'a>),
     WholeResourceOpen(WholeResourceOpenOwed<'a>),
     ResourceDecompression(ResourceDecompressionOwed<'a>),

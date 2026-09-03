@@ -161,6 +161,9 @@ where
                                 OwedWork::ResourceSeal(owed) => {
                                     owed_work.push(OwedWork::ResourceSeal(owed), crypto_pool);
                                 }
+                                OwedWork::ResourcePartHash(owed) => {
+                                    owed_work.push(OwedWork::ResourcePartHash(owed), crypto_pool);
+                                }
                                 OwedWork::Crypto(owed) => owed_work.push_crypto(owed),
                                 OwedWork::ResourceOpen(owed) => {
                                     owed_work.push_resource_open(owed, crypto_pool);

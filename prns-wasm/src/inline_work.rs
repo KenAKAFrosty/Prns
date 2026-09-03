@@ -21,17 +21,16 @@ use personal_rns::identity::{decrypt_token_in_place_with_ratchets, OpenedToken};
 use personal_rns::interfaces::AttachedInterfaces;
 use personal_rns::remote_control::RemoteControlPairingAvailabilityVerification;
 use personal_rns::routing::links::handshake::{link_proof_signature_valid, link_proof_signed_data};
-use personal_rns::routing::links::resources::build_outgoing::{
-    BuildRegions, SALT_REROLL_CAP,
-};
+use personal_rns::routing::links::resources::build_outgoing::{BuildRegions, SALT_REROLL_CAP};
+use personal_rns::routing::links::resources::receive::part_hash::ResourcePartHashResult;
 use personal_rns::routing::links::resources::send::{
     ResourceBuildCompleted, ResourceBuildPlan, ResourceSealCompleted, ResourceSealOutcome,
     ResourceSealPlan, UnavailableResourceSeal,
 };
+use personal_rns::routing::links::resources::table::ResourceBuildTransfer;
 use personal_rns::routing::links::resources::{
     ResourceBody, ResourceHash, ResourceMetadata, MAP_HASH_LEN, RESOURCE_NONCE_LEN,
 };
-use personal_rns::routing::links::resources::table::ResourceBuildTransfer;
 use personal_rns::routing::links::LinkId;
 use personal_rns::routing::proof::ProofRequest;
 use personal_rns::storage::GrowableHeap;
@@ -51,6 +50,10 @@ enum InlineReadyWork {
     ResourceSeal {
         plan: ResourceSealPlan,
         workspace: Vec<u8>,
+    },
+    ResourcePartHash {
+        result: ResourcePartHashResult,
+        part: Vec<u8>,
     },
     ResourceOpen(ResourceOpenCompleted<'static>),
     WholeResourceOpen {
@@ -76,11 +79,9 @@ impl InlineResourceMetadata {
         match self {
             Self::None => ResourceMetadata::None,
             Self::Packed(packed) => ResourceMetadata::Packed(packed),
-            Self::SentInFirstSegment { packed_len } => {
-                ResourceMetadata::SentInFirstSegment {
-                    packed_len: *packed_len,
-                }
-            }
+            Self::SentInFirstSegment { packed_len } => ResourceMetadata::SentInFirstSegment {
+                packed_len: *packed_len,
+            },
         }
     }
 }
@@ -122,9 +123,14 @@ impl InlineReadyWorkQueue {
             }
             OwedWork::ResourceSeal(owed) => {
                 let (plan, workspace) = owed.into_owned_parts();
-                InlineReadyWork::ResourceSeal {
-                    plan,
-                    workspace,
+                InlineReadyWork::ResourceSeal { plan, workspace }
+            }
+            OwedWork::ResourcePartHash(owed) => {
+                let (plan, source) = owed.into_parts();
+                let part = source.to_vec();
+                InlineReadyWork::ResourcePartHash {
+                    result: plan.calculate(&part),
+                    part,
                 }
             }
             OwedWork::ResourceOpen(owed) => InlineReadyWork::ResourceOpen(owed.fulfill_inline()),
@@ -164,10 +170,9 @@ impl InlineReadyWorkQueue {
                     match crate::browser_work::BrowserWorkOperation::announce(owed) {
                         Ok(operation) => operation,
                         Err(owed) => {
-                            self.work
-                                .push_back(InlineReadyWork::Crypto(CryptoOwed::AnnounceVerify(
-                                    *owed,
-                                )));
+                            self.work.push_back(InlineReadyWork::Crypto(
+                                CryptoOwed::AnnounceVerify(*owed),
+                            ));
                             continue;
                         }
                     }
@@ -471,6 +476,14 @@ pub(crate) fn fulfill_ready_work(
                     now,
                     fill_random,
                     sink,
+                );
+            }
+            InlineReadyWork::ResourcePartHash { result, part } => {
+                engine.resume_resource_part_hash(
+                    result.completed(&part),
+                    now,
+                    fill_random,
+                    &mut |reaction| route_or_capture(reaction, ready, sink),
                 );
             }
             InlineReadyWork::ResourceOpen(completed) => {

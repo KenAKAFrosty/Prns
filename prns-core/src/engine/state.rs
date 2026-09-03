@@ -15,6 +15,7 @@ use crate::routing::delivery::receipts::Receipts;
 use crate::routing::group_keys::GroupKeys;
 use crate::routing::links::resources::assembly::{IncomingAssemblies, OutgoingAssemblies};
 use crate::routing::links::resources::pending::PendingResourceOffers;
+use crate::routing::links::resources::receive::part_hash::ResourcePartHashLane;
 use crate::routing::links::resources::send::ResourceSealWorkspacePolicy;
 use crate::routing::links::resources::streamed_open::ResourceOpenLane;
 use crate::routing::links::resources::table::{IncomingResources, OutgoingResources};
@@ -234,6 +235,7 @@ pub struct EngineState<S: StorageLayout> {
     pub(crate) incoming_resources: IncomingResources<S::IncomingResources>,
     pub(crate) pending_resource_offers: PendingResourceOffers<S::PendingResourceOffers>,
     pub resource_seal_workspace_policy: ResourceSealWorkspacePolicy,
+    pub resource_part_hash_lane: ResourcePartHashLane,
     pub resource_open_lane: ResourceOpenLane,
     pub(crate) incoming_assemblies: IncomingAssemblies<S::IncomingAssemblies>,
     pub(crate) outgoing_assemblies: OutgoingAssemblies<S::OutgoingAssemblies>,
@@ -301,6 +303,7 @@ impl<S: StorageLayout> Default for EngineState<S> {
             incoming_resources: IncomingResources::default(),
             pending_resource_offers: PendingResourceOffers::default(),
             resource_seal_workspace_policy: ResourceSealWorkspacePolicy::default(),
+            resource_part_hash_lane: ResourcePartHashLane::default(),
             resource_open_lane: ResourceOpenLane::default(),
             incoming_assemblies: IncomingAssemblies::default(),
             outgoing_assemblies: OutgoingAssemblies::default(),
@@ -408,6 +411,7 @@ impl<S: StorageLayout> EngineState<S> {
                 resource_seal_workspace_policy,
                 ResourceSealWorkspacePolicy::default()
             );
+            write!(resource_part_hash_lane, ResourcePartHashLane::default());
             write!(resource_open_lane, ResourceOpenLane::default());
             write!(incoming_assemblies, IncomingAssemblies::default());
             write!(outgoing_assemblies, OutgoingAssemblies::default());

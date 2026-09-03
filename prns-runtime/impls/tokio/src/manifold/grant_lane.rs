@@ -266,16 +266,24 @@ impl TokioGrantConsumer {
 
     pub fn release(&mut self) {
         if let Some(slot) = self.peeked.take() {
-            match self.free.push(slot) {
-                Ok(()) => {
-                    if self.producer_parked.load(Ordering::Acquire)
-                        && self.producer_parked.swap(false, Ordering::AcqRel)
-                    {
-                        self.free_ready.notify_one();
-                    }
+            self.return_slot(slot);
+        }
+    }
+
+    pub(crate) fn take_peeked(&mut self) -> Option<HeapFrameSlot> {
+        self.peeked.take()
+    }
+
+    pub(crate) fn return_slot(&mut self, slot: HeapFrameSlot) {
+        match self.free.push(slot) {
+            Ok(()) => {
+                if self.producer_parked.load(Ordering::Acquire)
+                    && self.producer_parked.swap(false, Ordering::AcqRel)
+                {
+                    self.free_ready.notify_one();
                 }
-                Err(PushError::Full(_)) => {}
             }
+            Err(PushError::Full(_)) => {}
         }
     }
 
@@ -305,6 +313,22 @@ mod tests {
             consumer.release();
         }
         assert!(consumer.try_peek().is_none());
+    }
+
+    #[test]
+    fn a_taken_slot_returns_with_its_allocation() {
+        let (mut producer, mut consumer) = tokio_grant_lane(64, 1);
+        producer.try_grant().unwrap().fill(&[7; 48]);
+        let allocation = producer.granted.as_ref().unwrap().bytes.as_ptr();
+        producer.commit();
+
+        assert!(consumer.try_peek().is_some());
+        let slot = consumer.take_peeked().unwrap();
+        assert_eq!(slot.bytes.as_ptr(), allocation);
+        assert!(producer.try_grant().is_none());
+
+        consumer.return_slot(slot);
+        assert_eq!(producer.try_grant().unwrap().bytes.as_ptr(), allocation);
     }
 
     #[test]

@@ -4,6 +4,7 @@ pub mod cancel;
 pub mod conclude;
 pub mod gate;
 pub mod offload;
+pub mod part_hash;
 pub mod rounds;
 #[cfg(test)]
 pub mod tests_support;

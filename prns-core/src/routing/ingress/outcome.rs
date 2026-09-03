@@ -20,6 +20,7 @@ use crate::routing::links::channel::{ChannelSequence, MessageType};
 use crate::routing::links::handshake::{AcceptedLinkRequest, LinkProofVerifyOwed, LinkRttError};
 use crate::routing::links::identify::LinkIdentityVerifyOwed;
 use crate::routing::links::request::RequestId;
+use crate::routing::links::resources::receive::part_hash::ResourcePartHashOwed;
 use crate::routing::links::resources::table::AcceptedResource;
 use crate::routing::links::resources::{
     ResourceCorrelation, ResourceFailureCause, ResourceHash, ResourcePartRequest,
@@ -207,6 +208,7 @@ pub enum IngestPacketOutcome<'p> {
         packet_hash: PacketHash,
     },
     OwesResourceParts(ResourcePartRequest<'p>),
+    OwesResourcePartHash(ResourcePartHashOwed<'p>),
 
     ResourceDelivered {
         id: CommandId,

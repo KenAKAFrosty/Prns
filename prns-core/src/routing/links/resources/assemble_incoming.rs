@@ -67,9 +67,18 @@ pub fn match_part_in_window(
     window: usize,
 ) -> Option<usize> {
     let name = map_hash(part, salt_nonce);
+    match_part_name_in_window(&name, hashmap, scan_from, window)
+}
+
+pub fn match_part_name_in_window(
+    name: &[u8; MAP_HASH_LEN],
+    hashmap: &[u8],
+    scan_from: usize,
+    window: usize,
+) -> Option<usize> {
     let known = hashmap.len() / MAP_HASH_LEN;
     let end = scan_from.saturating_add(window).min(known);
-    (scan_from..end).find(|&i| hashmap[i * MAP_HASH_LEN..(i + 1) * MAP_HASH_LEN] == name)
+    (scan_from..end).find(|&i| hashmap[i * MAP_HASH_LEN..(i + 1) * MAP_HASH_LEN] == *name)
 }
 
 #[cfg(test)]

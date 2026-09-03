@@ -126,6 +126,9 @@ where
         } = completion;
         if let (Some(pool), Some(worker)) = (crypto_pool, worker) {
             pool.record_completed(worker, class, work, &timing);
+            if matches!(&result, CryptoResult::ResourcePartHashed { .. }) {
+                pool.resource_part_hash_completed();
+            }
             if result.settles_packet_verdict() {
                 pool.packet_verdict_settled();
             }
@@ -436,6 +439,30 @@ where
                     )
                 },
             )),
+            CryptoResult::ResourcePartHashed { result, buffer } => {
+                let wake = engine.resume_resource_part_hash(
+                    result.completed(buffer.part()),
+                    now,
+                    &mut |entropy| host.fill_random(entropy),
+                    &mut |reaction| {
+                        route_completion_reaction(
+                            reaction,
+                            &mut topology.egress,
+                            &topology.ifacs,
+                            &mut topology.pacers,
+                            wire_scratch,
+                            journal,
+                            owed_work,
+                            crypto_pool,
+                            now,
+                        )
+                    },
+                );
+                if let Some((source, frame)) = buffer.return_target() {
+                    topology.return_inbound_slot(source, frame);
+                }
+                CryptoCompletionEffect::WakeSchedules(wake)
+            }
             CryptoResult::ResourceDecompressed {
                 link_id,
                 hash,

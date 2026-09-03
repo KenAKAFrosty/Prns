@@ -23,6 +23,9 @@ use crate::routing::links::establish::link_mtu_ceiling;
 use crate::routing::links::handshake::{negotiated_link_mtu, LinkProofSignOwed};
 use crate::routing::links::maintenance::{write_keepalive, KEEPALIVE_ECHO};
 use crate::routing::links::resources::receive::gate::AcceptedResourceAdmission;
+use crate::routing::links::resources::receive::part_hash::{
+    ResourcePartHashCompleted, ResourcePartHashLanding,
+};
 use crate::routing::links::resources::ResourceOffer;
 use crate::routing::proof::ProofRequest;
 use crate::storage::StorageLayout;
@@ -50,6 +53,40 @@ pub struct IngestPacketReport {
 }
 
 impl<S: StorageLayout> EngineState<S> {
+    pub fn resume_resource_part_hash<F, K>(
+        &mut self,
+        completed: ResourcePartHashCompleted<'_>,
+        now: InstantMillis,
+        fill_random: &mut F,
+        sink: &mut K,
+    ) -> WakeSchedules
+    where
+        F: FnMut(&mut [u8]),
+        K: FnMut(EngineReaction<'_, OwedWork<'_>>),
+    {
+        let mut wake = WakeSchedules::UNCHANGED;
+        match self.land_resource_part_hash(completed) {
+            ResourcePartHashLanding::Ignored(_) => {}
+            ResourcePartHashLanding::Pull { link_id, hash } => {
+                self.emit_resource_pull(&link_id, &hash, now, fill_random, sink);
+                self.emit_resource_open(&link_id, &hash, sink);
+                wake.resource_deadlines = self.resource_deadlines_wake();
+                wake.receipt_timeouts = self.receipt_timeouts_wake();
+            }
+            ResourcePartHashLanding::Assembly { link_id, hash } => {
+                self.emit_resource_open(&link_id, &hash, sink);
+                self.conclude_resource(&link_id, &hash, now, sink);
+                wake.resource_deadlines = self.resource_deadlines_wake();
+                wake.receipt_timeouts = self.receipt_timeouts_wake();
+            }
+            ResourcePartHashLanding::DeadlineAdvanced { link_id, hash } => {
+                self.emit_resource_open(&link_id, &hash, sink);
+                wake.resource_deadlines = self.resource_deadlines_wake();
+            }
+        }
+        wake
+    }
+
     pub fn ingest_packet_into<F, P, A, K>(
         &mut self,
         packet: InboundPacket<'_>,
@@ -474,6 +511,11 @@ impl<S: StorageLayout> EngineState<S> {
                 self.serve_resource_request(&request, source, now, fill_random, sink);
                 self.request_resource_seal(&request.link_id, sink);
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
+            }
+            IngestPacketOutcome::OwesResourcePartHash(owed) => {
+                sink(EngineReaction::Directive(Directive::Fulfill(
+                    OwedWork::ResourcePartHash(owed),
+                )));
             }
             IngestPacketOutcome::OwesResourcePull { link_id, hash } => {
                 self.emit_resource_pull(&link_id, &hash, now, fill_random, sink);

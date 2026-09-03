@@ -6,8 +6,14 @@ use crate::routing::ingress::{DataPacket, IgnoreReason, IngestPacketOutcome};
 use crate::routing::links::data::write_link_packet;
 use crate::routing::links::data::{link_data_frame_ceiling, LINK_MDU};
 use crate::routing::links::resources::advertisement::parse_hashmap_update_plaintext;
-use crate::routing::links::resources::assemble_incoming::match_part_in_window;
+use crate::routing::links::resources::assemble_incoming::{
+    match_part_in_window, match_part_name_in_window,
+};
 use crate::routing::links::resources::control::write_part_request_plaintext;
+use crate::routing::links::resources::receive::part_hash::{
+    ResourcePartHashCompleted, ResourcePartHashLanding, ResourcePartHashLane, ResourcePartHashOwed,
+    ResourcePartHashPlan, ResourcePartHashReservation, ResourcePartHashReservations,
+};
 use crate::routing::links::resources::streamed_open::{
     OpenProgress, ResourceOpenLane, StreamedOpen,
 };
@@ -154,7 +160,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         data: DataPacket<'p>,
         arrived_at: InstantMillis,
-    ) -> IngestPacketOutcome<'static> {
+    ) -> IngestPacketOutcome<'p> {
         let link_id = LinkId::from_address(data.header.address);
         if !matches!(
             self.links.phase_for(&link_id),
@@ -163,6 +169,42 @@ impl<S: StorageLayout> EngineState<S> {
             return IngestPacketOutcome::Ignored(IgnoreReason::LinkPhaseMismatch);
         }
         let part: &[u8] = data.payload;
+        if self.resource_part_hash_lane == ResourcePartHashLane::External {
+            let mut reservations = None;
+            for index in 0..self.incoming_resources.len() {
+                if self.incoming_resources.link_at(index) != &link_id {
+                    continue;
+                }
+                let state = *self.incoming_resources.state(index);
+                if state.status != IncomingResourceStatus::Transferring {
+                    continue;
+                }
+                let reservation = ResourcePartHashReservation {
+                    link_id,
+                    hash: *self.incoming_resources.hash_at(index),
+                    salt_nonce: state.salt_nonce,
+                };
+                reservations = match reservations {
+                    None => Some(ResourcePartHashReservations::one(reservation)),
+                    Some(current) => match current.including(reservation) {
+                        Ok(including) => Some(including),
+                        Err(_) => {
+                            reservations = None;
+                            break;
+                        }
+                    },
+                };
+            }
+            if let Some(reservations) = reservations {
+                return IngestPacketOutcome::OwesResourcePartHash(ResourcePartHashOwed {
+                    plan: ResourcePartHashPlan {
+                        reservations,
+                        arrived_at,
+                    },
+                    part,
+                });
+            }
+        }
         let mut placed = None;
         for index in 0..self.incoming_resources.len() {
             if self.incoming_resources.link_at(index) != &link_id {
@@ -189,9 +231,70 @@ impl<S: StorageLayout> EngineState<S> {
         let Some(index) = placed else {
             return IngestPacketOutcome::Ignored(IgnoreReason::Superseded);
         };
+        self.finish_resource_part(index, link_id, part, arrived_at)
+            .into_ingest_outcome()
+    }
+
+    pub(crate) fn land_resource_part_hash(
+        &mut self,
+        completed: ResourcePartHashCompleted<'_>,
+    ) -> ResourcePartHashLanding {
+        let ResourcePartHashCompleted {
+            matches,
+            arrived_at,
+            part,
+        } = completed;
+        let link_id = matches.as_slice()[0].reservation.link_id;
+        if !matches!(
+            self.links.phase_for(&link_id),
+            Some(LinkPhase::Active { .. }),
+        ) {
+            return ResourcePartHashLanding::Ignored(IgnoreReason::LinkPhaseMismatch);
+        }
+        let mut placed = None;
+        for candidate in matches.as_slice() {
+            let reservation = candidate.reservation;
+            let Some(index) = self
+                .incoming_resources
+                .lookup(&reservation.link_id, &reservation.hash)
+            else {
+                continue;
+            };
+            let state = *self.incoming_resources.state(index);
+            if state.status != IncomingResourceStatus::Transferring
+                || state.salt_nonce != reservation.salt_nonce
+            {
+                continue;
+            }
+            let scan_from = state.consecutive_completed.map_or(0, |height| height + 1);
+            let Some(at) = match_part_name_in_window(
+                &candidate.name,
+                self.incoming_resources.names_flat(index),
+                scan_from,
+                state.window,
+            ) else {
+                continue;
+            };
+            if self.incoming_resources.place_part(index, at, part) == PlacePartOutcome::Placed {
+                placed = Some(index);
+            }
+        }
+        let Some(index) = placed else {
+            return ResourcePartHashLanding::Ignored(IgnoreReason::Superseded);
+        };
+        self.finish_resource_part(index, link_id, part, arrived_at)
+    }
+
+    fn finish_resource_part(
+        &mut self,
+        index: usize,
+        link_id: LinkId,
+        part: &[u8],
+        arrived_at: InstantMillis,
+    ) -> ResourcePartHashLanding {
         self.links.note_inbound(&link_id, arrived_at);
         let Some(LinkPhase::Active { rtt, .. }) = self.links.phase_for(&link_id) else {
-            return IngestPacketOutcome::Ignored(IgnoreReason::LinkPhaseMismatch);
+            return ResourcePartHashLanding::Ignored(IgnoreReason::LinkPhaseMismatch);
         };
         let link_rtt_ms = rtt.millis();
 
@@ -212,13 +315,13 @@ impl<S: StorageLayout> EngineState<S> {
         let hash = *self.incoming_resources.hash_at(index);
         let state = *self.incoming_resources.state(index);
         if state.received_part_count == state.part_count {
-            return IngestPacketOutcome::OwesResourceAssembly { link_id, hash };
+            return ResourcePartHashLanding::Assembly { link_id, hash };
         }
         if state.outstanding_part_count == 0 && !state.waiting_for_hmu {
             absorb_completed_round(self.incoming_resources.state_mut(index), arrived_at);
-            return IngestPacketOutcome::OwesResourcePull { link_id, hash };
+            return ResourcePartHashLanding::Pull { link_id, hash };
         }
-        IngestPacketOutcome::ResourceDeadlineAdvanced { link_id, hash }
+        ResourcePartHashLanding::DeadlineAdvanced { link_id, hash }
     }
 
     /// Begin the [`StreamedOpen`] once enough of the prefix has landed. The engine wrapper emits
@@ -476,6 +579,7 @@ mod loop_tests {
     use crate::engine::test_support::filled_frame;
     use crate::engine::CommandId;
     use crate::engine::IngestIo;
+    use crate::engine::OwedWork;
     use crate::engine::Settlement;
     use crate::interfaces::AttachedInterfaces;
     use crate::interfaces::InterfaceId;
@@ -1331,6 +1435,67 @@ mod loop_tests {
             receiver.resource_deadlines_wake(),
             "the recomputed lane delta matches the freshly-set part-round deadline",
         );
+    }
+
+    #[test]
+    fn an_external_part_hash_resumes_with_the_packet_arrival_time() {
+        let mut sender = engine_with_active_link();
+        let mut receiver = engine_with_active_link();
+        accept_everything(&mut receiver);
+        let data = eight_part_payload();
+
+        let advertisement = advertise_from(&mut sender, &data, None);
+        let pull = feed(&mut receiver, &advertisement, 2_000);
+        let serve = feed(&mut sender, &pull.frames[0].1, 2_100);
+        receiver.resource_part_hash_lane = ResourcePartHashLane::External;
+
+        let mut raw = serve.frames[0].1.clone();
+        let mut hashed = None;
+        receiver.ingest_packet_into(
+            crate::interfaces::InboundPacket {
+                arrived_at: InstantMillis(2_200),
+                source_interface: lane(),
+                bytes: &mut raw,
+            },
+            IngestIo {
+                interfaces: AttachedInterfaces::new(&[
+                    crate::engine::test_support::routable_descriptor(lane()),
+                ]),
+                now: InstantMillis(2_200),
+                fill_random: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
+                should_prove: &mut |_: &crate::engine::ProofRequest| false,
+                should_accept_resource:
+                    &mut |_: &crate::routing::links::resources::ResourceOffer| false,
+                sink: &mut |reaction| {
+                    if let EngineReaction::Directive(Directive::Fulfill(
+                        OwedWork::ResourcePartHash(owed),
+                    )) = reaction
+                    {
+                        let (plan, source) = owed.into_parts();
+                        let part = source.to_vec();
+                        hashed = Some((plan.calculate(&part), part));
+                    }
+                },
+            },
+        );
+
+        let index = 0;
+        let state_before = *receiver.incoming_resources.state(index);
+        assert_eq!(state_before.received_part_count, 0);
+        let (result, part) = hashed.expect("the part hash leaves the engine");
+        let expected_rate = (part.len() as u64 + state_before.request_sent_bytes) * 1_000
+            / (2_200 - state_before.request_sent_at.unwrap().0);
+
+        receiver.resume_resource_part_hash(
+            result.completed(&part),
+            InstantMillis(9_900),
+            &mut |bytes: &mut [u8]| bytes.fill(0xC7),
+            &mut |_| {},
+        );
+
+        let state = receiver.incoming_resources.state(index);
+        assert_eq!(state.received_part_count, 1);
+        assert_eq!(state.request_response_bytes_per_second, expected_rate);
     }
 
     #[test]

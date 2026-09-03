@@ -22,6 +22,7 @@ use crate::engine::{
     TunnelSynthesizeVerifyOwed, WholeResourceOpenReservation,
 };
 use crate::identity::{decrypt_token_in_place_with_ratchets, OpenedBy};
+use crate::manifold::grant_lane::HeapFrameSlot;
 use crate::remote_control::{
     RemoteControlPairingAvailabilityVerification, RemoteControlPairingAvailabilityVerifyOwed,
 };
@@ -32,6 +33,9 @@ use crate::routing::links::handshake::{
 use crate::routing::links::resources::build_outgoing::{
     seal_staged_resource, BuildOutgoingResourceError, BuildRegions, BuiltResource,
     SealedStagedResource, SALT_REROLL_CAP,
+};
+use crate::routing::links::resources::receive::part_hash::{
+    ResourcePartHashPlan, ResourcePartHashResult,
 };
 use crate::routing::links::resources::send::{
     ResourceBuildPlan, ResourceBuildWorkspace, ResourceSealPlan,
@@ -111,6 +115,7 @@ impl CryptoPoolConfig {
 const MANIFOLD_IO_HEADROOM: usize = 2;
 const MIN_POOL_WORKERS: usize = 4;
 const MAX_EFFICIENCY_SPILLOVER_WORKERS: usize = 2;
+const RESOURCE_PART_HASH_CONCURRENCY: usize = 1;
 
 impl PoolWorkers {
     fn resolve(self) -> NonZeroUsize {
@@ -221,6 +226,44 @@ pub(super) struct ResourceBuildJob {
     pub(super) nonces: [[u8; RESOURCE_NONCE_LEN]; SALT_REROLL_CAP + 1],
 }
 
+pub(super) enum ResourcePartHashBuffer {
+    GrantSlot {
+        source: crate::interfaces::InterfaceId,
+        frame: HeapFrameSlot,
+        part: std::ops::Range<usize>,
+    },
+    Copied(Vec<u8>),
+}
+
+impl ResourcePartHashBuffer {
+    pub(super) fn part(&self) -> &[u8] {
+        match self {
+            Self::GrantSlot { frame, part, .. } => &frame.bytes[part.clone()],
+            Self::Copied(part) => part,
+        }
+    }
+
+    pub(super) fn byte_len(&self) -> usize {
+        self.part().len()
+    }
+
+    pub(super) fn return_target(self) -> Option<(crate::interfaces::InterfaceId, HeapFrameSlot)> {
+        match self {
+            Self::GrantSlot {
+                source,
+                frame,
+                part: _,
+            } => Some((source, frame)),
+            Self::Copied(_) => None,
+        }
+    }
+}
+
+pub(super) struct ResourcePartHashJob {
+    pub(super) plan: ResourcePartHashPlan,
+    pub(super) buffer: ResourcePartHashBuffer,
+}
+
 pub(super) struct OpenSpanJob {
     pub(super) link_id: LinkId,
     pub(super) hash: ResourceHash,
@@ -245,6 +288,7 @@ pub(super) enum OpenedSpanResult {
 pub(super) enum CryptoJob {
     VerifySignature(SignatureVerifyJob),
     BuildResource(Box<ResourceBuildJob>),
+    HashResourcePart(Box<ResourcePartHashJob>),
     DecompressResource(Box<ResourceDecompressionJob>),
     SealStaged(Box<StagedSealJob>),
     OpenSpan(Box<OpenSpanJob>),
@@ -409,7 +453,7 @@ impl CryptoJob {
 
     fn owes_packet_verdict(&self) -> bool {
         match self {
-            Self::BuildResource(_) | Self::SealStaged(_) => false,
+            Self::BuildResource(_) | Self::HashResourcePart(_) | Self::SealStaged(_) => false,
             #[cfg(test)]
             Self::ScheduledTest(_) => false,
             _ => true,
@@ -420,6 +464,7 @@ impl CryptoJob {
         match self {
             Self::VerifySignature(_) => CryptoJobClass::Verify,
             Self::BuildResource(_)
+            | Self::HashResourcePart(_)
             | Self::DecompressResource(_)
             | Self::SealStaged(_)
             | Self::OpenSpan(_) => CryptoJobClass::Bulk,
@@ -446,6 +491,9 @@ impl CryptoJob {
     pub(super) fn estimated_work(&self) -> usize {
         match self {
             Self::BuildResource(job) => 1 + job.data.len().div_ceil(BULK_BYTES_PER_WORK_UNIT),
+            Self::HashResourcePart(job) => {
+                1 + job.buffer.byte_len().div_ceil(BULK_BYTES_PER_WORK_UNIT)
+            }
             Self::DecompressResource(job) => {
                 1 + job.stream.len().div_ceil(BULK_BYTES_PER_WORK_UNIT)
             }
@@ -644,6 +692,10 @@ pub(super) enum CryptoResult {
         names: Vec<u8>,
         outcome: Result<BuiltResource, BuildOutgoingResourceError>,
     },
+    ResourcePartHashed {
+        result: ResourcePartHashResult,
+        buffer: ResourcePartHashBuffer,
+    },
     ResourceDecompressed {
         link_id: LinkId,
         hash: ResourceHash,
@@ -674,6 +726,7 @@ impl CryptoResult {
         !matches!(
             self,
             Self::ResourceBuilt { .. }
+                | Self::ResourcePartHashed { .. }
                 | Self::StagedSealed { .. }
                 | Self::WholeResourceOpenUnavailable { .. }
         )
@@ -721,6 +774,7 @@ pub(super) struct CryptoPool {
     workers: Vec<CryptoWorker>,
     verify_batch_target: usize,
     maximum_outstanding_work: usize,
+    resource_part_hash_jobs: Cell<usize>,
     next_equal_load: Cell<usize>,
     next_completion: Cell<usize>,
     #[cfg(feature = "runtime-metrics")]
@@ -823,6 +877,7 @@ impl CryptoPool {
             workers: worker_slots,
             verify_batch_target: verify_batch_target(worker_count, performance_cores()),
             maximum_outstanding_work: crypto_backpressure_work(worker_count),
+            resource_part_hash_jobs: Cell::new(0),
             next_equal_load: Cell::new(0),
             next_completion: Cell::new(0),
             #[cfg(feature = "runtime-metrics")]
@@ -844,6 +899,7 @@ impl CryptoPool {
 
     pub(super) fn submit(&self, job: CryptoJob) {
         let owes_packet_verdict = job.owes_packet_verdict();
+        let is_resource_part_hash = matches!(&job, CryptoJob::HashResourcePart(_));
         let class = job.scheduling_class();
         let work = job.estimated_work();
         let selected_worker = self.worker_for(class, work);
@@ -862,6 +918,10 @@ impl CryptoPool {
             },
         );
         self.record_submitted_to_worker(worker, class, work);
+        if is_resource_part_hash {
+            self.resource_part_hash_jobs
+                .set(self.resource_part_hash_jobs.get().saturating_add(1));
+        }
         self.wake_worker_if_armed(worker);
         if owes_packet_verdict {
             if self.packet_verdicts_owed.get() == 0 {
@@ -1088,6 +1148,17 @@ impl CryptoPool {
                 .set(self.completed_jobs.get().saturating_add(1));
             self.work_class_metrics[_class.index()].complete(work, _timing);
         }
+    }
+
+    pub(super) fn has_resource_part_hash_capacity(&self) -> bool {
+        self.resource_part_hash_jobs.get() < RESOURCE_PART_HASH_CONCURRENCY
+    }
+
+    pub(super) fn resource_part_hash_completed(&self) {
+        let outstanding = self.resource_part_hash_jobs.get();
+        debug_assert!(outstanding > 0, "an uncounted resource part hash completed");
+        self.resource_part_hash_jobs
+            .set(outstanding.saturating_sub(1));
     }
 
     pub(super) fn pop_completion(&self) -> Option<CryptoCompletion> {
@@ -1355,6 +1426,13 @@ type WorkerVerifierCache = [Option<Ed25519Verifier>; WORKER_VERIFIER_CACHE_DEPTH
 fn run_crypto_job(job: CryptoJob, verifier_cache: &mut WorkerVerifierCache) -> CryptoResult {
     match job {
         CryptoJob::BuildResource(job) => run_resource_build_job(*job),
+        CryptoJob::HashResourcePart(job) => {
+            let ResourcePartHashJob { plan, buffer } = *job;
+            CryptoResult::ResourcePartHashed {
+                result: plan.calculate(buffer.part()),
+                buffer,
+            }
+        }
         CryptoJob::DecompressResource(job) => {
             let ResourceDecompressionJob {
                 link_id,
