@@ -30,8 +30,30 @@ const mockMessage: LxmfMessage = {
   content: { type: "invalidUtf8", bytes: Uint8Array.of(0xff, 0xfe) },
   direction: "inbound",
   verification: "invalidSignature",
-  deliveryState: "received",
-  failure: null,
+  deliveryState: { type: "received" },
+};
+const mockFailedMessage: LxmfMessage = {
+  ...mockMessage,
+  localRecordId: 7n,
+  messageId: Uint8Array.from({ length: 32 }, () => 0x77),
+  source: destinationHash(Uint8Array.from({ length: 16 }, () => 0x55)),
+  destination: mockDestination,
+  title: { type: "utf8", value: "Retry me" },
+  content: { type: "utf8", value: "The signed wire must stay identical" },
+  direction: "outbound",
+  verification: "verified",
+  deliveryState: {
+    type: "failed",
+    failedAttempts: 1n,
+    lastFailure: "deliveryTimedOut",
+  },
+};
+const mockQueuedMessage: LxmfMessage = {
+  ...mockFailedMessage,
+  localRecordId: 8n,
+  messageId: Uint8Array.from({ length: 32 }, () => 0x88),
+  title: { type: "utf8", value: "Cancel me" },
+  deliveryState: { type: "queued", failedAttempts: 0n },
 };
 const mockContact: Contact = {
   destination: mockDestination,
@@ -68,9 +90,17 @@ const mockMeasureLxmfText = jest.fn(async () => ({
 const mockSendDirectText = jest.fn(
   async (): Promise<RuntimeCommandResult<SendDirectTextOutcome>> => ({
     type: "outcome",
-    outcome: { type: "started", localRecordId: 2n },
+    outcome: { type: "accepted", localRecordId: 2n },
   }),
 );
+const mockRetryLxmfMessage = jest.fn(async () => ({
+  type: "outcome" as const,
+  outcome: { type: "accepted" as const, localRecordId: 7n },
+}));
+const mockCancelLxmfMessage = jest.fn(async () => ({
+  type: "outcome" as const,
+  outcome: { type: "cancelled" as const, localRecordId: 8n },
+}));
 const mockRefreshSnapshot = jest.fn(async () => ({
   type: "outcome" as const,
   outcome: mockSnapshot,
@@ -84,6 +114,9 @@ const mockListContacts = jest.fn(async () => ({
   contacts: [mockContact],
 }));
 const mockContactRuntime = { listContacts: mockListContacts };
+let mockPhase: "unavailable" | "starting" | "ready" | "failed" = "ready";
+let mockActiveSnapshot: DevelopmentNodeSnapshot = mockSnapshot;
+let mockLifecycleFailure: string | null = null;
 
 jest.mock("expo-router", () => ({
   Link: ({ children }: { readonly children: ReactNode }) => children,
@@ -93,13 +126,15 @@ jest.mock("expo-router", () => ({
 jest.mock("@/native/development-runtime-context", () => ({
   useDevelopmentRuntime: () => ({
     availability: { type: "available", platform: "ios" },
-    phase: "ready",
-    snapshot: mockSnapshot,
-    lifecycleFailure: null,
+    phase: mockPhase,
+    snapshot: mockActiveSnapshot,
+    lifecycleFailure: mockLifecycleFailure,
     backgroundFailure: null,
     refreshSnapshot: mockRefreshSnapshot,
     listLxmfPeers: mockListLxmfPeers,
     listLxmfMessages: mockListLxmfMessages,
+    retryLxmfMessage: mockRetryLxmfMessage,
+    cancelLxmfMessage: mockCancelLxmfMessage,
     announceLxmf: mockAnnounceLxmf,
     measureLxmfText: mockMeasureLxmfText,
     sendDirectText: mockSendDirectText,
@@ -115,9 +150,43 @@ jest.mock("@/native/contact-runtime-context", () => ({
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockPhase = "ready";
+  mockActiveSnapshot = mockSnapshot;
+  mockLifecycleFailure = null;
+  mockListLxmfPeers.mockResolvedValue({
+    type: "outcome",
+    outcome: { type: "listed", peers: [mockPeer] },
+  });
+  mockListLxmfMessages.mockResolvedValue({
+    type: "outcome",
+    outcome: { type: "listed", messages: [mockMessage] },
+  });
+  mockRetryLxmfMessage.mockResolvedValue({
+    type: "outcome",
+    outcome: { type: "accepted", localRecordId: 7n },
+  });
+  mockCancelLxmfMessage.mockResolvedValue({
+    type: "outcome",
+    outcome: { type: "cancelled", localRecordId: 8n },
+  });
+  mockSendDirectText.mockResolvedValue({
+    type: "outcome",
+    outcome: { type: "accepted", localRecordId: 2n },
+  });
 });
 
-describe("in-memory LXMF screens", () => {
+describe("durable LXMF screens", () => {
+  test("describes degraded mailbox health without inventing an inbound overflow", async () => {
+    mockActiveSnapshot = {
+      ...mockSnapshot,
+      lxmf: { state: "degraded", inboundOverflowCount: 0n },
+    };
+    const screen = render(<InboxScreen />);
+
+    expect(await screen.findByText(/durable mailbox access is degraded/u)).toBeTruthy();
+    expect(screen.queryByText(/proven inbound carrier/u)).toBeNull();
+  });
+
   test("uses saved alias before announced name and shows aggregate health", async () => {
     const screen = render(<InboxScreen />);
 
@@ -156,11 +225,11 @@ describe("in-memory LXMF screens", () => {
         content: "Proof please",
       });
     });
-    expect(await screen.findByText(/Started record 2/u)).toBeTruthy();
+    expect(await screen.findByText(/Saved record 2 to the durable queue/u)).toBeTruthy();
     expect(screen.queryByText(/^Delivered$/u)).toBeNull();
   });
 
-  test("navigates from compose only after native starts a visible record", async () => {
+  test("navigates from compose only after native durably accepts a visible record", async () => {
     const destination = Array.from(mockDestination, (byte) =>
       byte.toString(16).padStart(2, "0"),
     ).join("");
@@ -202,5 +271,58 @@ describe("in-memory LXMF screens", () => {
     ).toBeTruthy();
     expect(screen.getByText("Compose")).toBeTruthy();
     expect(mockReplace).not.toHaveBeenCalled();
+  });
+
+  test("retries a failed record by id without recomposing or calling send", async () => {
+    mockListLxmfMessages.mockResolvedValue({
+      type: "outcome",
+      outcome: { type: "listed", messages: [mockFailedMessage] },
+    });
+    const screen = render(<ConversationScreen destination={mockDestination} />);
+
+    expect(await screen.findByText(/Failed after 1 failed attempt/u)).toBeTruthy();
+    fireEvent.press(screen.getByText("Retry exact stored message"));
+
+    await waitFor(() => expect(mockRetryLxmfMessage).toHaveBeenCalledWith(7n));
+    expect(mockSendDirectText).not.toHaveBeenCalled();
+    expect(
+      await screen.findByText("Record 7 was requeued with its exact stored wire."),
+    ).toBeTruthy();
+  });
+
+  test("cancels a queued durable record by id", async () => {
+    mockListLxmfMessages.mockResolvedValue({
+      type: "outcome",
+      outcome: { type: "listed", messages: [mockQueuedMessage] },
+    });
+    const screen = render(<ConversationScreen destination={mockDestination} />);
+
+    expect(await screen.findByText(/Queued — stored durably/u)).toBeTruthy();
+    fireEvent.press(screen.getByText("Cancel queued message"));
+
+    await waitFor(() => expect(mockCancelLxmfMessage).toHaveBeenCalledWith(8n));
+    expect(await screen.findByText("Record 8 was cancelled.")).toBeTruthy();
+  });
+
+  test("lists durable rows and exposes exact retry while node startup has failed", async () => {
+    mockPhase = "failed";
+    mockActiveSnapshot = { ...mockSnapshot, runtime: "failed" };
+    mockLifecycleFailure = "The local node could not restore persistence.";
+    mockListLxmfMessages.mockResolvedValue({
+      type: "outcome",
+      outcome: { type: "listed", messages: [mockFailedMessage] },
+    });
+    const screen = render(<ConversationScreen destination={mockDestination} />);
+
+    expect(await screen.findByText("Retry me")).toBeTruthy();
+    expect(screen.getByText("Mailbox offline")).toBeTruthy();
+    expect(screen.getByText("Retry exact stored message")).toBeTruthy();
+    expect(screen.queryByText("New message")).toBeNull();
+    expect(mockListLxmfPeers).not.toHaveBeenCalled();
+    expect(mockListLxmfMessages).toHaveBeenCalledWith({
+      peer: mockDestination,
+      before: null,
+      limit: 100,
+    });
   });
 });

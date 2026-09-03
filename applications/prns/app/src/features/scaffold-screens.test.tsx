@@ -27,7 +27,7 @@ describe("foundation scaffold screens", () => {
 
     expect(view.getByText("Not yet implemented")).toBeTruthy();
     expect(
-      view.getByText("No generated message record or delivery evidence exists yet."),
+      view.getByText("The dedicated message inspector route is not implemented yet."),
     ).toBeTruthy();
     expect(view.queryByText(/success/iu)).toBeNull();
     expect(view.getByRole("button", { name: "Go back" })).toBeTruthy();

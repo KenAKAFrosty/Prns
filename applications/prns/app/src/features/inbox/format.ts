@@ -1,4 +1,10 @@
-import type { Contact, LxmfMessage, LxmfPeerSummary, LxmfText } from "@prns-internal/expo";
+import type {
+  Contact,
+  LxmfDeliveryFailure,
+  LxmfMessage,
+  LxmfPeerSummary,
+  LxmfText,
+} from "@prns-internal/expo";
 import type { DestinationHash } from "personal-rns/contract";
 
 import { formatContactHash } from "@/features/contacts/format";
@@ -51,15 +57,25 @@ export function textPresentation(value: LxmfText): {
 }
 
 export function deliveryLabel(message: LxmfMessage): string {
-  switch (message.deliveryState) {
+  switch (message.deliveryState.type) {
     case "received":
       return "Received";
+    case "queued":
+      return message.deliveryState.failedAttempts === 0n
+        ? "Queued — stored durably and awaiting send"
+        : `Queued — stored durably after ${attemptLabel(message.deliveryState.failedAttempts)}`;
     case "sending":
-      return "Sending — waiting for transport proof";
+      return message.deliveryState.failedAttempts === 0n
+        ? "Sending — waiting for transport proof"
+        : `Sending after ${attemptLabel(message.deliveryState.failedAttempts)} — waiting for transport proof`;
     case "delivered":
-      return "Delivered — transport proof received";
+      return message.deliveryState.rtt === null
+        ? `Delivered — transport proof received at ${timestampLabel(message.deliveryState.deliveredAt)}`
+        : `Delivered — transport proof received in ${message.deliveryState.rtt.toString()} ms at ${timestampLabel(message.deliveryState.deliveredAt)}`;
     case "failed":
-      return message.failure === null ? "Failed" : `Failed — ${failureLabel(message.failure)}`;
+      return `Failed after ${attemptLabel(message.deliveryState.failedAttempts)} — ${failureLabel(message.deliveryState.lastFailure)}`;
+    case "cancelled":
+      return `Cancelled ${timestampLabel(message.deliveryState.cancelledAt)}`;
   }
 }
 
@@ -84,7 +100,11 @@ export function timestampLabel(timestamp: bigint): string {
   return `${timestamp.toString()} ms since Unix epoch`;
 }
 
-function failureLabel(failure: NonNullable<LxmfMessage["failure"]>): string {
+function attemptLabel(failedAttempts: bigint): string {
+  return `${failedAttempts.toString()} failed ${failedAttempts === 1n ? "attempt" : "attempts"}`;
+}
+
+function failureLabel(failure: LxmfDeliveryFailure): string {
   switch (failure) {
     case "noRoute":
       return "no route";

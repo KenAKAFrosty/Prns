@@ -6,9 +6,13 @@ import type {
 import { fireEvent, render, waitFor } from "@testing-library/react-native";
 import { Effect } from "effect";
 import { destinationHash, identityHash, interfaceId } from "personal-rns/contract";
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect } from "react";
 
-import { DevelopmentRuntimeProvider } from "@/native/development-runtime-context";
+import {
+  DevelopmentRuntimeProvider,
+  type DevelopmentRuntimeView,
+  useDevelopmentRuntime,
+} from "@/native/development-runtime-context";
 import type { RuntimeProvider } from "@/native/runtime-provider.types";
 import { NodesScreen } from "./nodes-screen";
 import { PairNodeScreen } from "./pair-node-screen";
@@ -108,13 +112,15 @@ function fakeProvider(
     listContacts: async () => ({ type: "listed", contacts: [] }),
     listLxmfPeers: async () => ({ type: "listed", peers: [] }),
     listLxmfMessages: async () => ({ type: "listed", messages: [] }),
+    retryLxmfMessage: async () => ({ type: "notFound" }),
+    cancelLxmfMessage: async () => ({ type: "notFound" }),
     announceLxmf: async () => ({ type: "announced" }),
     measureLxmfText: async () => ({
       type: "measured",
       wireBytes: 113,
       remainingBytes: 318,
     }),
-    sendDirectText: async () => ({ type: "started", localRecordId: 1n }),
+    sendDirectText: async () => ({ type: "accepted", localRecordId: 1n }),
     stopDevelopmentNode: async () => {
       stop();
       return { type: "stopped" };
@@ -151,7 +157,83 @@ function fakeProvider(
   };
 }
 
+function RuntimeViewProbe({
+  publish,
+}: {
+  readonly publish: (view: DevelopmentRuntimeView) => void;
+}) {
+  const view = useDevelopmentRuntime();
+  useEffect(() => publish(view), [publish, view]);
+  return null;
+}
+
 describe("Foundation 1 Nodes runtime binding", () => {
+  it("keeps durable mailbox commands available after generation acquisition fails", async () => {
+    const stop = jest.fn();
+    const base = fakeProvider(stop);
+    if (!("runtime" in base)) {
+      throw new Error("the iOS test provider must expose a native runtime");
+    }
+    const listLxmfMessages = jest.fn(async () => ({
+      type: "listed" as const,
+      messages: [],
+    }));
+    const retryLxmfMessage = jest.fn(async () => ({ type: "notFound" as const }));
+    const cancelLxmfMessage = jest.fn(async () => ({ type: "notFound" as const }));
+    const sendDirectText = jest.fn(async () => ({
+      type: "accepted" as const,
+      localRecordId: 1n,
+    }));
+    const provider: RuntimeProvider = {
+      ...base,
+      runtime: {
+        ...base.runtime,
+        listLxmfMessages,
+        retryLxmfMessage,
+        cancelLxmfMessage,
+        sendDirectText,
+      },
+      acquire: () => Effect.die("startup failed"),
+    };
+    const publish = jest.fn<void, [DevelopmentRuntimeView]>();
+    render(
+      <DevelopmentRuntimeProvider provider={provider}>
+        <RuntimeViewProbe publish={publish} />
+      </DevelopmentRuntimeProvider>,
+    );
+
+    await waitFor(() =>
+      expect(publish).toHaveBeenCalledWith(expect.objectContaining({ phase: "failed" })),
+    );
+    const failedView = publish.mock.calls.find(([view]) => view.phase === "failed")?.[0];
+    if (failedView === undefined) {
+      throw new Error("the failed runtime view was not published");
+    }
+    expect(await failedView.listLxmfMessages({ peer: null, before: null, limit: 25 })).toEqual({
+      type: "outcome",
+      outcome: { type: "listed", messages: [] },
+    });
+    expect(await failedView.retryLxmfMessage(7n)).toEqual({
+      type: "outcome",
+      outcome: { type: "notFound" },
+    });
+    expect(await failedView.cancelLxmfMessage(8n)).toEqual({
+      type: "outcome",
+      outcome: { type: "notFound" },
+    });
+    expect(
+      await failedView.sendDirectText({
+        destination: observedDestination,
+        title: "not admitted",
+        content: "node stopped",
+      }),
+    ).toMatchObject({ type: "operationFailure" });
+    expect(listLxmfMessages).toHaveBeenCalledTimes(1);
+    expect(retryLxmfMessage).toHaveBeenCalledWith(7n);
+    expect(cancelLxmfMessage).toHaveBeenCalledWith(8n);
+    expect(sendDirectText).not.toHaveBeenCalled();
+  });
+
   it("holds one scoped runtime across the Nodes surface and stops it on layout release", async () => {
     const stop = jest.fn();
     const view = render(

@@ -1,5 +1,6 @@
 import type {
   AnnounceLxmfOutcome,
+  CancelLxmfMessageOutcome,
   Contact,
   ContactListOutcome,
   LxmfMessage,
@@ -7,6 +8,7 @@ import type {
   LxmfPeerListOutcome,
   LxmfPeerSummary,
   MeasureLxmfTextOutcome,
+  RetryLxmfMessageOutcome,
   SendDirectTextOutcome,
 } from "@prns-internal/expo";
 import type { Href } from "expo-router";
@@ -62,9 +64,10 @@ function useLxmfData(peer: DestinationHash | null): LxmfData {
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const peerKey = peer === null ? null : formatContactHash(peer);
+  const nodeRunning = development.phase === "ready" && development.snapshot?.runtime === "running";
 
   const refresh = useCallback(async () => {
-    if (development.phase !== "ready") {
+    if (development.availability.type !== "available" || development.phase === "starting") {
       return;
     }
     const selectedPeer = peerKey === null ? null : parseDestinationHash(peerKey);
@@ -75,10 +78,14 @@ function useLxmfData(peer: DestinationHash | null): LxmfData {
     setPending(true);
     setFailure(null);
     const [peerResult, messageResult] = await Promise.all([
-      development.listLxmfPeers(),
+      nodeRunning ? development.listLxmfPeers() : Promise.resolve(null),
       development.listLxmfMessages({ peer: selectedPeer, before: null, limit: pageLimit }),
     ]);
-    applyPeerResult(peerResult, setPeers, setFailure);
+    if (peerResult === null) {
+      setPeers([]);
+    } else {
+      applyPeerResult(peerResult, setPeers, setFailure);
+    }
     applyMessageResult(messageResult, setMessages, setFailure);
     if (contactRuntime.runtime !== null) {
       try {
@@ -90,17 +97,20 @@ function useLxmfData(peer: DestinationHash | null): LxmfData {
     setPending(false);
   }, [
     contactRuntime.runtime,
+    development.availability.type,
     development.listLxmfMessages,
     development.listLxmfPeers,
     development.phase,
+    nodeRunning,
     peerKey,
   ]);
 
   useEffect(() => {
-    if (development.snapshot?.revision !== undefined) {
-      void refresh();
+    if (development.phase === "starting" && development.snapshot?.revision === undefined) {
+      return;
     }
-  }, [development.snapshot?.revision, refresh]);
+    void refresh();
+  }, [development.phase, development.snapshot?.revision, refresh]);
 
   return { peers, messages, contacts, pending, failure, refresh };
 }
@@ -110,6 +120,7 @@ export function InboxScreen() {
   const data = useLxmfData(null);
   const [command, setCommand] = useState<string | null>(null);
   const [announcing, setAnnouncing] = useState(false);
+  const nodeRunning = development.phase === "ready" && development.snapshot?.runtime === "running";
 
   const announce = async () => {
     setAnnouncing(true);
@@ -129,26 +140,37 @@ export function InboxScreen() {
 
   return (
     <Screen>
-      <Badge>In-memory direct LXMF</Badge>
+      <Badge>Durable direct LXMF</Badge>
       <ScreenHeading>Inbox</ScreenHeading>
       <BodyText>
-        Compatible announcements and messages belong to this running development generation.
-        Restarting clears them; durable mailbox behavior is not implemented yet.
+        Messages are stored in the application mailbox. Listing, exact-wire retry, and cancellation
+        remain available while the local node is stopped; sending and peer discovery require a
+        running generation.
       </BodyText>
       <LxmfHealthCard />
       {development.availability.type !== "available" ? (
         <UnavailableCard platform={development.availability.platform} />
-      ) : development.phase !== "ready" ? (
-        <Card>
-          <Badge>{development.phase}</Badge>
-          <BodyText>{development.lifecycleFailure ?? "Starting the local node…"}</BodyText>
-        </Card>
       ) : (
         <>
+          {nodeRunning ? null : (
+            <Card>
+              <Badge tone="warning">
+                {development.phase === "starting" ? "Starting" : "Mailbox offline"}
+              </Badge>
+              <BodyText>
+                {development.lifecycleFailure ??
+                  (development.phase === "starting"
+                    ? "Waiting for persistence restoration before network attempts resume."
+                    : "The local node is stopped. Durable messages remain available.")}
+              </BodyText>
+            </Card>
+          )}
           <View style={styles.actions}>
-            <Button disabled={announcing} onPress={() => void announce()}>
-              {announcing ? "Announcing…" : "Announce LXMF destination"}
-            </Button>
+            {nodeRunning ? (
+              <Button disabled={announcing} onPress={() => void announce()}>
+                {announcing ? "Announcing…" : "Announce LXMF destination"}
+              </Button>
+            ) : null}
             <Button disabled={data.pending} onPress={() => void data.refresh()} tone="secondary">
               {data.pending ? "Refreshing…" : "Refresh Inbox"}
             </Button>
@@ -163,8 +185,9 @@ export function InboxScreen() {
             <Card>
               <Badge>No conversations</Badge>
               <BodyText>
-                Wait for a compatible lxmf.delivery announce from the controlled peer, then open the
-                composer.
+                {nodeRunning
+                  ? "Wait for a compatible lxmf.delivery announce from the controlled peer, then open the composer."
+                  : "No durable messages are stored in this development mailbox."}
               </BodyText>
             </Card>
           ) : (
@@ -193,7 +216,7 @@ export function InboxScreen() {
                         : `${compatiblePeer.lastObservedAgeMillis.toString()} ms ago`
                     }
                   />
-                  <KeyValue label="Messages this run" value={peerMessages.length.toString()} />
+                  <KeyValue label="Messages" value={peerMessages.length.toString()} />
                   {latest === undefined ? null : (
                     <BodyText muted>
                       {textPresentation(latest.content).text} · {deliveryLabel(latest)}
@@ -204,7 +227,13 @@ export function InboxScreen() {
               );
             })
           )}
-          <NavigationLink href="/inbox/compose">Compose by destination</NavigationLink>
+          {nodeRunning ? (
+            <NavigationLink href="/inbox/compose">Compose by destination</NavigationLink>
+          ) : (
+            <BodyText muted>
+              Start the local node to discover peers or compose a new message.
+            </BodyText>
+          )}
         </>
       )}
     </Screen>
@@ -214,9 +243,28 @@ export function InboxScreen() {
 export function ConversationScreen({ destination }: { readonly destination: DestinationHash }) {
   const development = useDevelopmentRuntime();
   const data = useLxmfData(destination);
-  const [retryOutcome, setRetryOutcome] = useState<SendDirectTextOutcome | null>(null);
+  const [mutationStatus, setMutationStatus] = useState<string | null>(null);
+  const [activeMutationId, setActiveMutationId] = useState<bigint | null>(null);
   const encoded = formatContactHash(destination);
   const peer = data.peers.find((candidate) => formatContactHash(candidate.destination) === encoded);
+  const nodeRunning = development.phase === "ready" && development.snapshot?.runtime === "running";
+
+  const mutate = async (kind: "retry" | "cancel", localRecordId: bigint): Promise<void> => {
+    setActiveMutationId(localRecordId);
+    setMutationStatus(null);
+    const result =
+      kind === "retry"
+        ? await development.retryLxmfMessage(localRecordId)
+        : await development.cancelLxmfMessage(localRecordId);
+    setMutationStatus(
+      result.type === "operationFailure"
+        ? result.detail
+        : mailboxMutationLabel(kind, result.outcome),
+    );
+    await data.refresh();
+    setActiveMutationId(null);
+  };
+
   if (development.availability.type !== "available") {
     return (
       <Screen>
@@ -226,23 +274,24 @@ export function ConversationScreen({ destination }: { readonly destination: Dest
       </Screen>
     );
   }
-  if (development.phase !== "ready") {
-    return (
-      <Screen>
-        <ScreenHeading>Conversation</ScreenHeading>
-        <Card>
-          <Badge>{development.phase}</Badge>
-          <BodyText>{development.lifecycleFailure ?? "Starting the local node…"}</BodyText>
-        </Card>
-        <NavigationLink href="/inbox">Back to Inbox</NavigationLink>
-      </Screen>
-    );
-  }
   return (
     <Screen>
-      <Badge>Direct conversation</Badge>
+      <Badge>Durable conversation</Badge>
       <ScreenHeading>{peerLabel(destination, data.peers, data.contacts)}</ScreenHeading>
       <KeyValue label="Destination" value={encoded} />
+      {nodeRunning ? null : (
+        <Card>
+          <Badge tone="warning">
+            {development.phase === "starting" ? "Starting" : "Mailbox offline"}
+          </Badge>
+          <BodyText>
+            {development.lifecycleFailure ??
+              (development.phase === "starting"
+                ? "Waiting for persistence restoration before network attempts resume."
+                : "The local node is stopped. You can still inspect, retry, or cancel durable records.")}
+          </BodyText>
+        </Card>
+      )}
       {peer?.requiredStampCost === null || peer?.requiredStampCost === undefined ? null : (
         <Card>
           <Badge tone="warning">Unsupported stamp requirement</Badge>
@@ -253,35 +302,35 @@ export function ConversationScreen({ destination }: { readonly destination: Dest
         </Card>
       )}
       {data.failure === null ? null : <FailureCard detail={data.failure} />}
-      <SendResult outcome={retryOutcome} />
-      <Composer destination={destination} onSettled={data.refresh} />
+      {mutationStatus === null ? null : (
+        <Card>
+          <BodyText>{mutationStatus}</BodyText>
+        </Card>
+      )}
+      {nodeRunning ? (
+        <Composer destination={destination} onSettled={data.refresh} />
+      ) : (
+        <BodyText muted>Start the local node to compose a new message.</BodyText>
+      )}
       <Subheading>Messages</Subheading>
       {data.messages.length === 0 ? (
         <Card>
-          <BodyText muted>No messages for this destination in the current process.</BodyText>
+          <BodyText muted>No durable messages are stored for this destination.</BodyText>
         </Card>
       ) : (
         data.messages.map((message) => (
           <MessageCard
             key={message.localRecordId.toString()}
             message={message}
+            pending={activeMutationId === message.localRecordId}
             onRetry={
-              message.deliveryState === "failed"
-                ? async () => {
-                    if (message.title.type !== "utf8" || message.content.type !== "utf8") {
-                      return;
-                    }
-                    const result = await development.sendDirectText({
-                      destination,
-                      title: message.title.value,
-                      content: message.content.value,
-                    });
-                    if (result.type === "outcome") {
-                      setRetryOutcome(result.outcome);
-                    }
-                    await development.refreshSnapshot();
-                    await data.refresh();
-                  }
+              message.deliveryState.type === "failed"
+                ? () => mutate("retry", message.localRecordId)
+                : undefined
+            }
+            onCancel={
+              message.deliveryState.type === "queued" || message.deliveryState.type === "sending"
+                ? () => mutate("cancel", message.localRecordId)
                 : undefined
             }
           />
@@ -302,6 +351,7 @@ export function ComposeScreen({
   const [destinationText, setDestinationText] = useState(initialDestination ?? "");
   const destination = parseDestinationHash(destinationText);
   const palette = useAppPalette();
+  const nodeRunning = development.phase === "ready" && development.snapshot?.runtime === "running";
 
   if (development.availability.type !== "available") {
     return (
@@ -312,13 +362,16 @@ export function ComposeScreen({
       </Screen>
     );
   }
-  if (development.phase !== "ready") {
+  if (!nodeRunning) {
     return (
       <Screen>
         <ScreenHeading>Compose</ScreenHeading>
         <Card>
-          <Badge>{development.phase}</Badge>
-          <BodyText>{development.lifecycleFailure ?? "Starting the local node…"}</BodyText>
+          <Badge>{development.phase === "starting" ? "Starting" : "Local node stopped"}</Badge>
+          <BodyText>
+            {development.lifecycleFailure ??
+              "Start the local node before composing a new direct message."}
+          </BodyText>
         </Card>
         <NavigationLink href="/inbox">Back to Inbox</NavigationLink>
       </Screen>
@@ -331,7 +384,7 @@ export function ComposeScreen({
       <ScreenHeading>Compose</ScreenHeading>
       <BodyText>
         Enter an observed lxmf.delivery destination. Native Rust measures and signs the complete
-        wire; delivery remains proof-gated.
+        wire once, commits it to the durable queue, and reports delivery only after transport proof.
       </BodyText>
       <TextInput
         accessibilityLabel="LXMF destination hash"
@@ -356,7 +409,7 @@ export function ComposeScreen({
           <Composer
             destination={destination}
             onSettled={async (result) => {
-              if (result.type !== "outcome" || result.outcome.type !== "started") {
+              if (result.type !== "outcome" || result.outcome.type !== "accepted") {
                 return;
               }
               const href: Href = {
@@ -430,7 +483,7 @@ function Composer({
       setSendFailure(result.detail);
     } else {
       setSendOutcome(result.outcome);
-      if (result.outcome.type === "started") {
+      if (result.outcome.type === "accepted") {
         setTitle("");
         setContent("");
       }
@@ -482,7 +535,7 @@ function Composer({
         }
         onPress={() => void send()}
       >
-        {sending ? "Sending — awaiting proof…" : "Send direct message"}
+        {sending ? "Saving to durable queue…" : "Send direct message"}
       </Button>
       {sendFailure === null ? null : <BodyText>Native send unavailable: {sendFailure}</BodyText>}
       <SendResult outcome={sendOutcome} />
@@ -493,9 +546,13 @@ function Composer({
 function MessageCard({
   message,
   onRetry,
+  onCancel,
+  pending,
 }: {
   readonly message: LxmfMessage;
   readonly onRetry: (() => Promise<void>) | undefined;
+  readonly onCancel: (() => Promise<void>) | undefined;
+  readonly pending: boolean;
 }) {
   const title = textPresentation(message.title);
   const content = textPresentation(message.content);
@@ -513,8 +570,13 @@ function MessageCard({
       <KeyValue label="Delivery" value={deliveryLabel(message)} />
       <KeyValue label="Message ID" value={formatContactHash(message.messageId)} />
       {onRetry === undefined ? null : (
-        <Button onPress={() => void onRetry()} tone="secondary">
-          Retry as a new message
+        <Button disabled={pending} onPress={() => void onRetry()} tone="secondary">
+          {pending ? "Retrying…" : "Retry exact stored message"}
+        </Button>
+      )}
+      {onCancel === undefined ? null : (
+        <Button disabled={pending} onPress={() => void onCancel()} tone="secondary">
+          {pending ? "Cancelling…" : "Cancel queued message"}
         </Button>
       )}
     </Card>
@@ -562,48 +624,78 @@ function SendResult({ outcome }: { readonly outcome: SendDirectTextOutcome | nul
     return null;
   }
   switch (outcome.type) {
-    case "started":
+    case "accepted":
       return (
         <BodyText>
-          Started record {outcome.localRecordId.toString()}. The proof-backed message state is
-          authoritative.
+          Saved record {outcome.localRecordId.toString()} to the durable queue. Delivery still
+          requires transport proof.
         </BodyText>
       );
     case "needsResource":
       return <BodyText>{outcome.wireBytes} bytes needs an unsupported Resource carrier.</BodyText>;
     case "unsupportedRemoteStampRequirement":
-      return <BodyText>This peer requires an unsupported LXMF stamp.</BodyText>;
+      return (
+        <BodyText>
+          This peer requires unsupported LXMF stamp cost {outcome.requiredStampCost.toString()}.
+        </BodyText>
+      );
     case "peerIdentityUnavailable":
       return <BodyText>No compatible authenticated announce is available for this peer.</BodyText>;
-    case "noRoute":
-      return <BodyText>No route was found. Retry creates a new message in this slice.</BodyText>;
-    case "linkFailed":
-      return <BodyText>The direct Link failed. Retry creates a new message.</BodyText>;
-    case "deliveryTimedOut":
-      return <BodyText>Transport proof timed out. Delivery is not claimed.</BodyText>;
-    case "invalidMessage":
-      return <BodyText>Native LXMF composition rejected this message.</BodyText>;
-    case "localNodeStopped":
-      return <BodyText>The local node stopped before this command was admitted.</BodyText>;
-    case "busy":
-      return <BodyText>The bounded native LXMF command lane is busy. Try again.</BodyText>;
+    case "developmentUnavailable":
+      return <BodyText>Durable send unavailable: {outcome.detail}</BodyText>;
+    case "developmentResetRequired":
+      return <BodyText>Reset development data before sending: {outcome.reason}</BodyText>;
+  }
+}
+
+function mailboxMutationLabel(
+  kind: "retry" | "cancel",
+  outcome: RetryLxmfMessageOutcome | CancelLxmfMessageOutcome,
+): string {
+  switch (outcome.type) {
+    case "accepted":
+      return `Record ${outcome.localRecordId.toString()} was requeued with its exact stored wire.`;
+    case "cancelled":
+      return `Record ${outcome.localRecordId.toString()} was cancelled.`;
+    case "notFound":
+      return `The record no longer exists, so ${kind} was not applied.`;
+    case "notFailed":
+      return `Retry was not applied because the record is ${outcome.current.type}.`;
+    case "alreadyDelivered":
+      return "Cancellation lost the race to transport proof; the record is delivered.";
+    case "alreadyCancelled":
+      return "The record was already cancelled.";
+    case "notCancellable":
+      return `Cancellation was not applied because the record is ${outcome.current.type}.`;
+    case "developmentUnavailable":
+      return `Durable mailbox ${kind} unavailable: ${outcome.detail}`;
+    case "developmentResetRequired":
+      return `Reset development data before mailbox ${kind}: ${outcome.reason}`;
   }
 }
 
 function LxmfHealthCard() {
   const development = useDevelopmentRuntime();
   const health = development.snapshot?.lxmf;
+  const state =
+    health?.state ??
+    (development.availability.type !== "available"
+      ? "Unavailable"
+      : development.phase === "starting"
+        ? "Starting"
+        : "Stopped");
   return (
     <Card>
       <Subheading>LXMF service</Subheading>
-      <KeyValue label="State" value={health?.state ?? "Starting"} />
+      <KeyValue label="State" value={state} />
       <KeyValue
         label="Inbound callback overflow"
         value={health?.inboundOverflowCount.toString() ?? "0"}
       />
       {health?.state === "degraded" ? (
         <BodyText>
-          At least one proven inbound carrier could not enter the local processing lane.
+          LXMF processing or durable mailbox access is degraded; authoritative records may lag until
+          the condition recovers.
         </BodyText>
       ) : null}
     </Card>
@@ -656,12 +748,10 @@ function applyMessageResult(
     publish(result.outcome.messages);
   } else if (result.outcome.type === "invalidInput") {
     fail(result.outcome.detail);
-  } else {
-    fail(
-      result.outcome.type === "busy"
-        ? "The bounded LXMF query lane is busy."
-        : "The local node is stopped.",
-    );
+  } else if (result.outcome.type === "developmentUnavailable") {
+    fail(result.outcome.detail);
+  } else if (result.outcome.type === "developmentResetRequired") {
+    fail(`Reset development data to reopen the mailbox: ${result.outcome.reason}`);
   }
 }
 

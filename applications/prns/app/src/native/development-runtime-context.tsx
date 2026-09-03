@@ -1,5 +1,6 @@
 import type {
   ContactMutationOutcome,
+  CancelLxmfMessageOutcome,
   DescribeRemoteControlTargetInput,
   DevelopmentNodeSnapshot,
   DevelopmentRuntime,
@@ -15,6 +16,7 @@ import type {
   RemoteControlDescribeOutcome,
   RemoteControlPairingCommandOutcome,
   RemoteControlPairingDecisionInput,
+  RetryLxmfMessageOutcome,
   SendDirectTextInput,
   SendDirectTextOutcome,
 } from "@prns-internal/expo";
@@ -64,6 +66,12 @@ export type DevelopmentRuntimeView = {
   readonly listLxmfMessages: (
     input: ListLxmfMessagesInput,
   ) => Promise<RuntimeCommandResult<LxmfMessageListOutcome>>;
+  readonly retryLxmfMessage: (
+    localRecordId: bigint,
+  ) => Promise<RuntimeCommandResult<RetryLxmfMessageOutcome>>;
+  readonly cancelLxmfMessage: (
+    localRecordId: bigint,
+  ) => Promise<RuntimeCommandResult<CancelLxmfMessageOutcome>>;
   readonly announceLxmf: () => Promise<RuntimeCommandResult<AnnounceLxmfOutcome>>;
   readonly measureLxmfText: (
     input: MeasureLxmfTextInput,
@@ -257,11 +265,11 @@ export function DevelopmentRuntimeProvider({
     [selectedProvider, unavailableResult],
   );
 
-  const runDirect = useCallback(
+  const runAvailable = useCallback(
     async <Outcome,>(
       operation: (runtime: DevelopmentRuntime) => Promise<Outcome>,
     ): Promise<RuntimeCommandResult<Outcome>> => {
-      if (!("runtime" in selectedProvider) || session.current === null) {
+      if (!("runtime" in selectedProvider)) {
         return unavailableResult();
       }
       try {
@@ -273,29 +281,52 @@ export function DevelopmentRuntimeProvider({
     [selectedProvider, unavailableResult],
   );
 
+  const runGenerationBound = useCallback(
+    async <Outcome,>(
+      operation: (runtime: DevelopmentRuntime) => Promise<Outcome>,
+    ): Promise<RuntimeCommandResult<Outcome>> => {
+      if (session.current === null) {
+        return unavailableResult();
+      }
+      return runAvailable(operation);
+    },
+    [runAvailable, unavailableResult],
+  );
+
   const listLxmfPeers = useCallback(
-    () => runDirect((runtime) => runtime.listLxmfPeers()),
-    [runDirect],
+    () => runGenerationBound((runtime) => runtime.listLxmfPeers()),
+    [runGenerationBound],
   );
 
   const listLxmfMessages = useCallback(
-    (input: ListLxmfMessagesInput) => runDirect((runtime) => runtime.listLxmfMessages(input)),
-    [runDirect],
+    (input: ListLxmfMessagesInput) => runAvailable((runtime) => runtime.listLxmfMessages(input)),
+    [runAvailable],
+  );
+
+  const retryLxmfMessage = useCallback(
+    (localRecordId: bigint) => runAvailable((runtime) => runtime.retryLxmfMessage(localRecordId)),
+    [runAvailable],
+  );
+
+  const cancelLxmfMessage = useCallback(
+    (localRecordId: bigint) => runAvailable((runtime) => runtime.cancelLxmfMessage(localRecordId)),
+    [runAvailable],
   );
 
   const announceLxmf = useCallback(
-    () => runDirect((runtime) => runtime.announceLxmf()),
-    [runDirect],
+    () => runGenerationBound((runtime) => runtime.announceLxmf()),
+    [runGenerationBound],
   );
 
   const measureLxmfText = useCallback(
-    (input: MeasureLxmfTextInput) => runDirect((runtime) => runtime.measureLxmfText(input)),
-    [runDirect],
+    (input: MeasureLxmfTextInput) =>
+      runGenerationBound((runtime) => runtime.measureLxmfText(input)),
+    [runGenerationBound],
   );
 
   const sendDirectText = useCallback(
-    (input: SendDirectTextInput) => runDirect((runtime) => runtime.sendDirectText(input)),
-    [runDirect],
+    (input: SendDirectTextInput) => runGenerationBound((runtime) => runtime.sendDirectText(input)),
+    [runGenerationBound],
   );
 
   const value = useMemo<DevelopmentRuntimeView>(
@@ -313,6 +344,8 @@ export function DevelopmentRuntimeProvider({
       saveObservedDestination,
       listLxmfPeers,
       listLxmfMessages,
+      retryLxmfMessage,
+      cancelLxmfMessage,
       announceLxmf,
       measureLxmfText,
       sendDirectText,
@@ -329,6 +362,8 @@ export function DevelopmentRuntimeProvider({
       saveObservedDestination,
       listLxmfPeers,
       listLxmfMessages,
+      retryLxmfMessage,
+      cancelLxmfMessage,
       announceLxmf,
       measureLxmfText,
       sendDirectText,
