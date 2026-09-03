@@ -14,7 +14,25 @@ pub const fn max_encoded_len(payload_len: usize) -> usize {
     2 + 2 * payload_len
 }
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", target_arch = "x86_64"))]
+use memchr::arch::x86_64::avx2::memchr::Two as HostSpecialFinder;
+
+#[cfg(all(feature = "std", target_arch = "aarch64"))]
+use memchr::arch::aarch64::neon::memchr::Two as HostSpecialFinder;
+
+#[cfg(all(feature = "std", any(target_arch = "x86_64", target_arch = "aarch64")))]
+fn find_special(haystack: &[u8]) -> Option<usize> {
+    static FINDER: std::sync::OnceLock<Option<HostSpecialFinder>> = std::sync::OnceLock::new();
+    match FINDER.get_or_init(|| HostSpecialFinder::new(FLAG, ESC)) {
+        Some(finder) => finder.find(haystack),
+        None => memchr::memchr2(FLAG, ESC, haystack),
+    }
+}
+
+#[cfg(all(
+    feature = "std",
+    not(any(target_arch = "x86_64", target_arch = "aarch64"))
+))]
 fn find_special(haystack: &[u8]) -> Option<usize> {
     memchr::memchr2(FLAG, ESC, haystack)
 }
