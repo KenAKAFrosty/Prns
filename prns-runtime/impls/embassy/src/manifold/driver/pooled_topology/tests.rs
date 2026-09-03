@@ -187,6 +187,7 @@ fn a_pooled_ifac_slot_added_at_runtime_opens_inbound_then_frees_on_remove() {
         | Journaled::RemoteControlTargetPairingControllerCommitted { .. }
         | Journaled::RemoteControlTargetPairingAuthorizationRequired { .. }
         | Journaled::RemoteControlTargetPairingAuthorizationPersisted { .. }
+        | Journaled::RemoteControlTargetPairingExpiredDuringAuthorization { .. }
         | Journaled::RemoteControlControllerPairingConfirmationRequired(_)
         | Journaled::RemoteControlControllerPairingPersistenceRequired(_)
         | Journaled::RemoteControlControllerPairingAuthorizationPersisted { .. }
@@ -329,6 +330,7 @@ fn a_pooled_slot_retagged_at_runtime_carries_traffic_under_the_new_id() {
         | Journaled::RemoteControlTargetPairingControllerCommitted { .. }
         | Journaled::RemoteControlTargetPairingAuthorizationRequired { .. }
         | Journaled::RemoteControlTargetPairingAuthorizationPersisted { .. }
+        | Journaled::RemoteControlTargetPairingExpiredDuringAuthorization { .. }
         | Journaled::RemoteControlControllerPairingConfirmationRequired(_)
         | Journaled::RemoteControlControllerPairingPersistenceRequired(_)
         | Journaled::RemoteControlControllerPairingAuthorizationPersisted { .. }
