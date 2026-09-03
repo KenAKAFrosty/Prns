@@ -927,6 +927,7 @@ inputs = [
   "applications/services/lxmf-wire/interop",
   "applications/services/lxmf/Cargo.toml",
   "applications/services/lxmf/src",
+  "applications/services/lxmf/tests",
   "applications/services/lxmf/examples",
   "applications/services/lxmf/interop",
   "applications/services/lxmf/scripts/verify.sh",
