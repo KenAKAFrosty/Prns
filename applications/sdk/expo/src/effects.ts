@@ -82,6 +82,7 @@ export type EffectDevelopmentRuntime = {
 };
 
 export type DevelopmentRuntimeScopeOptions = {
+  readonly nativeLifetime?: "process" | "scope";
   readonly refreshIntervalMillis?: number;
   readonly developmentTcpTarget?: DevelopmentNodeStartInput["developmentTcpTarget"];
   readonly shouldRefresh?: () => boolean;
@@ -134,15 +135,13 @@ export function scopedDevelopmentRuntime(
   }
   const effectRuntime = makeEffectDevelopmentRuntime(runtime);
   const release = releaseRuntime(effectRuntime, options.onBackgroundFailure);
+  const processOwned = options.nativeLifetime === "process";
 
-  const acquire = Effect.gen(function* () {
-    const outcome = yield* effectRuntime
-      .startDevelopmentNode({
-        developmentTcpTarget: options.developmentTcpTarget ?? null,
-      })
-      .pipe(Effect.catch((failure) => release.pipe(Effect.andThen(Effect.fail(failure)))));
+  const start = Effect.gen(function* () {
+    const outcome = yield* effectRuntime.startDevelopmentNode({
+      developmentTcpTarget: options.developmentTcpTarget ?? null,
+    });
     if (outcome.type === "failed") {
-      yield* release;
       return yield* Effect.fail(
         new DevelopmentRuntimeStartError({
           stage: outcome.stage,
@@ -152,9 +151,14 @@ export function scopedDevelopmentRuntime(
     }
     return outcome.snapshot;
   });
+  const acquire = processOwned
+    ? start
+    : start.pipe(Effect.catch((failure) => release.pipe(Effect.andThen(Effect.fail(failure)))));
 
   return Effect.gen(function* () {
-    const initialSnapshot = yield* Effect.acquireRelease(acquire, () => release);
+    const initialSnapshot = yield* processOwned
+      ? acquire
+      : Effect.acquireRelease(acquire, () => release);
     let latestRevision = initialSnapshot.revision;
     yield* Effect.sync(() => options.onSnapshot(initialSnapshot));
 

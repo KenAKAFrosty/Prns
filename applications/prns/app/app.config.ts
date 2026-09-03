@@ -29,6 +29,7 @@ function selectedVariant(value: string | undefined): AppVariant {
 
 export default ({ config }: ConfigContext): ExpoConfig => {
   const selection = variants[selectedVariant(process.env.PRNS_APP_VARIANT)];
+  const bluetoothRestorationPrefix = `${selection.identifier}.bluetooth-auto`;
 
   return {
     ...config,
@@ -47,6 +48,9 @@ export default ({ config }: ConfigContext): ExpoConfig => {
           "prns uses Bluetooth to connect to nearby Reticulum nodes.",
         NSLocalNetworkUsageDescription:
           "prns uses the local network for an explicitly configured development LXMF peer.",
+        PRNSCoreBluetoothCentralRestorationIdentifier: `${bluetoothRestorationPrefix}.central.v1`,
+        PRNSCoreBluetoothPeripheralRestorationIdentifier: `${bluetoothRestorationPrefix}.peripheral.v1`,
+        UIBackgroundModes: ["bluetooth-central", "bluetooth-peripheral"],
       },
       supportsTablet: true,
     },

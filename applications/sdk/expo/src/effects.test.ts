@@ -97,6 +97,78 @@ describe("Effect development runtime orchestration", () => {
     expect(readDevelopmentNodeSnapshot).toHaveBeenCalledTimes(readsAfterClose);
   });
 
+  test("process ownership survives scope close and remount while refresh fibers remain scoped", async () => {
+    const running = snapshot(1n);
+    const startDevelopmentNode = jest
+      .fn()
+      .mockResolvedValueOnce({ type: "started" as const, snapshot: running })
+      .mockResolvedValueOnce({ type: "alreadyRunning" as const, snapshot: running });
+    const readDevelopmentNodeSnapshot = jest.fn(async () => snapshot(2n));
+    const stopDevelopmentNode = jest.fn(async () => ({ type: "stopped" as const }));
+    const runtime = fakeRuntime({
+      startDevelopmentNode,
+      readDevelopmentNodeSnapshot,
+      stopDevelopmentNode,
+    });
+
+    for (let mount = 0; mount < 2; mount += 1) {
+      await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            yield* scopedDevelopmentRuntime(runtime, {
+              nativeLifetime: "process",
+              refreshIntervalMillis: 50,
+              onSnapshot: () => undefined,
+              onBackgroundFailure: () => undefined,
+            });
+            yield* Effect.sleep(80);
+          }),
+        ),
+      );
+      const readsAfterClose = readDevelopmentNodeSnapshot.mock.calls.length;
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      expect(readDevelopmentNodeSnapshot).toHaveBeenCalledTimes(readsAfterClose);
+    }
+
+    expect(startDevelopmentNode).toHaveBeenCalledTimes(2);
+    expect(stopDevelopmentNode).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    [
+      "a rejected native promise",
+      jest.fn(async () => {
+        throw new Error("bridge detached");
+      }),
+    ],
+    [
+      "a typed startup failure",
+      jest.fn(async () => ({
+        type: "failed" as const,
+        stage: "runtime" as const,
+        detail: "worker did not start",
+      })),
+    ],
+  ])("process ownership never stops after %s", async (_label, startDevelopmentNode) => {
+    const stopDevelopmentNode = jest.fn(async () => ({ type: "stopped" as const }));
+    const runtime = fakeRuntime({ startDevelopmentNode, stopDevelopmentNode });
+
+    await expect(
+      Effect.runPromise(
+        Effect.flip(
+          Effect.scoped(
+            scopedDevelopmentRuntime(runtime, {
+              nativeLifetime: "process",
+              onSnapshot: () => undefined,
+              onBackgroundFailure: () => undefined,
+            }),
+          ),
+        ),
+      ),
+    ).resolves.toBeDefined();
+    expect(stopDevelopmentNode).not.toHaveBeenCalled();
+  });
+
   test("forwards the explicit development TCP target only through scoped startup", async () => {
     const runtime = fakeRuntime();
 

@@ -65,8 +65,25 @@ function assertVariant(
       `${variant}.ios.infoPlist.NSLocalNetworkUsageDescription must be the tracked development fixture copy`,
     );
   }
-  if (infoPlist.UIBackgroundModes !== undefined) {
-    fail(`${variant}.ios.infoPlist must not claim Bluetooth background execution`);
+  const expectedCentral = `${expected.identifier}.bluetooth-auto.central.v1`;
+  const expectedPeripheral = `${expected.identifier}.bluetooth-auto.peripheral.v1`;
+  if (infoPlist.PRNSCoreBluetoothCentralRestorationIdentifier !== expectedCentral) {
+    fail(`${variant}.ios.infoPlist must contain its exact central restoration identifier`);
+  }
+  if (infoPlist.PRNSCoreBluetoothPeripheralRestorationIdentifier !== expectedPeripheral) {
+    fail(`${variant}.ios.infoPlist must contain its exact peripheral restoration identifier`);
+  }
+  if (expectedCentral === expectedPeripheral) {
+    fail(`${variant}.ios.infoPlist restoration identifiers must be role-distinct`);
+  }
+  const backgroundModes = infoPlist.UIBackgroundModes;
+  if (
+    !Array.isArray(backgroundModes) ||
+    backgroundModes.length !== 2 ||
+    backgroundModes[0] !== "bluetooth-central" ||
+    backgroundModes[1] !== "bluetooth-peripheral"
+  ) {
+    fail(`${variant}.ios.infoPlist must declare the exact two Bluetooth background modes`);
   }
 }
 
@@ -91,5 +108,5 @@ if (invalid.status === 0) {
 }
 
 console.log(
-  "config:check: coordinates, local-network fixture copy, and foreground-only declarations are exact",
+  "config:check: coordinates and variant-isolated CoreBluetooth background declarations are exact",
 );

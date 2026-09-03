@@ -19,7 +19,7 @@ Pod::Spec.new do |s|
 
   s.source_files = '**/*.{h,swift}'
   s.public_header_files = 'PrnsAppBridge.h'
-  s.frameworks = 'CoreBluetooth', 'CoreFoundation', 'Foundation'
+  s.frameworks = 'CoreBluetooth', 'CoreFoundation', 'Foundation', 'UIKit'
   s.libraries = 'iconv'
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',

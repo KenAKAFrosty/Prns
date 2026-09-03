@@ -13,6 +13,8 @@ METRO_PORT="${PRNS_IOS_METRO_PORT:-8088}"
 EXPECTED_BUNDLE_IDENTIFIER="rs.reticulum.prns.dev"
 BLUETOOTH_USAGE="prns uses Bluetooth to connect to nearby Reticulum nodes."
 LOCAL_NETWORK_USAGE="prns uses the local network for an explicitly configured development LXMF peer."
+CENTRAL_RESTORATION_IDENTIFIER="rs.reticulum.prns.dev.bluetooth-auto.central.v1"
+PERIPHERAL_RESTORATION_IDENTIFIER="rs.reticulum.prns.dev.bluetooth-auto.peripheral.v1"
 
 fail() {
   echo "build-development-client.sh: $*" >&2
@@ -72,9 +74,17 @@ echo "build-development-client.sh: generating a clean development iOS project"
   fail "clean CNG rendered unexpected Bluetooth usage copy"
 [[ "$(plutil -extract NSLocalNetworkUsageDescription raw "${INFO_PLIST}")" == "${LOCAL_NETWORK_USAGE}" ]] ||
   fail "clean CNG rendered unexpected local-network usage copy"
-if plutil -extract UIBackgroundModes raw "${INFO_PLIST}" >/dev/null 2>&1; then
-  fail "clean CNG must not claim background execution"
+[[ "$(plutil -extract UIBackgroundModes.0 raw "${INFO_PLIST}")" == "bluetooth-central" ]] ||
+  fail "clean CNG did not render the central Bluetooth background mode"
+[[ "$(plutil -extract UIBackgroundModes.1 raw "${INFO_PLIST}")" == "bluetooth-peripheral" ]] ||
+  fail "clean CNG did not render the peripheral Bluetooth background mode"
+if plutil -extract UIBackgroundModes.2 raw "${INFO_PLIST}" >/dev/null 2>&1; then
+  fail "clean CNG rendered an unexpected third background mode"
 fi
+[[ "$(plutil -extract PRNSCoreBluetoothCentralRestorationIdentifier raw "${INFO_PLIST}")" == "${CENTRAL_RESTORATION_IDENTIFIER}" ]] ||
+  fail "clean CNG rendered the wrong central restoration identifier"
+[[ "$(plutil -extract PRNSCoreBluetoothPeripheralRestorationIdentifier raw "${INFO_PLIST}")" == "${PERIPHERAL_RESTORATION_IDENTIFIER}" ]] ||
+  fail "clean CNG rendered the wrong peripheral restoration identifier"
 
 echo "build-development-client.sh: installing CocoaPods dependencies"
 (
@@ -83,6 +93,10 @@ echo "build-development-client.sh: installing CocoaPods dependencies"
 )
 [[ -d "${WORKSPACE}" ]] || fail "CocoaPods did not generate ${WORKSPACE}"
 grep -Fq "PrnsApp" "${IOS_DIRECTORY}/Podfile.lock" || fail "PrnsApp was not autolinked"
+EXPO_MODULES_PROVIDER="${IOS_DIRECTORY}/Pods/Target Support Files/Pods-prnsdev/ExpoModulesProvider.swift"
+[[ -f "${EXPO_MODULES_PROVIDER}" ]] || fail "Expo did not generate its modules provider"
+[[ "$(grep -Fc "PrnsAppDelegateSubscriber.self" "${EXPO_MODULES_PROVIDER}")" == "1" ]] ||
+  fail "Expo must register PrnsAppDelegateSubscriber exactly once"
 
 assert_development_client_metadata() {
   local app_bundle="$1"
@@ -93,6 +107,14 @@ assert_development_client_metadata() {
     fail "development client has the wrong bundle identifier"
   [[ "$(plutil -extract RCTMetroPort raw "${built_info_plist}")" == "${METRO_PORT}" ]] ||
     fail "development client does not contain the requested Metro port ${METRO_PORT}"
+  [[ "$(plutil -extract UIBackgroundModes.0 raw "${built_info_plist}")" == "bluetooth-central" ]] ||
+    fail "development client is missing the central Bluetooth background mode"
+  [[ "$(plutil -extract UIBackgroundModes.1 raw "${built_info_plist}")" == "bluetooth-peripheral" ]] ||
+    fail "development client is missing the peripheral Bluetooth background mode"
+  [[ "$(plutil -extract PRNSCoreBluetoothCentralRestorationIdentifier raw "${built_info_plist}")" == "${CENTRAL_RESTORATION_IDENTIFIER}" ]] ||
+    fail "development client has the wrong central restoration identifier"
+  [[ "$(plutil -extract PRNSCoreBluetoothPeripheralRestorationIdentifier raw "${built_info_plist}")" == "${PERIPHERAL_RESTORATION_IDENTIFIER}" ]] ||
+    fail "development client has the wrong peripheral restoration identifier"
 }
 
 if [[ "${MODE}" == "device" ]]; then

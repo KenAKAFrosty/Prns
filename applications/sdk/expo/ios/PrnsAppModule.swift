@@ -1,17 +1,19 @@
 import ExpoModulesCore
 import Foundation
 
-private final class PrnsAppException: GenericException<String>, @unchecked Sendable {
+final class PrnsAppException: GenericException<String>, @unchecked Sendable {
   override var reason: String {
     param
   }
 }
 
 public final class PrnsAppModule: Module {
-  private static let nativeQueue = DispatchQueue(
+  static let nativeQueue = DispatchQueue(
     label: "rs.reticulum.prns.app.native",
     attributes: .concurrent
   )
+  private static let storagePreparationLock = NSLock()
+  private static var preparedStorageIdentifiers: [String: AnyHashable] = [:]
 
   public func definition() -> ModuleDefinition {
     Name("PrnsApp")
@@ -61,7 +63,7 @@ public final class PrnsAppModule: Module {
     }.runOnQueue(Self.nativeQueue)
 
     AsyncFunction("start") { (inputJSON: String) throws -> String in
-      try Self.invokePathJSON(inputJSON, operation: prns_app_start)
+      try Self.startWithRestoration(inputJSON)
     }.runOnQueue(Self.nativeQueue)
 
     AsyncFunction("snapshot") { () throws -> String in
@@ -149,9 +151,11 @@ public final class PrnsAppModule: Module {
 
     AsyncFunction("reset") { () throws -> String in
       let storageURL = try Self.developmentStorageURL(create: false)
-      return try Self.withUtf8Bytes(storageURL.path) { pointer, count in
+      let outcome = try Self.withUtf8Bytes(storageURL.path) { pointer, count in
         try Self.consume(prns_app_reset(pointer, count))
       }
+      Self.invalidatePreparedStorage(at: storageURL)
+      return outcome
     }.runOnQueue(Self.nativeQueue)
 
     #if targetEnvironment(simulator)
@@ -169,8 +173,41 @@ public final class PrnsAppModule: Module {
     }
     #endif
 
-    OnDestroy {
-      Self.stopForTeardown()
+  }
+
+  static func configuredStartInputJSON() throws -> String {
+    let data = try JSONSerialization.data(
+      withJSONObject: ["developmentTcpTarget": NSNull()],
+      options: [.sortedKeys]
+    )
+    guard let json = String(data: data, encoding: .utf8) else {
+      throw PrnsAppException("Unable to encode the native restoration start input.")
+    }
+    return json
+  }
+
+  static func startWithRestoration(_ inputJSON: String) throws -> String {
+    let storageURL = try developmentStorageURL(create: true)
+    let identifiers = try restorationIdentifiers()
+    return try withUtf8Bytes(storageURL.path) { pathPointer, pathCount in
+      try withUtf8Bytes(inputJSON) { inputPointer, inputCount in
+        try withUtf8Bytes(identifiers.central) { centralPointer, centralCount in
+          try withUtf8Bytes(identifiers.peripheral) { peripheralPointer, peripheralCount in
+            try consume(
+              prns_app_start_with_apple_restoration(
+                pathPointer,
+                pathCount,
+                inputPointer,
+                inputCount,
+                centralPointer,
+                centralCount,
+                peripheralPointer,
+                peripheralCount
+              )
+            )
+          }
+        }
+      }
     }
   }
 
@@ -188,9 +225,31 @@ public final class PrnsAppModule: Module {
     return String(cString: pointer)
   }
 
-  private static func developmentStorageURL(create: Bool) throws -> URL {
+  private static func restorationIdentifiers() throws -> (central: String, peripheral: String) {
+    let centralKey = "PRNSCoreBluetoothCentralRestorationIdentifier"
+    let peripheralKey = "PRNSCoreBluetoothPeripheralRestorationIdentifier"
+    guard
+      let central = Bundle.main.object(forInfoDictionaryKey: centralKey) as? String,
+      !central.isEmpty
+    else {
+      throw PrnsAppException("The app is missing its central Bluetooth restoration identifier.")
+    }
+    guard
+      let peripheral = Bundle.main.object(forInfoDictionaryKey: peripheralKey) as? String,
+      !peripheral.isEmpty
+    else {
+      throw PrnsAppException("The app is missing its peripheral Bluetooth restoration identifier.")
+    }
+    guard central != peripheral else {
+      throw PrnsAppException("The app's Bluetooth restoration identifiers must be distinct.")
+    }
+    return (central, peripheral)
+  }
+
+  static func developmentStorageURL(create: Bool) throws -> URL {
     do {
-      let applicationSupport = try FileManager.default.url(
+      let fileManager = FileManager.default
+      let applicationSupport = try fileManager.url(
         for: .applicationSupportDirectory,
         in: .userDomainMask,
         appropriateFor: nil,
@@ -200,16 +259,83 @@ public final class PrnsAppModule: Module {
         .appendingPathComponent("prns", isDirectory: true)
         .appendingPathComponent("development", isDirectory: true)
       if create {
-        try FileManager.default.createDirectory(
+        try fileManager.createDirectory(
           at: storageURL,
           withIntermediateDirectories: true
         )
+      }
+      if fileManager.fileExists(atPath: storageURL.path) {
+        try prepareStoragePolicy(at: storageURL, fileManager: fileManager)
       }
       return storageURL
     } catch {
       throw PrnsAppException("Unable to prepare the prns development storage directory.")
         .causedBy(error)
     }
+  }
+
+  private static func prepareStoragePolicy(at storageURL: URL, fileManager: FileManager) throws {
+    storagePreparationLock.lock()
+    defer { storagePreparationLock.unlock() }
+
+    let resourceIdentifier = try storageURL.resourceValues(
+      forKeys: [.fileResourceIdentifierKey]
+    ).fileResourceIdentifier as? AnyHashable
+    if let resourceIdentifier,
+      preparedStorageIdentifiers[storageURL.path] == resourceIdentifier
+    {
+      return
+    }
+    preparedStorageIdentifiers.removeValue(forKey: storageURL.path)
+
+    try applyProtection(to: storageURL, fileManager: fileManager)
+    var rootValues = URLResourceValues()
+    rootValues.isExcludedFromBackup = true
+    var mutableStorageURL = storageURL
+    try mutableStorageURL.setResourceValues(rootValues)
+
+    let keys: [URLResourceKey] = [.isSymbolicLinkKey]
+    var traversalError: Error?
+    guard
+      let enumerator = fileManager.enumerator(
+        at: storageURL,
+        includingPropertiesForKeys: keys,
+        options: [],
+        errorHandler: { _, error in
+          traversalError = error
+          return false
+        }
+      )
+    else {
+      throw PrnsAppException("Unable to inspect the existing prns storage directory.")
+    }
+    for case let childURL as URL in enumerator {
+      let values = try childURL.resourceValues(forKeys: Set(keys))
+      if values.isSymbolicLink == true {
+        enumerator.skipDescendants()
+        continue
+      }
+      try applyProtection(to: childURL, fileManager: fileManager)
+    }
+    if let traversalError {
+      throw traversalError
+    }
+    if let resourceIdentifier {
+      preparedStorageIdentifiers[storageURL.path] = resourceIdentifier
+    }
+  }
+
+  private static func applyProtection(to url: URL, fileManager: FileManager) throws {
+    try fileManager.setAttributes(
+      [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+      ofItemAtPath: url.path
+    )
+  }
+
+  private static func invalidatePreparedStorage(at storageURL: URL) {
+    storagePreparationLock.lock()
+    preparedStorageIdentifiers.removeValue(forKey: storageURL.path)
+    storagePreparationLock.unlock()
   }
 
   private static func invokeJSON(
@@ -304,7 +430,7 @@ public final class PrnsAppModule: Module {
       let started = try invokePathJSON(
         startInput,
         storageURL: storageURL,
-        operation: prns_app_start
+        operation: restoringSmokeStart
       )
       try requireTag(started, operation: "start \(generation)", expected: "started")
 
@@ -338,7 +464,7 @@ public final class PrnsAppModule: Module {
     let failedStart = try invokePathJSON(
       startInput,
       storageURL: storageURL,
-      operation: prns_app_start
+      operation: restoringSmokeStart
     )
     try requireTag(failedStart, operation: "malformed identity start", expected: "failed")
     try requireField(
@@ -385,6 +511,30 @@ public final class PrnsAppModule: Module {
     }
   }
 
+  private static func restoringSmokeStart(
+    _ pathPointer: UnsafePointer<UInt8>?,
+    _ pathCount: Int,
+    _ inputPointer: UnsafePointer<UInt8>?,
+    _ inputCount: Int
+  ) -> PrnsAppBytes {
+    let central = "rs.reticulum.prns.smoke.bluetooth-auto.central.v1"
+    let peripheral = "rs.reticulum.prns.smoke.bluetooth-auto.peripheral.v1"
+    return withUtf8Bytes(central) { centralPointer, centralCount in
+      withUtf8Bytes(peripheral) { peripheralPointer, peripheralCount in
+        prns_app_start_with_apple_restoration(
+          pathPointer,
+          pathCount,
+          inputPointer,
+          inputCount,
+          centralPointer,
+          centralCount,
+          peripheralPointer,
+          peripheralCount
+        )
+      }
+    }
+  }
+
   private static func requireTag(
     _ json: String,
     operation: String,
@@ -416,10 +566,4 @@ public final class PrnsAppModule: Module {
   }
   #endif
 
-  private static func stopForTeardown() {
-    nativeQueue.sync(flags: .barrier) {
-      let bytes = prns_app_stop()
-      prns_app_bytes_free(bytes)
-    }
-  }
 }

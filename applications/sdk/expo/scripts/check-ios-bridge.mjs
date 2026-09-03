@@ -5,6 +5,17 @@ import { fileURLToPath } from "node:url";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const swift = readFileSync(resolve(packageRoot, "ios/PrnsAppModule.swift"), "utf8");
+const coordinator = readFileSync(
+  resolve(packageRoot, "ios/PrnsAppLifecycleCoordinator.swift"),
+  "utf8",
+);
+const subscriber = readFileSync(
+  resolve(packageRoot, "ios/PrnsAppDelegateSubscriber.swift"),
+  "utf8",
+);
+const moduleConfig = JSON.parse(
+  readFileSync(resolve(packageRoot, "expo-module.config.json"), "utf8"),
+);
 const podspec = readFileSync(resolve(packageRoot, "ios/PrnsApp.podspec"), "utf8");
 const developmentClient = readFileSync(
   resolve(packageRoot, "ios/build-development-client.sh"),
@@ -24,13 +35,28 @@ assert.equal(
   28,
   "every Expo bridge function must use the native operation queue",
 );
-assert.match(
+assert.doesNotMatch(
   swift,
-  /nativeQueue\.sync\(flags: \.barrier\)/,
-  "module teardown must wait for in-flight native calls before stopping Rust",
+  /\bOnDestroy\b/,
+  "Expo module teardown must not stop process-owned Rust",
 );
+assert.match(coordinator, /nativeQueue\.async\(flags: \.barrier\)/);
 assert.match(swift, /\.appendingPathComponent\("prns", isDirectory: true\)/);
 assert.match(swift, /\.appendingPathComponent\("development", isDirectory: true\)/);
+assert.match(swift, /FileProtectionType\.completeUntilFirstUserAuthentication/);
+assert.match(swift, /isExcludedFromBackup = true/);
+assert.match(swift, /isSymbolicLink == true[\s\S]*skipDescendants\(\)/);
+assert.deepEqual(moduleConfig.apple?.appDelegateSubscribers, ["PrnsAppDelegateSubscriber"]);
+assert.match(subscriber, /willFinishLaunchingWithOptions/);
+assert.match(coordinator, /\.bluetoothCentrals/);
+assert.match(coordinator, /\.bluetoothPeripherals/);
+assert.match(coordinator, /guard centralRestoration \|\| peripheralRestoration/);
+assert.match(swift, /"developmentTcpTarget": NSNull\(\)/);
+assert.doesNotMatch(
+  `${coordinator}\n${subscriber}`,
+  /applicationDidEnterBackground|applicationWillResignActive|prns_app_stop/,
+  "background lifecycle hooks must not stop the native node",
+);
 
 for (const abiName of [
   "prns_app_contract_fingerprint",
@@ -39,7 +65,7 @@ for (const abiName of [
   "prns_app_preview_identity_import",
   "prns_app_create_generated_identity",
   "prns_app_create_imported_identity",
-  "prns_app_start",
+  "prns_app_start_with_apple_restoration",
   "prns_app_snapshot",
   "prns_app_initiate_pairing",
   "prns_app_approve_pairing",
@@ -85,6 +111,7 @@ assert.match(
   /"\$\{PODS_ROOT\}\/\.\.\/\.\.\/\.\.\/native-composition\/include"/,
   "the generated app target must be able to import the public C bridge header",
 );
+assert.match(podspec, /'UIKit'/, "the lifecycle subscriber must link UIKit explicitly");
 assert.match(
   podspec,
   /"\$\{PODS_CONFIGURATION_BUILD_DIR\}"/,
