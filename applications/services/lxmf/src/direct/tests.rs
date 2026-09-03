@@ -37,7 +37,7 @@ struct FakeNetwork {
     has_route: AtomicBool,
     request_result: StdMutex<Result<(), DirectSendFailure>>,
     establish_result: StdMutex<Result<[u8; 16], DirectSendFailure>>,
-    send_result: StdMutex<Result<(), DirectSendFailure>>,
+    send_result: StdMutex<Result<DirectDeliveryReceipt, DirectSendFailure>>,
     public_keys: StdMutex<BTreeMap<[u8; 16], [u8; 64]>>,
     calls: StdMutex<Vec<Call>>,
     sent_wires: StdMutex<Vec<Vec<u8>>>,
@@ -65,7 +65,7 @@ impl Default for FakeNetwork {
             has_route: AtomicBool::new(true),
             request_result: StdMutex::new(Ok(())),
             establish_result: StdMutex::new(Ok([0xa5; 16])),
-            send_result: StdMutex::new(Ok(())),
+            send_result: StdMutex::new(Ok(DirectDeliveryReceipt { rtt_millis: 9 })),
             public_keys: StdMutex::new(BTreeMap::new()),
             calls: StdMutex::new(Vec::new()),
             sent_wires: StdMutex::new(Vec::new()),
@@ -141,7 +141,7 @@ impl DirectNetwork for FakeNetwork {
         &self,
         _link: [u8; 16],
         complete_wire: Vec<u8>,
-    ) -> DirectNetworkFuture<'_, Result<(), DirectSendFailure>> {
+    ) -> DirectNetworkFuture<'_, Result<DirectDeliveryReceipt, DirectSendFailure>> {
         Box::pin(async move {
             let _drop_signal = DropSignal(&self.send_future_dropped);
             self.record(Call::SendLinkPacket);
@@ -444,7 +444,7 @@ async fn assert_failure(
     has_route: bool,
     request_result: Result<(), DirectSendFailure>,
     establish_result: Result<[u8; 16], DirectSendFailure>,
-    send_result: Result<(), DirectSendFailure>,
+    send_result: Result<DirectDeliveryReceipt, DirectSendFailure>,
     expected: DirectSendFailure,
     expected_outcome: SendDirectTextOutcome,
     expected_calls: Vec<Call>,
@@ -482,7 +482,7 @@ async fn direct_send_retains_typed_single_attempt_failures() {
         false,
         Err(DirectSendFailure::NoRoute),
         Ok([0xa5; 16]),
-        Ok(()),
+        Ok(DirectDeliveryReceipt { rtt_millis: 9 }),
         DirectSendFailure::NoRoute,
         SendDirectTextOutcome::NoRoute,
         vec![Call::HasRoute, Call::RequestPath],
@@ -492,7 +492,7 @@ async fn direct_send_retains_typed_single_attempt_failures() {
         true,
         Ok(()),
         Err(DirectSendFailure::LinkFailed),
-        Ok(()),
+        Ok(DirectDeliveryReceipt { rtt_millis: 9 }),
         DirectSendFailure::LinkFailed,
         SendDirectTextOutcome::LinkFailed,
         vec![Call::HasRoute, Call::EstablishLink],

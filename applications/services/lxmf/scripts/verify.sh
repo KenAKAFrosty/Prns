@@ -59,10 +59,13 @@ cargo check --locked \
 cargo test --locked \
   --manifest-path applications/services/lxmf/Cargo.toml \
   --features tokio-host
+cargo test --locked \
+  --manifest-path applications/services/lxmf/Cargo.toml \
+  --features redb-mailbox
 cargo clippy --locked \
   --manifest-path applications/services/lxmf/Cargo.toml \
   --all-targets \
-  --features tokio-host \
+  --features redb-mailbox \
   -- \
   -D warnings
 

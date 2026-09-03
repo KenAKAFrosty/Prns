@@ -1205,6 +1205,8 @@ dependencies = [
  "hex",
  "personal-rns",
  "prns-lxmf-wire",
+ "redb",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",

@@ -25,7 +25,7 @@ use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::links::LinkId;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
-    Message, PreConfiguredDestination, PrnsEvent, ServeMyRequestEndpoints,
+    Message, PreConfiguredDestination, PrnsEvent, RequestPathError, ServeMyRequestEndpoints,
 };
 use personal_rns::units::ByteLimit;
 use personal_rns::wire::DestinationHash;
@@ -61,6 +61,12 @@ pub enum DirectSendFailure {
     LocalNodeStopped,
 }
 
+/// Proof-backed settlement facts returned by the direct network adapter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DirectDeliveryReceipt {
+    pub rtt_millis: u64,
+}
+
 /// Failure to ask the owning node to emit the registered LXMF announce.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DirectAnnounceFailure {
@@ -92,7 +98,7 @@ pub trait DirectNetwork: Send + Sync + 'static {
         &self,
         link: [u8; 16],
         complete_wire: Vec<u8>,
-    ) -> DirectNetworkFuture<'_, Result<(), DirectSendFailure>>;
+    ) -> DirectNetworkFuture<'_, Result<DirectDeliveryReceipt, DirectSendFailure>>;
     fn destination_public_key(
         &self,
         destination: [u8; 16],
@@ -137,10 +143,10 @@ impl DirectNetwork for PrnsDirectNetwork {
                 .await
             {
                 Ok(_) => Ok(()),
-                Err(personal_rns::runtime::RequestPathError::NodeStopped) => {
-                    Err(DirectSendFailure::LocalNodeStopped)
+                Err(RequestPathError::NodeStopped) => Err(DirectSendFailure::LocalNodeStopped),
+                Err(RequestPathError::EntropyUnavailable | RequestPathError::Failed(_)) => {
+                    Err(DirectSendFailure::NoRoute)
                 }
-                Err(_) => Err(DirectSendFailure::NoRoute),
             }
         })
     }
@@ -162,19 +168,23 @@ impl DirectNetwork for PrnsDirectNetwork {
         &self,
         link: [u8; 16],
         complete_wire: Vec<u8>,
-    ) -> DirectNetworkFuture<'_, Result<(), DirectSendFailure>> {
+    ) -> DirectNetworkFuture<'_, Result<DirectDeliveryReceipt, DirectSendFailure>> {
         Box::pin(async move {
             match self
                 .handle
                 .send_link_packet(LinkId::new(link), &complete_wire)
                 .await
             {
-                Ok(receipt) if matches!(receipt.evidence, DeliveryEvidence::Proof(_)) => Ok(()),
+                Ok(receipt) if matches!(receipt.evidence, DeliveryEvidence::Proof(_)) => {
+                    Ok(DirectDeliveryReceipt {
+                        rtt_millis: receipt.rtt.millis(),
+                    })
+                }
                 Ok(_) => Err(DirectSendFailure::LinkFailed),
-                Err(SendError::NodeStopped) => Err(DirectSendFailure::LocalNodeStopped),
                 Err(SendError::Failed(SendToLinkFailure::Timeout)) => {
                     Err(DirectSendFailure::DeliveryTimedOut)
                 }
+                Err(SendError::NodeStopped) => Err(DirectSendFailure::LocalNodeStopped),
                 Err(_) => Err(DirectSendFailure::LinkFailed),
             }
         })
@@ -373,9 +383,9 @@ pub enum DirectServiceStartError {
 
 #[derive(Clone)]
 pub struct LxmfCallbacks {
-    local_destination: [u8; 16],
-    jobs: mpsc::Sender<Job>,
-    health: Arc<LaneHealth>,
+    pub(crate) local_destination: [u8; 16],
+    pub(crate) jobs: mpsc::Sender<Job>,
+    pub(crate) health: Arc<LaneHealth>,
 }
 
 impl LxmfCallbacks {
@@ -698,7 +708,7 @@ impl DirectLxmfService {
                     .find(|message| message.local_record_id == local_record_id)
                 {
                     match result {
-                        Ok(()) => message.delivery_state = LxmfDeliveryState::Delivered,
+                        Ok(_) => message.delivery_state = LxmfDeliveryState::Delivered,
                         Err(failure) => {
                             message.delivery_state = LxmfDeliveryState::Failed;
                             message.failure = Some(failure);
@@ -780,10 +790,10 @@ impl DirectLxmfService {
 
 const fn send_outcome(
     local_record_id: u64,
-    result: Result<(), DirectSendFailure>,
+    result: Result<DirectDeliveryReceipt, DirectSendFailure>,
 ) -> SendDirectTextOutcome {
     match result {
-        Ok(()) => SendDirectTextOutcome::Started { local_record_id },
+        Ok(_) => SendDirectTextOutcome::Started { local_record_id },
         Err(DirectSendFailure::NoRoute) => SendDirectTextOutcome::NoRoute,
         Err(DirectSendFailure::LinkFailed) => SendDirectTextOutcome::LinkFailed,
         Err(DirectSendFailure::DeliveryTimedOut) => SendDirectTextOutcome::DeliveryTimedOut,
@@ -791,11 +801,11 @@ const fn send_outcome(
     }
 }
 
-async fn run_single_attempt(
+pub(crate) async fn run_single_attempt(
     network: &dyn DirectNetwork,
     destination: [u8; 16],
     exact_wire: Vec<u8>,
-) -> Result<(), DirectSendFailure> {
+) -> Result<DirectDeliveryReceipt, DirectSendFailure> {
     if !network.has_route(destination).await {
         network.request_path(destination).await?;
     }
@@ -835,14 +845,14 @@ impl ServiceState {
     }
 }
 
-struct LaneHealth {
+pub(crate) struct LaneHealth {
     state: AtomicU8,
     inbound_overflow_count: AtomicU64,
     refresh: watch::Sender<u64>,
 }
 
 impl LaneHealth {
-    fn new(refresh: watch::Sender<u64>) -> Self {
+    pub(crate) fn new(refresh: watch::Sender<u64>) -> Self {
         Self {
             state: AtomicU8::new(0),
             inbound_overflow_count: AtomicU64::new(0),
@@ -850,7 +860,7 @@ impl LaneHealth {
         }
     }
 
-    fn state(&self) -> LxmfHealthState {
+    pub(crate) fn state(&self) -> LxmfHealthState {
         match self.state.load(Ordering::Acquire) {
             0 => LxmfHealthState::Ready,
             1 => LxmfHealthState::Degraded,
@@ -858,7 +868,7 @@ impl LaneHealth {
         }
     }
 
-    fn snapshot(&self) -> LxmfHealth {
+    pub(crate) fn snapshot(&self) -> LxmfHealth {
         LxmfHealth {
             state: self.state(),
             inbound_overflow_count: self.inbound_overflow_count.load(Ordering::Acquire),
@@ -882,7 +892,7 @@ impl LaneHealth {
         }
     }
 
-    fn recover(&self) {
+    pub(crate) fn recover(&self) {
         if self
             .state
             .compare_exchange(1, 0, Ordering::AcqRel, Ordering::Acquire)
@@ -892,7 +902,7 @@ impl LaneHealth {
         }
     }
 
-    fn stop(&self) {
+    pub(crate) fn stop(&self) {
         if self.state.swap(2, Ordering::AcqRel) != 2 {
             self.notify();
         }
@@ -905,23 +915,23 @@ impl LaneHealth {
     }
 }
 
-enum Job {
+pub(crate) enum Job {
     Peer(PeerJob),
     Inbound(InboundJob),
 }
 
-struct PeerJob {
-    destination: [u8; 16],
-    announced_identity: [u8; 16],
-    app_data: Vec<u8>,
-    observed_at_millis: u64,
-    is_path_response: bool,
+pub(crate) struct PeerJob {
+    pub(crate) destination: [u8; 16],
+    pub(crate) announced_identity: [u8; 16],
+    pub(crate) app_data: Vec<u8>,
+    pub(crate) observed_at_millis: u64,
+    pub(crate) is_path_response: bool,
 }
 
-struct InboundJob {
-    wire: Vec<u8>,
-    arrived_at_millis: u64,
-    source_interface: [u8; 8],
+pub(crate) struct InboundJob {
+    pub(crate) wire: Vec<u8>,
+    pub(crate) arrived_at_millis: u64,
+    pub(crate) source_interface: [u8; 8],
 }
 
 async fn run_worker(

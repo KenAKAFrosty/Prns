@@ -55,5 +55,11 @@ pub struct LxmfHealth {
 #[cfg(feature = "tokio-host")]
 pub mod direct;
 
+#[cfg(feature = "redb-mailbox")]
+pub mod mailbox;
+
 #[cfg(feature = "tokio-host")]
 pub use direct::*;
+
+#[cfg(feature = "redb-mailbox")]
+pub use mailbox::*;
