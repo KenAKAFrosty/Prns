@@ -27,7 +27,10 @@ use super::central::{
 use super::gatt_link::{gatt_inbound_channel, ControlPlane, GattLink};
 use super::peripheral::PeripheralDelegate;
 #[cfg(target_os = "ios")]
-use super::{central_manager_options, peripheral_manager_options};
+use super::{
+    central_manager_options, legacy_restoration_identifiers, peripheral_manager_options,
+    CoreBluetoothRestorationIdentifiers,
+};
 use super::{
     start_scan, Event, MacosBleError, PeripheralTable, RestoredPeripherals, SendCentralDelegate,
     SendCentralManager, SendPeripheral, SendPeripheralDelegate,
@@ -266,15 +269,22 @@ pub struct PreparedMacosBleBackend {
     handles: Handles,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum ManagerPreparation {
-    RestorationAware,
+    #[cfg(target_os = "ios")]
+    RestorationAware(CoreBluetoothRestorationIdentifiers),
+    #[cfg(not(target_os = "ios"))]
+    PlatformDefault,
     ForegroundOnly,
 }
 
 impl ManagerPreparation {
-    const fn uses_state_restoration(self) -> bool {
-        matches!(self, Self::RestorationAware)
+    #[cfg(target_os = "ios")]
+    fn restoration_identifiers(&self) -> Option<&CoreBluetoothRestorationIdentifiers> {
+        match self {
+            Self::RestorationAware(identifiers) => Some(identifiers),
+            Self::ForegroundOnly => None,
+        }
     }
 }
 
@@ -290,7 +300,25 @@ impl MacosBleBackend {
     /// restoration lifecycle. Use [`Self::prepare_foreground`] when the owner intentionally has no
     /// CoreBluetooth state-restoration contract.
     pub async fn prepare(identity: BleIdentity) -> Result<PreparedMacosBleBackend, MacosBleError> {
-        Self::prepare_with(identity, ManagerPreparation::RestorationAware).await
+        #[cfg(target_os = "ios")]
+        let manager_preparation =
+            ManagerPreparation::RestorationAware(legacy_restoration_identifiers());
+        #[cfg(not(target_os = "ios"))]
+        let manager_preparation = ManagerPreparation::PlatformDefault;
+        Self::prepare_with(identity, manager_preparation).await
+    }
+
+    /// Creates CoreBluetooth managers with stable restoration identifiers supplied by the
+    /// application that owns their lifecycle.
+    ///
+    /// The containing application must declare both matching CoreBluetooth background modes and
+    /// recreate the managers with these exact identifiers during an iOS restoration launch.
+    #[cfg(target_os = "ios")]
+    pub async fn prepare_with_restoration(
+        identity: BleIdentity,
+        identifiers: CoreBluetoothRestorationIdentifiers,
+    ) -> Result<PreparedMacosBleBackend, MacosBleError> {
+        Self::prepare_with(identity, ManagerPreparation::RestorationAware(identifiers)).await
     }
 
     /// Creates CoreBluetooth managers without opting into iOS state restoration.
@@ -307,9 +335,10 @@ impl MacosBleBackend {
         identity: BleIdentity,
         manager_preparation: ManagerPreparation,
     ) -> Result<PreparedMacosBleBackend, MacosBleError> {
-        let uses_state_restoration = manager_preparation.uses_state_restoration();
+        #[cfg(target_os = "ios")]
+        let restoration_identifiers = manager_preparation.restoration_identifiers().cloned();
         #[cfg(not(target_os = "ios"))]
-        let _ = uses_state_restoration;
+        let _ = manager_preparation;
         let (events_tx, events_rx) = tokio_mpsc::unbounded_channel::<Event>();
         let (keepalive, shutdown_rx) = sync_mpsc::channel::<()>();
         let (handles_tx, handles_rx) = oneshot::channel::<Handles>();
@@ -334,7 +363,9 @@ impl MacosBleBackend {
                 );
                 let central_proto = ProtocolObject::from_ref(&*central_delegate);
                 #[cfg(target_os = "ios")]
-                let central_options = uses_state_restoration.then(central_manager_options);
+                let central_options = restoration_identifiers
+                    .as_ref()
+                    .map(|identifiers| central_manager_options(identifiers.central()));
                 #[cfg(not(target_os = "ios"))]
                 let central_options: Option<
                     Retained<NSDictionary<NSString, AnyObject>>,
@@ -354,7 +385,9 @@ impl MacosBleBackend {
                     PeripheralDelegate::new(events_tx, queue.clone(), identity);
                 let peripheral_proto = ProtocolObject::from_ref(&*peripheral_delegate);
                 #[cfg(target_os = "ios")]
-                let peripheral_options = uses_state_restoration.then(peripheral_manager_options);
+                let peripheral_options = restoration_identifiers
+                    .as_ref()
+                    .map(|identifiers| peripheral_manager_options(identifiers.peripheral()));
                 #[cfg(not(target_os = "ios"))]
                 let peripheral_options: Option<
                     Retained<NSDictionary<NSString, AnyObject>>,
@@ -705,9 +738,11 @@ mod native_thread_tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     #[test]
-    fn foreground_preparation_does_not_request_state_restoration() {
-        assert!(!ManagerPreparation::ForegroundOnly.uses_state_restoration());
-        assert!(ManagerPreparation::RestorationAware.uses_state_restoration());
+    fn foreground_preparation_is_distinct_from_the_platform_default() {
+        assert_ne!(
+            ManagerPreparation::ForegroundOnly,
+            ManagerPreparation::PlatformDefault
+        );
     }
 
     #[test]
