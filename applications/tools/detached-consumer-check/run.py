@@ -1076,11 +1076,12 @@ def validate_cargo_sources(
             resolved_manifest = pathlib.Path(manifest_path).resolve()
             if relative_to(resolved_manifest, applications_root):
                 owners_by_manifest[resolved_manifest] = entry
-    if set(sources_by_name) != set(source_packages):
-        missing = sorted(set(source_packages) - set(sources_by_name))
+    required_sources = {rewrite.package for rewrite in rewrites}
+    if not required_sources.issubset(sources_by_name):
+        missing = sorted(required_sources - set(sources_by_name))
         raise fail(f"Cargo metadata omitted recorded Prns packages: {missing}")
-    for name, expected in source_packages.items():
-        entry = sources_by_name[name]
+    for name, entry in sources_by_name.items():
+        expected = source_packages[name]
         if entry.get("version") != expected.version or not exact_git_source(
             entry.get("source"), git_url, revision, resolved=True
         ):
