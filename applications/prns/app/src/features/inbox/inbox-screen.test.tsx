@@ -176,6 +176,22 @@ beforeEach(() => {
 });
 
 describe("durable LXMF screens", () => {
+  test("states the foreground, custody, and announce preconditions", async () => {
+    const screen = render(<InboxScreen />);
+
+    expect(await screen.findByText("Saved alias")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Receipt is foreground-only: suspending the app can stop new messages. Managed nodes do not collect mail for this phone's installation identity.",
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Before exchanging messages, use Announce LXMF destination. Peers need this installation's lxmf.delivery announce to learn its identity and validate its source signatures.",
+      ),
+    ).toBeTruthy();
+  });
+
   test("describes degraded mailbox health without inventing an inbound overflow", async () => {
     mockActiveSnapshot = {
       ...mockSnapshot,

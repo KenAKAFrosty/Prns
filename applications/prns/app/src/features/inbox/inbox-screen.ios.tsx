@@ -147,6 +147,14 @@ export function InboxScreen() {
         remain available while the local node is stopped; sending and peer discovery require a
         running generation.
       </BodyText>
+      <BodyText muted>
+        Receipt is foreground-only: suspending the app can stop new messages. Managed nodes do not
+        collect mail for this phone's installation identity.
+      </BodyText>
+      <BodyText muted>
+        Before exchanging messages, use Announce LXMF destination. Peers need this installation's
+        lxmf.delivery announce to learn its identity and validate its source signatures.
+      </BodyText>
       <LxmfHealthCard />
       {development.availability.type !== "available" ? (
         <UnavailableCard platform={development.availability.platform} />
