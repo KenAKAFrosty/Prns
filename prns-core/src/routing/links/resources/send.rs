@@ -2330,8 +2330,10 @@ mod tests {
 
     /// Staging needs a second outgoing row, which the deliberately tight fixed test layout does not carry; the heap layout is the shape every staging host actually runs.
     pub(crate) fn heap_sender_with_active_link() -> EngineState<crate::storage::GrowableHeap> {
-        let mut engine = EngineState::<crate::storage::GrowableHeap>::default();
-        engine.resource_seal_workspace_policy = ResourceSealWorkspacePolicy::TransferOwnership;
+        let mut engine = EngineState::<crate::storage::GrowableHeap> {
+            resource_seal_workspace_policy: ResourceSealWorkspacePolicy::TransferOwnership,
+            ..Default::default()
+        };
         install_active_link(&mut engine);
         engine
     }
