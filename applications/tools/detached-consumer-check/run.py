@@ -947,6 +947,8 @@ def exact_git_source(
             return False
     elif separator:
         return False
+    else:
+        repository_and_query = resolved_revision
     parsed = urllib.parse.urlsplit(repository_and_query)
     query = urllib.parse.parse_qs(parsed.query, strict_parsing=True)
     if query != {"rev": [revision]}:

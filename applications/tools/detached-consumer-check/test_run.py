@@ -140,6 +140,11 @@ class DetachedConsumerCheckTests(unittest.TestCase):
     def test_cargo_lock_refresh_only_allows_exact_git_sources(self) -> None:
         revision = "1" * 40
         git_url = "file:///exact/prns.git"
+        self.assertTrue(
+            mobility.exact_git_source(
+                f"git+{git_url}?rev={revision}", git_url, revision, resolved=False
+            )
+        )
         before = b"""version = 4
 
 [[package]]
