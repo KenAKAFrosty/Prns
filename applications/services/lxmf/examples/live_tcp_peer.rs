@@ -144,7 +144,7 @@ async fn run() -> Result<(), Failure> {
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
         on_event: move |event, _state: &()| {
-            let _outcome = event_callbacks.on_prns_event(event);
+            let _outcome = event_callbacks.on_prns_event(&event);
         },
     })
     .with_accepted_announce_observer(callbacks.accepted_announce_observer());

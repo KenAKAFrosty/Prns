@@ -341,15 +341,21 @@ async fn authenticated_observer_is_the_only_peer_discovery_lane() {
     let (peer_material, peer_destination) = peer_facts(&PEER_SECRET);
     let announce = current_announce(b" \0 Python \0 peer \t");
 
+    let diagnostic_event = PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
+        destination: DestinationHash::new(peer_destination),
+        hops: 2,
+        source_interface: TEST_INTERFACE,
+        app_data: &announce,
+    });
     assert_eq!(
-        callbacks.on_prns_event(PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
-            destination: DestinationHash::new(peer_destination),
-            hops: 2,
-            source_interface: TEST_INTERFACE,
-            app_data: &announce,
-        })),
+        callbacks.on_prns_event(&diagnostic_event),
         CallbackOutcome::Ignored
     );
+    let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = diagnostic_event
+    else {
+        panic!("the borrowed event remains available to the aggregate consumer");
+    };
+    assert_eq!(destination, DestinationHash::new(peer_destination));
     assert!(service.snapshot().await.peers.is_empty());
 
     assert_eq!(
@@ -551,7 +557,7 @@ async fn stop_cancels_and_joins_inflight_send_and_worker() {
         b"cancel worker",
     );
     assert_eq!(
-        worker_callbacks.on_prns_event(link_event(&wire)),
+        worker_callbacks.on_prns_event(&link_event(&wire)),
         CallbackOutcome::Enqueued
     );
     worker_fake.public_key_entered.notified().await;
@@ -600,15 +606,15 @@ async fn inbound_messages_retain_verification_exact_wire_and_logical_dedup() {
     fake.add_public_key(invalid_signer.destination(), &wrong_material);
 
     assert_eq!(
-        callbacks.on_prns_event(link_event(&verified_wire)),
+        callbacks.on_prns_event(&link_event(&verified_wire)),
         CallbackOutcome::Enqueued
     );
     assert_eq!(
-        callbacks.on_prns_event(link_event(&unknown_wire)),
+        callbacks.on_prns_event(&link_event(&unknown_wire)),
         CallbackOutcome::Enqueued
     );
     assert_eq!(
-        callbacks.on_prns_event(link_event(&invalid_wire)),
+        callbacks.on_prns_event(&link_event(&invalid_wire)),
         CallbackOutcome::Enqueued
     );
     let snapshot = wait_for_snapshot(&service, |snapshot| snapshot.messages.len() == 3).await;
@@ -632,7 +638,7 @@ async fn inbound_messages_retain_verification_exact_wire_and_logical_dedup() {
     );
 
     assert_eq!(
-        callbacks.on_prns_event(link_event(&verified_wire)),
+        callbacks.on_prns_event(&link_event(&verified_wire)),
         CallbackOutcome::Enqueued
     );
     let dedup_barrier = compose_wire(
@@ -642,7 +648,7 @@ async fn inbound_messages_retain_verification_exact_wire_and_logical_dedup() {
         b"dedup barrier",
     );
     assert_eq!(
-        callbacks.on_prns_event(link_event(&dedup_barrier)),
+        callbacks.on_prns_event(&link_event(&dedup_barrier)),
         CallbackOutcome::Enqueued
     );
     let after_duplicate =
@@ -666,7 +672,7 @@ async fn inbound_messages_retain_verification_exact_wire_and_logical_dedup() {
             .expect("the stamped fixture reaches the service-layer exclusion");
     assert!(parsed_stamp.payload().stamp().is_some());
     assert_eq!(
-        callbacks.on_prns_event(link_event(&stamped)),
+        callbacks.on_prns_event(&link_event(&stamped)),
         CallbackOutcome::Enqueued
     );
     let stamp_barrier = compose_wire(
@@ -676,7 +682,7 @@ async fn inbound_messages_retain_verification_exact_wire_and_logical_dedup() {
         b"stamp barrier",
     );
     assert_eq!(
-        callbacks.on_prns_event(link_event(&stamp_barrier)),
+        callbacks.on_prns_event(&link_event(&stamp_barrier)),
         CallbackOutcome::Enqueued
     );
     let after_stamp = wait_for_snapshot(&service, |snapshot| snapshot.messages.len() == 5).await;
@@ -694,12 +700,12 @@ async fn bounded_lane_saturates_reports_loss_recovers_and_restarts_empty() {
     let invalid_wire = [0u8; 1];
     for _ in 0..DIRECT_JOB_CAPACITY {
         assert_eq!(
-            callbacks.on_prns_event(link_event(&invalid_wire)),
+            callbacks.on_prns_event(&link_event(&invalid_wire)),
             CallbackOutcome::Enqueued
         );
     }
     assert_eq!(
-        callbacks.on_prns_event(link_event(&invalid_wire)),
+        callbacks.on_prns_event(&link_event(&invalid_wire)),
         CallbackOutcome::LaneFull
     );
     assert_eq!(callbacks.health.snapshot().state, LxmfHealthState::Degraded);
@@ -710,7 +716,7 @@ async fn bounded_lane_saturates_reports_loss_recovers_and_restarts_empty() {
         .inbound_overflow_count
         .store(u64::MAX, Ordering::Release);
     assert_eq!(
-        callbacks.on_prns_event(link_event(&invalid_wire)),
+        callbacks.on_prns_event(&link_event(&invalid_wire)),
         CallbackOutcome::LaneFull
     );
     assert_eq!(callbacks.health.snapshot().inbound_overflow_count, u64::MAX);
@@ -726,7 +732,7 @@ async fn bounded_lane_saturates_reports_loss_recovers_and_restarts_empty() {
     assert_eq!(recovered.health.inbound_overflow_count, u64::MAX);
     service.stop().await.expect("service tasks stop promptly");
     assert_eq!(
-        callbacks.on_prns_event(link_event(&invalid_wire)),
+        callbacks.on_prns_event(&link_event(&invalid_wire)),
         CallbackOutcome::Stopped
     );
 

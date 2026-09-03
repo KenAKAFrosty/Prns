@@ -409,7 +409,7 @@ impl LxmfCallbacks {
     }
 
     /// Route only Link DATA into the LXMF lane; diagnostics never discover peers.
-    pub fn on_prns_event(&self, event: PrnsEvent<'_>) -> CallbackOutcome {
+    pub fn on_prns_event(&self, event: &PrnsEvent<'_>) -> CallbackOutcome {
         let PrnsEvent::Message(Message::Delivered(Delivery::Link(delivery))) = event else {
             return CallbackOutcome::Ignored;
         };
