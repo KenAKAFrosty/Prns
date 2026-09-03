@@ -2757,6 +2757,14 @@ fn publish_message(sink: &dyn NativeEventSink, message: Message<'_>) -> bool {
             );
             return true;
         }
+        Message::RemoteControlControllerPairingAuthorizationPersistenceFailed { attempt_id } => {
+            publish_remote_control_diagnostic(
+                sink,
+                "RemoteControlControllerPairingAuthorizationPersistenceFailed",
+                format!("{attempt_id:?}"),
+            );
+            return true;
+        }
         Message::RemoteControlControllerPairingExpired { aborted } => {
             publish_remote_control_diagnostic(
                 sink,
