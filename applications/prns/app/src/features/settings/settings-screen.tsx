@@ -49,7 +49,7 @@ export function SettingsScreen() {
   const confirmReset = () => {
     Alert.alert(
       "Reset development data?",
-      "This stops the local node and permanently removes the primary identity, Bluetooth identity, RemoteControl identities and authorization state from this development install.",
+      "This stops the local node and permanently removes local preview preferences, the primary and Bluetooth identities, RemoteControl identities and authorization state, saved contacts, and all Inbox and Outbox messages from this development install.",
       [
         { text: "Cancel", style: "cancel" },
         { text: "Reset", style: "destructive", onPress: () => void reset() },

@@ -8,15 +8,18 @@ export function HelpScreen() {
       <Card>
         <Subheading>What works</Subheading>
         <BodyText>
-          Responsive navigation, native identity onboarding, local-node Host inspection, local UI
-          preferences, and confirmed development reset.
+          Responsive navigation, native identity onboarding, local-node Host inspection, Bluetooth
+          Auto, upstream RemoteControl pairing and Describe, native saved contacts, a durable
+          direct-LXMF Inbox and Outbox, local UI preferences, and confirmed development reset.
         </BodyText>
       </Card>
       <Card>
         <Subheading>What does not work yet</Subheading>
         <BodyText>
-          Messages, contacts, interface mutation, NomadNet, location, notifications, recovery, and
-          non-iOS native runtimes are not implemented by this development build.
+          The dedicated message inspector, contact merging, separate identity and interface views,
+          interface mutation, controller-grant inspection, NomadNet, location, notifications and
+          background delivery, storage and retained-recovery inspection, activity diagnostics, and
+          non-iOS native runtimes remain placeholders.
         </BodyText>
       </Card>
       <BodyText muted>

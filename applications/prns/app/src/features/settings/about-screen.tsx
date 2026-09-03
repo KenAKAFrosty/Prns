@@ -15,8 +15,9 @@ export function AboutScreen() {
       </Card>
       <BodyText>
         This build includes the Rust-owned primary identity vault, local Host inspection, Bluetooth
-        Auto, and upstream RemoteControl flow. Mailbox and contact services are not present. The
-        canonical production identifier remains rs.reticulum.prns.
+        Auto, upstream RemoteControl pairing and Describe, a native saved-contact directory, and a
+        durable direct-LXMF Inbox and Outbox. Delivery is foreground-only, and the native
+        capabilities are iOS-only. The canonical production identifier remains rs.reticulum.prns.
       </BodyText>
     </Screen>
   );

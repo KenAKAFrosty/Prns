@@ -1,4 +1,4 @@
-import { navigationEntries, screenCatalog } from "./catalog";
+import { navigationEntries, screenById, screenCatalog } from "./catalog";
 
 describe("screen catalog", () => {
   it("keeps one closed, uniquely addressed route inventory", () => {
@@ -52,5 +52,22 @@ describe("screen catalog", () => {
       "explore.index",
       "more.index",
     ]);
+  });
+
+  it("distinguishes implemented native state from remaining placeholders", () => {
+    expect(screenById("more.index")).toMatchObject({
+      summary: "Open implemented settings and help alongside planned operational areas.",
+      limitation:
+        "Identities, interfaces, notifications, and activity remain labelled placeholders.",
+    });
+    expect(screenById("notifications.settings").limitation).toBe(
+      "Durable iOS message state is visible in Inbox; platform notifications and background delivery are not implemented.",
+    );
+    expect(screenById("settings.storage").limitation).toBe(
+      "Rust-owned iOS contacts and mailbox state exist, but a dedicated storage-inspection view is not implemented.",
+    );
+    expect(screenById("help.index").summary).toBe(
+      "Understand the implemented iOS capabilities and remaining placeholder routes.",
+    );
   });
 });

@@ -66,6 +66,11 @@ describe("development identity recovery", () => {
     await waitFor(() => expect(mockResetNativeData).toHaveBeenCalledTimes(1));
     expect(mockResetScaffoldData).toHaveBeenCalledTimes(1);
     expect(mockReplace).toHaveBeenCalledWith("/onboarding/welcome");
+    expect(alert).toHaveBeenCalledWith(
+      "Reset development data?",
+      "This permanently removes the malformed primary identity, local preview preferences, Bluetooth and RemoteControl identities and authorization state, saved contacts, and all Inbox and Outbox messages from this development install.",
+      expect.any(Array),
+    );
     alert.mockRestore();
   });
 

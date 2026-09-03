@@ -24,7 +24,8 @@ export function MoreScreen() {
       <Badge>Development preview</Badge>
       <ScreenHeading>More</ScreenHeading>
       <BodyText>
-        Application details and planned operational areas remain grouped here on compact layouts.
+        Open implemented Settings and Help here. Identities, Interfaces, Notifications, and Activity
+        remain clearly labelled placeholders when unavailable features are shown.
       </BodyText>
       <CardStack>
         {entries.map((entry) => (

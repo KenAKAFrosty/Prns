@@ -89,7 +89,7 @@ export function RecoveryScreen() {
   const confirmReset = () => {
     Alert.alert(
       "Reset development data?",
-      "This permanently removes the malformed primary identity and the complete disposable prns/development root.",
+      "This permanently removes the malformed primary identity, local preview preferences, Bluetooth and RemoteControl identities and authorization state, saved contacts, and all Inbox and Outbox messages from this development install.",
       [
         { text: "Cancel", style: "cancel" },
         { text: "Reset", style: "destructive", onPress: () => void reset() },
