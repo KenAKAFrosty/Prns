@@ -3173,6 +3173,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "tape-sha256",
  "x25519-dalek",
  "zeroize",
 ]
@@ -4253,6 +4254,12 @@ dependencies = [
  "quote",
  "syn 2.0.117",
 ]
+
+[[package]]
+name = "tape-sha256"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7898be91b12092a7d3bf81362f2308b19fdde3f1963914a7b9d318032cff583"
 
 [[package]]
 name = "tempfile"
