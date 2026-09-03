@@ -1357,34 +1357,17 @@ async fn stable_target_announcer_task(
     node_page_destination: personal_rns::wire::DestinationHash,
     stable_target_destination: personal_rns::wire::DestinationHash,
 ) -> ! {
-    let mut announcer = screen::StableTargetAnnouncer::new();
     loop {
-        announcer.set_transmit_ready(TRANSMIT_EGRESS_READY.load(Ordering::Acquire));
-        if STABLE_TARGET_AUTOMATIC_TRIGGER.swap(false, Ordering::AcqRel) {
-            announcer.trigger_automatic();
-        }
-        if STABLE_TARGET_MANUAL_TRIGGER.swap(false, Ordering::AcqRel) {
-            announcer.request_manual();
-        }
-
         let now = Instant::now().as_millis();
-        if let Some(action) = announcer.poll(now) {
+        if let Some(action) = poll_stable_target_announcement(now) {
             let (destination, kind) = match action {
-                screen::StableTargetAnnouncementAction::AutomaticStableTarget { attempt } => {
-                    if attempt == 1 {
-                        let _ = update_remote_control_state(
-                            screen::RemoteControlTargetPairingState::stable_announcement_started,
-                        );
-                    }
+                screen::StableTargetAnnouncementAction::AutomaticStableTarget { .. } => {
                     (stable_target_destination, "automatic-stable")
                 }
                 screen::StableTargetAnnouncementAction::ManualNodePage => {
                     (node_page_destination, "manual-node")
                 }
                 screen::StableTargetAnnouncementAction::ManualStableTarget => {
-                    let _ = update_remote_control_state(
-                        screen::RemoteControlTargetPairingState::stable_announcement_started,
-                    );
                     (stable_target_destination, "manual-stable")
                 }
             };
@@ -1403,22 +1386,12 @@ async fn stable_target_announcer_task(
                     "announce settled kind={kind} destination={destination:?} outcome=failed error={error:?}"
                 ),
             }
-            if matches!(
-                action,
-                screen::StableTargetAnnouncementAction::AutomaticStableTarget { .. }
-                    | screen::StableTargetAnnouncementAction::ManualStableTarget
-            ) {
-                let succeeded = result.is_ok();
-                let _ = update_remote_control_state(|state| {
-                    state.stable_announcement_settled(succeeded)
-                });
-            }
-            let settled = announcer.settle(action);
+            let settled = settle_stable_target_announcement(action, result.is_ok());
             debug_assert!(settled, "the serialized announce action remains in flight");
             continue;
         }
 
-        if let Some(deadline) = announcer.next_deadline_millis() {
+        if let Some(deadline) = next_stable_target_announcement_deadline_millis() {
             let deadline = Instant::try_from_millis(deadline).unwrap_or(Instant::MAX);
             match select(STABLE_TARGET_ANNOUNCER_WAKE.wait(), Timer::at(deadline)).await {
                 Either::First(()) | Either::Second(()) => {}
@@ -1465,10 +1438,9 @@ async fn manifold_run(
     #[cfg(feature = "remote-control-pairing")]
     {
         set_remote_control_clock(report.logical_start);
-        if report.remote_control_controller_grants_restored_count > 0 {
-            STABLE_TARGET_AUTOMATIC_TRIGGER.store(true, Ordering::Release);
-            STABLE_TARGET_ANNOUNCER_WAKE.signal(());
-        }
+        observe_restored_remote_control_grants(
+            report.remote_control_controller_grants_restored_count,
+        );
     }
     boot_stage(BootPhase::PersistenceRestoreComplete);
     node.run_manifold_with_persistence_and_interface_store(&INTERFACE_STORE, persistence)

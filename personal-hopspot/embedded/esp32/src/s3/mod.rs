@@ -116,6 +116,10 @@ use personal_rns::wifi_auto::{
 };
 use prns_interfaces_embassy::bluetooth_auto::PEER_CAPACITY as EMBEDDED_BLE_PEER_CAPACITY;
 
+#[cfg(feature = "remote-control-pairing")]
+use crate::remote_control_composition::{
+    RemoteControlComposition, RemoteControlCompositionEffects, StableTargetAnnouncementSettlement,
+};
 use crate::station_recovery::{
     AccessPoint as StationAccessPoint, ConnectionFailure, ConnectionOutcome, DiscoveryScope,
     ScanFailure, ScanOutcome, StationAttempt, StationRecovery, StationYield,
@@ -319,18 +323,14 @@ static COMPLETION: CompletionPool<Mtx, COMPLETIONS_CAP> = CompletionPool::new();
 const BUTTON_EVENT_CAPACITY: usize = 4;
 static BUTTON_EVENTS: Channel<Mtx, screen::InputEvent, BUTTON_EVENT_CAPACITY> = Channel::new();
 #[cfg(feature = "remote-control-pairing")]
-static REMOTE_CONTROL_EVENTS: BlockingMutex<Mtx, RefCell<screen::RemoteControlEventHandoff>> =
-    BlockingMutex::new(RefCell::new(screen::RemoteControlEventHandoff::new()));
+static REMOTE_CONTROL_COMPOSITION: BlockingMutex<
+    Mtx,
+    RefCell<RemoteControlComposition<personal_rns::remote_control::RemoteControlPairingAttemptId>>,
+> = BlockingMutex::new(RefCell::new(RemoteControlComposition::new()));
 #[cfg(feature = "remote-control-pairing")]
 static REMOTE_CONTROL_UI_WAKE: Signal<Mtx, ()> = Signal::new();
 #[cfg(feature = "remote-control-pairing")]
 static STABLE_TARGET_ANNOUNCER_WAKE: Signal<Mtx, ()> = Signal::new();
-#[cfg(feature = "remote-control-pairing")]
-static STABLE_TARGET_AUTOMATIC_TRIGGER: AtomicBool = AtomicBool::new(false);
-#[cfg(feature = "remote-control-pairing")]
-static STABLE_TARGET_MANUAL_TRIGGER: AtomicBool = AtomicBool::new(false);
-#[cfg(feature = "remote-control-pairing")]
-static TRANSMIT_EGRESS_READY: AtomicBool = AtomicBool::new(false);
 #[cfg(feature = "remote-control-pairing")]
 static PAIRING_CLOSE_REQUESTED: AtomicBool = AtomicBool::new(false);
 #[cfg(feature = "remote-control-pairing")]
@@ -356,29 +356,55 @@ static CORE_ONE_HEARTBEAT: AtomicU64 = AtomicU64::new(0);
 fn firmware_on_event(_event: PrnsEvent<'_>, _state: &()) {}
 
 #[cfg(feature = "remote-control-pairing")]
+fn apply_remote_control_effects(effects: RemoteControlCompositionEffects) {
+    if effects.wake_ui() {
+        REMOTE_CONTROL_UI_WAKE.signal(());
+    }
+    if effects.wake_announcer() {
+        STABLE_TARGET_ANNOUNCER_WAKE.signal(());
+    }
+    if effects.close_pairing() {
+        PAIRING_CLOSE_REQUESTED.store(true, Ordering::Release);
+        PAIRING_CLOSE_WAKE.signal(());
+    }
+}
+
+#[cfg(feature = "remote-control-pairing")]
 fn update_remote_control_state(
     transition: impl FnOnce(
         &mut screen::RemoteControlTargetPairingState,
     ) -> screen::RemoteControlTargetPairingUpdate,
 ) -> screen::RemoteControlTargetPairingUpdate {
-    let update = REMOTE_CONTROL_EVENTS.lock(|handoff| handoff.borrow_mut().update(transition));
-    if matches!(
-        update,
-        screen::RemoteControlTargetPairingUpdate::Changed
-            | screen::RemoteControlTargetPairingUpdate::ClosePairingWindow
-    ) {
-        REMOTE_CONTROL_UI_WAKE.signal(());
-    }
-    if update == screen::RemoteControlTargetPairingUpdate::ClosePairingWindow {
-        PAIRING_CLOSE_REQUESTED.store(true, Ordering::Release);
-        PAIRING_CLOSE_WAKE.signal(());
-    }
+    let output = REMOTE_CONTROL_COMPOSITION
+        .lock(|composition| composition.borrow_mut().update_pairing(transition));
+    let (update, effects) = output.into_parts();
+    apply_remote_control_effects(effects);
     update
 }
 
 #[cfg(feature = "remote-control-pairing")]
 fn current_remote_control_state() -> screen::RemoteControlTargetPairingState {
-    REMOTE_CONTROL_EVENTS.lock(|handoff| handoff.borrow_mut().take_current())
+    REMOTE_CONTROL_COMPOSITION.lock(|composition| composition.borrow_mut().take_current_pairing())
+}
+
+#[cfg(feature = "remote-control-pairing")]
+fn remote_control_authorization_persisted(
+    attempt_id: personal_rns::remote_control::RemoteControlPairingAttemptId,
+) {
+    let output = REMOTE_CONTROL_COMPOSITION
+        .lock(|composition| composition.borrow_mut().authorization_persisted(attempt_id));
+    let (_, effects) = output.into_parts();
+    apply_remote_control_effects(effects);
+}
+
+#[cfg(feature = "remote-control-pairing")]
+fn observe_restored_remote_control_grants(restored_count: u32) {
+    let effects = REMOTE_CONTROL_COMPOSITION.lock(|composition| {
+        composition
+            .borrow_mut()
+            .observe_restored_controller_grants(restored_count)
+    });
+    apply_remote_control_effects(effects);
 }
 
 #[cfg(feature = "remote-control-pairing")]
@@ -407,11 +433,7 @@ fn firmware_on_event(event: PrnsEvent<'_>, _state: &()) {
         PrnsEvent::Message(Message::RemoteControlTargetPairingAuthorizationPersisted {
             attempt_id,
         }) => {
-            let update = update_remote_control_state(|state| state.persisted(attempt_id));
-            if update == screen::RemoteControlTargetPairingUpdate::Changed {
-                STABLE_TARGET_AUTOMATIC_TRIGGER.store(true, Ordering::Release);
-                STABLE_TARGET_ANNOUNCER_WAKE.signal(());
-            }
+            remote_control_authorization_persisted(attempt_id);
         }
         PrnsEvent::Message(Message::RemoteControlTargetPairingExpired { aborted }) => {
             let attempt_id = aborted.attempt_id();
@@ -465,15 +487,53 @@ fn remote_control_now() -> personal_rns::units::InstantMillis {
 
 #[cfg(feature = "remote-control-pairing")]
 fn publish_transmit_egress_ready(ready: bool) {
-    if TRANSMIT_EGRESS_READY.swap(ready, Ordering::AcqRel) != ready {
-        STABLE_TARGET_ANNOUNCER_WAKE.signal(());
-    }
+    let effects = REMOTE_CONTROL_COMPOSITION
+        .lock(|composition| composition.borrow_mut().set_transmit_ready(ready));
+    apply_remote_control_effects(effects);
 }
 
 #[cfg(feature = "remote-control-pairing")]
 fn request_manual_announcements() {
-    STABLE_TARGET_MANUAL_TRIGGER.store(true, Ordering::Release);
-    STABLE_TARGET_ANNOUNCER_WAKE.signal(());
+    let effects = REMOTE_CONTROL_COMPOSITION
+        .lock(|composition| composition.borrow_mut().request_manual_announcements());
+    apply_remote_control_effects(effects);
+}
+
+#[cfg(feature = "remote-control-pairing")]
+fn poll_stable_target_announcement(
+    now_millis: u64,
+) -> Option<screen::StableTargetAnnouncementAction> {
+    let output = REMOTE_CONTROL_COMPOSITION
+        .lock(|composition| composition.borrow_mut().poll_announcement(now_millis));
+    let (action, effects) = output.into_parts();
+    apply_remote_control_effects(effects);
+    action
+}
+
+#[cfg(feature = "remote-control-pairing")]
+fn settle_stable_target_announcement(
+    action: screen::StableTargetAnnouncementAction,
+    succeeded: bool,
+) -> bool {
+    let settlement = if succeeded {
+        StableTargetAnnouncementSettlement::Succeeded
+    } else {
+        StableTargetAnnouncementSettlement::Failed
+    };
+    let output = REMOTE_CONTROL_COMPOSITION.lock(|composition| {
+        composition
+            .borrow_mut()
+            .settle_announcement(action, settlement)
+    });
+    let (settled, effects) = output.into_parts();
+    apply_remote_control_effects(effects);
+    settled
+}
+
+#[cfg(feature = "remote-control-pairing")]
+fn next_stable_target_announcement_deadline_millis() -> Option<u64> {
+    REMOTE_CONTROL_COMPOSITION
+        .lock(|composition| composition.borrow().next_announcement_deadline_millis())
 }
 
 #[cfg(feature = "remote-control-pairing")]
