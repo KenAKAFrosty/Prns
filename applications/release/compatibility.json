@@ -4,7 +4,9 @@
     "node": "24.18.0",
     "npm": "11.16.0",
     "pythonMinimum": "3.11.0",
-    "rustMinimum": "1.90.0"
+    "rustMinimum": "1.90.0",
+    "rustComponents": ["clippy", "rustfmt"],
+    "rustTargets": ["thumbv7em-none-eabihf"]
   },
   "prns": {
     "repository": "https://github.com/KenAKAFrosty/Prns.git",

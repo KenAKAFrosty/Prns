@@ -145,6 +145,34 @@ def require_qualification_toolchains(
         raise fail(
             f"Rust {'.'.join(map(str, expected_rust))} or newer is required, received {rustc}"
         )
+    installed_components = run(
+        ("rustup", "component", "list", "--installed"),
+        cwd=repository_root,
+        capture=True,
+    ).stdout.splitlines()
+    for component in string_array(
+        qualification, "rustComponents", "compatibility.qualification"
+    ):
+        if not any(
+            installed == component or installed.startswith(f"{component}-")
+            for installed in installed_components
+        ):
+            raise fail(f"required Rust component is not installed: {component}")
+    installed_targets = set(
+        run(
+            ("rustup", "target", "list", "--installed"),
+            cwd=repository_root,
+            capture=True,
+        ).stdout.splitlines()
+    )
+    missing_targets = (
+        set(string_array(qualification, "rustTargets", "compatibility.qualification"))
+        - installed_targets
+    )
+    if missing_targets:
+        raise fail(
+            f"required Rust targets are not installed: {sorted(missing_targets)}"
+        )
 
 
 def controlled_environment(
@@ -234,6 +262,8 @@ def load_compatibility() -> dict[str, Any]:
             is None
         ):
             raise fail(f"compatibility.qualification.{key} must be major.minor.patch")
+    string_array(qualification, "rustComponents", "compatibility.qualification")
+    string_array(qualification, "rustTargets", "compatibility.qualification")
     prns = object_value(document.get("prns"), "compatibility.prns")
     revision = string_value(prns, "revision", "compatibility.prns")
     if REVISION.fullmatch(revision) is None:
