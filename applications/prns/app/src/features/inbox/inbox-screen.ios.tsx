@@ -3,6 +3,7 @@ import type {
   CancelLxmfMessageOutcome,
   Contact,
   ContactListOutcome,
+  DevelopmentNodeSnapshot,
   LxmfMessage,
   LxmfMessageListOutcome,
   LxmfPeerListOutcome,
@@ -309,7 +310,7 @@ export function ConversationScreen({ destination }: { readonly destination: Dest
       {nodeRunning ? (
         <Composer destination={destination} onSettled={data.refresh} />
       ) : (
-        <BodyText muted>Start the local node to compose a new message.</BodyText>
+        <BodyText muted>Start this device&apos;s node to compose a new message.</BodyText>
       )}
       <Subheading>Messages</Subheading>
       {data.messages.length === 0 ? (
@@ -644,13 +645,13 @@ function mailboxMutationLabel(
     case "notFound":
       return `The message no longer exists, so it could not be ${kind === "retry" ? "retried" : "cancelled"}.`;
     case "notFailed":
-      return `This message cannot be retried because it is ${outcome.current.type}.`;
+      return "Only failed messages can be retried.";
     case "alreadyDelivered":
       return "This message was delivered before it could be cancelled.";
     case "alreadyCancelled":
       return "This message was already cancelled.";
     case "notCancellable":
-      return `This message cannot be cancelled because it is ${outcome.current.type}.`;
+      return "Only queued or sending messages can be cancelled.";
     case "developmentUnavailable":
       return `Could not ${kind} this message. Try again.`;
     case "developmentResetRequired":
@@ -662,12 +663,13 @@ function LxmfHealthCard() {
   const development = useDevelopmentRuntime();
   const health = development.snapshot?.lxmf;
   const state =
-    health?.state ??
-    (development.availability.type !== "available"
-      ? "Unavailable"
-      : development.phase === "starting"
-        ? "Starting"
-        : "Stopped");
+    health === undefined
+      ? development.availability.type !== "available"
+        ? "Unavailable"
+        : development.phase === "starting"
+          ? "Getting ready"
+          : "Offline"
+      : messagingStateLabel(health.state);
   return (
     <Card>
       <Subheading>Messaging status</Subheading>
@@ -677,6 +679,17 @@ function LxmfHealthCard() {
       ) : null}
     </Card>
   );
+}
+
+function messagingStateLabel(state: NonNullable<DevelopmentNodeSnapshot["lxmf"]>["state"]): string {
+  switch (state) {
+    case "ready":
+      return "Ready";
+    case "degraded":
+      return "Limited";
+    case "stopped":
+      return "Offline";
+  }
 }
 
 function conversationDestinations(

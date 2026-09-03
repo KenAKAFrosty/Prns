@@ -120,7 +120,7 @@ export function RecoveryScreen() {
           </Button>
         ) : null}
         {inspection.type === "present" ? (
-          <Button onPress={() => router.replace("/nodes/local")}>Open local node</Button>
+          <Button onPress={() => router.replace("/nodes/local")}>Open this device</Button>
         ) : null}
         {inspection.type === "missing" ? (
           <Button onPress={() => router.replace("/onboarding/welcome")}>

@@ -354,7 +354,7 @@ function observedSaveMessage(outcome: ContactMutationOutcome): string {
     case "notObserved":
       return "This destination is no longer visible on the network.";
     case "localNodeStopped":
-      return "The local node stopped before this association could be saved.";
+      return "This device's node stopped before this address could be saved.";
     case "developmentUnavailable":
       return outcome.detail;
     case "developmentResetRequired":

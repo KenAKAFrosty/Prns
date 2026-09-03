@@ -350,6 +350,7 @@ describe("Foundation 1 Nodes runtime binding", () => {
       [{ type: "paired", attemptId: "attempt-1" }, "Paired"],
       [{ type: "rejected", detail: "upstream RemoteControl rejected" }, "Rejected"],
       [{ type: "expired", detail: "signed availability expired" }, "Expired"],
+      [{ type: "cancelled" }, "Cancelled"],
       [{ type: "failed", stage: "link", detail: "E290 link failure" }, "Pairing failed"],
     ] as const satisfies readonly (readonly [PairingState, string])[];
 

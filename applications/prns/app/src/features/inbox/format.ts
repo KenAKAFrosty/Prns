@@ -46,12 +46,8 @@ export function textPresentation(value: LxmfText): {
   if (value.type === "utf8") {
     return { text: value.value, validUtf8: true };
   }
-  const preview = Array.from(value.bytes.slice(0, 12), (byte) =>
-    byte.toString(16).padStart(2, "0"),
-  ).join(" ");
-  const suffix = value.bytes.length > 12 ? " …" : "";
   return {
-    text: `Invalid UTF-8 (${value.bytes.length} bytes: ${preview}${suffix})`,
+    text: "Unreadable text",
     validUtf8: false,
   };
 }

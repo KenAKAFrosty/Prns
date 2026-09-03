@@ -208,7 +208,7 @@ describe("durable LXMF screens", () => {
       expect(screen.getByText("Saved alias")).toBeTruthy();
     });
     expect(screen.queryByText("Announced peer")).toBeNull();
-    expect(screen.getByText("ready")).toBeTruthy();
+    expect(screen.getByText("Ready")).toBeTruthy();
     expect(mockListLxmfMessages).toHaveBeenCalledWith({
       peer: null,
       before: null,
@@ -220,7 +220,7 @@ describe("durable LXMF screens", () => {
     const screen = render(<ConversationScreen destination={mockDestination} />);
 
     await waitFor(() => {
-      expect(screen.getByText(/Invalid UTF-8 \(2 bytes: ff fe\)/u)).toBeTruthy();
+      expect(screen.getByText("Unreadable text")).toBeTruthy();
     });
     expect(screen.getByText("Unverified — invalid signature")).toBeTruthy();
     expect(screen.getAllByText("Received")).toHaveLength(2);

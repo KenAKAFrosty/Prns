@@ -59,9 +59,9 @@ describe("identity onboarding", () => {
 
     fireEvent.press(view.getByRole("button", { name: "Create identity" }));
     await waitFor(() =>
-      expect(view.getByRole("button", { name: "Continue to local node" })).toBeTruthy(),
+      expect(view.getByRole("button", { name: "Continue to this device" })).toBeTruthy(),
     );
-    fireEvent.press(view.getByRole("button", { name: "Continue to local node" }));
+    fireEvent.press(view.getByRole("button", { name: "Continue to this device" }));
 
     expect(mockReplace).toHaveBeenCalledWith("/nodes/local");
   });
@@ -82,9 +82,9 @@ describe("identity onboarding", () => {
     await waitFor(() => expect(view.getByText("33333333333333333333333333333333")).toBeTruthy());
     fireEvent.press(view.getByRole("button", { name: "Confirm and import" }));
     await waitFor(() =>
-      expect(view.getByRole("button", { name: "Continue to local node" })).toBeTruthy(),
+      expect(view.getByRole("button", { name: "Continue to this device" })).toBeTruthy(),
     );
-    fireEvent.press(view.getByRole("button", { name: "Continue to local node" }));
+    fireEvent.press(view.getByRole("button", { name: "Continue to this device" }));
 
     expect(mockPreviewIdentityImport).toHaveBeenCalledWith(credential);
     expect(mockCreateImportedIdentity).toHaveBeenCalledWith(credential);

@@ -403,7 +403,7 @@ function MutationResult({ outcome }: { readonly outcome: ContactMutationOutcome 
     existing: "This verified destination was already saved.",
     alreadyExists: "This destination is already saved.",
     notFound: "The contact no longer exists.",
-    localNodeStopped: "The local node is not running.",
+    localNodeStopped: "This device's node is not running.",
     notObserved: "This destination is no longer visible on the network.",
     identityConflict: "The saved identity differs from the verified network identity.",
     missingIdentity: "Add or discover an identity before pinning this contact.",

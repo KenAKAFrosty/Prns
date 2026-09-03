@@ -115,7 +115,7 @@ function CreateIdentity() {
       <CreationResult outcome={outcome} failure={failure} />
       <CardStack>
         {outcome?.type === "created" || outcome?.type === "alreadyExists" ? (
-          <Button onPress={() => router.replace("/nodes/local")}>Continue to local node</Button>
+          <Button onPress={() => router.replace("/nodes/local")}>Continue to this device</Button>
         ) : (
           <Button disabled={pending || unavailable} onPress={() => void create()}>
             {pending ? "Creating…" : "Create identity"}
@@ -156,7 +156,7 @@ function ImportIdentity() {
       }
       const asset = selected.assets[0];
       if (asset === undefined) {
-        setFailure("The document picker returned no credential.");
+        setFailure("No identity file was selected.");
         return;
       }
       cachedCredential = new File(asset.uri);
@@ -165,9 +165,7 @@ function ImportIdentity() {
       if (preview.type === "invalidLength") {
         setIdentity(null);
         setPreviewHash(null);
-        setFailure(
-          `The selected credential is ${bytes.byteLength} bytes; exactly 64 are required.`,
-        );
+        setFailure("The selected file is not a valid Reticulum identity.");
         return;
       }
       setIdentity(bytes);
@@ -226,7 +224,7 @@ function ImportIdentity() {
       <CreationResult outcome={outcome} failure={failure} />
       <CardStack>
         {outcome?.type === "created" || outcome?.type === "alreadyExists" ? (
-          <Button onPress={() => router.replace("/nodes/local")}>Continue to local node</Button>
+          <Button onPress={() => router.replace("/nodes/local")}>Continue to this device</Button>
         ) : (
           <>
             <Button disabled={pending !== null || unavailable} onPress={() => void pick()}>
@@ -285,8 +283,8 @@ function CreationResult({
     case "invalidLength":
       return (
         <Card>
-          <Badge tone="warning">Invalid credential length</Badge>
-          <BodyText>Select a raw credential containing exactly 64 bytes.</BodyText>
+          <Badge tone="warning">Invalid identity file</Badge>
+          <BodyText>Select a valid Reticulum identity file.</BodyText>
         </Card>
       );
     case "unavailable":
