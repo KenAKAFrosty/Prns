@@ -162,8 +162,10 @@ def controlled_environment(
     npm_cache.mkdir()
     uv_cache = work / "uv-cache"
     uv_cache.mkdir()
-    npmrc = work / "empty.npmrc"
-    npmrc.write_text("", encoding="utf-8")
+    npm_user_config = work / "npm-user.npmrc"
+    npm_user_config.write_text("", encoding="utf-8")
+    npm_global_config = work / "npm-global.npmrc"
+    npm_global_config.write_text("", encoding="utf-8")
     environment.update(
         {
             "CARGO_HOME": os.fspath(cargo_home),
@@ -172,8 +174,8 @@ def controlled_environment(
             "GIT_CONFIG_GLOBAL": os.devnull,
             "GIT_CONFIG_SYSTEM": os.devnull,
             "NPM_CONFIG_CACHE": os.fspath(npm_cache),
-            "NPM_CONFIG_GLOBALCONFIG": os.fspath(npmrc),
-            "NPM_CONFIG_USERCONFIG": os.fspath(npmrc),
+            "NPM_CONFIG_GLOBALCONFIG": os.fspath(npm_global_config),
+            "NPM_CONFIG_USERCONFIG": os.fspath(npm_user_config),
             "RUST_MIN_STACK": str(16 * 1024 * 1024),
             "UV_CACHE_DIR": os.fspath(uv_cache),
         }
