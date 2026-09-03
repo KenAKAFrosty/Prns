@@ -9,6 +9,7 @@ from collections.abc import Mapping
 LISTEN_IP_ENV = "PRNS_LXMF_LISTEN_IP"
 WILDCARD_OPT_IN_ENV = "PRNS_LXMF_ALLOW_WILDCARD_BIND"
 DEFAULT_LISTEN_IP = "127.0.0.1"
+RUST_OBSERVED_MARKER = "PINNED_PYTHON_LXMF_RUST_OBSERVED"
 
 
 def validated_ip(value: str, *, label: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:

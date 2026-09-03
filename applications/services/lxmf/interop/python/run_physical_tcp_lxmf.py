@@ -15,6 +15,7 @@ import tempfile
 from tcp_fixture import (
     DEFAULT_LISTEN_IP,
     LISTEN_IP_ENV,
+    RUST_OBSERVED_MARKER,
     WILDCARD_OPT_IN_ENV,
     tcp_target,
     validated_ip,
@@ -25,10 +26,14 @@ from tcp_fixture import (
 ROOT = pathlib.Path(__file__).resolve().parents[5]
 PEER = pathlib.Path(__file__).with_name("live_tcp_lxmf_peer.py")
 DEFAULT_VENV = ROOT / "applications" / "target" / "interop" / "lxmf-1.1.0"
+PHYSICAL_SEQUENCE = (
+    "In the app, announce the local lxmf.delivery destination; wait for a line "
+    f"beginning with {RUST_OBSERVED_MARKER}; then send the Rust test message."
+)
 
 
 def arguments(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, epilog=PHYSICAL_SEQUENCE)
     parser.add_argument(
         "--listen-ip",
         default=DEFAULT_LISTEN_IP,
@@ -123,6 +128,7 @@ def main(argv: list[str] | None = None) -> int:
     with tempfile.TemporaryDirectory(prefix="prns-lxmf-physical-") as temporary:
         environment["PRNS_LXMF_CONFIG_DIR"] = str(pathlib.Path(temporary) / "rns")
         print(f"PRNS_LXMF_PHYSICAL_TARGET={target}", flush=True)
+        print(f"PRNS_LXMF_PHYSICAL_SEQUENCE={PHYSICAL_SEQUENCE}", flush=True)
         if selected.listen_address.is_unspecified:
             print(
                 "WARNING: the pinned LXMF fixture is listening on all addresses until this process exits",

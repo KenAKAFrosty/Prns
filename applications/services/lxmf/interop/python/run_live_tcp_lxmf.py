@@ -11,7 +11,12 @@ import tempfile
 import time
 from pathlib import Path
 
-from tcp_fixture import DEFAULT_LISTEN_IP, LISTEN_IP_ENV, WILDCARD_OPT_IN_ENV
+from tcp_fixture import (
+    DEFAULT_LISTEN_IP,
+    LISTEN_IP_ENV,
+    RUST_OBSERVED_MARKER,
+    WILDCARD_OPT_IN_ENV,
+)
 
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -145,7 +150,11 @@ def main() -> int:
                     f"--- pinned Python ({python_process.returncode}) ---\n{python_output}"
                     f"--- native Prns ({rust_process.returncode}) ---\n{rust_output}"
                 )
-            if PYTHON_SUCCESS not in python_output or RUST_SUCCESS not in rust_output:
+            if (
+                RUST_OBSERVED_MARKER not in python_output
+                or PYTHON_SUCCESS not in python_output
+                or RUST_SUCCESS not in rust_output
+            ):
                 raise RuntimeError(
                     "live exchange evidence missing\n"
                     f"--- pinned Python ---\n{python_output}"

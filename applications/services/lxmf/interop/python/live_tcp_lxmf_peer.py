@@ -11,12 +11,55 @@ import time
 import LXMF
 import RNS
 
-from tcp_fixture import environment_listen_ip, server_configuration
+from tcp_fixture import (
+    RUST_OBSERVED_MARKER,
+    environment_listen_ip,
+    server_configuration,
+)
 
 
 EXPECTED_FROM_RUST = b"rust-to-python"
 SENT_FROM_PYTHON = b"python-to-rust"
 PEER_SECRET = bytes([0x52]) * 64
+
+
+_MISSING_REASON = object()
+
+
+def source_verification_failure(message) -> str | None:
+    """Describe pinned LXMF verification failure without conflating its reasons."""
+    if getattr(message, "signature_validated", False):
+        return None
+
+    reason = getattr(message, "unverified_reason", _MISSING_REASON)
+    source_unknown = getattr(LXMF.LXMessage, "SOURCE_UNKNOWN", _MISSING_REASON)
+    signature_invalid = getattr(LXMF.LXMessage, "SIGNATURE_INVALID", _MISSING_REASON)
+    if source_unknown is not _MISSING_REASON and reason == source_unknown:
+        return (
+            "Rust LXMF source identity was unknown to pinned Python; announce the "
+            "app's lxmf.delivery destination and wait for a line beginning with "
+            f"{RUST_OBSERVED_MARKER} before sending"
+        )
+    if signature_invalid is not _MISSING_REASON and reason == signature_invalid:
+        return "Rust LXMF source signature was invalid according to pinned Python"
+
+    rendered_reason = "missing" if reason is _MISSING_REASON else repr(reason)
+    return (
+        "Rust LXMF source signature was not verified by pinned Python "
+        f"(unverified_reason={rendered_reason})"
+    )
+
+
+def report_rust_observed(
+    state: dict[str, object], destination_hash: bytes, *, stream=None
+) -> bool:
+    """Emit the physical-automation readiness marker at most once."""
+    if state.get("rust_observed_reported") is True:
+        return False
+    state["rust_observed_reported"] = True
+    output = sys.stdout if stream is None else stream
+    print(f"{RUST_OBSERVED_MARKER} {destination_hash.hex()}", file=output, flush=True)
+    return True
 
 
 def main() -> int:
@@ -56,6 +99,7 @@ def main() -> int:
         "outbound": None,
         "rust_destination": None,
         "rust_observed_at": None,
+        "rust_observed_reported": False,
         "failure": None,
     }
 
@@ -66,10 +110,9 @@ def main() -> int:
         if message.title != b"Rust":
             state["failure"] = f"unexpected Rust title {message.title!r}"
             return
-        if not message.signature_validated:
-            state["failure"] = (
-                "Rust LXMF source signature was not verified by pinned Python"
-            )
+        verification_failure = source_verification_failure(message)
+        if verification_failure is not None:
+            state["failure"] = verification_failure
             return
         state["received"] = True
 
@@ -96,6 +139,7 @@ def main() -> int:
                 return
             state["rust_destination"] = remote
             state["rust_observed_at"] = time.time()
+            report_rust_observed(state, destination_hash)
 
     RNS.Transport.register_announce_handler(RustDeliverySeeker())
     print(f"PINNED_PYTHON_LXMF_UP {delivery.hash.hex()}", flush=True)
