@@ -2855,6 +2855,7 @@ mod tests {
         let mut directives = 0usize;
         let mut settlement = None;
         let mut closed = None;
+        let mut expired_during_authorization = None;
         engine.ingest_command_into(
             IssuedCommand {
                 id: CommandId(0xB3),
@@ -2877,6 +2878,9 @@ mod tests {
                 EngineReaction::Journaled(Journaled::LinkClosed { link_id, reason }) => {
                     closed = Some((link_id, reason));
                 }
+                EngineReaction::Journaled(
+                    Journaled::RemoteControlTargetPairingExpiredDuringAuthorization { attempt_id },
+                ) => expired_during_authorization = Some(attempt_id),
                 EngineReaction::Journaled(_) => {}
             },
         );
@@ -2897,6 +2901,7 @@ mod tests {
             closed,
             Some((link_id, crate::engine::LinkClosedReason::LocallyClosed)),
         );
+        assert_eq!(expired_during_authorization, Some(attempt_id));
         assert!(engine.links.phase_for(&link_id).is_none());
         assert_eq!(
             engine.remote_control_target_pairing.view(),
