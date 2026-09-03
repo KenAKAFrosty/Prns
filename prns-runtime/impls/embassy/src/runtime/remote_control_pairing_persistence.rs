@@ -410,7 +410,9 @@ where
             self.pending_request = self.stores.try_take_request();
         }
         if self.pending_failure.is_some() || self.pending_request.is_some() {
-            self.persistence.deadline(now).or(Some(now))
+            // Pairing finalization is waiting on this work, so it must preempt any future
+            // deadline advertised by the underlying persistence implementation.
+            Some(now)
         } else {
             self.persistence.deadline(now)
         }
@@ -1059,6 +1061,7 @@ mod tests {
     use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 
     struct ScriptedPersistence {
+        deadline: Option<InstantMillis>,
         fail_first_store: bool,
         store_attempts: u8,
         observed_failure: Option<EmbeddedRemoteControlPairingPersistenceFailure>,
@@ -1068,7 +1071,7 @@ mod tests {
         fn observe(&mut self, _journaled: &Journaled<'_>, _now: InstantMillis) {}
 
         fn deadline(&mut self, _now: InstantMillis) -> Option<InstantMillis> {
-            None
+            self.deadline
         }
 
         fn observe_remote_control_pairing_failure(
@@ -1100,10 +1103,11 @@ mod tests {
     }
 
     #[test]
-    fn initial_store_wakes_the_manifold_and_returns_the_exact_failure() {
+    fn pending_initial_store_preempts_a_future_deadline_and_returns_the_exact_failure() {
         embassy_futures::block_on(async {
             let stores = RemoteControlAuthorizationStoreExchange::<CriticalSectionRawMutex>::new();
             let mut persistence = ScriptedPersistence {
+                deadline: Some(InstantMillis(60_000)),
                 fail_first_store: true,
                 store_attempts: 0,
                 observed_failure: None,
@@ -1134,6 +1138,7 @@ mod tests {
         embassy_futures::block_on(async {
             let stores = RemoteControlAuthorizationStoreExchange::<CriticalSectionRawMutex>::new();
             let mut persistence = ScriptedPersistence {
+                deadline: Some(InstantMillis(60_000)),
                 fail_first_store: true,
                 store_attempts: 0,
                 observed_failure: None,
@@ -1162,10 +1167,11 @@ mod tests {
     }
 
     #[test]
-    fn pairing_failure_wakes_the_manifold_and_preserves_its_exact_cause() {
+    fn pending_pairing_failure_preempts_a_future_deadline_and_preserves_its_exact_cause() {
         embassy_futures::block_on(async {
             let stores = RemoteControlAuthorizationStoreExchange::<CriticalSectionRawMutex>::new();
             let mut persistence = ScriptedPersistence {
+                deadline: Some(InstantMillis(60_000)),
                 fail_first_store: false,
                 store_attempts: 0,
                 observed_failure: None,
