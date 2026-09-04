@@ -27,8 +27,9 @@ use super::data_plane::{wire_l2cap, DataPlane, PendingL2cap};
 use super::gatt_link::{gatt_inbound_channel, ControlPlane, GattInboundSender, GattLink};
 use super::{
     advertisement_data, cbuuid_eq, columba_identity_uuid, columba_rx_uuid, columba_tx_uuid,
-    control_uuid, core_bluetooth_peer_id, data_uuid, service_uuid, CoreBluetoothPeerId, Event,
-    SendPeripheralDelegate, SendPeripheralManager,
+    control_uuid, core_bluetooth_peer_id, data_uuid, service_uuid, try_bounded_ingress,
+    BoundedIngress, CoreBluetoothPeerId, ManagerSignalSender, SendPeripheralDelegate,
+    SendPeripheralManager,
 };
 
 #[derive(Clone, Copy)]
@@ -96,7 +97,8 @@ impl PeripheralPeerSession {
 }
 
 pub(super) struct PeripheralDelegateIvars {
-    events: tokio_mpsc::UnboundedSender<Event>,
+    manager_signals: ManagerSignalSender,
+    inbound: tokio_mpsc::Sender<GattLink>,
     characteristic: RefCell<Retained<CBMutableCharacteristic>>,
     data_characteristic: RefCell<Retained<CBMutableCharacteristic>>,
     columba_rx_characteristic: RefCell<Retained<CBMutableCharacteristic>>,
@@ -228,7 +230,7 @@ define_class!(
                 crate::diagnostic_log::debug!(
                     "bluetooth: restored the published Prns GATT service from a background relaunch"
                 );
-                let _ = self.ivars().events.send(Event::GattServicePublished);
+                self.ivars().manager_signals.gatt_service_published();
             }
         }
 
@@ -241,13 +243,13 @@ define_class!(
         ) {
             if let Some(error) = error {
                 crate::diagnostic_log::error!("bluetooth: GATT service add FAILED: {error:?}");
-                let _ = self.ivars().events.send(Event::GattServicePublishFailed);
+                self.ivars().manager_signals.gatt_service_publish_failed();
                 return;
             }
             crate::diagnostic_log::debug!(
                 "bluetooth: GATT service added (control characteristic live)"
             );
-            let _ = self.ivars().events.send(Event::GattServicePublished);
+            self.ivars().manager_signals.gatt_service_published();
         }
 
         #[unsafe(method(peripheralManagerDidStartAdvertising:error:))]
@@ -274,10 +276,10 @@ define_class!(
         ) {
             if let Some(error) = error {
                 crate::diagnostic_log::error!("bluetooth: L2CAP publish FAILED: {error:?}");
-                let _ = self.ivars().events.send(Event::L2capPublishFailed);
+                self.ivars().manager_signals.l2cap_publish_failed();
             } else {
                 crate::diagnostic_log::debug!("bluetooth: published L2CAP channel, PSM {psm:#06x}");
-                let _ = self.ivars().events.send(Event::L2capPublished { psm });
+                self.ivars().manager_signals.l2cap_published(psm);
             }
         }
 
@@ -481,7 +483,8 @@ impl PeripheralDelegate {
     }
 
     pub(super) fn new(
-        events: tokio_mpsc::UnboundedSender<Event>,
+        manager_signals: ManagerSignalSender,
+        inbound: tokio_mpsc::Sender<GattLink>,
         queue: DispatchRetained<DispatchQueue>,
         identity: BleIdentity,
     ) -> Retained<Self> {
@@ -546,7 +549,8 @@ impl PeripheralDelegate {
             )
         };
         let this = Self::alloc().set_ivars(PeripheralDelegateIvars {
-            events,
+            manager_signals,
+            inbound,
             characteristic: RefCell::new(characteristic),
             data_characteristic: RefCell::new(data_characteristic),
             columba_rx_characteristic: RefCell::new(columba_rx_characteristic),
@@ -604,7 +608,29 @@ impl PeripheralDelegate {
             data_inbound_rx: Some(data_rx),
             l2cap_pending: None,
         };
-        let _ = self.ivars().events.send(Event::Inbound(link));
+        let rejected = match try_bounded_ingress(&self.ivars().inbound, link) {
+            BoundedIngress::Accepted => return,
+            BoundedIngress::Full(link) => {
+                crate::diagnostic_log::warn!(
+                    "bluetooth: rejecting inbound link from {:02x?} — inbound queue is full",
+                    link.address.octets()
+                );
+                link
+            }
+            BoundedIngress::Closed(link) => {
+                crate::diagnostic_log::debug!(
+                    "bluetooth: rejecting inbound link from {:02x?} — backend is closed",
+                    link.address.octets()
+                );
+                link
+            }
+        };
+        let address = rejected.address;
+        // The session's data sender observes receiver closure only after the rejected link is
+        // dropped. Remove the queue-confined session and any pending L2CAP state immediately
+        // afterward so a rejected ingress can never retain a live peer.
+        drop(rejected);
+        self.clear_closed_peer_on_queue(address);
     }
 
     pub(super) fn notify(
@@ -723,28 +749,31 @@ impl PeripheralDelegate {
         });
     }
 
+    /// Queue-confined: call only from the CoreBluetooth serial dispatch queue.
+    fn clear_closed_peer_on_queue(&self, address: BleAddress) {
+        let mut removed = false;
+        self.ivars()
+            .sessions
+            .borrow_mut()
+            .retain(|peer_id, session| {
+                let remove = peer_id.address() == address && session.data_receiver_closed();
+                removed |= remove;
+                !remove
+            });
+        if removed {
+            self.ivars()
+                .pending_l2cap
+                .borrow_mut()
+                .retain(|peer_id, _| peer_id.address() != address);
+        }
+    }
+
     pub(super) fn clear_closed_peer(&self, address: BleAddress) {
         let queue = self.ivars().queue.clone();
         let this = SendPeripheralDelegate(self.retain());
         queue.exec_async(move || {
             let this = this;
-            let mut removed = false;
-            this.0
-                .ivars()
-                .sessions
-                .borrow_mut()
-                .retain(|peer_id, session| {
-                    let remove = peer_id.address() == address && session.data_receiver_closed();
-                    removed |= remove;
-                    !remove
-                });
-            if removed {
-                this.0
-                    .ivars()
-                    .pending_l2cap
-                    .borrow_mut()
-                    .retain(|peer_id, _| peer_id.address() != address);
-            }
+            this.0.clear_closed_peer_on_queue(address);
         });
     }
 }

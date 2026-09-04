@@ -25,6 +25,7 @@ use objc2_core_bluetooth::{
     CBPeripheralManager, CBUUID,
 };
 use objc2_foundation::{NSArray, NSData, NSDictionary, NSNumber, NSString};
+use tokio::sync::{mpsc as tokio_mpsc, watch};
 
 use prns_core::interfaces::bluetooth_auto::{
     BleAddress, BleUuid, BLE_SERVICE_UUID, COLUMBA_IDENTITY_UUID, COLUMBA_RX_UUID, COLUMBA_TX_UUID,
@@ -32,7 +33,6 @@ use prns_core::interfaces::bluetooth_auto::{
 };
 
 use central::CentralDelegate;
-use gatt_link::GattLink;
 use peripheral::PeripheralDelegate;
 
 pub use backend::{MacosBleBackend, PreparedMacosBleBackend};
@@ -284,19 +284,90 @@ impl SendPeripheralDelegate {
     }
 }
 
-enum Event<L = GattLink> {
-    CentralPowered,
-    GattServicePublished,
-    GattServicePublishFailed,
-    L2capPublished {
-        psm: u16,
-    },
-    L2capPublishFailed,
-    Sighting {
-        address: BleAddress,
-        rssi: Option<i8>,
-    },
-    Inbound(L),
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum PublicationState {
+    #[default]
+    Waiting,
+    Published,
+    Failed,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum L2capPublicationState {
+    #[default]
+    Waiting,
+    Published(u16),
+    Failed,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct ManagerSignals {
+    central_powered_generation: u64,
+    gatt: PublicationState,
+    l2cap: L2capPublicationState,
+}
+
+#[derive(Clone)]
+struct ManagerSignalSender(watch::Sender<ManagerSignals>);
+
+impl ManagerSignalSender {
+    fn central_powered(&self) {
+        self.0.send_modify(|signals| {
+            signals.central_powered_generation = signals.central_powered_generation.wrapping_add(1);
+        });
+    }
+
+    fn gatt_service_published(&self) {
+        self.0.send_modify(|signals| {
+            if signals.gatt != PublicationState::Failed {
+                signals.gatt = PublicationState::Published;
+            }
+        });
+    }
+
+    fn gatt_service_publish_failed(&self) {
+        self.0
+            .send_modify(|signals| signals.gatt = PublicationState::Failed);
+    }
+
+    fn l2cap_published(&self, psm: u16) {
+        self.0.send_modify(|signals| {
+            if signals.l2cap != L2capPublicationState::Failed {
+                signals.l2cap = L2capPublicationState::Published(psm);
+            }
+        });
+    }
+
+    fn l2cap_publish_failed(&self) {
+        self.0
+            .send_modify(|signals| signals.l2cap = L2capPublicationState::Failed);
+    }
+}
+
+fn manager_signal_channel() -> (ManagerSignalSender, watch::Receiver<ManagerSignals>) {
+    let (sender, receiver) = watch::channel(ManagerSignals::default());
+    (ManagerSignalSender(sender), receiver)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Sighting {
+    address: BleAddress,
+    rssi: Option<i8>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum BoundedIngress<T> {
+    Accepted,
+    Full(T),
+    Closed(T),
+}
+
+fn try_bounded_ingress<T>(sender: &tokio_mpsc::Sender<T>, value: T) -> BoundedIngress<T> {
+    match sender.try_send(value) {
+        Ok(()) => BoundedIngress::Accepted,
+        Err(tokio_mpsc::error::TrySendError::Full(value)) => BoundedIngress::Full(value),
+        Err(tokio_mpsc::error::TrySendError::Closed(value)) => BoundedIngress::Closed(value),
+    }
 }
 
 #[derive(Debug)]
