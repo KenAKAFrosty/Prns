@@ -14,7 +14,6 @@ private let prnsRestorationEvents: Set<String> = [
   "central_state_restored",
   "logger_installed",
   "logger_unavailable",
-  "peripheral_service_restored",
 ]
 
 @_cdecl("prns_app_ios_restoration_probe_emit")

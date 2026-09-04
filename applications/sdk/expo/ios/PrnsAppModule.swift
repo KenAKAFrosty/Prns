@@ -18,6 +18,25 @@ public final class PrnsAppModule: Module {
   public func definition() -> ModuleDefinition {
     Name("PrnsApp")
 
+    Events("onAccessorySetupStatus")
+
+    OnStartObserving("onAccessorySetupStatus") {
+      NotificationCenter.default.addObserver(
+        self,
+        selector: #selector(self.handleAccessorySetupStatus(_:)),
+        name: prnsAccessorySetupStatusDidChange,
+        object: nil
+      )
+    }
+
+    OnStopObserving("onAccessorySetupStatus") {
+      NotificationCenter.default.removeObserver(
+        self,
+        name: prnsAccessorySetupStatusDidChange,
+        object: nil
+      )
+    }
+
     AsyncFunction("contractFingerprint") { () throws -> String in
       try Self.contractFingerprint()
     }.runOnQueue(Self.nativeQueue)
@@ -62,8 +81,22 @@ public final class PrnsAppModule: Module {
       }
     }.runOnQueue(Self.nativeQueue)
 
-    AsyncFunction("start") { (inputJSON: String) throws -> String in
-      try Self.startWithRestoration(inputJSON)
+    AsyncFunction("accessorySetupStatus") { (promise: Promise) in
+      DispatchQueue.main.async {
+        promise.resolve(PrnsAccessorySetupCoordinator.shared.statusJSON())
+      }
+    }
+
+    AsyncFunction("showAccessorySetupPicker") { (promise: Promise) in
+      DispatchQueue.main.async {
+        PrnsAccessorySetupCoordinator.shared.showPicker { outcome in
+          promise.resolve(outcome)
+        }
+      }
+    }
+
+    AsyncFunction("start") { (inputJSON: String, promise: Promise) in
+      Self.startWhenAccessoryAuthorized(inputJSON, promise: promise)
     }.runOnQueue(Self.nativeQueue)
 
     AsyncFunction("snapshot") { () throws -> String in
@@ -146,15 +179,20 @@ public final class PrnsAppModule: Module {
     }.runOnQueue(Self.nativeQueue)
 
     AsyncFunction("stop") { () throws -> String in
-      try Self.consume(prns_app_stop())
+      Self.beginNativeStop()
+      let outcome = try Self.consume(prns_app_stop())
+      Self.finishNativeStop(outcome)
+      return outcome
     }.runOnQueue(Self.nativeQueue)
 
     AsyncFunction("reset") { () throws -> String in
       let storageURL = try Self.developmentStorageURL(create: false)
+      Self.beginNativeStop()
       let outcome = try Self.withUtf8Bytes(storageURL.path) { pointer, count in
         try Self.consume(prns_app_reset(pointer, count))
       }
       Self.invalidatePreparedStorage(at: storageURL)
+      Self.finishNativeStop(outcome)
       return outcome
     }.runOnQueue(Self.nativeQueue)
 
@@ -175,6 +213,71 @@ public final class PrnsAppModule: Module {
 
   }
 
+  @objc
+  private func handleAccessorySetupStatus(_ notification: Notification) {
+    guard let status = notification.userInfo?["status"] as? String else {
+      return
+    }
+    sendEvent("onAccessorySetupStatus", ["status": status])
+  }
+
+  private static func startWhenAccessoryAuthorized(_ inputJSON: String, promise: Promise) {
+    DispatchQueue.main.async {
+      startAuthorized(inputJSON) { result in
+        switch result {
+        case .success(let outcome):
+          promise.resolve(outcome)
+        case .failure(let error):
+          promise.reject(error)
+        }
+      }
+    }
+  }
+
+  @MainActor
+  static func startAuthorized(
+    _ inputJSON: String,
+    completion: @escaping (Result<String, Error>) -> Void
+  ) {
+    let startGeneration: UInt64
+    do {
+      guard
+        let requestedGeneration = try PrnsAccessorySetupCoordinator.shared.requestNativeStart(
+          completion
+        )
+      else {
+        return
+      }
+      startGeneration = requestedGeneration
+    } catch {
+      completion(.failure(error))
+      return
+    }
+    nativeQueue.async(flags: .barrier) {
+      do {
+        try DispatchQueue.main.sync {
+          try PrnsAccessorySetupCoordinator.shared.requireAuthorized(
+            startGeneration: startGeneration
+          )
+        }
+        let outcome = try startWithCentralRestoration(inputJSON)
+        DispatchQueue.main.async {
+          PrnsAccessorySetupCoordinator.shared.nativeStartDidFinish(
+            outcomeJSON: outcome,
+            startGeneration: startGeneration
+          )
+        }
+      } catch {
+        DispatchQueue.main.async {
+          PrnsAccessorySetupCoordinator.shared.nativeStartDidFail(
+            error,
+            startGeneration: startGeneration
+          )
+        }
+      }
+    }
+  }
+
   static func configuredStartInputJSON() throws -> String {
     let data = try JSONSerialization.data(
       withJSONObject: ["developmentTcpTarget": NSNull()],
@@ -186,48 +289,40 @@ public final class PrnsAppModule: Module {
     return json
   }
 
-  static func startWithRestoration(_ inputJSON: String) throws -> String {
+  static func startWithCentralRestoration(_ inputJSON: String) throws -> String {
     let storageURL = try developmentStorageURL(create: true)
-    let identifiers = try restorationIdentifiers()
+    let identifier = try restorationIdentifier()
     return try withUtf8Bytes(storageURL.path) { pathPointer, pathCount in
       try withUtf8Bytes(inputJSON) { inputPointer, inputCount in
-        try withUtf8Bytes(identifiers.central) { centralPointer, centralCount in
-          try withUtf8Bytes(identifiers.peripheral) { peripheralPointer, peripheralCount in
-            try consume(
-              prns_app_start_with_apple_restoration(
-                pathPointer,
-                pathCount,
-                inputPointer,
-                inputCount,
-                centralPointer,
-                centralCount,
-                peripheralPointer,
-                peripheralCount
-              )
+        try withUtf8Bytes(identifier) { centralPointer, centralCount in
+          try consume(
+            prns_app_start_with_apple_bluetooth_central_restoration(
+              pathPointer,
+              pathCount,
+              inputPointer,
+              inputCount,
+              centralPointer,
+              centralCount
             )
-          }
+          )
         }
       }
     }
   }
 
-  static func prepareBluetoothRestoration() throws -> String {
+  static func prepareBluetoothCentralRestoration() throws -> String {
     let storageURL = try restorationStorageURL()
-    let identifiers = try restorationIdentifiers()
+    let identifier = try restorationIdentifier()
     return try withUtf8Bytes(storageURL.path) { pathPointer, pathCount in
-      try withUtf8Bytes(identifiers.central) { centralPointer, centralCount in
-        try withUtf8Bytes(identifiers.peripheral) { peripheralPointer, peripheralCount in
-          try consume(
-            prns_app_prepare_apple_bluetooth_restoration(
-              pathPointer,
-              pathCount,
-              centralPointer,
-              centralCount,
-              peripheralPointer,
-              peripheralCount
-            )
+      try withUtf8Bytes(identifier) { centralPointer, centralCount in
+        try consume(
+          prns_app_prepare_apple_bluetooth_central_restoration(
+            pathPointer,
+            pathCount,
+            centralPointer,
+            centralCount
           )
-        }
+        )
       }
     }
   }
@@ -246,25 +341,15 @@ public final class PrnsAppModule: Module {
     return String(cString: pointer)
   }
 
-  static func restorationIdentifiers() throws -> (central: String, peripheral: String) {
+  static func restorationIdentifier() throws -> String {
     let centralKey = "PRNSCoreBluetoothCentralRestorationIdentifier"
-    let peripheralKey = "PRNSCoreBluetoothPeripheralRestorationIdentifier"
     guard
       let central = Bundle.main.object(forInfoDictionaryKey: centralKey) as? String,
       !central.isEmpty
     else {
       throw PrnsAppException("The app is missing its central Bluetooth restoration identifier.")
     }
-    guard
-      let peripheral = Bundle.main.object(forInfoDictionaryKey: peripheralKey) as? String,
-      !peripheral.isEmpty
-    else {
-      throw PrnsAppException("The app is missing its peripheral Bluetooth restoration identifier.")
-    }
-    guard central != peripheral else {
-      throw PrnsAppException("The app's Bluetooth restoration identifiers must be distinct.")
-    }
-    return (central, peripheral)
+    return central
   }
 
   static func developmentStorageURL(create: Bool) throws -> URL {
@@ -388,6 +473,18 @@ public final class PrnsAppModule: Module {
     storagePreparationLock.lock()
     preparedStorageIdentifiers.removeValue(forKey: storageURL.path)
     storagePreparationLock.unlock()
+  }
+
+  private static func beginNativeStop() {
+    DispatchQueue.main.sync {
+      PrnsAccessorySetupCoordinator.shared.nativeStopWillBegin()
+    }
+  }
+
+  private static func finishNativeStop(_ outcomeJSON: String) {
+    DispatchQueue.main.sync {
+      PrnsAccessorySetupCoordinator.shared.nativeStopDidFinish(outcomeJSON: outcomeJSON)
+    }
   }
 
   private static func invokeJSON(
@@ -570,20 +667,15 @@ public final class PrnsAppModule: Module {
     _ inputCount: Int
   ) -> PrnsAppBytes {
     let central = "rs.reticulum.prns.smoke.bluetooth-auto.central.v1"
-    let peripheral = "rs.reticulum.prns.smoke.bluetooth-auto.peripheral.v1"
     return withUtf8Bytes(central) { centralPointer, centralCount in
-      withUtf8Bytes(peripheral) { peripheralPointer, peripheralCount in
-        prns_app_start_with_apple_restoration(
-          pathPointer,
-          pathCount,
-          inputPointer,
-          inputCount,
-          centralPointer,
-          centralCount,
-          peripheralPointer,
-          peripheralCount
-        )
-      }
+      prns_app_start_with_apple_bluetooth_central_restoration(
+        pathPointer,
+        pathCount,
+        inputPointer,
+        inputCount,
+        centralPointer,
+        centralCount
+      )
     }
   }
 

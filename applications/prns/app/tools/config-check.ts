@@ -7,6 +7,7 @@ const appRoot = fileURLToPath(new URL("..", import.meta.url));
 const bluetoothUsageDescription = "prns uses Bluetooth to connect to nearby Reticulum nodes.";
 const localNetworkUsageDescription =
   "prns uses the local network for an explicitly configured development LXMF peer.";
+const prnsBluetoothServiceUuid = "37145B00-442D-4A94-917F-8F42C5DA28E3";
 
 function fail(message: string): never {
   throw new Error(`config:check: ${message}`);
@@ -66,24 +67,33 @@ function assertVariant(
     );
   }
   const expectedCentral = `${expected.identifier}.bluetooth-auto.central.v1`;
-  const expectedPeripheral = `${expected.identifier}.bluetooth-auto.peripheral.v1`;
   if (infoPlist.PRNSCoreBluetoothCentralRestorationIdentifier !== expectedCentral) {
     fail(`${variant}.ios.infoPlist must contain its exact central restoration identifier`);
   }
-  if (infoPlist.PRNSCoreBluetoothPeripheralRestorationIdentifier !== expectedPeripheral) {
-    fail(`${variant}.ios.infoPlist must contain its exact peripheral restoration identifier`);
+  if ("PRNSCoreBluetoothPeripheralRestorationIdentifier" in infoPlist) {
+    fail(`${variant}.ios.infoPlist must not declare a peripheral restoration identifier`);
   }
-  if (expectedCentral === expectedPeripheral) {
-    fail(`${variant}.ios.infoPlist restoration identifiers must be role-distinct`);
+  if (
+    !Array.isArray(infoPlist.NSAccessorySetupBluetoothServices) ||
+    infoPlist.NSAccessorySetupBluetoothServices.length !== 1 ||
+    infoPlist.NSAccessorySetupBluetoothServices[0] !== prnsBluetoothServiceUuid
+  ) {
+    fail(`${variant}.ios.infoPlist must declare the exact ASK Bluetooth service UUID`);
+  }
+  if (
+    !Array.isArray(infoPlist.NSAccessorySetupKitSupports) ||
+    infoPlist.NSAccessorySetupKitSupports.length !== 1 ||
+    infoPlist.NSAccessorySetupKitSupports[0] !== "Bluetooth"
+  ) {
+    fail(`${variant}.ios.infoPlist must declare ASK Bluetooth support`);
   }
   const backgroundModes = infoPlist.UIBackgroundModes;
   if (
     !Array.isArray(backgroundModes) ||
-    backgroundModes.length !== 2 ||
-    backgroundModes[0] !== "bluetooth-central" ||
-    backgroundModes[1] !== "bluetooth-peripheral"
+    backgroundModes.length !== 1 ||
+    backgroundModes[0] !== "bluetooth-central"
   ) {
-    fail(`${variant}.ios.infoPlist must declare the exact two Bluetooth background modes`);
+    fail(`${variant}.ios.infoPlist must declare only the central Bluetooth background mode`);
   }
 }
 
@@ -107,6 +117,4 @@ if (invalid.status === 0) {
   fail("PRNS_APP_VARIANT=preview must be rejected");
 }
 
-console.log(
-  "config:check: coordinates and variant-isolated CoreBluetooth background declarations are exact",
-);
+console.log("config:check: coordinates and variant-isolated ASK central declarations are exact");

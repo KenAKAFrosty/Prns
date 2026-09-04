@@ -1,7 +1,16 @@
 import { createDevelopmentRuntime } from "./facade";
+import { createAccessorySetupRuntime } from "./accessory-setup";
 import nativePrnsApp from "./native";
 
 export { HOST_CONTRACT_FINGERPRINT, NATIVE_CONTRACT_FINGERPRINT } from "./contract.generated";
+export {
+  createAccessorySetupRuntime,
+  parseAccessorySetupStatus,
+  type AccessorySetupPickerOutcome,
+  type AccessorySetupRuntime,
+  type AccessorySetupStatus,
+  type AccessorySetupSubscription,
+} from "./accessory-setup";
 export type * as WireContract from "./contract.generated";
 export {
   NativeBridgeError,
@@ -57,6 +66,7 @@ export {
 export { NativePayloadError } from "./hydrate";
 
 export const developmentRuntime = createDevelopmentRuntime(nativePrnsApp);
+export const accessorySetupRuntime = createAccessorySetupRuntime(nativePrnsApp);
 
 export const {
   announceLxmf,

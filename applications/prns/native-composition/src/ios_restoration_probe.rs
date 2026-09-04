@@ -56,9 +56,7 @@ mod enabled {
     fn is_restoration_target(target: &str) -> bool {
         matches!(
             target,
-            "prns_ffi::bluetooth_auto::macos::central"
-                | "prns_ffi::bluetooth_auto::macos::peripheral"
-                | "prns_ffi::bluetooth_auto::macos::backend"
+            "prns_ffi::bluetooth_auto::macos::central" | "prns_ffi::bluetooth_auto::macos::backend"
         )
     }
 
@@ -79,12 +77,6 @@ mod enabled {
             if message.starts_with("bluetooth: restored control buffer exceeded for ") {
                 return Some("central_control_buffer_overflow");
             }
-        }
-        if target.ends_with("::peripheral")
-            && message
-                == "bluetooth: restored the published Prns GATT service from a background relaunch"
-        {
-            return Some("peripheral_service_restored");
         }
         if target.ends_with("::backend")
             && message.starts_with("bluetooth: resumed restored connection to ")
@@ -124,7 +116,6 @@ mod enabled {
         use super::*;
 
         const CENTRAL: &str = "prns_ffi::bluetooth_auto::macos::central";
-        const PERIPHERAL: &str = "prns_ffi::bluetooth_auto::macos::peripheral";
         const BACKEND: &str = "prns_ffi::bluetooth_auto::macos::backend";
 
         #[test]
@@ -135,13 +126,6 @@ mod enabled {
                     "bluetooth: restored peripheral [01, 23, 45, 67, 89, ab] from a background relaunch — re-adopting",
                 ),
                 Some("central_state_restored")
-            );
-            assert_eq!(
-                classify(
-                    PERIPHERAL,
-                    "bluetooth: restored the published Prns GATT service from a background relaunch",
-                ),
-                Some("peripheral_service_restored")
             );
             assert_eq!(
                 classify(
@@ -187,7 +171,6 @@ mod enabled {
                 "central_state_restored",
                 "central_data_buffer_overflow",
                 "central_control_buffer_overflow",
-                "peripheral_service_restored",
                 "central_session_resumed",
                 "logger_installed",
                 "logger_unavailable",

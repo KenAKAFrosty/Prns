@@ -1,4 +1,5 @@
 import { requireNativeModule } from "expo-modules-core";
+import type { EventSubscription } from "expo-modules-core";
 
 export type PrnsAppNativeModule = {
   readonly contractFingerprint: () => Promise<string>;
@@ -7,6 +8,12 @@ export type PrnsAppNativeModule = {
   readonly previewIdentityImport: (identity: readonly number[]) => Promise<string>;
   readonly createGeneratedIdentity: () => Promise<string>;
   readonly createImportedIdentity: (identity: readonly number[]) => Promise<string>;
+  readonly accessorySetupStatus: () => Promise<string>;
+  readonly showAccessorySetupPicker: () => Promise<string>;
+  readonly addListener: (
+    eventName: "onAccessorySetupStatus",
+    listener: (event: { readonly status: string }) => void,
+  ) => EventSubscription;
   readonly start: (inputJson: string) => Promise<string>;
   readonly snapshot: () => Promise<string>;
   readonly initiatePairing: (inputJson: string) => Promise<string>;

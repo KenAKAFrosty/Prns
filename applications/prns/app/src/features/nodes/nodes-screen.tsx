@@ -38,6 +38,26 @@ export function NodesScreen() {
       <ScreenHeading>Nodes</ScreenHeading>
       <BodyText>Manage this device and the nodes paired with it.</BodyText>
 
+      {runtime.accessorySetup?.phase === "setupRequired" ? (
+        <Card>
+          <Subheading>Bluetooth setup needed</Subheading>
+          <Badge tone="warning">Connection access required</Badge>
+          <BodyText>
+            Allow a nearby Reticulum Bluetooth node before this device starts searching or
+            reconnecting.
+          </BodyText>
+          <NavigationLink href="/nodes/pair">Set up Bluetooth</NavigationLink>
+        </Card>
+      ) : null}
+
+      {runtime.accessorySetup?.phase === "failed" || runtime.accessorySetupFailure !== null ? (
+        <Card>
+          <Subheading>Bluetooth setup unavailable</Subheading>
+          <Badge tone="warning">Relaunch required</Badge>
+          <BodyText>Relaunch prns to restore system Bluetooth setup.</BodyText>
+        </Card>
+      ) : null}
+
       {runtime.phase === "unavailable" ? (
         <Card>
           <Subheading>Nodes unavailable</Subheading>
@@ -46,7 +66,7 @@ export function NodesScreen() {
         </Card>
       ) : null}
 
-      {runtime.phase === "starting" ? (
+      {runtime.phase === "starting" && runtime.accessorySetup?.phase !== "setupRequired" ? (
         <Card>
           <Subheading>Getting ready</Subheading>
           <Badge>Starting</Badge>
@@ -54,7 +74,7 @@ export function NodesScreen() {
         </Card>
       ) : null}
 
-      {runtime.phase === "failed" ? (
+      {runtime.phase === "failed" && runtime.accessorySetup?.phase !== "failed" ? (
         <Card>
           <Subheading>This device&apos;s node failed to start</Subheading>
           <Badge tone="warning">Startup failed</Badge>

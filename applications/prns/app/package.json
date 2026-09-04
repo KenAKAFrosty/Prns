@@ -21,9 +21,10 @@
     "verify": "npm run versions:check && npm run format:check && npm run lint && npm run typecheck && npm run routes:check && npm run config:check && npm run expo:check && npm run doctor && npm run test && npm run export:web"
   },
   "dependencies": {
-    "@prns-internal/expo": "*",
     "@expo/metro-runtime": "~57.0.15",
+    "@prns-internal/expo": "*",
     "@react-native-async-storage/async-storage": "2.2.0",
+    "effect": "4.0.0-rc.112",
     "expo": "~57.0.19",
     "expo-constants": "~57.0.17",
     "expo-document-picker": "~57.0.1",
@@ -31,7 +32,6 @@
     "expo-linking": "~57.0.9",
     "expo-router": "~57.0.18",
     "expo-status-bar": "~57.0.1",
-    "effect": "4.0.0-rc.112",
     "personal-rns": "file:../../../prns-js",
     "react": "19.2.3",
     "react-dom": "19.2.3",
@@ -42,6 +42,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.11",
+    "@expo/config-plugins": "57.0.9",
     "@react-native/jest-preset": "0.86.3",
     "@testing-library/react-native": "13.3.3",
     "@types/jest": "29.5.14",

@@ -1,4 +1,7 @@
 import type {
+  AccessorySetupPickerOutcome,
+  AccessorySetupStatus,
+  AnnounceLxmfOutcome,
   ContactMutationOutcome,
   CancelLxmfMessageOutcome,
   DescribeRemoteControlTargetInput,
@@ -12,7 +15,6 @@ import type {
   LxmfPeerListOutcome,
   MeasureLxmfTextInput,
   MeasureLxmfTextOutcome,
-  AnnounceLxmfOutcome,
   RemoteControlDescribeOutcome,
   RemoteControlPairingCommandOutcome,
   RemoteControlPairingDecisionInput,
@@ -42,10 +44,15 @@ export type RuntimeCommandResult<Outcome> =
 
 export type DevelopmentRuntimeView = {
   readonly availability: RuntimeProvider["availability"];
+  readonly accessorySetup: AccessorySetupStatus | null;
+  readonly accessorySetupFailure: string | null;
   readonly phase: "unavailable" | "starting" | "ready" | "failed";
   readonly snapshot: DevelopmentNodeSnapshot | null;
   readonly lifecycleFailure: string | null;
   readonly backgroundFailure: string | null;
+  readonly showAccessorySetupPicker: () => Promise<
+    RuntimeCommandResult<AccessorySetupPickerOutcome>
+  >;
   readonly refreshSnapshot: () => Promise<RuntimeCommandResult<DevelopmentNodeSnapshot>>;
   readonly initiatePairing: (
     input: InitiateRemoteControlPairingInput,
@@ -102,6 +109,8 @@ export function DevelopmentRuntimeProvider({
   const [snapshot, setSnapshot] = useState<DevelopmentNodeSnapshot | null>(null);
   const [lifecycleFailure, setLifecycleFailure] = useState<string | null>(null);
   const [backgroundFailure, setBackgroundFailure] = useState<string | null>(null);
+  const [accessorySetup, setAccessorySetup] = useState<AccessorySetupStatus | null>(null);
+  const [accessorySetupFailure, setAccessorySetupFailure] = useState<string | null>(null);
   const session = useRef<DevelopmentRuntimeSession | null>(null);
   const latestRevision = useRef<bigint | null>(null);
   const refreshActiveState = useRef(refreshActive);
@@ -116,6 +125,42 @@ export function DevelopmentRuntimeProvider({
   }, []);
 
   useEffect(() => {
+    setAccessorySetup(null);
+    setAccessorySetupFailure(null);
+    if (!("accessorySetup" in selectedProvider) || selectedProvider.accessorySetup === undefined) {
+      return;
+    }
+    const setup = selectedProvider.accessorySetup;
+    let mounted = true;
+    let latestStatusRevision: number | null = null;
+    const publishAccessorySetup = (next: AccessorySetupStatus) => {
+      if (!mounted || (latestStatusRevision !== null && next.revision <= latestStatusRevision)) {
+        return;
+      }
+      latestStatusRevision = next.revision;
+      setAccessorySetup(next);
+      setAccessorySetupFailure(null);
+    };
+    const subscription = setup.addStatusListener((next) => {
+      publishAccessorySetup(next);
+    });
+    void setup.readStatus().then(
+      (next) => {
+        publishAccessorySetup(next);
+      },
+      (failure: unknown) => {
+        if (mounted && latestStatusRevision === null) {
+          setAccessorySetupFailure(formatFailure(failure));
+        }
+      },
+    );
+    return () => {
+      mounted = false;
+      subscription.remove();
+    };
+  }, [selectedProvider]);
+
+  useEffect(() => {
     session.current = null;
     latestRevision.current = null;
     setSnapshot(null);
@@ -125,6 +170,17 @@ export function DevelopmentRuntimeProvider({
     if (!("acquire" in selectedProvider)) {
       setPhase("unavailable");
       return;
+    }
+
+    if (availableProviderRequiresAccessorySetup(selectedProvider)) {
+      if (accessorySetupFailure !== null) {
+        setPhase("failed");
+        return;
+      }
+      if (accessorySetup?.phase !== "ready") {
+        setPhase(accessorySetup?.phase === "failed" ? "failed" : "starting");
+        return;
+      }
     }
 
     const availableProvider = selectedProvider;
@@ -171,7 +227,13 @@ export function DevelopmentRuntimeProvider({
       session.current = null;
       void Effect.runPromise(Scope.close(scope, Exit.void));
     };
-  }, [publishSnapshot, refreshIntervalMillis, selectedProvider]);
+  }, [
+    accessorySetup?.phase,
+    accessorySetupFailure,
+    publishSnapshot,
+    refreshIntervalMillis,
+    selectedProvider,
+  ]);
 
   const unavailableResult = useCallback(
     <Outcome,>(): RuntimeCommandResult<Outcome> => ({
@@ -334,13 +396,30 @@ export function DevelopmentRuntimeProvider({
     [runGenerationBound],
   );
 
+  const showAccessorySetupPicker = useCallback(async () => {
+    if (!("accessorySetup" in selectedProvider) || selectedProvider.accessorySetup === undefined) {
+      return unavailableResult<AccessorySetupPickerOutcome>();
+    }
+    try {
+      return {
+        type: "outcome" as const,
+        outcome: await selectedProvider.accessorySetup.showPicker(),
+      };
+    } catch (failure) {
+      return { type: "operationFailure" as const, detail: formatFailure(failure) };
+    }
+  }, [selectedProvider, unavailableResult]);
+
   const value = useMemo<DevelopmentRuntimeView>(
     () => ({
       availability: selectedProvider.availability,
+      accessorySetup,
+      accessorySetupFailure,
       phase,
       snapshot,
       lifecycleFailure,
       backgroundFailure,
+      showAccessorySetupPicker,
       refreshSnapshot,
       initiatePairing,
       approvePairing,
@@ -357,6 +436,8 @@ export function DevelopmentRuntimeProvider({
     }),
     [
       approvePairing,
+      accessorySetup,
+      accessorySetupFailure,
       backgroundFailure,
       describeTarget,
       initiatePairing,
@@ -372,6 +453,7 @@ export function DevelopmentRuntimeProvider({
       announceLxmf,
       measureLxmfText,
       sendDirectText,
+      showAccessorySetupPicker,
       selectedProvider.availability,
       snapshot,
     ],
@@ -415,4 +497,18 @@ function formatFailure(failure: DevelopmentRuntimeFailure | unknown): string {
     return failure.message.length > 0 ? failure.message : failure.name;
   }
   return String(failure);
+}
+
+function availableProviderRequiresAccessorySetup(provider: RuntimeProvider): provider is Extract<
+  RuntimeProvider,
+  { readonly availability: { readonly type: "available" } }
+> & {
+  readonly accessorySetup: NonNullable<
+    Extract<
+      RuntimeProvider,
+      { readonly availability: { readonly type: "available" } }
+    >["accessorySetup"]
+  >;
+} {
+  return "accessorySetup" in provider && provider.accessorySetup !== undefined;
 }

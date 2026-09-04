@@ -11,26 +11,27 @@ final class PrnsAppLifecycleCoordinator: NSObject {
     application: UIApplication,
     options: [UIApplication.LaunchOptionsKey: Any]?
   ) {
-    let identifiers: (central: String, peripheral: String)
+    let centralRestoration: Bool
     do {
-      identifiers = try PrnsAppModule.restorationIdentifiers()
+      let identifier = try PrnsAppModule.restorationIdentifier()
+      centralRestoration = Self.restorationLaunchIdentifiers(
+        options?[.bluetoothCentrals]
+      ).contains(identifier)
     } catch {
       Self.log("configuration failed")
-      return
+      centralRestoration = false
     }
-    let centralRestoration = Self.restorationLaunchIdentifiers(
-      options?[.bluetoothCentrals]
-    ).contains(identifiers.central)
-    let peripheralRestoration = Self.restorationLaunchIdentifiers(
-      options?[.bluetoothPeripherals]
-    ).contains(identifiers.peripheral)
     Self.log(
-      "launch centralRestoration=\(centralRestoration) peripheralRestoration=\(peripheralRestoration) protectedData=\(application.isProtectedDataAvailable)"
+      "launch centralRestoration=\(centralRestoration) protectedData=\(application.isProtectedDataAvailable)"
     )
-    guard centralRestoration || peripheralRestoration else {
-      return
+    PrnsAccessorySetupCoordinator.shared.activate(
+      restorationLaunchRequested: centralRestoration
+    ) { [weak self, weak application] in
+      guard let self, let application else {
+        return
+      }
+      self.prepareAndStartNativeRuntime(application: application)
     }
-    prepareAndStartNativeRuntime(application: application)
   }
 
   nonisolated private static func restorationLaunchIdentifiers(_ value: Any?) -> [String] {
@@ -74,7 +75,7 @@ final class PrnsAppLifecycleCoordinator: NSObject {
 
   private func prepareAndStartNativeRuntime(application: UIApplication) {
     do {
-      let outcome = try PrnsAppModule.prepareBluetoothRestoration()
+      let outcome = try PrnsAppModule.prepareBluetoothCentralRestoration()
       let summary = Self.outcomeSummary(outcome)
       Self.log("prepare outcome=\(summary.type) stage=\(summary.stage ?? "none")")
       switch summary.type {
@@ -100,9 +101,9 @@ final class PrnsAppLifecycleCoordinator: NSObject {
       return
     }
 
-    PrnsAppModule.nativeQueue.async(flags: .barrier) {
-      do {
-        let outcome = try PrnsAppModule.startWithRestoration(inputJSON)
+    PrnsAppModule.startAuthorized(inputJSON) { result in
+      switch result {
+      case .success(let outcome):
         let summary = Self.outcomeSummary(outcome)
         Self.log("start outcome=\(summary.type) stage=\(summary.stage ?? "none")")
         if summary.type == "failed" {
@@ -110,7 +111,7 @@ final class PrnsAppLifecycleCoordinator: NSObject {
             self.retryAfterProtectedDataIfNeeded(application: application)
           }
         }
-      } catch {
+      case .failure:
         Self.log("start bridge failed")
         DispatchQueue.main.async {
           self.retryAfterProtectedDataIfNeeded(application: application)

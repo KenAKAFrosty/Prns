@@ -13,6 +13,8 @@ const variants = {
   },
 } as const;
 
+const prnsBluetoothServiceUuid = "37145B00-442D-4A94-917F-8F42C5DA28E3";
+
 type AppVariant = keyof typeof variants;
 
 function selectedVariant(value: string | undefined): AppVariant {
@@ -38,7 +40,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     version: "0.0.0",
     orientation: "default",
     userInterfaceStyle: "automatic",
-    plugins: ["expo-router"],
+    plugins: ["expo-router", "./tools/with-ios-18"],
     ios: {
       ...config.ios,
       bundleIdentifier: selection.identifier,
@@ -46,11 +48,12 @@ export default ({ config }: ConfigContext): ExpoConfig => {
         ...config.ios?.infoPlist,
         NSBluetoothAlwaysUsageDescription:
           "prns uses Bluetooth to connect to nearby Reticulum nodes.",
+        NSAccessorySetupBluetoothServices: [prnsBluetoothServiceUuid],
+        NSAccessorySetupKitSupports: ["Bluetooth"],
         NSLocalNetworkUsageDescription:
           "prns uses the local network for an explicitly configured development LXMF peer.",
         PRNSCoreBluetoothCentralRestorationIdentifier: `${bluetoothRestorationPrefix}.central.v1`,
-        PRNSCoreBluetoothPeripheralRestorationIdentifier: `${bluetoothRestorationPrefix}.peripheral.v1`,
-        UIBackgroundModes: ["bluetooth-central", "bluetooth-peripheral"],
+        UIBackgroundModes: ["bluetooth-central"],
       },
       supportsTablet: true,
     },

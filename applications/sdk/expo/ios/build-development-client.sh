@@ -14,7 +14,7 @@ EXPECTED_BUNDLE_IDENTIFIER="rs.reticulum.prns.dev"
 BLUETOOTH_USAGE="prns uses Bluetooth to connect to nearby Reticulum nodes."
 LOCAL_NETWORK_USAGE="prns uses the local network for an explicitly configured development LXMF peer."
 CENTRAL_RESTORATION_IDENTIFIER="rs.reticulum.prns.dev.bluetooth-auto.central.v1"
-PERIPHERAL_RESTORATION_IDENTIFIER="rs.reticulum.prns.dev.bluetooth-auto.peripheral.v1"
+PRNS_BLUETOOTH_SERVICE="37145B00-442D-4A94-917F-8F42C5DA28E3"
 
 fail() {
   echo "build-development-client.sh: $*" >&2
@@ -106,15 +106,23 @@ echo "build-development-client.sh: generating a clean development iOS project"
   fail "clean CNG rendered unexpected local-network usage copy"
 [[ "$(plutil -extract UIBackgroundModes.0 raw "${INFO_PLIST}")" == "bluetooth-central" ]] ||
   fail "clean CNG did not render the central Bluetooth background mode"
-[[ "$(plutil -extract UIBackgroundModes.1 raw "${INFO_PLIST}")" == "bluetooth-peripheral" ]] ||
-  fail "clean CNG did not render the peripheral Bluetooth background mode"
-if plutil -extract UIBackgroundModes.2 raw "${INFO_PLIST}" >/dev/null 2>&1; then
-  fail "clean CNG rendered an unexpected third background mode"
+if plutil -extract UIBackgroundModes.1 raw "${INFO_PLIST}" >/dev/null 2>&1; then
+  fail "clean CNG rendered an unexpected second background mode"
 fi
 [[ "$(plutil -extract PRNSCoreBluetoothCentralRestorationIdentifier raw "${INFO_PLIST}")" == "${CENTRAL_RESTORATION_IDENTIFIER}" ]] ||
   fail "clean CNG rendered the wrong central restoration identifier"
-[[ "$(plutil -extract PRNSCoreBluetoothPeripheralRestorationIdentifier raw "${INFO_PLIST}")" == "${PERIPHERAL_RESTORATION_IDENTIFIER}" ]] ||
-  fail "clean CNG rendered the wrong peripheral restoration identifier"
+if plutil -extract PRNSCoreBluetoothPeripheralRestorationIdentifier raw "${INFO_PLIST}" >/dev/null 2>&1; then
+  fail "clean CNG rendered a peripheral restoration identifier"
+fi
+[[ "$(plutil -extract NSAccessorySetupKitSupports.0 raw "${INFO_PLIST}")" == "Bluetooth" ]] ||
+  fail "clean CNG did not render ASK Bluetooth support"
+[[ "$(plutil -extract NSAccessorySetupBluetoothServices.0 raw "${INFO_PLIST}")" == "${PRNS_BLUETOOTH_SERVICE}" ]] ||
+  fail "clean CNG rendered the wrong ASK Bluetooth service"
+DEPLOYMENT_TARGET_LINES="$(grep -E "IPHONEOS_DEPLOYMENT_TARGET = " "${IOS_DIRECTORY}/prnsdev.xcodeproj/project.pbxproj")"
+[[ -n "${DEPLOYMENT_TARGET_LINES}" ]] || fail "clean CNG did not render an iOS deployment target"
+if grep -Fv "IPHONEOS_DEPLOYMENT_TARGET = 18.0;" <<<"${DEPLOYMENT_TARGET_LINES}" >/dev/null; then
+  fail "clean CNG did not render the exact iOS 18.0 deployment target"
+fi
 
 echo "build-development-client.sh: installing CocoaPods dependencies"
 (
@@ -139,12 +147,20 @@ assert_development_client_metadata() {
     fail "development client does not contain the requested Metro port ${METRO_PORT}"
   [[ "$(plutil -extract UIBackgroundModes.0 raw "${built_info_plist}")" == "bluetooth-central" ]] ||
     fail "development client is missing the central Bluetooth background mode"
-  [[ "$(plutil -extract UIBackgroundModes.1 raw "${built_info_plist}")" == "bluetooth-peripheral" ]] ||
-    fail "development client is missing the peripheral Bluetooth background mode"
+  if plutil -extract UIBackgroundModes.1 raw "${built_info_plist}" >/dev/null 2>&1; then
+    fail "development client has an unexpected second background mode"
+  fi
   [[ "$(plutil -extract PRNSCoreBluetoothCentralRestorationIdentifier raw "${built_info_plist}")" == "${CENTRAL_RESTORATION_IDENTIFIER}" ]] ||
     fail "development client has the wrong central restoration identifier"
-  [[ "$(plutil -extract PRNSCoreBluetoothPeripheralRestorationIdentifier raw "${built_info_plist}")" == "${PERIPHERAL_RESTORATION_IDENTIFIER}" ]] ||
-    fail "development client has the wrong peripheral restoration identifier"
+  if plutil -extract PRNSCoreBluetoothPeripheralRestorationIdentifier raw "${built_info_plist}" >/dev/null 2>&1; then
+    fail "development client has a peripheral restoration identifier"
+  fi
+  [[ "$(plutil -extract NSAccessorySetupKitSupports.0 raw "${built_info_plist}")" == "Bluetooth" ]] ||
+    fail "development client is missing ASK Bluetooth support"
+  [[ "$(plutil -extract NSAccessorySetupBluetoothServices.0 raw "${built_info_plist}")" == "${PRNS_BLUETOOTH_SERVICE}" ]] ||
+    fail "development client has the wrong ASK Bluetooth service"
+  [[ "$(plutil -extract MinimumOSVersion raw "${built_info_plist}")" == "18.0" ]] ||
+    fail "development client does not require iOS 18.0"
 }
 
 if [[ "${MODE}" == "device" ]]; then

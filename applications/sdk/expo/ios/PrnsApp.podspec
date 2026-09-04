@@ -11,7 +11,7 @@ Pod::Spec.new do |s|
   s.author           = 'Prns contributors'
   s.homepage         = 'https://reticulum.rs'
   s.source           = { :git => 'https://github.com/KenAKAFrosty/Prns.git', :tag => s.version.to_s }
-  s.platforms        = { :ios => '16.4' }
+  s.platforms        = { :ios => '18.0' }
   s.swift_version    = '5.9'
   s.static_framework = true
 
@@ -19,7 +19,7 @@ Pod::Spec.new do |s|
 
   s.source_files = '**/*.{h,swift}'
   s.public_header_files = 'PrnsAppBridge.h'
-  s.frameworks = 'CoreBluetooth', 'CoreFoundation', 'Foundation', 'UIKit'
+  s.frameworks = 'AccessorySetupKit', 'CoreBluetooth', 'CoreFoundation', 'Foundation', 'UIKit'
   s.libraries = 'iconv'
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',

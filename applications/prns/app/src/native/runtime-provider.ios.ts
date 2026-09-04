@@ -1,8 +1,13 @@
-import { developmentRuntime, scopedDevelopmentRuntime } from "@prns-internal/expo";
+import {
+  accessorySetupRuntime,
+  developmentRuntime,
+  scopedDevelopmentRuntime,
+} from "@prns-internal/expo";
 import type { RuntimeProvider } from "./runtime-provider.types";
 
 export const runtimeProvider: RuntimeProvider = {
   availability: { type: "available", platform: "ios" },
+  accessorySetup: accessorySetupRuntime,
   runtime: developmentRuntime,
   acquire: (options) =>
     scopedDevelopmentRuntime(developmentRuntime, {

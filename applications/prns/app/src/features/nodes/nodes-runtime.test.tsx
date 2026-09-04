@@ -1,4 +1,6 @@
 import type {
+  AccessorySetupRuntime,
+  AccessorySetupStatus,
   DevelopmentNodeSnapshot,
   DevelopmentRuntime,
   DevelopmentRuntimeStartError,
@@ -29,6 +31,20 @@ const observedDestination = destinationHash(new Uint8Array(16).fill(0x33));
 const observedIdentity = identityHash(new Uint8Array(16).fill(0x44));
 type PairingState = DevelopmentNodeSnapshot["pairing"];
 type PairingCandidates = DevelopmentNodeSnapshot["pairingCandidates"];
+
+const readyAccessorySetup: AccessorySetupRuntime = {
+  readStatus: async () => ({
+    phase: "ready",
+    picker: "idle",
+    authorizedAccessoryCount: 1,
+    nativeStart: "running",
+    restorationLaunchRequested: false,
+    revision: 1,
+    lastError: null,
+  }),
+  showPicker: async () => ({ type: "completed" }),
+  addStatusListener: () => ({ remove: jest.fn() }),
+};
 
 function pairingCandidate(
   candidateId: string,
@@ -175,6 +191,7 @@ function fakeProvider(
   };
   return {
     availability: { type: "available", platform: "ios" },
+    accessorySetup: readyAccessorySetup,
     runtime,
     acquire: (options) =>
       Effect.acquireRelease(
@@ -209,6 +226,182 @@ describe("Foundation 1 Nodes runtime binding", () => {
     expect(routeConsumesDevelopmentSnapshot("/")).toBe(false);
     expect(routeConsumesDevelopmentSnapshot("/settings")).toBe(false);
     expect(routeConsumesDevelopmentSnapshot("/network/interfaces")).toBe(false);
+  });
+
+  it("keeps runtime acquisition gated while showing user-initiated system setup", async () => {
+    const stop = jest.fn();
+    const base = fakeProvider(stop);
+    if (!("acquire" in base)) {
+      throw new Error("the iOS test provider must expose runtime acquisition");
+    }
+    const acquire = jest.fn(base.acquire);
+    const showPicker = jest.fn(async () => ({ type: "cancelled" as const }));
+    const provider: RuntimeProvider = {
+      ...base,
+      accessorySetup: {
+        readStatus: async () => ({
+          phase: "setupRequired",
+          picker: "idle",
+          authorizedAccessoryCount: 0,
+          nativeStart: "notRequested",
+          restorationLaunchRequested: false,
+          revision: 1,
+          lastError: null,
+        }),
+        showPicker,
+        addStatusListener: () => ({ remove: jest.fn() }),
+      },
+      acquire,
+    };
+    const view = render(
+      <DevelopmentRuntimeProvider provider={provider}>
+        <PairNodeScreen selectedCandidateId={undefined} />
+      </DevelopmentRuntimeProvider>,
+    );
+
+    await waitFor(() => expect(view.getByText("Choose a nearby node")).toBeTruthy());
+    expect(acquire).not.toHaveBeenCalled();
+    fireEvent.press(view.getByRole("button", { name: "Choose a Bluetooth node" }));
+    await waitFor(() => expect(showPicker).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(
+        view.getByText("The Bluetooth chooser was cancelled. No Bluetooth access changed."),
+      ).toBeTruthy(),
+    );
+  });
+
+  it("starts once when ASK reports authorization and degrades honestly after removal", async () => {
+    const stop = jest.fn();
+    const base = fakeProvider(stop);
+    if (!("acquire" in base)) {
+      throw new Error("the iOS test provider must expose runtime acquisition");
+    }
+    const acquire = jest.fn(base.acquire);
+    let publishSetup:
+      | ((status: Awaited<ReturnType<AccessorySetupRuntime["readStatus"]>>) => void)
+      | undefined;
+    const provider: RuntimeProvider = {
+      ...base,
+      accessorySetup: {
+        readStatus: async () => ({
+          phase: "setupRequired",
+          picker: "idle",
+          authorizedAccessoryCount: 0,
+          nativeStart: "notRequested",
+          restorationLaunchRequested: false,
+          revision: 1,
+          lastError: null,
+        }),
+        showPicker: async () => ({ type: "completed" }),
+        addStatusListener: (listener) => {
+          publishSetup = listener;
+          return { remove: jest.fn() };
+        },
+      },
+      acquire,
+    };
+    const view = render(
+      <DevelopmentRuntimeProvider provider={provider}>
+        <PairNodeScreen selectedCandidateId={undefined} />
+      </DevelopmentRuntimeProvider>,
+    );
+    await waitFor(() => expect(view.getByText("Choose a nearby node")).toBeTruthy());
+
+    act(() =>
+      publishSetup?.({
+        phase: "ready",
+        picker: "idle",
+        authorizedAccessoryCount: 1,
+        nativeStart: "notRequested",
+        restorationLaunchRequested: false,
+        revision: 2,
+        lastError: null,
+      }),
+    );
+    await waitFor(() => expect(view.getByText("Bluetooth access ready")).toBeTruthy());
+    await waitFor(() => expect(acquire).toHaveBeenCalledTimes(1));
+
+    act(() =>
+      publishSetup?.({
+        phase: "setupRequired",
+        picker: "idle",
+        authorizedAccessoryCount: 0,
+        nativeStart: "running",
+        restorationLaunchRequested: false,
+        revision: 3,
+        lastError: null,
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        view.getByText(
+          "Bluetooth access was removed while this device stayed running. Authorize a node again to reconnect.",
+        ),
+      ).toBeTruthy(),
+    );
+    expect(acquire).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not let a stale initial ASK read overwrite a newer authorization event", async () => {
+    const stop = jest.fn();
+    const base = fakeProvider(stop);
+    if (!("acquire" in base)) {
+      throw new Error("the iOS test provider must expose runtime acquisition");
+    }
+    const acquire = jest.fn(base.acquire);
+    let publishSetup: ((status: AccessorySetupStatus) => void) | undefined;
+    let resolveInitialRead: ((status: AccessorySetupStatus) => void) | undefined;
+    const provider: RuntimeProvider = {
+      ...base,
+      accessorySetup: {
+        readStatus: () =>
+          new Promise((resolve) => {
+            resolveInitialRead = resolve;
+          }),
+        showPicker: async () => ({ type: "completed" }),
+        addStatusListener: (listener) => {
+          publishSetup = listener;
+          return { remove: jest.fn() };
+        },
+      },
+      acquire,
+    };
+    const view = render(
+      <DevelopmentRuntimeProvider provider={provider}>
+        <PairNodeScreen selectedCandidateId={undefined} />
+      </DevelopmentRuntimeProvider>,
+    );
+
+    act(() => {
+      publishSetup?.({
+        phase: "ready",
+        picker: "idle",
+        authorizedAccessoryCount: 1,
+        nativeStart: "notRequested",
+        restorationLaunchRequested: false,
+        revision: 2,
+        lastError: null,
+      });
+    });
+    await waitFor(() => expect(acquire).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(view.getByText("Bluetooth access ready")).toBeTruthy());
+
+    await act(async () => {
+      resolveInitialRead?.({
+        phase: "setupRequired",
+        picker: "idle",
+        authorizedAccessoryCount: 0,
+        nativeStart: "notRequested",
+        restorationLaunchRequested: false,
+        revision: 1,
+        lastError: null,
+      });
+      await Promise.resolve();
+    });
+
+    expect(view.getByText("Bluetooth access ready")).toBeTruthy();
+    expect(view.queryByText("Choose a nearby node")).toBeNull();
+    expect(acquire).toHaveBeenCalledTimes(1);
   });
 
   it("retains startup diagnostics without exposing them on the Nodes screen", async () => {
