@@ -10,7 +10,8 @@ use super::BluetoothAutoStatus;
 
 #[cfg(target_os = "ios")]
 pub use prns_ffi::bluetooth_auto::macos::{
-    CoreBluetoothRestorationIdentifiers, CoreBluetoothRestorationIdentifiersError,
+    CoreBluetoothCentralRestorationIdentifier, CoreBluetoothRestorationIdentifiers,
+    CoreBluetoothRestorationIdentifiersError,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,6 +77,25 @@ impl AutoBle {
         ))
     }
 
+    /// Creates only the restoration-aware CoreBluetooth central manager.
+    ///
+    /// The selected identifier is retained for every later readiness retry. The containing
+    /// application must declare the `bluetooth-central` background mode and recreate the manager
+    /// with this exact identifier on an iOS restoration launch. No peripheral manager is created.
+    #[cfg(target_os = "ios")]
+    pub async fn prepare_central_only_with_restoration(
+        identity: BleIdentity,
+        identifier: CoreBluetoothCentralRestorationIdentifier,
+    ) -> Result<PreparedAutoBle, prns_ffi::bluetooth_auto::macos::MacosBleError> {
+        let manager_preparation = AppleManagerPreparation::CentralOnlyRestorationAware(identifier);
+        let backend = manager_preparation.prepare(identity).await?;
+        Ok(PreparedAutoBle::new(
+            identity,
+            manager_preparation,
+            Some(backend),
+        ))
+    }
+
     /// Creates CoreBluetooth managers without state restoration while leaving radio authorization
     /// and service readiness to the attached asynchronous supervisor.
     ///
@@ -86,6 +106,20 @@ impl AutoBle {
         identity: BleIdentity,
     ) -> Result<PreparedAutoBle, prns_ffi::bluetooth_auto::macos::MacosBleError> {
         let manager_preparation = AppleManagerPreparation::WithoutRestoration;
+        let backend = manager_preparation.prepare(identity).await?;
+        Ok(PreparedAutoBle::new(
+            identity,
+            manager_preparation,
+            Some(backend),
+        ))
+    }
+
+    /// Creates only a CoreBluetooth central manager without state restoration.
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub async fn prepare_central_only_without_restoration(
+        identity: BleIdentity,
+    ) -> Result<PreparedAutoBle, prns_ffi::bluetooth_auto::macos::MacosBleError> {
+        let manager_preparation = AppleManagerPreparation::CentralOnlyWithoutRestoration;
         let backend = manager_preparation.prepare(identity).await?;
         Ok(PreparedAutoBle::new(
             identity,
@@ -120,12 +154,37 @@ impl AutoBle {
         )
     }
 
+    /// Produces a failed-but-supervised central-only attachment whose retries reuse the caller's
+    /// central restoration identifier.
+    #[cfg(target_os = "ios")]
+    pub fn unavailable_central_only_with_restoration(
+        identity: BleIdentity,
+        identifier: CoreBluetoothCentralRestorationIdentifier,
+    ) -> PreparedAutoBle {
+        PreparedAutoBle::new(
+            identity,
+            AppleManagerPreparation::CentralOnlyRestorationAware(identifier),
+            None,
+        )
+    }
+
     /// Produces a failed-but-supervised Bluetooth LE attachment without state restoration when
     /// native manager preparation itself cannot be started. The core node and every other
     /// transport remain available, and retries never opt into state restoration.
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     pub fn unavailable_without_restoration(identity: BleIdentity) -> PreparedAutoBle {
         PreparedAutoBle::new(identity, AppleManagerPreparation::WithoutRestoration, None)
+    }
+
+    /// Produces a failed-but-supervised central-only attachment whose retries remain outside the
+    /// CoreBluetooth restoration contract.
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub fn unavailable_central_only_without_restoration(identity: BleIdentity) -> PreparedAutoBle {
+        PreparedAutoBle::new(
+            identity,
+            AppleManagerPreparation::CentralOnlyWithoutRestoration,
+            None,
+        )
     }
 }
 
@@ -135,7 +194,22 @@ enum AppleManagerPreparation {
     LegacyRestorationAware,
     #[cfg(target_os = "ios")]
     RestorationAware(CoreBluetoothRestorationIdentifiers),
+    #[cfg(target_os = "ios")]
+    CentralOnlyRestorationAware(CoreBluetoothCentralRestorationIdentifier),
     WithoutRestoration,
+    CentralOnlyWithoutRestoration,
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+enum PreparedAppleBackend {
+    DualRole(prns_ffi::bluetooth_auto::macos::PreparedMacosBleBackend),
+    CentralOnly(prns_ffi::bluetooth_auto::macos::PreparedCentralOnlyMacosBleBackend),
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+enum ReadyAppleBackend {
+    DualRole(prns_ffi::bluetooth_auto::macos::MacosBleBackend),
+    CentralOnly(prns_ffi::bluetooth_auto::macos::CentralOnlyMacosBleBackend),
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -143,22 +217,63 @@ impl AppleManagerPreparation {
     async fn prepare(
         &self,
         identity: BleIdentity,
-    ) -> Result<
-        prns_ffi::bluetooth_auto::macos::PreparedMacosBleBackend,
-        prns_ffi::bluetooth_auto::macos::MacosBleError,
-    > {
-        use prns_ffi::bluetooth_auto::macos::MacosBleBackend;
+    ) -> Result<PreparedAppleBackend, prns_ffi::bluetooth_auto::macos::MacosBleError> {
+        use prns_ffi::bluetooth_auto::macos::{CentralOnlyMacosBleBackend, MacosBleBackend};
 
         match self {
-            Self::LegacyRestorationAware => MacosBleBackend::prepare(identity).await,
+            Self::LegacyRestorationAware => MacosBleBackend::prepare(identity)
+                .await
+                .map(PreparedAppleBackend::DualRole),
             #[cfg(target_os = "ios")]
             Self::RestorationAware(identifiers) => {
-                MacosBleBackend::prepare_with_restoration(identity, identifiers.clone()).await
+                MacosBleBackend::prepare_with_restoration(identity, identifiers.clone())
+                    .await
+                    .map(PreparedAppleBackend::DualRole)
             }
-            Self::WithoutRestoration => {
-                MacosBleBackend::prepare_without_restoration(identity).await
+            #[cfg(target_os = "ios")]
+            Self::CentralOnlyRestorationAware(identifier) => {
+                CentralOnlyMacosBleBackend::prepare_with_restoration(identity, identifier.clone())
+                    .await
+                    .map(PreparedAppleBackend::CentralOnly)
+            }
+            Self::WithoutRestoration => MacosBleBackend::prepare_without_restoration(identity)
+                .await
+                .map(PreparedAppleBackend::DualRole),
+            Self::CentralOnlyWithoutRestoration => {
+                CentralOnlyMacosBleBackend::prepare_without_restoration(identity)
+                    .await
+                    .map(PreparedAppleBackend::CentralOnly)
             }
         }
+    }
+}
+
+#[cfg(all(test, any(target_os = "macos", target_os = "ios")))]
+mod apple_manager_preparation_tests {
+    use super::*;
+
+    #[test]
+    fn unavailable_central_only_preparation_retains_its_role_for_retry() {
+        let identity = BleIdentity::new([0; 16]);
+        let prepared = AutoBle::unavailable_central_only_without_restoration(identity);
+        assert_eq!(
+            prepared.manager_preparation,
+            AppleManagerPreparation::CentralOnlyWithoutRestoration
+        );
+    }
+
+    #[cfg(target_os = "ios")]
+    #[test]
+    fn unavailable_central_only_preparation_retains_its_restoration_identifier() {
+        let identity = BleIdentity::new([0; 16]);
+        let identifier = CoreBluetoothCentralRestorationIdentifier::new("central-only")
+            .expect("the fixture identifier is valid");
+        let prepared =
+            AutoBle::unavailable_central_only_with_restoration(identity, identifier.clone());
+        assert_eq!(
+            prepared.manager_preparation,
+            AppleManagerPreparation::CentralOnlyRestorationAware(identifier)
+        );
     }
 }
 
@@ -167,7 +282,7 @@ impl PreparedAutoBle {
     fn new(
         identity: BleIdentity,
         manager_preparation: AppleManagerPreparation,
-        backend: Option<prns_ffi::bluetooth_auto::macos::PreparedMacosBleBackend>,
+        backend: Option<PreparedAppleBackend>,
     ) -> Self {
         Self {
             identity,
@@ -195,7 +310,7 @@ pub struct PreparedAutoBle {
     policy: EffectiveInterfacePolicy,
     status: BluetoothAutoStatus,
     manager_preparation: AppleManagerPreparation,
-    backend: Option<prns_ffi::bluetooth_auto::macos::PreparedMacosBleBackend>,
+    backend: Option<PreparedAppleBackend>,
 }
 
 /// Canonical name for a prepared Apple-platform Bluetooth LE auto-interface.
@@ -312,7 +427,7 @@ struct PreparedPlatformBluetooth {
     policy: EffectiveInterfacePolicy,
     status: BluetoothAutoStatus,
     manager_preparation: AppleManagerPreparation,
-    backend: Option<prns_ffi::bluetooth_auto::macos::PreparedMacosBleBackend>,
+    backend: Option<PreparedAppleBackend>,
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -360,10 +475,10 @@ async fn run_prepared_platform_bluetooth(
     status: BluetoothAutoStatus,
     policy: EffectiveInterfacePolicy,
     manager_preparation: AppleManagerPreparation,
-    backend: Option<prns_ffi::bluetooth_auto::macos::PreparedMacosBleBackend>,
+    backend: Option<PreparedAppleBackend>,
 ) {
     use super::BluetoothAuto;
-    use prns_ffi::bluetooth_auto::macos::MacosBleBackend;
+    use prns_ffi::bluetooth_auto::macos::{CentralOnlyMacosBleBackend, MacosBleBackend};
     use prns_runtime::interfaces::bluetooth_auto::{
         AppleHost, Endpoint, LinkCapabilities, BLE_HW_MTU,
     };
@@ -386,8 +501,16 @@ async fn run_prepared_platform_bluetooth(
             },
         };
 
-        match candidate.ready().await {
-            Ok(backend) => {
+        let ready = match candidate {
+            PreparedAppleBackend::DualRole(backend) => {
+                backend.ready().await.map(ReadyAppleBackend::DualRole)
+            }
+            PreparedAppleBackend::CentralOnly(backend) => {
+                backend.ready().await.map(ReadyAppleBackend::CentralOnly)
+            }
+        };
+        match ready {
+            Ok(ReadyAppleBackend::DualRole(backend)) => {
                 status.clear_failure();
                 let psm = backend.psm();
                 #[cfg(target_os = "macos")]
@@ -412,6 +535,30 @@ async fn run_prepared_platform_bluetooth(
                 crate::diagnostic_log::info!(
                     "bluetooth: supervising prepared CoreBluetooth backend, local psm {:#06x}",
                     psm.get()
+                );
+                bluetooth.run(fleet).await;
+                return;
+            }
+            Ok(ReadyAppleBackend::CentralOnly(backend)) => {
+                status.clear_failure();
+                #[cfg(target_os = "macos")]
+                let endpoint = Endpoint::CoreBluetooth(AppleHost::MacOs);
+                #[cfg(target_os = "ios")]
+                let endpoint = Endpoint::CoreBluetooth(AppleHost::Ios);
+                let bluetooth =
+                    BluetoothAuto::<_, { CentralOnlyMacosBleBackend::MAX_PEERS }>::with_status(
+                        backend,
+                        ble_identity,
+                        endpoint,
+                        LinkCapabilities {
+                            l2cap: None,
+                            link_mtu: BLE_HW_MTU as u16,
+                        },
+                        status,
+                    )
+                    .with_policy(policy);
+                crate::diagnostic_log::info!(
+                    "bluetooth: supervising prepared central-only CoreBluetooth backend; no local peripheral or L2CAP capability"
                 );
                 bluetooth.run(fleet).await;
                 return;

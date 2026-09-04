@@ -8,7 +8,10 @@ pub use host::{
     ConfiguredAutoBluetoothLe,
 };
 #[cfg(target_os = "ios")]
-pub use host::{CoreBluetoothRestorationIdentifiers, CoreBluetoothRestorationIdentifiersError};
+pub use host::{
+    CoreBluetoothCentralRestorationIdentifier, CoreBluetoothRestorationIdentifiers,
+    CoreBluetoothRestorationIdentifiersError,
+};
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 pub use host::{PreparedAutoBle, PreparedAutoBluetoothLe};
 #[cfg(target_os = "linux")]
