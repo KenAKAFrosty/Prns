@@ -20,6 +20,16 @@ COMPATIBILITY_PATH = APPLICATIONS_ROOT / "release" / "compatibility.json"
 REVISION = re.compile(r"[0-9a-f]{40}\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 SEMVER = re.compile(r"\d+\.\d+\.\d+\Z")
+BLUETOOTH_UUID = re.compile(
+    r"[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}\Z"
+)
+BLUETOOTH_SERVICE_SOURCE = (
+    "prns-core/src/interfaces/bluetooth_auto/advertisement.rs"
+)
+RUST_NON_CODE = re.compile(
+    r'/\*.*?\*/|//[^\n]*|b?r(?P<hashes>\#*)".*?"(?P=hashes)|b?"(?:\\.|[^"\\])*"',
+    flags=re.DOTALL,
+)
 
 
 def fail(message: str) -> ValueError:
@@ -93,6 +103,14 @@ def load_compatibility(path: pathlib.Path = COMPATIBILITY_PATH) -> dict[str, Any
         string_value(host, "schemaPath", "prns.hostContract"),
         "prns.hostContract.schemaPath",
     )
+    bluetooth = object_value(prns.get("bluetoothAuto"), "prns.bluetoothAuto")
+    if (
+        BLUETOOTH_UUID.fullmatch(
+            string_value(bluetooth, "serviceUuid", "prns.bluetoothAuto")
+        )
+        is None
+    ):
+        raise fail("prns.bluetoothAuto.serviceUuid must be an uppercase 128-bit UUID")
 
     rust = object_value(prns.get("rustPackages"), "prns.rustPackages")
     direct = string_array(rust, "direct", "prns.rustPackages")
@@ -161,6 +179,41 @@ def fnv1a64(source: bytes) -> str:
     return f"{value:016x}"
 
 
+def bluetooth_service_uuid(source: bytes) -> str:
+    text = source.decode("utf-8")
+    text = RUST_NON_CODE.sub(
+        lambda match: "\n" * match.group(0).count("\n"),
+        text,
+    )
+    helpers = re.findall(
+        r"^\s*const\s+fn\s+ble_reticulum_uuid\s*\(\s*last\s*:\s*u8\s*\)"
+        r"\s*->\s*\[\s*u8\s*;\s*16\s*\]\s*\{\s*\[(.*?)\]\s*\}",
+        text,
+        flags=re.DOTALL | re.MULTILINE,
+    )
+    if len(helpers) != 1:
+        raise fail("canonical ble_reticulum_uuid source shape changed")
+    entries = [entry.strip() for entry in helpers[0].split(",") if entry.strip()]
+    if len(entries) != 16 or entries[-1] != "last":
+        raise fail("canonical Bluetooth UUID must contain 15 bytes followed by last")
+    services = re.findall(
+        r"^\s*pub\s+const\s+BLE_SERVICE_UUID_BYTES\s*:\s*\[\s*u8\s*;\s*16\s*\]"
+        r"\s*=\s*ble_reticulum_uuid\s*\(\s*(0x[0-9a-fA-F]+)\s*\)\s*;",
+        text,
+        flags=re.MULTILINE,
+    )
+    if len(services) != 1:
+        raise fail("canonical BLE_SERVICE_UUID_BYTES source shape changed")
+    entries[-1] = services[0]
+    if any(re.fullmatch(r"0x[0-9a-fA-F]{1,2}", entry) is None for entry in entries):
+        raise fail("canonical Bluetooth UUID bytes must be hexadecimal u8 literals")
+    hexadecimal = "".join(f"{int(entry, 16):02X}" for entry in entries)
+    return (
+        f"{hexadecimal[:8]}-{hexadecimal[8:12]}-{hexadecimal[12:16]}-"
+        f"{hexadecimal[16:20]}-{hexadecimal[20:]}"
+    )
+
+
 def check(prns_root: pathlib.Path, require_head: bool) -> dict[str, Any]:
     compatibility = load_compatibility()
     prns = object_value(compatibility["prns"], "prns")
@@ -191,6 +244,19 @@ def check(prns_root: pathlib.Path, require_head: bool) -> dict[str, Any]:
         raise fail(
             f"Host contract at {revision}:{schema_path} has SHA-256 "
             f"{actual_schema_sha256}, expected {expected_schema_sha256}"
+        )
+
+    bluetooth = object_value(prns["bluetoothAuto"], "prns.bluetoothAuto")
+    expected_service_uuid = string_value(
+        bluetooth, "serviceUuid", "prns.bluetoothAuto"
+    )
+    actual_service_uuid = bluetooth_service_uuid(
+        git(prns_root, "show", f"{revision}:{BLUETOOTH_SERVICE_SOURCE}")
+    )
+    if actual_service_uuid != expected_service_uuid:
+        raise fail(
+            f"Bluetooth Auto service UUID at {revision}:{BLUETOOTH_SERVICE_SOURCE} "
+            f"is {actual_service_uuid}, expected {expected_service_uuid}"
         )
 
     rust = object_value(prns["rustPackages"], "prns.rustPackages")

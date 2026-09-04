@@ -18,6 +18,9 @@
       "fingerprint": "prns-host/v1/a18c51fd8314bb35",
       "schemaSha256": "0c75208632abbb4fb47e324ecf08cbfebb0e9df1dd9b9b89306268f621d955de"
     },
+    "bluetoothAuto": {
+      "serviceUuid": "37145B00-442D-4A94-917F-8F42C5DA28E3"
+    },
     "rustPackages": {
       "direct": [
         "personal-rns",

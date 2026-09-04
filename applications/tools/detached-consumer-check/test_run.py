@@ -47,6 +47,26 @@ class DetachedConsumerCheckTests(unittest.TestCase):
             }
         }
 
+    def test_compatibility_manifest_requires_canonical_bluetooth_uuid(self) -> None:
+        document = json.loads(mobility.COMPATIBILITY_PATH.read_text(encoding="utf-8"))
+        for bluetooth in (
+            None,
+            {"serviceUuid": "37145b00-442d-4a94-917f-8f42c5da28e3"},
+        ):
+            mutated = json.loads(json.dumps(document))
+            if bluetooth is None:
+                mutated["prns"].pop("bluetoothAuto")
+            else:
+                mutated["prns"]["bluetoothAuto"] = bluetooth
+            with self.subTest(bluetooth=bluetooth), tempfile.TemporaryDirectory() as temporary:
+                path = pathlib.Path(temporary) / "compatibility.json"
+                path.write_text(json.dumps(mutated), encoding="utf-8")
+                with mock.patch.object(mobility, "COMPATIBILITY_PATH", path):
+                    with self.assertRaisesRegex(
+                        mobility.QualificationFailure, "bluetoothAuto"
+                    ):
+                        mobility.load_compatibility()
+
     def test_cargo_rewrite_replaces_only_reviewed_base_packages(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             repository = pathlib.Path(temporary)

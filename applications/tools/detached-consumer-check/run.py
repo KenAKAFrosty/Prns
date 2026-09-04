@@ -30,6 +30,9 @@ COMPATIBILITY_PATH = APPLICATIONS_ROOT / "release" / "compatibility.json"
 REVISION = re.compile(r"[0-9a-f]{40}\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 SEMVER = re.compile(r"\d+\.\d+\.\d+\Z")
+BLUETOOTH_UUID = re.compile(
+    r"[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}\Z"
+)
 INLINE_DEPENDENCY = re.compile(
     r"^(?P<prefix>\s*(?P<name>[A-Za-z0-9_-]+)\s*=\s*\{)(?P<body>.*)(?P<suffix>\}\s*(?:#.*)?)$"
 )
@@ -300,6 +303,22 @@ def load_compatibility() -> dict[str, Any]:
     revision = string_value(prns, "revision", "compatibility.prns")
     if REVISION.fullmatch(revision) is None:
         raise fail("compatibility.prns.revision must be a full lowercase Git commit ID")
+    bluetooth = object_value(
+        prns.get("bluetoothAuto"), "compatibility.prns.bluetoothAuto"
+    )
+    if (
+        BLUETOOTH_UUID.fullmatch(
+            string_value(
+                bluetooth,
+                "serviceUuid",
+                "compatibility.prns.bluetoothAuto",
+            )
+        )
+        is None
+    ):
+        raise fail(
+            "compatibility.prns.bluetoothAuto.serviceUuid must be an uppercase 128-bit UUID"
+        )
     rust_packages(document)
     javascript = object_value(
         prns.get("javascriptContract"), "compatibility.prns.javascriptContract"

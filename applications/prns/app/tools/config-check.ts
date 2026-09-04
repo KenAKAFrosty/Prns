@@ -73,6 +73,9 @@ function assertVariant(
   if ("PRNSCoreBluetoothPeripheralRestorationIdentifier" in infoPlist) {
     fail(`${variant}.ios.infoPlist must not declare a peripheral restoration identifier`);
   }
+  if ("UIApplicationSceneManifest" in infoPlist) {
+    fail(`${variant}.ios.infoPlist must not declare a scene manifest`);
+  }
   if (
     !Array.isArray(infoPlist.NSAccessorySetupBluetoothServices) ||
     infoPlist.NSAccessorySetupBluetoothServices.length !== 1 ||

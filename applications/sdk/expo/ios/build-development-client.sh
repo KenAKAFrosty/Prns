@@ -118,6 +118,9 @@ fi
 if plutil -extract PRNSCoreBluetoothPeripheralRestorationIdentifier raw "${INFO_PLIST}" >/dev/null 2>&1; then
   fail "clean CNG rendered a peripheral restoration identifier"
 fi
+if plutil -extract UIApplicationSceneManifest raw "${INFO_PLIST}" >/dev/null 2>&1; then
+  fail "clean CNG rendered a scene manifest; AppDelegate launch options must own restoration"
+fi
 [[ "$(plutil -extract NSAccessorySetupKitSupports.0 raw "${INFO_PLIST}")" == "Bluetooth" ]] ||
   fail "clean CNG did not render ASK Bluetooth support"
 [[ "$(plutil -extract NSAccessorySetupBluetoothServices.0 raw "${INFO_PLIST}")" == "${PRNS_BLUETOOTH_SERVICE}" ]] ||
@@ -158,6 +161,9 @@ assert_development_client_metadata() {
     fail "development client has the wrong central restoration identifier"
   if plutil -extract PRNSCoreBluetoothPeripheralRestorationIdentifier raw "${built_info_plist}" >/dev/null 2>&1; then
     fail "development client has a peripheral restoration identifier"
+  fi
+  if plutil -extract UIApplicationSceneManifest raw "${built_info_plist}" >/dev/null 2>&1; then
+    fail "development client has a scene manifest; AppDelegate launch options must own restoration"
   fi
   [[ "$(plutil -extract NSAccessorySetupKitSupports.0 raw "${built_info_plist}")" == "Bluetooth" ]] ||
     fail "development client is missing ASK Bluetooth support"
