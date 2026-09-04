@@ -214,6 +214,9 @@ pub async fn run_with_store_and_deciders<S, H, J, P, A>(
     .await
 }
 
+// The executor entry point keeps its owned subsystems explicit; they are moved
+// once into the single-threaded manifold rather than hidden behind indirection.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_executor_local_with_store_and_deciders<S, H, J, P, A>(
     engine: EngineState<S>,
     host: H,
@@ -245,6 +248,9 @@ pub(crate) async fn run_executor_local_with_store_and_deciders<S, H, J, P, A>(
     .await
 }
 
+// These are the manifold's complete owned inputs. A generic configuration bag
+// would obscure which values cross into the hot-loop thread without reducing work.
+#[allow(clippy::too_many_arguments)]
 async fn run_inner<S, H, J, P, A, C>(
     mut engine: EngineState<S>,
     mut host: H,

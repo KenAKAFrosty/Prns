@@ -17,7 +17,7 @@ pub const DEFAULTS: InterfaceDefaults = InterfaceDefaults {
         egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
     },
     mode: InterfaceMode::PointToPoint,
-    gravity: crate::interfaces::InterfaceGravity::ZERO,
+    gravity: crate::interfaces::InterfaceGravityDefault::FromBitrate,
     bitrate: TCP_BITRATE_ESTIMATE,
     mtu: MtuPolicy::optimized_from_bitrate(MAX_LINK_MTU),
     announce_rate_limit: None,

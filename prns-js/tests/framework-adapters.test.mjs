@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -9,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { qwikVite } from "@builder.io/qwik/optimizer";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { build } from "vite";
+import { findChromium } from "./chromium.mjs";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const testRoot = resolve(packageRoot, "tests/framework-adapters");
@@ -16,13 +16,7 @@ const browserTimeoutMs = process.env.CI ? 60_000 : 30_000;
 const qwikRuntime = fileURLToPath(import.meta.resolve("@builder.io/qwik"));
 const prnsBrowser = fileURLToPath(import.meta.resolve("personal-rns/browser"));
 const prnsQwik = fileURLToPath(import.meta.resolve("personal-rns/qwik"));
-const chromium = [
-  process.env.CHROMIUM_PATH,
-  "/snap/bin/chromium",
-  "/usr/bin/chromium",
-  "/usr/bin/chromium-browser",
-  "/usr/bin/google-chrome",
-].find((candidate) => candidate && existsSync(candidate));
+const chromium = findChromium();
 assert.ok(chromium, "Chromium is required for the framework adapter test");
 
 const temporaryRoot = await mkdtemp(join(tmpdir(), "prns-framework-adapters-"));

@@ -1,22 +1,16 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { dirname, extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { findChromium } from "./chromium.mjs";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = resolve(packageRoot, "..");
 const browserTimeoutMs = process.env.CI ? 60_000 : 20_000;
-const chromium = [
-  process.env.CHROMIUM_PATH,
-  "/snap/bin/chromium",
-  "/usr/bin/chromium",
-  "/usr/bin/chromium-browser",
-  "/usr/bin/google-chrome",
-].find((candidate) => candidate && existsSync(candidate));
+const chromium = findChromium();
 assert.ok(chromium, "Chromium is required for the browser package smoke");
 
 const contentTypes = new Map([
@@ -28,10 +22,24 @@ let settleBrowserResult;
 const browserResult = new Promise((resolveResult) => {
   settleBrowserResult = resolveResult;
 });
+let browserProgress = "page did not report progress";
 const workerStatusSockets = new Set();
 const server = createServer(async (request, response) => {
   try {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    if (
+      request.method === "POST" &&
+      url.pathname === "/browser-smoke-progress"
+    ) {
+      const chunks = [];
+      for await (const chunk of request) {
+        chunks.push(chunk);
+      }
+      browserProgress = Buffer.concat(chunks).toString("utf8");
+      response.writeHead(204);
+      response.end();
+      return;
+    }
     if (
       request.method === "POST" &&
       url.pathname === "/browser-smoke-result"
@@ -103,6 +111,10 @@ try {
   const url =
     `http://127.0.0.1:${address.port}` +
     "/prns-js/tests/browser-auto-consumer.html";
+  let browserDiagnostics = "";
+  const retainBrowserDiagnostics = (chunk) => {
+    browserDiagnostics = `${browserDiagnostics}${chunk}`.slice(-16_384);
+  };
   browser = spawn(
     chromium,
     [
@@ -110,10 +122,13 @@ try {
       "--no-sandbox",
       "--disable-dev-shm-usage",
       "--disable-gpu",
+      "--enable-logging=stderr",
       url,
     ],
-    { stdio: "ignore" },
+    { stdio: ["ignore", "pipe", "pipe"] },
   );
+  browser.stdout.on("data", retainBrowserDiagnostics);
+  browser.stderr.on("data", retainBrowserDiagnostics);
   const browserExited = new Promise((_, rejectExit) => {
     browser.once("error", rejectExit);
     browser.once("exit", (code, signal) => {
@@ -131,7 +146,11 @@ try {
     new Promise((_, rejectTimeout) => {
       browserTimeout = setTimeout(
         () => rejectTimeout(
-          new Error(`browser smoke timed out after ${browserTimeoutMs}ms`),
+          new Error(
+            `browser smoke timed out after ${browserTimeoutMs}ms; ` +
+              `last progress: ${browserProgress}; Chromium output:\n` +
+              (browserDiagnostics || "(none)"),
+          ),
         ),
         browserTimeoutMs,
       );

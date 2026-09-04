@@ -7,19 +7,19 @@ use zeroize::Zeroizing;
 
 #[derive(Debug, PartialEq, Eq)]
 enum PortableCryptoInputError {
-    Ed25519PublicKeyLength,
-    Ed25519SignatureLength,
-    X25519SecretLength,
-    X25519PublicKeyLength,
+    Ed25519PublicKey,
+    Ed25519Signature,
+    X25519Secret,
+    X25519PublicKey,
 }
 
 impl PortableCryptoInputError {
     fn message(&self) -> &'static str {
         match self {
-            Self::Ed25519PublicKeyLength => "Ed25519 public key must be exactly 32 bytes",
-            Self::Ed25519SignatureLength => "Ed25519 signature must be exactly 64 bytes",
-            Self::X25519SecretLength => "X25519 secret scalar must be exactly 32 bytes",
-            Self::X25519PublicKeyLength => "X25519 public key must be exactly 32 bytes",
+            Self::Ed25519PublicKey => "Ed25519 public key must be exactly 32 bytes",
+            Self::Ed25519Signature => "Ed25519 signature must be exactly 64 bytes",
+            Self::X25519Secret => "X25519 secret scalar must be exactly 32 bytes",
+            Self::X25519PublicKey => "X25519 public key must be exactly 32 bytes",
         }
     }
 }
@@ -59,10 +59,10 @@ fn verify_ed25519(
 ) -> Result<bool, PortableCryptoInputError> {
     let public_key: [u8; Ed25519PublicKey::LEN] = public_key
         .try_into()
-        .map_err(|_| PortableCryptoInputError::Ed25519PublicKeyLength)?;
+        .map_err(|_| PortableCryptoInputError::Ed25519PublicKey)?;
     let signature: [u8; Ed25519Signature::LEN] = signature
         .try_into()
-        .map_err(|_| PortableCryptoInputError::Ed25519SignatureLength)?;
+        .map_err(|_| PortableCryptoInputError::Ed25519Signature)?;
     let Ok(verifier) = Ed25519Verifier::new(&Ed25519PublicKey(public_key)) else {
         return Ok(false);
     };
@@ -81,14 +81,14 @@ fn link_proof_verify(
     let secret_scalar = Zeroizing::new(secret_scalar);
     let peer_public_key: [u8; X25519PublicKey::LEN] = peer_public_key
         .try_into()
-        .map_err(|_| PortableCryptoInputError::X25519PublicKeyLength)?;
+        .map_err(|_| PortableCryptoInputError::X25519PublicKey)?;
     if !verify_ed25519(public_key, message, signature)? {
         return Ok(None);
     }
     let secret_scalar: [u8; X25519SecretKey::LEN] = secret_scalar
         .as_slice()
         .try_into()
-        .map_err(|_| PortableCryptoInputError::X25519SecretLength)?;
+        .map_err(|_| PortableCryptoInputError::X25519Secret)?;
     let shared = x25519_diffie_hellman(
         &X25519SecretKey::new(secret_scalar),
         &X25519PublicKey(peer_public_key),

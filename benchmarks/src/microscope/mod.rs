@@ -54,28 +54,36 @@ impl Splitmix {
 #[derive(Default)]
 struct FeedCapture {
     frames: Vec<Vec<u8>>,
+    recycled_frames: Vec<Vec<u8>>,
     settlements: Vec<(CommandId, Settlement)>,
     announce_heard: bool,
+    delivered_single: bool,
     link_established: Option<LinkEstablished>,
     resource_received: bool,
-    single_deliveries: u64,
 }
 
 impl FeedCapture {
+    fn record_frame(&mut self, bytes: &[u8]) {
+        let mut frame = self.recycled_frames.pop().unwrap_or_default();
+        frame.clear();
+        frame.extend_from_slice(bytes);
+        self.frames.push(frame);
+    }
+
     fn absorb<Work>(&mut self, reaction: EngineReaction<'_, Work>, scratch: &mut Vec<u8>) {
         match reaction {
             EngineReaction::Directive(Directive::Send { bytes, .. })
             | EngineReaction::Directive(Directive::SendAnnounce { bytes, .. }) => {
-                self.frames.push(bytes.to_vec());
+                self.record_frame(bytes);
             }
             EngineReaction::Directive(Directive::SendIfOnline { bytes, on_send, .. }) => {
                 on_send();
-                self.frames.push(bytes.to_vec());
+                self.record_frame(bytes);
             }
             EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
                 scratch.resize(MAX_WIRE_FRAME_LEN, 0);
                 if let Some(n) = fill(scratch.as_mut_slice()) {
-                    self.frames.push(scratch[..n].to_vec());
+                    self.record_frame(&scratch[..n]);
                 }
             }
             EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
@@ -87,14 +95,39 @@ impl FeedCapture {
             EngineReaction::Journaled(Journaled::AnnounceHeard { .. }) => {
                 self.announce_heard = true;
             }
+            EngineReaction::Journaled(Journaled::Delivered(Delivery::Single(_))) => {
+                self.delivered_single = true;
+            }
             EngineReaction::Journaled(Journaled::ResourceReceived { .. }) => {
                 self.resource_received = true;
             }
-            EngineReaction::Journaled(Journaled::Delivered(Delivery::Single(_))) => {
-                self.single_deliveries += 1;
-            }
             _ => {}
         }
+    }
+
+    fn only_frame(&mut self, label: &str) -> Vec<u8> {
+        assert_eq!(self.frames.len(), 1, "{label} emits exactly one frame");
+        self.frames.remove(0)
+    }
+
+    fn take_only_frame_into(&mut self, label: &str, target: &mut Vec<u8>) {
+        assert_eq!(self.frames.len(), 1, "{label} emits exactly one frame");
+        let mut frame = self.frames.remove(0);
+        core::mem::swap(&mut frame, target);
+        frame.clear();
+        self.recycled_frames.push(frame);
+    }
+
+    fn reset(&mut self) {
+        for mut frame in self.frames.drain(..) {
+            frame.clear();
+            self.recycled_frames.push(frame);
+        }
+        self.settlements.clear();
+        self.announce_heard = false;
+        self.delivered_single = false;
+        self.link_established = None;
+        self.resource_received = false;
     }
 }
 

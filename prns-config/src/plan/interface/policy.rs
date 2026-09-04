@@ -41,7 +41,7 @@ pub(in crate::plan) enum MemberEgressPolicy {
 pub(in crate::plan) struct InheritedInterfacePolicy {
     pub common: InterfaceCommonPolicy,
     pub announce_rate: Option<AnnounceRateLimit>,
-    pub gravity: InterfaceGravity,
+    pub gravity: Option<InterfaceGravity>,
 }
 
 impl MemberEgressPolicy {
@@ -107,9 +107,10 @@ pub(in crate::plan) fn effective_policy(
     Ok(defaults.configured(ConfiguredInterfacePolicy {
         capabilities,
         mode: Some(planned_mode(interface, medium, discovery)),
-        gravity: Some(InterfaceGravity::new(
-            interface.gravity.unwrap_or(inherited.gravity.get()),
-        )),
+        gravity: interface
+            .gravity
+            .map(InterfaceGravity::new)
+            .or(inherited.gravity),
         bitrate,
         mtu,
         announce_rate_limit,

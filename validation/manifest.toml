@@ -463,7 +463,12 @@ platform = "linux"
 toolchain = "stable"
 timeout_seconds = 3600
 command = ["bash", "validation/security/deps-audit.sh"]
-inputs = ["validation/security/deps-audit.sh", "deny.toml", "about.toml"]
+inputs = [
+  "validation/security/deps-audit.sh",
+  "validation/security/license-policy-parity.py",
+  "deny.toml",
+  "about.toml",
+]
 artifacts = "validation-artifacts/results/dependency-audit"
 
 [[suite]]

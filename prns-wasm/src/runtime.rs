@@ -201,7 +201,7 @@ impl PrnsRuntime {
             .unwrap_or(InterfaceMode::Full);
         let gravity = optional_i64(&options, "gravity")?
             .map(InterfaceGravity::new)
-            .unwrap_or(InterfaceGravity::ZERO);
+            .unwrap_or_else(|| InterfaceGravity::from_bitrate(bitrate));
         let mut common = InterfaceCommonPolicy::RNS_DEFAULT;
         if let Some(value) = optional_bool(&options, "recursivePathRequests")? {
             common.forwarding.recursive_path_requests =

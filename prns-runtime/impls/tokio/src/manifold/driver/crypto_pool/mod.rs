@@ -1939,6 +1939,9 @@ fn run_and_publish_link_sign_jobs(
     publish_crypto_results(completed, state, results, completion_wake)
 }
 
+// Results move through the worker ring. Boxing Identify would add an allocation
+// and pointer chase to every completed identify solely to shrink this enum.
+#[allow(clippy::large_enum_variant)]
 pub(super) enum LinkSignCompleted {
     ChannelAck(ChannelAckSignCompleted),
     Receipt(LinkReceiptSignCompleted),

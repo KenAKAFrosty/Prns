@@ -543,6 +543,36 @@ private func decodeCommandFailure(
         return .backendFailed(detail: detail)
     case .responseTooLarge:
         return .responseTooLarge
+    case .linkClosed:
+        return .linkClosed
+    case .responseCancelledBySender:
+        return .responseCancelledBySender
+    case .responseHashmapBeyondPartCount:
+        return .responseHashmapBeyondPartCount
+    case .responseHashmapSkipsAhead:
+        return .responseHashmapSkipsAhead
+    case .responseHashmapTooLong:
+        return .responseHashmapTooLong
+    case .responseHashmapRagged:
+        return .responseHashmapRagged
+    case .responseRetriesExhausted:
+        return .responseRetriesExhausted
+    case .responseLinkVanished:
+        return .responseLinkVanished
+    case .responseTransferUnopenable:
+        return .responseTransferUnopenable
+    case .responseTransferCorrupt:
+        return .responseTransferCorrupt
+    case .responseProofUnsendable:
+        return .responseProofUnsendable
+    case .responseDecompressionFailed:
+        return .responseDecompressionFailed
+    case .responseDecompressionTimedOut:
+        return .responseDecompressionTimedOut
+    case .responseOpenTimedOut:
+        return .responseOpenTimedOut
+    case .responseMetadataOverrun:
+        return .responseMetadataOverrun
     }
 }
 

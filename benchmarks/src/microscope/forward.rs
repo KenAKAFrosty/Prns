@@ -1,4 +1,4 @@
-use super::inline_work::feed_packet_inline;
+use super::inline_work::{feed_packet_inline, issue_command_inline};
 use super::*;
 
 pub struct Forward {
@@ -76,7 +76,7 @@ impl Forward {
     }
 
     fn learn_routes(&mut self) {
-        let mut announce = Vec::with_capacity(1024);
+        let mut announce;
         let issued = IssuedCommand {
             id: CommandId(0),
             command: PrnsCommand::AnnounceNow(AnnounceNow {
@@ -90,22 +90,20 @@ impl Forward {
                 upstream,
                 upstream_entropy,
                 up_view,
+                scratch,
                 ..
             } = self;
-            upstream.ingest_command_into(
+            let mut capture = FeedCapture::default();
+            issue_command_inline(
+                upstream,
                 issued,
                 AttachedInterfaces::new(up_view),
                 SETUP_NOW,
-                &mut |bytes| upstream_entropy.fill(bytes),
-                &mut |reaction| {
-                    if let EngineReaction::Directive(
-                        Directive::Send { bytes, .. } | Directive::SendAnnounce { bytes, .. },
-                    ) = reaction
-                    {
-                        announce.extend_from_slice(bytes);
-                    }
-                },
+                upstream_entropy,
+                &mut capture,
+                scratch,
             );
+            announce = capture.only_frame("announce");
         }
         assert!(!announce.is_empty(), "upstream emitted its announce");
 
@@ -114,10 +112,10 @@ impl Forward {
                 relay,
                 relay_entropy,
                 relay_interfaces,
+                scratch,
                 ..
             } = self;
             let mut capture = FeedCapture::default();
-            let mut scratch = Vec::new();
             feed_packet_inline(
                 relay,
                 InboundPacket {
@@ -129,7 +127,7 @@ impl Forward {
                 SETUP_NOW,
                 relay_entropy,
                 &mut capture,
-                &mut scratch,
+                scratch,
             );
             assert!(capture.announce_heard, "relay heard the upstream announce");
         }
@@ -169,10 +167,10 @@ impl Forward {
                 initiator,
                 initiator_entropy,
                 down_interfaces,
+                scratch,
                 ..
             } = self;
             let mut capture = FeedCapture::default();
-            let mut scratch = Vec::new();
             feed_packet_inline(
                 initiator,
                 InboundPacket {
@@ -184,7 +182,7 @@ impl Forward {
                 REBROADCAST_NOW,
                 initiator_entropy,
                 &mut capture,
-                &mut scratch,
+                scratch,
             );
             assert!(
                 capture.announce_heard,
@@ -207,20 +205,21 @@ impl Forward {
             initiator_entropy,
             down_interfaces,
             single,
+            scratch,
             ..
         } = self;
         single.clear();
-        initiator.ingest_command_into(
+        let mut capture = FeedCapture::default();
+        issue_command_inline(
+            initiator,
             issued,
             AttachedInterfaces::new(down_interfaces),
             FORWARD_NOW,
-            &mut |bytes| initiator_entropy.fill(bytes),
-            &mut |reaction| {
-                if let EngineReaction::Directive(Directive::Send { bytes, .. }) = reaction {
-                    single.extend_from_slice(bytes);
-                }
-            },
+            initiator_entropy,
+            &mut capture,
+            scratch,
         );
+        *single = capture.only_frame("single");
         assert!(
             !self.single.is_empty(),
             "initiator sealed a single via the relay"

@@ -110,6 +110,10 @@ tiers = ["release"]
         )
         self.assertEqual(run.call_args.kwargs["cwd"], root / "host")
         self.assertEqual(run.call_args.kwargs["env"]["CARGO_TARGET_DIR"], str(target))
+        self.assertEqual(
+            run.call_args.kwargs["env"]["RUSTFLAGS"],
+            "-D warnings --cfg aes_armv8",
+        )
 
     def test_pre_push_runs_the_canonical_repository_check(self) -> None:
         hook = (ROOT / ".githooks" / "pre-push").read_text(encoding="utf-8")

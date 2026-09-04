@@ -1,3 +1,7 @@
+// This integration fixture intentionally proves the compatibility parser that
+// runtime manifolds no longer call in production.
+#![allow(deprecated)]
+
 use core::time::Duration;
 use personal_rns::runtime::NoPersistence;
 

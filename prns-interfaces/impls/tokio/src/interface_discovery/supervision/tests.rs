@@ -130,7 +130,9 @@ fn auto_connect_capacity_reports_only_when_auto_connect_is_enabled() {
             DiscoverySourcePolicy::from_sources(Vec::new()),
             AutoConnectPolicy::Disabled,
             AutoConnectRoutingPolicy {
-                gravity: prns_core::interfaces::InterfaceGravity::ZERO,
+                gravity: prns_core::interfaces::InterfaceGravity::from_bitrate(
+                    prns_core::interface_discovery::AUTOCONNECT_BITRATE,
+                ),
                 announces_to_internal: false,
             },
         ),

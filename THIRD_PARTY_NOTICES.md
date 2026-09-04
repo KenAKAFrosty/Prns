@@ -350,7 +350,7 @@ but the BSD, MIT and UoI/NCSA licenses do not.
 
 License: Apache License 2.0
 
-Used by: `miette 7.6.0`, `self_cell 1.2.2`
+Used by: `ciborium 0.2.2`, `ciborium-io 0.2.2`, `ciborium-ll 0.2.2`, `miette 7.6.0`, `self_cell 1.2.2`
 
 Release graphs: engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, website Rust/WASM
 
@@ -1413,7 +1413,7 @@ limitations under the License.
 
 License: Apache License 2.0
 
-Used by: `dunce 1.0.5`, `ryu 1.0.23`, `serial2 0.2.37`, `serial2-tokio 0.1.24`
+Used by: `dunce 1.0.5`, `ryu 1.0.23`, `serial2 0.2.37`, `serial2-tokio 0.1.24`, `sync_wrapper 1.0.2`
 
 Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec E290, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, website Rust/WASM
 
@@ -1980,13 +1980,53 @@ NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
+### BSD-3-Clause (2f77e11b6c26)
+
+License: BSD 3-Clause "New" or "Revised" License
+
+Used by: `matchit 0.8.4`
+
+Release graphs: website Rust/WASM
+
+```text
+BSD 3-Clause License
+
+Copyright (c) 2013, Julien Schmidt
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
 ### BSD-3-Clause (865254261ae8)
 
 License: BSD 3-Clause "New" or "Revised" License
 
-Used by: `curve25519-dalek 4.1.3`, `nrf-pac 0.3.0`
+Used by: `nrf-pac 0.3.0`
 
-Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec E290, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
+Release graphs: nRF52840
 
 ```text
 Copyright (c) <year> <owner>.
@@ -2002,11 +2042,48 @@ Redistribution and use in source and binary forms, with or without modification,
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
+### BSD-3-Clause (b1d6d97b0476)
+
+License: BSD 3-Clause "New" or "Revised" License
+
+Used by: `encoding_rs 0.8.35`
+
+Release graphs: website Rust/WASM
+
+```text
+Copyright © WHATWG (Apple, Google, Mozilla, Microsoft).
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
 ### BSD-3-Clause (d2778eb7f5d0)
 
 License: BSD 3-Clause "New" or "Revised" License
 
-Used by: `ed25519-dalek 2.2.0`
+Used by: `ed25519-dalek 3.0.0`
 
 Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec E290, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
 
@@ -2041,11 +2118,51 @@ NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
+### BSD-3-Clause (db7e563b03fa)
+
+License: BSD 3-Clause "New" or "Revised" License
+
+Used by: `curve25519-dalek 5.0.0`
+
+Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec E290, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
+
+```text
+Copyright (c) 2016-2021 isis agora lovecruft. All rights reserved.
+Copyright (c) 2016-2021 Henry de Valence. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+1. Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright
+notice, this list of conditions and the following disclaimer in the
+documentation and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
+TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
 ### BSD-3-Clause (f7183775eea5)
 
 License: BSD 3-Clause "New" or "Revised" License
 
-Used by: `x25519-dalek 2.0.1`
+Used by: `x25519-dalek 3.0.0`
 
 Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec E290, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
 
@@ -2079,6 +2196,40 @@ PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
 LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
 NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+### BSL-1.0 (8d8291caf1ce)
+
+License: Boost Software License 1.0
+
+Used by: `xxhash-rust 0.8.15`
+
+Release graphs: website Rust/WASM
+
+```text
+Boost Software License - Version 1.0 - August 17th, 2003
+
+Permission is hereby granted, free of charge, to any person or organization
+obtaining a copy of the software and accompanying documentation covered by
+this license (the "Software") to use, reproduce, display, distribute,
+execute, and transmit the Software, and to prepare derivative works of the
+Software, and to permit third-parties to whom the Software is furnished to
+do so, all subject to the following:
+
+The copyright notices in the Software and this entire statement, including
+the above license grant, this restriction and the following disclaimer,
+must be included in all copies of the Software, in whole or in part, and
+all derivative works of the Software, unless such copies or derivative
+works are solely in the form of machine-executable object code generated by
+a source language processor.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, TITLE AND NON-INFRINGEMENT. IN NO EVENT
+SHALL THE COPYRIGHT HOLDERS OR ANYONE DISTRIBUTING THE SOFTWARE BE LIABLE
+FOR ANY DAMAGES OR OTHER LIABILITY, WHETHER IN CONTRACT, TORT OR OTHERWISE,
+ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
 ```
 
 ### CC0-1.0 (6d489af62926)
@@ -2451,6 +2602,44 @@ LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT
 OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
+### MIT (008c87afcd2e)
+
+License: MIT License
+
+Used by: `axum-core 0.5.6`
+
+Release graphs: website Rust/WASM
+
+```text
+MIT License
+
+Copyright (c) 2019–2025 axum Contributors
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
 ### MIT (033a9383ff21)
 
 License: MIT License
@@ -2553,7 +2742,7 @@ SOFTWARE.
 
 License: MIT License
 
-Used by: `bitfield-macros 0.19.4`, `block2 0.5.1`, `block2 0.6.2`, `bluez-async 0.8.2`, `bluez-generated 0.4.0`, `btleplug 0.12.0`, `btuuid 0.1.1`, `cesu8 1.1.0`, `const-serialize 0.7.2`, `const-serialize 0.8.0-alpha.0`, `const-serialize-macro 0.7.2`, `const-serialize-macro 0.8.0-alpha.0`, `cortex-m-rt 0.7.5`, `cortex-m-rt-macros 0.7.5`, `custom_debug 0.6.2`, `custom_debug_derive 0.6.2`, `deku_derive 0.18.1`, `delegate 0.13.5`, `dioxus 0.7.5`, `dioxus-asset-resolver 0.7.9`, `dioxus-cli-config 0.7.9`, `dioxus-config-macro 0.7.9`, `dioxus-config-macros 0.7.9`, `dioxus-core 0.7.9`, `dioxus-core-macro 0.7.9`, `dioxus-core-types 0.7.9`, `dioxus-devtools 0.7.9`, `dioxus-devtools-types 0.7.9`, `dioxus-document 0.7.9`, `dioxus-history 0.7.9`, `dioxus-hooks 0.7.9`, `dioxus-html 0.7.9`, `dioxus-html-internal-macro 0.7.9`, `dioxus-interpreter-js 0.7.9`, `dioxus-logger 0.7.9`, `dioxus-router 0.7.9`, `dioxus-router-macro 0.7.9`, `dioxus-rsx 0.7.9`, `dioxus-signals 0.7.9`, `dioxus-stores 0.7.9`, `dioxus-stores-macro 0.7.9`, `dioxus-web 0.7.9`, `dispatch 0.2.0`, `dispatch2 0.3.1`, `dlopen2 0.8.2`, `docs 0.1.0`, `docsplay-macros 0.1.2`, `dpi 0.1.2`, `embassy-embedded-hal 0.6.0`, `embassy-executor 0.10.0`, `embassy-executor-macros 0.8.0`, `embassy-executor-timer-queue 0.1.0`, `embassy-futures 0.1.2`, `embassy-hal-internal 0.4.0`, `embassy-hal-internal 0.5.0`, `embassy-net 0.9.1`, `embassy-net-driver 0.2.0`, `embassy-net-driver-channel 0.4.0`, `embassy-nrf 0.10.0`, `embassy-sync 0.6.2`, `embassy-sync 0.7.2`, `embassy-sync 0.8.0`, `embassy-time 0.5.1`, `embassy-time-driver 0.2.2`, `embassy-time-queue-utils 0.3.2`, `embassy-usb 0.6.0`, `embassy-usb-driver 0.2.2`, `embassy-usb-synopsys-otg 0.3.3`, `embedded-graphics-core 0.4.1`, `embedded-nal-async 0.9.0`, `esp-alloc 0.10.0`, `esp-backtrace 0.19.0`, `esp-bootloader-esp-idf 0.5.0`, `esp-config 0.7.0`, `esp-hal 1.1.1`, `esp-hal-procmacros 0.22.0`, `esp-metadata-generated 0.4.0`, `esp-phy 0.2.0`, `esp-println 0.17.0`, `esp-radio-rtos-driver 0.3.0`, `esp-riscv-rt 0.14.0`, `esp-rom-sys 0.1.4`, `esp-rtos 0.3.0`, `esp-sync 0.2.1`, `esp-wifi-sys-esp32c6 0.2.0`, `esp-wifi-sys-esp32s3 0.2.0`, `esp32c6 0.23.2`, `esp32s3 0.35.2`, `fluent-langneg 0.13.1`, `generational-box 0.7.9`, `gloo-timers 0.3.0`, `hopspot-flash 0.3.7`, `hopspot-heltec-e290 0.1.0`, `hopspot-heltec-v4 0.1.0`, `hopspot-heltec-v4-r8 0.1.0`, `hopspot-t-beam-supreme 0.1.0`, `hopspot-xiao-esp32-c6 0.1.0`, `intl_pluralrules 7.0.2`, `jni-sys-macros 0.4.1`, `lazy-js-bundle 0.7.9`, `macaddr 1.0.1`, `manganis 0.7.9`, `manganis-core 0.7.9`, `manganis-macro 0.7.9`, `minisign-verify 0.2.5`, `napi 3.11.0`, `napi-build 2.3.2`, `napi-derive 3.6.0`, `napi-derive-backend 6.0.0`, `napi-sys 3.3.0`, `ndk-context 0.1.1`, `netlink-packet-core 0.8.1`, `netlink-sys 0.8.8`, `nrf-softdevice 0.1.0-prns.1`, `nrf-softdevice-macro 0.1.0`, `objc-sys 0.3.5`, `objc2 0.5.2`, `objc2 0.6.4`, `objc2-app-kit 0.2.2`, `objc2-app-kit 0.3.2`, `objc2-core-bluetooth 0.2.2`, `objc2-core-bluetooth 0.3.2`, `objc2-core-foundation 0.3.2`, `objc2-core-graphics 0.3.2`, `objc2-core-wlan 0.3.2`, `objc2-encode 4.1.0`, `objc2-foundation 0.2.2`, `objc2-foundation 0.3.2`, `objc2-io-kit 0.3.2`, `objc2-security 0.3.2`, `objc2-security-foundation 0.3.2`, `objc2-system-configuration 0.3.2`, `ouroboros 0.18.5`, `ouroboros_macro 0.18.5`, `parse_int 0.9.0`, `personal-hopspot-android 0.1.0`, `personal-hopspot-core 0.1.0`, `personal-hopspot-desktop 0.1.0`, `personal-hopspot-ios 0.1.0`, `personal-rns 0.3.7`, `portable_atomic_enum 0.3.1`, `portable_atomic_enum_macros 0.2.1`, `prns-config 0.3.7`, `prns-core 0.3.7`, `prns-ffi 0.3.7`, `prns-flash-manifest 0.1.0`, `prns-host 0.3.7`, `prns-host-cooperative 0.3.7`, `prns-host-native 0.3.7`, `prns-interfaces-embassy 0.3.7`, `prns-interfaces-tokio 0.3.7`, `prns-macros 0.3.7`, `prns-nrf-dfu 0.1.0`, `prns-nrf-dfu-wasm 0.1.0`, `prns-runtime 0.3.7`, `prns-runtime-embassy 0.3.7`, `prns-runtime-tokio 0.3.7`, `prns-tools-command 0.1.0`, `prns-wasm 0.3.7`, `prnsd 0.3.7`, `prnsd-control 0.1.0`, `reticulum-site 0.1.0`, `riscv-macros 0.3.0`, `riscv-rt-macros 0.6.1`, `rlsf 0.2.2`, `sledgehammer_bindgen 0.6.0`, `sledgehammer_bindgen_macro 0.6.5`, `sledgehammer_utils 0.3.1`, `subsecond 0.7.9`, `subsecond-types 0.7.9`, `tokio-udev 0.9.1`, `trouble-host 0.6.0`, `trouble-host-macros 0.4.0`, `type-map 0.5.1`, `ufmt-write 0.1.0`, `usbd-hid-descriptors 0.10.0`, `usbd-hid-macros 0.10.0`, `void 1.0.2`, `warnings 0.2.1`, `warnings-macro 0.2.0`, `windows 0.58.0`, `windows 0.62.2`, `windows-collections 0.3.2`, `windows-core 0.58.0`, `windows-core 0.62.2`, `windows-future 0.3.2`, `windows-implement 0.58.0`, `windows-implement 0.60.2`, `windows-interface 0.58.0`, `windows-interface 0.59.3`, `windows-link 0.2.1`, `windows-numerics 0.3.1`, `windows-result 0.2.0`, `windows-result 0.4.1`, `windows-strings 0.1.0`, `windows-strings 0.5.1`, `windows-sys 0.52.0`, `windows-sys 0.59.0`, `windows-sys 0.61.2`, `windows-targets 0.52.6`, `windows-threading 0.2.1`, `windows_x86_64_msvc 0.52.6`, `xtensa-lx 0.13.0`, `xtensa-lx-rt 0.22.0`, `xtensa-lx-rt-proc-macros 0.5.0`
+Used by: `async-stream 0.3.6`, `async-stream-impl 0.3.6`, `bitfield-macros 0.19.4`, `block2 0.5.1`, `block2 0.6.2`, `bluez-async 0.8.2`, `bluez-generated 0.4.0`, `btleplug 0.12.0`, `btuuid 0.1.1`, `cesu8 1.1.0`, `const-serialize 0.7.2`, `const-serialize 0.8.0-alpha.0`, `const-serialize-macro 0.7.2`, `const-serialize-macro 0.8.0-alpha.0`, `content_disposition 0.4.0`, `cortex-m-rt 0.7.5`, `cortex-m-rt-macros 0.7.5`, `custom_debug 0.6.2`, `custom_debug_derive 0.6.2`, `deku_derive 0.18.1`, `delegate 0.13.5`, `dioxus 0.7.5`, `dioxus-asset-resolver 0.7.9`, `dioxus-cli-config 0.7.9`, `dioxus-config-macro 0.7.9`, `dioxus-config-macros 0.7.9`, `dioxus-core 0.7.9`, `dioxus-core-macro 0.7.9`, `dioxus-core-types 0.7.9`, `dioxus-devtools 0.7.9`, `dioxus-devtools-types 0.7.9`, `dioxus-document 0.7.9`, `dioxus-fullstack 0.7.9`, `dioxus-fullstack-core 0.7.9`, `dioxus-fullstack-macro 0.7.9`, `dioxus-history 0.7.9`, `dioxus-hooks 0.7.9`, `dioxus-html 0.7.9`, `dioxus-html-internal-macro 0.7.9`, `dioxus-logger 0.7.9`, `dioxus-router 0.7.9`, `dioxus-router-macro 0.7.9`, `dioxus-rsx 0.7.9`, `dioxus-signals 0.7.9`, `dioxus-stores 0.7.9`, `dioxus-stores-macro 0.7.9`, `dispatch 0.2.0`, `dispatch2 0.3.1`, `dlopen2 0.8.2`, `docs 0.1.0`, `docsplay-macros 0.1.2`, `dpi 0.1.2`, `embassy-embedded-hal 0.6.0`, `embassy-executor 0.10.0`, `embassy-executor-macros 0.8.0`, `embassy-executor-timer-queue 0.1.0`, `embassy-futures 0.1.2`, `embassy-hal-internal 0.4.0`, `embassy-hal-internal 0.5.0`, `embassy-net 0.9.1`, `embassy-net-driver 0.2.0`, `embassy-net-driver-channel 0.4.0`, `embassy-nrf 0.10.0`, `embassy-sync 0.6.2`, `embassy-sync 0.7.2`, `embassy-sync 0.8.0`, `embassy-time 0.5.1`, `embassy-time-driver 0.2.2`, `embassy-time-queue-utils 0.3.2`, `embassy-usb 0.6.0`, `embassy-usb-driver 0.2.2`, `embassy-usb-synopsys-otg 0.3.3`, `embedded-graphics-core 0.4.1`, `embedded-nal-async 0.9.0`, `esp-alloc 0.10.0`, `esp-backtrace 0.19.0`, `esp-bootloader-esp-idf 0.5.0`, `esp-config 0.7.0`, `esp-hal 1.1.1`, `esp-hal-procmacros 0.22.0`, `esp-metadata-generated 0.4.0`, `esp-phy 0.2.0`, `esp-println 0.17.0`, `esp-radio-rtos-driver 0.3.0`, `esp-riscv-rt 0.14.0`, `esp-rom-sys 0.1.4`, `esp-rtos 0.3.0`, `esp-sync 0.2.1`, `esp-wifi-sys-esp32c6 0.2.0`, `esp-wifi-sys-esp32s3 0.2.0`, `esp32c6 0.23.2`, `esp32s3 0.35.2`, `fluent-langneg 0.13.1`, `generational-box 0.7.9`, `gloo-net 0.6.0`, `gloo-utils 0.2.0`, `hopspot-flash 0.3.7`, `hopspot-heltec-e290 0.1.0`, `hopspot-heltec-v4 0.1.0`, `hopspot-heltec-v4-r8 0.1.0`, `hopspot-t-beam-supreme 0.1.0`, `hopspot-xiao-esp32-c6 0.1.0`, `intl_pluralrules 7.0.2`, `jni-sys-macros 0.4.1`, `lazy-js-bundle 0.7.9`, `macaddr 1.0.1`, `manganis 0.7.9`, `manganis-core 0.7.9`, `manganis-macro 0.7.9`, `minisign-verify 0.2.5`, `napi 3.11.0`, `napi-build 2.3.2`, `napi-derive 3.6.0`, `napi-derive-backend 6.0.0`, `napi-sys 3.3.0`, `ndk-context 0.1.1`, `netlink-packet-core 0.8.1`, `netlink-sys 0.8.8`, `nrf-softdevice 0.1.0-prns.1`, `nrf-softdevice-macro 0.1.0`, `objc-sys 0.3.5`, `objc2 0.5.2`, `objc2 0.6.4`, `objc2-app-kit 0.2.2`, `objc2-app-kit 0.3.2`, `objc2-core-bluetooth 0.2.2`, `objc2-core-bluetooth 0.3.2`, `objc2-core-foundation 0.3.2`, `objc2-core-graphics 0.3.2`, `objc2-core-wlan 0.3.2`, `objc2-encode 4.1.0`, `objc2-foundation 0.2.2`, `objc2-foundation 0.3.2`, `objc2-io-kit 0.3.2`, `objc2-security 0.3.2`, `objc2-security-foundation 0.3.2`, `objc2-system-configuration 0.3.2`, `ouroboros 0.18.5`, `ouroboros_macro 0.18.5`, `parse_int 0.9.0`, `personal-hopspot-android 0.1.0`, `personal-hopspot-core 0.1.0`, `personal-hopspot-desktop 0.1.0`, `personal-hopspot-ios 0.1.0`, `personal-rns 0.3.7`, `portable_atomic_enum 0.3.1`, `portable_atomic_enum_macros 0.2.1`, `prns-config 0.3.7`, `prns-core 0.3.7`, `prns-ffi 0.3.7`, `prns-flash-manifest 0.1.0`, `prns-host 0.3.7`, `prns-host-cooperative 0.3.7`, `prns-host-native 0.3.7`, `prns-interfaces-embassy 0.3.7`, `prns-interfaces-tokio 0.3.7`, `prns-macros 0.3.7`, `prns-nrf-dfu 0.1.0`, `prns-nrf-dfu-wasm 0.1.0`, `prns-runtime 0.3.7`, `prns-runtime-embassy 0.3.7`, `prns-runtime-tokio 0.3.7`, `prns-tools-command 0.1.0`, `prns-wasm 0.3.7`, `prnsd 0.3.7`, `prnsd-control 0.1.0`, `reticulum-site 0.1.0`, `riscv-macros 0.3.0`, `riscv-rt-macros 0.6.1`, `rlsf 0.2.2`, `subsecond 0.7.9`, `subsecond-types 0.7.9`, `tokio-udev 0.9.1`, `trouble-host 0.6.0`, `trouble-host-macros 0.4.0`, `type-map 0.5.1`, `ufmt-write 0.1.0`, `usbd-hid-descriptors 0.10.0`, `usbd-hid-macros 0.10.0`, `void 1.0.2`, `warnings 0.2.1`, `warnings-macro 0.2.0`, `windows 0.58.0`, `windows 0.62.2`, `windows-collections 0.3.2`, `windows-core 0.58.0`, `windows-core 0.62.2`, `windows-future 0.3.2`, `windows-implement 0.58.0`, `windows-implement 0.60.2`, `windows-interface 0.58.0`, `windows-interface 0.59.3`, `windows-link 0.2.1`, `windows-numerics 0.3.1`, `windows-result 0.2.0`, `windows-result 0.4.1`, `windows-strings 0.1.0`, `windows-strings 0.5.1`, `windows-sys 0.52.0`, `windows-sys 0.59.0`, `windows-sys 0.61.2`, `windows-targets 0.52.6`, `windows-threading 0.2.1`, `windows_x86_64_msvc 0.52.6`, `xtensa-lx 0.13.0`, `xtensa-lx-rt 0.22.0`, `xtensa-lx-rt-proc-macros 0.5.0`
 
 Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec E290, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, Nordic DFU browser core, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
 
@@ -2576,38 +2765,6 @@ LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE A
 EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
 IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 USE OR OTHER DEALINGS IN THE SOFTWARE.
-```
-
-### MIT (094965ffce7b)
-
-License: MIT License
-
-Used by: `serde-wasm-bindgen 0.6.5`
-
-Release graphs: website Rust/WASM
-
-```text
-MIT License
-
-Copyright (c) 2019 Cloudflare, Inc.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
 ```
 
 ### MIT (0d8a0aecbcba)
@@ -2710,9 +2867,9 @@ SOFTWARE.
 
 License: MIT License
 
-Used by: `zeroize_derive 1.5.0`
+Used by: `chacha20 0.10.2`, `zeroize_derive 1.5.0`
 
-Release graphs: Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, desktop Linux, desktop Windows, desktop macOS, website Rust/WASM
+Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec E290, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
 
 ```text
 Copyright (c) 2019-2026 The RustCrypto Project Developers
@@ -2814,9 +2971,9 @@ SOFTWARE.
 
 License: MIT License
 
-Used by: `uuid 1.23.3`, `uuid 1.23.4`, `uuid 1.23.5`, `uuid 1.24.0`
+Used by: `uuid 1.23.1`, `uuid 1.23.3`, `uuid 1.23.4`, `uuid 1.23.5`, `uuid 1.24.0`
 
-Release graphs: ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec E290, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, desktop Linux, nRF52840
+Release graphs: ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec E290, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, desktop Linux, nRF52840, website Rust/WASM
 
 ```text
 Copyright (c) 2014 The Rust Project Developers
@@ -2923,7 +3080,7 @@ DEALINGS IN THE SOFTWARE.
 
 License: MIT License
 
-Used by: `bitflags 1.3.2`, `bitflags 2.11.1`, `bitflags 2.12.1`, `bitflags 2.13.0`, `bitflags 2.13.1`, `log 0.4.30`, `log 0.4.31`, `log 0.4.32`, `log 0.4.33`, `num-bigint 0.4.8`, `num-derive 0.4.2`, `num-integer 0.1.46`, `num-traits 0.2.19`, `regex 1.12.3`, `regex 1.13.1`, `regex-automata 0.4.14`, `regex-automata 0.4.15`, `regex-automata 0.4.16`, `regex-syntax 0.8.10`, `regex-syntax 0.8.11`, `semver 0.9.0`, `serde-pickle 1.2.0`, `serde_plain 1.0.2`
+Used by: `bitflags 1.3.2`, `bitflags 2.11.1`, `bitflags 2.12.1`, `bitflags 2.13.0`, `bitflags 2.13.1`, `log 0.4.30`, `log 0.4.31`, `log 0.4.32`, `log 0.4.33`, `num-bigint 0.4.8`, `num-derive 0.4.2`, `num-integer 0.1.46`, `num-traits 0.2.19`, `regex 1.13.1`, `regex-automata 0.4.14`, `regex-automata 0.4.15`, `regex-automata 0.4.16`, `regex-syntax 0.8.10`, `regex-syntax 0.8.11`, `semver 0.9.0`, `serde-pickle 1.2.0`, `serde_plain 1.0.2`
 
 Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec E290, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
 
@@ -3645,7 +3802,7 @@ SOFTWARE.
 
 License: MIT License
 
-Used by: `adler2 2.0.1`, `allocator-api2 0.3.1`, `anyhow 1.0.102`, `async-recursion 1.1.1`, `async-trait 0.1.89`, `async-trait 0.1.91`, `concurrent-queue 2.5.0`, `ctrlc 3.5.2`, `curve25519-dalek-derive 0.1.1`, `deku 0.18.1`, `displaydoc 0.2.6`, `displaydoc 0.2.7`, `docsplay 0.1.3`, `endi 1.1.1`, `event-listener 5.4.1`, `event-listener-strategy 0.5.4`, `fastrand 2.4.1`, `fastrand 2.5.0`, `flume 0.12.0`, `futures-lite 2.6.1`, `home 0.5.12`, `indoc 2.0.7`, `iter-read 1.1.0`, `itoa 1.0.18`, `linux-raw-sys 0.12.1`, `macro-string 0.1.4`, `num_enum 0.7.6`, `num_enum_derive 0.7.6`, `nusb 0.2.4`, `nusb 0.2.7`, `once_cell 1.21.4`, `ordered-stream 0.2.0`, `parking 2.2.1`, `paste 1.0.15`, `pastey 0.2.3`, `pin-project 1.1.13`, `pin-project-internal 1.1.13`, `pin-project-lite 0.2.17`, `portable-atomic 1.13.1`, `proc-macro-crate 3.5.0`, `proc-macro2 1.0.106`, `proc-macro2 1.0.107`, `quote 1.0.45`, `quote 1.0.46`, `quote 1.0.47`, `rtrb 0.3.4`, `rustc-hash 1.1.0`, `rustc-hash 2.1.2`, `rustc-hash 2.1.3`, `rustix 1.1.4`, `rustversion 1.0.22`, `rustversion 1.0.23`, `semver 1.0.28`, `send_wrapper 0.6.0`, `serde 1.0.228`, `serde 1.0.229`, `serde_core 1.0.228`, `serde_core 1.0.229`, `serde_derive 1.0.228`, `serde_derive 1.0.229`, `serde_json 1.0.150`, `serde_json 1.0.151`, `serde_repr 0.1.21`, `serde_yaml 0.9.34+deprecated`, `smol_str 0.2.2`, `syn 1.0.109`, `syn 2.0.117`, `syn 2.0.118`, `syn 2.0.119`, `syn 3.0.2`, `syn 3.0.3`, `thiserror 1.0.69`, `thiserror 2.0.18`, `thiserror 2.0.19`, `thiserror-impl 1.0.69`, `thiserror-impl 2.0.18`, `thiserror-impl 2.0.19`, `unic-langid 0.9.6`, `unic-langid-impl 0.9.6`, `unic-langid-macros 0.9.6`, `unic-langid-macros-impl 0.9.6`, `unicode-ident 1.0.24`, `unsafe-libyaml 0.2.11`, `utf-8 0.7.6`, `utf8-zero 0.8.1`, `wasm-streams 0.4.2`, `zmij 1.0.21`, `zmij 1.0.23`, `zvariant_utils 3.5.0`
+Used by: `adler2 2.0.1`, `allocator-api2 0.3.1`, `anyhow 1.0.102`, `async-recursion 1.1.1`, `async-trait 0.1.89`, `async-trait 0.1.91`, `concurrent-queue 2.5.0`, `ctrlc 3.5.2`, `curve25519-dalek-derive 0.1.1`, `deku 0.18.1`, `displaydoc 0.2.6`, `docsplay 0.1.3`, `endi 1.1.1`, `event-listener 5.4.1`, `event-listener-strategy 0.5.4`, `fastrand 2.4.1`, `fastrand 2.5.0`, `flume 0.12.0`, `futures-lite 2.6.1`, `home 0.5.12`, `indoc 2.0.7`, `inventory 0.3.24`, `iter-read 1.1.0`, `itoa 1.0.18`, `linux-raw-sys 0.12.1`, `macro-string 0.1.4`, `num_enum 0.7.6`, `num_enum_derive 0.7.6`, `nusb 0.2.4`, `nusb 0.2.7`, `once_cell 1.21.4`, `ordered-stream 0.2.0`, `parking 2.2.1`, `paste 1.0.15`, `pastey 0.2.3`, `pin-project 1.1.13`, `pin-project-internal 1.1.13`, `pin-project-lite 0.2.17`, `portable-atomic 1.13.1`, `proc-macro-crate 3.5.0`, `proc-macro2 1.0.106`, `proc-macro2 1.0.107`, `quote 1.0.45`, `quote 1.0.46`, `quote 1.0.47`, `rtrb 0.3.5`, `rustc-hash 2.1.2`, `rustc-hash 2.1.3`, `rustix 1.1.4`, `rustversion 1.0.22`, `semver 1.0.28`, `send_wrapper 0.6.0`, `serde 1.0.228`, `serde 1.0.229`, `serde_core 1.0.228`, `serde_core 1.0.229`, `serde_derive 1.0.228`, `serde_derive 1.0.229`, `serde_json 1.0.150`, `serde_json 1.0.151`, `serde_path_to_error 0.1.20`, `serde_repr 0.1.21`, `serde_yaml 0.9.34+deprecated`, `smol_str 0.2.2`, `syn 1.0.109`, `syn 2.0.117`, `syn 2.0.118`, `syn 2.0.119`, `syn 3.0.3`, `syn 3.0.4`, `thiserror 1.0.69`, `thiserror 2.0.18`, `thiserror 2.0.19`, `thiserror-impl 1.0.69`, `thiserror-impl 2.0.18`, `thiserror-impl 2.0.19`, `unic-langid 0.9.6`, `unic-langid-impl 0.9.6`, `unic-langid-macros 0.9.6`, `unic-langid-macros-impl 0.9.6`, `unicode-ident 1.0.24`, `unsafe-libyaml 0.2.11`, `utf-8 0.7.6`, `utf8-zero 0.8.1`, `wasm-streams 0.4.2`, `zmij 1.0.21`, `zmij 1.0.23`, `zvariant_utils 3.5.0`
 
 Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec E290, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, Nordic DFU browser core, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
 
@@ -3943,6 +4100,35 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
+### MIT (37e73855e654)
+
+License: MIT License
+
+Used by: `strobe-rs 0.13.0`
+
+Release graphs: Android, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, iOS
+
+```text
+The MIT License (MIT)
+
+Copyright (c) 2018 Michael Rosenberg
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+associated documentation files (the "Software"), to deal in the Software without restriction,
+including without limitation the rights to use, copy, modify, merge, publish, distribute,
+sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial
+portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT
+NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES
+OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```
+
 ### MIT (37fe7ffb6b46)
 
 License: MIT License
@@ -4157,13 +4343,45 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+### MIT (3ce3e2561c6a)
+
+License: MIT License
+
+Used by: `cfb 0.7.3`
+
+Release graphs: website Rust/WASM
+
+```text
+MIT License
+
+Copyright (c) 2017 Matthew D. Steele
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ### MIT (3e1bef82aa0d)
 
 License: MIT License
 
 Used by: `tokio 1.52.3`, `tokio 1.53.1`, `tokio-stream 0.1.18`, `tokio-stream 0.1.19`, `tokio-util 0.7.18`, `tokio-util 0.7.19`
 
-Release graphs: Android, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, iOS
+Release graphs: Android, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, iOS, website Rust/WASM
 
 ```text
 MIT License
@@ -4225,9 +4443,9 @@ THE SOFTWARE.
 
 License: MIT License
 
-Used by: `md-5 0.10.6`, `sha1 0.10.7`, `sha2 0.10.9`
+Used by: `md-5 0.10.6`, `sha1 0.10.6`, `sha1 0.10.7`, `sha2 0.10.9`
 
-Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec E290, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
+Release graphs: Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, website Rust/WASM
 
 ```text
 Copyright (c) 2006-2009 Graydon Hoare
@@ -4361,6 +4579,42 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+### MIT (44280199f723)
+
+License: MIT License
+
+Used by: `ed25519 3.0.0`, `signature 3.0.0`
+
+Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec E290, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
+
+```text
+Copyright (c) 2018-2026 RustCrypto Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
 ### MIT (4428cd87371a)
 
 License: MIT License
@@ -4437,7 +4691,7 @@ DEALINGS IN THE SOFTWARE.
 
 License: MIT License
 
-Used by: `anstream 1.0.0`, `anstyle 1.0.14`, `anstyle-parse 1.0.0`, `anstyle-query 1.1.5`, `anstyle-wincon 3.0.11`, `clap 4.6.1`, `clap_builder 4.6.0`, `clap_derive 4.6.1`, `clap_lex 1.1.0`, `colorchoice 1.0.5`, `env_filter 0.1.4`, `is_terminal_polyfill 1.70.2`, `once_cell_polyfill 1.70.2`, `serde_spanned 1.1.1`, `toml 1.1.3+spec-1.1.0`, `toml 1.1.4+spec-1.1.0`, `toml_datetime 1.1.1+spec-1.1.0`, `toml_edit 0.25.12+spec-1.1.0`, `toml_edit 0.25.13+spec-1.1.0`, `toml_parser 1.1.2+spec-1.1.0`, `toml_parser 1.1.3+spec-1.1.0`, `toml_writer 1.1.2+spec-1.1.0`
+Used by: `anstream 1.0.0`, `anstyle 1.0.14`, `anstyle-parse 1.0.0`, `anstyle-query 1.1.5`, `anstyle-wincon 3.0.11`, `clap 4.6.1`, `clap_builder 4.6.0`, `clap_derive 4.6.1`, `clap_lex 1.1.0`, `colorchoice 1.0.5`, `env_filter 0.1.4`, `is_terminal_polyfill 1.70.2`, `once_cell_polyfill 1.70.2`, `serde_spanned 1.1.1`, `toml 1.1.3+spec-1.1.0`, `toml 1.1.4+spec-1.1.0`, `toml_datetime 1.1.1+spec-1.1.0`, `toml_edit 0.25.12+spec-1.1.0`, `toml_parser 1.1.2+spec-1.1.0`, `toml_parser 1.1.3+spec-1.1.0`, `toml_writer 1.1.2+spec-1.1.0`
 
 Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec E290, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, daemon Linux, daemon Windows, daemon macOS, desktop Linux, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64
 
@@ -4623,6 +4877,38 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+### MIT (4a4d43f3f90d)
+
+License: MIT License
+
+Used by: `derive_more 2.1.1`, `derive_more-impl 2.1.1`
+
+Release graphs: website Rust/WASM
+
+```text
+The MIT License (MIT)
+
+Copyright (c) 2016 Jelte Fennema
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ### MIT (4bb0af10042c)
 
 License: MIT License
@@ -4653,6 +4939,42 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+```
+
+### MIT (4bddfb319e32)
+
+License: MIT License
+
+Used by: `http-body-util 0.1.3`
+
+Release graphs: website Rust/WASM
+
+```text
+Copyright (c) 2019-2025 Sean McArthur & Hyper Contributors
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
 ```
 
 ### MIT (4d83b119f786)
@@ -4889,6 +5211,36 @@ WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
+### MIT (54987d63f266)
+
+License: MIT License
+
+Used by: `reqwest 0.12.28`
+
+Release graphs: website Rust/WASM
+
+```text
+Copyright (c) 2016-2025 Sean McArthur
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
+
 ### MIT (54b39d21221f)
 
 License: MIT License
@@ -5094,6 +5446,36 @@ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
+```
+
+### MIT (5f9689aff91a)
+
+License: MIT License
+
+Used by: `headers 0.4.1`
+
+Release graphs: website Rust/WASM
+
+```text
+Copyright (c) 2014-2025 Sean McArthur
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
 ```
 
 ### MIT (5fee9fd959b6)
@@ -5359,7 +5741,7 @@ License: MIT License
 
 Used by: `base64 0.13.1`, `base64 0.22.1`
 
-Release graphs: ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec E290, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64
+Release graphs: ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec E290, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, website Rust/WASM
 
 ```text
 The MIT License (MIT)
@@ -5391,7 +5773,7 @@ License: MIT License
 
 Used by: `spin 0.9.9`
 
-Release graphs: Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS
+Release graphs: Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, website Rust/WASM
 
 ```text
 The MIT License (MIT)
@@ -5449,6 +5831,38 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+### MIT (6deb47b6b924)
+
+License: MIT License
+
+Used by: `const-str 0.7.1`
+
+Release graphs: website Rust/WASM
+
+```text
+MIT License
+
+Copyright (c) 2020-2025 Nugine
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ### MIT (6e972f314e81)
 
 License: MIT License
@@ -5485,7 +5899,7 @@ License: MIT License
 
 Used by: `rand_core 0.10.1`
 
-Release graphs: ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec E290, ESP32-S3 Heltec R8, ESP32-S3 T-Beam
+Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec E290, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
 
 ```text
 Copyright (c) 2018-2026 The Rand Project Developers
@@ -5725,6 +6139,38 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
+### MIT (7804ded9273b)
+
+License: MIT License
+
+Used by: `infer 0.19.0`
+
+Release graphs: website Rust/WASM
+
+```text
+MIT License
+
+Copyright (c) 2019 Bojan
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ### MIT (7a8093fb4a93)
 
 License: MIT License
@@ -5829,47 +6275,11 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### MIT (7d9f551458e8)
-
-License: MIT License
-
-Used by: `ed25519 2.2.3`, `signature 2.2.0`
-
-Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec E290, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
-
-```text
-Copyright (c) 2018-2023 RustCrypto Developers
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-```
-
 ### MIT (7dc2f6402447)
 
 License: MIT License
 
-Used by: `utf8_iter 1.0.4`
+Used by: `charset 0.1.5`, `encoding_rs 0.8.35`, `utf8_iter 1.0.4`
 
 Release graphs: Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, website Rust/WASM
 
@@ -6039,6 +6449,38 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+### MIT (805009861c8c)
+
+License: MIT License
+
+Used by: `matchit 0.8.4`
+
+Release graphs: website Rust/WASM
+
+```text
+MIT License
+
+Copyright (c) 2022 Ibraheem Ahmed
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ### MIT (80cdd90699e4)
 
 License: MIT License
@@ -6115,9 +6557,9 @@ DEALINGS IN THE SOFTWARE.
 
 License: MIT License
 
-Used by: `zeroize 1.9.0`
+Used by: `keccak 0.2.2`, `zeroize 1.9.0`
 
-Release graphs: Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, desktop Linux, desktop Windows, desktop macOS
+Release graphs: Android, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, iOS
 
 ```text
 Copyright (c) 2018-2026 The RustCrypto Project Developers
@@ -6189,7 +6631,7 @@ License: MIT License
 
 Used by: `httparse 1.10.1`
 
-Release graphs: Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64
+Release graphs: Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, website Rust/WASM
 
 ```text
 Copyright (c) 2015-2025 Sean McArthur
@@ -6568,6 +7010,36 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+```
+
+### MIT (8ee77b53f701)
+
+License: MIT License
+
+Used by: `httpdate 1.0.3`
+
+Release graphs: website Rust/WASM
+
+```text
+Copyright (c) 2016 Pyfisch
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
 ```
 
 ### MIT (8fd8980cab89)
@@ -7219,9 +7691,9 @@ DEALINGS IN THE SOFTWARE.
 
 License: MIT License
 
-Used by: `zerocopy 0.8.50`, `zerocopy 0.8.52`, `zerocopy 0.8.54`, `zerocopy 0.8.55`, `zerocopy-derive 0.8.50`
+Used by: `zerocopy 0.8.49`, `zerocopy 0.8.50`, `zerocopy 0.8.52`, `zerocopy 0.8.54`, `zerocopy 0.8.55`, `zerocopy-derive 0.8.49`, `zerocopy-derive 0.8.50`
 
-Release graphs: ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec E290, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, nRF52840
+Release graphs: ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec E290, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, nRF52840, website Rust/WASM
 
 ```text
 Copyright 2023 The Fuchsia Authors
@@ -7321,6 +7793,36 @@ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
+```
+
+### MIT (a302dc760d97)
+
+License: MIT License
+
+Used by: `mime 0.3.17`
+
+Release graphs: website Rust/WASM
+
+```text
+Copyright (c) 2014 Sean McArthur
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
 ```
 
 ### MIT (a3320aa8d192)
@@ -7667,6 +8169,42 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+### MIT (ae61683b7dd6)
+
+License: MIT License
+
+Used by: `http-body 1.0.1`
+
+Release graphs: website Rust/WASM
+
+```text
+Copyright (c) 2019-2024 Sean McArthur & Hyper Contributors
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
 ### MIT (ae9791f02f2b)
 
 License: MIT License
@@ -7707,7 +8245,7 @@ DEALINGS IN THE SOFTWARE.
 
 License: MIT License
 
-Used by: `convert_case 0.11.0`, `convert_case 0.8.0`
+Used by: `convert_case 0.10.0`, `convert_case 0.11.0`, `convert_case 0.8.0`
 
 Release graphs: ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec E290, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Node addon Linux, Node addon Windows, Node addon macOS, website Rust/WASM
 
@@ -7806,7 +8344,7 @@ License: MIT License
 
 Used by: `ppv-lite86 0.2.21`
 
-Release graphs: Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, nRF52840
+Release graphs: Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS
 
 ```text
 Copyright (c) 2019 The CryptoCorrosion Contributors
@@ -7913,6 +8451,42 @@ Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec E290, ESP32-
 ```text
 Copyright (c) 2016 Alex Crichton
 Copyright (c) 2017 The Tokio Authors
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
+### MIT (b5dae9532426)
+
+License: MIT License
+
+Used by: `serde_urlencoded 0.7.1`
+
+Release graphs: website Rust/WASM
+
+```text
+Copyright (c) 2016 Anthony Ramine
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -8700,7 +9274,7 @@ License: MIT License
 
 Used by: `rand 0.9.5`, `rand_chacha 0.9.0`, `rand_core 0.6.4`, `rand_core 0.9.5`
 
-Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec E290, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
+Release graphs: ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec E290, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, nRF52840
 
 ```text
 Copyright 2018 Developers of the Rand project
@@ -8997,6 +9571,36 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+### MIT (d5f702470f20)
+
+License: MIT License
+
+Used by: `headers-core 0.3.0`
+
+Release graphs: website Rust/WASM
+
+```text
+Copyright (c) 2014-2023 Sean McArthur
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
+
 ### MIT (d9db5ec46734)
 
 License: MIT License
@@ -9043,6 +9647,42 @@ Release graphs: ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec E290, ESP32-S3 Heltec
 
 ```text
 Copyright (c) 2020 Project Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
+### MIT (da6b30502bad)
+
+License: MIT License
+
+Used by: `tower 0.5.3`, `tower-layer 0.3.3`, `tower-service 0.3.3`
+
+Release graphs: website Rust/WASM
+
+```text
+Copyright (c) 2019 Tower Contributors
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -9323,6 +9963,38 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+### MIT (e3c1a4eb6fce)
+
+License: MIT License
+
+Used by: `mime_guess 2.0.5`
+
+Release graphs: website Rust/WASM
+
+```text
+The MIT License (MIT)
+
+Copyright (c) 2015 Austin Bonander
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ### MIT (e660a28622f8)
 
 License: MIT License
@@ -9359,6 +10031,38 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
+### MIT (e6a7acaed438)
+
+License: MIT License
+
+Used by: `multer 3.1.0`
+
+Release graphs: website Rust/WASM
+
+```text
+MIT License
+
+Copyright (c) 2020 Rousan Ali
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ### MIT (e92f714e849a)
 
 License: MIT License
@@ -9369,6 +10073,42 @@ Release graphs: ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec E290, ESP32-S3 Heltec
 
 ```text
 Copyright (c) 2017-2018 Jorge Aparicio
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
+### MIT (ea495feff089)
+
+License: MIT License
+
+Used by: `axum 0.8.9`
+
+Release graphs: website Rust/WASM
+
+```text
+Copyright (c) 2019 axum Contributors
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -9527,6 +10267,44 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 IN THE SOFTWARE.
 ```
 
+### MIT (f082eaeefaa3)
+
+License: MIT License
+
+Used by: `serde_qs 0.15.0`
+
+Release graphs: website Rust/WASM
+
+```text
+Copyright (c) 2016 Anthony Ramine
+Copyright (c) 2017 Sam Scott
+Copyright (c) 2017 Google Inc.
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
 ### MIT (f3bd9e2e7745)
 
 License: MIT License
@@ -9568,9 +10346,9 @@ DEALINGS IN THE SOFTWARE.
 
 License: MIT License
 
-Used by: `http 1.4.2`, `http 1.5.0`
+Used by: `http 1.4.1`, `http 1.4.2`, `http 1.5.0`
 
-Release graphs: Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64
+Release graphs: Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, website Rust/WASM
 
 ```text
 Copyright (c) 2017 http-rs authors

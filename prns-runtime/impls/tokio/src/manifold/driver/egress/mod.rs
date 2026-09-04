@@ -424,6 +424,9 @@ pub(super) fn route_reaction<A>(
     );
 }
 
+// This is the common bow-tie seam. Its borrowed arguments make all routing
+// destinations visible without allocating or manufacturing a state owner.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn route_reaction_with_work<A, Work, W>(
     reaction: EngineReaction<'_, Work>,
     egress: &mut Egress,

@@ -56,6 +56,9 @@ struct DeferredResourcePartHash {
     part: std::ops::Range<usize>,
 }
 
+// Ingress adds ordering barriers to the common reaction route. Keeping those
+// borrowed queues explicit avoids a second, partially initialized router type.
+#[allow(clippy::too_many_arguments)]
 fn route_ingress_reaction<J>(
     reaction: EngineReaction<'_, OwedWork<'_>>,
     egress: &mut Egress,

@@ -1,4 +1,4 @@
-use super::inline_work::feed_packet_inline;
+use super::inline_work::{feed_packet_inline, issue_command_inline};
 use super::*;
 
 pub struct Cycle {
@@ -12,6 +12,8 @@ pub struct Cycle {
     next_id: u64,
     sealed: Vec<u8>,
     pub proof: Vec<u8>,
+    capture: FeedCapture,
+    scratch: Vec<u8>,
 }
 
 impl Default for Cycle {
@@ -54,9 +56,10 @@ impl Cycle {
             next_id: 1,
             sealed: Vec::with_capacity(1024),
             proof: Vec::with_capacity(1024),
+            capture: FeedCapture::default(),
+            scratch: Vec::new(),
         };
 
-        let mut announce = Vec::with_capacity(1024);
         let issued = IssuedCommand {
             id: CommandId(0),
             command: PrnsCommand::AnnounceNow(AnnounceNow {
@@ -65,36 +68,41 @@ impl Cycle {
                 app_data: AnnounceAppData::Registered,
             }),
         };
-        cycle.responder.ingest_command_into(
+        let Self {
+            initiator,
+            responder,
+            initiator_entropy,
+            responder_entropy,
+            interfaces,
+            capture,
+            scratch,
+            ..
+        } = &mut cycle;
+        issue_command_inline(
+            responder,
             issued,
-            AttachedInterfaces::new(&cycle.interfaces),
+            AttachedInterfaces::new(interfaces),
             NOW,
-            &mut |bytes| cycle.responder_entropy.fill(bytes),
-            &mut |reaction| {
-                if let EngineReaction::Directive(
-                    Directive::Send { bytes, .. } | Directive::SendAnnounce { bytes, .. },
-                ) = reaction
-                {
-                    announce.extend_from_slice(bytes);
-                }
-            },
+            responder_entropy,
+            capture,
+            scratch,
         );
+        let mut announce = capture.only_frame("announce");
         assert!(!announce.is_empty(), "responder emitted its announce");
 
-        let mut capture = FeedCapture::default();
-        let mut scratch = Vec::new();
+        capture.reset();
         feed_packet_inline(
-            &mut cycle.initiator,
+            initiator,
             InboundPacket {
                 arrived_at: NOW,
                 source_interface: WIRE,
                 bytes: &mut announce,
             },
-            AttachedInterfaces::new(&cycle.interfaces),
+            AttachedInterfaces::new(interfaces),
             NOW,
-            &mut cycle.initiator_entropy,
-            &mut capture,
-            &mut scratch,
+            initiator_entropy,
+            capture,
+            scratch,
         );
         assert!(capture.announce_heard, "initiator learned the destination");
         cycle
@@ -114,20 +122,22 @@ impl Cycle {
             initiator_entropy,
             interfaces,
             sealed,
+            capture,
+            scratch,
             ..
         } = self;
         sealed.clear();
-        initiator.ingest_command_into(
+        capture.reset();
+        issue_command_inline(
+            initiator,
             issued,
             AttachedInterfaces::new(interfaces),
             NOW,
-            &mut |bytes| initiator_entropy.fill(bytes),
-            &mut |reaction| {
-                if let EngineReaction::Directive(Directive::Send { bytes, .. }) = reaction {
-                    sealed.extend_from_slice(bytes);
-                }
-            },
+            initiator_entropy,
+            capture,
+            scratch,
         );
+        capture.take_only_frame_into("single", sealed);
         assert!(!self.sealed.is_empty(), "send sealed a frame");
     }
 
@@ -138,10 +148,12 @@ impl Cycle {
             interfaces,
             sealed,
             proof,
+            capture,
+            scratch,
             ..
         } = self;
-        let mut capture = FeedCapture::default();
-        let mut scratch = Vec::new();
+        proof.clear();
+        capture.reset();
         feed_packet_inline(
             responder,
             InboundPacket {
@@ -152,15 +164,13 @@ impl Cycle {
             AttachedInterfaces::new(interfaces),
             NOW,
             responder_entropy,
-            &mut capture,
-            &mut scratch,
+            capture,
+            scratch,
         );
-        assert_eq!(
-            capture.single_deliveries, 1,
-            "responder delivered the single"
-        );
-        assert_eq!(capture.frames.len(), 1, "responder proved the single");
-        *proof = capture.frames.pop().unwrap();
+        let delivered = capture.delivered_single;
+        capture.take_only_frame_into("proof", proof);
+        assert!(delivered, "responder delivered the single");
+        assert!(!self.proof.is_empty(), "responder proved the single");
     }
 
     pub fn settle(&mut self) {
@@ -174,10 +184,11 @@ impl Cycle {
             initiator,
             initiator_entropy,
             interfaces,
+            capture,
+            scratch,
             ..
         } = self;
-        let mut capture = FeedCapture::default();
-        let mut scratch = Vec::new();
+        capture.reset();
         feed_packet_inline(
             initiator,
             InboundPacket {
@@ -188,16 +199,14 @@ impl Cycle {
             AttachedInterfaces::new(interfaces),
             NOW,
             initiator_entropy,
-            &mut capture,
-            &mut scratch,
+            capture,
+            scratch,
         );
-        assert!(
-            capture
-                .settlements
-                .iter()
-                .any(|(_, settlement)| matches!(settlement, Settlement::SendSinglePacket(Ok(_)))),
-            "proof verified and the receipt settled",
-        );
+        let settled = capture
+            .settlements
+            .iter()
+            .any(|(_, settlement)| matches!(settlement, Settlement::SendSinglePacket(Ok(_))));
+        assert!(settled, "proof verified and the receipt settled");
     }
 }
 
@@ -208,5 +217,13 @@ mod tests {
     #[test]
     fn construction_learns_the_destination_from_the_announce_directive() {
         let _ = Cycle::new();
+    }
+
+    #[test]
+    fn roundtrip_drives_each_typed_continuation_to_settlement() {
+        let mut cycle = Cycle::new();
+        cycle.seal();
+        cycle.deliver_prove();
+        cycle.settle();
     }
 }

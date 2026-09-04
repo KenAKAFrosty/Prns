@@ -3,7 +3,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::crypto::sha256;
-use crate::interfaces::{InterfaceGravity, InterfaceId};
+use crate::interfaces::{BitrateBps, InterfaceGravity, InterfaceId};
 use crate::storage::TablePushError;
 use crate::units::{DurationMillis, InstantMillis};
 use crate::wire::TransportId;
@@ -16,6 +16,7 @@ use super::{
 };
 
 pub const DISCOVERED_INTERFACE_DETACH_AFTER: DurationMillis = DurationMillis(12_000);
+pub const AUTOCONNECT_BITRATE: BitrateBps = BitrateBps::guess(5_000_000);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct DiscoveredConnectionEndpointId([u8; 32]);

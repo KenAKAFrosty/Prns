@@ -48,6 +48,9 @@ pub(crate) fn local_command_lane(depth: usize) -> (LocalCommandProducer, LocalCo
 }
 
 impl LocalCommandProducer {
+    // A full SPSC ring returns the original command so the caller retains
+    // ownership. Boxing that error would allocate on the backpressure path.
+    #[allow(clippy::result_large_err)]
     pub(crate) fn send(&mut self, command: HostCommand) -> Result<(), HostCommand> {
         if !self.consumer_open.load(Ordering::Acquire) {
             return Err(command);

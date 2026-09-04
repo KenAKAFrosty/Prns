@@ -47,8 +47,9 @@ pub use policy::{
     ConfiguredInterfacePolicy, EffectiveInterfacePolicy, EgressCapability, FrequencyMilliHertz,
     IngressCapability, IngressControlPolicy, InterfaceCapabilities, InterfaceCapabilitiesError,
     InterfaceCommonPolicy, InterfaceDefaults, InterfaceForwardingPolicy, InterfaceGravity,
-    InterfaceMode, MtuBytes, MtuPolicy, PathRequestEgressControl, RecursivePathRequestPolicy,
-    TransportCapability, LOCAL_INTERFACE_BITRATE_ESTIMATE, TRAVERSED_NETWORK_BITRATE_ESTIMATE,
+    InterfaceGravityDefault, InterfaceMode, MtuBytes, MtuPolicy, PathRequestEgressControl,
+    RecursivePathRequestPolicy, TransportCapability, LOCAL_INTERFACE_BITRATE_ESTIMATE,
+    TRAVERSED_NETWORK_BITRATE_ESTIMATE,
 };
 pub use status::{
     AirtimeUtilization, ConnectionState, FrameAccounting, InterfaceSnapshot, InterfaceStatus,

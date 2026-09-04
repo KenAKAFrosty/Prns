@@ -63,7 +63,7 @@ fn fat_body() -> std::vec::Vec<u8> {
 
 enum Heard {
     Destination(DestinationHash),
-    Settled(CommandId, Settlement),
+    Settled(CommandId, Box<Settlement>),
     Response(std::vec::Vec<u8>),
 }
 
@@ -147,7 +147,7 @@ async fn a_request_endpoints_answers_a_live_request_over_tcp() {
                     Some(Heard::Destination(destination))
                 }
                 PrnsEvent::Diagnostic(Diagnostic::CommandSettled { id, settlement }) => {
-                    Some(Heard::Settled(id, settlement))
+                    Some(Heard::Settled(id, Box::new(settlement)))
                 }
                 PrnsEvent::Message(Message::Response { data, .. }) => {
                     Some(Heard::Response(data.to_vec()))
@@ -180,14 +180,13 @@ async fn a_request_endpoints_answers_a_live_request_over_tcp() {
             .expect("the initiator node is running");
         let link_id = loop {
             match heard_rx.recv().await.expect("initiator stays alive") {
-                Heard::Settled(id, Settlement::EstablishLink(Ok(established)))
-                    if id == link_cmd =>
-                {
-                    break established.link_id;
-                }
-                Heard::Settled(id, Settlement::EstablishLink(Err(failure))) if id == link_cmd => {
-                    panic!("link refused: {failure:?}");
-                }
+                Heard::Settled(id, settlement) if id == link_cmd => match *settlement {
+                    Settlement::EstablishLink(Ok(established)) => break established.link_id,
+                    Settlement::EstablishLink(Err(failure)) => {
+                        panic!("link refused: {failure:?}");
+                    }
+                    _ => {}
+                },
                 _ => {}
             }
         };

@@ -18,6 +18,13 @@
         BrowserCryptoExecutor,
       } from "/prns-js/dist/browser/crypto_pool.js";
 
+      async function reportBrowserSmokeProgress(stage) {
+        await fetch("/browser-smoke-progress", {
+          method: "POST",
+          body: stage,
+        });
+      }
+
       async function parallelCryptoOutcome() {
         const executor = new BrowserCryptoExecutor(2, {
           workers: 4,
@@ -684,6 +691,7 @@
         );
       }
 
+      await reportBrowserSmokeProgress("resource compression");
       const [packagedCompression, docsCompression] = await Promise.all([
         compressionWorkerOutcome(
           "/prns-js/dist/browser/resource_compression_worker.js",
@@ -698,11 +706,14 @@
         packagedCompression.compressed && docsCompression.compressed;
       const compressionDetail =
         `${packagedCompression.detail}:${docsCompression.detail}`;
+      await reportBrowserSmokeProgress("route persistence");
       const routePersistence = await routePersistenceOutcome();
+      await reportBrowserSmokeProgress("interface contracts");
       const webSocketFraming = await webSocketFramingOutcome();
       const bluetoothContract = await bluetoothContractOutcome();
       const bluetoothSession = await bluetoothSessionOutcome();
       const bluetoothWorker = await bluetoothWorkerOutcome();
+      await reportBrowserSmokeProgress("parallel crypto");
       const parallelCrypto = await parallelCryptoOutcome();
       document.body.dataset.routePersistence = routePersistence;
       document.body.dataset.webSocketFraming = webSocketFraming;
@@ -717,6 +728,7 @@
       localStorage.removeItem(`${persistenceRoot}.identity.v1`);
       localStorage.removeItem(`${persistenceRoot}.ble-identity.v1`);
       localStorage.removeItem(`${persistenceRoot}.state.v1`);
+      await reportBrowserSmokeProgress("persistent runtime");
       const persistentOptions = persistentBrowser(persistenceRoot);
       const firstPersistent = await Prns.create(persistentOptions);
       let persistence = "Failed";
@@ -765,6 +777,7 @@
         }
       }
       document.body.dataset.persistence = persistence;
+      await reportBrowserSmokeProgress("persistence failures");
       const corruptPersistence = await Prns.create({
         ...persistentOptions,
         persistenceStore: {
@@ -809,6 +822,7 @@
         }
       }
       document.body.dataset.persistenceFailures = persistenceFailures;
+      await reportBrowserSmokeProgress("runtime commands");
       const outcome = await Prns.create({});
       document.body.dataset.outcome = outcome.tag;
       if (outcome.tag !== "Ready") {
@@ -880,6 +894,7 @@
             ? "Retained"
             : `Failed:${autoWifiCloseAdmission.tag}:${autoWifi.closed}`;
         document.body.dataset.autoWifiAdmission = autoWifiAdmission;
+        await reportBrowserSmokeProgress("worker status and shutdown");
         const webSocketWorkerStatus = await workerWebSocketStatusOutcome(
           outcome.data,
         );
@@ -932,6 +947,7 @@
             ? "PASS"
             : "FAIL";
       }
+      await reportBrowserSmokeProgress("final result");
       await fetch("/browser-smoke-result", {
         method: "POST",
         headers: { "content-type": "application/json" },

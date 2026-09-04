@@ -215,12 +215,16 @@ network name/passphrase/size, ingress and egress controls, `recursive_prs`,
 `announces_from_internal`, `announces_to_internal`, and the common IC/EC tuning values.
 Interface-mode behavior follows RNS 1.4.2. `outgoing = No` disables egress while retaining ingress.
 
-`gravity` is a signed 64-bit routing preference. An interface inherits `default_gravity` from
-`[reticulum]` when it has no explicit value, and both default to zero. After an announce has passed
-normal identity, signature, freshness, and hop-count checks, a route may move to a higher-gravity
-interface only when the new evidence has the same announce timebase. Gravity does not make an
-older or longer route eligible. Dynamically spawned peers inherit their parent's effective
-gravity, and status output reports nonzero values.
+`gravity` is a signed 64-bit routing preference. An explicit interface value takes precedence over
+`default_gravity` from `[reticulum]`; when neither is configured, the interface's effective bitrate
+in bits per second becomes its gravity. This includes the medium estimate and any explicit
+`bitrate` override; values beyond the signed gravity range saturate at its maximum. Explicit
+gravity values, including zero, remain authoritative and compare directly with bitrate-derived
+values when the two are mixed. After an announce has passed normal identity, signature, freshness,
+and hop-count checks, a route may move to a higher-gravity interface only when the new evidence has
+the same announce timebase. Gravity does not make older or longer route evidence eligible.
+Dynamically spawned peers inherit their parent's effective gravity, and status output reports
+nonzero values.
 
 An explicit `bitrate` overrides the medium estimate and recomputes optimized MTU. TCP client/server
 `fixed_mtu` remains authoritative. Network-traversing TCP, UDP, Backbone, and WebSocket media use a
@@ -411,7 +415,8 @@ interface is available. When the configured `autoconnect_discovered_interfaces` 
 Prnsd retires all bootstrap-only interfaces. It restores them after every auto-connected interface
 is gone. As in RNS, this lifecycle is inactive when discovery auto-connect is disabled.
 `autoconnect_interface_gravity` selects the signed gravity assigned atomically to every
-auto-connected Backbone or TCP interface and defaults to zero.
+auto-connected Backbone or TCP interface. When omitted, those interfaces derive gravity from
+their effective bitrate like configured interfaces.
 `autoconnect_announces_to_internal = Yes` gives those interfaces the corresponding Internal
 announce opt-in and defaults to `No`.
 
