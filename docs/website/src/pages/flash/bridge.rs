@@ -120,6 +120,7 @@ struct BridgeUf2Compatibility {
     softdevice_version: String,
     fwid: u16,
     application_base: u32,
+    application_end_exclusive: u32,
     family_id: u32,
 }
 
@@ -448,6 +449,7 @@ impl BridgeRequest {
                 softdevice_version: compatibility.softdevice().version().as_str().to_string(),
                 fwid: compatibility.fwid(),
                 application_base: compatibility.application_base(),
+                application_end_exclusive: compatibility.application_end_exclusive(),
                 family_id: compatibility.family_id(),
             }),
             nrf_serial_dfu: None,
@@ -509,6 +511,7 @@ impl BridgeRequest {
                 softdevice_version: compatibility.softdevice().version().as_str().to_string(),
                 fwid: compatibility.fwid(),
                 application_base: compatibility.application_base(),
+                application_end_exclusive: compatibility.application_end_exclusive(),
                 family_id: recovery.family_id(),
             }),
             nrf_serial_dfu: None,
@@ -1127,6 +1130,7 @@ mod tests {
         assert_eq!(wire["transport"], "uf2-mass-storage");
         assert_eq!(wire["mountLabel"], "T1000-E");
         assert_eq!(wire["uf2Compatibility"]["softdeviceVersion"], "7.3.0");
+        assert_eq!(wire["uf2Compatibility"]["applicationEndExclusive"], 0xea000);
         let parts = wire["parts"]
             .as_array()
             .ok_or("recovery parts are not an array")?;
@@ -1427,6 +1431,7 @@ mod tests {
                     assert_eq!(wire["uf2Compatibility"]["softdeviceVersion"], "7.3.0");
                     assert_eq!(wire["uf2Compatibility"]["fwid"], 0x0123);
                     assert_eq!(wire["uf2Compatibility"]["applicationBase"], 0x27000);
+                    assert_eq!(wire["uf2Compatibility"]["applicationEndExclusive"], 0xc0000);
                     assert_eq!(wire["uf2Compatibility"]["familyId"], 0xada52840_u32);
                     for field in [
                         "expectedChip",
