@@ -78,9 +78,12 @@ pub use reaction::{
     CryptoOwed, Directive, EngineReaction, FanTarget, Journaled, LinkClosedReason, NoOwedWork,
     OpenedResourceSpan, OwedWork, PersistenceFlushCause, PersistenceFlushTarget,
     ResourceDecompressionCompleted, ResourceDecompressionOwed, ResourceOpenCompleted,
-    ResourceOpenOwed, WholeResourceOpenCompleted, WholeResourceOpenLanding,
-    WholeResourceOpenOutcome, WholeResourceOpenOwed, WholeResourceOpenPlan,
-    WholeResourceOpenReservation,
+    ResourceOpenOwed,
+};
+#[cfg(feature = "resource-work-offload")]
+pub use reaction::{
+    WholeResourceOpenCompleted, WholeResourceOpenLanding, WholeResourceOpenOutcome,
+    WholeResourceOpenOwed, WholeResourceOpenPlan, WholeResourceOpenReservation,
 };
 pub use registration::{
     PersistedRoutePreflightError, PersistedRouteSignaturePending, PersistedRouteVerificationError,

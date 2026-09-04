@@ -182,12 +182,11 @@ impl TokioGrantProducer {
                 GrantQueue::Expedited => self.expedited.push(slot).is_ok(),
                 GrantQueue::Regular => self.regular.push(slot).is_ok(),
             };
-            if committed {
-                if self.consumer_parked.load(Ordering::Acquire)
-                    && self.consumer_parked.swap(false, Ordering::AcqRel)
-                {
-                    self.filled_ready.notify_one();
-                }
+            if committed
+                && self.consumer_parked.load(Ordering::Acquire)
+                && self.consumer_parked.swap(false, Ordering::AcqRel)
+            {
+                self.filled_ready.notify_one();
             }
         }
     }

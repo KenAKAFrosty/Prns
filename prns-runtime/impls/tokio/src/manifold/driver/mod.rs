@@ -11,7 +11,7 @@ use crate::manifold::wake_schedule::{fire_due_reason, merge_wake_schedules_delta
 use crate::manifold::AppDeciders;
 use crate::manifold::Host;
 use crate::routing::links::resources::receive::part_hash::ResourcePartHashLane;
-use crate::routing::links::resources::send::ResourceSealWorkspacePolicy;
+use crate::routing::links::resources::send::ResourceSealExecution;
 use crate::routing::links::resources::ResourceOffer;
 use crate::runtime::InterfaceStore;
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
@@ -308,14 +308,14 @@ async fn run_inner<S, H, J, P, A, C>(
                 scheduler_policy,
             )
         });
-    engine.resource_seal_workspace_policy = match crypto_pool.as_ref() {
-        Some(_) => ResourceSealWorkspacePolicy::TransferOwnership,
-        None => ResourceSealWorkspacePolicy::Borrowed,
-    };
-    engine.resource_part_hash_lane = match crypto_pool.as_ref() {
+    engine.set_resource_seal_execution(match crypto_pool.as_ref() {
+        Some(_) => ResourceSealExecution::ExternalOwned,
+        None => ResourceSealExecution::Inline,
+    });
+    engine.set_resource_part_hash_lane(match crypto_pool.as_ref() {
         Some(_) => ResourcePartHashLane::External,
         None => ResourcePartHashLane::Inline,
-    };
+    });
     let mut clock = ManifoldClock::new(&host);
     let due_timer = tokio::time::sleep_until(clock.immediate_deadline());
     tokio::pin!(due_timer);

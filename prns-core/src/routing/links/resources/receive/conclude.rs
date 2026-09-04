@@ -5,9 +5,10 @@ use crate::engine::{CommandId, SendRequestFailure};
 use crate::engine::{DeliveryEvidence, PacketReceiptDelivered, Settlement};
 use crate::engine::{
     Directive, EngineReaction, EngineState, InstantMillis, OwedWork,
-    ResourceDecompressionCompleted, ResourceDecompressionOwed, WholeResourceOpenOwed,
-    WholeResourceOpenPlan, WholeResourceOpenReservation,
+    ResourceDecompressionCompleted, ResourceDecompressionOwed,
 };
+#[cfg(feature = "resource-work-offload")]
+use crate::engine::{WholeResourceOpenOwed, WholeResourceOpenPlan, WholeResourceOpenReservation};
 use crate::routing::delivery::receipts::{ReceiptTable, Receipts};
 use crate::routing::links::data::link_raw_frame_ceiling;
 use crate::routing::links::data::write_link_raw_packet;
@@ -19,8 +20,10 @@ use crate::routing::links::resources::assemble_incoming::{
 };
 use crate::routing::links::resources::assembly::AssemblyProgress;
 use crate::routing::links::resources::control::{write_proof_plaintext, PROOF_PLAINTEXT_LEN};
+#[cfg(feature = "resource-work-offload")]
+use crate::routing::links::resources::streamed_open::ResourceOpenLane;
 use crate::routing::links::resources::streamed_open::{
-    ExternalOpenVerification, OpenProgress, OpenedStream, ResourceOpenLane,
+    ExternalOpenVerification, OpenProgress, OpenedStream,
 };
 use crate::routing::links::resources::table::{IncomingResourceState, IncomingResourceStatus};
 use crate::routing::links::resources::{
@@ -67,6 +70,7 @@ impl<S: StorageLayout> EngineState<S> {
             LinkRole::Initiator { .. } => None,
         };
 
+        #[cfg(feature = "resource-work-offload")]
         if self.resource_open_lane == ResourceOpenLane::ExternalWhole
             && state.status == IncomingResourceStatus::Transferring
             && matches!(

@@ -340,10 +340,9 @@ impl InboundDispatch {
                         IngressBufferSource::GrantSlot,
                         Some(DeferredResourcePartHash { plan, part }),
                     ) => {
-                        let frame = lane
-                            .take_peeked()
-                            .expect("the deferred resource part retains its ingress grant");
-                        owed_work.push_resource_part_hash_grant_slot(plan, source, frame, part);
+                        if let Some(frame) = lane.take_peeked() {
+                            owed_work.push_resource_part_hash_grant_slot(plan, source, frame, part);
+                        }
                     }
                     (
                         IngressBufferSource::UnmaskScratch,

@@ -23,9 +23,12 @@ use crate::routing::links::establish::link_mtu_ceiling;
 use crate::routing::links::handshake::{negotiated_link_mtu, LinkProofSignOwed};
 use crate::routing::links::maintenance::{write_keepalive, KEEPALIVE_ECHO};
 use crate::routing::links::resources::receive::gate::AcceptedResourceAdmission;
+#[cfg(feature = "resource-work-offload")]
 use crate::routing::links::resources::receive::part_hash::{
     ResourcePartHashCompleted, ResourcePartHashLanding,
 };
+#[cfg(feature = "resource-work-offload")]
+use crate::routing::links::resources::send::ResourceSealExecution;
 use crate::routing::links::resources::ResourceOffer;
 use crate::routing::proof::ProofRequest;
 use crate::storage::StorageLayout;
@@ -53,6 +56,7 @@ pub struct IngestPacketReport {
 }
 
 impl<S: StorageLayout> EngineState<S> {
+    #[cfg(feature = "resource-work-offload")]
     pub fn resume_resource_part_hash<F, K>(
         &mut self,
         completed: ResourcePartHashCompleted<'_>,
@@ -509,9 +513,19 @@ impl<S: StorageLayout> EngineState<S> {
             }
             IngestPacketOutcome::OwesResourceParts(request) => {
                 self.serve_resource_request(&request, source, now, fill_random, sink);
-                self.request_resource_seal(&request.link_id, sink);
+                #[cfg(feature = "resource-work-offload")]
+                match self.resource_seal_execution {
+                    ResourceSealExecution::Inline => {
+                        self.seal_staged_continuation(&request.link_id, fill_random, sink);
+                    }
+                    ResourceSealExecution::ExternalBorrowed
+                    | ResourceSealExecution::ExternalOwned => {
+                        self.request_resource_seal(&request.link_id, sink);
+                    }
+                }
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
             }
+            #[cfg(feature = "resource-work-offload")]
             IngestPacketOutcome::OwesResourcePartHash(owed) => {
                 sink(EngineReaction::Directive(Directive::Fulfill(
                     OwedWork::ResourcePartHash(owed),

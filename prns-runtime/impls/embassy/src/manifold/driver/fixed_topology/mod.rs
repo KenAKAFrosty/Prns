@@ -135,6 +135,7 @@ async fn run_inner<S, H, M, P, A, Store, const NOTIFY: usize, const COMMANDS: us
     A: FnMut(&ResourceOffer) -> bool,
     Store: InterfaceInspectionStore,
 {
+    engine.use_inline_resource_work();
     let AppDeciders {
         mut should_prove,
         mut should_accept_resource,

@@ -466,7 +466,7 @@ pub(crate) fn fulfill_ready_work(
                 engine.resume_resource_build(
                     ResourceBuildCompleted {
                         reservation,
-                        transfer: ResourceBuildTransfer::Borrowed(&transfer),
+                        transfer: ResourceBuildTransfer::borrowed(&transfer),
                         names: &names,
                         request_data: &data,
                         outcome,

@@ -11840,6 +11840,10 @@
           "alloc",
           "default",
           "std"
+        ],
+        "wasm": [
+          "alloc",
+          "std"
         ]
       },
       "name": "memchr",
@@ -15266,6 +15270,7 @@
           "alloc",
           "default",
           "flash",
+          "resource-work-offload",
           "std",
           "std-sync-host"
         ],
@@ -15429,7 +15434,8 @@
         ],
         "wasm": [
           "alloc",
-          "flash"
+          "flash",
+          "resource-work-offload"
         ]
       },
       "name": "personal-rns",
@@ -15924,6 +15930,7 @@
           "flash",
           "parallel-persistence",
           "parallel-resource-hash",
+          "resource-work-offload",
           "shared-instance-rpc",
           "std",
           "tokio-host"
@@ -15938,6 +15945,7 @@
           "interface-discovery-archive",
           "parallel-persistence",
           "parallel-resource-hash",
+          "resource-work-offload",
           "rnx",
           "shared-instance-rpc",
           "signed-artifact",
@@ -15954,6 +15962,7 @@
           "interface-discovery-archive",
           "parallel-persistence",
           "parallel-resource-hash",
+          "resource-work-offload",
           "rnx",
           "shared-instance-rpc",
           "signed-artifact",
@@ -15970,6 +15979,7 @@
           "interface-discovery-archive",
           "parallel-persistence",
           "parallel-resource-hash",
+          "resource-work-offload",
           "rnx",
           "shared-instance-rpc",
           "signed-artifact",
@@ -15983,6 +15993,7 @@
           "flash",
           "parallel-persistence",
           "parallel-resource-hash",
+          "resource-work-offload",
           "shared-instance-rpc",
           "std",
           "tokio-host"
@@ -15994,6 +16005,7 @@
           "flash",
           "parallel-persistence",
           "parallel-resource-hash",
+          "resource-work-offload",
           "shared-instance-rpc",
           "std",
           "tokio-host"
@@ -16005,6 +16017,7 @@
           "flash",
           "parallel-persistence",
           "parallel-resource-hash",
+          "resource-work-offload",
           "shared-instance-rpc",
           "std",
           "tokio-host"
@@ -16013,6 +16026,7 @@
           "alloc",
           "default",
           "flash",
+          "resource-work-offload",
           "std",
           "std-sync-host",
           "test-support"
@@ -16023,6 +16037,7 @@
           "embassy-host",
           "external-alloc",
           "flash",
+          "resource-work-offload",
           "std",
           "tokio-host"
         ],
@@ -16032,6 +16047,7 @@
           "embassy-host",
           "external-alloc",
           "flash",
+          "resource-work-offload",
           "std",
           "tokio-host"
         ],
@@ -16041,6 +16057,7 @@
           "embassy-host",
           "external-alloc",
           "flash",
+          "resource-work-offload",
           "std",
           "tokio-host"
         ],
@@ -16050,6 +16067,7 @@
           "embassy-host",
           "external-alloc",
           "flash",
+          "resource-work-offload",
           "std",
           "tokio-host"
         ],
@@ -16059,6 +16077,7 @@
           "embassy-host",
           "external-alloc",
           "flash",
+          "resource-work-offload",
           "std",
           "tokio-host"
         ],
@@ -16071,6 +16090,7 @@
           "interface-discovery",
           "parallel-persistence",
           "parallel-resource-hash",
+          "resource-work-offload",
           "std",
           "tokio-host"
         ],
@@ -16083,6 +16103,7 @@
           "interface-discovery",
           "parallel-persistence",
           "parallel-resource-hash",
+          "resource-work-offload",
           "std",
           "tokio-host"
         ],
@@ -16095,6 +16116,7 @@
           "interface-discovery",
           "parallel-persistence",
           "parallel-resource-hash",
+          "resource-work-offload",
           "std",
           "tokio-host"
         ],
@@ -16105,6 +16127,7 @@
           "flash",
           "parallel-persistence",
           "parallel-resource-hash",
+          "resource-work-offload",
           "std",
           "tokio-host"
         ],
@@ -16113,12 +16136,14 @@
           "ed25519-batch",
           "embassy-host",
           "flash",
+          "resource-work-offload",
           "std",
           "tokio-host"
         ],
         "wasm": [
           "alloc",
           "flash",
+          "resource-work-offload",
           "std"
         ]
       },
@@ -16894,11 +16919,13 @@
       "graphs": {
         "android": [
           "parallel-persistence",
+          "parallel-resource-hash",
           "rns-management"
         ],
         "daemon-linux": [
           "interface-discovery",
           "parallel-persistence",
+          "parallel-resource-hash",
           "rns-management",
           "rnx",
           "tracing"
@@ -16906,6 +16933,7 @@
         "daemon-macos": [
           "interface-discovery",
           "parallel-persistence",
+          "parallel-resource-hash",
           "rns-management",
           "rnx",
           "tracing"
@@ -16913,22 +16941,26 @@
         "daemon-windows": [
           "interface-discovery",
           "parallel-persistence",
+          "parallel-resource-hash",
           "rns-management",
           "rnx",
           "tracing"
         ],
         "desktop-linux": [
           "parallel-persistence",
+          "parallel-resource-hash",
           "rns-management",
           "tracing"
         ],
         "desktop-macos": [
           "parallel-persistence",
+          "parallel-resource-hash",
           "rns-management",
           "tracing"
         ],
         "desktop-windows": [
           "parallel-persistence",
+          "parallel-resource-hash",
           "rns-management",
           "tracing"
         ],
@@ -16939,18 +16971,22 @@
         "esp32-s3-tbeam": [],
         "host-c-linux": [
           "interface-discovery",
-          "parallel-persistence"
+          "parallel-persistence",
+          "parallel-resource-hash"
         ],
         "host-c-macos": [
           "interface-discovery",
-          "parallel-persistence"
+          "parallel-persistence",
+          "parallel-resource-hash"
         ],
         "host-c-windows": [
           "interface-discovery",
-          "parallel-persistence"
+          "parallel-persistence",
+          "parallel-resource-hash"
         ],
         "ios": [
-          "parallel-persistence"
+          "parallel-persistence",
+          "parallel-resource-hash"
         ],
         "nrf52840": []
       },

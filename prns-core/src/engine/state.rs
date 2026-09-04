@@ -15,8 +15,10 @@ use crate::routing::delivery::receipts::Receipts;
 use crate::routing::group_keys::GroupKeys;
 use crate::routing::links::resources::assembly::{IncomingAssemblies, OutgoingAssemblies};
 use crate::routing::links::resources::pending::PendingResourceOffers;
+#[cfg(feature = "resource-work-offload")]
 use crate::routing::links::resources::receive::part_hash::ResourcePartHashLane;
-use crate::routing::links::resources::send::ResourceSealWorkspacePolicy;
+#[cfg(feature = "resource-work-offload")]
+use crate::routing::links::resources::send::ResourceSealExecution;
 use crate::routing::links::resources::streamed_open::ResourceOpenLane;
 use crate::routing::links::resources::table::{IncomingResources, OutgoingResources};
 #[cfg(feature = "alloc")]
@@ -234,9 +236,11 @@ pub struct EngineState<S: StorageLayout> {
     pub(crate) outgoing_resources: OutgoingResources<S::OutgoingResources>,
     pub(crate) incoming_resources: IncomingResources<S::IncomingResources>,
     pub(crate) pending_resource_offers: PendingResourceOffers<S::PendingResourceOffers>,
-    pub resource_seal_workspace_policy: ResourceSealWorkspacePolicy,
-    pub resource_part_hash_lane: ResourcePartHashLane,
-    pub resource_open_lane: ResourceOpenLane,
+    #[cfg(feature = "resource-work-offload")]
+    pub(crate) resource_seal_execution: ResourceSealExecution,
+    #[cfg(feature = "resource-work-offload")]
+    pub(crate) resource_part_hash_lane: ResourcePartHashLane,
+    pub(crate) resource_open_lane: ResourceOpenLane,
     pub(crate) incoming_assemblies: IncomingAssemblies<S::IncomingAssemblies>,
     pub(crate) outgoing_assemblies: OutgoingAssemblies<S::OutgoingAssemblies>,
     pub(crate) channels: S::Channels,
@@ -302,7 +306,9 @@ impl<S: StorageLayout> Default for EngineState<S> {
             outgoing_resources: OutgoingResources::default(),
             incoming_resources: IncomingResources::default(),
             pending_resource_offers: PendingResourceOffers::default(),
-            resource_seal_workspace_policy: ResourceSealWorkspacePolicy::default(),
+            #[cfg(feature = "resource-work-offload")]
+            resource_seal_execution: ResourceSealExecution::default(),
+            #[cfg(feature = "resource-work-offload")]
             resource_part_hash_lane: ResourcePartHashLane::default(),
             resource_open_lane: ResourceOpenLane::default(),
             incoming_assemblies: IncomingAssemblies::default(),
@@ -407,10 +413,9 @@ impl<S: StorageLayout> EngineState<S> {
             write!(outgoing_resources, OutgoingResources::default());
             write!(incoming_resources, IncomingResources::default());
             write!(pending_resource_offers, PendingResourceOffers::default());
-            write!(
-                resource_seal_workspace_policy,
-                ResourceSealWorkspacePolicy::default()
-            );
+            #[cfg(feature = "resource-work-offload")]
+            write!(resource_seal_execution, ResourceSealExecution::default());
+            #[cfg(feature = "resource-work-offload")]
             write!(resource_part_hash_lane, ResourcePartHashLane::default());
             write!(resource_open_lane, ResourceOpenLane::default());
             write!(incoming_assemblies, IncomingAssemblies::default());
@@ -477,6 +482,29 @@ where
 }
 
 impl<S: StorageLayout> EngineState<S> {
+    pub fn use_inline_resource_work(&mut self) {
+        #[cfg(feature = "resource-work-offload")]
+        {
+            self.resource_seal_execution = ResourceSealExecution::Inline;
+            self.resource_part_hash_lane = ResourcePartHashLane::Inline;
+        }
+        self.resource_open_lane = ResourceOpenLane::EngineDirected;
+    }
+
+    #[cfg(feature = "resource-work-offload")]
+    pub fn set_resource_seal_execution(&mut self, execution: ResourceSealExecution) {
+        self.resource_seal_execution = execution;
+    }
+
+    #[cfg(feature = "resource-work-offload")]
+    pub fn set_resource_part_hash_lane(&mut self, lane: ResourcePartHashLane) {
+        self.resource_part_hash_lane = lane;
+    }
+
+    pub fn set_resource_open_lane(&mut self, lane: ResourceOpenLane) {
+        self.resource_open_lane = lane;
+    }
+
     pub fn set_protocol_policy(&mut self, policy: EngineProtocolPolicy) {
         self.protocol = policy;
     }

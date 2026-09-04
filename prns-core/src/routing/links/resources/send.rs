@@ -1,5 +1,6 @@
 //! RNS 1.4.2 `Resource(data, link)` plus `Resource.advertise`.
 
+#[cfg(feature = "resource-work-offload")]
 use crate::crypto::Sha256PrefixState;
 use crate::engine::{
     CommandId, Directive, EngineReaction, EngineState, InstantMillis, Journaled, OwedWork,
@@ -23,27 +24,32 @@ use crate::routing::links::resources::advertisement::{
 };
 use crate::routing::links::resources::assembly::StaticResponseContinuation;
 use crate::routing::links::resources::build_outgoing::{
-    build_outgoing_resource, build_outgoing_resource_enveloped, finish_staged_resource,
-    outgoing_resource_buffer_shape, seal_staged_resource, winning_candidate,
-    write_hashmap_without_collision, BuildOutgoingResourceError, BuildRegions, BuiltResource,
-    HashmapWriteOutcome, SealedStagedResource, SALT_REROLL_CAP, STAGED_STREAM_OFFSET,
+    build_outgoing_resource, build_outgoing_resource_enveloped, outgoing_resource_buffer_shape,
+    seal_staged_resource, winning_candidate, BuildOutgoingResourceError, BuildRegions,
+    BuiltResource, SealedStagedResource, SALT_REROLL_CAP, STAGED_STREAM_OFFSET,
 };
 #[cfg(feature = "parallel-resource-hash")]
 use crate::routing::links::resources::build_outgoing::{
     build_outgoing_resource_with_prepared_digest, PreparedResourceDigest,
+};
+#[cfg(feature = "resource-work-offload")]
+use crate::routing::links::resources::build_outgoing::{
+    finish_staged_resource, write_hashmap_without_collision, HashmapWriteOutcome,
 };
 use crate::routing::links::resources::control::{
     parse_cancel_plaintext, parse_part_request_plaintext, parse_proof_plaintext,
     write_cancel_plaintext,
 };
 use crate::routing::links::resources::serve_outgoing::{plan_hashmap_update, serve_part_indices};
+#[cfg(feature = "alloc")]
+use crate::routing::links::resources::table::ResourceTransferDetach;
+#[cfg(all(feature = "alloc", feature = "resource-work-offload"))]
+use crate::routing::links::resources::table::ResourceTransferRestore;
 use crate::routing::links::resources::table::{
     OutgoingResourceStatus, PartSendOutcome, ResourceBuildLanding, ResourceBuildReservation,
     ResourceBuildTransfer, ResourceSealGeneration, StagedResourceTransfer, TrackLane,
     TrackOutgoingResourceError, TrackedCommand,
 };
-#[cfg(feature = "alloc")]
-use crate::routing::links::resources::table::{ResourceTransferDetach, ResourceTransferRestore};
 use crate::routing::links::resources::{
     resource_sdu, ResourceBody, ResourceBufferShape, ResourceCorrelation, ResourceHash,
     ResourceMetadata, ResourcePartRequest, ResourceSegment, ResourceSend, HASHMAP_MAX_LEN,
@@ -192,10 +198,11 @@ pub struct ResourceSealPlan {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ResourceSealWorkspacePolicy {
+pub enum ResourceSealExecution {
     #[default]
-    Borrowed,
-    TransferOwnership,
+    Inline,
+    ExternalBorrowed,
+    ExternalOwned,
 }
 
 impl ResourceSealPlan {
@@ -587,6 +594,33 @@ impl<S: StorageLayout> EngineState<S> {
             fill_random,
             sink,
         )
+    }
+
+    #[inline(never)]
+    pub fn resume_resource_build_unavailable(
+        &mut self,
+        reservation: ResourceBuildReservation,
+        sink: &mut dyn for<'reaction> FnMut(EngineReaction<'reaction>),
+    ) -> crate::engine::WakeSchedules {
+        let landing = self
+            .outgoing_resources
+            .fail_reserved_build(reservation, BuildOutgoingResourceError::BufferShapeMismatch);
+        let ResourceBuildLanding::Failed(error) = landing else {
+            return crate::engine::WakeSchedules::UNCHANGED;
+        };
+        sink(EngineReaction::Journaled(Journaled::CommandSettled {
+            id: reservation.command_id,
+            settlement: resource_settlement(
+                reservation.correlation,
+                Err(SendResourceFailure::Rejected(SendResourceRejection::Build(
+                    error,
+                ))),
+            ),
+        }));
+        if reservation.lane == TrackLane::Live {
+            self.fail_staged_continuation(&reservation.link_id, sink);
+        }
+        crate::engine::WakeSchedules::UNCHANGED
     }
 
     fn resume_landed_resource_build<F>(
@@ -1506,7 +1540,10 @@ impl<S: StorageLayout> EngineState<S> {
         state.expected_proof = sealed.expected_proof;
         state.staged_plaintext_bytes = 0;
         state.status = OutgoingResourceStatus::StagedSealed;
-        state.seal_generation = None;
+        #[cfg(feature = "resource-work-offload")]
+        {
+            state.seal_generation = None;
+        }
         if state.segment_index == 1 {
             state.original_hash = sealed.hash;
         }
@@ -1535,11 +1572,15 @@ impl<S: StorageLayout> EngineState<S> {
         self.fail_staged_continuation(&link_id, sink);
     }
 
+    #[cfg(feature = "resource-work-offload")]
     pub fn request_resource_seal(
         &mut self,
         link_id: &LinkId,
         sink: &mut impl FnMut(EngineReaction<'_, OwedWork<'_>>),
     ) {
+        if self.resource_seal_execution == ResourceSealExecution::Inline {
+            return;
+        }
         let Some(index) = self.outgoing_resources.next_unsealed_staged_index(link_id) else {
             return;
         };
@@ -1568,11 +1609,12 @@ impl<S: StorageLayout> EngineState<S> {
             state.status = OutgoingResourceStatus::StagedSealing;
             state.seal_generation = Some(generation);
         }
-        let workspace = match self.resource_seal_workspace_policy {
-            ResourceSealWorkspacePolicy::Borrowed => {
+        let workspace = match self.resource_seal_execution {
+            ResourceSealExecution::Inline => return,
+            ResourceSealExecution::ExternalBorrowed => {
                 StagedResourceTransfer::Borrowed(self.outgoing_resources.staged_plaintext(index))
             }
-            ResourceSealWorkspacePolicy::TransferOwnership => {
+            ResourceSealExecution::ExternalOwned => {
                 self.outgoing_resources.take_staged_transfer(index)
             }
         };
@@ -1590,6 +1632,7 @@ impl<S: StorageLayout> EngineState<S> {
         )));
     }
 
+    #[cfg(feature = "resource-work-offload")]
     pub fn resume_resource_seal<F>(
         &mut self,
         completed: ResourceSealCompleted<'_>,
@@ -1931,11 +1974,10 @@ impl<S: StorageLayout> EngineState<S> {
 
     /// A staged continuation dies with whatever killed the segment ahead of it; nothing rides the wire because nothing was ever advertised.
     /// Drains every staged row because a follower can wait behind a still-sealing row, and both fall together.
-    pub(crate) fn fail_staged_continuation<Work>(
-        &mut self,
-        link_id: &LinkId,
-        sink: &mut impl FnMut(EngineReaction<'_, Work>),
-    ) {
+    pub(crate) fn fail_staged_continuation<Work, K>(&mut self, link_id: &LinkId, sink: &mut K)
+    where
+        K: FnMut(EngineReaction<'_, Work>) + ?Sized,
+    {
         while let Some(index) = self.outgoing_resources.staged_index(link_id) {
             let state = self.outgoing_resources.state(index);
             let id = state.command_id;
@@ -2330,10 +2372,9 @@ mod tests {
 
     /// Staging needs a second outgoing row, which the deliberately tight fixed test layout does not carry; the heap layout is the shape every staging host actually runs.
     pub(crate) fn heap_sender_with_active_link() -> EngineState<crate::storage::GrowableHeap> {
-        let mut engine = EngineState::<crate::storage::GrowableHeap> {
-            resource_seal_workspace_policy: ResourceSealWorkspacePolicy::TransferOwnership,
-            ..Default::default()
-        };
+        let mut engine = EngineState::<crate::storage::GrowableHeap>::default();
+        #[cfg(feature = "resource-work-offload")]
+        engine.set_resource_seal_execution(ResourceSealExecution::ExternalOwned);
         install_active_link(&mut engine);
         engine
     }
@@ -2456,6 +2497,7 @@ mod tests {
         capture
     }
 
+    #[cfg(feature = "resource-work-offload")]
     fn send_segment_external_with_metadata<S: StorageLayout>(
         engine: &mut EngineState<S>,
         id: u64,
@@ -2496,11 +2538,13 @@ mod tests {
         capture
     }
 
+    #[cfg(feature = "resource-work-offload")]
     struct OwnedSealJob {
         plan: ResourceSealPlan,
         workspace: std::vec::Vec<u8>,
     }
 
+    #[cfg(feature = "resource-work-offload")]
     fn request_staged_seal<S: StorageLayout>(engine: &mut EngineState<S>) -> Option<OwnedSealJob> {
         let mut job = None;
         engine.request_resource_seal(&link_id(), &mut |reaction| {
@@ -2631,7 +2675,7 @@ mod tests {
         deferred_engine.resume_resource_build(
             ResourceBuildCompleted {
                 reservation,
-                transfer: ResourceBuildTransfer::Borrowed(&transfer),
+                transfer: ResourceBuildTransfer::borrowed(&transfer),
                 names: &names,
                 request_data: &plaintext,
                 outcome,
@@ -2704,7 +2748,7 @@ mod tests {
         engine.resume_resource_build(
             ResourceBuildCompleted {
                 reservation: first_reservation,
-                transfer: ResourceBuildTransfer::Borrowed(&first_transfer),
+                transfer: ResourceBuildTransfer::borrowed(&first_transfer),
                 names: &first_names,
                 request_data: first_data,
                 outcome: first_outcome,
@@ -2766,7 +2810,7 @@ mod tests {
         engine.resume_resource_build(
             ResourceBuildCompleted {
                 reservation: second_reservation,
-                transfer: ResourceBuildTransfer::Borrowed(&second_transfer),
+                transfer: ResourceBuildTransfer::borrowed(&second_transfer),
                 names: &second_names,
                 request_data: second_data,
                 outcome: second_outcome,
@@ -2795,6 +2839,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "resource-work-offload")]
     #[test]
     fn an_owning_build_restores_the_reserved_transfer_allocation() {
         let mut engine = heap_sender_with_active_link();
@@ -2923,9 +2968,11 @@ mod tests {
         assert!(engine.outgoing_resources.is_empty());
     }
 
+    #[cfg(feature = "resource-work-offload")]
     #[test]
     fn an_external_seal_rejects_bad_shape_preserves_metadata_and_ignores_a_stale_verdict() {
         let mut engine = sender_with_active_link();
+        engine.set_resource_seal_execution(ResourceSealExecution::ExternalOwned);
         let data = b"the browser crypto lane preserves the resource stream";
         let metadata = [0x82, 0xA1, b'n', 0x01];
         let initial = send_segment_external_with_metadata(
@@ -3029,6 +3076,7 @@ mod tests {
         assert!(advertisement.flags.has_metadata);
     }
 
+    #[cfg(feature = "resource-work-offload")]
     #[test]
     fn external_continuation_seals_after_its_predecessor_serves_and_promotes_in_order() {
         let mut engine = heap_sender_with_active_link();
@@ -3629,6 +3677,7 @@ mod tests {
     pub(crate) struct InboundCapture {
         pub(crate) frames: std::vec::Vec<(InterfaceId, std::vec::Vec<u8>)>,
         pub(crate) settlements: std::vec::Vec<(CommandId, Settlement)>,
+        #[cfg(feature = "resource-work-offload")]
         seals: std::vec::Vec<OwnedSealJob>,
     }
 
@@ -3642,6 +3691,7 @@ mod tests {
         let mut capture = InboundCapture {
             frames: std::vec::Vec::new(),
             settlements: std::vec::Vec::new(),
+            #[cfg(feature = "resource-work-offload")]
             seals: std::vec::Vec::new(),
         };
         let mut raw = frame.to_vec();
@@ -3667,6 +3717,7 @@ mod tests {
                     EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
                         capture.settlements.push((id, settlement));
                     }
+                    #[cfg(feature = "resource-work-offload")]
                     EngineReaction::Directive(Directive::Fulfill(OwedWork::ResourceSeal(owed))) => {
                         let (plan, workspace) = owed.into_owned_parts();
                         capture.seals.push(OwnedSealJob { plan, workspace });
@@ -4033,32 +4084,42 @@ mod tests {
     ) -> InboundCapture {
         let index = engine.outgoing_resources.lookup(&link_id(), live).unwrap();
         let names = engine.outgoing_resources.names_flat(index).to_vec();
-        let mut capture = feed(engine, &request_frame(live, None, &names), 2_000);
-        for job in core::mem::take(&mut capture.seals) {
-            let landing = engine.resume_resource_seal(
-                ResourceSealCompleted {
-                    reservation: job.plan.reservation(),
-                    outcome: ResourceSealOutcome::Unavailable(UnavailableResourceSeal::Owned(
-                        job.workspace,
-                    )),
-                },
-                InstantMillis(2_000),
-                &mut |bytes: &mut [u8]| bytes.fill(0xB2),
-                &mut |reaction| match reaction {
-                    EngineReaction::Directive(Directive::EmitFrame { target, fill, .. }) => {
-                        if let Some(frame) = filled_frame(fill) {
-                            capture.frames.push((target, frame));
-                        }
-                    }
-                    EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
-                        capture.settlements.push((id, settlement));
-                    }
-                    _ => {}
-                },
-            );
-            assert_eq!(landing, ResourceSealLanding::Applied);
+        let capture = feed(engine, &request_frame(live, None, &names), 2_000);
+        #[cfg(not(feature = "resource-work-offload"))]
+        {
+            capture
         }
-        capture
+        #[cfg(feature = "resource-work-offload")]
+        {
+            let mut capture = capture;
+            for job in core::mem::take(&mut capture.seals) {
+                let landing = engine.resume_resource_seal(
+                    ResourceSealCompleted {
+                        reservation: job.plan.reservation(),
+                        outcome: ResourceSealOutcome::Unavailable(UnavailableResourceSeal::Owned(
+                            job.workspace,
+                        )),
+                    },
+                    InstantMillis(2_000),
+                    &mut |bytes: &mut [u8]| bytes.fill(0xB2),
+                    &mut |reaction| match reaction {
+                        EngineReaction::Directive(Directive::EmitFrame {
+                            target, fill, ..
+                        }) => {
+                            if let Some(frame) = filled_frame(fill) {
+                                capture.frames.push((target, frame));
+                            }
+                        }
+                        EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
+                            capture.settlements.push((id, settlement));
+                        }
+                        _ => {}
+                    },
+                );
+                assert_eq!(landing, ResourceSealLanding::Applied);
+            }
+            capture
+        }
     }
 
     #[test]
@@ -4082,6 +4143,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "resource-work-offload")]
     #[test]
     fn the_seal_is_owed_only_once_every_live_part_has_served() {
         let mut engine = heap_sender_with_active_link();
@@ -4211,6 +4273,7 @@ mod tests {
         assert_eq!(engine.outgoing_resources.len(), 2);
     }
 
+    #[cfg(feature = "resource-work-offload")]
     #[test]
     fn a_pool_verdict_lands_and_a_follower_stages_behind_the_sealing_row() {
         let mut engine = heap_sender_with_active_link();
@@ -4344,6 +4407,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "resource-work-offload")]
     #[test]
     fn a_failed_sealing_segment_drains_its_queued_follower() {
         let mut engine = heap_sender_with_active_link();

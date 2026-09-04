@@ -22,7 +22,8 @@ use personal_rns::routing::links::channel::MessageType;
 use personal_rns::routing::links::handshake::link_proof_signature_valid;
 use personal_rns::routing::links::request::RequestId;
 use personal_rns::routing::links::resources::send::{
-    ResourceSealCompleted, ResourceSealLanding, ResourceSealOutcome, UnavailableResourceSeal,
+    ResourceSealCompleted, ResourceSealExecution, ResourceSealLanding, ResourceSealOutcome,
+    UnavailableResourceSeal,
 };
 use personal_rns::routing::links::resources::streamed_open::ResourceOpenLane;
 use personal_rns::routing::links::resources::{
@@ -718,11 +719,17 @@ impl PrnsRuntime {
         match execution.as_str() {
             "Inline" => {
                 self.browser_workers_enabled = false;
-                self.engine.resource_open_lane = ResourceOpenLane::EngineDirected;
+                self.engine
+                    .set_resource_seal_execution(ResourceSealExecution::Inline);
+                self.engine
+                    .set_resource_open_lane(ResourceOpenLane::EngineDirected);
             }
             "BrowserWorkers" => {
                 self.browser_workers_enabled = true;
-                self.engine.resource_open_lane = ResourceOpenLane::ExternalWhole;
+                self.engine
+                    .set_resource_seal_execution(ResourceSealExecution::ExternalOwned);
+                self.engine
+                    .set_resource_open_lane(ResourceOpenLane::ExternalWhole);
             }
             _ => return Err(JsValue::from_str("unknown browser work execution")),
         }

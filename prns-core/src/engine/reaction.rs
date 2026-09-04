@@ -17,14 +17,20 @@ use crate::routing::links::establish::EstablishLinkOwed;
 use crate::routing::links::handshake::{LinkProofSignOwed, LinkProofVerifyOwed};
 use crate::routing::links::identify::{IdentifySignOwed, LinkIdentityVerifyOwed};
 use crate::routing::links::request::RequestId;
+#[cfg(feature = "resource-work-offload")]
 use crate::routing::links::resources::receive::part_hash::ResourcePartHashOwed;
-use crate::routing::links::resources::send::{ResourceBuildOwed, ResourceSealOwed};
+use crate::routing::links::resources::send::ResourceBuildOwed;
+#[cfg(feature = "resource-work-offload")]
+use crate::routing::links::resources::send::ResourceSealOwed;
 use crate::routing::links::resources::streamed_open::StreamedOpen;
+#[cfg(feature = "resource-work-offload")]
 use crate::routing::links::resources::table::ResourceOpenGeneration;
-use crate::routing::links::resources::{
-    ResourceCompression, ResourceFailureCause, ResourceHash, ResourceProof, SaltNonce,
-};
-use crate::routing::links::{LinkId, LinkKey};
+#[cfg(feature = "resource-work-offload")]
+use crate::routing::links::resources::{ResourceCompression, ResourceProof, SaltNonce};
+use crate::routing::links::resources::{ResourceFailureCause, ResourceHash};
+use crate::routing::links::LinkId;
+#[cfg(feature = "resource-work-offload")]
+use crate::routing::links::LinkKey;
 use crate::routing::proof::ChannelAckSignOwed;
 use crate::routing::proof::{LinkReceiptSignOwed, ProofSignOwed, ReceiptProofVerifyOwed};
 use crate::routing::request_handlers::RequestPathHash;
@@ -76,9 +82,12 @@ impl<'a, Work> EngineReaction<'a, Work> {
 pub enum OwedWork<'a> {
     Crypto(CryptoOwed),
     ResourceBuild(ResourceBuildOwed<'a>),
+    #[cfg(feature = "resource-work-offload")]
     ResourceSeal(ResourceSealOwed<'a>),
+    #[cfg(feature = "resource-work-offload")]
     ResourcePartHash(ResourcePartHashOwed<'a>),
     ResourceOpen(ResourceOpenOwed<'a>),
+    #[cfg(feature = "resource-work-offload")]
     WholeResourceOpen(WholeResourceOpenOwed<'a>),
     ResourceDecompression(ResourceDecompressionOwed<'a>),
 }
@@ -169,12 +178,14 @@ pub struct ResourceOpenCompleted<'a> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(feature = "resource-work-offload")]
 pub struct WholeResourceOpenReservation {
     pub(crate) link_id: LinkId,
     pub(crate) hash: ResourceHash,
     pub(crate) generation: ResourceOpenGeneration,
 }
 
+#[cfg(feature = "resource-work-offload")]
 pub struct WholeResourceOpenPlan {
     pub(crate) reservation: WholeResourceOpenReservation,
     pub(crate) key: LinkKey,
@@ -183,6 +194,7 @@ pub struct WholeResourceOpenPlan {
     pub(crate) total_segments: u64,
 }
 
+#[cfg(feature = "resource-work-offload")]
 impl WholeResourceOpenPlan {
     pub fn reservation(&self) -> WholeResourceOpenReservation {
         self.reservation
@@ -221,11 +233,13 @@ impl WholeResourceOpenPlan {
     }
 }
 
+#[cfg(feature = "resource-work-offload")]
 pub struct WholeResourceOpenOwed<'a> {
     pub(crate) plan: WholeResourceOpenPlan,
     pub(crate) sealed: &'a [u8],
 }
 
+#[cfg(feature = "resource-work-offload")]
 impl WholeResourceOpenOwed<'_> {
     pub fn plan(&self) -> &WholeResourceOpenPlan {
         &self.plan
@@ -240,6 +254,7 @@ impl WholeResourceOpenOwed<'_> {
     }
 }
 
+#[cfg(feature = "resource-work-offload")]
 pub enum WholeResourceOpenOutcome<'a> {
     Opened(&'a [u8]),
     OpenedAndDigested {
@@ -251,12 +266,14 @@ pub enum WholeResourceOpenOutcome<'a> {
     Unavailable,
 }
 
+#[cfg(feature = "resource-work-offload")]
 pub struct WholeResourceOpenCompleted<'a> {
     pub reservation: WholeResourceOpenReservation,
     pub outcome: WholeResourceOpenOutcome<'a>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(feature = "resource-work-offload")]
 pub enum WholeResourceOpenLanding {
     Applied,
     Stale,

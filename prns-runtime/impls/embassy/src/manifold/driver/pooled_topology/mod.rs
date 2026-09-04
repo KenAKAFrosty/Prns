@@ -119,6 +119,7 @@ pub(crate) async fn run_pooled<
     M: RawMutex + 'static,
     Store: InterfaceInspectionStore,
 {
+    engine.use_inline_resource_work();
     let AppDeciders {
         mut should_prove,
         mut should_accept_resource,

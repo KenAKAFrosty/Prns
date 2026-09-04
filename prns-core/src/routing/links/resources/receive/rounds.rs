@@ -6,17 +6,19 @@ use crate::routing::ingress::{DataPacket, IgnoreReason, IngestPacketOutcome};
 use crate::routing::links::data::write_link_packet;
 use crate::routing::links::data::{link_data_frame_ceiling, LINK_MDU};
 use crate::routing::links::resources::advertisement::parse_hashmap_update_plaintext;
-use crate::routing::links::resources::assemble_incoming::{
-    match_part_in_window, match_part_name_in_window,
-};
+use crate::routing::links::resources::assemble_incoming::match_part_in_window;
+#[cfg(feature = "resource-work-offload")]
+use crate::routing::links::resources::assemble_incoming::match_part_name_in_window;
 use crate::routing::links::resources::control::write_part_request_plaintext;
+use crate::routing::links::resources::receive::part_hash::ResourcePartHashLanding;
+#[cfg(feature = "resource-work-offload")]
 use crate::routing::links::resources::receive::part_hash::{
-    ResourcePartHashCompleted, ResourcePartHashLanding, ResourcePartHashLane, ResourcePartHashOwed,
-    ResourcePartHashPlan, ResourcePartHashReservation, ResourcePartHashReservations,
+    ResourcePartHashCompleted, ResourcePartHashLane, ResourcePartHashOwed, ResourcePartHashPlan,
+    ResourcePartHashReservation, ResourcePartHashReservations,
 };
-use crate::routing::links::resources::streamed_open::{
-    OpenProgress, ResourceOpenLane, StreamedOpen,
-};
+#[cfg(feature = "resource-work-offload")]
+use crate::routing::links::resources::streamed_open::ResourceOpenLane;
+use crate::routing::links::resources::streamed_open::{OpenProgress, StreamedOpen};
 use crate::routing::links::resources::table::IncomingResourceState;
 use crate::routing::links::resources::table::{IncomingResourceStatus, PlacePartOutcome};
 use crate::routing::links::resources::{
@@ -169,6 +171,7 @@ impl<S: StorageLayout> EngineState<S> {
             return IngestPacketOutcome::Ignored(IgnoreReason::LinkPhaseMismatch);
         }
         let part: &[u8] = data.payload;
+        #[cfg(feature = "resource-work-offload")]
         if self.resource_part_hash_lane == ResourcePartHashLane::External {
             let mut reservations = None;
             for index in 0..self.incoming_resources.len() {
@@ -235,6 +238,7 @@ impl<S: StorageLayout> EngineState<S> {
             .into_ingest_outcome()
     }
 
+    #[cfg(feature = "resource-work-offload")]
     pub(crate) fn land_resource_part_hash(
         &mut self,
         completed: ResourcePartHashCompleted<'_>,
@@ -329,6 +333,7 @@ impl<S: StorageLayout> EngineState<S> {
     /// An intentional deviation in timing only: RNS 1.4.2 opens the joined transfer whole at
     /// assembly, while runtimes spread the same work under the part arrivals it was waiting on.
     fn advance_streamed_open(&mut self, index: usize) {
+        #[cfg(feature = "resource-work-offload")]
         if self.resource_open_lane == ResourceOpenLane::ExternalWhole {
             return;
         }
@@ -579,6 +584,7 @@ mod loop_tests {
     use crate::engine::test_support::filled_frame;
     use crate::engine::CommandId;
     use crate::engine::IngestIo;
+    #[cfg(feature = "resource-work-offload")]
     use crate::engine::OwedWork;
     use crate::engine::Settlement;
     use crate::interfaces::AttachedInterfaces;
@@ -1437,6 +1443,7 @@ mod loop_tests {
         );
     }
 
+    #[cfg(feature = "resource-work-offload")]
     #[test]
     fn an_external_part_hash_resumes_with_the_packet_arrival_time() {
         let mut sender = engine_with_active_link();

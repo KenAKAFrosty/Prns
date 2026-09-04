@@ -1,9 +1,13 @@
+#[cfg(feature = "resource-work-offload")]
 use crate::engine::InstantMillis;
 use crate::routing::ingress::{IgnoreReason, IngestPacketOutcome};
-use crate::routing::links::resources::{map_hash, ResourceHash, SaltNonce, MAP_HASH_LEN};
+use crate::routing::links::resources::ResourceHash;
+#[cfg(feature = "resource-work-offload")]
+use crate::routing::links::resources::{map_hash, SaltNonce, MAP_HASH_LEN};
 use crate::routing::links::LinkId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg(feature = "resource-work-offload")]
 pub enum ResourcePartHashLane {
     #[default]
     Inline,
@@ -11,6 +15,7 @@ pub enum ResourcePartHashLane {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(feature = "resource-work-offload")]
 pub struct ResourcePartHashReservation {
     pub(crate) link_id: LinkId,
     pub(crate) hash: ResourceHash,
@@ -18,6 +23,7 @@ pub struct ResourcePartHashReservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(feature = "resource-work-offload")]
 pub(crate) enum ResourcePartHashReservations {
     One([ResourcePartHashReservation; 1]),
     Two([ResourcePartHashReservation; 2]),
@@ -25,6 +31,7 @@ pub(crate) enum ResourcePartHashReservations {
     Four([ResourcePartHashReservation; 4]),
 }
 
+#[cfg(feature = "resource-work-offload")]
 impl ResourcePartHashReservations {
     pub(crate) fn one(reservation: ResourcePartHashReservation) -> Self {
         Self::One([reservation])
@@ -46,14 +53,17 @@ impl ResourcePartHashReservations {
 }
 
 #[derive(Debug)]
+#[cfg(feature = "resource-work-offload")]
 pub(crate) struct ResourcePartHashCandidateCapacityReached;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(feature = "resource-work-offload")]
 pub struct ResourcePartHashPlan {
     pub(crate) reservations: ResourcePartHashReservations,
     pub(crate) arrived_at: InstantMillis,
 }
 
+#[cfg(feature = "resource-work-offload")]
 impl ResourcePartHashPlan {
     #[must_use]
     pub fn calculate<Part>(self, part: Part) -> ResourcePartHashResult<Part>
@@ -81,6 +91,7 @@ impl ResourcePartHashPlan {
     }
 }
 
+#[cfg(feature = "resource-work-offload")]
 fn calculate_matches<const N: usize>(
     reservations: [ResourcePartHashReservation; N],
     part: &[u8],
@@ -91,11 +102,13 @@ fn calculate_matches<const N: usize>(
     })
 }
 
+#[cfg(feature = "resource-work-offload")]
 pub(crate) struct ResourcePartHashMatch {
     pub(crate) reservation: ResourcePartHashReservation,
     pub(crate) name: [u8; MAP_HASH_LEN],
 }
 
+#[cfg(feature = "resource-work-offload")]
 pub(crate) enum ResourcePartHashMatches {
     One([ResourcePartHashMatch; 1]),
     Two([ResourcePartHashMatch; 2]),
@@ -103,6 +116,7 @@ pub(crate) enum ResourcePartHashMatches {
     Four([ResourcePartHashMatch; 4]),
 }
 
+#[cfg(feature = "resource-work-offload")]
 impl ResourcePartHashMatches {
     pub(crate) fn as_slice(&self) -> &[ResourcePartHashMatch] {
         match self {
@@ -114,12 +128,14 @@ impl ResourcePartHashMatches {
     }
 }
 
+#[cfg(feature = "resource-work-offload")]
 pub struct ResourcePartHashResult<Part> {
     matches: ResourcePartHashMatches,
     arrived_at: InstantMillis,
     part: Part,
 }
 
+#[cfg(feature = "resource-work-offload")]
 impl<Part> ResourcePartHashResult<Part>
 where
     Part: AsRef<[u8]>,
@@ -144,11 +160,13 @@ where
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(feature = "resource-work-offload")]
 pub struct ResourcePartHashOwed<'a> {
     pub(crate) plan: ResourcePartHashPlan,
     pub(crate) part: &'a [u8],
 }
 
+#[cfg(feature = "resource-work-offload")]
 impl<'a> ResourcePartHashOwed<'a> {
     #[must_use]
     pub fn into_parts(self) -> (ResourcePartHashPlan, &'a [u8]) {
@@ -161,6 +179,7 @@ impl<'a> ResourcePartHashOwed<'a> {
     }
 }
 
+#[cfg(feature = "resource-work-offload")]
 pub struct ResourcePartHashCompleted<'a> {
     pub(crate) matches: &'a ResourcePartHashMatches,
     pub(crate) arrived_at: InstantMillis,
@@ -189,7 +208,7 @@ impl ResourcePartHashLanding {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "resource-work-offload"))]
 mod tests {
     use super::*;
 

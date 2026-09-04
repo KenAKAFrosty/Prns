@@ -5,25 +5,18 @@ use crate::engine::{
     LinkIdentityVerification, LinkReceiptSignCompleted, OwedWork, ProofRequest, ProofSignCompleted,
     ReceiptProofVerification, ResourceDecompressionCompleted, ResourceOpenCompleted,
     TunnelSynthesizeSignCompleted, TunnelSynthesizeVerification, WakeSchedules,
-    WholeResourceOpenCompleted, WholeResourceOpenOutcome, WholeResourceOpenReservation,
 };
 use crate::identity::decrypt_token_in_place_with_ratchets;
 use crate::interfaces::{AttachedInterfaces, InterfaceId, InterfaceIfac, InterfaceStatus};
 use crate::manifold::Host;
 use crate::remote_control::RemoteControlPairingAvailabilityVerification;
 use crate::routing::links::handshake::{link_proof_signature_valid, link_proof_signed_data};
-use crate::routing::links::resources::build_outgoing::BuildOutgoingResourceError;
-use crate::routing::links::resources::receive::part_hash::ResourcePartHashResult;
-use crate::routing::links::resources::send::{
-    ResourceBuildCompleted, ResourceSealCompleted, ResourceSealOutcome, ResourceSealReservation,
-    UnavailableResourceSeal,
-};
-use crate::routing::links::resources::table::{ResourceBuildReservation, ResourceBuildTransfer};
+use crate::routing::links::resources::table::ResourceBuildReservation;
 use crate::routing::links::resources::ResourceHash;
 use crate::routing::links::LinkId;
 use crate::storage::StorageLayout;
 use crate::wire::BROADCAST_MTU;
-use heapless::{Deque, Vec};
+use heapless::Deque;
 
 use super::egress::{route_reaction, route_reaction_with_work, InterfacePacer, ManifoldEgress};
 use super::interface_status::EmbassyInterfaceStatus;
@@ -38,16 +31,7 @@ pub(super) enum InlineReadyWork {
     ResourceBuildUnsupported {
         reservation: ResourceBuildReservation,
     },
-    ResourceSealUnsupported {
-        reservation: ResourceSealReservation,
-    },
-    ResourcePartHash {
-        result: ResourcePartHashResult<Vec<u8, BROADCAST_MTU>>,
-    },
     ResourceOpen(ResourceOpenCompleted<'static>),
-    WholeResourceOpenUnsupported {
-        reservation: WholeResourceOpenReservation,
-    },
     ResourceDecompressionUnsupported {
         link_id: LinkId,
         hash: ResourceHash,
@@ -71,32 +55,20 @@ pub(super) fn route_and_capture_owed_work(
     pending: &mut InlineOwedWorkQueue,
 ) {
     route_reaction_with_work(reaction, egress, ifacs, pacers, now, app, &mut |work| {
+        #[allow(unreachable_patterns)]
         let ready = match work {
             OwedWork::Crypto(crypto) => InlineReadyWork::Crypto(crypto),
             OwedWork::ResourceBuild(owed) => InlineReadyWork::ResourceBuildUnsupported {
                 reservation: owed.reservation(),
             },
-            OwedWork::ResourceSeal(owed) => InlineReadyWork::ResourceSealUnsupported {
-                reservation: owed.plan().reservation(),
-            },
-            OwedWork::ResourcePartHash(owed) => {
-                let (plan, source) = owed.into_parts();
-                let part = Vec::from_slice(source)
-                    .expect("resource part exceeded the Embassy ingress capacity");
-                InlineReadyWork::ResourcePartHash {
-                    result: plan.calculate(part),
-                }
-            }
             OwedWork::ResourceOpen(owed) => InlineReadyWork::ResourceOpen(owed.fulfill_inline()),
-            OwedWork::WholeResourceOpen(owed) => InlineReadyWork::WholeResourceOpenUnsupported {
-                reservation: owed.plan().reservation(),
-            },
             OwedWork::ResourceDecompression(owed) => {
                 InlineReadyWork::ResourceDecompressionUnsupported {
                     link_id: owed.link_id,
                     hash: owed.hash,
                 }
             }
+            _ => return,
         };
         assert!(
             pending.push_back(ready).is_ok(),
@@ -429,64 +401,12 @@ where
                 },
             },
             InlineReadyWork::ResourceBuildUnsupported { reservation } => {
-                wake.compose(engine.resume_resource_build(
-                    ResourceBuildCompleted {
-                        reservation,
-                        transfer: ResourceBuildTransfer::Borrowed(&[]),
-                        names: &[],
-                        request_data: &[],
-                        outcome: Err(BuildOutgoingResourceError::BufferShapeMismatch),
-                    },
-                    now,
-                    &mut |entropy| host.fill_random(entropy),
+                wake.compose(engine.resume_resource_build_unavailable(
+                    reservation,
                     &mut |reaction| {
                         route_reaction(reaction, egress, ifacs, pacers, now, on_journaled);
                     },
                 ));
-            }
-            InlineReadyWork::ResourceSealUnsupported { reservation } => {
-                engine.resume_resource_seal(
-                    ResourceSealCompleted {
-                        reservation,
-                        outcome: ResourceSealOutcome::Unavailable(
-                            UnavailableResourceSeal::Resident,
-                        ),
-                    },
-                    now,
-                    &mut |entropy| host.fill_random(entropy),
-                    &mut |reaction| {
-                        route_and_capture_owed_work(
-                            reaction,
-                            egress,
-                            ifacs,
-                            pacers,
-                            now,
-                            on_journaled,
-                            &mut pending,
-                        );
-                    },
-                );
-            }
-            InlineReadyWork::ResourcePartHash { result } => {
-                let (completed_wake, _) = result.complete_with(|completed| {
-                    engine.resume_resource_part_hash(
-                        completed,
-                        now,
-                        &mut |entropy| host.fill_random(entropy),
-                        &mut |reaction| {
-                            route_and_capture_owed_work(
-                                reaction,
-                                egress,
-                                ifacs,
-                                pacers,
-                                now,
-                                on_journaled,
-                                &mut pending,
-                            );
-                        },
-                    )
-                });
-                wake.compose(completed_wake);
             }
             InlineReadyWork::ResourceOpen(completed) => {
                 wake.compose(
@@ -501,26 +421,6 @@ where
                             &mut pending,
                         );
                     }),
-                );
-            }
-            InlineReadyWork::WholeResourceOpenUnsupported { reservation } => {
-                engine.resume_whole_resource_open(
-                    WholeResourceOpenCompleted {
-                        reservation,
-                        outcome: WholeResourceOpenOutcome::Unavailable,
-                    },
-                    now,
-                    &mut |reaction| {
-                        route_and_capture_owed_work(
-                            reaction,
-                            egress,
-                            ifacs,
-                            pacers,
-                            now,
-                            on_journaled,
-                            &mut pending,
-                        );
-                    },
                 );
             }
             InlineReadyWork::ResourceDecompressionUnsupported { link_id, hash } => {

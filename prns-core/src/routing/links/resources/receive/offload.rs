@@ -5,16 +5,22 @@
 
 use crate::engine::{
     Directive, EngineReaction, EngineState, InstantMillis, OpenedResourceSpan, OwedWork,
-    ResourceOpenCompleted, ResourceOpenOwed, WakeSchedules, WholeResourceOpenCompleted,
-    WholeResourceOpenLanding, WholeResourceOpenOutcome,
+    ResourceOpenCompleted, ResourceOpenOwed, WakeSchedules,
 };
-use crate::routing::links::resources::streamed_open::{ExternalOpenVerification, OpenProgress};
+#[cfg(feature = "resource-work-offload")]
+use crate::engine::{
+    WholeResourceOpenCompleted, WholeResourceOpenLanding, WholeResourceOpenOutcome,
+};
+#[cfg(feature = "resource-work-offload")]
+use crate::routing::links::resources::streamed_open::ExternalOpenVerification;
+use crate::routing::links::resources::streamed_open::OpenProgress;
 use crate::routing::links::resources::table::IncomingResourceStatus;
 use crate::routing::links::resources::ResourceHash;
 use crate::routing::links::LinkId;
 use crate::storage::StorageLayout;
 
 impl<S: StorageLayout> EngineState<S> {
+    #[cfg(feature = "resource-work-offload")]
     pub fn resume_whole_resource_open(
         &mut self,
         completed: WholeResourceOpenCompleted<'_>,
@@ -224,13 +230,17 @@ impl<S: StorageLayout> EngineState<S> {
 mod tests {
     use super::*;
     use crate::engine::test_support::{filled_frame, routable_descriptor};
+    #[cfg(feature = "resource-work-offload")]
+    use crate::engine::WholeResourceOpenPlan;
     use crate::engine::{
         CommandId, Directive, IngestIo, Journaled, OpenedResourceSpan, ResourceOpenCompleted,
-        Settlement, WholeResourceOpenPlan,
+        Settlement,
     };
     use crate::interfaces::{AttachedInterfaces, InboundPacket};
     use crate::routing::links::resources::receive::tests_support::*;
-    use crate::routing::links::resources::streamed_open::{ResourceOpenLane, StreamedOpen};
+    #[cfg(feature = "resource-work-offload")]
+    use crate::routing::links::resources::streamed_open::ResourceOpenLane;
+    use crate::routing::links::resources::streamed_open::StreamedOpen;
     use crate::routing::links::resources::table::IncomingResourceStatus;
     use crate::routing::links::resources::{
         ResourceBody, ResourceFailureCause, ResourceMetadata, ResourceSend, OPEN_VERDICT_GRACE_MS,
@@ -276,11 +286,13 @@ mod tests {
         other_transfers_in_flight: bool,
     }
 
+    #[cfg(feature = "resource-work-offload")]
     struct OwnedWholeOpenJob {
         plan: WholeResourceOpenPlan,
         sealed: std::vec::Vec<u8>,
     }
 
+    #[cfg(feature = "resource-work-offload")]
     fn feed_deferring_whole_open(
         receiver: &mut EngineState<crate::engine::test_support::TestStorageLayout>,
         frame: &[u8],
@@ -316,6 +328,7 @@ mod tests {
         job
     }
 
+    #[cfg(feature = "resource-work-offload")]
     fn park_external_transfer(
         sender: &mut EngineState<crate::engine::test_support::TestStorageLayout>,
         receiver: &mut EngineState<crate::engine::test_support::TestStorageLayout>,
@@ -337,6 +350,7 @@ mod tests {
         job.expect("the completed transfer owes one whole-resource open")
     }
 
+    #[cfg(feature = "resource-work-offload")]
     #[test]
     fn an_external_whole_open_delivers_and_proves() {
         let mut sender = engine_with_active_link();
@@ -378,6 +392,7 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "resource-work-offload")]
     #[test]
     fn an_externally_verified_open_delivers_with_the_supplied_proof() {
         let mut sender = engine_with_active_link();
@@ -429,6 +444,7 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "resource-work-offload")]
     #[test]
     fn an_externally_verified_open_rejects_a_mismatched_calculated_hash() {
         let mut sender = engine_with_active_link();
@@ -466,6 +482,7 @@ mod tests {
             .is_some());
     }
 
+    #[cfg(feature = "resource-work-offload")]
     #[test]
     fn an_external_open_refusal_fails_only_the_reserved_job() {
         let mut sender = engine_with_active_link();
@@ -493,6 +510,7 @@ mod tests {
         assert!(receiver.incoming_resources.is_empty());
     }
 
+    #[cfg(feature = "resource-work-offload")]
     #[test]
     fn an_external_open_runtime_failure_retries_the_same_row_inline() {
         let mut sender = engine_with_active_link();

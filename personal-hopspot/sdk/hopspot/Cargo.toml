@@ -18,7 +18,7 @@ include = ["src/**", "tests/**", "!tests/**/__pycache__/**", "!tests/**/*.pyc", 
 path = "src/lib.rs"
 
 [features]
-default = ["std", "std-sync-host"]
+default = ["std", "std-sync-host", "resource-work-offload"]
 alloc = ["personal-rns/alloc"]
 rnx = ["personal-rns/rnx"]
 signed-artifact = ["personal-rns/signed-artifact"]
@@ -38,6 +38,7 @@ large-static-responses = ["personal-rns/large-static-responses"]
 embassy-large-static-responses = ["personal-rns/embassy-large-static-responses"]
 parallel-resource-hash = ["personal-rns/parallel-resource-hash"]
 parallel-persistence = ["personal-rns/parallel-persistence"]
+resource-work-offload = ["personal-rns/resource-work-offload"]
 test-support = ["personal-rns/test-support"]
 keyring-zbus = ["personal-rns/keyring-zbus"]
 keyring-libdbus = ["personal-rns/keyring-libdbus"]

@@ -59,6 +59,7 @@ pub struct ResourceBuildGeneration(NonZeroU64);
 pub struct ResourceSealGeneration(NonZeroU64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(feature = "resource-work-offload")]
 pub struct ResourceOpenGeneration(NonZeroU64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -162,6 +163,7 @@ pub struct OutgoingResourceState {
     pub sent_part_count: usize,
     pub status: OutgoingResourceStatus,
     pub pending_build_lane: Option<TrackLane>,
+    #[cfg(feature = "resource-work-offload")]
     pub seal_generation: Option<ResourceSealGeneration>,
     pub retries_left: u8,
     pub command_id: CommandId,
@@ -188,6 +190,7 @@ impl Default for OutgoingResourceState {
             sent_part_count: 0,
             status: OutgoingResourceStatus::Advertised,
             pending_build_lane: None,
+            #[cfg(feature = "resource-work-offload")]
             seal_generation: None,
             retries_left: 0,
             command_id: CommandId(0),
@@ -216,6 +219,7 @@ pub struct IncomingResourceState {
     pub window_min: usize,
     pub window_max: usize,
     pub status: IncomingResourceStatus,
+    #[cfg(feature = "resource-work-offload")]
     pub open_generation: Option<ResourceOpenGeneration>,
     pub retries_left: u8,
     pub correlation: ResourceCorrelation,
@@ -265,6 +269,7 @@ impl Default for IncomingResourceState {
             window_min: WINDOW_MIN,
             window_max: WINDOW_MAX_SLOW,
             status: IncomingResourceStatus::Transferring,
+            #[cfg(feature = "resource-work-offload")]
             open_generation: None,
             retries_left: 0,
             correlation: ResourceCorrelation::Unsolicited,
@@ -304,18 +309,38 @@ pub enum ResourceTransferRestore {
     ShapeMismatch(Vec<u8>),
 }
 
+#[cfg(feature = "resource-work-offload")]
 pub enum ResourceBuildTransfer<'a> {
     Borrowed(&'a [u8]),
     #[cfg(feature = "alloc")]
     Owned(Vec<u8>),
 }
 
-impl ResourceBuildTransfer<'_> {
+#[cfg(not(feature = "resource-work-offload"))]
+pub struct ResourceBuildTransfer<'a>(&'a [u8]);
+
+impl<'a> ResourceBuildTransfer<'a> {
+    pub fn borrowed(bytes: &'a [u8]) -> Self {
+        #[cfg(feature = "resource-work-offload")]
+        {
+            Self::Borrowed(bytes)
+        }
+        #[cfg(not(feature = "resource-work-offload"))]
+        {
+            Self(bytes)
+        }
+    }
+
     pub fn as_slice(&self) -> &[u8] {
+        #[cfg(feature = "resource-work-offload")]
         match self {
             Self::Borrowed(bytes) => bytes,
             #[cfg(feature = "alloc")]
             Self::Owned(bytes) => bytes,
+        }
+        #[cfg(not(feature = "resource-work-offload"))]
+        {
+            self.0
         }
     }
 }
@@ -466,6 +491,7 @@ pub struct OutgoingResources<C: ResourceTable<OutgoingResourceState>> {
     table: C,
     earliest_timeout: Option<InstantMillis>,
     next_build_generation: u64,
+    #[cfg(feature = "resource-work-offload")]
     next_seal_generation: u64,
 }
 
@@ -485,6 +511,7 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
         }
     }
 
+    #[cfg(feature = "resource-work-offload")]
     pub(crate) fn take_seal_generation(&mut self) -> ResourceSealGeneration {
         loop {
             self.next_seal_generation = self.next_seal_generation.wrapping_add(1);
@@ -590,6 +617,7 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
                         TrackLane::Staged => OutgoingResourceStatus::StagedSealed,
                     },
                     pending_build_lane: None,
+                    #[cfg(feature = "resource-work-offload")]
                     seal_generation: None,
                     retries_left: 0,
                     command_id,
@@ -669,16 +697,12 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
         names: &[u8],
         outcome: Result<BuiltResource, BuildOutgoingResourceError>,
     ) -> ResourceBuildLanding {
-        let Some(index) = self.reserved_build_index(ticket) else {
-            return ResourceBuildLanding::Stale;
-        };
         let built = match outcome {
             Ok(built) => built,
-            Err(error) => {
-                self.table.swap_remove(index);
-                self.refresh_earliest_timeout();
-                return ResourceBuildLanding::Failed(error);
-            }
+            Err(error) => return self.fail_reserved_build(ticket, error),
+        };
+        let Some(index) = self.reserved_build_index(ticket) else {
+            return ResourceBuildLanding::Stale;
         };
         let reserved = self.table.states()[index];
         let expected_transfer_bytes = reserved.sealed_transfer_bytes;
@@ -692,6 +716,7 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
             self.refresh_earliest_timeout();
             return ResourceBuildLanding::Failed(BuildOutgoingResourceError::BufferShapeMismatch);
         }
+        #[cfg(feature = "resource-work-offload")]
         match transfer {
             ResourceBuildTransfer::Borrowed(transfer) => {
                 self.table.buffers_mut(index).transfer[..expected_transfer_bytes]
@@ -715,11 +740,27 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
                 }
             }
         }
+        #[cfg(not(feature = "resource-work-offload"))]
+        self.table.buffers_mut(index).transfer[..expected_transfer_bytes]
+            .copy_from_slice(transfer.as_slice());
         let buffers = self.table.buffers_mut(index);
         buffers.part_names[..expected_part_count]
             .as_flattened_mut()
             .copy_from_slice(names);
         self.finish_build(index, built, ticket.lane)
+    }
+
+    pub(crate) fn fail_reserved_build(
+        &mut self,
+        ticket: ResourceBuildReservation,
+        error: BuildOutgoingResourceError,
+    ) -> ResourceBuildLanding {
+        let Some(index) = self.reserved_build_index(ticket) else {
+            return ResourceBuildLanding::Stale;
+        };
+        self.table.swap_remove(index);
+        self.refresh_earliest_timeout();
+        ResourceBuildLanding::Failed(error)
     }
 
     fn reserved_build_index(&self, reservation: ResourceBuildReservation) -> Option<usize> {
@@ -773,6 +814,7 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
                 TrackLane::Staged => OutgoingResourceStatus::StagedSealed,
             },
             pending_build_lane: None,
+            #[cfg(feature = "resource-work-offload")]
             seal_generation: None,
             retries_left: 0,
             command_id: reserved.command_id,
@@ -1141,6 +1183,7 @@ pub enum PlacePartOutcome {
 pub struct IncomingResources<C: ResourceTable<IncomingResourceState>> {
     table: C,
     earliest_timeout: Option<InstantMillis>,
+    #[cfg(feature = "resource-work-offload")]
     next_open_generation: u64,
 }
 
@@ -1169,6 +1212,7 @@ fn accepted_resource_shape(
 }
 
 impl<C: ResourceTable<IncomingResourceState>> IncomingResources<C> {
+    #[cfg(feature = "resource-work-offload")]
     pub(crate) fn take_open_generation(&mut self) -> ResourceOpenGeneration {
         loop {
             self.next_open_generation = self.next_open_generation.wrapping_add(1);
@@ -1275,6 +1319,7 @@ impl<C: ResourceTable<IncomingResourceState>> IncomingResources<C> {
                     window_min: WINDOW_MIN,
                     window_max: WINDOW_MAX_SLOW,
                     status: IncomingResourceStatus::Transferring,
+                    #[cfg(feature = "resource-work-offload")]
                     open_generation: None,
                     retries_left: 0,
                     correlation: offer.correlation,
@@ -1691,7 +1736,7 @@ mod tests {
         assert_eq!(
             outgoing.land_built_resource(
                 first,
-                ResourceBuildTransfer::Borrowed(&transfer),
+                ResourceBuildTransfer::borrowed(&transfer),
                 &names,
                 Ok(fabricated(0xAB, 928, 2)),
             ),
@@ -1702,7 +1747,7 @@ mod tests {
         assert_eq!(
             outgoing.land_built_resource(
                 replacement,
-                ResourceBuildTransfer::Borrowed(&transfer),
+                ResourceBuildTransfer::borrowed(&transfer),
                 &names,
                 Ok(fabricated(0xAB, 928, 2)),
             ),
@@ -1719,7 +1764,7 @@ mod tests {
         assert_eq!(
             outgoing.land_built_resource(
                 replacement,
-                ResourceBuildTransfer::Borrowed(&transfer),
+                ResourceBuildTransfer::borrowed(&transfer),
                 &names,
                 Ok(fabricated(0xAB, 928, 2)),
             ),
@@ -1737,7 +1782,7 @@ mod tests {
         assert_eq!(
             outgoing.land_built_resource(
                 reservation,
-                ResourceBuildTransfer::Borrowed(&[0xAB; 928]),
+                ResourceBuildTransfer::borrowed(&[0xAB; 928]),
                 &[0xCD; 2 * MAP_HASH_LEN],
                 Ok(fabricated(0xAB, 928, 2)),
             ),
@@ -1753,7 +1798,7 @@ mod tests {
         assert_eq!(
             outgoing.land_built_resource(
                 failed,
-                ResourceBuildTransfer::Borrowed(&[]),
+                ResourceBuildTransfer::borrowed(&[]),
                 &[],
                 Err(BuildOutgoingResourceError::SaltRerollsExhausted),
             ),
@@ -1765,7 +1810,7 @@ mod tests {
         assert_eq!(
             outgoing.land_built_resource(
                 misshapen,
-                ResourceBuildTransfer::Borrowed(&[0; 927]),
+                ResourceBuildTransfer::borrowed(&[0; 927]),
                 &[0; 2 * MAP_HASH_LEN],
                 Ok(fabricated(0xAB, 928, 2)),
             ),

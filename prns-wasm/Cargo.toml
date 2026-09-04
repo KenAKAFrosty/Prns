@@ -23,7 +23,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 js-sys = "0.3"
-personal-rns = { path = "../personal-rns", default-features = false, features = ["alloc"] }
+personal-rns = { path = "../personal-rns", default-features = false, features = ["alloc", "resource-work-offload"] }
 personal-hopspot-core = { path = "../personal-hopspot/core", default-features = false }
 prns-host = { path = "../prns-host/core" }
 prns-host-cooperative = { path = "../prns-host/impls/cooperative" }
