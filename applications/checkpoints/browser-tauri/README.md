@@ -2,23 +2,29 @@
 
 This is a bounded architecture decision, not a browser or desktop provider. It
 retains no provider package, storage adapter, Tauri shell, or disposable spike
-code.
+code, and this re-review adds no provider or runtime implementation.
 
 ## Audited baseline
 
 - Original Prns baseline: `68ee3156d268152d77f5e5a2ece3578ba6473d4e`.
-- Re-review baseline: `5126c94fc21e0c5fb20f2478a1621c7ef5cce1a9`
-  (`upstream/trunk`, `Derive default interface gravity from bitrate`).
-- Between those revisions, `prns-js/src/browser`, `prns-js/src/worker_wire`, and
-  the Tokio shared-instance sources remained byte-identical. The only audited
-  shared-instance change makes its default gravity derive from its bitrate
-  instead of using zero. That policy correction does not change worker lane
-  ownership, shared-instance election, or the direct Tauri composition below.
-- `upstream/main` pointed to
-  `1f069678691ad093a857049c6cd07850b20c2f59`. Its difference from the audited
-  trunk snapshot was limited to release metadata, dependency-policy
-  documentation, an entropy hotfix record, and a Heltec qualification-host
-  correction. It did not change the audited worker or shared-instance sources.
+- Prior re-review baseline: `5126c94fc21e0c5fb20f2478a1621c7ef5cce1a9`
+  (`Derive default interface gravity from bitrate`).
+- Current re-review baseline:
+  `81e1eeb00080c44ef55b440f44d7bac13e3ee044` (`upstream/trunk`, `Gate
+  resource offload by runtime capability`).
+- Between the prior and current re-review baselines, the browser runtime folded
+  its separate protocol-crypto and Resource offload calls into one typed
+  `BrowserWork` continuation boundary. `RuntimeHost` now selects `Inline` or
+  `BrowserWorkers`, drains `AnnounceVerify`, `LinkProofVerify`, `ResourceSeal`,
+  and `WholeResourceOpen` work, and lands each completion through the runtime.
+- The same range adds bounded Tokio scheduler policy, prioritizes interactive
+  egress over bulk Resource work, and capability-gates Resource offload. These
+  changes belong inside the Prns runtime; they do not add an application
+  message lane or transfer node scheduling policy to a future provider.
+- The five-lane DedicatedWorker wire, client, protocol, and engine-bridge files,
+  together with the Tokio shared-instance sources, remained byte-identical in
+  the new range. Worker ownership, shared-instance election, and the direct
+  Tauri composition below therefore remain unchanged.
 
 ## Browser decision
 
@@ -37,6 +43,14 @@ The useful mechanics are real:
 | Page capabilities | Uses a separately bounded request/settlement channel for page-only Bluetooth, USB, and network work | Preserve the lane; generated aggregate capability cases cannot enter its current closed union |
 | Projections | Coalesces the latest update per projection tag, acknowledges one in-flight batch, and bounds pending synchronizations | Preserve coalescing and recovery; application projection tags cannot enter its current closed union |
 | Shutdown | Uses a dedicated, one-shot `Stop` port and returns stop, persistence, snapshot, and Host-snapshot state before worker termination | The lane is isolated, but its page-side wait has no explicit deadline; a stuck interface close or persistence save can therefore leave `stop()` pending indefinitely |
+
+The typed `BrowserWork` queue is an internal WASM/runtime execution seam, not a
+replacement for these five page/worker lanes. It authorizes and correlates
+bounded protocol and Resource continuations while the existing control, event,
+capability, projection, and shutdown ports still own browser-process
+orchestration. A future application aggregate should reuse both layers: it
+must not copy the continuation scheduler into TypeScript or treat
+`BrowserWork` as an application protocol.
 
 A disposable compile/runtime spike used the existing generic
 `BatchedPortSender` and `BatchedPortReceiver` with generated-like
@@ -79,6 +93,12 @@ correlation, backpressure, projection, and shutdown control, which is the
 parallel control plane this checkpoint is meant to prevent. A worker URL or
 engine factory alone is also insufficient because the public client has no
 application operation, event, or projection path.
+
+The extracted orchestrator should delegate protocol and Resource work to the
+existing `RuntimeHost`/`BrowserWork` boundary. It must preserve the runtime's
+capability gate, continuation correlation, stale/collision handling, and
+interactive-over-bulk scheduling rather than introducing a second work queue
+or scheduler in the application layer.
 
 ## Direct Tauri composition
 
@@ -143,15 +163,17 @@ Application code keeps importing the single stable
 These static entries prevent one bundle from selecting two owners. The Tauri
 entry and alias remain deferred until the desktop slice exists.
 
-## Evidence run
+## Current re-review evidence
 
-- `npm --prefix prns-js run build:code` passed after a clean dependency install.
-- The disposable TypeScript substrate spike compiled with strict settings.
-- Its runtime test passed: 1 test, including queue-bound `Busy` admission.
-- `worker-wire`, `worker-event-sender`, `worker-projection-sender`, and
-  `worker-projection-server` passed: 21 tests.
+- `npm --prefix prns-js test` passed 111 tests against the current integration
+  source, including the unified browser-work boundary, Resource continuations,
+  provider-free contract consumer, and the unchanged worker lanes.
+- A separate full `npm --prefix prns-js run build:code` and `npm pack` passed
+  while producing the artifact used by the compatibility refresh.
 - `cargo test --locked --manifest-path validation/integration/Cargo.toml --test local_instance`
-  passed: 5 tests.
+  passed five shared-instance role and traffic tests.
+- No browser provider, Tauri shell, or platform qualification was run for this
+  re-review.
 
 Browser storage, multi-tab ownership, a browser provider, Tauri packaging,
 command permissions, window/tray/sleep journeys, signing, updater behavior,
