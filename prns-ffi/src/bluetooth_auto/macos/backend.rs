@@ -297,6 +297,7 @@ impl MacosBleBackend {
                     peripherals_for_thread,
                     restored_for_thread,
                     scan_activity_for_thread,
+                    identity,
                     group_tag,
                 );
                 let central_proto = ProtocolObject::from_ref(&*central_delegate);

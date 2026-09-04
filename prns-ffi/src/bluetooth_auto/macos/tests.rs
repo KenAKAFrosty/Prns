@@ -3,8 +3,9 @@ use std::time::{Duration, Instant};
 
 use objc2_core_bluetooth::CBCharacteristicProperties;
 use prns_core::interfaces::bluetooth_auto::{
-    default_group_tag, group_tag, manufacturer_role_payload, AdvertisingMode, BleBackend,
-    BleIdentity, BleRoleCapabilities, Control, ScanningMode,
+    default_group_tag, dial_key_from_identity, group_tag, manufacturer_role_payload,
+    AdvertisingMode, BleAddress, BleBackend, BleIdentity, BleRoleCapabilities, Control,
+    ScanningMode,
 };
 use tokio::sync::{mpsc, oneshot};
 
@@ -13,8 +14,9 @@ use super::backend::{
 };
 use super::central::CentralPeerSession;
 use super::discovery::{
-    candidate_strength, discover_disposition, CandidateStrength, DiscoverDisposition,
-    DiscoveryGuard, PeripheralLinkState, SessionPresence, StaleCancellation, StaleLinkRecovery,
+    candidate_strength, dial_sighting_action, discover_disposition, CandidateStrength,
+    DialSightingAction, DiscoverDisposition, DiscoveryGuard, ManufacturerPresence,
+    PeripheralLinkState, SessionPresence, StaleCancellation, StaleLinkRecovery,
 };
 use super::gatt_link::{
     gatt_inbound_channel, gatt_inbound_channel_with_budget, GattInboundSendError,
@@ -245,6 +247,76 @@ fn dial_admission_is_scoped_to_the_target_peer() {
         ),
         DialAdmission::AttachCentralSession
     );
+}
+
+#[test]
+fn ba_sim_02_field_race_legacy_dual_role_fail_opens_dial() {
+    // SoftDevice / ESP / HV4: DualRole manufacturer without a shared dial key.
+    // Option C′ fail-opens Dial so Mac remains the initiator.
+    let local = dial_key_from_identity(BleIdentity::new([0xF0; 16]));
+    assert_eq!(
+        dial_sighting_action(
+            local,
+            None,
+            BleRoleCapabilities::DualRole,
+            ManufacturerPresence::Present
+        ),
+        DialSightingAction::Dial,
+        "legacy DualRole with manufacturer must fail-open Dial (option C′)"
+    );
+}
+
+#[test]
+fn incomplete_adv_without_manufacturer_must_not_dial() {
+    // Android primary ADV is UUID-only; dial-key lives in the scan response.
+    // Fail-open Dial on that incomplete sighting races the phone's inbound dial.
+    let local = dial_key_from_identity(BleIdentity::new([0xF0; 16]));
+    assert_eq!(
+        dial_sighting_action(
+            local,
+            None,
+            BleRoleCapabilities::DualRole,
+            ManufacturerPresence::Absent
+        ),
+        DialSightingAction::Accept,
+        "UUID-only / no-manufacturer DualRole must Accept, not Dial"
+    );
+}
+
+#[test]
+fn dial_sighting_elects_on_shared_dial_key() {
+    let phone = dial_key_from_identity(BleIdentity::new([0x10; 16]));
+    let mac = dial_key_from_identity(BleIdentity::new([0xF0; 16]));
+    assert_eq!(
+        dial_sighting_action(
+            mac,
+            Some(phone),
+            BleRoleCapabilities::DualRole,
+            ManufacturerPresence::Present
+        ),
+        DialSightingAction::Accept,
+        "Mac must Accept when phone dial-key wins sort"
+    );
+    assert_eq!(
+        dial_sighting_action(
+            phone,
+            Some(mac),
+            BleRoleCapabilities::DualRole,
+            ManufacturerPresence::Present
+        ),
+        DialSightingAction::Dial,
+        "phone must Dial when it wins dial-key sort"
+    );
+    assert_eq!(
+        dial_sighting_action(
+            mac,
+            None,
+            BleRoleCapabilities::PeripheralOnly,
+            ManufacturerPresence::Absent
+        ),
+        DialSightingAction::Dial
+    );
+    let _ = BleAddress::new([0; 6]);
 }
 
 #[test]

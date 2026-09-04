@@ -1,4 +1,4 @@
-use super::identity::{default_group_tag, BleAddress, GROUP_TAG_LEN};
+use super::identity::{default_group_tag, BleAddress, BleIdentity, GROUP_TAG_LEN};
 
 pub const MAX_ADVERTISEMENT_LEN: usize = 31;
 
@@ -27,7 +27,10 @@ const EXPERIMENTAL_ROLE_COMPANY_ID: [u8; 2] = [0xff, 0xff];
 pub(super) const EXPERIMENTAL_ROLE_VERSION_MIN: u8 = 0x03;
 /// Manufacturer payload version that carries a discovery group tag.
 pub(super) const EXPERIMENTAL_ROLE_VERSION: u8 = 0x04;
+/// Host manufacturer payload that also carries a dial-election key (first 6 identity bytes).
+pub(super) const EXPERIMENTAL_ROLE_VERSION_WITH_DIAL_KEY: u8 = 0x05;
 pub(super) const EXPERIMENTAL_ROLE_PERIPHERAL_ONLY: u8 = 0x01;
+pub const DIAL_KEY_LEN: usize = 6;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BleUuid {
@@ -163,6 +166,10 @@ pub fn manufacturer_discovery_groups_match(
 }
 
 /// Manufacturer-specific body for a DualRole advertisement in the local discovery group.
+///
+/// SoftDevice primary ADV is capped at [`MAX_ADVERTISEMENT_LEN`]; this v4 shape fits beside the
+/// 128-bit service UUID. Host stacks that can carry a larger manufacturer field should prefer
+/// [`manufacturer_role_payload_with_dial_key`].
 pub fn manufacturer_role_payload(
     role_capabilities: BleRoleCapabilities,
     group_tag: [u8; GROUP_TAG_LEN],
@@ -179,6 +186,57 @@ pub fn manufacturer_role_payload(
         group_tag[2],
         group_tag[3],
     ]
+}
+
+/// Host manufacturer payload including a dial-election key shared across address spaces.
+///
+/// CoreBluetooth does not expose peer public MACs, so Mac/Android elect on
+/// [`dial_key_from_identity`] carried here instead of radio addresses.
+pub fn manufacturer_role_payload_with_dial_key(
+    role_capabilities: BleRoleCapabilities,
+    group_tag: [u8; GROUP_TAG_LEN],
+    dial_key: BleAddress,
+) -> [u8; 2 + GROUP_TAG_LEN + DIAL_KEY_LEN] {
+    let flags = match role_capabilities {
+        BleRoleCapabilities::DualRole => 0,
+        BleRoleCapabilities::PeripheralOnly => EXPERIMENTAL_ROLE_PERIPHERAL_ONLY,
+    };
+    let key = *dial_key.octets();
+    [
+        EXPERIMENTAL_ROLE_VERSION_WITH_DIAL_KEY,
+        flags,
+        group_tag[0],
+        group_tag[1],
+        group_tag[2],
+        group_tag[3],
+        key[0],
+        key[1],
+        key[2],
+        key[3],
+        key[4],
+        key[5],
+    ]
+}
+
+/// First six bytes of a Bluetooth Auto identity, used as a cross-platform dial sort key.
+pub fn dial_key_from_identity(identity: BleIdentity) -> BleAddress {
+    let bytes = identity.as_bytes();
+    BleAddress::new([bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5]])
+}
+
+/// Dial-election key from a manufacturer payload, when the peer advertised v5+.
+pub fn dial_key_from_manufacturer(company_id: u16, data: &[u8]) -> Option<BleAddress> {
+    if company_id != u16::from_le_bytes(EXPERIMENTAL_ROLE_COMPANY_ID) {
+        return None;
+    }
+    if *data.first()? < EXPERIMENTAL_ROLE_VERSION_WITH_DIAL_KEY {
+        return None;
+    }
+    let key: [u8; DIAL_KEY_LEN] = data
+        .get(2 + GROUP_TAG_LEN..2 + GROUP_TAG_LEN + DIAL_KEY_LEN)?
+        .try_into()
+        .ok()?;
+    Some(BleAddress::new(key))
 }
 
 pub fn columba_connection_role(

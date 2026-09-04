@@ -16,11 +16,15 @@ use objc2_foundation::{
 };
 use tokio::sync::{mpsc as tokio_mpsc, oneshot};
 
-use prns_core::interfaces::bluetooth_auto::{BleAddress, BleIdentity, Control, PeerProtocol};
+use prns_core::interfaces::bluetooth_auto::{
+    dial_key_from_identity, BleAddress, BleIdentity, Control, PeerProtocol,
+};
 
 use super::discovery::{
-    advertisement_candidate_strength, discover_disposition, DiscoverDisposition, DiscoveryGuard,
-    PeripheralLinkState, SessionPresence, StaleCancellation, StaleLinkRecovery,
+    advertisement_candidate_strength, dial_sighting_action, discover_disposition,
+    peer_role_and_dial_key, DialSightingAction, DiscoverDisposition, DiscoveryGuard,
+    ManufacturerPresence, PeripheralLinkState, SessionPresence, StaleCancellation,
+    StaleLinkRecovery,
 };
 use super::gatt_link::GattInboundSender;
 use super::gatt_write::{
@@ -280,6 +284,7 @@ pub(super) struct CentralDelegateIvars {
     restored: RestoredPeripherals,
     scan_activity: Arc<AtomicBool>,
     group_tag: [u8; 4],
+    local_dial_key: BleAddress,
     sessions: RefCell<HashMap<CoreBluetoothPeerId, CentralPeerSession>>,
     discovery_guard: RefCell<DiscoveryGuard>,
 }
@@ -407,6 +412,31 @@ define_class!(
             let address = peer_id.address();
             if let Ok(mut map) = self.ivars().peripherals.lock() {
                 map.insert(peer_id, (SendPeripheral(peripheral.retain()), rssi));
+            }
+            // SAFETY: CoreBluetooth exports this dictionary key with process lifetime.
+            let manufacturer_data_key =
+                unsafe { objc2_core_bluetooth::CBAdvertisementDataManufacturerDataKey };
+            let manufacturer_data = advertisement_data
+                .objectForKey(manufacturer_data_key)
+                .and_then(|data| data.downcast_ref::<NSData>().map(NSData::to_vec));
+            let (peer_role, peer_dial_key) = peer_role_and_dial_key(manufacturer_data.as_deref());
+            let manufacturer = if manufacturer_data.is_some() {
+                ManufacturerPresence::Present
+            } else {
+                ManufacturerPresence::Absent
+            };
+            if dial_sighting_action(
+                self.ivars().local_dial_key,
+                peer_dial_key,
+                peer_role,
+                manufacturer,
+            ) == DialSightingAction::Accept
+            {
+                crate::diagnostic_log::debug!(
+                    "bluetooth: sighted {:02x?} — Accept-only after dial election",
+                    address.octets()
+                );
+                return;
             }
             let _ = self.ivars().events.send(Event::Sighting { address, rssi });
         }
@@ -769,6 +799,7 @@ impl CentralDelegate {
         peripherals: PeripheralTable,
         restored: RestoredPeripherals,
         scan_activity: Arc<AtomicBool>,
+        identity: BleIdentity,
         group_tag: [u8; 4],
     ) -> Retained<Self> {
         let this = Self::alloc().set_ivars(CentralDelegateIvars {
@@ -777,6 +808,7 @@ impl CentralDelegate {
             restored,
             scan_activity,
             group_tag,
+            local_dial_key: dial_key_from_identity(identity),
             sessions: RefCell::new(HashMap::new()),
             discovery_guard: RefCell::new(DiscoveryGuard::default()),
         });

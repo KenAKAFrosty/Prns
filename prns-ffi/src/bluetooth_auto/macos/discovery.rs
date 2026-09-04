@@ -8,8 +8,9 @@ use objc2_core_bluetooth::{
 use objc2_foundation::{NSData, NSDictionary, NSString};
 
 use prns_core::interfaces::bluetooth_auto::{
-    columba_role_capabilities_from_manufacturer, default_group_tag,
-    manufacturer_discovery_groups_match, GROUP_TAG_LEN,
+    columba_connection_role, columba_role_capabilities_from_manufacturer, default_group_tag,
+    dial_key_from_manufacturer, manufacturer_discovery_groups_match, BleAddress,
+    BleRoleCapabilities, ColumbaConnectionRole, GROUP_TAG_LEN,
 };
 
 use super::CoreBluetoothPeerId;
@@ -27,6 +28,73 @@ pub(super) enum CandidateStrength {
     Weak,
     /// Advertisement is in a different discovery group — never dial or sight.
     Rejected,
+}
+
+/// Whether a discovery should become an outbound dial sighting.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum DialSightingAction {
+    /// Forward `BleEvent::Sighting` so policy may dial.
+    Dial,
+    /// Keep the peripheral cached for inbound / later use; do not dial.
+    Accept,
+}
+
+/// Whether CoreBluetooth supplied manufacturer-specific data on this sighting.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ManufacturerPresence {
+    Present,
+    Absent,
+}
+
+/// Pre-dial election for CoreBluetooth DualRole peers (option C′).
+///
+/// Dial-key (v5) peers elect with [`columba_connection_role`]. Legacy DualRole
+/// with manufacturer and no dial key fail-opens Dial (SoftDevice / ESP). DualRole
+/// sightings without manufacturer Accept so UUID-only primary ADV does not race
+/// an inbound host dial.
+pub(super) fn dial_sighting_action(
+    local_dial_key: BleAddress,
+    peer_dial_key: Option<BleAddress>,
+    peer_capabilities: BleRoleCapabilities,
+    manufacturer: ManufacturerPresence,
+) -> DialSightingAction {
+    match peer_capabilities {
+        BleRoleCapabilities::PeripheralOnly => DialSightingAction::Dial,
+        BleRoleCapabilities::DualRole => match peer_dial_key {
+            Some(peer) => match columba_connection_role(
+                local_dial_key,
+                BleRoleCapabilities::DualRole,
+                peer,
+                BleRoleCapabilities::DualRole,
+            ) {
+                ColumbaConnectionRole::Dial => DialSightingAction::Dial,
+                ColumbaConnectionRole::Accept | ColumbaConnectionRole::Unavailable => {
+                    DialSightingAction::Accept
+                }
+            },
+            None => match manufacturer {
+                ManufacturerPresence::Present => DialSightingAction::Dial,
+                ManufacturerPresence::Absent => DialSightingAction::Accept,
+            },
+        },
+    }
+}
+
+pub(super) fn peer_role_and_dial_key(
+    manufacturer_data: Option<&[u8]>,
+) -> (BleRoleCapabilities, Option<BleAddress>) {
+    let Some(data) = manufacturer_data else {
+        return (BleRoleCapabilities::DualRole, None);
+    };
+    let Some(company_id) = data.get(..2).and_then(|bytes| bytes.try_into().ok()) else {
+        return (BleRoleCapabilities::DualRole, None);
+    };
+    let company_id = u16::from_le_bytes(company_id);
+    let body = &data[2..];
+    let role = columba_role_capabilities_from_manufacturer(company_id, body)
+        .unwrap_or(BleRoleCapabilities::DualRole);
+    let dial_key = dial_key_from_manufacturer(company_id, body);
+    (role, dial_key)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

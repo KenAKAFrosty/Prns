@@ -164,6 +164,31 @@ fn lower_dual_role_address_dials_and_higher_address_accepts() {
 }
 
 #[test]
+fn dial_key_from_identity_is_stable_prefix_and_round_trips_manufacturer_v5() {
+    let identity = BleIdentity::new([
+        0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x90, 0xa0, 0xb0, 0xc0, 0xd0, 0xe0, 0xf0,
+        0x01,
+    ]);
+    let key = dial_key_from_identity(identity);
+    assert_eq!(key, BleAddress::new([0x10, 0x20, 0x30, 0x40, 0x50, 0x60]));
+    let payload = manufacturer_role_payload_with_dial_key(
+        BleRoleCapabilities::DualRole,
+        default_group_tag(),
+        key,
+    );
+    assert_eq!(payload[0], 0x05);
+    assert_eq!(dial_key_from_manufacturer(0xffff, &payload), Some(key));
+    assert_eq!(
+        dial_key_from_manufacturer(
+            0xffff,
+            &manufacturer_role_payload(BleRoleCapabilities::DualRole, default_group_tag())
+        ),
+        None,
+        "v4 payloads have no dial key"
+    );
+}
+
+#[test]
 fn hci_addresses_compare_in_display_order() {
     assert_eq!(
         BleAddress::from_hci_bytes([0x17, 0x27, 0x0c, 0x6a, 0x46, 0xfd]),

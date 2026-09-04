@@ -27,6 +27,7 @@ import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.os.Build
 import android.os.ParcelUuid
+import android.os.SystemClock
 import android.util.Log
 import java.nio.ByteBuffer
 import java.util.UUID
@@ -94,6 +95,9 @@ class BleLink(private val context: Context) {
     private val devices = ConcurrentHashMap<String, BluetoothDevice>()
     /** Last scan-time discovery-group match for a peer address. Missing means not yet observed. */
     private val peerDiscoveryAllowed = ConcurrentHashMap<String, Boolean>()
+    /** Empty-GATT miss counts per peer MAC (BA-SIM-02 / option C′). */
+    private val emptyGattMisses = ConcurrentHashMap<String, Int>()
+    private val emptyGattSuppressedUntil = ConcurrentHashMap<String, Long>()
     private val workers = CopyOnWriteArraySet<Thread>()
     private val radioWorkers = CopyOnWriteArraySet<Thread>()
     private val linkWorkers = ConcurrentHashMap<Int, CopyOnWriteArraySet<Thread>>()
@@ -623,6 +627,8 @@ class BleLink(private val context: Context) {
                     val wasActive = radioActive
                     if (groupChanged) {
                         peerDiscoveryAllowed.clear()
+                        emptyGattMisses.clear()
+                        emptyGattSuppressedUntil.clear()
                     }
                     applyDesiredRadioState(state)
                     lastState = state
@@ -1156,6 +1162,7 @@ class BleLink(private val context: Context) {
                 val service = gatt.getService(PRNS_SERVICE)
                 if (service == null) {
                     Log.w(TAG, "dialer[$connId] no Prns service")
+                    recordEmptyGattMiss(address)
                     runCatching { gatt.disconnect() }
                     return
                 }
@@ -1325,6 +1332,7 @@ class BleLink(private val context: Context) {
                     Log.w(TAG, "dialer[$connId] data CCCD null — DATA notifications NOT enabled")
                 }
                 Log.i(TAG, "dialer[$connId] $address subscribed (control + data ready)")
+                clearEmptyGattBackoff(address)
                 linkedConnIds.add(connId)
                 val octets = parseMac(address)
                 if (octets != null) {
@@ -1593,23 +1601,33 @@ class BleLink(private val context: Context) {
             .setConnectable(true)
             .setTimeout(0)
             .build()
+        val identity = localBleIdentity()
+        val manufacturer = ByteArray(if (identity != null && identity.size >= 6) 12 else 6)
+        manufacturer[0] = if (identity != null && identity.size >= 6) {
+            PRNS_ROLE_VERSION_WITH_DIAL_KEY
+        } else {
+            PRNS_ROLE_VERSION
+        }
+        manufacturer[1] = PRNS_ROLE_DUAL_MODE
+        manufacturer[2] = tag[0]
+        manufacturer[3] = tag[1]
+        manufacturer[4] = tag[2]
+        manufacturer[5] = tag[3]
+        if (identity != null && identity.size >= 6) {
+            System.arraycopy(identity, 0, manufacturer, 6, 6)
+        }
+        // Keep the 128-bit service UUID alone in the primary ADV — packing it with a
+        // 12-byte dial-key manufacturer payload overflows classic 31-byte ADV
+        // (ADVERTISE_FAILED_DATA_TOO_LARGE / code 1) and leaves the phone silent.
         val data = AdvertiseData.Builder()
             .setIncludeDeviceName(false)
             .addServiceUuid(ParcelUuid(PRNS_SERVICE))
-            .addManufacturerData(
-                PRNS_ROLE_COMPANY_ID,
-                byteArrayOf(
-                    PRNS_ROLE_VERSION,
-                    PRNS_ROLE_DUAL_MODE,
-                    tag[0],
-                    tag[1],
-                    tag[2],
-                    tag[3],
-                ),
-            )
+            .build()
+        val scanResponse = AdvertiseData.Builder()
+            .addManufacturerData(PRNS_ROLE_COMPANY_ID, manufacturer)
             .build()
         try {
-            advertiser.startAdvertising(settings, data, advertiseCallback)
+            advertiser.startAdvertising(settings, data, scanResponse, advertiseCallback)
             this.advertiser = advertiser
             advertisedGroupTag = tag
         } catch (e: SecurityException) {
@@ -1672,6 +1690,8 @@ class BleLink(private val context: Context) {
         l2capServer = null
         devices.clear()
         peerDiscoveryAllowed.clear()
+        emptyGattMisses.clear()
+        emptyGattSuppressedUntil.clear()
         inboundByAddr.clear()
         columbaSubscribedCentrals.clear()
         dialingAddrs.clear()
@@ -1701,12 +1721,34 @@ class BleLink(private val context: Context) {
         if (!matchesLocalDiscoveryGroup(capabilities)) {
             return false
         }
+        val peerMac = result.device.address
+        if (isEmptyGattSuppressed(peerMac)) {
+            return false
+        }
         if (capabilities != null &&
             capabilities.size >= 2 &&
             capabilities[0] >= PRNS_ROLE_VERSION_MIN &&
             capabilities[1].toInt() and PRNS_ROLE_PERIPHERAL_ONLY.toInt() != 0
         ) {
             return true
+        }
+        // Shared dial-key election (manufacturer v5) — same space as Mac CoreBluetooth.
+        if (capabilities != null &&
+            capabilities.size >= 12 &&
+            capabilities[0] >= PRNS_ROLE_VERSION_WITH_DIAL_KEY
+        ) {
+            val localIdentity = localBleIdentity() ?: return true
+            if (localIdentity.size < 6) {
+                return true
+            }
+            for (index in 0 until 6) {
+                val local = localIdentity[index].toInt() and 0xff
+                val peer = capabilities[6 + index].toInt() and 0xff
+                if (local != peer) {
+                    return local < peer
+                }
+            }
+            return false
         }
         val localAddress = runCatching { adapter?.address }.getOrNull()?.let(::parseMac) ?: return true
         if (localAddress.contentEquals(HIDDEN_LOCAL_ADDRESS)) {
@@ -1720,6 +1762,35 @@ class BleLink(private val context: Context) {
             }
         }
         return false
+    }
+
+    private fun recordEmptyGattMiss(address: String) {
+        val misses = (emptyGattMisses[address] ?: 0) + 1
+        emptyGattMisses[address] = misses
+        if (misses < EMPTY_GATT_MISS_LIMIT) {
+            return
+        }
+        val until = SystemClock.elapsedRealtime() + EMPTY_GATT_SUPPRESS_MS
+        emptyGattSuppressedUntil[address] = until
+        Log.w(
+            TAG,
+            "suppressing dials to $address for ${EMPTY_GATT_SUPPRESS_MS}ms after $misses empty-GATT misses",
+        )
+    }
+
+    private fun isEmptyGattSuppressed(address: String): Boolean {
+        val until = emptyGattSuppressedUntil[address] ?: return false
+        if (SystemClock.elapsedRealtime() < until) {
+            return true
+        }
+        emptyGattSuppressedUntil.remove(address)
+        emptyGattMisses.remove(address)
+        return false
+    }
+
+    private fun clearEmptyGattBackoff(address: String) {
+        emptyGattMisses.remove(address)
+        emptyGattSuppressedUntil.remove(address)
     }
 
     private fun matchesLocalDiscoveryGroup(capabilities: ByteArray?): Boolean {
@@ -1852,8 +1923,13 @@ class BleLink(private val context: Context) {
         private const val PRNS_ROLE_VERSION_MIN: Byte = 0x03
         /** Advertised manufacturer payload version that includes a discovery group tag. */
         private const val PRNS_ROLE_VERSION: Byte = 0x04
+        /** Manufacturer payload that also carries a 6-byte dial-election key. */
+        private const val PRNS_ROLE_VERSION_WITH_DIAL_KEY: Byte = 0x05
         private const val PRNS_ROLE_DUAL_MODE: Byte = 0x00
         private const val PRNS_ROLE_PERIPHERAL_ONLY: Byte = 0x01
+        /** BA-SIM-02 / option C′: suppress dials after this many empty-GATT misses. */
+        private const val EMPTY_GATT_MISS_LIMIT = 3
+        private const val EMPTY_GATT_SUPPRESS_MS = 5 * 60 * 1000L
         /** sha256("reticulum")[0..4] — must match prns-core DEFAULT_GROUP_TAG. */
         private val PRNS_DEFAULT_GROUP_TAG =
             byteArrayOf(0xEA.toByte(), 0xC4.toByte(), 0xD7.toByte(), 0x0B)

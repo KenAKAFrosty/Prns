@@ -24,9 +24,9 @@ use objc2_core_bluetooth::{
 use objc2_foundation::{NSArray, NSData, NSDictionary, NSNumber, NSString};
 
 use prns_core::interfaces::bluetooth_auto::{
-    manufacturer_role_payload, BleAddress, BleRoleCapabilities, BleUuid, BLE_SERVICE_UUID,
-    COLUMBA_IDENTITY_UUID, COLUMBA_RX_UUID, COLUMBA_TX_UUID, GROUP_TAG_LEN, NATIVE_CONTROL_UUID,
-    NATIVE_DATA_UUID,
+    manufacturer_role_payload_with_dial_key, BleAddress, BleRoleCapabilities, BleUuid,
+    BLE_SERVICE_UUID, COLUMBA_IDENTITY_UUID, COLUMBA_RX_UUID, COLUMBA_TX_UUID, GROUP_TAG_LEN,
+    NATIVE_CONTROL_UUID, NATIVE_DATA_UUID,
 };
 
 use central::CentralDelegate;
@@ -104,6 +104,7 @@ fn cbuuid_eq(a: &CBUUID, b: &CBUUID) -> bool {
 fn advertisement_data(
     services: &NSArray<CBUUID>,
     group_tag: [u8; GROUP_TAG_LEN],
+    dial_key: BleAddress,
 ) -> Retained<NSDictionary<NSString, AnyObject>> {
     // SAFETY: CoreBluetooth exports this NSString constant with process lifetime.
     let uuids_key: &NSString = unsafe { CBAdvertisementDataServiceUUIDsKey };
@@ -112,8 +113,9 @@ fn advertisement_data(
     // in primary ADV (classic ADV is only 31 bytes with a 128-bit service UUID).
     // SAFETY: CoreBluetooth exports this NSString constant with process lifetime.
     let mfg_key: &NSString = unsafe { CBAdvertisementDataManufacturerDataKey };
-    let payload = manufacturer_role_payload(BleRoleCapabilities::DualRole, group_tag);
-    let mut mfg_bytes = [0u8; 8];
+    let payload =
+        manufacturer_role_payload_with_dial_key(BleRoleCapabilities::DualRole, group_tag, dial_key);
+    let mut mfg_bytes = [0u8; 14];
     mfg_bytes[0] = 0xff;
     mfg_bytes[1] = 0xff;
     mfg_bytes[2..].copy_from_slice(&payload);
