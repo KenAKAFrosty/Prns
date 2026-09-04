@@ -235,7 +235,22 @@ describe("Foundation 1 Nodes runtime binding", () => {
       throw new Error("the iOS test provider must expose runtime acquisition");
     }
     const acquire = jest.fn(base.acquire);
-    const showPicker = jest.fn(async () => ({ type: "cancelled" as const }));
+    let publishSetup: ((status: AccessorySetupStatus) => void) | undefined;
+    const showPicker = jest.fn(async () => {
+      publishSetup?.({
+        phase: "setupRequired",
+        picker: "idle",
+        authorizedAccessoryCount: 0,
+        nativeStart: "notRequested",
+        restorationLaunchRequested: false,
+        revision: 2,
+        lastError: {
+          code: "userCancelled",
+          detail: "The Bluetooth chooser was cancelled.",
+        },
+      });
+      return { type: "cancelled" as const };
+    });
     const provider: RuntimeProvider = {
       ...base,
       accessorySetup: {
@@ -249,7 +264,10 @@ describe("Foundation 1 Nodes runtime binding", () => {
           lastError: null,
         }),
         showPicker,
-        addStatusListener: () => ({ remove: jest.fn() }),
+        addStatusListener: (listener) => {
+          publishSetup = listener;
+          return { remove: jest.fn() };
+        },
       },
       acquire,
     };
@@ -274,6 +292,38 @@ describe("Foundation 1 Nodes runtime binding", () => {
         view.getByText("The Bluetooth chooser was cancelled. No Bluetooth access changed."),
       ).toBeTruthy(),
     );
+    expect(view.queryByText("The Bluetooth chooser was cancelled.")).toBeNull();
+  });
+
+  it("shows only Bluetooth-access recovery when ASK status cannot be read", async () => {
+    const stop = jest.fn();
+    const base = fakeProvider(stop);
+    if (!("acquire" in base)) {
+      throw new Error("the iOS test provider must expose runtime acquisition");
+    }
+    const acquire = jest.fn(base.acquire);
+    const provider: RuntimeProvider = {
+      ...base,
+      accessorySetup: {
+        readStatus: async () => {
+          throw new Error("hostile internal AccessorySetupKit session failure");
+        },
+        showPicker: async () => ({ type: "completed" }),
+        addStatusListener: () => ({ remove: jest.fn() }),
+      },
+      acquire,
+    };
+    const view = render(
+      <DevelopmentRuntimeProvider provider={provider}>
+        <NodesScreen />
+        <PairNodeScreen selectedCandidateId={undefined} />
+      </DevelopmentRuntimeProvider>,
+    );
+
+    await waitFor(() => expect(view.getAllByText("Bluetooth access unavailable")).toHaveLength(2));
+    expect(view.queryByText("This device's node failed to start")).toBeNull();
+    expect(JSON.stringify(view.toJSON())).not.toMatch(/AccessorySetupKit|session failure/iu);
+    expect(acquire).not.toHaveBeenCalled();
   });
 
   it("starts once when ASK reports authorization and degrades honestly after removal", async () => {

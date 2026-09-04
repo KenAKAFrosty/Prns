@@ -157,7 +157,9 @@ export function PairNodeScreen({
         </Card>
       ) : null}
 
-      {runtime.phase === "failed" && runtime.accessorySetup?.phase !== "failed" ? (
+      {runtime.phase === "failed" &&
+      runtime.accessorySetup?.phase !== "failed" &&
+      runtime.accessorySetupFailure === null ? (
         <Card>
           <Subheading>This device&apos;s node failed to start</Subheading>
           <Badge tone="warning">Pairing unavailable</Badge>
@@ -257,7 +259,9 @@ function AccessorySetupCard({
             reconnect.
           </BodyText>
         ) : null}
-        {setup.lastError === null ? null : <BodyText>{setup.lastError.detail}</BodyText>}
+        {setup.lastError === null || feedback !== null ? null : (
+          <BodyText>{setup.lastError.detail}</BodyText>
+        )}
         {feedback === null ? null : <BodyText>{feedback}</BodyText>}
         <Button disabled={pickerOpen} onPress={onShow}>
           {pickerOpen ? "Bluetooth chooser open…" : "Choose a Bluetooth node"}
@@ -275,7 +279,9 @@ function AccessorySetupCard({
           ? "One Bluetooth node is available to prns. Continue with secure Reticulum pairing below."
           : `${setup.authorizedAccessoryCount} Bluetooth nodes are available to prns. Continue with secure Reticulum pairing below.`}
       </BodyText>
-      {setup.lastError === null ? null : <BodyText>{setup.lastError.detail}</BodyText>}
+      {setup.lastError === null || feedback !== null ? null : (
+        <BodyText>{setup.lastError.detail}</BodyText>
+      )}
       {feedback === null ? null : <BodyText>{feedback}</BodyText>}
       <Button disabled={pickerOpen} onPress={onShow} tone="secondary">
         {pickerOpen ? "Bluetooth chooser open…" : "Add another Bluetooth node"}

@@ -74,7 +74,9 @@ export function NodesScreen() {
         </Card>
       ) : null}
 
-      {runtime.phase === "failed" && runtime.accessorySetup?.phase !== "failed" ? (
+      {runtime.phase === "failed" &&
+      runtime.accessorySetup?.phase !== "failed" &&
+      runtime.accessorySetupFailure === null ? (
         <Card>
           <Subheading>This device&apos;s node failed to start</Subheading>
           <Badge tone="warning">Startup failed</Badge>
