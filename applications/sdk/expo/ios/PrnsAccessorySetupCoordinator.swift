@@ -7,6 +7,20 @@ let prnsAccessorySetupStatusDidChange = Notification.Name(
   "rs.reticulum.prns.app.accessory-setup-status-did-change"
 )
 
+enum PrnsNativeStartInterruption: LocalizedError {
+  case stopInProgress
+  case supersededByStop
+
+  var errorDescription: String? {
+    switch self {
+    case .stopInProgress:
+      return "The native node is still stopping. Reset app data before starting it again."
+    case .supersededByStop:
+      return "The native start request was superseded by a stop request."
+    }
+  }
+}
+
 @MainActor
 final class PrnsAccessorySetupCoordinator {
   static let shared = PrnsAccessorySetupCoordinator()
@@ -44,8 +58,7 @@ final class PrnsAccessorySetupCoordinator {
   private var phase = Phase.activating
   private var pickerDismissalPending = false
   private var pickerPhase = PickerPhase.idle
-  private var restorationLaunchRequested = false
-  private var restorationStartDispatched = false
+  private var restorationDispatch = PrnsRestorationDispatch()
   private var restorationReady: (() -> Void)?
   private var statusRevision: UInt64 = 0
 
@@ -55,8 +68,7 @@ final class PrnsAccessorySetupCoordinator {
     restorationLaunchRequested: Bool,
     restorationReady: @escaping () -> Void
   ) {
-    self.restorationLaunchRequested =
-      self.restorationLaunchRequested || restorationLaunchRequested
+    restorationDispatch.request(restorationLaunchRequested)
     self.restorationReady = restorationReady
     publish()
 
@@ -73,18 +85,23 @@ final class PrnsAccessorySetupCoordinator {
   }
 
   func requireAuthorized() throws {
-    guard
-      activated,
-      !pickerDismissalPending,
-      authorizedAccessoryCount > 0,
-      phase == .ready
-    else {
+    guard nativeStartAuthorized else {
       throw PrnsAppException("Authorize a Bluetooth node before starting prns.")
     }
   }
 
+  func restorationStartAuthorizationDidClose() {
+    restorationDispatch.rearmAfterAuthorizationLoss()
+    publish()
+    dispatchRestorationStartIfReady()
+  }
+
   func showPicker(_ completion: @escaping (String) -> Void) {
     guard activated else {
+      completion(Self.pickerOutcome(type: "notReady"))
+      return
+    }
+    guard nativeStartPhase != .starting, nativeStartPhase != .stopping else {
       completion(Self.pickerOutcome(type: "notReady"))
       return
     }
@@ -133,7 +150,7 @@ final class PrnsAccessorySetupCoordinator {
       "picker": pickerPhase.rawValue,
       "authorizedAccessoryCount": authorizedAccessoryCount,
       "nativeStart": nativeStartPhase.rawValue,
-      "restorationLaunchRequested": restorationLaunchRequested,
+      "restorationLaunchRequested": restorationDispatch.launchRequested,
       "revision": statusRevision,
     ]
     if let lastError {
@@ -168,9 +185,7 @@ final class PrnsAccessorySetupCoordinator {
       nativeStartCompletions.append(completion)
       return nil
     case .stopping:
-      throw PrnsAppException(
-        "The native node is still stopping. Reset app data before starting it again."
-      )
+      throw PrnsNativeStartInterruption.stopInProgress
     case .failed, .notRequested:
       nativeStartGeneration &+= 1
       nativeStartPhase = .starting
@@ -186,7 +201,7 @@ final class PrnsAccessorySetupCoordinator {
       nativeStartGeneration == startGeneration,
       nativeStartPhase == .starting
     else {
-      throw PrnsAppException("The native start request is no longer current.")
+      throw PrnsNativeStartInterruption.supersededByStop
     }
     try requireAuthorized()
   }
@@ -227,12 +242,13 @@ final class PrnsAccessorySetupCoordinator {
   }
 
   func nativeStopWillBegin() {
+    restorationDispatch.cancel()
     nativeStartGeneration &+= 1
     nativeStartPhase = .stopping
     completedStartOutcome = nil
     let completions = nativeStartCompletions
     nativeStartCompletions.removeAll(keepingCapacity: false)
-    let error = PrnsAppException("The native start request was superseded by a stop request.")
+    let error = PrnsNativeStartInterruption.supersededByStop
     for completion in completions {
       completion(.failure(error))
     }
@@ -310,15 +326,19 @@ final class PrnsAccessorySetupCoordinator {
 
   private func dispatchRestorationStartIfReady() {
     guard
-      phase == .ready,
-      restorationLaunchRequested,
-      !restorationStartDispatched,
-      let restorationReady
+      let restorationReady,
+      restorationDispatch.claimIfAuthorized(nativeStartAuthorized)
     else {
       return
     }
-    restorationStartDispatched = true
     restorationReady()
+  }
+
+  private var nativeStartAuthorized: Bool {
+    activated
+      && !pickerDismissalPending
+      && authorizedAccessoryCount > 0
+      && phase == .ready
   }
 
   private func fail(code: String, detail: String) {
@@ -348,7 +368,7 @@ final class PrnsAccessorySetupCoordinator {
       pickerPhase.rawValue,
       authorizedAccessoryCount,
       nativeStartPhase.rawValue,
-      restorationLaunchRequested.description
+      restorationDispatch.launchRequested.description
     )
   }
 

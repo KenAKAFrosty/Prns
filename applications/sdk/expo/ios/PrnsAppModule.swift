@@ -477,6 +477,7 @@ public final class PrnsAppModule: Module {
 
   private static func beginNativeStop() {
     DispatchQueue.main.sync {
+      PrnsAppLifecycleCoordinator.shared.nativeStopWillBegin(application: .shared)
       PrnsAccessorySetupCoordinator.shared.nativeStopWillBegin()
     }
   }

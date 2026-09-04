@@ -295,6 +295,105 @@ describe("Foundation 1 Nodes runtime binding", () => {
     expect(view.queryByText("The Bluetooth chooser was cancelled.")).toBeNull();
   });
 
+  it("waits for chooser dismissal and disables it while native startup is in flight", async () => {
+    const stop = jest.fn();
+    const base = fakeProvider(stop);
+    if (!("acquire" in base)) {
+      throw new Error("the iOS test provider must expose runtime acquisition");
+    }
+    const acquire = jest.fn(base.acquire);
+    const showPicker = jest.fn(async () => ({ type: "completed" as const }));
+    let publishSetup: ((status: AccessorySetupStatus) => void) | undefined;
+    const provider: RuntimeProvider = {
+      ...base,
+      accessorySetup: {
+        readStatus: async () => ({
+          phase: "ready",
+          picker: "presented",
+          authorizedAccessoryCount: 1,
+          nativeStart: "notRequested",
+          restorationLaunchRequested: false,
+          revision: 1,
+          lastError: null,
+        }),
+        showPicker,
+        addStatusListener: (listener) => {
+          publishSetup = listener;
+          return { remove: jest.fn() };
+        },
+      },
+      acquire,
+    };
+    const view = render(
+      <DevelopmentRuntimeProvider provider={provider}>
+        <PairNodeScreen selectedCandidateId={undefined} />
+      </DevelopmentRuntimeProvider>,
+    );
+
+    await waitFor(() => expect(view.getByText("Bluetooth access ready")).toBeTruthy());
+    expect(acquire).not.toHaveBeenCalled();
+
+    act(() =>
+      publishSetup?.({
+        phase: "ready",
+        picker: "idle",
+        authorizedAccessoryCount: 1,
+        nativeStart: "stopping",
+        restorationLaunchRequested: false,
+        revision: 2,
+        lastError: null,
+      }),
+    );
+    expect(acquire).not.toHaveBeenCalled();
+
+    act(() =>
+      publishSetup?.({
+        phase: "ready",
+        picker: "idle",
+        authorizedAccessoryCount: 1,
+        nativeStart: "notRequested",
+        restorationLaunchRequested: false,
+        revision: 3,
+        lastError: null,
+      }),
+    );
+
+    await waitFor(() => expect(acquire).toHaveBeenCalledTimes(1));
+
+    act(() =>
+      publishSetup?.({
+        phase: "ready",
+        picker: "idle",
+        authorizedAccessoryCount: 1,
+        nativeStart: "starting",
+        restorationLaunchRequested: false,
+        revision: 4,
+        lastError: null,
+      }),
+    );
+    const busyChooser = view.getByRole("button", { name: "Add another Bluetooth node" });
+    expect(busyChooser.props.accessibilityState).toEqual({ disabled: true });
+    fireEvent.press(busyChooser);
+    expect(showPicker).not.toHaveBeenCalled();
+
+    act(() =>
+      publishSetup?.({
+        phase: "ready",
+        picker: "idle",
+        authorizedAccessoryCount: 1,
+        nativeStart: "running",
+        restorationLaunchRequested: false,
+        revision: 5,
+        lastError: null,
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        view.getByRole("button", { name: "Add another Bluetooth node" }).props.accessibilityState,
+      ).toEqual({ disabled: false }),
+    );
+  });
+
   it("shows only Bluetooth-access recovery when ASK status cannot be read", async () => {
     const stop = jest.fn();
     const base = fakeProvider(stop);

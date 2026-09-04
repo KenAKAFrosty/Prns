@@ -115,6 +115,15 @@ export function DevelopmentRuntimeProvider({
   const latestRevision = useRef<bigint | null>(null);
   const refreshActiveState = useRef(refreshActive);
   refreshActiveState.current = refreshActive;
+  const accessorySetupAcquisitionState = availableProviderRequiresAccessorySetup(selectedProvider)
+    ? accessorySetupFailure !== null || accessorySetup?.phase === "failed"
+      ? "failed"
+      : accessorySetup?.phase === "ready" &&
+          (accessorySetup.nativeStart === "running" ||
+            (accessorySetup.picker === "idle" && accessorySetup.nativeStart !== "stopping"))
+        ? "ready"
+        : "waiting"
+    : "notRequired";
 
   const publishSnapshot = useCallback((next: DevelopmentNodeSnapshot) => {
     if (latestRevision.current !== null && next.revision <= latestRevision.current) {
@@ -173,12 +182,12 @@ export function DevelopmentRuntimeProvider({
     }
 
     if (availableProviderRequiresAccessorySetup(selectedProvider)) {
-      if (accessorySetupFailure !== null) {
+      if (accessorySetupAcquisitionState === "failed") {
         setPhase("failed");
         return;
       }
-      if (accessorySetup?.phase !== "ready") {
-        setPhase(accessorySetup?.phase === "failed" ? "failed" : "starting");
+      if (accessorySetupAcquisitionState !== "ready") {
+        setPhase("starting");
         return;
       }
     }
@@ -227,13 +236,7 @@ export function DevelopmentRuntimeProvider({
       session.current = null;
       void Effect.runPromise(Scope.close(scope, Exit.void));
     };
-  }, [
-    accessorySetup?.phase,
-    accessorySetupFailure,
-    publishSnapshot,
-    refreshIntervalMillis,
-    selectedProvider,
-  ]);
+  }, [accessorySetupAcquisitionState, publishSnapshot, refreshIntervalMillis, selectedProvider]);
 
   const unavailableResult = useCallback(
     <Outcome,>(): RuntimeCommandResult<Outcome> => ({

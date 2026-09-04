@@ -244,6 +244,7 @@ function AccessorySetupCard({
   }
 
   const pickerOpen = setup.picker !== "idle" || pending;
+  const nativeStartBusy = setup.nativeStart === "starting" || setup.nativeStart === "stopping";
   if (setup.phase === "setupRequired") {
     return (
       <Card>
@@ -263,7 +264,7 @@ function AccessorySetupCard({
           <BodyText>{setup.lastError.detail}</BodyText>
         )}
         {feedback === null ? null : <BodyText>{feedback}</BodyText>}
-        <Button disabled={pickerOpen} onPress={onShow}>
+        <Button disabled={pickerOpen || nativeStartBusy} onPress={onShow}>
           {pickerOpen ? "Bluetooth chooser open…" : "Choose a Bluetooth node"}
         </Button>
       </Card>
@@ -283,7 +284,7 @@ function AccessorySetupCard({
         <BodyText>{setup.lastError.detail}</BodyText>
       )}
       {feedback === null ? null : <BodyText>{feedback}</BodyText>}
-      <Button disabled={pickerOpen} onPress={onShow} tone="secondary">
+      <Button disabled={pickerOpen || nativeStartBusy} onPress={onShow} tone="secondary">
         {pickerOpen ? "Bluetooth chooser open…" : "Add another Bluetooth node"}
       </Button>
     </Card>

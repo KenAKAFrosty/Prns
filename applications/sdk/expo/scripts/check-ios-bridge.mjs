@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -7,6 +9,14 @@ const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const swift = readFileSync(resolve(packageRoot, "ios/PrnsAppModule.swift"), "utf8");
 const coordinator = readFileSync(
   resolve(packageRoot, "ios/PrnsAppLifecycleCoordinator.swift"),
+  "utf8",
+);
+const protectedDataRecovery = readFileSync(
+  resolve(packageRoot, "ios/PrnsProtectedDataRecovery.swift"),
+  "utf8",
+);
+const restorationDispatch = readFileSync(
+  resolve(packageRoot, "ios/PrnsRestorationDispatch.swift"),
   "utf8",
 );
 const accessoryCoordinator = readFileSync(
@@ -77,7 +87,7 @@ assert.match(
 );
 assert.match(
   `${accessoryCoordinator}\n${coordinator}`,
-  /phase == \.ready,[\s\S]*?restorationLaunchRequested,[\s\S]*?restorationReady\(\)[\s\S]*?prepareBluetoothCentralRestoration\(\)[\s\S]*?case "prepared", "alreadyPrepared":[\s\S]*?startNativeRuntime/,
+  /claimIfAuthorized\(nativeStartAuthorized\)[\s\S]*?restorationReady\(\)[\s\S]*?requireAuthorized\(\)[\s\S]*?prepareBluetoothCentralRestoration\(\)[\s\S]*?case "prepared", "alreadyPrepared":[\s\S]*?startNativeRuntime/,
   "restoration must wait for ASK activation plus an authorized Bluetooth accessory",
 );
 const iosPreparedBluetooth =
@@ -103,6 +113,41 @@ assert.match(
   coordinator,
   /restorationLaunchIdentifiers[\s\S]*?as\? \[String\][\s\S]*?as\? NSArray[\s\S]*?compactMap/,
   "restoration launch identifiers must accept native Swift arrays and bridged NSArray values",
+);
+assert.match(
+  coordinator,
+  /private func waitForProtectedData\(application: UIApplication\)[\s\S]*?addObserver\([\s\S]*?guard !application\.isProtectedDataAvailable else \{[\s\S]*?stopWaitingForProtectedData\(application: application\)[\s\S]*?prepareAndStartNativeRuntime\(application: application\)/,
+  "protected-data waiting must register before rechecking and retry immediately after a lost wake",
+);
+assert.match(
+  coordinator,
+  /private func prepareAndStartNativeRuntime\(application: UIApplication\) \{\s+do \{\s+try PrnsAccessorySetupCoordinator\.shared\.requireAuthorized\(\)[\s\S]*?protectedDataRecovery\.beginAttempt\([\s\S]*?prepareBluetoothCentralRestoration\(\)/,
+  "every initial and resumed attempt must revalidate ASK immediately before manager preparation",
+);
+assert.doesNotMatch(
+  coordinator,
+  /private func prepareAndStartNativeRuntime\(application: UIApplication\) \{\s+guard application\.isProtectedDataAvailable/,
+  "ordinary after-first-unlock relocks must still attempt restoration against accessible storage",
+);
+assert.match(
+  protectedDataRecovery,
+  /let eligible = Self\.isRecoveryEligible\(failure\)[\s\S]*?let observedUnavailable = unavailableObserved[\s\S]*?guard !consumed, eligible, observedUnavailable[\s\S]*?consumed = true/,
+  "protected-data recovery must require observed unavailability and consume one bounded retry",
+);
+assert.match(
+  protectedDataRecovery,
+  /stage == "storage" \|\| stage == "identity" \|\| stage == "persistenceRestore"/,
+  "only storage-adjacent native failures may trigger protected-data recovery",
+);
+assert.match(
+  coordinator,
+  /recoverAfterProtectedDataFailure\([\s\S]*?requireAuthorized\(\)[\s\S]*?restorationStartAuthorizationDidClose\(\)[\s\S]*?protectedDataRecovery\.action\(for: failure\)[\s\S]*?waitForProtectedData/,
+  "a recovery must revalidate ASK and enter the race-safe protected-data wait",
+);
+assert.match(
+  `${accessoryCoordinator}\n${restorationDispatch}`,
+  /restorationStartAuthorizationDidClose\(\)[\s\S]*?rearmAfterAuthorizationLoss\(\)[\s\S]*?claimIfAuthorized[\s\S]*?guard launchRequested, authorized, !claimed/,
+  "authorization loss must re-arm exactly one later restoration dispatch",
 );
 assert.match(swift, /\.appendingPathComponent\("prns", isDirectory: true\)/);
 assert.match(swift, /\.appendingPathComponent\("development", isDirectory: true\)/);
@@ -140,6 +185,11 @@ assert.match(accessoryCoordinator, /UIApplication\.shared\.applicationState == \
 assert.match(accessoryCoordinator, /session\.showPicker\(for: \[Self\.pickerDisplayItem\]\)/);
 assert.match(
   accessoryCoordinator,
+  /guard nativeStartPhase != \.starting, nativeStartPhase != \.stopping else \{\s+completion\(Self\.pickerOutcome\(type: "notReady"\)\)/,
+  "the native chooser must reject presentation while start or stop ownership is changing",
+);
+assert.match(
+  accessoryCoordinator,
   /case \.accessoryAdded, \.accessoryChanged, \.accessoryRemoved:\s+reconcileAuthorizedAccessories\(\)[\s\S]*?case \.pickerDidDismiss:\s+pickerDismissalPending = false\s+pickerPhase = \.idle\s+reconcileAuthorizedAccessories\(\)/,
   "an added accessory must remain gated until ASK reports picker dismissal",
 );
@@ -163,6 +213,16 @@ assert.match(
   swift,
   /AsyncFunction\("stop"\)[\s\S]*?beginNativeStop\(\)[\s\S]*?prns_app_stop\(\)[\s\S]*?finishNativeStop\(outcome\)/,
   "an explicit stop must invalidate the cached native start generation",
+);
+assert.match(
+  `${swift}\n${accessoryCoordinator}`,
+  /beginNativeStop\(\)[\s\S]*?nativeStopWillBegin\(application: \.shared\)[\s\S]*?nativeStopWillBegin\(\)[\s\S]*?restorationDispatch\.cancel\(\)/,
+  "explicit stop must cancel both pending lifecycle recovery and restoration dispatch",
+);
+assert.match(
+  coordinator,
+  /case \.failure\(let error\):[\s\S]*?error is PrnsNativeStartInterruption \? \.cancelled : \.bridge[\s\S]*?if case \.cancelled = failure[\s\S]*?finishAttempt\(\)[\s\S]*?return/,
+  "stop supersession must terminate before ASK re-arm or protected-data retry",
 );
 assert.match(
   swift,
@@ -411,6 +471,26 @@ assert.match(
   /xcrun devicectl device install app --device "\$\{DEVICE_ID\}" "\$\{APP_BUNDLE\}"/,
   "physical installation must target only the requested device",
 );
+
+const recoveryTestDirectory = mkdtempSync(resolve(tmpdir(), "prns-protected-data-recovery-"));
+try {
+  const recoveryTestExecutable = resolve(recoveryTestDirectory, "recovery-tests");
+  execFileSync(
+    "xcrun",
+    [
+      "swiftc",
+      resolve(packageRoot, "ios/PrnsProtectedDataRecovery.swift"),
+      resolve(packageRoot, "ios/PrnsRestorationDispatch.swift"),
+      resolve(packageRoot, "scripts/PrnsProtectedDataRecoveryTests.swift"),
+      "-o",
+      recoveryTestExecutable,
+    ],
+    { stdio: "inherit" },
+  );
+  execFileSync(recoveryTestExecutable, [], { stdio: "inherit" });
+} finally {
+  rmSync(recoveryTestDirectory, { force: true, recursive: true });
+}
 
 console.log(
   "ios:check: native bridge, lifecycle, linkage, and iOS development-client contracts are exact",
