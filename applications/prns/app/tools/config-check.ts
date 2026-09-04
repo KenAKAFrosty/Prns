@@ -77,6 +77,13 @@ function assertVariant(
     fail(`${variant}.ios.infoPlist must not declare a scene manifest`);
   }
   if (
+    !Array.isArray(infoPlist.NSAccessorySetupBluetoothCompanyIdentifiers) ||
+    infoPlist.NSAccessorySetupBluetoothCompanyIdentifiers.length !== 1 ||
+    infoPlist.NSAccessorySetupBluetoothCompanyIdentifiers[0] !== "FFFF"
+  ) {
+    fail(`${variant}.ios.infoPlist must declare the Bluetooth Auto manufacturer identifier`);
+  }
+  if (
     !Array.isArray(infoPlist.NSAccessorySetupBluetoothServices) ||
     infoPlist.NSAccessorySetupBluetoothServices.length !== 1 ||
     infoPlist.NSAccessorySetupBluetoothServices[0] !== prnsBluetoothServiceUuid
