@@ -13,7 +13,7 @@ use objc2::AnyThread;
 use objc2_core_bluetooth::{CBCentralManager, CBPeripheralManager};
 #[cfg(not(target_os = "ios"))]
 use objc2_foundation::{NSDictionary, NSString};
-use tokio::sync::{mpsc as tokio_mpsc, oneshot};
+use tokio::sync::{mpsc as tokio_mpsc, oneshot, watch};
 use tokio::task::JoinSet;
 
 use prns_core::interfaces::bluetooth_auto::{
@@ -33,8 +33,9 @@ use super::{
     CoreBluetoothRestorationIdentifiers,
 };
 use super::{
-    start_scan, CoreBluetoothPeerId, Event, MacosBleError, PeripheralTable, RestoredPeripherals,
-    SendCentralDelegate, SendCentralManager, SendPeripheral, SendPeripheralDelegate,
+    manager_signal_channel, start_scan, CoreBluetoothPeerId, L2capPublicationState, MacosBleError,
+    ManagerSignals, PeripheralTable, PublicationState, RestoredPeripherals, SendCentralDelegate,
+    SendCentralManager, SendPeripheral, SendPeripheralDelegate, Sighting,
 };
 
 const POWER_ON_TIMEOUT: Duration = Duration::from_secs(10);
@@ -42,7 +43,7 @@ const DIAL_TIMEOUT: Duration = Duration::from_secs(15);
 /// Maximum recovery latency for a CoreBluetooth scan that claims to be active but has stopped
 /// delivering callbacks. Any discovery callback renews the scan lease without touching the radio.
 const RADIO_LIVENESS_INTERVAL: Duration = Duration::from_secs(60);
-const STARTUP_SIGHTINGS_PER_PEER: usize = 4;
+const SIGHTING_INGRESS_PER_PEER: usize = 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ScanLease {
@@ -85,149 +86,34 @@ pub(super) const fn scan_op(enabled: bool, is_scanning: bool, restart: bool) -> 
     }
 }
 
-#[derive(Default)]
-pub(super) struct StartupReadiness {
-    central_powered: bool,
-    gatt_service_published: bool,
-    l2cap_psm: Option<Psm>,
+pub(super) fn manager_readiness(signals: ManagerSignals) -> Result<Option<Psm>, MacosBleError> {
+    if signals.gatt == PublicationState::Failed {
+        crate::diagnostic_log::error!("bluetooth: GATT service publication failed at startup");
+        return Err(MacosBleError::PublishFailed);
+    }
+    if signals.l2cap == L2capPublicationState::Failed {
+        crate::diagnostic_log::error!("bluetooth: L2CAP publication failed at startup");
+        return Err(MacosBleError::PublishFailed);
+    }
+    let L2capPublicationState::Published(psm) = signals.l2cap else {
+        return Ok(None);
+    };
+    if signals.central_powered_generation == 0 || signals.gatt != PublicationState::Published {
+        return Ok(None);
+    }
+    Ok(Some(Psm::new(psm).ok_or(MacosBleError::PublishFailed)?))
 }
 
-impl StartupReadiness {
-    pub(super) fn note_central_powered(&mut self) {
-        self.central_powered = true;
-    }
-
-    pub(super) fn note_gatt_service_published(&mut self) {
-        self.gatt_service_published = true;
-    }
-
-    pub(super) fn note_l2cap_published(&mut self, psm: u16) -> Result<(), MacosBleError> {
-        self.l2cap_psm = Some(Psm::new(psm).ok_or(MacosBleError::PublishFailed)?);
-        Ok(())
-    }
-
-    pub(super) fn ready_psm(&self) -> Option<Psm> {
-        (self.central_powered && self.gatt_service_published)
-            .then_some(self.l2cap_psm)
-            .flatten()
-    }
-}
-
-pub(super) struct StartupBacklog<L> {
-    inbound: VecDeque<L>,
-    sightings: VecDeque<(BleAddress, Option<i8>)>,
-}
-
-impl<L> Default for StartupBacklog<L> {
-    fn default() -> Self {
-        Self {
-            inbound: VecDeque::new(),
-            sightings: VecDeque::new(),
+async fn wait_for_readiness(
+    signals: &mut watch::Receiver<ManagerSignals>,
+) -> Result<(Psm, u64), MacosBleError> {
+    loop {
+        let current = *signals.borrow_and_update();
+        if let Some(psm) = manager_readiness(current)? {
+            return Ok((psm, current.central_powered_generation));
         }
+        signals.changed().await.map_err(|_| MacosBleError::Closed)?;
     }
-}
-
-impl<L> StartupBacklog<L> {
-    fn push_inbound(&mut self, link: L, capacity: usize) -> Option<L> {
-        if self.inbound.len() >= capacity {
-            Some(link)
-        } else {
-            self.inbound.push_back(link);
-            None
-        }
-    }
-
-    fn note_sighting(
-        &mut self,
-        address: BleAddress,
-        rssi: Option<i8>,
-        capacity: usize,
-    ) -> Option<(BleAddress, Option<i8>)> {
-        if let Some(position) = self
-            .sightings
-            .iter()
-            .position(|(observed, _)| *observed == address)
-        {
-            self.sightings.remove(position);
-            self.sightings.push_back((address, rssi));
-            return None;
-        }
-        let evicted = if self.sightings.len() >= capacity {
-            self.sightings.pop_front()
-        } else {
-            None
-        };
-        if capacity > 0 {
-            self.sightings.push_back((address, rssi));
-        }
-        evicted
-    }
-
-    pub(super) fn pop_inbound(&mut self) -> Option<L> {
-        self.inbound.pop_front()
-    }
-
-    pub(super) fn pop_sighting(&mut self) -> Option<(BleAddress, Option<i8>)> {
-        self.sightings.pop_front()
-    }
-}
-
-pub(super) fn pop_unseen_startup_sighting<L>(
-    backlog: &mut StartupBacklog<L>,
-    seen: &mut HashSet<[u8; 6]>,
-) -> Option<BleAddress> {
-    while let Some((address, _)) = backlog.pop_sighting() {
-        if seen.insert(*address.octets()) {
-            return Some(address);
-        }
-    }
-    None
-}
-
-pub(super) enum StartupProgress<L> {
-    Waiting,
-    Ready(Psm),
-    InboundOverflow(L),
-    SightingEvicted {
-        address: BleAddress,
-        rssi: Option<i8>,
-    },
-}
-
-pub(super) fn stage_startup_event<L>(
-    readiness: &mut StartupReadiness,
-    backlog: &mut StartupBacklog<L>,
-    event: Event<L>,
-    inbound_capacity: usize,
-    sighting_capacity: usize,
-) -> Result<StartupProgress<L>, MacosBleError> {
-    match event {
-        Event::CentralPowered => readiness.note_central_powered(),
-        Event::GattServicePublished => readiness.note_gatt_service_published(),
-        Event::L2capPublished { psm } => readiness.note_l2cap_published(psm)?,
-        Event::GattServicePublishFailed => {
-            crate::diagnostic_log::error!("bluetooth: GATT service publication failed at startup");
-            return Err(MacosBleError::PublishFailed);
-        }
-        Event::L2capPublishFailed => {
-            crate::diagnostic_log::error!("bluetooth: L2CAP publication failed at startup");
-            return Err(MacosBleError::PublishFailed);
-        }
-        Event::Inbound(link) => {
-            if let Some(link) = backlog.push_inbound(link, inbound_capacity) {
-                return Ok(StartupProgress::InboundOverflow(link));
-            }
-        }
-        Event::Sighting { address, rssi } => {
-            if let Some((address, rssi)) = backlog.note_sighting(address, rssi, sighting_capacity) {
-                return Ok(StartupProgress::SightingEvicted { address, rssi });
-            }
-        }
-    }
-    Ok(match readiness.ready_psm() {
-        Some(psm) => StartupProgress::Ready(psm),
-        None => StartupProgress::Waiting,
-    })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -264,18 +150,6 @@ fn cancel_connection(central: &SendCentralManager, peripheral: &SendPeripheral) 
     // SAFETY: both retained objects remain alive through this call and are messaged only on the
     // CoreBluetooth serial dispatch queue.
     unsafe { central.0.cancelPeripheralConnection(&peripheral.0) };
-}
-
-fn close_overflow_inbound(delegate: &SendPeripheralDelegate, link: GattLink) {
-    let address = link.address;
-    crate::diagnostic_log::warn!(
-        "bluetooth: rejecting pre-ready inbound link from {:02x?} — startup queue is full",
-        address.octets()
-    );
-    // Dropping both receivers marks the queue-confined peripheral session closed; its delegate
-    // then removes that session and any pending L2CAP channel state.
-    drop(link);
-    delegate.0.clear_closed_peer(address);
 }
 
 fn apply_scanning(central: SendCentralManager, enabled: bool, restart: bool) {
@@ -379,7 +253,11 @@ enum DialTaskOutcome {
 
 pub struct MacosBleBackend {
     _native_thread: NativeThread,
-    events: tokio_mpsc::UnboundedReceiver<Event>,
+    manager_signals: watch::Receiver<ManagerSignals>,
+    manager_signals_open: bool,
+    central_powered_generation: u64,
+    inbound: tokio_mpsc::Receiver<GattLink>,
+    sightings: tokio_mpsc::Receiver<Sighting>,
     psm: Psm,
     seen: HashSet<[u8; 6]>,
     central: SendCentralManager,
@@ -390,7 +268,6 @@ pub struct MacosBleBackend {
     /// Restored peers whose synthesized sighting has been handed to the Host. The first dial
     /// consumes the marker so later system-owned connections keep the ordinary admission policy.
     restored_connections: HashSet<CoreBluetoothPeerId>,
-    startup_backlog: StartupBacklog<GattLink>,
     dials: JoinSet<DialTaskOutcome>,
     queue: DispatchRetained<DispatchQueue>,
     scan_enabled: bool,
@@ -418,7 +295,9 @@ impl Drop for NativeThread {
 /// authorization, service publication, and L2CAP readiness remain asynchronous.
 pub struct PreparedMacosBleBackend {
     native_thread: NativeThread,
-    events: tokio_mpsc::UnboundedReceiver<Event>,
+    manager_signals: watch::Receiver<ManagerSignals>,
+    inbound: tokio_mpsc::Receiver<GattLink>,
+    sightings: tokio_mpsc::Receiver<Sighting>,
     peripherals: PeripheralTable,
     restored: RestoredPeripherals,
     scan_activity: Arc<AtomicBool>,
@@ -495,13 +374,16 @@ impl MacosBleBackend {
         let restoration_identifiers = manager_preparation.restoration_identifiers().cloned();
         #[cfg(not(target_os = "ios"))]
         let _ = manager_preparation;
-        let (events_tx, events_rx) = tokio_mpsc::unbounded_channel::<Event>();
+        let (manager_signals_tx, manager_signals_rx) = manager_signal_channel();
+        let (inbound_tx, inbound_rx) = tokio_mpsc::channel::<GattLink>(Self::MAX_PEERS);
+        let (sightings_tx, sightings_rx) =
+            tokio_mpsc::channel::<Sighting>(Self::MAX_PEERS * SIGHTING_INGRESS_PER_PEER);
         let (keepalive, shutdown_rx) = sync_mpsc::channel::<()>();
         let (handles_tx, handles_rx) = oneshot::channel::<Handles>();
         let peripherals: PeripheralTable = Arc::new(Mutex::new(HashMap::new()));
         let restored: RestoredPeripherals = Arc::new(Mutex::new(VecDeque::new()));
         let scan_activity = Arc::new(AtomicBool::new(false));
-        let central_events = events_tx.clone();
+        let central_manager_signals = manager_signals_tx.clone();
         let peripherals_for_thread = peripherals.clone();
         let restored_for_thread = restored.clone();
         let scan_activity_for_thread = Arc::clone(&scan_activity);
@@ -512,7 +394,8 @@ impl MacosBleBackend {
                 let queue = DispatchQueue::new("com.personal.prns.ble", None);
 
                 let central_delegate = CentralDelegate::new(
-                    central_events,
+                    central_manager_signals,
+                    sightings_tx,
                     peripherals_for_thread,
                     restored_for_thread,
                     scan_activity_for_thread,
@@ -537,8 +420,12 @@ impl MacosBleBackend {
                     )
                 };
 
-                let peripheral_delegate =
-                    PeripheralDelegate::new(events_tx, queue.clone(), identity);
+                let peripheral_delegate = PeripheralDelegate::new(
+                    manager_signals_tx,
+                    inbound_tx,
+                    queue.clone(),
+                    identity,
+                );
                 let peripheral_proto = ProtocolObject::from_ref(&*peripheral_delegate);
                 #[cfg(target_os = "ios")]
                 let peripheral_options = restoration_identifiers
@@ -580,7 +467,9 @@ impl MacosBleBackend {
         // callers use `ready` after installing the rest of their lifecycle supervision.
         Ok(PreparedMacosBleBackend {
             native_thread,
-            events: events_rx,
+            manager_signals: manager_signals_rx,
+            inbound: inbound_rx,
+            sightings: sightings_rx,
             peripherals,
             restored,
             scan_activity,
@@ -596,20 +485,38 @@ impl MacosBleBackend {
         self.psm
     }
 
+    fn reconcile_manager_signals(&mut self) {
+        let generation = self
+            .manager_signals
+            .borrow_and_update()
+            .central_powered_generation;
+        let powered_again = generation != self.central_powered_generation;
+        self.central_powered_generation = generation;
+        if powered_again && self.scan_enabled {
+            let central = SendCentralManager(self.central.0.clone());
+            self.queue.exec_async(move || {
+                apply_scanning(central, true, true);
+            });
+        }
+    }
+
     pub async fn next_sighting(&mut self) -> Option<BleAddress> {
         loop {
-            if let Some(address) =
-                pop_unseen_startup_sighting(&mut self.startup_backlog, &mut self.seen)
-            {
-                return Some(address);
-            }
-            match self.events.recv().await? {
-                Event::Sighting { address, .. } => {
+            tokio::select! {
+                biased;
+                changed = self.manager_signals.changed(), if self.manager_signals_open => {
+                    if changed.is_err() {
+                        self.manager_signals_open = false;
+                    } else {
+                        self.reconcile_manager_signals();
+                    }
+                }
+                sighting = self.sightings.recv() => {
+                    let Sighting { address, .. } = sighting?;
                     if self.seen.insert(*address.octets()) {
                         return Some(address);
                     }
                 }
-                _ => continue,
             }
         }
     }
@@ -623,37 +530,12 @@ impl PreparedMacosBleBackend {
             peripheral_delegate,
             queue,
         } = self.handles;
-        let mut startup_backlog = StartupBacklog::default();
-        let inbound_capacity = MacosBleBackend::MAX_PEERS;
-        let sighting_capacity = inbound_capacity.saturating_mul(STARTUP_SIGHTINGS_PER_PEER);
-
-        let readiness = tokio::time::timeout(POWER_ON_TIMEOUT, async {
-            let mut readiness = StartupReadiness::default();
-            loop {
-                let event = self.events.recv().await.ok_or(MacosBleError::Closed)?;
-                match stage_startup_event(
-                    &mut readiness,
-                    &mut startup_backlog,
-                    event,
-                    inbound_capacity,
-                    sighting_capacity,
-                )? {
-                    StartupProgress::Waiting => {}
-                    StartupProgress::Ready(psm) => return Ok(psm),
-                    StartupProgress::InboundOverflow(link) => {
-                        close_overflow_inbound(&peripheral_delegate, link);
-                    }
-                    StartupProgress::SightingEvicted { address, rssi } => {
-                        crate::diagnostic_log::warn!(
-                            "bluetooth: evicted pre-ready advisory sighting {:02x?} rssi={rssi:?} — startup queue is full",
-                            address.octets()
-                        );
-                    }
-                }
-            }
-        })
+        let readiness = tokio::time::timeout(
+            POWER_ON_TIMEOUT,
+            wait_for_readiness(&mut self.manager_signals),
+        )
         .await;
-        let psm = match readiness {
+        let (psm, central_powered_generation) = match readiness {
             Ok(result) => result?,
             Err(_) => {
                 crate::diagnostic_log::error!(
@@ -668,7 +550,11 @@ impl PreparedMacosBleBackend {
         );
         Ok(MacosBleBackend {
             _native_thread: self.native_thread,
-            events: self.events,
+            manager_signals: self.manager_signals,
+            manager_signals_open: true,
+            central_powered_generation,
+            inbound: self.inbound,
+            sightings: self.sightings,
             psm,
             seen: HashSet::new(),
             central,
@@ -677,7 +563,6 @@ impl PreparedMacosBleBackend {
             peripherals: self.peripherals,
             restored: self.restored,
             restored_connections: HashSet::new(),
-            startup_backlog,
             dials: JoinSet::new(),
             queue,
             scan_enabled: false,
@@ -714,9 +599,6 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
 
     async fn next_event(&mut self) -> BleEvent<GattLink> {
         loop {
-            if let Some(link) = self.startup_backlog.pop_inbound() {
-                return BleEvent::Inbound(link);
-            }
             if let Some(peer_id) = self
                 .restored
                 .lock()
@@ -729,32 +611,19 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
                     rssi: None,
                 };
             }
-            if let Some((address, rssi)) = self.startup_backlog.pop_sighting() {
-                crate::diagnostic_log::debug!(
-                    "bluetooth: handing off pre-ready Prns sighting {:02x?} rssi={rssi:?}",
-                    address.octets()
-                );
-                return BleEvent::Sighting { address, rssi };
-            }
             let pending_dials = !self.dials.is_empty();
             tokio::select! {
-                event = self.events.recv() => match event {
-                    Some(Event::Sighting { address, rssi }) => {
-                        crate::diagnostic_log::debug!(
-                            "bluetooth: sighted Prns peer {:02x?} rssi={rssi:?}",
-                            address.octets()
-                        );
-                        return BleEvent::Sighting { address, rssi };
+                biased;
+                changed = self.manager_signals.changed(), if self.manager_signals_open => {
+                    if changed.is_err() {
+                        self.manager_signals_open = false;
+                    } else {
+                        self.reconcile_manager_signals();
                     }
-                    Some(Event::Inbound(link)) => return BleEvent::Inbound(link),
-                    Some(Event::CentralPowered) if self.scan_enabled => {
-                        let central = SendCentralManager(self.central.0.clone());
-                        self.queue.exec_async(move || {
-                            apply_scanning(central, true, true);
-                        });
-                        continue;
-                    }
-                    Some(_) => continue,
+                    continue;
+                }
+                inbound = self.inbound.recv() => match inbound {
+                    Some(link) => return BleEvent::Inbound(link),
                     None => core::future::pending().await,
                 },
                 Some(done) = self.dials.join_next(), if pending_dials => {
@@ -772,6 +641,16 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
                         Err(_) => continue,
                     }
                 }
+                sighting = self.sightings.recv() => match sighting {
+                    Some(Sighting { address, rssi }) => {
+                        crate::diagnostic_log::debug!(
+                            "bluetooth: sighted Prns peer {:02x?} rssi={rssi:?}",
+                            address.octets()
+                        );
+                        return BleEvent::Sighting { address, rssi };
+                    }
+                    None => core::future::pending().await,
+                },
                 _ = tokio::time::sleep_until(self.scan_liveness_at),
                     if cfg!(target_os = "macos") && self.scan_enabled => {
                     let scan_activity = self.scan_activity.swap(false, Ordering::Relaxed);
