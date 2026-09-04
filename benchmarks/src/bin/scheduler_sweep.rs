@@ -41,7 +41,7 @@ fn run() -> Result<(), SweepError> {
             );
             let observation = run_probe_with_retries(&probe, candidate, sample, arguments.retries)?;
             println!(
-                "SAMPLE candidate={} sample={} idle_p50_micros={} idle_p99_micros={} mixed_p50_micros={} mixed_p99_micros={} resource_micros={} cpu_micros={} voluntary_context_switches={} involuntary_context_switches={}",
+                "SAMPLE candidate={} sample={} idle_p50_micros={} idle_p99_micros={} mixed_p50_micros={} mixed_p99_micros={} resource_micros={} cpu_micros={} voluntary_context_switches={} involuntary_context_switches={} minor_page_faults={} major_page_faults={}",
                 candidate.name,
                 sample,
                 observation.idle_p50_micros,
@@ -52,6 +52,8 @@ fn run() -> Result<(), SweepError> {
                 observation.cpu_micros,
                 observation.voluntary_context_switches,
                 observation.involuntary_context_switches,
+                observation.minor_page_faults,
+                observation.major_page_faults,
             );
             observations[index].push(observation);
         }
@@ -508,6 +510,8 @@ struct Observation {
     cpu_micros: u64,
     voluntary_context_switches: u64,
     involuntary_context_switches: u64,
+    minor_page_faults: u64,
+    major_page_faults: u64,
 }
 
 impl Observation {
@@ -525,6 +529,8 @@ impl Observation {
             involuntary_context_switches: median_field(&observations, |value| {
                 value.involuntary_context_switches
             }),
+            minor_page_faults: median_field(&observations, |value| value.minor_page_faults),
+            major_page_faults: median_field(&observations, |value| value.major_page_faults),
         }
     }
 
@@ -626,6 +632,8 @@ fn parse_observation(candidate: &str, output: &str) -> Result<Observation, Sweep
         cpu_micros: metric(usage, "cpu_micros", candidate)?,
         voluntary_context_switches: metric(usage, "voluntary_context_switches", candidate)?,
         involuntary_context_switches: metric(usage, "involuntary_context_switches", candidate)?,
+        minor_page_faults: metric(usage, "minor_page_faults", candidate)?,
+        major_page_faults: metric(usage, "major_page_faults", candidate)?,
     })
 }
 
@@ -659,7 +667,7 @@ fn print_summary(kind: &str, summary: &CandidateSummary) {
     let observation = summary.observation;
     let resource_mib_per_sec = 64.0 * 1_000_000.0 / observation.resource_micros.max(1) as f64;
     println!(
-        "{kind} candidate={} workers={} idle_p50_micros={} idle_p99_micros={} mixed_p50_micros={} mixed_p99_micros={} resource_micros={} resource_mib_per_sec={resource_mib_per_sec:.2} cpu_micros={} voluntary_context_switches={} involuntary_context_switches={}",
+        "{kind} candidate={} workers={} idle_p50_micros={} idle_p99_micros={} mixed_p50_micros={} mixed_p99_micros={} resource_micros={} resource_mib_per_sec={resource_mib_per_sec:.2} cpu_micros={} voluntary_context_switches={} involuntary_context_switches={} minor_page_faults={} major_page_faults={}",
         summary.candidate.name,
         summary.candidate.workers,
         observation.idle_p50_micros,
@@ -670,6 +678,8 @@ fn print_summary(kind: &str, summary: &CandidateSummary) {
         observation.cpu_micros,
         observation.voluntary_context_switches,
         observation.involuntary_context_switches,
+        observation.minor_page_faults,
+        observation.major_page_faults,
     );
 }
 
@@ -795,7 +805,7 @@ mod tests {
 
     #[test]
     fn probe_output_parses_into_one_typed_observation() {
-        let output = "RESULT phase=idle probes=256 p50_micros=61 p99_micros=120 max_micros=200\nRESULT phase=mixed probes=256 p50_micros=140 p99_micros=3200 max_micros=4000\nRESULT resource_bytes=67108864 resource_micros=250000 resource_mib_per_sec=256.00\nUSAGE cpu_micros=620000 voluntary_context_switches=2800 involuntary_context_switches=40\n";
+        let output = "RESULT phase=idle probes=256 p50_micros=61 p99_micros=120 max_micros=200\nRESULT phase=mixed probes=256 p50_micros=140 p99_micros=3200 max_micros=4000\nRESULT resource_bytes=67108864 resource_micros=250000 resource_mib_per_sec=256.00\nUSAGE cpu_micros=620000 voluntary_context_switches=2800 involuntary_context_switches=40 minor_page_faults=6000 major_page_faults=0\n";
         assert_eq!(
             parse_observation("test", output).expect("complete output parses"),
             Observation {
@@ -807,6 +817,8 @@ mod tests {
                 cpu_micros: 620_000,
                 voluntary_context_switches: 2_800,
                 involuntary_context_switches: 40,
+                minor_page_faults: 6_000,
+                major_page_faults: 0,
             }
         );
     }
@@ -822,6 +834,8 @@ mod tests {
             cpu_micros: 640_000,
             voluntary_context_switches: 3_000,
             involuntary_context_switches: 40,
+            minor_page_faults: 6_000,
+            major_page_faults: 0,
         };
         let better = Observation {
             mixed_p99_micros: 3_900,

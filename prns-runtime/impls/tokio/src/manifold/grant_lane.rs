@@ -2,17 +2,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use prns_core::interfaces::{FrameSink, FrameSinkError, PacketPhyStats};
-use rtrb::{Consumer, PopError, Producer, PushError, RingBuffer};
+use rtrb::{Consumer, Producer, PushError, RingBuffer};
 use tokio::sync::Notify;
 
 pub fn tokio_grant_lane(slot_cap: usize, depth: usize) -> (TokioGrantProducer, TokioGrantConsumer) {
     let depth = depth.max(1);
     let (expedited, expedited_slots) = RingBuffer::new(depth);
     let (regular, regular_slots) = RingBuffer::new(depth);
-    let (mut free_slots, free) = RingBuffer::new(depth);
-    for _ in 0..depth {
-        let _ = free_slots.push(HeapFrameSlot::empty(slot_cap));
-    }
+    let (recycled_slots, recycled) = RingBuffer::new(depth);
     let filled_ready = Arc::new(Notify::new());
     let free_ready = Arc::new(Notify::new());
     let producer_parked = Arc::new(AtomicBool::new(false));
@@ -20,7 +17,9 @@ pub fn tokio_grant_lane(slot_cap: usize, depth: usize) -> (TokioGrantProducer, T
     let announced = Arc::new(AtomicBool::new(false));
     (
         TokioGrantProducer {
-            free,
+            slot_cap,
+            vacant_slots: depth,
+            recycled,
             expedited,
             regular,
             capacity: depth,
@@ -34,7 +33,7 @@ pub fn tokio_grant_lane(slot_cap: usize, depth: usize) -> (TokioGrantProducer, T
         TokioGrantConsumer {
             expedited: expedited_slots,
             regular: regular_slots,
-            free: free_slots,
+            recycled: recycled_slots,
             peeked: None,
             filled_ready,
             free_ready,
@@ -117,7 +116,9 @@ impl FrameSink for HeapFrameSlot {
 }
 
 pub struct TokioGrantProducer {
-    free: Consumer<HeapFrameSlot>,
+    slot_cap: usize,
+    vacant_slots: usize,
+    recycled: Consumer<HeapFrameSlot>,
     expedited: Producer<HeapFrameSlot>,
     regular: Producer<HeapFrameSlot>,
     capacity: usize,
@@ -135,14 +136,22 @@ impl TokioGrantProducer {
     }
 
     pub fn occupancy(&self) -> usize {
-        self.capacity().saturating_sub(self.free.slots())
+        self.capacity()
+            .saturating_sub(self.vacant_slots.saturating_add(self.recycled.slots()))
     }
 
     pub fn try_grant(&mut self) -> Option<&mut HeapFrameSlot> {
         if self.granted.is_none() {
-            self.granted = self.free.pop().ok();
+            self.granted = self.pop_free_slot();
         }
         self.granted.as_mut()
+    }
+
+    fn pop_free_slot(&mut self) -> Option<HeapFrameSlot> {
+        self.recycled.pop().ok().or_else(|| {
+            self.vacant_slots = self.vacant_slots.checked_sub(1)?;
+            Some(HeapFrameSlot::empty(self.slot_cap))
+        })
     }
 
     pub async fn grant(&mut self) -> &mut HeapFrameSlot {
@@ -150,18 +159,18 @@ impl TokioGrantProducer {
             if let Some(slot) = self.granted.take() {
                 return self.granted.insert(slot);
             }
-            match self.free.pop() {
-                Ok(slot) => self.granted = Some(slot),
-                Err(PopError::Empty) => {
+            match self.pop_free_slot() {
+                Some(slot) => self.granted = Some(slot),
+                None => {
                     // The ring is authoritative. Advertise the cold waiter, then recheck it so a
                     // release racing this arm either wakes us or is observed synchronously.
                     self.producer_parked.store(true, Ordering::Release);
-                    match self.free.pop() {
-                        Ok(slot) => {
+                    match self.pop_free_slot() {
+                        Some(slot) => {
                             self.producer_parked.store(false, Ordering::Release);
                             self.granted = Some(slot);
                         }
-                        Err(PopError::Empty) => self.free_ready.notified().await,
+                        None => self.free_ready.notified().await,
                     }
                 }
             }
@@ -199,7 +208,7 @@ impl TokioGrantProducer {
 pub struct TokioGrantConsumer {
     expedited: Consumer<HeapFrameSlot>,
     regular: Consumer<HeapFrameSlot>,
-    free: Producer<HeapFrameSlot>,
+    recycled: Producer<HeapFrameSlot>,
     peeked: Option<HeapFrameSlot>,
     filled_ready: Arc<Notify>,
     free_ready: Arc<Notify>,
@@ -274,7 +283,7 @@ impl TokioGrantConsumer {
     }
 
     pub(crate) fn return_slot(&mut self, slot: HeapFrameSlot) {
-        match self.free.push(slot) {
+        match self.recycled.push(slot) {
             Ok(()) => {
                 if self.producer_parked.load(Ordering::Acquire)
                     && self.producer_parked.swap(false, Ordering::AcqRel)
@@ -328,6 +337,40 @@ mod tests {
 
         consumer.return_slot(slot);
         assert_eq!(producer.try_grant().unwrap().bytes.as_ptr(), allocation);
+    }
+
+    #[test]
+    fn a_returned_slot_is_reused_before_untouched_burst_capacity() {
+        let (mut producer, mut consumer) = tokio_grant_lane(64, 3);
+        producer.try_grant().unwrap().fill(&[7; 48]);
+        let allocation = producer.granted.as_ref().unwrap().bytes.as_ptr();
+        producer.commit();
+        consumer.try_peek().unwrap();
+        consumer.release();
+
+        assert_eq!(producer.try_grant().unwrap().bytes.as_ptr(), allocation);
+    }
+
+    #[test]
+    fn sequential_frames_grow_only_the_recycled_high_water_slot() {
+        let (mut producer, mut consumer) = tokio_grant_lane(64, 3);
+        let mut allocation = None;
+
+        for _ in 0..32 {
+            let slot = producer.try_grant().unwrap();
+            slot.fill(&[7; 48]);
+            match allocation {
+                Some(allocation) => assert_eq!(slot.bytes.as_ptr(), allocation),
+                None => allocation = Some(slot.bytes.as_ptr()),
+            }
+            producer.commit();
+            consumer.try_peek().unwrap();
+            consumer.release();
+        }
+
+        assert_eq!(producer.vacant_slots, 2);
+        assert_eq!(producer.recycled.slots(), 1);
+        assert_eq!(producer.occupancy(), 0);
     }
 
     #[test]

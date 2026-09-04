@@ -176,8 +176,12 @@ async fn main() {
                 / (1024.0 * 1024.0),
         );
         println!(
-            "USAGE cpu_micros={} voluntary_context_switches={} involuntary_context_switches={}",
-            usage.cpu_micros, usage.voluntary_context_switches, usage.involuntary_context_switches,
+            "USAGE cpu_micros={} voluntary_context_switches={} involuntary_context_switches={} minor_page_faults={} major_page_faults={}",
+            usage.cpu_micros,
+            usage.voluntary_context_switches,
+            usage.involuntary_context_switches,
+            usage.minor_page_faults,
+            usage.major_page_faults,
         );
         print_metrics(
             "sender",
@@ -471,6 +475,8 @@ struct ProcessUsage {
     cpu_micros: u64,
     voluntary_context_switches: u64,
     involuntary_context_switches: u64,
+    minor_page_faults: u64,
+    major_page_faults: u64,
 }
 
 impl ProcessUsage {
@@ -483,6 +489,12 @@ impl ProcessUsage {
             involuntary_context_switches: self
                 .involuntary_context_switches
                 .saturating_sub(earlier.involuntary_context_switches),
+            minor_page_faults: self
+                .minor_page_faults
+                .saturating_sub(earlier.minor_page_faults),
+            major_page_faults: self
+                .major_page_faults
+                .saturating_sub(earlier.major_page_faults),
         }
     }
 }
@@ -499,6 +511,8 @@ fn process_usage() -> ProcessUsage {
         cpu_micros: timeval_micros(usage.ru_utime).saturating_add(timeval_micros(usage.ru_stime)),
         voluntary_context_switches: usage.ru_nvcsw.max(0) as u64,
         involuntary_context_switches: usage.ru_nivcsw.max(0) as u64,
+        minor_page_faults: usage.ru_minflt.max(0) as u64,
+        major_page_faults: usage.ru_majflt.max(0) as u64,
     }
 }
 
