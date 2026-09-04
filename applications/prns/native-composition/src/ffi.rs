@@ -7,11 +7,11 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use crate::contract::{
-    CancelLxmfMessageInput, ContactDestinationInput, CreateManualContactInput,
-    DescribeRemoteControlTargetInput, DevelopmentNodeStartInput, InitiateRemoteControlPairingInput,
-    ListLxmfMessagesInput, MeasureLxmfTextInput, RemoteControlPairingDecisionInput,
-    RetryLxmfMessageInput, SendDirectTextInput, SetContactAliasInput, SetContactPinnedInput,
-    CONTRACT_FINGERPRINT, HOST_CONTRACT_FINGERPRINT,
+    AnnounceRemoteControlTargetInput, CancelLxmfMessageInput, ContactDestinationInput,
+    CreateManualContactInput, DescribeRemoteControlTargetInput, DevelopmentNodeStartInput,
+    InitiateRemoteControlPairingInput, ListLxmfMessagesInput, MeasureLxmfTextInput,
+    RemoteControlPairingDecisionInput, RetryLxmfMessageInput, SendDirectTextInput,
+    SetContactAliasInput, SetContactPinnedInput, CONTRACT_FINGERPRINT, HOST_CONTRACT_FINGERPRINT,
 };
 use crate::lifecycle;
 
@@ -474,6 +474,26 @@ pub unsafe extern "C" fn prns_app_describe_target(
             input_ptr,
             input_len,
             lifecycle::describe,
+        )
+    }
+}
+
+/// Submit one authorized target announcement; settlement is retained in snapshot.
+///
+/// # Safety
+/// `input_ptr` must reference `input_len` immutable readable bytes for this call,
+/// unless the length is zero. Length must not exceed `PRNS_APP_MAX_INPUT_BYTES`.
+#[no_mangle]
+pub unsafe extern "C" fn prns_app_announce_target(
+    input_ptr: *const u8,
+    input_len: usize,
+) -> PrnsAppBytes {
+    // SAFETY: The public pointer/length contract is forwarded to the checked reader.
+    unsafe {
+        invoke_json::<AnnounceRemoteControlTargetInput, _>(
+            input_ptr,
+            input_len,
+            lifecycle::announce_self,
         )
     }
 }

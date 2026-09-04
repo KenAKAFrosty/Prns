@@ -1,4 +1,6 @@
 import type {
+  AnnounceRemoteControlTargetInput,
+  RemoteControlAnnounceOutcome,
   AccessorySetupPickerOutcome,
   AccessorySetupStatus,
   AnnounceLxmfOutcome,
@@ -43,6 +45,9 @@ export type RuntimeCommandResult<Outcome> =
   | { readonly type: "operationFailure"; readonly detail: string };
 
 export type DevelopmentRuntimeView = {
+  readonly announceTarget: (
+    input: AnnounceRemoteControlTargetInput,
+  ) => Promise<RuntimeCommandResult<RemoteControlAnnounceOutcome>>;
   readonly availability: RuntimeProvider["availability"];
   readonly accessorySetup: AccessorySetupStatus | null;
   readonly accessorySetupFailure: string | null;
@@ -318,6 +323,17 @@ export function DevelopmentRuntimeProvider({
     [publishSnapshot, run],
   );
 
+  const announceTarget = useCallback(
+    async (input: AnnounceRemoteControlTargetInput) => {
+      const result = await run((active) => active.runtime.announceRemoteControlTarget(input));
+      if (result.type === "outcome" && result.outcome.type === "accepted") {
+        publishSnapshot(result.outcome.snapshot);
+      }
+      return result;
+    },
+    [publishSnapshot, run],
+  );
+
   const saveObservedDestination = useCallback(
     async (destination: DestinationHash): Promise<RuntimeCommandResult<ContactMutationOutcome>> => {
       if (!("runtime" in selectedProvider) || session.current === null) {
@@ -428,6 +444,7 @@ export function DevelopmentRuntimeProvider({
       approvePairing,
       rejectPairing,
       describeTarget,
+      announceTarget,
       saveObservedDestination,
       listLxmfPeers,
       listLxmfMessages,
@@ -443,6 +460,7 @@ export function DevelopmentRuntimeProvider({
       accessorySetupFailure,
       backgroundFailure,
       describeTarget,
+      announceTarget,
       initiatePairing,
       lifecycleFailure,
       phase,

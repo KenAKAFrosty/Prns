@@ -21,6 +21,8 @@ function snapshot(revision: bigint): DevelopmentNodeSnapshot {
     pairing: { type: "searching" },
     pairingCandidates: [],
     pairedTargets: [],
+    lastAnnouncement: null,
+    generationId: 0n,
     activeOperation: null,
     failure: null,
   };
@@ -41,6 +43,7 @@ function fakeRuntime(overrides: Partial<DevelopmentRuntime> = {}): DevelopmentRu
     approveRemoteControlPairing: jest.fn(async () => ({ type: "busy" as const })),
     rejectRemoteControlPairing: jest.fn(async () => ({ type: "busy" as const })),
     describeRemoteControlTarget: jest.fn(async () => ({ type: "busy" as const })),
+    announceRemoteControlTarget: jest.fn(async () => ({ type: "busy" as const })),
     saveObservedDestination: jest.fn(async () => ({ type: "notObserved" as const })),
     createManualContact: jest.fn(async () => ({ type: "notFound" as const })),
     setContactAlias: jest.fn(async () => ({ type: "notFound" as const })),

@@ -21,6 +21,7 @@ impl From<u64> for U64String {
 pub struct DevelopmentNodeSnapshot {
     pub contract_fingerprint: String,
     pub revision: U64String,
+    pub generation_id: U64String,
     pub runtime: DevelopmentNodeRuntime,
     pub primary_identity: PrimaryIdentityState,
     pub local_host: LocalHostState,
@@ -29,6 +30,7 @@ pub struct DevelopmentNodeSnapshot {
     pub pairing: RemoteControlPairingState,
     pub pairing_candidates: Vec<RemoteControlPairingCandidate>,
     pub paired_targets: Vec<RemoteControlTargetSnapshot>,
+    pub last_announcement: Option<RemoteControlAnnounceOperation>,
     pub active_operation: Option<DevelopmentNodeOperation>,
     pub failure: Option<DevelopmentNodeFailure>,
 }
@@ -771,6 +773,7 @@ pub struct DevelopmentNodeOperation {
 pub enum DevelopmentNodeOperationKind {
     Pairing,
     Describe,
+    AnnounceSelf,
     Shutdown,
 }
 
@@ -982,6 +985,98 @@ pub struct DescribeRemoteControlTargetInput {
     pub target_identity_fingerprint: Vec<u8>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct AnnounceRemoteControlTargetInput {
+    pub target_identity_fingerprint: Vec<u8>,
+}
+
+/// One process-local result, retained independently of a React subscription.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct RemoteControlAnnounceOperation {
+    pub operation_id: U64String,
+    pub target_identity_fingerprint: Vec<u8>,
+    pub status: RemoteControlAnnounceStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+#[ts(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum RemoteControlAnnounceStatus {
+    Pending,
+    Announced {
+        rtt_millis: U64String,
+    },
+    Unavailable,
+    Rejected,
+    WriteFailed,
+    Failed {
+        stage: RemoteControlAnnounceFailureStage,
+    },
+    OutcomeUnknown {
+        reason: RemoteControlAnnounceUnknownReason,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub enum RemoteControlAnnounceFailureStage {
+    Busy,
+    Input,
+    Inventory,
+    Route,
+    Link,
+    Identification,
+    Permission,
+    Request,
+    Node,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub enum RemoteControlAnnounceUnknownReason {
+    DeliveryUnconfirmed,
+    Timeout,
+    ConnectionLost,
+    ResponseInvalid,
+    NodeStopped,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+#[ts(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum RemoteControlAnnounceOutcome {
+    Accepted {
+        operation: RemoteControlAnnounceOperation,
+        snapshot: Box<DevelopmentNodeSnapshot>,
+    },
+    Busy,
+    Failed {
+        stage: RemoteControlAnnounceFailureStage,
+    },
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct TaggedContractFixtures {
@@ -1010,6 +1105,8 @@ struct TaggedContractFixtures {
     stop_outcomes: Vec<DevelopmentNodeStopOutcome>,
     pairing_outcomes: Vec<RemoteControlPairingCommandOutcome>,
     describe_outcomes: Vec<RemoteControlDescribeOutcome>,
+    announce_operations: Vec<RemoteControlAnnounceOperation>,
+    announce_outcomes: Vec<RemoteControlAnnounceOutcome>,
 }
 
 impl DevelopmentNodeSnapshot {
@@ -1018,6 +1115,7 @@ impl DevelopmentNodeSnapshot {
         Self {
             contract_fingerprint: CONTRACT_FINGERPRINT.to_owned(),
             revision: U64String::from(0),
+            generation_id: U64String::from(0),
             runtime: DevelopmentNodeRuntime::Stopped,
             primary_identity: PrimaryIdentityState::Missing,
             local_host: LocalHostState::Stopped {
@@ -1028,6 +1126,7 @@ impl DevelopmentNodeSnapshot {
             pairing: RemoteControlPairingState::Searching,
             pairing_candidates: Vec::new(),
             paired_targets: Vec::new(),
+            last_announcement: None,
             active_operation: None,
             failure: None,
         }
@@ -1112,6 +1211,12 @@ pub fn export_typescript() -> String {
     export!(DevelopmentNodeStopOutcome);
     export!(RemoteControlPairingCommandOutcome);
     export!(RemoteControlDescribeOutcome);
+    export!(AnnounceRemoteControlTargetInput);
+    export!(RemoteControlAnnounceFailureStage);
+    export!(RemoteControlAnnounceUnknownReason);
+    export!(RemoteControlAnnounceStatus);
+    export!(RemoteControlAnnounceOperation);
+    export!(RemoteControlAnnounceOutcome);
     export!(InitiateRemoteControlPairingInput);
     export!(RemoteControlPairingDecisionInput);
     export!(DescribeRemoteControlTargetInput);
@@ -1145,6 +1250,8 @@ pub fn export_typescript() -> String {
          \treadonly stopOutcomes: readonly DevelopmentNodeStopOutcome[];\n\
          \treadonly pairingOutcomes: readonly RemoteControlPairingCommandOutcome[];\n\
          \treadonly describeOutcomes: readonly RemoteControlDescribeOutcome[];\n\
+         \treadonly announceOperations: readonly RemoteControlAnnounceOperation[];\n\
+         \treadonly announceOutcomes: readonly RemoteControlAnnounceOutcome[];\n\
          };\n",
     );
     output
@@ -1442,7 +1549,7 @@ fn tagged_contract_fixtures() -> TaggedContractFixtures {
         RemoteControlPairingState::ConfirmationRequired {
             attempt_id: "00112233445566778899aabbccddeeff".to_owned(),
             confirmation_code: "012345".to_owned(),
-            target_identity_fingerprint: hash,
+            target_identity_fingerprint: hash.clone(),
             permissions: vec![RemoteControlRequestKind::Describe],
         },
         RemoteControlPairingState::AwaitingTargetApproval {
@@ -1505,6 +1612,49 @@ fn tagged_contract_fixtures() -> TaggedContractFixtures {
             detail: "pairing command failure fixture".to_owned(),
         },
     ];
+    let announce_operations: Vec<_> = [
+        RemoteControlAnnounceStatus::Pending,
+        RemoteControlAnnounceStatus::Announced {
+            rtt_millis: U64String::from(u64::MAX),
+        },
+        RemoteControlAnnounceStatus::Unavailable,
+        RemoteControlAnnounceStatus::Rejected,
+        RemoteControlAnnounceStatus::WriteFailed,
+        RemoteControlAnnounceStatus::Failed {
+            stage: RemoteControlAnnounceFailureStage::Permission,
+        },
+        RemoteControlAnnounceStatus::OutcomeUnknown {
+            reason: RemoteControlAnnounceUnknownReason::Timeout,
+        },
+    ]
+    .into_iter()
+    .map(|status| RemoteControlAnnounceOperation {
+        operation_id: U64String::from(u64::MAX),
+        target_identity_fingerprint: hash.clone(),
+        status,
+    })
+    .collect();
+    let accepted_operation = RemoteControlAnnounceOperation {
+        operation_id: U64String::from(1),
+        target_identity_fingerprint: hash.clone(),
+        status: RemoteControlAnnounceStatus::Pending,
+    };
+    let mut accepted_snapshot = snapshot.clone();
+    accepted_snapshot.last_announcement = Some(accepted_operation.clone());
+    accepted_snapshot.active_operation = Some(DevelopmentNodeOperation {
+        kind: DevelopmentNodeOperationKind::AnnounceSelf,
+        started_at_millis: U64String::from(0),
+    });
+    let announce_outcomes = vec![
+        RemoteControlAnnounceOutcome::Accepted {
+            operation: accepted_operation,
+            snapshot: Box::new(accepted_snapshot),
+        },
+        RemoteControlAnnounceOutcome::Busy,
+        RemoteControlAnnounceOutcome::Failed {
+            stage: RemoteControlAnnounceFailureStage::Input,
+        },
+    ];
     let describe_outcomes = vec![
         RemoteControlDescribeOutcome::Described {
             target,
@@ -1543,6 +1693,8 @@ fn tagged_contract_fixtures() -> TaggedContractFixtures {
         stop_outcomes,
         pairing_outcomes,
         describe_outcomes,
+        announce_operations,
+        announce_outcomes,
     }
 }
 

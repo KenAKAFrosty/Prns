@@ -32,6 +32,8 @@ function snapshot(): DevelopmentNodeSnapshot {
     pairing: { type: "searching" },
     pairingCandidates: [],
     pairedTargets: [],
+    lastAnnouncement: null,
+    generationId: 0n,
     activeOperation: null,
     failure: null,
   };
@@ -49,6 +51,7 @@ function fakeRuntime(overrides: Partial<DevelopmentRuntime> = {}): DevelopmentRu
     approveRemoteControlPairing: async () => ({ type: "busy" }),
     rejectRemoteControlPairing: async () => ({ type: "busy" }),
     describeRemoteControlTarget: async () => ({ type: "busy" }),
+    announceRemoteControlTarget: async () => ({ type: "busy" }),
     saveObservedDestination: async () => ({ type: "notObserved" }),
     createManualContact: async () => ({ type: "notFound" }),
     setContactAlias: async () => ({ type: "notFound" }),

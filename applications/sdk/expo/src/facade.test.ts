@@ -18,6 +18,8 @@ const snapshot = {
   pairing: { type: "searching" },
   pairingCandidates: [],
   pairedTargets: [],
+  lastAnnouncement: null,
+  generationId: "0",
   activeOperation: null,
   failure: null,
 };
@@ -49,6 +51,7 @@ function fakeNative(overrides: Partial<PrnsAppNativeModule> = {}): PrnsAppNative
     approvePairing: jest.fn(async () => JSON.stringify({ type: "busy" })),
     rejectPairing: jest.fn(async () => JSON.stringify({ type: "busy" })),
     describeTarget: jest.fn(async () => JSON.stringify({ type: "busy" })),
+    announceTarget: jest.fn(async () => JSON.stringify({ type: "busy" })),
     saveObservedDestination: jest.fn(async () => JSON.stringify({ type: "notObserved" })),
     createManualContact: jest.fn(async () => JSON.stringify({ type: "notFound" })),
     setContactAlias: jest.fn(async () => JSON.stringify({ type: "notFound" })),
@@ -72,6 +75,61 @@ function fakeNative(overrides: Partial<PrnsAppNativeModule> = {}): PrnsAppNative
 }
 
 describe("development runtime facade", () => {
+  test("submits one announcement and hydrates its native operation identity", async () => {
+    const targetIdentityFingerprint = identityHash(new Uint8Array(16).fill(0x42));
+    const operation = {
+      operationId: "9007199254740993",
+      targetIdentityFingerprint: Array.from(targetIdentityFingerprint),
+      status: { type: "pending" },
+    };
+    const announceTarget = jest.fn(async () =>
+      JSON.stringify({
+        type: "accepted",
+        operation,
+        snapshot: { ...snapshot, lastAnnouncement: operation },
+      }),
+    );
+    const runtime = createDevelopmentRuntime(fakeNative({ announceTarget }));
+    const result = await runtime.announceRemoteControlTarget({ targetIdentityFingerprint });
+    expect(announceTarget).toHaveBeenCalledTimes(1);
+    expect(announceTarget).toHaveBeenCalledWith(
+      JSON.stringify({ targetIdentityFingerprint: Array.from(targetIdentityFingerprint) }),
+    );
+    expect(result.type).toBe("accepted");
+    if (result.type === "accepted") {
+      expect(result.operation.operationId).toBe(9_007_199_254_740_993n);
+      expect(result.operation.targetIdentityFingerprint).toEqual(targetIdentityFingerprint);
+      expect(result.snapshot.lastAnnouncement).toEqual(result.operation);
+    }
+  });
+
+  test("retains all generated announcement settlements and never retries an interrupted submission", async () => {
+    for (const operation of NATIVE_CONTRACT_FIXTURES.announceOperations) {
+      const runtime = createDevelopmentRuntime(
+        fakeNative({
+          snapshot: jest.fn(async () =>
+            JSON.stringify({ ...snapshot, lastAnnouncement: operation }),
+          ),
+        }),
+      );
+      const next = await runtime.readDevelopmentNodeSnapshot();
+      expect(next.lastAnnouncement?.status.type).toBe(operation.status.type);
+      expect(next.lastAnnouncement?.operationId).toBe(18_446_744_073_709_551_615n);
+      if (next.lastAnnouncement?.status.type === "announced") {
+        expect(next.lastAnnouncement.status.rttMillis).toBe(18_446_744_073_709_551_615n);
+      }
+    }
+    const announceTarget = jest.fn(async () => {
+      throw new Error("bridge interrupted");
+    });
+    const runtime = createDevelopmentRuntime(fakeNative({ announceTarget }));
+    await expect(
+      runtime.announceRemoteControlTarget({
+        targetIdentityFingerprint: identityHash(new Uint8Array(16)),
+      }),
+    ).rejects.toThrow("bridge interrupted");
+    expect(announceTarget).toHaveBeenCalledTimes(1);
+  });
   test("checks the native contract once and hydrates every snapshot result", async () => {
     const native = fakeNative();
     const runtime = createDevelopmentRuntime(native);

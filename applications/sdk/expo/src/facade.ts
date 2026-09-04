@@ -1,5 +1,9 @@
 import { HOST_CONTRACT_FINGERPRINT, NATIVE_CONTRACT_FINGERPRINT } from "./contract.generated";
 import type {
+  AnnounceRemoteControlTargetInput as WireAnnounceRemoteControlTargetInput,
+  RemoteControlAnnounceOutcome as WireRemoteControlAnnounceOutcome,
+  RemoteControlAnnounceOperation as WireRemoteControlAnnounceOperation,
+  RemoteControlAnnounceStatus as WireRemoteControlAnnounceStatus,
   AnnounceLxmfOutcome as WireAnnounceLxmfOutcome,
   CancelLxmfMessageInput as WireCancelLxmfMessageInput,
   CancelLxmfMessageOutcome as WireCancelLxmfMessageOutcome,
@@ -57,6 +61,10 @@ export type DevelopmentNodeStartOutcome = Hydrated<WireDevelopmentNodeStartOutco
 export type DevelopmentNodeStopOutcome = Hydrated<WireDevelopmentNodeStopOutcome>;
 export type RemoteControlPairingCommandOutcome = Hydrated<WireRemoteControlPairingCommandOutcome>;
 export type RemoteControlDescribeOutcome = Hydrated<WireRemoteControlDescribeOutcome>;
+export type AnnounceRemoteControlTargetInput = Hydrated<WireAnnounceRemoteControlTargetInput>;
+export type RemoteControlAnnounceOutcome = Hydrated<WireRemoteControlAnnounceOutcome>;
+export type RemoteControlAnnounceOperation = Hydrated<WireRemoteControlAnnounceOperation>;
+export type RemoteControlAnnounceStatus = Hydrated<WireRemoteControlAnnounceStatus>;
 export type InitiateRemoteControlPairingInput = Hydrated<WireInitiateRemoteControlPairingInput>;
 export type RemoteControlPairingDecisionInput = Hydrated<WireRemoteControlPairingDecisionInput>;
 export type DescribeRemoteControlTargetInput = Hydrated<WireDescribeRemoteControlTargetInput>;
@@ -87,6 +95,9 @@ export type RetryLxmfMessageOutcome = Hydrated<WireRetryLxmfMessageOutcome>;
 export type CancelLxmfMessageOutcome = Hydrated<WireCancelLxmfMessageOutcome>;
 
 export type DevelopmentRuntime = {
+  readonly announceRemoteControlTarget: (
+    input: AnnounceRemoteControlTargetInput,
+  ) => Promise<RemoteControlAnnounceOutcome>;
   readonly inspectDevelopmentIdentity: () => Promise<PrimaryIdentityState>;
   readonly previewIdentityImport: (identity: Uint8Array) => Promise<IdentityImportPreviewOutcome>;
   readonly createGeneratedIdentity: () => Promise<IdentityCreationOutcome>;
@@ -219,6 +230,14 @@ export function createDevelopmentRuntime(nativeModule: PrnsAppNativeModule): Dev
           JSON.stringify({
             targetIdentityFingerprint: Array.from(input.targetIdentityFingerprint),
           } satisfies WireDescribeRemoteControlTargetInput),
+        ),
+      ),
+    announceRemoteControlTarget: (input) =>
+      read(() =>
+        nativeModule.announceTarget(
+          JSON.stringify({
+            targetIdentityFingerprint: Array.from(input.targetIdentityFingerprint),
+          } satisfies WireAnnounceRemoteControlTargetInput),
         ),
       ),
     saveObservedDestination: (destination) =>

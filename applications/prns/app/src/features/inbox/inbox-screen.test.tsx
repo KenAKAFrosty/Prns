@@ -74,6 +74,8 @@ const mockSnapshot: DevelopmentNodeSnapshot = {
   pairing: { type: "searching" },
   pairingCandidates: [],
   pairedTargets: [],
+  lastAnnouncement: null,
+  generationId: 0n,
   activeOperation: null,
   failure: null,
 };

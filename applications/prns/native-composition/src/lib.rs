@@ -16,7 +16,7 @@ mod snapshot;
 #[doc(hidden)]
 pub mod host_test {
     pub use crate::lifecycle::{
-        approve, create_generated_identity, describe, initiate, reject, snapshot, start_configured,
-        stop,
+        announce_self, approve, create_generated_identity, describe, initiate, reject, snapshot,
+        start_configured, stop,
     };
 }

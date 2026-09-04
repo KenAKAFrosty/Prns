@@ -119,6 +119,10 @@ public final class PrnsAppModule: Module {
       try Self.invokeJSON(inputJSON, operation: prns_app_describe_target)
     }.runOnQueue(Self.nativeQueue)
 
+    AsyncFunction("announceTarget") { (inputJSON: String) throws -> String in
+      try Self.invokeJSON(inputJSON, operation: prns_app_announce_target)
+    }.runOnQueue(Self.nativeQueue)
+
     AsyncFunction("saveObservedDestination") { (inputJSON: String) throws -> String in
       try Self.invokePathJSON(inputJSON, operation: prns_app_save_observed_destination)
     }.runOnQueue(Self.nativeQueue)

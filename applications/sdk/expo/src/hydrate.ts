@@ -20,6 +20,8 @@ type DestinationByteKey = "destination" | "peer" | "source";
 type InterfaceByteKey = "interfaceId";
 type OpaqueByteKey = "bytes" | "messageId";
 type U64Key =
+  | "operationId"
+  | "generationId"
   | "before"
   | "cancelledAt"
   | "deliveredAt"
@@ -76,6 +78,8 @@ const identityByteKeys = new Set<string>([
 ]);
 const destinationByteKeys = new Set<string>(["destination", "peer", "source"]);
 const u64Keys = new Set<string>([
+  "operationId",
+  "generationId",
   "before",
   "cancelledAt",
   "deliveredAt",

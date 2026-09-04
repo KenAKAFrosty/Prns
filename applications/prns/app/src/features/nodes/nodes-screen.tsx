@@ -116,7 +116,7 @@ export function NodesScreen() {
               return (
                 <Card key={targetId}>
                   <Subheading>Paired node</Subheading>
-                  <Badge>Ready</Badge>
+                  <Badge>Paired</Badge>
                   <KeyValue label="Node ID" value={targetId} />
                   <KeyValue label="Destination" value={formatBytes(target.destination)} />
                   <KeyValue

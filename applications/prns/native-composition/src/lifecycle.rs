@@ -36,16 +36,18 @@ use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
 
 use crate::contract::{
-    AnnounceLxmfOutcome, AppleBluetoothRestorationPreparationFailureStage,
-    AppleBluetoothRestorationPreparationOutcome, CancelLxmfMessageInput, CancelLxmfMessageOutcome,
-    ContactDestinationInput, ContactListOutcome, ContactLookupOutcome, ContactMutationOutcome,
-    CreateManualContactInput, DescribeRemoteControlTargetInput, DevelopmentNodeFailure,
-    DevelopmentNodeFailureStage, DevelopmentNodeOperation, DevelopmentNodeOperationKind,
-    DevelopmentNodeRuntime, DevelopmentNodeSnapshot, DevelopmentNodeStartInput,
-    DevelopmentNodeStartOutcome, DevelopmentNodeStopOutcome, DevelopmentNodeStopStage,
-    IdentityCreationOutcome, IdentityImportPreviewOutcome, InitiateRemoteControlPairingInput,
-    ListLxmfMessagesInput, LocalHostState, LxmfMessageListOutcome, LxmfPeerListOutcome,
-    MeasureLxmfTextInput, MeasureLxmfTextOutcome, PrimaryIdentityState,
+    AnnounceLxmfOutcome, AnnounceRemoteControlTargetInput,
+    AppleBluetoothRestorationPreparationFailureStage, AppleBluetoothRestorationPreparationOutcome,
+    CancelLxmfMessageInput, CancelLxmfMessageOutcome, ContactDestinationInput, ContactListOutcome,
+    ContactLookupOutcome, ContactMutationOutcome, CreateManualContactInput,
+    DescribeRemoteControlTargetInput, DevelopmentNodeFailure, DevelopmentNodeFailureStage,
+    DevelopmentNodeOperation, DevelopmentNodeOperationKind, DevelopmentNodeRuntime,
+    DevelopmentNodeSnapshot, DevelopmentNodeStartInput, DevelopmentNodeStartOutcome,
+    DevelopmentNodeStopOutcome, DevelopmentNodeStopStage, IdentityCreationOutcome,
+    IdentityImportPreviewOutcome, InitiateRemoteControlPairingInput, ListLxmfMessagesInput,
+    LocalHostState, LxmfMessageListOutcome, LxmfPeerListOutcome, MeasureLxmfTextInput,
+    MeasureLxmfTextOutcome, PrimaryIdentityState, RemoteControlAnnounceFailureStage,
+    RemoteControlAnnounceOperation, RemoteControlAnnounceOutcome, RemoteControlAnnounceStatus,
     RemoteControlDescribeFailureStage, RemoteControlDescribeOutcome,
     RemoteControlPairingCommandOutcome, RemoteControlPairingDecisionInput,
     RemoteControlPairingFailureStage, RemoteControlPairingState, RetryLxmfMessageInput,
@@ -171,6 +173,7 @@ impl ShutdownSignal {
 }
 
 enum Command {
+    AnnounceSelf(RemoteControlAnnounceOperation),
     Snapshot(std_mpsc::SyncSender<DevelopmentNodeSnapshot>),
     Initiate(
         InitiateRemoteControlPairingInput,
@@ -965,6 +968,15 @@ fn snapshot_with_supervisor(supervisor: &Supervisor) -> DevelopmentNodeSnapshot 
     let mut state = supervisor.lock_state();
     reap_completed_worker_locked(supervisor, &mut state);
     let current = supervisor.snapshots.read();
+    // The actor owns one command at a time. Its retained operation record is
+    // immediately readable while a remote announcement awaits network settlement.
+    if current
+        .last_announcement
+        .as_ref()
+        .is_some_and(|operation| operation.status == RemoteControlAnnounceStatus::Pending)
+    {
+        return current;
+    }
     if current.runtime != DevelopmentNodeRuntime::Running {
         return current;
     }
@@ -1048,6 +1060,97 @@ pub fn describe(input: DescribeRemoteControlTargetInput) -> RemoteControlDescrib
             stage: RemoteControlDescribeFailureStage::Timeout,
             detail: "The native Describe command exceeded its bounded wait.".to_owned(),
         })
+}
+
+/// Admit once without tying remote settlement to the lifetime of the bridge call.
+pub fn announce_self(input: AnnounceRemoteControlTargetInput) -> RemoteControlAnnounceOutcome {
+    announce_self_with_supervisor(supervisor(), input)
+}
+
+fn announce_self_with_supervisor(
+    supervisor: &Supervisor,
+    input: AnnounceRemoteControlTargetInput,
+) -> RemoteControlAnnounceOutcome {
+    static NEXT_OPERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    if input.target_identity_fingerprint.len() != 16 {
+        return RemoteControlAnnounceOutcome::Failed {
+            stage: RemoteControlAnnounceFailureStage::Input,
+        };
+    }
+    let mut state = supervisor.lock_state();
+    reap_completed_worker_locked(supervisor, &mut state);
+    if supervisor.snapshots.read().runtime != DevelopmentNodeRuntime::Running
+        || supervisor.snapshots.is_explicit_stop_in_progress()
+    {
+        return RemoteControlAnnounceOutcome::Failed {
+            stage: RemoteControlAnnounceFailureStage::Node,
+        };
+    }
+    let Some(worker) = state.worker.as_ref() else {
+        return RemoteControlAnnounceOutcome::Failed {
+            stage: RemoteControlAnnounceFailureStage::Node,
+        };
+    };
+    let commands = &worker.commands;
+    if supervisor
+        .operation_admitted
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return RemoteControlAnnounceOutcome::Busy;
+    }
+    let permit = match commands.try_reserve() {
+        Ok(permit) => permit,
+        Err(error) => {
+            supervisor
+                .operation_admitted
+                .store(false, Ordering::Release);
+            return match error {
+                mpsc::error::TrySendError::Full(_) => RemoteControlAnnounceOutcome::Busy,
+                mpsc::error::TrySendError::Closed(_) => RemoteControlAnnounceOutcome::Failed {
+                    stage: RemoteControlAnnounceFailureStage::Node,
+                },
+            };
+        }
+    };
+    let Ok(id) =
+        NEXT_OPERATION.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+    else {
+        supervisor
+            .operation_admitted
+            .store(false, Ordering::Release);
+        return RemoteControlAnnounceOutcome::Busy;
+    };
+    let operation = RemoteControlAnnounceOperation {
+        operation_id: U64String::from(id),
+        target_identity_fingerprint: input.target_identity_fingerprint,
+        status: RemoteControlAnnounceStatus::Pending,
+    };
+    let mut published = false;
+    supervisor.snapshots.update(|snapshot| {
+        if snapshot.runtime != DevelopmentNodeRuntime::Running {
+            return;
+        }
+        snapshot.last_announcement = Some(operation.clone());
+        snapshot.active_operation = Some(DevelopmentNodeOperation {
+            kind: DevelopmentNodeOperationKind::AnnounceSelf,
+            started_at_millis: U64String::from(wall_clock_millis()),
+        });
+        published = true;
+    });
+    if !published {
+        supervisor
+            .operation_admitted
+            .store(false, Ordering::Release);
+        return RemoteControlAnnounceOutcome::Failed {
+            stage: RemoteControlAnnounceFailureStage::Node,
+        };
+    }
+    permit.send(Command::AnnounceSelf(operation.clone()));
+    RemoteControlAnnounceOutcome::Accepted {
+        operation,
+        snapshot: Box::new(supervisor.snapshots.read()),
+    }
 }
 
 enum LxmfAdmissionFailure {
@@ -2570,7 +2673,10 @@ fn settle_worker_result(
                 detail: detail.clone(),
             });
         });
+    } else if !snapshots.is_explicit_stop_in_progress() {
+        snapshots.stopped();
     }
+    snapshots.interrupt_announcement();
 }
 
 const fn failure_stage_for_stop(stage: DevelopmentNodeStopStage) -> DevelopmentNodeFailureStage {
@@ -2843,6 +2949,15 @@ async fn run_actor_loop(
                     };
                     operation_admitted.store(false, Ordering::Release);
                     let _ = response.send(outcome);
+                }
+                Some(Command::AnnounceSelf(operation)) => {
+                    let status = if controls.pairing_in_progress() {
+                        RemoteControlAnnounceStatus::Failed { stage: RemoteControlAnnounceFailureStage::Busy }
+                    } else {
+                        crate::remote_control::announce_self(handle, &operation.target_identity_fingerprint).await
+                    };
+                    crate::remote_control::complete_announcement(snapshots, &operation.operation_id, status);
+                    operation_admitted.store(false, Ordering::Release);
                 }
                 Some(Command::ObservedIdentity(destination, response)) => {
                     let identity = tokio::time::timeout(
@@ -3575,6 +3690,144 @@ fn wall_clock_millis() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn worker_terminal_paths_do_not_leave_an_announcement_pending() {
+        for result in [
+            Ok(()),
+            Err((DevelopmentNodeStopStage::Node, "unexpected exit".to_owned())),
+        ] {
+            let snapshots = SnapshotStore::new();
+            snapshots.set_runtime(DevelopmentNodeRuntime::Running);
+            snapshots.update(|snapshot| {
+                snapshot.lxmf.state = crate::contract::LxmfHealthState::Ready;
+                snapshot.last_announcement = Some(RemoteControlAnnounceOperation {
+                    operation_id: U64String::from(1),
+                    target_identity_fingerprint: vec![1; 16],
+                    status: RemoteControlAnnounceStatus::Pending,
+                });
+                snapshot.active_operation = Some(DevelopmentNodeOperation {
+                    kind: DevelopmentNodeOperationKind::AnnounceSelf,
+                    started_at_millis: U64String::from(0),
+                });
+            });
+            let admitted = AtomicBool::new(true);
+            settle_worker_result(&admitted, &snapshots, &result);
+            assert!(matches!(
+                snapshots
+                    .read()
+                    .last_announcement
+                    .map(|operation| operation.status),
+                Some(RemoteControlAnnounceStatus::OutcomeUnknown {
+                    reason: crate::contract::RemoteControlAnnounceUnknownReason::NodeStopped
+                })
+            ));
+            assert!(snapshots.read().active_operation.is_none());
+            if result.is_ok() {
+                let stopped = snapshots.read();
+                assert_eq!(stopped.runtime, DevelopmentNodeRuntime::Stopped);
+                assert_eq!(
+                    stopped.lxmf.state,
+                    crate::contract::LxmfHealthState::Stopped
+                );
+                assert!(matches!(stopped.local_host, LocalHostState::Stopped { .. }));
+                assert!(stopped.paired_targets.is_empty());
+            }
+            assert!(!admitted.load(Ordering::Acquire));
+        }
+    }
+
+    #[test]
+    fn announcement_admission_cannot_publish_after_stop_owns_the_supervisor() {
+        let supervisor = Arc::new(Supervisor {
+            snapshots: Arc::new(SnapshotStore::new()),
+            operation_admitted: Arc::new(AtomicBool::new(false)),
+            state: Mutex::new(SupervisorState::default()),
+        });
+        supervisor
+            .snapshots
+            .set_runtime(DevelopmentNodeRuntime::Running);
+        let (commands, mut command_rx) = mpsc::channel(1);
+        let (sender, _shutdown_rx) = watch::channel(false);
+        let (done_tx, done) = std_mpsc::channel();
+        supervisor.lock_state().worker = Some(test_worker(
+            commands,
+            ShutdownSignal {
+                sender,
+                requested: Arc::new(AtomicBool::new(false)),
+            },
+            done,
+            None,
+            PathBuf::from("/tmp/prns/announcement-test"),
+        ));
+
+        let accepted = announce_self_with_supervisor(
+            &supervisor,
+            AnnounceRemoteControlTargetInput {
+                target_identity_fingerprint: vec![1; 16],
+            },
+        );
+        assert!(matches!(
+            accepted,
+            RemoteControlAnnounceOutcome::Accepted { .. }
+        ));
+        assert!(matches!(
+            announce_self_with_supervisor(
+                &supervisor,
+                AnnounceRemoteControlTargetInput {
+                    target_identity_fingerprint: vec![1; 16]
+                }
+            ),
+            RemoteControlAnnounceOutcome::Busy
+        ));
+        assert!(matches!(
+            command_rx.try_recv(),
+            Ok(Command::AnnounceSelf(_))
+        ));
+        // Model a consumed command that never settles before priority shutdown.
+        let mut state = supervisor.lock_state();
+        supervisor.snapshots.begin_stop(U64String::from(2));
+        let blocked = Arc::clone(&supervisor);
+        let (started_tx, started_rx) = std_mpsc::channel();
+        let submit = std::thread::spawn(move || {
+            started_tx.send(()).expect("submission thread started");
+            announce_self_with_supervisor(
+                &blocked,
+                AnnounceRemoteControlTargetInput {
+                    target_identity_fingerprint: vec![2; 16],
+                },
+            )
+        });
+        started_rx
+            .recv()
+            .expect("submission reached held supervisor");
+        done_tx.send(Ok(())).expect("worker shutdown completed");
+        assert_eq!(
+            stop_locked(&supervisor, &mut state),
+            DevelopmentNodeStopOutcome::Stopped
+        );
+        drop(state);
+        assert!(matches!(
+            submit.join().expect("submission returned"),
+            RemoteControlAnnounceOutcome::Failed {
+                stage: RemoteControlAnnounceFailureStage::Node
+            }
+        ));
+        assert!(command_rx.try_recv().is_err());
+        assert_eq!(
+            supervisor.snapshots.read().runtime,
+            DevelopmentNodeRuntime::Stopped
+        );
+        assert!(supervisor.snapshots.read().active_operation.is_none());
+        assert!(matches!(
+            supervisor
+                .snapshots
+                .read()
+                .last_announcement
+                .map(|operation| operation.status),
+            Some(RemoteControlAnnounceStatus::OutcomeUnknown { .. })
+        ));
+    }
 
     fn test_worker(
         commands: mpsc::Sender<Command>,

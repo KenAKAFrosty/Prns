@@ -1,6 +1,28 @@
 import { NATIVE_CONTRACT_FIXTURES } from "./contract.generated";
 
 describe("Rust-generated contract fixtures", () => {
+  test("covers announcement admission and definite versus unknown settlement", () => {
+    expect(NATIVE_CONTRACT_FIXTURES.announceOutcomes.map(({ type }) => type)).toEqual([
+      "accepted",
+      "busy",
+      "failed",
+    ]);
+    expect(NATIVE_CONTRACT_FIXTURES.announceOperations.map(({ status }) => status.type)).toEqual([
+      "pending",
+      "announced",
+      "unavailable",
+      "rejected",
+      "writeFailed",
+      "failed",
+      "outcomeUnknown",
+    ]);
+    const accepted = NATIVE_CONTRACT_FIXTURES.announceOutcomes[0];
+    expect(accepted?.type).toBe("accepted");
+    if (accepted?.type === "accepted") {
+      expect(accepted.snapshot.lastAnnouncement).toEqual(accepted.operation);
+      expect(accepted.snapshot.activeOperation?.kind).toBe("announceSelf");
+    }
+  });
   test("every fixture survives the exact JSON bridge projection", () => {
     for (const fixtures of Object.values(NATIVE_CONTRACT_FIXTURES)) {
       for (const expected of fixtures) {

@@ -4,7 +4,8 @@ use std::sync::{Mutex, MutexGuard};
 use crate::contract::{
     DevelopmentNodeFailure, DevelopmentNodeOperation, DevelopmentNodeOperationKind,
     DevelopmentNodeRuntime, DevelopmentNodeSnapshot, LocalHostState, LxmfHealth, LxmfHealthState,
-    PrimaryIdentityState, U64String,
+    PrimaryIdentityState, RemoteControlAnnounceOperation, RemoteControlAnnounceStatus,
+    RemoteControlAnnounceUnknownReason, U64String,
 };
 
 pub struct SnapshotStore {
@@ -123,6 +124,7 @@ impl SnapshotStore {
 
     pub fn fail(&self, failure: DevelopmentNodeFailure) {
         self.update(|snapshot| {
+            interrupt_announcement(&mut snapshot.last_announcement);
             let explicit_stop_in_progress = self.explicit_stop_in_progress.load(Ordering::Acquire);
             if !explicit_stop_in_progress {
                 snapshot.runtime = DevelopmentNodeRuntime::Failed;
@@ -144,6 +146,7 @@ impl SnapshotStore {
         self.explicit_stop_in_progress
             .store(false, Ordering::Release);
         self.update(|snapshot| {
+            interrupt_announcement(&mut snapshot.last_announcement);
             snapshot.runtime = DevelopmentNodeRuntime::Failed;
             if !matches!(
                 &snapshot.local_host,
@@ -192,6 +195,16 @@ impl SnapshotStore {
             .store(false, Ordering::Release);
         self.update(|snapshot| {
             let mut next = DevelopmentNodeSnapshot::stopped();
+            next.generation_id = U64String::from(
+                snapshot
+                    .revision
+                    .0
+                    .parse::<u64>()
+                    .unwrap_or_default()
+                    .saturating_add(1),
+            );
+            next.last_announcement = snapshot.last_announcement.clone();
+            interrupt_announcement(&mut next.last_announcement);
             next.runtime = DevelopmentNodeRuntime::Starting;
             next.primary_identity = primary_identity;
             *snapshot = next;
@@ -203,8 +216,13 @@ impl SnapshotStore {
             .store(false, Ordering::Release);
         self.update(|snapshot| {
             let primary_identity = snapshot.primary_identity.clone();
+            let generation_id = snapshot.generation_id.clone();
+            let mut last_announcement = snapshot.last_announcement.clone();
+            interrupt_announcement(&mut last_announcement);
             *snapshot = DevelopmentNodeSnapshot::stopped();
             snapshot.primary_identity = primary_identity;
+            snapshot.generation_id = generation_id;
+            snapshot.last_announcement = last_announcement;
         });
     }
 
@@ -212,6 +230,20 @@ impl SnapshotStore {
         self.explicit_stop_in_progress
             .store(false, Ordering::Release);
         self.update(|snapshot| *snapshot = DevelopmentNodeSnapshot::stopped());
+    }
+
+    pub fn interrupt_announcement(&self) {
+        self.update(|snapshot| interrupt_announcement(&mut snapshot.last_announcement));
+    }
+}
+
+fn interrupt_announcement(operation: &mut Option<RemoteControlAnnounceOperation>) {
+    if let Some(operation) = operation {
+        if operation.status == RemoteControlAnnounceStatus::Pending {
+            operation.status = RemoteControlAnnounceStatus::OutcomeUnknown {
+                reason: RemoteControlAnnounceUnknownReason::NodeStopped,
+            };
+        }
     }
 }
 
@@ -224,6 +256,53 @@ impl Default for SnapshotStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generation_identity_changes_only_when_a_native_generation_begins() {
+        let store = SnapshotStore::new();
+        store.begin_generation(PrimaryIdentityState::Missing);
+        let first = store.read().generation_id;
+        store.set_runtime(DevelopmentNodeRuntime::Running);
+        assert_eq!(store.read().generation_id, first);
+        store.fail(DevelopmentNodeFailure {
+            stage: crate::contract::DevelopmentNodeFailureStage::Runtime,
+            detail: "stopped unexpectedly".to_owned(),
+        });
+        assert_eq!(store.read().generation_id, first);
+        store.stopped();
+        assert_eq!(store.read().generation_id, first);
+        store.begin_generation(PrimaryIdentityState::Missing);
+        let second = store.read().generation_id;
+        assert_ne!(second, first);
+        store.reset();
+        store.begin_generation(PrimaryIdentityState::Missing);
+        assert_ne!(store.read().generation_id, first);
+        assert_ne!(store.read().generation_id, second);
+    }
+
+    #[test]
+    fn announcement_result_survives_stop_and_restart_but_reset_clears_it() {
+        let store = SnapshotStore::new();
+        store.update(|snapshot| {
+            snapshot.last_announcement = Some(RemoteControlAnnounceOperation {
+                operation_id: U64String::from(7),
+                target_identity_fingerprint: vec![1; 16],
+                status: RemoteControlAnnounceStatus::Pending,
+            })
+        });
+        store.stopped();
+        let interrupted = store.read().last_announcement;
+        assert!(matches!(
+            interrupted.as_ref().map(|operation| &operation.status),
+            Some(RemoteControlAnnounceStatus::OutcomeUnknown {
+                reason: RemoteControlAnnounceUnknownReason::NodeStopped
+            })
+        ));
+        store.begin_generation(PrimaryIdentityState::Missing);
+        assert_eq!(store.read().last_announcement, interrupted);
+        store.reset();
+        assert!(store.read().last_announcement.is_none());
+    }
 
     #[test]
     fn updates_are_revisioned_and_poison_tolerant() {

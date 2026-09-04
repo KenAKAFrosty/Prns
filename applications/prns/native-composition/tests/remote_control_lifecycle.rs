@@ -23,10 +23,11 @@ use personal_rns::runtime::{
 };
 use personal_rns::units::DurationMillis;
 use prns_app::contract::{
-    DescribeRemoteControlTargetInput, DevelopmentNodeRuntime, DevelopmentNodeSnapshot,
-    DevelopmentNodeStartInput, DevelopmentNodeStartOutcome, DevelopmentNodeStopOutcome,
-    IdentityCreationOutcome, InitiateRemoteControlPairingInput, LocalHostState,
-    RemoteControlDescribeFailureStage, RemoteControlDescribeOutcome,
+    AnnounceRemoteControlTargetInput, DescribeRemoteControlTargetInput, DevelopmentNodeRuntime,
+    DevelopmentNodeSnapshot, DevelopmentNodeStartInput, DevelopmentNodeStartOutcome,
+    DevelopmentNodeStopOutcome, IdentityCreationOutcome, InitiateRemoteControlPairingInput,
+    LocalHostState, RemoteControlAnnounceFailureStage, RemoteControlAnnounceOutcome,
+    RemoteControlAnnounceStatus, RemoteControlDescribeFailureStage, RemoteControlDescribeOutcome,
     RemoteControlPairingCommandOutcome, RemoteControlPairingDecisionInput,
     RemoteControlPairingFailureStage, RemoteControlPairingState, RemoteControlRequestKind,
 };
@@ -81,6 +82,10 @@ struct TargetHarness {
 
 impl TargetHarness {
     async fn start() -> Self {
+        Self::start_with_announcement(false).await
+    }
+
+    async fn start_with_announcement(announcement_available: bool) -> Self {
         let persistence = tempfile::tempdir().expect("temporary target persistence");
         let identity_secrets = identity_secrets(0xA1, 0xA2);
         let endpoint = identity_secrets.identities().target().endpoint();
@@ -93,7 +98,15 @@ impl TargetHarness {
         let (confirmation_tx, confirmation) = mpsc::unbounded_channel();
         let node = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: None,
-            remote_control: service(identity_secrets),
+            remote_control: if announcement_available {
+                RemoteControlService::new(
+                    identity_secrets,
+                    RemoteControlInitialControllerGrants::Nobody,
+                    RemoteControlSelfAnnouncement::Destination(endpoint.destination_hash()),
+                )
+            } else {
+                service(identity_secrets)
+            },
             pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
             app_state: (),
             storage: GrowableHeap,
@@ -260,6 +273,7 @@ async fn controlled_tcp_remote_control_matrix_uses_the_public_lifecycle() {
             rejection_expiry_and_stale_decisions().await;
             permission_refusal().await;
             durable_restart_describe_and_unavailable_target().await;
+            authorized_announcement_and_retained_result().await;
             persistence_failure().await;
         })
         .await;
@@ -410,6 +424,7 @@ async fn permission_refusal() {
             ..
         }
     ));
+    assert_announcement_permission_refused(&target).await;
     assert_links_retired(&target).await;
     stop_controller().await;
     target.stop().await;
@@ -446,6 +461,7 @@ async fn durable_restart_describe_and_unavailable_target() {
             ..
         } if available_requests == vec![RemoteControlRequestKind::Describe]
     ));
+    assert_announcement_permission_refused(&target).await;
     assert_links_retired(&target).await;
 
     target.stop().await;
@@ -463,6 +479,103 @@ async fn durable_restart_describe_and_unavailable_target() {
         }
     ));
     assert_links_retired(&target).await;
+    stop_controller().await;
+}
+
+async fn assert_announcement_permission_refused(target: &TargetHarness) {
+    let accepted = app_announce(target.identity_fingerprint.clone()).await;
+    let RemoteControlAnnounceOutcome::Accepted { operation, .. } = accepted else {
+        panic!("permission check was not admitted: {accepted:?}");
+    };
+    wait_for_snapshot(
+        "announcement is not authorized",
+        EXCHANGE_TIMEOUT,
+        |snapshot| {
+            snapshot.last_announcement.as_ref().is_some_and(|last| {
+                last.operation_id == operation.operation_id
+                    && last.status
+                        == RemoteControlAnnounceStatus::Failed {
+                            stage: RemoteControlAnnounceFailureStage::Permission,
+                        }
+            })
+        },
+    )
+    .await;
+}
+
+async fn authorized_announcement_and_retained_result() {
+    let storage = AppStorage::new();
+    let mut target = TargetHarness::start_with_announcement(true).await;
+    create_identity(&storage.root).await;
+    start_controller(&storage.root, &target.server_address).await;
+    target.wait_for_connection().await;
+    let attempt = begin_pairing(
+        &mut target,
+        RemoteControlRequestSet::all(),
+        NORMAL_PAIRING_WINDOW,
+        NORMAL_ATTEMPT_TIMEOUT,
+    )
+    .await;
+    approve_pairing(&target, attempt).await;
+    target.announce().await;
+    let described = app_describe(target.identity_fingerprint.clone()).await;
+    assert!(
+        matches!(described, RemoteControlDescribeOutcome::Described { available_requests, .. } if available_requests.contains(&RemoteControlRequestKind::AnnounceSelf))
+    );
+
+    let accepted = app_announce(target.identity_fingerprint.clone()).await;
+    let RemoteControlAnnounceOutcome::Accepted { operation, .. } = accepted else {
+        panic!("announcement was not admitted: {accepted:?}");
+    };
+    let completed = wait_for_snapshot("announcement settled", EXCHANGE_TIMEOUT, |snapshot| {
+        snapshot.last_announcement.as_ref().is_some_and(|last| {
+            last.operation_id == operation.operation_id
+                && matches!(last.status, RemoteControlAnnounceStatus::Announced { .. })
+        })
+    })
+    .await;
+    assert_links_retired(&target).await;
+    assert_eq!(
+        app_snapshot().await.last_announcement,
+        completed.last_announcement
+    );
+    stop_controller().await;
+    let restarted = start_controller(&storage.root, &target.server_address).await;
+    assert_eq!(restarted.last_announcement, completed.last_announcement);
+    target.wait_for_connection().await;
+    target.announce().await;
+    assert!(matches!(
+        app_announce(target.identity_fingerprint.clone()).await,
+        RemoteControlAnnounceOutcome::Accepted { .. }
+    ));
+    wait_for_snapshot("announcement after restart", EXCHANGE_TIMEOUT, |snapshot| {
+        snapshot.last_announcement.as_ref().is_some_and(|last| {
+            last.operation_id != operation.operation_id
+                && matches!(last.status, RemoteControlAnnounceStatus::Announced { .. })
+        })
+    })
+    .await;
+    assert_links_retired(&target).await;
+
+    target.stop().await;
+    assert!(matches!(
+        app_announce(target.identity_fingerprint.clone()).await,
+        RemoteControlAnnounceOutcome::Accepted { .. }
+    ));
+    assert!(matches!(
+        app_announce(target.identity_fingerprint.clone()).await,
+        RemoteControlAnnounceOutcome::Busy
+    ));
+    wait_for_snapshot(
+        "offline announcement settles without retry",
+        UNAVAILABLE_TARGET_TIMEOUT,
+        |snapshot| {
+            snapshot.last_announcement.as_ref().is_some_and(|last| {
+                matches!(last.status, RemoteControlAnnounceStatus::Failed { .. })
+            })
+        },
+    )
+    .await;
     stop_controller().await;
 }
 
@@ -673,6 +786,15 @@ async fn app_reject(attempt_id: String) -> RemoteControlPairingCommandOutcome {
 async fn app_describe(target_identity_fingerprint: Vec<u8>) -> RemoteControlDescribeOutcome {
     run_blocking(move || {
         app::describe(DescribeRemoteControlTargetInput {
+            target_identity_fingerprint,
+        })
+    })
+    .await
+}
+
+async fn app_announce(target_identity_fingerprint: Vec<u8>) -> RemoteControlAnnounceOutcome {
+    run_blocking(move || {
+        app::announce_self(AnnounceRemoteControlTargetInput {
             target_identity_fingerprint,
         })
     })

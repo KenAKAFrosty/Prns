@@ -1,4 +1,8 @@
-import type { RemoteControlDescribeOutcome } from "@prns-internal/expo";
+import type {
+  RemoteControlDescribeOutcome,
+  RemoteControlAnnounceOutcome,
+  RemoteControlAnnounceStatus,
+} from "@prns-internal/expo";
 import { useLocalSearchParams } from "expo-router";
 import { useState } from "react";
 
@@ -25,6 +29,13 @@ export function ManagedNodeScreen() {
   const nodeId = params.nodeId;
   const runtime = useDevelopmentRuntime();
   const [pending, setPending] = useState(false);
+  const [announcing, setAnnouncing] = useState(false);
+  const [unknownSubmission, setUnknownSubmission] = useState<{
+    targetId: string;
+    previousOperationId: bigint | null;
+  } | null>(null);
+  const [announceResult, setAnnounceResult] =
+    useState<RuntimeCommandResult<RemoteControlAnnounceOutcome> | null>(null);
   const [result, setResult] = useState<RuntimeCommandResult<RemoteControlDescribeOutcome> | null>(
     null,
   );
@@ -77,8 +88,31 @@ export function ManagedNodeScreen() {
     return <NotFoundScreen backPath="/nodes" />;
   }
 
-  const canDescribe = target.permittedRequests.includes("describe");
+  const nodeRunning = runtime.snapshot?.runtime === "running";
+  const allowsDescribe = target.permittedRequests.includes("describe");
+  const canDescribe = nodeRunning && allowsDescribe;
   const describing = runtime.snapshot?.activeOperation?.kind === "describe";
+  const announcement = runtime.snapshot?.lastAnnouncement;
+  const targetAnnouncement =
+    announcement !== null &&
+    announcement !== undefined &&
+    formatBytes(announcement.targetIdentityFingerprint) === nodeId.toLowerCase()
+      ? announcement
+      : null;
+  const announcementPending = targetAnnouncement?.status.type === "pending";
+  const canAnnounce =
+    nodeRunning &&
+    result?.type === "outcome" &&
+    result.outcome.type === "described" &&
+    formatBytes(result.outcome.target.targetIdentityFingerprint) === nodeId.toLowerCase() &&
+    result.outcome.snapshot.generationId === runtime.snapshot?.generationId &&
+    target.permittedRequests.includes("announceSelf") &&
+    result.outcome.availableRequests.includes("announceSelf");
+  const operationBusy = runtime.snapshot?.activeOperation !== null;
+  const admissionUncertain =
+    unknownSubmission?.targetId === nodeId.toLowerCase() &&
+    (targetAnnouncement === null ||
+      targetAnnouncement.operationId === unknownSubmission.previousOperationId);
 
   const describe = async () => {
     setResult(null);
@@ -88,6 +122,24 @@ export function ManagedNodeScreen() {
     });
     setResult(next);
     setPending(false);
+  };
+
+  const announce = async () => {
+    const previousOperationId = targetAnnouncement?.operationId ?? null;
+    setAnnouncing(true);
+    setAnnounceResult(null);
+    setUnknownSubmission(null);
+    const next = await runtime.announceTarget({
+      targetIdentityFingerprint: target.targetIdentityFingerprint,
+    });
+    setAnnounceResult(next);
+    // A bridge interruption can lose the admission reply. Refresh the native
+    // record; never submit again to infer whether the first request was accepted.
+    if (next.type === "operationFailure") {
+      setUnknownSubmission({ targetId: nodeId.toLowerCase(), previousOperationId });
+      await runtime.refreshSnapshot();
+    }
+    setAnnouncing(false);
   };
 
   return (
@@ -110,19 +162,105 @@ export function ManagedNodeScreen() {
       </Card>
       <Card>
         <Subheading>Connection</Subheading>
-        <KeyValue label="Status" value={describing ? "Checking node…" : "Ready to check"} />
-        {canDescribe ? null : (
+        <KeyValue
+          label="Status"
+          value={
+            !nodeRunning
+              ? "This device is offline"
+              : describing
+                ? "Checking node…"
+                : "Ready to check"
+          }
+        />
+        {allowsDescribe ? null : (
           <BodyText>This pairing does not allow the app to view node information.</BodyText>
         )}
-        <Button disabled={!canDescribe || pending || describing} onPress={() => void describe()}>
+        <Button
+          disabled={!canDescribe || pending || operationBusy || announcing}
+          onPress={() => void describe()}
+        >
           {pending || describing ? "Checking…" : "Check node connection"}
         </Button>
       </Card>
 
       {result === null ? null : <DescribeResult result={result} />}
+      {canAnnounce ? (
+        <Card>
+          <Subheading>Share node address</Subheading>
+          <BodyText>Ask this node to make itself discoverable on its network.</BodyText>
+          <Button
+            disabled={
+              announcing || pending || operationBusy || announcementPending || admissionUncertain
+            }
+            onPress={() => void announce()}
+          >
+            {announcing || announcementPending ? "Sharing…" : "Share node address"}
+          </Button>
+        </Card>
+      ) : null}
+      {targetAnnouncement === null ? null : (
+        <Card>
+          <Subheading>
+            {admissionUncertain ? "Previous address sharing" : "Address sharing"}
+          </Subheading>
+          <BodyText>{announcementStatusMessage(targetAnnouncement.status)}</BodyText>
+          {targetAnnouncement.status.type === "announced" ? (
+            <KeyValue
+              label="Response time"
+              value={`${targetAnnouncement.status.rttMillis.toString()} ms`}
+            />
+          ) : null}
+        </Card>
+      )}
+      {admissionUncertain ? (
+        <BodyText>
+          The result could not be confirmed. The node may have shared its address. This request was
+          not repeated.
+        </BodyText>
+      ) : announceResult?.type === "outcome" && announceResult.outcome.type === "busy" ? (
+        <BodyText>Another operation is in progress. Address sharing has not started.</BodyText>
+      ) : announceResult?.type === "outcome" && announceResult.outcome.type === "failed" ? (
+        <BodyText>{announcementStatusMessage(announceResult.outcome)}</BodyText>
+      ) : null}
       <NavigationLink href="/nodes">Back to Nodes</NavigationLink>
     </Screen>
   );
+}
+
+export function announcementStatusMessage(status: RemoteControlAnnounceStatus): string {
+  switch (status.type) {
+    case "pending":
+      return "Waiting for the node to confirm address sharing…";
+    case "announced":
+      return "The node confirmed that it shared its address.";
+    case "unavailable":
+      return "The node cannot share its address right now.";
+    case "rejected":
+      return "The node declined to share its address.";
+    case "writeFailed":
+      return "The node could not send its address announcement.";
+    case "outcomeUnknown":
+      return "The result could not be confirmed. The node may have shared its address. This request was not repeated.";
+    case "failed":
+      switch (status.stage) {
+        case "busy":
+          return "Another operation is in progress. Address sharing has not started.";
+        case "input":
+        case "inventory":
+          return "This paired node is no longer available.";
+        case "route":
+        case "link":
+          return "The node could not be reached. Keep it on and nearby.";
+        case "identification":
+          return "The saved pairing could not be used with this node.";
+        case "permission":
+          return "This pairing does not allow the node to share its address.";
+        case "node":
+          return "This device went offline before address sharing could start.";
+        case "request":
+          return "Address sharing could not start.";
+      }
+  }
 }
 
 function DescribeResult({

@@ -10,8 +10,10 @@ use personal_rns::prelude::{
 
 use crate::contract::{
     DescribeRemoteControlTargetInput, DevelopmentNodeOperation, DevelopmentNodeOperationKind,
-    RemoteControlDescribeFailureStage, RemoteControlDescribeOutcome, RemoteControlTargetSnapshot,
-    U64String,
+    RemoteControlAnnounceFailureStage as AnnounceStage,
+    RemoteControlAnnounceStatus as AnnounceStatus,
+    RemoteControlAnnounceUnknownReason as UnknownReason, RemoteControlDescribeFailureStage,
+    RemoteControlDescribeOutcome, RemoteControlTargetSnapshot, U64String,
 };
 use crate::pairing::request_kinds;
 use crate::snapshot::SnapshotStore;
@@ -91,6 +93,140 @@ pub async fn describe(
             failed_operation(error)
         }
     }
+}
+
+/// Execute once through the authorized public target handle. An absent response
+/// after submission cannot prove that the target did not announce.
+pub async fn announce_self(
+    handle: &PrnsNodeHandle,
+    target_identity_fingerprint: &[u8],
+) -> AnnounceStatus {
+    let Some(identity) = identity_hash(target_identity_fingerprint) else {
+        return AnnounceStatus::Failed {
+            stage: AnnounceStage::Input,
+        };
+    };
+    let connected = match handle.connect_remote_control_target(identity).await {
+        Ok(connected) => connected,
+        Err(error) => return announce_connect_failure(error),
+    };
+    // Recheck the live target's capabilities: persisted permissions alone do not
+    // establish that the target still supports or authorizes this operation.
+    let status = match connected.describe().await {
+        Ok((description, _))
+            if description
+                .available_requests()
+                .supports(personal_rns::remote_control::RemoteControlRequestKind::AnnounceSelf) =>
+        {
+            match connected.announce_self().await {
+                Ok(rtt) => AnnounceStatus::Announced {
+                    rtt_millis: U64String::from(rtt.millis()),
+                },
+                Err(error) => announce_exchange_failure(error),
+            }
+        }
+        Ok(_) => AnnounceStatus::Failed {
+            stage: AnnounceStage::Permission,
+        },
+        Err(RemoteControlTargetOperationError::NotPermitted(_)) => AnnounceStatus::Failed {
+            stage: AnnounceStage::Permission,
+        },
+        Err(_) => AnnounceStatus::Failed {
+            stage: AnnounceStage::Request,
+        },
+    };
+    let _closed = connected.close();
+    status
+}
+
+fn announce_connect_failure(error: ConnectRemoteControlTargetError) -> AnnounceStatus {
+    let stage = match error {
+        ConnectRemoteControlTargetError::Resolve(_) => AnnounceStage::Inventory,
+        ConnectRemoteControlTargetError::EstablishLink(error) => {
+            match classify_establish_link_failure(&error) {
+                EstablishLinkFailureClass::Route => AnnounceStage::Route,
+                EstablishLinkFailureClass::Link => AnnounceStage::Link,
+                EstablishLinkFailureClass::Node => AnnounceStage::Node,
+            }
+        }
+        ConnectRemoteControlTargetError::Identify(_) => AnnounceStage::Identification,
+    };
+    AnnounceStatus::Failed { stage }
+}
+
+fn announce_exchange_failure(error: RemoteControlTargetOperationError) -> AnnounceStatus {
+    use personal_rns::runtime::RemoteControlAnnounceSelfFailure;
+    match error {
+        RemoteControlTargetOperationError::NotPermitted(_) => AnnounceStatus::Failed {
+            stage: AnnounceStage::Permission,
+        },
+        RemoteControlTargetOperationError::Exchange(RemoteControlError::AnnounceSelf(failure)) => {
+            match failure {
+                RemoteControlAnnounceSelfFailure::Unavailable => AnnounceStatus::Unavailable,
+                RemoteControlAnnounceSelfFailure::Rejected => AnnounceStatus::Rejected,
+                RemoteControlAnnounceSelfFailure::WriteFailed => AnnounceStatus::WriteFailed,
+            }
+        }
+        RemoteControlTargetOperationError::Exchange(RemoteControlError::Request(
+            SendError::Failed(failure),
+        )) => match failure {
+            SendRequestFailure::Rejected(_) => AnnounceStatus::Failed {
+                stage: AnnounceStage::Link,
+            },
+            SendRequestFailure::Timeout => AnnounceStatus::OutcomeUnknown {
+                reason: UnknownReason::Timeout,
+            },
+            SendRequestFailure::LinkClosed => AnnounceStatus::OutcomeUnknown {
+                reason: UnknownReason::ConnectionLost,
+            },
+            SendRequestFailure::ResponseTooLarge
+            | SendRequestFailure::ResponseTransferFailed(_)
+            | SendRequestFailure::ResourceCapacity => AnnounceStatus::OutcomeUnknown {
+                reason: UnknownReason::ResponseInvalid,
+            },
+            SendRequestFailure::WriteFailed | SendRequestFailure::Culled => {
+                AnnounceStatus::OutcomeUnknown {
+                    reason: UnknownReason::DeliveryUnconfirmed,
+                }
+            }
+        },
+        RemoteControlTargetOperationError::Exchange(RemoteControlError::Request(
+            SendError::NodeStopped,
+        )) => AnnounceStatus::OutcomeUnknown {
+            reason: UnknownReason::NodeStopped,
+        },
+        RemoteControlTargetOperationError::Exchange(
+            RemoteControlError::Response(_) | RemoteControlError::UnexpectedResponse { .. },
+        ) => AnnounceStatus::OutcomeUnknown {
+            reason: UnknownReason::ResponseInvalid,
+        },
+        RemoteControlTargetOperationError::Exchange(
+            RemoteControlError::Encode(_)
+            | RemoteControlError::Remote(_)
+            | RemoteControlError::Request(SendError::Busy | SendError::PayloadTooLarge),
+        ) => AnnounceStatus::Failed {
+            stage: AnnounceStage::Request,
+        },
+    }
+}
+
+pub fn complete_announcement(
+    snapshots: &SnapshotStore,
+    operation_id: &U64String,
+    status: AnnounceStatus,
+) {
+    snapshots.update(|snapshot| {
+        if let Some(operation) = &mut snapshot.last_announcement {
+            if &operation.operation_id == operation_id {
+                operation.status = status;
+                if snapshot.active_operation.as_ref().is_some_and(|operation| {
+                    operation.kind == DevelopmentNodeOperationKind::AnnounceSelf
+                }) {
+                    snapshot.active_operation = None;
+                }
+            }
+        }
+    });
 }
 
 fn target_snapshot(
@@ -256,6 +392,86 @@ mod tests {
     use super::*;
 
     #[test]
+    fn announcement_settlement_preserves_remote_outcomes_and_ambiguous_delivery() {
+        use personal_rns::runtime::RemoteControlAnnounceSelfFailure as Failure;
+        for (failure, expected) in [
+            (Failure::Unavailable, AnnounceStatus::Unavailable),
+            (Failure::Rejected, AnnounceStatus::Rejected),
+            (Failure::WriteFailed, AnnounceStatus::WriteFailed),
+        ] {
+            assert_eq!(
+                announce_exchange_failure(RemoteControlTargetOperationError::Exchange(
+                    RemoteControlError::AnnounceSelf(failure)
+                )),
+                expected
+            );
+        }
+        assert_eq!(
+            announce_exchange_failure(RemoteControlTargetOperationError::Exchange(
+                RemoteControlError::Request(SendError::Failed(SendRequestFailure::Timeout))
+            )),
+            AnnounceStatus::OutcomeUnknown {
+                reason: UnknownReason::Timeout
+            }
+        );
+        assert_eq!(
+            announce_exchange_failure(RemoteControlTargetOperationError::Exchange(
+                RemoteControlError::Request(SendError::Failed(SendRequestFailure::LinkClosed))
+            )),
+            AnnounceStatus::OutcomeUnknown {
+                reason: UnknownReason::ConnectionLost
+            }
+        );
+        assert_eq!(
+            announce_exchange_failure(RemoteControlTargetOperationError::Exchange(
+                RemoteControlError::Request(SendError::Busy)
+            )),
+            AnnounceStatus::Failed {
+                stage: AnnounceStage::Request
+            }
+        );
+    }
+
+    #[test]
+    fn older_completion_cannot_replace_a_newer_native_operation() {
+        let snapshots = SnapshotStore::new();
+        snapshots.update(|snapshot| {
+            snapshot.last_announcement = Some(crate::contract::RemoteControlAnnounceOperation {
+                operation_id: U64String::from(2),
+                target_identity_fingerprint: vec![1; 16],
+                status: AnnounceStatus::Pending,
+            });
+            snapshot.active_operation = Some(DevelopmentNodeOperation {
+                kind: DevelopmentNodeOperationKind::AnnounceSelf,
+                started_at_millis: U64String::from(0),
+            });
+        });
+        complete_announcement(
+            &snapshots,
+            &U64String::from(1),
+            AnnounceStatus::Announced {
+                rtt_millis: U64String::from(3),
+            },
+        );
+        assert_eq!(
+            snapshots
+                .read()
+                .last_announcement
+                .map(|operation| operation.status),
+            Some(AnnounceStatus::Pending)
+        );
+        assert!(snapshots.read().active_operation.is_some());
+        complete_announcement(
+            &snapshots,
+            &U64String::from(2),
+            AnnounceStatus::Announced {
+                rtt_millis: U64String::from(4),
+            },
+        );
+        assert!(snapshots.read().active_operation.is_none());
+    }
+
+    #[test]
     fn identity_input_is_exactly_sized() {
         assert!(identity_hash(&[0; 15]).is_none());
         assert!(identity_hash(&[0; 16]).is_some());
@@ -408,7 +624,7 @@ mod tests {
         }
 
         #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-        async fn restored_inventory_drives_describe_over_upstream_tcp() {
+        async fn restored_inventory_drives_describe_and_announcement_over_upstream_tcp() {
             let persistence = PersistenceDirectories::new();
             pair_once(&persistence).await;
             describe_after_restart(&persistence).await;
@@ -587,10 +803,14 @@ mod tests {
 
             let (target_restored_tx, mut target_restored_rx) =
                 tokio::sync::mpsc::unbounded_channel();
+            let self_destination = announcement_destination();
+            let self_destination_hash = self_destination
+                .destination_hash()
+                .expect("announcement destination is valid");
             let target = PrnsNode::new(PrnsNodeRecipe {
                 transport_identity: None,
                 remote_control: service(target_identity_secrets),
-                pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
+                pre_configured_destinations: [self_destination],
                 app_state: (),
                 storage: GrowableHeap,
                 request_endpoints: request_endpoints![],
@@ -702,9 +922,25 @@ mod tests {
                     target.target_identity_fingerprint,
                     target_identity_hash.as_bytes(),
                 );
-                assert_eq!(available_requests, vec![RemoteControlRequestKind::Describe]);
+                assert_eq!(
+                    available_requests,
+                    vec![
+                        RemoteControlRequestKind::Describe,
+                        RemoteControlRequestKind::AnnounceSelf
+                    ]
+                );
                 assert_eq!(snapshot.paired_targets, targets);
                 assert!(snapshot.active_operation.is_none());
+                let announced =
+                    announce_self(&controller_handle, target_identity_hash.as_bytes()).await;
+                assert!(matches!(announced, AnnounceStatus::Announced { .. }));
+                assert_eq!(
+                    target_announce_rx
+                        .recv()
+                        .await
+                        .expect("controller observes the requested announcement"),
+                    self_destination_hash
+                );
             };
 
             tokio::select! {
@@ -734,11 +970,29 @@ mod tests {
         fn service(
             identity_secrets: RemoteControlNodeIdentitySecrets,
         ) -> RemoteControlService<'static> {
+            let destination = announcement_destination()
+                .destination_hash()
+                .expect("announcement destination is valid");
             RemoteControlService::new(
                 identity_secrets,
                 RemoteControlInitialControllerGrants::Nobody,
-                RemoteControlSelfAnnouncement::Unavailable,
+                RemoteControlSelfAnnouncement::Destination(destination),
             )
+        }
+
+        fn announcement_destination() -> PreConfiguredDestination<'static> {
+            PreConfiguredDestination::Single {
+                app_name: "prns-app-test",
+                aspects: &["node"],
+                identity: Zeroizing::new([0xC4; IDENTITY_SECRET_KEY_LEN]),
+                announce_app_data: b"Announcement fixture",
+                proof: ProofStrategy::ProveNone,
+                link_requests: LinkRequestPolicy::AcceptAll,
+                ratchet: RatchetPolicy::NoRatchets,
+                resource_strategy: ResourceStrategy::AcceptNone,
+                maximum_request_bytes: Default::default(),
+                request_endpoints: ServeMyRequestEndpoints::No,
+            }
         }
 
         async fn wait_for_direct_connection(target: &PrnsNodeHandle, controller: &PrnsNodeHandle) {

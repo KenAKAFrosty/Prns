@@ -138,10 +138,11 @@ PrnsAppBytes prns_app_approve_pairing(const uint8_t *input_ptr,
 PrnsAppBytes prns_app_reject_pairing(const uint8_t *input_ptr,
                                      size_t input_len);
 
-/**
- * Describe a paired target. The input bytes must match
- * DescribeRemoteControlTargetInput and remain readable for the call.
- */
+/** Submit AnnounceRemoteControlTargetInput once; read settlement from snapshot.
+ * Input bytes must remain readable for the call. */
+PrnsAppBytes prns_app_announce_target(const uint8_t *input_ptr, size_t input_len);
+/** Describe a paired target. The input bytes must match
+ * DescribeRemoteControlTargetInput and remain readable for the call. */
 PrnsAppBytes prns_app_describe_target(const uint8_t *input_ptr,
                                       size_t input_len);
 

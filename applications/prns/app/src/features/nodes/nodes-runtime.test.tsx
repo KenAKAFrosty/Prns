@@ -124,6 +124,8 @@ function snapshot(
     pairing,
     pairingCandidates,
     pairedTargets,
+    lastAnnouncement: null,
+    generationId: 0n,
     activeOperation: null,
     failure: null,
   };
@@ -150,6 +152,7 @@ function fakeProvider(
     approveRemoteControlPairing: async () => ({ type: "busy" }),
     rejectRemoteControlPairing: async () => ({ type: "busy" }),
     describeRemoteControlTarget: async () => ({ type: "busy" }),
+    announceRemoteControlTarget: async () => ({ type: "busy" }),
     saveObservedDestination: async () => ({ type: "notObserved" }),
     createManualContact: async () => ({ type: "notFound" }),
     setContactAlias: async () => ({ type: "notFound" }),
@@ -186,6 +189,8 @@ function fakeProvider(
       Effect.promise(() => runtime.rejectRemoteControlPairing(input)),
     describeRemoteControlTarget: (input) =>
       Effect.promise(() => runtime.describeRemoteControlTarget(input)),
+    announceRemoteControlTarget: (input) =>
+      Effect.promise(() => runtime.announceRemoteControlTarget(input)),
     stopDevelopmentNode: Effect.promise(runtime.stopDevelopmentNode),
     resetDevelopmentData: Effect.promise(runtime.resetDevelopmentData),
   };
@@ -668,6 +673,36 @@ describe("Foundation 1 Nodes runtime binding", () => {
     expect(view.getByText("View this device")).toBeTruthy();
     expect(view.queryByText("Host runtime")).toBeNull();
 
+    view.unmount();
+    await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
+  });
+
+  it("labels saved nodes as paired without implying current connectivity", async () => {
+    const stop = jest.fn();
+    const describeRemoteControlTarget = jest.fn(async () => ({ type: "busy" as const }));
+    const target = {
+      targetIdentityFingerprint: observedIdentity,
+      destination: observedDestination,
+      controllerIdentityFingerprint: identityHash(new Uint8Array(16).fill(0x55)),
+      permittedRequests: ["describe" as const],
+    };
+    const view = render(
+      <DevelopmentRuntimeProvider
+        provider={fakeProvider(
+          stop,
+          { describeRemoteControlTarget },
+          false,
+          { type: "searching" },
+          [target],
+        )}
+      >
+        <NodesScreen />
+      </DevelopmentRuntimeProvider>,
+    );
+    await waitFor(() => expect(view.getByText("Paired")).toBeTruthy());
+    expect(view.getByText("Manage node")).toBeTruthy();
+    expect(view.queryByText("Ready")).toBeNull();
+    expect(describeRemoteControlTarget).not.toHaveBeenCalled();
     view.unmount();
     await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
   });

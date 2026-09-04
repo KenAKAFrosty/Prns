@@ -1,5 +1,7 @@
 import { Data, Effect, type Scope } from "effect";
 import type {
+  AnnounceRemoteControlTargetInput,
+  RemoteControlAnnounceOutcome,
   DescribeRemoteControlTargetInput,
   DevelopmentNodeSnapshot,
   DevelopmentNodeStartInput,
@@ -15,6 +17,7 @@ import type {
 export type DevelopmentRuntimeOperationName =
   | "approvePairing"
   | "describeTarget"
+  | "announceTarget"
   | "initiatePairing"
   | "rejectPairing"
   | "reset"
@@ -52,6 +55,9 @@ export type DevelopmentRuntimeFailure =
   | DevelopmentRuntimeStopError;
 
 export type EffectDevelopmentRuntime = {
+  readonly announceRemoteControlTarget: (
+    input: AnnounceRemoteControlTargetInput,
+  ) => Effect.Effect<RemoteControlAnnounceOutcome, DevelopmentRuntimeOperationError>;
   readonly startDevelopmentNode: (
     input: DevelopmentNodeStartInput,
   ) => Effect.Effect<DevelopmentNodeStartOutcome, DevelopmentRuntimeOperationError>;
@@ -114,6 +120,8 @@ export function makeEffectDevelopmentRuntime(
       runtimeCall("rejectPairing", () => runtime.rejectRemoteControlPairing(input)),
     describeRemoteControlTarget: (input) =>
       runtimeCall("describeTarget", () => runtime.describeRemoteControlTarget(input)),
+    announceRemoteControlTarget: (input) =>
+      runtimeCall("announceTarget", () => runtime.announceRemoteControlTarget(input)),
     stopDevelopmentNode: runtimeCall("stop", runtime.stopDevelopmentNode),
     resetDevelopmentData: runtimeCall("reset", runtime.resetDevelopmentData),
   };
