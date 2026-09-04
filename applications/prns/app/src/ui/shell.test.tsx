@@ -43,7 +43,7 @@ describe("shell accessibility", () => {
     expect(view.getByRole("link", { name: "Contacts" })).toBeTruthy();
   });
 
-  it("exposes the wide context landmark and marks the owning destination current", () => {
+  it("uses the wide rail without adding a generic context panel", () => {
     mockPathname = "/explore/nomadnet/page";
     mockWidth = 1200;
 
@@ -53,9 +53,9 @@ describe("shell accessibility", () => {
       view.UNSAFE_getByProps({ accessibilityLabel: "Primary navigation", role: "navigation" }),
     ).toBeTruthy();
     expect(view.UNSAFE_getByProps({ role: "main" })).toBeTruthy();
-    expect(
-      view.UNSAFE_getByProps({ accessibilityLabel: "Workspace context", role: "complementary" }),
-    ).toBeTruthy();
+    expect(view.UNSAFE_queryAllByProps({ accessibilityLabel: "Workspace context" })).toHaveLength(
+      0,
+    );
     expect(view.getByRole("link", { name: "NomadNet, current page" })).toBeTruthy();
   });
 });

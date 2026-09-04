@@ -27,7 +27,7 @@ export function NotYetImplementedScreen({ entry }: { readonly entry: ScreenCatal
   const router = useRouter();
   return (
     <Screen>
-      <Badge tone="warning">Not yet implemented</Badge>
+      <Badge tone="warning">Not available yet</Badge>
       <ScreenHeading>{entry.label}</ScreenHeading>
       <Card>
         <BodyText>{entry.summary}</BodyText>

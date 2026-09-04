@@ -25,7 +25,7 @@ describe("foundation scaffold screens", () => {
   it("renders an honest placeholder without a synthetic result", () => {
     const view = render(<NotYetImplementedScreen entry={screenById("inbox.message")} />);
 
-    expect(view.getByText("Not yet implemented")).toBeTruthy();
+    expect(view.getByText("Not available yet")).toBeTruthy();
     expect(view.getByText("View message details and delivery status.")).toBeTruthy();
     expect(view.getByText("Message details are not available yet.")).toBeTruthy();
     expect(view.queryByText("This feature is planned for a future update.")).toBeNull();

@@ -29,7 +29,6 @@ export function ShellLayout() {
         <View role="main" style={styles.content}>
           <Slot />
         </View>
-        {layout === "wide" ? <ContextPanel active={active} /> : null}
       </View>
       {layout === "compact" ? <BottomNavigation active={active} entries={entries} /> : null}
     </SafeAreaView>
@@ -145,37 +144,6 @@ function ShellNavigationItem({
   );
 }
 
-function ContextPanel({ active }: { readonly active: ScreenCatalogEntry | undefined }) {
-  const palette = useAppPalette();
-  return (
-    <View
-      accessibilityLabel="Workspace context"
-      role="complementary"
-      style={[
-        styles.contextPanel,
-        { backgroundColor: palette.surface, borderColor: palette.border },
-      ]}
-    >
-      <Text accessibilityRole="header" style={[styles.contextTitle, { color: palette.text }]}>
-        Workspace
-      </Text>
-      <Text style={[styles.contextLabel, { color: palette.textMuted }]}>Current area</Text>
-      <Text style={[styles.contextValue, { color: palette.text }]}>
-        {active?.label ?? "Detail"}
-      </Text>
-      {active?.section === "nodes" ? (
-        <>
-          <Text style={[styles.contextLabel, { color: palette.textMuted }]}>Nodes</Text>
-          <Text style={[styles.contextValue, { color: palette.text }]}>Live status</Text>
-          <Text style={[styles.contextHint, { color: palette.textMuted }]}>
-            Paired nodes appear here after pairing is complete.
-          </Text>
-        </>
-      ) : null}
-    </View>
-  );
-}
-
 export function ShellSurface({ children }: PropsWithChildren) {
   return <View style={styles.content}>{children}</View>;
 }
@@ -221,14 +189,4 @@ const styles = StyleSheet.create({
   compactNavigationItem: { alignItems: "center", flex: 1, minWidth: 0, paddingHorizontal: 4 },
   navigationLabel: { fontSize: 15, fontWeight: "600", lineHeight: 20 },
   compactNavigationLabel: { fontSize: 12, lineHeight: 16, textAlign: "center" },
-  contextPanel: {
-    borderLeftWidth: 1,
-    gap: space.sm,
-    padding: space.md,
-    width: 280,
-  },
-  contextTitle: { fontSize: 20, fontWeight: "700", lineHeight: 27 },
-  contextLabel: { fontSize: 12, fontWeight: "700", lineHeight: 17, textTransform: "uppercase" },
-  contextValue: { fontSize: 16, fontWeight: "600", lineHeight: 23 },
-  contextHint: { fontSize: 13, lineHeight: 19 },
 });
