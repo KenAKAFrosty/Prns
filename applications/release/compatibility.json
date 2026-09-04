@@ -11,7 +11,7 @@
   },
   "prns": {
     "repository": "https://github.com/KenAKAFrosty/Prns.git",
-    "revision": "cad8059467b8e32960ba03d622dedb1688ea2f1a",
+    "revision": "efd0beb522e7c81487a0bfeef6c99b27a9ec9285",
     "hostContract": {
       "id": "prns-host/v1",
       "schemaPath": "prns-host/schema/host-contract-v1.json",
@@ -45,7 +45,7 @@
       "sourcePath": "prns-js",
       "version": "0.3.7",
       "subpath": "./contract",
-      "artifactSha256": "8cfcc5c200275690fa4ad0d629b0a2d438c596ab45144a64636e37ebc1c04800",
+      "artifactSha256": "0b292b27e05d5c3f4e6f0d0861c1ef159059c62116ac983105f055eee5a71296",
       "consumers": [
         "prns/app/package.json",
         "sdk/expo/package.json"
