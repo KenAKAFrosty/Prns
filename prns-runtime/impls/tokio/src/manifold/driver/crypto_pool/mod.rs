@@ -53,11 +53,18 @@ use super::host_protocol::{
 };
 use super::scheduling_policy::{SchedulerPolicy, MAX_INTERACTIVE_CRYPTO_BATCH};
 
+mod worker_placement;
+
+use worker_placement::{performance_core_count, CryptoWorkerLayout, CryptoWorkerRole};
+
 /// How the host runtime runs the engine's asymmetric crypto. `Pooled` offloads verify/seal/sign/decrypt to worker threads and keeps the manifold hot; `Inline` runs them on the manifold thread (the embedded shape, and the mobile default).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CryptoPoolConfig {
     Inline,
-    Pooled { workers: PoolWorkers },
+    Pooled {
+        workers: PoolWorkers,
+        placement: CryptoWorkerPlacement,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,6 +72,18 @@ pub enum PoolWorkers {
     /// Size to the host: available parallelism minus manifold headroom (min 1).
     Auto,
     Fixed(NonZeroUsize),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CryptoWorkerPlacement {
+    SchedulerManaged,
+    CoreClassAware,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct ResolvedCryptoPoolConfig {
+    pub(crate) workers: NonZeroUsize,
+    pub(crate) placement: CryptoWorkerPlacement,
 }
 
 impl CryptoPoolConfig {
@@ -76,6 +95,7 @@ impl CryptoPoolConfig {
         } else {
             Self::Pooled {
                 workers: PoolWorkers::Auto,
+                placement: CryptoWorkerPlacement::CoreClassAware,
             }
         }
     }
@@ -94,21 +114,30 @@ impl CryptoPoolConfig {
             Some("0" | "off" | "false" | "no") => Self::Inline,
             Some("") | None => match self {
                 Self::Inline => Self::Inline,
-                Self::Pooled { workers } => Self::Pooled {
+                Self::Pooled { workers, placement } => Self::Pooled {
                     workers: workers_env.unwrap_or(workers),
+                    placement,
                 },
             },
             Some(_) => Self::Pooled {
                 workers: workers_env.unwrap_or(PoolWorkers::Auto),
+                placement: CryptoWorkerPlacement::CoreClassAware,
             },
         }
     }
 
-    pub(crate) fn resolved_worker_count(self) -> Option<NonZeroUsize> {
+    pub(crate) fn resolved(self) -> Option<ResolvedCryptoPoolConfig> {
         match self.with_env_override() {
             Self::Inline => None,
-            Self::Pooled { workers } => Some(workers.resolve()),
+            Self::Pooled { workers, placement } => Some(ResolvedCryptoPoolConfig {
+                workers: workers.resolve(),
+                placement,
+            }),
         }
+    }
+
+    pub(crate) fn resolved_worker_count(self) -> Option<NonZeroUsize> {
+        self.resolved().map(|resolved| resolved.workers)
     }
 }
 
@@ -125,7 +154,7 @@ impl PoolWorkers {
                 let logical = std::thread::available_parallelism()
                     .map(NonZeroUsize::get)
                     .unwrap_or(6);
-                let workers = automatic_worker_count(logical, performance_cores());
+                let workers = automatic_worker_count(logical, performance_core_count());
                 NonZeroUsize::new(workers).unwrap_or(NonZeroUsize::MIN)
             }
         }
@@ -147,65 +176,6 @@ fn automatic_worker_count(logical: usize, performance: Option<usize>) -> usize {
         }
         _ => logical.saturating_sub(MANIFOLD_IO_HEADROOM).max(1),
     }
-}
-
-fn performance_cores() -> Option<usize> {
-    #[cfg(target_os = "linux")]
-    {
-        linux_cpu_list_len("/sys/devices/cpu_core/cpus").or_else(linux_highest_capacity_cores)
-    }
-    #[cfg(target_os = "macos")]
-    {
-        macos_sysctl_usize("hw.perflevel0.logicalcpu")
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    {
-        None
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn linux_cpu_list_len(path: &str) -> Option<usize> {
-    let raw = std::fs::read_to_string(path).ok()?;
-    let count: usize = raw
-        .trim()
-        .split(',')
-        .filter_map(|span| {
-            let mut bounds = span
-                .split('-')
-                .filter_map(|n| n.trim().parse::<usize>().ok());
-            let first = bounds.next()?;
-            let last = bounds.next().unwrap_or(first);
-            last.checked_sub(first).map(|range| range + 1)
-        })
-        .sum();
-    (count > 0).then_some(count)
-}
-
-#[cfg(target_os = "linux")]
-fn linux_highest_capacity_cores() -> Option<usize> {
-    let logical = std::thread::available_parallelism().ok()?.get();
-    let capacities: Vec<usize> = (0..logical)
-        .filter_map(|cpu| {
-            std::fs::read_to_string(format!("/sys/devices/system/cpu/cpu{cpu}/cpu_capacity"))
-                .ok()
-                .and_then(|raw| raw.trim().parse::<usize>().ok())
-        })
-        .collect();
-    let highest = *capacities.iter().max()?;
-    let count = capacities.iter().filter(|&&c| c == highest).count();
-    (count < capacities.len()).then_some(count)
-}
-
-#[cfg(target_os = "macos")]
-fn macos_sysctl_usize(name: &str) -> Option<usize> {
-    let output = std::process::Command::new("sysctl")
-        .arg("-n")
-        .arg(name)
-        .output()
-        .ok()?;
-    output.status.success().then_some(())?;
-    String::from_utf8(output.stdout).ok()?.trim().parse().ok()
 }
 
 pub(super) struct StagedSealJob {
@@ -766,10 +736,16 @@ struct CryptoWorker {
     /// their SPSC ring directly, so a submit does not pay an unconditional kernel wake.
     wake_armed: Arc<AtomicBool>,
     handle: Option<std::thread::JoinHandle<()>>,
+    role: CryptoWorkerRole,
     outstanding_jobs: Cell<usize>,
     outstanding_work: Cell<usize>,
     tail_class: Cell<Option<CryptoJobClass>>,
     tail_run: Cell<usize>,
+}
+
+enum CryptoWorkerStart {
+    Run,
+    Abort,
 }
 
 pub(super) struct CryptoPool {
@@ -805,13 +781,19 @@ impl CryptoPool {
 
     #[cfg(test)]
     fn spawn(workers: usize, completion_wake: Arc<Notify>) -> Option<Self> {
-        Self::spawn_with_policy(workers, completion_wake, SchedulerPolicy::production())
+        Self::spawn_with_policy(
+            workers,
+            completion_wake,
+            SchedulerPolicy::production(),
+            CryptoWorkerPlacement::SchedulerManaged,
+        )
     }
 
     pub(super) fn spawn_with_policy(
         workers: usize,
         completion_wake: Arc<Notify>,
         scheduler_policy: SchedulerPolicy,
+        placement: CryptoWorkerPlacement,
     ) -> Option<Self> {
         let worker_count = workers.max(1);
         let state = Arc::new(CryptoPoolState {
@@ -822,8 +804,16 @@ impl CryptoPool {
             backpressure_depth: crypto_backpressure_depth(workers),
             shutdown: AtomicBool::new(false),
         });
+        let worker_layout = CryptoWorkerLayout::resolve(placement, worker_count);
+        let placement_requires_affinity = worker_layout.requires_affinity();
+        let (placement_ready_sender, placement_ready_receiver) = std::sync::mpsc::channel();
+        let mut worker_starts = Vec::with_capacity(worker_count);
         let mut worker_slots: Vec<CryptoWorker> = Vec::with_capacity(worker_count);
         for worker in 0..worker_count {
+            let role = worker_layout.role(worker);
+            let affinity = worker_layout.affinity(worker);
+            let worker_ready_sender = placement_ready_sender.clone();
+            let (worker_start_sender, worker_start_receiver) = std::sync::mpsc::channel();
             let (interactive_job_producer, interactive_job_consumer) =
                 RingBuffer::new(CRYPTO_WORKER_JOB_RING_DEPTH);
             let (bulk_job_producer, bulk_job_consumer) =
@@ -837,6 +827,16 @@ impl CryptoPool {
             match std::thread::Builder::new()
                 .name(format!("prns-crypto-{worker}"))
                 .spawn(move || {
+                    if placement_requires_affinity {
+                        let placement_ready = affinity.apply_to_current_thread();
+                        if worker_ready_sender.send(placement_ready).is_err() {
+                            return;
+                        }
+                    }
+                    match worker_start_receiver.recv() {
+                        Ok(CryptoWorkerStart::Run) => {}
+                        Ok(CryptoWorkerStart::Abort) | Err(_) => return,
+                    }
                     crypto_worker(CryptoWorkerRun {
                         worker,
                         state: &worker_state,
@@ -848,19 +848,26 @@ impl CryptoPool {
                         scheduler_policy,
                     });
                 }) {
-                Ok(handle) => worker_slots.push(CryptoWorker {
-                    interactive_job_producer: RefCell::new(Some(interactive_job_producer)),
-                    bulk_job_producer: RefCell::new(Some(bulk_job_producer)),
-                    result_consumer: RefCell::new(Some(result_consumer)),
-                    wake_armed,
-                    handle: Some(handle),
-                    outstanding_jobs: Cell::new(0),
-                    outstanding_work: Cell::new(0),
-                    tail_class: Cell::new(None),
-                    tail_run: Cell::new(0),
-                }),
+                Ok(handle) => {
+                    worker_starts.push(worker_start_sender);
+                    worker_slots.push(CryptoWorker {
+                        interactive_job_producer: RefCell::new(Some(interactive_job_producer)),
+                        bulk_job_producer: RefCell::new(Some(bulk_job_producer)),
+                        result_consumer: RefCell::new(Some(result_consumer)),
+                        wake_armed,
+                        handle: Some(handle),
+                        role,
+                        outstanding_jobs: Cell::new(0),
+                        outstanding_work: Cell::new(0),
+                        tail_class: Cell::new(None),
+                        tail_run: Cell::new(0),
+                    });
+                }
                 Err(_) => {
                     state.shutdown.store(true, Ordering::Release);
+                    for start in worker_starts.drain(..) {
+                        let _ = start.send(CryptoWorkerStart::Abort);
+                    }
                     for slot in &worker_slots {
                         if let Some(handle) = &slot.handle {
                             handle.thread().unpark();
@@ -875,10 +882,70 @@ impl CryptoPool {
                 }
             }
         }
+        drop(placement_ready_sender);
+        let mut placement_enabled = true;
+        if placement_requires_affinity {
+            let placement_deadline = std::time::Instant::now() + WORKER_PLACEMENT_START_TIMEOUT;
+            for _ in 0..worker_count {
+                let remaining =
+                    placement_deadline.saturating_duration_since(std::time::Instant::now());
+                if !placement_ready_receiver
+                    .recv_timeout(remaining)
+                    .is_ok_and(|outcome| outcome.is_ok())
+                {
+                    placement_enabled = false;
+                    break;
+                }
+            }
+        }
+        if !placement_enabled {
+            state.shutdown.store(true, Ordering::Release);
+            for start in worker_starts {
+                let _ = start.send(CryptoWorkerStart::Abort);
+            }
+            for slot in &worker_slots {
+                if let Some(handle) = &slot.handle {
+                    handle.thread().unpark();
+                }
+            }
+            for slot in &mut worker_slots {
+                if let Some(handle) = slot.handle.take() {
+                    let _ = handle.join();
+                }
+            }
+            drop(worker_slots);
+            if placement == CryptoWorkerPlacement::CoreClassAware {
+                return Self::spawn_with_policy(
+                    workers,
+                    completion_wake,
+                    scheduler_policy,
+                    CryptoWorkerPlacement::SchedulerManaged,
+                );
+            }
+            return None;
+        }
+        let mut workers_started = true;
+        for start in worker_starts {
+            workers_started &= start.send(CryptoWorkerStart::Run).is_ok();
+        }
+        if !workers_started {
+            state.shutdown.store(true, Ordering::Release);
+            for slot in &worker_slots {
+                if let Some(handle) = &slot.handle {
+                    handle.thread().unpark();
+                }
+            }
+            for slot in &mut worker_slots {
+                if let Some(handle) = slot.handle.take() {
+                    let _ = handle.join();
+                }
+            }
+            return None;
+        }
         Some(Self {
             state,
             workers: worker_slots,
-            verify_batch_target: verify_batch_target(worker_count, performance_cores()),
+            verify_batch_target: verify_batch_target(worker_count, performance_core_count()),
             maximum_outstanding_work: crypto_backpressure_work(worker_count),
             resource_part_hash_jobs: Cell::new(0),
             next_equal_load: Cell::new(0),
@@ -1019,6 +1086,13 @@ impl CryptoPool {
         loop {
             let mut worker = selected_worker;
             for _ in 0..self.workers.len() {
+                if !self.workers[worker].role.accepts(pending.class) {
+                    worker += 1;
+                    if worker == self.workers.len() {
+                        worker = 0;
+                    }
+                    continue;
+                }
                 let producer = if pending.class == CryptoJobClass::Bulk {
                     &self.workers[worker].bulk_job_producer
                 } else {
@@ -1073,20 +1147,23 @@ impl CryptoPool {
             .next_equal_load
             .get()
             .min(worker_count.saturating_sub(1));
-        let mut least_loaded = (start, self.workers[start].outstanding_work.get());
-        let mut worker = start;
-        for _ in 1..worker_count {
-            worker += 1;
-            if worker == worker_count {
-                worker = 0;
+        let mut least_loaded = None;
+        for offset in 0..worker_count {
+            let worker = (start + offset) % worker_count;
+            if !self.workers[worker].role.accepts(class) {
+                continue;
             }
             let load = self.workers[worker].outstanding_work.get();
-            if load < least_loaded.1 {
-                least_loaded = (worker, load);
+            if least_loaded.is_none_or(|(_, least_load)| load < least_load) {
+                least_loaded = Some((worker, load));
             }
         }
+        let Some(mut least_loaded) = least_loaded else {
+            return 0;
+        };
         let warm_worker = self.state.warm_worker.load(Ordering::Acquire);
         if warm_worker < worker_count
+            && self.workers[warm_worker].role.accepts(class)
             && self.workers[warm_worker].outstanding_work.get() == least_loaded.1
         {
             least_loaded = (
@@ -1113,7 +1190,8 @@ impl CryptoPool {
             .iter()
             .enumerate()
             .filter(|(_, slot)| {
-                slot.tail_class.get() == Some(CryptoJobClass::Verify)
+                slot.role.accepts(class)
+                    && slot.tail_class.get() == Some(CryptoJobClass::Verify)
                     && slot.tail_run.get() < self.verify_batch_target
                     && slot.outstanding_work.get() <= least_loaded.1.saturating_add(affinity_slack)
             })
@@ -1335,6 +1413,7 @@ const CRYPTO_QUEUE_PER_WORKER: usize = 2;
 const MIN_CRYPTO_QUEUE_DEPTH: usize = 16;
 const MAX_CRYPTO_QUEUE_DEPTH: usize = 64;
 const CRYPTO_WORKER_JOB_RING_DEPTH: usize = 16;
+const WORKER_PLACEMENT_START_TIMEOUT: core::time::Duration = core::time::Duration::from_secs(1);
 // Claim only the jobs visible at the start of a worker pass, then execute the first immediately.
 // This amortizes the SPSC ring's head publication without coalescing or delaying a lone job.
 const NO_WARM_WORKER: usize = usize::MAX;

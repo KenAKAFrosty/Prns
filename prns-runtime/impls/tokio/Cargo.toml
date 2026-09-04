@@ -45,6 +45,9 @@ shlex = { version = "1", optional = true }
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.31", optional = true, default-features = false, features = ["process", "signal"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+nix = { version = "0.31", default-features = false, features = ["sched"] }
+
 [dev-dependencies]
 prns-core = { version = "=0.3.7", path = "../../../prns-core", default-features = false, features = ["test-support"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "test-util"] }

@@ -7,8 +7,9 @@ use std::num::NonZeroUsize;
 use personal_rns::prelude::*;
 use personal_rns::routing::links::LinkId;
 use personal_rns::runtime::{
-    CryptoMetricsSnapshot, CryptoPoolConfig, EgressMetricsSnapshot, ManifoldMetricsSnapshot,
-    PoolWorkers, SchedulerPolicy, SchedulerPolicyError, SchedulerPolicyInput, SegmentCompression,
+    CryptoMetricsSnapshot, CryptoPoolConfig, CryptoWorkerPlacement, EgressMetricsSnapshot,
+    ManifoldMetricsSnapshot, PoolWorkers, SchedulerPolicy, SchedulerPolicyError,
+    SchedulerPolicyInput, SegmentCompression,
 };
 use tokio::io::AsyncReadExt as _;
 
@@ -50,7 +51,7 @@ async fn main() {
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
     })
-    .with_crypto_pool(config.workers.crypto_pool())
+    .with_crypto_pool(config.workers.crypto_pool(config.worker_placement))
     .with_scheduler_policy(config.scheduler_policy);
     let receiver_handle = receiver.handle();
     let _server = receiver_handle.supervise(tcp_server);
@@ -73,7 +74,7 @@ async fn main() {
         },
         persistence: NoPersistence,
     })
-    .with_crypto_pool(config.workers.crypto_pool())
+    .with_crypto_pool(config.workers.crypto_pool(config.worker_placement))
     .with_scheduler_policy(config.scheduler_policy);
     let sender_handle = sender.handle();
 
@@ -118,9 +119,21 @@ async fn main() {
             );
         }
 
-        run_probes(&sender_handle, link_id, WARMUP_PROBES).await;
+        run_probes(
+            &sender_handle,
+            link_id,
+            WARMUP_PROBES,
+            config.probe_concurrency,
+        )
+        .await;
         let usage_before = process_usage();
-        let idle = run_probes(&sender_handle, link_id, PROBE_COUNT).await;
+        let idle = run_probes(
+            &sender_handle,
+            link_id,
+            PROBE_COUNT,
+            config.probe_concurrency,
+        )
+        .await;
         let before = sender_handle
             .metrics_snapshot()
             .await
@@ -151,7 +164,13 @@ async fn main() {
             });
         }
         tokio::task::yield_now().await;
-        let mixed = run_probes(&sender_handle, link_id, PROBE_COUNT).await;
+        let mixed = run_probes(
+            &sender_handle,
+            link_id,
+            PROBE_COUNT,
+            config.probe_concurrency,
+        )
+        .await;
         while let Some(resource) = resources.join_next().await {
             resource
                 .expect("resource task remains live")
@@ -221,7 +240,9 @@ async fn main() {
 struct ProbeConfig {
     scheduler_policy: SchedulerPolicy,
     workers: ProbeWorkers,
+    worker_placement: ProbeWorkerPlacement,
     resource_streams: NonZeroUsize,
+    probe_concurrency: NonZeroUsize,
 }
 
 #[derive(Clone, Copy)]
@@ -231,12 +252,15 @@ enum ProbeWorkers {
 }
 
 impl ProbeWorkers {
-    fn crypto_pool(self) -> CryptoPoolConfig {
+    fn crypto_pool(self, placement: ProbeWorkerPlacement) -> CryptoPoolConfig {
         let workers = match self {
             Self::Auto => PoolWorkers::Auto,
             Self::Fixed(workers) => PoolWorkers::Fixed(workers),
         };
-        CryptoPoolConfig::Pooled { workers }
+        CryptoPoolConfig::Pooled {
+            workers,
+            placement: placement.into_runtime(),
+        }
     }
 }
 
@@ -245,6 +269,30 @@ impl fmt::Display for ProbeWorkers {
         match self {
             Self::Auto => formatter.write_str("auto"),
             Self::Fixed(workers) => workers.fmt(formatter),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ProbeWorkerPlacement {
+    SchedulerManaged,
+    CoreClassAware,
+}
+
+impl ProbeWorkerPlacement {
+    fn into_runtime(self) -> CryptoWorkerPlacement {
+        match self {
+            Self::SchedulerManaged => CryptoWorkerPlacement::SchedulerManaged,
+            Self::CoreClassAware => CryptoWorkerPlacement::CoreClassAware,
+        }
+    }
+}
+
+impl fmt::Display for ProbeWorkerPlacement {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SchedulerManaged => formatter.write_str("scheduler-managed"),
+            Self::CoreClassAware => formatter.write_str("core-class-aware"),
         }
     }
 }
@@ -302,6 +350,7 @@ enum ProbeArgumentError {
     InvalidInteger { argument: String, value: String },
     ZeroNotAllowed { argument: String },
     InvalidWorkerSelection { value: String },
+    InvalidWorkerPlacement { value: String },
     TooManyResourceStreams { value: usize },
     InvalidPolicy(SchedulerPolicyError),
 }
@@ -323,6 +372,12 @@ impl fmt::Display for ProbeArgumentError {
                     "workers must be auto or a positive integer, got {value:?}"
                 )
             }
+            Self::InvalidWorkerPlacement { value } => {
+                write!(
+                    formatter,
+                    "worker placement must be scheduler-managed or core-class-aware, got {value:?}"
+                )
+            }
             Self::TooManyResourceStreams { value } => {
                 write!(
                     formatter,
@@ -339,7 +394,9 @@ impl std::error::Error for ProbeArgumentError {}
 fn parse_arguments() -> Result<ProbeConfig, ProbeArgumentError> {
     let mut values = PolicyValues::production();
     let mut workers = ProbeWorkers::Auto;
+    let mut worker_placement = ProbeWorkerPlacement::CoreClassAware;
     let mut resource_streams = NonZeroUsize::MIN;
+    let mut probe_concurrency = NonZeroUsize::MIN;
     let mut arguments = std::env::args().skip(1);
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
@@ -385,12 +442,19 @@ fn parse_arguments() -> Result<ProbeConfig, ProbeArgumentError> {
             "--workers" => {
                 workers = parse_workers(next_value(&argument, &mut arguments)?)?;
             }
+            "--worker-placement" => {
+                worker_placement = parse_worker_placement(next_value(&argument, &mut arguments)?)?;
+            }
             "--resource-streams" => {
                 let parsed = parse_positive(&argument, next_value(&argument, &mut arguments)?)?;
                 if u64::try_from(parsed).map_or(true, |count| count > RESOURCE_BYTES) {
                     return Err(ProbeArgumentError::TooManyResourceStreams { value: parsed });
                 }
                 resource_streams = NonZeroUsize::new(parsed).expect("validated positive above");
+            }
+            "--probe-concurrency" => {
+                let parsed = parse_positive(&argument, next_value(&argument, &mut arguments)?)?;
+                probe_concurrency = NonZeroUsize::new(parsed).expect("validated positive above");
             }
             _ => return Err(ProbeArgumentError::UnknownArgument { argument }),
         }
@@ -401,7 +465,9 @@ fn parse_arguments() -> Result<ProbeConfig, ProbeArgumentError> {
     Ok(ProbeConfig {
         scheduler_policy,
         workers,
+        worker_placement,
         resource_streams,
+        probe_concurrency,
     })
 }
 
@@ -447,6 +513,14 @@ fn parse_workers(value: String) -> Result<ProbeWorkers, ProbeArgumentError> {
     Ok(ProbeWorkers::Fixed(workers))
 }
 
+fn parse_worker_placement(value: String) -> Result<ProbeWorkerPlacement, ProbeArgumentError> {
+    match value.as_str() {
+        "scheduler-managed" => Ok(ProbeWorkerPlacement::SchedulerManaged),
+        "core-class-aware" => Ok(ProbeWorkerPlacement::CoreClassAware),
+        _ => Err(ProbeArgumentError::InvalidWorkerPlacement { value }),
+    }
+}
+
 fn nonzero(value: usize) -> NonZeroUsize {
     NonZeroUsize::new(value).expect("validated positive policy value")
 }
@@ -454,9 +528,11 @@ fn nonzero(value: usize) -> NonZeroUsize {
 fn print_policy(config: &ProbeConfig) {
     let policy = config.scheduler_policy;
     println!(
-        "POLICY workers={} resource_streams={} turn_work={} completion_batch={} inbound_total={} inbound_per_lane={} command_batch={} owed_work_batch={} hot_turns={} worker_hot_idle_turns={} worker_spin_idle_turns={} interactive_batch={}",
+        "POLICY workers={} worker_placement={} resource_streams={} probe_concurrency={} turn_work={} completion_batch={} inbound_total={} inbound_per_lane={} command_batch={} owed_work_batch={} hot_turns={} worker_hot_idle_turns={} worker_spin_idle_turns={} interactive_batch={}",
         config.workers,
+        config.worker_placement,
         config.resource_streams,
+        config.probe_concurrency,
         policy.turn_work(),
         policy.completion_batch(),
         policy.inbound_total(),
@@ -528,15 +604,33 @@ fn process_usage() -> ProcessUsage {
     ProcessUsage::default()
 }
 
-async fn run_probes(handle: &PrnsNodeHandle, link_id: LinkId, count: usize) -> Vec<u64> {
+async fn run_probes(
+    handle: &PrnsNodeHandle,
+    link_id: LinkId,
+    count: usize,
+    concurrency: NonZeroUsize,
+) -> Vec<u64> {
     let mut latencies = Vec::with_capacity(count);
-    for sequence in 0..count {
-        let started = std::time::Instant::now();
-        handle
-            .send_link_packet(link_id, &(sequence as u64).to_be_bytes())
-            .await
-            .expect("control probe settles");
-        latencies.push(elapsed_micros(started));
+    let mut tasks = tokio::task::JoinSet::new();
+    let mut sequence = 0usize;
+    loop {
+        while sequence < count && tasks.len() < concurrency.get() {
+            let probe_sender = handle.clone();
+            let probe_sequence = sequence;
+            tasks.spawn(async move {
+                let started = std::time::Instant::now();
+                probe_sender
+                    .send_link_packet(link_id, &(probe_sequence as u64).to_be_bytes())
+                    .await
+                    .expect("control probe settles");
+                elapsed_micros(started)
+            });
+            sequence += 1;
+        }
+        let Some(latency) = tasks.join_next().await else {
+            break;
+        };
+        latencies.push(latency.expect("control probe task remains live"));
     }
     latencies.sort_unstable();
     latencies

@@ -36,7 +36,7 @@ mod scheduling_policy;
 pub use super::grant_lane::{
     tokio_grant_lane, HeapFrameSlot, TokioGrantConsumer, TokioGrantProducer,
 };
-pub use crypto_pool::{CryptoPoolConfig, PoolWorkers};
+pub use crypto_pool::{CryptoPoolConfig, CryptoWorkerPlacement, PoolWorkers};
 pub use egress::Egress;
 pub(crate) use host::TokioEntropy;
 pub use host::{TokioClock, TokioHost};
@@ -299,15 +299,14 @@ async fn run_inner<S, H, J, P, A, C>(
     }
     const LOCAL_COMMAND_BURST: usize = 32;
     let crypto_completion_wake = Arc::new(tokio::sync::Notify::new());
-    let crypto_pool = crypto_pool_config
-        .resolved_worker_count()
-        .and_then(|workers| {
-            CryptoPool::spawn_with_policy(
-                workers.get(),
-                crypto_completion_wake.clone(),
-                scheduler_policy,
-            )
-        });
+    let crypto_pool = crypto_pool_config.resolved().and_then(|resolved| {
+        CryptoPool::spawn_with_policy(
+            resolved.workers.get(),
+            crypto_completion_wake.clone(),
+            scheduler_policy,
+            resolved.placement,
+        )
+    });
     engine.set_resource_seal_execution(match crypto_pool.as_ref() {
         Some(_) => ResourceSealExecution::ExternalOwned,
         None => ResourceSealExecution::Inline,

@@ -80,6 +80,22 @@ fn equal_load_prefers_the_worker_that_is_already_warm() {
     assert_eq!(pool.worker_for(CryptoJobClass::Latency, 1), 2);
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn class_partition_routes_bulk_and_interactive_work_to_disjoint_workers() {
+    let mut pool = CryptoPool::spawn(4, Arc::new(Notify::new())).expect("workers spawn");
+    pool.workers[0].role = CryptoWorkerRole::Interactive;
+    pool.workers[1].role = CryptoWorkerRole::Interactive;
+    pool.workers[2].role = CryptoWorkerRole::Bulk;
+    pool.workers[3].role = CryptoWorkerRole::Bulk;
+
+    for _ in 0..8 {
+        assert!(pool.worker_for(CryptoJobClass::Latency, 1) < 2);
+        assert!(pool.worker_for(CryptoJobClass::Verify, 1) < 2);
+        assert!(pool.worker_for(CryptoJobClass::Bulk, 1) >= 2);
+    }
+}
+
 #[test]
 fn automatic_workers_use_bounded_efficiency_spillover_and_keep_host_headroom() {
     assert_eq!(automatic_worker_count(10, Some(4)), 6);
