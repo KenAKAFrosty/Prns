@@ -16,7 +16,7 @@ import type { Href } from "expo-router";
 import { useRouter } from "expo-router";
 import type { DestinationHash } from "personal-rns/contract";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { StyleSheet, TextInput, View } from "react-native";
+import { StyleSheet, View } from "react-native";
 
 import { formatContactHash, parseDestinationHash } from "@/features/contacts/format";
 import { useContactRuntime } from "@/native/contact-runtime-context";
@@ -35,7 +35,8 @@ import {
   ScreenHeading,
   Subheading,
 } from "@/ui/primitives";
-import { radius, space, useAppPalette } from "@/ui/theme";
+import { TextField } from "@/ui/text-field";
+import { space } from "@/ui/theme";
 import {
   deliveryLabel,
   messagePeer,
@@ -145,11 +146,8 @@ export function InboxScreen() {
     <Screen>
       <Badge>Messages</Badge>
       <ScreenHeading>Inbox</ScreenHeading>
-      <BodyText>Messages stay on this device and remain available while it is offline.</BodyText>
+      <BodyText>Your messages are saved on this device, including while offline.</BodyText>
       <BodyText muted>Keep prns open for reliable message delivery.</BodyText>
-      <BodyText muted>
-        Before exchanging messages with a new contact, share this device&apos;s messaging address.
-      </BodyText>
       <LxmfHealthCard />
       {development.availability.type !== "available" ? (
         <UnavailableCard platform={development.availability.platform} />
@@ -169,9 +167,18 @@ export function InboxScreen() {
           )}
           <View style={styles.actions}>
             {nodeRunning ? (
-              <Button disabled={announcing} onPress={() => void announce()}>
-                {announcing ? "Sharing…" : "Share messaging address"}
-              </Button>
+              <NavigationLink href="/inbox/compose">New message</NavigationLink>
+            ) : null}
+            {nodeRunning ? (
+              <>
+                <BodyText muted>
+                  Before exchanging messages with a new contact, share this device&apos;s messaging
+                  address.
+                </BodyText>
+                <Button disabled={announcing} onPress={() => void announce()}>
+                  {announcing ? "Sharing…" : "Share messaging address"}
+                </Button>
+              </>
             ) : null}
             <Button disabled={data.pending} onPress={() => void data.refresh()} tone="secondary">
               {data.pending ? "Refreshing…" : "Refresh Inbox"}
@@ -188,7 +195,7 @@ export function InboxScreen() {
               <Badge>No conversations</Badge>
               <BodyText>
                 {nodeRunning
-                  ? "Share your messaging address or start a conversation by destination."
+                  ? "Share your messaging address or start a new message."
                   : "No messages are saved on this device."}
               </BodyText>
             </Card>
@@ -229,9 +236,7 @@ export function InboxScreen() {
               );
             })
           )}
-          {nodeRunning ? (
-            <NavigationLink href="/inbox/compose">New message</NavigationLink>
-          ) : (
+          {nodeRunning ? null : (
             <BodyText muted>
               Start this device&apos;s node to find contacts or write a new message.
             </BodyText>
@@ -350,7 +355,6 @@ export function ComposeScreen({
   const router = useRouter();
   const [destinationText, setDestinationText] = useState(initialDestination ?? "");
   const destination = parseDestinationHash(destinationText);
-  const palette = useAppPalette();
   const nodeRunning = development.phase === "ready" && development.snapshot?.runtime === "running";
 
   if (development.availability.type !== "available") {
@@ -385,17 +389,12 @@ export function ComposeScreen({
       <BodyText>
         Enter the 32-character destination for the person or device you want to reach.
       </BodyText>
-      <TextInput
-        accessibilityLabel="Message destination"
+      <TextField
+        label="Recipient"
         autoCapitalize="none"
         autoCorrect={false}
         onChangeText={setDestinationText}
         placeholder="32 hexadecimal characters"
-        placeholderTextColor={palette.textMuted}
-        style={[
-          styles.input,
-          { backgroundColor: palette.surface, borderColor: palette.border, color: palette.text },
-        ]}
         value={destinationText}
       />
       {destination === null ? (
@@ -441,7 +440,6 @@ function Composer({
   readonly onSettled: (result: RuntimeCommandResult<SendDirectTextOutcome>) => Promise<void>;
 }) {
   const development = useDevelopmentRuntime();
-  const palette = useAppPalette();
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [measurement, setMeasurement] = useState<MeasureLxmfTextOutcome | null>(null);
@@ -495,36 +493,17 @@ function Composer({
   return (
     <Card>
       <Subheading>New message</Subheading>
-      <TextInput
-        accessibilityLabel="Message title"
+      <TextField
+        label="Title (optional)"
         onChangeText={setTitle}
         placeholder="Title"
-        placeholderTextColor={palette.textMuted}
-        style={[
-          styles.input,
-          {
-            backgroundColor: palette.surfaceRaised,
-            borderColor: palette.border,
-            color: palette.text,
-          },
-        ]}
         value={title}
       />
-      <TextInput
-        accessibilityLabel="Message"
+      <TextField
+        label="Message"
         multiline
         onChangeText={setContent}
         placeholder="Message"
-        placeholderTextColor={palette.textMuted}
-        style={[
-          styles.input,
-          styles.messageInput,
-          {
-            backgroundColor: palette.surfaceRaised,
-            borderColor: palette.border,
-            color: palette.text,
-          },
-        ]}
         value={content}
       />
       <Measurement outcome={measurement} failure={measureFailure} />
@@ -670,6 +649,9 @@ function mailboxMutationLabel(
 function LxmfHealthCard() {
   const development = useDevelopmentRuntime();
   const health = development.snapshot?.lxmf;
+  if (health?.state === "ready") {
+    return <Badge>Messaging ready</Badge>;
+  }
   const state =
     health === undefined
       ? development.availability.type !== "available"
@@ -795,16 +777,4 @@ function FailureCard({ detail }: { readonly detail: string }) {
 
 const styles = StyleSheet.create({
   actions: { gap: space.sm },
-  input: {
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    fontSize: 16,
-    minHeight: 48,
-    paddingHorizontal: space.md,
-    paddingVertical: space.sm,
-  },
-  messageInput: {
-    minHeight: 112,
-    textAlignVertical: "top",
-  },
 });

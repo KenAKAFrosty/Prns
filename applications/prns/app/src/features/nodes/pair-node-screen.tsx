@@ -3,7 +3,7 @@ import type {
   RemoteControlPairingCommandOutcome,
 } from "@prns-internal/expo";
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { StyleSheet, TextInput } from "react-native";
+import { StyleSheet } from "react-native";
 
 import type { RuntimeCommandResult } from "@/native/development-runtime-context";
 import { useDevelopmentRuntime } from "@/native/development-runtime-context";
@@ -19,7 +19,8 @@ import {
   ScreenHeading,
   Subheading,
 } from "@/ui/primitives";
-import { radius, space, useAppPalette } from "@/ui/theme";
+import { TextField } from "@/ui/text-field";
+import { useAppPalette } from "@/ui/theme";
 import { formatBytes, formatRequestKind } from "./format";
 
 type RemoteControlPairingState = DevelopmentNodeSnapshot["pairing"];
@@ -127,7 +128,7 @@ export function PairNodeScreen({
       <Badge>Secure pairing</Badge>
       <ScreenHeading>Pair a node</ScreenHeading>
       <BodyText>
-        First choose a nearby Bluetooth accessory. Then open secure pairing on the node you want to
+        First choose a nearby Bluetooth node. Then open secure pairing on the node you want to
         manage, enter its invitation, and compare the confirmation code on both devices.
       </BodyText>
 
@@ -167,6 +168,7 @@ export function PairNodeScreen({
             Pairing cannot start because this device&apos;s node is unavailable. Open its
             diagnostics for more details.
           </BodyText>
+          <NavigationLink href="/nodes/local">View diagnostics</NavigationLink>
         </Card>
       ) : null}
 
@@ -571,6 +573,7 @@ function CandidateSelectionCard({
               <BodyText muted>{formatExpiry(candidate.expiresInMillis)}</BodyText>
               <Button
                 accessibilityLabel={`${selected ? "Selected" : "Select"} ${name} ${shortCandidateId(candidate.candidateId)}`}
+                accessibilityState={{ selected }}
                 disabled={pending !== null}
                 onPress={() => onSelectCandidate(candidate.candidateId)}
                 tone={selected ? "primary" : "secondary"}
@@ -587,23 +590,15 @@ function CandidateSelectionCard({
       {selectedCandidate !== undefined ? (
         <>
           <BodyText>Enter the 8-character invitation shown on the selected node.</BodyText>
-          <TextInput
-            accessibilityLabel="Invitation code"
+          <TextField
+            label="Invitation code"
             autoCapitalize="characters"
             autoCorrect={false}
             editable={pending === null}
             maxLength={8}
             onChangeText={onInvitationCode}
             placeholder="A1B2C3D4"
-            placeholderTextColor={palette.textMuted}
-            style={[
-              styles.invitation,
-              {
-                backgroundColor: palette.surface,
-                borderColor: palette.border,
-                color: palette.text,
-              },
-            ]}
+            style={styles.invitation}
             value={invitationCode}
           />
           <Button
@@ -710,14 +705,10 @@ function pairingFailureMessage(stage: PairingFailureStage): string {
 
 const styles = StyleSheet.create({
   invitation: {
-    borderRadius: radius.sm,
-    borderWidth: 1,
     fontSize: 22,
     fontWeight: "700",
     letterSpacing: 3,
     minHeight: 52,
-    paddingHorizontal: space.md,
-    paddingVertical: space.sm,
     textAlign: "center",
   },
 });

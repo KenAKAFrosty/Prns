@@ -6,7 +6,6 @@ import { runtimeProvider } from "@/native/runtime-provider";
 import { useScaffoldState } from "@/state/scaffold-state-context";
 import { NavigationLink } from "@/ui/navigation-link";
 import {
-  Badge,
   BodyText,
   Button,
   Card,
@@ -59,7 +58,6 @@ export function SettingsScreen() {
 
   return (
     <Screen>
-      <Badge>Development preview</Badge>
       <ScreenHeading>Settings</ScreenHeading>
       <Card>
         <Subheading>Upcoming features</Subheading>
@@ -95,7 +93,7 @@ export function SettingsScreen() {
         </Pressable>
       </Card>
       <Card>
-        <Subheading>Preview data</Subheading>
+        <Subheading>App data</Subheading>
         <BodyText muted>
           Reset removes this app&apos;s identity, paired nodes, contacts, messages, and preferences
           from this device.

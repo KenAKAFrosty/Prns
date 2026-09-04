@@ -40,7 +40,11 @@ export function ScreenHeading({ children }: PropsWithChildren) {
 export function Subheading({ children }: PropsWithChildren) {
   const palette = useAppPalette();
   return (
-    <Text accessibilityRole="header" style={[styles.subheading, { color: palette.text }]}>
+    <Text
+      accessibilityRole="header"
+      aria-level={2}
+      style={[styles.subheading, { color: palette.text }]}
+    >
       {children}
     </Text>
   );
@@ -96,13 +100,17 @@ export function Card({
   );
 }
 
-type ButtonProps = Pick<PressableProps, "accessibilityLabel" | "disabled" | "onPress"> & {
+type ButtonProps = Pick<
+  PressableProps,
+  "accessibilityLabel" | "accessibilityState" | "disabled" | "onPress"
+> & {
   readonly children: ReactNode;
   readonly tone?: "primary" | "secondary" | "destructive";
 };
 
 export function Button({
   accessibilityLabel,
+  accessibilityState,
   children,
   disabled = false,
   onPress,
@@ -125,7 +133,7 @@ export function Button({
     <Pressable
       {...labelled}
       accessibilityRole="button"
-      accessibilityState={{ disabled: isDisabled }}
+      accessibilityState={{ ...accessibilityState, disabled: isDisabled }}
       disabled={isDisabled}
       onBlur={() => setFocused(false)}
       onFocus={() => setFocused(true)}
@@ -165,12 +173,13 @@ export function CardStack({ children }: PropsWithChildren) {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1 },
+  screen: { flex: 1, minWidth: 0 },
   screenContent: {
     alignSelf: "center",
     gap: space.md,
     maxWidth: 880,
     padding: space.lg,
+    paddingBottom: space.xl,
     width: "100%",
   },
   heading: { fontSize: 32, fontWeight: "700", lineHeight: 39 },
@@ -178,6 +187,7 @@ const styles = StyleSheet.create({
   body: { fontSize: 16, lineHeight: 24 },
   badge: {
     alignSelf: "flex-start",
+    maxWidth: "100%",
     borderRadius: radius.pill,
     paddingHorizontal: 10,
     paddingVertical: 5,
@@ -188,6 +198,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     gap: space.sm,
     padding: space.md,
+    minWidth: 0,
   },
   button: {
     alignItems: "center",
@@ -200,7 +211,7 @@ const styles = StyleSheet.create({
   },
   buttonText: { fontSize: 16, fontWeight: "700", lineHeight: 22, textAlign: "center" },
   keyValue: { gap: space.xs },
-  key: { fontSize: 13, fontWeight: "700", lineHeight: 18, textTransform: "uppercase" },
+  key: { fontSize: 13, fontWeight: "600", lineHeight: 18 },
   value: { fontSize: 16, lineHeight: 24 },
   stack: { gap: space.md },
 });

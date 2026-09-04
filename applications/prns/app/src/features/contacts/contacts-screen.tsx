@@ -9,7 +9,6 @@ import type { Href } from "expo-router";
 import { useRouter } from "expo-router";
 import type { DestinationHash } from "personal-rns/contract";
 import { useCallback, useEffect, useState } from "react";
-import { StyleSheet, TextInput } from "react-native";
 
 import { useContactRuntime } from "@/native/contact-runtime-context";
 import { NavigationLink } from "@/ui/navigation-link";
@@ -23,7 +22,7 @@ import {
   ScreenHeading,
   Subheading,
 } from "@/ui/primitives";
-import { radius, space, useAppPalette } from "@/ui/theme";
+import { TextField } from "@/ui/text-field";
 import { formatContactHash, parseDestinationHash, parseIdentityHash } from "./format";
 
 export function ContactsScreen() {
@@ -68,7 +67,7 @@ export function ContactsScreen() {
           </Button>
           {failure === null ? null : <FailureCard detail={failure} />}
           <ContactListResult outcome={outcome} />
-          <NavigationLink href="/contacts/add">Add a manual contact</NavigationLink>
+          <NavigationLink href="/contacts/add">Add contact</NavigationLink>
         </>
       )}
     </Screen>
@@ -94,7 +93,7 @@ function ContactListResult({ outcome }: { readonly outcome: ContactListOutcome |
     return (
       <Card>
         <Badge>No saved contacts</Badge>
-        <BodyText>Add a contact manually, or save a node you discover on the network.</BodyText>
+        <BodyText>Add a contact, or save a node you discover on the network.</BodyText>
       </Card>
     );
   }
@@ -218,11 +217,13 @@ export function ContactDetailScreen({ destination }: { readonly destination: Des
             <KeyValue label="Pinned" value={contact.pinned ? "Yes" : "No"} />
           </Card>
           <Card>
-            <Subheading>Alias</Subheading>
-            <ContactField
-              accessibilityLabel="Contact alias"
+            <Subheading>Contact name</Subheading>
+            <TextField
+              label="Name (optional)"
+              autoCapitalize="sentences"
+              autoCorrect={false}
               onChangeText={setAlias}
-              placeholder="Optional alias"
+              placeholder="e.g. Alex"
               value={alias}
             />
             <Button
@@ -231,7 +232,7 @@ export function ContactDetailScreen({ destination }: { readonly destination: Des
                 void applyMutation((runtime) => runtime.setContactAlias(destination, alias))
               }
             >
-              Save alias
+              Save name
             </Button>
           </Card>
           <Button
@@ -307,7 +308,7 @@ export function AddContactScreen() {
 
   return (
     <Screen>
-      <Badge>Manual entry</Badge>
+      <Badge>New contact</Badge>
       <ScreenHeading>Add contact</ScreenHeading>
       <BodyText>
         Enter a destination and, optionally, an identity. A contact needs an identity before it can
@@ -317,28 +318,32 @@ export function AddContactScreen() {
         <NativeContactsUnavailable platform={contactRuntime.availability.platform} />
       ) : (
         <Card>
-          <ContactField
-            accessibilityLabel="Destination hash"
+          <TextField
+            label="Destination"
             autoCapitalize="none"
+            autoCorrect={false}
             onChangeText={setDestinationText}
             placeholder="32 hexadecimal characters"
             value={destinationText}
           />
-          <ContactField
-            accessibilityLabel="Identity hash"
+          <TextField
+            label="Identity (optional)"
             autoCapitalize="none"
+            autoCorrect={false}
             onChangeText={setIdentityText}
             placeholder="Optional 32-character identity hash"
             value={identityText}
           />
-          <ContactField
-            accessibilityLabel="Contact alias"
+          <TextField
+            label="Name (optional)"
+            autoCapitalize="sentences"
+            autoCorrect={false}
             onChangeText={setAlias}
-            placeholder="Optional alias"
+            placeholder="e.g. Alex"
             value={alias}
           />
           <Button disabled={pending} onPress={() => void create()}>
-            {pending ? "Saving…" : "Save manual contact"}
+            {pending ? "Saving…" : "Save contact"}
           </Button>
         </Card>
       )}
@@ -349,37 +354,6 @@ export function AddContactScreen() {
       </BodyText>
       <NavigationLink href="/contacts">Back to Contacts</NavigationLink>
     </Screen>
-  );
-}
-
-function ContactField({
-  accessibilityLabel,
-  autoCapitalize = "sentences",
-  onChangeText,
-  placeholder,
-  value,
-}: {
-  readonly accessibilityLabel: string;
-  readonly autoCapitalize?: "none" | "sentences";
-  readonly onChangeText: (value: string) => void;
-  readonly placeholder: string;
-  readonly value: string;
-}) {
-  const palette = useAppPalette();
-  return (
-    <TextInput
-      accessibilityLabel={accessibilityLabel}
-      autoCapitalize={autoCapitalize}
-      autoCorrect={false}
-      onChangeText={onChangeText}
-      placeholder={placeholder}
-      placeholderTextColor={palette.textMuted}
-      style={[
-        styles.input,
-        { backgroundColor: palette.background, borderColor: palette.border, color: palette.text },
-      ]}
-      value={value}
-    />
   );
 }
 
@@ -450,14 +424,3 @@ function ResetRequiredCard() {
     </Card>
   );
 }
-
-const styles = StyleSheet.create({
-  input: {
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    fontSize: 16,
-    minHeight: 48,
-    paddingHorizontal: space.md,
-    paddingVertical: space.sm,
-  },
-});

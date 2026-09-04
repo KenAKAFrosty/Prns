@@ -1,6 +1,6 @@
 import { Link, Slot, usePathname } from "expo-router";
-import type { PropsWithChildren } from "react";
-import { Pressable, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import { type PropsWithChildren, useState } from "react";
+import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { navigationEntries, type ScreenCatalogEntry } from "@/navigation/catalog";
@@ -64,9 +64,11 @@ function NavigationRail({
       role="navigation"
       style={[styles.rail, { backgroundColor: palette.surface, borderColor: palette.border }]}
     >
-      {entries.map((entry) => (
-        <ShellNavigationItem active={active?.id === entry.id} entry={entry} key={entry.id} />
-      ))}
+      <ScrollView contentContainerStyle={styles.railContent} keyboardShouldPersistTaps="handled">
+        {entries.map((entry) => (
+          <ShellNavigationItem active={active?.id === entry.id} entry={entry} key={entry.id} />
+        ))}
+      </ScrollView>
     </View>
   );
 }
@@ -110,11 +112,20 @@ function ShellNavigationItem({
   readonly entry: ScreenCatalogEntry;
 }) {
   const palette = useAppPalette();
+  const [focused, setFocused] = useState(false);
+  const [pressed, setPressed] = useState(false);
   return (
     <Link href={entry.path} asChild>
       <Pressable
         accessibilityLabel={active ? `${entry.label}, current page` : entry.label}
         aria-current={active ? "page" : undefined}
+        onBlur={() => {
+          setFocused(false);
+          setPressed(false);
+        }}
+        onFocus={() => setFocused(true)}
+        onPressIn={() => setPressed(true)}
+        onPressOut={() => setPressed(false)}
         role="link"
         style={compact ? styles.compactNavigationPressable : styles.navigationPressable}
       >
@@ -123,13 +134,16 @@ function ShellNavigationItem({
             styles.navigationItem,
             compact ? styles.compactNavigationItem : null,
             {
-              backgroundColor: active ? palette.selected : "transparent",
-              borderColor: active ? palette.focus : "transparent",
+              backgroundColor: pressed
+                ? palette.surfaceRaised
+                : active
+                  ? palette.selected
+                  : "transparent",
+              borderColor: focused ? palette.focus : "transparent",
             },
           ]}
         >
           <Text
-            numberOfLines={compact ? 1 : 2}
             style={[
               styles.navigationLabel,
               compact ? styles.compactNavigationLabel : null,
@@ -154,6 +168,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     borderBottomWidth: 1,
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: space.md,
     justifyContent: "space-between",
     minHeight: 58,
@@ -162,13 +177,13 @@ const styles = StyleSheet.create({
   },
   brand: { fontSize: 24, fontWeight: "800", letterSpacing: -0.5, lineHeight: 30 },
   shellBody: { flex: 1, flexDirection: "row", minHeight: 0 },
-  content: { flex: 1, minWidth: 0 },
+  content: { flex: 1, minHeight: 0, minWidth: 0 },
   rail: {
     borderRightWidth: 1,
-    gap: space.xs,
-    padding: space.sm,
+    minHeight: 0,
     width: 224,
   },
+  railContent: { gap: space.xs, padding: space.sm },
   bottomNavigation: {
     borderTopWidth: 1,
     flexDirection: "row",

@@ -235,12 +235,24 @@ describe("durable LXMF screens", () => {
       expect(screen.getByText("Saved alias")).toBeTruthy();
     });
     expect(screen.queryByText("Announced peer")).toBeNull();
-    expect(screen.getByText("Ready")).toBeTruthy();
+    expect(screen.getByText("Messaging ready")).toBeTruthy();
     expect(mockListLxmfMessages).toHaveBeenCalledWith({
       peer: null,
       before: null,
       limit: 100,
     });
+  });
+
+  test("keeps connection warnings expanded when messaging is degraded", async () => {
+    mockActiveSnapshot = {
+      ...mockSnapshot,
+      lxmf: { state: "degraded", inboundOverflowCount: 1n },
+    };
+    const screen = render(<InboxScreen />);
+
+    expect(await screen.findByText("Limited")).toBeTruthy();
+    expect(screen.getByText("Messages may be delayed until the connection recovers.")).toBeTruthy();
+    expect(screen.queryByText("Messaging ready")).toBeNull();
   });
 
   test("renders invalid UTF-8 and signature state and sends only through native measure", async () => {
@@ -252,7 +264,7 @@ describe("durable LXMF screens", () => {
     expect(screen.getByText("Unverified — invalid signature")).toBeTruthy();
     expect(screen.getAllByText("Received")).toHaveLength(2);
 
-    fireEvent.changeText(screen.getByLabelText("Message title"), "Hello");
+    fireEvent.changeText(screen.getByLabelText("Title (optional)"), "Hello");
     fireEvent.changeText(screen.getByLabelText("Message"), "Proof please");
     await waitFor(() => {
       expect(screen.getByText("140 bytes used · 291 bytes available")).toBeTruthy();
@@ -293,7 +305,7 @@ describe("durable LXMF screens", () => {
     ).join("");
     const screen = render(<ComposeScreen initialDestination={destination} />);
 
-    fireEvent.changeText(screen.getByLabelText("Message title"), "Hello");
+    fireEvent.changeText(screen.getByLabelText("Title (optional)"), "Hello");
     fireEvent.changeText(screen.getByLabelText("Message"), "Proof please");
     await waitFor(() => {
       expect(screen.getByText("140 bytes used · 291 bytes available")).toBeTruthy();

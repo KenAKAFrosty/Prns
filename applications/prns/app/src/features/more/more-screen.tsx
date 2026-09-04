@@ -1,7 +1,7 @@
 import { screenCatalog } from "@/navigation/catalog";
 import { useScaffoldState } from "@/state/scaffold-state-context";
-import { Badge, BodyText, CardStack, Screen, ScreenHeading } from "@/ui/primitives";
 import { NavigationLink } from "@/ui/navigation-link";
+import { BodyText, CardStack, Screen, ScreenHeading } from "@/ui/primitives";
 
 const moreEntries = [
   "identities.index",
@@ -21,9 +21,8 @@ export function MoreScreen() {
   );
   return (
     <Screen>
-      <Badge>Development preview</Badge>
       <ScreenHeading>More</ScreenHeading>
-      <BodyText>Manage identities, connections, notifications, settings, and help.</BodyText>
+      <BodyText>App settings, connections, and help.</BodyText>
       <CardStack>
         {entries.map((entry) => (
           <NavigationLink key={entry.id} href={entry.path}>

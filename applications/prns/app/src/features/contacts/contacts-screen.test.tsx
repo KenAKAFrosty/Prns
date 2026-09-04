@@ -122,12 +122,9 @@ describe("contact screens", () => {
     }));
     const view = withRuntime(fakeRuntime({ createManualContact }), <AddContactScreen />);
 
-    fireEvent.changeText(
-      view.getByLabelText("Destination hash"),
-      "000102030405060708090a0b0c0d0e0f",
-    );
-    fireEvent.changeText(view.getByLabelText("Contact alias"), " Alice ");
-    fireEvent.press(view.getByRole("button", { name: "Save manual contact" }));
+    fireEvent.changeText(view.getByLabelText("Destination"), "000102030405060708090a0b0c0d0e0f");
+    fireEvent.changeText(view.getByLabelText("Name (optional)"), " Alice ");
+    fireEvent.press(view.getByRole("button", { name: "Save contact" }));
 
     await waitFor(() =>
       expect(createManualContact).toHaveBeenCalledWith(destination, null, " Alice "),

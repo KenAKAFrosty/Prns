@@ -83,6 +83,7 @@ export function NodesScreen() {
           <BodyText>
             This device&apos;s node could not start. Open its diagnostics for more details.
           </BodyText>
+          <NavigationLink href="/nodes/local">View diagnostics</NavigationLink>
         </Card>
       ) : null}
 

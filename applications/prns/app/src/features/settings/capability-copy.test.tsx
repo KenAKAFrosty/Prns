@@ -2,6 +2,7 @@ import { fireEvent, render } from "@testing-library/react-native";
 import type { ReactNode } from "react";
 import { Alert } from "react-native";
 
+import { ExploreScreen } from "@/features/explore/explore-screen";
 import { MoreScreen } from "@/features/more/more-screen";
 import { AboutScreen } from "./about-screen";
 import { HelpScreen } from "./help-screen";
@@ -62,15 +63,33 @@ describe("preview capability copy", () => {
   it("introduces More without narrating scaffold state", () => {
     const view = render(<MoreScreen />);
 
-    expect(
-      view.getByText("Manage identities, connections, notifications, settings, and help."),
-    ).toBeTruthy();
+    expect(view.getByText("App settings, connections, and help.")).toBeTruthy();
+  });
+
+  it("keeps the preview marker out of routine screens", () => {
+    for (const RoutineScreen of [ExploreScreen, MoreScreen, SettingsScreen, HelpScreen]) {
+      const view = render(<RoutineScreen />);
+      expect(view.queryByText("Development preview")).toBeNull();
+      view.unmount();
+    }
+
+    const about = render(<AboutScreen />);
+    expect(about.getByText("Development preview")).toBeTruthy();
+  });
+
+  it("gives Explore links distinct accessible names", () => {
+    const view = render(<ExploreScreen />);
+
+    expect(view.getByRole("link", { name: "About NomadNet" })).toBeTruthy();
+    expect(view.getByRole("link", { name: "About location sharing" })).toBeTruthy();
+    expect(view.queryByText("View details")).toBeNull();
   });
 
   it("discloses every durable data category removed by development reset", () => {
     const alert = jest.spyOn(Alert, "alert").mockImplementation();
     const view = render(<SettingsScreen />);
 
+    expect(view.getByText("App data")).toBeTruthy();
     fireEvent.press(view.getByRole("button", { name: "Reset app data" }));
 
     expect(alert).toHaveBeenCalledWith(

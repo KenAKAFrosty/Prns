@@ -1,5 +1,5 @@
 import { runtimeProvider } from "@/native/runtime-provider";
-import { Badge, BodyText, Card, Screen, ScreenHeading, Subheading } from "@/ui/primitives";
+import { BodyText, Card, Screen, ScreenHeading, Subheading } from "@/ui/primitives";
 
 export function HelpScreen() {
   const { availability } = runtimeProvider;
@@ -12,7 +12,6 @@ export function HelpScreen() {
 
   return (
     <Screen>
-      <Badge>Development preview</Badge>
       <ScreenHeading>Help</ScreenHeading>
       <Card>
         <Subheading>What works</Subheading>
