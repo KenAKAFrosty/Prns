@@ -39,10 +39,7 @@ enum ReadyWork {
     ResourceSealUnsupported {
         reservation: ResourceSealReservation,
     },
-    ResourcePartHash {
-        result: ResourcePartHashResult,
-        part: Vec<u8>,
-    },
+    ResourcePartHash(ResourcePartHashResult<Vec<u8>>),
     ResourceOpen(ResourceOpenCompleted<'static>),
     WholeResourceOpenUnsupported {
         reservation: WholeResourceOpenReservation,
@@ -74,11 +71,7 @@ fn route_or_capture_work(
                 },
                 OwedWork::ResourcePartHash(owed) => {
                     let (plan, source) = owed.into_parts();
-                    let part = source.to_vec();
-                    ReadyWork::ResourcePartHash {
-                        result: plan.calculate(&part),
-                        part,
-                    }
+                    ReadyWork::ResourcePartHash(plan.calculate(source.to_vec()))
                 }
                 OwedWork::ResourceOpen(owed) => ReadyWork::ResourceOpen(owed.fulfill_inline()),
                 OwedWork::WholeResourceOpen(owed) => ReadyWork::WholeResourceOpenUnsupported {
@@ -388,13 +381,17 @@ pub(super) fn feed_packet_inline(
                     &mut |reaction| route_or_capture_work(reaction, capture, scratch, &mut ready),
                 );
             }
-            ReadyWork::ResourcePartHash { result, part } => {
-                engine.resume_resource_part_hash(
-                    result.completed(&part),
-                    now,
-                    &mut |bytes| entropy.fill(bytes),
-                    &mut |reaction| route_or_capture_work(reaction, capture, scratch, &mut ready),
-                );
+            ReadyWork::ResourcePartHash(result) => {
+                let _completion_and_part = result.complete_with(|completed| {
+                    engine.resume_resource_part_hash(
+                        completed,
+                        now,
+                        &mut |bytes| entropy.fill(bytes),
+                        &mut |reaction| {
+                            route_or_capture_work(reaction, capture, scratch, &mut ready)
+                        },
+                    );
+                });
             }
             ReadyWork::ResourceOpen(completed) => {
                 engine.resume_resource_open(completed, now, &mut |reaction| {

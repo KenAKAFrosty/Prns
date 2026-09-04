@@ -104,10 +104,12 @@ impl SchedulerPolicy {
         self.turn_work
     }
 
+    #[cfg(any(feature = "scheduler-tuning", test))]
     pub const fn completion_batch(self) -> usize {
         self.completion_batch
     }
 
+    #[cfg(any(feature = "scheduler-tuning", test))]
     pub const fn inbound_total(self) -> usize {
         self.inbound_total
     }
@@ -116,10 +118,12 @@ impl SchedulerPolicy {
         self.inbound_per_lane
     }
 
+    #[cfg(any(feature = "scheduler-tuning", test))]
     pub const fn command_batch(self) -> usize {
         self.command_batch
     }
 
+    #[cfg(any(feature = "scheduler-tuning", test))]
     pub const fn owed_work_batch(self) -> usize {
         self.owed_work_batch
     }
