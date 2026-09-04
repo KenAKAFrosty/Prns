@@ -20,7 +20,7 @@ pub(super) fn rgb565_pixel(
 mod tests {
     use embedded_graphics::pixelcolor::BinaryColor;
     use embedded_graphics::prelude::{DrawTarget, Pixel};
-    use personal_hopspot_core::face_64x128::{PanelScale, PanelSize, QuarterTurn};
+    use personal_hopspot_core::face_64x128::{PanelScale, PanelScaling, PanelSize, QuarterTurn};
 
     use super::*;
 
@@ -45,7 +45,7 @@ mod tests {
     fn t096_rgb565_matches_the_qualified_rotation_at_every_pixel() {
         let transform = PanelTransform::centered(
             PanelSize::new(160, 80).unwrap(),
-            PanelScale::OneToOne,
+            PanelScaling::SampledDestinationPixels(PanelScale::OneToOne),
             QuarterTurn::Clockwise,
         )
         .unwrap();
@@ -79,7 +79,7 @@ mod tests {
     fn t114_rgb565_matches_the_qualified_scaling_at_every_pixel() {
         let transform = PanelTransform::centered(
             PanelSize::new(240, 135).unwrap(),
-            PanelScale::FifteenToEight,
+            PanelScaling::SampledDestinationPixels(PanelScale::FifteenToEight),
             QuarterTurn::CounterClockwise,
         )
         .unwrap();

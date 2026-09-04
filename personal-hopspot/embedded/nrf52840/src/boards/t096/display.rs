@@ -5,7 +5,7 @@ use personal_hopspot_core::display::{
     BlankingCommand, BlankingOutcome, BlankingResult, BufferRetention, PresentationOutcome,
 };
 use personal_hopspot_core::face_64x128::{
-    Frame, PanelScale, PanelSize, PanelTransform, PhysicalPoint, QuarterTurn,
+    Frame, PanelScale, PanelScaling, PanelSize, PanelTransform, PhysicalPoint, QuarterTurn,
 };
 
 use crate::boards::{tft, DisplayIoError};
@@ -17,11 +17,14 @@ const PANEL: PanelSize = match PanelSize::new(PANEL_WIDTH as u32, PANEL_HEIGHT a
     Ok(panel) => panel,
     Err(_) => panic!("the T096 panel dimensions are nonzero"),
 };
-const TRANSFORM: PanelTransform =
-    match PanelTransform::centered(PANEL, PanelScale::OneToOne, QuarterTurn::Clockwise) {
-        Ok(transform) => transform,
-        Err(_) => panic!("the canonical face fits the T096 panel"),
-    };
+const TRANSFORM: PanelTransform = match PanelTransform::centered(
+    PANEL,
+    PanelScaling::SampledDestinationPixels(PanelScale::OneToOne),
+    QuarterTurn::Clockwise,
+) {
+    Ok(transform) => transform,
+    Err(_) => panic!("the canonical face fits the T096 panel"),
+};
 const VIEWPORT_WIDTH: usize = TRANSFORM.viewport().size().width() as usize;
 
 // The 80x160 red-tab glass occupies columns 24..103 in the ST7735S's 132x162 RAM. Rotation 1

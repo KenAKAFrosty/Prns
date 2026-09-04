@@ -1,6 +1,7 @@
 use embedded_graphics::prelude::Point;
 use personal_hopspot_core::face_64x128::{
-    Frame, MappedPoint, PanelScale, PanelSize, PanelTransform, PhysicalPoint, QuarterTurn,
+    Frame, MappedPoint, PanelScale, PanelScaling, PanelSize, PanelTransform, PhysicalPoint,
+    QuarterTurn,
 };
 
 const PANEL_WIDTH: u32 = 200;
@@ -10,7 +11,7 @@ pub(super) const ROW_BYTES: usize = PANEL_WIDTH as usize / 8;
 pub(super) fn transform() -> PanelTransform {
     PanelTransform::centered(
         PanelSize::new(PANEL_WIDTH, PANEL_HEIGHT).expect("the T-Echo panel is nonzero"),
-        PanelScale::ThreeToTwo,
+        PanelScaling::PaintedSourceRectangles(PanelScale::ThreeToTwo),
         QuarterTurn::CounterClockwise,
     )
     .expect("the canonical face fits the T-Echo panel")

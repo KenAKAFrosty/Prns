@@ -81,6 +81,7 @@ pub enum PanelScale {
     ThreeToTwo,
     TwoToOne,
     FifteenToEight,
+    SixtyOneToThirtyTwo,
 }
 
 impl PanelScale {
@@ -90,18 +91,33 @@ impl PanelScale {
             Self::ThreeToTwo => (3, 2),
             Self::TwoToOne => (2, 1),
             Self::FifteenToEight => (15, 8),
+            Self::SixtyOneToThirtyTwo => (61, 32),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PanelScaling {
+    PaintedSourceRectangles(PanelScale),
+    SampledDestinationPixels(PanelScale),
+}
+
+impl PanelScaling {
+    const fn ratio(self) -> (u32, u32) {
+        match self {
+            Self::PaintedSourceRectangles(scale) | Self::SampledDestinationPixels(scale) => {
+                scale.ratio()
+            }
         }
     }
 
     fn source_coordinate(self, scaled: u32) -> u32 {
         let (numerator, denominator) = self.ratio();
         match self {
-            // Retained panels paint source rectangles; the TFTs sample once per destination pixel.
-            // Their qualified rasterization rules therefore require different inverses.
-            Self::ThreeToTwo | Self::TwoToOne => {
+            Self::PaintedSourceRectangles(_) => {
                 covered_source_coordinate(scaled, numerator, denominator)
             }
-            Self::OneToOne | Self::FifteenToEight => {
+            Self::SampledDestinationPixels(_) => {
                 sampled_source_coordinate(scaled, numerator, denominator)
             }
         }
@@ -158,7 +174,7 @@ pub struct PanelTransform {
     panel: PanelSize,
     scaled_width: u32,
     scaled_height: u32,
-    scale: PanelScale,
+    scaling: PanelScaling,
     turn: QuarterTurn,
     viewport: PanelViewport,
 }
@@ -166,10 +182,10 @@ pub struct PanelTransform {
 impl PanelTransform {
     pub const fn centered(
         panel: PanelSize,
-        scale: PanelScale,
+        scaling: PanelScaling,
         turn: QuarterTurn,
     ) -> Result<Self, TransformError> {
-        let (numerator, denominator) = scale.ratio();
+        let (numerator, denominator) = scaling.ratio();
         let scaled_width = WIDTH * numerator / denominator;
         let scaled_height = HEIGHT * numerator / denominator;
         let viewport_size = PanelSize {
@@ -190,7 +206,7 @@ impl PanelTransform {
             panel,
             scaled_width,
             scaled_height,
-            scale,
+            scaling,
             turn,
             viewport,
         })
@@ -223,12 +239,12 @@ impl PanelTransform {
         };
         Ok(MappedPoint::Source(LogicalPoint {
             x: match self.turn {
-                QuarterTurn::Clockwise => self.scale.source_coordinate(scaled_x),
-                QuarterTurn::CounterClockwise => self.scale.reversed_source_coordinate(scaled_x),
+                QuarterTurn::Clockwise => self.scaling.source_coordinate(scaled_x),
+                QuarterTurn::CounterClockwise => self.scaling.reversed_source_coordinate(scaled_x),
             },
             y: match self.turn {
-                QuarterTurn::Clockwise => self.scale.reversed_source_coordinate(scaled_y),
-                QuarterTurn::CounterClockwise => self.scale.source_coordinate(scaled_y),
+                QuarterTurn::Clockwise => self.scaling.reversed_source_coordinate(scaled_y),
+                QuarterTurn::CounterClockwise => self.scaling.source_coordinate(scaled_y),
             },
         }))
     }
@@ -251,7 +267,7 @@ mod tests {
     fn shipping_board_viewports_are_exact() {
         let t_beam = PanelTransform::centered(
             PanelSize::new(128, 64).unwrap(),
-            PanelScale::OneToOne,
+            PanelScaling::SampledDestinationPixels(PanelScale::OneToOne),
             QuarterTurn::Clockwise,
         )
         .unwrap();
@@ -260,7 +276,7 @@ mod tests {
 
         let t096 = PanelTransform::centered(
             PanelSize::new(160, 80).unwrap(),
-            PanelScale::OneToOne,
+            PanelScaling::SampledDestinationPixels(PanelScale::OneToOne),
             QuarterTurn::Clockwise,
         )
         .unwrap();
@@ -268,7 +284,7 @@ mod tests {
 
         let t114 = PanelTransform::centered(
             PanelSize::new(240, 135).unwrap(),
-            PanelScale::FifteenToEight,
+            PanelScaling::SampledDestinationPixels(PanelScale::FifteenToEight),
             QuarterTurn::CounterClockwise,
         )
         .unwrap();
@@ -277,16 +293,28 @@ mod tests {
 
         let t_echo = PanelTransform::centered(
             PanelSize::new(200, 200).unwrap(),
-            PanelScale::ThreeToTwo,
+            PanelScaling::PaintedSourceRectangles(PanelScale::ThreeToTwo),
             QuarterTurn::CounterClockwise,
         )
         .unwrap();
         assert_eq!(t_echo.viewport().origin(), PhysicalPoint::new(4, 52));
         assert_eq!(t_echo.viewport().size(), PanelSize::new(192, 96).unwrap());
 
+        let mesh_pocket = PanelTransform::centered(
+            PanelSize::new(250, 122).unwrap(),
+            PanelScaling::PaintedSourceRectangles(PanelScale::SixtyOneToThirtyTwo),
+            QuarterTurn::CounterClockwise,
+        )
+        .unwrap();
+        assert_eq!(mesh_pocket.viewport().origin(), PhysicalPoint::new(3, 0));
+        assert_eq!(
+            mesh_pocket.viewport().size(),
+            PanelSize::new(244, 122).unwrap()
+        );
+
         let e290 = PanelTransform::centered(
             PanelSize::new(296, 128).unwrap(),
-            PanelScale::TwoToOne,
+            PanelScaling::PaintedSourceRectangles(PanelScale::TwoToOne),
             QuarterTurn::Clockwise,
         )
         .unwrap();
@@ -298,7 +326,7 @@ mod tests {
     fn rotations_map_labeled_corners() {
         let clockwise = PanelTransform::centered(
             PanelSize::new(128, 64).unwrap(),
-            PanelScale::OneToOne,
+            PanelScaling::SampledDestinationPixels(PanelScale::OneToOne),
             QuarterTurn::Clockwise,
         )
         .unwrap();
@@ -313,7 +341,7 @@ mod tests {
 
         let counterclockwise = PanelTransform::centered(
             PanelSize::new(128, 64).unwrap(),
-            PanelScale::OneToOne,
+            PanelScaling::SampledDestinationPixels(PanelScale::OneToOne),
             QuarterTurn::CounterClockwise,
         )
         .unwrap();
@@ -331,7 +359,7 @@ mod tests {
     fn t114_mapping_matches_the_qualified_tft_sampling_at_every_pixel() {
         let transform = PanelTransform::centered(
             PanelSize::new(240, 135).unwrap(),
-            PanelScale::FifteenToEight,
+            PanelScaling::SampledDestinationPixels(PanelScale::FifteenToEight),
             QuarterTurn::CounterClockwise,
         )
         .unwrap();
@@ -358,7 +386,7 @@ mod tests {
     fn t_echo_mapping_matches_the_qualified_rectangle_expansion_at_every_pixel() {
         let transform = PanelTransform::centered(
             PanelSize::new(200, 200).unwrap(),
-            PanelScale::ThreeToTwo,
+            PanelScaling::PaintedSourceRectangles(PanelScale::ThreeToTwo),
             QuarterTurn::CounterClockwise,
         )
         .unwrap();
@@ -394,7 +422,7 @@ mod tests {
     fn margins_outside_points_and_nonfitting_panels_are_distinct() {
         let transform = PanelTransform::centered(
             PanelSize::new(160, 80).unwrap(),
-            PanelScale::OneToOne,
+            PanelScaling::SampledDestinationPixels(PanelScale::OneToOne),
             QuarterTurn::Clockwise,
         )
         .unwrap();
@@ -409,12 +437,38 @@ mod tests {
         assert_eq!(
             PanelTransform::centered(
                 PanelSize::new(127, 64).unwrap(),
-                PanelScale::OneToOne,
+                PanelScaling::SampledDestinationPixels(PanelScale::OneToOne),
                 QuarterTurn::Clockwise,
             ),
             Err(TransformError::ViewportDoesNotFit)
         );
         assert_eq!(PanelSize::new(0, 64), Err(PanelSizeError::ZeroWidth));
         assert_eq!(PanelSize::new(64, 0), Err(PanelSizeError::ZeroHeight));
+    }
+
+    #[test]
+    fn scaling_mode_is_independent_of_ratio() {
+        let panel = PanelSize::new(192, 96).unwrap();
+        let sampled = PanelTransform::centered(
+            panel,
+            PanelScaling::SampledDestinationPixels(PanelScale::ThreeToTwo),
+            QuarterTurn::Clockwise,
+        )
+        .unwrap();
+        let painted = PanelTransform::centered(
+            panel,
+            PanelScaling::PaintedSourceRectangles(PanelScale::ThreeToTwo),
+            QuarterTurn::Clockwise,
+        )
+        .unwrap();
+
+        assert_eq!(
+            sampled.map_panel_point(PhysicalPoint::new(0, 1)),
+            Ok(MappedPoint::Source(LogicalPoint { x: 0, y: 127 }))
+        );
+        assert_eq!(
+            painted.map_panel_point(PhysicalPoint::new(0, 1)),
+            Ok(MappedPoint::Source(LogicalPoint { x: 1, y: 127 }))
+        );
     }
 }
