@@ -10,7 +10,7 @@ use std::future::Future;
 use std::mem;
 use std::pin::Pin;
 use std::string::String;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, MutexGuard as StdMutexGuard, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::vec::Vec;
@@ -1255,6 +1255,7 @@ struct DurableShared {
     peers: Mutex<BTreeMap<[u8; 16], LxmfPeer>>,
     health: Arc<LaneHealth>,
     mailbox_health: StdMutex<MailboxHealthTracker>,
+    late_proof_count: AtomicU64,
     refresh: watch::Sender<u64>,
 }
 
@@ -1375,6 +1376,15 @@ impl DurableDirectLxmfService {
     #[must_use]
     pub fn subscribe(&self) -> watch::Receiver<u64> {
         self.shared.refresh.subscribe()
+    }
+
+    /// Saturating process-local count of delivery proofs rejected as stale.
+    ///
+    /// The diagnostic resets with the service generation and is never written to
+    /// the durable mailbox or treated as delivery state.
+    #[must_use]
+    pub fn late_proof_count(&self) -> u64 {
+        self.shared.late_proof_count.load(Ordering::Acquire)
     }
 
     #[must_use]
@@ -1781,6 +1791,7 @@ impl PendingDurableDirectLxmfService {
             peers: Mutex::new(BTreeMap::new()),
             health: callbacks.health.clone(),
             mailbox_health: StdMutex::new(MailboxHealthTracker::default()),
+            late_proof_count: AtomicU64::new(0),
             refresh,
         });
         let queued = match shared.mailbox.submit(MailboxRequest::ListQueued).await {
@@ -1833,6 +1844,18 @@ impl DurableShared {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .projection()
+    }
+
+    fn record_late_proof(&self) {
+        if self
+            .late_proof_count
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                count.checked_add(1)
+            })
+            .is_ok()
+        {
+            self.notify();
+        }
     }
 
     fn set_mailbox_read_ready(&self) {
@@ -2042,6 +2065,9 @@ async fn settle_durable_attempt(
             }
             Ok(MailboxReply::Completion(CompletionTransition::Stale { .. })) => {
                 shared.set_mailbox_read_ready();
+                if matches!(completion, AttemptCompletion::Delivered { .. }) {
+                    shared.record_late_proof();
+                }
                 false
             }
             Ok(_) => {
@@ -3628,6 +3654,136 @@ mod tests {
         assert!(service.activate_queued_attempts().await);
         service.stop().await.unwrap();
         assert!(!service.activate_queued_attempts().await);
+    }
+
+    #[tokio::test]
+    async fn late_proofs_after_cancel_and_retry_are_diagnostic_only() {
+        let (_root, database, submitter) = shared_database();
+        let cancelled = inserted_outbound(&database, 1_700_000_007_700);
+        let cancelled_key = AttemptKey {
+            local_record_id: cancelled.local_record_id,
+            generation: cancelled.generation().unwrap(),
+        };
+        assert!(matches!(
+            execute_mailbox_request(
+                &database,
+                MailboxRequest::Cancel {
+                    local_record_id: cancelled.local_record_id,
+                    cancelled_at_millis: 12_345,
+                },
+            )
+            .unwrap(),
+            MailboxReply::Cancel(CancelTransition::Cancelled { .. })
+        ));
+
+        let retry_source = inserted_outbound(&database, 1_700_000_007_800);
+        let retry_wire = retry_source.exact_wire.clone();
+        let old_retry_key = AttemptKey {
+            local_record_id: retry_source.local_record_id,
+            generation: retry_source.generation().unwrap(),
+        };
+        execute_mailbox_request(
+            &database,
+            MailboxRequest::CompleteAttempt {
+                key: old_retry_key,
+                completion: AttemptCompletion::Failed {
+                    failure: DirectSendFailure::DeliveryTimedOut,
+                },
+            },
+        )
+        .unwrap();
+        let MailboxReply::Retry(RetryTransition::Accepted {
+            message: retried, ..
+        }) = execute_mailbox_request(
+            &database,
+            MailboxRequest::Retry {
+                local_record_id: retry_source.local_record_id,
+            },
+        )
+        .unwrap()
+        else {
+            panic!("retry was not accepted");
+        };
+        assert_eq!(retried.generation(), Some(2));
+        assert_eq!(retried.exact_wire, retry_wire);
+
+        let identity = LocalLxmfIdentity::from_secret_bytes(&LOCAL_SECRET).unwrap();
+        let (pending, _callbacks) = DurableDirectLxmfService::prepare(identity);
+        let service = pending
+            .start_paused(
+                Arc::new(DurableFakeNetwork::default()),
+                submitter,
+                Arc::new(FixedClock(9_999)),
+            )
+            .await
+            .unwrap();
+        let before = *service.subscribe().borrow();
+        assert_eq!(service.late_proof_count(), 0);
+
+        for key in [cancelled_key, old_retry_key] {
+            settle_durable_attempt(
+                service.shared.clone(),
+                Arc::downgrade(&service.lifecycle),
+                key,
+                Ok(DirectDeliveryReceipt { rtt_millis: 3 }),
+            )
+            .await;
+        }
+
+        assert_eq!(service.late_proof_count(), 2);
+        let snapshot = service.snapshot(all_messages()).await.unwrap();
+        assert_eq!(snapshot.durable_revision, 5);
+        assert_eq!(snapshot.projection_revision, before + 2);
+        assert!(matches!(
+            snapshot
+                .messages
+                .iter()
+                .find(|message| message.local_record_id == cancelled.local_record_id)
+                .unwrap()
+                .delivery_state,
+            DurableLxmfDeliveryState::Cancelled {
+                cancelled_at_millis: 12_345
+            }
+        ));
+        let retry_after = snapshot
+            .messages
+            .iter()
+            .find(|message| message.local_record_id == retry_source.local_record_id)
+            .unwrap();
+        assert_eq!(retry_after.generation(), Some(2));
+        assert_eq!(retry_after.exact_wire, retry_wire);
+        assert_eq!(
+            retry_after.delivery_state,
+            DurableLxmfDeliveryState::Queued { failed_attempts: 1 }
+        );
+
+        service.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn late_proof_diagnostic_saturates_without_refresh_churn() {
+        let (_root, _database, submitter) = shared_database();
+        let identity = LocalLxmfIdentity::from_secret_bytes(&LOCAL_SECRET).unwrap();
+        let (pending, _callbacks) = DurableDirectLxmfService::prepare(identity);
+        let service = pending
+            .start_paused(
+                Arc::new(DurableFakeNetwork::default()),
+                submitter,
+                Arc::new(FixedClock(9_999)),
+            )
+            .await
+            .unwrap();
+        service
+            .shared
+            .late_proof_count
+            .store(u64::MAX, Ordering::Release);
+        let before = *service.subscribe().borrow();
+
+        service.shared.record_late_proof();
+
+        assert_eq!(service.late_proof_count(), u64::MAX);
+        assert_eq!(*service.subscribe().borrow(), before);
+        service.stop().await.unwrap();
     }
 
     #[tokio::test]
