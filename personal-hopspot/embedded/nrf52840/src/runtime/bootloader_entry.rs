@@ -1,6 +1,10 @@
 use personal_rns::usb_auto::WebUsbBootloaderEntry;
 
-#[cfg(any(feature = "board-t096", feature = "board-t1000e"))]
+#[cfg(any(
+    feature = "board-t096",
+    feature = "board-t1000e",
+    feature = "board-mesh-pocket"
+))]
 mod request {
     use core::sync::atomic::{AtomicBool, Ordering};
 
@@ -11,7 +15,7 @@ mod request {
 
     enum ResetPreparation {
         Ready,
-        #[cfg(feature = "board-t096")]
+        #[cfg(any(feature = "board-t096", feature = "board-mesh-pocket"))]
         Rejected,
     }
 
@@ -27,7 +31,7 @@ mod request {
                 Timer::after(CONTROL_RESPONSE_GRACE_PERIOD).await;
                 match prepare_bootloader_reset() {
                     ResetPreparation::Ready => cortex_m::peripheral::SCB::sys_reset(),
-                    #[cfg(feature = "board-t096")]
+                    #[cfg(any(feature = "board-t096", feature = "board-mesh-pocket"))]
                     ResetPreparation::Rejected => {}
                 }
             }
@@ -44,10 +48,10 @@ mod request {
         ResetPreparation::Ready
     }
 
-    #[cfg(feature = "board-t096")]
+    #[cfg(any(feature = "board-t096", feature = "board-mesh-pocket"))]
     fn prepare_bootloader_reset() -> ResetPreparation {
         const ADAFRUIT_UF2_DFU_GPREGRET: u32 = 0x57;
-        // SAFETY: S140 is enabled on T096 and owns POWER. This synchronous SVC is the Nordic API
+        // SAFETY: The enabled S140 SoftDevice owns POWER. This synchronous SVC is the Nordic API
         // for setting GPREGRET while the SoftDevice is active; register 0 and the one-byte UF2
         // bootloader request are valid inputs.
         let result =
@@ -60,19 +64,35 @@ mod request {
 }
 
 pub const fn webusb_entry() -> WebUsbBootloaderEntry {
-    #[cfg(any(feature = "board-t096", feature = "board-t1000e"))]
+    #[cfg(any(
+        feature = "board-t096",
+        feature = "board-t1000e",
+        feature = "board-mesh-pocket"
+    ))]
     return WebUsbBootloaderEntry::Supported {
         request: request::request,
     };
 
-    #[cfg(not(any(feature = "board-t096", feature = "board-t1000e")))]
+    #[cfg(not(any(
+        feature = "board-t096",
+        feature = "board-t1000e",
+        feature = "board-mesh-pocket"
+    )))]
     WebUsbBootloaderEntry::Unsupported
 }
 
 pub async fn wait() -> ! {
-    #[cfg(any(feature = "board-t096", feature = "board-t1000e"))]
+    #[cfg(any(
+        feature = "board-t096",
+        feature = "board-t1000e",
+        feature = "board-mesh-pocket"
+    ))]
     request::wait().await;
 
-    #[cfg(not(any(feature = "board-t096", feature = "board-t1000e")))]
+    #[cfg(not(any(
+        feature = "board-t096",
+        feature = "board-t1000e",
+        feature = "board-mesh-pocket"
+    )))]
     core::future::pending().await
 }

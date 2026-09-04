@@ -10,6 +10,7 @@ use personal_hopspot_core::{
 const BOARD_T_ECHO_FEATURE: &str = "CARGO_FEATURE_BOARD_T_ECHO";
 const BOARD_T096_FEATURE: &str = "CARGO_FEATURE_BOARD_T096";
 const BOARD_T114_FEATURE: &str = "CARGO_FEATURE_BOARD_T114";
+const BOARD_MESH_POCKET_FEATURE: &str = "CARGO_FEATURE_BOARD_MESH_POCKET";
 const BOARD_T1000E_FEATURE: &str = "CARGO_FEATURE_BOARD_T1000E";
 const BOARD_MESH_TOWER_V2_FEATURE: &str = "CARGO_FEATURE_BOARD_MESH_TOWER_V2";
 const S140_V6_FEATURE: &str = "CARGO_FEATURE_SOFTDEVICE_S140_V6";
@@ -19,6 +20,7 @@ enum Board {
     TEcho,
     T096,
     T114,
+    MeshPocket,
     T1000e,
     MeshTowerV2,
 }
@@ -45,6 +47,11 @@ fn main() {
         (Board::T114, None) => panic!("T114 requires softdevice-s140-v6"),
         (Board::T114, Some(Softdevice::S140V7)) => {
             panic!("T114 does not support S140 7.x")
+        }
+        (Board::MeshPocket, Some(Softdevice::S140V6)) => HELTEC_DISPLAY_NRF52840_FIRMWARE_MEMORY,
+        (Board::MeshPocket, None) => panic!("MeshPocket requires softdevice-s140-v6"),
+        (Board::MeshPocket, Some(Softdevice::S140V7)) => {
+            panic!("MeshPocket does not support S140 7.x")
         }
         (Board::T1000e, None) => T1000E_FIRMWARE_MEMORY,
         (Board::MeshTowerV2, Some(Softdevice::S140V6)) => MESH_TOWER_V2_FIRMWARE_MEMORY,
@@ -81,15 +88,19 @@ fn selected_board() -> Board {
         env::var_os(BOARD_T_ECHO_FEATURE).is_some(),
         env::var_os(BOARD_T096_FEATURE).is_some(),
         env::var_os(BOARD_T114_FEATURE).is_some(),
+        env::var_os(BOARD_MESH_POCKET_FEATURE).is_some(),
         env::var_os(BOARD_T1000E_FEATURE).is_some(),
         env::var_os(BOARD_MESH_TOWER_V2_FEATURE).is_some(),
     ) {
-        (true, false, false, false, false) => Board::TEcho,
-        (false, true, false, false, false) => Board::T096,
-        (false, false, true, false, false) => Board::T114,
-        (false, false, false, true, false) => Board::T1000e,
-        (false, false, false, false, true) => Board::MeshTowerV2,
-        (false, false, false, false, false) => panic!("select exactly one nRF52840 board feature"),
+        (true, false, false, false, false, false) => Board::TEcho,
+        (false, true, false, false, false, false) => Board::T096,
+        (false, false, true, false, false, false) => Board::T114,
+        (false, false, false, true, false, false) => Board::MeshPocket,
+        (false, false, false, false, true, false) => Board::T1000e,
+        (false, false, false, false, false, true) => Board::MeshTowerV2,
+        (false, false, false, false, false, false) => {
+            panic!("select exactly one nRF52840 board feature")
+        }
         _ => panic!("nRF52840 board features are mutually exclusive"),
     }
 }

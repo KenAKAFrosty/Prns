@@ -15,6 +15,10 @@ transparent background inside a dark "slot" (`.flash-board-slot--inset` in
   the residual white ring), with `ffmpeg`:
   `ffmpeg -i hi-res.jpg -vf "format=rgba,colorkey=0xFFFFFF:0.13:0.04,split[m][a];[a]alphaextract,erosion[e];[m][e]alphamerge,scale=160:160:force_original_aspect_ratio=decrease:flags=lanczos" cut.png`
   (key at low resolution and a white fringe glows against the dark slot).
+- For a white enclosure on a pure-white canvas, first flood-fill only the
+  corner-connected canvas to magenta so the enclosure remains opaque, then key,
+  erode, and downscale it:
+  `ffmpeg -i source.png -vf "format=rgba,floodfill=x=0:y=0:s0=-1:s1=-1:s2=-1:s3=-1:d0=0:d1=255:d2=255:d3=255,colorkey=0xFF00FF:0.04:0.02,split[m][a];[a]alphaextract,erosion[e];[m][e]alphamerge,scale=160:160:flags=lanczos" -c:v libwebp -quality 90 -compression_level 6 -pix_fmt yuva420p board.webp`
 - Encode to WebP with `cwebp` (`brew install webp`): `cwebp -q 90 cut.png -o board.webp`
   (many `ffmpeg` builds ship without the WebP encoder). The board's own white
   silkscreen survives the key because it is not pure `#FFFFFF`.
@@ -27,6 +31,7 @@ transparent background inside a dark "slot" (`.flash-board-slot--inset` in
 | LilyGO T-Echo | https://lilygo.cc/products/t-echo-lilygo | https://cdn.shopify.com/s/files/1/0617/7190/7253/products/K142_3.jpg | white-knockout | vendor catalog image, nominative use |
 | SenseCAP Card Tracker T1000-E | https://www.seeedstudio.com/SenseCAP-Card-Tracker-T1000-E-for-Meshtastic-p-5913.html | https://media-cdn.seeedstudio.com/media/catalog/product/3/-/3-114993369-sensecap-card-tracker-t1000-e-for-meshtastic-45font.jpg | white-knockout (key 0.16: the 0.13 key left a gray studio-shadow halo; the dark shell tolerates the wider key and the silkscreen survives) | vendor catalog image, nominative use |
 | Heltec Mesh Node T114 | https://heltec.org/project/mesh-node-t114/ | https://heltec.org/wp-content/uploads/2024/08/9-1.png | real alpha (vendor PNG) | vendor image, nominative use |
+| Heltec MeshPocket | https://heltec.org/project/meshpocket/ | https://heltec.org/wp-content/uploads/2025/03/5.1-1.png | connected-background flood-fill (white enclosure preserved) | vendor catalog image, nominative use |
 | Heltec Mesh Node T096 | https://heltec.org/project/t096/ | https://heltec.org/wp-content/uploads/2026/03/T096_1.png | real alpha (vendor PNG) | vendor image, nominative use |
 | Heltec MeshTower V2 | https://heltec.org/project/meshtower/ | https://heltec.org/wp-content/uploads/2025/06/1-2.png | real alpha (vendor PNG, full solar + antenna + enclosure kit) | vendor image, nominative use |
 

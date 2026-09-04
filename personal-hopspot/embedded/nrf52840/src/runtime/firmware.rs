@@ -25,16 +25,16 @@ use personal_rns::runtime::{Fleet, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNode
 use personal_rns::storage::StorageLayout;
 use personal_rns::usb_auto::{UsbAutoDevice, UsbAutoDeviceInput};
 use personal_rns::usb_auto::{
-    WebUsbAutoClass, WebUsbAutoState, WebUsbBootloaderEntry, WEBUSB_AUTO_CONTROL_BUFFER_BYTES,
+    WebUsbAutoClass, WebUsbAutoState, WEBUSB_AUTO_CONTROL_BUFFER_BYTES,
     WEBUSB_AUTO_MSOS_DESCRIPTOR_BYTES, WEBUSB_AUTO_PACKET_SIZE,
 };
 
 use crate::boards::selected as board;
 use crate::retained_display::RetainedPresentation;
 use board::{
-    Board, Controls, DisplayHardware, EarlyHardware, FaceHardware, RuntimeHardware, Storage,
-    UsbHardware, ANNOUNCE_APP_DATA, NODE_ANNOUNCE_APP_DATA, USB_INTERFACE_ID, USB_MANUFACTURER,
-    USB_PRODUCT, USB_SERIAL_NUMBER,
+    Board, DisplayHardware, EarlyHardware, FaceHardware, RuntimeHardware, Storage, UsbHardware,
+    ANNOUNCE_APP_DATA, NODE_ANNOUNCE_APP_DATA, USB_INTERFACE_ID, USB_MANUFACTURER, USB_PRODUCT,
+    USB_SERIAL_NUMBER,
 };
 
 use super::bluetooth_auto::{
@@ -153,7 +153,7 @@ pub async fn run(spawner: Spawner) -> ! {
     static USB_STATE: StaticCell<WebUsbAutoState> = StaticCell::new();
     let class = WebUsbAutoClass::new(
         &mut builder,
-        USB_STATE.init(WebUsbAutoState::new(WebUsbBootloaderEntry::Unsupported)),
+        USB_STATE.init(WebUsbAutoState::new(super::bootloader_entry::webusb_entry())),
         WEBUSB_AUTO_PACKET_SIZE,
     );
     let mut usb = builder.build();
@@ -200,9 +200,8 @@ pub async fn run(spawner: Spawner) -> ! {
         device: display,
         _rail: _eink_rail,
     } = display;
-    let Controls { button, frontlight } = controls;
     let FaceHardware {
-        battery: saadc,
+        battery,
         status_led: mut led,
     } = face;
 
@@ -339,7 +338,7 @@ pub async fn run(spawner: Spawner) -> ! {
 
     let ui_handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
     let render = async move {
-        let mut saadc = saadc;
+        let mut battery_probe = battery;
         let mut display = display.into_runtime(board::retained_policy());
         let mut ui_state = hopspot::UiState::new(hopspot::UiConfiguration {
             storage_limits: <Storage as StorageLayout>::LIMITS,
@@ -365,18 +364,15 @@ pub async fn run(spawner: Spawner) -> ! {
         let mut working_lora_profile = lora_profile;
         let mut refresh_urgency = hopspot::display::PresentationUrgency::Immediate;
         let mut activity = hopspot::CardActivityTracker::<{ MEMBERS + 4 }>::new();
-        let mut battery_gauge = hopspot::BatteryGauge::lipo();
+        let mut battery_gauge = board::battery_gauge();
         let mut persistence_notice = hopspot::PersistenceNotice::new();
         let mut controller_sleep_pending = false;
         loop {
             if controller_sleep_pending && display.deep_sleep().await.is_ok() {
                 controller_sleep_pending = false;
             }
-            let mut adc = [0i16; 1];
-            saadc.sample(&mut adc).await;
-            let vbat_mv = (adc[0].max(0) as u32) * 6000 / 4096;
             let battery = battery_gauge.update(
-                Some(vbat_mv),
+                Some(battery_probe.sample_millivolts().await),
                 hopspot::ExternalPowerState::from_presence(usb_vbus_present()),
             );
 
@@ -656,8 +652,8 @@ pub async fn run(spawner: Spawner) -> ! {
         usb_fut,
         usb_dev.run(usb_seam),
         heartbeat,
-        board::drive_button(button),
-        board::drive_frontlight(frontlight),
+        board::drive_controls(controls),
+        super::bootloader_entry::wait(),
     );
     let ble_plane = async move {
         match bluetooth {

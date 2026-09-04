@@ -82,6 +82,7 @@ fn preparation_profile(board: &BoardCatalogEntry) -> &'static str {
         "esp-usb-boot" => "PreparationProfile::EspUsbBoot",
         "techo-uf2" => "PreparationProfile::TechoUf2",
         "t114-uf2" => "PreparationProfile::T114Uf2",
+        "mesh-pocket-uf2" => "PreparationProfile::MeshPocketUf2",
         "t096-uf2" => "PreparationProfile::T096Uf2",
         "t1000e-nrf-dfu" => "PreparationProfile::T1000eNrfSerialDfu",
         value => panic!("unsupported website preparation profile {value:?}"),
@@ -109,6 +110,7 @@ fn flash_target(board: &BoardCatalogEntry) -> String {
         (Transport::NrfSerialDfu, BoardBuild::NrfSerialDfu(build)) => {
             let match_kind = match build.recovery.board_identity.match_kind {
                 Uf2BoardIdMatchKind::Exact => "Uf2BoardIdMatchKind::Exact",
+                Uf2BoardIdMatchKind::ExactShared => "Uf2BoardIdMatchKind::ExactShared",
                 Uf2BoardIdMatchKind::RevisionPrefix => "Uf2BoardIdMatchKind::RevisionPrefix",
             };
             format!(
@@ -127,6 +129,7 @@ fn uf2_flash_target(
 ) -> String {
     let match_kind = match board_id_match_kind {
         Uf2BoardIdMatchKind::Exact => "Uf2BoardIdMatchKind::Exact",
+        Uf2BoardIdMatchKind::ExactShared => "Uf2BoardIdMatchKind::ExactShared",
         Uf2BoardIdMatchKind::RevisionPrefix => "Uf2BoardIdMatchKind::RevisionPrefix",
     };
     format!(

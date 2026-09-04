@@ -53,6 +53,8 @@ pub(super) enum NrfSerialDfuEntry {
 pub(super) const WEB_SERIAL_PROBE_SUPPORTED: &str = "supported";
 pub(super) const WEB_SERIAL_PROBE_ANDROID_BLUETOOTH_ONLY: &str = "android-bluetooth-only";
 pub(super) const WEB_USB_PROBE_SUPPORTED: &str = "supported";
+const HT_N5262_SHARED_UF2_IDENTITY: &str = "ht-n5262";
+const HT_N5262_CONFIRMATION_DETAIL: &str = "INFO_UF2.TXT confirms only the shared HT-n5262 recovery family. It cannot distinguish T114 from MeshPocket or the two MeshPocket capacities; the printed product label and, for MeshPocket, enclosure capacity marking are the final identity check.";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum WebSerialCapability {
@@ -215,10 +217,33 @@ pub(super) fn preparation_guide(
         PreparationProfile::TechoUf2 | PreparationProfile::T114Uf2 => {
             uf2_preparation_guide(target)
         }
+        PreparationProfile::MeshPocketUf2 => mesh_pocket_preparation_guide(target),
         PreparationProfile::T096Uf2 => uf2_preparation_guide(target),
         PreparationProfile::T1000eNrfSerialDfu => {
             t1000e_preparation_guide(target, nrf_recovery)
         }
+    }
+}
+
+fn mesh_pocket_preparation_guide(target: BoardFlashTarget) -> PreparationGuide {
+    let BoardFlashTarget::Uf2MassStorage { mount_label, .. } = target else {
+        unreachable!("the MeshPocket profile requires a cataloged UF2 target")
+    };
+    PreparationGuide {
+        lead: "T114 and both MeshPocket battery capacities share the same bootloader identity. Check the enclosure capacity before selecting the image.",
+        steps: vec![
+            format!(
+                "Connect the MeshPocket with its magnetic USB data cable and double-press RST until the {mount_label} drive appears."
+            ),
+            format!(
+                "Select INFO_UF2.TXT from {mount_label}. It confirms the shared recovery family and SoftDevice, not the product or battery capacity."
+            ),
+            "Match the selected 5000 mAh or 10000 mAh target to the enclosure marking before preparing the release."
+                .to_string(),
+            format!(
+                "Copy the downloaded UF2 to {mount_label} and wait for the drive to disappear when the device reboots."
+            ),
+        ],
     }
 }
 
@@ -412,6 +437,14 @@ pub(super) fn shares_serial_chip_identity(target: &BoardTarget) -> bool {
         > 1
 }
 
+pub(super) fn board_identity_confirmation_detail(target: BoardFlashTarget) -> Option<&'static str> {
+    let shared_identity = target.shared_uf2_identity()?;
+    match shared_identity {
+        HT_N5262_SHARED_UF2_IDENTITY => Some(HT_N5262_CONFIRMATION_DETAIL),
+        _ => panic!("shared UF2 identity requires family-specific confirmation detail"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -421,6 +454,7 @@ mod tests {
     fn catalog_profiles_select_transport_specific_preparation() {
         let heltec = board_target_by_slug("heltec-v4").expect("shipping board");
         let t_echo = board_target_by_slug("t-echo").expect("shipping board");
+        let t114 = board_target_by_slug("t114").expect("shipping board");
 
         let esp = preparation_guide(
             heltec.preparation_profile.expect("flashable profile"),
@@ -439,8 +473,52 @@ mod tests {
             .steps
             .iter()
             .any(|step| step.contains("double-press RESET")));
+
+        let mesh_pocket_target = BoardFlashTarget::Uf2MassStorage {
+            mount_label: "HT-n5262",
+            board_id_match_kind: prns_flash_manifest::Uf2BoardIdMatchKind::ExactShared,
+            board_id: "ht-n5262",
+        };
+        let mesh_pocket =
+            preparation_guide(PreparationProfile::MeshPocketUf2, mesh_pocket_target, false);
+        assert_eq!(
+            mesh_pocket_target.shared_uf2_identity(),
+            Some(HT_N5262_SHARED_UF2_IDENTITY)
+        );
+        assert_eq!(
+            board_identity_confirmation_detail(mesh_pocket_target),
+            Some(HT_N5262_CONFIRMATION_DETAIL)
+        );
+        assert_eq!(
+            board_identity_confirmation_detail(t114.flash_target.expect("flash target")),
+            Some(HT_N5262_CONFIRMATION_DETAIL)
+        );
+        assert!(mesh_pocket.steps.iter().any(|step| step.contains("RST")));
+        assert!(mesh_pocket
+            .steps
+            .iter()
+            .any(|step| step.contains("battery capacity")));
+        assert_eq!(
+            t_echo
+                .flash_target
+                .expect("flash target")
+                .shared_uf2_identity(),
+            None
+        );
         assert!(uf2.steps.iter().any(|step| step.contains("TECHOBOOT")));
         assert!(uf2.lead.contains("local descriptor"));
+    }
+
+    #[test]
+    #[should_panic(expected = "shared UF2 identity requires family-specific confirmation detail")]
+    fn unknown_shared_uf2_identity_requires_its_own_confirmation_detail() {
+        let target = BoardFlashTarget::Uf2MassStorage {
+            mount_label: "ANOTHER",
+            board_id_match_kind: prns_flash_manifest::Uf2BoardIdMatchKind::ExactShared,
+            board_id: "another-family",
+        };
+
+        board_identity_confirmation_detail(target);
     }
 
     #[test]

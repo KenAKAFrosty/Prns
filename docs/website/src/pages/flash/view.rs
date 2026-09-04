@@ -13,10 +13,10 @@ use crate::routes::Route;
 use super::bridge;
 use super::contract::BridgePhase;
 use super::model::{
-    guided_steps, initial_status, parse_uf2_selection, preparation_guide,
-    shares_serial_chip_identity, DestructiveConfirmation, FlasherState, InstallMode,
-    NrfSerialDfuEntry, ReleaseCompatibility, ReleaseDetails, WebSerialCapability, WebUsbCapability,
-    WifiAction,
+    board_identity_confirmation_detail, guided_steps, initial_status, parse_uf2_selection,
+    preparation_guide, shares_serial_chip_identity, DestructiveConfirmation, FlasherState,
+    InstallMode, NrfSerialDfuEntry, ReleaseCompatibility, ReleaseDetails, WebSerialCapability,
+    WebUsbCapability, WifiAction,
 };
 use super::release;
 use super::trust;
@@ -224,6 +224,11 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                         if shares_serial_chip_identity(target) {
                             span { class: "mt-1 block text-xs text-mid",
                                 "The chip check confirms only the chip family; it cannot distinguish cataloged boards that share that family. The printed board label and photo are the final identity check."
+                            }
+                        }
+                        if let Some(detail) = board_identity_confirmation_detail(flash_target) {
+                            span { class: "mt-1 block text-xs text-mid",
+                                "{detail}"
                             }
                         }
                     }

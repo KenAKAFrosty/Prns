@@ -8,8 +8,10 @@ use personal_hopspot_core::InputEvent;
 
 const LONG_PRESS: Duration = Duration::from_millis(500);
 const DEBOUNCE: Duration = Duration::from_millis(25);
+pub(crate) const EVENT_CAPACITY: usize = 4;
 
-pub(crate) static EVENTS: Channel<CriticalSectionRawMutex, InputEvent, 4> = Channel::new();
+pub(crate) static EVENTS: Channel<CriticalSectionRawMutex, InputEvent, EVENT_CAPACITY> =
+    Channel::new();
 
 pub(crate) async fn drive(mut button: Input<'static>) -> ! {
     loop {

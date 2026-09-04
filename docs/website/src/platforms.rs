@@ -88,6 +88,8 @@ pub enum PreparationProfile {
     EspUsbBoot,
     TechoUf2,
     T114Uf2,
+    #[cfg_attr(not(feature = "local-dev-flasher"), allow(dead_code))]
+    MeshPocketUf2,
     T096Uf2,
     T1000eNrfSerialDfu,
 }
@@ -143,6 +145,28 @@ impl BoardFlashTarget {
             }
         )
     }
+
+    pub const fn shared_uf2_identity(self) -> Option<&'static str> {
+        match self {
+            Self::EspSerial { .. } => None,
+            Self::Uf2MassStorage {
+                board_id_match_kind,
+                board_id,
+                ..
+            } => match board_id_match_kind {
+                Uf2BoardIdMatchKind::ExactShared => Some(board_id),
+                Uf2BoardIdMatchKind::Exact | Uf2BoardIdMatchKind::RevisionPrefix => None,
+            },
+            Self::NrfSerialDfu {
+                recovery_board_id_match_kind,
+                recovery_board_id,
+                ..
+            } => match recovery_board_id_match_kind {
+                Uf2BoardIdMatchKind::ExactShared => Some(recovery_board_id),
+                Uf2BoardIdMatchKind::Exact | Uf2BoardIdMatchKind::RevisionPrefix => None,
+            },
+        }
+    }
 }
 
 pub mod board_images {
@@ -184,6 +208,7 @@ impl BoardTarget {
             "xiao-esp32-c6" => Some(&board_images::XIAO_ESP32_C6),
             "t-echo" => Some(&board_images::T_ECHO),
             "t114" => Some(&board_images::T114),
+            "mesh-pocket-5000" | "mesh-pocket-10000" => Some(&board_images::MESH_POCKET),
             "t1000-e" => Some(&board_images::SEEED_CARD_TRACKER_T1000_E),
             "t096" => Some(&board_images::HELTEC_MESH_NODE_T096),
             "mesh-tower-v2" => Some(&board_images::MESH_TOWER_V2),
@@ -733,12 +758,15 @@ mod tests {
                 .iter()
                 .map(|board| (board.slug, board.tier, board.image().is_some()))
                 .collect::<Vec<_>>(),
-            [("heltec-e290", Tier::Qualification, false)]
+            [
+                ("heltec-e290", Tier::Qualification, false),
+                ("mesh-pocket-5000", Tier::Qualification, true),
+                ("mesh-pocket-10000", Tier::Qualification, true),
+            ]
         );
-        assert_eq!(
-            QUALIFICATION_BOARD_TARGETS[0].is_flashable(),
-            cfg!(feature = "local-dev-flasher")
-        );
+        assert!(QUALIFICATION_BOARD_TARGETS
+            .iter()
+            .all(|board| board.is_flashable() == cfg!(feature = "local-dev-flasher")));
         let cards = SHIPPING_BOARD_TARGETS
             .iter()
             .filter(|board| matches!(board.slug, "t096" | "t1000-e"))

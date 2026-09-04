@@ -111,6 +111,7 @@ validated_string!(Uf2MountLabel);
 #[serde(rename_all = "kebab-case")]
 pub enum Uf2BoardIdMatchKind {
     Exact,
+    ExactShared,
     RevisionPrefix,
 }
 
@@ -142,7 +143,7 @@ impl Uf2BoardIdMatch {
             });
         let valid = canonical
             && match kind {
-                Uf2BoardIdMatchKind::Exact => true,
+                Uf2BoardIdMatchKind::Exact | Uf2BoardIdMatchKind::ExactShared => true,
                 Uf2BoardIdMatchKind::RevisionPrefix => value.ends_with("-v"),
             };
         valid
@@ -163,7 +164,7 @@ impl Uf2BoardIdMatch {
 
     pub fn matches(&self, board_id: &str) -> bool {
         match self.kind {
-            Uf2BoardIdMatchKind::Exact => board_id == self.value,
+            Uf2BoardIdMatchKind::Exact | Uf2BoardIdMatchKind::ExactShared => board_id == self.value,
             Uf2BoardIdMatchKind::RevisionPrefix => board_id
                 .strip_prefix(&self.value)
                 .is_some_and(valid_revision_suffix),
@@ -172,17 +173,28 @@ impl Uf2BoardIdMatch {
 
     pub(crate) fn overlaps(&self, other: &Self) -> bool {
         match (self.kind, other.kind) {
-            (Uf2BoardIdMatchKind::Exact, Uf2BoardIdMatchKind::Exact) => self.value == other.value,
-            (Uf2BoardIdMatchKind::Exact, Uf2BoardIdMatchKind::RevisionPrefix) => {
-                other.matches(&self.value)
-            }
-            (Uf2BoardIdMatchKind::RevisionPrefix, Uf2BoardIdMatchKind::Exact) => {
-                self.matches(&other.value)
-            }
+            (
+                Uf2BoardIdMatchKind::Exact | Uf2BoardIdMatchKind::ExactShared,
+                Uf2BoardIdMatchKind::Exact | Uf2BoardIdMatchKind::ExactShared,
+            ) => self.value == other.value,
+            (
+                Uf2BoardIdMatchKind::Exact | Uf2BoardIdMatchKind::ExactShared,
+                Uf2BoardIdMatchKind::RevisionPrefix,
+            ) => other.matches(&self.value),
+            (
+                Uf2BoardIdMatchKind::RevisionPrefix,
+                Uf2BoardIdMatchKind::Exact | Uf2BoardIdMatchKind::ExactShared,
+            ) => self.matches(&other.value),
             (Uf2BoardIdMatchKind::RevisionPrefix, Uf2BoardIdMatchKind::RevisionPrefix) => {
                 self.value == other.value
             }
         }
+    }
+
+    pub(crate) fn declares_shared_identity_with(&self, other: &Self) -> bool {
+        self.kind == Uf2BoardIdMatchKind::ExactShared
+            && other.kind == Uf2BoardIdMatchKind::ExactShared
+            && self.value == other.value
     }
 }
 
@@ -325,6 +337,7 @@ pub enum PreparationProfile {
     TechoUf2,
     T096Uf2,
     T114Uf2,
+    MeshPocketUf2,
     T1000eNrfDfu,
 }
 
@@ -335,6 +348,7 @@ impl PreparationProfile {
             "techo-uf2" => Ok(Self::TechoUf2),
             "t096-uf2" => Ok(Self::T096Uf2),
             "t114-uf2" => Ok(Self::T114Uf2),
+            "mesh-pocket-uf2" => Ok(Self::MeshPocketUf2),
             "t1000e-nrf-dfu" => Ok(Self::T1000eNrfDfu),
             _ => Err(DomainValueError::PreparationProfile(value.to_string())),
         }
@@ -346,6 +360,7 @@ impl PreparationProfile {
             Self::TechoUf2 => "techo-uf2",
             Self::T096Uf2 => "t096-uf2",
             Self::T114Uf2 => "t114-uf2",
+            Self::MeshPocketUf2 => "mesh-pocket-uf2",
             Self::T1000eNrfDfu => "t1000e-nrf-dfu",
         }
     }
@@ -543,6 +558,13 @@ mod tests {
             Uf2BoardIdMatch::parse(Uf2BoardIdMatchKind::RevisionPrefix, "nrf52840-techo-v").is_ok()
         );
         assert!(Uf2BoardIdMatch::parse(Uf2BoardIdMatchKind::Exact, "ht-n5262").is_ok());
+        let shared = Uf2BoardIdMatch::parse(Uf2BoardIdMatchKind::ExactShared, "ht-n5262").unwrap();
+        let other_shared =
+            Uf2BoardIdMatch::parse(Uf2BoardIdMatchKind::ExactShared, "ht-n5262").unwrap();
+        let exclusive = Uf2BoardIdMatch::parse(Uf2BoardIdMatchKind::Exact, "ht-n5262").unwrap();
+        assert!(shared.matches("ht-n5262"));
+        assert!(shared.declares_shared_identity_with(&other_shared));
+        assert!(!shared.declares_shared_identity_with(&exclusive));
         assert!(
             Uf2BoardIdMatch::parse(Uf2BoardIdMatchKind::RevisionPrefix, "nrf52840-techo-v1")
                 .is_err()

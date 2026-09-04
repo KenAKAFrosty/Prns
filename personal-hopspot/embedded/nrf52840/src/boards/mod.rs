@@ -14,7 +14,11 @@ use prns_core::entropy::{EntropySource, RuntimeEntropy};
 ))]
 mod status_led;
 
-#[cfg(any(feature = "board-t096", feature = "board-t114"))]
+#[cfg(any(
+    feature = "board-t096",
+    feature = "board-t114",
+    feature = "board-mesh-pocket"
+))]
 mod button;
 
 #[cfg(any(feature = "board-t096", feature = "board-t114"))]
@@ -52,6 +56,8 @@ impl RemoteControlIdentityFlash {
     }
 }
 
+#[cfg(feature = "board-mesh-pocket")]
+pub(crate) mod mesh_pocket;
 #[cfg(feature = "board-mesh-tower-v2")]
 pub(crate) mod mesh_tower_v2;
 #[cfg(feature = "board-t096")]
@@ -64,10 +70,21 @@ pub(crate) mod t114;
 pub(crate) mod t_echo;
 
 #[cfg(all(
+    feature = "board-mesh-pocket",
+    not(feature = "board-t-echo"),
+    not(feature = "board-t096"),
+    not(feature = "board-t114"),
+    not(feature = "board-t1000e"),
+    not(feature = "board-mesh-tower-v2")
+))]
+pub(crate) use mesh_pocket as selected;
+
+#[cfg(all(
     feature = "board-mesh-tower-v2",
     not(feature = "board-t-echo"),
     not(feature = "board-t096"),
     not(feature = "board-t114"),
+    not(feature = "board-mesh-pocket"),
     not(feature = "board-t1000e")
 ))]
 pub(crate) use mesh_tower_v2 as selected;
@@ -75,6 +92,7 @@ pub(crate) use mesh_tower_v2 as selected;
     feature = "board-t096",
     not(feature = "board-t-echo"),
     not(feature = "board-t114"),
+    not(feature = "board-mesh-pocket"),
     not(feature = "board-t1000e"),
     not(feature = "board-mesh-tower-v2")
 ))]
@@ -85,6 +103,7 @@ pub(crate) use t096 as selected;
     not(feature = "board-t-echo"),
     not(feature = "board-t096"),
     not(feature = "board-t114"),
+    not(feature = "board-mesh-pocket"),
     not(feature = "board-mesh-tower-v2")
 ))]
 pub(crate) use t1000e as selected;
@@ -92,6 +111,7 @@ pub(crate) use t1000e as selected;
     feature = "board-t114",
     not(feature = "board-t-echo"),
     not(feature = "board-t096"),
+    not(feature = "board-mesh-pocket"),
     not(feature = "board-t1000e"),
     not(feature = "board-mesh-tower-v2")
 ))]
@@ -100,6 +120,7 @@ pub(crate) use t114 as selected;
     feature = "board-t-echo",
     not(feature = "board-t096"),
     not(feature = "board-t114"),
+    not(feature = "board-mesh-pocket"),
     not(feature = "board-t1000e"),
     not(feature = "board-mesh-tower-v2")
 ))]

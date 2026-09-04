@@ -5,6 +5,7 @@ mod input;
 mod raster;
 mod ssd1681;
 
+use embassy_futures::join::join;
 use personal_rns::interfaces::InterfaceId;
 
 pub(crate) use crate::storage::Nrf52840Storage as Storage;
@@ -17,9 +18,23 @@ pub(crate) use hardware::{
 pub(crate) use identity::{
     bootstrap_ble_identity, bootstrap_node_identity, startup_notice as identity_startup_notice,
 };
-pub(crate) use input::{
-    drive_button, drive_frontlight, EVENTS as INPUT_EVENTS, EVENT_CAPACITY as INPUT_EVENT_CAPACITY,
-};
+pub(crate) use input::{EVENTS as INPUT_EVENTS, EVENT_CAPACITY as INPUT_EVENT_CAPACITY};
+
+pub(crate) type BatteryGauge = personal_hopspot_core::BatteryGauge;
+
+pub(crate) const fn battery_gauge() -> BatteryGauge {
+    BatteryGauge::lipo()
+}
+
+pub(crate) async fn drive_controls(controls: Controls) -> ! {
+    let Controls { button, frontlight } = controls;
+    let _ = join(
+        input::drive_button(button),
+        input::drive_frontlight(frontlight),
+    )
+    .await;
+    core::future::pending().await
+}
 
 pub(crate) const JOURNAL_LAYOUT: personal_rns::persistence::FlashJournalLayout =
     personal_hopspot_core::T_ECHO_JOURNAL_LAYOUT;
