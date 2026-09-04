@@ -29,9 +29,8 @@ use super::gatt_write::{
 };
 use super::{
     cbuuid_eq, columba_identity_uuid, columba_rx_uuid, columba_tx_uuid, control_uuid,
-    core_bluetooth_peer_id, data_uuid, service_uuid, try_bounded_ingress, BoundedIngress,
-    CoreBluetoothPeerId, MacosBleError, ManagerSignalSender, PeripheralTable, RestoredPeripherals,
-    SendCharacteristicRef, SendPeripheral, Sighting,
+    core_bluetooth_peer_id, data_uuid, service_uuid, CoreBluetoothPeerId, MacosBleError,
+    ManagerSignalSender, SendCentralManager, SendCharacteristicRef, SendPeripheral, Sighting,
 };
 
 pub(super) fn is_system_connected(
@@ -66,7 +65,16 @@ pub(super) struct DialChars {
 pub(super) enum DialCompletion {
     Ready(DialChars),
     Failed,
-    Rejected,
+    Rejected(DialRejection),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum DialRejection {
+    YieldToSystemConnection,
+    YieldToInboundSession,
+    RestoredConnectionUnavailable,
+    ExistingCentralSession,
+    RadioOff,
 }
 
 pub(super) const CENTRAL_CONTROL_INBOUND_CAPACITY: usize = 8;
@@ -115,6 +123,405 @@ impl RestoredCallbackBuffer {
         self.controls.clear();
         self.data.clear();
         self.charged_data_bytes = 0;
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum RestoredAdmission {
+    Admitted,
+    Updated,
+    AlreadyOwned,
+    Full,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RestoredPhase {
+    Queued,
+    Offered,
+    Claimed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CentralPeripheralState {
+    Observed,
+    Restored,
+    Dialing,
+    Active,
+}
+
+struct CentralPeripheral<P> {
+    peer_id: CoreBluetoothPeerId,
+    address: BleAddress,
+    peripheral: P,
+    rssi: Option<i8>,
+    state: CentralPeripheralState,
+    pending_sighting: bool,
+}
+
+struct RestoredPeer {
+    peer_id: CoreBluetoothPeerId,
+    phase: RestoredPhase,
+    callbacks: RestoredCallbackBuffer,
+}
+
+pub(super) enum CentralDialCandidate<P> {
+    Ready {
+        peer_id: CoreBluetoothPeerId,
+        peripheral: P,
+        rssi: Option<i8>,
+        restored: bool,
+    },
+    Busy,
+    Missing,
+}
+
+pub(super) enum RestoredBufferResult<T> {
+    Buffered,
+    Overflowed,
+    AlreadyFailed,
+    NotRestored(T),
+}
+
+/// Bounded central-role ownership confined to CoreBluetooth's serial queue. The async backend
+/// requests handoffs through that queue instead of locking this state from callback threads.
+///
+/// Restored peers retain their admission slot while queued, offered, and claimed, so popping a
+/// synthetic sighting never creates an unaccounted callback buffer. Candidate entries use a
+/// larger, independently supplied capacity and evict only advisory observations; live, dialing,
+/// and restored peers are never evicted.
+pub(super) struct CentralPeerRegistry<P> {
+    peripheral_capacity: usize,
+    restored_capacity: usize,
+    peripherals: VecDeque<CentralPeripheral<P>>,
+    restored: VecDeque<RestoredPeer>,
+}
+
+impl<P> CentralPeerRegistry<P> {
+    pub(super) fn new(peripheral_capacity: usize, restored_capacity: usize) -> Self {
+        Self {
+            peripheral_capacity,
+            restored_capacity,
+            peripherals: VecDeque::new(),
+            restored: VecDeque::new(),
+        }
+    }
+
+    pub(super) fn admit_restored(
+        &mut self,
+        peer_id: CoreBluetoothPeerId,
+        peripheral: P,
+    ) -> RestoredAdmission {
+        if let Some(restored) = self
+            .restored
+            .iter()
+            .find(|restored| restored.peer_id == peer_id)
+        {
+            if restored.phase != RestoredPhase::Queued {
+                return RestoredAdmission::AlreadyOwned;
+            }
+            if let Some(entry) = self
+                .peripherals
+                .iter_mut()
+                .find(|entry| entry.peer_id == peer_id)
+            {
+                entry.peripheral = peripheral;
+                entry.rssi = None;
+                return RestoredAdmission::Updated;
+            }
+            return RestoredAdmission::Full;
+        }
+        if self.restored.len() >= self.restored_capacity {
+            return RestoredAdmission::Full;
+        }
+
+        if let Some(position) = self
+            .peripherals
+            .iter()
+            .position(|entry| entry.peer_id == peer_id)
+        {
+            if self.peripherals[position].state != CentralPeripheralState::Observed {
+                return RestoredAdmission::AlreadyOwned;
+            }
+            self.peripherals.remove(position);
+        }
+
+        let address = peer_id.address();
+        if let Some(position) = self
+            .peripherals
+            .iter()
+            .position(|entry| entry.address == address)
+        {
+            if self.peripherals[position].state != CentralPeripheralState::Observed {
+                return RestoredAdmission::Full;
+            }
+            self.peripherals.remove(position);
+        }
+        if !self.make_peripheral_room() {
+            return RestoredAdmission::Full;
+        }
+
+        self.peripherals.push_back(CentralPeripheral {
+            peer_id,
+            address,
+            peripheral,
+            rssi: None,
+            state: CentralPeripheralState::Restored,
+            pending_sighting: false,
+        });
+        self.restored.push_back(RestoredPeer {
+            peer_id,
+            phase: RestoredPhase::Queued,
+            callbacks: RestoredCallbackBuffer::default(),
+        });
+        RestoredAdmission::Admitted
+    }
+
+    /// Updates the most recent handle and signal for one synthetic address. Address collisions are
+    /// deterministic: an advisory observation replaces an older advisory observation, while a
+    /// restored, dialing, or active owner rejects the colliding newcomer.
+    pub(super) fn observe(
+        &mut self,
+        peer_id: CoreBluetoothPeerId,
+        peripheral: P,
+        rssi: Option<i8>,
+    ) -> bool {
+        if let Some(position) = self
+            .peripherals
+            .iter()
+            .position(|entry| entry.peer_id == peer_id)
+        {
+            if self.peripherals[position].state != CentralPeripheralState::Observed {
+                return false;
+            }
+            self.peripherals.remove(position);
+        }
+
+        let address = peer_id.address();
+        if let Some(position) = self
+            .peripherals
+            .iter()
+            .position(|entry| entry.address == address)
+        {
+            if self.peripherals[position].state != CentralPeripheralState::Observed {
+                return false;
+            }
+            self.peripherals.remove(position);
+        }
+        if !self.make_peripheral_room() {
+            return false;
+        }
+        self.peripherals.push_back(CentralPeripheral {
+            peer_id,
+            address,
+            peripheral,
+            rssi,
+            state: CentralPeripheralState::Observed,
+            pending_sighting: true,
+        });
+        true
+    }
+
+    fn make_peripheral_room(&mut self) -> bool {
+        if self.peripheral_capacity == 0 {
+            return false;
+        }
+        if self.peripherals.len() < self.peripheral_capacity {
+            return true;
+        }
+        let Some(position) = self
+            .peripherals
+            .iter()
+            .position(|entry| entry.state == CentralPeripheralState::Observed)
+        else {
+            return false;
+        };
+        self.peripherals.remove(position);
+        true
+    }
+
+    pub(super) fn offer_restored(&mut self) -> Option<CoreBluetoothPeerId> {
+        let peer = self
+            .restored
+            .iter_mut()
+            .find(|peer| peer.phase == RestoredPhase::Queued)?;
+        peer.phase = RestoredPhase::Offered;
+        Some(peer.peer_id)
+    }
+
+    pub(super) fn claim(&mut self, address: BleAddress) -> CentralDialCandidate<P>
+    where
+        P: Clone,
+    {
+        let Some(position) = self
+            .peripherals
+            .iter()
+            .position(|entry| entry.address == address)
+        else {
+            return CentralDialCandidate::Missing;
+        };
+        let peer_id = self.peripherals[position].peer_id;
+        let restored = match self.peripherals[position].state {
+            CentralPeripheralState::Observed => false,
+            CentralPeripheralState::Restored => {
+                let Some(restored) = self
+                    .restored
+                    .iter_mut()
+                    .find(|restored| restored.peer_id == peer_id)
+                else {
+                    return CentralDialCandidate::Busy;
+                };
+                if restored.phase != RestoredPhase::Offered {
+                    return CentralDialCandidate::Busy;
+                }
+                restored.phase = RestoredPhase::Claimed;
+                true
+            }
+            CentralPeripheralState::Dialing | CentralPeripheralState::Active => {
+                return CentralDialCandidate::Busy;
+            }
+        };
+        self.peripherals[position].state = CentralPeripheralState::Dialing;
+        self.peripherals[position].pending_sighting = false;
+        CentralDialCandidate::Ready {
+            peer_id,
+            peripheral: self.peripherals[position].peripheral.clone(),
+            rssi: self.peripherals[position].rssi,
+            restored,
+        }
+    }
+
+    pub(super) fn begin_session(
+        &mut self,
+        peer_id: CoreBluetoothPeerId,
+    ) -> Result<Option<RestoredCallbackBuffer>, ()> {
+        let Some(peripheral) = self
+            .peripherals
+            .iter_mut()
+            .find(|entry| entry.peer_id == peer_id)
+        else {
+            return Err(());
+        };
+        if peripheral.state != CentralPeripheralState::Dialing {
+            return Err(());
+        }
+        peripheral.state = CentralPeripheralState::Active;
+        let Some(position) = self
+            .restored
+            .iter()
+            .position(|peer| peer.peer_id == peer_id)
+        else {
+            return Ok(None);
+        };
+        if self.restored[position].phase != RestoredPhase::Claimed {
+            peripheral.state = CentralPeripheralState::Dialing;
+            return Err(());
+        }
+        let restored = self.restored.remove(position).ok_or(())?;
+        Ok(Some(restored.callbacks))
+    }
+
+    pub(super) fn mark_active(&mut self, peer_id: CoreBluetoothPeerId) {
+        if let Some(entry) = self
+            .peripherals
+            .iter_mut()
+            .find(|entry| entry.peer_id == peer_id)
+        {
+            entry.state = CentralPeripheralState::Active;
+        }
+    }
+
+    pub(super) fn remove_peer(&mut self, peer_id: CoreBluetoothPeerId) -> Option<P> {
+        let peripheral = self
+            .peripherals
+            .iter()
+            .position(|entry| entry.peer_id == peer_id)
+            .and_then(|position| self.peripherals.remove(position))
+            .map(|entry| entry.peripheral);
+        self.restored.retain(|peer| peer.peer_id != peer_id);
+        peripheral
+    }
+
+    /// Remove all registry state and return only peripherals for which this backend owns a
+    /// restored, dialing, or active CoreBluetooth connection. Advisory observations are dropped
+    /// without cancellation because no connection was started for them.
+    pub(super) fn drain_owned(&mut self) -> Vec<P> {
+        self.restored.clear();
+        self.peripherals
+            .drain(..)
+            .filter_map(|entry| {
+                (entry.state != CentralPeripheralState::Observed).then_some(entry.peripheral)
+            })
+            .collect()
+    }
+
+    pub(super) fn pop_sighting(&mut self) -> (Option<Sighting>, bool) {
+        let sighting = self
+            .peripherals
+            .iter_mut()
+            .find(|entry| entry.pending_sighting)
+            .map(|entry| {
+                entry.pending_sighting = false;
+                Sighting {
+                    address: entry.address,
+                    rssi: entry.rssi,
+                }
+            });
+        let more = self.peripherals.iter().any(|entry| entry.pending_sighting);
+        (sighting, more)
+    }
+
+    pub(super) fn buffer_restored_data(
+        &mut self,
+        peer_id: CoreBluetoothPeerId,
+        data: Box<[u8]>,
+    ) -> RestoredBufferResult<Box<[u8]>> {
+        let Some(restored) = self
+            .restored
+            .iter_mut()
+            .find(|restored| restored.peer_id == peer_id)
+        else {
+            return RestoredBufferResult::NotRestored(data);
+        };
+        let was_failed = restored.callbacks.failed;
+        if restored.callbacks.buffer_data(data) {
+            RestoredBufferResult::Buffered
+        } else if was_failed {
+            RestoredBufferResult::AlreadyFailed
+        } else {
+            RestoredBufferResult::Overflowed
+        }
+    }
+
+    pub(super) fn buffer_restored_control(
+        &mut self,
+        peer_id: CoreBluetoothPeerId,
+        control: Control,
+    ) -> RestoredBufferResult<Control> {
+        let Some(restored) = self
+            .restored
+            .iter_mut()
+            .find(|restored| restored.peer_id == peer_id)
+        else {
+            return RestoredBufferResult::NotRestored(control);
+        };
+        let was_failed = restored.callbacks.failed;
+        if restored.callbacks.buffer_control(control) {
+            RestoredBufferResult::Buffered
+        } else if was_failed {
+            RestoredBufferResult::AlreadyFailed
+        } else {
+            RestoredBufferResult::Overflowed
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn peripheral_len(&self) -> usize {
+        self.peripherals.len()
+    }
+
+    #[cfg(test)]
+    pub(super) fn restored_len(&self) -> usize {
+        self.restored.len()
     }
 }
 
@@ -258,6 +665,13 @@ impl CentralPeerSession {
         true
     }
 
+    pub(super) fn enqueue_control(
+        &self,
+        control: Control,
+    ) -> Result<(), tokio_mpsc::error::TrySendError<Control>> {
+        self.control_tx.try_send(control)
+    }
+
     fn complete_columba(
         &mut self,
         write: GattWriteTarget,
@@ -286,9 +700,9 @@ impl CentralPeerSession {
         }
     }
 
-    pub(super) fn reject(mut self) {
+    pub(super) fn reject(mut self, rejection: DialRejection) {
         if let Some(completion_tx) = self.completion_tx.take() {
-            let _ = completion_tx.send(DialCompletion::Rejected);
+            let _ = completion_tx.send(DialCompletion::Rejected(rejection));
         }
     }
 
@@ -338,6 +752,15 @@ impl CentralPeerSession {
     }
 }
 
+pub(super) fn closed_central_session_ids(
+    sessions: &HashMap<CoreBluetoothPeerId, CentralPeerSession>,
+) -> Vec<CoreBluetoothPeerId> {
+    sessions
+        .iter()
+        .filter_map(|(peer_id, session)| session.data_receiver_closed().then_some(*peer_id))
+        .collect()
+}
+
 pub(super) struct DialCommand {
     pub(super) central: Retained<CBCentralManager>,
     pub(super) delegate: Retained<CentralDelegate>,
@@ -351,11 +774,11 @@ unsafe impl Send for DialCommand {}
 
 pub(super) struct CentralDelegateIvars {
     manager_signals: ManagerSignalSender,
-    sightings: tokio_mpsc::Sender<Sighting>,
-    peripherals: PeripheralTable,
-    restored: RestoredPeripherals,
+    sighting_wake: tokio_mpsc::Sender<()>,
+    manager: RefCell<Option<SendCentralManager>>,
+    radio_enabled: Arc<AtomicBool>,
+    registry: RefCell<CentralPeerRegistry<SendPeripheral>>,
     scan_activity: Arc<AtomicBool>,
-    pending_restored_callbacks: RefCell<HashMap<CoreBluetoothPeerId, RestoredCallbackBuffer>>,
     sessions: RefCell<HashMap<CoreBluetoothPeerId, CentralPeerSession>>,
     discovery_guard: RefCell<DiscoveryGuard>,
 }
@@ -370,6 +793,7 @@ define_class!(
     unsafe impl CBCentralManagerDelegate for CentralDelegate {
         #[unsafe(method(centralManagerDidUpdateState:))]
         fn did_update_state(&self, central: &CBCentralManager) {
+            *self.ivars().manager.borrow_mut() = Some(SendCentralManager(central.retain()));
             // SAFETY: CoreBluetooth supplied this live manager to its delegate on the configured
             // serial dispatch queue.
             if unsafe { central.state() } == CBManagerState::PoweredOn {
@@ -380,9 +804,11 @@ define_class!(
         #[unsafe(method(centralManager:willRestoreState:))]
         fn will_restore_state(
             &self,
-            _central: &CBCentralManager,
+            central: &CBCentralManager,
             dict: &NSDictionary<NSString, AnyObject>,
         ) {
+            *self.ivars().manager.borrow_mut() = Some(SendCentralManager(central.retain()));
+            self.reap_closed_sessions(central);
             // SAFETY: CoreBluetooth exports this NSString constant with process lifetime.
             let key: &NSString = unsafe { CBCentralManagerRestoredStatePeripheralsKey };
             let Some(restored) = dict.objectForKey(key) else {
@@ -392,18 +818,53 @@ define_class!(
             // CBPeripheral objects; `restored` retains the array for the duration of the borrow.
             let peripherals: &NSArray<CBPeripheral> =
                 unsafe { &*(Retained::as_ptr(&restored) as *const NSArray<CBPeripheral>) };
+            if !self.ivars().radio_enabled.load(Ordering::Acquire) {
+                for peripheral in peripherals.iter() {
+                    let peer_id = core_bluetooth_peer_id(&peripheral);
+                    // Remove any earlier exact owner before cancellation so the queued shutdown
+                    // drain cannot repeat this cancellation.
+                    self.ivars().registry.borrow_mut().remove_peer(peer_id);
+                    // SAFETY: CoreBluetooth supplied the restored peripheral and manager together
+                    // on their serial queue. A logically disabled backend adopts no restored link.
+                    unsafe {
+                        peripheral.setDelegate(None);
+                        central.cancelPeripheralConnection(&peripheral);
+                    }
+                }
+                return;
+            }
             for peripheral in peripherals.iter() {
                 let peer_id = core_bluetooth_peer_id(&peripheral);
                 let address = peer_id.address();
+                let admission = self
+                    .ivars()
+                    .registry
+                    .borrow_mut()
+                    .admit_restored(peer_id, SendPeripheral(peripheral.retain()));
+                match admission {
+                    RestoredAdmission::Admitted | RestoredAdmission::Updated => {}
+                    RestoredAdmission::AlreadyOwned => {
+                        crate::diagnostic_log::debug!(
+                            "bluetooth: ignoring duplicate restoration for already-owned peripheral {:02x?}",
+                            address.octets()
+                        );
+                        continue;
+                    }
+                    RestoredAdmission::Full => {
+                        crate::diagnostic_log::warn!(
+                            "bluetooth: rejecting restored peripheral {:02x?} — restored-peer capacity is full",
+                            address.octets()
+                        );
+                        // SAFETY: CoreBluetooth supplied both live objects on the manager's serial
+                        // queue; the registry's mutable borrow ended before this framework call.
+                        unsafe { central.cancelPeripheralConnection(&peripheral) };
+                        continue;
+                    }
+                }
                 crate::diagnostic_log::debug!(
                     "bluetooth: restored peripheral {:02x?} from a background relaunch — re-adopting",
                     address.octets()
                 );
-                self.ivars()
-                    .pending_restored_callbacks
-                    .borrow_mut()
-                    .entry(peer_id)
-                    .or_default();
                 // CoreBluetooth may deliver the value notification that caused this relaunch as
                 // soon as the restoration delegate method returns. Install the peripheral
                 // delegate now and buffer those values until the Host admits this central-role
@@ -413,13 +874,11 @@ define_class!(
                 unsafe {
                     peripheral.setDelegate(Some(ProtocolObject::from_ref(self)));
                 }
-                if let Ok(mut map) = self.ivars().peripherals.lock() {
-                    map.insert(peer_id, (SendPeripheral(peripheral.retain()), None));
-                }
-                if let Ok(mut queue) = self.ivars().restored.lock() {
-                    queue.push_back(peer_id);
-                }
             }
+            // Wake the async backend without waiting for queue capacity. The capacity-one signal
+            // is only advisory; restored ownership remains in the queue-confined registry until
+            // the backend offers and claims it.
+            let _ = self.ivars().sighting_wake.try_send(());
         }
 
         #[unsafe(method(centralManager:didDiscoverPeripheral:advertisementData:RSSI:))]
@@ -430,9 +889,13 @@ define_class!(
             advertisement_data: &NSDictionary<NSString, AnyObject>,
             rssi: &NSNumber,
         ) {
+            if !self.ivars().radio_enabled.load(Ordering::Acquire) {
+                return;
+            }
             self.ivars().scan_activity.store(true, Ordering::Relaxed);
             let peer_id = core_bluetooth_peer_id(peripheral);
             let now = Instant::now();
+            self.reap_closed_sessions_at(central, now);
             let strength = advertisement_candidate_strength(advertisement_data);
             if cfg!(target_os = "macos")
                 && !self
@@ -493,22 +956,27 @@ define_class!(
             } else {
                 i8::try_from(dbm).ok()
             };
-            let address = peer_id.address();
-            if let Ok(mut map) = self.ivars().peripherals.lock() {
-                map.insert(peer_id, (SendPeripheral(peripheral.retain()), rssi));
+            let observed = self.ivars().registry.borrow_mut().observe(
+                peer_id,
+                SendPeripheral(peripheral.retain()),
+                rssi,
+            );
+            if !observed {
+                return;
             }
-            match try_bounded_ingress(&self.ivars().sightings, Sighting { address, rssi }) {
-                BoundedIngress::Accepted => {}
-                BoundedIngress::Full(_) => crate::diagnostic_log::debug!(
-                    "bluetooth: dropping advisory sighting for {:02x?} — sighting queue is full",
-                    address.octets()
-                ),
-                BoundedIngress::Closed(_) => {}
-            }
+            let _ = self.ivars().sighting_wake.try_send(());
         }
 
         #[unsafe(method(centralManager:didConnectPeripheral:))]
-        fn did_connect(&self, _central: &CBCentralManager, peripheral: &CBPeripheral) {
+        fn did_connect(&self, central: &CBCentralManager, peripheral: &CBPeripheral) {
+            if !self.ivars().radio_enabled.load(Ordering::Acquire) {
+                // A connect completion can race the queued logical shutdown. Remove the exact
+                // registry owner before cancelling so the later drain cannot cancel it twice; if
+                // shutdown already drained it, this intentionally does nothing.
+                self.cancel_registered_peer(central, core_bluetooth_peer_id(peripheral));
+                return;
+            }
+            self.reap_closed_sessions(central);
             let peer_id = core_bluetooth_peer_id(peripheral);
             if !self.ivars().sessions.borrow().contains_key(&peer_id) {
                 return;
@@ -527,7 +995,7 @@ define_class!(
             error: Option<&NSError>,
         ) {
             crate::diagnostic_log::warn!("bluetooth: dial connect FAILED: {error:?}");
-            self.fail_peer(core_bluetooth_peer_id(peripheral));
+            self.disconnect_peer(core_bluetooth_peer_id(peripheral));
         }
 
         #[unsafe(method(centralManager:didDisconnectPeripheral:error:))]
@@ -545,7 +1013,7 @@ define_class!(
             crate::diagnostic_log::warn!(
                 "bluetooth: central-role peripheral disconnected: {error:?}"
             );
-            self.fail_peer(peer_id);
+            self.disconnect_peer(peer_id);
         }
     }
 
@@ -779,20 +1247,24 @@ define_class!(
                 || cbuuid_eq(&updated_uuid, &columba_tx_uuid())
             {
                 let data = value.to_vec().into_boxed_slice();
-                if let Some(restored) = self
+                let restored = self
                     .ivars()
-                    .pending_restored_callbacks
+                    .registry
                     .borrow_mut()
-                    .get_mut(&peer_id)
-                {
-                    if !restored.buffer_data(data) {
+                    .buffer_restored_data(peer_id, data);
+                let data = match restored {
+                    RestoredBufferResult::Buffered | RestoredBufferResult::AlreadyFailed => {
+                        return;
+                    }
+                    RestoredBufferResult::Overflowed => {
                         crate::diagnostic_log::warn!(
                             "bluetooth: restored GATT notification buffer exceeded for {:02x?}",
                             peer_id.address().octets()
                         );
+                        return;
                     }
-                    return;
-                }
+                    RestoredBufferResult::NotRestored(data) => data,
+                };
                 let enqueue_error = self
                     .ivars()
                     .sessions
@@ -824,22 +1296,34 @@ define_class!(
             let Some(control) = Control::decode(&value.to_vec()) else {
                 return;
             };
-            if let Some(restored) = self
+            let restored = self
                 .ivars()
-                .pending_restored_callbacks
+                .registry
                 .borrow_mut()
-                .get_mut(&peer_id)
-            {
-                if !restored.buffer_control(control) {
+                .buffer_restored_control(peer_id, control);
+            let control = match restored {
+                RestoredBufferResult::Buffered | RestoredBufferResult::AlreadyFailed => return,
+                RestoredBufferResult::Overflowed => {
                     crate::diagnostic_log::warn!(
                         "bluetooth: restored control buffer exceeded for {:02x?}",
                         peer_id.address().octets()
                     );
+                    return;
                 }
-                return;
-            }
-            if let Some(session) = self.ivars().sessions.borrow().get(&peer_id) {
-                let _ = session.control_tx.try_send(control);
+                RestoredBufferResult::NotRestored(control) => control,
+            };
+            let enqueue_error = self
+                .ivars()
+                .sessions
+                .borrow()
+                .get(&peer_id)
+                .and_then(|session| session.enqueue_control(control).err());
+            if let Some(error) = enqueue_error {
+                crate::diagnostic_log::warn!(
+                    "bluetooth: control inbox failed for {:02x?}: {error:?}",
+                    peer_id.address().octets()
+                );
+                self.fail_peer(peer_id);
             }
         }
 
@@ -884,18 +1368,22 @@ define_class!(
 impl CentralDelegate {
     pub(super) fn new(
         manager_signals: ManagerSignalSender,
-        sightings: tokio_mpsc::Sender<Sighting>,
-        peripherals: PeripheralTable,
-        restored: RestoredPeripherals,
+        sighting_wake: tokio_mpsc::Sender<()>,
         scan_activity: Arc<AtomicBool>,
+        radio_enabled: Arc<AtomicBool>,
+        peripheral_capacity: usize,
+        restored_capacity: usize,
     ) -> Retained<Self> {
         let this = Self::alloc().set_ivars(CentralDelegateIvars {
             manager_signals,
-            sightings,
-            peripherals,
-            restored,
+            sighting_wake,
+            manager: RefCell::new(None),
+            radio_enabled,
+            registry: RefCell::new(CentralPeerRegistry::new(
+                peripheral_capacity,
+                restored_capacity,
+            )),
             scan_activity,
-            pending_restored_callbacks: RefCell::new(HashMap::new()),
             sessions: RefCell::new(HashMap::new()),
             discovery_guard: RefCell::new(DiscoveryGuard::default()),
         });
@@ -906,20 +1394,31 @@ impl CentralDelegate {
 
     pub(super) fn begin_session(
         &self,
+        central: &CBCentralManager,
         peer_id: CoreBluetoothPeerId,
         mut session: CentralPeerSession,
     ) -> bool {
-        if self.ivars().sessions.borrow().contains_key(&peer_id) {
-            session.reject();
+        *self.ivars().manager.borrow_mut() = Some(SendCentralManager(central.retain()));
+        if !self.ivars().radio_enabled.load(Ordering::Acquire) {
+            self.cancel_registered_peer(central, peer_id);
+            session.reject(DialRejection::RadioOff);
             return false;
         }
-        if let Some(callbacks) = self
-            .ivars()
-            .pending_restored_callbacks
-            .borrow_mut()
-            .remove(&peer_id)
-        {
+        self.reap_closed_sessions(central);
+        if self.ivars().sessions.borrow().contains_key(&peer_id) {
+            self.ivars().registry.borrow_mut().mark_active(peer_id);
+            session.reject(DialRejection::ExistingCentralSession);
+            return false;
+        }
+        let callbacks = self.ivars().registry.borrow_mut().begin_session(peer_id);
+        let Ok(callbacks) = callbacks else {
+            self.cancel_registered_peer(central, peer_id);
+            session.fail();
+            return false;
+        };
+        if let Some(callbacks) = callbacks {
             if !session.restore_callbacks(callbacks) {
+                self.cancel_registered_peer(central, peer_id);
                 session.fail();
                 return false;
             }
@@ -928,30 +1427,134 @@ impl CentralDelegate {
         true
     }
 
-    pub(super) fn discard_restored_callbacks(&self, peer_id: CoreBluetoothPeerId) {
-        self.ivars()
-            .pending_restored_callbacks
-            .borrow_mut()
-            .remove(&peer_id);
+    /// Queue-confined restored-event handoff for the async backend.
+    pub(super) fn offer_restored(&self) -> Option<CoreBluetoothPeerId> {
+        if !self.ivars().radio_enabled.load(Ordering::Acquire) {
+            return None;
+        }
+        self.ivars().registry.borrow_mut().offer_restored()
     }
 
-    pub(super) fn remove_session(&self, peer_id: CoreBluetoothPeerId) {
-        if let Some(session) = self.ivars().sessions.borrow_mut().remove(&peer_id) {
+    /// Queue-confined sighting handoff for the async backend.
+    pub(super) fn pop_sighting(&self) -> Option<Sighting> {
+        if !self.ivars().radio_enabled.load(Ordering::Acquire) {
+            return None;
+        }
+        let (sighting, more) = self.ivars().registry.borrow_mut().pop_sighting();
+        if more {
+            let _ = self.ivars().sighting_wake.try_send(());
+        }
+        sighting
+    }
+
+    /// Queue-confined dial lookup. Closed sessions are removed before registry admission so a
+    /// dropped link cannot keep either the per-peer entry or aggregate capacity pinned.
+    pub(super) fn claim(
+        &self,
+        central: &CBCentralManager,
+        address: BleAddress,
+    ) -> CentralDialCandidate<SendPeripheral> {
+        if !self.ivars().radio_enabled.load(Ordering::Acquire) {
+            return CentralDialCandidate::Missing;
+        }
+        self.reap_closed_sessions(central);
+        self.ivars().registry.borrow_mut().claim(address)
+    }
+
+    /// Queue-confined logical radio transition. Disabling fails every async session, clears all
+    /// callback/admission state, and cancels each restored, dialing, or active peripheral exactly
+    /// once. Published managers stay alive so a later enable does not rebuild CoreBluetooth state.
+    pub(super) fn set_radio_enabled(&self, central: &CBCentralManager, enabled: bool) {
+        self.ivars().radio_enabled.store(enabled, Ordering::Release);
+        if enabled {
+            return;
+        }
+
+        // SAFETY: the manager and delegate are confined to this serial CoreBluetooth queue.
+        unsafe { central.stopScan() };
+        self.ivars().scan_activity.store(false, Ordering::Relaxed);
+
+        let sessions = core::mem::take(&mut *self.ivars().sessions.borrow_mut());
+        for (_, session) in sessions {
+            session.fail();
+        }
+        let owned = self.ivars().registry.borrow_mut().drain_owned();
+        *self.ivars().discovery_guard.borrow_mut() = DiscoveryGuard::default();
+        for peripheral in owned {
+            // SAFETY: the retained peripheral, manager, and delegate all belong to this serial
+            // queue. Detaching first prevents late characteristic callbacks from reviving work.
+            unsafe {
+                peripheral.0.setDelegate(None);
+                central.cancelPeripheralConnection(&peripheral.0);
+            }
+        }
+    }
+
+    pub(super) fn discard_peer(&self, peer_id: CoreBluetoothPeerId) {
+        self.ivars().registry.borrow_mut().remove_peer(peer_id);
+    }
+
+    fn cancel_registered_peer(&self, central: &CBCentralManager, peer_id: CoreBluetoothPeerId) {
+        let peripheral = self.ivars().registry.borrow_mut().remove_peer(peer_id);
+        let Some(peripheral) = peripheral else {
+            return;
+        };
+        // SAFETY: the manager, retained peripheral, and this delegate are confined to the same
+        // serial CoreBluetooth queue.
+        unsafe { central.cancelPeripheralConnection(&peripheral.0) };
+    }
+
+    fn finish_peer(&self, peer_id: CoreBluetoothPeerId, cancel_connection: bool) {
+        let session = self.ivars().sessions.borrow_mut().remove(&peer_id);
+        let peripheral = self.ivars().registry.borrow_mut().remove_peer(peer_id);
+        if cancel_connection {
+            let central = self
+                .ivars()
+                .manager
+                .borrow()
+                .as_ref()
+                .map(|manager| manager.0.clone());
+            if let (Some(central), Some(peripheral)) = (central, peripheral) {
+                // SAFETY: every caller and both retained framework objects are confined to the
+                // central manager's serial dispatch queue.
+                unsafe { central.cancelPeripheralConnection(&peripheral.0) };
+            }
+        }
+        if let Some(session) = session {
             session.fail();
         }
     }
 
-    pub(super) fn remove_closed_session(&self, peer_id: CoreBluetoothPeerId) -> bool {
-        let link_closed = self
-            .ivars()
-            .sessions
-            .borrow()
-            .get(&peer_id)
-            .is_some_and(CentralPeerSession::data_receiver_closed);
-        if link_closed {
-            self.remove_session(peer_id);
+    fn disconnect_peer(&self, peer_id: CoreBluetoothPeerId) {
+        self.finish_peer(peer_id, false);
+    }
+
+    pub(super) fn reap_closed_sessions(&self, central: &CBCentralManager) {
+        self.reap_closed_sessions_at(central, Instant::now());
+    }
+
+    fn reap_closed_sessions_at(&self, central: &CBCentralManager, now: Instant) {
+        let closed = closed_central_session_ids(&self.ivars().sessions.borrow());
+        for peer_id in closed {
+            if let Some(session) = self.ivars().sessions.borrow_mut().remove(&peer_id) {
+                session.fail();
+            }
+            let peripheral = self.ivars().registry.borrow_mut().remove_peer(peer_id);
+            let Some(peripheral) = peripheral else {
+                continue;
+            };
+            self.ivars()
+                .discovery_guard
+                .borrow_mut()
+                .record_stale_cancellation(peer_id, now);
+            crate::diagnostic_log::debug!(
+                "bluetooth: reaping closed central session for {:02x?}",
+                peer_id.address().octets()
+            );
+            // SAFETY: this method and all callers are confined to the manager's serial dispatch
+            // queue; both retained framework objects remain live through the cancellation call.
+            unsafe { central.cancelPeripheralConnection(&peripheral.0) };
         }
-        link_closed
     }
 
     pub(super) fn submit_write(
@@ -960,6 +1563,10 @@ impl CentralDelegate {
         peer_id: CoreBluetoothPeerId,
         request: GattWriteRequest,
     ) {
+        if !self.ivars().radio_enabled.load(Ordering::Acquire) {
+            request.complete(Err(MacosBleError::Closed));
+            return;
+        }
         let mut sessions = self.ivars().sessions.borrow_mut();
         let Some(session) = sessions.get_mut(&peer_id) else {
             request.complete(Err(MacosBleError::Closed));
@@ -1030,9 +1637,8 @@ impl CentralDelegate {
         issue_unacknowledged_write(peripheral, request);
     }
 
-    fn fail_peer(&self, peer_id: CoreBluetoothPeerId) {
-        self.discard_restored_callbacks(peer_id);
-        self.remove_session(peer_id);
+    pub(super) fn fail_peer(&self, peer_id: CoreBluetoothPeerId) {
+        self.finish_peer(peer_id, true);
     }
 }
 
