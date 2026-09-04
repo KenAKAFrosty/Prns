@@ -8,10 +8,11 @@ mod l2cap_lifecycle;
 mod peripheral;
 
 #[cfg(test)]
+mod peripheral_tests;
+#[cfg(test)]
+mod radio_lifecycle_tests;
+#[cfg(test)]
 mod tests;
-
-use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, Mutex};
 
 #[cfg(any(test, target_os = "ios"))]
 use std::fmt;
@@ -37,9 +38,6 @@ use peripheral::PeripheralDelegate;
 
 pub use backend::{MacosBleBackend, PreparedMacosBleBackend};
 pub use gatt_link::{GattSink, GattSource};
-
-type PeripheralTable = Arc<Mutex<HashMap<CoreBluetoothPeerId, (SendPeripheral, Option<i8>)>>>;
-type RestoredPeripherals = Arc<Mutex<VecDeque<CoreBluetoothPeerId>>>;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct CoreBluetoothPeerId([u8; 16]);
@@ -252,6 +250,7 @@ struct SendPeripheralManager(Retained<CBPeripheralManager>);
 // retained Objective-C object is never concurrently messaged by Prns.
 unsafe impl Send for SendPeripheralManager {}
 
+#[derive(Clone)]
 struct SendPeripheral(Retained<CBPeripheral>);
 // SAFETY: this wrapper is only transferred into jobs on the central manager's serial dispatch
 // queue; Prns does not concurrently message the retained peripheral.
@@ -373,6 +372,7 @@ fn try_bounded_ingress<T>(sender: &tokio_mpsc::Sender<T>, value: T) -> BoundedIn
 #[derive(Debug)]
 pub enum MacosBleError {
     PowerOnTimeout,
+    RadioTransitionTimeout,
     Closed,
     ControlTooLarge,
     NotifyFailed,

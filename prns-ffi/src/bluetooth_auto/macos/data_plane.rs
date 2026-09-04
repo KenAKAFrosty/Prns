@@ -194,17 +194,10 @@ unsafe extern "C-unwind" fn write_cb(
 pub(super) fn wire_l2cap(
     channel: &CBL2CAPChannel,
     queue: &DispatchRetained<DispatchQueue>,
-) -> Option<(CoreBluetoothPeerId, DataPlane)> {
+) -> Option<DataPlane> {
     // SAFETY: CoreBluetooth supplied a live retained channel, and its accessors return retained
     // objects whose runtime types match the generated bindings.
-    let (peer_id, input, output) = unsafe {
-        let peer = channel.peer()?;
-        (
-            core_bluetooth_peer_id(&peer),
-            channel.inputStream()?,
-            channel.outputStream()?,
-        )
-    };
+    let (input, output) = unsafe { (channel.inputStream()?, channel.outputStream()?) };
     let (inbound_tx, inbound_rx) = tokio_mpsc::channel::<Box<[u8]>>(16);
     let outbound = Arc::new(Mutex::new(Outbound {
         pending: VecDeque::new(),
@@ -238,19 +231,37 @@ pub(super) fn wire_l2cap(
         pump_ref.input.open();
         pump_ref.output.open();
     }
-    Some((
-        peer_id,
-        DataPlane {
-            inbound_rx,
-            outbound,
+    Some(DataPlane {
+        inbound_rx,
+        outbound,
+        queue: queue.clone(),
+        pump_ptr: PumpPtr(pump),
+        pump: Arc::new(PumpHandle {
+            ptr: pump,
             queue: queue.clone(),
-            pump_ptr: PumpPtr(pump),
-            pump: Arc::new(PumpHandle {
-                ptr: pump,
-                queue: queue.clone(),
-            }),
-        },
-    ))
+        }),
+    })
+}
+
+/// Read the exact CoreBluetooth peer identity without touching or opening the channel streams.
+pub(super) fn l2cap_peer_id(channel: &CBL2CAPChannel) -> Option<CoreBluetoothPeerId> {
+    // SAFETY: CoreBluetooth supplied a live channel and retains its peer for the callback.
+    unsafe { channel.peer().map(|peer| core_bluetooth_peer_id(&peer)) }
+}
+
+/// Explicitly close a refused channel. CoreBluetooth has no delegate acknowledgement for an
+/// inbound CoC, so closing both unopened stream halves is the only immediate negative signal.
+pub(super) fn close_l2cap(channel: &CBL2CAPChannel) {
+    // SAFETY: CoreBluetooth supplied a live channel. Closing an unopened or already closed
+    // NSStream is idempotent and does not schedule either stream on a run loop or dispatch queue.
+    unsafe {
+        if let Some(input) = channel.inputStream() {
+            input.close();
+        }
+        if let Some(output) = channel.outputStream() {
+            output.close();
+        }
+    }
 }
 
 pub(super) struct DataPlane {
@@ -259,6 +270,16 @@ pub(super) struct DataPlane {
     pub(super) queue: DispatchRetained<DispatchQueue>,
     pub(super) pump_ptr: PumpPtr,
     pub(super) pump: Arc<PumpHandle>,
+}
+
+impl DataPlane {
+    fn is_closed(&self) -> bool {
+        self.inbound_rx.is_closed()
+            || self
+                .outbound
+                .lock()
+                .map_or(true, |outbound| outbound.closed)
+    }
 }
 
 const MAX_BUFFERED_L2CAP: usize = 4;
@@ -270,25 +291,58 @@ pub(super) struct PendingL2cap {
 }
 
 impl PendingL2cap {
-    pub(super) fn deliver(&mut self, mut data: DataPlane) {
+    pub(super) fn deliver(&mut self, mut data: DataPlane) -> bool {
+        self.reap_closed();
         while let Some(tx) = self.waiters.pop_front() {
             match tx.send(data) {
-                Ok(()) => return,
+                Ok(()) => return true,
                 Err(returned) => data = returned,
             }
         }
-        self.ready.push_back(data);
-        while self.ready.len() > MAX_BUFFERED_L2CAP {
-            self.ready.pop_front();
+        if self.ready.len() >= MAX_BUFFERED_L2CAP {
+            return false;
         }
+        self.ready.push_back(data);
+        true
     }
 
-    pub(super) fn arm(&mut self, tx: oneshot::Sender<DataPlane>) {
+    pub(super) fn arm(&mut self, tx: oneshot::Sender<DataPlane>) -> bool {
+        self.reap_closed();
+        if tx.is_closed() {
+            return false;
+        }
         match self.ready.pop_front() {
             Some(data) => {
                 let _ = tx.send(data);
+                true
             }
-            None => self.waiters.push_back(tx),
+            None => {
+                self.waiters.retain(|waiter| !waiter.is_closed());
+                if self.waiters.len() >= MAX_BUFFERED_L2CAP {
+                    return false;
+                }
+                self.waiters.push_back(tx);
+                true
+            }
         }
+    }
+
+    pub(super) fn can_deliver(&self) -> bool {
+        self.waiters.iter().any(|waiter| !waiter.is_closed())
+            || self.ready.len() < MAX_BUFFERED_L2CAP
+    }
+
+    pub(super) fn reap_closed(&mut self) {
+        self.waiters.retain(|waiter| !waiter.is_closed());
+        self.ready.retain(|data| !data.is_closed());
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.waiters.is_empty() && self.ready.is_empty()
+    }
+
+    #[cfg(test)]
+    pub(super) fn waiter_len(&self) -> usize {
+        self.waiters.len()
     }
 }
