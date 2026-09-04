@@ -52,8 +52,7 @@ enum InlineReadyWork {
         workspace: Vec<u8>,
     },
     ResourcePartHash {
-        result: ResourcePartHashResult,
-        part: Vec<u8>,
+        result: ResourcePartHashResult<Vec<u8>>,
     },
     ResourceOpen(ResourceOpenCompleted<'static>),
     WholeResourceOpen {
@@ -129,8 +128,7 @@ impl InlineReadyWorkQueue {
                 let (plan, source) = owed.into_parts();
                 let part = source.to_vec();
                 InlineReadyWork::ResourcePartHash {
-                    result: plan.calculate(&part),
-                    part,
+                    result: plan.calculate(part),
                 }
             }
             OwedWork::ResourceOpen(owed) => InlineReadyWork::ResourceOpen(owed.fulfill_inline()),
@@ -478,13 +476,12 @@ pub(crate) fn fulfill_ready_work(
                     sink,
                 );
             }
-            InlineReadyWork::ResourcePartHash { result, part } => {
-                engine.resume_resource_part_hash(
-                    result.completed(&part),
-                    now,
-                    fill_random,
-                    &mut |reaction| route_or_capture(reaction, ready, sink),
-                );
+            InlineReadyWork::ResourcePartHash { result } => {
+                let _ = result.complete_with(|completed| {
+                    engine.resume_resource_part_hash(completed, now, fill_random, &mut |reaction| {
+                        route_or_capture(reaction, ready, sink)
+                    })
+                });
             }
             InlineReadyWork::ResourceOpen(completed) => {
                 engine.resume_resource_open(completed, now, &mut |reaction| {

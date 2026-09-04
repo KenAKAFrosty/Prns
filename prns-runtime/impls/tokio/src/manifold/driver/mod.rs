@@ -368,6 +368,7 @@ async fn run_inner<S, H, J, P, A, C>(
             let now = clock.observe_step(&host);
             let mut seal_buf = [0u8; crate::wire::BROADCAST_MTU];
             let mut completed = 0;
+            let completion_budget = scheduler_policy.completion_turn_budget(work_remaining);
             while let Some(result) = next {
                 let completed_work = result.work.max(1);
                 let effect = CryptoDispatch {
@@ -402,7 +403,7 @@ async fn run_inner<S, H, J, P, A, C>(
                 }
                 work_remaining = work_remaining.saturating_sub(completed_work);
                 completed += 1;
-                if work_remaining == 0 || completed == scheduler_policy.completion_batch() {
+                if work_remaining == 0 || completed == completion_budget {
                     break;
                 }
                 next = pool.pop_completion();
@@ -414,7 +415,7 @@ async fn run_inner<S, H, J, P, A, C>(
             progressed = true;
         }
 
-        if work_remaining > 0 && inbound.has_ready_lanes() {
+        if inbound.has_ready_lanes() {
             let now = clock.observe_step(&host);
             let processed = inbound.process(InboundContext {
                 engine: &mut engine,
@@ -428,7 +429,7 @@ async fn run_inner<S, H, J, P, A, C>(
                 should_prove: &mut should_prove,
                 should_accept_resource: &mut should_accept_resource,
                 max_frames_per_lane: scheduler_policy.inbound_per_lane(),
-                max_frames_total: work_remaining.min(scheduler_policy.inbound_total()),
+                max_frames_total: scheduler_policy.inbound_turn_budget(work_remaining),
                 owed_work: &mut owed_work,
                 now,
             });
@@ -440,10 +441,10 @@ async fn run_inner<S, H, J, P, A, C>(
             progressed |= processed > 0;
         }
 
-        if work_remaining > 0 {
+        if work_remaining > 0 || pending_command.is_some() {
             if let Some(mut issued) = pending_command.take() {
                 let now = clock.observe_step(&host);
-                let mut command_budget = work_remaining.min(scheduler_policy.command_batch());
+                let mut command_budget = scheduler_policy.command_turn_budget(work_remaining);
                 let initial_command_budget = command_budget;
                 loop {
                     let effect = CommandDispatch {
@@ -546,7 +547,7 @@ async fn run_inner<S, H, J, P, A, C>(
             progressed = true;
         }
 
-        if work_remaining > 0 {
+        if work_remaining > 0 || owed_work.has_pending() {
             #[cfg(feature = "runtime-metrics")]
             let inline_dispatch_started = crypto_pool.is_none().then(std::time::Instant::now);
             let dispatched = owed_work.dispatch(
@@ -554,7 +555,7 @@ async fn run_inner<S, H, J, P, A, C>(
                 crypto_pool.as_ref(),
                 &mut inline_crypto_completions,
                 if crypto_pool.is_some() {
-                    work_remaining.min(scheduler_policy.owed_work_batch())
+                    scheduler_policy.owed_work_turn_budget(work_remaining)
                 } else {
                     1
                 },

@@ -259,6 +259,12 @@ impl ResourcePartHashBuffer {
     }
 }
 
+impl AsRef<[u8]> for ResourcePartHashBuffer {
+    fn as_ref(&self) -> &[u8] {
+        self.part()
+    }
+}
+
 pub(super) struct ResourcePartHashJob {
     pub(super) plan: ResourcePartHashPlan,
     pub(super) buffer: ResourcePartHashBuffer,
@@ -692,10 +698,7 @@ pub(super) enum CryptoResult {
         names: Vec<u8>,
         outcome: Result<BuiltResource, BuildOutgoingResourceError>,
     },
-    ResourcePartHashed {
-        result: ResourcePartHashResult,
-        buffer: ResourcePartHashBuffer,
-    },
+    ResourcePartHashed(ResourcePartHashResult<ResourcePartHashBuffer>),
     ResourceDecompressed {
         link_id: LinkId,
         hash: ResourceHash,
@@ -726,7 +729,7 @@ impl CryptoResult {
         !matches!(
             self,
             Self::ResourceBuilt { .. }
-                | Self::ResourcePartHashed { .. }
+                | Self::ResourcePartHashed(_)
                 | Self::StagedSealed { .. }
                 | Self::WholeResourceOpenUnavailable { .. }
         )
@@ -1428,10 +1431,7 @@ fn run_crypto_job(job: CryptoJob, verifier_cache: &mut WorkerVerifierCache) -> C
         CryptoJob::BuildResource(job) => run_resource_build_job(*job),
         CryptoJob::HashResourcePart(job) => {
             let ResourcePartHashJob { plan, buffer } = *job;
-            CryptoResult::ResourcePartHashed {
-                result: plan.calculate(buffer.part()),
-                buffer,
-            }
+            CryptoResult::ResourcePartHashed(plan.calculate(buffer))
         }
         CryptoJob::DecompressResource(job) => {
             let ResourceDecompressionJob {

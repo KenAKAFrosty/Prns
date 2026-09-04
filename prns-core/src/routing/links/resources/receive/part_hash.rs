@@ -56,23 +56,27 @@ pub struct ResourcePartHashPlan {
 
 impl ResourcePartHashPlan {
     #[must_use]
-    pub fn calculate(self, part: &[u8]) -> ResourcePartHashResult {
+    pub fn calculate<Part>(self, part: Part) -> ResourcePartHashResult<Part>
+    where
+        Part: AsRef<[u8]>,
+    {
         ResourcePartHashResult {
             matches: match self.reservations {
                 ResourcePartHashReservations::One(reservations) => {
-                    ResourcePartHashMatches::One(calculate_matches(reservations, part))
+                    ResourcePartHashMatches::One(calculate_matches(reservations, part.as_ref()))
                 }
                 ResourcePartHashReservations::Two(reservations) => {
-                    ResourcePartHashMatches::Two(calculate_matches(reservations, part))
+                    ResourcePartHashMatches::Two(calculate_matches(reservations, part.as_ref()))
                 }
                 ResourcePartHashReservations::Three(reservations) => {
-                    ResourcePartHashMatches::Three(calculate_matches(reservations, part))
+                    ResourcePartHashMatches::Three(calculate_matches(reservations, part.as_ref()))
                 }
                 ResourcePartHashReservations::Four(reservations) => {
-                    ResourcePartHashMatches::Four(calculate_matches(reservations, part))
+                    ResourcePartHashMatches::Four(calculate_matches(reservations, part.as_ref()))
                 }
             },
             arrived_at: self.arrived_at,
+            part,
         }
     }
 }
@@ -110,19 +114,32 @@ impl ResourcePartHashMatches {
     }
 }
 
-pub struct ResourcePartHashResult {
+pub struct ResourcePartHashResult<Part> {
     matches: ResourcePartHashMatches,
     arrived_at: InstantMillis,
+    part: Part,
 }
 
-impl ResourcePartHashResult {
+impl<Part> ResourcePartHashResult<Part>
+where
+    Part: AsRef<[u8]>,
+{
     #[must_use]
-    pub fn completed<'a>(self, part: &'a [u8]) -> ResourcePartHashCompleted<'a> {
-        ResourcePartHashCompleted {
-            matches: self.matches,
+    pub fn complete_with<Output>(
+        self,
+        complete: impl FnOnce(ResourcePartHashCompleted<'_>) -> Output,
+    ) -> (Output, Part) {
+        let output = complete(ResourcePartHashCompleted {
+            matches: &self.matches,
             arrived_at: self.arrived_at,
-            part,
-        }
+            part: self.part.as_ref(),
+        });
+        (output, self.part)
+    }
+
+    #[must_use]
+    pub fn part(&self) -> &[u8] {
+        self.part.as_ref()
     }
 }
 
@@ -139,13 +156,13 @@ impl<'a> ResourcePartHashOwed<'a> {
     }
 
     #[must_use]
-    pub fn fulfill(self) -> ResourcePartHashCompleted<'a> {
-        self.plan.calculate(self.part).completed(self.part)
+    pub fn fulfill(self) -> ResourcePartHashResult<&'a [u8]> {
+        self.plan.calculate(self.part)
     }
 }
 
 pub struct ResourcePartHashCompleted<'a> {
-    pub(crate) matches: ResourcePartHashMatches,
+    pub(crate) matches: &'a ResourcePartHashMatches,
     pub(crate) arrived_at: InstantMillis,
     pub(crate) part: &'a [u8],
 }

@@ -1473,7 +1473,7 @@ mod loop_tests {
                     {
                         let (plan, source) = owed.into_parts();
                         let part = source.to_vec();
-                        hashed = Some((plan.calculate(&part), part));
+                        hashed = Some(plan.calculate(part));
                     }
                 },
             },
@@ -1482,16 +1482,18 @@ mod loop_tests {
         let index = 0;
         let state_before = *receiver.incoming_resources.state(index);
         assert_eq!(state_before.received_part_count, 0);
-        let (result, part) = hashed.expect("the part hash leaves the engine");
-        let expected_rate = (part.len() as u64 + state_before.request_sent_bytes) * 1_000
+        let result = hashed.expect("the part hash leaves the engine");
+        let expected_rate = (result.part().len() as u64 + state_before.request_sent_bytes) * 1_000
             / (2_200 - state_before.request_sent_at.unwrap().0);
 
-        receiver.resume_resource_part_hash(
-            result.completed(&part),
-            InstantMillis(9_900),
-            &mut |bytes: &mut [u8]| bytes.fill(0xC7),
-            &mut |_| {},
-        );
+        let _ = result.complete_with(|completed| {
+            receiver.resume_resource_part_hash(
+                completed,
+                InstantMillis(9_900),
+                &mut |bytes: &mut [u8]| bytes.fill(0xC7),
+                &mut |_| {},
+            )
+        });
 
         let state = receiver.incoming_resources.state(index);
         assert_eq!(state.received_part_count, 1);

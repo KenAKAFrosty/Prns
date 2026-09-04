@@ -140,6 +140,22 @@ impl SchedulerPolicy {
         self.interactive_batch
     }
 
+    pub(crate) const fn completion_turn_budget(self, work_remaining: usize) -> usize {
+        liveness_preserving_budget(work_remaining, self.completion_batch)
+    }
+
+    pub(crate) const fn inbound_turn_budget(self, work_remaining: usize) -> usize {
+        liveness_preserving_budget(work_remaining, self.inbound_total)
+    }
+
+    pub(crate) const fn command_turn_budget(self, work_remaining: usize) -> usize {
+        liveness_preserving_budget(work_remaining, self.command_batch)
+    }
+
+    pub(crate) const fn owed_work_turn_budget(self, work_remaining: usize) -> usize {
+        liveness_preserving_budget(work_remaining, self.owed_work_batch)
+    }
+
     #[cfg(any(feature = "scheduler-tuning", test))]
     fn validate(self) -> Result<(), SchedulerPolicyError> {
         if self.completion_batch > self.turn_work {
@@ -179,6 +195,19 @@ impl SchedulerPolicy {
             });
         }
         Ok(())
+    }
+}
+
+const fn liveness_preserving_budget(work_remaining: usize, batch_limit: usize) -> usize {
+    let available = if work_remaining < batch_limit {
+        work_remaining
+    } else {
+        batch_limit
+    };
+    if available == 0 {
+        1
+    } else {
+        available
     }
 }
 
@@ -265,6 +294,26 @@ mod tests {
             SchedulerPolicy::new(production_input()),
             Ok(SchedulerPolicy::production())
         );
+    }
+
+    #[test]
+    fn exhausted_turns_retain_one_slot_for_every_downstream_lane() {
+        let policy = SchedulerPolicy::production();
+
+        assert_eq!(policy.completion_turn_budget(0), 1);
+        assert_eq!(policy.inbound_turn_budget(0), 1);
+        assert_eq!(policy.command_turn_budget(0), 1);
+        assert_eq!(policy.owed_work_turn_budget(0), 1);
+    }
+
+    #[test]
+    fn live_turn_budgets_remain_bounded_by_each_lane_policy() {
+        let policy = SchedulerPolicy::production();
+
+        assert_eq!(policy.completion_turn_budget(usize::MAX), 16);
+        assert_eq!(policy.inbound_turn_budget(usize::MAX), 24);
+        assert_eq!(policy.command_turn_budget(usize::MAX), 16);
+        assert_eq!(policy.owed_work_turn_budget(usize::MAX), 8);
     }
 
     #[test]

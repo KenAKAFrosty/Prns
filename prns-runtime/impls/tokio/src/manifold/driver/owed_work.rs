@@ -74,6 +74,10 @@ impl PendingOwedWork {
         self.interactive.len() + self.bulk.len() + self.resource_part_hash.len()
     }
 
+    pub(super) fn has_pending(&self) -> bool {
+        !self.completed.is_empty() || self.pool_jobs_len() > 0
+    }
+
     pub(super) fn push(&mut self, work: OwedWork<'_>, pool: Option<&CryptoPool>) {
         match work {
             OwedWork::Crypto(owed) => self.push_crypto(owed),

@@ -42,8 +42,7 @@ pub(super) enum InlineReadyWork {
         reservation: ResourceSealReservation,
     },
     ResourcePartHash {
-        result: ResourcePartHashResult,
-        part: Vec<u8, BROADCAST_MTU>,
+        result: ResourcePartHashResult<Vec<u8, BROADCAST_MTU>>,
     },
     ResourceOpen(ResourceOpenCompleted<'static>),
     WholeResourceOpenUnsupported {
@@ -85,8 +84,7 @@ pub(super) fn route_and_capture_owed_work(
                 let part = Vec::from_slice(source)
                     .expect("resource part exceeded the Embassy ingress capacity");
                 InlineReadyWork::ResourcePartHash {
-                    result: plan.calculate(&part),
-                    part,
+                    result: plan.calculate(part),
                 }
             }
             OwedWork::ResourceOpen(owed) => InlineReadyWork::ResourceOpen(owed.fulfill_inline()),
@@ -469,23 +467,26 @@ where
                     },
                 );
             }
-            InlineReadyWork::ResourcePartHash { result, part } => {
-                wake.compose(engine.resume_resource_part_hash(
-                    result.completed(&part),
-                    now,
-                    &mut |entropy| host.fill_random(entropy),
-                    &mut |reaction| {
-                        route_and_capture_owed_work(
-                            reaction,
-                            egress,
-                            ifacs,
-                            pacers,
-                            now,
-                            on_journaled,
-                            &mut pending,
-                        );
-                    },
-                ));
+            InlineReadyWork::ResourcePartHash { result } => {
+                let (completed_wake, _) = result.complete_with(|completed| {
+                    engine.resume_resource_part_hash(
+                        completed,
+                        now,
+                        &mut |entropy| host.fill_random(entropy),
+                        &mut |reaction| {
+                            route_and_capture_owed_work(
+                                reaction,
+                                egress,
+                                ifacs,
+                                pacers,
+                                now,
+                                on_journaled,
+                                &mut pending,
+                            );
+                        },
+                    )
+                });
+                wake.compose(completed_wake);
             }
             InlineReadyWork::ResourceOpen(completed) => {
                 wake.compose(
