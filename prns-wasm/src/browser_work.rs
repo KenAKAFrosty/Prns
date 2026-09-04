@@ -78,7 +78,6 @@ impl BrowserWorkOperation {
             Self::WholeResourceOpen { .. } => BrowserWorkKind::WholeResourceOpen,
         }
     }
-
 }
 
 struct PendingBrowserWork {
@@ -203,16 +202,16 @@ impl BrowserWorkQueue {
                 seal_iv,
                 salts,
             } => BrowserWorkJob::ResourceSeal {
-                    id: pending.id,
-                    link_id: plan.link_id(),
-                    nonce_prefixed_bytes: plan.nonce_prefixed_bytes(),
-                    total_segments: plan.total_segments(),
-                    workspace: core::mem::take(workspace),
-                    signing_key: *plan.signing_key_material(),
-                    encryption_key: *plan.encryption_key_material(),
-                    seal_iv: *seal_iv,
-                    salts: *salts,
-                },
+                id: pending.id,
+                link_id: plan.link_id(),
+                nonce_prefixed_bytes: plan.nonce_prefixed_bytes(),
+                total_segments: plan.total_segments(),
+                workspace: core::mem::take(workspace),
+                signing_key: *plan.signing_key_material(),
+                encryption_key: *plan.encryption_key_material(),
+                seal_iv: *seal_iv,
+                salts: *salts,
+            },
             BrowserWorkOperation::WholeResourceOpen { plan, sealed } => {
                 BrowserWorkJob::WholeResourceOpen {
                     id: pending.id,

@@ -21,13 +21,13 @@ use personal_rns::interfaces::{
 use personal_rns::routing::links::channel::MessageType;
 use personal_rns::routing::links::handshake::link_proof_signature_valid;
 use personal_rns::routing::links::request::RequestId;
+use personal_rns::routing::links::resources::send::{
+    ResourceSealCompleted, ResourceSealLanding, ResourceSealOutcome, UnavailableResourceSeal,
+};
 use personal_rns::routing::links::resources::streamed_open::ResourceOpenLane;
 use personal_rns::routing::links::resources::{
     ResourceBody, ResourceCompression, ResourceCorrelation, ResourceMetadata, ResourceSend,
     ResourceSendPlan, ResourceSendPlanError, ResourceStrategy, MAX_EFFICIENT_SIZE,
-};
-use personal_rns::routing::links::resources::send::{
-    ResourceSealCompleted, ResourceSealLanding, ResourceSealOutcome, UnavailableResourceSeal,
 };
 use personal_rns::routing::links::LinkId;
 use personal_rns::routing::request_handlers::{RequestPathHash, RequestPolicy};
@@ -44,6 +44,10 @@ use prns_runtime::runtime::persistence_snapshots::{
 };
 use wasm_bindgen::prelude::*;
 
+use crate::browser_work::{
+    BrowserWorkJob, BrowserWorkKind, BrowserWorkOperation, BrowserWorkQueue,
+    BrowserWorkSettlementError,
+};
 use crate::command_settlement::{
     encode_batch as encode_command_settlement_batch, CapturedCommandSettlement,
 };
@@ -53,8 +57,8 @@ use crate::input::{
     array_to_strings, destination_hash_from_vec, identity_hash_from_vec, interface_id_from_vec,
     link_id_from_vec, optional_array, optional_bool, optional_bytes, optional_i64, optional_string,
     optional_u32, optional_u64, parse_interface_kind, parse_interface_mode, request_id_from_vec,
-    request_path_hash_from_vec, required_array, required_bool, required_bytes,
-    required_string, required_u64, secret_key_from_vec, u64_from_number,
+    request_path_hash_from_vec, required_array, required_bool, required_bytes, required_string,
+    required_u64, secret_key_from_vec, u64_from_number,
 };
 use crate::js_translation::{
     command_settled_to_js, interface_kind_name, outbound_to_js, set_bigint, set_bytes, set_str,
@@ -62,10 +66,6 @@ use crate::js_translation::{
 };
 use crate::outbound_batch::encode as encode_outbound_batch;
 use crate::parameters::{bitrate_bps_u32, BROWSER_PERSISTENCE_VERSION};
-use crate::browser_work::{
-    BrowserWorkJob, BrowserWorkKind, BrowserWorkOperation, BrowserWorkQueue,
-    BrowserWorkSettlementError,
-};
 
 enum BrowserWorkCompletion {
     AnnounceValid,
@@ -852,12 +852,12 @@ impl PrnsRuntime {
                 BrowserWorkOperation::AnnounceVerify { owed, .. },
                 BrowserWorkCompletion::AnnounceValid,
             ) => {
-                    self.resume_protocol_announce_with_entropy(
-                        owed.verified_by_external_backend(),
-                        &mut entropy,
-                    );
-                    set_str(&result, "tag", "Applied");
-                    return Ok(result.into());
+                self.resume_protocol_announce_with_entropy(
+                    owed.verified_by_external_backend(),
+                    &mut entropy,
+                );
+                set_str(&result, "tag", "Applied");
+                return Ok(result.into());
             }
             (
                 BrowserWorkOperation::AnnounceVerify { .. },
@@ -867,49 +867,45 @@ impl PrnsRuntime {
                 BrowserWorkOperation::AnnounceVerify { owed, .. },
                 BrowserWorkCompletion::AnnounceUnavailable,
             ) => {
-                    if let personal_rns::engine::AnnounceVerification::Verified(verified) =
-                        owed.verify()
-                    {
-                        self.resume_protocol_announce_with_entropy(verified, &mut entropy);
-                    }
-                    set_str(&result, "tag", "Applied");
-                    return Ok(result.into());
+                if let personal_rns::engine::AnnounceVerification::Verified(verified) =
+                    owed.verify()
+                {
+                    self.resume_protocol_announce_with_entropy(verified, &mut entropy);
+                }
+                set_str(&result, "tag", "Applied");
+                return Ok(result.into());
             }
             (
                 BrowserWorkOperation::LinkProofVerify(owed),
                 BrowserWorkCompletion::LinkProofVerified(shared),
             ) => {
-                    self.resume_protocol_link_proof_with_entropy(
-                        owed,
-                        X25519SharedSecret::from_external_diffie_hellman(shared),
-                        now_ms,
-                        &mut entropy,
-                    );
-                    set_str(&result, "tag", "Applied");
-                    return Ok(result.into());
+                self.resume_protocol_link_proof_with_entropy(
+                    owed,
+                    X25519SharedSecret::from_external_diffie_hellman(shared),
+                    now_ms,
+                    &mut entropy,
+                );
+                set_str(&result, "tag", "Applied");
+                return Ok(result.into());
             }
-            (
-                BrowserWorkOperation::LinkProofVerify(_),
-                BrowserWorkCompletion::LinkProofInvalid,
-            ) => {}
+            (BrowserWorkOperation::LinkProofVerify(_), BrowserWorkCompletion::LinkProofInvalid) => {
+            }
             (
                 BrowserWorkOperation::LinkProofVerify(owed),
                 BrowserWorkCompletion::LinkProofUnavailable,
             ) => {
-                    if link_proof_signature_valid(&owed) {
-                        let shared = x25519_diffie_hellman(
-                            &owed.initiator_secret,
-                            &owed.responder_encryption,
-                        );
-                        self.resume_protocol_link_proof_with_entropy(
-                            owed,
-                            shared,
-                            now_ms,
-                            &mut entropy,
-                        );
-                    }
-                    set_str(&result, "tag", "Applied");
-                    return Ok(result.into());
+                if link_proof_signature_valid(&owed) {
+                    let shared =
+                        x25519_diffie_hellman(&owed.initiator_secret, &owed.responder_encryption);
+                    self.resume_protocol_link_proof_with_entropy(
+                        owed,
+                        shared,
+                        now_ms,
+                        &mut entropy,
+                    );
+                }
+                set_str(&result, "tag", "Applied");
+                return Ok(result.into());
             }
             (
                 BrowserWorkOperation::ResourceSeal {
@@ -928,10 +924,7 @@ impl PrnsRuntime {
                         self.engine.resume_resource_seal(
                             ResourceSealCompleted {
                                 reservation,
-                                outcome: ResourceSealOutcome::Sealed {
-                                    sealed,
-                                    salts,
-                                },
+                                outcome: ResourceSealOutcome::Sealed { sealed, salts },
                             },
                             InstantMillis(now_ms),
                             &mut |out| entropy.fill(out),
@@ -943,34 +936,45 @@ impl PrnsRuntime {
                         salt,
                         hash,
                         proof,
-                    } => {
+                    } => self.engine.resume_resource_seal(
+                        ResourceSealCompleted {
+                            reservation,
+                            outcome: ResourceSealOutcome::SealedAndDigested {
+                                sealed,
+                                salt_nonce: personal_rns::routing::links::resources::SaltNonce::new(
+                                    *salt,
+                                ),
+                                hash: personal_rns::routing::links::resources::ResourceHash::new(
+                                    *hash,
+                                ),
+                                expected_proof:
+                                    personal_rns::routing::links::resources::ResourceProof::new(
+                                        *proof,
+                                    ),
+                            },
+                        },
+                        InstantMillis(now_ms),
+                        &mut |out| entropy.fill(out),
+                        &mut |reaction| capture.route(reaction),
+                    ),
+                    BrowserWorkCompletion::ResourceSealUnavailable => {
                         self.engine.resume_resource_seal(
                             ResourceSealCompleted {
                                 reservation,
-                                outcome: ResourceSealOutcome::SealedAndDigested {
-                                    sealed,
-                                    salt_nonce: personal_rns::routing::links::resources::SaltNonce::new(*salt),
-                                    hash: personal_rns::routing::links::resources::ResourceHash::new(*hash),
-                                    expected_proof: personal_rns::routing::links::resources::ResourceProof::new(*proof),
-                                },
+                                outcome: ResourceSealOutcome::Unavailable(
+                                    UnavailableResourceSeal::Resident,
+                                ),
                             },
                             InstantMillis(now_ms),
                             &mut |out| entropy.fill(out),
                             &mut |reaction| capture.route(reaction),
                         )
                     }
-                    BrowserWorkCompletion::ResourceSealUnavailable => self.engine.resume_resource_seal(
-                        ResourceSealCompleted {
-                            reservation,
-                            outcome: ResourceSealOutcome::Unavailable(
-                                UnavailableResourceSeal::Resident,
-                            ),
-                        },
-                        InstantMillis(now_ms),
-                        &mut |out| entropy.fill(out),
-                        &mut |reaction| capture.route(reaction),
-                    ),
-                    _ => return Err(JsValue::from_str("browser work completion does not match operation")),
+                    _ => {
+                        return Err(JsValue::from_str(
+                            "browser work completion does not match operation",
+                        ))
+                    }
                 };
                 if matches!(
                     landing,
@@ -986,12 +990,16 @@ impl PrnsRuntime {
                         },
                     );
                 }
-                set_str(&result, "tag", match landing {
-                    ResourceSealLanding::Applied => "Applied",
-                    ResourceSealLanding::Collision => "Collision",
-                    ResourceSealLanding::Stale => "Stale",
-                    ResourceSealLanding::Invalid => "Invalid",
-                });
+                set_str(
+                    &result,
+                    "tag",
+                    match landing {
+                        ResourceSealLanding::Applied => "Applied",
+                        ResourceSealLanding::Collision => "Collision",
+                        ResourceSealLanding::Stale => "Stale",
+                        ResourceSealLanding::Invalid => "Invalid",
+                    },
+                );
             }
             (
                 BrowserWorkOperation::WholeResourceOpen { plan, sealed },
@@ -1009,20 +1017,24 @@ impl PrnsRuntime {
                         plaintext,
                         hash,
                         proof,
-                    } => {
-                        WholeResourceOpenOutcome::OpenedAndDigested {
-                            plaintext,
-                            calculated_hash: personal_rns::routing::links::resources::ResourceHash::new(*hash),
-                            proof: personal_rns::routing::links::resources::ResourceProof::new(*proof),
-                        }
-                    }
+                    } => WholeResourceOpenOutcome::OpenedAndDigested {
+                        plaintext,
+                        calculated_hash: personal_rns::routing::links::resources::ResourceHash::new(
+                            *hash,
+                        ),
+                        proof: personal_rns::routing::links::resources::ResourceProof::new(*proof),
+                    },
                     BrowserWorkCompletion::WholeResourceRefused => {
                         WholeResourceOpenOutcome::Refused
                     }
                     BrowserWorkCompletion::WholeResourceUnavailable => {
                         WholeResourceOpenOutcome::Unavailable
                     }
-                    _ => return Err(JsValue::from_str("browser work completion does not match operation")),
+                    _ => {
+                        return Err(JsValue::from_str(
+                            "browser work completion does not match operation",
+                        ))
+                    }
                 };
                 let landing = self.engine.resume_whole_resource_open(
                     WholeResourceOpenCompleted {
@@ -1036,18 +1048,24 @@ impl PrnsRuntime {
                     landing,
                     personal_rns::engine::WholeResourceOpenLanding::Invalid
                 ) {
-                    self.browser_work.restore(
-                        id,
-                        BrowserWorkOperation::WholeResourceOpen { plan, sealed },
-                    );
+                    self.browser_work
+                        .restore(id, BrowserWorkOperation::WholeResourceOpen { plan, sealed });
                 }
-                set_str(&result, "tag", match landing {
-                    personal_rns::engine::WholeResourceOpenLanding::Applied => "Applied",
-                    personal_rns::engine::WholeResourceOpenLanding::Stale => "Stale",
-                    personal_rns::engine::WholeResourceOpenLanding::Invalid => "Invalid",
-                });
+                set_str(
+                    &result,
+                    "tag",
+                    match landing {
+                        personal_rns::engine::WholeResourceOpenLanding::Applied => "Applied",
+                        personal_rns::engine::WholeResourceOpenLanding::Stale => "Stale",
+                        personal_rns::engine::WholeResourceOpenLanding::Invalid => "Invalid",
+                    },
+                );
             }
-            _ => return Err(JsValue::from_str("browser work completion does not match operation")),
+            _ => {
+                return Err(JsValue::from_str(
+                    "browser work completion does not match operation",
+                ))
+            }
         }
         self.fulfill_captured_work(capture, now_ms, &mut entropy);
         Ok(result.into())
@@ -1593,9 +1611,7 @@ impl PrnsRuntime {
             };
             match *operation {
                 BrowserWorkOperation::AnnounceVerify { owed, .. } => {
-                    capture
-                        .ready
-                        .push_crypto(CryptoOwed::AnnounceVerify(*owed));
+                    capture.ready.push_crypto(CryptoOwed::AnnounceVerify(*owed));
                 }
                 BrowserWorkOperation::LinkProofVerify(owed) => {
                     capture.ready.push_crypto(CryptoOwed::LinkProofVerify(owed));
@@ -1909,9 +1925,7 @@ fn parse_browser_work_completion(
 ) -> Result<BrowserWorkCompletion, JsValue> {
     match (kind, outcome) {
         (BrowserWorkKind::AnnounceVerify, "Valid") => Ok(BrowserWorkCompletion::AnnounceValid),
-        (BrowserWorkKind::AnnounceVerify, "Invalid") => {
-            Ok(BrowserWorkCompletion::AnnounceInvalid)
-        }
+        (BrowserWorkKind::AnnounceVerify, "Invalid") => Ok(BrowserWorkCompletion::AnnounceInvalid),
         (BrowserWorkKind::AnnounceVerify, "Unavailable") => {
             Ok(BrowserWorkCompletion::AnnounceUnavailable)
         }
@@ -1925,9 +1939,9 @@ fn parse_browser_work_completion(
         (BrowserWorkKind::LinkProofVerify, "Unavailable") => {
             Ok(BrowserWorkCompletion::LinkProofUnavailable)
         }
-        (BrowserWorkKind::ResourceSeal, "Sealed") => Ok(
-            BrowserWorkCompletion::ResourceSealed(required_bytes(options, "sealed")?),
-        ),
+        (BrowserWorkKind::ResourceSeal, "Sealed") => Ok(BrowserWorkCompletion::ResourceSealed(
+            required_bytes(options, "sealed")?,
+        )),
         (BrowserWorkKind::ResourceSeal, "SealedAndDigested") => {
             Ok(BrowserWorkCompletion::ResourceSealedAndDigested {
                 sealed: required_bytes(options, "sealed")?,
@@ -1958,9 +1972,9 @@ fn parse_browser_work_completion(
         (BrowserWorkKind::AnnounceVerify, _)
         | (BrowserWorkKind::LinkProofVerify, _)
         | (BrowserWorkKind::ResourceSeal, _)
-        | (BrowserWorkKind::WholeResourceOpen, _) => {
-            Err(JsValue::from_str("browser work completion outcome is invalid"))
-        }
+        | (BrowserWorkKind::WholeResourceOpen, _) => Err(JsValue::from_str(
+            "browser work completion outcome is invalid",
+        )),
     }
 }
 
