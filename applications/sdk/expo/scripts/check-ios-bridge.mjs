@@ -13,12 +13,25 @@ const subscriber = readFileSync(
   resolve(packageRoot, "ios/PrnsAppDelegateSubscriber.swift"),
   "utf8",
 );
+const restorationProbe = readFileSync(
+  resolve(packageRoot, "ios/PrnsAppRestorationProbe.swift"),
+  "utf8",
+);
 const moduleConfig = JSON.parse(
   readFileSync(resolve(packageRoot, "expo-module.config.json"), "utf8"),
 );
 const podspec = readFileSync(resolve(packageRoot, "ios/PrnsApp.podspec"), "utf8");
 const developmentClient = readFileSync(
   resolve(packageRoot, "ios/build-development-client.sh"),
+  "utf8",
+);
+const rustBuild = readFileSync(resolve(packageRoot, "ios/build-rust.sh"), "utf8");
+const nativeCargo = readFileSync(
+  resolve(packageRoot, "../../prns/native-composition/Cargo.toml"),
+  "utf8",
+);
+const nativeFfi = readFileSync(
+  resolve(packageRoot, "../../prns/native-composition/src/ffi.rs"),
   "utf8",
 );
 const applicationsPackage = JSON.parse(
@@ -79,6 +92,45 @@ assert.doesNotMatch(
   /applicationDidEnterBackground|applicationWillResignActive|prns_app_stop/,
   "background lifecycle hooks must not stop the native node",
 );
+assert.match(restorationProbe, /#if DEBUG[\s\S]*?import OSLog/);
+assert.match(
+  restorationProbe,
+  /@_cdecl\("prns_app_ios_restoration_probe_emit"\)/,
+  "the private Rust callback must terminate in the Debug-only Apple unified-log sink",
+);
+assert.match(restorationProbe, /category: "PRNS_IOS_RESTORATION"/);
+assert.match(
+  restorationProbe,
+  /codeLength > 0, codeLength <= 64[\s\S]*?prnsRestorationEvents\.contains\(code\)/,
+  "the restoration sink must accept only bounded allowlisted event codes",
+);
+assert.match(
+  nativeCargo,
+  /ios-restoration-probe = \["apple", "dep:log", "prns-interfaces-tokio\/log"\]/,
+  "the private restoration logger must remain an explicit app feature",
+);
+assert.match(
+  rustBuild,
+  /if \[\[ "\$\{CONFIGURATION:-\}" == "Debug" \]\]; then[\s\S]*?ios-restoration-probe/,
+  "only Debug Xcode builds may enable restoration observability",
+);
+assert.equal(
+  nativeFfi.match(/crate::ios_restoration_probe::install\(\);/g)?.length,
+  2,
+  "both restoration-aware entry points must install the logger idempotently",
+);
+for (const abiName of [
+  "prns_app_prepare_apple_bluetooth_restoration",
+  "prns_app_start_with_apple_restoration",
+]) {
+  assert.match(
+    nativeFfi,
+    new RegExp(
+      `fn ${abiName}\\([\\s\\S]*?crate::ios_restoration_probe::install\\(\\);[\\s\\S]*?invoke_`,
+    ),
+    `${abiName} must install restoration logging before constructing a manager`,
+  );
+}
 
 for (const abiName of [
   "prns_app_contract_fingerprint",

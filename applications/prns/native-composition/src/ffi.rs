@@ -222,6 +222,7 @@ pub unsafe extern "C" fn prns_app_prepare_apple_bluetooth_restoration(
     peripheral_identifier_ptr: *const u8,
     peripheral_identifier_len: usize,
 ) -> PrnsAppBytes {
+    crate::ios_restoration_probe::install();
     // SAFETY: The caller contracts are forwarded to the bounded independent decoders.
     unsafe {
         invoke_path_two_strings(
@@ -255,6 +256,7 @@ pub unsafe extern "C" fn prns_app_start_with_apple_restoration(
     peripheral_identifier_ptr: *const u8,
     peripheral_identifier_len: usize,
 ) -> PrnsAppBytes {
+    crate::ios_restoration_probe::install();
     // SAFETY: The caller contracts are forwarded to the bounded independent decoders.
     unsafe {
         invoke_path_json_two_strings::<DevelopmentNodeStartInput, _, _>(

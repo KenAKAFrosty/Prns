@@ -38,12 +38,16 @@ if ! "${RUSTUP_EXECUTABLE}" target list --installed | grep -Fxq "${RUST_TARGET}"
 fi
 
 export CARGO_TARGET_DIR="${SCRIPT_DIRECTORY}/build"
+RUST_FEATURES="apple"
+if [[ "${CONFIGURATION:-}" == "Debug" ]]; then
+  RUST_FEATURES="${RUST_FEATURES},ios-restoration-probe"
+fi
 "${CARGO_EXECUTABLE}" build \
   --release \
   --locked \
   --manifest-path "${APPLICATIONS_DIRECTORY}/Cargo.toml" \
   --package prns-app-native \
-  --features apple \
+  --features "${RUST_FEATURES}" \
   --lib \
   --target "${RUST_TARGET}"
 

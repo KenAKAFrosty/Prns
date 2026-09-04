@@ -27,6 +27,7 @@ apple = [
     "prns-interfaces-tokio/bluetooth-auto",
 ]
 host-test = ["personal-rns/tcp"]
+ios-restoration-probe = ["apple", "dep:log", "prns-interfaces-tokio/log"]
 
 [dependencies]
 personal-rns = { path = "../../../personal-rns", default-features = false, features = ["tokio-host"] }
@@ -35,6 +36,7 @@ prns-core = { path = "../../../prns-core", default-features = false, features = 
 prns-host = { path = "../../../prns-host/core" }
 prns-host-snapshot = { path = "../../../prns-host/impls/snapshot" }
 prns-interfaces-tokio = { path = "../../../prns-interfaces/impls/tokio", default-features = false, optional = true }
+log = { version = "0.4", default-features = false, optional = true }
 redb = "=4.2.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -1098,6 +1098,7 @@ dependencies = [
 name = "prns-app-native"
 version = "0.1.0"
 dependencies = [
+ "log",
  "personal-rns",
  "prns-core",
  "prns-host",
@@ -1142,6 +1143,7 @@ version = "0.3.7"
 dependencies = [
  "cfg-if",
  "dispatch2",
+ "log",
  "objc2",
  "objc2-core-bluetooth",
  "objc2-core-foundation",
@@ -1192,6 +1194,7 @@ dependencies = [
  "cfg-if",
  "futures-util",
  "heapless 0.8.0",
+ "log",
  "prns-core",
  "prns-ffi",
  "prns-runtime-tokio",
