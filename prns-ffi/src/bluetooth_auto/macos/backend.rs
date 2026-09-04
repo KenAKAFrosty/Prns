@@ -526,7 +526,9 @@ struct PreparedCoreBluetoothBackend {
 }
 
 /// Prepared dual-role CoreBluetooth managers.
-pub struct PreparedMacosBleBackend(PreparedCoreBluetoothBackend);
+pub struct PreparedMacosBleBackend {
+    backend: PreparedCoreBluetoothBackend,
+}
 
 /// Prepared central-only CoreBluetooth manager.
 pub struct PreparedCentralOnlyMacosBleBackend(PreparedCoreBluetoothBackend);
@@ -589,7 +591,7 @@ impl MacosBleBackend {
         let manager_preparation = ManagerPreparation::PlatformDefault;
         Self::prepare_with(identity, manager_preparation)
             .await
-            .map(PreparedMacosBleBackend)
+            .map(|backend| PreparedMacosBleBackend { backend })
     }
 
     /// Creates CoreBluetooth managers with stable restoration identifiers supplied by the
@@ -604,7 +606,7 @@ impl MacosBleBackend {
     ) -> Result<PreparedMacosBleBackend, MacosBleError> {
         Self::prepare_with(identity, ManagerPreparation::RestorationAware(identifiers))
             .await
-            .map(PreparedMacosBleBackend)
+            .map(|backend| PreparedMacosBleBackend { backend })
     }
 
     /// Creates CoreBluetooth managers without opting into iOS state restoration.
@@ -619,7 +621,7 @@ impl MacosBleBackend {
             ManagerPreparation::WithoutRestoration(CoreBluetoothRole::DualRole),
         )
         .await
-        .map(PreparedMacosBleBackend)
+        .map(|backend| PreparedMacosBleBackend { backend })
     }
 
     async fn prepare_with(
@@ -1012,7 +1014,7 @@ impl PreparedCoreBluetoothBackend {
 
 impl PreparedMacosBleBackend {
     pub async fn ready(self) -> Result<MacosBleBackend, MacosBleError> {
-        let ready = self.0.ready().await?;
+        let ready = self.backend.ready().await?;
         let psm = ready.local_psm.ok_or(MacosBleError::PublishFailed)?;
         Ok(MacosBleBackend {
             backend: ready.backend,
