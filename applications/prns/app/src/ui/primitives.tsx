@@ -1,5 +1,6 @@
 import { type PropsWithChildren, type ReactNode, useState } from "react";
 import {
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -18,6 +19,8 @@ export function Screen({ children }: PropsWithChildren) {
     <ScrollView
       style={[styles.screen, { backgroundColor: palette.background }]}
       contentContainerStyle={styles.screenContent}
+      automaticallyAdjustKeyboardInsets
+      keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
       keyboardShouldPersistTaps="handled"
     >
       {children}
