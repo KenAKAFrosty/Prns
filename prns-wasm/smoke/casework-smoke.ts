@@ -75,7 +75,7 @@ const { MakeTag } = from<Creation>();
 const missing = MakeTag("Missing");
 assert(missing.tag === "Missing", "from constructs data-less union members");
 
-const into = match_into<number>().from<Creation>(ready, {
+const into = match_into<number>().from(ready as Creation, {
   Ready: ({ value }) => value,
   Missing: () => 0,
 });

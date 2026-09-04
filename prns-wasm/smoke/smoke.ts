@@ -371,7 +371,7 @@ function describeInterface(snapshot: InterfaceSnapshot): string {
 }
 
 function describeEvent(event: PrnsEvent): string {
-  return match_into<string>().from<PrnsEvent>(event, {
+  return match_into<string>().from(event, {
     AnnounceHeard: ({ destination, hops, sourceInterface }) =>
       `announce destination=${hex(destination)} hops=${hops} interface=${hex(sourceInterface)}`,
     SingleDelivery: ({ destination, plaintext, sourceInterface }) =>
