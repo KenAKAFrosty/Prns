@@ -29,8 +29,9 @@ use super::gatt_write::{
 };
 use super::{
     cbuuid_eq, columba_identity_uuid, columba_rx_uuid, columba_tx_uuid, control_uuid,
-    core_bluetooth_peer_id, data_uuid, service_uuid, CoreBluetoothPeerId, Event, MacosBleError,
-    PeripheralTable, RestoredPeripherals, SendCharacteristicRef, SendPeripheral,
+    core_bluetooth_peer_id, data_uuid, service_uuid, try_bounded_ingress, BoundedIngress,
+    CoreBluetoothPeerId, MacosBleError, ManagerSignalSender, PeripheralTable, RestoredPeripherals,
+    SendCharacteristicRef, SendPeripheral, Sighting,
 };
 
 pub(super) fn is_system_connected(
@@ -349,7 +350,8 @@ pub(super) struct DialCommand {
 unsafe impl Send for DialCommand {}
 
 pub(super) struct CentralDelegateIvars {
-    events: tokio_mpsc::UnboundedSender<Event>,
+    manager_signals: ManagerSignalSender,
+    sightings: tokio_mpsc::Sender<Sighting>,
     peripherals: PeripheralTable,
     restored: RestoredPeripherals,
     scan_activity: Arc<AtomicBool>,
@@ -371,7 +373,7 @@ define_class!(
             // SAFETY: CoreBluetooth supplied this live manager to its delegate on the configured
             // serial dispatch queue.
             if unsafe { central.state() } == CBManagerState::PoweredOn {
-                let _ = self.ivars().events.send(Event::CentralPowered);
+                self.ivars().manager_signals.central_powered();
             }
         }
 
@@ -495,7 +497,14 @@ define_class!(
             if let Ok(mut map) = self.ivars().peripherals.lock() {
                 map.insert(peer_id, (SendPeripheral(peripheral.retain()), rssi));
             }
-            let _ = self.ivars().events.send(Event::Sighting { address, rssi });
+            match try_bounded_ingress(&self.ivars().sightings, Sighting { address, rssi }) {
+                BoundedIngress::Accepted => {}
+                BoundedIngress::Full(_) => crate::diagnostic_log::debug!(
+                    "bluetooth: dropping advisory sighting for {:02x?} — sighting queue is full",
+                    address.octets()
+                ),
+                BoundedIngress::Closed(_) => {}
+            }
         }
 
         #[unsafe(method(centralManager:didConnectPeripheral:))]
@@ -874,13 +883,15 @@ define_class!(
 
 impl CentralDelegate {
     pub(super) fn new(
-        events: tokio_mpsc::UnboundedSender<Event>,
+        manager_signals: ManagerSignalSender,
+        sightings: tokio_mpsc::Sender<Sighting>,
         peripherals: PeripheralTable,
         restored: RestoredPeripherals,
         scan_activity: Arc<AtomicBool>,
     ) -> Retained<Self> {
         let this = Self::alloc().set_ivars(CentralDelegateIvars {
-            events,
+            manager_signals,
+            sightings,
             peripherals,
             restored,
             scan_activity,
