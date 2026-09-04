@@ -219,13 +219,48 @@ assert.match(
 );
 assert.match(
   developmentClient,
-  /DEVELOPMENT_TEAM="\$\{DEVELOPMENT_TEAM\}"[\s\S]*RCT_METRO_PORT="\$\{METRO_PORT\}"/,
+  /"DEVELOPMENT_TEAM=\$\{DEVELOPMENT_TEAM\}"[\s\S]*"RCT_METRO_PORT=\$\{METRO_PORT\}"/,
   "physical builds must pass signing ownership and the validated Metro port to xcodebuild",
 );
 assert.match(
   developmentClient,
-  /-allowProvisioningUpdates[\s\S]*CODE_SIGN_STYLE=Automatic/,
+  /else[\s\S]*SIGNING_ARGUMENTS=\([\s\S]*-allowProvisioningUpdates[\s\S]*CODE_SIGN_STYLE=Automatic[\s\S]*\)/,
   "automatic device signing must allow Xcode to update the development profile",
+);
+assert.match(
+  developmentClient,
+  /if \[\[ -n "\$\{EXPECTED_PROVISIONING_PROFILE_UUID\}" \]\]; then[\s\S]*SIGNING_ARGUMENTS=\([\s\S]*CODE_SIGN_STYLE=Automatic[\s\S]*"CODE_SIGN_IDENTITY=Apple Development"[\s\S]*\)/,
+  "an expected installed profile must use automatic signing without portal permission",
+);
+assert.match(
+  developmentClient,
+  /PRNS_IOS_EXPECTED_PROVISIONING_PROFILE_UUID must not be empty[\s\S]*PRNS_IOS_EXPECTED_PROVISIONING_PROFILE_UUID must be a UUID/,
+  "installed-profile-only signing must require a nonempty UUID",
+);
+assert.match(
+  developmentClient,
+  /"\$\{SIGNING_ARGUMENTS\[@\]\}"[\s\S]*"RCT_METRO_PORT=\$\{METRO_PORT\}"/,
+  "physical builds must pass the selected signing argument set as quoted array entries",
+);
+assert.equal(
+  developmentClient.match(/-allowProvisioningUpdates/g)?.length,
+  1,
+  "only the default automatic signing branch may permit developer-portal updates",
+);
+assert.match(
+  developmentClient,
+  /security cms -D -i "\$\{EMBEDDED_PROFILE\}"[\s\S]*plutil -extract UUID raw -[\s\S]*ACTUAL_PROVISIONING_PROFILE_UUID[\s\S]*EXPECTED_PROVISIONING_PROFILE_UUID/,
+  "installed-profile-only builds must verify the embedded profile UUID before installation",
+);
+assert.match(
+  developmentClient,
+  /PRNS_POD_EXECUTABLE[\s\S]*?--version >\/dev\/null 2>&1[\s\S]*?fail "PRNS_POD_EXECUTABLE cannot run/,
+  "an explicit CocoaPods executable must be health-checked before project generation",
+);
+assert.match(
+  developmentClient,
+  /for candidate in "\$\{POD_ON_PATH\}" \/opt\/homebrew\/bin\/pod \/usr\/local\/bin\/pod; do[\s\S]*?"\$\{candidate\}" --version >\/dev\/null 2>&1[\s\S]*?POD_EXECUTABLE="\$\{candidate\}"/,
+  "automatic CocoaPods selection must skip broken PATH shims and try standard installations",
 );
 assert.match(
   developmentClient,

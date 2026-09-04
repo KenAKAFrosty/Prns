@@ -35,10 +35,16 @@ fi
 
 DEVICE_ID=""
 DEVELOPMENT_TEAM=""
+EXPECTED_PROVISIONING_PROFILE_UUID=""
 DEFAULT_DERIVED_DATA="${APPLICATIONS_DIRECTORY}/target/ios-development-client"
 if [[ "${MODE}" == "device" ]]; then
   DEVICE_ID="${PRNS_IOS_DEVICE_UDID:-}"
   DEVELOPMENT_TEAM="${PRNS_IOS_DEVELOPMENT_TEAM:-}"
+  if [[ "${PRNS_IOS_EXPECTED_PROVISIONING_PROFILE_UUID+x}" == x ]]; then
+    EXPECTED_PROVISIONING_PROFILE_UUID="${PRNS_IOS_EXPECTED_PROVISIONING_PROFILE_UUID}"
+    [[ -n "${EXPECTED_PROVISIONING_PROFILE_UUID}" ]] ||
+      fail "PRNS_IOS_EXPECTED_PROVISIONING_PROFILE_UUID must not be empty"
+  fi
   DEFAULT_DERIVED_DATA="${APPLICATIONS_DIRECTORY}/target/ios-development-device"
   [[ -n "${DEVICE_ID}" ]] || fail "PRNS_IOS_DEVICE_UDID is required with --device"
   [[ "${DEVICE_ID}" =~ ^[[:alnum:]-]+$ ]] ||
@@ -46,10 +52,17 @@ if [[ "${MODE}" == "device" ]]; then
   [[ -n "${DEVELOPMENT_TEAM}" ]] || fail "PRNS_IOS_DEVELOPMENT_TEAM is required with --device"
   [[ "${DEVELOPMENT_TEAM}" =~ ^[[:alnum:]]+$ ]] ||
     fail "PRNS_IOS_DEVELOPMENT_TEAM must contain only letters and numbers"
+  if [[ -n "${EXPECTED_PROVISIONING_PROFILE_UUID}" ]]; then
+    [[ "${EXPECTED_PROVISIONING_PROFILE_UUID}" =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$ ]] ||
+      fail "PRNS_IOS_EXPECTED_PROVISIONING_PROFILE_UUID must be a UUID"
+    EXPECTED_PROVISIONING_PROFILE_UUID="$(
+      printf '%s' "${EXPECTED_PROVISIONING_PROFILE_UUID}" | tr '[:upper:]' '[:lower:]'
+    )"
+  fi
 fi
 DERIVED_DATA="${PRNS_IOS_DERIVED_DATA:-${DEFAULT_DERIVED_DATA}}"
 
-for executable in curl node xcodebuild xcrun plutil; do
+for executable in curl node xcodebuild xcrun plutil security; do
   command -v "${executable}" >/dev/null || fail "${executable} is required"
 done
 [[ -x "${EXPO_EXECUTABLE}" ]] || fail "run npm ci in ${APPLICATIONS_DIRECTORY} first"
@@ -57,8 +70,25 @@ done
 ((METRO_PORT >= 1024 && METRO_PORT <= 65535)) ||
   fail "PRNS_IOS_METRO_PORT must be from 1024 through 65535"
 
-POD_EXECUTABLE="${PRNS_POD_EXECUTABLE:-$(command -v pod || true)}"
-[[ -n "${POD_EXECUTABLE}" ]] || fail "CocoaPods is required"
+POD_EXECUTABLE=""
+if [[ -n "${PRNS_POD_EXECUTABLE:-}" ]]; then
+  POD_EXECUTABLE="${PRNS_POD_EXECUTABLE}"
+  [[ -x "${POD_EXECUTABLE}" ]] ||
+    fail "PRNS_POD_EXECUTABLE is not executable: ${POD_EXECUTABLE}"
+  env -u LIBRARY_PATH "${POD_EXECUTABLE}" --version >/dev/null 2>&1 ||
+    fail "PRNS_POD_EXECUTABLE cannot run: ${POD_EXECUTABLE}"
+else
+  POD_ON_PATH="$(command -v pod || true)"
+  for candidate in "${POD_ON_PATH}" /opt/homebrew/bin/pod /usr/local/bin/pod; do
+    [[ -n "${candidate}" && -x "${candidate}" ]] || continue
+    if env -u LIBRARY_PATH "${candidate}" --version >/dev/null 2>&1; then
+      POD_EXECUTABLE="${candidate}"
+      break
+    fi
+  done
+  [[ -n "${POD_EXECUTABLE}" ]] ||
+    fail "CocoaPods is required, but no usable pod executable was found"
+fi
 
 echo "build-development-client.sh: generating a clean development iOS project"
 (
@@ -119,6 +149,20 @@ assert_development_client_metadata() {
 
 if [[ "${MODE}" == "device" ]]; then
   DESTINATION="platform=iOS,id=${DEVICE_ID}"
+  if [[ -n "${EXPECTED_PROVISIONING_PROFILE_UUID}" ]]; then
+    echo "build-development-client.sh: using installed-profile-only automatic signing"
+    SIGNING_ARGUMENTS=(
+      CODE_SIGN_STYLE=Automatic
+      "DEVELOPMENT_TEAM=${DEVELOPMENT_TEAM}"
+      "CODE_SIGN_IDENTITY=Apple Development"
+    )
+  else
+    SIGNING_ARGUMENTS=(
+      -allowProvisioningUpdates
+      CODE_SIGN_STYLE=Automatic
+      "DEVELOPMENT_TEAM=${DEVELOPMENT_TEAM}"
+    )
+  fi
   echo "build-development-client.sh: building ${SCHEME} for ${DESTINATION}"
   env -u LIBRARY_PATH xcodebuild -quiet \
     -workspace "${WORKSPACE}" \
@@ -127,14 +171,24 @@ if [[ "${MODE}" == "device" ]]; then
     -destination "${DESTINATION}" \
     -destination-timeout 60 \
     -derivedDataPath "${DERIVED_DATA}" \
-    -allowProvisioningUpdates \
-    CODE_SIGN_STYLE=Automatic \
-    DEVELOPMENT_TEAM="${DEVELOPMENT_TEAM}" \
-    RCT_METRO_PORT="${METRO_PORT}" \
+    "${SIGNING_ARGUMENTS[@]}" \
+    "RCT_METRO_PORT=${METRO_PORT}" \
     build
 
   APP_BUNDLE="${DERIVED_DATA}/Build/Products/Debug-iphoneos/prnsdev.app"
   assert_development_client_metadata "${APP_BUNDLE}"
+  if [[ -n "${EXPECTED_PROVISIONING_PROFILE_UUID}" ]]; then
+    EMBEDDED_PROFILE="${APP_BUNDLE}/embedded.mobileprovision"
+    [[ -f "${EMBEDDED_PROFILE}" ]] ||
+      fail "development client does not contain an embedded provisioning profile"
+    ACTUAL_PROVISIONING_PROFILE_UUID="$(
+      security cms -D -i "${EMBEDDED_PROFILE}" 2>/dev/null |
+        plutil -extract UUID raw - |
+        tr '[:upper:]' '[:lower:]'
+    )" || fail "development client contains an unreadable provisioning profile"
+    [[ "${ACTUAL_PROVISIONING_PROFILE_UUID}" == "${EXPECTED_PROVISIONING_PROFILE_UUID}" ]] ||
+      fail "development client used provisioning profile ${ACTUAL_PROVISIONING_PROFILE_UUID}, expected ${EXPECTED_PROVISIONING_PROFILE_UUID}"
+  fi
   PACKAGER_IP_FILE="${APP_BUNDLE}/ip.txt"
   [[ -f "${PACKAGER_IP_FILE}" ]] || fail "development client does not contain ip.txt"
   PACKAGER_HOST="$(<"${PACKAGER_IP_FILE}")"
