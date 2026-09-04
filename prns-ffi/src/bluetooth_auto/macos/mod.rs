@@ -36,7 +36,10 @@ use prns_core::interfaces::bluetooth_auto::{
 use central::CentralDelegate;
 use peripheral::PeripheralDelegate;
 
-pub use backend::{MacosBleBackend, PreparedMacosBleBackend};
+pub use backend::{
+    CentralOnlyMacosBleBackend, MacosBleBackend, PreparedCentralOnlyMacosBleBackend,
+    PreparedMacosBleBackend,
+};
 pub use gatt_link::{GattSink, GattSource};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -67,6 +70,36 @@ const PERIPHERAL_RESTORE_IDENTIFIER: &str = "com.personal.prns.ble.peripheral";
 pub struct CoreBluetoothRestorationIdentifiers {
     central: String,
     peripheral: String,
+}
+
+/// Stable, application-owned identifier for the CoreBluetooth central manager used by a
+/// central-only Bluetooth Auto backend.
+///
+/// This identifier opts only the central manager into CoreBluetooth state preservation and
+/// restoration. The containing application is responsible for declaring the `bluetooth-central`
+/// background mode and recreating the manager with this exact identifier when iOS relaunches it.
+/// No peripheral restoration identifier is accepted because central-only preparation does not
+/// create a `CBPeripheralManager`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg(any(test, target_os = "ios"))]
+pub struct CoreBluetoothCentralRestorationIdentifier(String);
+
+#[cfg(any(test, target_os = "ios"))]
+impl CoreBluetoothCentralRestorationIdentifier {
+    pub fn new(
+        identifier: impl Into<String>,
+    ) -> Result<Self, CoreBluetoothRestorationIdentifiersError> {
+        let identifier = identifier.into();
+        if identifier.is_empty() {
+            return Err(CoreBluetoothRestorationIdentifiersError::EmptyCentral);
+        }
+        Ok(Self(identifier))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 #[cfg(any(test, target_os = "ios"))]
