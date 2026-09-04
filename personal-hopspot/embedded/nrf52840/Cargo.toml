@@ -94,7 +94,9 @@ codegen-units = 1
 debug = 2
 debug-assertions = false
 incremental = false
-lto = "fat"
+# fat LTO miscompiles the SX126x SPI command stream on thumbv7em (wrong
+# SetRfFrequency / SetTxParams, or a boot HardFault). thin is required.
+lto = "thin"
 opt-level = "z"
 overflow-checks = false
 
