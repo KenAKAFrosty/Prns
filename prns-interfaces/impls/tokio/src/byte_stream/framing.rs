@@ -22,6 +22,8 @@ use prns_runtime::manifold::driver::TokioInterfaceStatus;
 use prns_runtime::manifold::interface_seam::InterfaceSeam;
 use prns_runtime::manifold::throughput::ThroughputLedger;
 
+const OUTBOUND_BATCH_TARGET_BYTES: usize = 256 * 1024;
+
 pub trait StreamDeframer {
     fn new() -> Self;
     fn reset(&mut self);
@@ -371,7 +373,10 @@ async fn serve_inner<F, const READ_LEN: usize, const FRAMED_LEN: usize, S, Seam,
                     status.set_transfer_rates(throughput.rates());
                     status.set_airtime(airtime.record_tx(now, frame_airtime_us(written, bitrate)));
                 };
-                while let Some(next) = seam.try_next_outbound() {
+                while filled < OUTBOUND_BATCH_TARGET_BYTES {
+                    let Some(next) = seam.try_next_outbound() else {
+                        break;
+                    };
                     if let Some(more) = F::encode(next, &mut frame_buf[filled..]) {
                         filled += more;
                         continue;
@@ -636,6 +641,78 @@ mod tests {
             1,
             "the queued burst coalesced into a single wire write",
         );
+
+        drop(far);
+        served.await.expect("the serve loop returns on stream drop");
+    }
+
+    #[tokio::test]
+    async fn a_large_queued_outbound_burst_yields_at_the_byte_target() {
+        const PAYLOAD_LEN: usize = OUTBOUND_BATCH_TARGET_BYTES / 2;
+        const FRAMED_LEN: usize = OUTBOUND_BATCH_TARGET_BYTES * 2;
+
+        let (mut producer, consumer) = tokio_grant_lane(PAYLOAD_LEN, 3);
+        let payloads = [
+            std::vec![0x11; PAYLOAD_LEN],
+            std::vec![0x22; PAYLOAD_LEN],
+            std::vec![0x33; PAYLOAD_LEN],
+        ];
+        for payload in &payloads {
+            producer
+                .try_grant()
+                .expect("lane has free slots")
+                .fill(payload);
+            producer.commit();
+        }
+
+        let (near, mut far) = tokio::io::duplex(FRAMED_LEN);
+        let writes = Arc::new(AtomicUsize::new(0));
+        let counted = WriteCounting {
+            stream: near,
+            writes: writes.clone(),
+        };
+
+        let served = tokio::spawn(async move {
+            let mut buffers = FramedBuffers::<HdlcFraming, 4096, FRAMED_LEN>::new();
+            let mut seam = LaneSeam {
+                outbound: consumer,
+                inbound: std::vec::Vec::new(),
+            };
+            let status = TokioInterfaceStatus::new_accounted(
+                InterfaceId::new([8u8; 8]),
+                ConnectionState::Connected,
+            );
+            let mut airtime = AirtimeLedger::default();
+            let mut throughput = ThroughputLedger::new();
+            let mut meters = WireMeters {
+                status: &status,
+                airtime: &mut airtime,
+                throughput: &mut throughput,
+                bitrate: BitrateBps::guess(1_000_000),
+                started: tokio::time::Instant::now(),
+            };
+            serve(counted, &mut buffers, &mut seam, &mut meters).await;
+        });
+
+        let mut decoder = RnsSerialDecoder::<PAYLOAD_LEN>::new();
+        let mut decoded: std::vec::Vec<std::vec::Vec<u8>> = std::vec::Vec::new();
+        let mut buf = std::vec![0u8; FRAMED_LEN];
+        while decoded.len() < payloads.len() {
+            let read = tokio::io::AsyncReadExt::read(&mut far, &mut buf)
+                .await
+                .expect("reads from the wire");
+            assert_ne!(read, 0, "the wire stays up while frames are owed");
+            let mut offset = 0;
+            while offset < read {
+                if let Ok(Some(frame)) = decoder.feed_slice_next(&buf[..read], &mut offset) {
+                    if !frame.is_empty() {
+                        decoded.push(frame.to_vec());
+                    }
+                }
+            }
+        }
+        assert_eq!(decoded, payloads);
+        assert_eq!(writes.load(Ordering::Relaxed), 2);
 
         drop(far);
         served.await.expect("the serve loop returns on stream drop");
