@@ -3,13 +3,15 @@ use std::time::{Duration, Instant};
 
 use objc2_core_bluetooth::CBCharacteristicProperties;
 use prns_core::interfaces::bluetooth_auto::{
-    AdvertisingMode, BleBackend, BleIdentity, Control, RadioMode, ScanningMode,
+    AdvertisingMode, BleBackend, BleIdentity, Control, LinkCapabilities, Psm, RadioMode,
+    ScanningMode,
 };
 use tokio::sync::{mpsc, oneshot};
 
 use super::backend::{
-    central_peripheral_capacity, dial_admission, manager_readiness, scan_lease, scan_op,
-    BoundedRecentSet, DialAdmission, ScanLease, ScanOp,
+    central_peripheral_capacity, dial_admission, manager_readiness, role_capabilities, scan_lease,
+    scan_op, take_inbound_event, BoundedRecentSet, CoreBluetoothRole, DialAdmission, ScanLease,
+    ScanOp,
 };
 use super::central::{
     closed_central_session_ids, CentralDialCandidate, CentralPeerRegistry, CentralPeerSession,
@@ -37,7 +39,10 @@ use super::{
     manager_signal_channel, try_bounded_ingress, BoundedIngress, CoreBluetoothPeerId,
     MacosBleBackend, Sighting,
 };
-use super::{CoreBluetoothRestorationIdentifiers, CoreBluetoothRestorationIdentifiersError};
+use super::{
+    CoreBluetoothCentralRestorationIdentifier, CoreBluetoothRestorationIdentifiers,
+    CoreBluetoothRestorationIdentifiersError,
+};
 
 fn peer_id(value: u16) -> CoreBluetoothPeerId {
     let mut bytes = [0; 16];
@@ -70,6 +75,18 @@ fn restoration_identifiers_are_nonempty_and_distinct(
     let identifiers = CoreBluetoothRestorationIdentifiers::new("central", "peripheral")?;
     assert_eq!(identifiers.central(), "central");
     assert_eq!(identifiers.peripheral(), "peripheral");
+    Ok(())
+}
+
+#[test]
+fn central_restoration_identifier_is_nonempty_and_singular(
+) -> Result<(), CoreBluetoothRestorationIdentifiersError> {
+    assert_eq!(
+        CoreBluetoothCentralRestorationIdentifier::new(""),
+        Err(CoreBluetoothRestorationIdentifiersError::EmptyCentral)
+    );
+    let identifier = CoreBluetoothCentralRestorationIdentifier::new("central-only")?;
+    assert_eq!(identifier.as_str(), "central-only");
     Ok(())
 }
 
@@ -211,18 +228,72 @@ fn discovery_guard_bounds_service_misses_and_stale_cancellation_retries() {
 fn startup_requires_central_gatt_and_l2cap_readiness() {
     let (signals, current) = manager_signal_channel();
     signals.l2cap_published(0x0081);
-    assert_eq!(manager_readiness(*current.borrow()).unwrap(), None);
+    assert_eq!(
+        manager_readiness(CoreBluetoothRole::DualRole, *current.borrow()).unwrap(),
+        None
+    );
 
     signals.central_powered();
-    assert_eq!(manager_readiness(*current.borrow()).unwrap(), None);
+    assert_eq!(
+        manager_readiness(CoreBluetoothRole::DualRole, *current.borrow()).unwrap(),
+        None
+    );
 
     signals.gatt_service_published();
     assert_eq!(
-        manager_readiness(*current.borrow())
+        manager_readiness(CoreBluetoothRole::DualRole, *current.borrow())
             .unwrap()
-            .map(|psm| psm.get()),
+            .and_then(|readiness| readiness.local_psm.map(Psm::get)),
         Some(0x0081)
     );
+}
+
+#[test]
+fn central_only_readiness_requires_only_central_power_and_has_no_local_psm() {
+    let (signals, current) = manager_signal_channel();
+    assert_eq!(
+        manager_readiness(CoreBluetoothRole::CentralOnly, *current.borrow()).unwrap(),
+        None
+    );
+
+    signals.gatt_service_publish_failed();
+    signals.l2cap_publish_failed();
+    signals.central_powered();
+    let readiness = manager_readiness(CoreBluetoothRole::CentralOnly, *current.borrow())
+        .unwrap()
+        .expect("central power is sufficient for central-only readiness");
+    assert_eq!(readiness.central_powered_generation, 1);
+    assert_eq!(readiness.local_psm, None);
+}
+
+#[test]
+fn central_only_capabilities_clear_any_configured_local_psm() {
+    let configured = LinkCapabilities {
+        l2cap: Psm::new(0x0081),
+        link_mtu: 244,
+    };
+    assert_eq!(
+        role_capabilities(CoreBluetoothRole::CentralOnly, configured),
+        LinkCapabilities {
+            l2cap: None,
+            link_mtu: 244,
+        }
+    );
+    assert_eq!(
+        role_capabilities(CoreBluetoothRole::DualRole, configured),
+        configured
+    );
+}
+
+#[test]
+fn closed_inbound_ingress_is_disabled_without_blocking_other_events() {
+    let mut inbound_open = true;
+    assert_eq!(take_inbound_event::<u8>(None, &mut inbound_open), None);
+    assert!(!inbound_open);
+
+    let mut inbound_open = true;
+    assert_eq!(take_inbound_event(Some(7_u8), &mut inbound_open), Some(7));
+    assert!(inbound_open);
 }
 
 #[test]
@@ -265,9 +336,9 @@ fn bounded_ingress_separates_inbound_and_sighting_pressure() {
     manager_signals.gatt_service_published();
     manager_signals.l2cap_published(0x0081);
     assert_eq!(
-        manager_readiness(*manager_current.borrow())
+        manager_readiness(CoreBluetoothRole::DualRole, *manager_current.borrow())
             .unwrap()
-            .map(|psm| psm.get()),
+            .and_then(|readiness| readiness.local_psm.map(Psm::get)),
         Some(0x0081)
     );
     assert_eq!(inbound_rx.try_recv(), Ok(1));
@@ -532,7 +603,7 @@ fn manager_failures_are_sticky_and_fatal() {
     gatt_signals.gatt_service_publish_failed();
     gatt_signals.gatt_service_published();
     assert!(matches!(
-        manager_readiness(*gatt_current.borrow()),
+        manager_readiness(CoreBluetoothRole::DualRole, *gatt_current.borrow()),
         Err(MacosBleError::PublishFailed)
     ));
 
@@ -540,7 +611,7 @@ fn manager_failures_are_sticky_and_fatal() {
     l2cap_signals.l2cap_publish_failed();
     l2cap_signals.l2cap_published(0x0081);
     assert!(matches!(
-        manager_readiness(*l2cap_current.borrow()),
+        manager_readiness(CoreBluetoothRole::DualRole, *l2cap_current.borrow()),
         Err(MacosBleError::PublishFailed)
     ));
 }
