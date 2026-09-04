@@ -18,9 +18,8 @@ export function HelpScreen() {
         <Subheading>What works</Subheading>
         {availability.type === "available" ? (
           <BodyText>
-            Create or import an identity, pair and check nodes over Bluetooth, save contacts,
-            exchange direct messages, inspect this device&apos;s network status, and reset preview
-            data.
+            Create or import an identity, pair and check nearby nodes, save contacts, exchange
+            direct messages, inspect this device&apos;s network status, and reset preview data.
           </BodyText>
         ) : (
           <BodyText>

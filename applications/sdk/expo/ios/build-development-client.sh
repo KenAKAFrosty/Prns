@@ -7,6 +7,7 @@ APP_DIRECTORY="${APPLICATIONS_DIRECTORY}/prns/app"
 IOS_DIRECTORY="${APP_DIRECTORY}/ios"
 EXPO_EXECUTABLE="${APPLICATIONS_DIRECTORY}/node_modules/.bin/expo"
 INFO_PLIST="${IOS_DIRECTORY}/prnsdev/Info.plist"
+PODFILE_PROPERTIES="${IOS_DIRECTORY}/Podfile.properties.json"
 WORKSPACE="${IOS_DIRECTORY}/prnsdev.xcworkspace"
 SCHEME="prnsdev"
 METRO_PORT="${PRNS_IOS_METRO_PORT:-8088}"
@@ -100,6 +101,9 @@ echo "build-development-client.sh: generating a clean development iOS project"
 )
 
 [[ -f "${INFO_PLIST}" ]] || fail "clean CNG did not render ${INFO_PLIST}"
+[[ -f "${PODFILE_PROPERTIES}" ]] || fail "clean CNG did not render ${PODFILE_PROPERTIES}"
+[[ "$(node -e 'const value = require(process.argv[1])["ios.deploymentTarget"]; process.stdout.write(String(value ?? ""))' "${PODFILE_PROPERTIES}")" == "18.0" ]] ||
+  fail "clean CNG did not render the CocoaPods iOS 18.0 deployment target"
 [[ "$(plutil -extract NSBluetoothAlwaysUsageDescription raw "${INFO_PLIST}")" == "${BLUETOOTH_USAGE}" ]] ||
   fail "clean CNG rendered unexpected Bluetooth usage copy"
 [[ "$(plutil -extract NSLocalNetworkUsageDescription raw "${INFO_PLIST}")" == "${LOCAL_NETWORK_USAGE}" ]] ||

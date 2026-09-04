@@ -40,7 +40,7 @@ export function NodesScreen() {
 
       {runtime.accessorySetup?.phase === "setupRequired" ? (
         <Card>
-          <Subheading>Bluetooth setup needed</Subheading>
+          <Subheading>Bluetooth access needed</Subheading>
           <Badge tone="warning">Connection access required</Badge>
           <BodyText>
             Allow a nearby Reticulum Bluetooth node before this device starts searching or
@@ -52,9 +52,9 @@ export function NodesScreen() {
 
       {runtime.accessorySetup?.phase === "failed" || runtime.accessorySetupFailure !== null ? (
         <Card>
-          <Subheading>Bluetooth setup unavailable</Subheading>
+          <Subheading>Bluetooth access unavailable</Subheading>
           <Badge tone="warning">Relaunch required</Badge>
-          <BodyText>Relaunch prns to restore system Bluetooth setup.</BodyText>
+          <BodyText>Relaunch prns to check Bluetooth access again.</BodyText>
         </Card>
       ) : null}
 

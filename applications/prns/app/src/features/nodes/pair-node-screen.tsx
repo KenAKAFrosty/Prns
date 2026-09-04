@@ -102,7 +102,7 @@ export function PairNodeScreen({
     setSetupFeedback(null);
     const result = await runtime.showAccessorySetupPicker();
     if (result.type === "operationFailure") {
-      setSetupFeedback("System Bluetooth setup could not open. Try again.");
+      setSetupFeedback("The Bluetooth chooser could not open. Try again.");
     } else {
       setSetupFeedback(pickerOutcomeCopy(result.outcome.type));
     }
@@ -127,8 +127,8 @@ export function PairNodeScreen({
       <Badge>Secure pairing</Badge>
       <ScreenHeading>Pair a node</ScreenHeading>
       <BodyText>
-        First allow prns to connect to the Bluetooth node. Then open the node&apos;s secure pairing
-        screen, enter its invitation, and compare the confirmation code on both devices.
+        First choose a nearby Bluetooth accessory. Then open secure pairing on the node you want to
+        manage, enter its invitation, and compare the confirmation code on both devices.
       </BodyText>
 
       {runtime.availability.type === "available" ? (
@@ -213,11 +213,9 @@ function AccessorySetupCard({
   if (setupFailure !== null) {
     return (
       <Card>
-        <Subheading>Bluetooth setup unavailable</Subheading>
+        <Subheading>Bluetooth access unavailable</Subheading>
         <Badge tone="warning">Status unavailable</Badge>
-        <BodyText>
-          prns could not read system Bluetooth setup. Relaunch the app to try again.
-        </BodyText>
+        <BodyText>prns could not check Bluetooth access. Relaunch the app to try again.</BodyText>
       </Card>
     );
   }
@@ -226,18 +224,18 @@ function AccessorySetupCard({
       <Card>
         <Subheading>Checking Bluetooth access</Subheading>
         <Badge>Getting ready</Badge>
-        <BodyText muted>Waiting for system accessory setup…</BodyText>
+        <BodyText muted>Checking Bluetooth access…</BodyText>
       </Card>
     );
   }
   if (setup.phase === "failed") {
     return (
       <Card>
-        <Subheading>Bluetooth setup unavailable</Subheading>
+        <Subheading>Bluetooth access unavailable</Subheading>
         <Badge tone="warning">Relaunch required</Badge>
         <BodyText>
           {setup.lastError?.detail ??
-            "System Bluetooth setup stopped. Relaunch the app to try again."}
+            "Bluetooth access checking stopped. Relaunch the app to try again."}
         </BodyText>
       </Card>
     );
@@ -310,7 +308,7 @@ function pickerOutcomeCopy(
     case "notReady":
       return "Bluetooth access is still getting ready.";
     case "failed":
-      return "System Bluetooth setup could not be completed.";
+      return "Bluetooth access could not be completed.";
   }
 }
 
@@ -562,7 +560,7 @@ function CandidateSelectionCard({
               style={selected ? { borderColor: palette.focus } : undefined}
             >
               <Subheading>{name}</Subheading>
-              <KeyValue label="Identifier" value={shortCandidateId(candidate.candidateId)} />
+              <KeyValue label="Node ID" value={shortCandidateId(candidate.candidateId)} />
               <BodyText muted>{formatExpiry(candidate.expiresInMillis)}</BodyText>
               <Button
                 accessibilityLabel={`${selected ? "Selected" : "Select"} ${name} ${shortCandidateId(candidate.candidateId)}`}

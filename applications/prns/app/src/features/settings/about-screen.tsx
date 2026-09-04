@@ -29,9 +29,9 @@ export function AboutScreen() {
       </Card>
       {availability.type === "available" ? (
         <BodyText>
-          This preview can create or import an identity, pair and check nodes over Bluetooth, save
-          contacts, exchange direct messages, and show this device&apos;s network status. New
-          messages arrive only while the app is open.
+          This preview can create or import an identity, pair and check nearby nodes, save contacts,
+          exchange direct messages, and show this device&apos;s network status. New messages arrive
+          only while the app is open.
         </BodyText>
       ) : (
         <BodyText>

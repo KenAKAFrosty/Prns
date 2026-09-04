@@ -260,6 +260,12 @@ describe("Foundation 1 Nodes runtime binding", () => {
     );
 
     await waitFor(() => expect(view.getByText("Choose a nearby node")).toBeTruthy());
+    expect(
+      view.getByText(
+        /First choose a nearby Bluetooth accessory\. Then open secure pairing on the node/u,
+      ),
+    ).toBeTruthy();
+    expect(JSON.stringify(view.toJSON())).not.toMatch(/system (?:accessory|Bluetooth) setup/iu);
     expect(acquire).not.toHaveBeenCalled();
     fireEvent.press(view.getByRole("button", { name: "Choose a Bluetooth node" }));
     await waitFor(() => expect(showPicker).toHaveBeenCalledTimes(1));
@@ -697,6 +703,7 @@ describe("Foundation 1 Nodes runtime binding", () => {
 
     await waitFor(() => expect(view.getByText("Node no longer available")).toBeTruthy());
     expect(view.getByText("Nearby node")).toBeTruthy();
+    expect(view.getByText("Node ID")).toBeTruthy();
     expect(view.getByText("2 minutes remaining")).toBeTruthy();
     expect(view.queryByLabelText("Invitation code")).toBeNull();
 

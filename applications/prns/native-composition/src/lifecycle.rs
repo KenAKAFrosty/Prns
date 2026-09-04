@@ -5,6 +5,8 @@ use std::sync::{mpsc as std_mpsc, Arc, Mutex, MutexGuard, OnceLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+#[cfg(all(feature = "apple", target_os = "ios"))]
+use personal_rns::bluetooth_auto::{AutoBle, CoreBluetoothCentralRestorationIdentifier};
 #[cfg(any(test, all(feature = "apple", target_os = "ios")))]
 use personal_rns::interfaces::bluetooth_auto::BleIdentity;
 use personal_rns::node_introspection::DestinationIdentityQuery;
@@ -554,7 +556,7 @@ fn prepare_apple_bluetooth_central_restoration_with_supervisor(
             "CoreBluetooth restoration preparation requires restoration identifiers.",
         );
     };
-    let identifier = match personal_rns::interface_families::bluetooth_auto::CoreBluetoothCentralRestorationIdentifier::new(central) {
+    let identifier = match CoreBluetoothCentralRestorationIdentifier::new(central) {
         Ok(identifier) => identifier,
         Err(error) => {
             return apple_bluetooth_preparation_failed(
@@ -575,12 +577,9 @@ fn prepare_apple_bluetooth_central_restoration_with_supervisor(
             )
         }
     };
-    let prepared = match runtime.block_on(
-        personal_rns::interface_families::bluetooth_auto::AutoBle::prepare_central_only_with_restoration(
-            identity,
-            identifier,
-        ),
-    ) {
+    let prepared = match runtime.block_on(AutoBle::prepare_central_only_with_restoration(
+        identity, identifier,
+    )) {
         Ok(prepared) => prepared,
         Err(error) => {
             return apple_bluetooth_preparation_failed(
@@ -2316,23 +2315,16 @@ async fn run_generation(
         Some(prepared) => prepared,
         None => match bluetooth_preparation.preparation {
             AppleBluetoothPreparation::WithoutRestoration => {
-                match personal_rns::bluetooth_auto::AutoBle::prepare_without_restoration(
-                    bluetooth_identity,
-                )
-                .await
-                {
+                match AutoBle::prepare_central_only_without_restoration(bluetooth_identity).await {
                     Ok(prepared) => prepared,
                     Err(_) => {
-                        personal_rns::bluetooth_auto::AutoBle::unavailable_without_restoration(
-                            bluetooth_identity,
-                        )
+                        AutoBle::unavailable_central_only_without_restoration(bluetooth_identity)
                     }
                 }
             }
             AppleBluetoothPreparation::CentralOnlyRestoration { central } => {
                 let restoration =
-                    personal_rns::interface_families::bluetooth_auto::CoreBluetoothCentralRestorationIdentifier::new(central)
-                    .map_err(|error| {
+                    CoreBluetoothCentralRestorationIdentifier::new(central).map_err(|error| {
                         boot_failure(
                             &ready,
                             &snapshots,
@@ -2340,19 +2332,17 @@ async fn run_generation(
                             error.to_string(),
                         )
                     })?;
-                match personal_rns::interface_families::bluetooth_auto::AutoBle::prepare_central_only_with_restoration(
+                match AutoBle::prepare_central_only_with_restoration(
                     bluetooth_identity,
                     restoration.clone(),
                 )
                 .await
                 {
                     Ok(prepared) => prepared,
-                    Err(_) => {
-                        personal_rns::interface_families::bluetooth_auto::AutoBle::unavailable_central_only_with_restoration(
-                            bluetooth_identity,
-                            restoration,
-                        )
-                    }
+                    Err(_) => AutoBle::unavailable_central_only_with_restoration(
+                        bluetooth_identity,
+                        restoration,
+                    ),
                 }
             }
         },

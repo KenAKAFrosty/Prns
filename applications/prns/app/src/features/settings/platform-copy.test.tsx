@@ -13,7 +13,7 @@ describe("unsupported-platform capability copy", () => {
       view.getByText(/This web preview lets you explore the app's layout, navigation, settings/iu),
     ).toBeTruthy();
     expect(view.getByText(/not available on web yet/iu)).toBeTruthy();
-    expect(view.queryByText(/pair and check nodes over Bluetooth/iu)).toBeNull();
+    expect(view.queryByText(/pair and check nearby nodes/iu)).toBeNull();
   });
 
   it("limits web help to the interactions that web actually supports", () => {

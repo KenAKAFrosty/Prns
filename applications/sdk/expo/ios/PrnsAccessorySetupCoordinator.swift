@@ -42,6 +42,7 @@ final class PrnsAccessorySetupCoordinator {
   private var nativeStartGeneration: UInt64 = 0
   private var completedStartOutcome: String?
   private var phase = Phase.activating
+  private var pickerDismissalPending = false
   private var pickerPhase = PickerPhase.idle
   private var restorationLaunchRequested = false
   private var restorationStartDispatched = false
@@ -72,7 +73,12 @@ final class PrnsAccessorySetupCoordinator {
   }
 
   func requireAuthorized() throws {
-    guard activated, authorizedAccessoryCount > 0, phase == .ready else {
+    guard
+      activated,
+      !pickerDismissalPending,
+      authorizedAccessoryCount > 0,
+      phase == .ready
+    else {
       throw PrnsAppException("Authorize a Bluetooth node before starting prns.")
     }
   }
@@ -85,7 +91,7 @@ final class PrnsAccessorySetupCoordinator {
     guard UIApplication.shared.applicationState == .active else {
       setLastError(
         code: "pickerRestricted",
-        detail: "Bluetooth setup can only open while prns is in the foreground."
+        detail: "The Bluetooth chooser can only open while prns is in the foreground."
       )
       completion(Self.pickerOutcome(type: "restricted"))
       return
@@ -96,6 +102,7 @@ final class PrnsAccessorySetupCoordinator {
     }
 
     lastError = nil
+    pickerDismissalPending = true
     pickerPhase = .presenting
     publish()
     session.showPicker(for: [Self.pickerDisplayItem]) { [weak self] error in
@@ -108,15 +115,12 @@ final class PrnsAccessorySetupCoordinator {
           let outcome = Self.classifyPickerError(error)
           self.setLastError(code: outcome.code, detail: outcome.detail)
           if self.pickerPhase == .presenting {
+            self.pickerDismissalPending = false
             self.pickerPhase = .idle
-            self.publish()
+            self.reconcileAuthorizedAccessories()
           }
           completion(Self.pickerOutcome(type: outcome.type))
           return
-        }
-        if self.pickerPhase == .presenting {
-          self.pickerPhase = .idle
-          self.publish()
         }
         completion(Self.pickerOutcome(type: "completed"))
       }
@@ -252,7 +256,10 @@ final class PrnsAccessorySetupCoordinator {
     switch event.eventType {
     case .activated:
       guard event.error == nil else {
-        fail(code: "activationFailed", detail: "Bluetooth accessory setup could not activate.")
+        fail(
+          code: "activationFailed",
+          detail: "Bluetooth access could not be checked. Relaunch prns to try again."
+        )
         return
       }
       activated = true
@@ -260,24 +267,39 @@ final class PrnsAccessorySetupCoordinator {
     case .accessoryAdded, .accessoryChanged, .accessoryRemoved:
       reconcileAuthorizedAccessories()
     case .pickerDidPresent:
+      pickerDismissalPending = true
       pickerPhase = .presented
       publish()
     case .pickerDidDismiss:
+      pickerDismissalPending = false
       pickerPhase = .idle
-      publish()
+      reconcileAuthorizedAccessories()
     case .invalidated:
-      fail(code: "invalidated", detail: "Bluetooth accessory setup became unavailable. Relaunch prns to try again.")
+      fail(
+        code: "invalidated",
+        detail: "Bluetooth access became unavailable. Relaunch prns to try again."
+      )
     case .pickerSetupFailed:
-      setLastError(code: "connectionFailed", detail: "The selected Bluetooth node could not be set up.")
+      setLastError(
+        code: "connectionFailed",
+        detail: "The selected Bluetooth node could not be connected."
+      )
     default:
       break
     }
   }
 
   private func reconcileAuthorizedAccessories() {
-    authorizedAccessoryCount = session.accessories.filter {
+    let nextAuthorizedAccessoryCount = session.accessories.filter {
       $0.state == .authorized && $0.bluetoothIdentifier != nil
     }.count
+    // ASK sends accessoryAdded before pickerDidDismiss. Keep the runtime gated
+    // until the system picker is completely out of the way, while still
+    // applying removals immediately.
+    if pickerDismissalPending && nextAuthorizedAccessoryCount > authorizedAccessoryCount {
+      return
+    }
+    authorizedAccessoryCount = nextAuthorizedAccessoryCount
     phase = authorizedAccessoryCount > 0 ? .ready : .setupRequired
     if authorizedAccessoryCount > 0 {
       lastError = nil
@@ -302,6 +324,7 @@ final class PrnsAccessorySetupCoordinator {
   private func fail(code: String, detail: String) {
     phase = .failed
     lastError = (code, detail)
+    pickerDismissalPending = false
     pickerPhase = .idle
     publish()
   }
@@ -351,27 +374,27 @@ final class PrnsAccessorySetupCoordinator {
   ) -> (type: String, code: String, detail: String) {
     let nsError = error as NSError
     guard nsError.domain == ASErrorDomain else {
-      return ("failed", "unknown", "Bluetooth setup could not be completed.")
+      return ("failed", "unknown", "Bluetooth access could not be completed.")
     }
     switch ASError.Code(rawValue: nsError.code) {
     case .userCancelled:
-      return ("cancelled", "userCancelled", "Bluetooth setup was cancelled.")
+      return ("cancelled", "userCancelled", "The Bluetooth chooser was cancelled.")
     case .discoveryTimeout:
       return ("timedOut", "discoveryTimeout", "No matching Bluetooth node was found in time.")
     case .pickerRestricted, .userRestricted:
-      return ("restricted", "pickerRestricted", "Bluetooth setup is restricted on this device.")
+      return ("restricted", "pickerRestricted", "The Bluetooth chooser is restricted on this device.")
     case .pickerAlreadyActive:
-      return ("alreadyActive", "pickerAlreadyActive", "Bluetooth setup is already open.")
+      return ("alreadyActive", "pickerAlreadyActive", "The Bluetooth chooser is already open.")
     case .invalidated:
-      return ("failed", "invalidated", "Bluetooth accessory setup became unavailable.")
+      return ("failed", "invalidated", "Bluetooth access became unavailable.")
     case .activationFailed:
-      return ("failed", "activationFailed", "Bluetooth accessory setup could not activate.")
+      return ("failed", "activationFailed", "Bluetooth access could not be checked.")
     case .connectionFailed:
-      return ("failed", "connectionFailed", "The selected Bluetooth node could not be set up.")
+      return ("failed", "connectionFailed", "The selected Bluetooth node could not be connected.")
     case .invalidRequest:
-      return ("failed", "invalidRequest", "The Bluetooth setup request was invalid.")
+      return ("failed", "invalidRequest", "The Bluetooth chooser request was invalid.")
     default:
-      return ("failed", "unknown", "Bluetooth setup could not be completed.")
+      return ("failed", "unknown", "Bluetooth access could not be completed.")
     }
   }
 

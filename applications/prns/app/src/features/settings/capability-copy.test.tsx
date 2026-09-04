@@ -40,9 +40,7 @@ describe("preview capability copy", () => {
   it("describes available features without implementation or board jargon", () => {
     const about = render(<AboutScreen />);
     expect(
-      about.getByText(
-        /pair and check nodes over Bluetooth, save contacts, exchange direct messages/u,
-      ),
+      about.getByText(/pair and check nearby nodes, save contacts, exchange direct messages/u),
     ).toBeTruthy();
     expect(JSON.stringify(about.toJSON())).not.toMatch(
       /E290|signed availability|upstream RemoteControl/iu,
@@ -51,9 +49,7 @@ describe("preview capability copy", () => {
 
     const help = render(<HelpScreen />);
     expect(
-      help.getByText(
-        /pair and check nodes over Bluetooth, save contacts, exchange direct messages/u,
-      ),
+      help.getByText(/pair and check nearby nodes, save contacts, exchange direct messages/u),
     ).toBeTruthy();
     expect(
       help.getByText(/Message details, contact merging, identity and connection management/u),

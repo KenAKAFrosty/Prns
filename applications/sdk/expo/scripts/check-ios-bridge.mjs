@@ -29,6 +29,10 @@ const developmentClient = readFileSync(
   resolve(packageRoot, "ios/build-development-client.sh"),
   "utf8",
 );
+const iosDeploymentPlugin = readFileSync(
+  resolve(packageRoot, "../../prns/app/tools/with-ios-18.ts"),
+  "utf8",
+);
 const rustBuild = readFileSync(resolve(packageRoot, "ios/build-rust.sh"), "utf8");
 const nativeCargo = readFileSync(
   resolve(packageRoot, "../../prns/native-composition/Cargo.toml"),
@@ -36,6 +40,10 @@ const nativeCargo = readFileSync(
 );
 const nativeFfi = readFileSync(
   resolve(packageRoot, "../../prns/native-composition/src/ffi.rs"),
+  "utf8",
+);
+const nativeLifecycle = readFileSync(
+  resolve(packageRoot, "../../prns/native-composition/src/lifecycle.rs"),
   "utf8",
 );
 const nativeRestorationProbe = readFileSync(
@@ -71,6 +79,25 @@ assert.match(
   `${accessoryCoordinator}\n${coordinator}`,
   /phase == \.ready,[\s\S]*?restorationLaunchRequested,[\s\S]*?restorationReady\(\)[\s\S]*?prepareBluetoothCentralRestoration\(\)[\s\S]*?case "prepared", "alreadyPrepared":[\s\S]*?startNativeRuntime/,
   "restoration must wait for ASK activation plus an authorized Bluetooth accessory",
+);
+const iosPreparedBluetooth =
+  nativeLifecycle.match(
+    /#\[cfg\(all\(feature = "apple", target_os = "ios"\)\)\]\s+let prepared_bluetooth =[\s\S]*?#\[cfg\(all\(feature = "apple", target_os = "macos"\)\)\]\s+let prepared_bluetooth =/,
+  )?.[0] ?? "";
+assert.notEqual(
+  iosPreparedBluetooth,
+  "",
+  "the static check must locate the complete iOS Bluetooth preparation branch",
+);
+assert.match(
+  iosPreparedBluetooth,
+  /AutoBle::prepare_central_only_without_restoration[\s\S]*?AutoBle::unavailable_central_only_without_restoration/,
+  "even an unprepared iOS start must remain central-only",
+);
+assert.doesNotMatch(
+  iosPreparedBluetooth,
+  /AutoBle::(?:prepare|unavailable)_without_restoration/,
+  "the iOS path must never initialize the dual-role Bluetooth backend",
 );
 assert.match(
   coordinator,
@@ -111,6 +138,16 @@ assert.match(
 );
 assert.match(accessoryCoordinator, /UIApplication\.shared\.applicationState == \.active/);
 assert.match(accessoryCoordinator, /session\.showPicker\(for: \[Self\.pickerDisplayItem\]\)/);
+assert.match(
+  accessoryCoordinator,
+  /case \.accessoryAdded, \.accessoryChanged, \.accessoryRemoved:\s+reconcileAuthorizedAccessories\(\)[\s\S]*?case \.pickerDidDismiss:\s+pickerDismissalPending = false\s+pickerPhase = \.idle\s+reconcileAuthorizedAccessories\(\)/,
+  "an added accessory must remain gated until ASK reports picker dismissal",
+);
+assert.match(
+  accessoryCoordinator,
+  /if pickerDismissalPending && nextAuthorizedAccessoryCount > authorizedAccessoryCount \{\s+return\s+\}/,
+  "authorization increases must wait for picker dismissal while removals still reconcile",
+);
 assert.match(accessoryCoordinator, /37145B00-442D-4A94-917F-8F42C5DA28E3/);
 assert.match(
   accessoryCoordinator,
@@ -247,6 +284,11 @@ assert.match(podspec, /'UIKit'/, "the lifecycle subscriber must link UIKit expli
 assert.match(podspec, /'AccessorySetupKit'/, "the native module must link ASK explicitly");
 assert.match(podspec, /:ios => '18\.0'/, "the ASK native module must require iOS 18.0");
 assert.match(
+  iosDeploymentPlugin,
+  /withPodfileProperties[\s\S]*?\["ios\.deploymentTarget"\] = deploymentTarget/,
+  "CNG must raise the CocoaPods platform before native-module autolinking",
+);
+assert.match(
   podspec,
   /"\$\{PODS_CONFIGURATION_BUILD_DIR\}"/,
   "the app target and Rust build phase must share one archive directory",
@@ -343,6 +385,7 @@ assert.match(
 );
 assert.doesNotMatch(developmentClient, /NSAccessorySetupSupports\.0/);
 assert.match(developmentClient, /MinimumOSVersion[\s\S]*?18\.0/);
+assert.match(developmentClient, /PODFILE_PROPERTIES[\s\S]*?ios\.deploymentTarget[\s\S]*?18\.0/);
 assert.match(
   developmentClient,
   /plutil -extract CFBundleIdentifier raw "\$\{built_info_plist\}"/,
