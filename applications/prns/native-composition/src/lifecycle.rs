@@ -164,6 +164,7 @@ struct Worker {
     shutdown: ShutdownSignal,
     done: std_mpsc::Receiver<WorkerResult>,
     join: Option<JoinHandle<()>>,
+    incomplete_stop: Option<(DevelopmentNodeStopStage, String)>,
     storage_root: PathBuf,
     #[cfg(all(feature = "apple", target_os = "ios"))]
     bluetooth_owner_key: AppleBluetoothOwnerKey,
@@ -932,6 +933,7 @@ fn start_configured_with_supervisor(
         shutdown,
         done: done_rx,
         join: Some(join),
+        incomplete_stop: None,
         storage_root: storage_for_worker,
         #[cfg(all(feature = "apple", target_os = "ios"))]
         bluetooth_owner_key: bluetooth_owner_key_for_worker,
@@ -1103,6 +1105,9 @@ fn reap_completed_worker_locked(supervisor: &Supervisor, state: &mut SupervisorS
     let Some(worker) = state.worker.as_mut() else {
         return;
     };
+    if worker.incomplete_stop.is_some() {
+        return;
+    }
     if !worker
         .join
         .as_ref()
@@ -1941,15 +1946,22 @@ fn stop_locked(supervisor: &Supervisor, state: &mut SupervisorState) -> Developm
         return DevelopmentNodeStopOutcome::AlreadyStopped;
     };
 
+    if worker.join.is_none() {
+        if let Some((stage, detail)) = worker.incomplete_stop.as_ref() {
+            return DevelopmentNodeStopOutcome::Failed {
+                stage: *stage,
+                detail: detail.clone(),
+            };
+        }
+    }
+
+    let stop_started_at_millis = U64String::from(wall_clock_millis());
+    let terminal_snapshot = supervisor.snapshots.read();
+    let preserve_terminal_failure = terminal_snapshot.runtime == DevelopmentNodeRuntime::Failed;
+    let prior_terminal_failure = terminal_snapshot.failure;
     supervisor
         .snapshots
-        .set_runtime(DevelopmentNodeRuntime::Stopping);
-    supervisor.snapshots.update(|snapshot| {
-        snapshot.active_operation = Some(DevelopmentNodeOperation {
-            kind: DevelopmentNodeOperationKind::Shutdown,
-            started_at_millis: U64String::from(wall_clock_millis()),
-        });
-    });
+        .begin_stop(stop_started_at_millis.clone());
     request_worker_shutdown(worker);
 
     let result = worker.done.recv_timeout(STOP_TIMEOUT);
@@ -1965,22 +1977,36 @@ fn stop_locked(supervisor: &Supervisor, state: &mut SupervisorState) -> Developm
         }
         Ok(Err((stage, detail))) => {
             join_finished_worker(worker);
-            state.worker = None;
             supervisor
                 .operation_admitted
                 .store(false, Ordering::Release);
-            supervisor.snapshots.fail(DevelopmentNodeFailure {
+            let failure = DevelopmentNodeFailure {
                 stage: failure_stage_for_stop(stage),
                 detail: detail.clone(),
-            });
+            };
+            if preserve_terminal_failure {
+                state.worker = None;
+                supervisor
+                    .snapshots
+                    .terminal_fail(prior_terminal_failure.unwrap_or(failure));
+            } else {
+                worker.incomplete_stop = Some((stage, detail.clone()));
+                supervisor
+                    .snapshots
+                    .incomplete_stop(failure, stop_started_at_millis);
+            }
             DevelopmentNodeStopOutcome::Failed { stage, detail }
         }
         Err(std_mpsc::RecvTimeoutError::Timeout) => {
             let detail = "The native worker did not finish bounded shutdown.".to_owned();
-            supervisor.snapshots.fail(DevelopmentNodeFailure {
-                stage: DevelopmentNodeFailureStage::Runtime,
-                detail: detail.clone(),
-            });
+            worker.incomplete_stop = Some((DevelopmentNodeStopStage::Worker, detail.clone()));
+            supervisor.snapshots.incomplete_stop(
+                DevelopmentNodeFailure {
+                    stage: DevelopmentNodeFailureStage::Runtime,
+                    detail: detail.clone(),
+                },
+                stop_started_at_millis,
+            );
             DevelopmentNodeStopOutcome::Failed {
                 stage: DevelopmentNodeStopStage::Worker,
                 detail,
@@ -1989,14 +2015,24 @@ fn stop_locked(supervisor: &Supervisor, state: &mut SupervisorState) -> Developm
         Err(std_mpsc::RecvTimeoutError::Disconnected) => {
             join_finished_worker(worker);
             let detail = "The native worker exited without a shutdown result.".to_owned();
-            state.worker = None;
             supervisor
                 .operation_admitted
                 .store(false, Ordering::Release);
-            supervisor.snapshots.fail(DevelopmentNodeFailure {
+            let failure = DevelopmentNodeFailure {
                 stage: DevelopmentNodeFailureStage::Runtime,
                 detail: detail.clone(),
-            });
+            };
+            if preserve_terminal_failure {
+                state.worker = None;
+                supervisor
+                    .snapshots
+                    .terminal_fail(prior_terminal_failure.unwrap_or(failure));
+            } else {
+                worker.incomplete_stop = Some((DevelopmentNodeStopStage::Worker, detail.clone()));
+                supervisor
+                    .snapshots
+                    .incomplete_stop(failure, stop_started_at_millis);
+            }
             DevelopmentNodeStopOutcome::Failed {
                 stage: DevelopmentNodeStopStage::Worker,
                 detail,
@@ -2047,7 +2083,18 @@ fn reset_with_supervisor(
             };
         }
     }
-    let stop_outcome = stop_locked(supervisor, &mut state);
+    let discard_joined_incomplete_stop = state
+        .worker
+        .as_ref()
+        .is_some_and(|worker| worker.join.is_none() && worker.incomplete_stop.is_some());
+    let stop_outcome = if discard_joined_incomplete_stop {
+        supervisor
+            .operation_admitted
+            .store(false, Ordering::Release);
+        DevelopmentNodeStopOutcome::Stopped
+    } else {
+        stop_locked(supervisor, &mut state)
+    };
     if !matches!(
         stop_outcome,
         DevelopmentNodeStopOutcome::Stopped | DevelopmentNodeStopOutcome::AlreadyStopped
@@ -2069,6 +2116,9 @@ fn reset_with_supervisor(
     state.identity_owner = None;
     match reset_storage(storage_root) {
         Ok(()) => {
+            if discard_joined_incomplete_stop {
+                state.worker = None;
+            }
             supervisor.snapshots.reset();
             stop_outcome
         }
@@ -2522,6 +2572,7 @@ fn settle_worker_result(
     operation_admitted.store(false, Ordering::Release);
     if let Err((stage, detail)) = result {
         snapshots.update(|snapshot| {
+            let explicit_stop_in_progress = snapshots.is_explicit_stop_in_progress();
             if *stage == DevelopmentNodeStopStage::Persistence
                 && matches!(
                     snapshot.pairing,
@@ -2533,20 +2584,22 @@ fn settle_worker_result(
                     detail: "The paired target authorization could not be persisted.".to_owned(),
                 };
             }
-            snapshot.runtime = DevelopmentNodeRuntime::Failed;
-            if !matches!(
-                &snapshot.local_host,
-                LocalHostState::DevelopmentResetRequired { .. }
-            ) {
-                snapshot.local_host = LocalHostState::Stopped {
-                    last_start_failure: Some(detail.clone()),
-                };
+            if !explicit_stop_in_progress {
+                snapshot.runtime = DevelopmentNodeRuntime::Failed;
+                if !matches!(
+                    &snapshot.local_host,
+                    LocalHostState::DevelopmentResetRequired { .. }
+                ) {
+                    snapshot.local_host = LocalHostState::Stopped {
+                        last_start_failure: Some(detail.clone()),
+                    };
+                }
+                snapshot.active_operation = None;
             }
             snapshot.failure = Some(DevelopmentNodeFailure {
                 stage: failure_stage_for_stop(*stage),
                 detail: detail.clone(),
             });
-            snapshot.active_operation = None;
         });
     }
 }
@@ -3572,6 +3625,7 @@ mod tests {
             shutdown,
             done,
             join,
+            incomplete_stop: None,
             storage_root,
             #[cfg(all(feature = "apple", target_os = "ios"))]
             bluetooth_owner_key,
@@ -4810,11 +4864,19 @@ mod tests {
         ));
         assert!(paths.application.exists());
         assert!(supervisor.lock_state().application_owner.is_some());
-        assert!(supervisor.lock_state().worker.is_none());
+        assert!(supervisor
+            .lock_state()
+            .worker
+            .as_ref()
+            .is_some_and(|worker| worker.incomplete_stop.is_some() && worker.join.is_none()));
+        assert_eq!(
+            supervisor.snapshots.read().runtime,
+            DevelopmentNodeRuntime::Stopping
+        );
 
         assert_eq!(
             reset_with_supervisor(&supervisor, &storage),
-            DevelopmentNodeStopOutcome::AlreadyStopped
+            DevelopmentNodeStopOutcome::Stopped
         );
         assert!(!storage.exists());
         assert!(supervisor.lock_state().application_owner.is_none());
@@ -5465,6 +5527,44 @@ mod tests {
     }
 
     #[test]
+    fn worker_failure_during_explicit_stop_retains_the_stopping_transition() {
+        let snapshots = SnapshotStore::new();
+        snapshots.set_runtime(DevelopmentNodeRuntime::Running);
+        let local_host = running_host_state();
+        snapshots.set_local_host(local_host.clone());
+        snapshots.begin_stop(U64String::from(42));
+        let admitted = AtomicBool::new(true);
+
+        settle_worker_result(
+            &admitted,
+            &snapshots,
+            &Err((
+                DevelopmentNodeStopStage::Worker,
+                "shutdown did not settle".to_owned(),
+            )),
+        );
+
+        assert!(!admitted.load(Ordering::Acquire));
+        let snapshot = snapshots.read();
+        assert_eq!(snapshot.runtime, DevelopmentNodeRuntime::Stopping);
+        assert_eq!(snapshot.local_host, local_host);
+        assert_eq!(
+            snapshot.failure,
+            Some(DevelopmentNodeFailure {
+                stage: DevelopmentNodeFailureStage::Runtime,
+                detail: "shutdown did not settle".to_owned(),
+            })
+        );
+        assert_eq!(
+            snapshot.active_operation,
+            Some(DevelopmentNodeOperation {
+                kind: DevelopmentNodeOperationKind::Shutdown,
+                started_at_millis: U64String::from(42),
+            })
+        );
+    }
+
+    #[test]
     fn terminal_failure_preserves_a_reset_required_host() {
         let snapshots = SnapshotStore::new();
         snapshots.set_local_host(LocalHostState::DevelopmentResetRequired {
@@ -5996,6 +6096,185 @@ mod tests {
     }
 
     #[test]
+    fn incomplete_stop_remains_stopping_and_blocks_start_until_reset() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let storage = temporary.path().join("prns").join("development");
+        let paths = prepare_storage(&storage).expect("private storage");
+        let supervisor = Supervisor {
+            snapshots: Arc::new(SnapshotStore::new()),
+            operation_admitted: Arc::new(AtomicBool::new(true)),
+            state: Mutex::new(SupervisorState::default()),
+        };
+        supervisor
+            .snapshots
+            .set_runtime(DevelopmentNodeRuntime::Running);
+        let local_host = running_host_state();
+        supervisor.snapshots.set_local_host(local_host.clone());
+
+        let (commands, _command_rx) = mpsc::channel(1);
+        let (shutdown_sender, _shutdown_rx) = watch::channel(false);
+        let shutdown = ShutdownSignal {
+            sender: shutdown_sender,
+            requested: Arc::new(AtomicBool::new(false)),
+        };
+        let (done_tx, done) = std_mpsc::sync_channel(1);
+        done_tx
+            .send(Err((
+                DevelopmentNodeStopStage::Worker,
+                "shutdown did not settle".to_owned(),
+            )))
+            .expect("terminal worker result");
+        let join = std::thread::spawn(|| {});
+        supervisor.lock_state().worker = Some(test_worker(
+            commands,
+            shutdown,
+            done,
+            Some(join),
+            paths.root,
+        ));
+
+        {
+            let mut state = supervisor.lock_state();
+            assert_eq!(
+                stop_locked(&supervisor, &mut state),
+                DevelopmentNodeStopOutcome::Failed {
+                    stage: DevelopmentNodeStopStage::Worker,
+                    detail: "shutdown did not settle".to_owned(),
+                }
+            );
+            assert!(state
+                .worker
+                .as_ref()
+                .is_some_and(|worker| worker.incomplete_stop.is_some() && worker.join.is_none()));
+        }
+        assert!(!supervisor.operation_admitted.load(Ordering::Acquire));
+        let incomplete = snapshot_with_supervisor(&supervisor);
+        assert_eq!(incomplete.runtime, DevelopmentNodeRuntime::Stopping);
+        assert_eq!(incomplete.local_host, local_host);
+        assert_eq!(
+            incomplete.failure,
+            Some(DevelopmentNodeFailure {
+                stage: DevelopmentNodeFailureStage::Runtime,
+                detail: "shutdown did not settle".to_owned(),
+            })
+        );
+        assert!(matches!(
+            incomplete.active_operation,
+            Some(DevelopmentNodeOperation {
+                kind: DevelopmentNodeOperationKind::Shutdown,
+                ..
+            })
+        ));
+
+        assert!(matches!(
+            start_configured_with_supervisor(
+                &supervisor,
+                &storage,
+                DevelopmentNodeStartInput {
+                    development_tcp_target: None,
+                },
+                AppleBluetoothPreparation::WithoutRestoration,
+            ),
+            DevelopmentNodeStartOutcome::Failed {
+                stage: DevelopmentNodeFailureStage::Runtime,
+                ..
+            }
+        ));
+        assert_eq!(
+            supervisor.snapshots.read().runtime,
+            DevelopmentNodeRuntime::Stopping
+        );
+
+        let mut state = supervisor.lock_state();
+        assert_eq!(
+            stop_locked(&supervisor, &mut state),
+            DevelopmentNodeStopOutcome::Failed {
+                stage: DevelopmentNodeStopStage::Worker,
+                detail: "shutdown did not settle".to_owned(),
+            }
+        );
+        assert!(state.worker.is_some());
+        assert_eq!(
+            supervisor.snapshots.read().runtime,
+            DevelopmentNodeRuntime::Stopping
+        );
+        drop(state);
+
+        assert_eq!(
+            reset_with_supervisor(&supervisor, &storage),
+            DevelopmentNodeStopOutcome::Stopped
+        );
+        assert!(supervisor.lock_state().worker.is_none());
+        assert_eq!(
+            supervisor.snapshots.read().runtime,
+            DevelopmentNodeRuntime::Stopped
+        );
+    }
+
+    #[test]
+    fn timed_out_stop_can_settle_successfully_when_retried() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let storage = temporary.path().join("prns").join("development");
+        let paths = prepare_storage(&storage).expect("private storage");
+        let supervisor = Supervisor {
+            snapshots: Arc::new(SnapshotStore::new()),
+            operation_admitted: Arc::new(AtomicBool::new(false)),
+            state: Mutex::new(SupervisorState::default()),
+        };
+        let detail = "The native worker did not finish bounded shutdown.".to_owned();
+        supervisor.snapshots.incomplete_stop(
+            DevelopmentNodeFailure {
+                stage: DevelopmentNodeFailureStage::Runtime,
+                detail: detail.clone(),
+            },
+            U64String::from(42),
+        );
+
+        let (commands, _command_rx) = mpsc::channel(1);
+        let (shutdown_sender, _shutdown_rx) = watch::channel(false);
+        let (done_tx, done) = std_mpsc::sync_channel(1);
+        done_tx.send(Ok(())).expect("terminal worker result");
+        let mut worker = test_worker(
+            commands,
+            ShutdownSignal {
+                sender: shutdown_sender,
+                requested: Arc::new(AtomicBool::new(true)),
+            },
+            done,
+            Some(std::thread::spawn(|| {})),
+            paths.root,
+        );
+        worker.incomplete_stop = Some((DevelopmentNodeStopStage::Worker, detail));
+        supervisor.lock_state().worker = Some(worker);
+
+        assert!(matches!(
+            start_configured_with_supervisor(
+                &supervisor,
+                &storage,
+                DevelopmentNodeStartInput {
+                    development_tcp_target: None,
+                },
+                AppleBluetoothPreparation::WithoutRestoration,
+            ),
+            DevelopmentNodeStartOutcome::Failed {
+                stage: DevelopmentNodeFailureStage::Runtime,
+                ..
+            }
+        ));
+
+        let mut state = supervisor.lock_state();
+        assert_eq!(
+            stop_locked(&supervisor, &mut state),
+            DevelopmentNodeStopOutcome::Stopped
+        );
+        assert!(state.worker.is_none());
+        assert_eq!(
+            supervisor.snapshots.read().runtime,
+            DevelopmentNodeRuntime::Stopped
+        );
+    }
+
+    #[test]
     fn stop_reaps_an_already_terminal_worker_and_preserves_failure_state() {
         let supervisor = Supervisor {
             snapshots: Arc::new(SnapshotStore::new()),
@@ -6054,6 +6333,53 @@ mod tests {
                 last_start_failure: Some("node stopped unexpectedly".to_owned()),
             }
         );
+    }
+
+    #[test]
+    fn stop_reaps_a_disconnected_terminal_worker_and_preserves_its_failure() {
+        let supervisor = Supervisor {
+            snapshots: Arc::new(SnapshotStore::new()),
+            operation_admitted: Arc::new(AtomicBool::new(false)),
+            state: Mutex::new(SupervisorState::default()),
+        };
+        let prior_failure = DevelopmentNodeFailure {
+            stage: DevelopmentNodeFailureStage::Node,
+            detail: "node stopped unexpectedly".to_owned(),
+        };
+        supervisor.snapshots.terminal_fail(prior_failure.clone());
+
+        let (commands, _command_rx) = mpsc::channel(1);
+        let (shutdown_sender, _shutdown_rx) = watch::channel(false);
+        let (_done_tx, done) = std_mpsc::sync_channel::<WorkerResult>(1);
+        drop(_done_tx);
+        let join = std::thread::spawn(|| {});
+        let mut state = test_supervisor_state(
+            Some(test_worker(
+                commands,
+                ShutdownSignal {
+                    sender: shutdown_sender,
+                    requested: Arc::new(AtomicBool::new(false)),
+                },
+                done,
+                Some(join),
+                PathBuf::from("/tmp/prns/development"),
+            )),
+            None,
+            None,
+        );
+
+        assert!(matches!(
+            stop_locked(&supervisor, &mut state),
+            DevelopmentNodeStopOutcome::Failed {
+                stage: DevelopmentNodeStopStage::Worker,
+                ..
+            }
+        ));
+        assert!(state.worker.is_none());
+        let snapshot = supervisor.snapshots.read();
+        assert_eq!(snapshot.runtime, DevelopmentNodeRuntime::Failed);
+        assert_eq!(snapshot.failure, Some(prior_failure));
+        assert!(snapshot.active_operation.is_none());
     }
 
     #[test]

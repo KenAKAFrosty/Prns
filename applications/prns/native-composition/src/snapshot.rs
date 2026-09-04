@@ -1,12 +1,15 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
 use crate::contract::{
-    DevelopmentNodeFailure, DevelopmentNodeRuntime, DevelopmentNodeSnapshot, LocalHostState,
-    LxmfHealth, LxmfHealthState, PrimaryIdentityState, U64String,
+    DevelopmentNodeFailure, DevelopmentNodeOperation, DevelopmentNodeOperationKind,
+    DevelopmentNodeRuntime, DevelopmentNodeSnapshot, LocalHostState, LxmfHealth, LxmfHealthState,
+    PrimaryIdentityState, U64String,
 };
 
 pub struct SnapshotStore {
     inner: Mutex<DevelopmentNodeSnapshot>,
+    explicit_stop_in_progress: AtomicBool,
 }
 
 impl SnapshotStore {
@@ -14,6 +17,7 @@ impl SnapshotStore {
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(DevelopmentNodeSnapshot::stopped()),
+            explicit_stop_in_progress: AtomicBool::new(false),
         }
     }
 
@@ -119,6 +123,27 @@ impl SnapshotStore {
 
     pub fn fail(&self, failure: DevelopmentNodeFailure) {
         self.update(|snapshot| {
+            let explicit_stop_in_progress = self.explicit_stop_in_progress.load(Ordering::Acquire);
+            if !explicit_stop_in_progress {
+                snapshot.runtime = DevelopmentNodeRuntime::Failed;
+                if !matches!(
+                    &snapshot.local_host,
+                    LocalHostState::DevelopmentResetRequired { .. }
+                ) {
+                    snapshot.local_host = LocalHostState::Stopped {
+                        last_start_failure: Some(failure.detail.clone()),
+                    };
+                }
+                snapshot.active_operation = None;
+            }
+            snapshot.failure = Some(failure);
+        });
+    }
+
+    pub fn terminal_fail(&self, failure: DevelopmentNodeFailure) {
+        self.explicit_stop_in_progress
+            .store(false, Ordering::Release);
+        self.update(|snapshot| {
             snapshot.runtime = DevelopmentNodeRuntime::Failed;
             if !matches!(
                 &snapshot.local_host,
@@ -133,7 +158,38 @@ impl SnapshotStore {
         });
     }
 
+    pub fn begin_stop(&self, started_at_millis: U64String) {
+        self.explicit_stop_in_progress
+            .store(true, Ordering::Release);
+        self.update(|snapshot| {
+            snapshot.runtime = DevelopmentNodeRuntime::Stopping;
+            snapshot.active_operation = Some(DevelopmentNodeOperation {
+                kind: DevelopmentNodeOperationKind::Shutdown,
+                started_at_millis,
+            });
+        });
+    }
+
+    pub fn incomplete_stop(&self, failure: DevelopmentNodeFailure, started_at_millis: U64String) {
+        self.explicit_stop_in_progress
+            .store(true, Ordering::Release);
+        self.update(|snapshot| {
+            snapshot.runtime = DevelopmentNodeRuntime::Stopping;
+            snapshot.failure = Some(failure);
+            snapshot.active_operation = Some(DevelopmentNodeOperation {
+                kind: DevelopmentNodeOperationKind::Shutdown,
+                started_at_millis,
+            });
+        });
+    }
+
+    pub fn is_explicit_stop_in_progress(&self) -> bool {
+        self.explicit_stop_in_progress.load(Ordering::Acquire)
+    }
+
     pub fn begin_generation(&self, primary_identity: PrimaryIdentityState) {
+        self.explicit_stop_in_progress
+            .store(false, Ordering::Release);
         self.update(|snapshot| {
             let mut next = DevelopmentNodeSnapshot::stopped();
             next.runtime = DevelopmentNodeRuntime::Starting;
@@ -143,6 +199,8 @@ impl SnapshotStore {
     }
 
     pub fn stopped(&self) {
+        self.explicit_stop_in_progress
+            .store(false, Ordering::Release);
         self.update(|snapshot| {
             let primary_identity = snapshot.primary_identity.clone();
             *snapshot = DevelopmentNodeSnapshot::stopped();
@@ -151,6 +209,8 @@ impl SnapshotStore {
     }
 
     pub fn reset(&self) {
+        self.explicit_stop_in_progress
+            .store(false, Ordering::Release);
         self.update(|snapshot| *snapshot = DevelopmentNodeSnapshot::stopped());
     }
 }
@@ -173,6 +233,58 @@ mod tests {
         let snapshot = store.read();
         assert_eq!(snapshot.revision, U64String::from(2));
         assert_eq!(snapshot.runtime, DevelopmentNodeRuntime::Running);
+    }
+
+    #[test]
+    fn incomplete_stop_retains_the_transition_and_failure() {
+        let store = SnapshotStore::new();
+        let local_host = LocalHostState::Unavailable {
+            detail: "last observed host".to_owned(),
+        };
+        store.set_runtime(DevelopmentNodeRuntime::Running);
+        store.set_local_host(local_host.clone());
+        let failure = DevelopmentNodeFailure {
+            stage: crate::contract::DevelopmentNodeFailureStage::Runtime,
+            detail: "shutdown remains incomplete".to_owned(),
+        };
+
+        store.incomplete_stop(failure.clone(), U64String::from(42));
+
+        let snapshot = store.read();
+        assert_eq!(snapshot.runtime, DevelopmentNodeRuntime::Stopping);
+        assert_eq!(snapshot.local_host, local_host);
+        assert_eq!(snapshot.failure, Some(failure));
+        assert_eq!(
+            snapshot.active_operation,
+            Some(DevelopmentNodeOperation {
+                kind: DevelopmentNodeOperationKind::Shutdown,
+                started_at_millis: U64String::from(42),
+            })
+        );
+    }
+
+    #[test]
+    fn failure_during_stop_does_not_collapse_the_transition() {
+        let store = SnapshotStore::new();
+        let local_host = LocalHostState::Unavailable {
+            detail: "last observed host".to_owned(),
+        };
+        store.set_runtime(DevelopmentNodeRuntime::Running);
+        store.set_local_host(local_host.clone());
+        store.begin_stop(U64String::from(42));
+        store.update(|snapshot| snapshot.active_operation = None);
+        let failure = DevelopmentNodeFailure {
+            stage: crate::contract::DevelopmentNodeFailureStage::Runtime,
+            detail: "late teardown failure".to_owned(),
+        };
+
+        store.fail(failure.clone());
+
+        let snapshot = store.read();
+        assert_eq!(snapshot.runtime, DevelopmentNodeRuntime::Stopping);
+        assert_eq!(snapshot.local_host, local_host);
+        assert_eq!(snapshot.failure, Some(failure));
+        assert!(snapshot.active_operation.is_none());
     }
 
     #[test]
