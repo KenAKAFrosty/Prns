@@ -6,7 +6,8 @@ pub use prns_interfaces_tokio::bluetooth_auto::{
 
 #[cfg(all(feature = "tokio-host", target_os = "ios"))]
 pub use prns_interfaces_tokio::bluetooth_auto::{
-    CoreBluetoothRestorationIdentifiers, CoreBluetoothRestorationIdentifiersError,
+    CoreBluetoothCentralRestorationIdentifier, CoreBluetoothRestorationIdentifiers,
+    CoreBluetoothRestorationIdentifiersError,
 };
 
 #[cfg(all(feature = "embassy-host", not(feature = "tokio-host")))]
