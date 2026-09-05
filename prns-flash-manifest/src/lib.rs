@@ -8,11 +8,12 @@ mod trust;
 mod uf2;
 
 pub use catalog::{
-    board_catalog, BoardAvailability, BoardBuild, BoardCatalog, BoardCatalogEntry, CatalogError,
-    EspBuild, NrfDfuApplicationVersion, NrfDfuBankLayout, NrfSerialDfuBuild,
+    board_catalog, ApplicationAddressRange, BoardAvailability, BoardBuild, BoardCatalog,
+    BoardCatalogEntry, CatalogError, EspBuild, MemoryProfileReference, MemoryProfileReferenceError,
+    NrfDfuApplicationVersion, NrfDfuBankLayout, NrfSerialDfuBuild, NrfSerialDfuBuildCompatibility,
     NrfSerialDfuCompatibility, NrfSerialDfuControlApplication, NrfSerialDfuRecoveryBootloader,
     NrfSerialDfuRecoveryBuild, NrfSerialDfuSerialTransport, NrfSerialDfuSerialTransportError,
-    NrfSerialDfuTouchApplicationAndBootloader, ProvisioningDescriptor,
+    NrfSerialDfuTouchApplicationAndBootloader, ProvisioningDescriptor, ResolvedMemoryProfile,
     TcpClientProvisioningDescriptor, Transport, Uf2ApplicationLink, Uf2ApplicationUsb,
     Uf2BoardIdentity, Uf2Build, Uf2BuildVariant, UsbVendorProductId,
 };

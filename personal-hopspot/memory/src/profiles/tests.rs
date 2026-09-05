@@ -13,6 +13,14 @@ fn every_canonical_profile_is_unique_and_valid() {
 }
 
 #[test]
+fn profiles_resolve_by_their_stable_external_names() {
+    for profile in ALL_MEMORY_PROFILES {
+        assert_eq!(memory_profile_named(profile.id.as_str()), Some(profile));
+    }
+    assert_eq!(memory_profile_named("unknown-profile"), None);
+}
+
+#[test]
 fn architecture_matrix_has_three_adapters_without_board_specific_architectures() {
     assert_eq!(
         HELTEC_V4.architecture.rust_target(),

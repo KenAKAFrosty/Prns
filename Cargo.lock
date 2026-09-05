@@ -3124,6 +3124,7 @@ name = "prns-flash-manifest"
 version = "0.1.0"
 dependencies = [
  "minisign-verify",
+ "personal-hopspot-memory",
  "prns-core",
  "serde",
  "serde_json",

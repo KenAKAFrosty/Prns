@@ -104,6 +104,19 @@ pub enum AddressSpaceKind {
 }
 
 impl AddressSpaceKind {
+    pub(super) const fn same_as(self, other: Self) -> bool {
+        match self {
+            Self::InternalFlash => matches!(other, Self::InternalFlash),
+            Self::InternalRam => matches!(other, Self::InternalRam),
+            Self::InstructionRam => matches!(other, Self::InstructionRam),
+            Self::DataRam => matches!(other, Self::DataRam),
+            Self::ReclaimedRam => matches!(other, Self::ReclaimedRam),
+            Self::DataCacheRam => matches!(other, Self::DataCacheRam),
+            Self::ExternalPsram => matches!(other, Self::ExternalPsram),
+            Self::ExternalStorage => matches!(other, Self::ExternalStorage),
+        }
+    }
+
     pub(super) const fn is_ram(self) -> bool {
         matches!(
             self,

@@ -87,20 +87,14 @@ impl EspFirmwareMemory {
     }
 
     const fn internal_flash(&self) -> AddressRange {
-        let mut matching_index = self.profile.address_spaces.len();
-        let mut index = 0;
-        while index < self.profile.address_spaces.len() {
-            if matches!(
-                self.profile.address_spaces[index].kind,
-                AddressSpaceKind::InternalFlash
-            ) {
-                assert!(matching_index == self.profile.address_spaces.len());
-                matching_index = index;
-            }
-            index += 1;
-        }
-        assert!(matching_index < self.profile.address_spaces.len());
-        match self.profile.address_spaces[matching_index].geometry {
+        let address_space = match self
+            .profile
+            .unique_address_space_for_kind(AddressSpaceKind::InternalFlash)
+        {
+            Ok(address_space) => address_space,
+            Err(_) => panic!(),
+        };
+        match address_space.geometry {
             AddressSpaceGeometry::Fixed(range) => range,
             AddressSpaceGeometry::FixedCapacity { .. }
             | AddressSpaceGeometry::LinkerDefined

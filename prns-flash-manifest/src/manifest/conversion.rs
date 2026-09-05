@@ -278,18 +278,14 @@ fn convert_target(
                 .into_iter()
                 .map(|variant| {
                     let path = variant.path.clone();
-                    let application_end_exclusive = catalog_build
+                    let catalog_variant = catalog_build
                         .variants
                         .iter()
                         .find(|catalog_variant| {
                             catalog_variant.softdevice_family == variant.softdevice_family
                                 && catalog_variant.softdevice_version == variant.softdevice_version
                                 && catalog_variant.fwid == variant.fwid
-                                && catalog_variant.application_base == variant.application_base
                                 && catalog_variant.family_id == variant.family_id
-                        })
-                        .and_then(|catalog_variant| {
-                            parse_hex_u32(&catalog_variant.application_end_exclusive)
                         })
                         .ok_or_else(|| {
                             invalid_part_values(
@@ -298,6 +294,12 @@ fn convert_target(
                                 "UF2 variant is not pinned by the board catalog",
                             )
                         })?;
+                    let application = catalog_variant
+                        .memory_layout()
+                        .map_err(|error| {
+                            invalid_part_values(&board_slug, &path, &error.to_string())
+                        })?
+                        .transport_envelope();
                     let softdevice = SoftdeviceIdentity::parse(
                         &variant.softdevice_family,
                         variant.softdevice_version,
@@ -314,6 +316,13 @@ fn convert_target(
                                 "application base is not canonical hexadecimal",
                             )
                         })?;
+                    if application_base != application.start() {
+                        return Err(invalid_part_values(
+                            &board_slug,
+                            &path,
+                            "application base disagrees with the memory profile",
+                        ));
+                    }
                     let family_id = parse_hex_u32(&variant.family_id).ok_or_else(|| {
                         invalid_part_values(
                             &board_slug,
@@ -326,7 +335,7 @@ fn convert_target(
                             softdevice,
                             fwid,
                             application_base,
-                            application_end_exclusive,
+                            application.end_exclusive(),
                             family_id,
                         ),
                         part: Uf2Part {

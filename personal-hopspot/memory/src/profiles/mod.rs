@@ -115,5 +115,13 @@ pub fn memory_profile(id: MemoryProfileId) -> Option<&'static MemoryProfile> {
         .find(|profile| profile.id == id)
 }
 
+#[must_use]
+pub fn memory_profile_named(id: &str) -> Option<&'static MemoryProfile> {
+    ALL_MEMORY_PROFILES
+        .iter()
+        .copied()
+        .find(|profile| profile.id.as_str() == id)
+}
+
 #[cfg(test)]
 mod tests;

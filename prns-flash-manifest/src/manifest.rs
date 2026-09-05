@@ -412,15 +412,24 @@ mod tests {
                 build
                     .variants
                     .iter()
-                    .map(|variant| Uf2VariantManifest {
-                        softdevice_family: variant.softdevice_family.clone(),
-                        softdevice_version: variant.softdevice_version.clone(),
-                        fwid: variant.fwid.clone(),
-                        application_base: variant.application_base.clone(),
-                        family_id: variant.family_id.clone(),
-                        path: format!("firmware/hopspot/{}/0.2.6/{}", board.slug, variant.filename),
-                        size: 256,
-                        sha256: "a".repeat(64),
+                    .map(|variant| {
+                        let application = variant
+                            .memory_layout()
+                            .expect("UF2 memory profile")
+                            .transport_envelope();
+                        Uf2VariantManifest {
+                            softdevice_family: variant.softdevice_family.clone(),
+                            softdevice_version: variant.softdevice_version.clone(),
+                            fwid: variant.fwid.clone(),
+                            application_base: format!("0x{:08x}", application.start()),
+                            family_id: variant.family_id.clone(),
+                            path: format!(
+                                "firmware/hopspot/{}/0.2.6/{}",
+                                board.slug, variant.filename
+                            ),
+                            size: 256,
+                            sha256: "a".repeat(64),
+                        }
                     })
                     .collect(),
                 None,
@@ -434,7 +443,9 @@ mod tests {
                 Vec::new(),
                 Some(NrfSerialDfuManifest {
                     serial: build.serial.clone(),
-                    compatibility: build.compatibility.clone(),
+                    compatibility: build
+                        .manifest_compatibility()
+                        .expect("Nordic serial DFU memory profile"),
                     application: part(
                         board,
                         FlashPartKind::DfuApplication,

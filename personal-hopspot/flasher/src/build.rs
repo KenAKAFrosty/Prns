@@ -25,7 +25,6 @@ use crate::release::PreparedTarget;
 use crate::toolchain::{capture_stdout, configure_esp_toolchain, run_status, rust_host_triple};
 
 const PARTITION_TABLE_OFFSET: u32 = 0x8000;
-const APPLICATION_OFFSET: u32 = 0x10000;
 struct BuiltPart {
     descriptor: FlashPart,
     bytes: Vec<u8>,
@@ -297,6 +296,11 @@ fn build_esp_parts(
     partition_table: &Path,
     version: &str,
 ) -> Result<Vec<BuiltPart>, AppError> {
+    let application_offset = build
+        .memory_layout()
+        .map_err(|error| AppError::developer_manifest(error.to_string()))?
+        .transport_envelope()
+        .start();
     let elf = crate_dir
         .join("target")
         .join(&build.rust_target)
@@ -366,7 +370,9 @@ fn build_esp_parts(
     for segment in ImageFormat::from(image).flash_segments() {
         let (kind, filename) = match segment.addr {
             PARTITION_TABLE_OFFSET => (FlashPartKind::PartitionTable, "partition-table.bin"),
-            APPLICATION_OFFSET => (FlashPartKind::Application, "application.bin"),
+            address if address == application_offset => {
+                (FlashPartKind::Application, "application.bin")
+            }
             _ if segment.addr < PARTITION_TABLE_OFFSET => {
                 (FlashPartKind::Bootloader, "bootloader.bin")
             }
@@ -444,6 +450,11 @@ fn build_uf2(
     let mut descriptors = Vec::with_capacity(variants.len());
     let mut artifacts = Vec::with_capacity(variants.len());
     for variant in variants {
+        let application = variant
+            .memory_layout()
+            .map_err(|error| AppError::developer_manifest(error.to_string()))?
+            .transport_envelope();
+        let application_base = format!("0x{:08x}", application.start());
         let target_directory = crate_dir.join(&variant.target_directory);
         let features = match variant.application_link.cargo_feature() {
             Some(link_feature) => format!("{},{link_feature}", build.board_feature),
@@ -482,7 +493,7 @@ fn build_uf2(
                 .arg(repo.join("tools").join("device").join("bin2uf2.py"))
                 .arg(&binary)
                 .arg(&uf2)
-                .arg(&variant.application_base)
+                .arg(&application_base)
                 .arg(&variant.family_id),
             "bin2uf2.py",
         )?;
@@ -493,7 +504,7 @@ fn build_uf2(
             softdevice_family: variant.softdevice_family.clone(),
             softdevice_version: variant.softdevice_version.clone(),
             fwid: variant.fwid.clone(),
-            application_base: variant.application_base.clone(),
+            application_base,
             family_id: variant.family_id.clone(),
             path: release_part_path(&board.slug, version, &variant.filename),
             size: bytes.len() as u64,
@@ -624,20 +635,11 @@ fn build_nrf_serial_dfu(
             application_path.display()
         ))
     })?;
-    let application_base =
-        parse_catalog_hex_u32("application base", &build.compatibility.application_base)?;
-    let application_end_exclusive = parse_catalog_hex_u32(
-        "exclusive application end",
-        &build.compatibility.application_end_exclusive,
-    )?;
-    let maximum_application_bytes = application_end_exclusive
-        .checked_sub(application_base)
-        .ok_or_else(|| {
-            AppError::developer_manifest(format!(
-                "{} application region is empty",
-                board.display_name
-            ))
-        })?;
+    let application_region = build
+        .memory_layout()
+        .map_err(|error| AppError::developer_manifest(error.to_string()))?
+        .transport_envelope();
+    let maximum_application_bytes = application_region.byte_len();
     if application.len() as u64 > u64::from(maximum_application_bytes) {
         return Err(AppError::developer_artifact(format!(
             "{} application is {} bytes; serial DFU accepts at most {maximum_application_bytes}",
@@ -654,21 +656,25 @@ fn build_nrf_serial_dfu(
     atomic_write(&output_dir.join(&build.init_packet_filename), &init_packet)?;
 
     let recovery_path = output_dir.join(&build.recovery.filename);
+    let application_base = format!("0x{:08x}", application_region.start());
     run_status(
         Command::new(if cfg!(windows) { "python" } else { "python3" })
             .arg(repo.join("tools").join("device").join("bin2uf2.py"))
             .arg(&application_path)
             .arg(&recovery_path)
-            .arg(&build.compatibility.application_base)
+            .arg(&application_base)
             .arg(&build.recovery.family_id),
         "bin2uf2.py",
     )?;
     let recovery_uf2 = fs::read(&recovery_path).map_err(|error| {
         AppError::developer_artifact(format!("could not read recovery UF2: {error}"))
     })?;
+    let compatibility = build
+        .manifest_compatibility()
+        .map_err(|error| AppError::developer_manifest(error.to_string()))?;
     let dfu_manifest = NrfSerialDfuManifest {
         serial: build.serial.clone(),
-        compatibility: build.compatibility.clone(),
+        compatibility,
         application: release_artifact(
             board,
             version,
@@ -728,7 +734,7 @@ fn build_nrf_serial_dfu(
 }
 
 fn nrf_init_packet_spec(
-    compatibility: &prns_flash_manifest::NrfSerialDfuCompatibility,
+    compatibility: &prns_flash_manifest::NrfSerialDfuBuildCompatibility,
 ) -> Result<ApplicationInitPacketSpec, AppError> {
     let fwid = SoftdeviceFirmwareId::new(parse_catalog_hex_u16("FWID", &compatibility.fwid)?)
         .map_err(|error| AppError::developer_manifest(error.to_string()))?;
@@ -751,15 +757,6 @@ fn parse_catalog_hex_u16(label: &str, value: &str) -> Result<u16, AppError> {
         AppError::developer_manifest(format!("invalid Nordic DFU {label} {value:?}"))
     })?;
     u16::from_str_radix(digits, 16).map_err(|error| {
-        AppError::developer_manifest(format!("invalid Nordic DFU {label} {value:?}: {error}"))
-    })
-}
-
-fn parse_catalog_hex_u32(label: &str, value: &str) -> Result<u32, AppError> {
-    let digits = value.strip_prefix("0x").ok_or_else(|| {
-        AppError::developer_manifest(format!("invalid Nordic DFU {label} {value:?}"))
-    })?;
-    u32::from_str_radix(digits, 16).map_err(|error| {
         AppError::developer_manifest(format!("invalid Nordic DFU {label} {value:?}: {error}"))
     })
 }

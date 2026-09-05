@@ -152,6 +152,51 @@ fn semantic_region_lookup_rejects_missing_and_ambiguous_roles() {
 }
 
 #[test]
+fn address_space_kind_lookup_rejects_missing_and_ambiguous_kinds() {
+    const OTHER_FLASH: AddressSpaceId = AddressSpaceId("other-flash");
+    static NO_INTERNAL_FLASH: [AddressSpace; 1] = [AddressSpace {
+        id: RAM,
+        kind: AddressSpaceKind::InternalRam,
+        geometry: AddressSpaceGeometry::FixedCapacity { bytes: 0x4000 },
+        backing_store: BackingStoreId("sram"),
+        backing_offset: 0,
+    }];
+    static TWO_INTERNAL_FLASH: [AddressSpace; 2] = [
+        AddressSpace {
+            id: FLASH,
+            kind: AddressSpaceKind::InternalFlash,
+            geometry: AddressSpaceGeometry::Fixed(AddressRange::new(0, 0x4000)),
+            backing_store: BackingStoreId("flash-chip"),
+            backing_offset: 0,
+        },
+        AddressSpace {
+            id: OTHER_FLASH,
+            kind: AddressSpaceKind::InternalFlash,
+            geometry: AddressSpaceGeometry::Fixed(AddressRange::new(0x4000, 0x8000)),
+            backing_store: BackingStoreId("flash-chip"),
+            backing_offset: 0x4000,
+        },
+    ];
+
+    assert_eq!(
+        profile(&NO_INTERNAL_FLASH, &[], &[])
+            .unique_address_space_for_kind(AddressSpaceKind::InternalFlash),
+        Err(crate::AddressSpaceKindLookupError::Missing {
+            kind: AddressSpaceKind::InternalFlash,
+        })
+    );
+    assert_eq!(
+        profile(&TWO_INTERNAL_FLASH, &[], &[])
+            .unique_address_space_for_kind(AddressSpaceKind::InternalFlash),
+        Err(crate::AddressSpaceKindLookupError::Ambiguous {
+            kind: AddressSpaceKind::InternalFlash,
+            first: FLASH,
+            second: OTHER_FLASH,
+        })
+    );
+}
+
+#[test]
 fn region_boundaries_must_satisfy_the_declared_alignment() {
     const ALIGN_256: Alignment = match Alignment::try_new(256) {
         Ok(value) => value,

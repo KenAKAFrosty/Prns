@@ -249,8 +249,11 @@ fn validate_nrf_serial_dfu(
         .nrf_serial_dfu
         .as_ref()
         .ok_or_else(|| mismatch(target, "Nordic serial DFU artifact contract"))?;
+    let expected_compatibility = build
+        .manifest_compatibility()
+        .map_err(|_| mismatch(target, "Nordic serial DFU memory profile"))?;
     if manifest.serial != build.serial
-        || manifest.compatibility != build.compatibility
+        || manifest.compatibility != expected_compatibility
         || manifest.recovery.mount_label != build.recovery.mount_label
         || manifest.recovery.board_id_prefix != build.recovery.board_identity.value
         || manifest.recovery.family_id != build.recovery.family_id
@@ -363,6 +366,10 @@ fn validate_uf2_variants(
     let mut identities = BTreeSet::new();
     let mut paths = BTreeSet::new();
     for (variant, expected) in target.variants.iter().zip(expected) {
+        let expected_application = expected
+            .memory_layout()
+            .map_err(|_| mismatch(target, "UF2 memory profile"))?
+            .transport_envelope();
         let identity = (
             variant.softdevice_family.as_str(),
             variant.softdevice_version.as_str(),
@@ -381,7 +388,7 @@ fn validate_uf2_variants(
         if variant.softdevice_family != expected.softdevice_family
             || variant.softdevice_version != expected.softdevice_version
             || variant.fwid != expected.fwid
-            || variant.application_base != expected.application_base
+            || parse_hex_u32(&variant.application_base) != Some(expected_application.start())
             || variant.family_id != expected.family_id
             || variant.path != expected_path
         {
