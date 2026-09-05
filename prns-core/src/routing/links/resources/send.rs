@@ -4142,6 +4142,7 @@ mod tests {
         live
     }
 
+    #[cfg(feature = "resource-work-offload")]
     fn serve_live_parts<S: StorageLayout>(
         engine: &mut EngineState<S>,
         live: &ResourceHash,
@@ -4237,6 +4238,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "resource-work-offload")]
     #[test]
     fn serving_the_last_live_part_seals_the_staged_continuation() {
         let mut engine = heap_sender_with_active_link();
@@ -4264,6 +4266,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "resource-work-offload")]
     #[test]
     fn the_live_proof_promotes_the_sealed_continuation_in_the_same_pass() {
         let mut engine = heap_sender_with_active_link();
@@ -4319,6 +4322,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "resource-work-offload")]
     #[test]
     fn a_request_or_proof_for_a_staged_hash_is_ignored() {
         let mut engine = heap_sender_with_active_link();
