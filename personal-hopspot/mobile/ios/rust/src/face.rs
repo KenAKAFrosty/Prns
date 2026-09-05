@@ -174,10 +174,8 @@ impl HopspotFace {
         snapshots: &[InterfaceSnapshot],
         out_rgba: &mut [u8; MOBILE_RGBA_BYTES],
     ) {
-        let interface_menu_details = snapshots_to_interface_menu_details(
-            self.state.selected_card(cards),
-            snapshots,
-        );
+        let interface_menu_details =
+            snapshots_to_interface_menu_details(self.state.selected_card(cards), snapshots);
         let content = ScreenContent {
             cards,
             local_docs: None,

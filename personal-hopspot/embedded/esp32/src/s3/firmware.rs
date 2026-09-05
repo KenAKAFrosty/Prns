@@ -141,10 +141,8 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     #[cfg(not(feature = "lora"))]
     let profile_startup_notice: Option<screen::UiNotice> = None;
 
-    let mut interface_mode_store = screen::InterfaceModeStore::new(
-        shared_flash,
-        B::FLASH_LAYOUT.interface_mode_pages,
-    );
+    let mut interface_mode_store =
+        screen::InterfaceModeStore::new(shared_flash, B::FLASH_LAYOUT.interface_mode_pages);
     let loaded_interface_modes = match interface_mode_store.load().await {
         Ok(loaded) => loaded,
         Err(error) => {
