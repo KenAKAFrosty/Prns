@@ -56,6 +56,7 @@ required-features = ["board-mesh-tower-v2", "softdevice-s140-v6"]
 [dependencies]
 personal-rns = { path = "../../../personal-rns", default-features = false, features = ["embassy-host", "flash", "lora", "bluetooth-auto", "usb"] }
 personal-hopspot-core = { path = "../../core", default-features = false, features = ["embedded"] }
+personal-hopspot-memory = { path = "../../memory" }
 prns-core = { path = "../../../prns-core", default-features = false }
 
 embedded-graphics = { version = "0.8", optional = true }

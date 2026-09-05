@@ -61,6 +61,7 @@ compile_error!("T1000-E does not support S140 compatibility features");
 mod boards;
 #[cfg(any(feature = "board-t096", feature = "board-t114"))]
 mod immediate_display;
+mod memory;
 #[cfg(feature = "board-t-echo")]
 mod retained_display;
 #[cfg(any(
