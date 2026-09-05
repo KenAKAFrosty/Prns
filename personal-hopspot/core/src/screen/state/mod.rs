@@ -559,6 +559,7 @@ impl UiState {
         }
     }
 
+    #[cfg(test)]
     pub(in crate::screen) fn interface_detail_focus(&self) -> Option<InterfaceDetailFocus> {
         match self.mode {
             UiMode::InterfaceDetail { focus, .. } => Some(focus),
