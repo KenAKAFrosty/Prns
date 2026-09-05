@@ -1,7 +1,8 @@
 use core::fmt::Write as _;
 
 use heapless::{String as HString, Vec as HVec};
-use personal_rns::interfaces::{ConnectionState, InterfaceId};
+use personal_rns::interfaces::lora::{ModemPreset, Modulation, RadioProfile};
+use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceMode};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CardKind {
@@ -34,7 +35,7 @@ pub fn card_label(text: &str) -> CardLabel {
 }
 
 const INTERFACE_MENU_DETAIL_TEXT_CAP: usize = 15;
-const INTERFACE_MENU_DETAIL_ROWS_CAP: usize = 8;
+const INTERFACE_MENU_DETAIL_ROWS_CAP: usize = 16;
 type InterfaceMenuDetailText = HString<INTERFACE_MENU_DETAIL_TEXT_CAP>;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -197,6 +198,49 @@ impl InterfaceMenuDetails {
         });
     }
 
+    /// Current Tune settings so the LoRa detail screen shows them without opening the editor.
+    pub fn push_lora_profile(&mut self, profile: RadioProfile) {
+        self.push_info("Reg", profile.region.label());
+
+        let rate = ModemPreset::matching(profile.modulation)
+            .map(ModemPreset::label)
+            .unwrap_or("Custom");
+        self.push_info("Rate", rate);
+
+        let Modulation::Lora {
+            spreading_factor,
+            bandwidth,
+            coding_rate,
+        } = profile.modulation;
+        let mut value = InterfaceMenuDetailText::new();
+        let _ = write!(value, "{}", spreading_factor as u8);
+        self.push_info("SF", value.as_str());
+
+        value.clear();
+        let _ = write!(value, "{} kHz", bandwidth.hz() / 1_000);
+        self.push_info("BW", value.as_str());
+
+        value.clear();
+        let _ = write!(value, "4/{}", coding_rate.denominator());
+        self.push_info("CR", value.as_str());
+
+        let hz = profile.frequency.hz();
+        value.clear();
+        let _ = write!(value, "{}.{:03} MHz", hz / 1_000_000, (hz / 1_000) % 1_000);
+        let _ = self.rows.push(InterfaceMenuDetailRow::from_text(
+            InterfaceMenuDetailKind::Info,
+            value.as_str(),
+        ));
+
+        value.clear();
+        let _ = write!(value, "{} dBm", profile.tx_power.dbm());
+        self.push_info("Pwr", value.as_str());
+
+        value.clear();
+        let _ = write!(value, "{}", profile.preamble.count());
+        self.push_info("Pre", value.as_str());
+    }
+
     pub fn push_lora_spectrum(&mut self, spectrum: LoRaSpectrumMenuDetails) {
         let mut value = InterfaceMenuDetailText::new();
         let _ = write!(
@@ -343,6 +387,7 @@ pub struct Card {
     pub(crate) id: InterfaceId,
     pub(crate) kind: CardKind,
     pub(crate) label: CardLabel,
+    pub(crate) mode: InterfaceMode,
     pub(crate) connection: ConnectionState,
     pub(crate) failure_reason: Option<&'static str>,
     pub(crate) tx_bytes: u64,
@@ -364,6 +409,11 @@ impl Card {
     #[must_use]
     pub const fn kind(&self) -> CardKind {
         self.kind
+    }
+
+    #[must_use]
+    pub const fn mode(&self) -> InterfaceMode {
+        self.mode
     }
 
     #[must_use]
@@ -513,4 +563,6 @@ pub struct LocalDocsAccess<'a> {
 pub struct ScreenContent<'content, 'docs> {
     pub cards: &'content [Card],
     pub local_docs: Option<&'content LocalDocsAccess<'docs>>,
+    /// Status rows for the selected interface detail screen (peers, STA/AP, etc.).
+    pub interface_menu_details: Option<&'content InterfaceMenuDetails>,
 }

@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use personal_rns::bluetooth_auto::BluetoothAutoStatus;
 use personal_rns::interfaces::shared_instance as instance_core;
-use personal_rns::interfaces::tcp;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind};
 use personal_rns::manifold::reconnect::ReconnectPolicy;
 use personal_rns::manifold::tokio::TokioInterfaceStatus;
@@ -26,8 +25,9 @@ use personal_rns::wire::DestinationHash;
 use tokio::sync::Notify;
 
 use personal_hopspot_core::{
-    self as screen, load_host_ble_identity, load_host_node_identity, CardKind,
-    HopspotDestinationSet, IdentityPersistence, BLE_IDENTITY_STORAGE, NODE_IDENTITY_STORAGE,
+    self as screen, load_host_ble_identity, load_host_interface_modes, load_host_node_identity,
+    CardKind, HopspotDestinationSet, IdentityPersistence, InterfaceModeSlot, BLE_IDENTITY_STORAGE,
+    INTERFACE_MODE_STORAGE, NODE_IDENTITY_STORAGE,
 };
 
 use super::persistence;
@@ -147,6 +147,7 @@ fn run_node(ready_tx: Sender<(WindowHandles, persistence::ShutdownFlush)>) {
             load_host_ble_identity(&storage_dir.join(BLE_IDENTITY_STORAGE.as_str()));
         log_identity_persistence("bluetooth", ble_bootstrap.persistence());
         let ble_identity = ble_bootstrap.into_identity();
+        let interface_modes = load_host_interface_modes(&storage_dir.join(INTERFACE_MODE_STORAGE));
 
         let destination_secret = node_identity.into_destination_secret();
         let destinations = HopspotDestinationSet::new(
@@ -205,11 +206,16 @@ fn run_node(ready_tx: Sender<(WindowHandles, persistence::ShutdownFlush)>) {
         };
 
         let rescan = Arc::new(Notify::new());
-        let usb = UsbAutoHost::new(
+        let usb = UsbAutoHost::with_policy(
             USB_INTERFACE_ID,
             scan_native_usb_auto_targets,
             open_native_usb_auto_target_with_baud,
             rescan.clone(),
+            personal_rns::interfaces::usb_auto::HOST_DEFAULTS.configured(
+                interface_modes
+                    .get(InterfaceModeSlot::Usb)
+                    .configured_policy(),
+            ),
         );
         let usb_status = usb.status();
         handle.add_interface(usb);
@@ -227,10 +233,16 @@ fn run_node(ready_tx: Sender<(WindowHandles, persistence::ShutdownFlush)>) {
             prns_ffi::usb_hotplug::watch_serial_hotplug(move || rescan.notify_one());
         }
 
+        let wifi_policy = personal_rns::interfaces::wifi_auto::configured_policy(
+            interface_modes
+                .get(InterfaceModeSlot::Wifi)
+                .configured_policy(),
+        );
         #[cfg(target_os = "macos")]
-        let wifi = AutoWifi::default().with_host_discovery(apple_service_discovery());
+        let wifi =
+            AutoWifi::with_policy(wifi_policy).with_host_discovery(apple_service_discovery());
         #[cfg(not(target_os = "macos"))]
-        let wifi = AutoWifi::default();
+        let wifi = AutoWifi::with_policy(wifi_policy);
         let wifi_status = wifi.status();
         if std::env::var_os("HOPSPOT_WIFI_OFF").is_some() {
             wifi_status.disable();
@@ -238,9 +250,31 @@ fn run_node(ready_tx: Sender<(WindowHandles, persistence::ShutdownFlush)>) {
         }
         handle.supervise(wifi);
 
-        let ble_status = Some(handle.attach(AutoBle::new(ble_identity)).status());
+        let ble_status = Some(
+            handle
+                .attach(AutoBle::with_policy(
+                    ble_identity,
+                    personal_rns::interfaces::bluetooth_auto::defaults_for_bitrate(
+                        personal_rns::interfaces::bluetooth_auto::BLE_BITRATE_GUESS_BPS,
+                    )
+                    .configured(
+                        interface_modes
+                            .get(InterfaceModeSlot::Ble)
+                            .configured_policy(),
+                    ),
+                ))
+                .status(),
+        );
 
-        handle.supervise(SharedInstanceServer::default());
+        handle.supervise(
+            SharedInstanceServer::default().with_policy(
+                personal_rns::interfaces::shared_instance::configured_policy(
+                    interface_modes
+                        .get(InterfaceModeSlot::SharedInstance)
+                        .configured_policy(),
+                ),
+            ),
+        );
         tracing::info!(
             event = "shared_instance_started",
             bus_port = instance_core::DEFAULT_LOCAL_PORT,
@@ -251,9 +285,13 @@ fn run_node(ready_tx: Sender<(WindowHandles, persistence::ShutdownFlush)>) {
 
         let (tcp_status, tcp_id, tcp_target) = match std::env::var("HOPSPOT_TCP_TARGET") {
             Ok(target) if !target.is_empty() => {
-                let tcp = TcpClientInterface::new_with_bitrate(
+                let tcp = TcpClientInterface::with_policy(
                     target.clone(),
-                    tcp::TCP_BITRATE_ESTIMATE,
+                    personal_rns::interfaces::tcp::configured_policy(
+                        interface_modes
+                            .get(InterfaceModeSlot::Tcp)
+                            .configured_policy(),
+                    ),
                     ReconnectPolicy::STANDARD,
                 );
                 let status = tcp.status();

@@ -182,6 +182,20 @@ pub async fn run(spawner: Spawner) -> ! {
         hopspot::RadioProfileLoadNotice::Recovered => hopspot::UiNotice::ProfileRecovered,
         hopspot::RadioProfileLoadNotice::Reset => hopspot::UiNotice::ProfileReset,
     });
+    let mut interface_mode_store =
+        hopspot::InterfaceModeStore::new(shared_flash, board::INTERFACE_MODE_PAGES);
+    let loaded_interface_modes = match interface_mode_store.load().await {
+        Ok(loaded) => loaded,
+        Err(_) => hopspot::LoadedInterfaceModes {
+            table: hopspot::InterfaceModeTable::DEFAULT,
+            follows_default: true,
+            notice: Some(hopspot::InterfaceModeLoadNotice::Reset),
+        },
+    };
+    let interface_mode_startup_notice = loaded_interface_modes.notice.map(|notice| match notice {
+        hopspot::InterfaceModeLoadNotice::Recovered => hopspot::UiNotice::ProfileRecovered,
+        hopspot::InterfaceModeLoadNotice::Reset => hopspot::UiNotice::ProfileReset,
+    });
     if let Some(identity) = ble_identity {
         super::bluetooth_auto::set_columba_identity(sd, server, identity);
     }
@@ -223,6 +237,7 @@ pub async fn run(spawner: Spawner) -> ! {
     );
     let mut manifold_lanes = ManifoldLanes::new();
     let lora_profile = loaded_lora_profile.profile;
+    let working_interface_modes = loaded_interface_modes.table;
     let lora_id = LoRaInterface::<board::Radio>::interface_id(&lora_profile);
     static LORA_STATUS: StaticCell<EmbassyInterfaceStatus> = StaticCell::new();
     let lora_status: &'static EmbassyInterfaceStatus = LORA_STATUS.init(
@@ -259,8 +274,18 @@ pub async fn run(spawner: Spawner) -> ! {
         host_present: || true,
     });
 
+    let mut lora_cfg = lora.descriptor();
+    hopspot::apply_selection_to_descriptor(
+        &mut lora_cfg,
+        working_interface_modes.get(hopspot::InterfaceModeSlot::LoRa),
+    );
+    let mut usb_cfg = usb_dev.descriptor();
+    hopspot::apply_selection_to_descriptor(
+        &mut usb_cfg,
+        working_interface_modes.get(hopspot::InterfaceModeSlot::Usb),
+    );
     let lora_lane = manifold_lanes
-        .claim_accounted_interface(&LORA_MANIFOLD_LANE, lora.descriptor(), lora_status)
+        .claim_accounted_interface(&LORA_MANIFOLD_LANE, lora_cfg, lora_status)
         .expect("LoRa lane is available");
     let ble_supervisor_lane = ble_identity.as_ref().map(|_| {
         manifold_lanes
@@ -268,7 +293,7 @@ pub async fn run(spawner: Spawner) -> ! {
             .expect("Bluetooth supervisor lane is available")
     });
     let usb_lane = manifold_lanes
-        .claim_accounted_interface(&USB_MANIFOLD_LANE, usb_dev.descriptor(), usb_status)
+        .claim_accounted_interface(&USB_MANIFOLD_LANE, usb_cfg, usb_status)
         .expect("USB lane is available");
 
     let handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
@@ -348,11 +373,17 @@ pub async fn run(spawner: Spawner) -> ! {
             shared_instance_config_export: hopspot::SharedInstanceConfigExport::Unavailable,
             gnss: hopspot::GnssAvailability::Unavailable,
         });
-        let startup_notice = identity_startup_notice.or(profile_startup_notice);
+        let startup_notice = identity_startup_notice
+            .or(profile_startup_notice)
+            .or(interface_mode_startup_notice);
         let mut pending_startup_notice = identity_startup_notice
             .is_some()
-            .then_some(profile_startup_notice)
-            .flatten();
+            .then_some(profile_startup_notice.or(interface_mode_startup_notice))
+            .flatten()
+            .or(profile_startup_notice
+                .is_some()
+                .then_some(interface_mode_startup_notice)
+                .flatten());
         let mut notice_timer = PresentedNoticeTimer::new();
         if let Some(notice) = startup_notice {
             show_notice(
@@ -363,6 +394,8 @@ pub async fn run(spawner: Spawner) -> ! {
             );
         }
         let mut working_lora_profile = lora_profile;
+        let mut working_interface_modes = working_interface_modes;
+        let mut interface_mode_store = interface_mode_store;
         let mut refresh_urgency = hopspot::display::PresentationUrgency::Immediate;
         let mut activity = hopspot::CardActivityTracker::<{ MEMBERS + 4 }>::new();
         let mut battery_gauge = hopspot::BatteryGauge::lipo();
@@ -380,7 +413,7 @@ pub async fn run(spawner: Spawner) -> ! {
                 hopspot::ExternalPowerState::from_presence(usb_vbus_present()),
             );
 
-            let snapshots = build_snapshots(lora_status, usb_status);
+            let snapshots = build_snapshots(lora_status, usb_status, working_interface_modes);
             let mut cards = build_cards(&snapshots, lora_status.id(), usb_status.id());
             let now_ms = embassy_time::Instant::now().as_millis();
             let now = hopspot::display::MonotonicMillis::new(now_ms);
@@ -389,6 +422,7 @@ pub async fn run(spawner: Spawner) -> ! {
             let content = hopspot::ScreenContent {
                 cards: &cards,
                 local_docs: None,
+                interface_menu_details: None,
             };
             ui_state.sync(content);
             if let Some(notice) =
@@ -441,6 +475,7 @@ pub async fn run(spawner: Spawner) -> ! {
                 .selected_card(content.cards)
                 .is_some_and(|card| card.id() == lora_status.id())
             {
+                interface_menu_details.push_lora_profile(working_lora_profile);
                 let spectrum = lora_spectrum.snapshot();
                 interface_menu_details.push_lora_spectrum(hopspot::LoRaSpectrumMenuDetails {
                     channel_busy_per_mille: spectrum.channel_busy_per_mille,
@@ -638,6 +673,35 @@ pub async fn run(spawner: Spawner) -> ! {
                             hopspot::UiAction::BlankDisplay => {}
                             hopspot::UiAction::ToggleDisplayAutoOff => {}
                             hopspot::UiAction::CopySharedInstanceConfig => {}
+                            hopspot::UiAction::OpenInterfaceModeEditor => {
+                                if let Some(card) = ui_state.selected_card(content.cards) {
+                                    if let Some(slot) = hopspot::interface_mode_slot(card.kind()) {
+                                        ui_state.open_interface_mode_editor(
+                                            slot,
+                                            working_interface_modes.get(slot),
+                                        );
+                                    }
+                                }
+                            }
+                            hopspot::UiAction::SetInterfaceMode { slot, selection } => {
+                                working_interface_modes.set(slot, selection);
+                                let result = hopspot::apply_and_persist_interface_modes(
+                                    async { true },
+                                    || async {
+                                        interface_mode_store
+                                            .save(working_interface_modes)
+                                            .await
+                                            .is_ok()
+                                    },
+                                )
+                                .await;
+                                show_notice(
+                                    &mut ui_state,
+                                    &mut notice_timer,
+                                    result.notice(),
+                                    NOTICE_DURATION,
+                                );
+                            }
                             hopspot::UiAction::ControlGnss(_) => {}
                             hopspot::UiAction::None => {}
                         }

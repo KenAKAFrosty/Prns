@@ -25,6 +25,8 @@ pub(crate) const JOURNAL_LAYOUT: personal_rns::persistence::FlashJournalLayout =
     personal_hopspot_core::T_ECHO_JOURNAL_LAYOUT;
 pub(crate) const RADIO_PROFILE_PAGES: [u32; 2] =
     personal_hopspot_core::NRF52840_RADIO_PROFILE_PAGES;
+pub(crate) const INTERFACE_MODE_PAGES: [u32; 2] =
+    personal_hopspot_core::T_ECHO_INTERFACE_MODE_PAGES;
 pub(crate) const REMOTE_CONTROL_IDENTITY_FLASH: super::RemoteControlIdentityFlash =
     super::RemoteControlIdentityFlash::at(
         personal_hopspot_core::T_ECHO_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET,

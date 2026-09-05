@@ -8,6 +8,7 @@ pub struct HopspotS3FlashLayout {
     pub flash_capacity: usize,
     pub remote_control_identity_flash_offset: u32,
     pub radio_profile_pages: [u32; 2],
+    pub interface_mode_pages: [u32; 2],
     pub journal: FlashJournalLayout,
 }
 
@@ -18,10 +19,11 @@ pub const S3_8_MIB_FLASH_LAYOUT: HopspotS3FlashLayout = HopspotS3FlashLayout {
     flash_capacity: 8 * 1024 * 1024,
     remote_control_identity_flash_offset: 0x67D000,
     radio_profile_pages: [0x67E000, 0x67F000],
+    interface_mode_pages: [0x680000, 0x681000],
     journal: FlashJournalLayout::new(
-        [0x680000, 0x681000],
+        [0x682000, 0x683000],
         [
-            FlashArenaRange::new(0x682000, 0x741000),
+            FlashArenaRange::new(0x684000, 0x741000),
             FlashArenaRange::new(0x741000, 0x800000),
         ],
     ),
@@ -31,10 +33,11 @@ pub const S3_16_MIB_FLASH_LAYOUT: HopspotS3FlashLayout = HopspotS3FlashLayout {
     flash_capacity: 16 * 1024 * 1024,
     remote_control_identity_flash_offset: 0xE7D000,
     radio_profile_pages: [0xE7E000, 0xE7F000],
+    interface_mode_pages: [0xE80000, 0xE81000],
     journal: FlashJournalLayout::new(
-        [0xE80000, 0xE81000],
+        [0xE82000, 0xE83000],
         [
-            FlashArenaRange::new(0xE82000, 0xF41000),
+            FlashArenaRange::new(0xE84000, 0xF41000),
             FlashArenaRange::new(0xF41000, 0x1000000),
         ],
     ),
@@ -46,6 +49,13 @@ pub const NRF52840_NODE_IDENTITY_FLASH_OFFSET: u32 = 0xEB000;
 pub const T114_RECOVERY_BOOTLOADER_FLASH_OFFSET: u32 = 0xEC000;
 pub const T_ECHO_BLE_IDENTITY_FLASH_OFFSET: u32 = 0xEC000;
 pub const T_ECHO_RESERVED_FLASH_END: u32 = 0xED000;
+/// Heltec display boards (T114 / T096): dual pages between the shrunk journal and BLE identity.
+pub const HELTEC_DISPLAY_INTERFACE_MODE_PAGES: [u32; 2] = [0xE6000, 0xE7000];
+/// T-Echo / Mesh Tower V2 share the dual pages immediately below radio-profile storage.
+pub const T_ECHO_INTERFACE_MODE_PAGES: [u32; 2] = [0xE7000, 0xE8000];
+pub const MESH_TOWER_V2_INTERFACE_MODE_PAGES: [u32; 2] = T_ECHO_INTERFACE_MODE_PAGES;
+/// T1000-E: dual pages between the shrunk journal and the node-identity vault.
+pub const T1000E_INTERFACE_MODE_PAGES: [u32; 2] = [0xEE000, 0xEF000];
 pub const MESH_TOWER_V2_RADIO_PROFILE_FLASH_OFFSET: u32 = 0xE9000;
 pub const MESH_TOWER_V2_BLE_IDENTITY_FLASH_OFFSET: u32 = 0xEA000;
 pub const MESH_TOWER_V2_RECOVERY_BOOTLOADER_FLASH_OFFSET: u32 = 0xEC000;
@@ -54,7 +64,7 @@ pub const T1000E_RECOVERY_BOOTLOADER_FLASH_OFFSET: u32 = 0xF4000;
 pub const T096_APPLICATION_DATA_END: u32 = 0xEC000;
 pub const T096_FACTORY_RESERVED_FLASH_OFFSET: u32 = 0xED000;
 pub const T096_RECOVERY_BOOTLOADER_FLASH_OFFSET: u32 = 0xF4000;
-pub const T_ECHO_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET: u32 = 0xBF000;
+pub const T_ECHO_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET: u32 = 0xC0000;
 pub const HELTEC_DISPLAY_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET: u32 = 0xE1000;
 pub const MESH_TOWER_V2_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET: u32 = 0xE2000;
 pub const T1000E_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET: u32 = 0xE9000;
@@ -93,12 +103,15 @@ const NRF52840_S140_APPLICATION_RAM_ORIGIN: u32 = 0x2000C000;
 const T1000E_APPLICATION_RAM_ORIGIN: u32 = 0x20010000;
 const NRF52840_RAM_END: u32 = 0x20040000;
 const NRF52840_MINIMUM_RUNTIME_STACK_BYTES: u32 = 68 * 1024;
-pub const T_ECHO_MIN_ARENA_BYTES: usize = 19 * HOPSPOT_FLASH_PAGE_BYTES;
+/// Heltec display boards (T096 / T114) run closer to the BSS ceiling once interface-mode
+/// persistence and the Options/detail face paths are linked; keep a 4 KiB smaller floor.
+const HELTEC_DISPLAY_MINIMUM_RUNTIME_STACK_BYTES: u32 = 64 * 1024;
+pub const T_ECHO_MIN_ARENA_BYTES: usize = 17 * HOPSPOT_FLASH_PAGE_BYTES;
 pub const T_ECHO_JOURNAL_LAYOUT: FlashJournalLayout = FlashJournalLayout::new(
-    [0xC0000, 0xC1000],
+    [0xC1000, 0xC2000],
     [
-        FlashArenaRange::new(0xC2000, 0xD6000),
-        FlashArenaRange::new(0xD6000, 0xE9000),
+        FlashArenaRange::new(0xC3000, 0xD6000),
+        FlashArenaRange::new(0xD6000, 0xE7000),
     ],
 );
 pub const T_ECHO_S140_V6_FIRMWARE_MEMORY: Nrf52840FirmwareMemory = Nrf52840FirmwareMemory {
@@ -124,12 +137,12 @@ pub const T_ECHO_S140_V7_FIRMWARE_MEMORY: Nrf52840FirmwareMemory = Nrf52840Firmw
     minimum_runtime_stack_bytes: NRF52840_MINIMUM_RUNTIME_STACK_BYTES,
 };
 
-pub const NRF52840_MIN_ARENA_BYTES: usize = 2 * HOPSPOT_FLASH_PAGE_BYTES;
+pub const NRF52840_MIN_ARENA_BYTES: usize = HOPSPOT_FLASH_PAGE_BYTES;
 pub const HELTEC_DISPLAY_NRF52840_JOURNAL_LAYOUT: FlashJournalLayout = FlashJournalLayout::new(
     [0xE2000, 0xE3000],
     [
-        FlashArenaRange::new(0xE4000, 0xE6000),
-        FlashArenaRange::new(0xE6000, 0xE8000),
+        FlashArenaRange::new(0xE4000, 0xE5000),
+        FlashArenaRange::new(0xE5000, 0xE6000),
     ],
 );
 pub const HELTEC_DISPLAY_NRF52840_FIRMWARE_MEMORY: Nrf52840FirmwareMemory =
@@ -142,13 +155,13 @@ pub const HELTEC_DISPLAY_NRF52840_FIRMWARE_MEMORY: Nrf52840FirmwareMemory =
             NRF52840_S140_APPLICATION_RAM_ORIGIN,
             NRF52840_RAM_END,
         ),
-        minimum_runtime_stack_bytes: NRF52840_MINIMUM_RUNTIME_STACK_BYTES,
+        minimum_runtime_stack_bytes: HELTEC_DISPLAY_MINIMUM_RUNTIME_STACK_BYTES,
     };
 pub const MESH_TOWER_V2_JOURNAL_LAYOUT: FlashJournalLayout = FlashJournalLayout::new(
     [0xE3000, 0xE4000],
     [
-        FlashArenaRange::new(0xE5000, 0xE7000),
-        FlashArenaRange::new(0xE7000, 0xE9000),
+        FlashArenaRange::new(0xE5000, 0xE6000),
+        FlashArenaRange::new(0xE6000, 0xE7000),
     ],
 );
 pub const MESH_TOWER_V2_FIRMWARE_MEMORY: Nrf52840FirmwareMemory = Nrf52840FirmwareMemory {
@@ -165,8 +178,8 @@ pub const MESH_TOWER_V2_FIRMWARE_MEMORY: Nrf52840FirmwareMemory = Nrf52840Firmwa
 pub const T1000E_JOURNAL_LAYOUT: FlashJournalLayout = FlashJournalLayout::new(
     [0xEA000, 0xEB000],
     [
-        FlashArenaRange::new(0xEC000, 0xEE000),
-        FlashArenaRange::new(0xEE000, 0xF0000),
+        FlashArenaRange::new(0xEC000, 0xED000),
+        FlashArenaRange::new(0xED000, 0xEE000),
     ],
 );
 pub const T1000E_FIRMWARE_MEMORY: Nrf52840FirmwareMemory = Nrf52840FirmwareMemory {
@@ -190,6 +203,14 @@ const _: () = {
     );
     assert!(
         S3_8_MIB_FLASH_LAYOUT.radio_profile_pages[1] + PAGE
+            == S3_8_MIB_FLASH_LAYOUT.interface_mode_pages[0]
+    );
+    assert!(
+        S3_8_MIB_FLASH_LAYOUT.interface_mode_pages[0] + PAGE
+            == S3_8_MIB_FLASH_LAYOUT.interface_mode_pages[1]
+    );
+    assert!(
+        S3_8_MIB_FLASH_LAYOUT.interface_mode_pages[1] + PAGE
             == S3_8_MIB_FLASH_LAYOUT.journal.timebase_regions[0]
     );
     assert!(
@@ -207,6 +228,14 @@ const _: () = {
     );
     assert!(
         S3_16_MIB_FLASH_LAYOUT.radio_profile_pages[1] + PAGE
+            == S3_16_MIB_FLASH_LAYOUT.interface_mode_pages[0]
+    );
+    assert!(
+        S3_16_MIB_FLASH_LAYOUT.interface_mode_pages[0] + PAGE
+            == S3_16_MIB_FLASH_LAYOUT.interface_mode_pages[1]
+    );
+    assert!(
+        S3_16_MIB_FLASH_LAYOUT.interface_mode_pages[1] + PAGE
             == S3_16_MIB_FLASH_LAYOUT.journal.timebase_regions[0]
     );
     assert!(
@@ -226,7 +255,9 @@ const _: () = {
         T_ECHO_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET + PAGE
             == T_ECHO_JOURNAL_LAYOUT.timebase_regions[0]
     );
-    assert!(T_ECHO_JOURNAL_LAYOUT.arenas[1].end == NRF52840_RADIO_PROFILE_PAGES[0]);
+    assert!(T_ECHO_JOURNAL_LAYOUT.arenas[1].end == T_ECHO_INTERFACE_MODE_PAGES[0]);
+    assert!(T_ECHO_INTERFACE_MODE_PAGES[0] + PAGE == T_ECHO_INTERFACE_MODE_PAGES[1]);
+    assert!(T_ECHO_INTERFACE_MODE_PAGES[1] + PAGE == NRF52840_RADIO_PROFILE_PAGES[0]);
     assert!(
         HELTEC_DISPLAY_NRF52840_FIRMWARE_MEMORY
             .application_flash
@@ -238,8 +269,13 @@ const _: () = {
             == HELTEC_DISPLAY_NRF52840_JOURNAL_LAYOUT.timebase_regions[0]
     );
     assert!(
-        HELTEC_DISPLAY_NRF52840_JOURNAL_LAYOUT.arenas[1].end == NRF52840_BLE_IDENTITY_FLASH_OFFSET
+        HELTEC_DISPLAY_NRF52840_JOURNAL_LAYOUT.arenas[1].end
+            == HELTEC_DISPLAY_INTERFACE_MODE_PAGES[0]
     );
+    assert!(
+        HELTEC_DISPLAY_INTERFACE_MODE_PAGES[0] + PAGE == HELTEC_DISPLAY_INTERFACE_MODE_PAGES[1]
+    );
+    assert!(HELTEC_DISPLAY_INTERFACE_MODE_PAGES[1] + PAGE == NRF52840_BLE_IDENTITY_FLASH_OFFSET);
     assert!(
         MESH_TOWER_V2_FIRMWARE_MEMORY.application_flash.end
             == MESH_TOWER_V2_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET
@@ -248,7 +284,11 @@ const _: () = {
         MESH_TOWER_V2_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET + PAGE
             == MESH_TOWER_V2_JOURNAL_LAYOUT.timebase_regions[0]
     );
-    assert!(MESH_TOWER_V2_JOURNAL_LAYOUT.arenas[1].end == NRF52840_RADIO_PROFILE_PAGES[0]);
+    assert!(MESH_TOWER_V2_JOURNAL_LAYOUT.arenas[1].end == MESH_TOWER_V2_INTERFACE_MODE_PAGES[0]);
+    assert!(MESH_TOWER_V2_INTERFACE_MODE_PAGES[0] + PAGE == MESH_TOWER_V2_INTERFACE_MODE_PAGES[1]);
+    assert!(
+        MESH_TOWER_V2_INTERFACE_MODE_PAGES[1] + PAGE == MESH_TOWER_V2_RADIO_PROFILE_FLASH_OFFSET
+    );
     assert!(
         T1000E_FIRMWARE_MEMORY.application_flash.end == T1000E_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET
     );
@@ -256,6 +296,9 @@ const _: () = {
         T1000E_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET + PAGE
             == T1000E_JOURNAL_LAYOUT.timebase_regions[0]
     );
+    assert!(T1000E_JOURNAL_LAYOUT.arenas[1].end == T1000E_INTERFACE_MODE_PAGES[0]);
+    assert!(T1000E_INTERFACE_MODE_PAGES[0] + PAGE == T1000E_INTERFACE_MODE_PAGES[1]);
+    assert!(T1000E_INTERFACE_MODE_PAGES[1] + PAGE == T1000E_NODE_IDENTITY_FLASH_OFFSET);
     assert!(T_ECHO_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET.is_multiple_of(PAGE));
     assert!(HELTEC_DISPLAY_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET.is_multiple_of(PAGE));
     assert!(MESH_TOWER_V2_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET.is_multiple_of(PAGE));
@@ -280,7 +323,6 @@ const _: () = {
     assert!(NRF52840_NODE_IDENTITY_FLASH_OFFSET + PAGE == T114_RECOVERY_BOOTLOADER_FLASH_OFFSET);
     assert!(NRF52840_NODE_IDENTITY_FLASH_OFFSET + PAGE == T_ECHO_BLE_IDENTITY_FLASH_OFFSET);
     assert!(T_ECHO_BLE_IDENTITY_FLASH_OFFSET + PAGE == T_ECHO_RESERVED_FLASH_END);
-    assert!(MESH_TOWER_V2_JOURNAL_LAYOUT.arenas[1].end == MESH_TOWER_V2_RADIO_PROFILE_FLASH_OFFSET);
     assert!(
         MESH_TOWER_V2_RADIO_PROFILE_FLASH_OFFSET + PAGE == MESH_TOWER_V2_BLE_IDENTITY_FLASH_OFFSET
     );
@@ -289,7 +331,6 @@ const _: () = {
         NRF52840_NODE_IDENTITY_FLASH_OFFSET + PAGE
             == MESH_TOWER_V2_RECOVERY_BOOTLOADER_FLASH_OFFSET
     );
-    assert!(T1000E_JOURNAL_LAYOUT.arenas[1].end == T1000E_NODE_IDENTITY_FLASH_OFFSET);
     assert!(
         T1000E_NODE_IDENTITY_FLASH_OFFSET + 4 * PAGE == T1000E_RECOVERY_BOOTLOADER_FLASH_OFFSET
     );
@@ -339,6 +380,10 @@ mod tests {
         assert_eq!(profile_offset, layout.radio_profile_pages[0]);
         assert_eq!(profile_size, 2 * HOPSPOT_FLASH_PAGE_BYTES as u32);
 
+        let (mode_offset, mode_size) = partition(csv, "iface_mode");
+        assert_eq!(mode_offset, layout.interface_mode_pages[0]);
+        assert_eq!(mode_size, 2 * HOPSPOT_FLASH_PAGE_BYTES as u32);
+
         let (journal_offset, journal_size) = partition(csv, "prns_state");
         assert_eq!(journal_offset, layout.journal.timebase_regions[0]);
         assert_eq!(journal_offset + journal_size, layout.flash_capacity as u32);
@@ -383,6 +428,13 @@ mod tests {
             T_ECHO_JOURNAL_LAYOUT.arenas[1].len() as usize,
             T_ECHO_MIN_ARENA_BYTES
         );
+        assert_eq!(T_ECHO_INTERFACE_MODE_PAGES, [0xE7000, 0xE8000]);
+        assert_eq!(
+            MESH_TOWER_V2_INTERFACE_MODE_PAGES,
+            T_ECHO_INTERFACE_MODE_PAGES
+        );
+        assert_eq!(HELTEC_DISPLAY_INTERFACE_MODE_PAGES, [0xE6000, 0xE7000]);
+        assert_eq!(T1000E_INTERFACE_MODE_PAGES, [0xEE000, 0xEF000]);
         assert_eq!(NRF52840_RADIO_PROFILE_PAGES, [0xE9000, 0xEA000]);
         assert_eq!(
             NRF52840_RADIO_PROFILE_PAGES[1] + HOPSPOT_FLASH_PAGE_BYTES as u32,
@@ -403,7 +455,7 @@ mod tests {
         assert_eq!(
             T_ECHO_S140_V6_FIRMWARE_MEMORY,
             Nrf52840FirmwareMemory {
-                application_flash: FirmwareAddressRange::new(0x26000, 0xBF000),
+                application_flash: FirmwareAddressRange::new(0x26000, 0xC0000),
                 application_ram: FirmwareAddressRange::new(0x2000C000, 0x20040000),
                 minimum_runtime_stack_bytes: 68 * 1024,
             }
@@ -411,7 +463,7 @@ mod tests {
         assert_eq!(
             T_ECHO_S140_V7_FIRMWARE_MEMORY,
             Nrf52840FirmwareMemory {
-                application_flash: FirmwareAddressRange::new(0x27000, 0xBF000),
+                application_flash: FirmwareAddressRange::new(0x27000, 0xC0000),
                 application_ram: FirmwareAddressRange::new(0x2000C000, 0x20040000),
                 minimum_runtime_stack_bytes: 68 * 1024,
             }
@@ -421,7 +473,7 @@ mod tests {
             Nrf52840FirmwareMemory {
                 application_flash: FirmwareAddressRange::new(0x26000, 0xE1000),
                 application_ram: FirmwareAddressRange::new(0x2000C000, 0x20040000),
-                minimum_runtime_stack_bytes: 68 * 1024,
+                minimum_runtime_stack_bytes: 64 * 1024,
             }
         );
         assert_eq!(
@@ -447,26 +499,26 @@ mod tests {
         for (layout, expected_start, expected_end, expected_arena_lengths) in [
             (
                 T_ECHO_JOURNAL_LAYOUT,
-                0xC0000,
-                0xE9000,
-                [20 * HOPSPOT_FLASH_PAGE_BYTES, T_ECHO_MIN_ARENA_BYTES],
+                0xC1000,
+                0xE7000,
+                [19 * HOPSPOT_FLASH_PAGE_BYTES, T_ECHO_MIN_ARENA_BYTES],
             ),
             (
                 HELTEC_DISPLAY_NRF52840_JOURNAL_LAYOUT,
                 0xE2000,
-                0xE8000,
+                0xE6000,
                 [NRF52840_MIN_ARENA_BYTES; 2],
             ),
             (
                 MESH_TOWER_V2_JOURNAL_LAYOUT,
                 0xE3000,
-                0xE9000,
+                0xE7000,
                 [NRF52840_MIN_ARENA_BYTES; 2],
             ),
             (
                 T1000E_JOURNAL_LAYOUT,
                 0xEA000,
-                0xF0000,
+                0xEE000,
                 [NRF52840_MIN_ARENA_BYTES; 2],
             ),
         ] {

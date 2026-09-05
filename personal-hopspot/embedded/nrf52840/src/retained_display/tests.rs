@@ -98,6 +98,7 @@ fn render_input<'a>(state: &'a UiState, details: &'a InterfaceMenuDetails) -> Re
         content: ScreenContent {
             cards: &[],
             local_docs: None,
+            interface_menu_details: None,
         },
         battery: personal_hopspot_core::PowerSnapshot::UNKNOWN,
         gnss: None,

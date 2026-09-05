@@ -123,6 +123,7 @@ pub(super) fn build_snapshots(
     tcp: Option<&EmbassyInterfaceStatus>,
     lora: Option<&EmbassyInterfaceStatus>,
     espnow: Option<&EmbassyInterfaceStatus>,
+    modes: personal_hopspot_core::InterfaceModeTable,
 ) -> HVec<InterfaceSnapshot, INTERFACE_CAPACITY> {
     use personal_rns::interfaces::InterfaceStatus;
     let ble = BluetoothAutoStatus::new(&BLE_SHARED);
@@ -174,7 +175,7 @@ pub(super) fn build_snapshots(
         };
         let _ = snapshots.push(InterfaceSnapshot {
             id,
-            mode: personal_rns::interfaces::InterfaceMode::Full,
+            mode: personal_hopspot_core::mode_from_table(modes, id.kind()),
             gravity: personal_rns::interfaces::InterfaceGravity::ZERO,
             connection,
             failure_reason: status.failure_reason(),
@@ -271,6 +272,18 @@ pub(super) fn add_manifold_pressure(
 }
 
 #[cfg(feature = "lora")]
+pub(super) fn add_lora_profile(
+    details: &mut screen::InterfaceMenuDetails,
+    selected_card: Option<&screen::Card>,
+    profile: personal_rns::interfaces::lora::RadioProfile,
+) {
+    if !selected_card.is_some_and(|card| card.kind() == screen::CardKind::LoRa) {
+        return;
+    }
+    details.push_lora_profile(profile);
+}
+
+#[cfg(feature = "lora")]
 pub(super) fn add_lora_spectrum(
     details: &mut screen::InterfaceMenuDetails,
     selected_card: Option<&screen::Card>,
@@ -297,6 +310,7 @@ pub(super) fn build_interface_menu_details(
     selected_card: Option<&screen::Card>,
     snapshots: &[InterfaceSnapshot],
     usb: &EmbassyInterfaceStatus,
+    #[cfg(feature = "lora")] lora_profile: personal_rns::interfaces::lora::RadioProfile,
     #[cfg(feature = "lora")] lora_spectrum: &LoRaSpectrumStatus,
     wifi: Option<&AutoWifiStatus<MEMBERS>>,
     wifi_config: &HopspotWifiConfig,
@@ -353,6 +367,8 @@ pub(super) fn build_interface_menu_details(
         }
         _ => screen::InterfaceMenuDetails::empty(),
     };
+    #[cfg(feature = "lora")]
+    add_lora_profile(&mut details, selected_card, lora_profile);
     #[cfg(feature = "lora")]
     add_lora_spectrum(&mut details, selected_card, lora_spectrum);
     add_manifold_pressure(&mut details, selected_card);
