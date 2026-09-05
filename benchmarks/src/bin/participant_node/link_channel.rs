@@ -44,11 +44,11 @@ pub(super) async fn run_runtime_endpoint(
                 Some(Event::Settled(id, settlement))
             }
             PrnsEvent::Diagnostic(Diagnostic::LinkEstablished(_)) => Some(Event::LinkUp),
-            PrnsEvent::Diagnostic(Diagnostic::LinkClosed { reason, .. }) => {
+            PrnsEvent::Diagnostic(Diagnostic::LinkClosed { link_id, reason }) => {
                 if reason != LinkClosedReason::PeerClosed {
                     eprintln!("DIED role={event_role} mechanism=link reason={reason:?}");
                 }
-                Some(Event::Closed)
+                Some(Event::Closed { link_id, reason })
             }
             PrnsEvent::Message(Message::Delivered(Delivery::Single(delivery))) => {
                 if count_deliveries && callback_delivery_counters.record(delivery.plaintext.len()) {
@@ -295,7 +295,7 @@ async fn respond_link(
 ) {
     let mut links_up = 0usize;
     let mut measurement_ready = false;
-    let mut closed_links = 0usize;
+    let mut closed_links = std::collections::HashSet::with_capacity(expected_links);
     let mut announce = tokio::time::interval(announce_every);
     let mut announcing = true;
     let report_at = tokio::time::Instant::now() + duration + drain + DRAIN_GRACE;
@@ -329,10 +329,16 @@ async fn respond_link(
                         }
                     }
                     Some(Event::FirstDelivered) => {}
-                    Some(Event::Closed) if closed_links + 1 < expected_links => {
-                        closed_links += 1;
+                    Some(Event::Closed { link_id, .. }) => {
+                        closed_links.insert(link_id);
+                        if closed_links.len() < expected_links {
+                            continue;
+                        }
+                        let (delivered, payload_bytes) = delivery_counters.snapshot();
+                        println!("RESULT delivered={delivered} payload_bytes={payload_bytes}");
+                        return;
                     }
-                    Some(Event::Closed) | None => {
+                    None => {
                         let (delivered, payload_bytes) = delivery_counters.snapshot();
                         println!("RESULT delivered={delivered} payload_bytes={payload_bytes}");
                         return;

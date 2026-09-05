@@ -955,16 +955,15 @@ def initiate_request(name, block, profile, duration):
     with state_changed:
         for _ in range(profile["window"]):
             send_one(available_links.popleft())
-    drain_deadline = deadline + DRAIN_GRACE
     with state_changed:
-        while time.monotonic() < drain_deadline:
+        while True:
             in_flight = state["in_flight"]
             if in_flight < profile["window"] and available_links and time.monotonic() < deadline:
                 send_one(available_links.popleft())
                 continue
             if in_flight == 0:
                 break
-            state_changed.wait(max(0.0, drain_deadline - time.monotonic()))
+            state_changed.wait()
     elapsed_ms = int((time.monotonic() - started) * 1000)
     with state_changed:
         pending = len(pending_receipts)

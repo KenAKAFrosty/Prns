@@ -24,13 +24,15 @@ impl RequestEndpoint<RequestServer> for BenchSizedRequestEndpoint {
         let mut framed = Vec::with_capacity(wanted + 3);
         begin_msgpack_bin(wanted, &mut framed);
         framed.extend_from_slice(&cx.state.scratch[..wanted]);
-        if request.get(2..6) != Some(b"WARM") {
+        let measured = request.get(2..6) != Some(b"WARM");
+        let response = cx.respond(framed);
+        if measured && response.is_ok() {
             cx.state.served.fetch_add(1, Ordering::Relaxed);
             cx.state
                 .response_bytes
                 .fetch_add(wanted as u64, Ordering::Relaxed);
         }
-        cx.respond(framed)
+        response
     }
 }
 
@@ -79,7 +81,9 @@ pub(super) async fn run_request_endpoint(
         let on_event = move |event: PrnsEvent<'_>, _state: &RequestServer| {
             let mapped = match event {
                 PrnsEvent::Diagnostic(Diagnostic::LinkEstablished(_)) => Some(Event::LinkUp),
-                PrnsEvent::Diagnostic(Diagnostic::LinkClosed { .. }) => Some(Event::Closed),
+                PrnsEvent::Diagnostic(Diagnostic::LinkClosed { link_id, reason }) => {
+                    Some(Event::Closed { link_id, reason })
+                }
                 _ => None,
             };
             if let Some(event) = mapped {
@@ -157,7 +161,9 @@ pub(super) async fn respond_request_runtime(
 ) {
     let mut links_up = 0usize;
     let mut measurement_ready = false;
-    let mut closed_links = 0usize;
+    let mut closed_links = std::collections::HashSet::with_capacity(initiator_count);
+    let mut duplicate_closes = 0u64;
+    let mut unexpected_closes = 0u64;
     let mut announce = tokio::time::interval(announce_every);
     let mut announcing = true;
     loop {
@@ -184,14 +190,38 @@ pub(super) async fn respond_request_runtime(
                             println!("MEASURE_READY");
                         }
                     }
-                    Some(Event::Closed) if closed_links + 1 < initiator_count => {
-                        closed_links += 1;
-                    }
-                    Some(Event::Closed) | None => {
+                    Some(Event::Closed { link_id, reason }) => {
+                        if !closed_links.insert(link_id) {
+                            duplicate_closes += 1;
+                            eprintln!(
+                                "LINK_CLOSED_DUPLICATE role=responder mechanism=request link_id={:?} reason={reason:?}",
+                                link_id.as_bytes(),
+                            );
+                        }
+                        if reason != LinkClosedReason::PeerClosed {
+                            unexpected_closes += 1;
+                            eprintln!(
+                                "LINK_CLOSED_UNEXPECTED role=responder mechanism=request link_id={:?} reason={reason:?}",
+                                link_id.as_bytes(),
+                            );
+                        }
+                        if closed_links.len() < initiator_count {
+                            continue;
+                        }
                         println!(
-                            "RESULT served={} response_bytes={}",
+                            "RESULT served={} response_bytes={} closed_links={} duplicate_closes={duplicate_closes} unexpected_closes={unexpected_closes}",
                             served.load(Ordering::Relaxed),
-                            response_bytes.load(Ordering::Relaxed)
+                            response_bytes.load(Ordering::Relaxed),
+                            closed_links.len(),
+                        );
+                        return;
+                    }
+                    None => {
+                        println!(
+                            "RESULT served={} response_bytes={} closed_links={} duplicate_closes={duplicate_closes} unexpected_closes={unexpected_closes}",
+                            served.load(Ordering::Relaxed),
+                            response_bytes.load(Ordering::Relaxed),
+                            closed_links.len(),
                         );
                         return;
                     }
@@ -317,12 +347,7 @@ pub(super) async fn initiate_request_runtime(
         );
     }
 
-    let drain_deadline = deadline + drain_grace(profile);
-    while !tasks.is_empty() {
-        let Ok(Some(joined)) = tokio::time::timeout_at(drain_deadline, tasks.join_next()).await
-        else {
-            break;
-        };
+    while let Some(joined) = tasks.join_next().await {
         let (link_id, _request_len, _wanted, issued_at, result) =
             joined.expect("request task remains alive");
         match result {
@@ -343,8 +368,6 @@ pub(super) async fn initiate_request_runtime(
             );
         }
     }
-    timeouts += tasks.len() as u64;
-    tasks.abort_all();
     let elapsed_ms = started.elapsed().as_millis().max(1) as u64;
     println!("MEASURE_DONE");
 
@@ -354,7 +377,7 @@ pub(super) async fn initiate_request_runtime(
     rtts.sort_by(f64::total_cmp);
     let seconds = (elapsed_ms as f64 / 1_000.0).max(f64::EPSILON);
     println!(
-        "RESULT sent={sent} delivered={delivered} timeouts={timeouts} \
+        "RESULT sent={sent} delivered={delivered} timeouts={timeouts} raced=0 pending=0 \
          request_bytes={request_bytes} response_bytes={response_bytes} \
          expected_response_bytes={expected_response_bytes} \
          elapsed_ms={elapsed_ms} requests_per_sec={:.1} \
