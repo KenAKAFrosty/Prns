@@ -81,6 +81,7 @@ fn instance(
         blackhole_source: credentials.transport_identity_hash(),
         transport_identity: credentials.transport_identity_hash(),
         network_identity: None,
+        probe_responder: None,
         credentials,
         blackhole_files: RnsBlackholeFiles::new(identity_dir.join("storage/blackhole")),
         ports,
