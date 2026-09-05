@@ -19,7 +19,7 @@ use personal_rns::interfaces::{hardware_mtu_for_bitrate, tcp};
 
 use arguments::{parse_args, Args, RunnerCommand};
 use implementation::{implementation, Implementation};
-use process::{await_line, spawn_role};
+use process::{await_line, spawn_role, try_await_line};
 use results::{file_results, CollectedRun};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,6 +82,11 @@ fn run_scenario(args: &Args) {
     let manifest = scenario_dir(args.scenario.as_str()).join("manifest.json");
     assert!(manifest.exists(), "no manifest at {}", manifest.display());
     let manifest_data = load_manifest(args.scenario).expect("validated scenario manifest");
+    assert!(
+        args.transport_window.is_none()
+            || args.scenario == benchmarks::ScenarioId::RawTransportThroughput,
+        "--transport-window belongs to raw-transport-throughput"
+    );
     match manifest_data.topology {
         ScenarioTopology::Direct => {
             assert!(
@@ -200,6 +205,9 @@ fn run_transport(args: &Args, manifest_data: &ScenarioManifest, manifest: &std::
     let mut driver_command = raw_driver_command();
     if args.smoke {
         driver_command.env("BENCHMARK_SMOKE", "1");
+    }
+    if let Some(window) = args.transport_window {
+        driver_command.env("BENCHMARK_TRANSPORT_WINDOW", window.get().to_string());
     }
     let mut driver = spawn_role(driver_command, manifest, "wire-driver", &addresses, args);
     await_line(&driver, "READY", Duration::from_secs(10));
@@ -334,23 +342,37 @@ fn run_interop(args: &Args, manifest_data: &ScenarioManifest, manifest: &std::pa
         .expect("initiator stopped issuing and drained every outstanding operation");
     let result = await_line(&initiator, "RESULT", Duration::from_secs(30));
     let resource_collection = manifest_data.conformance_rule == ConformanceRule::ExactResource;
-    if resource_collection {
-        responder.set_collection_target(
+    let responder_result = if resource_collection {
+        let collection_target = responder.set_collection_target(
             result_metric(&result, "settled"),
             result_metric(&result, "payload_bytes"),
         );
-    }
-    let responder_result = await_line(
-        &responder,
-        "RESULT",
-        if resource_collection {
-            Duration::from_millis(drain_timeout_ms + 10_000)
-        } else {
-            Duration::from_secs(10)
-        },
-    );
+        match collection_target {
+            Ok(()) => match try_await_line(
+                &responder,
+                "RESULT",
+                Duration::from_millis(drain_timeout_ms + 10_000),
+            ) {
+                Ok(result) => result,
+                Err(error) => {
+                    eprintln!("COLLECTION_FAILURE stage=result error={error:?}");
+                    responder.terminate();
+                    "RESULT received=0 payload_bytes=0 collection_failed=1".to_string()
+                }
+            },
+            Err(error) => {
+                eprintln!("COLLECTION_FAILURE stage=target error={error}");
+                responder.terminate();
+                "RESULT received=0 payload_bytes=0 collection_failed=1".to_string()
+            }
+        }
+    } else {
+        await_line(&responder, "RESULT", Duration::from_secs(10))
+    };
     if resource_collection {
-        initiator.release_collection();
+        if let Err(error) = initiator.release_collection() {
+            eprintln!("COLLECTION_FAILURE stage=release error={error}");
+        }
     }
     phase
         .advance(MeasurementPhase::Complete)
