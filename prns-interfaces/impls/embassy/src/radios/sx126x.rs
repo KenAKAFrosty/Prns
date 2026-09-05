@@ -963,7 +963,7 @@ mod tests {
     use embedded_hal_async::delay::DelayNs;
     use embedded_hal_async::digital::Wait;
     use embedded_hal_async::spi::SpiDevice;
-    use prns_core::interfaces::lora::{TxPower, DEFAULT_915_PROFILE};
+    use prns_core::interfaces::lora::{TxPower, US915_AUTO_LORA_PROFILE};
 
     #[derive(Debug)]
     struct MockErr;
@@ -1241,12 +1241,12 @@ mod tests {
     #[test]
     fn reticulum_profile_maps_to_the_existing_sx126x_configuration() {
         assert_eq!(
-            radio_config(DEFAULT_915_PROFILE),
+            radio_config(US915_AUTO_LORA_PROFILE),
             RadioConfig {
-                frequency_hz: 915_000_000,
+                frequency_hz: 921_500_000,
                 modulation: Modulation::Lora {
-                    spreading_factor: SpreadingFactor::Sf9,
-                    bandwidth: Bandwidth::Bw250,
+                    spreading_factor: SpreadingFactor::Sf7,
+                    bandwidth: Bandwidth::Bw500,
                     coding_rate: CodingRate::Cr4_5,
                 },
                 packet: LoraPacket {
@@ -1293,7 +1293,7 @@ mod tests {
     #[test]
     fn sx126x_owns_its_transmit_power_compatibility() {
         let radio = mock_radio();
-        let mut profile = DEFAULT_915_PROFILE;
+        let mut profile = US915_AUTO_LORA_PROFILE;
         profile.tx_power = TxPower::new(MIN_TX_POWER_DBM - 1);
         assert_eq!(profile.validate(), Ok(()));
         assert_eq!(
@@ -1330,7 +1330,7 @@ mod tests {
             board,
         );
 
-        let mut profile = DEFAULT_915_PROFILE;
+        let mut profile = US915_AUTO_LORA_PROFILE;
         profile.tx_power = TxPower::new(4);
         assert_eq!(
             radio.validate_profile(profile),
@@ -1343,7 +1343,7 @@ mod tests {
             )
         );
 
-        block_on(radio.init(radio_config(DEFAULT_915_PROFILE))).expect("init");
+        block_on(radio.init(radio_config(US915_AUTO_LORA_PROFILE))).expect("init");
         assert_eq!(radio.tx_power_dbm, 8);
         assert!(
             log.borrow()

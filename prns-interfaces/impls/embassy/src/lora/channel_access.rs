@@ -569,7 +569,7 @@ mod tests {
     use crate::lora::airtime_quantum::ServiceAge;
     use prns_core::interfaces::lora::{
         CodingRate, Frequency, LoraBandwidth, ModemPreset, PreambleSymbols, Region,
-        SpreadingFactor, TxPower, DEFAULT_915_PROFILE,
+        SpreadingFactor, TxPower, US915_AUTO_LORA_PROFILE,
     };
 
     fn begin(access: &mut ChannelAccess, entropy: u16) {
@@ -583,8 +583,8 @@ mod tests {
 
     #[test]
     fn timing_tracks_symbols_and_preserves_profile_bounds() {
-        let normal = ChannelTiming::for_profile(DEFAULT_915_PROFILE);
-        assert_eq!(normal.slot_ms(), 25);
+        let normal = ChannelTiming::for_profile(US915_AUTO_LORA_PROFILE);
+        assert_eq!(normal.slot_ms(), 24);
         assert_eq!(normal.sample_ms(), 6);
 
         let fastest = RadioProfile {
@@ -602,14 +602,14 @@ mod tests {
 
         let slowest = RadioProfile {
             modulation: ModemPreset::LongSlow.modulation(),
-            ..DEFAULT_915_PROFILE
+            ..US915_AUTO_LORA_PROFILE
         };
         assert_eq!(ChannelTiming::for_profile(slowest).slot_ms(), 100);
     }
 
     #[test]
     fn a_transmit_requires_real_difs_ticket_and_a_final_clear_check() {
-        let mut access = ChannelAccess::new(DEFAULT_915_PROFILE, 0, 1_000_000);
+        let mut access = ChannelAccess::new(US915_AUTO_LORA_PROFILE, 0, 1_000_000);
         begin(&mut access, 0);
         let difs_ms = access.timing.difs_ms;
         assert_eq!(
@@ -628,10 +628,10 @@ mod tests {
 
     #[test]
     fn full_entropy_maps_to_millisecond_tickets_across_self_airtime_bands() {
-        let timing = ChannelTiming::for_profile(DEFAULT_915_PROFILE);
+        let timing = ChannelTiming::for_profile(US915_AUTO_LORA_PROFILE);
         let width_ms = 15 * timing.slot_ms;
 
-        let mut access = ChannelAccess::new(DEFAULT_915_PROFILE, 0, 1_000_000);
+        let mut access = ChannelAccess::new(US915_AUTO_LORA_PROFILE, 0, 1_000_000);
         begin(&mut access, u16::MAX / 2 + 1);
         assert_eq!(
             access.state,
@@ -642,7 +642,7 @@ mod tests {
         );
 
         let mut loaded = ChannelAccess::new_at(
-            DEFAULT_915_PROFILE,
+            US915_AUTO_LORA_PROFILE,
             0,
             0,
             1_000_000,
@@ -660,7 +660,7 @@ mod tests {
         );
 
         let mut continuation = ChannelAccess::new_at(
-            DEFAULT_915_PROFILE,
+            US915_AUTO_LORA_PROFILE,
             0,
             0,
             1_000_000,
@@ -678,7 +678,7 @@ mod tests {
 
     #[test]
     fn busy_channel_restarts_difs_and_permanently_freezes_ticket_progress() {
-        let mut access = ChannelAccess::new(DEFAULT_915_PROFILE, 0, 1_000_000);
+        let mut access = ChannelAccess::new(US915_AUTO_LORA_PROFILE, 0, 1_000_000);
         begin(&mut access, u16::MAX / 2 + 1);
         let difs_ms = access.timing.difs_ms;
         assert_eq!(
@@ -720,7 +720,7 @@ mod tests {
 
     #[test]
     fn a_busy_final_check_draws_only_a_one_slot_tie_break_tail() {
-        let mut access = ChannelAccess::new(DEFAULT_915_PROFILE, 0, 1_000_000);
+        let mut access = ChannelAccess::new(US915_AUTO_LORA_PROFILE, 0, 1_000_000);
         begin(&mut access, 0);
         let difs_ms = access.timing.difs_ms;
         assert_eq!(
@@ -747,9 +747,9 @@ mod tests {
 
     #[test]
     fn earned_age_accelerates_only_ticket_time_and_caps_at_three_times() {
-        let mut age = ServiceAge::new(DEFAULT_915_PROFILE);
+        let mut age = ServiceAge::new(US915_AUTO_LORA_PROFILE);
         age.record_peer_airtime(age.quantum().us());
-        let mut access = ChannelAccess::new(DEFAULT_915_PROFILE, 0, 1_000_000);
+        let mut access = ChannelAccess::new(US915_AUTO_LORA_PROFILE, 0, 1_000_000);
         begin(&mut access, u16::MAX / 2 + 1);
         let initial_ticket_ms = 15 * access.timing.slot_ms / 2;
         let difs_ms = access.timing.difs_ms;
@@ -772,10 +772,10 @@ mod tests {
 
     #[test]
     fn fractional_ticket_progress_survives_channel_interruptions() {
-        let mut age = ServiceAge::new(DEFAULT_915_PROFILE);
+        let mut age = ServiceAge::new(US915_AUTO_LORA_PROFILE);
         age.record_peer_airtime(age.quantum().us() / 4);
         let rate = age.backoff_rate();
-        let mut access = ChannelAccess::new(DEFAULT_915_PROFILE, 0, 1_000_000);
+        let mut access = ChannelAccess::new(US915_AUTO_LORA_PROFILE, 0, 1_000_000);
         begin(&mut access, u16::MAX / 2 + 1);
         let initial_ticket_ms = 15 * access.timing.slot_ms / 2;
         let difs_ms = access.timing.difs_ms;
@@ -811,7 +811,7 @@ mod tests {
 
     #[test]
     fn contention_expires_instead_of_forcing_a_transmit() {
-        let mut access = ChannelAccess::new(DEFAULT_915_PROFILE, 0, 100_000);
+        let mut access = ChannelAccess::new(US915_AUTO_LORA_PROFILE, 0, 100_000);
         assert_eq!(
             access.observe(30_000, ChannelObservation::Busy, BackoffRate::ONE),
             ChannelAccessAction::Expired
@@ -889,14 +889,14 @@ mod tests {
     #[test]
     fn preamble_activity_latches_until_header_or_the_false_preamble_watchdog() {
         let mut activity = DemodulatorActivity::new();
-        activity.preamble_detected(1_000, DEFAULT_915_PROFILE);
-        let watchdog = false_preamble_watchdog_ms(DEFAULT_915_PROFILE);
+        activity.preamble_detected(1_000, US915_AUTO_LORA_PROFILE);
+        let watchdog = false_preamble_watchdog_ms(US915_AUTO_LORA_PROFILE);
         assert_eq!(activity.next_poll_ms(1_000, 12), watchdog);
         assert_eq!(activity.observe(1_000 + watchdog - 1), (true, false));
         assert_eq!(activity.observe(1_000 + watchdog), (false, true));
 
-        activity.preamble_detected(2_000, DEFAULT_915_PROFILE);
-        activity.header_valid(2_100, DEFAULT_915_PROFILE);
+        activity.preamble_detected(2_000, US915_AUTO_LORA_PROFILE);
+        activity.header_valid(2_100, US915_AUTO_LORA_PROFILE);
         assert!(activity.next_poll_ms(2_100, 12) > 12);
         assert_eq!(activity.observe(2_100 + watchdog), (true, false));
         activity.frame_finished();
@@ -906,9 +906,9 @@ mod tests {
 
     #[test]
     fn low_load_latency_stays_within_one_sense_interval_of_the_rnode_shape() {
-        let timing = ChannelTiming::for_profile(DEFAULT_915_PROFILE);
+        let timing = ChannelTiming::for_profile(US915_AUTO_LORA_PROFILE);
         for slots in [0u16, 1, 7, 14] {
-            let mut access = ChannelAccess::new(DEFAULT_915_PROFILE, 0, 250_000);
+            let mut access = ChannelAccess::new(US915_AUTO_LORA_PROFILE, 0, 250_000);
             let entropy = ((u32::from(slots) << 16) / 15) as u16;
             let mut now_ms = 0;
             let adaptive_ms = loop {
@@ -943,7 +943,7 @@ mod tests {
 
     #[test]
     fn rnode_baseline_freezes_a_selected_wait_but_restarts_difs() {
-        let timing = ChannelTiming::for_profile(DEFAULT_915_PROFILE);
+        let timing = ChannelTiming::for_profile(US915_AUTO_LORA_PROFILE);
         let mut remaining_ms = Some(7 * timing.slot_ms);
         remaining_ms = remaining_ms.map(|remaining| remaining - timing.sample_ms());
         let frozen = remaining_ms;

@@ -12,7 +12,7 @@ use personal_hopspot_core as hopspot;
 use personal_rns::bluetooth_auto::{BluetoothAuto, BluetoothAutoStatus};
 use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, PrnsCommand};
 use personal_rns::interfaces::bluetooth_auto::{Endpoint, LinkCapabilities, Nrf52Host, BLE_HW_MTU};
-use personal_rns::interfaces::lora::{AirtimePolicy, DEFAULT_915_PROFILE};
+use personal_rns::interfaces::lora::{AirtimePolicy, US915_AUTO_LORA_PROFILE};
 use personal_rns::interfaces::usb_auto::{WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID};
 use personal_rns::interfaces::{ConnectionState, InterfaceStatus};
 use personal_rns::lora::{LoRaApplyOutcome, LoRaInterface, LoRaInterfaceInput, LoRaSpectrumStatus};
@@ -170,10 +170,10 @@ pub async fn run(spawner: Spawner) -> ! {
     let shared_flash = super::learned_state::take_flash(sd);
     let mut lora_profile_store =
         hopspot::RadioProfileStore::new(shared_flash, board::RADIO_PROFILE_PAGES);
-    let loaded_lora_profile = match lora_profile_store.load(DEFAULT_915_PROFILE).await {
+    let loaded_lora_profile = match lora_profile_store.load(US915_AUTO_LORA_PROFILE).await {
         Ok(loaded) => loaded,
         Err(_) => hopspot::LoadedRadioProfile {
-            profile: DEFAULT_915_PROFILE,
+            profile: US915_AUTO_LORA_PROFILE,
             follows_default: true,
             notice: Some(hopspot::RadioProfileLoadNotice::Reset),
         },
@@ -612,14 +612,14 @@ pub async fn run(spawner: Spawner) -> ! {
                             hopspot::UiAction::ResetLoRaProfile => {
                                 let result = hopspot::apply_and_persist_radio_profile(
                                     async {
-                                        LORA_CONTROL.apply(DEFAULT_915_PROFILE).await
+                                        LORA_CONTROL.apply(US915_AUTO_LORA_PROFILE).await
                                             == LoRaApplyOutcome::Applied
                                     },
                                     || async { lora_profile_store.reset().await.is_ok() },
                                 )
                                 .await;
                                 if result.applied() {
-                                    working_lora_profile = DEFAULT_915_PROFILE;
+                                    working_lora_profile = US915_AUTO_LORA_PROFILE;
                                 }
                                 show_notice(
                                     &mut ui_state,

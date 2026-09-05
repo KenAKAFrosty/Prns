@@ -120,12 +120,12 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let mut lora_profile_store =
         screen::RadioProfileStore::new(shared_flash, B::FLASH_LAYOUT.radio_profile_pages);
     #[cfg(feature = "lora")]
-    let loaded_lora_profile = match lora_profile_store.load(DEFAULT_915_PROFILE).await {
+    let loaded_lora_profile = match lora_profile_store.load(US915_AUTO_LORA_PROFILE).await {
         Ok(loaded) => loaded,
         Err(error) => {
             log::error!("LoRa profile restore failed: {error:?}");
             screen::LoadedRadioProfile {
-                profile: DEFAULT_915_PROFILE,
+                profile: US915_AUTO_LORA_PROFILE,
                 follows_default: true,
                 notice: Some(screen::RadioProfileLoadNotice::Reset),
             }
@@ -919,7 +919,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                 screen::UiAction::ResetLoRaProfile => {
                                     let result = screen::apply_and_persist_radio_profile(
                                         async {
-                                            LORA_CONTROL.apply(DEFAULT_915_PROFILE).await
+                                            LORA_CONTROL.apply(US915_AUTO_LORA_PROFILE).await
                                                 == LoRaApplyOutcome::Applied
                                         },
                                         || async {
@@ -936,7 +936,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                     )
                                     .await;
                                     if result.applied() {
-                                        working_lora_profile = DEFAULT_915_PROFILE;
+                                        working_lora_profile = US915_AUTO_LORA_PROFILE;
                                     }
                                     let notice = result.notice();
                                     show_notice(

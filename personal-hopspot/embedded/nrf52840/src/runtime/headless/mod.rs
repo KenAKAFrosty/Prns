@@ -9,7 +9,7 @@ use static_cell::{ConstStaticCell, StaticCell};
 use personal_hopspot_core as hopspot;
 use personal_rns::engine::IssuedCommand;
 #[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
-use personal_rns::interfaces::lora::DEFAULT_915_PROFILE;
+use personal_rns::interfaces::lora::US915_AUTO_LORA_PROFILE;
 use personal_rns::interfaces::lora::{AirtimePolicy, LORA_MAX_PAYLOAD};
 use personal_rns::interfaces::usb_auto::{WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID};
 use personal_rns::interfaces::{ConnectionState, InterfaceId};
@@ -327,7 +327,7 @@ pub async fn run(spawner: Spawner) -> ! {
     #[cfg(any(feature = "board-t096", feature = "board-t114"))]
     let lora_profile = loaded_lora_profile.profile;
     #[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
-    let lora_profile = DEFAULT_915_PROFILE;
+    let lora_profile = US915_AUTO_LORA_PROFILE;
     let lora_id = LoraInterface::interface_id(&lora_profile);
     static LORA_STATUS: StaticCell<EmbassyInterfaceStatus> = StaticCell::new();
     let lora_status: &'static EmbassyInterfaceStatus = LORA_STATUS.init(

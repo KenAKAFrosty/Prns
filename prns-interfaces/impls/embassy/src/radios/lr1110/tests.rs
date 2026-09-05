@@ -14,7 +14,7 @@ use embedded_hal::spi::{
 use embedded_hal_async::delay::DelayNs;
 use embedded_hal_async::digital::Wait;
 use embedded_hal_async::spi::SpiDevice;
-use prns_core::interfaces::lora::{TxPower, DEFAULT_915_PROFILE};
+use prns_core::interfaces::lora::{TxPower, US915_AUTO_LORA_PROFILE};
 
 const TEST_PA_CONFIGS: [PowerAmplifierConfig; 3] = [
     PowerAmplifierConfig {
@@ -424,7 +424,7 @@ fn block_on<F: Future>(future: F) -> F::Output {
 }
 
 fn profile_with_power(power_dbm: i8) -> RadioProfile {
-    let mut profile = DEFAULT_915_PROFILE;
+    let mut profile = US915_AUTO_LORA_PROFILE;
     profile.tx_power = TxPower::new(power_dbm);
     profile
 }
@@ -432,12 +432,12 @@ fn profile_with_power(power_dbm: i8) -> RadioProfile {
 #[test]
 fn reticulum_profile_maps_to_lr1110_configuration() {
     assert_eq!(
-        radio_config(DEFAULT_915_PROFILE),
+        radio_config(US915_AUTO_LORA_PROFILE),
         RadioConfig {
-            frequency_hz: 915_000_000,
+            frequency_hz: 921_500_000,
             modulation: LoraModulation {
-                spreading_factor: SpreadingFactor::Sf9,
-                bandwidth: Bandwidth::Bw250,
+                spreading_factor: SpreadingFactor::Sf7,
+                bandwidth: Bandwidth::Bw500,
                 coding_rate: CodingRate::Cr4_5,
             },
             packet: LoraPacket {
@@ -594,8 +594,8 @@ fn command_stream_matches_lr1110_protocol_and_board_policy() {
     assert!(has(&[0x01, 0x0f, 0x3f]));
     assert!(has(&[0x02, 0x0e, 0x02]));
     assert!(has(&[0x02, 0x2b, 0x12]));
-    assert!(has(&[0x02, 0x0b, 0x36, 0x89, 0xca, 0xc0]));
-    assert!(has(&[0x02, 0x0f, 0x09, 0x05, 0x01, 0x00]));
+    assert!(has(&[0x02, 0x0b, 0x36, 0xec, 0xf9, 0x60]));
+    assert!(has(&[0x02, 0x0f, 0x07, 0x06, 0x01, 0x00]));
     assert!(has(&[0x02, 0x15, 0x01, 0x01, 0x05, 0x07]));
     assert!(has(&[0x02, 0x11, 22, 0x02]));
     assert!(has(&[0x02, 0x10, 0x00, 0x12, 0x00, 0xff, 0x01, 0x00]));
@@ -607,7 +607,7 @@ fn command_stream_matches_lr1110_protocol_and_board_policy() {
     assert!(has(&[0x02, 0x09, 0xff, 0xff, 0xff]));
     assert!(has(&[0x01, 0x0a, 250, 6]));
     assert!(has(&[0x01, 0x0a, 0, 10]));
-    assert_eq!(count(&[0x02, 0x0f, 0x09, 0x05, 0x01, 0x00]), 1);
+    assert_eq!(count(&[0x02, 0x0f, 0x07, 0x06, 0x01, 0x00]), 1);
     assert_eq!(count(&[0x02, 0x15, 0x01, 0x01, 0x05, 0x07]), 1);
     assert_eq!(count(&[0x02, 0x11, 22, 0x02]), 1);
     assert!(position(&[0x01, 0x0e]) < position(&[0x01, 0x17, 0x00, 0x00, 0x00, 0xa4]));

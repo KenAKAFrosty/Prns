@@ -451,7 +451,7 @@ mod tests {
     use embedded_storage_async::nor_flash::{
         ErrorType, NorFlashError, NorFlashErrorKind, ReadNorFlash,
     };
-    use personal_rns::interfaces::lora::DEFAULT_915_PROFILE;
+    use personal_rns::interfaces::lora::US915_AUTO_LORA_PROFILE;
     use std::boxed::Box;
     use std::task::Waker;
 
@@ -584,7 +584,7 @@ mod tests {
         RadioProfile {
             frequency: Frequency::new(916_000_000),
             tx_power: TxPower::new(20),
-            ..DEFAULT_915_PROFILE
+            ..US915_AUTO_LORA_PROFILE
         }
     }
 
@@ -656,7 +656,7 @@ mod tests {
         for tx_power in [-9, -1, 0, 1, 22] {
             let profile = RadioProfile {
                 tx_power: TxPower::new(tx_power),
-                ..DEFAULT_915_PROFILE
+                ..US915_AUTO_LORA_PROFILE
             };
             let record = committed_record(43, StoredValue::Profile(profile));
             assert_eq!(
@@ -671,7 +671,7 @@ mod tests {
 
     #[test]
     fn codec_refuses_unknown_schema_codes_corruption_and_invalid_profiles() {
-        let valid = committed_record(1, StoredValue::Profile(DEFAULT_915_PROFILE));
+        let valid = committed_record(1, StoredValue::Profile(US915_AUTO_LORA_PROFILE));
         let mut unknown_schema = valid;
         unknown_schema[4..6].copy_from_slice(&2u16.to_le_bytes());
         reseal(&mut unknown_schema);
@@ -694,7 +694,7 @@ mod tests {
         corrupted[PAYLOAD_OFFSET] ^= 1;
         assert_eq!(decode_record(&corrupted), None);
 
-        let mut outside_region = DEFAULT_915_PROFILE;
+        let mut outside_region = US915_AUTO_LORA_PROFILE;
         outside_region.frequency = Frequency::new(800_000_000);
         let invalid = committed_record(2, StoredValue::Profile(outside_region));
         assert_eq!(decode_record(&invalid), None);
@@ -703,11 +703,11 @@ mod tests {
     #[test]
     fn fresh_save_reset_and_restore_have_distinct_semantics() {
         let mut store = RadioProfileStore::new(FakeFlash::erased(), PAGES);
-        let fresh = block_on(store.load(DEFAULT_915_PROFILE)).unwrap();
+        let fresh = block_on(store.load(US915_AUTO_LORA_PROFILE)).unwrap();
         assert_eq!(
             fresh,
             LoadedRadioProfile {
-                profile: DEFAULT_915_PROFILE,
+                profile: US915_AUTO_LORA_PROFILE,
                 follows_default: true,
                 notice: None,
             }
@@ -716,7 +716,7 @@ mod tests {
         let profile = changed_profile();
         block_on(store.save(profile)).unwrap();
         assert_eq!(
-            block_on(store.load(DEFAULT_915_PROFILE)).unwrap(),
+            block_on(store.load(US915_AUTO_LORA_PROFILE)).unwrap(),
             LoadedRadioProfile {
                 profile,
                 follows_default: false,
@@ -727,7 +727,7 @@ mod tests {
         block_on(store.reset()).unwrap();
         let future_default = RadioProfile {
             frequency: Frequency::new(917_000_000),
-            ..DEFAULT_915_PROFILE
+            ..US915_AUTO_LORA_PROFILE
         };
         assert_eq!(
             block_on(store.load(future_default)).unwrap(),
@@ -742,7 +742,7 @@ mod tests {
     #[test]
     fn every_interrupted_mutation_preserves_the_previous_committed_profile() {
         let mut initial = RadioProfileStore::new(FakeFlash::erased(), PAGES);
-        block_on(initial.save(DEFAULT_915_PROFILE)).unwrap();
+        block_on(initial.save(US915_AUTO_LORA_PROFILE)).unwrap();
         let bytes = initial.into_flash().bytes;
 
         for fail_mutation in 0..4 {
@@ -753,10 +753,10 @@ mod tests {
             let flash = interrupted.into_flash();
             let mut rebooted = RadioProfileStore::new(FakeFlash::from_bytes(flash.bytes), PAGES);
             assert_eq!(
-                block_on(rebooted.load(DEFAULT_915_PROFILE))
+                block_on(rebooted.load(US915_AUTO_LORA_PROFILE))
                     .unwrap()
                     .profile,
-                DEFAULT_915_PROFILE
+                US915_AUTO_LORA_PROFILE
             );
         }
     }
@@ -765,7 +765,7 @@ mod tests {
     fn every_interrupted_mutation_preserves_the_previous_reset_marker() {
         let future_default = RadioProfile {
             frequency: Frequency::new(917_000_000),
-            ..DEFAULT_915_PROFILE
+            ..US915_AUTO_LORA_PROFILE
         };
         let mut initial = RadioProfileStore::new(FakeFlash::erased(), PAGES);
         block_on(initial.reset()).unwrap();
@@ -790,7 +790,7 @@ mod tests {
     #[test]
     fn failed_readback_verification_preserves_the_previous_profile() {
         let mut initial = RadioProfileStore::new(FakeFlash::erased(), PAGES);
-        block_on(initial.save(DEFAULT_915_PROFILE)).unwrap();
+        block_on(initial.save(US915_AUTO_LORA_PROFILE)).unwrap();
         let mut flash = initial.into_flash();
         flash.corrupt_after_commit = true;
         let mut store = RadioProfileStore::new(flash, PAGES);
@@ -799,42 +799,42 @@ mod tests {
             Err(RadioProfileStoreError::VerificationFailed)
         );
         let mut rebooted = RadioProfileStore::new(store.into_flash(), PAGES);
-        let loaded = block_on(rebooted.load(DEFAULT_915_PROFILE)).unwrap();
-        assert_eq!(loaded.profile, DEFAULT_915_PROFILE);
+        let loaded = block_on(rebooted.load(US915_AUTO_LORA_PROFILE)).unwrap();
+        assert_eq!(loaded.profile, US915_AUTO_LORA_PROFILE);
         assert_eq!(loaded.notice, Some(RadioProfileLoadNotice::Recovered));
     }
 
     #[test]
     fn corrupt_newest_falls_back_and_two_corrupt_slots_reset() {
         let mut store = RadioProfileStore::new(FakeFlash::erased(), PAGES);
-        block_on(store.save(DEFAULT_915_PROFILE)).unwrap();
+        block_on(store.save(US915_AUTO_LORA_PROFILE)).unwrap();
         block_on(store.save(changed_profile())).unwrap();
         let mut flash = store.into_flash();
         flash.bytes[4096 + CHECKSUM_OFFSET] ^= 1;
         let mut recovered = RadioProfileStore::new(flash, PAGES);
-        let loaded = block_on(recovered.load(DEFAULT_915_PROFILE)).unwrap();
-        assert_eq!(loaded.profile, DEFAULT_915_PROFILE);
+        let loaded = block_on(recovered.load(US915_AUTO_LORA_PROFILE)).unwrap();
+        assert_eq!(loaded.profile, US915_AUTO_LORA_PROFILE);
         assert_eq!(loaded.notice, Some(RadioProfileLoadNotice::Recovered));
 
         let mut flash = recovered.into_flash();
         flash.bytes[CHECKSUM_OFFSET] ^= 1;
         let mut reset = RadioProfileStore::new(flash, PAGES);
-        let loaded = block_on(reset.load(DEFAULT_915_PROFILE)).unwrap();
-        assert_eq!(loaded.profile, DEFAULT_915_PROFILE);
+        let loaded = block_on(reset.load(US915_AUTO_LORA_PROFILE)).unwrap();
+        assert_eq!(loaded.profile, US915_AUTO_LORA_PROFILE);
         assert_eq!(loaded.notice, Some(RadioProfileLoadNotice::Reset));
     }
 
     #[test]
     fn unreadable_newest_generation_still_reports_recovery() {
         let mut store = RadioProfileStore::new(FakeFlash::erased(), PAGES);
-        block_on(store.save(DEFAULT_915_PROFILE)).unwrap();
+        block_on(store.save(US915_AUTO_LORA_PROFILE)).unwrap();
         block_on(store.save(changed_profile())).unwrap();
         let mut flash = store.into_flash();
         flash.bytes[4096] ^= 1;
 
         let mut rebooted = RadioProfileStore::new(flash, PAGES);
-        let loaded = block_on(rebooted.load(DEFAULT_915_PROFILE)).unwrap();
-        assert_eq!(loaded.profile, DEFAULT_915_PROFILE);
+        let loaded = block_on(rebooted.load(US915_AUTO_LORA_PROFILE)).unwrap();
+        assert_eq!(loaded.profile, US915_AUTO_LORA_PROFILE);
         assert_eq!(loaded.notice, Some(RadioProfileLoadNotice::Recovered));
     }
 
@@ -846,7 +846,7 @@ mod tests {
         });
         let wrapped = Slot::Valid(StoredRecord {
             generation: 0,
-            value: StoredValue::Profile(DEFAULT_915_PROFILE),
+            value: StoredValue::Profile(US915_AUTO_LORA_PROFILE),
         });
         assert_eq!(select_active(&[older, wrapped]), Some(1));
     }
