@@ -53,6 +53,7 @@ const _: () = assert!(matches!(
 
 fn classify_card(
     id: InterfaceId,
+    subg_configuration: Option<SubGConfigurationState>,
     usb_id: InterfaceId,
     wifi_id: Option<InterfaceId>,
     tcp_id: Option<InterfaceId>,
@@ -63,7 +64,7 @@ fn classify_card(
     if id == usb_id {
         Some((screen::CardKind::Usb, screen::card_label("USB")))
     } else if id.kind() == Some(InterfaceKind::LoRa) {
-        Some((screen::CardKind::LoRa, screen::card_label("LoRa")))
+        subg_configuration.map(screen::subg_card)
     } else if Some(id) == wifi_id {
         Some((wifi_kind, screen::card_label("LAN")))
     } else if Some(id) == espnow_id {
@@ -192,6 +193,7 @@ pub(super) fn build_snapshots(
 
 pub(super) fn build_cards(
     snapshots: &[InterfaceSnapshot],
+    subg_configuration: Option<SubGConfigurationState>,
     usb_id: InterfaceId,
     wifi_id: Option<InterfaceId>,
     tcp_id: Option<InterfaceId>,
@@ -209,7 +211,14 @@ pub(super) fn build_cards(
     };
     screen::snapshots_to_cards(snapshots, |id| {
         classify_card(
-            id, usb_id, wifi_id, tcp_id, tcp_client, wifi_kind, espnow_id,
+            id,
+            subg_configuration,
+            usb_id,
+            wifi_id,
+            tcp_id,
+            tcp_client,
+            wifi_kind,
+            espnow_id,
         )
     })
 }
@@ -276,7 +285,7 @@ pub(super) fn add_lora_spectrum(
     selected_card: Option<&screen::Card>,
     spectrum: &LoRaSpectrumStatus,
 ) {
-    if !selected_card.is_some_and(|card| card.kind() == screen::CardKind::LoRa) {
+    if !selected_card.is_some_and(|card| matches!(card.kind(), screen::CardKind::SubG(_))) {
         return;
     }
     let snapshot = spectrum.snapshot();

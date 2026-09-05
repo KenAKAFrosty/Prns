@@ -4,8 +4,10 @@ use embedded_graphics::mock_display::MockDisplay;
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;
 use heapless::Vec as HVec;
-use personal_rns::interfaces::lora::{
-    Frequency, ModemPreset, RadioProfile, Region, US915_AUTO_LORA_PROFILE,
+use personal_rns::interfaces::lora::{Frequency, ModemPreset, RadioProfile};
+use personal_rns::interfaces::subghz::regions::us915::{Us915, US915_AUTO_LORA_PROFILE};
+use personal_rns::interfaces::subghz::{
+    ManualLoRaParameters, RegulatoryRegion, SubGConfiguration, SubGConfigurationState, SubGRegion,
 };
 use personal_rns::interfaces::{ConnectionState, InterfaceId};
 use personal_rns::storage::{DisplayedStorageLimits, StorageCapacity};
@@ -33,7 +35,7 @@ use super::render::layout::{
     MENU_HEADER_Y, MENU_ITEM_STEP, MENU_ITEM_TOP, MENU_MARK_X, MENU_REASON_X, NAME_BACKING_X,
     NAME_BACKING_Y, NAME_ICON_X, NAME_LINE_Y, STAT_ICON_X, STAT_TEXT_X, WIDTH,
 };
-use super::render::menus::lora::{LORA_DOT_X, LORA_EDITOR_TOP};
+use super::render::menus::subg::{SUBG_DOT_X, SUBG_EDITOR_TOP};
 use super::render::menus::{
     draw_interface_menu, limits_row_drawable, limits_row_text, menu_item_text_right,
     station_uplink_action_label,
@@ -42,21 +44,24 @@ use super::render::metrics::{
     compact_numeric_width, draw_compact_number, fmt_activity_age, fmt_bytes, fmt_count,
     fmt_rate_bytes_per_sec,
 };
-use super::state::lora::{
-    region_index, step_custom_row, CustomRow, EditMode, FreqRow, LoRaScreen, PresetChoice,
-    LORA_REGION_CANCEL, PRESET_CHOICES,
+use super::state::subg::{
+    region_index, step_custom_row, subg_region_choice, CustomRow, EditMode, FreqRow, PresetChoice,
+    SubGRegionChoice, SubGScreen, PRESET_CHOICES, SUBG_REGION_CANCEL,
 };
 use super::state::{
     GlobalMenuItem, UiMode, ANNOUNCE_MENU_ITEM, BLANK_DISPLAY_MENU_ITEM,
-    DISPLAY_AUTO_OFF_MENU_ITEM, LORA_RESET_MENU_ITEM, LORA_TUNE_MENU_ITEM, POWER_MENU_ITEM,
-    POWER_ONLY_MENU_ITEMS, RADIO_MENU_ITEM_NO_DISPLAY, SHARED_INSTANCE_CONFIG_MENU_ITEM,
-    SLEEP_MENU_ITEM, STATION_UPLINK_MENU_ITEM, WIFI_MENU_ITEMS,
+    DISPLAY_AUTO_OFF_MENU_ITEM, POWER_MENU_ITEM, POWER_ONLY_MENU_ITEMS, RADIO_MENU_ITEM_NO_DISPLAY,
+    SHARED_INSTANCE_CONFIG_MENU_ITEM, SLEEP_MENU_ITEM, STATION_UPLINK_MENU_ITEM,
+    SUBG_CLEAR_MENU_ITEM, SUBG_CONFIGURE_MENU_ITEM, SUBG_SETUP_CONFIGURE_MENU_ITEM,
+    WIFI_MENU_ITEMS,
 };
 use super::{
-    apply_and_persist_radio_profile, card_label, sort_cards_for_display, AccessPointState,
-    BluetoothRecoveryMenuDetails, Card, CardActivityTracker, CardKind, GnssAvailability,
-    InputEvent, InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess, PersistenceNotice,
-    RadioProfileChangeResult, ScreenContent, SharedInstanceConfigExport, UiAction, UiConfiguration,
+    apply_and_persist_subg_configuration, card_label, sort_cards_for_display, subg_card,
+    AccessPointState, ActiveSubGConfiguration, BluetoothRecoveryMenuDetails, Card,
+    CardActivityTracker, CardKind, GnssAvailability, InputEvent, InterfaceMenuDetails,
+    LoRaSpectrumMenuDetails, LocalDocsAccess, PersistenceNotice, ScreenContent,
+    SharedInstanceConfigExport, SubGCardState, SubGConfigurationChangeResult,
+    SubGConfigurationPersistenceOutcome, SubGConfigurationStepOutcome, UiAction, UiConfiguration,
     UiNotice, UiState, UserBlanking,
 };
 
@@ -245,7 +250,7 @@ fn has_on_pixel(
 }
 
 mod limits;
-mod lora;
 mod model;
 mod render;
 mod state;
+mod subg;

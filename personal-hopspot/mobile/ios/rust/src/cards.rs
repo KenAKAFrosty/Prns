@@ -3,7 +3,9 @@ pub const MAX_CARDS: usize = 16;
 #[cfg(test)]
 use heapless::Vec as HVec;
 #[cfg(test)]
-use personal_hopspot_core::{card_label, snapshots_to_cards, Card, CardKind};
+use personal_hopspot_core::{
+    card_label, snapshots_to_cards, Card, CardKind, SubGCardState,
+};
 #[cfg(test)]
 use personal_rns::interfaces::{
     ConnectionState, InterfaceId, InterfaceSnapshot, Membership, TransferRates,
@@ -76,7 +78,10 @@ pub fn dummy_cards() -> HVec<Card, MAX_CARDS> {
         2 => Some((CardKind::Wifi, card_label("LAN"))),
         3 => Some((CardKind::EspNow, card_label("ESP-NOW"))),
         4 => Some((CardKind::Ble, card_label("BLE"))),
-        5 => Some((CardKind::LoRa, card_label("LoRa"))),
+        5 => Some((
+            CardKind::SubG(SubGCardState::AutoLoRa),
+            card_label("AutoLoRa"),
+        )),
         _ => None,
     })
 }

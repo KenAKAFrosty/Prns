@@ -12,7 +12,8 @@ use personal_hopspot_core as hopspot;
 use personal_rns::bluetooth_auto::{BluetoothAuto, BluetoothAutoStatus};
 use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, PrnsCommand};
 use personal_rns::interfaces::bluetooth_auto::{Endpoint, LinkCapabilities, Nrf52Host, BLE_HW_MTU};
-use personal_rns::interfaces::lora::{AirtimePolicy, US915_AUTO_LORA_PROFILE};
+use personal_rns::interfaces::lora::AirtimePolicy;
+use personal_rns::interfaces::subghz::SubGConfigurationState;
 use personal_rns::interfaces::usb_auto::{WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID};
 use personal_rns::interfaces::{ConnectionState, InterfaceStatus};
 use personal_rns::lora::{LoRaApplyOutcome, LoRaInterface, LoRaInterfaceInput, LoRaSpectrumStatus};
@@ -168,19 +169,19 @@ pub async fn run(spawner: Spawner) -> ! {
     install_softdevice_runtime_entropy(entropy, sd);
     spawner.spawn(softdevice_task(sd, vbus).expect("softdevice task fits"));
     let shared_flash = super::learned_state::take_flash(sd);
-    let mut lora_profile_store =
-        hopspot::RadioProfileStore::new(shared_flash, board::RADIO_PROFILE_PAGES);
-    let loaded_lora_profile = match lora_profile_store.load(US915_AUTO_LORA_PROFILE).await {
+    let mut subg_configuration_store =
+        hopspot::SubGConfigurationStore::new(shared_flash, board::RADIO_PROFILE_PAGES);
+    let loaded_subg_configuration = match subg_configuration_store.load().await {
         Ok(loaded) => loaded,
-        Err(_) => hopspot::LoadedRadioProfile {
-            profile: US915_AUTO_LORA_PROFILE,
-            follows_default: true,
-            notice: Some(hopspot::RadioProfileLoadNotice::Reset),
+        Err(_) => hopspot::LoadedSubGConfiguration {
+            state: SubGConfigurationState::Unconfigured,
+            notice: Some(hopspot::SubGConfigurationLoadNotice::Reset),
         },
     };
-    let profile_startup_notice = loaded_lora_profile.notice.map(|notice| match notice {
-        hopspot::RadioProfileLoadNotice::Recovered => hopspot::UiNotice::ProfileRecovered,
-        hopspot::RadioProfileLoadNotice::Reset => hopspot::UiNotice::ProfileReset,
+    let subg_startup_notice = loaded_subg_configuration.notice.map(|notice| match notice {
+        hopspot::SubGConfigurationLoadNotice::Migrated => hopspot::UiNotice::SubGMigrated,
+        hopspot::SubGConfigurationLoadNotice::Recovered => hopspot::UiNotice::SubGRecovered,
+        hopspot::SubGConfigurationLoadNotice::Reset => hopspot::UiNotice::SubGReset,
     });
     if let Some(identity) = ble_identity {
         super::bluetooth_auto::set_columba_identity(sd, server, identity);
@@ -221,8 +222,9 @@ pub async fn run(spawner: Spawner) -> ! {
         RemoteControlSelfAnnouncement::Destination(node_page_destination),
     );
     let mut manifold_lanes = ManifoldLanes::new();
-    let lora_profile = loaded_lora_profile.profile;
-    let lora_id = LoRaInterface::<board::Radio>::interface_id(&lora_profile);
+    let subg_configuration = loaded_subg_configuration.state;
+    let lora_id = LoRaInterface::<board::Radio>::interface_id_for_configuration(subg_configuration)
+        .unwrap_or_else(|_| LoRaInterface::<board::Radio>::unconfigured_interface_id());
     static LORA_STATUS: StaticCell<EmbassyInterfaceStatus> = StaticCell::new();
     let lora_status: &'static EmbassyInterfaceStatus = LORA_STATUS.init(
         EmbassyInterfaceStatus::new_accounted(lora_id, ConnectionState::Initializing),
@@ -234,7 +236,7 @@ pub async fn run(spawner: Spawner) -> ! {
     let lora_tx_queue = LORA_TX_QUEUE.take();
     let lora = match LoRaInterface::new(LoRaInterfaceInput {
         radio,
-        profile: lora_profile,
+        configuration: subg_configuration,
         airtime_policy: AirtimePolicy::Regional,
         tx_queue: lora_tx_queue,
         control: &LORA_CONTROL,
@@ -348,10 +350,10 @@ pub async fn run(spawner: Spawner) -> ! {
             shared_instance_config_export: hopspot::SharedInstanceConfigExport::Unavailable,
             gnss: hopspot::GnssAvailability::Unavailable,
         });
-        let startup_notice = identity_startup_notice.or(profile_startup_notice);
+        let startup_notice = identity_startup_notice.or(subg_startup_notice);
         let mut pending_startup_notice = identity_startup_notice
             .is_some()
-            .then_some(profile_startup_notice)
+            .then_some(subg_startup_notice)
             .flatten();
         let mut notice_timer = PresentedNoticeTimer::new();
         if let Some(notice) = startup_notice {
@@ -362,7 +364,7 @@ pub async fn run(spawner: Spawner) -> ! {
                 STARTUP_NOTICE_DURATION,
             );
         }
-        let mut working_lora_profile = lora_profile;
+        let mut working_subg_configuration = subg_configuration;
         let mut refresh_urgency = hopspot::display::PresentationUrgency::Immediate;
         let mut activity = hopspot::CardActivityTracker::<{ MEMBERS + 4 }>::new();
         let mut battery_gauge = board::battery_gauge();
@@ -378,7 +380,12 @@ pub async fn run(spawner: Spawner) -> ! {
             );
 
             let snapshots = build_snapshots(lora_status, usb_status);
-            let mut cards = build_cards(&snapshots, lora_status.id(), usb_status.id());
+            let mut cards = build_cards(
+                &snapshots,
+                working_subg_configuration,
+                lora_status.id(),
+                usb_status.id(),
+            );
             let now_ms = embassy_time::Instant::now().as_millis();
             let now = hopspot::display::MonotonicMillis::new(now_ms);
             let activity_secs = (now_ms / 1000).min(u64::from(u32::MAX)) as u32;
@@ -588,20 +595,53 @@ pub async fn run(spawner: Spawner) -> ! {
                                     }
                                 }
                             }
-                            hopspot::UiAction::OpenLoRaEditor => {
-                                ui_state.open_lora_editor(working_lora_profile);
+                            hopspot::UiAction::OpenSubGEditor => {
+                                ui_state.open_subg_editor(working_subg_configuration);
                             }
-                            hopspot::UiAction::SetLoRaProfile(profile) => {
-                                let result = hopspot::apply_and_persist_radio_profile(
-                                    async {
-                                        LORA_CONTROL.apply(profile).await
-                                            == LoRaApplyOutcome::Applied
+                            hopspot::UiAction::SetSubGConfiguration(configuration) => {
+                                let previous = working_subg_configuration;
+                                let requested = SubGConfigurationState::Configured(configuration);
+                                let result = hopspot::apply_and_persist_subg_configuration(
+                                    || async {
+                                        match LORA_CONTROL.apply_configuration(requested).await {
+                                            LoRaApplyOutcome::Applied => {
+                                                hopspot::SubGConfigurationStepOutcome::Succeeded
+                                            }
+                                            LoRaApplyOutcome::Rejected(_) => {
+                                                hopspot::SubGConfigurationStepOutcome::Failed
+                                            }
+                                        }
                                     },
-                                    || async { lora_profile_store.save(profile).await.is_ok() },
+                                    || async {
+                                        match subg_configuration_store.save(configuration).await {
+                                            hopspot::SubGConfigurationCommitOutcome::Committed => {
+                                                hopspot::SubGConfigurationPersistenceOutcome::Committed
+                                            }
+                                            hopspot::SubGConfigurationCommitOutcome::NotCommitted(_) => {
+                                                hopspot::SubGConfigurationPersistenceOutcome::NotCommitted
+                                            }
+                                            hopspot::SubGConfigurationCommitOutcome::Indeterminate(_) => {
+                                                hopspot::SubGConfigurationPersistenceOutcome::Indeterminate
+                                            }
+                                        }
+                                    },
+                                    || async {
+                                        match LORA_CONTROL.apply_configuration(previous).await {
+                                            LoRaApplyOutcome::Applied => {
+                                                hopspot::SubGConfigurationStepOutcome::Succeeded
+                                            }
+                                            LoRaApplyOutcome::Rejected(_) => {
+                                                hopspot::SubGConfigurationStepOutcome::Failed
+                                            }
+                                        }
+                                    },
                                 )
                                 .await;
-                                if result.applied() {
-                                    working_lora_profile = profile;
+                                if matches!(
+                                    result.active_configuration(),
+                                    hopspot::ActiveSubGConfiguration::Requested
+                                ) {
+                                    working_subg_configuration = requested;
                                 }
                                 show_notice(
                                     &mut ui_state,
@@ -610,17 +650,50 @@ pub async fn run(spawner: Spawner) -> ! {
                                     NOTICE_DURATION,
                                 );
                             }
-                            hopspot::UiAction::ResetLoRaProfile => {
-                                let result = hopspot::apply_and_persist_radio_profile(
-                                    async {
-                                        LORA_CONTROL.apply(US915_AUTO_LORA_PROFILE).await
-                                            == LoRaApplyOutcome::Applied
+                            hopspot::UiAction::ClearSubGConfiguration => {
+                                let previous = working_subg_configuration;
+                                let result = hopspot::apply_and_persist_subg_configuration(
+                                    || async {
+                                        match LORA_CONTROL.clear().await {
+                                            LoRaApplyOutcome::Applied => {
+                                                hopspot::SubGConfigurationStepOutcome::Succeeded
+                                            }
+                                            LoRaApplyOutcome::Rejected(_) => {
+                                                hopspot::SubGConfigurationStepOutcome::Failed
+                                            }
+                                        }
                                     },
-                                    || async { lora_profile_store.reset().await.is_ok() },
+                                    || async {
+                                        match subg_configuration_store.clear().await {
+                                            hopspot::SubGConfigurationCommitOutcome::Committed => {
+                                                hopspot::SubGConfigurationPersistenceOutcome::Committed
+                                            }
+                                            hopspot::SubGConfigurationCommitOutcome::NotCommitted(_) => {
+                                                hopspot::SubGConfigurationPersistenceOutcome::NotCommitted
+                                            }
+                                            hopspot::SubGConfigurationCommitOutcome::Indeterminate(_) => {
+                                                hopspot::SubGConfigurationPersistenceOutcome::Indeterminate
+                                            }
+                                        }
+                                    },
+                                    || async {
+                                        match LORA_CONTROL.apply_configuration(previous).await {
+                                            LoRaApplyOutcome::Applied => {
+                                                hopspot::SubGConfigurationStepOutcome::Succeeded
+                                            }
+                                            LoRaApplyOutcome::Rejected(_) => {
+                                                hopspot::SubGConfigurationStepOutcome::Failed
+                                            }
+                                        }
+                                    },
                                 )
                                 .await;
-                                if result.applied() {
-                                    working_lora_profile = US915_AUTO_LORA_PROFILE;
+                                if matches!(
+                                    result.active_configuration(),
+                                    hopspot::ActiveSubGConfiguration::Requested
+                                ) {
+                                    working_subg_configuration =
+                                        SubGConfigurationState::Unconfigured;
                                 }
                                 show_notice(
                                     &mut ui_state,

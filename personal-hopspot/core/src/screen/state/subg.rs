@@ -1,13 +1,40 @@
 use personal_rns::interfaces::lora::{
-    Frequency, ModemPreset, Modulation, RadioProfile, Region, TxPower,
+    Frequency, ModemPreset, Modulation, RadioProfile, RadioProfileError, TxPower,
+};
+use personal_rns::interfaces::subghz::{
+    supported_modes, RegulatoryRegion, SubGConfiguration, SubGMode, SubGRegion,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::screen) enum LoRaScreen {
+pub(in crate::screen) enum SubGScreen {
     Region { cursor: usize },
+    Mode { cursor: usize },
     Preset { cursor: usize },
     Frequency { cursor: FreqRow, edit: EditMode },
     Custom { cursor: CustomRow, edit: EditMode },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::screen) enum SubGModeChoice {
+    AutoLoRa,
+    ManualLoRa,
+    Back,
+}
+
+const MANUAL_LORA_MODE_CHOICES: [SubGModeChoice; 2] =
+    [SubGModeChoice::ManualLoRa, SubGModeChoice::Back];
+const AUTO_LORA_MODE_CHOICES: [SubGModeChoice; 3] = [
+    SubGModeChoice::AutoLoRa,
+    SubGModeChoice::ManualLoRa,
+    SubGModeChoice::Back,
+];
+
+pub(in crate::screen) fn subg_mode_choices(region: SubGRegion) -> &'static [SubGModeChoice] {
+    if supported_modes(region).supports(SubGMode::AutoLoRa) {
+        &AUTO_LORA_MODE_CHOICES
+    } else {
+        &MANUAL_LORA_MODE_CHOICES
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -156,14 +183,34 @@ impl FreqRow {
 
 const LORA_TX_POWER_MIN_DBM: i8 = -9;
 
-pub(in crate::screen) const LORA_REGION_CANCEL: usize = Region::ALL.len();
-pub(in crate::screen) const LORA_REGION_COUNT: usize = Region::ALL.len() + 1;
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::screen) enum SubGRegionChoice {
+    Region(SubGRegion),
+    Cancel,
+}
 
-pub(in crate::screen) fn region_index(region: Region) -> usize {
-    Region::ALL
-        .iter()
-        .position(|&candidate| candidate == region)
-        .unwrap_or(0)
+const CUSTOM_REGION_INDEX: usize = RegulatoryRegion::ALL.len();
+pub(in crate::screen) const SUBG_REGION_CANCEL: usize = CUSTOM_REGION_INDEX + 1;
+pub(in crate::screen) const SUBG_REGION_COUNT: usize = SUBG_REGION_CANCEL + 1;
+
+pub(in crate::screen) fn subg_region_choice(index: usize) -> SubGRegionChoice {
+    if index < RegulatoryRegion::ALL.len() {
+        return SubGRegionChoice::Region(SubGRegion::Regulated(RegulatoryRegion::ALL[index]));
+    }
+    if index == CUSTOM_REGION_INDEX {
+        return SubGRegionChoice::Region(SubGRegion::Custom);
+    }
+    SubGRegionChoice::Cancel
+}
+
+pub(in crate::screen) fn region_index(region: SubGRegion) -> usize {
+    match region {
+        SubGRegion::Regulated(region) => RegulatoryRegion::ALL
+            .iter()
+            .position(|candidate| *candidate == region)
+            .unwrap_or(0),
+        SubGRegion::Custom => CUSTOM_REGION_INDEX,
+    }
 }
 
 fn bump_freq_place(hz: u32, place: FreqPlace) -> u32 {
@@ -176,27 +223,44 @@ fn bump_freq_place(hz: u32, place: FreqPlace) -> u32 {
     above + ((digit + 1) % 10) * step + lower
 }
 
-fn clamp_freq_to_region(hz: u32, region: Region) -> u32 {
-    let (low, high) = region.band();
+fn valid_center_range(profile: &RadioProfile) -> (u32, u32) {
+    let range = profile.region().frequency_range();
+    let bandwidth = channel_bandwidth_hz(profile);
+    let lower_half = bandwidth / 2;
+    let upper_half = bandwidth - lower_half;
+    (
+        range.minimum().hz() + lower_half,
+        range.maximum().hz() - upper_half,
+    )
+}
+
+fn clamp_freq_to_region(hz: u32, profile: &RadioProfile) -> u32 {
+    let (low, high) = valid_center_range(profile);
     hz.clamp(low, high)
 }
 
-fn apply_region(profile: RadioProfile, region: Region) -> RadioProfile {
-    let mut next = profile;
-    if region != profile.region {
-        next.frequency = region.default_frequency();
+fn apply_region(
+    profile: RadioProfile,
+    region: SubGRegion,
+) -> Result<RadioProfile, RadioProfileError> {
+    if region == profile.region() {
+        Ok(profile)
+    } else {
+        let defaults = region.manual_lora_defaults();
+        RadioProfile::new(
+            region,
+            defaults.frequency(),
+            defaults.modulation(),
+            defaults.tx_power(),
+            defaults.preamble(),
+        )
     }
-    next.region = region;
-    if next.tx_power.dbm() > region.max_tx_power().dbm() {
-        next.tx_power = region.max_tx_power();
-    }
-    next
 }
 
 fn apply_preset(profile: RadioProfile, preset: ModemPreset) -> RadioProfile {
-    let mut next = profile;
-    next.modulation = preset.modulation();
-    next
+    profile
+        .with_modulation(preset.modulation())
+        .unwrap_or(profile)
 }
 
 pub(in crate::screen) fn scroll_start(cursor: usize, count: usize, visible: usize) -> usize {
@@ -212,50 +276,50 @@ pub(in crate::screen) fn step_custom_row(profile: RadioProfile, row: CustomRow) 
         spreading_factor,
         bandwidth,
         coding_rate,
-    } = profile.modulation;
-    let mut next = profile;
+    } = profile.modulation();
     match row {
-        CustomRow::SpreadingFactor => {
-            next.modulation = Modulation::Lora {
+        CustomRow::SpreadingFactor => profile
+            .with_modulation(Modulation::Lora {
                 spreading_factor: spreading_factor.next(),
                 bandwidth,
                 coding_rate,
-            }
-        }
-        CustomRow::Bandwidth => {
-            next.modulation = Modulation::Lora {
+            })
+            .unwrap_or(profile),
+        CustomRow::Bandwidth => profile
+            .with_modulation(Modulation::Lora {
                 spreading_factor,
                 bandwidth: bandwidth.next(),
                 coding_rate,
-            }
-        }
-        CustomRow::CodingRate => {
-            next.modulation = Modulation::Lora {
+            })
+            .unwrap_or(profile),
+        CustomRow::CodingRate => profile
+            .with_modulation(Modulation::Lora {
                 spreading_factor,
                 bandwidth,
                 coding_rate: coding_rate.next(),
-            }
-        }
+            })
+            .unwrap_or(profile),
         CustomRow::TxPower => {
-            let dbm = profile.tx_power.dbm();
-            let ceiling = profile.region.max_tx_power().dbm();
-            next.tx_power = TxPower::new(if dbm >= ceiling {
-                LORA_TX_POWER_MIN_DBM
-            } else {
-                dbm + 1
-            });
+            let dbm = profile.tx_power().dbm();
+            let ceiling = profile.region().max_tx_power().dbm();
+            profile
+                .with_tx_power(TxPower::new(if dbm >= ceiling {
+                    LORA_TX_POWER_MIN_DBM
+                } else {
+                    dbm + 1
+                }))
+                .unwrap_or(profile)
         }
-        CustomRow::FreqMhz | CustomRow::FreqKhz | CustomRow::Save | CustomRow::Back => {}
+        CustomRow::FreqMhz | CustomRow::FreqKhz | CustomRow::Save | CustomRow::Back => profile,
     }
-    next
 }
 
-pub(in crate::screen) enum LoRaHold {
+pub(in crate::screen) enum SubGEditorOutcome {
     Stay {
-        screen: LoRaScreen,
+        screen: SubGScreen,
         profile: RadioProfile,
     },
-    Commit(RadioProfile),
+    Commit(SubGConfiguration),
     Cancel,
 }
 
@@ -276,30 +340,34 @@ enum FreqStep {
 }
 
 fn bump_freq(profile: RadioProfile, place: FreqPlace) -> RadioProfile {
-    let mut next = profile;
-    next.frequency = Frequency::new(bump_freq_place(profile.frequency.hz(), place));
-    next
+    let hz = bump_freq_place(profile.frequency().hz(), place);
+    let hz = clamp_freq_to_region(hz, &profile);
+    profile
+        .with_frequency(Frequency::new(hz))
+        .unwrap_or(profile)
 }
 
 fn channel_bandwidth_hz(profile: &RadioProfile) -> u32 {
-    let Modulation::Lora { bandwidth, .. } = profile.modulation;
+    let Modulation::Lora { bandwidth, .. } = profile.modulation();
     bandwidth.hz()
 }
 
 pub(in crate::screen) fn channel_count(profile: &RadioProfile) -> u32 {
-    let (low, high) = profile.region.band();
+    let range = profile.region().frequency_range();
+    let low = range.minimum().hz();
+    let high = range.maximum().hz();
     ((high - low) / channel_bandwidth_hz(profile)).max(1)
 }
 
 fn channel_center_hz(profile: &RadioProfile, channel: u32) -> u32 {
-    let (low, _) = profile.region.band();
+    let low = profile.region().frequency_range().minimum().hz();
     let bandwidth = channel_bandwidth_hz(profile);
     low + bandwidth / 2 + channel * bandwidth
 }
 
 pub(in crate::screen) fn current_channel(profile: &RadioProfile) -> u32 {
-    let (low, _) = profile.region.band();
-    let hz = profile.frequency.hz();
+    let low = profile.region().frequency_range().minimum().hz();
+    let hz = profile.frequency().hz();
     if hz <= low {
         0
     } else {
@@ -309,163 +377,202 @@ pub(in crate::screen) fn current_channel(profile: &RadioProfile) -> u32 {
 
 fn step_freq_channel(profile: RadioProfile) -> RadioProfile {
     let next_channel = (current_channel(&profile) + 1) % channel_count(&profile);
-    let mut next = profile;
-    next.frequency = Frequency::new(channel_center_hz(&profile, next_channel));
-    next
+    profile
+        .with_frequency(Frequency::new(channel_center_hz(&profile, next_channel)))
+        .unwrap_or(profile)
 }
 
 fn advance_freq_place(profile: RadioProfile, place: FreqPlace) -> FreqStep {
     match place.next_within_row() {
         Some(next_place) => FreqStep::Place(next_place),
         None => {
-            let mut next = profile;
-            next.frequency =
-                Frequency::new(clamp_freq_to_region(profile.frequency.hz(), profile.region));
-            FreqStep::Done(next)
+            let frequency =
+                Frequency::new(clamp_freq_to_region(profile.frequency().hz(), &profile));
+            FreqStep::Done(profile.with_frequency(frequency).unwrap_or(profile))
         }
     }
 }
 
-pub(in crate::screen) fn lora_editor_tap(
-    screen: LoRaScreen,
+pub(in crate::screen) fn subg_editor_tap(
+    screen: SubGScreen,
     profile: RadioProfile,
-) -> (LoRaScreen, RadioProfile) {
+) -> (SubGScreen, RadioProfile) {
     match screen {
-        LoRaScreen::Region { cursor } => (
-            LoRaScreen::Region {
-                cursor: (cursor + 1) % LORA_REGION_COUNT,
+        SubGScreen::Region { cursor } => (
+            SubGScreen::Region {
+                cursor: (cursor + 1) % SUBG_REGION_COUNT,
             },
             profile,
         ),
-        LoRaScreen::Preset { cursor } => (
-            LoRaScreen::Preset {
+        SubGScreen::Mode { cursor } => (
+            SubGScreen::Mode {
+                cursor: (cursor + 1) % subg_mode_choices(profile.region()).len(),
+            },
+            profile,
+        ),
+        SubGScreen::Preset { cursor } => (
+            SubGScreen::Preset {
                 cursor: (cursor + 1) % PRESET_CHOICES.len(),
             },
             profile,
         ),
-        LoRaScreen::Frequency { cursor, edit } => match edit {
+        SubGScreen::Frequency { cursor, edit } => match edit {
             EditMode::Freq { place } => (
-                LoRaScreen::Frequency { cursor, edit },
+                SubGScreen::Frequency { cursor, edit },
                 bump_freq(profile, place),
             ),
             EditMode::Field => (
-                LoRaScreen::Frequency { cursor, edit },
+                SubGScreen::Frequency { cursor, edit },
                 step_freq_channel(profile),
             ),
             EditMode::Browsing => (
-                LoRaScreen::Frequency {
+                SubGScreen::Frequency {
                     cursor: cursor.next(),
                     edit,
                 },
                 profile,
             ),
         },
-        LoRaScreen::Custom { cursor, edit } => match edit {
+        SubGScreen::Custom { cursor, edit } => match edit {
             EditMode::Browsing => (
-                LoRaScreen::Custom {
+                SubGScreen::Custom {
                     cursor: cursor.next(),
                     edit,
                 },
                 profile,
             ),
             EditMode::Field => (
-                LoRaScreen::Custom { cursor, edit },
+                SubGScreen::Custom { cursor, edit },
                 step_custom_row(profile, cursor),
             ),
             EditMode::Freq { place } => (
-                LoRaScreen::Custom { cursor, edit },
+                SubGScreen::Custom { cursor, edit },
                 bump_freq(profile, place),
             ),
         },
     }
 }
 
-pub(in crate::screen) fn lora_editor_hold(screen: LoRaScreen, profile: RadioProfile) -> LoRaHold {
+pub(in crate::screen) fn subg_editor_hold(
+    screen: SubGScreen,
+    profile: RadioProfile,
+) -> SubGEditorOutcome {
     match screen {
-        LoRaScreen::Region { cursor } => {
-            if cursor == LORA_REGION_CANCEL {
-                return LoRaHold::Cancel;
-            }
-            let region = Region::ALL[cursor.min(Region::ALL.len() - 1)];
-            let profile = apply_region(profile, region);
-            LoRaHold::Stay {
-                screen: LoRaScreen::Preset {
-                    cursor: preset_cursor_for(profile.modulation),
-                },
+        SubGScreen::Region { cursor } => {
+            let SubGRegionChoice::Region(region) = subg_region_choice(cursor) else {
+                return SubGEditorOutcome::Cancel;
+            };
+            let Ok(profile) = apply_region(profile, region) else {
+                return SubGEditorOutcome::Cancel;
+            };
+            SubGEditorOutcome::Stay {
+                screen: SubGScreen::Mode { cursor: 0 },
                 profile,
             }
         }
-        LoRaScreen::Preset { cursor } => {
+        SubGScreen::Mode { cursor } => subg_mode_hold(cursor, profile),
+        SubGScreen::Preset { cursor } => {
             match PRESET_CHOICES[cursor.min(PRESET_CHOICES.len() - 1)] {
-                PresetChoice::Preset(preset) => LoRaHold::Stay {
-                    screen: LoRaScreen::Frequency {
+                PresetChoice::Preset(preset) => SubGEditorOutcome::Stay {
+                    screen: SubGScreen::Frequency {
                         cursor: FreqRow::FIRST,
                         edit: EditMode::Browsing,
                     },
                     profile: apply_preset(profile, preset),
                 },
-                PresetChoice::Custom => LoRaHold::Stay {
-                    screen: LoRaScreen::Custom {
+                PresetChoice::Custom => SubGEditorOutcome::Stay {
+                    screen: SubGScreen::Custom {
                         cursor: CustomRow::FIRST,
                         edit: EditMode::Browsing,
                     },
                     profile,
                 },
-                PresetChoice::Back => LoRaHold::Stay {
-                    screen: LoRaScreen::Region {
-                        cursor: region_index(profile.region),
-                    },
+                PresetChoice::Back => SubGEditorOutcome::Stay {
+                    screen: SubGScreen::Mode { cursor: 0 },
                     profile,
                 },
             }
         }
-        LoRaScreen::Frequency { cursor, edit } => lora_frequency_hold(cursor, edit, profile),
-        LoRaScreen::Custom { cursor, edit } => lora_custom_hold(cursor, edit, profile),
+        SubGScreen::Frequency { cursor, edit } => lora_frequency_hold(cursor, edit, profile),
+        SubGScreen::Custom { cursor, edit } => lora_custom_hold(cursor, edit, profile),
     }
 }
 
-fn lora_frequency_hold(cursor: FreqRow, edit: EditMode, profile: RadioProfile) -> LoRaHold {
+fn subg_mode_hold(cursor: usize, profile: RadioProfile) -> SubGEditorOutcome {
+    let choices = subg_mode_choices(profile.region());
+    match choices[cursor.min(choices.len() - 1)] {
+        SubGModeChoice::AutoLoRa => match SubGConfiguration::auto_lora_for(profile.region()) {
+            Ok(configuration) => SubGEditorOutcome::Commit(configuration),
+            Err(_) => SubGEditorOutcome::Stay {
+                screen: SubGScreen::Mode { cursor },
+                profile,
+            },
+        },
+        SubGModeChoice::ManualLoRa => SubGEditorOutcome::Stay {
+            screen: SubGScreen::Preset {
+                cursor: preset_cursor_for(profile.modulation()),
+            },
+            profile,
+        },
+        SubGModeChoice::Back => SubGEditorOutcome::Stay {
+            screen: SubGScreen::Region {
+                cursor: region_index(profile.region()),
+            },
+            profile,
+        },
+    }
+}
+
+fn manual_configuration(profile: RadioProfile) -> SubGConfiguration {
+    SubGConfiguration::manual_lora(profile)
+}
+
+fn lora_frequency_hold(
+    cursor: FreqRow,
+    edit: EditMode,
+    profile: RadioProfile,
+) -> SubGEditorOutcome {
     match edit {
         EditMode::Freq { place } => match advance_freq_place(profile, place) {
-            FreqStep::Place(next_place) => LoRaHold::Stay {
-                screen: LoRaScreen::Frequency {
+            FreqStep::Place(next_place) => SubGEditorOutcome::Stay {
+                screen: SubGScreen::Frequency {
                     cursor,
                     edit: EditMode::Freq { place: next_place },
                 },
                 profile,
             },
-            FreqStep::Done(profile) => LoRaHold::Stay {
-                screen: LoRaScreen::Frequency {
+            FreqStep::Done(profile) => SubGEditorOutcome::Stay {
+                screen: SubGScreen::Frequency {
                     cursor,
                     edit: EditMode::Browsing,
                 },
                 profile,
             },
         },
-        EditMode::Field => LoRaHold::Stay {
-            screen: LoRaScreen::Frequency {
+        EditMode::Field => SubGEditorOutcome::Stay {
+            screen: SubGScreen::Frequency {
                 cursor,
                 edit: EditMode::Browsing,
             },
             profile,
         },
         EditMode::Browsing => match cursor {
-            FreqRow::Save => LoRaHold::Commit(profile),
-            FreqRow::Back => LoRaHold::Stay {
-                screen: LoRaScreen::Preset {
-                    cursor: preset_cursor_for(profile.modulation),
+            FreqRow::Save => SubGEditorOutcome::Commit(manual_configuration(profile)),
+            FreqRow::Back => SubGEditorOutcome::Stay {
+                screen: SubGScreen::Preset {
+                    cursor: preset_cursor_for(profile.modulation()),
                 },
                 profile,
             },
-            FreqRow::Channel => LoRaHold::Stay {
-                screen: LoRaScreen::Frequency {
+            FreqRow::Channel => SubGEditorOutcome::Stay {
+                screen: SubGScreen::Frequency {
                     cursor,
                     edit: EditMode::Field,
                 },
                 profile,
             },
-            FreqRow::Mhz | FreqRow::Khz => LoRaHold::Stay {
-                screen: LoRaScreen::Frequency {
+            FreqRow::Mhz | FreqRow::Khz => SubGEditorOutcome::Stay {
+                screen: SubGScreen::Frequency {
                     cursor,
                     edit: match cursor.freq_first_place() {
                         Some(place) => EditMode::Freq { place },
@@ -478,18 +585,18 @@ fn lora_frequency_hold(cursor: FreqRow, edit: EditMode, profile: RadioProfile) -
     }
 }
 
-fn lora_custom_hold(cursor: CustomRow, edit: EditMode, profile: RadioProfile) -> LoRaHold {
+fn lora_custom_hold(cursor: CustomRow, edit: EditMode, profile: RadioProfile) -> SubGEditorOutcome {
     match edit {
         EditMode::Browsing => match cursor {
-            CustomRow::Save => LoRaHold::Commit(profile),
-            CustomRow::Back => LoRaHold::Stay {
-                screen: LoRaScreen::Preset {
-                    cursor: preset_cursor_for(profile.modulation),
+            CustomRow::Save => SubGEditorOutcome::Commit(manual_configuration(profile)),
+            CustomRow::Back => SubGEditorOutcome::Stay {
+                screen: SubGScreen::Preset {
+                    cursor: preset_cursor_for(profile.modulation()),
                 },
                 profile,
             },
-            _ => LoRaHold::Stay {
-                screen: LoRaScreen::Custom {
+            _ => SubGEditorOutcome::Stay {
+                screen: SubGScreen::Custom {
                     cursor,
                     edit: match cursor.freq_first_place() {
                         Some(place) => EditMode::Freq { place },
@@ -499,23 +606,23 @@ fn lora_custom_hold(cursor: CustomRow, edit: EditMode, profile: RadioProfile) ->
                 profile,
             },
         },
-        EditMode::Field => LoRaHold::Stay {
-            screen: LoRaScreen::Custom {
+        EditMode::Field => SubGEditorOutcome::Stay {
+            screen: SubGScreen::Custom {
                 cursor,
                 edit: EditMode::Browsing,
             },
             profile,
         },
         EditMode::Freq { place } => match advance_freq_place(profile, place) {
-            FreqStep::Place(next_place) => LoRaHold::Stay {
-                screen: LoRaScreen::Custom {
+            FreqStep::Place(next_place) => SubGEditorOutcome::Stay {
+                screen: SubGScreen::Custom {
                     cursor,
                     edit: EditMode::Freq { place: next_place },
                 },
                 profile,
             },
-            FreqStep::Done(profile) => LoRaHold::Stay {
-                screen: LoRaScreen::Custom {
+            FreqStep::Done(profile) => SubGEditorOutcome::Stay {
+                screen: SubGScreen::Custom {
                     cursor,
                     edit: EditMode::Browsing,
                 },

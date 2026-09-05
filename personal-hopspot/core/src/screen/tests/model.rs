@@ -9,7 +9,7 @@ fn display_sort_pins_usb_last_and_prioritizes_radios() {
         CardKind::Tcp,
         CardKind::Ble,
         CardKind::EspNow,
-        CardKind::LoRa,
+        CardKind::SubG(SubGCardState::AutoLoRa),
     ] {
         let mut card = test_card("iface");
         card.kind = kind;
@@ -22,7 +22,7 @@ fn display_sort_pins_usb_last_and_prioritizes_radios() {
     assert_eq!(
         kinds.as_slice(),
         &[
-            CardKind::LoRa,
+            CardKind::SubG(SubGCardState::AutoLoRa),
             CardKind::Wifi,
             CardKind::Ble,
             CardKind::EspNow,

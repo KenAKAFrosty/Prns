@@ -1,15 +1,19 @@
-pub(in crate::screen) mod lora;
+pub(in crate::screen) mod subg;
 
 use core::future::Future;
 
 use personal_rns::interfaces::lora::RadioProfile;
+use personal_rns::interfaces::subghz::regions::us915::US915_AUTO_LORA_PROFILE;
+use personal_rns::interfaces::subghz::{
+    ResolvedSubGMode, SubGConfiguration, SubGConfigurationState,
+};
 use personal_rns::storage::DisplayedStorageLimits;
 
 use crate::PersistenceState;
 
 use super::limits::storage_limit_page_count;
-use super::model::{Card, CardKind, ScreenContent};
-use lora::{lora_editor_hold, lora_editor_tap, region_index, LoRaHold, LoRaScreen};
+use super::model::{Card, CardKind, ScreenContent, SubGCardState};
+use subg::{region_index, subg_editor_hold, subg_editor_tap, SubGEditorOutcome, SubGScreen};
 
 const INITIAL_VISIBLE_FOCUS_ITEMS: usize = 3;
 const SCROLLED_VISIBLE_FOCUS_ITEMS: usize = 2;
@@ -54,16 +58,19 @@ pub(in crate::screen) const SHARED_INSTANCE_MENU_ITEMS: &[&str] = &["Power", "RN
 pub(in crate::screen) const SHARED_INSTANCE_CONFIG_MENU_ITEM: usize = 1;
 pub(in crate::screen) const WIFI_MENU_ITEMS: &[&str] = &["Power", "Station", "Back"];
 pub(in crate::screen) const STATION_UPLINK_MENU_ITEM: usize = 1;
-const LORA_MENU_ITEMS: &[&str] = &["Power", "Tune", "Reset", "Back"];
-pub(in crate::screen) const LORA_TUNE_MENU_ITEM: usize = 1;
-pub(in crate::screen) const LORA_RESET_MENU_ITEM: usize = 2;
+const SUBG_MENU_ITEMS: &[&str] = &["Power", "Configure", "Clear", "Back"];
+const SUBG_SETUP_MENU_ITEMS: &[&str] = &["Configure", "Back"];
+pub(in crate::screen) const SUBG_CONFIGURE_MENU_ITEM: usize = 1;
+pub(in crate::screen) const SUBG_CLEAR_MENU_ITEM: usize = 2;
+pub(in crate::screen) const SUBG_SETUP_CONFIGURE_MENU_ITEM: usize = 0;
 
 pub(in crate::screen) fn interface_menu_items(
     kind: CardKind,
     shared_instance_config_export: SharedInstanceConfigExport,
 ) -> &'static [&'static str] {
     match kind {
-        CardKind::LoRa => LORA_MENU_ITEMS,
+        CardKind::SubG(SubGCardState::Setup) => SUBG_SETUP_MENU_ITEMS,
+        CardKind::SubG(SubGCardState::AutoLoRa | SubGCardState::ManualLoRa) => SUBG_MENU_ITEMS,
         CardKind::WifiStation | CardKind::WifiStationDisabled => WIFI_MENU_ITEMS,
         CardKind::SharedInstance
             if shared_instance_config_export == SharedInstanceConfigExport::Available =>
@@ -99,9 +106,9 @@ pub enum UiAction {
     /// Flip the selected card's interface off or back on, keyed by the card's [`id`](crate::screen::Card::id).
     ToggleSelectedInterface,
     ToggleStationUplink,
-    OpenLoRaEditor,
-    SetLoRaProfile(RadioProfile),
-    ResetLoRaProfile,
+    OpenSubGEditor,
+    SetSubGConfiguration(SubGConfiguration),
+    ClearSubGConfiguration,
     SwapRadioMode,
     OpenDocs,
     CopySharedInstanceConfig,
@@ -128,9 +135,11 @@ prns_macros::iterable_enum! {
         Awake,
         Saved,
         ApplyFailed,
-        ProfileNotSaved,
-        ProfileRecovered,
-        ProfileReset,
+        SubGNotSaved,
+        SubGRecovered,
+        SubGReset,
+        SubGMigrated,
+        SubGUncertain,
         IdentityReset,
         IdentityUnstable,
         StateRecovered,
@@ -142,16 +151,34 @@ prns_macros::iterable_enum! {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RadioProfileChangeResult {
+pub enum SubGConfigurationChangeResult {
     Saved,
     ApplyFailed,
-    ProfileNotSaved,
+    PersistenceFailed,
+    PersistenceUncertain,
+    RollbackFailed,
 }
 
-impl RadioProfileChangeResult {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ActiveSubGConfiguration {
+    Previous,
+    Requested,
+}
+
+impl SubGConfigurationChangeResult {
     #[must_use]
-    pub const fn applied(self) -> bool {
-        matches!(self, Self::Saved | Self::ProfileNotSaved)
+    pub const fn committed(self) -> bool {
+        matches!(self, Self::Saved)
+    }
+
+    #[must_use]
+    pub const fn active_configuration(self) -> ActiveSubGConfiguration {
+        match self {
+            Self::ApplyFailed | Self::PersistenceFailed => ActiveSubGConfiguration::Previous,
+            Self::Saved | Self::PersistenceUncertain | Self::RollbackFailed => {
+                ActiveSubGConfiguration::Requested
+            }
+        }
     }
 
     #[must_use]
@@ -159,26 +186,60 @@ impl RadioProfileChangeResult {
         match self {
             Self::Saved => UiNotice::Saved,
             Self::ApplyFailed => UiNotice::ApplyFailed,
-            Self::ProfileNotSaved => UiNotice::ProfileNotSaved,
+            Self::PersistenceFailed => UiNotice::SubGNotSaved,
+            Self::PersistenceUncertain | Self::RollbackFailed => UiNotice::SubGUncertain,
         }
     }
 }
 
-pub async fn apply_and_persist_radio_profile<Apply, Persist, PersistFuture>(
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SubGConfigurationStepOutcome {
+    Succeeded,
+    Failed,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SubGConfigurationPersistenceOutcome {
+    Committed,
+    NotCommitted,
+    Indeterminate,
+}
+
+pub async fn apply_and_persist_subg_configuration<
+    Apply,
+    ApplyFuture,
+    Persist,
+    PersistFuture,
+    Rollback,
+    RollbackFuture,
+>(
     apply: Apply,
     persist: Persist,
-) -> RadioProfileChangeResult
+    rollback: Rollback,
+) -> SubGConfigurationChangeResult
 where
-    Apply: Future<Output = bool>,
+    Apply: FnOnce() -> ApplyFuture,
+    ApplyFuture: Future<Output = SubGConfigurationStepOutcome>,
     Persist: FnOnce() -> PersistFuture,
-    PersistFuture: Future<Output = bool>,
+    PersistFuture: Future<Output = SubGConfigurationPersistenceOutcome>,
+    Rollback: FnOnce() -> RollbackFuture,
+    RollbackFuture: Future<Output = SubGConfigurationStepOutcome>,
 {
-    if !apply.await {
-        RadioProfileChangeResult::ApplyFailed
-    } else if persist().await {
-        RadioProfileChangeResult::Saved
-    } else {
-        RadioProfileChangeResult::ProfileNotSaved
+    if matches!(apply().await, SubGConfigurationStepOutcome::Failed) {
+        return SubGConfigurationChangeResult::ApplyFailed;
+    }
+    match persist().await {
+        SubGConfigurationPersistenceOutcome::Committed => {
+            return SubGConfigurationChangeResult::Saved
+        }
+        SubGConfigurationPersistenceOutcome::Indeterminate => {
+            return SubGConfigurationChangeResult::PersistenceUncertain
+        }
+        SubGConfigurationPersistenceOutcome::NotCommitted => {}
+    }
+    match rollback().await {
+        SubGConfigurationStepOutcome::Succeeded => SubGConfigurationChangeResult::PersistenceFailed,
+        SubGConfigurationStepOutcome::Failed => SubGConfigurationChangeResult::RollbackFailed,
     }
 }
 
@@ -197,9 +258,11 @@ impl UiNotice {
             Self::Awake => NoticeLines::one("Awake"),
             Self::Saved => NoticeLines::one("Saved"),
             Self::ApplyFailed => NoticeLines::one("Apply Failed"),
-            Self::ProfileNotSaved => NoticeLines::two("Profile", "Not saved"),
-            Self::ProfileRecovered => NoticeLines::two("Profile", "Recovered"),
-            Self::ProfileReset => NoticeLines::two("Profile", "Reset"),
+            Self::SubGNotSaved => NoticeLines::two("SubG", "Not saved"),
+            Self::SubGRecovered => NoticeLines::two("SubG", "Recovered"),
+            Self::SubGReset => NoticeLines::two("SubG", "Reset"),
+            Self::SubGMigrated => NoticeLines::two("SubG", "Migrated"),
+            Self::SubGUncertain => NoticeLines::two("SubG", "Uncertain"),
             Self::IdentityReset => NoticeLines::two("Identity", "Reset"),
             Self::IdentityUnstable => NoticeLines::two("Identity", "Unstable"),
             Self::StateRecovered => NoticeLines::two("State", "Recovered"),
@@ -380,9 +443,12 @@ pub(in crate::screen) enum UiMode {
         selected_item: usize,
         kind: CardKind,
     },
-    LoRaEditor {
-        screen: LoRaScreen,
+    SubGEditor {
+        screen: SubGScreen,
         profile: RadioProfile,
+    },
+    ConfirmSubGClear {
+        confirm: bool,
     },
     ConfirmRadioSwap {
         confirm: bool,
@@ -454,7 +520,8 @@ impl UiState {
             | UiMode::LimitsPage { .. }
             | UiMode::Sleeping
             | UiMode::InterfaceMenu { .. }
-            | UiMode::LoRaEditor { .. }
+            | UiMode::SubGEditor { .. }
+            | UiMode::ConfirmSubGClear { .. }
             | UiMode::ConfirmRadioSwap { .. } => None,
         }
     }
@@ -466,15 +533,23 @@ impl UiState {
             | UiMode::GlobalMenu { .. }
             | UiMode::LimitsPage { .. }
             | UiMode::Sleeping
-            | UiMode::LoRaEditor { .. }
+            | UiMode::SubGEditor { .. }
+            | UiMode::ConfirmSubGClear { .. }
             | UiMode::ConfirmRadioSwap { .. } => None,
         }
     }
 
-    pub fn open_lora_editor(&mut self, profile: RadioProfile) {
-        self.mode = UiMode::LoRaEditor {
-            screen: LoRaScreen::Region {
-                cursor: region_index(profile.region),
+    pub fn open_subg_editor(&mut self, state: SubGConfigurationState) {
+        let profile = match state {
+            SubGConfigurationState::Unconfigured => US915_AUTO_LORA_PROFILE,
+            SubGConfigurationState::Configured(configuration) => {
+                let ResolvedSubGMode::LoRa(profile) = configuration.resolve();
+                profile
+            }
+        };
+        self.mode = UiMode::SubGEditor {
+            screen: SubGScreen::Region {
+                cursor: region_index(profile.region()),
             },
             profile,
         };
@@ -544,7 +619,8 @@ impl UiState {
             | UiMode::GlobalMenu { .. }
             | UiMode::LimitsPage { .. }
             | UiMode::Sleeping
-            | UiMode::LoRaEditor { .. }
+            | UiMode::SubGEditor { .. }
+            | UiMode::ConfirmSubGClear { .. }
             | UiMode::ConfirmRadioSwap { .. } => {}
             UiMode::InterfaceMenu { .. } if self.selected_card(content.cards).is_none() => {
                 self.mode = UiMode::Cards;
@@ -678,6 +754,18 @@ impl UiState {
                     UiAction::None
                 }
             }
+            (InputEvent::ShortPress, UiMode::ConfirmSubGClear { confirm }) => {
+                self.mode = UiMode::ConfirmSubGClear { confirm: !confirm };
+                UiAction::None
+            }
+            (InputEvent::LongPress, UiMode::ConfirmSubGClear { confirm }) => {
+                self.mode = UiMode::Cards;
+                if confirm {
+                    UiAction::ClearSubGConfiguration
+                } else {
+                    UiAction::None
+                }
+            }
             (
                 InputEvent::ShortPress,
                 UiMode::InterfaceMenu {
@@ -701,38 +789,45 @@ impl UiState {
             ) => {
                 self.mode = UiMode::Cards;
                 match (kind, selected_item) {
+                    (CardKind::SubG(SubGCardState::Setup), SUBG_SETUP_CONFIGURE_MENU_ITEM) => {
+                        UiAction::OpenSubGEditor
+                    }
                     (CardKind::SharedInstance, SHARED_INSTANCE_CONFIG_MENU_ITEM)
                         if self.shared_instance_config_export
                             == SharedInstanceConfigExport::Available =>
                     {
                         UiAction::CopySharedInstanceConfig
                     }
+                    (CardKind::SubG(SubGCardState::Setup), _) => UiAction::None,
                     (_, POWER_MENU_ITEM) => UiAction::ToggleSelectedInterface,
                     (
                         CardKind::WifiStation | CardKind::WifiStationDisabled,
                         STATION_UPLINK_MENU_ITEM,
                     ) => UiAction::ToggleStationUplink,
-                    (CardKind::LoRa, LORA_TUNE_MENU_ITEM) => UiAction::OpenLoRaEditor,
-                    (CardKind::LoRa, LORA_RESET_MENU_ITEM) => UiAction::ResetLoRaProfile,
+                    (CardKind::SubG(_), SUBG_CONFIGURE_MENU_ITEM) => UiAction::OpenSubGEditor,
+                    (CardKind::SubG(_), SUBG_CLEAR_MENU_ITEM) => {
+                        self.mode = UiMode::ConfirmSubGClear { confirm: false };
+                        UiAction::None
+                    }
                     _ => UiAction::None,
                 }
             }
-            (InputEvent::ShortPress, UiMode::LoRaEditor { screen, profile }) => {
-                let (screen, profile) = lora_editor_tap(screen, profile);
-                self.mode = UiMode::LoRaEditor { screen, profile };
+            (InputEvent::ShortPress, UiMode::SubGEditor { screen, profile }) => {
+                let (screen, profile) = subg_editor_tap(screen, profile);
+                self.mode = UiMode::SubGEditor { screen, profile };
                 UiAction::None
             }
-            (InputEvent::LongPress, UiMode::LoRaEditor { screen, profile }) => {
-                match lora_editor_hold(screen, profile) {
-                    LoRaHold::Stay { screen, profile } => {
-                        self.mode = UiMode::LoRaEditor { screen, profile };
+            (InputEvent::LongPress, UiMode::SubGEditor { screen, profile }) => {
+                match subg_editor_hold(screen, profile) {
+                    SubGEditorOutcome::Stay { screen, profile } => {
+                        self.mode = UiMode::SubGEditor { screen, profile };
                         UiAction::None
                     }
-                    LoRaHold::Commit(profile) => {
+                    SubGEditorOutcome::Commit(configuration) => {
                         self.mode = UiMode::Cards;
-                        UiAction::SetLoRaProfile(profile)
+                        UiAction::SetSubGConfiguration(configuration)
                     }
-                    LoRaHold::Cancel => {
+                    SubGEditorOutcome::Cancel => {
                         self.mode = UiMode::Cards;
                         UiAction::None
                     }

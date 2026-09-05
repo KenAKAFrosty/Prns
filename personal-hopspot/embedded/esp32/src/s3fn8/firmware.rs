@@ -43,23 +43,23 @@ pub async fn run(spawner: Spawner) {
         S3_8_MIB_FLASH_LAYOUT.flash_capacity,
     )));
     let shared_flash = SharedNorFlash::new(flash, S3_8_MIB_FLASH_LAYOUT.flash_capacity);
-    let mut profile_store = personal_hopspot_core::RadioProfileStore::new(
+    let mut subg_configuration_store = personal_hopspot_core::SubGConfigurationStore::new(
         shared_flash,
         S3_8_MIB_FLASH_LAYOUT.radio_profile_pages,
     );
-    let loaded_profile = match profile_store.load(US915_AUTO_LORA_PROFILE).await {
+    let loaded_subg_configuration = match subg_configuration_store.load().await {
         Ok(loaded) => loaded,
         Err(error) => {
-            log::error!("LoRa profile restore failed: {error:?}");
-            personal_hopspot_core::LoadedRadioProfile {
-                profile: US915_AUTO_LORA_PROFILE,
-                follows_default: true,
-                notice: Some(personal_hopspot_core::RadioProfileLoadNotice::Reset),
+            log::error!("SubG configuration restore failed: {error:?}");
+            personal_hopspot_core::LoadedSubGConfiguration {
+                state: SubGConfigurationState::Unconfigured,
+                notice: Some(personal_hopspot_core::SubGConfigurationLoadNotice::Reset),
             }
         }
     };
-    let lora_profile = loaded_profile.profile;
-    let lora_id = LoRaInterface::<LoraRadio>::interface_id(&lora_profile);
+    let subg_configuration = loaded_subg_configuration.state;
+    let lora_id = LoRaInterface::<LoraRadio>::interface_id_for_configuration(subg_configuration)
+        .unwrap_or_else(|_| LoRaInterface::<LoraRadio>::unconfigured_interface_id());
     static LORA_STATUS: StaticCell<EmbassyInterfaceStatus> = StaticCell::new();
     let lora_status: &'static EmbassyInterfaceStatus = LORA_STATUS.init(
         EmbassyInterfaceStatus::new_accounted(lora_id, ConnectionState::Initializing),
@@ -72,7 +72,7 @@ pub async fn run(spawner: Spawner) {
         LORA_TX_QUEUE.init([0; personal_rns::lora::LORA_TX_QUEUE_BYTES]);
     let lora = match LoRaInterface::new(LoRaInterfaceInput {
         radio: lora_radio,
-        profile: lora_profile,
+        configuration: subg_configuration,
         airtime_policy: AirtimePolicy::Regional,
         tx_queue: lora_tx_queue,
         control: &LORA_CONTROL,

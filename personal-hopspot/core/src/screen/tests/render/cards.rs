@@ -43,16 +43,48 @@ fn cards_name_each_connection_state_without_a_dormant_bucket() {
             ConnectionState::Disconnected,
             Some("Waiting"),
         ),
+        (
+            CardKind::SubG(SubGCardState::Setup),
+            ConnectionState::Disabled,
+            Some("Setup"),
+        ),
+        (
+            CardKind::SubG(SubGCardState::AutoLoRa),
+            ConnectionState::Disabled,
+            Some("Off"),
+        ),
     ];
 
-    let labels: HVec<Option<&str>, 12> = states
+    let labels: HVec<Option<&str>, 14> = states
         .iter()
         .map(|(kind, connection, _)| connection_status_label(*kind, *connection))
         .collect();
-    let expected: HVec<Option<&str>, 12> =
+    let expected: HVec<Option<&str>, 14> =
         states.iter().map(|(_, _, expected)| *expected).collect();
 
     assert_eq!(labels, expected);
+}
+
+#[test]
+fn subg_card_presentation_preserves_configuration_state() {
+    assert_eq!(
+        subg_card(SubGConfigurationState::Unconfigured),
+        (CardKind::SubG(SubGCardState::Setup), card_label("SubG"),)
+    );
+    assert_eq!(
+        subg_card(SubGConfigurationState::Configured(Us915::auto_lora())),
+        (
+            CardKind::SubG(SubGCardState::AutoLoRa),
+            card_label("AutoLoRa"),
+        )
+    );
+    for state in [
+        SubGConfigurationState::Unconfigured,
+        SubGConfigurationState::Configured(Us915::auto_lora()),
+    ] {
+        let (kind, label) = subg_card(state);
+        assert!(label.chars().count() <= card_label_max_chars(kind));
+    }
 }
 
 #[test]
