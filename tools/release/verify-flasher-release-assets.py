@@ -140,9 +140,14 @@ def expected_candidate_assets(candidate: Path, version: str) -> dict[str, Path]:
         "release-history.json": candidate / "metadata" / "release-history.json",
     }
     if schema >= 3:
-        sources["flasher_manifest.py"] = (
-            candidate / "qualification" / "flasher_manifest.py"
-        )
+        manifest_helper = candidate / "qualification" / "flasher_manifest.py"
+        sources["flasher_manifest.py"] = manifest_helper
+        if manifest_helper.is_file() and "from flasher_memory_contracts import" in (
+            manifest_helper.read_text(encoding="utf-8")
+        ):
+            sources["flasher_memory_contracts.py"] = (
+                candidate / "qualification" / "flasher_memory_contracts.py"
+            )
     hotfix_metadata = candidate / "metadata" / "hotfix.json"
     hotfix_helper = candidate / "qualification" / "flasher_hotfix.py"
     if hotfix_helper.is_file():

@@ -27,6 +27,7 @@ from flasher_build_metadata import EXPECTED_TOOLS, EXPECTED_WEB_PACKAGES
 from flasher_reproducibility import SEPARATE_ENVELOPES, payload_identity, payload_manifest
 from flasher_sparse_sizes import build_report as build_sparse_size_report
 from flasher_manifest import (
+    validate_esp_artifact,
     validate_nrf_serial_dfu_recovery_artifact,
     validate_uf2_artifact,
 )
@@ -56,22 +57,25 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def uf2_payload(application_base: int) -> bytes:
-    block = bytearray(512)
-    for offset, value in (
-        (0, 0x0A324655),
-        (4, 0x9E5D5157),
-        (8, 0x00002000),
-        (12, application_base),
-        (16, 256),
-        (20, 0),
-        (24, 1),
-        (28, 0xADA52840),
-        (508, 0x0AB16F30),
-    ):
-        block[offset : offset + 4] = value.to_bytes(4, "little")
-    block[32:288] = bytes(range(256))
-    return bytes(block)
+def uf2_payload(application_base: int, block_count: int = 1) -> bytes:
+    blocks = []
+    for index in range(block_count):
+        block = bytearray(512)
+        for offset, value in (
+            (0, 0x0A324655),
+            (4, 0x9E5D5157),
+            (8, 0x00002000),
+            (12, application_base + index * 256),
+            (16, 256),
+            (20, index),
+            (24, block_count),
+            (28, 0xADA52840),
+            (508, 0x0AB16F30),
+        ):
+            block[offset : offset + 4] = value.to_bytes(4, "little")
+        block[32:288] = bytes(range(256))
+        blocks.append(block)
+    return b"".join(blocks)
 
 
 def run_script(script: str, *arguments: object, environment: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
@@ -294,8 +298,12 @@ class CandidateFixture:
                         "softdevice_family": "s140",
                         "softdevice_version": "7.3.0",
                         "fwid": "0x0123",
+                        "device_type": "0x0052",
+                        "device_revision": 52840,
+                        "application_version": "not-enforced",
                         "application_base": "0x00027000",
                         "application_end_exclusive": "0x000ea000",
+                        "bank_layout": "single",
                     },
                     "recovery": {
                         "mount_label": "T1000-E",
@@ -418,6 +426,7 @@ class CandidateFixture:
             "validate-flasher-acceptance.py": SCRIPTS / "validate-flasher-acceptance.py",
             "flasher_acceptance_contract.py": SCRIPTS / "flasher_acceptance_contract.py",
             "flasher_manifest.py": SCRIPTS / "flasher_manifest.py",
+            "flasher_memory_contracts.py": SCRIPTS / "flasher_memory_contracts.py",
             "serve-flasher-candidate.py": SCRIPTS / "serve-flasher-candidate.py",
             "verify-flasher-candidate-files.py": SCRIPTS / "verify-flasher-candidate-files.py",
             "validate-flasher-tester-roster.py": SCRIPTS / "validate-flasher-tester-roster.py",
@@ -747,10 +756,29 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         )
         variant = target["variants"][0]
         payload = bytearray((self.fixture.root / variant["path"]).read_bytes())
-        validate_uf2_artifact(variant, bytes(payload))
+        validate_uf2_artifact("t-echo", variant, bytes(payload))
         payload[0] = 0
         with self.assertRaisesRegex(ValueError, "invalid magic"):
-            validate_uf2_artifact(variant, bytes(payload))
+            validate_uf2_artifact("t-echo", variant, bytes(payload))
+
+    def test_release_boundary_rejects_legacy_uf2_transport_tail(self) -> None:
+        target = next(
+            target
+            for target in self.fixture.manifest["targets"]
+            if target["board_slug"] == "t-echo"
+        )
+        variant = target["variants"][0]
+        firmware_blocks = (0x000BF000 - 0x00026000) // 256
+        payload = uf2_payload(0x00026000, firmware_blocks + 1)
+        with self.assertRaisesRegex(ValueError, "firmware-owned region"):
+            validate_uf2_artifact("t-echo", variant, payload)
+        validate_uf2_artifact("t114", variant, payload)
+
+    def test_release_boundary_applies_esp_sector_occupancy(self) -> None:
+        part = {"kind": "bootloader", "offset": 0}
+        validate_esp_artifact("heltec-v4", part, bytes(0x8000))
+        with self.assertRaisesRegex(ValueError, "assigned memory region"):
+            validate_esp_artifact("heltec-v4", part, bytes(0x8001))
 
     def test_release_boundary_binds_nordic_recovery_to_dfu_application(self) -> None:
         target = next(
@@ -765,6 +793,22 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         tampered = bytes([application[0] ^ 0xFF]) + application[1:]
         with self.assertRaisesRegex(ValueError, "disagrees with the exact DFU application"):
             validate_nrf_serial_dfu_recovery_artifact(target, tampered, recovery)
+
+    def test_release_boundary_rejects_nordic_transport_tail(self) -> None:
+        target = next(
+            target
+            for target in self.fixture.manifest["targets"]
+            if target["board_slug"] == "t1000-e"
+        )
+        recovery = target["nrf_serial_dfu"]["recovery"]
+        recovery_payload = (self.fixture.root / recovery["artifact"]["path"]).read_bytes()
+        firmware_bytes = 0x000E9000 - 0x00027000
+        with self.assertRaisesRegex(ValueError, "firmware-owned region"):
+            validate_nrf_serial_dfu_recovery_artifact(
+                target,
+                bytes(firmware_bytes + 1),
+                recovery_payload,
+            )
 
     def test_embedded_firmware_cannot_carry_the_hosted_source_archive(self) -> None:
         target = next(
@@ -1508,6 +1552,7 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
             self.fixture.root / "qualification" / "flasher_acceptance_contract.py",
             self.fixture.root / "qualification" / "flasher_hotfix.py",
             self.fixture.root / "qualification" / "flasher_manifest.py",
+            self.fixture.root / "qualification" / "flasher_memory_contracts.py",
             self.fixture.root / "qualification" / "serve-flasher-candidate.py",
             self.fixture.root / "qualification" / "verify-flasher-candidate-files.py",
             self.fixture.root / "qualification" / "validate-flasher-tester-roster.py",
@@ -1704,6 +1749,22 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
 
         schema_three = module.expected_candidate_assets(self.fixture.root, VERSION)
         self.assertIn("flasher_manifest.py", schema_three)
+        self.assertIn("flasher_memory_contracts.py", schema_three)
+
+        memory_contracts = (
+            self.fixture.root / "qualification" / "flasher_memory_contracts.py"
+        )
+        memory_contracts.unlink()
+        with self.assertRaisesRegex(ValueError, "flasher_memory_contracts.py"):
+            module.expected_candidate_assets(self.fixture.root, VERSION)
+        manifest_helper = self.fixture.root / "qualification" / "flasher_manifest.py"
+        manifest_helper.write_text("FLASH_MANIFEST_SCHEMA = 3\n", encoding="utf-8")
+        historical_schema_three = module.expected_candidate_assets(
+            self.fixture.root, VERSION
+        )
+        self.assertNotIn("flasher_memory_contracts.py", historical_schema_three)
+        shutil.copy2(SCRIPTS / "flasher_manifest.py", manifest_helper)
+        shutil.copy2(SCRIPTS / "flasher_memory_contracts.py", memory_contracts)
 
         self.fixture.manifest["schema"] = 2
         write_json(self.fixture.manifest_path, self.fixture.manifest)

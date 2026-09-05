@@ -10,8 +10,12 @@ const DIVERGENT_PARTITION_TABLE: EspPartitionTable = EspPartitionTable {
 
 fn prepare_root() -> TempDir {
     let root = TempDir::new().expect("temporary repository root is available");
-    for artifact in PARTITION_ARTIFACTS {
-        let path = root.path().join(artifact.relative_path);
+    for relative_path in PARTITION_ARTIFACTS
+        .iter()
+        .map(|artifact| artifact.relative_path)
+        .chain([python::RELATIVE_PATH])
+    {
+        let path = root.path().join(relative_path);
         fs::create_dir_all(path.parent().expect("artifact has a parent directory"))
             .expect("artifact parent directory is writable");
     }
@@ -26,7 +30,7 @@ fn missing_contracts_are_reported_without_writes() {
         .err()
         .expect("missing artifacts fail the check");
     if let ContractError::Stale { artifacts } = error {
-        assert_eq!(artifacts.0.len(), PARTITION_ARTIFACTS.len());
+        assert_eq!(artifacts.0.len(), PARTITION_ARTIFACTS.len() + 1);
         assert!(artifacts
             .0
             .iter()
@@ -42,7 +46,7 @@ fn writes_are_idempotent_and_make_checks_pass() {
 
     let first_write = run(root.path(), ContractsMode::Write).expect("contracts can be written");
     if let ContractOutcome::Written { updated, unchanged } = first_write {
-        assert_eq!(updated.len(), PARTITION_ARTIFACTS.len());
+        assert_eq!(updated.len(), PARTITION_ARTIFACTS.len() + 1);
         assert_eq!(unchanged, 0);
     } else {
         assert!(matches!(first_write, ContractOutcome::Written { .. }));
@@ -52,7 +56,7 @@ fn writes_are_idempotent_and_make_checks_pass() {
         run(root.path(), ContractsMode::Write).expect("contracts can be written again");
     if let ContractOutcome::Written { updated, unchanged } = second_write {
         assert!(updated.is_empty());
-        assert_eq!(unchanged, PARTITION_ARTIFACTS.len());
+        assert_eq!(unchanged, PARTITION_ARTIFACTS.len() + 1);
     } else {
         assert!(matches!(second_write, ContractOutcome::Written { .. }));
     }
@@ -60,7 +64,7 @@ fn writes_are_idempotent_and_make_checks_pass() {
     assert!(matches!(
         run(root.path(), ContractsMode::Check),
         Ok(ContractOutcome::Verified { artifact_count })
-            if artifact_count == PARTITION_ARTIFACTS.len()
+            if artifact_count == PARTITION_ARTIFACTS.len() + 1
     ));
 }
 

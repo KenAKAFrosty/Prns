@@ -1,3 +1,5 @@
+mod python;
+
 use std::fmt;
 use std::fs;
 use std::io;
@@ -8,6 +10,8 @@ use personal_hopspot_memory::{
     ESP_16_MIB_PARTITION_TABLE, ESP_4_MIB_PARTITION_TABLE, ESP_8_MIB_PARTITION_TABLE,
 };
 use thiserror::Error;
+
+use python::PythonContractError;
 
 const PARTITION_ARTIFACTS: [PartitionArtifact; 3] = [
     PartitionArtifact {
@@ -65,6 +69,8 @@ pub(crate) enum ContractError {
         #[source]
         source: EspPartitionCsvError,
     },
+    #[error("failed to render the Python release memory contract: {0}")]
+    Python(#[from] PythonContractError),
     #[error(
         "partition artifact {path} differs between memory profiles {canonical:?} and {conflicting:?}"
     )]
@@ -136,7 +142,7 @@ pub(crate) fn run(root: &Path, mode: ContractsMode) -> Result<ContractOutcome, C
 }
 
 fn render_artifacts(root: &Path) -> Result<Vec<RenderedArtifact>, ContractError> {
-    PARTITION_ARTIFACTS
+    let mut rendered = PARTITION_ARTIFACTS
         .iter()
         .map(|artifact| {
             Ok(RenderedArtifact {
@@ -144,7 +150,9 @@ fn render_artifacts(root: &Path) -> Result<Vec<RenderedArtifact>, ContractError>
                 contents: render_partition_artifact(artifact)?,
             })
         })
-        .collect()
+        .collect::<Result<Vec<_>, ContractError>>()?;
+    rendered.push(python::render(root)?);
+    Ok(rendered)
 }
 
 fn render_partition_artifact(artifact: &PartitionArtifact) -> Result<String, ContractError> {
@@ -186,9 +194,9 @@ fn render_profile(
     Ok(contents)
 }
 
-struct RenderedArtifact {
-    path: PathBuf,
-    contents: String,
+pub(super) struct RenderedArtifact {
+    pub(super) path: PathBuf,
+    pub(super) contents: String,
 }
 
 fn check_artifacts(rendered: Vec<RenderedArtifact>) -> Result<ContractOutcome, ContractError> {
