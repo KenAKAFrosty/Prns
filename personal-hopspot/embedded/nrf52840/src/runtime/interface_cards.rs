@@ -10,6 +10,7 @@ use super::node::INTERFACE_STORE;
 pub(super) fn build_snapshots(
     lora: &dyn InterfaceStatus,
     usb: &dyn InterfaceStatus,
+    modes: hopspot::InterfaceModeTable,
 ) -> heapless::Vec<InterfaceSnapshot, { MEMBERS + 4 }> {
     let ble = BluetoothAutoStatus::new(&BLE_SHARED);
     let mut entries: heapless::Vec<(&dyn InterfaceStatus, Membership), { MEMBERS + 4 }> =
@@ -27,7 +28,7 @@ pub(super) fn build_snapshots(
         let counts = INTERFACE_STORE.counts(id);
         let _ = snapshots.push(InterfaceSnapshot {
             id,
-            mode: personal_rns::interfaces::InterfaceMode::Full,
+            mode: hopspot::mode_from_table(modes, id.kind()),
             gravity: personal_rns::interfaces::InterfaceGravity::ZERO,
             connection: status.connection(),
             failure_reason: status.failure_reason(),

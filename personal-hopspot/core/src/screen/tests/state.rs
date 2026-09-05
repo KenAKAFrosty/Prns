@@ -55,6 +55,29 @@ fn radio_profile_save_result_distinguishes_apply_and_persistence_failures() {
 }
 
 #[test]
+fn interface_mode_change_result_mirrors_radio_profile_notices() {
+    let saved = block_on(apply_and_persist_interface_modes(
+        async { true },
+        || async { true },
+    ));
+    assert_eq!(saved, InterfaceModeChangeResult::Saved);
+    assert_eq!(saved.notice(), UiNotice::Saved);
+
+    let apply_failed = block_on(apply_and_persist_interface_modes(
+        async { false },
+        || async { true },
+    ));
+    assert_eq!(apply_failed, InterfaceModeChangeResult::ApplyFailed);
+
+    let not_saved = block_on(apply_and_persist_interface_modes(
+        async { true },
+        || async { false },
+    ));
+    assert_eq!(not_saved, InterfaceModeChangeResult::NotSaved);
+    assert_eq!(not_saved.notice(), UiNotice::ProfileNotSaved);
+}
+
+#[test]
 fn persistence_notices_are_brief_across_deferred_failed_and_recovered_states() {
     let mut state = test_ui_state();
     let mut persistence = PersistenceNotice::new();
@@ -438,18 +461,23 @@ fn supported_access_point_states_offer_the_radio_swap_action() {
 }
 
 #[test]
-fn non_lora_interface_menus_cycle_power_and_back_only() {
+fn non_lora_interface_menus_cycle_power_mode_and_back() {
     let cards = test_cards::<1>(CardKind::Usb);
     let content = test_content(&cards);
     let mut state = test_ui_state();
     state.handle_input(InputEvent::ShortPress, content);
-    state.handle_input(InputEvent::LongPress, content);
+    open_interface_options(&mut state, content);
 
-    assert_eq!(state.interface_menu_selected_item(), Some(0));
+    assert_eq!(state.interface_menu_selected_item(), Some(POWER_MENU_ITEM));
     state.handle_input(InputEvent::ShortPress, content);
-    assert_eq!(state.interface_menu_selected_item(), Some(1));
+    assert_eq!(
+        state.interface_menu_selected_item(),
+        Some(POWER_ONLY_MODE_MENU_ITEM)
+    );
     state.handle_input(InputEvent::ShortPress, content);
-    assert_eq!(state.interface_menu_selected_item(), Some(0));
+    assert_eq!(state.interface_menu_selected_item(), Some(2));
+    state.handle_input(InputEvent::ShortPress, content);
+    assert_eq!(state.interface_menu_selected_item(), Some(POWER_MENU_ITEM));
 }
 
 #[test]
@@ -458,9 +486,14 @@ fn shared_instance_config_action_requires_platform_capability() {
     let content = test_content(&cards);
     let mut unavailable = test_ui_state();
     unavailable.handle_input(InputEvent::ShortPress, content);
-    unavailable.handle_input(InputEvent::LongPress, content);
+    open_interface_options(&mut unavailable, content);
     unavailable.handle_input(InputEvent::ShortPress, content);
-    assert_eq!(unavailable.interface_menu_selected_item(), Some(1));
+    assert_eq!(
+        unavailable.interface_menu_selected_item(),
+        Some(POWER_ONLY_MODE_MENU_ITEM)
+    );
+    unavailable.handle_input(InputEvent::ShortPress, content);
+    assert_eq!(unavailable.interface_menu_selected_item(), Some(2));
     unavailable.handle_input(InputEvent::ShortPress, content);
     assert_eq!(
         unavailable.interface_menu_selected_item(),
@@ -469,7 +502,7 @@ fn shared_instance_config_action_requires_platform_capability() {
 
     let mut available = test_ui_state_with_shared_instance_config();
     available.handle_input(InputEvent::ShortPress, content);
-    available.handle_input(InputEvent::LongPress, content);
+    open_interface_options(&mut available, content);
     available.handle_input(InputEvent::ShortPress, content);
     assert_eq!(
         available.interface_menu_selected_item(),
@@ -487,9 +520,14 @@ fn ordinary_tcp_menu_never_exports_shared_instance_config() {
     let content = test_content(&cards);
     let mut state = test_ui_state_with_shared_instance_config();
     state.handle_input(InputEvent::ShortPress, content);
-    state.handle_input(InputEvent::LongPress, content);
+    open_interface_options(&mut state, content);
     state.handle_input(InputEvent::ShortPress, content);
-    assert_eq!(state.interface_menu_selected_item(), Some(1));
+    assert_eq!(
+        state.interface_menu_selected_item(),
+        Some(POWER_ONLY_MODE_MENU_ITEM)
+    );
+    state.handle_input(InputEvent::ShortPress, content);
+    assert_eq!(state.interface_menu_selected_item(), Some(2));
     state.handle_input(InputEvent::ShortPress, content);
     assert_eq!(state.interface_menu_selected_item(), Some(POWER_MENU_ITEM));
 }
@@ -500,7 +538,7 @@ fn configured_wifi_menu_exposes_station_uplink_action() {
     let content = test_content(&cards);
     let mut state = test_ui_state();
     state.handle_input(InputEvent::ShortPress, content);
-    state.handle_input(InputEvent::LongPress, content);
+    open_interface_options(&mut state, content);
 
     assert_eq!(state.interface_menu_selected_item(), Some(POWER_MENU_ITEM));
     state.handle_input(InputEvent::ShortPress, content);
@@ -515,26 +553,31 @@ fn configured_wifi_menu_exposes_station_uplink_action() {
 }
 
 #[test]
-fn unconfigured_wifi_menu_keeps_power_and_back_only() {
+fn unconfigured_wifi_menu_includes_mode_before_back() {
     let cards = test_cards::<1>(CardKind::Wifi);
     let content = test_content(&cards);
     let mut state = test_ui_state();
     state.handle_input(InputEvent::ShortPress, content);
-    state.handle_input(InputEvent::LongPress, content);
+    open_interface_options(&mut state, content);
 
     state.handle_input(InputEvent::ShortPress, content);
-    assert_eq!(state.interface_menu_selected_item(), Some(1));
+    assert_eq!(
+        state.interface_menu_selected_item(),
+        Some(POWER_ONLY_MODE_MENU_ITEM)
+    );
+    state.handle_input(InputEvent::ShortPress, content);
+    assert_eq!(state.interface_menu_selected_item(), Some(2));
     state.handle_input(InputEvent::ShortPress, content);
     assert_eq!(state.interface_menu_selected_item(), Some(POWER_MENU_ITEM));
 }
 
 #[test]
-fn lora_interface_menu_keeps_tune_and_reset() {
+fn lora_interface_menu_keeps_tune_reset_and_mode() {
     let cards = test_cards::<1>(CardKind::LoRa);
     let content = test_content(&cards);
     let mut state = test_ui_state();
     state.handle_input(InputEvent::ShortPress, content);
-    state.handle_input(InputEvent::LongPress, content);
+    open_interface_options(&mut state, content);
 
     assert_eq!(state.interface_menu_selected_item(), Some(0));
     state.handle_input(InputEvent::ShortPress, content);
@@ -548,7 +591,12 @@ fn lora_interface_menu_keeps_tune_and_reset() {
         Some(LORA_RESET_MENU_ITEM)
     );
     state.handle_input(InputEvent::ShortPress, content);
-    assert_eq!(state.interface_menu_selected_item(), Some(3));
+    assert_eq!(
+        state.interface_menu_selected_item(),
+        Some(LORA_MODE_MENU_ITEM)
+    );
+    state.handle_input(InputEvent::ShortPress, content);
+    assert_eq!(state.interface_menu_selected_item(), Some(4));
     state.handle_input(InputEvent::ShortPress, content);
     assert_eq!(state.interface_menu_selected_item(), Some(0));
 }
@@ -559,7 +607,7 @@ fn lora_reset_is_distinct_from_saving_the_current_default_values() {
     let content = test_content(&cards);
     let mut state = test_ui_state();
     state.handle_input(InputEvent::ShortPress, content);
-    state.handle_input(InputEvent::LongPress, content);
+    open_interface_options(&mut state, content);
     for _ in 0..LORA_RESET_MENU_ITEM {
         state.handle_input(InputEvent::ShortPress, content);
     }
@@ -571,7 +619,7 @@ fn lora_reset_is_distinct_from_saving_the_current_default_values() {
 }
 
 #[test]
-fn long_press_opens_interface_menu_after_card_focus() {
+fn long_press_opens_interface_detail_then_options() {
     let cards = test_cards::<4>(CardKind::Usb);
     let content = test_content(&cards);
     let mut state = test_ui_state();
@@ -581,14 +629,151 @@ fn long_press_opens_interface_menu_after_card_focus() {
 
     assert_eq!(state.selected_card_index(4), Some(0));
     assert_eq!(state.visible_start, 0);
-    assert_eq!(state.interface_menu_selected_item(), Some(0));
-
-    state.handle_input(InputEvent::ShortPress, content);
-
-    assert_eq!(state.selected_card_index(4), Some(0));
-    assert_eq!(state.interface_menu_selected_item(), Some(1));
+    assert_eq!(
+        state.interface_detail_focus(),
+        Some(InterfaceDetailFocus::Options)
+    );
+    assert_eq!(state.interface_menu_selected_item(), None);
 
     state.handle_input(InputEvent::LongPress, content);
+    assert_eq!(state.interface_menu_selected_item(), Some(POWER_MENU_ITEM));
+
+    state.handle_input(InputEvent::ShortPress, content);
+    assert_eq!(
+        state.interface_menu_selected_item(),
+        Some(POWER_ONLY_MODE_MENU_ITEM)
+    );
+
+    assert_eq!(
+        state.handle_input(InputEvent::LongPress, content),
+        UiAction::OpenInterfaceModeEditor
+    );
 
     assert_eq!(state.selected_card_index(4), Some(0));
+}
+
+#[test]
+fn interface_detail_back_returns_home_without_opening_options() {
+    let cards = test_cards::<1>(CardKind::Ble);
+    let content = test_content(&cards);
+    let mut state = test_ui_state();
+    state.handle_input(InputEvent::ShortPress, content);
+    state.handle_input(InputEvent::LongPress, content);
+    assert_eq!(
+        state.interface_detail_focus(),
+        Some(InterfaceDetailFocus::Options)
+    );
+    state.handle_input(InputEvent::ShortPress, content);
+    assert_eq!(
+        state.interface_detail_focus(),
+        Some(InterfaceDetailFocus::Back)
+    );
+    assert_eq!(
+        state.handle_input(InputEvent::LongPress, content),
+        UiAction::None
+    );
+    assert_eq!(state.mode, UiMode::Cards);
+}
+
+#[test]
+fn options_back_returns_to_interface_detail() {
+    let cards = test_cards::<1>(CardKind::Usb);
+    let content = test_content(&cards);
+    let mut state = test_ui_state();
+    state.handle_input(InputEvent::ShortPress, content);
+    open_interface_options(&mut state, content);
+    // Power, Mode, Back
+    state.handle_input(InputEvent::ShortPress, content);
+    state.handle_input(InputEvent::ShortPress, content);
+    assert_eq!(state.interface_menu_selected_item(), Some(2));
+    assert_eq!(
+        state.handle_input(InputEvent::LongPress, content),
+        UiAction::None
+    );
+    assert_eq!(
+        state.interface_detail_focus(),
+        Some(InterfaceDetailFocus::Options)
+    );
+}
+
+#[test]
+fn ble_and_usb_mode_menu_opens_interface_mode_editor_action() {
+    for kind in [CardKind::Ble, CardKind::Usb] {
+        let cards = test_cards::<1>(kind);
+        let content = test_content(&cards);
+        let mut state = test_ui_state();
+        state.handle_input(InputEvent::ShortPress, content);
+        open_interface_options(&mut state, content);
+        for _ in 0..POWER_ONLY_MODE_MENU_ITEM {
+            state.handle_input(InputEvent::ShortPress, content);
+        }
+        assert_eq!(
+            state.handle_input(InputEvent::LongPress, content),
+            UiAction::OpenInterfaceModeEditor
+        );
+    }
+}
+
+#[test]
+fn wifi_station_kinds_share_wifi_interface_mode_slot() {
+    assert_eq!(
+        interface_mode_slot(CardKind::Wifi),
+        Some(crate::InterfaceModeSlot::Wifi)
+    );
+    assert_eq!(
+        interface_mode_slot(CardKind::WifiStation),
+        Some(crate::InterfaceModeSlot::Wifi)
+    );
+    assert_eq!(
+        interface_mode_slot(CardKind::WifiStationDisabled),
+        Some(crate::InterfaceModeSlot::Wifi)
+    );
+    assert_eq!(interface_mode_slot(CardKind::Peer), None);
+}
+
+#[test]
+fn interface_mode_editor_selecting_a_mode_saves_and_returns() {
+    use crate::{AnnouncesToInternal, InterfaceModeSelection, InterfaceModeSlot};
+    use personal_rns::interfaces::InterfaceMode;
+
+    let cards = test_cards::<1>(CardKind::Ble);
+    let content = test_content(&cards);
+    let mut state = test_ui_state();
+    state.open_interface_mode_editor(InterfaceModeSlot::Ble, InterfaceModeSelection::full());
+
+    // Boundary is the 5th mode choice (index 4).
+    for _ in 0..4 {
+        state.handle_input(InputEvent::ShortPress, content);
+    }
+    assert_eq!(
+        state.handle_input(InputEvent::LongPress, content),
+        UiAction::SetInterfaceMode {
+            slot: InterfaceModeSlot::Ble,
+            selection: InterfaceModeSelection {
+                mode: InterfaceMode::Boundary,
+                announces_to_internal: AnnouncesToInternal::Denied,
+            },
+        }
+    );
+    assert_eq!(state.mode, UiMode::Cards);
+}
+
+#[test]
+fn interface_mode_editor_back_returns_without_saving() {
+    use crate::{InterfaceModeSelection, InterfaceModeSlot};
+
+    let cards = test_cards::<1>(CardKind::Ble);
+    let content = test_content(&cards);
+    let mut state = test_ui_state();
+    state.open_interface_mode_editor(InterfaceModeSlot::Ble, InterfaceModeSelection::full());
+
+    // Modes (7) then Back (index 7).
+    for _ in 0..7 {
+        state.handle_input(InputEvent::ShortPress, content);
+    }
+    assert_eq!(
+        state.handle_input(InputEvent::LongPress, content),
+        UiAction::None
+    );
+    assert_eq!(state.mode, UiMode::Cards);
 }

@@ -163,6 +163,23 @@ fn bluetooth_recovery_coexists_with_five_peer_rows() {
 }
 
 #[test]
+fn lora_profile_details_list_every_tune_parameter() {
+    let mut details = InterfaceMenuDetails::empty();
+    details.push_lora_profile(DEFAULT_915_PROFILE);
+    let rows = details.as_slice();
+
+    assert_eq!(rows.len(), 8);
+    assert_eq!(rows[0].text(), "Reg US915");
+    assert_eq!(rows[1].text(), "Rate MediumFast");
+    assert_eq!(rows[2].text(), "SF 9");
+    assert_eq!(rows[3].text(), "BW 250 kHz");
+    assert_eq!(rows[4].text(), "CR 4/5");
+    assert_eq!(rows[5].text(), "915.000 MHz");
+    assert_eq!(rows[6].text(), "Pwr 22 dBm");
+    assert_eq!(rows[7].text(), "Pre 18");
+}
+
+#[test]
 fn lora_spectrum_details_keep_the_common_case_compact() {
     let mut details = InterfaceMenuDetails::empty();
     details.push_lora_spectrum(LoRaSpectrumMenuDetails {

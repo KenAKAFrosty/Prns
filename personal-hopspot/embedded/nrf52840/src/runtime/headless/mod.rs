@@ -328,6 +328,22 @@ pub async fn run(spawner: Spawner) -> ! {
     let lora_profile = loaded_lora_profile.profile;
     #[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
     let lora_profile = DEFAULT_915_PROFILE;
+    let mut interface_mode_store =
+        hopspot::InterfaceModeStore::new(shared_flash, board::INTERFACE_MODE_PAGES);
+    let loaded_interface_modes = match interface_mode_store.load().await {
+        Ok(loaded) => loaded,
+        Err(_) => hopspot::LoadedInterfaceModes {
+            table: hopspot::InterfaceModeTable::DEFAULT,
+            follows_default: true,
+            notice: Some(hopspot::InterfaceModeLoadNotice::Reset),
+        },
+    };
+    let working_interface_modes = loaded_interface_modes.table;
+    #[cfg(any(feature = "board-t096", feature = "board-t114"))]
+    let interface_mode_startup_notice = loaded_interface_modes.notice.map(|notice| match notice {
+        hopspot::InterfaceModeLoadNotice::Recovered => hopspot::UiNotice::ProfileRecovered,
+        hopspot::InterfaceModeLoadNotice::Reset => hopspot::UiNotice::ProfileReset,
+    });
     let lora_id = LoraInterface::interface_id(&lora_profile);
     static LORA_STATUS: StaticCell<EmbassyInterfaceStatus> = StaticCell::new();
     let lora_status: &'static EmbassyInterfaceStatus = LORA_STATUS.init(
@@ -363,8 +379,20 @@ pub async fn run(spawner: Spawner) -> ! {
         host_present: || true,
     });
 
+    // Claim-time mode comes from durable flash; display boards can edit and re-persist later.
+    let interface_modes = working_interface_modes;
+    let mut lora_cfg = lora.descriptor();
+    hopspot::apply_selection_to_descriptor(
+        &mut lora_cfg,
+        interface_modes.get(hopspot::InterfaceModeSlot::LoRa),
+    );
+    let mut usb_cfg = usb_device.descriptor();
+    hopspot::apply_selection_to_descriptor(
+        &mut usb_cfg,
+        interface_modes.get(hopspot::InterfaceModeSlot::Usb),
+    );
     let lora_lane = manifold_lanes
-        .claim_accounted_interface(&LORA_MANIFOLD_LANE, lora.descriptor(), lora_status)
+        .claim_accounted_interface(&LORA_MANIFOLD_LANE, lora_cfg, lora_status)
         .expect("LoRa lane is available");
     #[cfg(any(
         feature = "board-t096",
@@ -381,8 +409,10 @@ pub async fn run(spawner: Spawner) -> ! {
             .expect("Bluetooth supervisor lane is available")
     });
     let usb_lane = manifold_lanes
-        .claim_accounted_interface(&USB_MANIFOLD_LANE, usb_device.descriptor(), usb_status)
+        .claim_accounted_interface(&USB_MANIFOLD_LANE, usb_cfg, usb_status)
         .expect("USB lane is available");
+    #[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
+    let _ = interface_mode_store;
     let handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
     let manifold_wiring = manifold_lanes.into_manifold_wiring(
         NOTIFY.receiver(),
@@ -446,9 +476,12 @@ pub async fn run(spawner: Spawner) -> ! {
             display,
             battery,
             profile_store: loaded_lora_profile.store,
+            interface_mode_store,
             identity_startup_notice,
             profile_startup_notice: loaded_lora_profile.startup_notice,
+            interface_mode_startup_notice,
             lora_profile,
+            working_interface_modes,
             lora_status,
             usb_status,
             lora_spectrum,
@@ -470,9 +503,12 @@ pub async fn run(spawner: Spawner) -> ! {
             display,
             battery,
             profile_store: loaded_lora_profile.store,
+            interface_mode_store,
             identity_startup_notice,
             profile_startup_notice: loaded_lora_profile.startup_notice,
+            interface_mode_startup_notice,
             lora_profile,
+            working_interface_modes,
             lora_status,
             usb_status,
             lora_spectrum,

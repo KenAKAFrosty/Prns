@@ -423,6 +423,12 @@ pub(crate) fn engine_state() -> MobileEngineState {
     manager.state
 }
 
+pub(crate) fn configured_storage_dir() -> Option<PathBuf> {
+    let mut manager = lock_manager();
+    manager.reap_finished();
+    manager.storage_dir.clone()
+}
+
 pub(crate) fn last_failure() -> MobileEngineFailure {
     let mut manager = lock_manager();
     manager.reap_finished();

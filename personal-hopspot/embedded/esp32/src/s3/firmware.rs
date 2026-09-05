@@ -140,6 +140,27 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     });
     #[cfg(not(feature = "lora"))]
     let profile_startup_notice: Option<screen::UiNotice> = None;
+
+    let mut interface_mode_store = screen::InterfaceModeStore::new(
+        shared_flash,
+        B::FLASH_LAYOUT.interface_mode_pages,
+    );
+    let loaded_interface_modes = match interface_mode_store.load().await {
+        Ok(loaded) => loaded,
+        Err(error) => {
+            log::error!("Interface mode restore failed: {error:?}");
+            screen::LoadedInterfaceModes {
+                table: screen::InterfaceModeTable::DEFAULT,
+                follows_default: true,
+                notice: Some(screen::InterfaceModeLoadNotice::Reset),
+            }
+        }
+    };
+    let working_interface_modes = loaded_interface_modes.table;
+    let interface_mode_startup_notice = loaded_interface_modes.notice.map(|notice| match notice {
+        screen::InterfaceModeLoadNotice::Recovered => screen::UiNotice::ProfileRecovered,
+        screen::InterfaceModeLoadNotice::Reset => screen::UiNotice::ProfileReset,
+    });
     #[cfg(feature = "lora")]
     let lora_id = LoRaInterface::<LoraRadio>::interface_id(&lora_profile);
     #[cfg(feature = "lora")]
@@ -259,9 +280,31 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     };
 
     #[cfg(feature = "lora")]
-    let lora_cfg = lora.descriptor();
-    let espnow_cfg = espnow.as_ref().map(|e| e.descriptor());
-    let tcp_cfg = tcp_built.as_ref().map(|(t, _, _)| t.descriptor());
+    let mut lora_cfg = lora.descriptor();
+    #[cfg(feature = "lora")]
+    screen::apply_selection_to_descriptor(
+        &mut lora_cfg,
+        working_interface_modes.get(screen::InterfaceModeSlot::LoRa),
+    );
+    let mut espnow_cfg = espnow.as_ref().map(|e| e.descriptor());
+    if let Some(descriptor) = espnow_cfg.as_mut() {
+        screen::apply_selection_to_descriptor(
+            descriptor,
+            working_interface_modes.get(screen::InterfaceModeSlot::EspNow),
+        );
+    }
+    let mut tcp_cfg = tcp_built.as_ref().map(|(t, _, _)| t.descriptor());
+    if let Some(descriptor) = tcp_cfg.as_mut() {
+        screen::apply_selection_to_descriptor(
+            descriptor,
+            working_interface_modes.get(screen::InterfaceModeSlot::Tcp),
+        );
+    }
+    let mut usb_cfg = device_descriptor(usb_id);
+    screen::apply_selection_to_descriptor(
+        &mut usb_cfg,
+        working_interface_modes.get(screen::InterfaceModeSlot::Usb),
+    );
     let has_wifi = wifi.is_some();
 
     let usb_outbound = crate::storage::allocate_manifold_outbound::<EMBEDDED_MAX_WIRE_FRAME_LEN>(
@@ -270,7 +313,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let usb_lane = manifold_lanes
         .claim_accounted_interface_with_outbound_buffer(
             &USB_MANIFOLD_LANE,
-            device_descriptor(usb_id),
+            usb_cfg,
             usb_outbound,
             usb_status,
         )
@@ -440,11 +483,17 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             shared_instance_config_export: screen::SharedInstanceConfigExport::Unavailable,
             gnss: B::Gnss::AVAILABILITY,
         });
-        let startup_notice = identity_startup_notice.or(profile_startup_notice);
+        let startup_notice = identity_startup_notice
+            .or(profile_startup_notice)
+            .or(interface_mode_startup_notice);
         let mut pending_startup_notice = identity_startup_notice
             .is_some()
-            .then_some(profile_startup_notice)
-            .flatten();
+            .then_some(profile_startup_notice.or(interface_mode_startup_notice))
+            .flatten()
+            .or(profile_startup_notice
+                .is_some()
+                .then_some(interface_mode_startup_notice)
+                .flatten());
         let mut notice_timer = screen::PresentedNoticeTimer::new();
         if let Some(notice) = startup_notice {
             show_notice(
@@ -456,6 +505,8 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         }
         #[cfg(feature = "lora")]
         let mut working_lora_profile = lora_profile;
+        let mut working_interface_modes = working_interface_modes;
+        let mut interface_mode_store = interface_mode_store;
         let mut battery_state = screen::PowerSnapshot::UNKNOWN;
         let mut sampled_battery_state = screen::PowerSnapshot::UNKNOWN;
         let mut battery_gauge = screen::BatteryGauge::lipo();
@@ -498,6 +549,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 tcp_status,
                 lora_card_status,
                 espnow_card_status,
+                working_interface_modes,
             );
             let tcp_card_config = wifi_config.tcp_client.as_ref();
             let mut cards = build_cards(
@@ -513,16 +565,13 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             let now_ms = embassy_time::Instant::now().as_millis();
             let activity_secs = (now_ms / 1000).min(u64::from(u32::MAX)) as u32;
             activity.update(&mut cards, activity_secs);
-            let content = screen::ScreenContent {
-                cards: &cards,
-                local_docs: local_docs.as_ref(),
-            };
             let menu_ap_ssid = active_ap_ssid.as_deref();
             #[cfg(feature = "lora")]
             let interface_menu_details = build_interface_menu_details(
-                ui_state.selected_card(content.cards),
+                ui_state.selected_card(&cards),
                 &snapshots,
                 usb_status,
+                working_lora_profile,
                 lora_spectrum,
                 wifi_status.as_ref(),
                 &wifi_config,
@@ -530,13 +579,18 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             );
             #[cfg(not(feature = "lora"))]
             let interface_menu_details = build_interface_menu_details(
-                ui_state.selected_card(content.cards),
+                ui_state.selected_card(&cards),
                 &snapshots,
                 usb_status,
                 wifi_status.as_ref(),
                 &wifi_config,
                 menu_ap_ssid,
             );
+            let content = screen::ScreenContent {
+                cards: &cards,
+                local_docs: local_docs.as_ref(),
+                interface_menu_details: Some(&interface_menu_details),
+            };
             ui_state.sync(content);
             if let Some(notice) =
                 persistence_notice.observe(crate::persistence::persistence_state())
@@ -955,6 +1009,47 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                 }
                                 screen::UiAction::OpenDocs => {}
                                 screen::UiAction::CopySharedInstanceConfig => {}
+                                screen::UiAction::OpenInterfaceModeEditor => {
+                                    if let Some(card) = ui_state.selected_card(content.cards) {
+                                        if let Some(slot) = screen::interface_mode_slot(card.kind())
+                                        {
+                                            ui_state.open_interface_mode_editor(
+                                                slot,
+                                                working_interface_modes.get(slot),
+                                            );
+                                        }
+                                    }
+                                }
+                                screen::UiAction::SetInterfaceMode { slot, selection } => {
+                                    // Claim-time mode is fixed for attached faces; update the
+                                    // working table (and snapshots) immediately and persist.
+                                    // Live descriptors keep their claim-time mode until reboot.
+                                    working_interface_modes.set(slot, selection);
+                                    let result = screen::apply_and_persist_interface_modes(
+                                        async { true },
+                                        || async {
+                                            match interface_mode_store
+                                                .save(working_interface_modes)
+                                                .await
+                                            {
+                                                Ok(()) => true,
+                                                Err(error) => {
+                                                    log::error!(
+                                                        "Interface mode save failed: {error:?}"
+                                                    );
+                                                    false
+                                                }
+                                            }
+                                        },
+                                    )
+                                    .await;
+                                    show_notice(
+                                        &mut ui_state,
+                                        &mut notice_timer,
+                                        result.notice(),
+                                        NOTICE_DURATION,
+                                    );
+                                }
                                 screen::UiAction::None => {}
                             }
                         }

@@ -1,8 +1,10 @@
 use heapless::Vec as HVec;
 use personal_hopspot_core::{
-    expand_face_rgba, face_64x128, snapshots_to_cards, snapshots_to_interface_menu_details,
-    AccessPointState, Card, CardActivityTracker, InputEvent, PowerSnapshot, ScreenContent,
-    UiAction, UiConfiguration, UiNotice, UiState, UserBlanking, MOBILE_RGBA_BYTES,
+    expand_face_rgba, face_64x128, interface_mode_slot, load_host_interface_modes,
+    save_host_interface_modes, snapshots_to_cards, snapshots_to_interface_menu_details,
+    AccessPointState, Card, CardActivityTracker, InputEvent, InterfaceModeTable, PowerSnapshot,
+    ScreenContent, UiAction, UiConfiguration, UiNotice, UiState, UserBlanking,
+    INTERFACE_MODE_STORAGE, MOBILE_RGBA_BYTES,
 };
 use personal_rns::interfaces::InterfaceSnapshot;
 use personal_rns::storage::{GrowableHeap, StorageLayout};
@@ -10,7 +12,8 @@ use std::time::{Duration, Instant};
 
 use crate::cards::MAX_CARDS;
 use crate::engine::{
-    classify, interface_snapshots, sleep_interfaces, toggle_interface, wake_interfaces,
+    classify, interface_snapshots, sleep_interfaces, storage_directory, toggle_interface,
+    wake_interfaces,
 };
 const NOTICE_TIMEOUT: Duration = Duration::from_millis(900);
 
@@ -32,6 +35,8 @@ pub struct HopspotFace {
     activity: CardActivityTracker<MAX_CARDS>,
     activity_started: Instant,
     notice_started: Option<Instant>,
+    interface_modes: InterfaceModeTable,
+    modes_bound: bool,
 }
 
 impl HopspotFace {
@@ -43,7 +48,20 @@ impl HopspotFace {
             activity: CardActivityTracker::new(),
             activity_started: Instant::now(),
             notice_started: None,
+            interface_modes: InterfaceModeTable::DEFAULT,
+            modes_bound: false,
         }
+    }
+
+    fn bind_modes_if_ready(&mut self) {
+        if self.modes_bound {
+            return;
+        }
+        let Some(storage_dir) = storage_directory() else {
+            return;
+        };
+        self.interface_modes = load_host_interface_modes(&storage_dir.join(INTERFACE_MODE_STORAGE));
+        self.modes_bound = true;
     }
 
     fn show_notice(&mut self, notice: UiNotice) {
@@ -56,10 +74,12 @@ impl HopspotFace {
     }
 
     pub fn post_input(&mut self, event: InputEvent) -> UiAction {
+        self.bind_modes_if_ready();
         let cards = self.build_cards();
         let content = ScreenContent {
             cards: &cards,
             local_docs: None,
+            interface_menu_details: None,
         };
         let action = self.state.handle_input(event, content);
         match action {
@@ -86,6 +106,30 @@ impl HopspotFace {
             }
             UiAction::Announce => self.show_notice(UiNotice::Announcing),
             UiAction::CopySharedInstanceConfig => {}
+            UiAction::OpenInterfaceModeEditor => {
+                if let Some(card) = self.state.selected_card(content.cards) {
+                    if let Some(slot) = interface_mode_slot(card.kind()) {
+                        let mut selection = self.interface_modes.get(slot);
+                        selection.mode = card.mode();
+                        self.state.open_interface_mode_editor(slot, selection);
+                    }
+                }
+            }
+            UiAction::SetInterfaceMode { slot, selection } => {
+                self.interface_modes.set(slot, selection);
+                let notice = match storage_directory() {
+                    Some(storage_dir) => {
+                        let path = storage_dir.join(INTERFACE_MODE_STORAGE);
+                        if save_host_interface_modes(&path, self.interface_modes).is_ok() {
+                            UiNotice::Saved
+                        } else {
+                            UiNotice::ProfileNotSaved
+                        }
+                    }
+                    None => UiNotice::ProfileNotSaved,
+                };
+                self.show_notice(notice);
+            }
             UiAction::None
             | UiAction::BlankDisplay
             | UiAction::ToggleDisplayAutoOff
@@ -101,6 +145,7 @@ impl HopspotFace {
     }
 
     pub fn render(&mut self, out_rgba: &mut [u8; MOBILE_RGBA_BYTES]) {
+        self.bind_modes_if_ready();
         let snapshots = interface_snapshots();
         let mut cards = self.build_cards_from_snapshots(&snapshots);
         let elapsed = self.activity_started.elapsed();
@@ -115,7 +160,12 @@ impl HopspotFace {
     }
 
     fn build_cards_from_snapshots(&self, snapshots: &[InterfaceSnapshot]) -> HVec<Card, MAX_CARDS> {
-        snapshots_to_cards(snapshots, classify)
+        let mut owned: std::vec::Vec<_> = snapshots.to_vec();
+        for snapshot in &mut owned {
+            snapshot.mode =
+                personal_hopspot_core::mode_from_table(self.interface_modes, snapshot.id.kind());
+        }
+        snapshots_to_cards(&owned, classify)
     }
 
     fn render_cards(
@@ -124,9 +174,14 @@ impl HopspotFace {
         snapshots: &[InterfaceSnapshot],
         out_rgba: &mut [u8; MOBILE_RGBA_BYTES],
     ) {
+        let interface_menu_details = snapshots_to_interface_menu_details(
+            self.state.selected_card(cards),
+            snapshots,
+        );
         let content = ScreenContent {
             cards,
             local_docs: None,
+            interface_menu_details: Some(&interface_menu_details),
         };
         self.state.sync(content);
         if self
@@ -142,10 +197,6 @@ impl HopspotFace {
                 face_64x128::SplashContent::Connecting,
             );
         } else {
-            let interface_menu_details = snapshots_to_interface_menu_details(
-                self.state.selected_card(content.cards),
-                snapshots,
-            );
             face_64x128::render(
                 &mut self.framebuffer,
                 face_64x128::RenderInput {
@@ -182,6 +233,8 @@ mod tests {
                 activity: CardActivityTracker::new(),
                 activity_started: Instant::now(),
                 notice_started: None,
+                interface_modes: InterfaceModeTable::DEFAULT,
+                modes_bound: true,
             }
         }
     }
@@ -227,6 +280,7 @@ mod tests {
             ScreenContent {
                 cards: &cards,
                 local_docs: None,
+                interface_menu_details: None,
             },
         );
         face.render_cards(&cards, &[], &mut after);
@@ -247,6 +301,7 @@ mod tests {
             ScreenContent {
                 cards: &cards,
                 local_docs: None,
+                interface_menu_details: None,
             },
         );
         face.render_cards(&cards, &[], &mut after);

@@ -23,8 +23,8 @@ use gnss::draw_gnss_panel;
 use layout::*;
 use menus::lora::draw_lora_editor;
 use menus::{
-    draw_global_menu, draw_interface_menu, draw_limits_page, draw_notice, draw_radio_confirm,
-    draw_sleeping,
+    draw_global_menu, draw_interface_detail, draw_interface_mode_editor, draw_interface_options,
+    draw_limits_page, draw_notice, draw_radio_confirm, draw_sleeping,
 };
 
 pub(super) fn draw<D: DrawTarget<Color = BinaryColor>>(
@@ -53,6 +53,11 @@ pub(super) fn draw<D: DrawTarget<Color = BinaryColor>>(
         return;
     }
 
+    if let UiMode::InterfaceModeEditor { cursor, .. } = state.mode {
+        draw_interface_mode_editor(display, cursor);
+        return;
+    }
+
     if let UiMode::LimitsPage { page } = state.mode {
         let rows = build_limit_rows(state.storage_limits);
         draw_limits_page(display, page, &rows);
@@ -74,13 +79,30 @@ pub(super) fn draw<D: DrawTarget<Color = BinaryColor>>(
         return;
     }
 
-    if let Some(selected_item) = state.interface_menu_selected_item() {
+    if let Some(selected_item) = state.interface_options_selected_item() {
         if let Some(selected_card) = state.selected_card(cards) {
-            draw_interface_menu(
+            draw_interface_options(
                 display,
                 selected_card,
                 selected_item,
                 state.shared_instance_config_export,
+            );
+            return;
+        }
+    }
+
+    if let UiMode::InterfaceDetail {
+        focus,
+        status_page,
+        ..
+    } = state.mode
+    {
+        if let Some(selected_card) = state.selected_card(cards) {
+            draw_interface_detail(
+                display,
+                selected_card,
+                focus,
+                status_page,
                 interface_menu_details,
             );
             return;

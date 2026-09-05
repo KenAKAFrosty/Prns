@@ -35,29 +35,31 @@ use super::render::layout::{
 };
 use super::render::menus::lora::{LORA_DOT_X, LORA_EDITOR_TOP};
 use super::render::menus::{
-    draw_interface_menu, limits_row_drawable, limits_row_text, menu_item_text_right,
-    station_uplink_action_label,
+    draw_interface_detail, draw_interface_options, limits_row_drawable, limits_row_text,
+    menu_item_text_right, station_uplink_action_label,
 };
 use super::render::metrics::{
     compact_numeric_width, draw_compact_number, fmt_activity_age, fmt_bytes, fmt_count,
     fmt_rate_bytes_per_sec,
 };
+use super::state::interface_detail::{DETAIL_DIVIDER_Y, DETAIL_OPTIONS_Y, DETAIL_STATUS_TOP};
 use super::state::lora::{
     region_index, step_custom_row, CustomRow, EditMode, FreqRow, LoRaScreen, PresetChoice,
     LORA_REGION_CANCEL, PRESET_CHOICES,
 };
 use super::state::{
     GlobalMenuItem, UiMode, ANNOUNCE_MENU_ITEM, BLANK_DISPLAY_MENU_ITEM,
-    DISPLAY_AUTO_OFF_MENU_ITEM, LORA_RESET_MENU_ITEM, LORA_TUNE_MENU_ITEM, POWER_MENU_ITEM,
-    POWER_ONLY_MENU_ITEMS, RADIO_MENU_ITEM_NO_DISPLAY, SHARED_INSTANCE_CONFIG_MENU_ITEM,
-    SLEEP_MENU_ITEM, STATION_UPLINK_MENU_ITEM, WIFI_MENU_ITEMS,
+    DISPLAY_AUTO_OFF_MENU_ITEM, LORA_MODE_MENU_ITEM, LORA_RESET_MENU_ITEM, LORA_TUNE_MENU_ITEM,
+    POWER_MENU_ITEM, POWER_ONLY_MODE_MENU_ITEM, RADIO_MENU_ITEM_NO_DISPLAY,
+    SHARED_INSTANCE_CONFIG_MENU_ITEM, SLEEP_MENU_ITEM, STATION_UPLINK_MENU_ITEM,
 };
 use super::{
-    apply_and_persist_radio_profile, card_label, sort_cards_for_display, AccessPointState,
-    BluetoothRecoveryMenuDetails, Card, CardActivityTracker, CardKind, GnssAvailability,
-    InputEvent, InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess, PersistenceNotice,
-    RadioProfileChangeResult, ScreenContent, SharedInstanceConfigExport, UiAction, UiConfiguration,
-    UiNotice, UiState, UserBlanking,
+    apply_and_persist_interface_modes, apply_and_persist_radio_profile, card_label,
+    interface_mode_slot, sort_cards_for_display, AccessPointState, BluetoothRecoveryMenuDetails,
+    Card, CardActivityTracker, CardKind, GnssAvailability, InputEvent, InterfaceDetailFocus,
+    InterfaceMenuDetails, InterfaceModeChangeResult, LoRaSpectrumMenuDetails, LocalDocsAccess,
+    PersistenceNotice, RadioProfileChangeResult, ScreenContent, SharedInstanceConfigExport,
+    UiAction, UiConfiguration, UiNotice, UiState, UserBlanking,
 };
 
 const TEST_WIDTH: usize = WIDTH as usize;
@@ -138,6 +140,7 @@ fn render_with_local_docs<D: DrawTarget<Color = BinaryColor>>(
             content: ScreenContent {
                 cards,
                 local_docs: Some(local_docs),
+                interface_menu_details: None,
             },
             battery,
             gnss: None,
@@ -152,6 +155,7 @@ fn test_card(label: &'static str) -> Card {
         id: InterfaceId::new([0; 8]),
         kind: CardKind::Usb,
         label: card_label(label),
+        mode: personal_rns::interfaces::InterfaceMode::Full,
         connection: ConnectionState::Connected,
         failure_reason: None,
         tx_bytes: 0,
@@ -176,7 +180,23 @@ fn test_content(cards: &[Card]) -> ScreenContent<'_, 'static> {
     ScreenContent {
         cards,
         local_docs: None,
+        interface_menu_details: None,
     }
+}
+
+fn open_interface_options(state: &mut UiState, content: ScreenContent<'_, '_>) {
+    assert_eq!(
+        state.handle_input(InputEvent::LongPress, content),
+        UiAction::None
+    );
+    assert_eq!(
+        state.interface_detail_focus(),
+        Some(InterfaceDetailFocus::Options)
+    );
+    assert_eq!(
+        state.handle_input(InputEvent::LongPress, content),
+        UiAction::None
+    );
 }
 
 fn test_ui_state() -> UiState {

@@ -371,6 +371,10 @@ pub(crate) fn state() -> MobileEngineState {
     supervisor().state()
 }
 
+pub(crate) fn storage_directory() -> Option<PathBuf> {
+    supervisor().lock().storage_directory.clone()
+}
+
 pub(crate) fn last_failure() -> MobileEngineFailure {
     supervisor().last_failure()
 }

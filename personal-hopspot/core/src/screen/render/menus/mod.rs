@@ -11,9 +11,17 @@ use embedded_graphics::text::{Baseline, Text};
 use heapless::String as HString;
 use personal_rns::interfaces::ConnectionState;
 
+use crate::interface_mode::interface_mode_menu_label;
 use crate::screen::limits::{limit_page_count, LimitRow, LimitValue, LIMITS_PER_PAGE};
 use crate::screen::model::{
-    Card, CardKind, InterfaceMenuDetailKind, InterfaceMenuDetailRow, InterfaceMenuDetails,
+    Card, CardKind, InterfaceMenuDetailKind, InterfaceMenuDetails,
+};
+use crate::screen::state::interface_detail::{
+    interface_detail_page, interface_detail_status_line_count, InterfaceDetailFocus,
+    InterfaceDetailPage, DETAIL_CONTROL_Y, DETAIL_DIVIDER_Y, DETAIL_OPTIONS_Y, DETAIL_STATUS_TOP,
+};
+use crate::screen::state::interface_mode::{
+    interface_mode_editor_row_count, interface_mode_editor_row_label,
 };
 use crate::screen::state::{
     interface_menu_items, AccessPointState, SharedInstanceConfigExport, UiNotice, UiState,
@@ -83,71 +91,6 @@ fn draw_menu_item<D: DrawTarget<Color = BinaryColor>>(
     draw_menu_cursor(display, MENU_MARK_X, y, color);
     let _ =
         Text::with_baseline(label, Point::new(MENU_TEXT_X, y), style, Baseline::Top).draw(display);
-}
-
-fn draw_failure_reason<D: DrawTarget<Color = BinaryColor>>(
-    display: &mut D,
-    mut y: i32,
-    reason: &str,
-) {
-    const LINE_H: i32 = 7;
-    const MAX_CHARS: usize = ((WIDTH - MENU_REASON_X) / FONT_4X6_CHAR_W) as usize;
-    let style = MonoTextStyle::new(&FONT_4X6, BinaryColor::On);
-    let draw_line = |display: &mut D, y: &mut i32, line: &str| {
-        if *y > HEIGHT - LINE_H {
-            return false;
-        }
-        let _ = Text::with_baseline(line, Point::new(MENU_REASON_X, *y), style, Baseline::Top)
-            .draw(display);
-        *y += LINE_H;
-        true
-    };
-
-    if !draw_line(display, &mut y, "Fail:") {
-        return;
-    }
-
-    let mut line: heapless::String<24> = heapless::String::new();
-    for word in reason.split_whitespace() {
-        let sep = usize::from(!line.is_empty());
-        let would_len = line.chars().count() + sep + word.chars().count();
-        if would_len > MAX_CHARS && !line.is_empty() {
-            if !draw_line(display, &mut y, &line) {
-                return;
-            }
-            line.clear();
-        }
-        if !line.is_empty() {
-            let _ = line.push(' ');
-        }
-        for ch in word.chars().take(MAX_CHARS) {
-            let _ = line.push(ch);
-        }
-    }
-    if !line.is_empty() {
-        let _ = draw_line(display, &mut y, &line);
-    }
-}
-
-fn draw_interface_menu_details<D: DrawTarget<Color = BinaryColor>>(
-    display: &mut D,
-    mut y: i32,
-    rows: &[InterfaceMenuDetailRow],
-) -> i32 {
-    let style = MonoTextStyle::new(&FONT_4X6, BinaryColor::On);
-    for row in rows {
-        if y > HEIGHT - MENU_DETAIL_STEP {
-            break;
-        }
-        let x = match row.kind() {
-            InterfaceMenuDetailKind::Info => MENU_REASON_X,
-            InterfaceMenuDetailKind::Peer => MENU_REASON_X + 4,
-        };
-        let _ =
-            Text::with_baseline(row.text(), Point::new(x, y), style, Baseline::Top).draw(display);
-        y += MENU_DETAIL_STEP;
-    }
-    y
 }
 
 pub(super) fn draw_global_menu<D: DrawTarget<Color = BinaryColor>>(
@@ -366,12 +309,136 @@ pub(super) fn draw_notice<D: DrawTarget<Color = BinaryColor>>(display: &mut D, n
     }
 }
 
-pub(in crate::screen) fn draw_interface_menu<D: DrawTarget<Color = BinaryColor>>(
+pub(in crate::screen) fn draw_interface_detail<D: DrawTarget<Color = BinaryColor>>(
+    display: &mut D,
+    card: &Card,
+    focus: InterfaceDetailFocus,
+    status_page: usize,
+    details: &InterfaceMenuDetails,
+) {
+    draw_interface_icon(
+        display,
+        NAME_ICON_X,
+        MENU_HEADER_Y,
+        card.kind,
+        BinaryColor::On,
+    );
+    let header_style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
+    let _ = Text::with_baseline(
+        &card.label,
+        Point::new(NAME_TEXT_X, MENU_HEADER_Y),
+        header_style,
+        Baseline::Top,
+    )
+    .draw(display);
+    line(
+        display,
+        Point::new(0, DETAIL_DIVIDER_Y),
+        Point::new(WIDTH - 1, DETAIL_DIVIDER_Y),
+    );
+
+    draw_menu_item(
+        display,
+        DETAIL_OPTIONS_Y,
+        "Options",
+        focus == InterfaceDetailFocus::Options,
+    );
+
+    let status_lines = interface_detail_status_line_count(
+        details.as_slice().len(),
+        card.connection == ConnectionState::Failed && card.failure_reason.is_some(),
+    );
+    let page = interface_detail_page(status_lines, status_page);
+    draw_interface_detail_status_page(display, card, details, page);
+
+    if page.shows_next {
+        draw_menu_item(
+            display,
+            DETAIL_CONTROL_Y,
+            "Next",
+            focus == InterfaceDetailFocus::Next,
+        );
+    }
+    if page.shows_back {
+        let back_y = DETAIL_STATUS_TOP + page.status_count as i32 * MENU_DETAIL_STEP;
+        draw_menu_item(
+            display,
+            back_y,
+            "Back",
+            focus == InterfaceDetailFocus::Back,
+        );
+    }
+}
+
+fn draw_interface_detail_status_page<D: DrawTarget<Color = BinaryColor>>(
+    display: &mut D,
+    card: &Card,
+    details: &InterfaceMenuDetails,
+    page: InterfaceDetailPage,
+) {
+    let style = MonoTextStyle::new(&FONT_4X6, BinaryColor::On);
+    let mut drawn = 0usize;
+    let mut y = DETAIL_STATUS_TOP;
+
+    let emit = |display: &mut D,
+                y: &mut i32,
+                drawn: &mut usize,
+                page: InterfaceDetailPage,
+                x: i32,
+                text: &str| {
+        if *drawn < page.status_start {
+            *drawn = drawn.saturating_add(1);
+            return;
+        }
+        if *drawn >= page.status_start.saturating_add(page.status_count) {
+            return;
+        }
+        if page.shows_next && *y >= DETAIL_CONTROL_Y {
+            return;
+        }
+        let _ = Text::with_baseline(text, Point::new(x, *y), style, Baseline::Top).draw(display);
+        *y += MENU_DETAIL_STEP;
+        *drawn = drawn.saturating_add(1);
+    };
+
+    {
+        let mut mode_text = heapless::String::<15>::new();
+        let _ = write!(mode_text, "Mode {}", interface_mode_menu_label(card.mode()));
+        emit(
+            display,
+            &mut y,
+            &mut drawn,
+            page,
+            MENU_REASON_X,
+            mode_text.as_str(),
+        );
+    }
+
+    for row in details.as_slice() {
+        let x = match row.kind() {
+            InterfaceMenuDetailKind::Info => MENU_REASON_X,
+            InterfaceMenuDetailKind::Peer => MENU_REASON_X + 4,
+        };
+        emit(display, &mut y, &mut drawn, page, x, row.text());
+    }
+
+    if card.connection == ConnectionState::Failed {
+        if let Some(reason) = card.failure_reason {
+            emit(display, &mut y, &mut drawn, page, MENU_REASON_X, "Fail:");
+            let mut line: heapless::String<15> = heapless::String::new();
+            for ch in reason.chars().take(15) {
+                let _ = line.push(ch);
+            }
+            emit(display, &mut y, &mut drawn, page, MENU_REASON_X, &line);
+        }
+    }
+}
+
+pub(in crate::screen) fn draw_interface_options<D: DrawTarget<Color = BinaryColor>>(
     display: &mut D,
     card: &Card,
     selected_item: usize,
     shared_instance_config_export: SharedInstanceConfigExport,
-    details: &InterfaceMenuDetails,
 ) {
     draw_interface_icon(
         display,
@@ -391,7 +458,7 @@ pub(in crate::screen) fn draw_interface_menu<D: DrawTarget<Color = BinaryColor>>
 
     let subtitle_style = MonoTextStyle::new(&FONT_5X8, BinaryColor::On);
     let _ = Text::with_baseline(
-        "Menu",
+        "Options",
         Point::new(NAME_TEXT_X, MENU_SUBTITLE_Y),
         subtitle_style,
         Baseline::Top,
@@ -423,13 +490,42 @@ pub(in crate::screen) fn draw_interface_menu<D: DrawTarget<Color = BinaryColor>>
             index == selected_item.min(items.len() - 1),
         );
     }
-    let mut detail_y = MENU_ITEM_TOP + items.len() as i32 * MENU_ITEM_STEP + 1;
-    if !details.as_slice().is_empty() {
-        detail_y = draw_interface_menu_details(display, detail_y, details.as_slice());
-    }
-    if card.connection == ConnectionState::Failed {
-        if let Some(reason) = card.failure_reason {
-            draw_failure_reason(display, detail_y - 1, reason);
-        }
+}
+
+pub(super) fn draw_interface_mode_editor<D: DrawTarget<Color = BinaryColor>>(
+    display: &mut D,
+    cursor: usize,
+) {
+    let header_style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
+    let _ = Text::with_baseline(
+        "Mode",
+        Point::new(NAME_TEXT_X, MENU_HEADER_Y),
+        header_style,
+        Baseline::Top,
+    )
+    .draw(display);
+    line(
+        display,
+        Point::new(0, MENU_DIVIDER_Y),
+        Point::new(WIDTH - 1, MENU_DIVIDER_Y),
+    );
+
+    const VISIBLE_ITEMS: usize = 6;
+    let item_count = interface_mode_editor_row_count();
+    let cursor = cursor.min(item_count.saturating_sub(1));
+    let visible_start = cursor
+        .saturating_sub(VISIBLE_ITEMS - 1)
+        .min(item_count.saturating_sub(VISIBLE_ITEMS));
+    for visible_index in 0..VISIBLE_ITEMS.min(item_count.saturating_sub(visible_start)) {
+        let index = visible_start + visible_index;
+        let Some(label) = interface_mode_editor_row_label(index) else {
+            break;
+        };
+        draw_menu_item(
+            display,
+            MENU_ITEM_TOP + visible_index as i32 * MENU_ITEM_STEP,
+            label,
+            index == cursor,
+        );
     }
 }

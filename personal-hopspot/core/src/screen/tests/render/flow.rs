@@ -125,6 +125,7 @@ fn render_scrolls_local_docs_after_the_last_card() {
     let content = ScreenContent {
         cards: &cards,
         local_docs: Some(&local_docs),
+        interface_menu_details: None,
     };
     for _ in 0..4 {
         state.handle_input(InputEvent::ShortPress, content);
@@ -159,6 +160,7 @@ fn render_shows_local_docs_access_details() {
     let content = ScreenContent {
         cards: &cards,
         local_docs: Some(&local_docs),
+        interface_menu_details: None,
     };
     for _ in 0..4 {
         state.handle_input(InputEvent::ShortPress, content);
@@ -190,6 +192,7 @@ fn footer_focus_long_press_opens_docs() {
     let content = ScreenContent {
         cards: &cards,
         local_docs: Some(&local_docs),
+        interface_menu_details: None,
     };
     let mut state = test_ui_state();
 
@@ -273,7 +276,7 @@ fn render_shows_global_menu() {
 }
 
 #[test]
-fn render_shows_selected_interface_menu() {
+fn render_shows_selected_interface_detail() {
     let mut display = MockDisplay::new();
     display.set_allow_overdraw(true);
     display.set_allow_out_of_bounds_drawing(true);
@@ -283,6 +286,7 @@ fn render_shows_selected_interface_menu() {
             id: InterfaceId::new([0; 8]),
             kind: CardKind::Ble,
             label: card_label("BLE"),
+            mode: personal_rns::interfaces::InterfaceMode::Full,
             connection: ConnectionState::Connected,
             failure_reason: None,
             tx_bytes: 0,
@@ -305,21 +309,24 @@ fn render_shows_selected_interface_menu() {
     assert!(state
         .selected_card(&cards)
         .is_some_and(|selected| core::ptr::eq(selected, &cards[1])));
-    assert_eq!(state.interface_menu_selected_item(), Some(0));
+    assert_eq!(
+        state.interface_detail_focus(),
+        Some(InterfaceDetailFocus::Options)
+    );
     assert_eq!(
         display.get_pixel(Point::new(NAME_ICON_X + 4, MENU_HEADER_Y)),
         Some(BinaryColor::On)
     );
     assert_eq!(
-        display.get_pixel(Point::new(MENU_BACKING_X, MENU_ITEM_TOP - 1)),
+        display.get_pixel(Point::new(MENU_BACKING_X, DETAIL_OPTIONS_Y - 1)),
         Some(BinaryColor::On)
     );
     assert_eq!(
-        display.get_pixel(Point::new(MENU_MARK_X, MENU_ITEM_TOP + 2)),
+        display.get_pixel(Point::new(MENU_MARK_X, DETAIL_OPTIONS_Y + 2)),
         Some(BinaryColor::Off)
     );
     assert_eq!(
-        display.get_pixel(Point::new(0, MENU_DIVIDER_Y)),
+        display.get_pixel(Point::new(0, DETAIL_DIVIDER_Y)),
         Some(BinaryColor::On)
     );
     assert_eq!(
@@ -329,7 +336,7 @@ fn render_shows_selected_interface_menu() {
 }
 
 #[test]
-fn interface_menu_draws_detail_rows_below_actions() {
+fn interface_detail_draws_status_rows_below_options() {
     let mut display = PanelDisplay::new();
     let mut card = test_card("LAN");
     card.kind = CardKind::WifiStation;
@@ -341,18 +348,21 @@ fn interface_menu_draws_detail_rows_below_actions() {
         ConnectionState::Connected,
     )]);
 
-    draw_interface_menu(
+    draw_interface_detail(
         &mut display,
         &card,
-        POWER_MENU_ITEM,
-        SharedInstanceConfigExport::Unavailable,
+        InterfaceDetailFocus::Options,
+        0,
         &details,
     );
 
-    let detail_top = MENU_ITEM_TOP + WIFI_MENU_ITEMS.len() as i32 * MENU_ITEM_STEP + 1;
     assert!(
-        has_on_pixel(&display, MENU_REASON_X..WIDTH, detail_top..HEIGHT),
-        "interface menus should render supplied detail rows below the actions"
+        has_on_pixel(
+            &display,
+            MENU_REASON_X..WIDTH,
+            DETAIL_STATUS_TOP..HEIGHT
+        ),
+        "interface detail should render status rows below Options"
     );
 }
 
@@ -374,7 +384,7 @@ fn station_uplink_menu_labels_follow_requested_state() {
 }
 
 #[test]
-fn failed_interface_menu_draws_failure_reason() {
+fn failed_interface_detail_draws_failure_reason() {
     let mut display = PanelDisplay::new();
     let mut card = test_card("BLE");
     card.kind = CardKind::Ble;
@@ -382,17 +392,41 @@ fn failed_interface_menu_draws_failure_reason() {
     card.failure_reason = Some("BlueZ GATT Channels >1; set Channels=1");
 
     let details = InterfaceMenuDetails::empty();
-    draw_interface_menu(
+    draw_interface_detail(
+        &mut display,
+        &card,
+        InterfaceDetailFocus::Options,
+        0,
+        &details,
+    );
+
+    assert!(
+        has_on_pixel(
+            &display,
+            MENU_REASON_X..WIDTH,
+            DETAIL_STATUS_TOP..HEIGHT
+        ),
+        "failed-card detail should show the failure reason in the status stream"
+    );
+}
+
+#[test]
+fn interface_options_draws_action_rows() {
+    let mut display = PanelDisplay::new();
+    let mut card = test_card("LAN");
+    card.kind = CardKind::WifiStation;
+    draw_interface_options(
         &mut display,
         &card,
         POWER_MENU_ITEM,
         SharedInstanceConfigExport::Unavailable,
-        &details,
     );
-
-    let reason_top = MENU_ITEM_TOP + POWER_ONLY_MENU_ITEMS.len() as i32 * MENU_ITEM_STEP - 1;
     assert!(
-        has_on_pixel(&display, MENU_REASON_X..WIDTH, reason_top..HEIGHT),
-        "failed-card menus should show the failure reason below the actions"
+        has_on_pixel(
+            &display,
+            MENU_BACKING_X..WIDTH,
+            MENU_ITEM_TOP..(MENU_ITEM_TOP + MENU_ITEM_STEP)
+        ),
+        "options screen should draw action rows"
     );
 }

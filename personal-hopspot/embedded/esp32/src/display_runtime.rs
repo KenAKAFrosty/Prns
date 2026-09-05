@@ -311,6 +311,7 @@ mod tests {
             content: personal_hopspot_core::ScreenContent {
                 cards: &[],
                 local_docs: None,
+                interface_menu_details: None,
             },
             battery: personal_hopspot_core::PowerSnapshot::UNKNOWN,
             gnss: None,
