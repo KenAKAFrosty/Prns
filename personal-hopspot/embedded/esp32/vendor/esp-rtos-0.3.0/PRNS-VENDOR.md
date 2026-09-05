@@ -19,3 +19,6 @@
   - Do not request a cross-core yield until the destination scheduler is initialized, and clear a
     stale software-interrupt request before installing the second core's handler. This prevents an
     early radio task from entering core 1's scheduler before its main task and context exist.
+  - Add `Task::new_with_stack` / `spawn_task_with_stack` so long-lived workers (Hopspot `run-core`)
+    can use a caller-owned stack (e.g. PSRAM) instead of carving the Wi-Fi/BLE `InternalMemory`
+    freelist.

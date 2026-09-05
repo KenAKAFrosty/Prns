@@ -33,5 +33,7 @@ pub(crate) const USB_MANUFACTURER: &str = "Stay Personal";
 pub(crate) const USB_PRODUCT: &str = "Personal Hopspot (T-Echo)";
 pub(crate) const USB_SERIAL_NUMBER: &str = "PERSONAL-RNS-TECHO-HOP";
 pub(crate) const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"techousb");
+/// Antenna-referred TX ceiling for the T-Echo SX1262 path.
+pub(crate) const MAX_TX_POWER_DBM: i8 = 22;
 pub(crate) const ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x17Personal Hopspot T-Echo\xc0";
 pub(crate) const NODE_ANNOUNCE_APP_DATA: &[u8] = b"Personal Hopspot T-Echo";

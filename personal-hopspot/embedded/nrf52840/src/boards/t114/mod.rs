@@ -21,6 +21,8 @@ pub(crate) const USB_MANUFACTURER: &str = "Stay Personal";
 pub(crate) const USB_PRODUCT: &str = "Personal Hopspot (Heltec T114)";
 pub(crate) const USB_SERIAL_NUMBER: &str = "PERSONAL-RNS-T114-HOP";
 pub(crate) const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"t114-usb");
+/// Antenna-referred TX ceiling for the T114 (SX1262 without high-power FEM).
+pub(crate) const MAX_TX_POWER_DBM: i8 = 21;
 pub(crate) const RADIO_PROFILE_PAGES: [u32; 2] =
     personal_hopspot_core::NRF52840_RADIO_PROFILE_PAGES;
 pub(crate) const REMOTE_CONTROL_IDENTITY_FLASH: super::RemoteControlIdentityFlash =

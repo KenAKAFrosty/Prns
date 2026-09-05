@@ -15,7 +15,7 @@ pub use modulation::{
 pub use network::{LoRaNetwork, RNODE_LORA_SYNC_WORD};
 pub use policy::{defaults, descriptor};
 pub use profile::{
-    channel_tag, AirtimePolicy, AirtimePolicyError, Frequency, ModemPreset, PreambleSymbols,
-    RadioProfile, RadioProfileCompatibilityError, RadioProfileError, Region, TxPower,
-    CHANNEL_TAG_CAP, DEFAULT_915_PROFILE,
+    boot_lora_profile, channel_tag, AirtimePolicy, AirtimePolicyError, Frequency, ModemPreset,
+    PreambleSymbols, RadioProfile, RadioProfileCompatibilityError, RadioProfileError, Region,
+    TxPower, CHANNEL_TAG_CAP, DEFAULT_915_PROFILE, MONTREAL_PROFILE,
 };

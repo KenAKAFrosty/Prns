@@ -208,6 +208,50 @@ impl SchedulerState {
         task_ptr
     }
 
+    #[cfg(feature = "esp-radio")]
+    pub(crate) fn create_task_with_stack(
+        &mut self,
+        name: &str,
+        task: extern "C" fn(*mut c_void),
+        param: *mut c_void,
+        stack: &'static mut [core::mem::MaybeUninit<u8>],
+        priority: usize,
+        pinned_to: Option<Cpu>,
+    ) -> TaskPtr {
+        if let Some(cpu) = pinned_to {
+            assert!(
+                self.per_cpu[cpu as usize].initialized,
+                "Cannot create task on uninitialized CPU"
+            );
+        }
+
+        // Task control block still lives in internal RAM; only the execution stack is caller-owned.
+        let task = Box::new_in(
+            Task::new_with_stack(name, task, param, stack, priority, pinned_to),
+            InternalMemory,
+        );
+        // `new_with_stack` leaves `heap_allocated` false so Drop does not free the caller stack.
+        let mut task_ptr = NonNull::from(Box::leak(task));
+
+        unsafe {
+            task_ptr
+                .as_mut()
+                .cpu_context
+                .set_tp(task_ptr.as_ptr() as u32)
+        };
+
+        #[cfg(feature = "rtos-trace")]
+        rtos_trace::trace::task_new(task_ptr.rtos_trace_id());
+
+        self.all_tasks.push(task_ptr);
+        let run_scheduler = self.run_queue.mark_task_ready(&self.per_cpu, task_ptr);
+        task::trigger_scheduler(run_scheduler);
+
+        debug!("Task '{}' created (caller stack): {:?}", name, task_ptr);
+
+        task_ptr
+    }
+
     #[cold]
     #[inline(never)]
     fn delete_marked_tasks(&mut self, cpu: Cpu, current_sp: usize) {
@@ -587,6 +631,28 @@ impl Scheduler {
                 task,
                 param,
                 task_stack_size,
+                priority as usize,
+                pinned_to,
+            )
+        })
+    }
+
+    #[cfg(feature = "esp-radio")]
+    pub(crate) fn create_task_with_stack(
+        &self,
+        name: &str,
+        task: extern "C" fn(*mut c_void),
+        param: *mut c_void,
+        stack: &'static mut [core::mem::MaybeUninit<u8>],
+        priority: u32,
+        pinned_to: Option<Cpu>,
+    ) -> TaskPtr {
+        self.with(|state| {
+            state.create_task_with_stack(
+                name,
+                task,
+                param,
+                stack,
                 priority as usize,
                 pinned_to,
             )

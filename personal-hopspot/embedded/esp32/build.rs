@@ -9,6 +9,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=PRNS_BUILD_VERSION");
     println!("cargo:rerun-if-env-changed=PRNS_BUILD_SOURCE_DIGEST");
     println!("cargo:rerun-if-env-changed=PRNS_SOURCE_SHA256");
+    println!("cargo:rerun-if-env-changed=PRNS_LORA_PROFILE");
     track_git_head();
     let build_commit_short = git_commit_short();
     let build_version = env::var("PRNS_BUILD_VERSION")

@@ -24,6 +24,8 @@ pub(crate) const USB_MANUFACTURER: &str = "Stay Personal";
 pub(crate) const USB_PRODUCT: &str = "Personal Hopspot (Heltec MeshTower V2)";
 pub(crate) const USB_SERIAL_NUMBER: &str = "PERSONAL-RNS-MTWR-HOP";
 pub(crate) const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"mtowerv2");
+/// Antenna-referred TX ceiling for the Mesh Tower V2 FEM path.
+pub(crate) const MAX_TX_POWER_DBM: i8 = 30;
 pub(crate) const ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x1dPersonal Hopspot MeshTower V2\xc0";
 pub(crate) const NODE_ANNOUNCE_APP_DATA: &[u8] = b"Personal Hopspot MeshTower V2";
 

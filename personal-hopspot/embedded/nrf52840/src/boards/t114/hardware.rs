@@ -12,7 +12,9 @@ use embassy_nrf::{bind_interrupts, config, peripherals, usb};
 use embassy_time::{Delay, Timer};
 use embedded_hal_bus::spi::ExclusiveDevice;
 use personal_rns::lora::LoRaInterface;
-use personal_rns::radios::sx126x::{BoardConfig, FrontendControl, Sx126x, TcxoVoltage};
+use personal_rns::radios::sx126x::{
+    BoardConfig, ExternalPowerAmplifier, FrontendControl, Sx126x, TcxoVoltage,
+};
 use static_cell::StaticCell;
 
 use crate::boards::status_led::StatusLed;
@@ -167,7 +169,11 @@ impl T114Board {
                 rx_boost: true,
                 dio2_as_rf_switch: true,
                 external_rx_gain_db: 0,
-                external_power_amplifier: None,
+                external_power_amplifier: Some(ExternalPowerAmplifier {
+                    minimum_output_power_dbm: -9,
+                    maximum_output_power_dbm: 21,
+                    chip_power_dbm: t114_chip_power_dbm,
+                }),
                 frontend_control: FrontendControl::NoDynamicControl,
             },
         );
@@ -191,6 +197,11 @@ impl T114Board {
             },
         )
     }
+}
+
+/// T114 has no high-power FEM; antenna-referred power equals SX1262 chip power.
+const fn t114_chip_power_dbm(requested_output_dbm: i8) -> i8 {
+    requested_output_dbm
 }
 
 const fn battery_millivolts(raw: i16) -> u32 {

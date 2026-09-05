@@ -226,7 +226,7 @@ impl T096Board {
                 external_rx_gain_db: 21,
                 external_power_amplifier: Some(ExternalPowerAmplifier {
                     minimum_output_power_dbm: 5,
-                    maximum_output_power_dbm: 22,
+                    maximum_output_power_dbm: 28,
                     chip_power_dbm: t096_chip_power_dbm,
                 }),
                 frontend_control: FrontendControl::TxRx {

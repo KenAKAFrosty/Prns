@@ -15,7 +15,9 @@ use embassy_sync::blocking_mutex::Mutex;
 use embassy_time::{Delay, Timer};
 use embedded_hal_bus::spi::ExclusiveDevice;
 use personal_rns::lora::LoRaInterface;
-use personal_rns::radios::sx126x::{BoardConfig, FrontendControl, Sx126x, TcxoVoltage};
+use personal_rns::radios::sx126x::{
+    BoardConfig, ExternalPowerAmplifier, FrontendControl, Sx126x, TcxoVoltage,
+};
 use static_cell::StaticCell;
 
 use crate::boards::status_led::StatusLed;
@@ -143,7 +145,11 @@ impl MeshTowerV2Board {
                 rx_boost: true,
                 dio2_as_rf_switch: true,
                 external_rx_gain_db: 0,
-                external_power_amplifier: None,
+                external_power_amplifier: Some(ExternalPowerAmplifier {
+                    minimum_output_power_dbm: 5,
+                    maximum_output_power_dbm: 30,
+                    chip_power_dbm: fem_8db_chip_power_dbm,
+                }),
                 frontend_control: FrontendControl::TxRx {
                     enter_transmit,
                     enter_receive,
@@ -203,4 +209,9 @@ pub(crate) fn release_watchdog() {
             io.watchdog_done.set_low();
         }
     });
+}
+
+/// Map antenna-referred power through the Mesh Tower FEM (~8 dB gain) into SX1262 chip power.
+fn fem_8db_chip_power_dbm(requested_output_dbm: i8) -> i8 {
+    requested_output_dbm.saturating_sub(8).clamp(-9, 22)
 }
