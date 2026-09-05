@@ -1226,6 +1226,100 @@ mod tests {
         }
     }
 
+    #[derive(Debug, PartialEq, Eq)]
+    enum StartupCall {
+        Radio(RadioMode),
+        Capabilities(LinkCapabilities),
+        Advertising(AdvertisingMode),
+        Scanning(ScanningMode),
+        NextEvent,
+    }
+
+    struct RecordingStartupBackend {
+        calls: Vec<StartupCall>,
+        first_event: Option<oneshot::Sender<Vec<StartupCall>>>,
+    }
+
+    impl BleBackend<7> for RecordingStartupBackend {
+        type Error = Closed;
+        type Link = LoopbackLink;
+
+        async fn set_radio_mode(&mut self, mode: RadioMode) -> Result<(), Closed> {
+            self.calls.push(StartupCall::Radio(mode));
+            Ok(())
+        }
+
+        async fn local_capabilities(
+            &mut self,
+            configured: LinkCapabilities,
+        ) -> Result<LinkCapabilities, Closed> {
+            self.calls.push(StartupCall::Capabilities(configured));
+            Ok(configured)
+        }
+
+        async fn set_advertising(&mut self, mode: AdvertisingMode) -> Result<(), Closed> {
+            self.calls.push(StartupCall::Advertising(mode));
+            Ok(())
+        }
+
+        async fn set_scanning(&mut self, mode: ScanningMode) -> Result<(), Closed> {
+            self.calls.push(StartupCall::Scanning(mode));
+            Ok(())
+        }
+
+        async fn next_event(&mut self) -> BleEvent<LoopbackLink> {
+            if let Some(first_event) = self.first_event.take() {
+                self.calls.push(StartupCall::NextEvent);
+                let _ = first_event.send(std::mem::take(&mut self.calls));
+            }
+            std::future::pending().await
+        }
+
+        async fn dial(
+            &mut self,
+            _address: BleAddress,
+        ) -> prns_core::interfaces::bluetooth_auto::DialOutcome {
+            prns_core::interfaces::bluetooth_auto::DialOutcome::UnknownPeer
+        }
+    }
+
+    #[tokio::test]
+    async fn ios_gatt_only_startup_enables_scanning_before_waiting_for_peers() {
+        let (first_event_tx, first_event_rx) = oneshot::channel();
+        let capabilities = LinkCapabilities {
+            l2cap: None,
+            link_mtu: contract::BLE_HW_MTU as u16,
+        };
+        let bluetooth = BluetoothAuto::<_, 7>::new(
+            RecordingStartupBackend {
+                calls: Vec::new(),
+                first_event: Some(first_event_tx),
+            },
+            BleIdentity::new([1; 16]),
+            Endpoint::CoreBluetooth(AppleHost::Ios),
+            capabilities,
+        );
+        let status = bluetooth.status();
+        assert!(status.is_enabled());
+        let (fleet, _detached_fleet) = Fleet::detached(status.id());
+        let calls = tokio::select! {
+            result = tokio::time::timeout(Duration::from_secs(1), first_event_rx) => {
+                result.unwrap().unwrap()
+            }
+            () = bluetooth.run(fleet) => unreachable!("the BLE supervisor runs until cancelled"),
+        };
+        assert_eq!(
+            calls,
+            vec![
+                StartupCall::Radio(RadioMode::On),
+                StartupCall::Capabilities(capabilities),
+                StartupCall::Advertising(AdvertisingMode::On),
+                StartupCall::Scanning(ScanningMode::On),
+                StartupCall::NextEvent,
+            ]
+        );
+    }
+
     #[tokio::test]
     async fn two_nodes_handshake_over_loopback_and_a_frame_crosses() {
         let local_a = LocalPeer {

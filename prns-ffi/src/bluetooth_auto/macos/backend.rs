@@ -125,6 +125,18 @@ pub(super) enum ScanOp {
     None,
 }
 
+impl ScanOp {
+    pub(super) const fn diagnostic_label(self, enabled: bool) -> &'static str {
+        match self {
+            Self::Start => "bluetooth: scan decision start",
+            Self::Restart => "bluetooth: scan decision restart",
+            Self::Stop => "bluetooth: scan decision stop",
+            Self::None if enabled => "bluetooth: scan decision already scanning",
+            Self::None => "bluetooth: scan decision already stopped",
+        }
+    }
+}
+
 pub(super) const fn scan_op(enabled: bool, is_scanning: bool, restart: bool) -> ScanOp {
     if enabled {
         if is_scanning {
@@ -284,10 +296,13 @@ fn schedule_failed_dial_cleanup(
 }
 
 fn apply_scanning(central: SendCentralManager, enabled: bool, restart: bool) {
+    crate::diagnostic_log::debug!("bluetooth: querying scan state");
     // SAFETY: this authoritative CoreBluetooth state query runs on the retained manager's
     // serial dispatch queue.
     let is_scanning = unsafe { central.0.isScanning() };
-    match scan_op(enabled, is_scanning, restart) {
+    let operation = scan_op(enabled, is_scanning, restart);
+    crate::diagnostic_log::debug!("{}", operation.diagnostic_label(enabled));
+    match operation {
         ScanOp::Restart => {
             // SAFETY: the retained central manager is only messaged on its serial dispatch queue.
             unsafe { central.0.stopScan() };
@@ -1053,6 +1068,11 @@ impl BleBackend<{ MAX_PEERS }> for CoreBluetoothBackend {
     }
 
     async fn set_scanning(&mut self, mode: ScanningMode) -> Result<(), MacosBleError> {
+        if mode.is_on() {
+            crate::diagnostic_log::debug!("bluetooth: scanning requested on");
+        } else {
+            crate::diagnostic_log::debug!("bluetooth: scanning requested off");
+        }
         self.scan_enabled = mode.is_on();
         self.scan_activity.store(false, Ordering::Relaxed);
         self.scan_liveness_at = tokio::time::Instant::now() + RADIO_LIVENESS_INTERVAL;
@@ -1060,7 +1080,9 @@ impl BleBackend<{ MAX_PEERS }> for CoreBluetoothBackend {
         let central = SendCentralManager(self.central.0.clone());
         let radio_enabled = Arc::clone(&self.radio_enabled);
         self.queue.exec_async(move || {
+            crate::diagnostic_log::debug!("bluetooth: scan job started");
             if mode.is_on() && !radio_enabled.load(Ordering::Acquire) {
+                crate::diagnostic_log::debug!("bluetooth: scan job skipped radio disabled");
                 return;
             }
             apply_scanning(central, mode.is_on(), restart);

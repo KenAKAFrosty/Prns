@@ -692,6 +692,42 @@ fn scan_op_starts_restarts_and_stops_without_spurious_work() {
 }
 
 #[test]
+fn scan_decision_labels_distinguish_work_from_already_satisfied_requests() {
+    let cases = [
+        (true, false, false, "bluetooth: scan decision start"),
+        (true, false, true, "bluetooth: scan decision start"),
+        (
+            true,
+            true,
+            false,
+            "bluetooth: scan decision already scanning",
+        ),
+        (true, true, true, "bluetooth: scan decision restart"),
+        (false, true, false, "bluetooth: scan decision stop"),
+        (false, true, true, "bluetooth: scan decision stop"),
+        (
+            false,
+            false,
+            false,
+            "bluetooth: scan decision already stopped",
+        ),
+        (
+            false,
+            false,
+            true,
+            "bluetooth: scan decision already stopped",
+        ),
+    ];
+    for (enabled, is_scanning, restart, expected) in cases {
+        assert_eq!(
+            scan_op(enabled, is_scanning, restart).diagnostic_label(enabled),
+            expected,
+            "enabled={enabled}, is_scanning={is_scanning}, restart={restart}",
+        );
+    }
+}
+
+#[test]
 fn scan_lease_restarts_only_an_enabled_scan_without_observed_activity() {
     assert_eq!(scan_lease(false, false), ScanLease::Inactive);
     assert_eq!(scan_lease(false, true), ScanLease::Inactive);
