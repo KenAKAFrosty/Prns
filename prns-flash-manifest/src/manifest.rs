@@ -623,7 +623,7 @@ mod tests {
         let validated = ValidatedFlashManifest::from_json(&encoded, &catalog)?;
         assert_eq!(validated.schema_version(), FLASH_MANIFEST_SCHEMA);
         assert_eq!(validated.release().version().as_str(), "0.2.6");
-        assert_eq!(validated.targets().len(), 8);
+        assert_eq!(validated.targets().len(), catalog.shipping_boards().count());
         assert_eq!(
             validated
                 .targets()
@@ -638,7 +638,10 @@ mod tests {
                 .iter()
                 .filter(|target| matches!(target, ReleaseTarget::EspSerial(_)))
                 .count(),
-            4
+            catalog
+                .shipping_boards()
+                .filter(|board| matches!(&board.build, BoardBuild::Esp(_)))
+                .count()
         );
         let t_echo = validated
             .targets()

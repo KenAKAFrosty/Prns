@@ -33,7 +33,7 @@ if [[ -f "$candidate/qualification/hotfix.json" ]]; then
             --repository "$root" --version "$version" --format roster-version
     )"
 fi
-python3 "$root/tools/release/validate-flasher-tester-roster.py" \
+python3 "$candidate/qualification/validate-flasher-tester-roster.py" \
     --roster "$candidate/qualification/tester-roster.json" \
     --version "$roster_version"
 if [[ -n "$acceptance" ]]; then
@@ -41,7 +41,7 @@ if [[ -n "$acceptance" ]]; then
     trap 'rm -rf "$evidence_work"' EXIT HUP INT TERM
     python3 "$root/tools/release/extract-flasher-candidate.py" \
         "$qualification_evidence" "$evidence_work/root"
-    python3 "$root/tools/release/validate-flasher-acceptance.py" \
+    python3 "$candidate/qualification/validate-flasher-acceptance.py" \
         --acceptance "$acceptance" \
         --manifest "$candidate/flash-manifest.json" \
         --manifest-signature "$candidate/flash-manifest.json.minisig" \

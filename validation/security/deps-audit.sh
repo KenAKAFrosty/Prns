@@ -32,6 +32,7 @@ graphs=(
     "esp32-s3-heltec-e290|personal-hopspot/embedded/esp32/boards/heltec-e290/Cargo.toml|xtensa-esp32s3-none-elf"
     "esp32-s3-heltec|personal-hopspot/embedded/esp32/boards/heltec-v4/Cargo.toml|xtensa-esp32s3-none-elf"
     "esp32-s3-heltec-r8|personal-hopspot/embedded/esp32/boards/heltec-v4-r8/Cargo.toml|xtensa-esp32s3-none-elf"
+    "esp32-s3-heltec-wireless-stick-lite-v3|personal-hopspot/embedded/esp32/boards/heltec-wireless-stick-lite-v3/Cargo.toml|xtensa-esp32s3-none-elf"
     "esp32-s3-tbeam|personal-hopspot/embedded/esp32/boards/t-beam-supreme/Cargo.toml|xtensa-esp32s3-none-elf"
     "wasm|prns-wasm/Cargo.toml|wasm32-unknown-unknown"
     "nrf-dfu-browser|prns-nrf-dfu-wasm/Cargo.toml|wasm32-unknown-unknown"

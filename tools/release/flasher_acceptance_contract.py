@@ -8,23 +8,14 @@ import hashlib
 from pathlib import Path
 import re
 
+from flasher_board_catalog import release_boards
 from flasher_manifest import require_schema, target_artifacts
 from flasher_hotfix import HotfixSpec
 
 
-ESP_SERIAL_BOARDS = (
-    "heltec-v4",
-    "heltec-v4-r8",
-    "t-beam-supreme",
-    "xiao-esp32-c6",
-)
-SHIPPING_BOARDS = (
-    *ESP_SERIAL_BOARDS,
-    "t-echo",
-    "t114",
-    "t096",
-    "t1000-e",
-)
+RELEASE_BOARDS = release_boards(Path(__file__))
+ESP_SERIAL_BOARDS = RELEASE_BOARDS.esp_serial
+SHIPPING_BOARDS = RELEASE_BOARDS.shipping
 SURFACES = ("cli", "web")
 OS_ARCHITECTURES = {
     ("macos", "aarch64"),
@@ -60,6 +51,14 @@ FALLBACK_SCENARIOS = {
     "t-echo-uf2-route",
     "t096-uf2-route",
     "t1000-e-recovery-uf2-route",
+}
+INTERFACE_SCENARIOS = {
+    "Wi-Fi Auto": "wifi",
+    "TCP Client": "tcp-client",
+    "BLE Auto": "ble",
+    "LoRa": "lora",
+    "ESP-NOW": "esp-now",
+    "USB Auto": "usb",
 }
 
 ESP_COMMON_SCENARIOS = {
@@ -97,8 +96,6 @@ UF2_COMMON_SCENARIOS = {
     "foundation-detection",
     "unsupported-foundation-rejection",
     "display",
-    "ble",
-    "lora",
 }
 UF2_WEB_SCENARIOS = {
     "manual-copy-flow",
@@ -133,8 +130,6 @@ NRF_SERIAL_DFU_COMMON_SCENARIOS = {
     "reliable-dfu-transfer",
     "activation",
     "recovery-uf2-fallback",
-    "lora",
-    "usb",
     "post-flash-boot",
 }
 NRF_SERIAL_DFU_WEB_SCENARIOS = {
@@ -192,9 +187,21 @@ def sha256(path: Path) -> str:
 def applicable_scenarios(
     target: dict, surface: str, chip_counts: Counter[str]
 ) -> set[str]:
+    interfaces = target.get("interfaces")
+    if (
+        not isinstance(interfaces, list)
+        or not interfaces
+        or any(not isinstance(interface, str) for interface in interfaces)
+        or len(set(interfaces)) != len(interfaces)
+    ):
+        raise ValueError("acceptance target interfaces must be a nonempty unique string array")
+    unknown_interfaces = sorted(set(interfaces) - set(INTERFACE_SCENARIOS))
+    if unknown_interfaces:
+        raise ValueError(f"acceptance target has unsupported interfaces: {unknown_interfaces}")
+    interface_scenarios = {INTERFACE_SCENARIOS[interface] for interface in interfaces}
     transport = target.get("transport")
     if transport == "esp-serial":
-        scenarios = set(ESP_COMMON_SCENARIOS)
+        scenarios = set(ESP_COMMON_SCENARIOS) | interface_scenarios
         scenarios.update(ESP_WEB_SCENARIOS if surface == "web" else ESP_CLI_SCENARIOS)
         chip = target.get("expected_chip")
         if isinstance(chip, str) and chip_counts[chip] > 1:
@@ -203,11 +210,11 @@ def applicable_scenarios(
             scenarios.update(PROVISIONING_SCENARIOS)
         return scenarios
     if transport == "uf2-mass-storage":
-        scenarios = set(UF2_COMMON_SCENARIOS)
+        scenarios = set(UF2_COMMON_SCENARIOS) | interface_scenarios
         scenarios.update(UF2_WEB_SCENARIOS if surface == "web" else UF2_CLI_SCENARIOS)
         return scenarios
     if transport == "nrf-serial-dfu":
-        scenarios = set(NRF_SERIAL_DFU_COMMON_SCENARIOS)
+        scenarios = set(NRF_SERIAL_DFU_COMMON_SCENARIOS) | interface_scenarios
         scenarios.update(
             NRF_SERIAL_DFU_WEB_SCENARIOS
             if surface == "web"
@@ -306,6 +313,8 @@ def scaffold(
     if any(
         not isinstance(target.get("display_name"), str)
         or not target["display_name"].strip()
+        or not isinstance(target.get("interfaces"), list)
+        or not target["interfaces"]
         or target.get("transport")
         not in {"esp-serial", "uf2-mass-storage", "nrf-serial-dfu"}
         for target in targets.values()

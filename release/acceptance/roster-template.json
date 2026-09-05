@@ -1,5 +1,5 @@
 {
-  "schema": 3,
+  "schema": 4,
   "release": {
     "version": "REPLACE_WITH_VERSION"
   },
@@ -40,6 +40,48 @@
     },
     {
       "board": "heltec-v4-r8",
+      "surface": "cli",
+      "os": "linux",
+      "architecture": "x86_64",
+      "tester": "REPLACE_WITH_PUBLIC_TESTER_IDENTITY",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
+      "board": "heltec-e290",
+      "surface": "web",
+      "os": "linux",
+      "architecture": "x86_64",
+      "browser": {"name": "chrome", "channel": "stable"},
+      "tester": "REPLACE_WITH_PUBLIC_TESTER_IDENTITY",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
+      "board": "heltec-e290",
+      "surface": "cli",
+      "os": "linux",
+      "architecture": "x86_64",
+      "tester": "REPLACE_WITH_PUBLIC_TESTER_IDENTITY",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
+      "board": "heltec-wireless-stick-lite-v3",
+      "surface": "web",
+      "os": "linux",
+      "architecture": "x86_64",
+      "browser": {"name": "chrome", "channel": "stable"},
+      "tester": "REPLACE_WITH_PUBLIC_TESTER_IDENTITY",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
+      "board": "heltec-wireless-stick-lite-v3",
       "surface": "cli",
       "os": "linux",
       "architecture": "x86_64",
@@ -126,6 +168,48 @@
       "board": "t114",
       "surface": "cli",
       "os": "linux",
+      "architecture": "x86_64",
+      "tester": "REPLACE_WITH_PUBLIC_TESTER_IDENTITY",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
+      "board": "mesh-pocket-5000",
+      "surface": "web",
+      "os": "macos",
+      "architecture": "aarch64",
+      "browser": {"name": "chrome", "channel": "stable"},
+      "tester": "REPLACE_WITH_PUBLIC_TESTER_IDENTITY",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
+      "board": "mesh-pocket-5000",
+      "surface": "cli",
+      "os": "macos",
+      "architecture": "aarch64",
+      "tester": "REPLACE_WITH_PUBLIC_TESTER_IDENTITY",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
+      "board": "mesh-pocket-10000",
+      "surface": "web",
+      "os": "windows",
+      "architecture": "x86_64",
+      "browser": {"name": "edge", "channel": "stable"},
+      "tester": "REPLACE_WITH_PUBLIC_TESTER_IDENTITY",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
+      "board": "mesh-pocket-10000",
+      "surface": "cli",
+      "os": "windows",
       "architecture": "x86_64",
       "tester": "REPLACE_WITH_PUBLIC_TESTER_IDENTITY",
       "cables_ready": true,

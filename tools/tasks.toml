@@ -825,6 +825,16 @@ entrypoint = ["python3", "tools/release/validate-flasher-prerelease.py"]
 requires = ["python3"]
 
 [[task]]
+id = "release.tester-roster.create"
+summary = "Create a versioned tester-roster scaffold from the catalog-aware template."
+domain = "release"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["operator", "release"]
+entrypoint = ["python3", "tools/release/create-flasher-tester-roster.py"]
+requires = ["python3"]
+
+[[task]]
 id = "release.tester-roster.validate"
 summary = "Validate that a version's tester roster covers every shipping target."
 domain = "release"
@@ -941,6 +951,10 @@ reason = "Validated local developer candidate boundary shared by the developer f
 [[internal]]
 path = "tools/release/flasher_acceptance_contract.py"
 reason = "Shared acceptance schema and scaffold implementation used by release commands and bundled qualification tools."
+
+[[internal]]
+path = "tools/release/flasher_board_catalog.py"
+reason = "Shared release-board projection from the authoritative catalog or an immutable candidate manifest."
 
 [[internal]]
 path = "tools/release/flasher_build_metadata.py"

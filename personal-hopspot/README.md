@@ -74,6 +74,14 @@ ESP32 firmware, from `embedded/esp32/` with the board on USB:
     cargo tbeam-supreme-flash
     cargo c6-flash
 
+The Wireless Stick Lite V3 uses the catalog-owned serial reset policy. From the
+repository root, build and flash the current working tree with:
+
+    ./tools/prns run device.hopspot.flash-local -- heltec-wireless-stick-lite-v3 --monitor
+
+Its [qualification receipt](../validation/qualifications/heltec-wireless-stick-lite-v3-qualification.md)
+records the supported hardware contract, current software evidence, and the
+remaining physical soak and sanity checks.
 
 T-Echo firmware:
 
