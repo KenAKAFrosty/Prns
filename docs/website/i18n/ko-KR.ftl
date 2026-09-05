@@ -65,8 +65,8 @@ start-section-label = 시작 경로
 start-section-title = 무엇을 하러 오셨나요?
 start-section-lead = Prns가 내 작업에 들어오는 방식에 맞는 경로를 고르세요. 플래시할 하드웨어, 운영할 인프라, 만들 소프트웨어 중 하나입니다.
 
-start-daemon-headline = daemon 실행하기
-start-daemon-body = 데스크톱, LXMF 앱, backbone VPS 등을 위한 빠른 Reticulum daemon을 설치하세요.
+start-daemon-headline = prnsd로 Reticulum 설치하기
+start-daemon-body = 데스크톱, LXMF 앱, backbone VPS 등을 위한 빠른 Reticulum daemon입니다.
 start-daemon-code = 기존 앱에 drop-in
     ~/.reticulum 읽기
     인터페이스 라이브 편집
