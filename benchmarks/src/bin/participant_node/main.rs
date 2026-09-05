@@ -556,6 +556,35 @@ async fn run_relay(manifest: &Manifest, addr: &str) {
     println!(
         "READY role=relay addr={addr_a}>{addr_b} bitrate_bps={bitrate_bps} mtu_bytes={mtu_bytes}"
     );
+    #[cfg(feature = "scheduler-probe")]
+    let relay_handle = node.handle();
+    #[cfg(feature = "scheduler-probe")]
+    {
+        let stop_and_snapshot = async {
+            await_stop().await;
+            relay_handle.metrics_snapshot().await
+        };
+        tokio::select! {
+            result = node.run() => {
+                result.expect("relay node remains healthy");
+            }
+            snapshot = stop_and_snapshot => {
+                let snapshot = snapshot.expect("relay runtime metrics remain available");
+                println!(
+                    "RELAY_METRICS turns={} inbound_batch_max={} egress_frames={} egress_backpressured_frames={} egress_pending_frames={} egress_max_pending_frames={} egress_full_drops={} egress_missing_drops={}",
+                    snapshot.manifold.turns,
+                    snapshot.manifold.maximum_inbound_batch,
+                    snapshot.egress.enqueued_frames,
+                    snapshot.egress.backpressured_frames,
+                    snapshot.egress.pending_frames,
+                    snapshot.egress.maximum_pending_frames,
+                    snapshot.egress.full_lane_drops,
+                    snapshot.egress.missing_lane_drops,
+                );
+            }
+        }
+    }
+    #[cfg(not(feature = "scheduler-probe"))]
     tokio::select! {
         result = node.run() => {
             result.expect("relay node remains healthy");

@@ -18,7 +18,8 @@ use crate::storage::StorageLayout;
 
 use super::crypto_pool::{run_link_sign_job, CryptoPool, LinkSignCompleted, LinkSignJob};
 use super::egress::{
-    ifac_for, route_reaction, route_reaction_with_work, Egress, InterfacePacer, WireScratch,
+    ifac_for, route_ingress_reaction, route_ingress_reaction_with_work, Egress, InterfacePacer,
+    WireScratch,
 };
 use super::interface_topology::InterfaceTopology;
 use super::journal_delivery::JournalDispatch;
@@ -59,7 +60,7 @@ struct DeferredResourcePartHash {
 // Ingress adds ordering barriers to the common reaction route. Keeping those
 // borrowed queues explicit avoids a second, partially initialized router type.
 #[allow(clippy::too_many_arguments)]
-fn route_ingress_reaction<J>(
+fn route_ingress_reaction_with_owed_work<J>(
     reaction: EngineReaction<'_, OwedWork<'_>>,
     egress: &mut Egress,
     ifacs: &[InterfaceIfac],
@@ -77,7 +78,7 @@ fn route_ingress_reaction<J>(
 ) where
     J: for<'a> FnMut(Journaled<'a>),
 {
-    route_reaction_with_work(
+    route_ingress_reaction_with_work(
         reaction,
         egress,
         ifacs,
@@ -125,6 +126,7 @@ fn route_ingress_reaction<J>(
                 owed_work.push(OwedWork::ResourceDecompression(owed), crypto_pool);
             }
         },
+        source,
     );
 }
 
@@ -223,6 +225,9 @@ impl InboundDispatch {
             if processed_frames == max_frames_total {
                 break;
             }
+            if topology.egress.blocks_source(source) {
+                continue;
+            }
             if !link_identity_barriers.is_empty()
                 && link_identity_barriers
                     .iter()
@@ -307,7 +312,7 @@ impl InboundDispatch {
                         should_prove,
                         should_accept_resource,
                         sink: &mut |reaction| {
-                            route_ingress_reaction(
+                            route_ingress_reaction_with_owed_work(
                                 reaction,
                                 &mut topology.egress,
                                 &topology.ifacs,
@@ -369,6 +374,9 @@ impl InboundDispatch {
                 {
                     break;
                 }
+                if topology.egress.blocks_source(source) {
+                    break;
+                }
             }
             {
                 let inline_signs = crypto_pool.map_or(usize::MAX, |_| 0);
@@ -385,7 +393,7 @@ impl InboundDispatch {
                     match run_link_sign_job(job) {
                         LinkSignCompleted::ChannelAck(completed) => {
                             engine.resume_channel_ack_sign(completed, now, &mut |reaction| {
-                                route_reaction(
+                                route_ingress_reaction(
                                     reaction,
                                     &mut topology.egress,
                                     &topology.ifacs,
@@ -393,12 +401,13 @@ impl InboundDispatch {
                                     wire_scratch,
                                     now,
                                     &mut |journaled| journal.route(journaled),
+                                    source,
                                 );
                             });
                         }
                         LinkSignCompleted::Receipt(completed) => {
                             engine.resume_link_receipt_sign(completed, now, &mut |reaction| {
-                                route_reaction(
+                                route_ingress_reaction(
                                     reaction,
                                     &mut topology.egress,
                                     &topology.ifacs,
@@ -406,13 +415,14 @@ impl InboundDispatch {
                                     wire_scratch,
                                     now,
                                     &mut |journaled| journal.route(journaled),
+                                    source,
                                 );
                             });
                         }
                         LinkSignCompleted::Identify(completed) => {
                             let changed =
                                 engine.resume_identify_sign(completed, now, &mut |reaction| {
-                                    route_reaction(
+                                    route_ingress_reaction(
                                         reaction,
                                         &mut topology.egress,
                                         &topology.ifacs,
@@ -420,6 +430,7 @@ impl InboundDispatch {
                                         wire_scratch,
                                         now,
                                         &mut |journaled| journal.route(journaled),
+                                        source,
                                     );
                                 });
                             merge_wake_schedules_delta(

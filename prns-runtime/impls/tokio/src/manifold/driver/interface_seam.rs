@@ -22,8 +22,9 @@ impl TokioInterfaceSeam {
         id: InterfaceId,
         inbound: TokioGrantProducer,
         notify: UnboundedSender<InterfaceId>,
-        outbound: TokioGrantConsumer,
+        mut outbound: TokioGrantConsumer,
     ) -> Self {
+        outbound.notify_releases_to(id, notify.clone());
         Self {
             id,
             origin: InterfaceOriginKind::Configured,

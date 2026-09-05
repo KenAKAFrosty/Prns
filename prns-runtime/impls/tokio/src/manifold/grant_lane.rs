@@ -1,9 +1,9 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use prns_core::interfaces::{FrameSink, FrameSinkError, PacketPhyStats};
+use prns_core::interfaces::{FrameSink, FrameSinkError, InterfaceId, PacketPhyStats};
 use rtrb::{Consumer, Producer, PushError, RingBuffer};
-use tokio::sync::Notify;
+use tokio::sync::{mpsc::UnboundedSender, Notify};
 
 pub fn tokio_grant_lane(slot_cap: usize, depth: usize) -> (TokioGrantProducer, TokioGrantConsumer) {
     let depth = depth.max(1);
@@ -41,6 +41,7 @@ pub fn tokio_grant_lane(slot_cap: usize, depth: usize) -> (TokioGrantProducer, T
             consumer_parked,
             announced,
             expedited_streak: 0,
+            release_notify: None,
         },
     )
 }
@@ -203,6 +204,14 @@ impl TokioGrantProducer {
     pub fn needs_announce(&self) -> bool {
         !self.announced.swap(true, Ordering::AcqRel)
     }
+
+    pub(super) fn arm_release_wake(&self) {
+        self.producer_parked.store(true, Ordering::Release);
+    }
+
+    pub(super) fn disarm_release_wake(&self) {
+        self.producer_parked.store(false, Ordering::Release);
+    }
 }
 
 pub struct TokioGrantConsumer {
@@ -216,9 +225,10 @@ pub struct TokioGrantConsumer {
     consumer_parked: Arc<AtomicBool>,
     announced: Arc<AtomicBool>,
     expedited_streak: usize,
+    release_notify: Option<(InterfaceId, UnboundedSender<InterfaceId>)>,
 }
 
-const EXPEDITED_BURST: usize = 8;
+pub(super) const EXPEDITED_BURST: usize = 8;
 
 enum GrantQueue {
     Expedited,
@@ -226,6 +236,14 @@ enum GrantQueue {
 }
 
 impl TokioGrantConsumer {
+    pub(super) fn notify_releases_to(
+        &mut self,
+        interface: InterfaceId,
+        notify: UnboundedSender<InterfaceId>,
+    ) {
+        self.release_notify = Some((interface, notify));
+    }
+
     pub fn try_peek(&mut self) -> Option<&mut HeapFrameSlot> {
         if self.peeked.is_none() {
             self.peeked = self.pop_next();
@@ -289,6 +307,9 @@ impl TokioGrantConsumer {
                     && self.producer_parked.swap(false, Ordering::AcqRel)
                 {
                     self.free_ready.notify_one();
+                    if let Some((interface, notify)) = &self.release_notify {
+                        let _ = notify.send(*interface);
+                    }
                 }
             }
             Err(PushError::Full(_)) => {}
@@ -371,6 +392,28 @@ mod tests {
         assert_eq!(producer.vacant_slots, 2);
         assert_eq!(producer.recycled.slots(), 1);
         assert_eq!(producer.occupancy(), 0);
+    }
+
+    #[test]
+    fn armed_release_notifies_the_manifold_once() {
+        let id = InterfaceId::new([0xD1; 8]);
+        let (notify, mut notified) = tokio::sync::mpsc::unbounded_channel();
+        let (mut producer, mut consumer) = tokio_grant_lane(64, 1);
+        consumer.notify_releases_to(id, notify);
+
+        producer.try_grant().unwrap().fill(b"hot");
+        producer.commit();
+        consumer.try_peek().unwrap();
+        consumer.release();
+        assert!(notified.try_recv().is_err());
+
+        producer.try_grant().unwrap().fill(b"parked");
+        producer.commit();
+        consumer.try_peek().unwrap();
+        producer.arm_release_wake();
+        consumer.release();
+        assert_eq!(notified.try_recv(), Ok(id));
+        assert!(notified.try_recv().is_err());
     }
 
     #[test]

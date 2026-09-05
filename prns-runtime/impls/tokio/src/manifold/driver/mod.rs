@@ -356,6 +356,10 @@ async fn run_inner<S, H, J, P, A, C>(
         // Announcements carry only lane identity. Pull every already-durable notification without
         // registering a Tokio waiter; the SPSC lane remains the source of truth for frame data.
         inbound.collect_ready(&mut notify);
+        let mut work_remaining = scheduler_policy.turn_work();
+        let flushed_egress = topology.egress.flush_pending(work_remaining);
+        work_remaining = work_remaining.saturating_sub(flushed_egress);
+        let mut egress_backpressured = topology.egress.has_pending();
         if pending_command.is_none() {
             pending_command = next_command(
                 &mut local_commands,
@@ -365,9 +369,11 @@ async fn run_inner<S, H, J, P, A, C>(
             );
         }
 
-        let mut progressed = false;
-        let mut work_remaining = scheduler_policy.turn_work();
-        if let Some(pool) = crypto_pool.as_ref().filter(|pool| pool.has_completion()) {
+        let mut progressed = flushed_egress > 0;
+        if let Some(pool) = crypto_pool
+            .as_ref()
+            .filter(|pool| !egress_backpressured && pool.has_completion())
+        {
             pool.disarm_completion_wait();
             let mut next = pool.pop_completion();
             let now = clock.observe_step(&host);
@@ -408,7 +414,10 @@ async fn run_inner<S, H, J, P, A, C>(
                 }
                 work_remaining = work_remaining.saturating_sub(completed_work);
                 completed += 1;
-                if work_remaining == 0 || completed == completion_budget {
+                if work_remaining == 0
+                    || completed == completion_budget
+                    || topology.egress.has_pending()
+                {
                     break;
                 }
                 next = pool.pop_completion();
@@ -417,6 +426,7 @@ async fn run_inner<S, H, J, P, A, C>(
             {
                 turn_activity.completions = completed;
             }
+            egress_backpressured = topology.egress.has_pending();
             progressed = true;
         }
 
@@ -443,6 +453,7 @@ async fn run_inner<S, H, J, P, A, C>(
             {
                 turn_activity.inbound_frames = processed;
             }
+            egress_backpressured = topology.egress.has_pending();
             progressed |= processed > 0;
         }
 
@@ -482,7 +493,7 @@ async fn run_inner<S, H, J, P, A, C>(
                         }
                     }
                     command_budget -= 1;
-                    if command_budget == 0 {
+                    if command_budget == 0 || topology.egress.has_pending() {
                         break;
                     }
                     match next_command(
@@ -501,11 +512,12 @@ async fn run_inner<S, H, J, P, A, C>(
                 {
                     turn_activity.commands = commands_dispatched;
                 }
+                egress_backpressured = topology.egress.has_pending();
                 progressed = true;
             }
         }
 
-        if armed.is_some_and(|(deadline, _)| deadline <= clock.now()) {
+        if !egress_backpressured && armed.is_some_and(|(deadline, _)| deadline <= clock.now()) {
             if let Some((_deadline, reason)) = armed.take() {
                 let now = clock.observe_step(&host);
                 #[cfg(feature = "runtime-metrics")]
@@ -534,11 +546,12 @@ async fn run_inner<S, H, J, P, A, C>(
                     &engine,
                     topology.view(),
                 );
+                egress_backpressured = topology.egress.has_pending();
                 progressed = true;
             }
         }
 
-        if pacer_armed.is_some_and(|deadline| deadline <= clock.now()) {
+        if !egress_backpressured && pacer_armed.is_some_and(|deadline| deadline <= clock.now()) {
             let _deadline = pacer_armed.take().unwrap_or(InstantMillis(0));
             let now = clock.observe_step(&host);
             #[cfg(feature = "runtime-metrics")]
@@ -552,7 +565,7 @@ async fn run_inner<S, H, J, P, A, C>(
             progressed = true;
         }
 
-        if work_remaining > 0 || owed_work.has_pending() {
+        if !egress_backpressured && (work_remaining > 0 || owed_work.has_pending()) {
             #[cfg(feature = "runtime-metrics")]
             let inline_dispatch_started = crypto_pool.is_none().then(std::time::Instant::now);
             let dispatched = owed_work.dispatch(
@@ -666,14 +679,14 @@ async fn run_inner<S, H, J, P, A, C>(
         // after every synchronously observable source has reported cold.
         if crypto_pool
             .as_ref()
-            .is_some_and(CryptoPool::prepare_completion_wait)
+            .is_some_and(|pool| !egress_backpressured && pool.prepare_completion_wait())
         {
             continue;
         }
 
         tokio::select! {
             local_issued = poll_fn(|context| local_commands.poll_recv(context)),
-                if local_commands_enabled => {
+                if local_commands_enabled && pending_command.is_none() => {
                 match local_issued {
                     Some(issued) => {
                         local_command_streak = local_command_streak.saturating_add(1);
@@ -686,7 +699,7 @@ async fn run_inner<S, H, J, P, A, C>(
                 let Some(source) = arrived else { return };
                 inbound.mark_ready(source);
             }
-            issued = commands.recv() => {
+            issued = commands.recv(), if pending_command.is_none() => {
                 let Some(issued) = issued else { return };
                 pending_command = Some(issued);
             }
@@ -698,7 +711,8 @@ async fn run_inner<S, H, J, P, A, C>(
                 pacer_armed = None;
                 clock.observe_step(&host);
             }
-            () = crypto_completion_wake.notified(), if crypto_pool.is_some() => {}
+            () = crypto_completion_wake.notified(),
+                if crypto_pool.is_some() && !egress_backpressured => {}
         }
     }
 }
