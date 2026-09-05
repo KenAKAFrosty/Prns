@@ -1,6 +1,4 @@
-use personal_hopspot_memory::{
-    JournalLayout, MemoryProfile, MemoryRegion, ProcessorArchitecture, RegionRole,
-};
+use personal_hopspot_memory::{JournalLayout, MemoryProfile, ProcessorArchitecture, RegionRole};
 use personal_rns::persistence::{FlashArenaRange, FlashJournalLayout};
 
 pub(crate) struct NrfFirmwareMemory {
@@ -55,18 +53,11 @@ impl NrfFirmwareMemory {
         )
     }
 
-    const fn region(&self, role: RegionRole) -> &'static MemoryRegion {
-        let mut matching_index = self.profile.regions.len();
-        let mut index = 0;
-        while index < self.profile.regions.len() {
-            if same_role(self.profile.regions[index].role, role) {
-                assert!(matching_index == self.profile.regions.len());
-                matching_index = index;
-            }
-            index += 1;
+    const fn region(&self, role: RegionRole) -> &personal_hopspot_memory::MemoryRegion {
+        match self.profile.unique_region_for_role(role) {
+            Ok(region) => region,
+            Err(_) => panic!(),
         }
-        assert!(matching_index < self.profile.regions.len());
-        &self.profile.regions[matching_index]
     }
 
     const fn journal(&self) -> &'static JournalLayout {
@@ -78,31 +69,4 @@ impl NrfFirmwareMemory {
 const fn narrow_address(address: u64) -> u32 {
     assert!(address <= u32::MAX as u64);
     address as u32
-}
-
-const fn same_role(left: RegionRole, right: RegionRole) -> bool {
-    matches!(
-        (left, right),
-        (RegionRole::Bootloader, RegionRole::Bootloader)
-            | (RegionRole::PartitionTable, RegionRole::PartitionTable)
-            | (RegionRole::SoftDevice, RegionRole::SoftDevice)
-            | (RegionRole::PlatformData, RegionRole::PlatformData)
-            | (RegionRole::FirmwareImage, RegionRole::FirmwareImage)
-            | (RegionRole::BleIdentity, RegionRole::BleIdentity)
-            | (RegionRole::Provisioning, RegionRole::Provisioning)
-            | (RegionRole::NodeIdentity, RegionRole::NodeIdentity)
-            | (RegionRole::PhyInitialization, RegionRole::PhyInitialization)
-            | (
-                RegionRole::RemoteControlIdentity,
-                RegionRole::RemoteControlIdentity
-            )
-            | (RegionRole::RadioProfile, RegionRole::RadioProfile)
-            | (RegionRole::Journal, RegionRole::Journal)
-            | (
-                RegionRole::RecoveryBootloader,
-                RegionRole::RecoveryBootloader
-            )
-            | (RegionRole::FactoryReserved, RegionRole::FactoryReserved)
-            | (RegionRole::Reserved, RegionRole::Reserved)
-    )
 }

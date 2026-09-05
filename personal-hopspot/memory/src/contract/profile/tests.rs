@@ -95,6 +95,63 @@ fn overlapping_regions_in_one_space_are_rejected() {
 }
 
 #[test]
+fn semantic_region_lookup_rejects_missing_and_ambiguous_roles() {
+    static SPACES: [AddressSpace; 1] = [AddressSpace {
+        id: FLASH,
+        kind: AddressSpaceKind::InternalFlash,
+        geometry: AddressSpaceGeometry::Fixed(AddressRange::new(0, 0x4000)),
+        backing_store: BackingStoreId("flash-chip"),
+        backing_offset: 0,
+    }];
+    static REGIONS: [MemoryRegion; 3] = [
+        region(
+            "firmware",
+            FLASH,
+            AddressRange::new(0x1000, 0x2000),
+            RegionOwner::FirmwareImage,
+            RegionRetention::ReplaceWithFirmware,
+            RegionRole::FirmwareImage,
+        ),
+        region(
+            "node-a",
+            FLASH,
+            AddressRange::new(0x2000, 0x2800),
+            RegionOwner::DeviceIdentity,
+            RegionRetention::PreserveAcrossFirmwareUpdate,
+            RegionRole::NodeIdentity,
+        ),
+        region(
+            "node-b",
+            FLASH,
+            AddressRange::new(0x2800, 0x3000),
+            RegionOwner::DeviceIdentity,
+            RegionRetention::PreserveAcrossFirmwareUpdate,
+            RegionRole::NodeIdentity,
+        ),
+    ];
+    let profile = profile(&SPACES, &REGIONS, &[]);
+
+    assert_eq!(
+        profile.unique_region_for_role(RegionRole::FirmwareImage),
+        Ok(&REGIONS[0])
+    );
+    assert_eq!(
+        profile.unique_region_for_role(RegionRole::BleIdentity),
+        Err(crate::RegionRoleLookupError::Missing {
+            role: RegionRole::BleIdentity,
+        })
+    );
+    assert_eq!(
+        profile.unique_region_for_role(RegionRole::NodeIdentity),
+        Err(crate::RegionRoleLookupError::Ambiguous {
+            role: RegionRole::NodeIdentity,
+            first: MemoryRegionId("node-a"),
+            second: MemoryRegionId("node-b"),
+        })
+    );
+}
+
+#[test]
 fn region_boundaries_must_satisfy_the_declared_alignment() {
     const ALIGN_256: Alignment = match Alignment::try_new(256) {
         Ok(value) => value,

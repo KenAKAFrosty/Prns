@@ -2,8 +2,6 @@
 use core::{cell::UnsafeCell, ffi::c_void, mem::MaybeUninit};
 
 #[cfg(target_arch = "xtensa")]
-use personal_hopspot_core::HopspotS3FlashLayout;
-#[cfg(target_arch = "xtensa")]
 use personal_hopspot_core::UiNotice;
 use personal_hopspot_core::{
     bootstrap_flash_ble_identity_with_runtime_entropy,
@@ -11,10 +9,6 @@ use personal_hopspot_core::{
 };
 use personal_hopspot_core::{
     FlashIdentityError, HopspotNodeIdentity, IdentityBootstrap, IdentityPersistence,
-};
-#[cfg(target_arch = "riscv32")]
-use personal_hopspot_core::{
-    ESP32_4_MIB_FLASH_CAPACITY, ESP32_4_MIB_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET,
 };
 use personal_rns::identity::vault::{FlashVault, FlashVaultError};
 use personal_rns::interfaces::bluetooth_auto::BleIdentity;
@@ -27,19 +21,11 @@ use portable_atomic::{AtomicU8, Ordering};
 use prns_core::entropy::{EntropySource, RuntimeEntropy};
 
 use crate::flash::{EspRomFlash, EspRomFlashError};
+use crate::memory::EspFirmwareMemory;
 #[cfg(target_arch = "xtensa")]
 use crate::s3::S3RuntimeEntropy;
 
-const FLASH_SECTOR_LEN: u32 = 0x1000;
-const BLE_IDENTITY_FLASH_OFFSET: u32 = 0xC000;
-const HOPSPOT_CONFIG_FLASH_OFFSET: u32 = 0xD000;
-const NODE_IDENTITY_FLASH_OFFSET: u32 = 0xE000;
-const IDENTITY_FLASH_END: usize = 0xF000;
 const VAULT_SLOTS: usize = 1;
-
-const _: () = assert!(BLE_IDENTITY_FLASH_OFFSET + FLASH_SECTOR_LEN == HOPSPOT_CONFIG_FLASH_OFFSET);
-const _: () = assert!(HOPSPOT_CONFIG_FLASH_OFFSET + FLASH_SECTOR_LEN == NODE_IDENTITY_FLASH_OFFSET);
-const _: () = assert!(NODE_IDENTITY_FLASH_OFFSET + FLASH_SECTOR_LEN == IDENTITY_FLASH_END as u32);
 
 pub(crate) type Error = FlashIdentityError<EspRomFlashError>;
 pub(crate) type RemoteControlIdentityBootstrapError =
@@ -51,10 +37,10 @@ pub(crate) struct RemoteControlIdentityFlash {
 }
 
 impl RemoteControlIdentityFlash {
-    const fn new(flash_capacity: usize, offset: u32) -> Self {
+    pub(crate) fn from_memory(memory: &EspFirmwareMemory) -> Self {
         Self {
-            flash_capacity,
-            offset,
+            flash_capacity: memory.flash_capacity(),
+            offset: memory.remote_control_identity_offset(),
         }
     }
 
@@ -71,23 +57,6 @@ impl RemoteControlIdentityFlash {
         )
     }
 }
-
-#[cfg(target_arch = "xtensa")]
-impl From<HopspotS3FlashLayout> for RemoteControlIdentityFlash {
-    fn from(layout: HopspotS3FlashLayout) -> Self {
-        Self::new(
-            layout.flash_capacity,
-            layout.remote_control_identity_flash_offset,
-        )
-    }
-}
-
-#[cfg(target_arch = "riscv32")]
-pub(crate) const C6_REMOTE_CONTROL_IDENTITY_FLASH: RemoteControlIdentityFlash =
-    RemoteControlIdentityFlash::new(
-        ESP32_4_MIB_FLASH_CAPACITY,
-        ESP32_4_MIB_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET,
-    );
 
 #[cfg(target_arch = "xtensa")]
 const IDENTITY_TASK_IDLE: u8 = 0;
@@ -113,7 +82,7 @@ type IdentityTaskOutput = (S3IdentityBootstraps, S3RuntimeEntropy);
 #[cfg(target_arch = "xtensa")]
 struct IdentityTaskContext {
     state: AtomicU8,
-    remote_control_identity_flash: UnsafeCell<MaybeUninit<RemoteControlIdentityFlash>>,
+    memory: UnsafeCell<MaybeUninit<EspFirmwareMemory>>,
     entropy: UnsafeCell<MaybeUninit<S3RuntimeEntropy>>,
     output: UnsafeCell<MaybeUninit<IdentityTaskOutput>>,
 }
@@ -123,7 +92,7 @@ impl IdentityTaskContext {
     const fn new() -> Self {
         Self {
             state: AtomicU8::new(IDENTITY_TASK_IDLE),
-            remote_control_identity_flash: UnsafeCell::new(MaybeUninit::uninit()),
+            memory: UnsafeCell::new(MaybeUninit::uninit()),
             entropy: UnsafeCell::new(MaybeUninit::uninit()),
             output: UnsafeCell::new(MaybeUninit::uninit()),
         }
@@ -133,11 +102,7 @@ impl IdentityTaskContext {
         clippy::undocumented_unsafe_blocks,
         reason = "the one-shot transition grants the caller exclusive initialization access before the worker starts"
     )]
-    fn start(
-        &self,
-        remote_control_identity_flash: RemoteControlIdentityFlash,
-        entropy: S3RuntimeEntropy,
-    ) {
+    fn start(&self, memory: EspFirmwareMemory, entropy: S3RuntimeEntropy) {
         self.state
             .compare_exchange(
                 IDENTITY_TASK_IDLE,
@@ -147,7 +112,7 @@ impl IdentityTaskContext {
             )
             .expect("S3 identities may only be bootstrapped once");
         unsafe {
-            (*self.remote_control_identity_flash.get()).write(remote_control_identity_flash);
+            (*self.memory.get()).write(memory);
             (*self.entropy.get()).write(entropy);
         }
     }
@@ -156,8 +121,8 @@ impl IdentityTaskContext {
         clippy::undocumented_unsafe_blocks,
         reason = "the worker runs only after start initializes the one-shot input"
     )]
-    fn take_remote_control_identity_flash(&self) -> RemoteControlIdentityFlash {
-        unsafe { (*self.remote_control_identity_flash.get()).assume_init_read() }
+    fn take_memory(&self) -> EspFirmwareMemory {
+        unsafe { (*self.memory.get()).assume_init_read() }
     }
 
     #[expect(
@@ -181,11 +146,11 @@ static IDENTITY_TASK: IdentityTaskContext = IdentityTaskContext::new();
 
 #[cfg(target_arch = "xtensa")]
 extern "C" fn identity_task(_param: *mut c_void) {
-    let remote_control_identity_flash = IDENTITY_TASK.take_remote_control_identity_flash();
+    let memory = IDENTITY_TASK.take_memory();
     let mut entropy = IDENTITY_TASK.take_entropy();
-    let node = bootstrap_node_identity(&mut entropy);
-    let remote_control =
-        remote_control_identity_flash.load_or_generate_with_runtime_entropy(&mut entropy);
+    let node = bootstrap_node_identity(&memory, &mut entropy);
+    let remote_control = RemoteControlIdentityFlash::from_memory(&memory)
+        .load_or_generate_with_runtime_entropy(&mut entropy);
     let destination_hashes =
         personal_hopspot_core::hopspot_destination_hashes(node.identity().secret())
             .expect("the built-in hopspot destination names are valid");
@@ -193,7 +158,7 @@ extern "C" fn identity_task(_param: *mut c_void) {
         S3IdentityBootstraps {
             node,
             remote_control,
-            ble: bootstrap_ble_identity(&mut entropy),
+            ble: bootstrap_ble_identity(&memory, &mut entropy),
             destination_hashes,
         },
         entropy,
@@ -215,10 +180,10 @@ extern "C" fn identity_task(_param: *mut c_void) {
 /// worker exits. The persisted records and bootstrap behavior are otherwise identical.
 #[cfg(target_arch = "xtensa")]
 pub(crate) async fn bootstrap_s3_identities(
-    remote_control_identity_flash: RemoteControlIdentityFlash,
+    memory: EspFirmwareMemory,
     entropy: S3RuntimeEntropy,
 ) -> IdentityTaskOutput {
-    IDENTITY_TASK.start(remote_control_identity_flash, entropy);
+    IDENTITY_TASK.start(memory, entropy);
 
     // SAFETY: `IDENTITY_TASK` has static storage and is Send. The worker only uses the global
     // directly, but passing its address documents and satisfies the RTOS task parameter lifetime.
@@ -270,21 +235,23 @@ pub fn startup_notice(
 }
 
 pub(crate) fn bootstrap_node_identity<S: EntropySource>(
+    memory: &EspFirmwareMemory,
     entropy: &mut RuntimeEntropy<S>,
 ) -> IdentityBootstrap<HopspotNodeIdentity, Error> {
     let mut vault = FlashVault::<_, VAULT_SLOTS>::new(
-        EspRomFlash::new(IDENTITY_FLASH_END),
-        NODE_IDENTITY_FLASH_OFFSET,
+        EspRomFlash::new(memory.identity_flash_capacity()),
+        memory.node_identity_offset(),
     );
     bootstrap_flash_node_identity_with_runtime_entropy(&mut vault, entropy)
 }
 
 pub(crate) fn bootstrap_ble_identity<S: EntropySource>(
+    memory: &EspFirmwareMemory,
     entropy: &mut RuntimeEntropy<S>,
 ) -> IdentityBootstrap<BleIdentity, Error> {
     let mut vault = FlashVault::<_, VAULT_SLOTS>::new(
-        EspRomFlash::new(IDENTITY_FLASH_END),
-        BLE_IDENTITY_FLASH_OFFSET,
+        EspRomFlash::new(memory.identity_flash_capacity()),
+        memory.ble_identity_offset(),
     );
     bootstrap_flash_ble_identity_with_runtime_entropy(&mut vault, entropy)
 }

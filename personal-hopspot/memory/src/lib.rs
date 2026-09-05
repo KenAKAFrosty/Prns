@@ -9,9 +9,9 @@ pub use contract::{
     AddressRange, AddressRangeError, AddressSpace, AddressSpaceGeometry, AddressSpaceId,
     AddressSpaceKind, Alignment, AlignmentError, ArtifactError, BackingStoreId, FirmwarePlacement,
     JournalLayout, MemoryProfile, MemoryProfileId, MemoryRegion, MemoryRegionId,
-    ProcessorArchitecture, RegionOwner, RegionRetention, RegionRole, ReservationAccounting,
-    ReservationCharge, ReservationId, ReservationPoolId, ReservationTotals, RuntimeReservation,
-    TransportCompatibility, TransportEnvelope, ValidationError,
+    ProcessorArchitecture, RegionOwner, RegionRetention, RegionRole, RegionRoleLookupError,
+    ReservationAccounting, ReservationCharge, ReservationId, ReservationPoolId, ReservationTotals,
+    RuntimeReservation, TransportCompatibility, TransportEnvelope, ValidationError,
 };
 pub use formats::{
     EspPartitionBinding, EspPartitionKind, EspPartitionTable, EspPartitionTableError,

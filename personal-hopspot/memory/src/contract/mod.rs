@@ -13,7 +13,7 @@ pub use address::{
 pub use architecture::ProcessorArchitecture;
 pub use firmware::{ArtifactError, FirmwarePlacement, TransportCompatibility, TransportEnvelope};
 pub use journal::JournalLayout;
-pub use profile::{MemoryProfile, MemoryProfileId, ValidationError};
+pub use profile::{MemoryProfile, MemoryProfileId, RegionRoleLookupError, ValidationError};
 pub use region::{MemoryRegion, MemoryRegionId, RegionOwner, RegionRetention, RegionRole};
 pub use reservation::{
     ReservationAccounting, ReservationCharge, ReservationId, ReservationPoolId, ReservationTotals,

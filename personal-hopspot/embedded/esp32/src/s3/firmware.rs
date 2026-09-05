@@ -6,6 +6,8 @@ use personal_rns::remote_control::{
     RemoteControlInitialControllerGrants, RemoteControlSelfAnnouncement, RemoteControlService,
 };
 
+use crate::memory::EspFirmwareMemory;
+
 fn display_now() -> MonotonicMillis {
     MonotonicMillis::new(embassy_time::Instant::now().as_millis())
 }
@@ -57,6 +59,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     B::Battery: 'static,
     B::Gnss: 'static,
 {
+    let memory = EspFirmwareMemory::new(B::MEMORY_PROFILE);
     let BoardFace {
         display: board_display,
         battery,
@@ -113,12 +116,12 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     static FLASH: StaticCell<Mutex<CriticalSectionRawMutex, crate::flash::EspRomFlash>> =
         StaticCell::new();
     let flash = FLASH.init(Mutex::new(crate::flash::EspRomFlash::new(
-        B::FLASH_LAYOUT.flash_capacity,
+        memory.flash_capacity(),
     )));
-    let shared_flash = SharedNorFlash::new(flash, B::FLASH_LAYOUT.flash_capacity);
+    let shared_flash = SharedNorFlash::new(flash, memory.flash_capacity());
     #[cfg(feature = "lora")]
     let mut lora_profile_store =
-        screen::RadioProfileStore::new(shared_flash, B::FLASH_LAYOUT.radio_profile_pages);
+        screen::RadioProfileStore::new(shared_flash, memory.radio_profile_pages());
     #[cfg(feature = "lora")]
     let loaded_lora_profile = match lora_profile_store.load(DEFAULT_915_PROFILE).await {
         Ok(loaded) => loaded,
@@ -254,7 +257,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         storage: EngineStorageType::default(),
         request_endpoints: screen::node_pages::NodePageRoutes,
         interfaces: personal_rns::runtime::ManuallyAttached,
-        persistence: crate::persistence::s3(shared_flash, B::FLASH_LAYOUT.journal),
+        persistence: crate::persistence::s3(shared_flash, &memory),
         on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
     };
 

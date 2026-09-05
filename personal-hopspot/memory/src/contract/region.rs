@@ -39,6 +39,28 @@ pub enum RegionRole {
     Reserved,
 }
 
+impl RegionRole {
+    pub(super) const fn same_as(self, other: Self) -> bool {
+        match self {
+            Self::Bootloader => matches!(other, Self::Bootloader),
+            Self::PartitionTable => matches!(other, Self::PartitionTable),
+            Self::SoftDevice => matches!(other, Self::SoftDevice),
+            Self::PlatformData => matches!(other, Self::PlatformData),
+            Self::FirmwareImage => matches!(other, Self::FirmwareImage),
+            Self::BleIdentity => matches!(other, Self::BleIdentity),
+            Self::Provisioning => matches!(other, Self::Provisioning),
+            Self::NodeIdentity => matches!(other, Self::NodeIdentity),
+            Self::PhyInitialization => matches!(other, Self::PhyInitialization),
+            Self::RemoteControlIdentity => matches!(other, Self::RemoteControlIdentity),
+            Self::RadioProfile => matches!(other, Self::RadioProfile),
+            Self::Journal => matches!(other, Self::Journal),
+            Self::RecoveryBootloader => matches!(other, Self::RecoveryBootloader),
+            Self::FactoryReserved => matches!(other, Self::FactoryReserved),
+            Self::Reserved => matches!(other, Self::Reserved),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MemoryRegion {
     pub id: MemoryRegionId,

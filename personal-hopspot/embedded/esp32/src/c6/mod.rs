@@ -55,7 +55,10 @@ use personal_rns::manifold::interface_seam::Interface;
 
 esp_app_desc!();
 
-use board::{C6Hardware, XiaoEsp32C6, ANNOUNCE_APP_DATA, NODE_ANNOUNCE_APP_DATA, USB_INTERFACE_ID};
+use board::{
+    C6Hardware, XiaoEsp32C6, ANNOUNCE_APP_DATA, MEMORY_PROFILE, NODE_ANNOUNCE_APP_DATA,
+    USB_INTERFACE_ID,
+};
 use entropy::{runtime_entropy, C6EntropySource};
 
 const USB_LANE: usize = 1;

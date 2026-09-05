@@ -8,7 +8,6 @@ extern crate std;
 
 mod destinations;
 mod flash_identity;
-mod flash_layout;
 mod identity;
 #[cfg(feature = "display")]
 mod mobile;
@@ -26,11 +25,6 @@ pub use destinations::{
 pub use flash_identity::{
     bootstrap_flash_ble_identity_with_runtime_entropy,
     bootstrap_flash_node_identity_with_runtime_entropy, FlashIdentityError,
-};
-pub use flash_layout::{
-    HopspotS3FlashLayout, ESP32_4_MIB_FLASH_CAPACITY,
-    ESP32_4_MIB_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET, HOPSPOT_FLASH_PAGE_BYTES,
-    S3_16_MIB_FLASH_LAYOUT, S3_8_MIB_FLASH_LAYOUT,
 };
 #[cfg(feature = "host")]
 pub use identity::{

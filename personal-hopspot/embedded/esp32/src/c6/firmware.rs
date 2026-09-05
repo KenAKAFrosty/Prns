@@ -3,7 +3,10 @@ use personal_rns::remote_control::{
     RemoteControlInitialControllerGrants, RemoteControlSelfAnnouncement, RemoteControlService,
 };
 
+use crate::memory::EspFirmwareMemory;
+
 pub async fn run(spawner: Spawner) {
+    let memory = EspFirmwareMemory::new(MEMORY_PROFILE);
     let C6Hardware {
         usb_rx,
         usb_tx,
@@ -19,12 +22,13 @@ pub async fn run(spawner: Spawner) {
 
     let mut boot_entropy = super::entropy::seed_runtime_entropy(&identity_entropy)
         .expect("the enabled C6 boot TRNG fills the initial seed");
-    let node_bootstrap = crate::identity::bootstrap_node_identity(&mut boot_entropy);
+    let node_bootstrap = crate::identity::bootstrap_node_identity(&memory, &mut boot_entropy);
     crate::identity::log_persistence("node", node_bootstrap.persistence());
-    let remote_control_bootstrap = crate::identity::C6_REMOTE_CONTROL_IDENTITY_FLASH
-        .load_or_generate_with_runtime_entropy(&mut boot_entropy)
-        .expect("RemoteControl identity bootstrap failed");
-    let ble_bootstrap = crate::identity::bootstrap_ble_identity(&mut boot_entropy);
+    let remote_control_bootstrap =
+        crate::identity::RemoteControlIdentityFlash::from_memory(&memory)
+            .load_or_generate_with_runtime_entropy(&mut boot_entropy)
+            .expect("RemoteControl identity bootstrap failed");
+    let ble_bootstrap = crate::identity::bootstrap_ble_identity(&memory, &mut boot_entropy);
     crate::identity::log_persistence("Bluetooth", ble_bootstrap.persistence());
     drop(identity_entropy);
 
@@ -125,7 +129,7 @@ pub async fn run(spawner: Spawner) {
         storage: C6Storage,
         request_endpoints: personal_hopspot_core::node_pages::NodePageRoutes,
         interfaces: personal_rns::runtime::ManuallyAttached,
-        persistence: crate::persistence::c6(),
+        persistence: crate::persistence::c6(&memory),
         on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
     };
 
