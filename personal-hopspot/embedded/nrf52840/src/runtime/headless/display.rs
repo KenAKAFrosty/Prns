@@ -10,7 +10,7 @@ use embassy_nrf::gpio::Input;
 use embassy_time::{Duration, Timer};
 use personal_hopspot_core as hopspot;
 use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, PrnsCommand};
-use personal_rns::interfaces::lora::{RadioProfile, DEFAULT_915_PROFILE};
+use personal_rns::interfaces::lora::{boot_lora_profile, RadioProfile};
 use personal_rns::interfaces::{
     InterfaceGravity, InterfaceId, InterfaceMode, InterfaceSnapshot, InterfaceStatus, Membership,
 };
@@ -21,6 +21,7 @@ use personal_rns::storage::StorageLayout;
 use personal_rns::wire::DestinationHash;
 
 use crate::boards::selected as board;
+use board::MAX_TX_POWER_DBM;
 
 use super::bluetooth::{self, BluetoothAutoStatus, BLE_SHARED, BLE_SUPERVISOR_ID, MEMBERS};
 use super::{BLE_MANIFOLD_LANE, COMMANDS, COMPLETION, INTERFACE_STORE, LORA_CONTROL};
@@ -67,10 +68,10 @@ pub(super) async fn load_profile(
     shared_flash: super::super::learned_state::BoardFlash,
 ) -> LoadedProfile {
     let mut store = hopspot::RadioProfileStore::new(shared_flash, board::RADIO_PROFILE_PAGES);
-    let loaded = match store.load(DEFAULT_915_PROFILE).await {
+    let loaded = match store.load(boot_lora_profile(MAX_TX_POWER_DBM)).await {
         Ok(loaded) => loaded,
         Err(_) => hopspot::LoadedRadioProfile {
-            profile: DEFAULT_915_PROFILE,
+            profile: boot_lora_profile(MAX_TX_POWER_DBM),
             follows_default: true,
             notice: Some(hopspot::RadioProfileLoadNotice::Reset),
         },
@@ -81,7 +82,7 @@ pub(super) async fn load_profile(
     });
     LoadedProfile {
         store,
-        profile: loaded.profile,
+        profile: loaded.profile.with_tx_power_at_most(MAX_TX_POWER_DBM),
         startup_notice,
     }
 }
@@ -356,14 +357,16 @@ pub(super) fn face(input: FaceInput) -> impl Future {
                         hopspot::UiAction::ResetLoRaProfile => {
                             let result = hopspot::apply_and_persist_radio_profile(
                                 async {
-                                    LORA_CONTROL.apply(DEFAULT_915_PROFILE).await
+                                    LORA_CONTROL
+                                        .apply(boot_lora_profile(MAX_TX_POWER_DBM))
+                                        .await
                                         == LoRaApplyOutcome::Applied
                                 },
                                 || async { profile_store.reset().await.is_ok() },
                             )
                             .await;
                             if result.applied() {
-                                working_lora_profile = DEFAULT_915_PROFILE;
+                                working_lora_profile = boot_lora_profile(MAX_TX_POWER_DBM);
                             }
                             let notice = result.notice();
                             ui_state.show_notice(notice);

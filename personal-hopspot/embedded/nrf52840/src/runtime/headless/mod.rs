@@ -8,9 +8,9 @@ use static_cell::{ConstStaticCell, StaticCell};
 
 use personal_hopspot_core as hopspot;
 use personal_rns::engine::IssuedCommand;
-#[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
-use personal_rns::interfaces::lora::DEFAULT_915_PROFILE;
 use personal_rns::interfaces::lora::{AirtimePolicy, LORA_MAX_PAYLOAD};
+#[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
+use personal_rns::interfaces::lora::{DEFAULT_915_PROFILE, MONTREAL_PROFILE};
 use personal_rns::interfaces::usb_auto::{WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID};
 use personal_rns::interfaces::{ConnectionState, InterfaceId};
 use personal_rns::lora::{LoRaControl, LoRaInterface, LoRaInterfaceInput, LoRaSpectrumStatus};
@@ -31,6 +31,8 @@ use personal_rns::usb_auto::{
 };
 
 use crate::boards::selected as board;
+#[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
+use board::MAX_TX_POWER_DBM;
 use board::{
     Board, Hardware, LoraInterface, Storage, ANNOUNCE_APP_DATA, NODE_ANNOUNCE_APP_DATA,
     USB_INTERFACE_ID, USB_MANUFACTURER, USB_PRODUCT, USB_SERIAL_NUMBER,
@@ -51,6 +53,52 @@ use super::entropy::install_softdevice_runtime_entropy;
 ))]
 use super::entropy::prepare_softdevice_runtime_entropy;
 use super::entropy::{runtime_entropy, seed_from_hal};
+
+/// Select the compile-time LoRa default in this crate so `PRNS_LORA_PROFILE` is not lost
+/// inside a prebuilt `prns-core` rlib (`option_env!` is crate-local).
+#[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
+const fn hopspot_lora_marker_is_montreal() -> bool {
+    let marker = env!("HOPSPOT_LORA_PROFILE_MARKER").as_bytes();
+    let expected = b"HOPSPOT_LORA_MONTREAL";
+    if marker.len() != expected.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < marker.len() {
+        if marker[i] != expected[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+#[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
+fn compiled_boot_lora_profile(
+    max_tx_power_dbm: i8,
+) -> personal_rns::interfaces::lora::RadioProfile {
+    if hopspot_lora_marker_is_montreal() {
+        MONTREAL_PROFILE
+    } else {
+        DEFAULT_915_PROFILE
+    }
+    .with_tx_power_at_most(max_tx_power_dbm)
+}
+
+/// Keep the build-script marker in the image so a stale incremental `env!` cannot silently
+/// boot the 915.000 default while `PRNS_LORA_PROFILE=montreal` was set for the crate.
+#[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
+#[used]
+static HOPSPOT_LORA_PROFILE_MARKER: &[u8] = env!("HOPSPOT_LORA_PROFILE_MARKER").as_bytes();
+
+/// Contiguous little-endian Hz so a Montreal image can be grepped for 914.875 MHz.
+#[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
+#[used]
+static COMPILED_BOOT_LORA_FREQUENCY_HZ: u32 = if hopspot_lora_marker_is_montreal() {
+    914_875_000
+} else {
+    915_000_000
+};
 
 #[cfg(any(
     feature = "board-t096",
@@ -327,7 +375,7 @@ pub async fn run(spawner: Spawner) -> ! {
     #[cfg(any(feature = "board-t096", feature = "board-t114"))]
     let lora_profile = loaded_lora_profile.profile;
     #[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
-    let lora_profile = DEFAULT_915_PROFILE;
+    let lora_profile = compiled_boot_lora_profile(MAX_TX_POWER_DBM);
     let lora_id = LoraInterface::interface_id(&lora_profile);
     static LORA_STATUS: StaticCell<EmbassyInterfaceStatus> = StaticCell::new();
     let lora_status: &'static EmbassyInterfaceStatus = LORA_STATUS.init(

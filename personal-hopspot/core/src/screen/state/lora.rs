@@ -1,5 +1,5 @@
 use personal_rns::interfaces::lora::{
-    Frequency, ModemPreset, Modulation, RadioProfile, Region, TxPower,
+    Frequency, ModemPreset, Modulation, RadioProfile, Region, TxPower, MONTREAL_PROFILE,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -24,11 +24,12 @@ pub(in crate::screen) enum PresetChoice {
     Back,
 }
 
-pub(in crate::screen) const PRESET_CHOICES: [PresetChoice; 6] = [
+pub(in crate::screen) const PRESET_CHOICES: [PresetChoice; 7] = [
     PresetChoice::Preset(ModemPreset::ShortFast),
     PresetChoice::Preset(ModemPreset::MediumFast),
     PresetChoice::Preset(ModemPreset::LongFast),
     PresetChoice::Preset(ModemPreset::LongSlow),
+    PresetChoice::Preset(ModemPreset::Montreal),
     PresetChoice::Custom,
     PresetChoice::Back,
 ];
@@ -196,6 +197,14 @@ fn apply_region(profile: RadioProfile, region: Region) -> RadioProfile {
 fn apply_preset(profile: RadioProfile, preset: ModemPreset) -> RadioProfile {
     let mut next = profile;
     next.modulation = preset.modulation();
+    if preset == ModemPreset::Montreal {
+        next.frequency = MONTREAL_PROFILE.frequency;
+        next.preamble = MONTREAL_PROFILE.preamble;
+        next.tx_power = MONTREAL_PROFILE.tx_power;
+        if next.tx_power.dbm() > next.region.max_tx_power().dbm() {
+            next.tx_power = next.region.max_tx_power();
+        }
+    }
     next
 }
 

@@ -12,7 +12,7 @@ use personal_hopspot_core as hopspot;
 use personal_rns::bluetooth_auto::{BluetoothAuto, BluetoothAutoStatus};
 use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, PrnsCommand};
 use personal_rns::interfaces::bluetooth_auto::{Endpoint, LinkCapabilities, Nrf52Host, BLE_HW_MTU};
-use personal_rns::interfaces::lora::{AirtimePolicy, DEFAULT_915_PROFILE};
+use personal_rns::interfaces::lora::{boot_lora_profile, AirtimePolicy};
 use personal_rns::interfaces::usb_auto::{WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID};
 use personal_rns::interfaces::{ConnectionState, InterfaceStatus};
 use personal_rns::lora::{LoRaApplyOutcome, LoRaInterface, LoRaInterfaceInput, LoRaSpectrumStatus};
@@ -33,8 +33,8 @@ use crate::boards::selected as board;
 use crate::retained_display::RetainedPresentation;
 use board::{
     Board, Controls, DisplayHardware, EarlyHardware, FaceHardware, RuntimeHardware, Storage,
-    UsbHardware, ANNOUNCE_APP_DATA, NODE_ANNOUNCE_APP_DATA, USB_INTERFACE_ID, USB_MANUFACTURER,
-    USB_PRODUCT, USB_SERIAL_NUMBER,
+    UsbHardware, ANNOUNCE_APP_DATA, MAX_TX_POWER_DBM, NODE_ANNOUNCE_APP_DATA, USB_INTERFACE_ID,
+    USB_MANUFACTURER, USB_PRODUCT, USB_SERIAL_NUMBER,
 };
 
 use super::bluetooth_auto::{
@@ -170,10 +170,17 @@ pub async fn run(spawner: Spawner) -> ! {
     let shared_flash = super::learned_state::take_flash(sd);
     let mut lora_profile_store =
         hopspot::RadioProfileStore::new(shared_flash, board::RADIO_PROFILE_PAGES);
-    let loaded_lora_profile = match lora_profile_store.load(DEFAULT_915_PROFILE).await {
-        Ok(loaded) => loaded,
+    let loaded_lora_profile = match lora_profile_store
+        .load(boot_lora_profile(MAX_TX_POWER_DBM))
+        .await
+    {
+        Ok(loaded) => hopspot::LoadedRadioProfile {
+            profile: loaded.profile.with_tx_power_at_most(MAX_TX_POWER_DBM),
+            follows_default: loaded.follows_default,
+            notice: loaded.notice,
+        },
         Err(_) => hopspot::LoadedRadioProfile {
-            profile: DEFAULT_915_PROFILE,
+            profile: boot_lora_profile(MAX_TX_POWER_DBM),
             follows_default: true,
             notice: Some(hopspot::RadioProfileLoadNotice::Reset),
         },
@@ -616,14 +623,16 @@ pub async fn run(spawner: Spawner) -> ! {
                             hopspot::UiAction::ResetLoRaProfile => {
                                 let result = hopspot::apply_and_persist_radio_profile(
                                     async {
-                                        LORA_CONTROL.apply(DEFAULT_915_PROFILE).await
+                                        LORA_CONTROL
+                                            .apply(boot_lora_profile(MAX_TX_POWER_DBM))
+                                            .await
                                             == LoRaApplyOutcome::Applied
                                     },
                                     || async { lora_profile_store.reset().await.is_ok() },
                                 )
                                 .await;
                                 if result.applied() {
-                                    working_lora_profile = DEFAULT_915_PROFILE;
+                                    working_lora_profile = boot_lora_profile(MAX_TX_POWER_DBM);
                                 }
                                 show_notice(
                                     &mut ui_state,

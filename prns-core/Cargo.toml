@@ -18,6 +18,7 @@ include = [
     "!tests/**/__pycache__/**",
     "!tests/**/*.pyc",
     "examples/**",
+    "build.rs",
     "Cargo.toml",
     "README.md",
 ]
