@@ -1,12 +1,18 @@
+use core::future::Future;
+
 use personal_rns::engine::{
     EstablishLinkFailure, EstablishLinkRejection, SendRequestFailure, SendRequestRejection,
     WriteEstablishLinkRejection,
 };
 use personal_rns::identity::IdentityHash;
+use personal_rns::node_introspection::NodeIntrospection;
 use personal_rns::prelude::{
     ConnectRemoteControlTargetError, PrnsNodeHandle, RemoteControlError,
-    RemoteControlTargetAccessControl, RemoteControlTargetOperationError, SendError,
+    RemoteControlTargetAccessControl, RemoteControlTargetHandle, RemoteControlTargetOperationError,
+    SendError,
 };
+use personal_rns::runtime::RequestPathError;
+use personal_rns::wire::DestinationHash;
 
 use crate::contract::{
     DescribeRemoteControlTargetInput, DevelopmentNodeOperation, DevelopmentNodeOperationKind,
@@ -67,11 +73,16 @@ pub async fn describe(
         }
     };
     let target = target_snapshot(&resolved);
-    let connected = match handle.connect_remote_control_target(target_identity).await {
+    let connected = match connect_reachable_target(
+        handle,
+        target_identity,
+        resolved.endpoint().destination_hash(),
+    )
+    .await
+    {
         Ok(connected) => connected,
         Err(error) => {
-            clear_operation(snapshots);
-            return failed_connect(error);
+            return fail_describe_reachable_connect(snapshots, error);
         }
     };
     let result = connected.describe().await;
@@ -106,10 +117,21 @@ pub async fn announce_self(
             stage: AnnounceStage::Input,
         };
     };
-    let connected = match handle.connect_remote_control_target(identity).await {
-        Ok(connected) => connected,
-        Err(error) => return announce_connect_failure(error),
+    let resolved = match handle.resolve_remote_control_target(identity).await {
+        Ok(resolved) => resolved,
+        Err(_) => {
+            return AnnounceStatus::Failed {
+                stage: AnnounceStage::Inventory,
+            };
+        }
     };
+    let connected =
+        match connect_reachable_target(handle, identity, resolved.endpoint().destination_hash())
+            .await
+        {
+            Ok(connected) => connected,
+            Err(error) => return announce_reachable_connect_failure(error),
+        };
     // Recheck the live target's capabilities: persisted permissions alone do not
     // establish that the target still supports or authorizes this operation.
     let status = match connected.describe().await {
@@ -137,6 +159,122 @@ pub async fn announce_self(
     };
     let _closed = connected.close();
     status
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReachabilityFailure {
+    Route,
+    Node,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReachableTargetConnectionError<ConnectionError> {
+    Reachability(ReachabilityFailure),
+    Connection(ConnectionError),
+}
+
+async fn connect_reachable_target<'a>(
+    handle: &'a PrnsNodeHandle,
+    target: IdentityHash,
+    destination: DestinationHash,
+) -> Result<
+    RemoteControlTargetHandle<'a>,
+    ReachableTargetConnectionError<ConnectRemoteControlTargetError>,
+> {
+    // `request_path` is the engine-owned, bitrate-aware bounded wait for a matching
+    // accepted announcement. Do not add a second timer or retry a RemoteControl
+    // request here: discovery must settle before the Link is opened.
+    connect_reachable_target_with(
+        destination,
+        |destination| async move { handle.route(destination).await.is_some() },
+        |destination| async move {
+            handle
+                .request_path(destination)
+                .await
+                .map(|_| ())
+                .map_err(classify_request_path_error)
+        },
+        || async move { handle.connect_remote_control_target(target).await },
+    )
+    .await
+}
+
+async fn connect_reachable_target_with<
+    Connection,
+    ConnectionError,
+    HasRoute,
+    HasRouteFuture,
+    RequestPath,
+    RequestPathFuture,
+    Connect,
+    ConnectFuture,
+>(
+    destination: DestinationHash,
+    has_route: HasRoute,
+    request_path: RequestPath,
+    connect: Connect,
+) -> Result<Connection, ReachableTargetConnectionError<ConnectionError>>
+where
+    HasRoute: FnOnce(DestinationHash) -> HasRouteFuture,
+    HasRouteFuture: Future<Output = bool>,
+    RequestPath: FnOnce(DestinationHash) -> RequestPathFuture,
+    RequestPathFuture: Future<Output = Result<(), ReachabilityFailure>>,
+    Connect: FnOnce() -> ConnectFuture,
+    ConnectFuture: Future<Output = Result<Connection, ConnectionError>>,
+{
+    if !has_route(destination).await {
+        request_path(destination)
+            .await
+            .map_err(ReachableTargetConnectionError::Reachability)?;
+    }
+    connect()
+        .await
+        .map_err(ReachableTargetConnectionError::Connection)
+}
+
+const fn classify_request_path_error(error: RequestPathError) -> ReachabilityFailure {
+    match error {
+        RequestPathError::NodeStopped => ReachabilityFailure::Node,
+        RequestPathError::EntropyUnavailable | RequestPathError::Failed(_) => {
+            ReachabilityFailure::Route
+        }
+    }
+}
+
+fn fail_describe_reachable_connect(
+    snapshots: &SnapshotStore,
+    error: ReachableTargetConnectionError<ConnectRemoteControlTargetError>,
+) -> RemoteControlDescribeOutcome {
+    clear_operation(snapshots);
+    match error {
+        ReachableTargetConnectionError::Reachability(ReachabilityFailure::Route) => failed(
+            RemoteControlDescribeFailureStage::Route,
+            "Prns could not discover a route to the selected target.",
+        ),
+        ReachableTargetConnectionError::Reachability(ReachabilityFailure::Node) => failed(
+            RemoteControlDescribeFailureStage::Node,
+            "The Prns node stopped while discovering the selected target.",
+        ),
+        ReachableTargetConnectionError::Connection(error) => failed_connect(error),
+    }
+}
+
+fn announce_reachable_connect_failure(
+    error: ReachableTargetConnectionError<ConnectRemoteControlTargetError>,
+) -> AnnounceStatus {
+    match error {
+        ReachableTargetConnectionError::Reachability(ReachabilityFailure::Route) => {
+            AnnounceStatus::Failed {
+                stage: AnnounceStage::Route,
+            }
+        }
+        ReachableTargetConnectionError::Reachability(ReachabilityFailure::Node) => {
+            AnnounceStatus::Failed {
+                stage: AnnounceStage::Node,
+            }
+        }
+        ReachableTargetConnectionError::Connection(error) => announce_connect_failure(error),
+    }
 }
 
 fn announce_connect_failure(error: ConnectRemoteControlTargetError) -> AnnounceStatus {
@@ -579,6 +717,191 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn cached_route_skips_discovery_before_connecting() {
+        let destination = DestinationHash::new([0x42; 16]);
+        let path_requests = core::cell::Cell::new(0_u8);
+        let connections = core::cell::Cell::new(0_u8);
+
+        let result = connect_reachable_target_with(
+            destination,
+            |observed| {
+                assert_eq!(observed, destination);
+                core::future::ready(true)
+            },
+            |observed| {
+                assert_eq!(observed, destination);
+                path_requests.set(path_requests.get() + 1);
+                core::future::ready(Ok(()))
+            },
+            || {
+                connections.set(connections.get() + 1);
+                core::future::ready(Result::<_, ()>::Ok(7_u8))
+            },
+        )
+        .await;
+
+        assert_eq!(result, Ok(7));
+        assert_eq!(path_requests.get(), 0);
+        assert_eq!(connections.get(), 1);
+    }
+
+    #[tokio::test]
+    async fn missing_route_requests_the_authorized_destination_before_connecting() {
+        let destination = DestinationHash::new([0x43; 16]);
+        let phase = core::cell::Cell::new(0_u8);
+        let requested = core::cell::Cell::new(None);
+
+        let result = connect_reachable_target_with(
+            destination,
+            |observed| {
+                assert_eq!(observed, destination);
+                assert_eq!(phase.replace(1), 0);
+                core::future::ready(false)
+            },
+            |observed| {
+                assert_eq!(phase.replace(2), 1);
+                requested.set(Some(observed));
+                core::future::ready(Ok(()))
+            },
+            || {
+                assert_eq!(phase.replace(3), 2);
+                core::future::ready(Result::<_, ()>::Ok(8_u8))
+            },
+        )
+        .await;
+
+        assert_eq!(result, Ok(8));
+        assert_eq!(requested.get(), Some(destination));
+        assert_eq!(phase.get(), 3);
+    }
+
+    #[tokio::test]
+    async fn failed_discovery_prevents_connection() {
+        let destination = DestinationHash::new([0x44; 16]);
+        let connections = core::cell::Cell::new(0_u8);
+
+        let result = connect_reachable_target_with(
+            destination,
+            |_| core::future::ready(false),
+            |observed| {
+                assert_eq!(observed, destination);
+                core::future::ready(Err(ReachabilityFailure::Route))
+            },
+            || {
+                connections.set(connections.get() + 1);
+                core::future::ready(Result::<(), ()>::Ok(()))
+            },
+        )
+        .await;
+
+        assert_eq!(
+            result,
+            Err(ReachableTargetConnectionError::Reachability(
+                ReachabilityFailure::Route
+            ))
+        );
+        assert_eq!(connections.get(), 0);
+    }
+
+    #[tokio::test]
+    async fn pending_discovery_holds_the_operation_and_node_failure_clears_it() {
+        let destination = DestinationHash::new([0x45; 16]);
+        let snapshots = SnapshotStore::new();
+        snapshots.update(|snapshot| {
+            snapshot.active_operation = Some(DevelopmentNodeOperation {
+                kind: DevelopmentNodeOperationKind::Describe,
+                started_at_millis: U64String::from(1),
+            });
+        });
+        let connections = core::cell::Cell::new(0_u8);
+        let (settle, settled) = tokio::sync::oneshot::channel();
+        let pending = connect_reachable_target_with(
+            destination,
+            |_| core::future::ready(false),
+            move |observed| async move {
+                assert_eq!(observed, destination);
+                settled.await.expect("the discovery test settles")
+            },
+            || {
+                connections.set(connections.get() + 1);
+                core::future::ready(Result::<u8, ConnectRemoteControlTargetError>::Ok(9))
+            },
+        );
+        tokio::pin!(pending);
+
+        tokio::select! {
+            result = &mut pending => panic!("discovery settled before its engine result: {result:?}"),
+            () = tokio::task::yield_now() => {}
+        }
+        assert_eq!(connections.get(), 0);
+        assert!(matches!(
+            snapshots.read().active_operation,
+            Some(DevelopmentNodeOperation {
+                kind: DevelopmentNodeOperationKind::Describe,
+                ..
+            })
+        ));
+
+        settle
+            .send(Err(ReachabilityFailure::Node))
+            .expect("the pending discovery receives its settlement");
+        let error = pending.await.expect_err("node failure prevents connection");
+        let outcome = fail_describe_reachable_connect(&snapshots, error);
+        assert!(matches!(
+            outcome,
+            RemoteControlDescribeOutcome::Failed {
+                stage: RemoteControlDescribeFailureStage::Node,
+                ..
+            }
+        ));
+        assert_eq!(connections.get(), 0);
+        assert!(snapshots.read().active_operation.is_none());
+    }
+
+    #[test]
+    fn request_path_failures_preserve_route_and_node_stages() {
+        assert_eq!(
+            classify_request_path_error(RequestPathError::NodeStopped),
+            ReachabilityFailure::Node
+        );
+        assert_eq!(
+            classify_request_path_error(RequestPathError::EntropyUnavailable),
+            ReachabilityFailure::Route
+        );
+        assert_eq!(
+            classify_request_path_error(RequestPathError::Failed(
+                personal_rns::engine::RequestPathFailure::Timeout
+            )),
+            ReachabilityFailure::Route
+        );
+    }
+
+    #[test]
+    fn describe_discovery_failure_clears_the_active_operation() {
+        let snapshots = SnapshotStore::new();
+        snapshots.update(|snapshot| {
+            snapshot.active_operation = Some(DevelopmentNodeOperation {
+                kind: DevelopmentNodeOperationKind::Describe,
+                started_at_millis: U64String::from(1),
+            });
+        });
+
+        let outcome = fail_describe_reachable_connect(
+            &snapshots,
+            ReachableTargetConnectionError::Reachability(ReachabilityFailure::Route),
+        );
+
+        assert!(matches!(
+            outcome,
+            RemoteControlDescribeOutcome::Failed {
+                stage: RemoteControlDescribeFailureStage::Route,
+                ..
+            }
+        ));
+        assert!(snapshots.read().active_operation.is_none());
+    }
+
     #[cfg(feature = "host-test")]
     mod host {
         use core::time::Duration;
@@ -596,7 +919,9 @@ mod tests {
             RemoteControlPairingPublicAppDataBytes, RemoteControlSelfAnnouncement,
             RemoteControlService,
         };
-        use personal_rns::runtime::{NodePersistence, RemoteControlPairingControlError};
+        use personal_rns::runtime::{
+            DropRouteOutcome, NodePersistence, RemoteControlPairingControlError, RoutingControl,
+        };
         use personal_rns::units::DurationMillis;
 
         use super::*;
@@ -624,7 +949,7 @@ mod tests {
         }
 
         #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-        async fn restored_inventory_drives_describe_and_announcement_over_upstream_tcp() {
+        async fn restored_inventory_discovers_describes_and_announces_over_upstream_tcp() {
             let persistence = PersistenceDirectories::new();
             pair_once(&persistence).await;
             describe_after_restart(&persistence).await;
@@ -876,20 +1201,12 @@ mod tests {
                     .await
                     .expect("restarted controller restores its target access");
                 wait_for_direct_connection(&target_handle, &controller_handle).await;
-                target_handle
-                    .announce_now(AnnounceNow {
-                        destination: target_endpoint.destination_hash(),
-                        target: AnnounceTarget::AllInterfaces,
-                        app_data: AnnounceAppData::Registered,
-                    })
-                    .await
-                    .expect("restarted target announces its stable endpoint");
-                assert_eq!(
-                    target_announce_rx
-                        .recv()
+                assert!(
+                    controller_handle
+                        .route(target_endpoint.destination_hash())
                         .await
-                        .expect("restarted controller hears the target announcement"),
-                    target_endpoint.destination_hash(),
+                        .is_none(),
+                    "the restarted controller begins without a cached target route"
                 );
 
                 let targets = refresh_targets(&controller_handle, &snapshots)
@@ -899,6 +1216,10 @@ mod tests {
                 assert_eq!(
                     targets[0].target_identity_fingerprint,
                     target_identity_hash.as_bytes(),
+                );
+                assert_eq!(
+                    targets[0].destination,
+                    target_endpoint.destination_hash().as_bytes(),
                 );
 
                 let outcome = describe(
@@ -919,6 +1240,13 @@ mod tests {
                     panic!("application Describe failed after restart: {outcome:?}");
                 };
                 assert_eq!(
+                    target_announce_rx
+                        .recv()
+                        .await
+                        .expect("the route request returns the stable target announcement"),
+                    target_endpoint.destination_hash(),
+                );
+                assert_eq!(
                     target.target_identity_fingerprint,
                     target_identity_hash.as_bytes(),
                 );
@@ -931,9 +1259,27 @@ mod tests {
                 );
                 assert_eq!(snapshot.paired_targets, targets);
                 assert!(snapshot.active_operation.is_none());
+
+                assert_eq!(
+                    controller_handle
+                        .drop_route(target_endpoint.destination_hash())
+                        .await,
+                    Ok(DropRouteOutcome::Dropped),
+                );
+                assert!(controller_handle
+                    .route(target_endpoint.destination_hash())
+                    .await
+                    .is_none());
                 let announced =
                     announce_self(&controller_handle, target_identity_hash.as_bytes()).await;
                 assert!(matches!(announced, AnnounceStatus::Announced { .. }));
+                assert_eq!(
+                    target_announce_rx
+                        .recv()
+                        .await
+                        .expect("AnnounceSelf reacquires the stable target route"),
+                    target_endpoint.destination_hash(),
+                );
                 assert_eq!(
                     target_announce_rx
                         .recv()
