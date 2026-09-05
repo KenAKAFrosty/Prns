@@ -119,6 +119,68 @@ impl EspPartitionTable {
         }
         Ok(())
     }
+
+    pub fn write_csv(
+        &self,
+        profile: &MemoryProfile,
+        output: &mut impl fmt::Write,
+    ) -> Result<(), EspPartitionCsvError> {
+        self.validate(profile)
+            .map_err(EspPartitionCsvError::InvalidTable)?;
+        for partition in self.partitions {
+            let region =
+                profile
+                    .region(partition.region)
+                    .ok_or(EspPartitionCsvError::InvalidTable(
+                        EspPartitionTableError::UnknownRegion {
+                            region: partition.region,
+                        },
+                    ))?;
+            write_csv_line(output, partition, region)
+                .map_err(|_| EspPartitionCsvError::Formatting)?;
+        }
+        Ok(())
+    }
+}
+
+fn write_csv_line(
+    output: &mut impl fmt::Write,
+    partition: &EspPartitionBinding,
+    region: &crate::MemoryRegion,
+) -> fmt::Result {
+    let offset = region.range.start();
+    let size = region.range.byte_len();
+    match partition.kind {
+        EspPartitionKind::FactoryApplication => {
+            writeln!(
+                output,
+                "{},app,factory,0x{offset:x},0x{size:x},",
+                partition.name
+            )
+        }
+        EspPartitionKind::NvsData => {
+            writeln!(
+                output,
+                "{},data,nvs,0x{offset:x},0x{size:x},",
+                partition.name
+            )
+        }
+        EspPartitionKind::PhyData => {
+            writeln!(
+                output,
+                "{},data,phy,0x{offset:x},0x{size:x},",
+                partition.name
+            )
+        }
+        EspPartitionKind::Custom {
+            partition_type,
+            subtype,
+        } => writeln!(
+            output,
+            "{},0x{partition_type:02x},0x{subtype:02x},0x{offset:x},0x{size:x},",
+            partition.name
+        ),
+    }
 }
 
 const fn partition_kind_matches_region(kind: EspPartitionKind, role: RegionRole) -> bool {
@@ -193,6 +255,29 @@ pub enum EspPartitionTableError {
 impl fmt::Display for EspPartitionTableError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "invalid ESP partition table: {self:?}")
+    }
+}
+
+impl core::error::Error for EspPartitionTableError {}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum EspPartitionCsvError {
+    InvalidTable(EspPartitionTableError),
+    Formatting,
+}
+
+impl fmt::Display for EspPartitionCsvError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "cannot render ESP partition CSV: {self:?}")
+    }
+}
+
+impl core::error::Error for EspPartitionCsvError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::InvalidTable(error) => Some(error),
+            Self::Formatting => None,
+        }
     }
 }
 

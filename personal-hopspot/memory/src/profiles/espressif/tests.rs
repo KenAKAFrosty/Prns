@@ -1,46 +1,14 @@
 use super::*;
 use crate::ReservationTotals;
-
-fn csv_partition(csv: &str, name: &str) -> (u64, u64) {
-    csv.lines()
-        .filter(|line| !line.trim_start().starts_with('#'))
-        .find_map(|line| {
-            let mut fields = line.split(',').map(str::trim);
-            let partition_name = fields.next()?;
-            let _partition_type = fields.next()?;
-            let _partition_subtype = fields.next()?;
-            let offset = fields.next()?;
-            let size = fields.next()?;
-            (partition_name == name).then(|| {
-                (
-                    u64::from_str_radix(offset.trim_start_matches("0x"), 16)
-                        .expect("partition offset is hexadecimal"),
-                    u64::from_str_radix(size.trim_start_matches("0x"), 16)
-                        .expect("partition size is hexadecimal"),
-                )
-            })
-        })
-        .expect("named partition exists")
-}
+use std::string::String;
 
 fn assert_partition_csv(profile: &MemoryProfile, csv: &str) {
     let table = esp_partition_table(profile.id).expect("profile has a partition table");
-    assert_eq!(
-        csv.lines()
-            .filter(|line| !line.trim().is_empty())
-            .filter(|line| !line.trim_start().starts_with('#'))
-            .count(),
-        table.partitions.len()
-    );
-    for partition in table.partitions {
-        let region = profile
-            .region(partition.region)
-            .expect("partition region exists");
-        assert_eq!(
-            csv_partition(csv, partition.name),
-            (region.range.start(), region.range.byte_len())
-        );
-    }
+    let mut generated = String::new();
+    table
+        .write_csv(profile, &mut generated)
+        .expect("canonical partition table renders");
+    assert_eq!(csv, generated);
 }
 
 #[test]

@@ -2908,6 +2908,16 @@ name = "personal-hopspot-memory"
 version = "0.1.0"
 
 [[package]]
+name = "personal-hopspot-resources"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "personal-hopspot-memory",
+ "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "personal-rns"
 version = "0.3.7"
 dependencies = [

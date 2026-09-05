@@ -1,6 +1,9 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
+#[cfg(test)]
+extern crate std;
+
 mod contract;
 mod formats;
 mod profiles;
@@ -14,8 +17,8 @@ pub use contract::{
     RuntimeReservation, TransportCompatibility, TransportEnvelope, ValidationError,
 };
 pub use formats::{
-    EspPartitionBinding, EspPartitionKind, EspPartitionTable, EspPartitionTableError,
-    NrfMemoryXBinding, NrfMemoryXError, NrfMemoryXLayout,
+    EspPartitionBinding, EspPartitionCsvError, EspPartitionKind, EspPartitionTable,
+    EspPartitionTableError, NrfMemoryXBinding, NrfMemoryXError, NrfMemoryXLayout,
 };
 pub use profiles::{
     esp_partition_table, memory_profile, ALL_MEMORY_PROFILES, ESP_16_MIB_PARTITION_TABLE,

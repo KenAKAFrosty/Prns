@@ -55,6 +55,16 @@ entrypoint = ["bash", "tools/build/android.sh"]
 requires = ["bash", "cargo"]
 
 [[task]]
+id = "build.embedded.resources"
+summary = "Generate or verify embedded memory contracts from canonical profiles."
+domain = "build"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci", "release"]
+entrypoint = ["bash", "tools/build/embedded-resources.sh"]
+requires = ["bash", "cargo"]
+
+[[task]]
 id = "build.esp32s3-wpa3-radio"
 summary = "Rebuild and verify the pinned ESP32-S3 WPA3-SAE radio archives."
 domain = "build"

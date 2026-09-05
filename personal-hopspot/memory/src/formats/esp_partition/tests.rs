@@ -1,5 +1,6 @@
 use super::*;
 use crate::{ESP_16_MIB_PARTITION_TABLE, HELTEC_V4};
+use std::string::String;
 
 const HELTEC_V4_ONLY: [MemoryProfileId; 1] = [HELTEC_V4.id];
 const DUPLICATE_REGIONS: [EspPartitionBinding; 2] = [
@@ -53,4 +54,21 @@ fn partition_kinds_must_match_region_roles() {
             kind: EspPartitionKind::NvsData,
         })
     );
+}
+
+#[test]
+fn invalid_tables_cannot_be_rendered() {
+    let table = EspPartitionTable {
+        profiles: &HELTEC_V4_ONLY,
+        partitions: &DUPLICATE_REGIONS,
+    };
+    let mut output = String::new();
+
+    assert!(matches!(
+        table.write_csv(&HELTEC_V4, &mut output),
+        Err(EspPartitionCsvError::InvalidTable(
+            EspPartitionTableError::DuplicateRegion { .. }
+        ))
+    ));
+    assert!(output.is_empty());
 }
