@@ -1,4 +1,4 @@
-use prns_core::interfaces::subghz::turbo::{
+use prns_core::interfaces::subghz::regions::us915::turbo::{
     simulate_acquisition, simulate_contention, AcquisitionSimulation, AcquisitionSimulationError,
     ContentionSimulation, ContentionSimulationError, TURBO_SCAN_DWELL_US, US915_TURBO_PHY,
 };

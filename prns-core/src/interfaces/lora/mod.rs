@@ -4,7 +4,7 @@ mod network;
 mod policy;
 mod profile;
 
-pub use super::subghz::{Frequency, Region, TxPower};
+pub use super::subghz::{Frequency, RegulatoryRegion, SubGRegion, TxPower};
 pub use framing::{
     air_frame_count, decode_air_frame, encode_air_frame_part, AirFrame, AirFrameError,
     LoRaReassembler, LoRaReassemblyError, LoRaReassemblyOutcome, ReassembledPacket,
@@ -14,8 +14,8 @@ pub use modulation::{
     nominal_lora_bitrate_bps, CodingRate, LoraBandwidth, Modulation, SpreadingFactor,
 };
 pub use network::{LoRaNetwork, RNODE_LORA_SYNC_WORD};
-pub use policy::{defaults, descriptor};
+pub use policy::{defaults, descriptor, unconfigured_descriptor};
 pub use profile::{
     channel_tag, AirtimePolicy, AirtimePolicyError, ModemPreset, PreambleSymbols, RadioProfile,
-    RadioProfileCompatibilityError, RadioProfileError, CHANNEL_TAG_CAP, US915_AUTO_LORA_PROFILE,
+    RadioProfileCompatibilityError, RadioProfileError, CHANNEL_TAG_CAP,
 };

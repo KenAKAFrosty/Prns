@@ -1,4 +1,3 @@
-use super::super::MonotonicMicros;
 use super::clock::{AcquiredReceivePhase, ClockError, ScheduleMicros};
 use super::profile::TurboPhyProfile;
 use super::schedule::{
@@ -6,6 +5,7 @@ use super::schedule::{
     TURBO_SLOT_US, TURBO_SUPERCYCLE_US,
 };
 use super::AcquisitionBeacon;
+use crate::interfaces::subghz::MonotonicMicros;
 
 const MINIMUM_ACQUISITION_UNCERTAINTY_US: u64 = 250;
 

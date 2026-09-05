@@ -1,5 +1,5 @@
 use super::*;
-use crate::interfaces::subghz::frequency_hopping::{
+use crate::interfaces::subghz::regions::us915::frequency_hopping::{
     AntennaGainDeciDb, ConductedPowerDbm, MeasuredTwentyDbBandwidth, Us915PowerInputs,
 };
 use crate::interfaces::subghz::MonotonicMicros;

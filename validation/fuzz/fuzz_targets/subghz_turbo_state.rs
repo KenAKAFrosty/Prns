@@ -1,10 +1,10 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use prns_core::interfaces::subghz::frequency_hopping::{
+use prns_core::interfaces::subghz::regions::us915::frequency_hopping::{
     AntennaGainDeciDb, ConductedPowerDbm, MeasuredTwentyDbBandwidth, Us915PowerInputs,
 };
-use prns_core::interfaces::subghz::turbo::{
+use prns_core::interfaces::subghz::regions::us915::turbo::{
     decode_frame, AcquisitionBeacon, AcquisitionObservation, AcquisitionTracker, CapabilitySupport,
     ChannelAccess, ChannelAccessAction, ChannelAccessEvent, ContentionClass, ContentionPolicy,
     DatagramId, MaximumTransmitUncertainty, MonotonicMicros, ReassemblyLifetime, ScheduleMicros,
@@ -48,10 +48,12 @@ fuzz_target!(|bytes: &[u8]| {
         let mut padded = [0u8; 8];
         padded[..chunk.len()].copy_from_slice(chunk);
         let received_at = u64::from_le_bytes(padded);
-        let cycle = prns_core::interfaces::subghz::turbo::supercycle_cycle_at(received_at);
+        let cycle =
+            prns_core::interfaces::subghz::regions::us915::turbo::supercycle_cycle_at(received_at);
         let beacon =
             AcquisitionBeacon::from_entropy(cycle, u16::from_le_bytes([padded[0], padded[1]]));
-        let channel = prns_core::interfaces::subghz::turbo::channel_index_at(received_at);
+        let channel =
+            prns_core::interfaces::subghz::regions::us915::turbo::channel_index_at(received_at);
         let _ = tracker.observe(AcquisitionObservation::from_beacon(
             MonotonicMicros::new(received_at),
             channel,
@@ -104,7 +106,7 @@ fuzz_target!(|bytes: &[u8]| {
 
     for (index, chunk) in bytes.chunks(32).enumerate().take(64) {
         let now = 10_100_000u64.saturating_add(index as u64 * 400_000);
-        let channel = prns_core::interfaces::subghz::turbo::channel_index_at(now);
+        let channel = prns_core::interfaces::subghz::regions::us915::turbo::channel_index_at(now);
         let mut access = ChannelAccess::begin(
             ContentionPolicy::turbo(),
             channel,

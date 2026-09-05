@@ -10,7 +10,7 @@ mod schedule;
 mod simulation;
 mod transmission;
 
-pub use super::MonotonicMicros;
+pub use crate::interfaces::subghz::MonotonicMicros;
 
 pub use acquisition::{
     AcquisitionCorroboration, AcquisitionObservation, AcquisitionOutcome, AcquisitionTracker,

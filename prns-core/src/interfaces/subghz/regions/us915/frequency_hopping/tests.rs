@@ -1,5 +1,8 @@
 use super::*;
-use crate::interfaces::subghz::turbo::{
+use crate::interfaces::subghz::frequency_hopping::{
+    audit_frequency_occupancy, FrequencyOccupancyError, HopTransmission,
+};
+use crate::interfaces::subghz::regions::us915::turbo::{
     TURBO_CHANNEL_COUNT, TURBO_OCCUPANCY_LIMIT_US, US915_TURBO_CHANNELS,
 };
 use crate::interfaces::subghz::MonotonicMicros;

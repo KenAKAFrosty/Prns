@@ -1,9 +1,3 @@
-use super::super::frequency_hopping::{
-    ChannelOccupancyLimit, ChannelOccupancyLimitError, ConductedPowerDbm, HopSetError,
-    MeasuredTwentyDbBandwidth, Us915HopSet, Us915HoppingModel, Us915HoppingModelError,
-    Us915PowerBudget, Us915PowerBudgetError, Us915PowerInputs,
-};
-use super::super::{Frequency, MonotonicMicros};
 use super::channel_access::FinalClearGrant;
 use super::clock::{
     ClockError, ScheduleMicros, TrustedScheduleClock, TrustedTimeSource, UtcTimescale,
@@ -16,6 +10,12 @@ use super::schedule::{
     TransmissionTimingBudget, TurboOpportunity, TURBO_BOOT_QUARANTINE_US, TURBO_CHANNEL_COUNT,
     TURBO_OCCUPANCY_LIMIT_US, US915_TURBO_CHANNELS,
 };
+use crate::interfaces::subghz::regions::us915::frequency_hopping::{
+    ChannelOccupancyLimit, ChannelOccupancyLimitError, ConductedPowerDbm, HopSetError,
+    MeasuredTwentyDbBandwidth, Us915HopSet, Us915HoppingModel, Us915HoppingModelError,
+    Us915PowerBudget, Us915PowerBudgetError, Us915PowerInputs,
+};
+use crate::interfaces::subghz::{Frequency, MonotonicMicros};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MaximumTransmitUncertainty(u64);

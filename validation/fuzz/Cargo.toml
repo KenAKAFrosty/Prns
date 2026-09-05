@@ -107,3 +107,10 @@ path = "fuzz_targets/subghz_turbo_state.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "subghz_configuration"
+path = "fuzz_targets/subghz_configuration.rs"
+test = false
+doc = false
+bench = false

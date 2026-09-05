@@ -1,7 +1,7 @@
-use super::super::Frequency;
 use super::clock::ClockWindow;
 use super::frame::EncodedDatagram;
 use super::profile::TurboPhyProfile;
+use crate::interfaces::subghz::Frequency;
 
 pub const TURBO_CHANNEL_COUNT: usize = 51;
 pub const TURBO_SLOT_US: u64 = 400_000;

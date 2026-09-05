@@ -1,9 +1,5 @@
 use crate::interfaces::AirtimeDutyCycle;
 
-const DUTY_ONE_PERCENT_PER_MILLE: u16 = 10;
-const DUTY_QUEUE_BUDGET_MS: u32 = 4_000;
-const DUTY_TEN_PERCENT_PER_MILLE: u16 = 100;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Frequency(u32);
 
@@ -14,6 +10,50 @@ impl Frequency {
 
     pub const fn hz(self) -> u32 {
         self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FrequencyRange {
+    minimum: Frequency,
+    maximum: Frequency,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrequencyRangeError {
+    EmptyOrReversed,
+}
+
+impl FrequencyRange {
+    pub const fn new(minimum: Frequency, maximum: Frequency) -> Result<Self, FrequencyRangeError> {
+        if minimum.hz() >= maximum.hz() {
+            return Err(FrequencyRangeError::EmptyOrReversed);
+        }
+        Ok(Self { minimum, maximum })
+    }
+
+    pub(crate) const fn from_ordered_hz(minimum_hz: u32, maximum_hz: u32) -> Self {
+        assert!(minimum_hz < maximum_hz);
+        Self {
+            minimum: Frequency::new(minimum_hz),
+            maximum: Frequency::new(maximum_hz),
+        }
+    }
+
+    pub const fn minimum(self) -> Frequency {
+        self.minimum
+    }
+
+    pub const fn maximum(self) -> Frequency {
+        self.maximum
+    }
+
+    pub const fn contains_nominal_channel(self, center: Frequency, bandwidth_hz: u32) -> bool {
+        let doubled_center = center.hz() as u64 * 2;
+        let doubled_minimum = self.minimum.hz() as u64 * 2;
+        let doubled_maximum = self.maximum.hz() as u64 * 2;
+        doubled_center >= doubled_minimum + bandwidth_hz as u64
+            && doubled_center + bandwidth_hz as u64 <= doubled_maximum
     }
 }
 
@@ -45,7 +85,7 @@ impl MonotonicMicros {
 
 prns_macros::iterable_enum! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum Region {
+    pub enum RegulatoryRegion {
         Us915,
         Au915,
         Eu433,
@@ -57,84 +97,32 @@ prns_macros::iterable_enum! {
         Cn470,
         Kr920,
         Jp920,
-        Unlimited,
     }
 }
 
-impl Region {
-    pub const fn band(self) -> (u32, u32) {
-        match self {
-            Self::Us915 => (902_000_000, 928_000_000),
-            Self::Au915 => (915_000_000, 928_000_000),
-            Self::Eu433 => (433_050_000, 434_790_000),
-            Self::Eu865 => (865_000_000, 868_000_000),
-            Self::Eu868 => (868_000_000, 868_600_000),
-            Self::Eu869 => (869_400_000, 869_650_000),
-            Self::As923 => (920_000_000, 925_000_000),
-            Self::In865 => (865_000_000, 867_000_000),
-            Self::Cn470 => (470_000_000, 510_000_000),
-            Self::Kr920 => (920_000_000, 923_000_000),
-            Self::Jp920 => (920_800_000, 927_800_000),
-            Self::Unlimited => (150_000_000, 960_000_000),
-        }
+impl RegulatoryRegion {
+    pub const fn frequency_range(self) -> FrequencyRange {
+        crate::interfaces::subghz::regions::specification(self).frequency_range()
     }
 
     pub const fn default_frequency(self) -> Frequency {
-        let hz = match self {
-            Self::Us915 | Self::Au915 => 921_500_000,
-            Self::Eu433 => 433_900_000,
-            Self::Eu865 => 866_500_000,
-            Self::Eu868 => 868_300_000,
-            Self::Eu869 => 869_500_000,
-            Self::As923 => 922_500_000,
-            Self::In865 => 866_000_000,
-            Self::Cn470 => 490_000_000,
-            Self::Kr920 => 921_500_000,
-            Self::Jp920 => 922_000_000,
-            Self::Unlimited => 915_000_000,
-        };
-        Frequency::new(hz)
+        crate::interfaces::subghz::regions::specification(self)
+            .manual_lora_defaults()
+            .frequency()
     }
 
     pub const fn max_tx_power(self) -> TxPower {
-        let dbm = match self {
-            Self::Us915 | Self::Au915 | Self::In865 | Self::Eu869 | Self::Unlimited => 22,
-            Self::Cn470 => 19,
-            Self::As923 | Self::Jp920 => 16,
-            Self::Eu865 | Self::Eu868 | Self::Kr920 => 14,
-            Self::Eu433 => 12,
-        };
-        TxPower::new(dbm)
+        crate::interfaces::subghz::regions::specification(self).maximum_tx_power()
     }
 
     pub const fn regulatory_duty_cycle(self) -> Option<AirtimeDutyCycle> {
-        let limit_long_per_mille = match self {
-            Self::Eu865 | Self::Eu868 => DUTY_ONE_PERCENT_PER_MILLE,
-            Self::Eu433 | Self::Eu869 => DUTY_TEN_PERCENT_PER_MILLE,
-            _ => return None,
-        };
-        Some(AirtimeDutyCycle {
-            limit_short_per_mille: None,
-            limit_long_per_mille: Some(limit_long_per_mille),
-            max_queued_airtime_ms: DUTY_QUEUE_BUDGET_MS,
-        })
+        crate::interfaces::subghz::regions::specification(self)
+            .duty_cycle()
+            .limit()
     }
 
     pub const fn label(self) -> &'static str {
-        match self {
-            Self::Us915 => "US915",
-            Self::Au915 => "AU915",
-            Self::Eu433 => "EU433",
-            Self::Eu865 => "EU865",
-            Self::Eu868 => "EU868",
-            Self::Eu869 => "EU869",
-            Self::As923 => "AS923",
-            Self::In865 => "IN865",
-            Self::Cn470 => "CN470",
-            Self::Kr920 => "KR920",
-            Self::Jp920 => "JP920",
-            Self::Unlimited => "Custom",
-        }
+        crate::interfaces::subghz::regions::specification(self).label()
     }
 
     pub const fn next(self) -> Self {
@@ -149,8 +137,100 @@ impl Region {
             Self::In865 => Self::Cn470,
             Self::Cn470 => Self::Kr920,
             Self::Kr920 => Self::Jp920,
-            Self::Jp920 => Self::Unlimited,
-            Self::Unlimited => Self::Us915,
+            Self::Jp920 => Self::Us915,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubGRegion {
+    Regulated(RegulatoryRegion),
+    Custom,
+}
+
+impl SubGRegion {
+    pub const fn frequency_range(self) -> FrequencyRange {
+        match self {
+            Self::Regulated(region) => region.frequency_range(),
+            Self::Custom => {
+                crate::interfaces::subghz::configuration::CUSTOM_SUBG_SPEC.frequency_range()
+            }
+        }
+    }
+
+    pub const fn default_frequency(self) -> Frequency {
+        self.manual_lora_defaults().frequency()
+    }
+
+    pub const fn manual_lora_defaults(self) -> crate::interfaces::subghz::ManualLoRaParameters {
+        match self {
+            Self::Regulated(region) => {
+                crate::interfaces::subghz::regions::specification(region).manual_lora_defaults()
+            }
+            Self::Custom => {
+                crate::interfaces::subghz::configuration::CUSTOM_SUBG_SPEC.manual_lora_defaults()
+            }
+        }
+    }
+
+    pub const fn max_tx_power(self) -> TxPower {
+        match self {
+            Self::Regulated(region) => region.max_tx_power(),
+            Self::Custom => {
+                crate::interfaces::subghz::configuration::CUSTOM_SUBG_SPEC.maximum_tx_power()
+            }
+        }
+    }
+
+    pub const fn regulatory_duty_cycle(self) -> Option<AirtimeDutyCycle> {
+        match self {
+            Self::Regulated(region) => region.regulatory_duty_cycle(),
+            Self::Custom => crate::interfaces::subghz::configuration::CUSTOM_SUBG_SPEC
+                .duty_cycle()
+                .limit(),
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Regulated(region) => region.label(),
+            Self::Custom => crate::interfaces::subghz::configuration::CUSTOM_SUBG_SPEC.label(),
+        }
+    }
+}
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    #[kani::proof]
+    fn contained_channel_centers_never_escape_the_frequency_range() {
+        let minimum_hz: u32 = kani::any();
+        let maximum_hz: u32 = kani::any();
+        let center_hz: u32 = kani::any();
+        let bandwidth_hz: u32 = kani::any();
+        kani::assume(minimum_hz < maximum_hz);
+        let range =
+            FrequencyRange::new(Frequency::new(minimum_hz), Frequency::new(maximum_hz)).unwrap();
+        if range.contains_nominal_channel(Frequency::new(center_hz), bandwidth_hz) {
+            assert!(center_hz >= minimum_hz);
+            assert!(center_hz <= maximum_hz);
+        }
+    }
+
+    #[kani::proof]
+    fn accepting_a_wider_channel_also_accepts_every_narrower_channel() {
+        let minimum_hz: u32 = kani::any();
+        let maximum_hz: u32 = kani::any();
+        let center_hz: u32 = kani::any();
+        let narrower_hz: u32 = kani::any();
+        let wider_hz: u32 = kani::any();
+        kani::assume(minimum_hz < maximum_hz);
+        kani::assume(narrower_hz <= wider_hz);
+        let range =
+            FrequencyRange::new(Frequency::new(minimum_hz), Frequency::new(maximum_hz)).unwrap();
+        if range.contains_nominal_channel(Frequency::new(center_hz), wider_hz) {
+            assert!(range.contains_nominal_channel(Frequency::new(center_hz), narrower_hz));
         }
     }
 }

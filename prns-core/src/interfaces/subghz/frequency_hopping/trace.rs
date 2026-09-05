@@ -99,7 +99,7 @@ where
 {
     validate_trace::<N>(transmissions)?;
     let observation_window_us = region.observation_window().micros();
-    let maximum_us = region.channel_occupancy_limit().micros();
+    let maximum_us = region.maximum_channel_occupancy().micros();
     let mut total_airtime_us = 0u64;
     let mut maximum_channel_occupancy_us = 0u64;
     for transmission in transmissions {

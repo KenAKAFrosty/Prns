@@ -1,5 +1,5 @@
-use super::super::MonotonicMicros;
 use super::schedule::{TURBO_CHANNEL_COUNT, TURBO_OCCUPANCY_LIMIT_US};
+use crate::interfaces::subghz::MonotonicMicros;
 
 const OCCUPANCY_WINDOW_US: u64 = 10_000_000;
 const UNUSED_VISIT: u64 = u64::MAX;
@@ -245,8 +245,10 @@ mod kani_proofs {
 mod tests {
     use super::*;
     use crate::interfaces::subghz::frequency_hopping::{
-        audit_frequency_occupancy, ChannelOccupancyLimit, FrequencyOccupancyError, HopTransmission,
-        MeasuredTwentyDbBandwidth, Us915HopSet, Us915HoppingModel,
+        audit_frequency_occupancy, FrequencyOccupancyError, HopTransmission,
+    };
+    use crate::interfaces::subghz::regions::us915::frequency_hopping::{
+        ChannelOccupancyLimit, MeasuredTwentyDbBandwidth, Us915HopSet, Us915HoppingModel,
     };
     use proptest::prelude::*;
 

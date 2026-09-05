@@ -1,6 +1,6 @@
-use super::super::MonotonicMicros;
 use super::profile::{TURBO_AIR_FRAME_MAX, TURBO_FRAME_DATA_MAX, TURBO_LOGICAL_PACKET_MAX};
 use super::schedule::{SupercycleCycle, SupercycleCycleError};
+use crate::interfaces::subghz::MonotonicMicros;
 
 const FRAME_VERSION: u8 = 1;
 const FRAME_VERSION_SHIFT: u8 = 4;

@@ -1,7 +1,3 @@
-use super::super::frequency_hopping::{
-    AntennaGainDeciDb, ConductedPowerDbm, MeasuredTwentyDbBandwidth, Us915PowerInputs,
-};
-use super::super::MonotonicMicros;
 use super::{
     acquisition_beacon_listen_window_us, channel_index_at, AcquisitionBeacon, CapabilitySupport,
     ChannelAccess, ChannelAccessAction, ChannelAccessEvent, ContentionClass, ContentionPolicy,
@@ -10,6 +6,10 @@ use super::{
     TurboProfileError, Us915TurboConfiguration, Us915TurboTransmitter, UtcTimescale,
     TURBO_CHANNEL_COUNT, TURBO_LOGICAL_PACKET_MAX, TURBO_SCAN_STRIDE, TURBO_SLOT_US,
 };
+use crate::interfaces::subghz::regions::us915::frequency_hopping::{
+    AntennaGainDeciDb, ConductedPowerDbm, MeasuredTwentyDbBandwidth, Us915PowerInputs,
+};
+use crate::interfaces::subghz::MonotonicMicros;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AcquisitionSimulation {
