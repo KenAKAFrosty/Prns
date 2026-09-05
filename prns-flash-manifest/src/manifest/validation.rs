@@ -2,10 +2,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::{
-    BoardBuild, BoardCatalogEntry, FlashPart, FlashPartKind, ImmutableArtifactPath, KeyId,
-    ReleaseVersion, Sha256Digest, SoftdeviceIdentity, Transport, CONFIG_OFFSET,
-    ESP_FLASH_SECTOR_SIZE,
+    ApplicationAddressRange, BoardBuild, BoardCatalogEntry, FlashPart, FlashPartKind,
+    ImmutableArtifactPath, KeyId, ReleaseVersion, Sha256Digest, SoftdeviceIdentity, Transport,
+    CONFIG_OFFSET, ESP_FLASH_SECTOR_SIZE,
 };
+use personal_hopspot_memory::RegionRole;
 
 use super::{FlashManifest, ManifestError, ManifestTargetSetPolicy, TargetManifest};
 
@@ -185,6 +186,12 @@ fn validate_payloads(
     }
     let mut ranges = BTreeMap::<u32, (u32, &str)>::new();
     let mut paths = BTreeSet::new();
+    let BoardBuild::Esp(build) = &board.build else {
+        unreachable!();
+    };
+    let memory = build
+        .memory_layout()
+        .map_err(|_| mismatch(target, "ESP memory profile"))?;
     for part in &target.parts {
         if part.size == 0 {
             return Err(invalid_part(target, &part.path, "size must be nonzero"));
@@ -213,7 +220,20 @@ fn validate_payloads(
             ));
         }
         match target.transport {
-            Transport::EspSerial => validate_esp_part(target, part, &mut ranges)?,
+            Transport::EspSerial => {
+                let assigned_region = match part.kind {
+                    FlashPartKind::Bootloader => memory.region_for_role(RegionRole::Bootloader),
+                    FlashPartKind::PartitionTable => {
+                        memory.region_for_role(RegionRole::PartitionTable)
+                    }
+                    FlashPartKind::Application => Ok(memory.firmware_owned()),
+                    FlashPartKind::Uf2
+                    | FlashPartKind::DfuApplication
+                    | FlashPartKind::DfuInitPacket => unreachable!(),
+                }
+                .map_err(|_| mismatch(target, "ESP memory profile regions"))?;
+                validate_esp_part(target, part, assigned_region, &mut ranges)?;
+            }
             Transport::Uf2MassStorage => unreachable!(),
             Transport::NrfSerialDfu => unreachable!(),
         }
@@ -317,16 +337,22 @@ fn validate_nrf_serial_dfu(
         .ok_or_else(|| mismatch(target, "Nordic serial DFU application base"))?;
     let application_end = parse_hex_u32(&manifest.compatibility.application_end_exclusive)
         .ok_or_else(|| mismatch(target, "Nordic serial DFU application end"))?;
-    let maximum_application_size = u64::from(
-        application_end
-            .checked_sub(application_base)
-            .ok_or_else(|| mismatch(target, "Nordic serial DFU application region"))?,
-    );
+    application_end
+        .checked_sub(application_base)
+        .ok_or_else(|| mismatch(target, "Nordic serial DFU application region"))?;
+    let firmware_owned = build
+        .memory_layout()
+        .map_err(|_| mismatch(target, "Nordic serial DFU memory profile"))?
+        .firmware_owned();
+    if application_base != firmware_owned.start() {
+        return Err(mismatch(target, "Nordic serial DFU firmware-owned region"));
+    }
+    let maximum_application_size = u64::from(firmware_owned.byte_len());
     if manifest.application.size > maximum_application_size {
         return Err(invalid_part(
             target,
             &manifest.application.path,
-            "application exceeds the serial DFU region",
+            "application exceeds the firmware-owned region",
         ));
     }
     Ok(())
@@ -429,6 +455,7 @@ fn validate_uf2_variants(
 fn validate_esp_part<'a>(
     target: &'a TargetManifest,
     part: &'a FlashPart,
+    assigned_region: ApplicationAddressRange,
     ranges: &mut BTreeMap<u32, (u32, &'a str)>,
 ) -> Result<(), ManifestError> {
     let offset = part
@@ -458,6 +485,13 @@ fn validate_esp_part<'a>(
             target,
             &part.path,
             "sector-rounded erase footprint exceeds physical flash",
+        ));
+    }
+    if offset != assigned_region.start() || !assigned_region.contains(offset, erase_end) {
+        return Err(invalid_part(
+            target,
+            &part.path,
+            "sector-rounded part exceeds its memory-profile region",
         ));
     }
     let config_end = CONFIG_OFFSET + crate::CONFIG_SIZE as u32;

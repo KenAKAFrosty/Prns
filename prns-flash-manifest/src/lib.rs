@@ -8,24 +8,25 @@ mod trust;
 mod uf2;
 
 pub use catalog::{
-    board_catalog, ApplicationAddressRange, BoardAvailability, BoardBuild, BoardCatalog,
-    BoardCatalogEntry, CatalogError, EspBuild, MemoryProfileReference, MemoryProfileReferenceError,
-    NrfDfuApplicationVersion, NrfDfuBankLayout, NrfSerialDfuBuild, NrfSerialDfuBuildCompatibility,
-    NrfSerialDfuCompatibility, NrfSerialDfuControlApplication, NrfSerialDfuRecoveryBootloader,
-    NrfSerialDfuRecoveryBuild, NrfSerialDfuSerialTransport, NrfSerialDfuSerialTransportError,
+    board_catalog, BoardAvailability, BoardBuild, BoardCatalog, BoardCatalogEntry, CatalogError,
+    EspBuild, MemoryProfileReference, MemoryProfileReferenceError, NrfDfuApplicationVersion,
+    NrfDfuBankLayout, NrfSerialDfuBuild, NrfSerialDfuBuildCompatibility, NrfSerialDfuCompatibility,
+    NrfSerialDfuControlApplication, NrfSerialDfuRecoveryBootloader, NrfSerialDfuRecoveryBuild,
+    NrfSerialDfuSerialTransport, NrfSerialDfuSerialTransportError,
     NrfSerialDfuTouchApplicationAndBootloader, ProvisioningDescriptor, ResolvedMemoryProfile,
     TcpClientProvisioningDescriptor, Transport, Uf2ApplicationLink, Uf2ApplicationUsb,
     Uf2BoardIdentity, Uf2Build, Uf2BuildVariant, UsbVendorProductId,
 };
 pub use domain::{
-    AfterResetStrategy, BeforeResetStrategy, BoardId, ChipFamily, DomainValueError, EspFlashPart,
-    EspSerialTarget, FlashFrequency, FlashMode, ImmutableArtifactPath, KeyId, NrfSerialDfuArtifact,
-    NrfSerialDfuRecovery, NrfSerialDfuTarget, PreparationProfile, ProvisioningFormat,
-    ProvisioningSlot, ReleasePartRef, ReleaseTarget, ReleaseVersion, Sha256Digest,
-    SoftdeviceFamily, SoftdeviceIdentity, SoftdeviceVersion, Uf2BoardIdMatch, Uf2BoardIdMatchKind,
-    Uf2Compatibility, Uf2MountLabel, Uf2Part, Uf2Target, Uf2Variant, UsbVidPid,
-    ValidatedChannelDescriptor, ValidatedFlashManifest, ValidatedNrfSerialDfuCompatibility,
-    ValidatedNrfSerialDfuSerialTransport, ValidatedOfflineKeySigningInfo, ValidatedReleaseInfo,
+    AfterResetStrategy, ApplicationAddressRange, BeforeResetStrategy, BoardId, ChipFamily,
+    DomainValueError, EspFlashPart, EspSerialTarget, FlashFrequency, FlashMode,
+    ImmutableArtifactPath, KeyId, NrfSerialDfuArtifact, NrfSerialDfuRecovery, NrfSerialDfuTarget,
+    PreparationProfile, ProvisioningFormat, ProvisioningSlot, ReleasePartRef, ReleaseTarget,
+    ReleaseVersion, Sha256Digest, SoftdeviceFamily, SoftdeviceIdentity, SoftdeviceVersion,
+    Uf2BoardIdMatch, Uf2BoardIdMatchKind, Uf2Compatibility, Uf2MountLabel, Uf2Part, Uf2Target,
+    Uf2Variant, UsbVidPid, ValidatedChannelDescriptor, ValidatedFlashManifest,
+    ValidatedNrfSerialDfuCompatibility, ValidatedNrfSerialDfuSerialTransport,
+    ValidatedOfflineKeySigningInfo, ValidatedReleaseInfo,
 };
 pub use manifest::{
     ChannelDescriptor, FlashManifest, FlashPart, FlashPartKind, ManifestError,

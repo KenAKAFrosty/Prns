@@ -1,12 +1,10 @@
 mod memory;
 
+use personal_hopspot_memory::RegionRole;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-pub use memory::{
-    ApplicationAddressRange, MemoryProfileReference, MemoryProfileReferenceError,
-    ResolvedMemoryProfile,
-};
+pub use memory::{MemoryProfileReference, MemoryProfileReferenceError, ResolvedMemoryProfile};
 
 use crate::{
     AfterResetStrategy, BeforeResetStrategy, BoardId, ChipFamily, ImmutableArtifactPath,
@@ -517,6 +515,8 @@ fn validate_transport(board: &BoardCatalogEntry) -> Result<(), CatalogError> {
             let memory_is_valid = build.memory_layout().is_ok_and(|memory| {
                 memory.architecture().rust_target() == build.rust_target
                     && board.flash_size == Some(memory.internal_flash_capacity())
+                    && memory.region_for_role(RegionRole::Bootloader).is_ok()
+                    && memory.region_for_role(RegionRole::PartitionTable).is_ok()
             });
             if !memory_is_valid
                 || board.expected_chip.as_deref() != Some(build.chip.as_str())

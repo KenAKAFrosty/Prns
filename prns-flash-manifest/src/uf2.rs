@@ -174,6 +174,7 @@ pub fn validate_uf2_artifact(variant: &Uf2Variant, bytes: &[u8]) -> Result<(), U
     validate_uf2_bytes(
         variant.compatibility().application_base(),
         variant.compatibility().application_end_exclusive(),
+        variant.firmware_owned(),
         variant.compatibility().family_id(),
         bytes,
     )
@@ -187,6 +188,7 @@ pub fn validate_nrf_serial_dfu_recovery_artifact(
     validate_uf2_bytes(
         target.compatibility().application_base(),
         target.compatibility().application_end_exclusive(),
+        target.firmware_owned(),
         target.recovery().family_id(),
         recovery,
     )?;
@@ -223,6 +225,7 @@ fn validate_recovery_application(
 fn validate_uf2_bytes(
     application_base: u32,
     application_end_exclusive: u32,
+    firmware_owned: crate::ApplicationAddressRange,
     family_id: u32,
     bytes: &[u8],
 ) -> Result<(), Uf2ArtifactError> {
@@ -265,6 +268,9 @@ fn validate_uf2_bytes(
         if end > application_end_exclusive {
             return Err(Uf2ArtifactError::Bounds(block_number));
         }
+        if !firmware_owned.contains(address, end) {
+            return Err(Uf2ArtifactError::FirmwareOwnership(block_number));
+        }
         expected_address = end;
         if block[UF2_DATA_OFFSET + payload as usize..UF2_DATA_OFFSET + UF2_DATA_BYTES]
             .iter()
@@ -301,8 +307,10 @@ pub enum Uf2ArtifactError {
     Address(u32),
     #[error("UF2 block {0} has an unsupported payload length")]
     Payload(u32),
-    #[error("UF2 block {0} exceeds the application flash region")]
+    #[error("UF2 block {0} exceeds the declared transport envelope")]
     Bounds(u32),
+    #[error("UF2 block {0} exceeds the firmware-owned flash region")]
+    FirmwareOwnership(u32),
     #[error("UF2 block {0} has nonzero bytes outside its payload")]
     Padding(u32),
     #[error("UF2 recovery has {uf2_blocks} blocks for a {application_bytes}-byte application")]
@@ -341,6 +349,7 @@ mod tests {
                 0x000c_0000,
                 0xada5_2840,
             ),
+            firmware_owned: crate::ApplicationAddressRange::new(application_base, 0x000c_0000),
             part: Uf2Part {
                 path: ImmutableArtifactPath::parse(format!("t-echo-{version}.uf2"))
                     .expect("artifact path"),
@@ -493,6 +502,24 @@ mod tests {
             validate_uf2_artifact(&v7, &padding),
             Err(Uf2ArtifactError::Padding(0))
         ));
+    }
+
+    #[test]
+    fn legacy_transport_envelopes_do_not_authorize_persistent_flash() {
+        let application_base = 0x000b_ee00;
+        let firmware_owned = crate::ApplicationAddressRange::new(application_base, 0x000b_f000);
+        let bytes = artifact(application_base, 0xada5_2840, 3);
+
+        assert_eq!(
+            validate_uf2_bytes(
+                application_base,
+                0x000c_0000,
+                firmware_owned,
+                0xada5_2840,
+                &bytes,
+            ),
+            Err(Uf2ArtifactError::FirmwareOwnership(2))
+        );
     }
 
     #[test]

@@ -635,14 +635,14 @@ fn build_nrf_serial_dfu(
             application_path.display()
         ))
     })?;
-    let application_region = build
+    let memory = build
         .memory_layout()
-        .map_err(|error| AppError::developer_manifest(error.to_string()))?
-        .transport_envelope();
-    let maximum_application_bytes = application_region.byte_len();
+        .map_err(|error| AppError::developer_manifest(error.to_string()))?;
+    let firmware_owned = memory.firmware_owned();
+    let maximum_application_bytes = firmware_owned.byte_len();
     if application.len() as u64 > u64::from(maximum_application_bytes) {
         return Err(AppError::developer_artifact(format!(
-            "{} application is {} bytes; serial DFU accepts at most {maximum_application_bytes}",
+            "{} application is {} bytes; firmware owns at most {maximum_application_bytes}",
             board.display_name,
             application.len()
         )));
@@ -656,7 +656,7 @@ fn build_nrf_serial_dfu(
     atomic_write(&output_dir.join(&build.init_packet_filename), &init_packet)?;
 
     let recovery_path = output_dir.join(&build.recovery.filename);
-    let application_base = format!("0x{:08x}", application_region.start());
+    let application_base = format!("0x{:08x}", memory.transport_envelope().start());
     run_status(
         Command::new(if cfg!(windows) { "python" } else { "python3" })
             .arg(repo.join("tools").join("device").join("bin2uf2.py"))

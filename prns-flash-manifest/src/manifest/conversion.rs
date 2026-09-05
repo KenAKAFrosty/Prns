@@ -150,6 +150,19 @@ fn convert_target(
     };
     match transport {
         Transport::EspSerial => {
+            let BoardBuild::Esp(catalog_build) = &board.build else {
+                return Err(ManifestError::CatalogMismatch {
+                    board: board_slug,
+                    field: "ESP transport requires its catalog build".to_string(),
+                });
+            };
+            let firmware_owned = catalog_build
+                .memory_layout()
+                .map_err(|error| ManifestError::CatalogMismatch {
+                    board: board_slug.clone(),
+                    field: error.to_string(),
+                })?
+                .firmware_owned();
             if !variants.is_empty() || nrf_serial_dfu.is_some() {
                 return Err(ManifestError::CatalogMismatch {
                     board: board_slug,
@@ -234,6 +247,7 @@ fn convert_target(
                         field: error.to_string(),
                     }
                 })?,
+                firmware_owned,
                 parts: validated_parts,
                 provisioning,
             }))
@@ -294,12 +308,10 @@ fn convert_target(
                                 "UF2 variant is not pinned by the board catalog",
                             )
                         })?;
-                    let application = catalog_variant
-                        .memory_layout()
-                        .map_err(|error| {
-                            invalid_part_values(&board_slug, &path, &error.to_string())
-                        })?
-                        .transport_envelope();
+                    let memory = catalog_variant.memory_layout().map_err(|error| {
+                        invalid_part_values(&board_slug, &path, &error.to_string())
+                    })?;
+                    let application = memory.transport_envelope();
                     let softdevice = SoftdeviceIdentity::parse(
                         &variant.softdevice_family,
                         variant.softdevice_version,
@@ -338,6 +350,7 @@ fn convert_target(
                             application.end_exclusive(),
                             family_id,
                         ),
+                        firmware_owned: memory.firmware_owned(),
                         part: Uf2Part {
                             path: ImmutableArtifactPath::parse(variant.path.clone()).map_err(
                                 |error| {
@@ -403,6 +416,12 @@ fn convert_target(
                 &manifest.application.path,
                 manifest.compatibility,
             )?;
+            let firmware_owned = catalog_build
+                .memory_layout()
+                .map_err(|error| {
+                    invalid_part_values(&board_slug, &manifest.application.path, &error.to_string())
+                })?
+                .firmware_owned();
             let application = convert_nrf_serial_dfu_artifact(
                 &board_slug,
                 manifest.application,
@@ -438,6 +457,7 @@ fn convert_target(
                 identity,
                 serial_transport,
                 compatibility,
+                firmware_owned,
                 application,
                 init_packet,
                 recovery,

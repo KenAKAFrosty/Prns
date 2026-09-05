@@ -1,11 +1,13 @@
 use personal_hopspot_memory::{
     memory_profile_named, AddressRange, AddressSpaceGeometry, AddressSpaceKind,
-    AddressSpaceKindLookupError, MemoryProfileId, ProcessorArchitecture, ValidationError,
+    AddressSpaceKindLookupError, MemoryProfile, MemoryProfileId, ProcessorArchitecture, RegionRole,
+    RegionRoleLookupError, ValidationError,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use super::{EspBuild, NrfSerialDfuBuild, NrfSerialDfuCompatibility, Uf2BuildVariant};
+use crate::ApplicationAddressRange;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -61,11 +63,12 @@ impl MemoryProfileReference {
             }
         })?;
         Ok(ResolvedMemoryProfile {
+            profile,
             id: profile.id,
             architecture: profile.architecture,
             internal_flash_capacity: flash_capacity,
-            firmware_owned: ApplicationAddressRange::try_from_memory(profile.id, firmware.range)?,
-            transport_envelope: ApplicationAddressRange::try_from_memory(
+            firmware_owned: application_range(profile.id, firmware.range)?,
+            transport_envelope: application_range(
                 profile.id,
                 profile.firmware.transport_envelope.range,
             )?,
@@ -110,6 +113,7 @@ impl NrfSerialDfuBuild {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResolvedMemoryProfile {
+    profile: &'static MemoryProfile,
     id: MemoryProfileId,
     architecture: ProcessorArchitecture,
     internal_flash_capacity: u32,
@@ -142,51 +146,37 @@ impl ResolvedMemoryProfile {
     pub const fn transport_envelope(self) -> ApplicationAddressRange {
         self.transport_envelope
     }
-}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ApplicationAddressRange {
-    start: u32,
-    end_exclusive: u32,
-}
-
-impl ApplicationAddressRange {
-    fn try_from_memory(
-        profile: MemoryProfileId,
-        range: AddressRange,
-    ) -> Result<Self, MemoryProfileReferenceError> {
-        let start = u32::try_from(range.start()).map_err(|_| {
-            MemoryProfileReferenceError::AddressExceedsU32 {
-                profile,
-                address: range.start(),
+    pub fn region_for_role(
+        self,
+        role: RegionRole,
+    ) -> Result<ApplicationAddressRange, MemoryProfileReferenceError> {
+        let region = self.profile.unique_region_for_role(role).map_err(|error| {
+            MemoryProfileReferenceError::InvalidRegionRole {
+                profile: self.id,
+                error,
             }
         })?;
-        let end_exclusive = u32::try_from(range.end()).map_err(|_| {
-            MemoryProfileReferenceError::AddressExceedsU32 {
-                profile,
-                address: range.end(),
-            }
+        application_range(self.id, region.range)
+    }
+}
+
+fn application_range(
+    profile: MemoryProfileId,
+    range: AddressRange,
+) -> Result<ApplicationAddressRange, MemoryProfileReferenceError> {
+    let start = u32::try_from(range.start()).map_err(|_| {
+        MemoryProfileReferenceError::AddressExceedsU32 {
+            profile,
+            address: range.start(),
+        }
+    })?;
+    let end_exclusive =
+        u32::try_from(range.end()).map_err(|_| MemoryProfileReferenceError::AddressExceedsU32 {
+            profile,
+            address: range.end(),
         })?;
-        Ok(Self {
-            start,
-            end_exclusive,
-        })
-    }
-
-    #[must_use]
-    pub const fn start(self) -> u32 {
-        self.start
-    }
-
-    #[must_use]
-    pub const fn end_exclusive(self) -> u32 {
-        self.end_exclusive
-    }
-
-    #[must_use]
-    pub const fn byte_len(self) -> u32 {
-        self.end_exclusive - self.start
-    }
+    Ok(ApplicationAddressRange::new(start, end_exclusive))
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -204,6 +194,11 @@ pub enum MemoryProfileReferenceError {
     InvalidInternalFlash {
         profile: MemoryProfileId,
         error: AddressSpaceKindLookupError,
+    },
+    #[error("embedded memory profile {profile} has invalid region role: {error}")]
+    InvalidRegionRole {
+        profile: MemoryProfileId,
+        error: RegionRoleLookupError,
     },
     #[error("embedded memory profile {profile} internal flash {address_space:?} is not fixed")]
     UnboundedInternalFlash {
