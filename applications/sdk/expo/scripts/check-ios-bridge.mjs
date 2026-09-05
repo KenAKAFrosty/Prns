@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
@@ -464,13 +464,23 @@ assert.doesNotMatch(
   /applicationDidEnterBackground|applicationWillResignActive|prns_app_stop/,
   "background lifecycle hooks must not stop the native node",
 );
-assert.match(restorationProbe, /#if DEBUG[\s\S]*?import OSLog/);
+assert.match(restorationProbe, /^#if DEBUG\nimport Foundation/);
+assert.match(restorationProbe, /\n#endif\s*$/);
 assert.match(
   restorationProbe,
   /@_cdecl\("prns_app_ios_restoration_probe_emit"\)/,
-  "the private Rust callback must terminate in the Debug-only Apple unified-log sink",
+  "the private Rust callback must terminate in the Debug-only console-visible sink",
 );
-assert.match(restorationProbe, /category: "PRNS_IOS_RESTORATION"/);
+assert.match(
+  restorationProbe,
+  /NSLog\("PRNS_IOS_RESTORATION sequence=%llu event=%@", sequence, code\)/,
+);
+assert.equal(restorationProbe.match(/\bNSLog\(/g)?.length, 1);
+assert.doesNotMatch(
+  restorationProbe,
+  /\b(?:Logger|os_log)\s*\(/,
+  "the restoration sink must not duplicate console events in a second unified-log sink",
+);
 assert.doesNotMatch(
   `${restorationProbe}\n${nativeRestorationProbe}`,
   /peripheral_service_restored|bluetooth_auto::macos::peripheral/,
@@ -726,6 +736,54 @@ try {
     { stdio: "inherit" },
   );
   execFileSync(recoveryTestExecutable, [], { stdio: "inherit" });
+
+  const probeSource = resolve(packageRoot, "ios/PrnsAppRestorationProbe.swift");
+  const probeTestExecutable = resolve(recoveryTestDirectory, "probe-tests");
+  execFileSync(
+    "xcrun",
+    [
+      "swiftc",
+      "-D",
+      "DEBUG",
+      probeSource,
+      resolve(packageRoot, "scripts/PrnsAppRestorationProbeTests.swift"),
+      "-o",
+      probeTestExecutable,
+    ],
+    { stdio: "inherit" },
+  );
+  const probeResult = spawnSync(probeTestExecutable, [], { encoding: "utf8" });
+  assert.ifError(probeResult.error);
+  assert.equal(probeResult.status, 0, probeResult.stderr);
+  assert.equal(probeResult.stdout, "");
+  const probeTag = "PRNS_IOS_RESTORATION ";
+  const probeLines = probeResult.stderr
+    .split("\n")
+    .filter((line) => line.includes(probeTag))
+    .map((line) => line.slice(line.indexOf(probeTag)));
+  assert.deepEqual(
+    probeLines,
+    [
+      "PRNS_IOS_RESTORATION sequence=17 event=logger_installed",
+      "PRNS_IOS_RESTORATION sequence=18446744073709551615 event=central_scan_started",
+    ],
+    "each valid probe must reach stderr once; invalid codes must stay silent",
+  );
+  assert.doesNotMatch(probeResult.stderr, /private-peer|private-error/);
+  const releaseProbeObject = resolve(recoveryTestDirectory, "probe-release.o");
+  execFileSync(
+    "xcrun",
+    ["swiftc", "-parse-as-library", "-emit-object", probeSource, "-o", releaseProbeObject],
+    { stdio: "inherit" },
+  );
+  const releaseProbeSymbols = execFileSync("xcrun", ["nm", "-g", releaseProbeObject], {
+    encoding: "utf8",
+  });
+  assert.doesNotMatch(
+    releaseProbeSymbols,
+    /prns_app_ios_restoration_probe_emit|prnsAppIosRestorationProbeEmit/,
+    "non-Debug compilation must omit the diagnostic callback entirely",
+  );
 } finally {
   rmSync(recoveryTestDirectory, { force: true, recursive: true });
 }

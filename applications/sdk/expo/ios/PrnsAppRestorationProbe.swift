@@ -1,11 +1,5 @@
 #if DEBUG
 import Foundation
-import OSLog
-
-private let prnsRestorationLogger = Logger(
-  subsystem: Bundle.main.bundleIdentifier ?? "rs.reticulum.prns",
-  category: "PRNS_IOS_RESTORATION"
-)
 
 private let prnsRestorationEvents: Set<String> = [
   "central_characteristic_discovery_failed",
@@ -53,8 +47,8 @@ func prnsAppIosRestorationProbeEmit(
   guard prnsRestorationEvents.contains(code) else {
     return
   }
-  prnsRestorationLogger.notice(
-    "sequence=\(sequence, privacy: .public) event=\(code, privacy: .public)"
-  )
+  // Match the lifecycle sink so devicectl --console can capture these breadcrumbs.
+  // NSLog also reaches unified logging; use one tagged sink to avoid duplicate events.
+  NSLog("PRNS_IOS_RESTORATION sequence=%llu event=%@", sequence, code)
 }
 #endif
