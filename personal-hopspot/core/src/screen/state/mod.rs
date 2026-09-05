@@ -205,6 +205,7 @@ pub enum SubGConfigurationPersistenceOutcome {
     Indeterminate,
 }
 
+#[inline(never)]
 pub async fn apply_and_persist_subg_configuration<
     Apply,
     ApplyFuture,

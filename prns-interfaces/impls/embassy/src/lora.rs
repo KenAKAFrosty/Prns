@@ -995,14 +995,12 @@ impl<R: LoRaRadio> Interface for LoRaInterface<'_, R> {
                                             crate::diagnostic_log::warn!(
                                                 "RNS_LORA rejected profile: {error:?}"
                                             );
-                                            control
-                                                .complete(
-                                                    request.id,
-                                                    LoRaApplyOutcome::Rejected(
-                                                        configuration_rejection(error),
-                                                    ),
-                                                )
-                                                .await;
+                                            control.complete(
+                                                request.id,
+                                                LoRaApplyOutcome::Rejected(
+                                                    configuration_rejection(error),
+                                                ),
+                                            );
                                             continue;
                                         }
                                     };
@@ -1013,16 +1011,15 @@ impl<R: LoRaRadio> Interface for LoRaInterface<'_, R> {
                                                 "RNS_LORA configuration init failed: {error:?}"
                                             );
                                             control
-                                            .complete(
-                                                request.id,
-                                                LoRaApplyOutcome::Rejected(
-                                                    LoRaConfigurationRejection::Radio {
-                                                        operation: LoRaRadioConfigurationOperation::Initialize,
-                                                        previous: PreviousLoRaConfigurationRecovery::NotAttempted,
-                                                    },
-                                                ),
-                                            )
-                                            .await;
+                                                .complete(
+                                                    request.id,
+                                                    LoRaApplyOutcome::Rejected(
+                                                        LoRaConfigurationRejection::Radio {
+                                                            operation: LoRaRadioConfigurationOperation::Initialize,
+                                                            previous: PreviousLoRaConfigurationRecovery::NotAttempted,
+                                                        },
+                                                    ),
+                                                );
                                             continue;
                                         }
                                         if let Err(error) = radio.arm_rx().await {
@@ -1035,16 +1032,15 @@ impl<R: LoRaRadio> Interface for LoRaInterface<'_, R> {
                                                 LoRaRadioState::Unknown
                                             };
                                             control
-                                            .complete(
-                                                request.id,
-                                                LoRaApplyOutcome::Rejected(
-                                                    LoRaConfigurationRejection::Radio {
-                                                        operation: LoRaRadioConfigurationOperation::ArmReceive,
-                                                        previous: PreviousLoRaConfigurationRecovery::NotAttempted,
-                                                    },
-                                                ),
-                                            )
-                                            .await;
+                                                .complete(
+                                                    request.id,
+                                                    LoRaApplyOutcome::Rejected(
+                                                        LoRaConfigurationRejection::Radio {
+                                                            operation: LoRaRadioConfigurationOperation::ArmReceive,
+                                                            previous: PreviousLoRaConfigurationRecovery::NotAttempted,
+                                                        },
+                                                    ),
+                                                );
                                             continue;
                                         }
                                         radio_state = LoRaRadioState::Receiving;
@@ -1066,15 +1062,11 @@ impl<R: LoRaRadio> Interface for LoRaInterface<'_, R> {
                                     if matches!(radio_state, LoRaRadioState::Receiving) {
                                         status.set_connection(ConnectionState::Connected);
                                     }
-                                    control
-                                        .complete(request.id, LoRaApplyOutcome::Applied)
-                                        .await;
+                                    control.complete(request.id, LoRaApplyOutcome::Applied);
                                     break (requested, requested_duty);
                                 }
                                 LoRaConfigurationCommand::Clear => {
-                                    control
-                                        .complete(request.id, LoRaApplyOutcome::Applied)
-                                        .await;
+                                    control.complete(request.id, LoRaApplyOutcome::Applied);
                                 }
                             },
                             Either3::Second(_) => {
@@ -1207,16 +1199,14 @@ impl<R: LoRaRadio> Interface for LoRaInterface<'_, R> {
                                         )
                                         .await;
                                         if outcome.is_ok() {
-                                            control
-                                                .complete(request.id, LoRaApplyOutcome::Applied)
-                                                .await;
+                                            control.complete(request.id, LoRaApplyOutcome::Applied);
                                             configuration = LoRaRuntimeConfiguration::Unconfigured;
                                             continue 'configuration;
                                         }
                                         outcome
                                     }
                                 };
-                                control.complete(request.id, apply_outcome(outcome)).await;
+                                control.complete(request.id, apply_outcome(outcome));
                             }
                             Either3::Third(()) => {
                                 if let Err(error) = radio.idle().await {
@@ -1338,9 +1328,7 @@ impl<R: LoRaRadio> Interface for LoRaInterface<'_, R> {
                                     )
                                     .await;
                                     if outcome.is_ok() {
-                                        control
-                                            .complete(request.id, LoRaApplyOutcome::Applied)
-                                            .await;
+                                        control.complete(request.id, LoRaApplyOutcome::Applied);
                                         configuration = LoRaRuntimeConfiguration::Unconfigured;
                                         continue 'configuration;
                                     }
@@ -1362,7 +1350,7 @@ impl<R: LoRaRadio> Interface for LoRaInterface<'_, R> {
                                 duty_was_held = false;
                                 reported_deferrals = 0;
                             }
-                            control.complete(request.id, apply_outcome(outcome)).await;
+                            control.complete(request.id, apply_outcome(outcome));
                         }
                         Either5::Second(()) => continue,
                         Either5::Third(Ok(event)) => {
@@ -1742,9 +1730,7 @@ impl<R: LoRaRadio> Interface for LoRaInterface<'_, R> {
                                     )
                                     .await;
                                     if outcome.is_ok() {
-                                        control
-                                            .complete(request.id, LoRaApplyOutcome::Applied)
-                                            .await;
+                                        control.complete(request.id, LoRaApplyOutcome::Applied);
                                         configuration = LoRaRuntimeConfiguration::Unconfigured;
                                         continue 'configuration;
                                     }
@@ -1758,7 +1744,7 @@ impl<R: LoRaRadio> Interface for LoRaInterface<'_, R> {
                                 service_age.reset(profile);
                                 continuation = false;
                             }
-                            control.complete(request.id, apply_outcome(outcome)).await;
+                            control.complete(request.id, apply_outcome(outcome));
                         }
                         Either4::Second(()) => continue,
                         Either4::Third(Ok(event)) => {

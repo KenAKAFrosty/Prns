@@ -598,9 +598,17 @@ pub async fn run(spawner: Spawner) -> ! {
                             hopspot::UiAction::OpenSubGEditor => {
                                 ui_state.open_subg_editor(working_subg_configuration);
                             }
-                            hopspot::UiAction::SetSubGConfiguration(configuration) => {
+                            action @ (hopspot::UiAction::SetSubGConfiguration(_)
+                            | hopspot::UiAction::ClearSubGConfiguration) => {
                                 let previous = working_subg_configuration;
-                                let requested = SubGConfigurationState::Configured(configuration);
+                                let requested =
+                                    if let hopspot::UiAction::SetSubGConfiguration(configuration) =
+                                        action
+                                    {
+                                        SubGConfigurationState::Configured(configuration)
+                                    } else {
+                                        SubGConfigurationState::Unconfigured
+                                    };
                                 let result = hopspot::apply_and_persist_subg_configuration(
                                     || async {
                                         match LORA_CONTROL.apply_configuration(requested).await {
@@ -613,7 +621,15 @@ pub async fn run(spawner: Spawner) -> ! {
                                         }
                                     },
                                     || async {
-                                        match subg_configuration_store.save(configuration).await {
+                                        let outcome = match requested {
+                                            SubGConfigurationState::Configured(configuration) => {
+                                                subg_configuration_store.save(configuration).await
+                                            }
+                                            SubGConfigurationState::Unconfigured => {
+                                                subg_configuration_store.clear().await
+                                            }
+                                        };
+                                        match outcome {
                                             hopspot::SubGConfigurationCommitOutcome::Committed => {
                                                 hopspot::SubGConfigurationPersistenceOutcome::Committed
                                             }
@@ -642,58 +658,6 @@ pub async fn run(spawner: Spawner) -> ! {
                                     hopspot::ActiveSubGConfiguration::Requested
                                 ) {
                                     working_subg_configuration = requested;
-                                }
-                                show_notice(
-                                    &mut ui_state,
-                                    &mut notice_timer,
-                                    result.notice(),
-                                    NOTICE_DURATION,
-                                );
-                            }
-                            hopspot::UiAction::ClearSubGConfiguration => {
-                                let previous = working_subg_configuration;
-                                let result = hopspot::apply_and_persist_subg_configuration(
-                                    || async {
-                                        match LORA_CONTROL.clear().await {
-                                            LoRaApplyOutcome::Applied => {
-                                                hopspot::SubGConfigurationStepOutcome::Succeeded
-                                            }
-                                            LoRaApplyOutcome::Rejected(_) => {
-                                                hopspot::SubGConfigurationStepOutcome::Failed
-                                            }
-                                        }
-                                    },
-                                    || async {
-                                        match subg_configuration_store.clear().await {
-                                            hopspot::SubGConfigurationCommitOutcome::Committed => {
-                                                hopspot::SubGConfigurationPersistenceOutcome::Committed
-                                            }
-                                            hopspot::SubGConfigurationCommitOutcome::NotCommitted(_) => {
-                                                hopspot::SubGConfigurationPersistenceOutcome::NotCommitted
-                                            }
-                                            hopspot::SubGConfigurationCommitOutcome::Indeterminate(_) => {
-                                                hopspot::SubGConfigurationPersistenceOutcome::Indeterminate
-                                            }
-                                        }
-                                    },
-                                    || async {
-                                        match LORA_CONTROL.apply_configuration(previous).await {
-                                            LoRaApplyOutcome::Applied => {
-                                                hopspot::SubGConfigurationStepOutcome::Succeeded
-                                            }
-                                            LoRaApplyOutcome::Rejected(_) => {
-                                                hopspot::SubGConfigurationStepOutcome::Failed
-                                            }
-                                        }
-                                    },
-                                )
-                                .await;
-                                if matches!(
-                                    result.active_configuration(),
-                                    hopspot::ActiveSubGConfiguration::Requested
-                                ) {
-                                    working_subg_configuration =
-                                        SubGConfigurationState::Unconfigured;
                                 }
                                 show_notice(
                                     &mut ui_state,
