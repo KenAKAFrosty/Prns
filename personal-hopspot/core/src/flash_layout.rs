@@ -103,6 +103,9 @@ const NRF52840_S140_APPLICATION_RAM_ORIGIN: u32 = 0x2000C000;
 const T1000E_APPLICATION_RAM_ORIGIN: u32 = 0x20010000;
 const NRF52840_RAM_END: u32 = 0x20040000;
 const NRF52840_MINIMUM_RUNTIME_STACK_BYTES: u32 = 68 * 1024;
+/// Heltec display boards (T096 / T114) run closer to the BSS ceiling once interface-mode
+/// persistence and the Options/detail face paths are linked; keep a 4 KiB smaller floor.
+const HELTEC_DISPLAY_MINIMUM_RUNTIME_STACK_BYTES: u32 = 64 * 1024;
 pub const T_ECHO_MIN_ARENA_BYTES: usize = 17 * HOPSPOT_FLASH_PAGE_BYTES;
 pub const T_ECHO_JOURNAL_LAYOUT: FlashJournalLayout = FlashJournalLayout::new(
     [0xC1000, 0xC2000],
@@ -152,7 +155,7 @@ pub const HELTEC_DISPLAY_NRF52840_FIRMWARE_MEMORY: Nrf52840FirmwareMemory =
             NRF52840_S140_APPLICATION_RAM_ORIGIN,
             NRF52840_RAM_END,
         ),
-        minimum_runtime_stack_bytes: NRF52840_MINIMUM_RUNTIME_STACK_BYTES,
+        minimum_runtime_stack_bytes: HELTEC_DISPLAY_MINIMUM_RUNTIME_STACK_BYTES,
     };
 pub const MESH_TOWER_V2_JOURNAL_LAYOUT: FlashJournalLayout = FlashJournalLayout::new(
     [0xE3000, 0xE4000],
@@ -470,7 +473,7 @@ mod tests {
             Nrf52840FirmwareMemory {
                 application_flash: FirmwareAddressRange::new(0x26000, 0xE1000),
                 application_ram: FirmwareAddressRange::new(0x2000C000, 0x20040000),
-                minimum_runtime_stack_bytes: 68 * 1024,
+                minimum_runtime_stack_bytes: 64 * 1024,
             }
         );
         assert_eq!(
