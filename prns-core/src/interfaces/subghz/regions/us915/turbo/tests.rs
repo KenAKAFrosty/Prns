@@ -925,6 +925,7 @@ fn discontinuous_clock_update_reenters_quarantine() {
     );
 }
 
+#[cfg(feature = "std")]
 #[test]
 fn deterministic_contention_simulation_executes_the_production_state_machines() {
     let result = simulate_contention(
