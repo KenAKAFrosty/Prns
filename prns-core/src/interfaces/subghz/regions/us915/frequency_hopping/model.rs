@@ -36,6 +36,11 @@ impl MeasuredTwentyDbBandwidth {
     pub const fn hz(self) -> u32 {
         self.0
     }
+
+    pub(crate) const fn from_known_nonzero(hz: u32) -> Self {
+        assert!(hz != 0);
+        Self(hz)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,6 +68,12 @@ impl ChannelOccupancyLimit {
 
     pub const fn micros(self) -> u64 {
         self.0
+    }
+
+    pub(crate) const fn from_known_within_regulatory_maximum(micros: u64) -> Self {
+        assert!(micros != 0);
+        assert!(micros <= FCC_REGULATORY_MAXIMUM_CHANNEL_OCCUPANCY_US);
+        Self(micros)
     }
 }
 
@@ -238,6 +249,17 @@ impl Us915HoppingModel {
             measured_twenty_db_bandwidth,
             channel_occupancy_limit,
         })
+    }
+
+    pub(crate) const fn from_known_valid(
+        measured_twenty_db_bandwidth: MeasuredTwentyDbBandwidth,
+        channel_occupancy_limit: ChannelOccupancyLimit,
+    ) -> Self {
+        assert!(measured_twenty_db_bandwidth.hz() <= FCC_MAXIMUM_HOPPING_CHANNEL_BANDWIDTH_HZ);
+        Self {
+            measured_twenty_db_bandwidth,
+            channel_occupancy_limit,
+        }
     }
 
     pub const fn measured_twenty_db_bandwidth(self) -> MeasuredTwentyDbBandwidth {

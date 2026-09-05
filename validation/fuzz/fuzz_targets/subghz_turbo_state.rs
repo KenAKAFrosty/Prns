@@ -10,7 +10,7 @@ use prns_core::interfaces::subghz::regions::us915::turbo::{
     DatagramId, MaximumTransmitUncertainty, MonotonicMicros, ReassemblyLifetime, ScheduleMicros,
     TransmissionTimingBudget, TrustedScheduleClock, TrustedTimeSource, TurboHardwareSupport,
     TurboReassembler, TurboTransmitterInstanceId, Us915TurboConfiguration, Us915TurboTransmitter,
-    UtcTimescale, TURBO_CHANNEL_COUNT, US915_TURBO_PHY,
+    UtcTimescale, TURBO_CHANNEL_COUNT, US915_TURBO_SPEC,
 };
 use prns_core::interfaces::subghz::{
     ChannelAssessmentPolicy, ChannelNoiseFloorBank, ChannelSample,
@@ -48,17 +48,16 @@ fuzz_target!(|bytes: &[u8]| {
         let mut padded = [0u8; 8];
         padded[..chunk.len()].copy_from_slice(chunk);
         let received_at = u64::from_le_bytes(padded);
-        let cycle =
-            prns_core::interfaces::subghz::regions::us915::turbo::supercycle_cycle_at(received_at);
+        let schedule_slot = US915_TURBO_SPEC.slot_at(ScheduleMicros::new(received_at));
+        let cycle = schedule_slot.cycle();
         let beacon =
             AcquisitionBeacon::from_entropy(cycle, u16::from_le_bytes([padded[0], padded[1]]));
-        let channel =
-            prns_core::interfaces::subghz::regions::us915::turbo::channel_index_at(received_at);
+        let channel = schedule_slot.channel_index().index();
         let _ = tracker.observe(AcquisitionObservation::from_beacon(
             MonotonicMicros::new(received_at),
             channel,
             beacon,
-            US915_TURBO_PHY,
+            US915_TURBO_SPEC.phy(),
             u64::from(padded[2]) + 1,
         ));
     }
@@ -106,7 +105,10 @@ fuzz_target!(|bytes: &[u8]| {
 
     for (index, chunk) in bytes.chunks(32).enumerate().take(64) {
         let now = 10_100_000u64.saturating_add(index as u64 * 400_000);
-        let channel = prns_core::interfaces::subghz::regions::us915::turbo::channel_index_at(now);
+        let channel = US915_TURBO_SPEC
+            .slot_at(ScheduleMicros::new(now))
+            .channel_index()
+            .index();
         let mut access = ChannelAccess::begin(
             ContentionPolicy::turbo(),
             channel,

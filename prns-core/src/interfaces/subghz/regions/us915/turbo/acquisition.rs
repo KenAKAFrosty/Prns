@@ -1,9 +1,7 @@
 use super::clock::{AcquiredReceivePhase, ClockError, ScheduleMicros};
 use super::profile::TurboPhyProfile;
-use super::schedule::{
-    channel_index_at, slot_position_for_channel, TURBO_CHANNEL_COUNT, TURBO_CYCLE_US,
-    TURBO_SLOT_US, TURBO_SUPERCYCLE_US,
-};
+use super::schedule::TurboChannelIndex;
+use super::spec::{TURBO_CHANNEL_COUNT, US915_TURBO_SPEC};
 use super::AcquisitionBeacon;
 use crate::interfaces::subghz::MonotonicMicros;
 
@@ -89,7 +87,7 @@ impl AcquisitionTracker {
                 channel_index: observation.channel_index,
             });
         }
-        if observation.completion_offset_us >= TURBO_SLOT_US {
+        if observation.completion_offset_us >= US915_TURBO_SPEC.slot_us() {
             return Err(AcquisitionTrackerError::CompletionOutsideSlot {
                 completion_offset_us: observation.completion_offset_us,
             });
@@ -97,12 +95,16 @@ impl AcquisitionTracker {
         if observation.timing_uncertainty_us == 0 {
             return Err(AcquisitionTrackerError::EmptyTimingUncertainty);
         }
-        let position = slot_position_for_channel(observation.cycle, observation.channel_index)
-            .map_err(|_| AcquisitionTrackerError::ChannelOutsideHopSet {
+        let channel_index = TurboChannelIndex::new(observation.channel_index).map_err(|_| {
+            AcquisitionTrackerError::ChannelOutsideHopSet {
                 channel_index: observation.channel_index,
-            })?;
-        let observed_phase_us = observation.cycle.index() as u64 * TURBO_CYCLE_US
-            + position as u64 * TURBO_SLOT_US
+            }
+        })?;
+        let position = US915_TURBO_SPEC
+            .slot_position_for_channel(observation.cycle, channel_index)
+            .index();
+        let observed_phase_us = observation.cycle.index() as u64 * US915_TURBO_SPEC.cycle_us()
+            + position as u64 * US915_TURBO_SPEC.slot_us()
             + observation.completion_offset_us;
 
         let Some(previous) = self.estimate else {
@@ -163,12 +165,16 @@ impl AcquisitionTracker {
         let predicted = estimate
             .window_at(received_at)
             .map_err(AcquisitionTrackerError::Clock)?;
-        let earliest_channel = channel_index_at(predicted.earliest_schedule_us());
-        let latest_channel = channel_index_at(predicted.latest_schedule_us());
+        let earliest_channel = US915_TURBO_SPEC
+            .slot_at(ScheduleMicros::new(predicted.earliest_schedule_us()))
+            .channel_index();
+        let latest_channel = US915_TURBO_SPEC
+            .slot_at(ScheduleMicros::new(predicted.latest_schedule_us()))
+            .channel_index();
         if earliest_channel != latest_channel {
             return Ok(AcquisitionCorroboration::ClockWindowCrossesChannelBoundary);
         }
-        if earliest_channel == channel_index {
+        if earliest_channel.index() == channel_index {
             Ok(AcquisitionCorroboration::Consistent)
         } else {
             Ok(AcquisitionCorroboration::Contradiction)
@@ -201,10 +207,11 @@ impl AcquisitionTracker {
 }
 
 fn align_phase_near(phase_us: u64, target_us: u64) -> u64 {
-    let base = target_us / TURBO_SUPERCYCLE_US * TURBO_SUPERCYCLE_US;
+    let supercycle_us = US915_TURBO_SPEC.supercycle_us();
+    let base = target_us / supercycle_us * supercycle_us;
     let candidate = base.saturating_add(phase_us);
-    let lower = candidate.saturating_sub(TURBO_SUPERCYCLE_US);
-    let upper = candidate.saturating_add(TURBO_SUPERCYCLE_US);
+    let lower = candidate.saturating_sub(supercycle_us);
+    let upper = candidate.saturating_add(supercycle_us);
     [lower, candidate, upper]
         .into_iter()
         .min_by_key(|value| value.abs_diff(target_us))

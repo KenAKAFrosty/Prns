@@ -1,10 +1,10 @@
 use super::{
-    acquisition_beacon_listen_window_us, channel_index_at, AcquisitionBeacon, CapabilitySupport,
-    ChannelAccess, ChannelAccessAction, ChannelAccessEvent, ContentionClass, ContentionPolicy,
-    DatagramId, MaximumTransmitUncertainty, ScheduleMicros, TransmissionTimingBudget,
-    TrustedScheduleClock, TrustedTimeSource, TurboHardwareSupport, TurboPhyProfile,
-    TurboProfileError, Us915TurboConfiguration, Us915TurboTransmitter, UtcTimescale,
-    TURBO_CHANNEL_COUNT, TURBO_LOGICAL_PACKET_MAX, TURBO_SCAN_STRIDE, TURBO_SLOT_US,
+    acquisition_beacon_listen_window_us, AcquisitionBeacon, CapabilitySupport, ChannelAccess,
+    ChannelAccessAction, ChannelAccessEvent, ContentionClass, ContentionPolicy, DatagramId,
+    MaximumTransmitUncertainty, ScheduleMicros, TransmissionTimingBudget, TrustedScheduleClock,
+    TrustedTimeSource, TurboGlobalSlot, TurboHardwareSupport, TurboPhyProfile, TurboProfileError,
+    Us915TurboConfiguration, Us915TurboTransmitter, UtcTimescale, TURBO_CHANNEL_COUNT,
+    TURBO_LOGICAL_PACKET_MAX, US915_TURBO_SPEC,
 };
 use crate::interfaces::subghz::regions::us915::frequency_hopping::{
     AntennaGainDeciDb, ConductedPowerDbm, MeasuredTwentyDbBandwidth, Us915PowerInputs,
@@ -188,7 +188,7 @@ pub fn simulate_acquisition(
     for _ in 0..input.trials {
         let scan_origin = rng.next_u64() % input.scanner_dwell_us;
         let scan_channel = rng.next_u64() as usize % TURBO_CHANNEL_COUNT;
-        let schedule_origin = rng.next_u64() % TURBO_SLOT_US;
+        let schedule_origin = rng.next_u64() % US915_TURBO_SPEC.slot_us();
         let mut observed_channels = [false; TURBO_CHANNEL_COUNT];
         let mut observations = 0u8;
         let mut beacon_cycle = 0u64;
@@ -199,10 +199,17 @@ pub fn simulate_acquisition(
             let global_slot = beacon_cycle
                 .saturating_mul(TURBO_CHANNEL_COUNT as u64)
                 .saturating_add(candidate_position);
-            let cycle = super::supercycle_cycle_at(global_slot.saturating_mul(TURBO_SLOT_US));
+            let Ok(global_slot) = TurboGlobalSlot::new(global_slot) else {
+                break None;
+            };
+            let cycle = US915_TURBO_SPEC.slot_for_global_slot(global_slot).cycle();
             let beacon = AcquisitionBeacon::from_entropy(cycle, rng.next_u16());
             let completion = schedule_origin
-                .saturating_add(global_slot.saturating_mul(TURBO_SLOT_US))
+                .saturating_add(
+                    global_slot
+                        .index()
+                        .saturating_mul(US915_TURBO_SPEC.slot_us()),
+                )
                 .saturating_add(beacon.completes_at_slot_offset_us(profile));
             if completion > input.maximum_search_us {
                 break None;
@@ -212,7 +219,12 @@ pub fn simulate_acquisition(
             if beacon_available {
                 beacons_transmitted = beacons_transmitted.saturating_add(1);
             }
-            let schedule_channel = channel_index_at(completion.saturating_sub(schedule_origin));
+            let schedule_channel = US915_TURBO_SPEC
+                .slot_at(ScheduleMicros::new(
+                    completion.saturating_sub(schedule_origin),
+                ))
+                .channel_index()
+                .index();
             let (listening_channel, received_without_retune) = if observations == 0 {
                 let beacon_start = completion.saturating_sub(beacon_airtime_us);
                 let scan_step_at_start =
@@ -221,7 +233,7 @@ pub fn simulate_acquisition(
                     / input.scanner_dwell_us;
                 trial_retunes = scan_step_at_end;
                 (
-                    (scan_channel + scan_step_at_start as usize * TURBO_SCAN_STRIDE)
+                    (scan_channel + scan_step_at_start as usize * US915_TURBO_SPEC.scan_stride())
                         % TURBO_CHANNEL_COUNT,
                     scan_step_at_start == scan_step_at_end,
                 )
@@ -266,7 +278,7 @@ pub fn simulate_acquisition(
         .saturating_mul(1_000_000)
         .div_ceil(
             considered_beacon_slots
-                .saturating_mul(super::TURBO_CYCLE_US)
+                .saturating_mul(US915_TURBO_SPEC.cycle_us())
                 .max(1),
         )
         .min(1_000_000) as u32;
@@ -371,9 +383,13 @@ pub fn simulate_contention(
         if remaining.iter().all(|queued| *queued == 0) {
             break;
         }
-        let slot_origin_us = 10_000_000u64.saturating_add(u64::from(round) * TURBO_SLOT_US);
+        let slot_origin_us =
+            10_000_000u64.saturating_add(u64::from(round) * US915_TURBO_SPEC.slot_us());
         let access_begins_us = slot_origin_us.saturating_add(5_000);
-        let channel = channel_index_at(access_begins_us);
+        let channel = US915_TURBO_SPEC
+            .slot_at(ScheduleMicros::new(access_begins_us))
+            .channel_index()
+            .index();
         let mut grants = std::vec::Vec::new();
         for (node, queued) in remaining.iter().copied().enumerate() {
             if queued == 0 {

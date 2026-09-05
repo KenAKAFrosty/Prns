@@ -21,6 +21,20 @@ fn timing() -> TransmissionTimingBudget {
     TransmissionTimingBudget::new(1_000, 500, 1_000, 250, 1_000).unwrap()
 }
 
+fn scheduled_channel(schedule_us: u64) -> usize {
+    US915_TURBO_SPEC
+        .slot_at(ScheduleMicros::new(schedule_us))
+        .channel_index()
+        .index()
+}
+
+fn global_slot_channel(global_slot: u64) -> usize {
+    US915_TURBO_SPEC
+        .slot_for_global_slot(TurboGlobalSlot::new(global_slot).unwrap())
+        .channel_index()
+        .index()
+}
+
 fn hardware_support() -> TurboHardwareSupport {
     TurboHardwareSupport {
         bit_rate: CapabilitySupport::Supported,
@@ -95,29 +109,46 @@ fn final_clear_grant(channel_index: usize, issued_at: u64) -> FinalClearGrant {
 
 #[test]
 fn us915_turbo_profile_fully_names_the_phy() {
-    assert_eq!(US915_TURBO_PHY.validate(), Ok(()));
-    assert_eq!(US915_TURBO_PHY.bit_rate().bps(), 250_000);
-    assert_eq!(US915_TURBO_PHY.frequency_deviation().hz(), 62_500);
-    assert_eq!(US915_TURBO_PHY.receiver_bandwidth().hz(), 467_000);
-    assert_eq!(US915_TURBO_PHY.modulation_index(), ModulationIndex::Half);
-    assert_eq!(US915_TURBO_PHY.sync_word(), *b"PRNS");
+    let profile = US915_TURBO_SPEC.phy();
+    assert_eq!(profile.validate(), Ok(()));
+    assert_eq!(profile.bit_rate().bps(), 250_000);
+    assert_eq!(profile.frequency_deviation().hz(), 62_500);
+    assert_eq!(profile.receiver_bandwidth().hz(), 467_000);
+    assert_eq!(profile.modulation_index(), ModulationIndex::Half);
+    assert_eq!(profile.sync_word(), *b"PRNS");
     assert_eq!(
-        US915_TURBO_PHY.data_whitening(),
+        profile.data_whitening(),
         DataWhitening::Pn9 {
             polynomial: 0x021,
             seed: 0x1ff,
         }
     );
     assert_eq!(
-        US915_TURBO_PHY.packet_crc(),
+        profile.packet_crc(),
         PacketCrc::CcittFalse {
             polynomial: 0x1021,
             initial: 0xffff,
             xor_out: 0,
         }
     );
-    assert_eq!(US915_TURBO_PHY.time_on_air_us(255), 8_512);
-    assert_eq!(US915_TURBO_PHY.logical_packet_airtime_us(500), 17_024);
+    assert_eq!(profile.time_on_air_us(255), 8_512);
+    assert_eq!(profile.logical_packet_airtime_us(500), 17_024);
+}
+
+#[test]
+fn us915_turbo_spec_owns_the_complete_schedule_contract() {
+    assert_eq!(US915_TURBO_SPEC.channels().len(), 51);
+    assert_eq!(US915_TURBO_SPEC.slot_us(), 400_000);
+    assert_eq!(US915_TURBO_SPEC.cycle_us(), 20_400_000);
+    assert_eq!(US915_TURBO_SPEC.supercycle_slots(), 2_601);
+    assert_eq!(US915_TURBO_SPEC.supercycle_us(), 1_040_400_000);
+    assert_eq!(US915_TURBO_SPEC.occupancy_window_us(), 10_000_000);
+    assert_eq!(US915_TURBO_SPEC.channel_occupancy_budget_us(), 390_000);
+    assert_eq!(US915_TURBO_SPEC.minimum_measured_bandwidth_hz(), 250_000);
+    assert_eq!(US915_TURBO_SPEC.maximum_measured_bandwidth_hz(), 500_000);
+    assert_eq!(US915_TURBO_SPEC.boot_quarantine_us(), 10_000_000);
+    assert_eq!(US915_TURBO_SPEC.scan_stride(), 7);
+    assert_eq!(US915_TURBO_SPEC.scan_dwell_us(), 341_000);
 }
 
 #[test]
@@ -139,13 +170,113 @@ fn unsupported_hardware_cannot_construct_a_transmitter() {
 }
 
 #[test]
+fn utc_schedule_has_stable_epoch_and_boundary_vectors() {
+    let first = US915_TURBO_SPEC.slot_at(ScheduleMicros::new(0));
+    assert_eq!(first.global_slot(), TurboGlobalSlot::new(0).unwrap());
+    assert_eq!(first.supercycle(), 0);
+    assert_eq!(first.cycle(), SupercycleCycle::new(0).unwrap());
+    assert_eq!(first.position().index(), 0);
+    assert_eq!(first.channel_index(), TurboChannelIndex::new(23).unwrap());
+    assert_eq!(first.frequency(), US915_TURBO_SPEC.channels()[23]);
+    assert_eq!(first.starts_at(), ScheduleMicros::new(0));
+    assert_eq!(first.offset_us(), 0);
+    assert_eq!(first.remaining_us(), US915_TURBO_SPEC.slot_us());
+
+    let final_microsecond =
+        US915_TURBO_SPEC.slot_at(ScheduleMicros::new(US915_TURBO_SPEC.slot_us() - 1));
+    assert_eq!(final_microsecond.global_slot(), first.global_slot());
+    assert_eq!(final_microsecond.channel_index(), first.channel_index());
+    assert_eq!(
+        final_microsecond.offset_us(),
+        US915_TURBO_SPEC.slot_us() - 1
+    );
+    assert_eq!(final_microsecond.remaining_us(), 1);
+
+    let second = US915_TURBO_SPEC.slot_at(ScheduleMicros::new(US915_TURBO_SPEC.slot_us()));
+    assert_eq!(second.global_slot(), TurboGlobalSlot::new(1).unwrap());
+    assert_eq!(second.position().index(), 1);
+    assert_eq!(second.channel_index(), TurboChannelIndex::new(35).unwrap());
+    assert_eq!(
+        second.starts_at(),
+        ScheduleMicros::new(US915_TURBO_SPEC.slot_us())
+    );
+    assert_eq!(second.offset_us(), 0);
+
+    let next_cycle = US915_TURBO_SPEC.slot_at(ScheduleMicros::new(US915_TURBO_SPEC.cycle_us()));
+    assert_eq!(next_cycle.global_slot(), TurboGlobalSlot::new(51).unwrap());
+    assert_eq!(next_cycle.cycle(), SupercycleCycle::new(1).unwrap());
+    assert_eq!(next_cycle.position().index(), 0);
+    assert_eq!(
+        next_cycle.channel_index(),
+        TurboChannelIndex::new(35).unwrap()
+    );
+
+    let next_supercycle =
+        US915_TURBO_SPEC.slot_at(ScheduleMicros::new(US915_TURBO_SPEC.supercycle_us()));
+    assert_eq!(next_supercycle.supercycle(), 1);
+    assert_eq!(next_supercycle.cycle(), first.cycle());
+    assert_eq!(next_supercycle.position(), first.position());
+    assert_eq!(next_supercycle.channel_index(), first.channel_index());
+}
+
+#[test]
+fn largest_representable_schedule_time_remains_a_valid_slot() {
+    let slot = US915_TURBO_SPEC.slot_at(ScheduleMicros::new(u64::MAX));
+    assert_eq!(
+        slot.starts_at().micros().checked_add(slot.offset_us()),
+        Some(u64::MAX)
+    );
+    assert!(slot.offset_us() < US915_TURBO_SPEC.slot_us());
+    assert!((1..=US915_TURBO_SPEC.slot_us()).contains(&slot.remaining_us()));
+    assert_eq!(
+        slot.offset_us().checked_add(slot.remaining_us()),
+        Some(US915_TURBO_SPEC.slot_us())
+    );
+    assert!(slot.channel_index().index() < TURBO_CHANNEL_COUNT);
+}
+
+#[test]
+fn typed_global_slots_reject_unrepresentable_start_times() {
+    let maximum_index = u64::MAX / US915_TURBO_SPEC.slot_us();
+    let maximum_slot = TurboGlobalSlot::new(maximum_index).unwrap();
+    assert_eq!(
+        US915_TURBO_SPEC
+            .slot_for_global_slot(maximum_slot)
+            .starts_at(),
+        ScheduleMicros::new(maximum_index * US915_TURBO_SPEC.slot_us())
+    );
+    assert_eq!(
+        TurboGlobalSlot::new(maximum_index + 1),
+        Err(TurboGlobalSlotError::OutsideScheduleRange {
+            index: maximum_index + 1,
+            maximum_index,
+        })
+    );
+}
+
+#[test]
+fn typed_channel_indices_reject_values_outside_the_hop_set() {
+    assert_eq!(
+        TurboChannelIndex::new(TURBO_CHANNEL_COUNT),
+        Err(ChannelLookupError::OutsideHopSet {
+            channel_index: TURBO_CHANNEL_COUNT,
+        })
+    );
+    assert_eq!(
+        TurboChannelIndex::new(usize::MAX),
+        Err(ChannelLookupError::OutsideHopSet {
+            channel_index: usize::MAX,
+        })
+    );
+}
+
+#[test]
 fn supercycle_is_balanced_and_spread_across_cycle_boundaries() {
     assert_eq!(TURBO_CHANNEL_COUNT, 51);
     for cycle in 0..TURBO_CHANNEL_COUNT as u64 {
         let mut seen = [false; TURBO_CHANNEL_COUNT];
         for position in 0..TURBO_CHANNEL_COUNT as u64 {
-            let channel =
-                channel_index_for_global_slot(cycle * TURBO_CHANNEL_COUNT as u64 + position);
+            let channel = global_slot_channel(cycle * TURBO_CHANNEL_COUNT as u64 + position);
             assert!(!seen[channel]);
             seen[channel] = true;
         }
@@ -154,28 +285,36 @@ fn supercycle_is_balanced_and_spread_across_cycle_boundaries() {
     for position in 0..TURBO_CHANNEL_COUNT as u64 {
         let mut seen = [false; TURBO_CHANNEL_COUNT];
         for cycle in 0..TURBO_CHANNEL_COUNT as u64 {
-            seen[channel_index_for_global_slot(cycle * TURBO_CHANNEL_COUNT as u64 + position)] =
-                true;
+            seen[global_slot_channel(cycle * TURBO_CHANNEL_COUNT as u64 + position)] = true;
         }
         assert_eq!(seen, [true; TURBO_CHANNEL_COUNT]);
     }
-    for global_slot in 0..TURBO_SUPERCYCLE_SLOTS {
-        let current = channel_index_for_global_slot(global_slot);
-        let next = channel_index_for_global_slot((global_slot + 1) % TURBO_SUPERCYCLE_SLOTS);
+    for global_slot in 0..US915_TURBO_SPEC.supercycle_slots() {
+        let current = global_slot_channel(global_slot);
+        let next = global_slot_channel((global_slot + 1) % US915_TURBO_SPEC.supercycle_slots());
         assert!(current.abs_diff(next) >= 12);
     }
-    assert_ne!(channel_index_at(0), channel_index_at(TURBO_CYCLE_US));
-    assert_eq!(channel_index_at(0), channel_index_at(TURBO_SUPERCYCLE_US));
+    assert_ne!(
+        scheduled_channel(0),
+        scheduled_channel(US915_TURBO_SPEC.cycle_us())
+    );
+    assert_eq!(
+        scheduled_channel(0),
+        scheduled_channel(US915_TURBO_SPEC.supercycle_us())
+    );
 }
 
 #[test]
 fn every_frequency_revisit_is_outside_the_ten_second_occupancy_window() {
     let mut previous = [None; TURBO_CHANNEL_COUNT];
-    for global_slot in 0..=TURBO_SUPERCYCLE_SLOTS {
-        let channel = channel_index_for_global_slot(global_slot);
+    for global_slot in 0..=US915_TURBO_SPEC.supercycle_slots() {
+        let channel = global_slot_channel(global_slot);
         if let Some(previous_slot) = previous[channel] {
             assert!(global_slot - previous_slot >= 50);
-            assert!((global_slot - previous_slot) * TURBO_SLOT_US >= 20_000_000);
+            assert!(
+                (global_slot - previous_slot) * US915_TURBO_SPEC.slot_us()
+                    >= US915_TURBO_SPEC.occupancy_window_us()
+            );
         }
         previous[channel] = Some(global_slot);
     }
@@ -183,22 +322,28 @@ fn every_frequency_revisit_is_outside_the_ten_second_occupancy_window() {
 
 #[test]
 fn turbo_channel_centers_retain_band_edge_guard() {
-    for (index, frequency) in US915_TURBO_CHANNELS.into_iter().enumerate() {
+    for (index, frequency) in US915_TURBO_SPEC.channels().iter().enumerate() {
         assert_eq!(frequency.hz(), 902_500_000 + index as u32 * 500_000);
     }
-    assert_eq!(US915_TURBO_CHANNELS[0].hz(), 902_500_000);
-    assert_eq!(US915_TURBO_CHANNELS[50].hz(), 927_500_000);
+    assert_eq!(US915_TURBO_SPEC.channels()[0].hz(), 902_500_000);
+    assert_eq!(US915_TURBO_SPEC.channels()[50].hz(), 927_500_000);
 }
 
 #[test]
 fn scanner_stride_visits_every_channel_without_slot_lockstep() {
     let mut seen = [false; TURBO_CHANNEL_COUNT];
     for step in 0..TURBO_CHANNEL_COUNT {
-        seen[step * TURBO_SCAN_STRIDE % TURBO_CHANNEL_COUNT] = true;
+        seen[step * US915_TURBO_SPEC.scan_stride() % TURBO_CHANNEL_COUNT] = true;
     }
     assert_eq!(seen, [true; TURBO_CHANNEL_COUNT]);
-    assert_ne!(TURBO_SLOT_US % TURBO_SCAN_DWELL_US, 0);
-    assert_ne!(TURBO_SCAN_DWELL_US % TURBO_SLOT_US, 0);
+    assert_ne!(
+        US915_TURBO_SPEC.slot_us() % US915_TURBO_SPEC.scan_dwell_us(),
+        0
+    );
+    assert_ne!(
+        US915_TURBO_SPEC.scan_dwell_us() % US915_TURBO_SPEC.slot_us(),
+        0
+    );
 }
 
 #[test]
@@ -295,14 +440,14 @@ fn acquisition_evidence_never_becomes_transmit_authority() {
         let cycle = SupercycleCycle::new(cycle_index).unwrap();
         let beacon = AcquisitionBeacon::new(cycle, 0).unwrap();
         let global_slot = u64::from(cycle_index) * TURBO_CHANNEL_COUNT as u64;
-        let received_at =
-            global_slot * TURBO_SLOT_US + beacon.completes_at_slot_offset_us(US915_TURBO_PHY);
+        let received_at = global_slot * US915_TURBO_SPEC.slot_us()
+            + beacon.completes_at_slot_offset_us(US915_TURBO_SPEC.phy());
         let outcome = tracker
             .observe(AcquisitionObservation::from_beacon(
                 MonotonicMicros::new(received_at),
-                channel_index_for_global_slot(global_slot),
+                global_slot_channel(global_slot),
                 beacon,
-                US915_TURBO_PHY,
+                US915_TURBO_SPEC.phy(),
                 500,
             ))
             .unwrap();
@@ -345,7 +490,7 @@ fn acquisition_beacons_are_bounded_to_one_attempt_after_a_quiet_cycle() {
 #[test]
 fn contention_grant_is_bound_to_channel_and_final_clear_instant() {
     let now = 10_100_000;
-    let channel = channel_index_at(now);
+    let channel = scheduled_channel(now);
     let grant = final_clear_grant(channel, now);
     let mut transmitter = transmitter();
     let prepared = transmitter
@@ -356,7 +501,10 @@ fn contention_grant_is_bound_to_channel_and_final_clear_instant() {
             &[9; 500],
         )
         .unwrap();
-    assert_eq!(prepared.channel_index(), channel);
+    assert_eq!(
+        prepared.channel_index(),
+        TurboChannelIndex::new(channel).unwrap()
+    );
     assert_eq!(prepared.keyed_airtime_us(), 17_024);
     assert_eq!(prepared.power().dbm(), 28);
 }
@@ -364,7 +512,7 @@ fn contention_grant_is_bound_to_channel_and_final_clear_instant() {
 #[test]
 fn stale_or_wrong_channel_clearance_cannot_reserve_rf() {
     let now = 10_100_000;
-    let channel = channel_index_at(now);
+    let channel = scheduled_channel(now);
     let mut stale = transmitter();
     assert!(matches!(
         stale.prepare_after_final_clear(
@@ -396,7 +544,7 @@ fn stale_or_wrong_channel_clearance_cannot_reserve_rf() {
 #[test]
 fn prepared_capabilities_are_bound_to_their_transmitter_instance() {
     let now = 10_100_000;
-    let channel = channel_index_at(now);
+    let channel = scheduled_channel(now);
     let mut first = transmitter();
     let mut second = Us915TurboTransmitter::new(
         MonotonicMicros::new(0),
@@ -432,7 +580,7 @@ fn prepared_capabilities_are_bound_to_their_transmitter_instance() {
 #[test]
 fn transmitter_reserves_before_rf_and_accounts_failed_delivery_as_keyed_airtime() {
     let now = 10_100_000;
-    let channel = channel_index_at(now);
+    let channel = scheduled_channel(now);
     let mut transmitter = transmitter();
     let prepared = transmitter
         .prepare_after_final_clear(
@@ -461,7 +609,7 @@ fn transmitter_reserves_before_rf_and_accounts_failed_delivery_as_keyed_airtime(
 #[test]
 fn actual_airtime_overrun_is_accounted_and_faults_closed() {
     let now = 10_100_000;
-    let channel = channel_index_at(now);
+    let channel = scheduled_channel(now);
     let mut transmitter = transmitter();
     let prepared = transmitter
         .prepare_after_final_clear(
@@ -498,7 +646,7 @@ fn actual_airtime_overrun_is_accounted_and_faults_closed() {
 #[test]
 fn abort_before_rf_releases_both_occupancy_and_balance_reservations() {
     let now = 10_100_000;
-    let channel = channel_index_at(now);
+    let channel = scheduled_channel(now);
     let mut transmitter = transmitter();
     let prepared = transmitter
         .prepare_after_final_clear(
@@ -554,7 +702,7 @@ fn deterministic_contention_simulation_executes_the_production_state_machines() 
             rounds: 256,
             packet_loss_per_mille: 100,
         },
-        US915_TURBO_PHY,
+        US915_TURBO_SPEC.phy(),
     )
     .unwrap();
     assert!(result.delivered_packets > 0);
@@ -567,8 +715,8 @@ proptest! {
 
     #[test]
     fn schedule_repeats_only_after_the_complete_supercycle(schedule_us in any::<u64>()) {
-        if let Some(next_supercycle) = schedule_us.checked_add(TURBO_SUPERCYCLE_US) {
-            prop_assert_eq!(channel_index_at(schedule_us), channel_index_at(next_supercycle));
+        if let Some(next_supercycle) = schedule_us.checked_add(US915_TURBO_SPEC.supercycle_us()) {
+            prop_assert_eq!(scheduled_channel(schedule_us), scheduled_channel(next_supercycle));
         }
     }
 

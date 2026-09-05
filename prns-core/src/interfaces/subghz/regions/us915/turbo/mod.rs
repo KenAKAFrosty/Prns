@@ -8,6 +8,7 @@ mod profile;
 mod schedule;
 #[cfg(feature = "std")]
 mod simulation;
+mod spec;
 mod transmission;
 
 pub use crate::interfaces::subghz::MonotonicMicros;
@@ -43,15 +44,12 @@ pub use profile::{
     BitRate, CapabilitySupport, DataWhitening, FrequencyDeviation, GaussianFilter, ModulationIndex,
     PacketCrc, PacketMode, ReceiverBandwidth, TurboHardwareSupport, TurboPhyCapability,
     TurboPhyProfile, TurboProfileError, TURBO_AIR_FRAME_MAX, TURBO_DATA_HEADER_BYTES,
-    TURBO_FRAME_DATA_MAX, TURBO_LOGICAL_PACKET_MAX, US915_TURBO_PHY,
+    TURBO_FRAME_DATA_MAX, TURBO_LOGICAL_PACKET_MAX,
 };
 pub use schedule::{
-    channel_index_at, channel_index_for_global_slot, global_slot_at, slot_position_for_channel,
-    supercycle_cycle_at, ChannelLookupError, OpportunityRejection, SupercycleCycle,
-    SupercycleCycleError, TransmissionTimingBudget, TransmissionTimingBudgetError,
-    TurboOpportunity, TURBO_BOOT_QUARANTINE_US, TURBO_CHANNEL_COUNT, TURBO_CHANNEL_ORDER,
-    TURBO_CYCLE_US, TURBO_OCCUPANCY_LIMIT_US, TURBO_SCAN_DWELL_US, TURBO_SCAN_STRIDE,
-    TURBO_SLOT_US, TURBO_SUPERCYCLE_SLOTS, TURBO_SUPERCYCLE_US, US915_TURBO_CHANNELS,
+    ChannelLookupError, OpportunityRejection, SupercycleCycle, SupercycleCycleError,
+    TransmissionTimingBudget, TransmissionTimingBudgetError, TurboChannelIndex, TurboGlobalSlot,
+    TurboGlobalSlotError, TurboOpportunity, TurboScheduleSlot, TurboSlotPosition,
 };
 #[cfg(feature = "std")]
 pub use simulation::{
@@ -60,6 +58,7 @@ pub use simulation::{
     ContentionSimulationError, ContentionSimulationResult, LinkSimulation, LinkSimulationError,
     LinkSimulationResult, PositionMeters, PropagationModel, PropagationModelError,
 };
+pub use spec::{Us915TurboSpec, TURBO_CHANNEL_COUNT, US915_TURBO_SPEC};
 pub use transmission::{
     ActiveTurboTransmission, ClockUpdateDisposition, MaximumTransmitUncertainty,
     MaximumTransmitUncertaintyError, PreparedTurboTransmission, TurboFault, TurboTransmissionError,

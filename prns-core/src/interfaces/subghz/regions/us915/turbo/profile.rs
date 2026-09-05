@@ -262,7 +262,7 @@ impl TurboPhyProfile {
     }
 }
 
-pub const US915_TURBO_PHY: TurboPhyProfile = TurboPhyProfile {
+pub(super) const US915_TURBO_PHY: TurboPhyProfile = TurboPhyProfile {
     bit_rate: BitRate(250_000),
     frequency_deviation: FrequencyDeviation(62_500),
     receiver_bandwidth: ReceiverBandwidth(467_000),

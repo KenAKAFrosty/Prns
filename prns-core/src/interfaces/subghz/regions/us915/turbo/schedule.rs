@@ -1,35 +1,8 @@
-use super::clock::ClockWindow;
+use super::clock::{ClockWindow, ScheduleMicros};
 use super::frame::EncodedDatagram;
 use super::profile::TurboPhyProfile;
+use super::spec::{Us915TurboSpec, TURBO_CHANNEL_COUNT, US915_TURBO_SPEC};
 use crate::interfaces::subghz::Frequency;
-
-pub const TURBO_CHANNEL_COUNT: usize = 51;
-pub const TURBO_SLOT_US: u64 = 400_000;
-pub const TURBO_CYCLE_US: u64 = TURBO_SLOT_US * TURBO_CHANNEL_COUNT as u64;
-pub const TURBO_SUPERCYCLE_SLOTS: u64 = TURBO_CHANNEL_COUNT as u64 * TURBO_CHANNEL_COUNT as u64;
-pub const TURBO_SUPERCYCLE_US: u64 = TURBO_SLOT_US * TURBO_SUPERCYCLE_SLOTS;
-pub const TURBO_OCCUPANCY_LIMIT_US: u64 = 390_000;
-pub const TURBO_BOOT_QUARANTINE_US: u64 = 10_000_000;
-pub const TURBO_SCAN_STRIDE: usize = 7;
-pub const TURBO_SCAN_DWELL_US: u64 = 341_000;
-
-pub const US915_TURBO_CHANNELS: [Frequency; TURBO_CHANNEL_COUNT] = channels();
-
-pub const TURBO_CHANNEL_ORDER: [u8; TURBO_CHANNEL_COUNT] = [
-    23, 35, 4, 16, 32, 45, 7, 19, 43, 31, 18, 0, 48, 28, 2, 15, 30, 42, 9, 21, 49, 34, 3, 22, 37,
-    8, 20, 39, 1, 27, 14, 41, 29, 17, 47, 5, 33, 46, 13, 25, 44, 12, 24, 40, 11, 26, 38, 10, 50,
-    36, 6,
-];
-
-const fn channels() -> [Frequency; TURBO_CHANNEL_COUNT] {
-    let mut frequencies = [Frequency::new(902_500_000); TURBO_CHANNEL_COUNT];
-    let mut index = 0;
-    while index < TURBO_CHANNEL_COUNT {
-        frequencies[index] = Frequency::new(902_500_000 + index as u32 * 500_000);
-        index += 1;
-    }
-    frequencies
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SupercycleCycle(u8);
@@ -53,6 +26,151 @@ impl SupercycleCycle {
 
     pub(crate) const fn from_base_cycle(base_cycle: u64) -> Self {
         Self((base_cycle % TURBO_CHANNEL_COUNT as u64) as u8)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TurboGlobalSlot(u64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurboGlobalSlotError {
+    OutsideScheduleRange { index: u64, maximum_index: u64 },
+}
+
+impl TurboGlobalSlot {
+    pub const fn new(index: u64) -> Result<Self, TurboGlobalSlotError> {
+        let maximum_index = u64::MAX / US915_TURBO_SPEC.slot_us();
+        if index > maximum_index {
+            return Err(TurboGlobalSlotError::OutsideScheduleRange {
+                index,
+                maximum_index,
+            });
+        }
+        Ok(Self(index))
+    }
+
+    pub const fn index(self) -> u64 {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TurboSlotPosition(u8);
+
+impl TurboSlotPosition {
+    pub const fn index(self) -> u8 {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TurboChannelIndex(u8);
+
+impl TurboChannelIndex {
+    pub const fn new(index: usize) -> Result<Self, ChannelLookupError> {
+        if index >= TURBO_CHANNEL_COUNT {
+            return Err(ChannelLookupError::OutsideHopSet {
+                channel_index: index,
+            });
+        }
+        Ok(Self(index as u8))
+    }
+
+    pub const fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TurboScheduleSlot {
+    global_slot: TurboGlobalSlot,
+    supercycle: u64,
+    cycle: SupercycleCycle,
+    position: TurboSlotPosition,
+    channel_index: TurboChannelIndex,
+    frequency: Frequency,
+    starts_at: ScheduleMicros,
+    offset_us: u64,
+    remaining_us: u64,
+}
+
+impl TurboScheduleSlot {
+    pub const fn global_slot(self) -> TurboGlobalSlot {
+        self.global_slot
+    }
+
+    pub const fn supercycle(self) -> u64 {
+        self.supercycle
+    }
+
+    pub const fn cycle(self) -> SupercycleCycle {
+        self.cycle
+    }
+
+    pub const fn position(self) -> TurboSlotPosition {
+        self.position
+    }
+
+    pub const fn channel_index(self) -> TurboChannelIndex {
+        self.channel_index
+    }
+
+    pub const fn frequency(self) -> Frequency {
+        self.frequency
+    }
+
+    pub const fn starts_at(self) -> ScheduleMicros {
+        self.starts_at
+    }
+
+    pub const fn offset_us(self) -> u64 {
+        self.offset_us
+    }
+
+    pub const fn remaining_us(self) -> u64 {
+        self.remaining_us
+    }
+}
+
+impl Us915TurboSpec {
+    pub const fn slot_at(&self, schedule: ScheduleMicros) -> TurboScheduleSlot {
+        let global_slot = TurboGlobalSlot(schedule.micros() / self.slot_us());
+        let offset_us = schedule.micros() % self.slot_us();
+        self.build_slot(global_slot, offset_us)
+    }
+
+    pub const fn slot_for_global_slot(&self, global_slot: TurboGlobalSlot) -> TurboScheduleSlot {
+        self.build_slot(global_slot, 0)
+    }
+
+    pub const fn slot_position_for_channel(
+        &self,
+        cycle: SupercycleCycle,
+        channel_index: TurboChannelIndex,
+    ) -> TurboSlotPosition {
+        let order_position = self.channel_order_position(channel_index.index()) as usize;
+        let position =
+            (order_position + TURBO_CHANNEL_COUNT - cycle.index() as usize) % TURBO_CHANNEL_COUNT;
+        TurboSlotPosition(position as u8)
+    }
+
+    const fn build_slot(&self, global_slot: TurboGlobalSlot, offset_us: u64) -> TurboScheduleSlot {
+        let base_cycle = global_slot.index() / TURBO_CHANNEL_COUNT as u64;
+        let position = global_slot.index() % TURBO_CHANNEL_COUNT as u64;
+        let cycle = SupercycleCycle::from_base_cycle(base_cycle);
+        let order_position = (position + cycle.index() as u64) % TURBO_CHANNEL_COUNT as u64;
+        let channel_index = TurboChannelIndex(self.channel_order_at(order_position as usize));
+        TurboScheduleSlot {
+            global_slot,
+            supercycle: base_cycle / TURBO_CHANNEL_COUNT as u64,
+            cycle,
+            position: TurboSlotPosition(position as u8),
+            channel_index,
+            frequency: self.channels()[channel_index.index()],
+            starts_at: ScheduleMicros::new(global_slot.index() * self.slot_us()),
+            offset_us,
+            remaining_us: self.slot_us() - offset_us,
+        }
     }
 }
 
@@ -97,7 +215,7 @@ impl TransmissionTimingBudget {
         if enter_us
             .saturating_add(exit_us)
             .saturating_add(scheduling_jitter_us.saturating_mul(2))
-            >= TURBO_SLOT_US
+            >= US915_TURBO_SPEC.slot_us()
         {
             return Err(TransmissionTimingBudgetError::GuardConsumesSlot);
         }
@@ -129,15 +247,15 @@ impl TransmissionTimingBudget {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TurboOpportunity {
-    channel_index: usize,
+    channel_index: TurboChannelIndex,
     frequency: Frequency,
-    global_slot: u64,
+    global_slot: TurboGlobalSlot,
     cycle: SupercycleCycle,
     transmit_must_end_by_schedule_us: u64,
 }
 
 impl TurboOpportunity {
-    pub const fn channel_index(self) -> usize {
+    pub const fn channel_index(self) -> TurboChannelIndex {
         self.channel_index
     }
 
@@ -145,7 +263,7 @@ impl TurboOpportunity {
         self.frequency
     }
 
-    pub const fn global_slot(self) -> u64 {
+    pub const fn global_slot(self) -> TurboGlobalSlot {
         self.global_slot
     }
 
@@ -166,43 +284,6 @@ pub enum OpportunityRejection {
     PacketCrossesGuardedBoundary,
 }
 
-pub const fn global_slot_at(schedule_us: u64) -> u64 {
-    schedule_us / TURBO_SLOT_US
-}
-
-pub const fn supercycle_cycle_at(schedule_us: u64) -> SupercycleCycle {
-    let global_slot = global_slot_at(schedule_us);
-    SupercycleCycle((global_slot / TURBO_CHANNEL_COUNT as u64 % TURBO_CHANNEL_COUNT as u64) as u8)
-}
-
-pub const fn channel_index_at(schedule_us: u64) -> usize {
-    channel_index_for_global_slot(global_slot_at(schedule_us))
-}
-
-pub const fn channel_index_for_global_slot(global_slot: u64) -> usize {
-    let position = global_slot % TURBO_CHANNEL_COUNT as u64;
-    let cycle = global_slot / TURBO_CHANNEL_COUNT as u64 % TURBO_CHANNEL_COUNT as u64;
-    TURBO_CHANNEL_ORDER[((position + cycle) % TURBO_CHANNEL_COUNT as u64) as usize] as usize
-}
-
-pub const fn slot_position_for_channel(
-    cycle: SupercycleCycle,
-    channel_index: usize,
-) -> Result<usize, ChannelLookupError> {
-    if channel_index >= TURBO_CHANNEL_COUNT {
-        return Err(ChannelLookupError::OutsideHopSet { channel_index });
-    }
-    let mut position = 0;
-    while position < TURBO_CHANNEL_COUNT {
-        let order_position = (position + cycle.index() as usize) % TURBO_CHANNEL_COUNT;
-        if TURBO_CHANNEL_ORDER[order_position] as usize == channel_index {
-            return Ok(position);
-        }
-        position += 1;
-    }
-    Err(ChannelLookupError::OutsideHopSet { channel_index })
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChannelLookupError {
     OutsideHopSet { channel_index: usize },
@@ -216,14 +297,12 @@ pub(crate) fn opportunity_for(
 ) -> Result<TurboOpportunity, OpportunityRejection> {
     let earliest = clock.earliest_schedule_us();
     let latest = clock.latest_schedule_us();
-    let earliest_slot = global_slot_at(earliest);
-    let latest_slot = global_slot_at(latest);
-    if earliest_slot != latest_slot {
+    let earliest_slot = US915_TURBO_SPEC.slot_at(ScheduleMicros::new(earliest));
+    let latest_slot = US915_TURBO_SPEC.slot_at(ScheduleMicros::new(latest));
+    if earliest_slot.global_slot() != latest_slot.global_slot() {
         return Err(OpportunityRejection::ClockWindowCrossesChannelBoundary);
     }
-    let slot_begins_at_schedule_us = earliest_slot
-        .checked_mul(TURBO_SLOT_US)
-        .ok_or(OpportunityRejection::ClockRangeOverflow)?;
+    let slot_begins_at_schedule_us = earliest_slot.starts_at().micros();
     let transmit_not_before_schedule_us = slot_begins_at_schedule_us
         .checked_add(timing.entry_guard_us())
         .ok_or(OpportunityRejection::ClockRangeOverflow)?;
@@ -231,7 +310,7 @@ pub(crate) fn opportunity_for(
         return Err(OpportunityRejection::EntryGuard);
     }
     let slot_ends_at_schedule_us = slot_begins_at_schedule_us
-        .checked_add(TURBO_SLOT_US)
+        .checked_add(US915_TURBO_SPEC.slot_us())
         .ok_or(OpportunityRejection::ClockRangeOverflow)?;
     let transmit_must_end_by_schedule_us = slot_ends_at_schedule_us
         .checked_sub(timing.exit_guard_us())
@@ -250,12 +329,11 @@ pub(crate) fn opportunity_for(
     if projected_latest_end > transmit_must_end_by_schedule_us {
         return Err(OpportunityRejection::PacketCrossesGuardedBoundary);
     }
-    let channel_index = channel_index_for_global_slot(earliest_slot);
     Ok(TurboOpportunity {
-        channel_index,
-        frequency: US915_TURBO_CHANNELS[channel_index],
-        global_slot: earliest_slot,
-        cycle: supercycle_cycle_at(earliest),
+        channel_index: earliest_slot.channel_index(),
+        frequency: earliest_slot.frequency(),
+        global_slot: earliest_slot.global_slot(),
+        cycle: earliest_slot.cycle(),
         transmit_must_end_by_schedule_us,
     })
 }
@@ -267,7 +345,44 @@ mod kani_proofs {
     #[kani::proof]
     fn every_schedule_time_selects_a_valid_turbo_channel() {
         let schedule_us: u64 = kani::any();
-        assert!(channel_index_at(schedule_us) < TURBO_CHANNEL_COUNT);
+        let slot = US915_TURBO_SPEC.slot_at(ScheduleMicros::new(schedule_us));
+        assert!(slot.channel_index().index() < TURBO_CHANNEL_COUNT);
+    }
+
+    #[kani::proof]
+    fn global_slot_construction_matches_representable_start_times() {
+        let index: u64 = kani::any();
+        let maximum_index = u64::MAX / US915_TURBO_SPEC.slot_us();
+        match TurboGlobalSlot::new(index) {
+            Ok(global_slot) => {
+                assert!(global_slot.index() <= maximum_index);
+                assert!(global_slot
+                    .index()
+                    .checked_mul(US915_TURBO_SPEC.slot_us())
+                    .is_some());
+            }
+            Err(TurboGlobalSlotError::OutsideScheduleRange {
+                index,
+                maximum_index: rejected_maximum,
+            }) => {
+                assert_eq!(rejected_maximum, maximum_index);
+                assert!(index > maximum_index);
+            }
+        }
+    }
+
+    #[kani::proof]
+    fn schedule_slot_reconstructs_bounded_time() {
+        let schedule_us: u32 = kani::any();
+        let schedule_us = schedule_us as u64;
+        let slot = US915_TURBO_SPEC.slot_at(ScheduleMicros::new(schedule_us));
+        assert!(slot.offset_us() < US915_TURBO_SPEC.slot_us());
+        assert!(slot.starts_at().micros() <= schedule_us);
+        assert_eq!(schedule_us - slot.starts_at().micros(), slot.offset_us());
+        assert_eq!(
+            slot.offset_us() + slot.remaining_us(),
+            US915_TURBO_SPEC.slot_us()
+        );
     }
 
     #[kani::proof]
@@ -276,7 +391,47 @@ mod kani_proofs {
         let position: u8 = kani::any();
         kani::assume(cycle < TURBO_CHANNEL_COUNT as u8);
         kani::assume(position < TURBO_CHANNEL_COUNT as u8);
-        let global_slot = cycle as u64 * TURBO_CHANNEL_COUNT as u64 + position as u64;
-        assert!(channel_index_for_global_slot(global_slot) < TURBO_CHANNEL_COUNT);
+        let global_slot =
+            TurboGlobalSlot(cycle as u64 * TURBO_CHANNEL_COUNT as u64 + position as u64);
+        assert!(
+            US915_TURBO_SPEC
+                .slot_for_global_slot(global_slot)
+                .channel_index()
+                .index()
+                < TURBO_CHANNEL_COUNT
+        );
+    }
+
+    #[kani::proof]
+    fn schedule_repeats_after_one_complete_supercycle() {
+        let global_slot: u16 = kani::any();
+        let global_slot = TurboGlobalSlot(global_slot as u64);
+        let repeated_global_slot =
+            TurboGlobalSlot(global_slot.index() + US915_TURBO_SPEC.supercycle_slots());
+        let current = US915_TURBO_SPEC.slot_for_global_slot(global_slot);
+        let repeated = US915_TURBO_SPEC.slot_for_global_slot(repeated_global_slot);
+        assert_eq!(current.cycle(), repeated.cycle());
+        assert_eq!(current.position(), repeated.position());
+        assert_eq!(current.channel_index(), repeated.channel_index());
+    }
+
+    #[kani::proof]
+    fn channel_position_lookup_round_trips() {
+        let cycle: u8 = kani::any();
+        let channel: u8 = kani::any();
+        kani::assume(cycle < TURBO_CHANNEL_COUNT as u8);
+        kani::assume(channel < TURBO_CHANNEL_COUNT as u8);
+        let cycle = SupercycleCycle(cycle);
+        let channel = TurboChannelIndex(channel);
+        let position = US915_TURBO_SPEC.slot_position_for_channel(cycle, channel);
+        let global_slot = TurboGlobalSlot(
+            cycle.index() as u64 * TURBO_CHANNEL_COUNT as u64 + position.index() as u64,
+        );
+        assert_eq!(
+            US915_TURBO_SPEC
+                .slot_for_global_slot(global_slot)
+                .channel_index(),
+            channel
+        );
     }
 }

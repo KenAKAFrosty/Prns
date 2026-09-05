@@ -1,7 +1,6 @@
-use super::schedule::{TURBO_CHANNEL_COUNT, TURBO_OCCUPANCY_LIMIT_US};
+use super::spec::{TURBO_CHANNEL_COUNT, US915_TURBO_SPEC};
 use crate::interfaces::subghz::MonotonicMicros;
 
-const OCCUPANCY_WINDOW_US: u64 = 10_000_000;
 const UNUSED_VISIT: u64 = u64::MAX;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,7 +94,7 @@ impl TurboOccupancyLedger {
                 let transmit_not_before_us = visit
                     .last_rf_end
                     .micros()
-                    .saturating_add(OCCUPANCY_WINDOW_US);
+                    .saturating_add(US915_TURBO_SPEC.occupancy_window_us());
                 if now.micros() < transmit_not_before_us {
                     return Err(OccupancyError::PriorVisitInsideObservationWindow {
                         transmit_not_before_us,
@@ -111,14 +110,15 @@ impl TurboOccupancyLedger {
             .keyed_airtime_us
             .saturating_add(visit.reserved_airtime_us)
             .saturating_add(airtime_us);
-        if projected_occupancy_us > TURBO_OCCUPANCY_LIMIT_US {
+        if projected_occupancy_us > US915_TURBO_SPEC.channel_occupancy_budget_us() {
             return Err(OccupancyError::ChannelOccupancyExceeded {
                 projected_us: projected_occupancy_us,
-                maximum_us: TURBO_OCCUPANCY_LIMIT_US,
+                maximum_us: US915_TURBO_SPEC.channel_occupancy_budget_us(),
             });
         }
         let minimum_use_us = self.cumulative_use_us.iter().copied().min().unwrap_or(0);
-        let permitted_us = minimum_use_us.saturating_add(TURBO_OCCUPANCY_LIMIT_US);
+        let permitted_us =
+            minimum_use_us.saturating_add(US915_TURBO_SPEC.channel_occupancy_budget_us());
         let projected_use_us = self.cumulative_use_us[channel_index].saturating_add(airtime_us);
         if projected_use_us > permitted_us {
             return Err(OccupancyError::UnequalChannelUse {
@@ -190,10 +190,10 @@ impl TurboOccupancyLedger {
                 actual_us: actual_airtime_us,
             });
         }
-        if keyed_airtime_us > TURBO_OCCUPANCY_LIMIT_US {
+        if keyed_airtime_us > US915_TURBO_SPEC.channel_occupancy_budget_us() {
             return Err(OccupancyError::ChannelOccupancyExceeded {
                 projected_us: keyed_airtime_us,
-                maximum_us: TURBO_OCCUPANCY_LIMIT_US,
+                maximum_us: US915_TURBO_SPEC.channel_occupancy_budget_us(),
             });
         }
         Ok(())
@@ -235,8 +235,11 @@ mod kani_proofs {
             .reserve(channel as usize, 0, MonotonicMicros::new(0), airtime as u64)
             .is_ok()
         {
-            assert!(airtime as u64 <= TURBO_OCCUPANCY_LIMIT_US);
-            assert!(ledger.cumulative_use_us[channel as usize] <= TURBO_OCCUPANCY_LIMIT_US);
+            assert!(airtime as u64 <= US915_TURBO_SPEC.channel_occupancy_budget_us());
+            assert!(
+                ledger.cumulative_use_us[channel as usize]
+                    <= US915_TURBO_SPEC.channel_occupancy_budget_us()
+            );
         }
     }
 }
@@ -255,10 +258,10 @@ mod tests {
     fn hop_set() -> Us915HopSet<TURBO_CHANNEL_COUNT> {
         let model = Us915HoppingModel::new(
             MeasuredTwentyDbBandwidth::new(500_000).unwrap(),
-            ChannelOccupancyLimit::new(TURBO_OCCUPANCY_LIMIT_US).unwrap(),
+            ChannelOccupancyLimit::new(US915_TURBO_SPEC.channel_occupancy_budget_us()).unwrap(),
         )
         .unwrap();
-        Us915HopSet::new(model, super::super::schedule::US915_TURBO_CHANNELS).unwrap()
+        Us915HopSet::new(model, *US915_TURBO_SPEC.channels()).unwrap()
     }
 
     #[test]
@@ -288,13 +291,18 @@ mod tests {
     fn cumulative_balance_blocks_a_periodic_single_channel_producer() {
         let mut ledger = TurboOccupancyLedger::new();
         let reservation = ledger
-            .reserve(0, 0, MonotonicMicros::new(0), TURBO_OCCUPANCY_LIMIT_US)
+            .reserve(
+                0,
+                0,
+                MonotonicMicros::new(0),
+                US915_TURBO_SPEC.channel_occupancy_budget_us(),
+            )
             .unwrap();
         ledger
             .complete(
                 reservation,
-                MonotonicMicros::new(TURBO_OCCUPANCY_LIMIT_US),
-                TURBO_OCCUPANCY_LIMIT_US,
+                MonotonicMicros::new(US915_TURBO_SPEC.channel_occupancy_budget_us()),
+                US915_TURBO_SPEC.channel_occupancy_budget_us(),
             )
             .unwrap();
         assert!(matches!(

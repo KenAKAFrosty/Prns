@@ -2,7 +2,8 @@ use super::frame::{
     decode_frame, encode_acquisition, DecodedTurboFrame, EncodedTurboFrame, TurboFrameError,
 };
 use super::profile::TurboPhyProfile;
-use super::schedule::{SupercycleCycle, TURBO_CYCLE_US};
+use super::schedule::SupercycleCycle;
+use super::spec::US915_TURBO_SPEC;
 
 pub const ACQUISITION_BEACON_BYTES: usize = 3;
 pub const ACQUISITION_BEACON_CONTENTION_SLOTS: u8 = 16;
@@ -185,5 +186,5 @@ pub const fn acquisition_beacon_listen_window_us(profile: TurboPhyProfile) -> u6
 }
 
 pub const fn base_cycle_at(schedule_us: u64) -> u64 {
-    schedule_us / TURBO_CYCLE_US
+    schedule_us / US915_TURBO_SPEC.cycle_us()
 }
