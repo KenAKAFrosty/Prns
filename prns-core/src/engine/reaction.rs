@@ -126,12 +126,43 @@ impl<'a> From<CryptoOwed> for OwedWork<'a> {
     }
 }
 
+#[cfg(feature = "resource-work-offload")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StreamedResourceOpenReservation {
+    pub(crate) link_id: LinkId,
+    pub(crate) hash: ResourceHash,
+    pub(crate) span_start: usize,
+    pub(crate) span_end: usize,
+    pub(crate) generation: ResourceOpenGeneration,
+}
+
+#[cfg(feature = "resource-work-offload")]
+impl StreamedResourceOpenReservation {
+    pub fn span_start(&self) -> usize {
+        self.span_start
+    }
+
+    pub fn span_end(&self) -> usize {
+        self.span_end
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResourceOpenSpanResidence {
+    Resident,
+    #[cfg(feature = "resource-work-offload")]
+    Transferable(StreamedResourceOpenReservation),
+}
+
+#[cfg(all(feature = "resource-work-offload", feature = "alloc"))]
+pub enum ResourceOpenWorkspace {
+    CopiedSpan(alloc::vec::Vec<u8>),
+    DetachedTransfer(alloc::vec::Vec<u8>),
+    Stale,
+}
+
 /// One contiguous ciphertext span whose authenticated streamed open can run outside the engine.
-///
-/// The state is moved out of its incoming-resource row while the mutable span remains borrowed
-/// from that row. A worker runtime copies the span into its owning job envelope while this value
-/// is live; an inline runtime may chew the borrowed span directly and return an in-place
-/// completion. `other_transfers_in_flight` describes available overlap, not a scheduling order.
 #[repr(C)]
 pub struct ResourceOpenOwed<'a> {
     pub link_id: LinkId,
@@ -139,6 +170,7 @@ pub struct ResourceOpenOwed<'a> {
     pub span_start: usize,
     pub state: StreamedOpen,
     pub bytes: &'a mut [u8],
+    pub residence: ResourceOpenSpanResidence,
     pub other_transfers_in_flight: bool,
 }
 
@@ -154,6 +186,7 @@ impl ResourceOpenOwed<'_> {
             span_start: self.span_start,
             state: self.state,
             opened: OpenedResourceSpan::InPlace { byte_len },
+            residence: self.residence,
         }
     }
 }
@@ -165,6 +198,11 @@ pub enum OpenedResourceSpan<'a> {
     InPlace { byte_len: usize },
     /// A worker chewed an owning copy which must be landed over the row's ciphertext.
     Returned(&'a [u8]),
+    #[cfg(all(feature = "resource-work-offload", feature = "alloc"))]
+    ReturnedTransfer {
+        transfer: alloc::vec::Vec<u8>,
+        span_byte_len: usize,
+    },
 }
 
 /// A runtime's completed resource-open span, submitted as a later engine input.
@@ -175,6 +213,7 @@ pub struct ResourceOpenCompleted<'a> {
     pub span_start: usize,
     pub state: StreamedOpen,
     pub opened: OpenedResourceSpan<'a>,
+    pub residence: ResourceOpenSpanResidence,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

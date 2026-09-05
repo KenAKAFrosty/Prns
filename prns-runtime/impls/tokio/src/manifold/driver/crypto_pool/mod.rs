@@ -18,8 +18,8 @@ use crate::engine::{
     EstablishLinkOwed, IdentifySignCompleted, IdentifySignOwed, LinkIdentityVerification,
     LinkIdentityVerifyOwed, LinkReceiptSignCompleted, LinkReceiptSignOwed, ProofSignCompleted,
     ProofSignOwed, RatchetDecryptOwed, ReceiptProofVerification, ReceiptProofVerifyOwed,
-    TunnelSynthesizeSignCompleted, TunnelSynthesizeSignOwed, TunnelSynthesizeVerification,
-    TunnelSynthesizeVerifyOwed, WholeResourceOpenReservation,
+    ResourceOpenSpanResidence, TunnelSynthesizeSignCompleted, TunnelSynthesizeSignOwed,
+    TunnelSynthesizeVerification, TunnelSynthesizeVerifyOwed, WholeResourceOpenReservation,
 };
 use crate::identity::{decrypt_token_in_place_with_ratchets, OpenedBy};
 use crate::manifold::grant_lane::HeapFrameSlot;
@@ -245,7 +245,16 @@ pub(super) struct OpenSpanJob {
     pub(super) hash: ResourceHash,
     pub(super) span_start: usize,
     pub(super) state: StreamedOpen,
-    pub(super) bytes: Vec<u8>,
+    pub(super) residence: ResourceOpenSpanResidence,
+    pub(super) buffer: OpenSpanBuffer,
+}
+
+pub(super) enum OpenSpanBuffer {
+    Span(Vec<u8>),
+    Transfer {
+        bytes: Vec<u8>,
+        span: core::ops::Range<usize>,
+    },
 }
 
 pub(super) struct ResourceDecompressionJob {
@@ -256,8 +265,14 @@ pub(super) struct ResourceDecompressionJob {
 }
 
 pub(super) enum OpenedSpanResult {
-    InPlace { byte_len: usize },
+    InPlace {
+        byte_len: usize,
+    },
     Owned(Vec<u8>),
+    Transfer {
+        bytes: Vec<u8>,
+        span_byte_len: usize,
+    },
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -474,7 +489,13 @@ impl CryptoJob {
                 1 + job.stream.len().div_ceil(BULK_BYTES_PER_WORK_UNIT)
             }
             Self::SealStaged(job) => 1 + job.plaintext.len().div_ceil(BULK_BYTES_PER_WORK_UNIT),
-            Self::OpenSpan(job) => 1 + job.bytes.len().div_ceil(BULK_BYTES_PER_WORK_UNIT),
+            Self::OpenSpan(job) => {
+                let byte_len = match &job.buffer {
+                    OpenSpanBuffer::Span(bytes) => bytes.len(),
+                    OpenSpanBuffer::Transfer { span, .. } => span.len(),
+                };
+                1 + byte_len.div_ceil(BULK_BYTES_PER_WORK_UNIT)
+            }
             Self::VerifyLinkProof(_) | Self::SignLinkProof(_) | Self::EstablishLink(_) => 3,
             Self::SealScalars(_) | Self::Decrypt(_) | Self::DecryptWithRatchets(_) => 2,
             Self::VerifySignature(_)
@@ -688,6 +709,7 @@ pub(super) enum CryptoResult {
         hash: ResourceHash,
         span_start: usize,
         state: StreamedOpen,
+        residence: ResourceOpenSpanResidence,
         opened: OpenedSpanResult,
     },
     #[cfg(test)]
@@ -1568,15 +1590,29 @@ fn run_crypto_job(job: CryptoJob, verifier_cache: &mut WorkerVerifierCache) -> C
                 hash,
                 span_start,
                 mut state,
-                mut bytes,
+                residence,
+                buffer,
             } = *job;
-            state.chew_span(&mut bytes);
+            let opened = match buffer {
+                OpenSpanBuffer::Span(mut bytes) => {
+                    state.chew_span(&mut bytes);
+                    OpenedSpanResult::Owned(bytes)
+                }
+                OpenSpanBuffer::Transfer { mut bytes, span } => {
+                    state.chew_span(&mut bytes[span.clone()]);
+                    OpenedSpanResult::Transfer {
+                        bytes,
+                        span_byte_len: span.len(),
+                    }
+                }
+            };
             CryptoResult::SpanOpened {
                 link_id,
                 hash,
                 span_start,
                 state,
-                opened: OpenedSpanResult::Owned(bytes),
+                residence,
+                opened,
             }
         }
         CryptoJob::VerifySignature(job) => {

@@ -1,7 +1,8 @@
 use crate::engine::{
     AnnounceVerification, EngineReaction, EngineState, InstantMillis, Journaled,
     OpenedResourceSpan, OwedWork, ProofRequest, ResourceDecompressionCompleted,
-    ResourceOpenCompleted, WakeSchedules, WholeResourceOpenCompleted, WholeResourceOpenOutcome,
+    ResourceOpenCompleted, ResourceOpenOwed, ResourceOpenSpanResidence, WakeSchedules,
+    WholeResourceOpenCompleted, WholeResourceOpenOutcome,
 };
 use crate::identity::OpenedToken;
 use crate::interfaces::{FrameAccountingEvent, InterfaceIfac};
@@ -19,7 +20,7 @@ use super::egress::{
 use super::inbound_dispatch::InboundDispatch;
 use super::interface_topology::InterfaceTopology;
 use super::journal_delivery::JournalDispatch;
-use super::owed_work::PendingOwedWork;
+use super::owed_work::{DeferredTransferOpen, PendingOwedWork};
 use crate::remote_control::RemoteControlPairingAvailabilityVerification;
 
 // Completion routing deliberately exposes every borrowed data-plane component;
@@ -100,6 +101,70 @@ where
     H: Host,
     J: for<'a> FnMut(Journaled<'a>),
 {
+    fn complete_resource_open(
+        self,
+        completed: ResourceOpenCompleted<'_>,
+        now: InstantMillis,
+    ) -> CryptoCompletionEffect {
+        let Self {
+            engine,
+            topology,
+            wire_scratch,
+            journal,
+            crypto_pool,
+            owed_work,
+            ..
+        } = self;
+        let mut deferred = None;
+        let wake = engine.resume_resource_open(completed, now, &mut |reaction| {
+            route_reaction_with_work(
+                reaction,
+                &mut topology.egress,
+                &topology.ifacs,
+                &mut topology.pacers,
+                wire_scratch,
+                now,
+                &mut |journaled| journal.route(journaled),
+                &mut |work| {
+                    let OwedWork::ResourceOpen(owed) = work else {
+                        owed_work.push(work, crypto_pool);
+                        return;
+                    };
+                    let ResourceOpenSpanResidence::Transferable(reservation) = owed.residence
+                    else {
+                        owed_work.push_resource_open(owed, crypto_pool);
+                        return;
+                    };
+                    if crypto_pool.is_none() || deferred.is_some() {
+                        owed_work.push_resource_open(owed, crypto_pool);
+                        return;
+                    }
+                    let ResourceOpenOwed {
+                        link_id,
+                        hash,
+                        span_start,
+                        state,
+                        bytes: _,
+                        residence: _,
+                        other_transfers_in_flight: _,
+                    } = owed;
+                    deferred = Some(DeferredTransferOpen {
+                        link_id,
+                        hash,
+                        span_start,
+                        state,
+                        reservation,
+                    });
+                },
+            );
+        });
+        if let Some(deferred) = deferred {
+            let workspace = engine.take_resource_open_workspace(deferred.reservation);
+            owed_work.push_deferred_transfer_open(deferred, workspace);
+        }
+        CryptoCompletionEffect::OpenSpanAdvanced(wake)
+    }
+
     pub(super) fn complete<P>(
         self,
         completion: CryptoCompletion,
@@ -623,37 +688,47 @@ where
                 hash,
                 span_start,
                 state,
+                residence,
                 opened,
             } => {
-                let opened = match &opened {
-                    OpenedSpanResult::InPlace { byte_len } => OpenedResourceSpan::InPlace {
-                        byte_len: *byte_len,
-                    },
-                    OpenedSpanResult::Owned(bytes) => OpenedResourceSpan::Returned(bytes),
+                let dispatch = CryptoDispatch {
+                    engine,
+                    host,
+                    topology,
+                    wire_scratch,
+                    journal,
+                    crypto_pool,
+                    owed_work,
+                    inbound,
                 };
-                CryptoCompletionEffect::OpenSpanAdvanced(engine.resume_resource_open(
-                    ResourceOpenCompleted {
-                        link_id,
-                        hash,
-                        span_start,
-                        state,
-                        opened,
-                    },
-                    now,
-                    &mut |reaction| {
-                        route_completion_reaction(
-                            reaction,
-                            &mut topology.egress,
-                            &topology.ifacs,
-                            &mut topology.pacers,
-                            wire_scratch,
-                            journal,
-                            owed_work,
-                            crypto_pool,
-                            now,
-                        )
-                    },
-                ))
+                let completed = |opened| ResourceOpenCompleted {
+                    link_id,
+                    hash,
+                    span_start,
+                    state,
+                    opened,
+                    residence,
+                };
+                match opened {
+                    OpenedSpanResult::InPlace { byte_len } => dispatch.complete_resource_open(
+                        completed(OpenedResourceSpan::InPlace { byte_len }),
+                        now,
+                    ),
+                    OpenedSpanResult::Owned(bytes) => dispatch.complete_resource_open(
+                        completed(OpenedResourceSpan::Returned(&bytes)),
+                        now,
+                    ),
+                    OpenedSpanResult::Transfer {
+                        bytes,
+                        span_byte_len,
+                    } => dispatch.complete_resource_open(
+                        completed(OpenedResourceSpan::ReturnedTransfer {
+                            transfer: bytes,
+                            span_byte_len,
+                        }),
+                        now,
+                    ),
+                }
             }
         }
     }

@@ -1498,6 +1498,29 @@ impl<C: ResourceTable<IncomingResourceState>> IncomingResources<C> {
         )
     }
 
+    pub(crate) fn streamed_open(&self, index: usize) -> &OpenProgress {
+        self.table.streamed_open(index)
+    }
+
+    #[cfg(all(feature = "resource-work-offload", feature = "alloc"))]
+    pub(crate) fn transfer_is_resident(&self, index: usize) -> bool {
+        !self.table.transfer(index).is_empty()
+    }
+
+    #[cfg(all(feature = "resource-work-offload", feature = "alloc"))]
+    pub(crate) fn detach_transfer(&mut self, index: usize) -> ResourceTransferDetach {
+        self.table.detach_transfer(index)
+    }
+
+    #[cfg(all(feature = "resource-work-offload", feature = "alloc"))]
+    pub(crate) fn restore_transfer(
+        &mut self,
+        index: usize,
+        transfer: Vec<u8>,
+    ) -> ResourceTransferRestore {
+        self.table.restore_transfer(index, transfer)
+    }
+
     pub fn link_at(&self, index: usize) -> &LinkId {
         &self.table.link_ids()[index]
     }

@@ -116,9 +116,10 @@ impl<S: StorageLayout> EngineState<S> {
             return ConcludeResourceOutcome::AwaitingOpenVerdict;
         }
 
-        if let (_, OpenProgress::Chewing { .. }) =
-            self.incoming_resources.transfer_and_streamed_open(index)
-        {
+        if matches!(
+            self.incoming_resources.streamed_open(index),
+            OpenProgress::Chewing { .. }
+        ) {
             self.incoming_resources.state_mut(index).status = IncomingResourceStatus::AwaitingOpen;
             self.incoming_resources.set_timeout_at(
                 index,
