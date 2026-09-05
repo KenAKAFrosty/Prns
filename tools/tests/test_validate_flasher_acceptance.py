@@ -27,6 +27,7 @@ COMPLETED_AT = "2026-07-20T13:00:00Z"
 MODELS = {
     "heltec-v4": "Heltec LoRa 32 V4 (S3R2)",
     "heltec-v4-r8": "Heltec LoRa 32 V4 (S3R8)",
+    "heltec-wireless-stick-lite-v3": "Heltec Wireless Stick Lite V3",
     "t-beam-supreme": "LilyGO T-Beam Supreme",
     "xiao-esp32-c6": "Seeed XIAO ESP32-C6",
     "t-echo": "LilyGO T-Echo",
@@ -34,23 +35,28 @@ MODELS = {
     "t096": "Heltec Mesh Node T096",
     "t1000-e": "Seeed SenseCAP T1000-E",
 }
+CATALOG_INTERFACES = {
+    board["slug"]: board["interfaces"]
+    for board in json.loads(
+        (Path(__file__).resolve().parents[2] / "release" / "flash" / "boards.json").read_text(
+            encoding="utf-8"
+        )
+    )["boards"]
+}
 
 
 def manifest() -> dict:
     targets = []
-    for board, model in MODELS.items():
-        esp = board in {
-            "heltec-v4",
-            "heltec-v4-r8",
-            "t-beam-supreme",
-            "xiao-esp32-c6",
-        }
+    for board in VALIDATOR.SHIPPING_BOARDS:
+        model = MODELS[board]
+        esp = board in VALIDATOR.ESP_SERIAL_BOARDS
         uf2 = board in {"t-echo", "t114", "t096"}
-        chip = "esp32s3" if board in {"heltec-v4", "heltec-v4-r8", "t-beam-supreme"} else "esp32c6"
+        chip = "esp32c6" if board == "xiao-esp32-c6" else "esp32s3"
         targets.append(
             {
                 "board_slug": board,
                 "display_name": model,
+                "interfaces": CATALOG_INTERFACES[board],
                 "transport": (
                     "esp-serial"
                     if esp
@@ -299,6 +305,8 @@ def complete_roster() -> dict:
         ("heltec-v4", "web"): ("linux", "x86_64"),
         ("heltec-v4-r8", "cli"): ("linux", "x86_64"),
         ("heltec-v4-r8", "web"): ("linux", "x86_64"),
+        ("heltec-wireless-stick-lite-v3", "cli"): ("linux", "x86_64"),
+        ("heltec-wireless-stick-lite-v3", "web"): ("linux", "x86_64"),
         ("t-beam-supreme", "cli"): ("macos", "aarch64"),
         ("t-beam-supreme", "web"): ("macos", "aarch64"),
         ("xiao-esp32-c6", "cli"): ("windows", "x86_64"),
@@ -314,6 +322,8 @@ def complete_roster() -> dict:
     }
     physical_assignments = []
     for (board, surface), (os_name, target_architecture) in hosts.items():
+        if board not in VALIDATOR.SHIPPING_BOARDS:
+            continue
         assignment = {
             "board": board,
             "surface": surface,

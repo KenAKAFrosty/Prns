@@ -13,13 +13,17 @@ cd "$root"
 (
     cd personal-hopspot/embedded/esp32
 
-    cargo +esp check --release --locked \
-        -p hopspot-heltec-e290 \
-        -p hopspot-heltec-v4 \
-        -p hopspot-heltec-v4-r8 \
-        -p hopspot-t-beam-supreme \
-        --target xtensa-esp32s3-none-elf \
-        -Zbuild-std=core,alloc
+    for package in \
+        hopspot-heltec-e290 \
+        hopspot-heltec-v4 \
+        hopspot-heltec-v4-r8 \
+        hopspot-heltec-wireless-stick-lite-v3 \
+        hopspot-t-beam-supreme; do
+        cargo +esp check --release --locked \
+            -p "$package" \
+            --target xtensa-esp32s3-none-elf \
+            -Zbuild-std=core,alloc
+    done
 
     cargo +esp check --release --locked \
         -p hopspot-xiao-esp32-c6 \

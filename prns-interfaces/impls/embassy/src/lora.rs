@@ -1446,7 +1446,7 @@ mod tests {
     use core::task::{Context, Poll};
     use embassy_futures::join::join;
     use prns_core::interfaces::lora::{
-        CodingRate, LoraBandwidth, Modulation, PreambleSymbols, TxPower, DEFAULT_915_PROFILE,
+        CodingRate, LoraBandwidth, Modulation, PreambleSymbols, TxPower, US915_AUTO_LORA_PROFILE,
     };
     use prns_core::interfaces::{FrameAccounting, FrameSink, InterfaceStatus};
     use std::boxed::Box;
@@ -1502,7 +1502,7 @@ mod tests {
     #[test]
     fn receive_accounting_distinguishes_reassembly_resync_from_delivery() {
         let status = EmbassyInterfaceStatus::new_accounted(
-            id_of(&DEFAULT_915_PROFILE),
+            id_of(&US915_AUTO_LORA_PROFILE),
             ConnectionState::Connected,
         );
         let mut throughput = ThroughputLedger::new();
@@ -1563,7 +1563,7 @@ mod tests {
     #[test]
     fn awaited_control_returns_only_the_matching_radio_result() {
         let control = LoRaControl::new();
-        control.signal(DEFAULT_915_PROFILE);
+        control.signal(US915_AUTO_LORA_PROFILE);
         block_on(async {
             let stale = control.wait().await;
             control.complete(stale.id, true);
@@ -1571,7 +1571,7 @@ mod tests {
 
         let requested = RadioProfile {
             tx_power: TxPower::new(12),
-            ..DEFAULT_915_PROFILE
+            ..US915_AUTO_LORA_PROFILE
         };
         let (outcome, ()) = block_on(join(control.apply(requested), async {
             let request = control.wait().await;
@@ -1583,8 +1583,8 @@ mod tests {
 
     #[test]
     fn a_channel_change_re_keys_to_the_new_id() {
-        let current = id_of(&DEFAULT_915_PROFILE);
-        let mut next = DEFAULT_915_PROFILE;
+        let current = id_of(&US915_AUTO_LORA_PROFILE);
+        let mut next = US915_AUTO_LORA_PROFILE;
         next.modulation = Modulation::Lora {
             spreading_factor: SpreadingFactor::Sf10,
             bandwidth: LoraBandwidth::Bw125kHz,
@@ -1601,8 +1601,8 @@ mod tests {
 
     #[test]
     fn a_local_only_change_does_not_re_key() {
-        let current = id_of(&DEFAULT_915_PROFILE);
-        let mut next = DEFAULT_915_PROFILE;
+        let current = id_of(&US915_AUTO_LORA_PROFILE);
+        let mut next = US915_AUTO_LORA_PROFILE;
         next.tx_power = TxPower::new(2);
         next.preamble = PreambleSymbols::new(24);
         assert!(
@@ -1613,7 +1613,7 @@ mod tests {
 
     #[test]
     fn packet_airtime_sums_both_frames_of_a_split() {
-        let profile = lora::DEFAULT_915_PROFILE;
+        let profile = lora::US915_AUTO_LORA_PROFILE;
         let one_frame = packet_airtime(&[0u8; 100], &profile);
         let two_frames = packet_airtime(&[0u8; 400], &profile);
         assert_eq!(
@@ -1639,7 +1639,10 @@ mod tests {
             RadioEvent::Timeout,
             RadioEvent::SpuriousInterrupt,
         ] {
-            assert_eq!(decoded_peer_airtime_us(event, &DEFAULT_915_PROFILE), None);
+            assert_eq!(
+                decoded_peer_airtime_us(event, &US915_AUTO_LORA_PROFILE),
+                None
+            );
         }
         assert_eq!(
             decoded_peer_airtime_us(
@@ -1647,9 +1650,9 @@ mod tests {
                     len: 100,
                     phy: PacketPhyStats::default(),
                 }),
-                &DEFAULT_915_PROFILE,
+                &US915_AUTO_LORA_PROFILE,
             ),
-            Some(DEFAULT_915_PROFILE.time_on_air_us(100))
+            Some(US915_AUTO_LORA_PROFILE.time_on_air_us(100))
         );
     }
 
@@ -1657,7 +1660,7 @@ mod tests {
     fn an_active_packet_accepts_a_fifo_burst_until_maximum_record_backpressure() {
         let mut storage = [0; LORA_TX_QUEUE_BYTES];
         let mut backlog = TransmitBacklog::new(&mut storage);
-        let profile = DEFAULT_915_PROFILE;
+        let profile = US915_AUTO_LORA_PROFILE;
 
         assert_eq!(
             backlog.accept(&[0; LORA_MAX_PAYLOAD], &profile, 10),
@@ -1688,7 +1691,7 @@ mod tests {
     fn disable_drops_only_the_active_packet_and_activation_starts_a_fresh_profile_timeout() {
         let mut storage = [0; LORA_TX_QUEUE_BYTES];
         let mut backlog = TransmitBacklog::new(&mut storage);
-        let original_profile = DEFAULT_915_PROFILE;
+        let original_profile = US915_AUTO_LORA_PROFILE;
         let queued = [0xA5; 400];
         backlog.accept(b"active", &original_profile, 1_000).unwrap();
         backlog.accept(&queued, &original_profile, 1_001).unwrap();

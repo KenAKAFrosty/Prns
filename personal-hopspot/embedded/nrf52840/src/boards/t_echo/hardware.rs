@@ -36,8 +36,20 @@ pub(crate) struct TechoUsbHardware {
 }
 
 pub(crate) struct TechoFaceHardware {
-    pub(crate) battery: Saadc<'static, 1>,
+    pub(crate) battery: TechoBattery,
     pub(crate) status_led: Output<'static>,
+}
+
+pub(crate) struct TechoBattery {
+    adc: Saadc<'static, 1>,
+}
+
+impl TechoBattery {
+    pub(crate) async fn sample_millivolts(&mut self) -> u32 {
+        let mut sample = [0i16; 1];
+        self.adc.sample(&mut sample).await;
+        (sample[0].max(0) as u32) * 6_000 / 4_096
+    }
 }
 
 pub(crate) struct TechoEarlyHardware {
@@ -133,7 +145,7 @@ impl TechoBoard {
                 vbus,
             },
             face: TechoFaceHardware {
-                battery,
+                battery: TechoBattery { adc: battery },
                 status_led,
             },
             deferred: TechoDeferredHardware {

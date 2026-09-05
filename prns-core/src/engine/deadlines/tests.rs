@@ -226,7 +226,10 @@ fn a_bluetooth_peer_announce_rebroadcasts_to_usb_device_transport() {
     ]);
     let interfaces = [
         routable_descriptor(source),
-        crate::interfaces::usb_auto::device_descriptor(usb),
+        crate::interfaces::usb_auto::device_descriptor(
+            usb,
+            crate::interfaces::usb_auto::DEVICE_USB_BITRATE_BPS,
+        ),
     ];
 
     let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);

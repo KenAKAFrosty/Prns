@@ -301,16 +301,16 @@ pub(in crate::screen::render) fn draw_lora_editor<D: DrawTarget<Color = BinaryCo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use personal_rns::interfaces::lora::DEFAULT_915_PROFILE;
+    use personal_rns::interfaces::lora::US915_AUTO_LORA_PROFILE;
 
     #[test]
     fn radio_values_use_their_natural_quantities_and_unit_order() {
         assert_eq!(
-            custom_row_value(CustomRow::Bandwidth, &DEFAULT_915_PROFILE).as_str(),
-            "250 kHz"
+            custom_row_value(CustomRow::Bandwidth, &US915_AUTO_LORA_PROFILE).as_str(),
+            "500 kHz"
         );
         assert_eq!(
-            custom_row_value(CustomRow::TxPower, &DEFAULT_915_PROFILE).as_str(),
+            custom_row_value(CustomRow::TxPower, &US915_AUTO_LORA_PROFILE).as_str(),
             "22 dBm"
         );
         assert_eq!(
@@ -318,20 +318,20 @@ mod tests {
                 FreqRow::Mhz,
                 EditMode::Browsing,
                 false,
-                &DEFAULT_915_PROFILE,
+                &US915_AUTO_LORA_PROFILE,
             )
             .as_str(),
-            "915 MHz"
+            "921 MHz"
         );
         assert_eq!(
             lora_freq_row_text(
                 FreqRow::Khz,
                 EditMode::Browsing,
                 false,
-                &DEFAULT_915_PROFILE,
+                &US915_AUTO_LORA_PROFILE,
             )
             .as_str(),
-            "000 kHz"
+            "500 kHz"
         );
     }
 
@@ -347,7 +347,7 @@ mod tests {
     #[test]
     fn selected_unit_bearing_rows_fit_the_constrained_display() {
         for row in [CustomRow::Bandwidth, CustomRow::TxPower] {
-            let text = lora_custom_row_text(row, EditMode::Field, true, &DEFAULT_915_PROFILE);
+            let text = lora_custom_row_text(row, EditMode::Field, true, &US915_AUTO_LORA_PROFILE);
             let character_width = if lora_row_uses_compact_font(&text) {
                 FONT_4X6_CHAR_W
             } else {

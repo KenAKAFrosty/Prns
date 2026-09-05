@@ -23,6 +23,8 @@ def complete_roster() -> dict:
         ("heltec-v4", "web"): ("linux", "x86_64"),
         ("heltec-v4-r8", "cli"): ("linux", "x86_64"),
         ("heltec-v4-r8", "web"): ("linux", "x86_64"),
+        ("heltec-wireless-stick-lite-v3", "cli"): ("linux", "x86_64"),
+        ("heltec-wireless-stick-lite-v3", "web"): ("linux", "x86_64"),
         ("t-beam-supreme", "cli"): ("macos", "aarch64"),
         ("t-beam-supreme", "web"): ("macos", "aarch64"),
         ("xiao-esp32-c6", "cli"): ("windows", "x86_64"),
@@ -38,6 +40,8 @@ def complete_roster() -> dict:
     }
     physical_assignments = []
     for (board, surface), (os_name, architecture) in hosts.items():
+        if board not in VALIDATOR.SHIPPING_BOARDS:
+            continue
         assignment = {
             "board": board,
             "surface": surface,

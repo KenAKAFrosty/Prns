@@ -82,7 +82,8 @@ pub(crate) fn new(flash: BoardFlash) -> BoardPersistence {
 #[cfg(any(
     feature = "board-t-echo",
     feature = "board-t096",
-    feature = "board-t114"
+    feature = "board-t114",
+    feature = "board-mesh-pocket"
 ))]
 pub(crate) fn persistence_state() -> PersistenceState {
     PersistenceState::decode(PERSISTENCE_STATE.load(Ordering::Acquire))

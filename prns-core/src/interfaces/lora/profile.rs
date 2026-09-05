@@ -1,41 +1,13 @@
 use heapless::Vec as HeaplessVec;
 
+use crate::interfaces::subghz::{Frequency, Region, TxPower};
 use crate::interfaces::AirtimeDutyCycle;
 
 use super::modulation::{CodingRate, LoraBandwidth, Modulation, SpreadingFactor};
 
-const DUTY_ONE_PERCENT_PER_MILLE: u16 = 10;
-const DUTY_QUEUE_BUDGET_MS: u32 = 4_000;
-const DUTY_TEN_PERCENT_PER_MILLE: u16 = 100;
 const MODULATION_TAG_LORA: u8 = 0x00;
 
 pub const CHANNEL_TAG_CAP: usize = 11;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Frequency(u32);
-
-impl Frequency {
-    pub const fn new(hz: u32) -> Self {
-        Self(hz)
-    }
-
-    pub const fn hz(self) -> u32 {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TxPower(i8);
-
-impl TxPower {
-    pub const fn new(dbm: i8) -> Self {
-        Self(dbm)
-    }
-
-    pub const fn dbm(self) -> i8 {
-        self.0
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PreambleSymbols(u16);
@@ -47,119 +19,6 @@ impl PreambleSymbols {
 
     pub const fn count(self) -> u16 {
         self.0
-    }
-}
-
-prns_macros::iterable_enum! {
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum Region {
-        Us915,
-        Au915,
-        Eu433,
-        Eu865,
-        Eu868,
-        Eu869,
-        As923,
-        In865,
-        Cn470,
-        Kr920,
-        Jp920,
-        Unlimited,
-    }
-}
-
-impl Region {
-    pub const fn band(self) -> (u32, u32) {
-        match self {
-            Self::Us915 => (902_000_000, 928_000_000),
-            Self::Au915 => (915_000_000, 928_000_000),
-            Self::Eu433 => (433_050_000, 434_790_000),
-            Self::Eu865 => (865_000_000, 868_000_000),
-            Self::Eu868 => (868_000_000, 868_600_000),
-            Self::Eu869 => (869_400_000, 869_650_000),
-            Self::As923 => (920_000_000, 925_000_000),
-            Self::In865 => (865_000_000, 867_000_000),
-            Self::Cn470 => (470_000_000, 510_000_000),
-            Self::Kr920 => (920_000_000, 923_000_000),
-            Self::Jp920 => (920_800_000, 927_800_000),
-            Self::Unlimited => (150_000_000, 960_000_000),
-        }
-    }
-
-    pub const fn default_frequency(self) -> Frequency {
-        let hz = match self {
-            Self::Us915 => 915_000_000,
-            Self::Au915 => 921_500_000,
-            Self::Eu433 => 433_900_000,
-            Self::Eu865 => 866_500_000,
-            Self::Eu868 => 868_300_000,
-            Self::Eu869 => 869_500_000,
-            Self::As923 => 922_500_000,
-            Self::In865 => 866_000_000,
-            Self::Cn470 => 490_000_000,
-            Self::Kr920 => 921_500_000,
-            Self::Jp920 => 922_000_000,
-            Self::Unlimited => 915_000_000,
-        };
-        Frequency::new(hz)
-    }
-
-    pub const fn max_tx_power(self) -> TxPower {
-        let dbm = match self {
-            Self::Us915 | Self::Au915 | Self::In865 | Self::Eu869 | Self::Unlimited => 22,
-            Self::Cn470 => 19,
-            Self::As923 | Self::Jp920 => 16,
-            Self::Eu865 | Self::Eu868 | Self::Kr920 => 14,
-            Self::Eu433 => 12,
-        };
-        TxPower::new(dbm)
-    }
-
-    pub const fn regulatory_duty_cycle(self) -> Option<AirtimeDutyCycle> {
-        let limit_long_per_mille = match self {
-            Self::Eu865 | Self::Eu868 => DUTY_ONE_PERCENT_PER_MILLE,
-            Self::Eu433 | Self::Eu869 => DUTY_TEN_PERCENT_PER_MILLE,
-            _ => return None,
-        };
-        Some(AirtimeDutyCycle {
-            limit_short_per_mille: None,
-            limit_long_per_mille: Some(limit_long_per_mille),
-            max_queued_airtime_ms: DUTY_QUEUE_BUDGET_MS,
-        })
-    }
-
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Us915 => "US915",
-            Self::Au915 => "AU915",
-            Self::Eu433 => "EU433",
-            Self::Eu865 => "EU865",
-            Self::Eu868 => "EU868",
-            Self::Eu869 => "EU869",
-            Self::As923 => "AS923",
-            Self::In865 => "IN865",
-            Self::Cn470 => "CN470",
-            Self::Kr920 => "KR920",
-            Self::Jp920 => "JP920",
-            Self::Unlimited => "Custom",
-        }
-    }
-
-    pub const fn next(self) -> Self {
-        match self {
-            Self::Us915 => Self::Au915,
-            Self::Au915 => Self::Eu433,
-            Self::Eu433 => Self::Eu865,
-            Self::Eu865 => Self::Eu868,
-            Self::Eu868 => Self::Eu869,
-            Self::Eu869 => Self::As923,
-            Self::As923 => Self::In865,
-            Self::In865 => Self::Cn470,
-            Self::Cn470 => Self::Kr920,
-            Self::Kr920 => Self::Jp920,
-            Self::Jp920 => Self::Unlimited,
-            Self::Unlimited => Self::Us915,
-        }
     }
 }
 
@@ -388,9 +247,13 @@ impl RadioProfile {
     }
 }
 
-pub const DEFAULT_915_PROFILE: RadioProfile = RadioProfile {
-    frequency: Frequency::new(915_000_000),
-    modulation: ModemPreset::MediumFast.modulation(),
+pub const US915_AUTO_LORA_PROFILE: RadioProfile = RadioProfile {
+    frequency: Frequency::new(921_500_000),
+    modulation: Modulation::Lora {
+        spreading_factor: SpreadingFactor::Sf7,
+        bandwidth: LoraBandwidth::Bw500kHz,
+        coding_rate: CodingRate::Cr45,
+    },
     tx_power: TxPower::new(22),
     preamble: PreambleSymbols::new(18),
     region: Region::Us915,
@@ -418,10 +281,10 @@ mod tests {
 
     #[test]
     fn time_on_air_matches_the_rnode_firmware_formula() {
-        assert_eq!(DEFAULT_915_PROFILE.time_on_air_us(167), 436_053);
+        assert_eq!(US915_AUTO_LORA_PROFILE.time_on_air_us(167), 68_525);
         let long_slow = RadioProfile {
             modulation: ModemPreset::LongSlow.modulation(),
-            ..DEFAULT_915_PROFILE
+            ..US915_AUTO_LORA_PROFILE
         };
         assert_eq!(long_slow.time_on_air_us(255), 14_203_289);
         let sub_sf7 = RadioProfile {
@@ -431,24 +294,32 @@ mod tests {
                 coding_rate: CodingRate::Cr45,
             },
             preamble: PreambleSymbols::new(12),
-            ..DEFAULT_915_PROFILE
+            ..US915_AUTO_LORA_PROFILE
         };
         assert_eq!(sub_sf7.time_on_air_us(50), 13_834);
     }
 
     #[test]
-    fn default_profile_balances_capacity_and_reach_at_medium_fast() {
+    fn auto_lora_profile_uses_the_fastest_supported_lora_shape() {
         assert_eq!(
-            DEFAULT_915_PROFILE.modulation,
-            ModemPreset::MediumFast.modulation()
+            US915_AUTO_LORA_PROFILE.modulation,
+            Modulation::Lora {
+                spreading_factor: SpreadingFactor::Sf7,
+                bandwidth: LoraBandwidth::Bw500kHz,
+                coding_rate: CodingRate::Cr45,
+            }
+        );
+        assert_eq!(
+            US915_AUTO_LORA_PROFILE.frequency,
+            Frequency::new(921_500_000)
         );
     }
 
     #[test]
     fn time_on_air_exceeds_the_nominal_serialization_time() {
         let nominal_us =
-            167u64 * 8 * 1_000_000 / u64::from(DEFAULT_915_PROFILE.nominal_bitrate_bps());
-        assert!(DEFAULT_915_PROFILE.time_on_air_us(167) > nominal_us);
+            167u64 * 8 * 1_000_000 / u64::from(US915_AUTO_LORA_PROFILE.nominal_bitrate_bps());
+        assert!(US915_AUTO_LORA_PROFILE.time_on_air_us(167) > nominal_us);
     }
 
     #[test]
@@ -490,8 +361,8 @@ mod tests {
 
     #[test]
     fn changing_the_channel_settings_re_keys_the_interface_id() {
-        let a = DEFAULT_915_PROFILE;
-        let mut b = DEFAULT_915_PROFILE;
+        let a = US915_AUTO_LORA_PROFILE;
+        let mut b = US915_AUTO_LORA_PROFILE;
         b.modulation = Modulation::Lora {
             spreading_factor: SpreadingFactor::Sf10,
             bandwidth: LoraBandwidth::Bw125kHz,
@@ -506,8 +377,8 @@ mod tests {
 
     #[test]
     fn local_knobs_do_not_re_key_identity() {
-        let mut low = DEFAULT_915_PROFILE;
-        let mut high = DEFAULT_915_PROFILE;
+        let mut low = US915_AUTO_LORA_PROFILE;
+        let mut high = US915_AUTO_LORA_PROFILE;
         low.tx_power = TxPower::new(2);
         high.tx_power = TxPower::new(22);
         high.preamble = PreambleSymbols::new(24);
@@ -542,8 +413,8 @@ mod tests {
 
     #[test]
     fn region_is_a_local_knob_outside_the_channel_tag() {
-        let mut a = DEFAULT_915_PROFILE;
-        let mut b = DEFAULT_915_PROFILE;
+        let mut a = US915_AUTO_LORA_PROFILE;
+        let mut b = US915_AUTO_LORA_PROFILE;
         a.region = Region::Eu868;
         b.region = Region::Unlimited;
         assert_eq!(channel_tag(&a), channel_tag(&b));
@@ -551,9 +422,9 @@ mod tests {
 
     #[test]
     fn profiles_reject_out_of_band_frequency_power_and_empty_preambles() {
-        assert_eq!(DEFAULT_915_PROFILE.validate(), Ok(()));
+        assert_eq!(US915_AUTO_LORA_PROFILE.validate(), Ok(()));
 
-        let mut outside_band = DEFAULT_915_PROFILE;
+        let mut outside_band = US915_AUTO_LORA_PROFILE;
         outside_band.frequency = Frequency::new(868_300_000);
         assert!(matches!(
             outside_band.validate(),
@@ -563,7 +434,7 @@ mod tests {
             })
         ));
 
-        let mut excessive_power = DEFAULT_915_PROFILE;
+        let mut excessive_power = US915_AUTO_LORA_PROFILE;
         excessive_power.region = Region::Eu868;
         excessive_power.frequency = Region::Eu868.default_frequency();
         assert_eq!(
@@ -575,7 +446,7 @@ mod tests {
             })
         );
 
-        let mut empty_preamble = DEFAULT_915_PROFILE;
+        let mut empty_preamble = US915_AUTO_LORA_PROFILE;
         empty_preamble.preamble = PreambleSymbols::new(0);
         assert_eq!(
             empty_preamble.validate(),

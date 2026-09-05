@@ -10,16 +10,6 @@ use crate::{
 
 const CATALOG_JSON: &str = include_str!("../../release/flash/boards.json");
 const BOARD_CATALOG_SCHEMA: u32 = 4;
-const SHIPPING_BOARD_SLUGS: [&str; 8] = [
-    "heltec-v4",
-    "heltec-v4-r8",
-    "t-beam-supreme",
-    "xiao-esp32-c6",
-    "t-echo",
-    "t114",
-    "t096",
-    "t1000-e",
-];
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -422,17 +412,10 @@ impl BoardCatalog {
             validate_provisioning(board)?;
         }
         validate_uf2_board_identities(&self.boards)?;
-        let shipping = self
-            .shipping_boards()
-            .map(|board| board.slug.as_str())
-            .collect::<std::collections::BTreeSet<_>>();
-        let expected = SHIPPING_BOARD_SLUGS
-            .into_iter()
-            .collect::<std::collections::BTreeSet<_>>();
-        if shipping != expected {
+        if self.shipping_boards().next().is_none() {
             return Err(CatalogError::InvalidBoard {
                 board: "catalog".to_string(),
-                message: format!("shipping board set must be exactly {expected:?}"),
+                message: "at least one shipping board is required".to_string(),
             });
         }
         Ok(())
@@ -576,7 +559,9 @@ fn validate_uf2_board_identities(boards: &[BoardCatalogEntry]) -> Result<(), Cat
                         board: (*other_slug).to_string(),
                         message: "UF2 Board-ID match rule is invalid".to_string(),
                     })?;
-            if identity.overlaps(&other_identity) {
+            if identity.overlaps(&other_identity)
+                && !identity.declares_shared_identity_with(&other_identity)
+            {
                 return Err(CatalogError::OverlappingUf2BoardIdentities {
                     first: (*slug).to_string(),
                     second: (*other_slug).to_string(),
@@ -695,6 +680,48 @@ const T114_UF2_RECIPE: PinnedUf2Recipe = PinnedUf2Recipe {
     }],
 };
 
+const MESH_POCKET_5000_UF2_RECIPE: PinnedUf2Recipe = PinnedUf2Recipe {
+    preparation_profile: PreparationProfile::MeshPocketUf2,
+    package: "t-echo",
+    binary: "heltec-mesh-pocket",
+    board_feature: "board-mesh-pocket,mesh-pocket-battery-5000",
+    manufacturer: "Stay Personal",
+    product: "Personal Hopspot (MeshPocket 5000)",
+    serial_number: "PERSONAL-RNS-MSPK5-HOP",
+    variants: &[PinnedUf2Variant {
+        softdevice_family: "s140",
+        softdevice_version: "6.1.1",
+        fwid: "0x00b6",
+        application_base: "0x00026000",
+        application_end_exclusive: "0x000e1000",
+        family_id: "0xada52840",
+        application_link: Uf2ApplicationLink::BareMetal,
+        target_directory: "target/mesh-pocket-5000",
+        filename: "heltec-mesh-pocket-5000-s140-6.1.1.uf2",
+    }],
+};
+
+const MESH_POCKET_10000_UF2_RECIPE: PinnedUf2Recipe = PinnedUf2Recipe {
+    preparation_profile: PreparationProfile::MeshPocketUf2,
+    package: "t-echo",
+    binary: "heltec-mesh-pocket",
+    board_feature: "board-mesh-pocket,mesh-pocket-battery-10000",
+    manufacturer: "Stay Personal",
+    product: "Personal Hopspot (MeshPocket 10000)",
+    serial_number: "PERSONAL-RNS-MSPK10-HOP",
+    variants: &[PinnedUf2Variant {
+        softdevice_family: "s140",
+        softdevice_version: "6.1.1",
+        fwid: "0x00b6",
+        application_base: "0x00026000",
+        application_end_exclusive: "0x000e1000",
+        family_id: "0xada52840",
+        application_link: Uf2ApplicationLink::BareMetal,
+        target_directory: "target/mesh-pocket-10000",
+        filename: "heltec-mesh-pocket-10000-s140-6.1.1.uf2",
+    }],
+};
+
 const T096_UF2_RECIPE: PinnedUf2Recipe = PinnedUf2Recipe {
     preparation_profile: PreparationProfile::T096Uf2,
     package: "t-echo",
@@ -719,6 +746,8 @@ const T096_UF2_RECIPE: PinnedUf2Recipe = PinnedUf2Recipe {
 fn pinned_uf2_recipe(slug: &str) -> Option<&'static PinnedUf2Recipe> {
     match slug {
         "t-echo" => Some(&T_ECHO_UF2_RECIPE),
+        "mesh-pocket-5000" => Some(&MESH_POCKET_5000_UF2_RECIPE),
+        "mesh-pocket-10000" => Some(&MESH_POCKET_10000_UF2_RECIPE),
         "t096" => Some(&T096_UF2_RECIPE),
         "t114" => Some(&T114_UF2_RECIPE),
         _ => None,
@@ -919,49 +948,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn embedded_catalog_has_all_shipping_boards() -> Result<(), CatalogError> {
+    fn embedded_catalog_has_shipping_and_qualification_boards() -> Result<(), CatalogError> {
         let catalog = board_catalog()?;
         assert_eq!(catalog.schema_version, 4);
-        let slugs = catalog
-            .shipping_boards()
-            .map(|board| board.slug.as_str())
-            .collect::<Vec<_>>();
-        assert_eq!(
-            slugs,
-            [
-                "heltec-v4",
-                "heltec-v4-r8",
-                "t-beam-supreme",
-                "xiao-esp32-c6",
-                "t-echo",
-                "t114",
-                "t096",
-                "t1000-e"
-            ]
-        );
+        assert!(catalog.shipping_boards().next().is_some());
+        assert!(catalog
+            .boards
+            .iter()
+            .any(|board| board.availability == BoardAvailability::Qualification));
         Ok(())
     }
 
     #[test]
     fn qualification_boards_are_absent_from_the_shipping_view() -> Result<(), CatalogError> {
         let mut catalog = board_catalog()?;
+        let expected = catalog
+            .shipping_boards()
+            .skip(1)
+            .map(|board| board.slug.clone())
+            .collect::<Vec<_>>();
         catalog.boards[0].availability = BoardAvailability::Qualification;
         let shipping = catalog
             .shipping_boards()
-            .map(|board| board.slug.as_str())
+            .map(|board| board.slug.clone())
             .collect::<Vec<_>>();
-        assert_eq!(
-            shipping,
-            [
-                "heltec-v4-r8",
-                "t-beam-supreme",
-                "xiao-esp32-c6",
-                "t-echo",
-                "t114",
-                "t096",
-                "t1000-e"
-            ]
-        );
+        assert_eq!(shipping, expected);
         assert!(catalog.board("heltec-v4").is_some());
         Ok(())
     }
@@ -1003,6 +1014,11 @@ mod tests {
                     Some(("partitions-hopspot-16mb.csv", "16mb"))
                 ),
                 (
+                    "heltec-wireless-stick-lite-v3",
+                    Some(8_388_608),
+                    Some(("partitions-hopspot-8mb.csv", "8mb"))
+                ),
+                (
                     "t-beam-supreme",
                     Some(8_388_608),
                     Some(("partitions-hopspot-8mb.csv", "8mb"))
@@ -1014,6 +1030,8 @@ mod tests {
                 ),
                 ("t-echo", None, None),
                 ("t114", None, None),
+                ("mesh-pocket-5000", None, None),
+                ("mesh-pocket-10000", None, None),
                 ("t096", None, None),
                 ("t1000-e", None, None),
             ]
@@ -1060,6 +1078,32 @@ mod tests {
         assert!(!catalog
             .shipping_boards()
             .any(|entry| entry.slug == board.slug));
+        Ok(())
+    }
+
+    #[test]
+    fn wireless_stick_lite_v3_contract_is_complete() -> Result<(), CatalogError> {
+        let catalog = board_catalog()?;
+        let board = catalog
+            .board("heltec-wireless-stick-lite-v3")
+            .ok_or_else(|| CatalogError::InvalidBoard {
+                board: "heltec-wireless-stick-lite-v3".to_string(),
+                message: "missing qualification target".to_string(),
+            })?;
+        assert_eq!(board.display_name, "Heltec Wireless Stick Lite V3");
+        assert_eq!(board.expected_chip.as_deref(), Some("esp32s3"));
+        assert_eq!(board.flash_size, Some(8_388_608));
+        assert_eq!(board.interfaces, ["BLE Auto", "LoRa", "USB Auto"]);
+        assert!(!board.supports_provisioning());
+        let BoardBuild::Esp(build) = &board.build else {
+            return Err(invalid(board, "expected an ESP build"));
+        };
+        assert_eq!(build.package, "hopspot-heltec-wireless-stick-lite-v3");
+        assert_eq!(build.binary, "hopspot-heltec-wireless-stick-lite-v3");
+        assert_eq!(build.rust_target, "xtensa-esp32s3-none-elf");
+        assert_eq!(build.partition_table, "partitions-hopspot-8mb.csv");
+        assert_eq!(build.before_reset, "default-reset");
+        assert_eq!(build.after_reset, "hard-reset");
         Ok(())
     }
 
@@ -1210,7 +1254,10 @@ mod tests {
         assert_eq!(build.binary, "heltec-t114");
         assert_eq!(build.board_feature, "board-t114");
         assert_eq!(build.mount_label, "HT-n5262");
-        assert_eq!(build.board_identity.match_kind, Uf2BoardIdMatchKind::Exact);
+        assert_eq!(
+            build.board_identity.match_kind,
+            Uf2BoardIdMatchKind::ExactShared
+        );
         assert_eq!(build.board_identity.value, "ht-n5262");
         assert_eq!(build.application_usb.usb.vendor_id, "0x1209");
         assert_eq!(build.application_usb.usb.product_id, "0x0001");
@@ -1282,12 +1329,12 @@ mod tests {
     }
 
     #[test]
-    fn a_shipping_board_cannot_be_removed() -> Result<(), Box<dyn std::error::Error>> {
+    fn a_catalog_must_retain_a_shipping_board() -> Result<(), Box<dyn std::error::Error>> {
         let mut value = serde_json::to_value(board_catalog()?)?;
         value["boards"]
             .as_array_mut()
             .ok_or("boards is not an array")?
-            .remove(0);
+            .retain(|board| board["availability"] != "shipping");
         assert!(matches!(
             BoardCatalog::from_json(&serde_json::to_vec(&value)?),
             Err(CatalogError::InvalidBoard { .. })
@@ -1348,6 +1395,61 @@ mod tests {
             catalog.validate(),
             Err(CatalogError::OverlappingUf2BoardIdentities { .. })
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn shared_uf2_identity_requires_every_colliding_target_to_declare_it(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut catalog = board_catalog()?;
+        let board = catalog
+            .boards
+            .iter_mut()
+            .find(|board| board.slug == "mesh-pocket-10000")
+            .ok_or("expected MeshPocket target")?;
+        let BoardBuild::Uf2(build) = &mut board.build else {
+            return Err("expected a UF2 build".into());
+        };
+        build.board_identity.match_kind = Uf2BoardIdMatchKind::Exact;
+        assert!(matches!(
+            catalog.validate(),
+            Err(CatalogError::OverlappingUf2BoardIdentities { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn mesh_pocket_capacity_targets_are_distinct_builds_with_shared_recovery_identity(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let catalog = board_catalog()?;
+        for (slug, capacity, serial) in [
+            ("mesh-pocket-5000", "5000", "PERSONAL-RNS-MSPK5-HOP"),
+            ("mesh-pocket-10000", "10000", "PERSONAL-RNS-MSPK10-HOP"),
+        ] {
+            let board = catalog.board(slug).ok_or("expected MeshPocket target")?;
+            assert_eq!(board.availability, BoardAvailability::Qualification);
+            assert_eq!(board.preparation_profile, "mesh-pocket-uf2");
+            let BoardBuild::Uf2(build) = &board.build else {
+                return Err("expected a UF2 build".into());
+            };
+            assert_eq!(build.binary, "heltec-mesh-pocket");
+            assert_eq!(
+                build.board_feature,
+                format!("board-mesh-pocket,mesh-pocket-battery-{capacity}")
+            );
+            assert_eq!(build.mount_label, "HT-n5262");
+            assert_eq!(
+                build.board_identity.match_kind,
+                Uf2BoardIdMatchKind::ExactShared
+            );
+            assert_eq!(build.board_identity.value, "ht-n5262");
+            assert_eq!(build.application_usb.serial_number, serial);
+            let [variant] = build.variants.as_slice() else {
+                return Err("expected one MeshPocket artifact".into());
+            };
+            assert_eq!(variant.application_base, "0x00026000");
+            assert_eq!(variant.application_end_exclusive, "0x000e1000");
+        }
         Ok(())
     }
 

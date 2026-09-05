@@ -280,6 +280,7 @@ jobs:
           stage target/flasher/candidate/qualification/create-flasher-acceptance.py
           stage target/flasher/candidate/qualification/validate-flasher-acceptance.py
           stage target/flasher/candidate/qualification/flasher_acceptance_contract.py
+          stage target/flasher/candidate/qualification/flasher_board_catalog.py
           stage target/flasher/candidate/qualification/flasher_manifest.py
           stage target/flasher/candidate/qualification/serve-flasher-candidate.py
           stage target/flasher/candidate/qualification/verify-flasher-candidate-files.py

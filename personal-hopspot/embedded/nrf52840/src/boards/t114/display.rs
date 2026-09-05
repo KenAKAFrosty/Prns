@@ -5,7 +5,7 @@ use personal_hopspot_core::display::{
     BlankingCommand, BlankingOutcome, BlankingResult, BufferRetention, PresentationOutcome,
 };
 use personal_hopspot_core::face_64x128::{
-    Frame, PanelScale, PanelSize, PanelTransform, PhysicalPoint, QuarterTurn,
+    Frame, PanelScale, PanelScaling, PanelSize, PanelTransform, PhysicalPoint, QuarterTurn,
 };
 
 use crate::boards::{tft, DisplayIoError};
@@ -19,7 +19,7 @@ const PANEL: PanelSize = match PanelSize::new(PANEL_WIDTH as u32, PANEL_HEIGHT a
 };
 const TRANSFORM: PanelTransform = match PanelTransform::centered(
     PANEL,
-    PanelScale::FifteenToEight,
+    PanelScaling::SampledDestinationPixels(PanelScale::FifteenToEight),
     QuarterTurn::CounterClockwise,
 ) {
     Ok(transform) => transform,

@@ -246,6 +246,7 @@ jobs:
             target/candidate/qualification/create-flasher-acceptance.py
             target/candidate/qualification/validate-flasher-acceptance.py
             target/candidate/qualification/flasher_acceptance_contract.py
+            target/candidate/qualification/flasher_board_catalog.py
             target/candidate/qualification/flasher_hotfix.py
             target/candidate/qualification/flasher_manifest.py
             target/candidate/qualification/serve-flasher-candidate.py

@@ -27,7 +27,7 @@ use personal_rns::runtime::{
     EmbassyInterfaceStore, ManifoldLaneSet, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
     StaticManifoldLane,
 };
-use personal_rns::usb_auto::{UsbAutoDevice, UsbAutoDeviceInput};
+use personal_rns::usb_auto::{PhysicalHostPresence, UsbAutoDevice, UsbAutoDeviceInput};
 
 use crate::storage::{C6Storage, EngineStorageType};
 
@@ -189,7 +189,8 @@ async fn usb_device_task(
         rx,
         tx,
         status: &USB_STATUS,
-        host_present,
+        bitrate: personal_rns::interfaces::usb_auto::DEVICE_USB_BITRATE_BPS,
+        host_presence: PhysicalHostPresence::new(host_present),
     });
     device.run(seam).await
 }

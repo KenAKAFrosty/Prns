@@ -60,6 +60,7 @@ async fn pooled_crypto_resumes_a_verified_pairing_availability_as_one_typed_obse
         InterfaceStore::new(),
         CryptoPoolConfig::Pooled {
             workers: PoolWorkers::Fixed(NonZeroUsize::MIN),
+            placement: super::super::CryptoWorkerPlacement::SchedulerManaged,
         },
     ));
 

@@ -126,13 +126,13 @@ impl BackoffRate {
 mod tests {
     use super::*;
     use prns_core::interfaces::lora::{
-        ModemPreset, DEFAULT_915_PROFILE, LORA_MAX_PAYLOAD, LORA_SINGLE_FRAME_MAX,
+        ModemPreset, LORA_MAX_PAYLOAD, LORA_SINGLE_FRAME_MAX, US915_AUTO_LORA_PROFILE,
     };
 
     fn profile(preset: ModemPreset) -> RadioProfile {
         RadioProfile {
             modulation: preset.modulation(),
-            ..DEFAULT_915_PROFILE
+            ..US915_AUTO_LORA_PROFILE
         }
     }
 
@@ -156,7 +156,7 @@ mod tests {
 
     #[test]
     fn a_quantum_strictly_rejects_every_packet_that_would_cross_it() {
-        let quantum = AirtimeQuantum::for_profile(DEFAULT_915_PROFILE);
+        let quantum = AirtimeQuantum::for_profile(US915_AUTO_LORA_PROFILE);
         assert!(quantum.permits(0, quantum.us()));
         assert!(!quantum.permits(0, quantum.us() + 1));
         assert!(!quantum.permits(1, quantum.us()));
@@ -164,7 +164,7 @@ mod tests {
 
     #[test]
     fn service_age_accelerates_continuously_and_caps_at_three_times() {
-        let mut age = ServiceAge::new(DEFAULT_915_PROFILE);
+        let mut age = ServiceAge::new(US915_AUTO_LORA_PROFILE);
         let quantum = age.quantum().us();
         assert_eq!(age.backoff_rate(), BackoffRate::ONE);
 
@@ -242,7 +242,7 @@ mod tests {
 
     #[test]
     fn peer_airtime_is_cumulative_capped_and_resettable() {
-        let mut age = ServiceAge::new(DEFAULT_915_PROFILE);
+        let mut age = ServiceAge::new(US915_AUTO_LORA_PROFILE);
         let quantum = age.quantum().us();
         age.record_peer_airtime(quantum / 4);
         age.record_peer_airtime(quantum / 3);

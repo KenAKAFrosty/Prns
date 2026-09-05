@@ -173,9 +173,15 @@ enum Event {
     Settled(CommandId, Settlement),
     FirstDelivered,
     LinkUp,
-    ResourceIn { link_id: LinkId, bytes: usize },
+    ResourceIn {
+        link_id: LinkId,
+        bytes: usize,
+    },
     ResourceAck(u64),
-    Closed,
+    Closed {
+        link_id: LinkId,
+        reason: LinkClosedReason,
+    },
 }
 
 #[derive(Default)]

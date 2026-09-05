@@ -41,7 +41,7 @@ impl Interface for UsbMuxAutoDevice {
     const KIND: InterfaceKind = InterfaceKind::UsbAutoDevice;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        contract::device_descriptor(self.id)
+        contract::device_descriptor(self.id, contract::DEVICE_USB_BITRATE_BPS)
     }
 
     fn channel_tag(&self) -> &[u8] {

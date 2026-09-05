@@ -338,6 +338,40 @@ class WebsiteBuildTests(unittest.TestCase):
                 run_process.call_args_list[-1].kwargs["label"],
                 "local developer Nordic DFU browser core build",
             )
+            calls_by_label = {
+                call.kwargs["label"]: call for call in run_process.call_args_list
+            }
+            self.assertEqual(
+                calls_by_label["local developer website build"].args[0],
+                [
+                    "dx",
+                    "build",
+                    "--web",
+                    "--ssg",
+                    "--force-sequential",
+                    "true",
+                    "--debug-symbols",
+                    "false",
+                    "--release",
+                    "--locked",
+                    "--features",
+                    "local-dev-flasher",
+                ],
+            )
+            self.assertEqual(
+                calls_by_label["local developer SSG finalization"].args[0],
+                [
+                    "cargo",
+                    "run",
+                    "--locked",
+                    "--features",
+                    "local-dev-flasher",
+                    "--bin",
+                    "finalize_ssg",
+                    "--",
+                    output,
+                ],
+            )
 
 
 

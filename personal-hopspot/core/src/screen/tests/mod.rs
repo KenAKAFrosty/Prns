@@ -5,7 +5,7 @@ use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;
 use heapless::Vec as HVec;
 use personal_rns::interfaces::lora::{
-    Frequency, ModemPreset, RadioProfile, Region, DEFAULT_915_PROFILE,
+    Frequency, ModemPreset, RadioProfile, Region, US915_AUTO_LORA_PROFILE,
 };
 use personal_rns::interfaces::{ConnectionState, InterfaceId};
 use personal_rns::storage::{DisplayedStorageLimits, StorageCapacity};

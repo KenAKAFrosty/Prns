@@ -915,6 +915,28 @@ mod doctor_tests {
             catalog.board("xiao-esp32-c6").expect("XIAO")
         )
         .is_empty());
+        assert_eq!(
+            indistinguishable_esp_boards(
+                &catalog,
+                catalog
+                    .board("heltec-wireless-stick-lite-v3")
+                    .expect("Wireless Stick Lite")
+            )
+            .into_iter()
+            .map(|board| board.slug.as_str())
+            .collect::<Vec<_>>(),
+            ["t-beam-supreme"]
+        );
+        assert_eq!(
+            indistinguishable_esp_boards(
+                &catalog,
+                catalog.board("t-beam-supreme").expect("T-Beam")
+            )
+            .into_iter()
+            .map(|board| board.slug.as_str())
+            .collect::<Vec<_>>(),
+            ["heltec-wireless-stick-lite-v3"]
+        );
 
         let mut two_board_catalog = catalog.clone();
         two_board_catalog

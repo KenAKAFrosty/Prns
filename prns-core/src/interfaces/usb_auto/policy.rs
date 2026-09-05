@@ -36,9 +36,12 @@ pub const HOST_DEFAULTS: InterfaceDefaults = InterfaceDefaults {
     airtime_duty_cycle: None,
 };
 
-pub fn device_descriptor(id: InterfaceId) -> InterfaceDescriptor {
+pub fn device_descriptor(id: InterfaceId, bitrate: BitrateBps) -> InterfaceDescriptor {
     DEVICE_DEFAULTS
-        .configured(ConfiguredInterfacePolicy::default())
+        .configured(ConfiguredInterfacePolicy {
+            bitrate: Some(bitrate),
+            ..ConfiguredInterfacePolicy::default()
+        })
         .descriptor(id)
 }
 
@@ -55,3 +58,25 @@ pub const DEVICE_DEFAULTS: InterfaceDefaults = InterfaceDefaults {
     announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
     airtime_duty_cycle: None,
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn device_descriptor_uses_the_explicit_link_bitrate() {
+        let id = InterfaceId::new([0xA5; 8]);
+        let bitrate = BitrateBps::guess(92_160);
+
+        let descriptor = device_descriptor(id, bitrate);
+
+        assert_eq!(descriptor.bitrate, bitrate);
+        assert_eq!(descriptor.hardware_mtu, Some(DEVICE_USB_HW_MTU));
+        assert_eq!(descriptor.capabilities, DEVICE_DEFAULTS.capabilities);
+    }
+
+    #[test]
+    fn native_usb_default_retains_the_full_speed_bulk_ceiling() {
+        assert_eq!(DEVICE_USB_BITRATE_BPS.get(), 9_728_000);
+    }
+}

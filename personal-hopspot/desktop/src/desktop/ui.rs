@@ -12,7 +12,7 @@ use embedded_graphics_simulator::{
 };
 use heapless::Vec as HVec;
 use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, PrnsCommand};
-use personal_rns::interfaces::lora::{RadioProfile, DEFAULT_915_PROFILE};
+use personal_rns::interfaces::lora::{RadioProfile, US915_AUTO_LORA_PROFILE};
 use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus};
 use personal_rns::storage::{GrowableHeap, StorageLayout};
 use sdl2::event::{Event, WindowEvent};
@@ -671,7 +671,7 @@ pub(super) fn run_window(handles: WindowHandles) {
         UiAction::ResetLoRaProfile => {
             ui_state.show_notice(screen::UiNotice::Saved);
             *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
-            *working_lora_profile = DEFAULT_915_PROFILE;
+            *working_lora_profile = US915_AUTO_LORA_PROFILE;
         }
         UiAction::SwapRadioMode => {}
         UiAction::OpenDocs => {}
@@ -679,7 +679,7 @@ pub(super) fn run_window(handles: WindowHandles) {
     };
 
     let mut ui_state = ui_state();
-    let mut working_lora_profile = DEFAULT_915_PROFILE;
+    let mut working_lora_profile = US915_AUTO_LORA_PROFILE;
     let mut notice_until: Option<Instant> = None;
     let mut active_press: Option<PressStart> = None;
     let mut last_logged: HashMap<InterfaceId, LoggedStatus> = HashMap::new();

@@ -100,3 +100,10 @@ path = "fuzz_targets/remote_control_controller_grants_snapshot.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "subghz_turbo_state"
+path = "fuzz_targets/subghz_turbo_state.rs"
+test = false
+doc = false
+bench = false

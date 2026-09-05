@@ -27,6 +27,8 @@ cargo build \
 ./tools/prns build hopspot t1000e
 ./tools/prns build hopspot t096
 ./tools/prns build hopspot t114
+./tools/prns build hopspot mesh-pocket-5000
+./tools/prns build hopspot mesh-pocket-10000
 ./tools/prns build hopspot mesh-tower-v2
 
 echo "EMBEDDED_BUILD_GATE_OK"

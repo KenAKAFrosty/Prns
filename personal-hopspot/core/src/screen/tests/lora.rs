@@ -47,11 +47,11 @@ fn tap_to_preset_choice(state: &mut UiState, choice: PresetChoice) {
 #[test]
 fn the_tuner_opens_on_the_region_list_at_the_current_region() {
     let mut state = test_ui_state();
-    state.open_lora_editor(DEFAULT_915_PROFILE);
+    state.open_lora_editor(US915_AUTO_LORA_PROFILE);
     assert_eq!(
         lora_screen(&state),
         LoRaScreen::Region {
-            cursor: region_index(DEFAULT_915_PROFILE.region),
+            cursor: region_index(US915_AUTO_LORA_PROFILE.region),
         }
     );
 }
@@ -59,7 +59,7 @@ fn the_tuner_opens_on_the_region_list_at_the_current_region() {
 #[test]
 fn accepting_a_region_snaps_the_default_frequency_and_power_ceiling() {
     let mut state = test_ui_state();
-    state.open_lora_editor(DEFAULT_915_PROFILE);
+    state.open_lora_editor(US915_AUTO_LORA_PROFILE);
     let target = region_index(Region::Eu868);
     tap(&mut state, target);
     input(&mut state, InputEvent::LongPress);
@@ -74,10 +74,10 @@ fn accepting_a_region_snaps_the_default_frequency_and_power_ceiling() {
 #[test]
 fn cancel_from_the_region_list_returns_to_cards_without_committing() {
     let mut state = test_ui_state();
-    state.open_lora_editor(DEFAULT_915_PROFILE);
+    state.open_lora_editor(US915_AUTO_LORA_PROFILE);
     tap(
         &mut state,
-        LORA_REGION_CANCEL - region_index(DEFAULT_915_PROFILE.region),
+        LORA_REGION_CANCEL - region_index(US915_AUTO_LORA_PROFILE.region),
     );
     assert_eq!(
         lora_screen(&state),
@@ -93,8 +93,8 @@ fn cancel_from_the_region_list_returns_to_cards_without_committing() {
 #[test]
 fn a_nonpreset_modulation_lands_the_cursor_on_custom() {
     let mut state = test_ui_state();
-    let mut profile = DEFAULT_915_PROFILE;
-    profile.modulation = step_custom_row(DEFAULT_915_PROFILE, CustomRow::Bandwidth).modulation;
+    let mut profile = US915_AUTO_LORA_PROFILE;
+    profile.modulation = step_custom_row(US915_AUTO_LORA_PROFILE, CustomRow::Bandwidth).modulation;
     state.open_lora_editor(profile);
     input(&mut state, InputEvent::LongPress);
     assert_eq!(
@@ -108,7 +108,7 @@ fn a_nonpreset_modulation_lands_the_cursor_on_custom() {
 #[test]
 fn choosing_a_named_preset_applies_it_then_opens_the_frequency_step() {
     let mut state = test_ui_state();
-    state.open_lora_editor(DEFAULT_915_PROFILE);
+    state.open_lora_editor(US915_AUTO_LORA_PROFILE);
     input(&mut state, InputEvent::LongPress);
     tap_to_preset_choice(&mut state, PresetChoice::Preset(ModemPreset::ShortFast));
     let action = input(&mut state, InputEvent::LongPress);
@@ -130,7 +130,7 @@ fn choosing_a_named_preset_applies_it_then_opens_the_frequency_step() {
 #[test]
 fn the_channel_row_cycles_to_the_next_band_channel_center() {
     let mut state = test_ui_state();
-    state.open_lora_editor(DEFAULT_915_PROFILE);
+    state.open_lora_editor(US915_AUTO_LORA_PROFILE);
     input(&mut state, InputEvent::LongPress);
     tap_to_preset_choice(&mut state, PresetChoice::Preset(ModemPreset::ShortFast));
     input(&mut state, InputEvent::LongPress);
@@ -147,13 +147,13 @@ fn the_channel_row_cycles_to_the_next_band_channel_center() {
     let hz = lora_working_profile(&state).frequency.hz();
     let (low, _) = Region::Us915.band();
     assert_eq!((hz - low - 125_000) % 250_000, 0);
-    assert_eq!(hz, 915_375_000);
+    assert_eq!(hz, 921_875_000);
 }
 
 #[test]
 fn the_frequency_step_dials_a_channel_then_saves_with_the_preset() {
     let mut state = test_ui_state();
-    state.open_lora_editor(DEFAULT_915_PROFILE);
+    state.open_lora_editor(US915_AUTO_LORA_PROFILE);
     input(&mut state, InputEvent::LongPress);
     tap_to_preset_choice(&mut state, PresetChoice::Preset(ModemPreset::ShortFast));
     input(&mut state, InputEvent::LongPress);
@@ -172,13 +172,13 @@ fn the_frequency_step_dials_a_channel_then_saves_with_the_preset() {
     input(&mut state, InputEvent::LongPress);
     tap(&mut state, 5);
     input(&mut state, InputEvent::LongPress);
-    assert_eq!(lora_working_profile(&state).frequency.hz(), 915_625_000);
+    assert_eq!(lora_working_profile(&state).frequency.hz(), 921_125_000);
 
     tap(&mut state, 1);
     let committed = input(&mut state, InputEvent::LongPress);
-    let mut expected = DEFAULT_915_PROFILE;
+    let mut expected = US915_AUTO_LORA_PROFILE;
     expected.modulation = ModemPreset::ShortFast.modulation();
-    expected.frequency = Frequency::new(915_625_000);
+    expected.frequency = Frequency::new(921_125_000);
     assert_eq!(committed, UiAction::SetLoRaProfile(expected));
     assert_eq!(state.mode, UiMode::Cards);
 }
@@ -186,7 +186,7 @@ fn the_frequency_step_dials_a_channel_then_saves_with_the_preset() {
 #[test]
 fn back_from_the_frequency_step_returns_to_the_preset_list() {
     let mut state = test_ui_state();
-    state.open_lora_editor(DEFAULT_915_PROFILE);
+    state.open_lora_editor(US915_AUTO_LORA_PROFILE);
     input(&mut state, InputEvent::LongPress);
     tap_to_preset_choice(&mut state, PresetChoice::Preset(ModemPreset::ShortFast));
     input(&mut state, InputEvent::LongPress);
@@ -203,7 +203,7 @@ fn back_from_the_frequency_step_returns_to_the_preset_list() {
 }
 
 fn open_custom(state: &mut UiState) {
-    state.open_lora_editor(DEFAULT_915_PROFILE);
+    state.open_lora_editor(US915_AUTO_LORA_PROFILE);
     input(state, InputEvent::LongPress);
     tap_to_preset_choice(state, PresetChoice::Custom);
     input(state, InputEvent::LongPress);
@@ -227,8 +227,8 @@ fn custom_grabs_a_field_steps_it_and_saves() {
     tap(&mut state, 5);
     let committed = input(&mut state, InputEvent::LongPress);
 
-    let mut expected = DEFAULT_915_PROFILE;
-    expected.modulation = step_custom_row(DEFAULT_915_PROFILE, CustomRow::Bandwidth).modulation;
+    let mut expected = US915_AUTO_LORA_PROFILE;
+    expected.modulation = step_custom_row(US915_AUTO_LORA_PROFILE, CustomRow::Bandwidth).modulation;
     assert_eq!(committed, UiAction::SetLoRaProfile(expected));
 }
 
@@ -251,11 +251,11 @@ fn custom_dials_a_fractional_frequency_across_the_two_rows() {
     input(&mut state, InputEvent::LongPress);
     tap(&mut state, 5);
     input(&mut state, InputEvent::LongPress);
-    assert_eq!(lora_working_profile(&state).frequency.hz(), 915_625_000);
+    assert_eq!(lora_working_profile(&state).frequency.hz(), 921_125_000);
 
     tap(&mut state, 2);
     match input(&mut state, InputEvent::LongPress) {
-        UiAction::SetLoRaProfile(profile) => assert_eq!(profile.frequency.hz(), 915_625_000),
+        UiAction::SetLoRaProfile(profile) => assert_eq!(profile.frequency.hz(), 921_125_000),
         other => panic!("expected SetLoRaProfile, got {other:?}"),
     }
 }
@@ -312,7 +312,7 @@ fn each_lora_screen_renders_its_selected_row_within_bounds() {
         display.set_allow_overdraw(true);
         display.set_allow_out_of_bounds_drawing(true);
         let mut state = test_ui_state();
-        state.open_lora_editor(DEFAULT_915_PROFILE);
+        state.open_lora_editor(US915_AUTO_LORA_PROFILE);
         if let UiMode::LoRaEditor { profile, .. } = state.mode {
             state.mode = UiMode::LoRaEditor { screen, profile };
         }

@@ -1,9 +1,9 @@
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 use core::{cell::UnsafeCell, ffi::c_void, mem::MaybeUninit};
 
 #[cfg(target_arch = "xtensa")]
 use personal_hopspot_core::HopspotS3FlashLayout;
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 use personal_hopspot_core::UiNotice;
 use personal_hopspot_core::{
     bootstrap_flash_ble_identity_with_runtime_entropy,
@@ -22,12 +22,12 @@ use personal_rns::remote_control::{
     RemoteControlNodeIdentityBootstrap, RemoteControlNodeIdentityBootstrapError,
     REMOTE_CONTROL_IDENTITY_VAULT_SLOTS,
 };
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 use portable_atomic::{AtomicU8, Ordering};
 use prns_core::entropy::{EntropySource, RuntimeEntropy};
 
 use crate::flash::{EspRomFlash, EspRomFlashError};
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 use crate::s3::S3RuntimeEntropy;
 
 const FLASH_SECTOR_LEN: u32 = 0x1000;
@@ -89,16 +89,16 @@ pub(crate) const C6_REMOTE_CONTROL_IDENTITY_FLASH: RemoteControlIdentityFlash =
         ESP32_4_MIB_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET,
     );
 
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 const IDENTITY_TASK_IDLE: u8 = 0;
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 const IDENTITY_TASK_RUNNING: u8 = 1;
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 const IDENTITY_TASK_READY: u8 = 2;
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 const IDENTITY_TASK_STACK_BYTES: usize = 40 * 1024;
 
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 pub(crate) struct S3IdentityBootstraps {
     pub(crate) node: IdentityBootstrap<HopspotNodeIdentity, Error>,
     pub(crate) remote_control:
@@ -107,10 +107,10 @@ pub(crate) struct S3IdentityBootstraps {
     pub(crate) destination_hashes: personal_hopspot_core::HopspotDestinationHashes,
 }
 
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 type IdentityTaskOutput = (S3IdentityBootstraps, S3RuntimeEntropy);
 
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 struct IdentityTaskContext {
     state: AtomicU8,
     remote_control_identity_flash: UnsafeCell<MaybeUninit<RemoteControlIdentityFlash>>,
@@ -118,7 +118,7 @@ struct IdentityTaskContext {
     output: UnsafeCell<MaybeUninit<IdentityTaskOutput>>,
 }
 
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 impl IdentityTaskContext {
     const fn new() -> Self {
         Self {
@@ -169,17 +169,17 @@ impl IdentityTaskContext {
     }
 }
 
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 #[expect(
     clippy::undocumented_unsafe_blocks,
     reason = "the one-shot state transition separates input initialization, worker output, and caller consumption"
 )]
 unsafe impl Sync for IdentityTaskContext {}
 
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 static IDENTITY_TASK: IdentityTaskContext = IdentityTaskContext::new();
 
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 extern "C" fn identity_task(_param: *mut c_void) {
     let remote_control_identity_flash = IDENTITY_TASK.take_remote_control_identity_flash();
     let mut entropy = IDENTITY_TASK.take_entropy();
@@ -213,7 +213,7 @@ extern "C" fn identity_task(_param: *mut c_void) {
 /// Ed25519 public-key reconstruction has a large stack high-water mark. Running it on a temporary
 /// radio-RTOS task keeps the main stack guard effective and frees the temporary stack when the
 /// worker exits. The persisted records and bootstrap behavior are otherwise identical.
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 pub(crate) async fn bootstrap_s3_identities(
     remote_control_identity_flash: RemoteControlIdentityFlash,
     entropy: S3RuntimeEntropy,
@@ -255,7 +255,7 @@ pub fn log_persistence(identity: &str, persistence: &IdentityPersistence<Error>)
     }
 }
 
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 pub fn startup_notice(
     node: &IdentityPersistence<Error>,
     bluetooth: &IdentityPersistence<Error>,

@@ -1,7 +1,7 @@
 use core::cmp::{max, min};
 
 use prns_core::interfaces::lora::{
-    ModemPreset, RadioProfile, DEFAULT_915_PROFILE, LORA_MAX_PAYLOAD, LORA_SINGLE_FRAME_MAX,
+    ModemPreset, RadioProfile, LORA_MAX_PAYLOAD, LORA_SINGLE_FRAME_MAX, US915_AUTO_LORA_PROFILE,
 };
 
 use super::airtime_quantum::{AirtimeQuantum, ServiceAge};
@@ -209,7 +209,7 @@ struct SimulationResult {
 fn profile(preset: ModemPreset) -> RadioProfile {
     RadioProfile {
         modulation: preset.modulation(),
-        ..DEFAULT_915_PROFILE
+        ..US915_AUTO_LORA_PROFILE
     }
 }
 

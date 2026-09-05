@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from script_command import script_command
 
 from flasher_build_metadata import EXPECTED_TOOLS, EXPECTED_WEB_PACKAGES
+from flasher_board_catalog import release_boards
 from flasher_reproducibility import SEPARATE_ENVELOPES, payload_identity, payload_manifest
 from flasher_sparse_sizes import build_report as build_sparse_size_report
 from flasher_manifest import (
@@ -52,6 +53,15 @@ CLI_TARGETS = {
     "aarch64-unknown-linux-gnu": ".tar.gz",
     "x86_64-pc-windows-msvc": ".zip",
 }
+SHIPPING_BOARDS = release_boards(SCRIPTS / "flasher_board_catalog.py").shipping
+CATALOG_INTERFACES = {
+    board["slug"]: board["interfaces"]
+    for board in json.loads(
+        (ROOT / "release" / "flash" / "boards.json").read_text(encoding="utf-8")
+    )["boards"]
+}
+
+
 def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -189,19 +199,7 @@ class CandidateFixture:
         (root / "THIRD_PARTY_NOTICES.md").write_text("fixture notices\n", encoding="utf-8")
         targets = []
         self.firmware_paths = []
-        for index, board in enumerate(
-            (
-                "heltec-v4",
-                "heltec-v4-r8",
-                "t-beam-supreme",
-                "xiao-esp32-c6",
-                "t-echo",
-                "t114",
-                "t096",
-                "t1000-e",
-            ),
-            start=1,
-        ):
+        for index, board in enumerate(SHIPPING_BOARDS, start=1):
             filenames = (
                 ("t-echo-s140-6.1.1.uf2", "t-echo-s140-7.3.0.uf2")
                 if board == "t-echo"
@@ -276,6 +274,7 @@ class CandidateFixture:
                 variants = []
             target = {
                 "board_slug": board,
+                "interfaces": CATALOG_INTERFACES[board],
                 "transport": (
                     "uf2-mass-storage"
                     if board in {"t-echo", "t114", "t096"}
@@ -320,16 +319,7 @@ class CandidateFixture:
                         "source": None,
                         "reserve_bytes": None,
                     }
-                    for board in (
-                        "heltec-v4",
-                        "heltec-v4-r8",
-                        "t-beam-supreme",
-                        "xiao-esp32-c6",
-                        "t-echo",
-                        "t114",
-                        "t096",
-                        "t1000-e",
-                    )
+                    for board in SHIPPING_BOARDS
                 ],
             },
         )
@@ -417,6 +407,7 @@ class CandidateFixture:
             "create-flasher-acceptance.py": SCRIPTS / "create-flasher-acceptance.py",
             "validate-flasher-acceptance.py": SCRIPTS / "validate-flasher-acceptance.py",
             "flasher_acceptance_contract.py": SCRIPTS / "flasher_acceptance_contract.py",
+            "flasher_board_catalog.py": SCRIPTS / "flasher_board_catalog.py",
             "flasher_manifest.py": SCRIPTS / "flasher_manifest.py",
             "serve-flasher-candidate.py": SCRIPTS / "serve-flasher-candidate.py",
             "verify-flasher-candidate-files.py": SCRIPTS / "verify-flasher-candidate-files.py",
@@ -433,6 +424,8 @@ class CandidateFixture:
             ("heltec-v4", "web"): ("linux", "x86_64"),
             ("heltec-v4-r8", "cli"): ("linux", "x86_64"),
             ("heltec-v4-r8", "web"): ("linux", "x86_64"),
+            ("heltec-wireless-stick-lite-v3", "cli"): ("linux", "x86_64"),
+            ("heltec-wireless-stick-lite-v3", "web"): ("linux", "x86_64"),
             ("t-beam-supreme", "cli"): ("macos", "aarch64"),
             ("t-beam-supreme", "web"): ("macos", "aarch64"),
             ("xiao-esp32-c6", "cli"): ("windows", "x86_64"),
@@ -448,6 +441,8 @@ class CandidateFixture:
         }
         physical_assignments = []
         for (board, surface), (os_name, architecture) in physical_hosts.items():
+            if board not in SHIPPING_BOARDS:
+                continue
             assignment = {
                 "board": board,
                 "surface": surface,
@@ -1506,6 +1501,7 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
             self.fixture.root / "qualification" / "create-flasher-acceptance.py",
             self.fixture.root / "qualification" / "validate-flasher-acceptance.py",
             self.fixture.root / "qualification" / "flasher_acceptance_contract.py",
+            self.fixture.root / "qualification" / "flasher_board_catalog.py",
             self.fixture.root / "qualification" / "flasher_hotfix.py",
             self.fixture.root / "qualification" / "flasher_manifest.py",
             self.fixture.root / "qualification" / "serve-flasher-candidate.py",

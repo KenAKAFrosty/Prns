@@ -38,7 +38,9 @@ pub(super) async fn run_resource_endpoint(
                 Some(Event::Heard(destination))
             }
             PrnsEvent::Diagnostic(Diagnostic::LinkEstablished(_)) => Some(Event::LinkUp),
-            PrnsEvent::Diagnostic(Diagnostic::LinkClosed { .. }) => Some(Event::Closed),
+            PrnsEvent::Diagnostic(Diagnostic::LinkClosed { link_id, reason }) => {
+                Some(Event::Closed { link_id, reason })
+            }
             PrnsEvent::Message(Message::Resource { link_id, data, .. }) => {
                 Some(Event::ResourceIn {
                     link_id,
@@ -86,8 +88,6 @@ pub(super) async fn run_resource_endpoint(
             respond_resource_runtime(
                 destination,
                 announce_every,
-                duration,
-                drain_grace(&manifest.profile),
                 initiators,
                 &commands,
                 event_rx,
@@ -119,8 +119,6 @@ pub(super) async fn run_resource_endpoint(
 pub(super) async fn respond_resource_runtime(
     destination: DestinationHash,
     announce_every: Duration,
-    duration: Duration,
-    drain: Duration,
     initiator_count: usize,
     commands: &PrnsNodeHandle,
     mut events: mpsc::Receiver<Event>,
@@ -130,7 +128,6 @@ pub(super) async fn respond_resource_runtime(
     let mut measurement_ready = false;
     let mut announce = tokio::time::interval(announce_every);
     let mut announcing = true;
-    let report_at = tokio::time::Instant::now() + duration + drain + DRAIN_GRACE;
     let mut received = 0u64;
     let mut payload_bytes = 0u64;
     let mut target = None;
@@ -147,10 +144,6 @@ pub(super) async fn respond_resource_runtime(
                 {
                     return;
                 }
-            }
-            _ = tokio::time::sleep_until(report_at) => {
-                println!("RESULT received={received} payload_bytes={payload_bytes}");
-                return;
             }
             requested = &mut collection_target, if target.is_none() => {
                 target = Some(requested.expect("runner supplied collection target"));
@@ -177,7 +170,7 @@ pub(super) async fn respond_resource_runtime(
                             }))
                             .expect("resource acknowledgement is accepted");
                     }
-                    Some(Event::Closed) => {}
+                    Some(Event::Closed { .. }) => {}
                     None => return,
                     Some(_) => {}
                 }
