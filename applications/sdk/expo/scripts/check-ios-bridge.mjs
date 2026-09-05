@@ -765,6 +765,7 @@ try {
     probeLines,
     [
       "PRNS_IOS_RESTORATION sequence=17 event=logger_installed",
+      "PRNS_IOS_RESTORATION sequence=18 event=central_scan_already_scanning",
       "PRNS_IOS_RESTORATION sequence=18446744073709551615 event=central_scan_started",
     ],
     "each valid probe must reach stderr once; invalid codes must stay silent",

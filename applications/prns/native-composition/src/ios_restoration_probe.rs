@@ -139,6 +139,22 @@ mod enabled {
                 "bluetooth: CoreBluetooth logical radio resources down" => {
                     return Some("central_radio_disabled");
                 }
+                "bluetooth: scanning requested on" => return Some("central_scan_requested_on"),
+                "bluetooth: scanning requested off" => return Some("central_scan_requested_off"),
+                "bluetooth: scan job started" => return Some("central_scan_job_started"),
+                "bluetooth: scan job skipped radio disabled" => {
+                    return Some("central_scan_job_radio_disabled");
+                }
+                "bluetooth: querying scan state" => return Some("central_scan_state_query"),
+                "bluetooth: scan decision start" => return Some("central_scan_decision_start"),
+                "bluetooth: scan decision restart" => return Some("central_scan_decision_restart"),
+                "bluetooth: scan decision stop" => return Some("central_scan_decision_stop"),
+                "bluetooth: scan decision already scanning" => {
+                    return Some("central_scan_already_scanning");
+                }
+                "bluetooth: scan decision already stopped" => {
+                    return Some("central_scan_already_stopped");
+                }
                 "bluetooth: scanning for Prns peers" => return Some("central_scan_started"),
                 "bluetooth: restarted Prns scan so late-arriving peers can be sighted" => {
                     return Some("central_scan_restarted");
@@ -302,6 +318,16 @@ mod enabled {
                 "bluetooth: CoreBluetooth logical radio resources down",
                 "central_radio_disabled",
             ),
+            (BACKEND, "bluetooth: scanning requested on", "central_scan_requested_on"),
+            (BACKEND, "bluetooth: scanning requested off", "central_scan_requested_off"),
+            (BACKEND, "bluetooth: scan job started", "central_scan_job_started"),
+            (BACKEND, "bluetooth: scan job skipped radio disabled", "central_scan_job_radio_disabled"),
+            (BACKEND, "bluetooth: querying scan state", "central_scan_state_query"),
+            (BACKEND, "bluetooth: scan decision start", "central_scan_decision_start"),
+            (BACKEND, "bluetooth: scan decision restart", "central_scan_decision_restart"),
+            (BACKEND, "bluetooth: scan decision stop", "central_scan_decision_stop"),
+            (BACKEND, "bluetooth: scan decision already scanning", "central_scan_already_scanning"),
+            (BACKEND, "bluetooth: scan decision already stopped", "central_scan_already_stopped"),
             (
                 BACKEND,
                 "bluetooth: scanning for Prns peers",

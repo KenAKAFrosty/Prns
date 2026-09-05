@@ -4,6 +4,7 @@ import Foundation
 enum PrnsAppRestorationProbeTests {
   static func main() {
     emit(Array("logger_installed".utf8), sequence: 17)
+    emit(Array("central_scan_already_scanning".utf8), sequence: 18)
     emit(Array("central_scan_started".utf8), sequence: UInt64.max)
 
     // Invalid calls must never reach the console, including private/error payloads.
