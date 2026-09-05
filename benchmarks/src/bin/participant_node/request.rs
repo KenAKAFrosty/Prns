@@ -320,6 +320,7 @@ pub(super) async fn initiate_request_runtime(
     let mut rtts = Vec::new();
 
     let mut launch = |link_id, tasks: &mut tokio::task::JoinSet<_>| {
+        let sequence = sent + 1;
         let request_len = request_sizes.next_len();
         let wanted = response_sizes.next_len() as u16;
         let mut framed = Vec::with_capacity(request_len + 3);
@@ -332,7 +333,14 @@ pub(super) async fn initiate_request_runtime(
             let result = handle
                 .request_with_response_timeout(link_id, path_hash, &framed, timeout)
                 .await;
-            (link_id, request_len, u64::from(wanted), issued_at, result)
+            (
+                sequence,
+                link_id,
+                request_len,
+                u64::from(wanted),
+                issued_at,
+                result,
+            )
         });
         sent += 1;
         request_bytes += request_len as u64;
@@ -348,7 +356,7 @@ pub(super) async fn initiate_request_runtime(
     }
 
     while let Some(joined) = tasks.join_next().await {
-        let (link_id, _request_len, _wanted, issued_at, result) =
+        let (sequence, link_id, _request_len, _wanted, issued_at, result) =
             joined.expect("request task remains alive");
         match result {
             Ok((response, _protocol_rtt)) => {
@@ -356,7 +364,14 @@ pub(super) async fn initiate_request_runtime(
                 response_bytes += msgpack_bin_payload(&response).len() as u64;
                 rtts.push(issued_at.elapsed().as_secs_f64() * 1_000.0);
             }
-            Err(_) => timeouts += 1,
+            Err(error) => {
+                timeouts += 1;
+                eprintln!(
+                    "REQUEST_FAILURE role=initiator sequence={sequence} link_id={:?} elapsed_ms={} error={error:?}",
+                    link_id.as_bytes(),
+                    issued_at.elapsed().as_millis(),
+                );
+            }
         }
         available_links.push_back(link_id);
         if tokio::time::Instant::now() < deadline {

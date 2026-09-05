@@ -754,9 +754,7 @@ struct CryptoWorker {
     bulk_job_producer: RefCell<Option<Producer<ScheduledCryptoJob>>>,
     /// The worker owns this ring's producer and the manifold owns this consumer.
     result_consumer: RefCell<Option<Consumer<ScheduledCryptoResult>>>,
-    /// Set only across the worker's final empty-ring observation and park. Active workers observe
-    /// their SPSC ring directly, so a submit does not pay an unconditional kernel wake.
-    wake_armed: Arc<AtomicBool>,
+    wake_on_submit: Arc<AtomicBool>,
     handle: Option<std::thread::JoinHandle<()>>,
     role: CryptoWorkerRole,
     outstanding_jobs: Cell<usize>,
@@ -844,8 +842,8 @@ impl CryptoPool {
                 RingBuffer::new(CRYPTO_WORKER_RESULT_RING_DEPTH);
             let worker_state = state.clone();
             let worker_completion_wake = completion_wake.clone();
-            let wake_armed = Arc::new(AtomicBool::new(false));
-            let worker_wake_armed = wake_armed.clone();
+            let wake_on_submit = Arc::new(AtomicBool::new(false));
+            let worker_wake_on_submit = wake_on_submit.clone();
             match std::thread::Builder::new()
                 .name(format!("prns-crypto-{worker}"))
                 .spawn(move || {
@@ -866,7 +864,7 @@ impl CryptoPool {
                         bulk_jobs: bulk_job_consumer,
                         results: result_producer,
                         completion_wake: &worker_completion_wake,
-                        wake_armed: &worker_wake_armed,
+                        wake_on_submit: &worker_wake_on_submit,
                         scheduler_policy,
                     });
                 }) {
@@ -876,7 +874,7 @@ impl CryptoPool {
                         interactive_job_producer: RefCell::new(Some(interactive_job_producer)),
                         bulk_job_producer: RefCell::new(Some(bulk_job_producer)),
                         result_consumer: RefCell::new(Some(result_consumer)),
-                        wake_armed,
+                        wake_on_submit,
                         handle: Some(handle),
                         role,
                         outstanding_jobs: Cell::new(0),
@@ -1155,8 +1153,7 @@ impl CryptoPool {
 
     fn wake_worker_if_armed(&self, worker: usize) {
         let slot = &self.workers[worker];
-        if slot.wake_armed.load(Ordering::Acquire) && slot.wake_armed.swap(false, Ordering::AcqRel)
-        {
+        if slot.wake_on_submit.swap(false, Ordering::AcqRel) {
             if let Some(handle) = &slot.handle {
                 handle.thread().unpark();
             }
@@ -1798,7 +1795,7 @@ struct CryptoWorkerRun<'a> {
     bulk_jobs: Consumer<ScheduledCryptoJob>,
     results: Producer<ScheduledCryptoResult>,
     completion_wake: &'a Notify,
-    wake_armed: &'a AtomicBool,
+    wake_on_submit: &'a AtomicBool,
     scheduler_policy: SchedulerPolicy,
 }
 
@@ -1810,7 +1807,7 @@ fn crypto_worker(run: CryptoWorkerRun<'_>) {
         mut bulk_jobs,
         mut results,
         completion_wake,
-        wake_armed,
+        wake_on_submit,
         scheduler_policy,
     } = run;
     let mut verifier_cache = core::array::from_fn(|_| None);
@@ -1877,14 +1874,13 @@ fn crypto_worker(run: CryptoWorkerRun<'_>) {
             WorkerIdleStep::Park => {}
         }
         release_warm_worker(state, worker);
-        wake_armed.store(true, Ordering::Release);
+        wake_on_submit.swap(true, Ordering::AcqRel);
         if interactive_jobs.slots() == 0
             && bulk_jobs.slots() == 0
             && !state.shutdown.load(Ordering::Acquire)
         {
             std::thread::park();
         }
-        wake_armed.store(false, Ordering::Release);
     }
 }
 

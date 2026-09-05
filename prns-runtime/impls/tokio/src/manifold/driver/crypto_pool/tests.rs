@@ -527,7 +527,7 @@ fn parked_worker_arm_is_cleared_by_submission_without_losing_the_job() {
 
     let pool = CryptoPool::spawn(1, Arc::new(Notify::new())).expect("worker spawns");
     let deadline = std::time::Instant::now() + Duration::from_secs(1);
-    while !pool.workers[0].wake_armed.load(Ordering::Acquire) {
+    while !pool.workers[0].wake_on_submit.load(Ordering::Acquire) {
         assert!(std::time::Instant::now() < deadline, "worker arms its park");
         std::thread::yield_now();
     }
