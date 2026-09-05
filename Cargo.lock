@@ -2904,6 +2904,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "personal-hopspot-memory"
+version = "0.1.0"
+
+[[package]]
 name = "personal-rns"
 version = "0.3.7"
 dependencies = [
