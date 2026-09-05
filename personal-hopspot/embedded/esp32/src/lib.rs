@@ -22,20 +22,33 @@ mod immediate_display;
 
 #[cfg(all(
     target_arch = "xtensa",
-    not(all(
-        feature = "bluetooth-auto",
-        feature = "esp-now",
-        feature = "tcp",
-        feature = "usb",
-        feature = "wifi-auto"
+    not(any(
+        all(
+            not(feature = "esp32s3fn8"),
+            feature = "bluetooth-auto",
+            feature = "esp-now",
+            feature = "tcp",
+            feature = "usb",
+            feature = "wifi-auto"
+        ),
+        all(
+            feature = "esp32s3fn8",
+            feature = "bluetooth-auto",
+            feature = "lora",
+            feature = "usb",
+            not(feature = "esp-now"),
+            not(feature = "tcp"),
+            not(feature = "wifi-auto")
+        )
     ))
 ))]
 compile_error!(
-    "ESP32-S3 firmware is built through a board package, which selects bluetooth-auto, esp-now, tcp, usb, and wifi-auto (plus lora on boards with an SX1262)"
+    "ESP32-S3 firmware is built through a board package with one complete board capability set"
 );
 
 #[cfg(all(
     target_arch = "xtensa",
+    not(feature = "esp32s3fn8"),
     feature = "bluetooth-auto",
     feature = "esp-now",
     feature = "tcp",
@@ -43,6 +56,18 @@ compile_error!(
     feature = "wifi-auto"
 ))]
 pub mod s3;
+
+#[cfg(all(
+    target_arch = "xtensa",
+    feature = "esp32s3fn8",
+    feature = "bluetooth-auto",
+    feature = "lora",
+    feature = "usb",
+    not(feature = "esp-now"),
+    not(feature = "tcp"),
+    not(feature = "wifi-auto")
+))]
+pub mod s3fn8;
 
 #[cfg(all(
     target_arch = "riscv32",
@@ -81,11 +106,11 @@ mod identity;
 #[cfg(any(target_arch = "riscv32", target_arch = "xtensa"))]
 mod persistence;
 
-#[cfg(any(test, target_arch = "xtensa"))]
+#[cfg(any(test, all(target_arch = "xtensa", not(feature = "esp32s3fn8"))))]
 mod station_recovery;
-#[cfg(any(test, target_arch = "xtensa"))]
+#[cfg(any(test, all(target_arch = "xtensa", not(feature = "esp32s3fn8"))))]
 mod station_security;
 #[cfg(any(target_arch = "riscv32", target_arch = "xtensa"))]
 mod storage;
-#[cfg(any(test, target_arch = "xtensa"))]
+#[cfg(any(test, all(target_arch = "xtensa", not(feature = "esp32s3fn8"))))]
 mod wifi_data_path_recovery;

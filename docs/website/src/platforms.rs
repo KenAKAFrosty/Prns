@@ -240,16 +240,6 @@ pub const UPCOMING_BOARD_TARGETS: &[BoardTarget] = &[
         flash_target: None,
     },
     BoardTarget {
-        name: "Heltec Wireless Stick Lite V3",
-        slug: "heltec-wireless-stick-lite-v3",
-        silicon: "ESP32-S3 + SX1262",
-        tier: Tier::BringUp,
-        interfaces: &[],
-        icon: Some("espressif"),
-        preparation_profile: None,
-        flash_target: None,
-    },
-    BoardTarget {
         name: "Raspberry Pi Zero 2 W",
         slug: "raspberry-pi-zero-2-w",
         silicon: "RP3A0, quad-core Arm Cortex-A53",
@@ -728,7 +718,6 @@ mod tests {
             bring_up,
             vec![
                 "muzi.works Base Duo",
-                "Heltec Wireless Stick Lite V3",
                 "Raspberry Pi Zero 2 W",
                 "RAK WisBlock Starter Kit",
             ]
@@ -752,21 +741,26 @@ mod tests {
     }
 
     #[test]
-    fn promoted_nordic_boards_come_from_the_shared_shipping_catalog() {
+    fn qualification_boards_come_from_the_shared_catalog() {
+        let catalog = prns_flash_manifest::board_catalog().expect("board catalog is valid");
         assert_eq!(
             QUALIFICATION_BOARD_TARGETS
                 .iter()
-                .map(|board| (board.slug, board.tier, board.image().is_some()))
+                .map(|board| board.slug)
                 .collect::<Vec<_>>(),
-            [
-                ("heltec-e290", Tier::Qualification, false),
-                ("mesh-pocket-5000", Tier::Qualification, true),
-                ("mesh-pocket-10000", Tier::Qualification, true),
-            ]
+            catalog
+                .boards
+                .iter()
+                .filter(|board| {
+                    board.availability == prns_flash_manifest::BoardAvailability::Qualification
+                })
+                .map(|board| board.slug.as_str())
+                .collect::<Vec<_>>()
         );
         assert!(QUALIFICATION_BOARD_TARGETS
             .iter()
-            .all(|board| board.is_flashable() == cfg!(feature = "local-dev-flasher")));
+            .all(|board| board.tier == Tier::Qualification
+                && board.is_flashable() == cfg!(feature = "local-dev-flasher")));
         let cards = SHIPPING_BOARD_TARGETS
             .iter()
             .filter(|board| matches!(board.slug, "t096" | "t1000-e"))

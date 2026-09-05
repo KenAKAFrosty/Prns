@@ -4,13 +4,14 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 publish = false
-description = "Personal Hopspot ESP32 firmware: the Heltec V4 / V4-R8 and T-Beam Supreme (ESP32-S3) and the headless XIAO (ESP32-C6) faces."
+description = "Personal Hopspot firmware for supported ESP32-S3 and ESP32-C6 boards."
 
 [workspace]
 members = [
     "boards/heltec-e290",
     "boards/heltec-v4",
     "boards/heltec-v4-r8",
+    "boards/heltec-wireless-stick-lite-v3",
     "boards/t-beam-supreme",
     "boards/xiao-esp32-c6",
 ]
@@ -39,12 +40,15 @@ path = "src/lib.rs"
 [features]
 default = []
 display = ["personal-hopspot-core/display", "dep:embedded-graphics"]
-bluetooth-auto = ["dep:trouble-host", "dep:prns-interfaces-embassy", "esp-radio/ble", "esp-radio/coex", "esp-rtos/esp-radio", "personal-rns/bluetooth-auto"]
+bluetooth-auto = ["dep:trouble-host", "dep:prns-interfaces-embassy", "esp-radio/ble", "esp-rtos/esp-radio", "personal-rns/bluetooth-auto"]
 wifi-auto = ["esp-radio/wifi", "esp-radio/coex", "esp-rtos/esp-radio", "personal-rns/wifi-auto"]
 esp-now = ["esp-radio/esp-now", "esp-radio/coex", "esp-rtos/esp-radio", "personal-rns/esp-now"]
 lora = ["personal-rns/lora"]
 usb = ["personal-rns/usb"]
 tcp = ["wifi-auto", "personal-rns/tcp-dns", "embassy-net/dns"]
+esp32s3fn8 = []
+jtag-logging = ["esp-println/jtag-serial"]
+silent-logging = ["esp-println/no-op"]
 # Developer-only interoperability fixture. Shipping board packages do not enable it.
 wifi-security-probe = []
 
@@ -80,7 +84,7 @@ log = { version = "0.4", features = ["release_max_level_info"] }
 esp-hal = { version = "1.1", features = ["esp32s3", "unstable"] }
 esp-phy = "0.2.0"
 esp-backtrace = { version = "0.19", default-features = false, features = ["esp32s3", "panic-handler", "println"] }
-esp-println = { version = "0.17", default-features = false, features = ["esp32s3", "jtag-serial", "log-04"] }
+esp-println = { version = "0.17", default-features = false, features = ["esp32s3", "log-04"] }
 esp-bootloader-esp-idf = { version = "0.5", features = ["esp32s3"] }
 ssd1306 = "0.9"
 esp-rtos = { version = "0.3.0", features = ["esp32s3", "embassy", "esp-radio"] }
@@ -101,7 +105,7 @@ esp-hal = { version = "1.1", features = ["esp32c6", "unstable"] }
 esp-rtos = { version = "0.3.0", features = ["esp32c6", "embassy"] }
 esp-alloc = { version = "0.10.0", features = ["internal-heap-stats"] }
 esp-backtrace = { version = "0.19", default-features = false, features = ["esp32c6", "panic-handler", "println"] }
-esp-println = { version = "0.17", default-features = false, features = ["esp32c6", "jtag-serial", "log-04"] }
+esp-println = { version = "0.17", default-features = false, features = ["esp32c6", "log-04"] }
 esp-bootloader-esp-idf = { version = "0.5", features = ["esp32c6"] }
 static_cell = "2"
 portable-atomic = { version = "1", default-features = false }

@@ -10,16 +10,6 @@ use crate::{
 
 const CATALOG_JSON: &str = include_str!("../../release/flash/boards.json");
 const BOARD_CATALOG_SCHEMA: u32 = 4;
-const SHIPPING_BOARD_SLUGS: [&str; 8] = [
-    "heltec-v4",
-    "heltec-v4-r8",
-    "t-beam-supreme",
-    "xiao-esp32-c6",
-    "t-echo",
-    "t114",
-    "t096",
-    "t1000-e",
-];
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -422,17 +412,10 @@ impl BoardCatalog {
             validate_provisioning(board)?;
         }
         validate_uf2_board_identities(&self.boards)?;
-        let shipping = self
-            .shipping_boards()
-            .map(|board| board.slug.as_str())
-            .collect::<std::collections::BTreeSet<_>>();
-        let expected = SHIPPING_BOARD_SLUGS
-            .into_iter()
-            .collect::<std::collections::BTreeSet<_>>();
-        if shipping != expected {
+        if self.shipping_boards().next().is_none() {
             return Err(CatalogError::InvalidBoard {
                 board: "catalog".to_string(),
-                message: format!("shipping board set must be exactly {expected:?}"),
+                message: "at least one shipping board is required".to_string(),
             });
         }
         Ok(())
@@ -965,49 +948,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn embedded_catalog_has_all_shipping_boards() -> Result<(), CatalogError> {
+    fn embedded_catalog_has_shipping_and_qualification_boards() -> Result<(), CatalogError> {
         let catalog = board_catalog()?;
         assert_eq!(catalog.schema_version, 4);
-        let slugs = catalog
-            .shipping_boards()
-            .map(|board| board.slug.as_str())
-            .collect::<Vec<_>>();
-        assert_eq!(
-            slugs,
-            [
-                "heltec-v4",
-                "heltec-v4-r8",
-                "t-beam-supreme",
-                "xiao-esp32-c6",
-                "t-echo",
-                "t114",
-                "t096",
-                "t1000-e"
-            ]
-        );
+        assert!(catalog.shipping_boards().next().is_some());
+        assert!(catalog
+            .boards
+            .iter()
+            .any(|board| board.availability == BoardAvailability::Qualification));
         Ok(())
     }
 
     #[test]
     fn qualification_boards_are_absent_from_the_shipping_view() -> Result<(), CatalogError> {
         let mut catalog = board_catalog()?;
+        let expected = catalog
+            .shipping_boards()
+            .skip(1)
+            .map(|board| board.slug.clone())
+            .collect::<Vec<_>>();
         catalog.boards[0].availability = BoardAvailability::Qualification;
         let shipping = catalog
             .shipping_boards()
-            .map(|board| board.slug.as_str())
+            .map(|board| board.slug.clone())
             .collect::<Vec<_>>();
-        assert_eq!(
-            shipping,
-            [
-                "heltec-v4-r8",
-                "t-beam-supreme",
-                "xiao-esp32-c6",
-                "t-echo",
-                "t114",
-                "t096",
-                "t1000-e"
-            ]
-        );
+        assert_eq!(shipping, expected);
         assert!(catalog.board("heltec-v4").is_some());
         Ok(())
     }
@@ -1047,6 +1012,11 @@ mod tests {
                     "heltec-e290",
                     Some(16_777_216),
                     Some(("partitions-hopspot-16mb.csv", "16mb"))
+                ),
+                (
+                    "heltec-wireless-stick-lite-v3",
+                    Some(8_388_608),
+                    Some(("partitions-hopspot-8mb.csv", "8mb"))
                 ),
                 (
                     "t-beam-supreme",
@@ -1108,6 +1078,32 @@ mod tests {
         assert!(!catalog
             .shipping_boards()
             .any(|entry| entry.slug == board.slug));
+        Ok(())
+    }
+
+    #[test]
+    fn wireless_stick_lite_v3_contract_is_complete() -> Result<(), CatalogError> {
+        let catalog = board_catalog()?;
+        let board = catalog
+            .board("heltec-wireless-stick-lite-v3")
+            .ok_or_else(|| CatalogError::InvalidBoard {
+                board: "heltec-wireless-stick-lite-v3".to_string(),
+                message: "missing qualification target".to_string(),
+            })?;
+        assert_eq!(board.display_name, "Heltec Wireless Stick Lite V3");
+        assert_eq!(board.expected_chip.as_deref(), Some("esp32s3"));
+        assert_eq!(board.flash_size, Some(8_388_608));
+        assert_eq!(board.interfaces, ["BLE Auto", "LoRa", "USB Auto"]);
+        assert!(!board.supports_provisioning());
+        let BoardBuild::Esp(build) = &board.build else {
+            return Err(invalid(board, "expected an ESP build"));
+        };
+        assert_eq!(build.package, "hopspot-heltec-wireless-stick-lite-v3");
+        assert_eq!(build.binary, "hopspot-heltec-wireless-stick-lite-v3");
+        assert_eq!(build.rust_target, "xtensa-esp32s3-none-elf");
+        assert_eq!(build.partition_table, "partitions-hopspot-8mb.csv");
+        assert_eq!(build.before_reset, "default-reset");
+        assert_eq!(build.after_reset, "hard-reset");
         Ok(())
     }
 
@@ -1333,12 +1329,12 @@ mod tests {
     }
 
     #[test]
-    fn a_shipping_board_cannot_be_removed() -> Result<(), Box<dyn std::error::Error>> {
+    fn a_catalog_must_retain_a_shipping_board() -> Result<(), Box<dyn std::error::Error>> {
         let mut value = serde_json::to_value(board_catalog()?)?;
         value["boards"]
             .as_array_mut()
             .ok_or("boards is not an array")?
-            .remove(0);
+            .retain(|board| board["availability"] != "shipping");
         assert!(matches!(
             BoardCatalog::from_json(&serde_json::to_vec(&value)?),
             Err(CatalogError::InvalidBoard { .. })

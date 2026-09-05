@@ -305,6 +305,16 @@ entrypoint = ["python", "tools/device/hopspot-dev-flasher.py"]
 requires = ["cargo", "dx", "git", "npm", "python"]
 
 [[task]]
+id = "device.hopspot.flash-local"
+summary = "Build and flash one cataloged Hopspot board from the current working tree."
+domain = "device"
+effect = "device-write"
+platforms = ["any"]
+audience = ["developer"]
+entrypoint = ["python", "tools/device/hopspot-flash-local.py"]
+requires = ["cargo", "python"]
+
+[[task]]
 id = "repo.cargo-check"
 summary = "Compile-check every host-compatible first-party Cargo workspace in parallel."
 domain = "repo"
