@@ -1,8 +1,9 @@
 use core::cmp::{max, min};
 
 use prns_core::interfaces::lora::{
-    ModemPreset, RadioProfile, LORA_MAX_PAYLOAD, LORA_SINGLE_FRAME_MAX, US915_AUTO_LORA_PROFILE,
+    ModemPreset, RadioProfile, LORA_MAX_PAYLOAD, LORA_SINGLE_FRAME_MAX,
 };
+use prns_core::interfaces::subghz::regions::us915::US915_AUTO_LORA_PROFILE;
 
 use super::airtime_quantum::{AirtimeQuantum, ServiceAge};
 use super::channel_access::{
@@ -207,10 +208,9 @@ struct SimulationResult {
 }
 
 fn profile(preset: ModemPreset) -> RadioProfile {
-    RadioProfile {
-        modulation: preset.modulation(),
-        ..US915_AUTO_LORA_PROFILE
-    }
+    US915_AUTO_LORA_PROFILE
+        .with_modulation(preset.modulation())
+        .unwrap()
 }
 
 fn self_airtime_band(short_airtime_per_mille: u16) -> u8 {

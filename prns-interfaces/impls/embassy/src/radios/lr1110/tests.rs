@@ -14,7 +14,8 @@ use embedded_hal::spi::{
 use embedded_hal_async::delay::DelayNs;
 use embedded_hal_async::digital::Wait;
 use embedded_hal_async::spi::SpiDevice;
-use prns_core::interfaces::lora::{TxPower, US915_AUTO_LORA_PROFILE};
+use prns_core::interfaces::lora::TxPower;
+use prns_core::interfaces::subghz::regions::us915::US915_AUTO_LORA_PROFILE;
 
 const TEST_PA_CONFIGS: [PowerAmplifierConfig; 3] = [
     PowerAmplifierConfig {
@@ -424,9 +425,9 @@ fn block_on<F: Future>(future: F) -> F::Output {
 }
 
 fn profile_with_power(power_dbm: i8) -> RadioProfile {
-    let mut profile = US915_AUTO_LORA_PROFILE;
-    profile.tx_power = TxPower::new(power_dbm);
-    profile
+    US915_AUTO_LORA_PROFILE
+        .with_tx_power(TxPower::new(power_dbm))
+        .unwrap()
 }
 
 #[test]

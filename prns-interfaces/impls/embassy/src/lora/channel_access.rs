@@ -88,7 +88,7 @@ impl ChannelTiming {
             spreading_factor,
             bandwidth,
             ..
-        } = profile.modulation;
+        } = profile.modulation();
         let symbol_us = (1u64 << spreading_factor as u8) * 1_000_000 / bandwidth.hz() as u64;
         let slot_unclamped_ms = symbol_us
             .saturating_mul(SYMBOLS_PER_SLOT)
@@ -554,9 +554,9 @@ const fn false_preamble_watchdog_ms(profile: RadioProfile) -> u64 {
         spreading_factor,
         bandwidth,
         ..
-    } = profile.modulation;
+    } = profile.modulation();
     let symbol_us = (1u64 << spreading_factor as u8) * 1_000_000 / bandwidth.hz() as u64;
-    let watchdog_symbols = (profile.preamble.count() as u64).saturating_add(20);
+    let watchdog_symbols = (profile.preamble().count() as u64).saturating_add(20);
     symbol_us
         .saturating_mul(watchdog_symbols)
         .saturating_add(999)
@@ -568,9 +568,11 @@ mod tests {
     use super::*;
     use crate::lora::airtime_quantum::ServiceAge;
     use prns_core::interfaces::lora::{
-        CodingRate, Frequency, LoraBandwidth, ModemPreset, PreambleSymbols, Region,
-        SpreadingFactor, TxPower, US915_AUTO_LORA_PROFILE,
+        CodingRate, Frequency, LoraBandwidth, ModemPreset, PreambleSymbols, SpreadingFactor,
+        TxPower,
     };
+    use prns_core::interfaces::subghz::regions::us915::US915_AUTO_LORA_PROFILE;
+    use prns_core::interfaces::subghz::{RegulatoryRegion, SubGRegion};
 
     fn begin(access: &mut ChannelAccess, entropy: u16) {
         assert_eq!(
@@ -587,23 +589,23 @@ mod tests {
         assert_eq!(normal.slot_ms(), 24);
         assert_eq!(normal.sample_ms(), 6);
 
-        let fastest = RadioProfile {
-            frequency: Frequency::new(915_000_000),
-            modulation: Modulation::Lora {
+        let fastest = RadioProfile::new(
+            SubGRegion::Regulated(RegulatoryRegion::Us915),
+            Frequency::new(915_000_000),
+            Modulation::Lora {
                 spreading_factor: SpreadingFactor::Sf5,
                 bandwidth: LoraBandwidth::Bw500kHz,
                 coding_rate: CodingRate::Cr45,
             },
-            tx_power: TxPower::new(14),
-            preamble: PreambleSymbols::new(18),
-            region: Region::Us915,
-        };
+            TxPower::new(14),
+            PreambleSymbols::new(18),
+        )
+        .unwrap();
         assert_eq!(ChannelTiming::for_profile(fastest).slot_ms(), 6);
 
-        let slowest = RadioProfile {
-            modulation: ModemPreset::LongSlow.modulation(),
-            ..US915_AUTO_LORA_PROFILE
-        };
+        let slowest = US915_AUTO_LORA_PROFILE
+            .with_modulation(ModemPreset::LongSlow.modulation())
+            .unwrap();
         assert_eq!(ChannelTiming::for_profile(slowest).slot_ms(), 100);
     }
 

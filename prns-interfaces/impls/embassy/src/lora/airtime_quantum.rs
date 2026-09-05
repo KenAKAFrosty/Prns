@@ -125,15 +125,13 @@ impl BackoffRate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prns_core::interfaces::lora::{
-        ModemPreset, LORA_MAX_PAYLOAD, LORA_SINGLE_FRAME_MAX, US915_AUTO_LORA_PROFILE,
-    };
+    use prns_core::interfaces::lora::{ModemPreset, LORA_MAX_PAYLOAD, LORA_SINGLE_FRAME_MAX};
+    use prns_core::interfaces::subghz::regions::us915::US915_AUTO_LORA_PROFILE;
 
     fn profile(preset: ModemPreset) -> RadioProfile {
-        RadioProfile {
-            modulation: preset.modulation(),
-            ..US915_AUTO_LORA_PROFILE
-        }
+        US915_AUTO_LORA_PROFILE
+            .with_modulation(preset.modulation())
+            .unwrap()
     }
 
     #[test]

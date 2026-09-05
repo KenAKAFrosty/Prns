@@ -647,7 +647,7 @@ where
         &self,
         profile: RadioProfile,
     ) -> Result<(), RadioProfileCompatibilityError> {
-        let power_dbm = profile.tx_power.dbm();
+        let power_dbm = profile.tx_power().dbm();
         let minimum_dbm = self.board.power_amplifier.minimum_output_power_dbm();
         let maximum_dbm = self.board.power_amplifier.maximum_output_power_dbm();
         if !(minimum_dbm..=maximum_dbm).contains(&power_dbm) {
@@ -682,6 +682,10 @@ where
 
     async fn initialize(&mut self, profile: RadioProfile) -> Result<(), Self::Error> {
         self.initialize_profile(profile).await
+    }
+
+    async fn idle(&mut self) -> Result<(), Self::Error> {
+        self.set_standby().await
     }
 
     async fn arm_rx(&mut self) -> Result<(), Self::Error> {
