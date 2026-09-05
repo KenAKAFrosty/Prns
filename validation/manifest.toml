@@ -1529,6 +1529,18 @@ inputs = [
 ]
 artifacts = "validation-artifacts/results/interop-websocket-bergie-lxmf-e2e"
 
+[[suite]]
+id = "subghz-turbo-evidence"
+domain = "simulation"
+group = "subghz"
+tiers = ["release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 300
+command = ["cargo", "run", "--locked", "-p", "prns-core", "--example", "subghz_turbo_evidence"]
+inputs = ["prns-core/src/interfaces/subghz", "prns-core/examples/subghz_turbo_evidence.rs"]
+artifacts = "validation-artifacts/results/subghz-turbo-evidence"
+
 [[fuzz_target]]
 name = "wire_announce_parse"
 path = "fuzz_targets/wire_announce_parse.rs"
@@ -1599,6 +1611,48 @@ tiers = ["release", "scheduled"]
 name = "remote_control_controller_grants_snapshot"
 path = "fuzz_targets/remote_control_controller_grants_snapshot.rs"
 group = "remote-control"
+tiers = ["release", "scheduled"]
+
+[[fuzz_target]]
+name = "subghz_turbo_state"
+path = "fuzz_targets/subghz_turbo_state.rs"
+group = "subghz"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "every_schedule_time_selects_a_valid_turbo_channel"
+source = "prns-core/src/interfaces/subghz/turbo/schedule.rs"
+group = "subghz"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "every_cycle_and_position_selects_a_valid_channel"
+source = "prns-core/src/interfaces/subghz/turbo/schedule.rs"
+group = "subghz"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "clock_uncertainty_never_shrinks_during_holdover"
+source = "prns-core/src/interfaces/subghz/turbo/clock.rs"
+group = "subghz"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "channel_access_never_grants_without_a_final_clear"
+source = "prns-core/src/interfaces/subghz/turbo/channel_access.rs"
+group = "subghz"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "overlap_never_exceeds_transmission_airtime"
+source = "prns-core/src/interfaces/subghz/frequency_hopping/trace.rs"
+group = "subghz"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "accepted_reservation_never_exceeds_occupancy_or_balance_limit"
+source = "prns-core/src/interfaces/subghz/turbo/occupancy.rs"
+group = "subghz"
 tiers = ["release", "scheduled"]
 
 [[kani]]
