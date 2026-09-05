@@ -59,40 +59,6 @@ pub const HELTEC_DISPLAY_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET: u32 = 0xE1000;
 pub const MESH_TOWER_V2_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET: u32 = 0xE2000;
 pub const T1000E_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET: u32 = 0xE9000;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Nrf52840FirmwareMemory {
-    pub application_flash: FirmwareAddressRange,
-    pub application_ram: FirmwareAddressRange,
-    pub minimum_runtime_stack_bytes: u32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct FirmwareAddressRange {
-    pub start: u32,
-    pub end: u32,
-}
-
-impl FirmwareAddressRange {
-    #[must_use]
-    pub const fn new(start: u32, end: u32) -> Self {
-        assert!(start < end);
-        Self { start, end }
-    }
-
-    #[must_use]
-    pub const fn byte_len(self) -> u32 {
-        self.end - self.start
-    }
-}
-
-const NRF52840_APPLICATION_FLASH_ORIGIN: u32 = 0x26000;
-const NRF52840_S140_V7_APPLICATION_FLASH_ORIGIN: u32 = 0x27000;
-// Both supported S140 versions accept this boundary with the production Bluetooth Auto config.
-// Keeping one proven origin gives every S140 board the same application-RAM contract.
-const NRF52840_S140_APPLICATION_RAM_ORIGIN: u32 = 0x2000C000;
-const T1000E_APPLICATION_RAM_ORIGIN: u32 = 0x20010000;
-const NRF52840_RAM_END: u32 = 0x20040000;
-const NRF52840_MINIMUM_RUNTIME_STACK_BYTES: u32 = 68 * 1024;
 pub const T_ECHO_MIN_ARENA_BYTES: usize = 19 * HOPSPOT_FLASH_PAGE_BYTES;
 pub const T_ECHO_JOURNAL_LAYOUT: FlashJournalLayout = FlashJournalLayout::new(
     [0xC0000, 0xC1000],
@@ -101,29 +67,6 @@ pub const T_ECHO_JOURNAL_LAYOUT: FlashJournalLayout = FlashJournalLayout::new(
         FlashArenaRange::new(0xD6000, 0xE9000),
     ],
 );
-pub const T_ECHO_S140_V6_FIRMWARE_MEMORY: Nrf52840FirmwareMemory = Nrf52840FirmwareMemory {
-    application_flash: FirmwareAddressRange::new(
-        NRF52840_APPLICATION_FLASH_ORIGIN,
-        T_ECHO_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET,
-    ),
-    application_ram: FirmwareAddressRange::new(
-        NRF52840_S140_APPLICATION_RAM_ORIGIN,
-        NRF52840_RAM_END,
-    ),
-    minimum_runtime_stack_bytes: NRF52840_MINIMUM_RUNTIME_STACK_BYTES,
-};
-pub const T_ECHO_S140_V7_FIRMWARE_MEMORY: Nrf52840FirmwareMemory = Nrf52840FirmwareMemory {
-    application_flash: FirmwareAddressRange::new(
-        NRF52840_S140_V7_APPLICATION_FLASH_ORIGIN,
-        T_ECHO_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET,
-    ),
-    application_ram: FirmwareAddressRange::new(
-        NRF52840_S140_APPLICATION_RAM_ORIGIN,
-        NRF52840_RAM_END,
-    ),
-    minimum_runtime_stack_bytes: NRF52840_MINIMUM_RUNTIME_STACK_BYTES,
-};
-
 pub const NRF52840_MIN_ARENA_BYTES: usize = 2 * HOPSPOT_FLASH_PAGE_BYTES;
 pub const HELTEC_DISPLAY_NRF52840_JOURNAL_LAYOUT: FlashJournalLayout = FlashJournalLayout::new(
     [0xE2000, 0xE3000],
@@ -132,18 +75,6 @@ pub const HELTEC_DISPLAY_NRF52840_JOURNAL_LAYOUT: FlashJournalLayout = FlashJour
         FlashArenaRange::new(0xE6000, 0xE8000),
     ],
 );
-pub const HELTEC_DISPLAY_NRF52840_FIRMWARE_MEMORY: Nrf52840FirmwareMemory =
-    Nrf52840FirmwareMemory {
-        application_flash: FirmwareAddressRange::new(
-            NRF52840_APPLICATION_FLASH_ORIGIN,
-            HELTEC_DISPLAY_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET,
-        ),
-        application_ram: FirmwareAddressRange::new(
-            NRF52840_S140_APPLICATION_RAM_ORIGIN,
-            NRF52840_RAM_END,
-        ),
-        minimum_runtime_stack_bytes: NRF52840_MINIMUM_RUNTIME_STACK_BYTES,
-    };
 pub const MESH_TOWER_V2_JOURNAL_LAYOUT: FlashJournalLayout = FlashJournalLayout::new(
     [0xE3000, 0xE4000],
     [
@@ -151,17 +82,6 @@ pub const MESH_TOWER_V2_JOURNAL_LAYOUT: FlashJournalLayout = FlashJournalLayout:
         FlashArenaRange::new(0xE7000, 0xE9000),
     ],
 );
-pub const MESH_TOWER_V2_FIRMWARE_MEMORY: Nrf52840FirmwareMemory = Nrf52840FirmwareMemory {
-    application_flash: FirmwareAddressRange::new(
-        NRF52840_APPLICATION_FLASH_ORIGIN,
-        MESH_TOWER_V2_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET,
-    ),
-    application_ram: FirmwareAddressRange::new(
-        NRF52840_S140_APPLICATION_RAM_ORIGIN,
-        NRF52840_RAM_END,
-    ),
-    minimum_runtime_stack_bytes: NRF52840_MINIMUM_RUNTIME_STACK_BYTES,
-};
 pub const T1000E_JOURNAL_LAYOUT: FlashJournalLayout = FlashJournalLayout::new(
     [0xEA000, 0xEB000],
     [
@@ -169,15 +89,6 @@ pub const T1000E_JOURNAL_LAYOUT: FlashJournalLayout = FlashJournalLayout::new(
         FlashArenaRange::new(0xEE000, 0xF0000),
     ],
 );
-pub const T1000E_FIRMWARE_MEMORY: Nrf52840FirmwareMemory = Nrf52840FirmwareMemory {
-    application_flash: FirmwareAddressRange::new(
-        NRF52840_S140_V7_APPLICATION_FLASH_ORIGIN,
-        T1000E_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET,
-    ),
-    application_ram: FirmwareAddressRange::new(T1000E_APPLICATION_RAM_ORIGIN, NRF52840_RAM_END),
-    minimum_runtime_stack_bytes: NRF52840_MINIMUM_RUNTIME_STACK_BYTES,
-};
-
 const _: () = {
     const PAGE: u32 = HOPSPOT_FLASH_PAGE_BYTES as u32;
     assert!(
@@ -215,24 +126,10 @@ const _: () = {
     );
 
     assert!(
-        T_ECHO_S140_V6_FIRMWARE_MEMORY.application_flash.end
-            == T_ECHO_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET
-    );
-    assert!(
-        T_ECHO_S140_V7_FIRMWARE_MEMORY.application_flash.end
-            == T_ECHO_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET
-    );
-    assert!(
         T_ECHO_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET + PAGE
             == T_ECHO_JOURNAL_LAYOUT.timebase_regions[0]
     );
     assert!(T_ECHO_JOURNAL_LAYOUT.arenas[1].end == NRF52840_RADIO_PROFILE_PAGES[0]);
-    assert!(
-        HELTEC_DISPLAY_NRF52840_FIRMWARE_MEMORY
-            .application_flash
-            .end
-            == HELTEC_DISPLAY_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET
-    );
     assert!(
         HELTEC_DISPLAY_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET + PAGE
             == HELTEC_DISPLAY_NRF52840_JOURNAL_LAYOUT.timebase_regions[0]
@@ -241,17 +138,10 @@ const _: () = {
         HELTEC_DISPLAY_NRF52840_JOURNAL_LAYOUT.arenas[1].end == NRF52840_BLE_IDENTITY_FLASH_OFFSET
     );
     assert!(
-        MESH_TOWER_V2_FIRMWARE_MEMORY.application_flash.end
-            == MESH_TOWER_V2_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET
-    );
-    assert!(
         MESH_TOWER_V2_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET + PAGE
             == MESH_TOWER_V2_JOURNAL_LAYOUT.timebase_regions[0]
     );
     assert!(MESH_TOWER_V2_JOURNAL_LAYOUT.arenas[1].end == NRF52840_RADIO_PROFILE_PAGES[0]);
-    assert!(
-        T1000E_FIRMWARE_MEMORY.application_flash.end == T1000E_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET
-    );
     assert!(
         T1000E_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET + PAGE
             == T1000E_JOURNAL_LAYOUT.timebase_regions[0]
@@ -395,50 +285,6 @@ mod tests {
         assert_eq!(
             T096_APPLICATION_DATA_END + HOPSPOT_FLASH_PAGE_BYTES as u32,
             T096_FACTORY_RESERVED_FLASH_OFFSET
-        );
-    }
-
-    #[test]
-    fn nrf52840_firmware_ends_at_its_remote_control_identity_vault() {
-        assert_eq!(
-            T_ECHO_S140_V6_FIRMWARE_MEMORY,
-            Nrf52840FirmwareMemory {
-                application_flash: FirmwareAddressRange::new(0x26000, 0xBF000),
-                application_ram: FirmwareAddressRange::new(0x2000C000, 0x20040000),
-                minimum_runtime_stack_bytes: 68 * 1024,
-            }
-        );
-        assert_eq!(
-            T_ECHO_S140_V7_FIRMWARE_MEMORY,
-            Nrf52840FirmwareMemory {
-                application_flash: FirmwareAddressRange::new(0x27000, 0xBF000),
-                application_ram: FirmwareAddressRange::new(0x2000C000, 0x20040000),
-                minimum_runtime_stack_bytes: 68 * 1024,
-            }
-        );
-        assert_eq!(
-            HELTEC_DISPLAY_NRF52840_FIRMWARE_MEMORY,
-            Nrf52840FirmwareMemory {
-                application_flash: FirmwareAddressRange::new(0x26000, 0xE1000),
-                application_ram: FirmwareAddressRange::new(0x2000C000, 0x20040000),
-                minimum_runtime_stack_bytes: 68 * 1024,
-            }
-        );
-        assert_eq!(
-            MESH_TOWER_V2_FIRMWARE_MEMORY,
-            Nrf52840FirmwareMemory {
-                application_flash: FirmwareAddressRange::new(0x26000, 0xE2000),
-                application_ram: FirmwareAddressRange::new(0x2000C000, 0x20040000),
-                minimum_runtime_stack_bytes: 68 * 1024,
-            }
-        );
-        assert_eq!(
-            T1000E_FIRMWARE_MEMORY,
-            Nrf52840FirmwareMemory {
-                application_flash: FirmwareAddressRange::new(0x27000, 0xE9000),
-                application_ram: FirmwareAddressRange::new(0x20010000, 0x20040000),
-                minimum_runtime_stack_bytes: 68 * 1024,
-            }
         );
     }
 

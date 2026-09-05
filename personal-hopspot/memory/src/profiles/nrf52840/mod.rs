@@ -3,10 +3,12 @@ use super::{
 };
 use crate::{
     AddressRange, AddressSpace, AddressSpaceGeometry, AddressSpaceKind, JournalLayout,
-    MemoryProfile, MemoryProfileId, MemoryRegion, ProcessorArchitecture, RegionOwner,
-    RegionRetention, RegionRole, ReservationAccounting, ReservationCharge, ReservationId,
-    RuntimeReservation,
+    MemoryProfile, MemoryProfileId, MemoryRegion, NrfMemoryXBinding, ProcessorArchitecture,
+    RegionOwner, RegionRetention, RegionRole, ReservationAccounting, ReservationCharge,
+    ReservationId, RuntimeReservation,
 };
+
+const MINIMUM_RUNTIME_STACK: ReservationId = ReservationId("minimum-runtime-stack");
 
 const NRF52840_S140_RAM_SPACES: [AddressSpace; 2] = nrf52840_spaces(0x2000_C000);
 const NRF52840_T1000E_RAM_SPACES: [AddressSpace; 2] = nrf52840_spaces(0x2001_0000);
@@ -34,7 +36,7 @@ const fn nrf52840_spaces(application_ram_start: u64) -> [AddressSpace; 2] {
 }
 
 const NRF_RUNTIME_RESERVATIONS: [RuntimeReservation; 1] = [RuntimeReservation {
-    id: ReservationId("minimum-runtime-stack"),
+    id: MINIMUM_RUNTIME_STACK,
     address_space: RAM,
     bytes: 68 * KIB,
     accounting: ReservationAccounting::Dedicated {
@@ -465,6 +467,21 @@ pub const MESH_TOWER_V2: MemoryProfile = MemoryProfile {
     firmware: firmware_placement(0x26000, 0xE2000, 0xE2000),
     journals: &MESH_TOWER_JOURNALS,
     runtime_reservations: &NRF_RUNTIME_RESERVATIONS,
+};
+
+const NRF52840_MEMORY_X_PROFILES: [MemoryProfileId; 6] = [
+    T_ECHO_S140_V6.id,
+    T_ECHO_S140_V7.id,
+    T096.id,
+    T114.id,
+    T1000_E.id,
+    MESH_TOWER_V2.id,
+];
+
+pub const NRF52840_MEMORY_X_BINDING: NrfMemoryXBinding = NrfMemoryXBinding {
+    profiles: &NRF52840_MEMORY_X_PROFILES,
+    application_ram: RAM,
+    minimum_runtime_stack: MINIMUM_RUNTIME_STACK,
 };
 
 #[cfg(test)]

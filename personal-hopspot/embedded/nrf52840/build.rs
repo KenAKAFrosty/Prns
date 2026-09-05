@@ -2,9 +2,9 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use personal_hopspot_core::{
-    Nrf52840FirmwareMemory, HELTEC_DISPLAY_NRF52840_FIRMWARE_MEMORY, MESH_TOWER_V2_FIRMWARE_MEMORY,
-    T1000E_FIRMWARE_MEMORY, T_ECHO_S140_V6_FIRMWARE_MEMORY, T_ECHO_S140_V7_FIRMWARE_MEMORY,
+use personal_hopspot_memory::{
+    MemoryProfile, NrfMemoryXLayout, MESH_TOWER_V2, NRF52840_MEMORY_X_BINDING, T096, T1000_E, T114,
+    T_ECHO_S140_V6, T_ECHO_S140_V7,
 };
 
 const BOARD_T_ECHO_FEATURE: &str = "CARGO_FEATURE_BOARD_T_ECHO";
@@ -32,22 +32,22 @@ fn main() {
     let out = PathBuf::from(env::var_os("OUT_DIR").unwrap());
     let board = selected_board();
     let softdevice = selected_softdevice();
-    let memory = match (board, softdevice) {
-        (Board::TEcho, Some(Softdevice::S140V6)) => T_ECHO_S140_V6_FIRMWARE_MEMORY,
-        (Board::TEcho, Some(Softdevice::S140V7)) => T_ECHO_S140_V7_FIRMWARE_MEMORY,
+    let profile: &MemoryProfile = match (board, softdevice) {
+        (Board::TEcho, Some(Softdevice::S140V6)) => &T_ECHO_S140_V6,
+        (Board::TEcho, Some(Softdevice::S140V7)) => &T_ECHO_S140_V7,
         (Board::TEcho, None) => panic!("T-Echo requires exactly one S140 compatibility feature"),
-        (Board::T096, Some(Softdevice::S140V6)) => HELTEC_DISPLAY_NRF52840_FIRMWARE_MEMORY,
+        (Board::T096, Some(Softdevice::S140V6)) => &T096,
         (Board::T096, None) => panic!("T096 requires softdevice-s140-v6"),
         (Board::T096, Some(Softdevice::S140V7)) => {
             panic!("T096 does not support S140 7.x")
         }
-        (Board::T114, Some(Softdevice::S140V6)) => HELTEC_DISPLAY_NRF52840_FIRMWARE_MEMORY,
+        (Board::T114, Some(Softdevice::S140V6)) => &T114,
         (Board::T114, None) => panic!("T114 requires softdevice-s140-v6"),
         (Board::T114, Some(Softdevice::S140V7)) => {
             panic!("T114 does not support S140 7.x")
         }
-        (Board::T1000e, None) => T1000E_FIRMWARE_MEMORY,
-        (Board::MeshTowerV2, Some(Softdevice::S140V6)) => MESH_TOWER_V2_FIRMWARE_MEMORY,
+        (Board::T1000e, None) => &T1000_E,
+        (Board::MeshTowerV2, Some(Softdevice::S140V6)) => &MESH_TOWER_V2,
         (Board::MeshTowerV2, None) => {
             panic!("MeshTower V2 requires softdevice-s140-v6")
         }
@@ -58,16 +58,19 @@ fn main() {
             panic!("T1000-E does not support S140 compatibility features")
         }
     };
+    let memory = NRF52840_MEMORY_X_BINDING
+        .resolve(profile)
+        .unwrap_or_else(|error| panic!("{error}"));
     write_nrf52840_memory(&out, memory);
     println!("cargo:rustc-link-search={}", out.display());
     println!("cargo:rustc-link-arg=-Tlink.x");
     println!("cargo:rerun-if-changed=build.rs");
 }
 
-fn write_nrf52840_memory(out: &Path, layout: Nrf52840FirmwareMemory) {
-    let application_flash_origin = layout.application_flash.start;
+fn write_nrf52840_memory(out: &Path, layout: NrfMemoryXLayout) {
+    let application_flash_origin = layout.application_flash.start();
     let application_flash_bytes = layout.application_flash.byte_len();
-    let application_ram_origin = layout.application_ram.start;
+    let application_ram_origin = layout.application_ram.start();
     let application_ram_bytes = layout.application_ram.byte_len();
     let minimum_runtime_stack_bytes = layout.minimum_runtime_stack_bytes;
     let memory = format!(

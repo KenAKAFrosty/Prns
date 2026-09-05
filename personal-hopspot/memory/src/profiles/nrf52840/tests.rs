@@ -1,5 +1,8 @@
 use super::*;
-use crate::{AddressSpaceId, ArtifactError, BackingStoreId, MemoryRegionId, ReservationTotals};
+use crate::{
+    AddressSpaceId, ArtifactError, BackingStoreId, MemoryRegionId, NrfMemoryXLayout,
+    ReservationTotals,
+};
 
 #[test]
 fn legacy_transport_envelopes_do_not_expand_firmware_ownership() {
@@ -36,6 +39,51 @@ fn minimum_runtime_stack_is_additional_to_static_ram() {
             external_bytes: 0,
         })
     );
+}
+
+#[test]
+fn memory_x_layouts_derive_from_each_canonical_profile() {
+    for (profile, application_flash, application_ram) in [
+        (
+            &T_ECHO_S140_V6,
+            AddressRange::new(0x26000, 0xBF000),
+            AddressRange::new(0x2000_C000, 0x2004_0000),
+        ),
+        (
+            &T_ECHO_S140_V7,
+            AddressRange::new(0x27000, 0xBF000),
+            AddressRange::new(0x2000_C000, 0x2004_0000),
+        ),
+        (
+            &T096,
+            AddressRange::new(0x26000, 0xE1000),
+            AddressRange::new(0x2000_C000, 0x2004_0000),
+        ),
+        (
+            &T114,
+            AddressRange::new(0x26000, 0xE1000),
+            AddressRange::new(0x2000_C000, 0x2004_0000),
+        ),
+        (
+            &T1000_E,
+            AddressRange::new(0x27000, 0xE9000),
+            AddressRange::new(0x2001_0000, 0x2004_0000),
+        ),
+        (
+            &MESH_TOWER_V2,
+            AddressRange::new(0x26000, 0xE2000),
+            AddressRange::new(0x2000_C000, 0x2004_0000),
+        ),
+    ] {
+        assert_eq!(
+            NRF52840_MEMORY_X_BINDING.resolve(profile),
+            Ok(NrfMemoryXLayout {
+                application_flash,
+                application_ram,
+                minimum_runtime_stack_bytes: 68 * KIB,
+            })
+        );
+    }
 }
 
 #[test]
