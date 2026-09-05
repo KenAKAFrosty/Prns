@@ -147,7 +147,7 @@ pub(in crate::screen) fn clamp_interface_detail_focus(
     page: InterfaceDetailPage,
 ) -> InterfaceDetailFocus {
     let cycle = interface_detail_focus_cycle(page);
-    if cycle.iter().any(|item| *item == focus) {
+    if cycle.contains(&focus) {
         focus
     } else {
         InterfaceDetailFocus::Options
