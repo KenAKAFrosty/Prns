@@ -955,6 +955,7 @@ mod tests {
         ScreenContent {
             cards,
             local_docs: None,
+            interface_menu_details: None,
         }
     }
 
