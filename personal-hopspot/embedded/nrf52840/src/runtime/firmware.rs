@@ -23,7 +23,7 @@ use personal_rns::remote_control::{
 };
 use personal_rns::runtime::{Fleet, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe};
 use personal_rns::storage::StorageLayout;
-use personal_rns::usb_auto::{UsbAutoDevice, UsbAutoDeviceInput};
+use personal_rns::usb_auto::{ProtocolHostPresence, UsbAutoDevice, UsbAutoDeviceInput};
 use personal_rns::usb_auto::{
     WebUsbAutoClass, WebUsbAutoState, WEBUSB_AUTO_CONTROL_BUFFER_BYTES,
     WEBUSB_AUTO_MSOS_DESCRIPTOR_BYTES, WEBUSB_AUTO_PACKET_SIZE,
@@ -255,7 +255,8 @@ pub async fn run(spawner: Spawner) -> ! {
         rx: usb_rx,
         tx: usb_tx,
         status: usb_status,
-        host_present: || true,
+        bitrate: personal_rns::interfaces::usb_auto::DEVICE_USB_BITRATE_BPS,
+        host_presence: ProtocolHostPresence::new(),
     });
 
     let lora_lane = manifold_lanes

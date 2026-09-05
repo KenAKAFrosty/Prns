@@ -151,7 +151,10 @@ pub use crate::usb_auto::AutoUsb;
 #[cfg(all(feature = "usb", feature = "tokio-host"))]
 pub use crate::usb_auto::UsbAutoHost;
 #[cfg(all(feature = "usb", feature = "embassy-host"))]
-pub use crate::usb_auto::{UsbAutoDevice, UsbAutoDeviceInput};
+pub use crate::usb_auto::{
+    PhysicalHostPresence, ProtocolHostPresence, UsbAutoDevice, UsbAutoDeviceInput,
+    UsbAutoHostPresence,
+};
 #[cfg(all(feature = "weave", feature = "tokio-host"))]
 pub use crate::weave::WeaveInterface;
 #[cfg(all(feature = "websocket", feature = "tokio-host"))]

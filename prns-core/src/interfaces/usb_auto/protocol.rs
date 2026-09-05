@@ -12,6 +12,10 @@ pub const MAX_FRAMED_BYTES: usize = rns_serial_framing::max_encoded_len(MAX_MESS
 pub const READ_CHUNK_BYTES: usize = MAX_FRAMED_BYTES;
 pub const MAGIC: [u8; 4] = *b"Prns";
 pub const PROTOCOL_VERSION: u8 = 2;
+pub const HOST_HEARTBEAT_INTERVAL_MS: u64 = 2_000;
+const HOST_HEARTBEATS_BEFORE_TIMEOUT: u64 = 3;
+pub const HOST_HEARTBEAT_TIMEOUT_MS: u64 =
+    HOST_HEARTBEAT_INTERVAL_MS * HOST_HEARTBEATS_BEFORE_TIMEOUT;
 pub const WEBUSB_VENDOR_ID: u16 = 0x1209;
 pub const WEBUSB_PRODUCT_ID: u16 = 0x0001;
 pub const BOOTLOADER_ENTRY_CONTROL_REQUEST: u8 = 0x50;

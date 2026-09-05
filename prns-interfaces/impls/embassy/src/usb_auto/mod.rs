@@ -14,7 +14,7 @@ use prns_core::interfaces::usb_auto::{
     self as contract, Capabilities, InboundReaction, Message, NodeTag,
 };
 use prns_core::interfaces::{
-    ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceStatus,
+    BitrateBps, ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceStatus,
 };
 use prns_runtime::manifold::driver::EmbassyInterfaceStatus;
 use prns_runtime::manifold::interface_seam::{
@@ -23,7 +23,8 @@ use prns_runtime::manifold::interface_seam::{
 
 const WRITE_TIMEOUT: Duration = Duration::from_millis(200);
 const IO_RETRY_DELAY: Duration = Duration::from_millis(100);
-const PRESENCE_PROBE_INTERVAL: Duration = Duration::from_secs(2);
+const PRESENCE_PROBE_INTERVAL: Duration =
+    Duration::from_millis(contract::HOST_HEARTBEAT_INTERVAL_MS);
 const PRESENCE_STRIKES_TO_DORMANT: u8 = 2;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -134,36 +135,122 @@ impl IoPriority {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-enum PresenceVerdict {
+pub enum HostPresenceVerdict {
     Present,
     SuspectedAbsent,
     Absent,
 }
 
-pub struct UsbAutoDeviceInput<'a, R, W, P> {
+pub trait UsbAutoHostPresence {
+    fn observe_host_hello(&mut self, now: Instant);
+    fn verdict(&mut self, now: Instant) -> HostPresenceVerdict;
+    fn reset(&mut self);
+}
+
+pub struct PhysicalHostPresence<P> {
+    probe: P,
+    absent_probes: u8,
+}
+
+impl<P> PhysicalHostPresence<P> {
+    #[must_use]
+    pub const fn new(probe: P) -> Self {
+        Self {
+            probe,
+            absent_probes: 0,
+        }
+    }
+}
+
+impl<P> UsbAutoHostPresence for PhysicalHostPresence<P>
+where
+    P: FnMut() -> bool,
+{
+    fn observe_host_hello(&mut self, _now: Instant) {}
+
+    fn verdict(&mut self, _now: Instant) -> HostPresenceVerdict {
+        presence_verdict((self.probe)(), &mut self.absent_probes)
+    }
+
+    fn reset(&mut self) {
+        self.absent_probes = 0;
+    }
+}
+
+enum ProtocolPresenceState {
+    AwaitingHello,
+    PresentUntil(Instant),
+}
+
+pub struct ProtocolHostPresence {
+    state: ProtocolPresenceState,
+}
+
+impl ProtocolHostPresence {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            state: ProtocolPresenceState::AwaitingHello,
+        }
+    }
+}
+
+impl Default for ProtocolHostPresence {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl UsbAutoHostPresence for ProtocolHostPresence {
+    fn observe_host_hello(&mut self, now: Instant) {
+        self.state = ProtocolPresenceState::PresentUntil(
+            now + Duration::from_millis(contract::HOST_HEARTBEAT_TIMEOUT_MS),
+        );
+    }
+
+    fn verdict(&mut self, now: Instant) -> HostPresenceVerdict {
+        match &self.state {
+            ProtocolPresenceState::PresentUntil(deadline) if now < *deadline => {
+                HostPresenceVerdict::Present
+            }
+            ProtocolPresenceState::AwaitingHello | ProtocolPresenceState::PresentUntil(_) => {
+                HostPresenceVerdict::Absent
+            }
+        }
+    }
+
+    fn reset(&mut self) {
+        self.state = ProtocolPresenceState::AwaitingHello;
+    }
+}
+
+pub struct UsbAutoDeviceInput<'a, R, W, H> {
     pub rx: R,
     pub tx: W,
     pub status: &'a EmbassyInterfaceStatus,
-    pub host_present: P,
+    pub bitrate: BitrateBps,
+    pub host_presence: H,
 }
 
-pub struct UsbAutoDevice<'a, R, W, P> {
+pub struct UsbAutoDevice<'a, R, W, H> {
     id: InterfaceId,
     rx: R,
     tx: W,
     node_tag: NodeTag,
     status: &'a EmbassyInterfaceStatus,
-    host_present: P,
+    bitrate: BitrateBps,
+    host_presence: H,
 }
 
-impl<'a, R, W, P> UsbAutoDevice<'a, R, W, P> {
+impl<'a, R, W, H> UsbAutoDevice<'a, R, W, H> {
     #[must_use]
-    pub fn new(input: UsbAutoDeviceInput<'a, R, W, P>) -> Self {
+    pub fn new(input: UsbAutoDeviceInput<'a, R, W, H>) -> Self {
         let UsbAutoDeviceInput {
             rx,
             tx,
             status,
-            host_present,
+            bitrate,
+            host_presence,
         } = input;
         let id = status.id();
         Self {
@@ -172,22 +259,23 @@ impl<'a, R, W, P> UsbAutoDevice<'a, R, W, P> {
             tx,
             node_tag: contract::node_tag_for(id),
             status,
-            host_present,
+            bitrate,
+            host_presence,
         }
     }
 }
 
-impl<R, W, P> Interface for UsbAutoDevice<'_, R, W, P>
+impl<R, W, H> Interface for UsbAutoDevice<'_, R, W, H>
 where
     R: Read,
     W: Write,
-    P: FnMut() -> bool,
+    H: UsbAutoHostPresence,
 {
     const HW_MTU: usize = prns_core::interfaces::usb_auto::DEVICE_USB_HW_MTU;
     const KIND: InterfaceKind = InterfaceKind::UsbAutoDevice;
 
     fn descriptor(&self) -> InterfaceDescriptor {
-        contract::device_descriptor(self.id)
+        contract::device_descriptor(self.id, self.bitrate)
     }
 
     fn channel_tag(&self) -> &[u8] {
@@ -201,13 +289,13 @@ where
             mut tx,
             node_tag,
             status,
-            mut host_present,
+            bitrate: _,
+            mut host_presence,
         } = self;
         let mut decoder = contract::Decoder::new();
         let mut read_buf = [0u8; contract::READ_CHUNK_BYTES];
         let mut frame_buf = [0u8; contract::MAX_FRAMED_BYTES];
         let mut lifecycle = UsbLifecycle::AwaitingHost;
-        let mut absent_probes = 0u8;
         let mut read_retry_at = None;
         let mut presence_probe_at = Instant::now() + PRESENCE_PROBE_INTERVAL;
         let mut io_priority = IoPriority::Read;
@@ -219,7 +307,7 @@ where
                 lifecycle.disable();
                 decoder = contract::Decoder::new();
                 read_retry_at = None;
-                absent_probes = 0;
+                host_presence.reset();
                 status.wait_until_enabled().await;
                 lifecycle.publish(status);
                 presence_probe_at = Instant::now() + PRESENCE_PROBE_INTERVAL;
@@ -240,9 +328,9 @@ where
                 Either3::First(()) => {}
                 Either3::Second(()) => {
                     presence_probe_at = Instant::now() + PRESENCE_PROBE_INTERVAL;
-                    match presence_verdict(host_present(), &mut absent_probes) {
-                        PresenceVerdict::Present | PresenceVerdict::SuspectedAbsent => {}
-                        PresenceVerdict::Absent => {
+                    match host_presence.verdict(Instant::now()) {
+                        HostPresenceVerdict::Present | HostPresenceVerdict::SuspectedAbsent => {}
+                        HostPresenceVerdict::Absent => {
                             decoder = contract::Decoder::new();
                             lifecycle.disconnect(status);
                         }
@@ -253,7 +341,6 @@ where
                     match event {
                         IoEvent::Read(ReadOutcome::Bytes(n)) => {
                             read_retry_at = None;
-                            absent_probes = 0;
                             status.add_rx(n as u64);
                             lifecycle.recover(status);
                             for &byte in &read_buf[..n] {
@@ -278,6 +365,7 @@ where
                                 };
                                 match contract::react_to(Ok(message)) {
                                     InboundReaction::AnswerHandshake => {
+                                        host_presence.observe_host_hello(Instant::now());
                                         let ack = Message::HelloAck {
                                             tag: node_tag,
                                             capabilities: Capabilities::none(),
@@ -449,16 +537,16 @@ fn classify_io_error(kind: ErrorKind) -> IoFailure {
     }
 }
 
-fn presence_verdict(present: bool, absent_probes: &mut u8) -> PresenceVerdict {
+fn presence_verdict(present: bool, absent_probes: &mut u8) -> HostPresenceVerdict {
     if present {
         *absent_probes = 0;
-        return PresenceVerdict::Present;
+        return HostPresenceVerdict::Present;
     }
     *absent_probes = absent_probes.saturating_add(1);
     if *absent_probes >= PRESENCE_STRIKES_TO_DORMANT {
-        PresenceVerdict::Absent
+        HostPresenceVerdict::Absent
     } else {
-        PresenceVerdict::SuspectedAbsent
+        HostPresenceVerdict::SuspectedAbsent
     }
 }
 
@@ -768,7 +856,8 @@ mod tests {
                     buf: &device_to_host,
                 },
                 status: &status,
-                host_present: || true,
+                bitrate: contract::DEVICE_USB_BITRATE_BPS,
+                host_presence: ProtocolHostPresence::new(),
             });
             let inner = EmbassyInterfaceSeam::new(
                 device_id(),
@@ -870,7 +959,8 @@ mod tests {
                     buf: &device_to_host,
                 },
                 status: &status,
-                host_present: || true,
+                bitrate: contract::DEVICE_USB_BITRATE_BPS,
+                host_presence: ProtocolHostPresence::new(),
             });
             let inner = EmbassyInterfaceSeam::new(
                 device_id(),
@@ -1168,7 +1258,8 @@ mod tests {
                     buf: &device_to_host,
                 },
                 status: &status,
-                host_present: || true,
+                bitrate: contract::DEVICE_USB_BITRATE_BPS,
+                host_presence: ProtocolHostPresence::new(),
             });
             let seam = EmbassyInterfaceSeam::new(
                 device_id(),
@@ -1226,7 +1317,8 @@ mod tests {
                     cancellations: &write_cancellations,
                 },
                 status: &status,
-                host_present: || true,
+                bitrate: contract::DEVICE_USB_BITRATE_BPS,
+                host_presence: ProtocolHostPresence::new(),
             });
             let seam = EmbassyInterfaceSeam::new(
                 device_id(),
@@ -1281,14 +1373,14 @@ mod tests {
         let mut absent = 0u8;
         assert_eq!(
             presence_verdict(true, &mut absent),
-            PresenceVerdict::Present
+            HostPresenceVerdict::Present
         );
         assert_eq!(absent, 0);
 
         absent = 1;
         assert_eq!(
             presence_verdict(true, &mut absent),
-            PresenceVerdict::Present
+            HostPresenceVerdict::Present
         );
         assert_eq!(absent, 0);
     }
@@ -1298,22 +1390,60 @@ mod tests {
         let mut absent = 0u8;
         assert_eq!(
             presence_verdict(false, &mut absent),
-            PresenceVerdict::SuspectedAbsent
+            HostPresenceVerdict::SuspectedAbsent
         );
         assert_eq!(absent, 1);
         assert_eq!(
             presence_verdict(false, &mut absent),
-            PresenceVerdict::Absent
+            HostPresenceVerdict::Absent
         );
 
         let mut recovered = 1u8;
         assert_eq!(
             presence_verdict(true, &mut recovered),
-            PresenceVerdict::Present
+            HostPresenceVerdict::Present
         );
         assert_eq!(
             presence_verdict(false, &mut recovered),
-            PresenceVerdict::SuspectedAbsent
+            HostPresenceVerdict::SuspectedAbsent
         );
+    }
+
+    #[test]
+    fn protocol_presence_requires_hello_and_expires_at_the_shared_deadline() {
+        let mut presence = ProtocolHostPresence::new();
+        let observed_at = Instant::now();
+        let timeout = Duration::from_millis(contract::HOST_HEARTBEAT_TIMEOUT_MS);
+
+        assert_eq!(presence.verdict(observed_at), HostPresenceVerdict::Absent);
+
+        presence.observe_host_hello(observed_at);
+        assert_eq!(
+            presence.verdict(observed_at + timeout - Duration::from_millis(1)),
+            HostPresenceVerdict::Present
+        );
+        assert_eq!(
+            presence.verdict(observed_at + timeout),
+            HostPresenceVerdict::Absent
+        );
+    }
+
+    #[test]
+    fn protocol_presence_refreshes_and_resets_explicitly() {
+        let mut presence = ProtocolHostPresence::new();
+        let observed_at = Instant::now();
+        let refresh_at = observed_at + Duration::from_millis(4_000);
+
+        presence.observe_host_hello(observed_at);
+        presence.observe_host_hello(refresh_at);
+        assert_eq!(
+            presence.verdict(
+                refresh_at + Duration::from_millis(contract::HOST_HEARTBEAT_TIMEOUT_MS - 1)
+            ),
+            HostPresenceVerdict::Present
+        );
+
+        presence.reset();
+        assert_eq!(presence.verdict(refresh_at), HostPresenceVerdict::Absent);
     }
 }

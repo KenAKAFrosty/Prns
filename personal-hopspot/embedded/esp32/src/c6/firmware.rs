@@ -80,7 +80,10 @@ pub async fn run(spawner: Spawner) {
     let usb_lane = manifold_lanes
         .claim_accounted_interface(
             &USB_MANIFOLD_LANE,
-            device_descriptor(USB_INTERFACE_ID),
+            device_descriptor(
+                USB_INTERFACE_ID,
+                personal_rns::interfaces::usb_auto::DEVICE_USB_BITRATE_BPS,
+            ),
             &USB_STATUS,
         )
         .expect("USB lane is available");

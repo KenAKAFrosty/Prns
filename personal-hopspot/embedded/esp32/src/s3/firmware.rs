@@ -270,7 +270,10 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let usb_lane = manifold_lanes
         .claim_accounted_interface_with_outbound_buffer(
             &USB_MANIFOLD_LANE,
-            device_descriptor(usb_id),
+            device_descriptor(
+                usb_id,
+                personal_rns::interfaces::usb_auto::DEVICE_USB_BITRATE_BPS,
+            ),
             usb_outbound,
             usb_status,
         )
