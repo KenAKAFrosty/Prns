@@ -357,11 +357,7 @@ fn interface_detail_draws_status_rows_below_options() {
     );
 
     assert!(
-        has_on_pixel(
-            &display,
-            MENU_REASON_X..WIDTH,
-            DETAIL_STATUS_TOP..HEIGHT
-        ),
+        has_on_pixel(&display, MENU_REASON_X..WIDTH, DETAIL_STATUS_TOP..HEIGHT),
         "interface detail should render status rows below Options"
     );
 }
@@ -401,11 +397,7 @@ fn failed_interface_detail_draws_failure_reason() {
     );
 
     assert!(
-        has_on_pixel(
-            &display,
-            MENU_REASON_X..WIDTH,
-            DETAIL_STATUS_TOP..HEIGHT
-        ),
+        has_on_pixel(&display, MENU_REASON_X..WIDTH, DETAIL_STATUS_TOP..HEIGHT),
         "failed-card detail should show the failure reason in the status stream"
     );
 }

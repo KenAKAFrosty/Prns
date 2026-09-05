@@ -1,6 +1,8 @@
 //! Card detail screen: Options + paginated status + Back/Next.
 
-use crate::screen::render::layout::{CARD_TOP, HEIGHT, MENU_BACKING_H, MENU_DETAIL_STEP, MENU_ITEM_STEP};
+use crate::screen::render::layout::{
+    CARD_TOP, HEIGHT, MENU_BACKING_H, MENU_DETAIL_STEP, MENU_ITEM_STEP,
+};
 
 /// Focusable controls on the interface detail screen (status lines are display-only).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

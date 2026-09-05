@@ -13,9 +13,7 @@ use personal_rns::interfaces::ConnectionState;
 
 use crate::interface_mode::interface_mode_menu_label;
 use crate::screen::limits::{limit_page_count, LimitRow, LimitValue, LIMITS_PER_PAGE};
-use crate::screen::model::{
-    Card, CardKind, InterfaceMenuDetailKind, InterfaceMenuDetails,
-};
+use crate::screen::model::{Card, CardKind, InterfaceMenuDetailKind, InterfaceMenuDetails};
 use crate::screen::state::interface_detail::{
     interface_detail_page, interface_detail_status_line_count, InterfaceDetailFocus,
     InterfaceDetailPage, DETAIL_CONTROL_Y, DETAIL_DIVIDER_Y, DETAIL_OPTIONS_Y, DETAIL_STATUS_TOP,
@@ -361,12 +359,7 @@ pub(in crate::screen) fn draw_interface_detail<D: DrawTarget<Color = BinaryColor
     }
     if page.shows_back {
         let back_y = DETAIL_STATUS_TOP + page.status_count as i32 * MENU_DETAIL_STEP;
-        draw_menu_item(
-            display,
-            back_y,
-            "Back",
-            focus == InterfaceDetailFocus::Back,
-        );
+        draw_menu_item(display, back_y, "Back", focus == InterfaceDetailFocus::Back);
     }
 }
 

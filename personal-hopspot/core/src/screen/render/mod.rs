@@ -92,9 +92,7 @@ pub(super) fn draw<D: DrawTarget<Color = BinaryColor>>(
     }
 
     if let UiMode::InterfaceDetail {
-        focus,
-        status_page,
-        ..
+        focus, status_page, ..
     } = state.mode
     {
         if let Some(selected_card) = state.selected_card(cards) {

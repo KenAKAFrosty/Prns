@@ -34,7 +34,9 @@ pub(in crate::screen) fn interface_mode_editor_row_count() -> usize {
 }
 
 #[must_use]
-pub(in crate::screen) fn interface_mode_editor_row(cursor: usize) -> Option<InterfaceModeEditorRow> {
+pub(in crate::screen) fn interface_mode_editor_row(
+    cursor: usize,
+) -> Option<InterfaceModeEditorRow> {
     let mode_count = INTERFACE_MODE_CHOICES.len();
     if cursor < mode_count {
         return Some(InterfaceModeEditorRow::Mode(INTERFACE_MODE_CHOICES[cursor]));
