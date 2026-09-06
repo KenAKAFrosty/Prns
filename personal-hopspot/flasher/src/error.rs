@@ -379,6 +379,9 @@ impl From<personal_hopspot_builder::BuildError> for AppError {
             personal_hopspot_builder::BuildError::Artifact(message) => {
                 Self::developer_artifact(message)
             }
+            error @ personal_hopspot_builder::BuildError::FirmwareOverflow { .. } => {
+                Self::developer_artifact(error.to_string())
+            }
             personal_hopspot_builder::BuildError::Manifest(message) => {
                 Self::developer_manifest(message)
             }
@@ -421,6 +424,14 @@ mod tests {
                 "manifest".to_string()
             )),
             AppError::DeveloperBuild(DeveloperBuildError::Manifest(_))
+        ));
+        assert!(matches!(
+            AppError::from(personal_hopspot_builder::BuildError::FirmwareOverflow {
+                target: "target".to_string(),
+                actual: 2,
+                maximum: 1,
+            }),
+            AppError::DeveloperBuild(DeveloperBuildError::Artifact(_))
         ));
     }
 

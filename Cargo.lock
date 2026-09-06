@@ -2896,6 +2896,7 @@ version = "0.1.0"
 dependencies = [
  "espflash",
  "prns-flash-manifest",
+ "prns-nrf-dfu",
  "thiserror 2.0.18",
 ]
 

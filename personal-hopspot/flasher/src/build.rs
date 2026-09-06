@@ -1,23 +1,16 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
+use personal_hopspot_builder::artifact::publish;
 use personal_hopspot_builder::platform::esp as esp_builder;
+use personal_hopspot_builder::platform::nrf52840::serial_dfu as serial_dfu_builder;
 use personal_hopspot_builder::platform::nrf52840::uf2 as uf2_builder;
-use personal_hopspot_builder::{
-    embedded_cargo_command, llvm_objcopy, run_status, BuildContext, BuildVersion,
-};
+use personal_hopspot_builder::{BuildContext, BuildVersion};
 use prns_flash_manifest::{
-    sha256_hex, validate_nrf_serial_dfu_recovery_artifact, validate_uf2_artifact, BoardBuild,
-    BoardCatalog, BoardCatalogEntry, FlashManifest, FlashPart, FlashPartKind,
-    ManifestTargetSetPolicy, NrfDfuApplicationVersion, NrfSerialDfuManifest,
-    NrfSerialDfuRecoveryManifest, OfflineKeySigningInfo, ReleaseChannel, ReleaseInfo,
-    ReleaseTarget, ReleaseVersion, SoftdeviceIdentity, TargetManifest, Uf2VariantManifest,
-    FLASH_MANIFEST_SCHEMA,
-};
-use prns_nrf_dfu::{
-    ApplicationInitPacket, ApplicationInitPacketSpec, ApplicationVersion, DfuDeviceRevision,
-    DfuDeviceType, DfuImage, SoftdeviceFirmwareId, SoftdeviceRequirements,
+    validate_nrf_serial_dfu_recovery_artifact, validate_uf2_artifact, BoardBuild, BoardCatalog,
+    BoardCatalogEntry, FlashManifest, FlashPart, ManifestTargetSetPolicy, NrfSerialDfuManifest,
+    OfflineKeySigningInfo, ReleaseChannel, ReleaseInfo, ReleaseTarget, ReleaseVersion,
+    SoftdeviceIdentity, TargetManifest, Uf2VariantManifest, FLASH_MANIFEST_SCHEMA,
 };
 
 use crate::cli::ChannelArg;
@@ -188,7 +181,7 @@ pub(crate) fn assemble_manifest(
     let json = serde_json::to_vec_pretty(&manifest).map_err(|error| {
         AppError::developer_manifest(format!("could not encode manifest: {error}"))
     })?;
-    atomic_write(&path, &with_newline(json))?;
+    publish(&path, &with_newline(json))?;
     let capability_document = serde_json::to_vec_pretty(&serde_json::json!({
         "schema": 1,
         "version": version,
@@ -204,7 +197,7 @@ pub(crate) fn assemble_manifest(
             "could not create candidate metadata directory: {error}"
         ))
     })?;
-    atomic_write(
+    publish(
         &metadata_dir.join("source-capabilities.json"),
         &with_newline(capability_document),
     )?;
@@ -242,7 +235,7 @@ fn build_esp(
         let filename = Path::new(&part.descriptor().path)
             .file_name()
             .ok_or_else(|| AppError::developer_artifact("firmware part path has no filename"))?;
-        atomic_write(&output_dir.join(filename), part.bytes())?;
+        publish(&output_dir.join(filename), part.bytes())?;
     }
     let target = target_record(
         board,
@@ -380,138 +373,11 @@ fn build_nrf_serial_dfu(
         Some(&board.slug),
         &format!("Building {} developer firmware…", board.display_name),
     );
-    let crate_dir = context
-        .repository()
-        .join("personal-hopspot")
-        .join("embedded")
-        .join("nrf52840");
-    let target_directory = crate_dir.join(&build.target_directory);
-    let mut cargo = embedded_cargo_command();
-    cargo
-        .arg("build")
-        .arg("--release")
-        .arg("--locked")
-        .arg("--no-default-features")
-        .arg("--features")
-        .arg(&build.cargo_feature)
-        .arg("--package")
-        .arg(&build.package)
-        .arg("--bin")
-        .arg(&build.binary)
-        .arg("--target")
-        .arg(&build.rust_target)
-        .arg("--target-dir")
-        .arg(&target_directory)
-        .env("PRNS_BUILD_VERSION", context.version())
-        .current_dir(&crate_dir);
-    run_status(&mut cargo, "Nordic serial DFU cargo build")?;
-
+    let built = serial_dfu_builder::build(context, board, build)?;
     let output_dir = context.board_output(&board.slug);
-    fs::create_dir_all(&output_dir).map_err(|error| {
-        AppError::developer_artifact(format!(
-            "could not create {}: {error}",
-            output_dir.display()
-        ))
-    })?;
-    let work_dir = context.work_output(&board.slug);
-    fs::create_dir_all(&work_dir).map_err(|error| {
-        AppError::developer_artifact(format!("could not create work directory: {error}"))
-    })?;
-    let elf = target_directory
-        .join(&build.rust_target)
-        .join("release")
-        .join(&build.binary);
-    let application_path = work_dir.join(&build.application_filename);
-    run_status(
-        Command::new(llvm_objcopy()?.as_os_str())
-            .arg("-O")
-            .arg("binary")
-            .arg(&elf)
-            .arg(&application_path),
-        "llvm-objcopy",
-    )?;
-    let application = fs::read(&application_path).map_err(|error| {
-        AppError::developer_artifact(format!(
-            "could not read {}: {error}",
-            application_path.display()
-        ))
-    })?;
-    let memory = build
-        .memory_layout()
-        .map_err(|error| AppError::developer_manifest(error.to_string()))?;
-    let firmware_owned = memory.firmware_owned();
-    let maximum_application_bytes = firmware_owned.byte_len();
-    if application.len() as u64 > u64::from(maximum_application_bytes) {
-        return Err(AppError::developer_artifact(format!(
-            "{} application is {} bytes; firmware owns at most {maximum_application_bytes}",
-            board.display_name,
-            application.len()
-        )));
-    }
-    let init_packet_spec = nrf_init_packet_spec(&build.compatibility)?;
-    let init_packet = ApplicationInitPacket::build(&application, &init_packet_spec)
-        .map_err(|error| AppError::developer_artifact(error.to_string()))?
-        .bytes()
-        .to_vec();
-    atomic_write(&output_dir.join(&build.application_filename), &application)?;
-    atomic_write(&output_dir.join(&build.init_packet_filename), &init_packet)?;
-
-    let recovery_path = output_dir.join(&build.recovery.filename);
-    let application_base = format!("0x{:08x}", memory.transport_envelope().start());
-    run_status(
-        Command::new(if cfg!(windows) { "python" } else { "python3" })
-            .arg(
-                context
-                    .repository()
-                    .join("tools")
-                    .join("device")
-                    .join("bin2uf2.py"),
-            )
-            .arg(&application_path)
-            .arg(&recovery_path)
-            .arg(&application_base)
-            .arg(&build.recovery.family_id),
-        "bin2uf2.py",
-    )?;
-    let recovery_uf2 = fs::read(&recovery_path).map_err(|error| {
-        AppError::developer_artifact(format!("could not read recovery UF2: {error}"))
-    })?;
-    let compatibility = build
-        .manifest_compatibility()
-        .map_err(|error| AppError::developer_manifest(error.to_string()))?;
-    let dfu_manifest = NrfSerialDfuManifest {
-        serial: build.serial.clone(),
-        compatibility,
-        application: release_artifact(
-            board,
-            context,
-            &build.application_filename,
-            FlashPartKind::DfuApplication,
-            &application,
-        ),
-        init_packet: release_artifact(
-            board,
-            context,
-            &build.init_packet_filename,
-            FlashPartKind::DfuInitPacket,
-            &init_packet,
-        ),
-        recovery: NrfSerialDfuRecoveryManifest {
-            mount_label: build.recovery.mount_label.clone(),
-            board_id_prefix: build.recovery.board_identity.value.clone(),
-            family_id: build.recovery.family_id.clone(),
-            artifact: release_artifact(
-                board,
-                context,
-                &build.recovery.filename,
-                FlashPartKind::Uf2,
-                &recovery_uf2,
-            ),
-        },
-    };
     let target = target_record(
         board,
-        BuiltTargetArtifacts::NrfSerialDfu(Box::new(dfu_manifest)),
+        BuiltTargetArtifacts::NrfSerialDfu(Box::new(built.manifest().clone())),
     );
     write_target_record(&output_dir, &target)?;
     write_source_capability_record(&output_dir, board)?;
@@ -521,10 +387,13 @@ fn build_nrf_serial_dfu(
             "built target did not validate as Nordic serial DFU",
         ));
     };
-    DfuImage::from_artifacts(&application, &init_packet, &init_packet_spec)
-        .map_err(|error| AppError::developer_artifact(error.to_string()))?;
-    validate_nrf_serial_dfu_recovery_artifact(validated_target, &application, &recovery_uf2)
-        .map_err(|error| AppError::developer_artifact(error.to_string()))?;
+    validate_nrf_serial_dfu_recovery_artifact(
+        validated_target,
+        built.application(),
+        built.recovery(),
+    )
+    .map_err(|error| AppError::developer_artifact(error.to_string()))?;
+    let (application, init_packet) = built.into_transfer_artifacts();
     let prepared = PreparedTarget::bind(version, target, vec![application, init_packet])
         .map_err(|error| AppError::developer_artifact(error.to_string()))?;
     reporter.phase(
@@ -538,50 +407,6 @@ fn build_nrf_serial_dfu(
         output_dir,
         target_record,
     })
-}
-
-fn nrf_init_packet_spec(
-    compatibility: &prns_flash_manifest::NrfSerialDfuBuildCompatibility,
-) -> Result<ApplicationInitPacketSpec, AppError> {
-    let fwid = SoftdeviceFirmwareId::new(parse_catalog_hex_u16("FWID", &compatibility.fwid)?)
-        .map_err(|error| AppError::developer_manifest(error.to_string()))?;
-    Ok(ApplicationInitPacketSpec {
-        device_type: DfuDeviceType::new(parse_catalog_hex_u16(
-            "device type",
-            &compatibility.device_type,
-        )?),
-        device_revision: DfuDeviceRevision::new(compatibility.device_revision),
-        application_version: match compatibility.application_version {
-            NrfDfuApplicationVersion::NotEnforced => ApplicationVersion::NotEnforced,
-        },
-        softdevices: SoftdeviceRequirements::new(fwid, std::iter::empty())
-            .map_err(|error| AppError::developer_manifest(error.to_string()))?,
-    })
-}
-
-fn parse_catalog_hex_u16(label: &str, value: &str) -> Result<u16, AppError> {
-    let digits = value.strip_prefix("0x").ok_or_else(|| {
-        AppError::developer_manifest(format!("invalid Nordic DFU {label} {value:?}"))
-    })?;
-    u16::from_str_radix(digits, 16).map_err(|error| {
-        AppError::developer_manifest(format!("invalid Nordic DFU {label} {value:?}: {error}"))
-    })
-}
-
-fn release_artifact(
-    board: &BoardCatalogEntry,
-    context: &BuildContext<'_>,
-    filename: &str,
-    kind: FlashPartKind,
-    bytes: &[u8],
-) -> FlashPart {
-    FlashPart {
-        kind,
-        path: context.release_part_path(&board.slug, filename),
-        offset: None,
-        size: bytes.len() as u64,
-        sha256: sha256_hex(bytes),
-    }
 }
 
 fn compatible_uf2_build_variants<'a>(
@@ -616,10 +441,11 @@ fn write_source_capability_record(
     .map_err(|error| {
         AppError::developer_manifest(format!("could not encode source capability: {error}"))
     })?;
-    atomic_write(
+    publish(
         &output_dir.join("source-capability.json"),
         &with_newline(json),
     )
+    .map_err(AppError::from)
 }
 
 enum BuiltTargetArtifacts {
@@ -693,7 +519,7 @@ fn write_target_record(output_dir: &Path, target: &TargetManifest) -> Result<(),
     let json = serde_json::to_vec_pretty(target).map_err(|error| {
         AppError::developer_manifest(format!("could not encode target record: {error}"))
     })?;
-    atomic_write(&output_dir.join("target.json"), &with_newline(json))
+    publish(&output_dir.join("target.json"), &with_newline(json)).map_err(AppError::from)
 }
 
 fn report_sparse_size(
@@ -730,22 +556,6 @@ fn sparse_size_gate(board_slug: &str) -> Option<(u64, u64)> {
         "t-beam-supreme" => Some((7_639_296, 3_055_718)),
         _ => None,
     }
-}
-
-fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
-    let parent = path.parent().ok_or_else(|| {
-        AppError::developer_artifact(format!("path has no parent: {}", path.display()))
-    })?;
-    fs::create_dir_all(parent).map_err(|error| {
-        AppError::developer_artifact(format!("could not create {}: {error}", parent.display()))
-    })?;
-    let temporary = path.with_extension(format!("part-{}", std::process::id()));
-    fs::write(&temporary, bytes).map_err(|error| {
-        AppError::developer_artifact(format!("could not write {}: {error}", temporary.display()))
-    })?;
-    fs::rename(&temporary, path).map_err(|error| {
-        AppError::developer_artifact(format!("could not publish {}: {error}", path.display()))
-    })
 }
 
 fn with_newline(mut bytes: Vec<u8>) -> Vec<u8> {

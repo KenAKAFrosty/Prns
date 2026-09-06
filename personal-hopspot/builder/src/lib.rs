@@ -1,3 +1,4 @@
+pub mod artifact;
 mod context;
 mod error;
 pub mod platform;
