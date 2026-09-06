@@ -26,13 +26,13 @@ use super::HeapFrameSlot;
 const INLINE_RESOURCE_OPEN_MAX_BYTES: usize = 8 * 1024;
 
 #[derive(Debug, PartialEq, Eq)]
-enum ResourceOpenExecution {
+pub(super) enum ResourceOpenExecution {
     Manifold,
     CryptoWorker,
 }
 
 impl ResourceOpenExecution {
-    fn for_sealed_byte_len(sealed_byte_len: usize) -> Self {
+    pub(super) fn for_sealed_byte_len(sealed_byte_len: usize) -> Self {
         if sealed_byte_len <= INLINE_RESOURCE_OPEN_MAX_BYTES {
             Self::Manifold
         } else {

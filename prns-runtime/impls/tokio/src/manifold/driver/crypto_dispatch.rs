@@ -20,7 +20,7 @@ use super::egress::{
 use super::inbound_dispatch::InboundDispatch;
 use super::interface_topology::InterfaceTopology;
 use super::journal_delivery::JournalDispatch;
-use super::owed_work::{DeferredTransferOpen, PendingOwedWork};
+use super::owed_work::{DeferredTransferOpen, PendingOwedWork, ResourceOpenExecution};
 use crate::remote_control::RemoteControlPairingAvailabilityVerification;
 
 // Completion routing deliberately exposes every borrowed data-plane component;
@@ -135,7 +135,11 @@ where
                         owed_work.push_resource_open(owed, crypto_pool);
                         return;
                     };
-                    if crypto_pool.is_none() || deferred.is_some() {
+                    if crypto_pool.is_none()
+                        || deferred.is_some()
+                        || ResourceOpenExecution::for_sealed_byte_len(owed.state.sealed_byte_len())
+                            == ResourceOpenExecution::Manifold
+                    {
                         owed_work.push_resource_open(owed, crypto_pool);
                         return;
                     }
