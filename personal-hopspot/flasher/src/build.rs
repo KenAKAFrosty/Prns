@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use personal_hopspot_builder::platform::esp as esp_builder;
+use personal_hopspot_builder::platform::nrf52840::uf2 as uf2_builder;
 use personal_hopspot_builder::{
     embedded_cargo_command, llvm_objcopy, run_status, BuildContext, BuildVersion,
 };
@@ -287,23 +288,6 @@ fn build_uf2(
         Some(&board.slug),
         &format!("Building {} developer firmware…", board.display_name),
     );
-    let crate_dir = context
-        .repository()
-        .join("personal-hopspot")
-        .join("embedded")
-        .join("nrf52840");
-    let objcopy = llvm_objcopy()?;
-    let work_dir = context.work_output(&board.slug);
-    fs::create_dir_all(&work_dir).map_err(|error| {
-        AppError::developer_artifact(format!("could not create work directory: {error}"))
-    })?;
-    let output_dir = context.board_output(&board.slug);
-    fs::create_dir_all(&output_dir).map_err(|error| {
-        AppError::developer_artifact(format!(
-            "could not create {}: {error}",
-            output_dir.display()
-        ))
-    })?;
     let selected_softdevice = match selection {
         Uf2BuildSelection::AllVariants => None,
         Uf2BuildSelection::Compatible(softdevice) => Some(softdevice),
@@ -314,78 +298,16 @@ fn build_uf2(
             "no build variant matches {selected_softdevice:?}"
         )));
     }
-    let mut descriptors = Vec::with_capacity(variants.len());
-    let mut artifacts = Vec::with_capacity(variants.len());
-    for variant in variants {
-        let application = variant
-            .memory_layout()
-            .map_err(|error| AppError::developer_manifest(error.to_string()))?
-            .transport_envelope();
-        let application_base = format!("0x{:08x}", application.start());
-        let target_directory = crate_dir.join(&variant.target_directory);
-        let features = match variant.application_link.cargo_feature() {
-            Some(link_feature) => format!("{},{link_feature}", build.board_feature),
-            None => build.board_feature.clone(),
-        };
-        let mut cargo = embedded_cargo_command();
-        cargo
-            .arg("build")
-            .arg("--release")
-            .arg("--locked")
-            .arg("--no-default-features")
-            .arg("--bin")
-            .arg(&build.binary)
-            .arg("--features")
-            .arg(features)
-            .arg("--target-dir")
-            .arg(&target_directory)
-            .current_dir(&crate_dir);
-        run_status(&mut cargo, &format!("{} cargo build", board.display_name))?;
-        let elf = target_directory
-            .join(&build.rust_target)
-            .join("release")
-            .join(&build.binary);
-        let binary = work_dir.join(format!("{}.bin", variant.softdevice_version));
-        run_status(
-            Command::new(&objcopy)
-                .arg("-O")
-                .arg("binary")
-                .arg(&elf)
-                .arg(&binary),
-            "llvm-objcopy",
-        )?;
-        let uf2 = output_dir.join(&variant.filename);
-        run_status(
-            Command::new(if cfg!(windows) { "python" } else { "python3" })
-                .arg(
-                    context
-                        .repository()
-                        .join("tools")
-                        .join("device")
-                        .join("bin2uf2.py"),
-                )
-                .arg(&binary)
-                .arg(&uf2)
-                .arg(&application_base)
-                .arg(&variant.family_id),
-            "bin2uf2.py",
-        )?;
-        let bytes = fs::read(&uf2).map_err(|error| {
-            AppError::developer_artifact(format!("could not read UF2: {error}"))
-        })?;
-        descriptors.push(Uf2VariantManifest {
-            softdevice_family: variant.softdevice_family.clone(),
-            softdevice_version: variant.softdevice_version.clone(),
-            fwid: variant.fwid.clone(),
-            application_base,
-            family_id: variant.family_id.clone(),
-            path: context.release_part_path(&board.slug, &variant.filename),
-            size: bytes.len() as u64,
-            sha256: sha256_hex(&bytes),
-        });
-        artifacts.push(bytes);
-    }
+    let built_variants = variants
+        .into_iter()
+        .map(|variant| uf2_builder::build(context, board, build, variant))
+        .collect::<Result<Vec<_>, _>>()?;
+    let descriptors = built_variants
+        .iter()
+        .map(|variant| variant.descriptor().clone())
+        .collect();
     let target = target_record(board, BuiltTargetArtifacts::Uf2(descriptors));
+    let output_dir = context.board_output(&board.slug);
     write_target_record(&output_dir, &target)?;
     write_source_capability_record(&output_dir, board)?;
     let (version, target) = match selected_softdevice {
@@ -400,13 +322,13 @@ fn build_uf2(
             board.display_name
         )));
     };
-    if validated_uf2.variants().len() != artifacts.len() {
+    if validated_uf2.variants().len() != built_variants.len() {
         return Err(AppError::developer_artifact(
             "built UF2 descriptor and payload counts disagree",
         ));
     }
-    for (variant, bytes) in validated_uf2.variants().iter().zip(&artifacts) {
-        validate_uf2_artifact(variant, bytes).map_err(|error| {
+    for (variant, built) in validated_uf2.variants().iter().zip(&built_variants) {
+        validate_uf2_artifact(variant, built.bytes()).map_err(|error| {
             AppError::developer_artifact(format!(
                 "built UF2 {} is invalid: {error}",
                 variant.part().path()
@@ -418,14 +340,23 @@ fn build_uf2(
         Some(&board.slug),
         &format!(
             "UF2 variants ready: {} bytes",
-            artifacts.iter().map(Vec::len).sum::<usize>()
+            built_variants
+                .iter()
+                .map(|variant| variant.bytes().len())
+                .sum::<usize>()
         ),
     );
     let prepared = selected_softdevice
         .map(|softdevice| {
-            let bytes = artifacts.into_iter().next().ok_or_else(|| {
-                AppError::developer_artifact(format!("no built UF2 variant matches {softdevice}"))
-            })?;
+            let bytes = built_variants
+                .into_iter()
+                .next()
+                .map(uf2_builder::Output::into_bytes)
+                .ok_or_else(|| {
+                    AppError::developer_artifact(format!(
+                        "no built UF2 variant matches {softdevice}"
+                    ))
+                })?;
             PreparedTarget::bind_uf2(version.clone(), target.clone(), softdevice, bytes)
                 .map_err(|error| AppError::developer_artifact(error.to_string()))
         })
