@@ -8,6 +8,7 @@ members = [
     "prns-nrf-dfu",
     "prns-nrf-dfu-wasm",
     "prns-runtime/core",
+    "personal-hopspot/builder",
     "personal-hopspot/core",
     "personal-hopspot/memory",
     "personal-hopspot/resources",
