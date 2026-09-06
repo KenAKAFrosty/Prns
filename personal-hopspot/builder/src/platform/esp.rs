@@ -3,7 +3,9 @@ use std::fs;
 use espflash::flasher::{FlashData, FlashFrequency, FlashMode, FlashSettings, FlashSize};
 use espflash::image_format::{idf::IdfBootloaderFormat, ImageFormat};
 use espflash::target::{Chip, XtalFrequency};
-use prns_flash_manifest::{sha256_hex, BoardCatalogEntry, EspBuild, FlashPart, FlashPartKind};
+use prns_flash_manifest::{
+    sha256_hex, validate_esp_sparse_image, BoardCatalogEntry, EspBuild, FlashPart, FlashPartKind,
+};
 
 use crate::architecture::adapter_for_rust_target;
 use crate::{embedded_cargo_command, run_status, BuildContext, BuildError, FirmwareEvidence};
@@ -58,7 +60,7 @@ pub fn build(
     let memory = recipe
         .memory_layout()
         .map_err(|error| BuildError::Manifest(error.to_string()))?;
-    let application_offset = memory.transport_envelope().start();
+    let application_offset = memory.firmware_owned().start();
     let crate_dir = context
         .repository()
         .join("personal-hopspot")
@@ -140,6 +142,9 @@ pub fn build(
         parts.push(Part { descriptor, bytes });
     }
     parts.sort_by_key(|part| part.descriptor.offset);
+    validate_esp_sparse_image(board, parts.iter().map(Part::descriptor)).map_err(|error| {
+        BuildError::Artifact(format!("built sparse ESP image is invalid: {error}"))
+    })?;
     Ok(Output { firmware, parts })
 }
 

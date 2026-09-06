@@ -1,12 +1,10 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fmt;
 
 use crate::{
-    ApplicationAddressRange, BoardBuild, BoardCatalogEntry, FlashPart, FlashPartKind,
-    ImmutableArtifactPath, KeyId, ReleaseVersion, Sha256Digest, SoftdeviceIdentity, Transport,
-    CONFIG_OFFSET, ESP_FLASH_SECTOR_SIZE,
+    BoardBuild, BoardCatalogEntry, EspSparseImageError, FlashPartKind, ImmutableArtifactPath,
+    KeyId, ReleaseVersion, Sha256Digest, SoftdeviceIdentity,
 };
-use personal_hopspot_memory::RegionRole;
 
 use super::{FlashManifest, ManifestError, ManifestTargetSetPolicy, TargetManifest};
 
@@ -181,83 +179,29 @@ fn validate_payloads(
         return Err(mismatch(target, "UF2 compatibility selection"));
     }
     let expected_prefix = format!("firmware/hopspot/{}/{version}/", target.board_slug);
-    if target.parts.is_empty() {
-        return Err(invalid_part(target, "", "at least one part is required"));
-    }
-    let mut ranges = BTreeMap::<u32, (u32, &str)>::new();
-    let mut paths = BTreeSet::new();
-    let BoardBuild::Esp(build) = &board.build else {
-        unreachable!();
-    };
-    let memory = build
-        .memory_layout()
-        .map_err(|_| mismatch(target, "ESP memory profile"))?;
     for part in &target.parts {
-        if part.size == 0 {
-            return Err(invalid_part(target, &part.path, "size must be nonzero"));
-        }
-        if !part.path.starts_with(&expected_prefix)
-            || ImmutableArtifactPath::parse(part.path.clone()).is_err()
-        {
+        if !part.path.starts_with(&expected_prefix) {
             return Err(invalid_part(
                 target,
                 &part.path,
                 "path is not immutable and relative",
             ));
         }
-        if validate_sha256(&part.sha256).is_err() {
-            return Err(invalid_part(
-                target,
-                &part.path,
-                "SHA-256 must be lowercase hex",
-            ));
-        }
-        if !paths.insert(part.path.as_str()) {
-            return Err(invalid_part(
-                target,
-                &part.path,
-                "artifact path is duplicated",
-            ));
-        }
-        match target.transport {
-            Transport::EspSerial => {
-                let assigned_region = match part.kind {
-                    FlashPartKind::Bootloader => memory.region_for_role(RegionRole::Bootloader),
-                    FlashPartKind::PartitionTable => {
-                        memory.region_for_role(RegionRole::PartitionTable)
-                    }
-                    FlashPartKind::Application => Ok(memory.firmware_owned()),
-                    FlashPartKind::Uf2
-                    | FlashPartKind::DfuApplication
-                    | FlashPartKind::DfuInitPacket => unreachable!(),
-                }
-                .map_err(|_| mismatch(target, "ESP memory profile regions"))?;
-                validate_esp_part(target, part, assigned_region, &mut ranges)?;
+    }
+    crate::validate_esp_sparse_image(board, &target.parts).map_err(|error| {
+        let message = error.to_string();
+        match &error {
+            EspSparseImageError::Build { .. }
+            | EspSparseImageError::MissingFlashSize { .. }
+            | EspSparseImageError::MemoryProfile(_) => mismatch(target, &message),
+            EspSparseImageError::MissingParts | EspSparseImageError::PartOrder { .. } => {
+                invalid_part(target, "", &message)
             }
-            Transport::Uf2MassStorage => unreachable!(),
-            Transport::NrfSerialDfu => unreachable!(),
+            EspSparseImageError::Part { path, violation } => {
+                invalid_part(target, path, &violation.to_string())
+            }
         }
-    }
-    if target.transport == Transport::EspSerial {
-        let kinds = target
-            .parts
-            .iter()
-            .map(|part| part.kind)
-            .collect::<Vec<_>>();
-        let required = vec![
-            FlashPartKind::Bootloader,
-            FlashPartKind::PartitionTable,
-            FlashPartKind::Application,
-        ];
-        if kinds != required {
-            return Err(invalid_part(
-                target,
-                "",
-                "ESP parts must be ordered bootloader, partition-table, application",
-            ));
-        }
-    }
-    Ok(())
+    })
 }
 
 fn validate_nrf_serial_dfu(
@@ -452,78 +396,6 @@ fn validate_uf2_variants(
             ));
         }
     }
-    Ok(())
-}
-
-fn validate_esp_part<'a>(
-    target: &'a TargetManifest,
-    part: &'a FlashPart,
-    assigned_region: ApplicationAddressRange,
-    ranges: &mut BTreeMap<u32, (u32, &'a str)>,
-) -> Result<(), ManifestError> {
-    let offset = part
-        .offset
-        .ok_or_else(|| invalid_part(target, &part.path, "ESP part requires an offset"))?;
-    let size = u32::try_from(part.size)
-        .map_err(|_| invalid_part(target, &part.path, "part is too large"))?;
-    if offset % ESP_FLASH_SECTOR_SIZE != 0 {
-        return Err(invalid_part(
-            target,
-            &part.path,
-            "offset must be aligned to the 4 KiB flash erase sector",
-        ));
-    }
-    let erase_size = size
-        .checked_add(ESP_FLASH_SECTOR_SIZE - 1)
-        .map(|rounded| rounded / ESP_FLASH_SECTOR_SIZE * ESP_FLASH_SECTOR_SIZE)
-        .ok_or_else(|| invalid_part(target, &part.path, "erase footprint overflows"))?;
-    let erase_end = offset
-        .checked_add(erase_size)
-        .ok_or_else(|| invalid_part(target, &part.path, "erase footprint overflows"))?;
-    let flash_size = target
-        .flash_size
-        .ok_or_else(|| invalid_part(target, &part.path, "ESP target has no flash size"))?;
-    if erase_end > flash_size {
-        return Err(invalid_part(
-            target,
-            &part.path,
-            "sector-rounded erase footprint exceeds physical flash",
-        ));
-    }
-    if offset != assigned_region.start() || !assigned_region.contains(offset, erase_end) {
-        return Err(invalid_part(
-            target,
-            &part.path,
-            "sector-rounded part exceeds its memory-profile region",
-        ));
-    }
-    let config_end = CONFIG_OFFSET + crate::CONFIG_SIZE as u32;
-    if offset < config_end && CONFIG_OFFSET < erase_end {
-        return Err(invalid_part(
-            target,
-            &part.path,
-            "sector-rounded erase footprint overlaps provisioning slot",
-        ));
-    }
-    if let Some((_, (previous_end, previous_path))) = ranges.range(..=offset).next_back() {
-        if *previous_end > offset {
-            return Err(invalid_part(
-                target,
-                &part.path,
-                &format!("overlaps {previous_path:?}"),
-            ));
-        }
-    }
-    if let Some((next_offset, (_, next_path))) = ranges.range(offset..).next() {
-        if erase_end > *next_offset {
-            return Err(invalid_part(
-                target,
-                &part.path,
-                &format!("overlaps {next_path:?}"),
-            ));
-        }
-    }
-    ranges.insert(offset, (erase_end, part.path.as_str()));
     Ok(())
 }
 

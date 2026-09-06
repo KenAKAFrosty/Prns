@@ -3,6 +3,7 @@
 mod canonical_hex;
 mod catalog;
 mod domain;
+mod esp;
 mod manifest;
 mod provisioning;
 mod trust;
@@ -29,6 +30,7 @@ pub use domain::{
     ValidatedNrfSerialDfuCompatibility, ValidatedNrfSerialDfuSerialTransport,
     ValidatedOfflineKeySigningInfo, ValidatedReleaseInfo,
 };
+pub use esp::{validate_esp_sparse_image, EspPartViolation, EspSparseImageError};
 pub use manifest::{
     ChannelDescriptor, FlashManifest, FlashPart, FlashPartKind, ManifestError,
     ManifestTargetSetPolicy, NrfSerialDfuManifest, NrfSerialDfuRecoveryManifest,
