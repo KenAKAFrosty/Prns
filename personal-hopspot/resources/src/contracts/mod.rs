@@ -50,12 +50,6 @@ pub(crate) enum ContractOutcome {
 
 #[derive(Debug, Error)]
 pub(crate) enum ContractError {
-    #[error("failed to resolve repository root {path}: {source}")]
-    ResolveRepositoryRoot {
-        path: PathBuf,
-        #[source]
-        source: io::Error,
-    },
     #[error("partition artifact {path} has no memory profiles")]
     EmptyProfileSet { path: &'static str },
     #[error("partition artifact {path} references unknown memory profile {profile:?}")]

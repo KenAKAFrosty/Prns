@@ -56,13 +56,13 @@ requires = ["bash", "cargo"]
 
 [[task]]
 id = "build.embedded.resources"
-summary = "Generate or verify embedded memory contracts from canonical profiles."
+summary = "Build embedded resource evidence and generate or verify memory contracts."
 domain = "build"
 effect = "workspace-write"
 platforms = ["any"]
 audience = ["developer", "ci", "release"]
 entrypoint = ["bash", "tools/build/embedded-resources.sh"]
-requires = ["bash", "cargo"]
+requires = ["bash", "cargo", "python3", "rustc"]
 
 [[task]]
 id = "build.esp32s3-wpa3-radio"

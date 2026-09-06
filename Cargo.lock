@@ -2923,6 +2923,7 @@ name = "personal-hopspot-resources"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "personal-hopspot-builder",
  "personal-hopspot-memory",
  "prns-flash-manifest",
  "serde_json",
