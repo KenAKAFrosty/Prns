@@ -15,9 +15,9 @@ use prns_core::interfaces::kiss_framing::{self, KissScanner};
     feature = "i2p"
 ))]
 use prns_core::interfaces::rns_serial_framing::{self, RnsSerialScanner};
-#[cfg(any(target_os = "windows", test))]
-use prns_core::interfaces::BROADCAST_WIRE_FRAME_LEN;
 use prns_core::interfaces::{BitrateBps, FrameSink};
+#[cfg(any(target_os = "windows", test))]
+use prns_core::interfaces::{BROADCAST_WIRE_FRAME_LEN, IFAC_MAX_SIZE};
 use prns_core::units::DurationMillis;
 #[cfg(any(target_os = "windows", test))]
 use prns_core::wire::{WireContext, WirePacketHeader};
@@ -27,22 +27,33 @@ use prns_runtime::manifold::interface_seam::InterfaceSeam;
 use prns_runtime::manifold::throughput::ThroughputLedger;
 
 const OUTBOUND_BATCH_TARGET_BYTES: usize = 256 * 1024;
+#[cfg(any(target_os = "windows", test))]
+const RESOURCE_WINDOW_BATCH_TARGET_BYTES: usize = 768 * 1024;
+#[cfg(any(target_os = "windows", test))]
+const RESOURCE_WINDOW_BATCH_FRAME_MAX_BYTES: usize = 8 * 1024 + IFAC_MAX_SIZE;
 
 #[cfg(any(target_os = "windows", test))]
 #[derive(Debug, PartialEq, Eq)]
 enum OutboundBatchClass {
     LatencyBounded,
+    WindowBatchableResource,
     CompatibilitySizedResource,
 }
 
 #[cfg(any(target_os = "windows", test))]
 fn outbound_batch_class(frame: &[u8]) -> OutboundBatchClass {
-    if frame.len() > BROADCAST_WIRE_FRAME_LEN {
-        return OutboundBatchClass::LatencyBounded;
-    }
     match WirePacketHeader::parse(frame) {
-        Ok((header, _)) if header.context == WireContext::Resource => {
+        Ok((header, _))
+            if header.context == WireContext::Resource
+                && frame.len() <= BROADCAST_WIRE_FRAME_LEN =>
+        {
             OutboundBatchClass::CompatibilitySizedResource
+        }
+        Ok((header, _))
+            if header.context == WireContext::Resource
+                && frame.len() <= RESOURCE_WINDOW_BATCH_FRAME_MAX_BYTES =>
+        {
+            OutboundBatchClass::WindowBatchableResource
         }
         Ok(_) | Err(_) => OutboundBatchClass::LatencyBounded,
     }
@@ -52,6 +63,9 @@ fn outbound_batch_class(frame: &[u8]) -> OutboundBatchClass {
 fn windows_outbound_batch_target_bytes(frame: &[u8], buffer_capacity: usize) -> usize {
     match outbound_batch_class(frame) {
         OutboundBatchClass::LatencyBounded => OUTBOUND_BATCH_TARGET_BYTES.min(buffer_capacity),
+        OutboundBatchClass::WindowBatchableResource => {
+            RESOURCE_WINDOW_BATCH_TARGET_BYTES.min(buffer_capacity)
+        }
         OutboundBatchClass::CompatibilitySizedResource => buffer_capacity,
     }
 }
@@ -694,7 +708,7 @@ mod tests {
     }
 
     #[test]
-    fn only_compatibility_sized_resource_frames_select_deep_batching() {
+    fn resource_frame_width_selects_its_batching_class() {
         const BUFFER_CAPACITY: usize = OUTBOUND_BATCH_TARGET_BYTES * 4;
         let mut frame = std::vec![0u8; BROADCAST_WIRE_FRAME_LEN];
         frame[HEADER_MIN_LEN - 1] = WireContext::Resource.to_byte();
@@ -721,14 +735,36 @@ mod tests {
             OutboundBatchClass::LatencyBounded
         );
 
-        frame.push(0);
+        frame.resize(RESOURCE_WINDOW_BATCH_FRAME_MAX_BYTES, 0);
         frame[HEADER_MIN_LEN - 1] = WireContext::Resource.to_byte();
+        assert_eq!(
+            outbound_batch_class(&frame),
+            OutboundBatchClass::WindowBatchableResource
+        );
+        assert_eq!(
+            windows_outbound_batch_target_bytes(&frame, BUFFER_CAPACITY),
+            RESOURCE_WINDOW_BATCH_TARGET_BYTES
+        );
+
+        frame.push(0);
         assert_eq!(
             outbound_batch_class(&frame),
             OutboundBatchClass::LatencyBounded
         );
         assert_eq!(
             windows_outbound_batch_target_bytes(&frame, BUFFER_CAPACITY),
+            OUTBOUND_BATCH_TARGET_BYTES
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn non_windows_resource_batching_remains_latency_bounded() {
+        const BUFFER_CAPACITY: usize = OUTBOUND_BATCH_TARGET_BYTES * 4;
+        let mut frame = std::vec![0u8; RESOURCE_WINDOW_BATCH_FRAME_MAX_BYTES];
+        frame[HEADER_MIN_LEN - 1] = WireContext::Resource.to_byte();
+        assert_eq!(
+            outbound_batch_target_bytes(&frame, BUFFER_CAPACITY),
             OUTBOUND_BATCH_TARGET_BYTES
         );
     }
