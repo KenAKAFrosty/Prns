@@ -5,13 +5,14 @@ use prns_core::interfaces::subghz::regions::us915::frequency_hopping::{
     AntennaGainDeciDb, ConductedPowerDbm, MeasuredTwentyDbBandwidth, Us915PowerInputs,
 };
 use prns_core::interfaces::subghz::regions::us915::turbo::{
-    decode_frame, AcquisitionBeacon, AcquisitionObservation, AcquisitionTracker, CapabilitySupport,
-    AcquisitionOutcome, ChannelAccess, ChannelAccessAction, ChannelAccessEvent, ContentionClass,
-    ContentionPolicy, DatagramId, MaximumTransmitUncertainty, MonotonicMicros, ReassemblyLifetime,
-    ScheduleMicros, SupercycleCycle, TransmissionTimingBudget, TrustedScheduleClock,
-    TrustedTimeSource, TurboGlobalSlot, TurboHardwareSupport, TurboRadioDwell, TurboReassembler,
-    TurboTransmitterInstanceId, Us915TurboConfiguration, Us915TurboTransmitter, UtcTimescale,
-    ValidatedAcquiredSchedule, TURBO_CHANNEL_COUNT, US915_TURBO_SPEC,
+    decode_frame, AcquisitionBeacon, AcquisitionObservation, AcquisitionOutcome,
+    AcquisitionTracker, CapabilitySupport, ChannelAccess, ChannelAccessAction, ChannelAccessEvent,
+    ContentionClass, ContentionPolicy, DatagramId, MaximumTransmitUncertainty, MonotonicMicros,
+    ReassemblyLifetime, ScheduleMicros, SupercycleCycle, TransmissionTimingBudget,
+    TrustedScheduleClock, TrustedTimeSource, TurboGlobalSlot, TurboHardwareSupport,
+    TurboRadioDwell, TurboReassembler, TurboTransmitterInstanceId, Us915TurboConfiguration,
+    Us915TurboTransmitter, UtcTimescale, ValidatedAcquiredSchedule, TURBO_CHANNEL_COUNT,
+    US915_TURBO_SPEC,
 };
 use prns_core::interfaces::subghz::{
     ChannelAssessmentPolicy, ChannelNoiseFloorBank, ChannelSample,
@@ -25,8 +26,8 @@ fn validated_acquired_schedule(
     for cycle_index in 0..US915_TURBO_SPEC.acquisition_observations() {
         let cycle = SupercycleCycle::new(cycle_index).unwrap();
         let global_slot = u64::from(cycle_index) * TURBO_CHANNEL_COUNT as u64;
-        let slot = US915_TURBO_SPEC
-            .slot_for_global_slot(TurboGlobalSlot::new(global_slot).unwrap());
+        let slot =
+            US915_TURBO_SPEC.slot_for_global_slot(TurboGlobalSlot::new(global_slot).unwrap());
         let beacon = AcquisitionBeacon::new(cycle, cycle_index).unwrap();
         let received_at = global_slot * US915_TURBO_SPEC.slot_us()
             + beacon.completes_at_slot_offset_us(US915_TURBO_SPEC.phy());
