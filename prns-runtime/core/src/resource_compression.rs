@@ -45,8 +45,8 @@ pub fn compress_resource_candidate(data: &[u8], packed_metadata: Option<&[u8]>) 
 /// The reference pays the full attempt on every input; on dense data that is where a bulk
 /// sender's whole core goes (~80 ms per 1 MiB segment against ~3 ms of engine work), so past
 /// [`SAMPLE_GATE_LEN`] we first compress a head/middle/tail sample and decline outright when
-/// even the sample refuses to shrink. A kept stream is still the whole-input level-9 attempt,
-/// byte-identical to the reference's; the sample only buys the decline early. The corner this
+/// even the sample refuses to shrink. A kept stream is still byte-identical to the reference's
+/// whole-input level-9 output; the sample only buys the decline early. The corner this
 /// trades away: a large payload whose only compressible run hides between the sample points
 /// ships uncompressed — wire-legal, just larger than the reference would have sent it.
 ///
@@ -78,10 +78,25 @@ fn sample_shrinks(data: &[u8]) -> bool {
 }
 
 fn bz2_if_smaller(data: &[u8]) -> Option<Vec<u8>> {
-    let mut compressor = Compress::new(Compression::best(), 0);
+    const BZ2_BLOCK_BYTES: usize = 100_000;
+    const BZ2_BLOCK_OVERFLOW_GUARD_BYTES: usize = 19;
+    const BZ2_REFERENCE_BLOCK_LEVEL: usize = 9;
+    const BZ2_REFERENCE_BLOCK_LEVEL_HEADER: u8 = b'9';
+    let level = data
+        .len()
+        .saturating_add(BZ2_BLOCK_OVERFLOW_GUARD_BYTES)
+        .div_ceil(BZ2_BLOCK_BYTES)
+        .clamp(1, BZ2_REFERENCE_BLOCK_LEVEL) as u32;
+    let mut compressed = bz2_if_smaller_with_level(data, Compression::new(level))?;
+    *compressed.get_mut(3)? = BZ2_REFERENCE_BLOCK_LEVEL_HEADER;
+    Some(compressed)
+}
+
+fn bz2_if_smaller_with_level(data: &[u8], level: Compression) -> Option<Vec<u8>> {
+    let mut compressor = Compress::new(level, 0);
     let mut compressed = Vec::with_capacity(bz2_worst_case_len(data.len()));
     match compressor.compress_vec(data, &mut compressed, bzip2::Action::Finish) {
-        Ok(Status::StreamEnd) => (compressed.len() < data.len()).then_some(compressed),
+        Ok(Status::StreamEnd) if compressed.len() < data.len() => Some(compressed),
         _ => None,
     }
 }
@@ -178,6 +193,23 @@ mod tests {
             compress_if_smaller(&reference_input()),
             Some(bytes_from_hex(CASE1_BZ2)),
         );
+    }
+
+    #[test]
+    fn adaptive_block_workspace_preserves_level_nine_output_across_boundaries() {
+        for len in [99_981, 99_982, 399_981, 399_982, 799_981, 799_982] {
+            let data = b"reticulum resources ride the link "
+                .iter()
+                .copied()
+                .cycle()
+                .take(len)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                bz2_if_smaller(&data),
+                bz2_if_smaller_with_level(&data, Compression::best()),
+                "input length {len}",
+            );
+        }
     }
 
     #[test]
