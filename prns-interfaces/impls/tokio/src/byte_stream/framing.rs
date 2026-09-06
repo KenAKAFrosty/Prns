@@ -17,12 +17,44 @@ use prns_core::interfaces::kiss_framing::{self, KissScanner};
 use prns_core::interfaces::rns_serial_framing::{self, RnsSerialScanner};
 use prns_core::interfaces::{BitrateBps, FrameSink};
 use prns_core::units::DurationMillis;
+#[cfg(any(target_os = "windows", test))]
+use prns_core::wire::{WireContext, WirePacketHeader};
 use prns_runtime::manifold::airtime::{frame_airtime_us, AirtimeLedger};
 use prns_runtime::manifold::driver::TokioInterfaceStatus;
 use prns_runtime::manifold::interface_seam::InterfaceSeam;
 use prns_runtime::manifold::throughput::ThroughputLedger;
 
 const OUTBOUND_BATCH_TARGET_BYTES: usize = 256 * 1024;
+
+#[cfg(any(target_os = "windows", test))]
+#[derive(Debug, PartialEq, Eq)]
+enum OutboundBatchClass {
+    LatencyBounded,
+    ResourceThroughput,
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn outbound_batch_class(frame: &[u8]) -> OutboundBatchClass {
+    match WirePacketHeader::parse(frame) {
+        Ok((header, _)) if header.context == WireContext::Resource => {
+            OutboundBatchClass::ResourceThroughput
+        }
+        Ok(_) | Err(_) => OutboundBatchClass::LatencyBounded,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn outbound_batch_target_bytes(frame: &[u8], buffer_capacity: usize) -> usize {
+    match outbound_batch_class(frame) {
+        OutboundBatchClass::LatencyBounded => OUTBOUND_BATCH_TARGET_BYTES.min(buffer_capacity),
+        OutboundBatchClass::ResourceThroughput => buffer_capacity,
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn outbound_batch_target_bytes(_frame: &[u8], buffer_capacity: usize) -> usize {
+    OUTBOUND_BATCH_TARGET_BYTES.min(buffer_capacity)
+}
 
 pub trait StreamDeframer {
     fn new() -> Self;
@@ -363,6 +395,7 @@ async fn serve_inner<F, const READ_LEN: usize, const FRAMED_LEN: usize, S, Seam,
                 }
             }
             outbound = seam.next_outbound() => {
+                let batch_target = outbound_batch_target_bytes(outbound, frame_buf.len());
                 let Some(mut filled) = F::encode(outbound, &mut *frame_buf) else {
                     continue;
                 };
@@ -373,7 +406,7 @@ async fn serve_inner<F, const READ_LEN: usize, const FRAMED_LEN: usize, S, Seam,
                     status.set_transfer_rates(throughput.rates());
                     status.set_airtime(airtime.record_tx(now, frame_airtime_us(written, bitrate)));
                 };
-                while filled < OUTBOUND_BATCH_TARGET_BYTES {
+                while filled < batch_target {
                     let Some(next) = seam.try_next_outbound() else {
                         break;
                     };
@@ -430,6 +463,7 @@ mod tests {
     use super::*;
     use prns_core::interfaces::rns_serial_framing::RnsSerialDecoder;
     use prns_core::interfaces::{ConnectionState, FrameSinkError, InterfaceId};
+    use prns_core::wire::HEADER_MIN_LEN;
     use prns_runtime::manifold::driver::{tokio_grant_lane, TokioGrantConsumer};
     use std::pin::Pin;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -514,6 +548,26 @@ mod tests {
             StreamDeframeOutcome::Rejected,
         );
         assert_eq!(tiny.frame_len(), 0);
+    }
+
+    #[test]
+    fn only_resource_frames_select_the_throughput_batch_class() {
+        let mut frame = std::vec![0u8; HEADER_MIN_LEN];
+        frame[HEADER_MIN_LEN - 1] = WireContext::Resource.to_byte();
+        assert_eq!(
+            outbound_batch_class(&frame),
+            OutboundBatchClass::ResourceThroughput
+        );
+
+        frame[HEADER_MIN_LEN - 1] = WireContext::None.to_byte();
+        assert_eq!(
+            outbound_batch_class(&frame),
+            OutboundBatchClass::LatencyBounded
+        );
+        assert_eq!(
+            outbound_batch_class(&frame[..HEADER_MIN_LEN - 1]),
+            OutboundBatchClass::LatencyBounded
+        );
     }
 
     impl InterfaceSeam for LaneSeam {
