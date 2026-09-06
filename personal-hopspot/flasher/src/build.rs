@@ -7,10 +7,9 @@ use personal_hopspot_builder::platform::nrf52840::serial_dfu as serial_dfu_build
 use personal_hopspot_builder::platform::nrf52840::uf2 as uf2_builder;
 use personal_hopspot_builder::{BuildContext, BuildVersion};
 use prns_flash_manifest::{
-    validate_nrf_serial_dfu_recovery_artifact, BoardBuild, BoardCatalog, BoardCatalogEntry,
-    FlashManifest, FlashPart, ManifestTargetSetPolicy, NrfSerialDfuManifest, OfflineKeySigningInfo,
-    ReleaseChannel, ReleaseInfo, ReleaseTarget, ReleaseVersion, SoftdeviceIdentity, TargetManifest,
-    Uf2VariantManifest, FLASH_MANIFEST_SCHEMA,
+    BoardBuild, BoardCatalog, BoardCatalogEntry, FlashManifest, FlashPart, ManifestTargetSetPolicy,
+    NrfSerialDfuManifest, OfflineKeySigningInfo, ReleaseChannel, ReleaseInfo, ReleaseTarget,
+    ReleaseVersion, SoftdeviceIdentity, TargetManifest, Uf2VariantManifest, FLASH_MANIFEST_SCHEMA,
 };
 
 use crate::cli::ChannelArg;
@@ -374,17 +373,6 @@ fn build_nrf_serial_dfu(
     write_target_record(&output_dir, &target)?;
     write_source_capability_record(&output_dir, board)?;
     let (version, target) = validated_prepared_target(board, context.version(), target)?;
-    let ReleaseTarget::NrfSerialDfu(validated_target) = &target else {
-        return Err(AppError::developer_manifest(
-            "built target did not validate as Nordic serial DFU",
-        ));
-    };
-    validate_nrf_serial_dfu_recovery_artifact(
-        validated_target,
-        built.application(),
-        built.recovery(),
-    )
-    .map_err(|error| AppError::developer_artifact(error.to_string()))?;
     let (application, init_packet) = built.into_transfer_artifacts();
     let prepared = PreparedTarget::bind(version, target, vec![application, init_packet])
         .map_err(|error| AppError::developer_artifact(error.to_string()))?;

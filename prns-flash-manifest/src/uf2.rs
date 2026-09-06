@@ -3,8 +3,8 @@ use std::collections::BTreeSet;
 use thiserror::Error;
 
 use crate::{
-    MemoryProfileReferenceError, NrfSerialDfuTarget, SoftdeviceIdentity, Uf2BoardIdMatch,
-    Uf2BuildVariant, Uf2Variant,
+    MemoryProfileReferenceError, NrfSerialDfuBuild, NrfSerialDfuTarget, SoftdeviceIdentity,
+    Uf2BoardIdMatch, Uf2BuildVariant, Uf2Variant,
 };
 
 const MAX_INFO_UF2_BYTES: usize = 4096;
@@ -17,6 +17,13 @@ const UF2_MAGIC_START_ZERO: u32 = 0x0a32_4655;
 const UF2_MAGIC_START_ONE: u32 = 0x9e5d_5157;
 const UF2_MAGIC_END: u32 = 0x0ab1_6f30;
 const UF2_FAMILY_ID_FLAG: u32 = 0x0000_2000;
+
+struct Uf2ArtifactContract {
+    application_base: u32,
+    application_end_exclusive: u32,
+    firmware_owned: crate::ApplicationAddressRange,
+    family_id: u32,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Uf2BootloaderIdentity {
@@ -182,10 +189,12 @@ pub fn validate_uf2_build_artifact(
     let family_id = crate::canonical_hex::parse_u32(&variant.family_id)
         .ok_or_else(|| Uf2BuildArtifactError::FamilyId(variant.family_id.clone()))?;
     validate_uf2_bytes(
-        transport.start(),
-        transport.end_exclusive(),
-        memory.firmware_owned(),
-        family_id,
+        Uf2ArtifactContract {
+            application_base: transport.start(),
+            application_end_exclusive: transport.end_exclusive(),
+            firmware_owned: memory.firmware_owned(),
+            family_id,
+        },
         bytes,
     )?;
     Ok(())
@@ -193,10 +202,12 @@ pub fn validate_uf2_build_artifact(
 
 pub fn validate_uf2_artifact(variant: &Uf2Variant, bytes: &[u8]) -> Result<(), Uf2ArtifactError> {
     validate_uf2_bytes(
-        variant.compatibility().application_base(),
-        variant.compatibility().application_end_exclusive(),
-        variant.firmware_owned(),
-        variant.compatibility().family_id(),
+        Uf2ArtifactContract {
+            application_base: variant.compatibility().application_base(),
+            application_end_exclusive: variant.compatibility().application_end_exclusive(),
+            firmware_owned: variant.firmware_owned(),
+            family_id: variant.compatibility().family_id(),
+        },
         bytes,
     )
 }
@@ -206,13 +217,46 @@ pub fn validate_nrf_serial_dfu_recovery_artifact(
     application: &[u8],
     recovery: &[u8],
 ) -> Result<(), Uf2ArtifactError> {
-    validate_uf2_bytes(
-        target.compatibility().application_base(),
-        target.compatibility().application_end_exclusive(),
-        target.firmware_owned(),
-        target.recovery().family_id(),
+    validate_recovery_artifact(
+        Uf2ArtifactContract {
+            application_base: target.compatibility().application_base(),
+            application_end_exclusive: target.compatibility().application_end_exclusive(),
+            firmware_owned: target.firmware_owned(),
+            family_id: target.recovery().family_id(),
+        },
+        application,
+        recovery,
+    )
+}
+
+pub fn validate_nrf_serial_dfu_build_artifacts(
+    build: &NrfSerialDfuBuild,
+    application: &[u8],
+    recovery: &[u8],
+) -> Result<(), Uf2BuildArtifactError> {
+    let memory = build.memory_layout()?;
+    let transport = memory.transport_envelope();
+    let family_id = crate::canonical_hex::parse_u32(&build.recovery.family_id)
+        .ok_or_else(|| Uf2BuildArtifactError::FamilyId(build.recovery.family_id.clone()))?;
+    validate_recovery_artifact(
+        Uf2ArtifactContract {
+            application_base: transport.start(),
+            application_end_exclusive: transport.end_exclusive(),
+            firmware_owned: memory.firmware_owned(),
+            family_id,
+        },
+        application,
         recovery,
     )?;
+    Ok(())
+}
+
+fn validate_recovery_artifact(
+    contract: Uf2ArtifactContract,
+    application: &[u8],
+    recovery: &[u8],
+) -> Result<(), Uf2ArtifactError> {
+    validate_uf2_bytes(contract, recovery)?;
     validate_recovery_application(application, recovery)
 }
 
@@ -243,20 +287,14 @@ fn validate_recovery_application(
     Ok(())
 }
 
-fn validate_uf2_bytes(
-    application_base: u32,
-    application_end_exclusive: u32,
-    firmware_owned: crate::ApplicationAddressRange,
-    family_id: u32,
-    bytes: &[u8],
-) -> Result<(), Uf2ArtifactError> {
+fn validate_uf2_bytes(contract: Uf2ArtifactContract, bytes: &[u8]) -> Result<(), Uf2ArtifactError> {
     if bytes.is_empty() || !bytes.len().is_multiple_of(UF2_BLOCK_BYTES) {
         return Err(Uf2ArtifactError::Length(bytes.len()));
     }
     let block_count = bytes.len() / UF2_BLOCK_BYTES;
     let declared_blocks =
         u32::try_from(block_count).map_err(|_| Uf2ArtifactError::Length(bytes.len()))?;
-    let mut expected_address = application_base;
+    let mut expected_address = contract.application_base;
     for (index, block) in bytes.as_chunks::<UF2_BLOCK_BYTES>().0.iter().enumerate() {
         let block_number =
             u32::try_from(index).map_err(|_| Uf2ArtifactError::Length(bytes.len()))?;
@@ -272,7 +310,7 @@ fn validate_uf2_bytes(
         if word(block, 20) != block_number || word(block, 24) != declared_blocks {
             return Err(Uf2ArtifactError::Order(block_number));
         }
-        if word(block, 28) != family_id {
+        if word(block, 28) != contract.family_id {
             return Err(Uf2ArtifactError::Family(block_number));
         }
         let address = word(block, 12);
@@ -286,10 +324,10 @@ fn validate_uf2_bytes(
         let end = address
             .checked_add(payload)
             .ok_or(Uf2ArtifactError::Bounds(block_number))?;
-        if end > application_end_exclusive {
+        if end > contract.application_end_exclusive {
             return Err(Uf2ArtifactError::Bounds(block_number));
         }
-        if !firmware_owned.contains(address, end) {
+        if !contract.firmware_owned.contains(address, end) {
             return Err(Uf2ArtifactError::FirmwareOwnership(block_number));
         }
         expected_address = end;
@@ -439,6 +477,40 @@ mod tests {
     }
 
     #[test]
+    fn serial_dfu_recovery_is_checked_against_its_application_and_catalog(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let catalog = crate::board_catalog()?;
+        let board = catalog.board("t1000-e").ok_or("missing T1000-E")?;
+        let crate::BoardBuild::NrfSerialDfu(build) = &board.build else {
+            return Err("T1000-E does not use Nordic serial DFU".into());
+        };
+        let memory = build.memory_layout()?;
+        let mut application = vec![0_u8; 300];
+        for (index, byte) in application.iter_mut().enumerate() {
+            *byte = index as u8;
+        }
+        let mut recovery = artifact(memory.transport_envelope().start(), 0xada5_2840, 2);
+        recovery[UF2_DATA_OFFSET..UF2_DATA_OFFSET + UF2_PAYLOAD_BYTES as usize]
+            .copy_from_slice(&application[..UF2_PAYLOAD_BYTES as usize]);
+        recovery[UF2_BLOCK_BYTES + UF2_DATA_OFFSET
+            ..UF2_BLOCK_BYTES + UF2_DATA_OFFSET + application.len() - UF2_PAYLOAD_BYTES as usize]
+            .copy_from_slice(&application[UF2_PAYLOAD_BYTES as usize..]);
+        assert_eq!(
+            validate_nrf_serial_dfu_build_artifacts(build, &application, &recovery),
+            Ok(())
+        );
+
+        recovery[UF2_DATA_OFFSET] ^= 1;
+        assert!(matches!(
+            validate_nrf_serial_dfu_build_artifacts(build, &application, &recovery),
+            Err(Uf2BuildArtifactError::Artifact(
+                Uf2ArtifactError::ApplicationData(0)
+            ))
+        ));
+        Ok(())
+    }
+
+    #[test]
     fn descriptors_accept_lf_crlf_and_normalized_board_ids() {
         let board_id_match = Uf2BoardIdMatch::parse(
             crate::Uf2BoardIdMatchKind::RevisionPrefix,
@@ -569,10 +641,12 @@ mod tests {
 
         assert_eq!(
             validate_uf2_bytes(
-                application_base,
-                0x000c_0000,
-                firmware_owned,
-                0xada5_2840,
+                Uf2ArtifactContract {
+                    application_base,
+                    application_end_exclusive: 0x000c_0000,
+                    firmware_owned,
+                    family_id: 0xada5_2840,
+                },
                 &bytes,
             ),
             Err(Uf2ArtifactError::FirmwareOwnership(2))

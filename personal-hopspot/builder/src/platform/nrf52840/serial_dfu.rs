@@ -2,9 +2,9 @@ use std::fs;
 use std::process::Command;
 
 use prns_flash_manifest::{
-    sha256_hex, BoardCatalogEntry, FlashPart, FlashPartKind, NrfDfuApplicationVersion,
-    NrfSerialDfuBuild, NrfSerialDfuBuildCompatibility, NrfSerialDfuManifest,
-    NrfSerialDfuRecoveryManifest,
+    sha256_hex, validate_nrf_serial_dfu_build_artifacts, BoardCatalogEntry, FlashPart,
+    FlashPartKind, NrfDfuApplicationVersion, NrfSerialDfuBuild, NrfSerialDfuBuildCompatibility,
+    NrfSerialDfuManifest, NrfSerialDfuRecoveryManifest,
 };
 use prns_nrf_dfu::{
     ApplicationInitPacket, ApplicationInitPacketSpec, ApplicationVersion, DfuDeviceRevision,
@@ -23,7 +23,6 @@ pub struct Output {
     manifest: NrfSerialDfuManifest,
     application: Vec<u8>,
     init_packet: Vec<u8>,
-    recovery: Vec<u8>,
 }
 
 impl Output {
@@ -33,18 +32,6 @@ impl Output {
 
     pub const fn manifest(&self) -> &NrfSerialDfuManifest {
         &self.manifest
-    }
-
-    pub fn application(&self) -> &[u8] {
-        &self.application
-    }
-
-    pub fn init_packet(&self) -> &[u8] {
-        &self.init_packet
-    }
-
-    pub fn recovery(&self) -> &[u8] {
-        &self.recovery
     }
 
     pub fn into_transfer_artifacts(self) -> (Vec<u8>, Vec<u8>) {
@@ -152,6 +139,12 @@ pub fn build(
     )?;
     let recovery = fs::read(&recovery_path)
         .map_err(|error| BuildError::Artifact(format!("could not read recovery UF2: {error}")))?;
+    validate_nrf_serial_dfu_build_artifacts(recipe, &application, &recovery).map_err(|error| {
+        BuildError::Artifact(format!(
+            "built recovery UF2 {} is invalid: {error}",
+            recovery_path.display()
+        ))
+    })?;
     let compatibility = recipe
         .manifest_compatibility()
         .map_err(|error| BuildError::Manifest(error.to_string()))?;
@@ -192,7 +185,6 @@ pub fn build(
         manifest,
         application,
         init_packet,
-        recovery,
     })
 }
 

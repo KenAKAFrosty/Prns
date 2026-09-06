@@ -48,8 +48,9 @@ pub use trust::{
     TrustError, PINNED_MINISIGN_PUBLIC_KEY,
 };
 pub use uf2::{
-    validate_nrf_serial_dfu_recovery_artifact, validate_uf2_artifact, validate_uf2_build_artifact,
-    Uf2ArtifactError, Uf2BootloaderIdentity, Uf2BuildArtifactError, Uf2IdentityError,
+    validate_nrf_serial_dfu_build_artifacts, validate_nrf_serial_dfu_recovery_artifact,
+    validate_uf2_artifact, validate_uf2_build_artifact, Uf2ArtifactError, Uf2BootloaderIdentity,
+    Uf2BuildArtifactError, Uf2IdentityError,
 };
 
 pub const FLASH_MANIFEST_SCHEMA: u32 = 3;
