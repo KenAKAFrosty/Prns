@@ -89,7 +89,9 @@ impl BuildEvidence {
     }
 
     pub(crate) fn linker_map(&self) -> Option<&Path> {
-        self.firmware.linker_map()
+        self.firmware
+            .resource_build()
+            .map(personal_hopspot_builder::ResourceBuildEvidence::linker_map)
     }
 
     pub(crate) const fn firmware(&self) -> &FirmwareEvidence {

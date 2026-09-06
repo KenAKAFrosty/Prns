@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use personal_hopspot_builder::{BuildConfiguration, BuildContext, BuildVersion, LtoMode};
+use personal_hopspot_builder::{BuildContext, BuildIntent, BuildVersion, LtoMode};
 use personal_hopspot_memory::T114;
 use serde_json::{json, Value};
 
@@ -38,13 +38,15 @@ fn build_fingerprint_distinguishes_lto_configuration() -> Result<(), Box<dyn std
         Path::new("/output"),
         BuildVersion::Developer("0.1.0"),
     )?
-    .with_configuration(BuildConfiguration::new(LtoMode::Configured, true));
+    .with_intent(BuildIntent::ResourceReport {
+        lto: LtoMode::Configured,
+    });
     let thin = BuildContext::new(
         Path::new("/repository"),
         Path::new("/output"),
         BuildVersion::Developer("0.1.0"),
     )?
-    .with_configuration(BuildConfiguration::new(LtoMode::Thin, true));
+    .with_intent(BuildIntent::ResourceReport { lto: LtoMode::Thin });
     let configured = build_identity(&configured, recipe())?;
     let thin = build_identity(&thin, recipe())?;
     assert_ne!(configured.fingerprint, thin.fingerprint);

@@ -21,10 +21,8 @@ const CARGO_PROFILE: &str = "release";
 pub(crate) enum ReportError {
     #[error(transparent)]
     Contract(#[from] contract::ContractIdentityError),
-    #[error("resource build for {target:?} did not capture toolchain evidence")]
-    MissingToolchain { target: String },
-    #[error("resource build for {target:?} did not capture a linker map")]
-    MissingLinkerMap { target: String },
+    #[error("build for {target:?} did not capture resource evidence")]
+    MissingResourceEvidence { target: String },
     #[error("could not inspect linker map {path}: {source}")]
     LinkerMapMetadata {
         path: PathBuf,
@@ -60,18 +58,13 @@ fn build(
 ) -> Result<ResourceReport, ReportError> {
     let recipe = target.recipe_identity();
     let adapter = target.adapter();
-    let toolchain =
-        evidence
-            .firmware()
-            .toolchain()
-            .ok_or_else(|| ReportError::MissingToolchain {
-                target: target.id().to_string(),
-            })?;
-    let linker_map = evidence
-        .linker_map()
-        .ok_or_else(|| ReportError::MissingLinkerMap {
+    let resource_build = evidence.firmware().resource_build().ok_or_else(|| {
+        ReportError::MissingResourceEvidence {
             target: target.id().to_string(),
-        })?;
+        }
+    })?;
+    let toolchain = resource_build.toolchain();
+    let linker_map = resource_build.linker_map();
     let linker_map_bytes = linker_map_size(linker_map)?;
 
     Ok(ResourceReport {
@@ -115,7 +108,7 @@ pub(super) fn build_identity(
     let recipe_kind = recipe.kind;
     let package = recipe.package;
     let binary = recipe.binary;
-    let lto = context.configuration().lto().as_str();
+    let lto = context.intent().lto().as_str();
     let body = BuildFingerprint {
         firmware_version: version,
         cargo_profile: CARGO_PROFILE,

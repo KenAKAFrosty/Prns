@@ -8,7 +8,7 @@ use std::process::ExitCode;
 
 use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use personal_hopspot_builder::{
-    default_artifact_root, BuildConfiguration, BuildContext, BuildError, BuildVersion, LtoMode,
+    default_artifact_root, BuildContext, BuildError, BuildIntent, BuildVersion, LtoMode,
 };
 use thiserror::Error;
 
@@ -148,9 +148,9 @@ fn build_reports(root: &Path, arguments: &ReportArguments) -> Result<(), Resourc
     let matrix = Matrix::from_catalog(&catalog)?;
     let lto = LtoMode::from(arguments.lto);
     let output_root = default_artifact_root(root).join("resources");
-    let configuration = BuildConfiguration::new(lto, true);
-    let context = BuildContext::new(root, &output_root, BuildVersion::Repository)?
-        .with_configuration(configuration);
+    let intent = BuildIntent::ResourceReport { lto };
+    let context =
+        BuildContext::new(root, &output_root, BuildVersion::Repository)?.with_intent(intent);
     if arguments.all {
         for target in matrix.iter() {
             build_report(target, &context)?;
@@ -172,7 +172,7 @@ fn build_report(target: &Target<'_>, context: &BuildContext<'_>) -> Result<(), R
         adapter.rust_target(),
         adapter.id().as_str(),
         adapter.linker_flavor().as_str(),
-        context.configuration().lto().as_str(),
+        context.intent().lto().as_str(),
         evidence.artifacts().len(),
         evidence.package_bytes(),
         evidence.elf().display()

@@ -43,7 +43,7 @@ fn release_context_preserves_cargo_and_omits_linker_maps() -> Result<(), BuildEr
         BuildVersion::Developer("0.3.7"),
     )?;
 
-    assert_eq!(context.configuration(), BuildConfiguration::default());
+    assert_eq!(context.intent(), BuildIntent::default());
     assert_eq!(context.cargo_subcommand(), "build");
     assert_eq!(context.linker_map_path("t114"), None);
     Ok(())
@@ -56,7 +56,9 @@ fn evidence_context_separates_linker_maps_by_lto_mode() -> Result<(), BuildError
         Path::new("/artifacts"),
         BuildVersion::Developer("0.3.7"),
     )?
-    .with_configuration(BuildConfiguration::new(crate::LtoMode::Thin, true));
+    .with_intent(BuildIntent::ResourceReport {
+        lto: crate::LtoMode::Thin,
+    });
 
     assert_eq!(context.cargo_subcommand(), "rustc");
     assert_eq!(

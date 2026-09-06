@@ -12,14 +12,17 @@ pub(crate) struct LinkerMapCapture {
     published: PathBuf,
 }
 
-pub(crate) struct FirmwareBuildCapture {
-    linker_map: Option<LinkerMapCapture>,
-    toolchain: Option<ToolchainEvidence>,
+pub(crate) enum FirmwareBuildCapture {
+    Firmware,
+    ResourceReport {
+        linker_map: LinkerMapCapture,
+        toolchain: ToolchainEvidence,
+    },
 }
 
 impl BuildContext<'_> {
     pub(crate) const fn cargo_subcommand(&self) -> &'static str {
-        if self.configuration.captures_linker_map() {
+        if self.intent.is_resource_report() {
             "rustc"
         } else {
             "build"
@@ -32,36 +35,37 @@ impl BuildContext<'_> {
         adapter: &Adapter,
         command: &mut Command,
     ) -> Result<FirmwareBuildCapture, BuildError> {
-        if let Some(lto) = self.configuration.lto().cargo_value() {
+        if let Some(lto) = self.intent.lto().cargo_value() {
             command.env("CARGO_PROFILE_RELEASE_LTO", lto);
         }
         let linker = adapter.configure_cargo(command)?;
-        let toolchain = self
-            .configuration
-            .captures_linker_map()
-            .then(|| capture_toolchain_evidence(command, adapter, &linker))
-            .transpose()?;
-        let linker_map = self.prepare_linker_map(target_id, adapter, command)?;
-        Ok(FirmwareBuildCapture {
-            linker_map,
-            toolchain,
-        })
+        match self.intent {
+            crate::BuildIntent::Firmware => Ok(FirmwareBuildCapture::Firmware),
+            crate::BuildIntent::ResourceReport { .. } => {
+                let toolchain = capture_toolchain_evidence(command, adapter, &linker)?;
+                let linker_map = self.prepare_linker_map(target_id, adapter, command)?;
+                Ok(FirmwareBuildCapture::ResourceReport {
+                    linker_map,
+                    toolchain,
+                })
+            }
+        }
     }
 
     pub fn linker_map_path(&self, target_id: &str) -> Option<PathBuf> {
-        self.configuration
-            .captures_linker_map()
+        self.intent
+            .is_resource_report()
             .then(|| self.evidence_work_output(target_id).join("linker.map"))
     }
 
     pub fn cargo_target_directory(&self, target_id: &str) -> Option<PathBuf> {
-        self.configuration
-            .isolates_artifacts()
+        self.intent
+            .is_resource_report()
             .then(|| self.evidence_work_output(target_id).join("cargo"))
     }
 
     pub fn pending_linker_map_path(&self, target_id: &str) -> Option<PathBuf> {
-        self.configuration.captures_linker_map().then(|| {
+        self.intent.is_resource_report().then(|| {
             self.evidence_work_output(target_id)
                 .join(format!("linker.{}.map", self.evidence_run_id))
         })
@@ -72,8 +76,18 @@ impl BuildContext<'_> {
         elf: PathBuf,
         capture: FirmwareBuildCapture,
     ) -> Result<FirmwareEvidence, BuildError> {
-        let linker_map = self.publish_linker_map(capture.linker_map)?;
-        Ok(FirmwareEvidence::new(elf, linker_map, capture.toolchain))
+        match capture {
+            FirmwareBuildCapture::Firmware => Ok(FirmwareEvidence::firmware(elf)),
+            FirmwareBuildCapture::ResourceReport {
+                linker_map,
+                toolchain,
+            } => {
+                let linker_map = self.publish_linker_map(linker_map)?;
+                Ok(FirmwareEvidence::resource_report(
+                    elf, linker_map, toolchain,
+                ))
+            }
+        }
     }
 
     fn prepare_linker_map(
@@ -81,13 +95,10 @@ impl BuildContext<'_> {
         target_id: &str,
         adapter: &Adapter,
         command: &mut Command,
-    ) -> Result<Option<LinkerMapCapture>, BuildError> {
-        let Some(published) = self.linker_map_path(target_id) else {
-            return Ok(None);
-        };
-        let pending = self.pending_linker_map_path(target_id).ok_or_else(|| {
-            BuildError::Artifact(format!("missing pending linker map path for {target_id:?}"))
-        })?;
+    ) -> Result<LinkerMapCapture, BuildError> {
+        let output = self.evidence_work_output(target_id);
+        let published = output.join("linker.map");
+        let pending = output.join(format!("linker.{}.map", self.evidence_run_id));
         let parent = pending.parent().ok_or_else(|| {
             BuildError::Artifact(format!(
                 "linker map path {} has no parent",
@@ -104,16 +115,10 @@ impl BuildContext<'_> {
             .arg("--")
             .arg("-C")
             .arg(adapter.linker_map_argument(&pending));
-        Ok(Some(LinkerMapCapture { pending, published }))
+        Ok(LinkerMapCapture { pending, published })
     }
 
-    fn publish_linker_map(
-        &self,
-        capture: Option<LinkerMapCapture>,
-    ) -> Result<Option<PathBuf>, BuildError> {
-        let Some(capture) = capture else {
-            return Ok(None);
-        };
+    fn publish_linker_map(&self, capture: LinkerMapCapture) -> Result<PathBuf, BuildError> {
         let metadata = std::fs::metadata(&capture.pending).map_err(|error| {
             BuildError::Artifact(format!(
                 "linker did not produce map {}: {error}",
@@ -142,7 +147,7 @@ impl BuildContext<'_> {
                 capture.published.display()
             ))
         })?;
-        Ok(Some(capture.published))
+        Ok(capture.published)
     }
 
     fn evidence_work_output(&self, target_id: &str) -> PathBuf {

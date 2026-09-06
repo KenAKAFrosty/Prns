@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use prns_flash_manifest::ReleaseVersion;
 
-use crate::{BuildConfiguration, BuildError};
+use crate::{BuildError, BuildIntent};
 
 static BUILD_CONTEXT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -23,7 +23,7 @@ pub struct BuildContext<'a> {
     repository: &'a Path,
     output_root: &'a Path,
     version: String,
-    configuration: BuildConfiguration,
+    intent: BuildIntent,
     evidence_run_id: String,
 }
 
@@ -38,14 +38,14 @@ impl<'a> BuildContext<'a> {
             repository,
             output_root,
             version,
-            configuration: BuildConfiguration::default(),
+            intent: BuildIntent::default(),
             evidence_run_id: evidence_run_id(),
         })
     }
 
     #[must_use]
-    pub const fn with_configuration(mut self, configuration: BuildConfiguration) -> Self {
-        self.configuration = configuration;
+    pub const fn with_intent(mut self, intent: BuildIntent) -> Self {
+        self.intent = intent;
         self
     }
 
@@ -65,8 +65,8 @@ impl<'a> BuildContext<'a> {
         developer_source_digest(&self.version)
     }
 
-    pub const fn configuration(&self) -> BuildConfiguration {
-        self.configuration
+    pub const fn intent(&self) -> BuildIntent {
+        self.intent
     }
 
     pub fn board_output(&self, board_slug: &str) -> PathBuf {
@@ -90,8 +90,8 @@ impl<'a> BuildContext<'a> {
     }
 
     pub fn configured_output_root(&self) -> PathBuf {
-        if self.configuration.isolates_artifacts() {
-            self.output_root.join(self.configuration.lto().as_str())
+        if self.intent.is_resource_report() {
+            self.output_root.join(self.intent.lto().as_str())
         } else {
             self.output_root.to_path_buf()
         }

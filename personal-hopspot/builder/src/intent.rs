@@ -26,29 +26,25 @@ impl LtoMode {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct BuildConfiguration {
-    lto: LtoMode,
-    linker_map: bool,
+pub enum BuildIntent {
+    #[default]
+    Firmware,
+    ResourceReport {
+        lto: LtoMode,
+    },
 }
 
-impl BuildConfiguration {
-    #[must_use]
-    pub const fn new(lto: LtoMode, linker_map: bool) -> Self {
-        Self { lto, linker_map }
-    }
-
+impl BuildIntent {
     #[must_use]
     pub const fn lto(self) -> LtoMode {
-        self.lto
+        match self {
+            Self::Firmware => LtoMode::Configured,
+            Self::ResourceReport { lto } => lto,
+        }
     }
 
-    #[must_use]
-    pub const fn captures_linker_map(self) -> bool {
-        self.linker_map
-    }
-
-    pub(crate) const fn isolates_artifacts(self) -> bool {
-        self.linker_map || !matches!(self.lto, LtoMode::Configured)
+    pub(crate) const fn is_resource_report(self) -> bool {
+        matches!(self, Self::ResourceReport { .. })
     }
 }
 
@@ -57,17 +53,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_configuration_preserves_cargo_release_settings() {
-        let configuration = BuildConfiguration::default();
-        assert_eq!(configuration.lto(), LtoMode::Configured);
-        assert!(!configuration.captures_linker_map());
-        assert_eq!(configuration.lto().cargo_value(), None);
+    fn firmware_intent_preserves_cargo_release_settings() {
+        let intent = BuildIntent::default();
+        assert_eq!(intent.lto(), LtoMode::Configured);
+        assert!(!intent.is_resource_report());
+        assert_eq!(intent.lto().cargo_value(), None);
     }
 
     #[test]
     fn explicit_lto_modes_have_stable_cargo_values() {
         assert_eq!(LtoMode::Fat.cargo_value(), Some("fat"));
         assert_eq!(LtoMode::Thin.cargo_value(), Some("thin"));
-        assert!(BuildConfiguration::new(LtoMode::Thin, false).isolates_artifacts());
+        assert!(BuildIntent::ResourceReport { lto: LtoMode::Thin }.is_resource_report());
     }
 }

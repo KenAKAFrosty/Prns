@@ -3,20 +3,40 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Debug)]
 pub struct FirmwareEvidence {
     elf: PathBuf,
-    linker_map: Option<PathBuf>,
-    toolchain: Option<ToolchainEvidence>,
+    kind: FirmwareEvidenceKind,
+}
+
+#[derive(Clone, Debug)]
+enum FirmwareEvidenceKind {
+    Firmware,
+    ResourceReport(ResourceBuildEvidence),
+}
+
+#[derive(Clone, Debug)]
+pub struct ResourceBuildEvidence {
+    linker_map: PathBuf,
+    toolchain: ToolchainEvidence,
 }
 
 impl FirmwareEvidence {
-    pub(crate) const fn new(
+    pub(crate) const fn firmware(elf: PathBuf) -> Self {
+        Self {
+            elf,
+            kind: FirmwareEvidenceKind::Firmware,
+        }
+    }
+
+    pub(crate) const fn resource_report(
         elf: PathBuf,
-        linker_map: Option<PathBuf>,
-        toolchain: Option<ToolchainEvidence>,
+        linker_map: PathBuf,
+        toolchain: ToolchainEvidence,
     ) -> Self {
         Self {
             elf,
-            linker_map,
-            toolchain,
+            kind: FirmwareEvidenceKind::ResourceReport(ResourceBuildEvidence {
+                linker_map,
+                toolchain,
+            }),
         }
     }
 
@@ -26,13 +46,23 @@ impl FirmwareEvidence {
     }
 
     #[must_use]
-    pub fn linker_map(&self) -> Option<&Path> {
-        self.linker_map.as_deref()
+    pub const fn resource_build(&self) -> Option<&ResourceBuildEvidence> {
+        match &self.kind {
+            FirmwareEvidenceKind::Firmware => None,
+            FirmwareEvidenceKind::ResourceReport(evidence) => Some(evidence),
+        }
+    }
+}
+
+impl ResourceBuildEvidence {
+    #[must_use]
+    pub fn linker_map(&self) -> &Path {
+        &self.linker_map
     }
 
     #[must_use]
-    pub const fn toolchain(&self) -> Option<&ToolchainEvidence> {
-        self.toolchain.as_ref()
+    pub const fn toolchain(&self) -> &ToolchainEvidence {
+        &self.toolchain
     }
 }
 
@@ -69,5 +99,29 @@ impl ToolchainEvidence {
     #[must_use]
     pub fn linker_version(&self) -> &str {
         &self.linker_version
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn firmware_and_resource_report_evidence_are_distinct() {
+        let firmware = FirmwareEvidence::firmware(PathBuf::from("firmware.elf"));
+        assert!(firmware.resource_build().is_none());
+
+        let resource = FirmwareEvidence::resource_report(
+            PathBuf::from("firmware.elf"),
+            PathBuf::from("linker.map"),
+            ToolchainEvidence::new(
+                "rustc version".to_string(),
+                "cargo version".to_string(),
+                "linker version".to_string(),
+            ),
+        );
+        let resource = resource.resource_build().expect("resource evidence");
+        assert_eq!(resource.linker_map(), Path::new("linker.map"));
+        assert_eq!(resource.toolchain().rustc_version(), "rustc version");
     }
 }
