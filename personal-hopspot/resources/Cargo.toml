@@ -11,6 +11,7 @@ description = "Embedded resource reporting and memory-contract tooling for Perso
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
+object = { version = "0.39.1", default-features = false, features = ["elf", "read_core", "std"] }
 personal-hopspot-builder = { path = "../builder" }
 personal-hopspot-memory = { path = "../memory" }
 prns-flash-manifest = { path = "../../prns-flash-manifest" }

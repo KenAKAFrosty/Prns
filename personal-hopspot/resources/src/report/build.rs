@@ -7,13 +7,15 @@ use personal_hopspot_memory::MemoryProfile;
 use serde::Serialize;
 use thiserror::Error;
 
+use crate::analysis::{self, AnalysisError, SectionKind};
 use crate::matrix::{BuildEvidence, RecipeIdentity, Target};
 
 use super::contract;
 use super::fingerprint::fingerprint;
 use super::model::{
-    AnalysisState, ArchitectureIdentity, ArtifactIdentity, BuildIdentity, BuildStatus,
-    FirmwareFlashUsage, ResourceReport, TargetIdentity, ToolchainIdentity, SCHEMA_VERSION,
+    AnalysisEvidence, ArchitectureIdentity, ArtifactIdentity, BuildIdentity, BuildStatus,
+    FirmwareFlashUsage, ResourceReport, SectionKindIdentity, SectionUsage, TargetIdentity,
+    ToolchainIdentity, SCHEMA_VERSION,
 };
 
 const CARGO_PROFILE: &str = "release";
@@ -38,6 +40,8 @@ pub(crate) enum ReportError {
         #[source]
         source: io::Error,
     },
+    #[error(transparent)]
+    Analysis(#[from] AnalysisError),
     #[error("could not serialize resource report: {0}")]
     Serialize(#[from] serde_json::Error),
     #[error("could not publish resource report: {0}")]
@@ -75,6 +79,21 @@ fn build(
     let toolchain = resource_build.toolchain();
     let linker_map = resource_build.linker_map();
     let linker_map_bytes = linker_map_size(linker_map)?;
+    let allocated_sections = analysis::read_allocated_sections(evidence.elf())?
+        .into_iter()
+        .map(|section| {
+            let run_range = section.run_range();
+            SectionUsage {
+                name: section.name().to_string(),
+                kind: section_kind_identity(section.kind()),
+                run_address: run_range.start(),
+                run_end: run_range.end(),
+                run_bytes: run_range.byte_len(),
+                load_bytes: section.load_bytes(),
+                alignment: section.alignment(),
+            }
+        })
+        .collect();
 
     Ok(ResourceReport {
         schema_version: SCHEMA_VERSION,
@@ -105,8 +124,21 @@ fn build(
                 bytes: artifact.bytes(),
             })
             .collect(),
-        analysis: AnalysisState::Pending { linker_map_bytes },
+        analysis: AnalysisEvidence {
+            linker_map_bytes,
+            allocated_sections,
+        },
     })
+}
+
+const fn section_kind_identity(kind: SectionKind) -> SectionKindIdentity {
+    match kind {
+        SectionKind::Code => SectionKindIdentity::Code,
+        SectionKind::ReadOnlyData => SectionKindIdentity::ReadOnlyData,
+        SectionKind::InitializedData => SectionKindIdentity::InitializedData,
+        SectionKind::ZeroFill => SectionKindIdentity::ZeroFill,
+        SectionKind::Other => SectionKindIdentity::Other,
+    }
 }
 
 pub(super) fn firmware_flash_usage(

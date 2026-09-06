@@ -173,6 +173,28 @@ fn report_value() -> Value {
             "headroom_bytes": 65952
         },
         "artifacts": [{"path": "firmware.bin", "bytes": 42}],
-        "analysis": {"status": "pending", "linker_map_bytes": 128}
+        "analysis": {
+            "linker_map_bytes": 128,
+            "allocated_sections": [
+                {
+                    "name": ".text",
+                    "kind": "code",
+                    "run_address": 155648,
+                    "run_end": 155690,
+                    "run_bytes": 42,
+                    "load_bytes": 42,
+                    "alignment": 4
+                },
+                {
+                    "name": ".bss",
+                    "kind": "zero-fill",
+                    "run_address": 536920064,
+                    "run_end": 536920128,
+                    "run_bytes": 64,
+                    "load_bytes": 0,
+                    "alignment": 8
+                }
+            ]
+        }
     })
 }

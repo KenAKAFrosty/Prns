@@ -16,7 +16,7 @@ pub(super) struct ResourceReport {
     pub status: BuildStatus,
     pub firmware_flash: FirmwareFlashUsage,
     pub artifacts: Vec<ArtifactIdentity>,
-    pub analysis: AnalysisState,
+    pub analysis: AnalysisEvidence,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -151,7 +151,30 @@ pub(super) struct ArtifactIdentity {
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "status", rename_all = "kebab-case", deny_unknown_fields)]
-pub(super) enum AnalysisState {
-    Pending { linker_map_bytes: u64 },
+#[serde(deny_unknown_fields)]
+pub(super) struct AnalysisEvidence {
+    pub linker_map_bytes: u64,
+    pub allocated_sections: Vec<SectionUsage>,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct SectionUsage {
+    pub name: String,
+    pub kind: SectionKindIdentity,
+    pub run_address: u64,
+    pub run_end: u64,
+    pub run_bytes: u64,
+    pub load_bytes: u64,
+    pub alignment: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum SectionKindIdentity {
+    Code,
+    ReadOnlyData,
+    InitializedData,
+    ZeroFill,
+    Other,
 }

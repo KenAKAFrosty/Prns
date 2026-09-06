@@ -1,3 +1,4 @@
+mod analysis;
 mod contracts;
 mod matrix;
 mod report;
