@@ -18,6 +18,7 @@ pub(super) static ADAPTER: Adapter = Adapter::new(
     LinkerFlavor::GnuLd,
     LINKER_PROGRAM,
     configure_linker,
+    linker_map_argument,
 );
 
 struct ToolchainEnvironment {
@@ -38,6 +39,10 @@ fn configure_linker(command: &mut Command) -> Result<PathBuf, BuildError> {
         command.env("LIBCLANG_PATH", libclang_path);
     }
     Ok(linker)
+}
+
+fn linker_map_argument(path: &Path) -> OsString {
+    format!("link-arg=-Wl,-Map={}", path.display()).into()
 }
 
 fn toolchain_environment() -> Result<ToolchainEnvironment, BuildError> {

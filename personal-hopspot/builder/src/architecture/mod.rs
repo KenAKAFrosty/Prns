@@ -5,7 +5,8 @@ mod xtensa;
 #[cfg(test)]
 mod tests;
 
-use std::path::PathBuf;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use personal_hopspot_memory::ProcessorArchitecture;
@@ -45,6 +46,7 @@ pub struct Adapter {
     linker_flavor: LinkerFlavor,
     linker_program: &'static str,
     configure_linker: fn(&mut Command) -> Result<PathBuf, BuildError>,
+    linker_map_argument: fn(&Path) -> OsString,
 }
 
 impl Adapter {
@@ -54,6 +56,7 @@ impl Adapter {
         linker_flavor: LinkerFlavor,
         linker_program: &'static str,
         configure_linker: fn(&mut Command) -> Result<PathBuf, BuildError>,
+        linker_map_argument: fn(&Path) -> OsString,
     ) -> Self {
         Self {
             id: AdapterId(id),
@@ -61,6 +64,7 @@ impl Adapter {
             linker_flavor,
             linker_program,
             configure_linker,
+            linker_map_argument,
         }
     }
 
@@ -93,6 +97,10 @@ impl Adapter {
         let linker = (self.configure_linker)(command)?;
         command.env(cargo_linker_environment(self.rust_target()), &linker);
         Ok(linker)
+    }
+
+    pub(crate) fn linker_map_argument(&self, path: &Path) -> OsString {
+        (self.linker_map_argument)(path)
     }
 }
 

@@ -1,8 +1,16 @@
+mod firmware;
+#[cfg(test)]
+mod tests;
+
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use prns_flash_manifest::ReleaseVersion;
 
-use crate::BuildError;
+use crate::{BuildConfiguration, BuildError};
+
+static BUILD_CONTEXT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BuildVersion<'a> {
@@ -15,6 +23,8 @@ pub struct BuildContext<'a> {
     repository: &'a Path,
     output_root: &'a Path,
     version: String,
+    configuration: BuildConfiguration,
+    evidence_run_id: String,
 }
 
 impl<'a> BuildContext<'a> {
@@ -28,7 +38,15 @@ impl<'a> BuildContext<'a> {
             repository,
             output_root,
             version,
+            configuration: BuildConfiguration::default(),
+            evidence_run_id: evidence_run_id(),
         })
+    }
+
+    #[must_use]
+    pub const fn with_configuration(mut self, configuration: BuildConfiguration) -> Self {
+        self.configuration = configuration;
+        self
     }
 
     pub const fn repository(&self) -> &'a Path {
@@ -47,8 +65,12 @@ impl<'a> BuildContext<'a> {
         developer_source_digest(&self.version)
     }
 
+    pub const fn configuration(&self) -> BuildConfiguration {
+        self.configuration
+    }
+
     pub fn board_output(&self, board_slug: &str) -> PathBuf {
-        self.output_root
+        self.build_output_root()
             .join("firmware")
             .join("hopspot")
             .join(board_slug)
@@ -65,6 +87,14 @@ impl<'a> BuildContext<'a> {
 
     pub fn release_part_path(&self, board_slug: &str, filename: &str) -> String {
         format!("firmware/hopspot/{board_slug}/{}/{filename}", self.version)
+    }
+
+    fn build_output_root(&self) -> PathBuf {
+        if self.configuration.isolates_artifacts() {
+            self.output_root.join(self.configuration.lto().as_str())
+        } else {
+            self.output_root.to_path_buf()
+        }
     }
 }
 
@@ -112,54 +142,10 @@ fn developer_source_digest(version: &str) -> Option<&str> {
     .then_some(digest)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn developer_context_owns_validated_identity_and_paths() -> Result<(), BuildError> {
-        let repository = Path::new("/repository");
-        let output = Path::new("/artifacts");
-        let digest = "e3ffc728180a8194c2efb55f90b0285f093db6e53e6dc800d4b229426e966399";
-        let version = format!("0.3.7-dev.dirty.{digest}");
-        let context = BuildContext::new(repository, output, BuildVersion::Developer(&version))?;
-
-        assert_eq!(context.repository(), repository);
-        assert_eq!(context.output_root(), output);
-        assert_eq!(context.version(), version);
-        assert_eq!(context.source_digest(), Some(digest));
-        assert_eq!(
-            context.board_output("t-echo"),
-            Path::new("/artifacts/firmware/hopspot/t-echo").join(&version)
-        );
-        assert_eq!(
-            context.work_output("t-echo"),
-            Path::new("/repository/target/flash-artifacts/work/t-echo")
-        );
-        assert_eq!(
-            context.release_part_path("t-echo", "application.uf2"),
-            format!("firmware/hopspot/t-echo/{version}/application.uf2")
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn release_artifact_root_is_repository_scoped() {
-        assert_eq!(
-            default_artifact_root(Path::new("/repository")),
-            Path::new("/repository/target/flash-artifacts")
-        );
-    }
-
-    #[test]
-    fn invalid_developer_versions_never_form_contexts() {
-        assert!(matches!(
-            BuildContext::new(
-                Path::new("/repository"),
-                Path::new("/artifacts"),
-                BuildVersion::Developer("../invalid")
-            ),
-            Err(BuildError::Repository(_))
-        ));
-    }
+fn evidence_run_id() -> String {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+    let sequence = BUILD_CONTEXT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    format!("{}-{timestamp}-{sequence}", std::process::id())
 }

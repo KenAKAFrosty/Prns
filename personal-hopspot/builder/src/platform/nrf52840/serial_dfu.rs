@@ -1,5 +1,4 @@
 use std::fs;
-use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use prns_flash_manifest::{
@@ -14,11 +13,13 @@ use prns_nrf_dfu::{
 
 use crate::architecture::adapter_for_rust_target;
 use crate::artifact::publish;
-use crate::{embedded_cargo_command, llvm_objcopy, run_status, BuildContext, BuildError};
+use crate::{
+    embedded_cargo_command, llvm_objcopy, run_status, BuildContext, BuildError, FirmwareEvidence,
+};
 
 #[derive(Debug)]
 pub struct Output {
-    elf: PathBuf,
+    firmware: FirmwareEvidence,
     manifest: NrfSerialDfuManifest,
     application: Vec<u8>,
     init_packet: Vec<u8>,
@@ -26,8 +27,8 @@ pub struct Output {
 }
 
 impl Output {
-    pub fn elf(&self) -> &Path {
-        &self.elf
+    pub const fn firmware(&self) -> &FirmwareEvidence {
+        &self.firmware
     }
 
     pub const fn manifest(&self) -> &NrfSerialDfuManifest {
@@ -56,15 +57,24 @@ pub fn build(
     board: &BoardCatalogEntry,
     recipe: &NrfSerialDfuBuild,
 ) -> Result<Output, BuildError> {
+    let memory = recipe
+        .memory_layout()
+        .map_err(|error| BuildError::Manifest(error.to_string()))?;
     let crate_dir = context
         .repository()
         .join("personal-hopspot")
         .join("embedded")
         .join("nrf52840");
-    let target_directory = crate_dir.join(&recipe.target_directory);
+    let target_directory = context
+        .cargo_target_directory(memory.id().0)
+        .unwrap_or_else(|| crate_dir.join(&recipe.target_directory));
+    let elf = target_directory
+        .join(&recipe.rust_target)
+        .join("release")
+        .join(&recipe.binary);
     let mut cargo = embedded_cargo_command();
     cargo
-        .arg("build")
+        .arg(context.cargo_subcommand())
         .arg("--release")
         .arg("--locked")
         .arg("--no-default-features")
@@ -80,13 +90,11 @@ pub fn build(
         .arg(&target_directory)
         .env("PRNS_BUILD_VERSION", context.version())
         .current_dir(&crate_dir);
-    adapter_for_rust_target(&recipe.rust_target)?.configure_cargo(&mut cargo)?;
+    let adapter = adapter_for_rust_target(&recipe.rust_target)?;
+    let linker_map = context.configure_firmware_cargo(memory.id().0, adapter, &mut cargo)?;
     run_status(&mut cargo, "Nordic serial DFU cargo build")?;
+    let linker_map = context.publish_linker_map(linker_map)?;
 
-    let elf = target_directory
-        .join(&recipe.rust_target)
-        .join("release")
-        .join(&recipe.binary);
     let work_dir = context.work_output(&board.slug);
     fs::create_dir_all(&work_dir).map_err(|error| {
         BuildError::Artifact(format!("could not create work directory: {error}"))
@@ -106,9 +114,6 @@ pub fn build(
             application_path.display()
         ))
     })?;
-    let memory = recipe
-        .memory_layout()
-        .map_err(|error| BuildError::Manifest(error.to_string()))?;
     let maximum_application_bytes = u64::from(memory.firmware_owned().byte_len());
     let application_bytes = application.len() as u64;
     if application_bytes > maximum_application_bytes {
@@ -183,7 +188,7 @@ pub fn build(
     DfuImage::from_artifacts(&application, &init_packet, &init_packet_spec)
         .map_err(|error| BuildError::Artifact(error.to_string()))?;
     Ok(Output {
-        elf,
+        firmware: FirmwareEvidence::new(elf, linker_map),
         manifest,
         application,
         init_packet,

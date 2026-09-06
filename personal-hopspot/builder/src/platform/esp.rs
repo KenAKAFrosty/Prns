@@ -1,5 +1,4 @@
 use std::fs;
-use std::path::{Path, PathBuf};
 
 use espflash::flasher::{FlashData, FlashFrequency, FlashMode, FlashSettings, FlashSize};
 use espflash::image_format::{idf::IdfBootloaderFormat, ImageFormat};
@@ -7,7 +6,7 @@ use espflash::target::{Chip, XtalFrequency};
 use prns_flash_manifest::{sha256_hex, BoardCatalogEntry, EspBuild, FlashPart, FlashPartKind};
 
 use crate::architecture::adapter_for_rust_target;
-use crate::{embedded_cargo_command, run_status, BuildContext, BuildError};
+use crate::{embedded_cargo_command, run_status, BuildContext, BuildError, FirmwareEvidence};
 
 const PARTITION_TABLE_OFFSET: u32 = 0x8000;
 
@@ -33,13 +32,13 @@ impl Part {
 
 #[derive(Debug)]
 pub struct Output {
-    elf: PathBuf,
+    firmware: FirmwareEvidence,
     parts: Vec<Part>,
 }
 
 impl Output {
-    pub fn elf(&self) -> &Path {
-        &self.elf
+    pub const fn firmware(&self) -> &FirmwareEvidence {
+        &self.firmware
     }
 
     pub fn parts(&self) -> &[Part] {
@@ -56,25 +55,27 @@ pub fn build(
     board: &BoardCatalogEntry,
     recipe: &EspBuild,
 ) -> Result<Output, BuildError> {
-    let application_offset = recipe
+    let memory = recipe
         .memory_layout()
-        .map_err(|error| BuildError::Manifest(error.to_string()))?
-        .transport_envelope()
-        .start();
+        .map_err(|error| BuildError::Manifest(error.to_string()))?;
+    let application_offset = memory.transport_envelope().start();
     let crate_dir = context
         .repository()
         .join("personal-hopspot")
         .join("embedded")
         .join("esp32");
     let partition_table = crate_dir.join(&recipe.partition_table);
-    let elf = crate_dir
-        .join("target")
+    let evidence_target_directory = context.cargo_target_directory(memory.id().0);
+    let target_directory = evidence_target_directory
+        .clone()
+        .unwrap_or_else(|| crate_dir.join("target"));
+    let elf = target_directory
         .join(&recipe.rust_target)
         .join("release")
         .join(&recipe.binary);
     let mut cargo = embedded_cargo_command();
     cargo
-        .arg("build")
+        .arg(context.cargo_subcommand())
         .arg("--release")
         .arg("--locked")
         .arg("--package")
@@ -86,11 +87,16 @@ pub fn build(
         .arg("-Zbuild-std=core,alloc")
         .env("PRNS_BUILD_VERSION", context.version())
         .current_dir(&crate_dir);
+    if let Some(target_directory) = evidence_target_directory {
+        cargo.arg("--target-dir").arg(target_directory);
+    }
     if let Some(source_digest) = context.source_digest() {
         cargo.env("PRNS_BUILD_SOURCE_DIGEST", source_digest);
     }
-    adapter_for_rust_target(&recipe.rust_target)?.configure_cargo(&mut cargo)?;
+    let adapter = adapter_for_rust_target(&recipe.rust_target)?;
+    let linker_map = context.configure_firmware_cargo(memory.id().0, adapter, &mut cargo)?;
     run_status(&mut cargo, "embedded ESP cargo build")?;
+    let linker_map = context.publish_linker_map(linker_map)?;
 
     let elf_bytes = fs::read(&elf).map_err(|error| {
         BuildError::Artifact(format!("could not read {}: {error}", elf.display()))
@@ -134,7 +140,10 @@ pub fn build(
         parts.push(Part { descriptor, bytes });
     }
     parts.sort_by_key(|part| part.descriptor.offset);
-    Ok(Output { elf, parts })
+    Ok(Output {
+        firmware: FirmwareEvidence::new(elf, linker_map),
+        parts,
+    })
 }
 
 fn flash_size(bytes: Option<u32>) -> Result<FlashSize, BuildError> {

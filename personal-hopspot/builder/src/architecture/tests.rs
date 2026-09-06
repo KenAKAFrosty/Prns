@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 use std::ffi::OsStr;
+use std::path::Path;
 use std::process::Command;
 
 use personal_hopspot_memory::ProcessorArchitecture;
@@ -73,5 +74,22 @@ fn linker_environment_is_derived_from_the_rust_target() {
             .find(|(key, _)| *key == OsStr::new("CARGO_TARGET_RISCV32IMAC_UNKNOWN_NONE_ELF_LINKER"))
             .and_then(|(_, value)| value),
         Some(OsStr::new("/tools/rust-lld"))
+    );
+}
+
+#[test]
+fn adapters_encode_their_linker_map_dialects() {
+    let path = Path::new("/artifacts/linker.map");
+    assert_eq!(
+        adapter_for(ProcessorArchitecture::ThumbV7em).linker_map_argument(path),
+        OsStr::new("link-arg=-Map=/artifacts/linker.map")
+    );
+    assert_eq!(
+        adapter_for(ProcessorArchitecture::RiscV32Imac).linker_map_argument(path),
+        OsStr::new("link-arg=-Map=/artifacts/linker.map")
+    );
+    assert_eq!(
+        adapter_for(ProcessorArchitecture::XtensaEsp32S3).linker_map_argument(path),
+        OsStr::new("link-arg=-Wl,-Map=/artifacts/linker.map")
     );
 }

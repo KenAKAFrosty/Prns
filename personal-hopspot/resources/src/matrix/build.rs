@@ -1,12 +1,12 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use personal_hopspot_builder::platform::{esp, nrf52840};
-use personal_hopspot_builder::BuildContext;
+use personal_hopspot_builder::{BuildContext, FirmwareEvidence};
 
 use super::{mesh_tower_v2, MatrixError, Target, TargetRecipe};
 
 pub(crate) struct BuildEvidence {
-    elf: PathBuf,
+    firmware: FirmwareEvidence,
     artifacts: Vec<ArtifactEvidence>,
 }
 
@@ -20,7 +20,7 @@ impl Target<'_> {
         let result = match self.recipe {
             TargetRecipe::Esp { board, recipe } => {
                 esp::build(context, board, recipe).map(|output| BuildEvidence {
-                    elf: output.elf().to_path_buf(),
+                    firmware: output.firmware().clone(),
                     artifacts: output
                         .parts()
                         .iter()
@@ -37,7 +37,7 @@ impl Target<'_> {
                 variant,
             } => {
                 nrf52840::uf2::build(context, board, recipe, variant).map(|output| BuildEvidence {
-                    elf: output.elf().to_path_buf(),
+                    firmware: output.firmware().clone(),
                     artifacts: vec![ArtifactEvidence {
                         path: output.descriptor().path.clone(),
                         bytes: output.descriptor().size,
@@ -48,7 +48,7 @@ impl Target<'_> {
                 nrf52840::serial_dfu::build(context, board, recipe).map(|output| {
                     let manifest = output.manifest();
                     BuildEvidence {
-                        elf: output.elf().to_path_buf(),
+                        firmware: output.firmware().clone(),
                         artifacts: [
                             &manifest.application,
                             &manifest.init_packet,
@@ -65,8 +65,8 @@ impl Target<'_> {
             }
             TargetRecipe::MeshTowerV2 => {
                 nrf52840::firmware::build(context, self.id(), mesh_tower_v2::recipe()).map(
-                    |output| BuildEvidence {
-                        elf: output.elf().to_path_buf(),
+                    |firmware| BuildEvidence {
+                        firmware,
                         artifacts: Vec::new(),
                     },
                 )
@@ -81,11 +81,15 @@ impl Target<'_> {
 
 impl BuildEvidence {
     pub(crate) fn elf(&self) -> &Path {
-        &self.elf
+        self.firmware.elf()
     }
 
     pub(crate) fn artifacts(&self) -> &[ArtifactEvidence] {
         &self.artifacts
+    }
+
+    pub(crate) fn linker_map(&self) -> Option<&Path> {
+        self.firmware.linker_map()
     }
 
     pub(crate) fn package_bytes(&self) -> u64 {
