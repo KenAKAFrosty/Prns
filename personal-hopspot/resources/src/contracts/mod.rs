@@ -2,7 +2,9 @@ mod python;
 
 use std::fmt;
 use std::fs;
-use std::io;
+use std::io::{self, Write};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use personal_hopspot_memory::{
@@ -79,8 +81,28 @@ pub(crate) enum ContractError {
         #[source]
         source: io::Error,
     },
+    #[error("generated contract path has no parent: {path}")]
+    MissingParent { path: PathBuf },
     #[error("failed to write generated contract {path}: {source}")]
     Write {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("failed to synchronize generated contract {path}: {source}")]
+    Sync {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("failed to preserve generated contract permissions for {path}: {source}")]
+    Permissions {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("failed to publish generated contract {path}: {source}")]
+    Publish {
         path: PathBuf,
         #[source]
         source: io::Error,
@@ -253,12 +275,68 @@ fn write_artifact(
     artifact: RenderedArtifact,
     updated: &mut Vec<PathBuf>,
 ) -> Result<(), ContractError> {
-    fs::write(&artifact.path, artifact.contents).map_err(|source| ContractError::Write {
+    let parent = artifact
+        .path
+        .parent()
+        .ok_or_else(|| ContractError::MissingParent {
+            path: artifact.path.clone(),
+        })?;
+    let permissions = match fs::metadata(&artifact.path) {
+        Ok(metadata) => Some(metadata.permissions()),
+        Err(source) if source.kind() == io::ErrorKind::NotFound => None,
+        Err(source) => {
+            return Err(ContractError::Read {
+                path: artifact.path,
+                source,
+            });
+        }
+    };
+    let mut pending = temporary_artifact(parent).map_err(|source| ContractError::Write {
         path: artifact.path.clone(),
         source,
     })?;
+    if let Some(permissions) = permissions {
+        pending
+            .as_file()
+            .set_permissions(permissions)
+            .map_err(|source| ContractError::Permissions {
+                path: artifact.path.clone(),
+                source,
+            })?;
+    }
+    pending
+        .write_all(artifact.contents.as_bytes())
+        .map_err(|source| ContractError::Write {
+            path: artifact.path.clone(),
+            source,
+        })?;
+    pending
+        .as_file()
+        .sync_all()
+        .map_err(|source| ContractError::Sync {
+            path: artifact.path.clone(),
+            source,
+        })?;
+    pending
+        .persist(&artifact.path)
+        .map_err(|error| ContractError::Publish {
+            path: artifact.path.clone(),
+            source: error.error,
+        })?;
     updated.push(artifact.path);
     Ok(())
+}
+
+#[cfg(unix)]
+fn temporary_artifact(parent: &Path) -> io::Result<tempfile::NamedTempFile> {
+    tempfile::Builder::new()
+        .permissions(fs::Permissions::from_mode(0o666))
+        .tempfile_in(parent)
+}
+
+#[cfg(not(unix))]
+fn temporary_artifact(parent: &Path) -> io::Result<tempfile::NamedTempFile> {
+    tempfile::NamedTempFile::new_in(parent)
 }
 
 #[cfg(test)]

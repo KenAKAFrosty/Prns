@@ -87,4 +87,3 @@ NRF_SERIAL_DFU_MEMORY_CONTRACTS = {
         "transport_envelope": (0x00027000, 0x000ea000),
     },
 }
-

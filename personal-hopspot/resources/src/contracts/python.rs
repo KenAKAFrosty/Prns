@@ -32,7 +32,9 @@ pub(super) fn render(root: &Path) -> Result<RenderedArtifact, PythonContractErro
     let catalog = board_catalog()?;
     let mut contents = String::new();
     write_esp_contracts(&mut contents, &catalog.boards)?;
+    writeln!(contents)?;
     write_uf2_contracts(&mut contents, &catalog.boards)?;
+    writeln!(contents)?;
     write_nrf_serial_dfu_contracts(&mut contents, &catalog.boards)?;
     Ok(RenderedArtifact {
         path: root.join(RELATIVE_PATH),
@@ -78,7 +80,7 @@ fn write_esp_contracts(
         writeln!(output, "        }},")?;
         writeln!(output, "    }},")?;
     }
-    writeln!(output, "}}\n")?;
+    writeln!(output, "}}")?;
     Ok(())
 }
 
@@ -127,7 +129,7 @@ fn write_uf2_contracts(
             writeln!(output, "    }},")?;
         }
     }
-    writeln!(output, "}}\n")?;
+    writeln!(output, "}}")?;
     Ok(())
 }
 
@@ -232,7 +234,7 @@ fn write_nrf_serial_dfu_contracts(
         )?;
         writeln!(output, "    }},")?;
     }
-    writeln!(output, "}}\n")?;
+    writeln!(output, "}}")?;
     Ok(())
 }
 

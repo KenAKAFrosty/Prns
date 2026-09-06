@@ -69,6 +69,37 @@ fn writes_are_idempotent_and_make_checks_pass() {
 }
 
 #[test]
+fn generated_python_has_one_final_line_ending() {
+    let root = prepare_root();
+    let artifact = python::render(root.path()).expect("Python contract can be rendered");
+
+    assert!(artifact.contents.ends_with("}\n"));
+    assert!(!artifact.contents.ends_with("}\n\n"));
+}
+
+#[cfg(unix)]
+#[test]
+fn replacement_preserves_existing_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = prepare_root();
+    let path = root.path().join(PARTITION_ARTIFACTS[0].relative_path);
+    fs::write(&path, "stale\n").expect("stale contract is writable");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o640))
+        .expect("contract permissions are writable");
+    run(root.path(), ContractsMode::Write).expect("contracts can be written");
+
+    assert_eq!(
+        fs::metadata(path)
+            .expect("contract exists")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o640
+    );
+}
+
+#[test]
 fn changed_contracts_are_distinct_from_missing_contracts() {
     let root = prepare_root();
     run(root.path(), ContractsMode::Write).expect("contracts can be written");
