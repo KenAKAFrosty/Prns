@@ -7,15 +7,15 @@ use personal_hopspot_memory::MemoryProfile;
 use serde::Serialize;
 use thiserror::Error;
 
-use crate::analysis::{self, AnalysisError, SectionKind};
+use crate::analysis::{self, AnalysisError, RamAnalysisError, RamCapacity, SectionKind};
 use crate::matrix::{BuildEvidence, RecipeIdentity, Target};
 
 use super::contract;
 use super::fingerprint::fingerprint;
 use super::model::{
     AnalysisEvidence, ArchitectureIdentity, ArtifactIdentity, BuildIdentity, BuildStatus,
-    FirmwareFlashUsage, ResourceReport, SectionKindIdentity, SectionUsage, TargetIdentity,
-    ToolchainIdentity, SCHEMA_VERSION,
+    FirmwareFlashUsage, RamBackingUsage, RamCapacityIdentity, ResourceReport, SectionKindIdentity,
+    SectionUsage, TargetIdentity, ToolchainIdentity, SCHEMA_VERSION,
 };
 
 const CARGO_PROFILE: &str = "release";
@@ -42,6 +42,8 @@ pub(crate) enum ReportError {
     },
     #[error(transparent)]
     Analysis(#[from] AnalysisError),
+    #[error(transparent)]
+    RamAnalysis(#[from] RamAnalysisError),
     #[error("could not serialize resource report: {0}")]
     Serialize(#[from] serde_json::Error),
     #[error("could not publish resource report: {0}")]
@@ -79,7 +81,34 @@ fn build(
     let toolchain = resource_build.toolchain();
     let linker_map = resource_build.linker_map();
     let linker_map_bytes = linker_map_size(linker_map)?;
-    let allocated_sections = analysis::read_allocated_sections(evidence.elf())?
+    let allocated_sections = analysis::read_allocated_sections(evidence.elf())?;
+    let static_ram = analysis::analyze_ram(target.profile(), &allocated_sections)?
+        .into_iter()
+        .map(|usage| RamBackingUsage {
+            backing_store: usage.backing_store.0.to_string(),
+            address_spaces: usage
+                .address_spaces
+                .into_iter()
+                .map(|address_space| address_space.0.to_string())
+                .collect(),
+            capacity: match usage.capacity {
+                RamCapacity::Known {
+                    bytes,
+                    headroom_bytes,
+                } => RamCapacityIdentity::Known {
+                    bytes,
+                    headroom_bytes,
+                },
+                RamCapacity::RuntimeDetected => RamCapacityIdentity::RuntimeDetected,
+            },
+            static_section_bytes: usage.static_section_bytes,
+            linker_padding_bytes: usage.linker_padding_bytes,
+            additional_reservation_bytes: usage.additional_reservation_bytes,
+            included_reservation_bytes: usage.included_reservation_bytes,
+            external_reservation_bytes: usage.external_reservation_bytes,
+        })
+        .collect();
+    let allocated_sections = allocated_sections
         .into_iter()
         .map(|section| {
             let run_range = section.run_range();
@@ -116,6 +145,7 @@ fn build(
             target.profile(),
             evidence.firmware_image_bytes(),
         )?,
+        static_ram,
         artifacts: evidence
             .artifacts()
             .iter()

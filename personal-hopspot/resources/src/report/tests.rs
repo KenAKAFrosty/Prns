@@ -172,6 +172,22 @@ fn report_value() -> Value {
             "image_bytes": 700000,
             "headroom_bytes": 65952
         },
+        "static_ram": [
+            {
+                "backing_store": "internal-sram",
+                "address_spaces": ["internal-ram"],
+                "capacity": {
+                    "kind": "known",
+                    "bytes": 212992,
+                    "headroom_bytes": 5004
+                },
+                "static_section_bytes": 138356,
+                "linker_padding_bytes": 0,
+                "additional_reservation_bytes": 69632,
+                "included_reservation_bytes": 0,
+                "external_reservation_bytes": 0
+            }
+        ],
         "artifacts": [{"path": "firmware.bin", "bytes": 42}],
         "analysis": {
             "linker_map_bytes": 128,

@@ -25,6 +25,22 @@ pub(crate) struct AllocatedSection {
 }
 
 impl AllocatedSection {
+    pub(super) fn from_parts(
+        name: String,
+        kind: SectionKind,
+        run_range: AddressRange,
+        load_bytes: u64,
+        alignment: u64,
+    ) -> Self {
+        Self {
+            name,
+            kind,
+            run_range,
+            load_bytes,
+            alignment,
+        }
+    }
+
     pub(crate) fn name(&self) -> &str {
         &self.name
     }
@@ -122,13 +138,13 @@ fn allocated_sections(path: &Path, bytes: &[u8]) -> Result<Vec<AllocatedSection>
                     }
                 })?;
             let load_bytes = section.file_range().map_or(0, |(_, bytes)| bytes);
-            Ok(AllocatedSection {
+            Ok(AllocatedSection::from_parts(
                 name,
-                kind: section_kind(section.kind()),
+                section_kind(section.kind()),
                 run_range,
                 load_bytes,
-                alignment: section.align(),
-            })
+                section.align(),
+            ))
         })
         .collect::<Result<Vec<_>, AnalysisError>>()?;
     if sections.is_empty() {

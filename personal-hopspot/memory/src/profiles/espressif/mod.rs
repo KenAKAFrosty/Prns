@@ -13,10 +13,14 @@ const IRAM: AddressSpaceId = AddressSpaceId("instruction-ram");
 const DRAM: AddressSpaceId = AddressSpaceId("data-ram");
 const RECLAIMED_RAM: AddressSpaceId = AddressSpaceId("reclaimed-ram");
 const DCACHE_RAM: AddressSpaceId = AddressSpaceId("dcache-ram");
+const RTC_FAST_RAM: AddressSpaceId = AddressSpaceId("fast-retention-ram");
+const RTC_SLOW_RAM: AddressSpaceId = AddressSpaceId("slow-retention-ram");
 const PSRAM: AddressSpaceId = AddressSpaceId("external-psram");
 
 const RECLAIMED_RAM_BACKING: BackingStoreId = BackingStoreId("reclaimed-sram");
 const DCACHE_RAM_BACKING: BackingStoreId = BackingStoreId("dcache-sram");
+const RTC_FAST_RAM_BACKING: BackingStoreId = BackingStoreId("fast-retention-sram");
+const RTC_SLOW_RAM_BACKING: BackingStoreId = BackingStoreId("slow-retention-sram");
 const PSRAM_BACKING: BackingStoreId = BackingStoreId("external-psram");
 
 const fn esp_binding(
@@ -31,19 +35,19 @@ const fn esp_binding(
     }
 }
 
-const ESP32S3_16_MIB_RUNTIME_PSRAM_SPACES: [AddressSpace; 6] =
+const ESP32S3_16_MIB_RUNTIME_PSRAM_SPACES: [AddressSpace; 8] =
     esp32s3_spaces(16 * MIB, AddressSpaceGeometry::RuntimeDetected);
-const ESP32S3_16_MIB_FIXED_PSRAM_SPACES: [AddressSpace; 6] = esp32s3_spaces(
+const ESP32S3_16_MIB_FIXED_PSRAM_SPACES: [AddressSpace; 8] = esp32s3_spaces(
     16 * MIB,
     AddressSpaceGeometry::FixedCapacity { bytes: 8 * MIB },
 );
-const ESP32S3_8_MIB_RUNTIME_PSRAM_SPACES: [AddressSpace; 6] =
+const ESP32S3_8_MIB_RUNTIME_PSRAM_SPACES: [AddressSpace; 8] =
     esp32s3_spaces(8 * MIB, AddressSpaceGeometry::RuntimeDetected);
 
 const fn esp32s3_spaces(
     flash_bytes: u64,
     psram_geometry: AddressSpaceGeometry,
-) -> [AddressSpace; 6] {
+) -> [AddressSpace; 8] {
     [
         AddressSpace {
             id: FLASH,
@@ -78,6 +82,20 @@ const fn esp32s3_spaces(
             kind: AddressSpaceKind::DataCacheRam,
             geometry: AddressSpaceGeometry::Fixed(AddressRange::new(0x3FCF_0000, 0x3FCF_8000)),
             backing_store: DCACHE_RAM_BACKING,
+            backing_offset: 0,
+        },
+        AddressSpace {
+            id: RTC_FAST_RAM,
+            kind: AddressSpaceKind::RetentionRam,
+            geometry: AddressSpaceGeometry::Fixed(AddressRange::new(0x600F_E000, 0x6010_0000)),
+            backing_store: RTC_FAST_RAM_BACKING,
+            backing_offset: 0,
+        },
+        AddressSpace {
+            id: RTC_SLOW_RAM,
+            kind: AddressSpaceKind::RetentionRam,
+            geometry: AddressSpaceGeometry::Fixed(AddressRange::new(0x5000_0000, 0x5000_2000)),
+            backing_store: RTC_SLOW_RAM_BACKING,
             backing_offset: 0,
         },
         AddressSpace {
@@ -360,7 +378,7 @@ const C6_RUNTIME_RESERVATIONS: [RuntimeReservation; 1] = [RuntimeReservation {
     bytes: 88 * KIB,
     accounting: ReservationAccounting::SharedPool {
         pool: ReservationPoolId("radio-runtime-heap"),
-        charge: ReservationCharge::AdditionalToStatic,
+        charge: ReservationCharge::IncludedInStaticImage,
     },
 }];
 

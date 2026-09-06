@@ -99,6 +99,7 @@ pub enum AddressSpaceKind {
     DataRam,
     ReclaimedRam,
     DataCacheRam,
+    RetentionRam,
     ExternalPsram,
     ExternalStorage,
 }
@@ -112,6 +113,7 @@ impl AddressSpaceKind {
             Self::DataRam => matches!(other, Self::DataRam),
             Self::ReclaimedRam => matches!(other, Self::ReclaimedRam),
             Self::DataCacheRam => matches!(other, Self::DataCacheRam),
+            Self::RetentionRam => matches!(other, Self::RetentionRam),
             Self::ExternalPsram => matches!(other, Self::ExternalPsram),
             Self::ExternalStorage => matches!(other, Self::ExternalStorage),
         }
@@ -125,6 +127,7 @@ impl AddressSpaceKind {
                 | Self::DataRam
                 | Self::ReclaimedRam
                 | Self::DataCacheRam
+                | Self::RetentionRam
                 | Self::ExternalPsram
         )
     }

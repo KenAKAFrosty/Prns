@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::fingerprint::Fingerprint;
 
-pub(super) const SCHEMA_VERSION: u32 = 1;
+pub(super) const SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -15,6 +15,7 @@ pub(super) struct ResourceReport {
     pub memory_contract: MemoryContractIdentity,
     pub status: BuildStatus,
     pub firmware_flash: FirmwareFlashUsage,
+    pub static_ram: Vec<RamBackingUsage>,
     pub artifacts: Vec<ArtifactIdentity>,
     pub analysis: AnalysisEvidence,
 }
@@ -141,6 +142,26 @@ pub(super) struct FirmwareFlashUsage {
     pub end: u64,
     pub image_bytes: u64,
     pub headroom_bytes: u64,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RamBackingUsage {
+    pub backing_store: String,
+    pub address_spaces: Vec<String>,
+    pub capacity: RamCapacityIdentity,
+    pub static_section_bytes: u64,
+    pub linker_padding_bytes: u64,
+    pub additional_reservation_bytes: u64,
+    pub included_reservation_bytes: u64,
+    pub external_reservation_bytes: u64,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub(super) enum RamCapacityIdentity {
+    Known { bytes: u64, headroom_bytes: u64 },
+    RuntimeDetected,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]

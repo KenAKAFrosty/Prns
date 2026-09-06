@@ -139,6 +139,7 @@ const fn address_space_kind(value: AddressSpaceKind) -> &'static str {
         AddressSpaceKind::DataRam => "data-ram",
         AddressSpaceKind::ReclaimedRam => "reclaimed-ram",
         AddressSpaceKind::DataCacheRam => "data-cache-ram",
+        AddressSpaceKind::RetentionRam => "retention-ram",
         AddressSpaceKind::ExternalPsram => "external-psram",
         AddressSpaceKind::ExternalStorage => "external-storage",
     }

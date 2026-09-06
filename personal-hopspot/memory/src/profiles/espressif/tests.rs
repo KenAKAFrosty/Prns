@@ -67,4 +67,12 @@ fn linker_counted_and_additional_reservations_stay_separate() {
             external_bytes: 0,
         })
     );
+    assert_eq!(
+        XIAO_ESP32_C6.reservation_totals(DRAM),
+        Ok(ReservationTotals {
+            additional_bytes: 0,
+            linker_counted_bytes: 88 * KIB,
+            external_bytes: 0,
+        })
+    );
 }
