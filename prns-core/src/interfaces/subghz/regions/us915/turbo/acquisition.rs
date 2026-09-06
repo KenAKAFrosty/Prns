@@ -1,4 +1,7 @@
-use super::clock::{AcquiredReceivePhase, ClockError, ScheduleMicros};
+use super::clock::{
+    validate_drift_bound, AcquisitionCandidate, ClockError, ClockWindow,
+    MaximumTransmitUncertainty, ScheduleMicros,
+};
 use super::profile::TurboPhyProfile;
 use super::schedule::TurboChannelIndex;
 use super::spec::{TURBO_CHANNEL_COUNT, US915_TURBO_SPEC};
@@ -39,15 +42,54 @@ pub enum AcquisitionTrackerError {
     ChannelOutsideHopSet { channel_index: usize },
     CompletionOutsideSlot { completion_offset_us: u64 },
     EmptyTimingUncertainty,
+    TimingUncertaintyExceeded { actual_us: u64, maximum_us: u64 },
     NonMonotonicObservation,
     Clock(ClockError),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AcquisitionTrackerConfigurationError {
+    Clock(ClockError),
+    TransmitUncertaintyBelowAcquisitionFloor { actual_us: u64, minimum_us: u64 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ValidatedAcquiredSchedule {
+    candidate: AcquisitionCandidate,
+}
+
+impl ValidatedAcquiredSchedule {
+    pub const fn observed_at(self) -> MonotonicMicros {
+        self.candidate.observed_at()
+    }
+
+    pub const fn observations(self) -> u8 {
+        self.candidate.observations()
+    }
+
+    pub const fn distinct_channels(self) -> u8 {
+        self.candidate.distinct_channels()
+    }
+
+    pub fn window_at(self, now: MonotonicMicros) -> Result<ClockWindow, ClockError> {
+        self.candidate.window_at(now)
+    }
+
+    pub fn transmit_window_at(
+        self,
+        now: MonotonicMicros,
+        maximum_uncertainty: MaximumTransmitUncertainty,
+    ) -> Result<ClockWindow, ClockError> {
+        self.window_at(now)?
+            .require_transmit_uncertainty(maximum_uncertainty)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AcquisitionOutcome {
-    Provisional { observations: u8 },
-    ReceivePhase { phase: AcquiredReceivePhase },
-    ContradictionReset,
+    Candidate { candidate: AcquisitionCandidate },
+    Operational { schedule: ValidatedAcquiredSchedule },
+    ContradictionReset { candidate: AcquisitionCandidate },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,22 +101,35 @@ pub enum AcquisitionCorroboration {
 }
 
 pub struct AcquisitionTracker {
-    estimate: Option<AcquiredReceivePhase>,
+    estimate: Option<AcquisitionCandidate>,
     observations: u8,
     observed_channels: [bool; TURBO_CHANNEL_COUNT],
     maximum_drift_ppm: u32,
+    maximum_transmit_uncertainty: MaximumTransmitUncertainty,
 }
 
 impl AcquisitionTracker {
-    pub const fn new(maximum_drift_ppm: u32) -> Result<Self, ClockError> {
-        if maximum_drift_ppm == 0 {
-            return Err(ClockError::EmptyDriftBound);
+    pub const fn new(
+        maximum_drift_ppm: u32,
+        maximum_transmit_uncertainty: MaximumTransmitUncertainty,
+    ) -> Result<Self, AcquisitionTrackerConfigurationError> {
+        if let Err(error) = validate_drift_bound(maximum_drift_ppm) {
+            return Err(AcquisitionTrackerConfigurationError::Clock(error));
+        }
+        if maximum_transmit_uncertainty.micros() < MINIMUM_ACQUISITION_UNCERTAINTY_US {
+            return Err(
+                AcquisitionTrackerConfigurationError::TransmitUncertaintyBelowAcquisitionFloor {
+                    actual_us: maximum_transmit_uncertainty.micros(),
+                    minimum_us: MINIMUM_ACQUISITION_UNCERTAINTY_US,
+                },
+            );
         }
         Ok(Self {
             estimate: None,
             observations: 0,
             observed_channels: [false; TURBO_CHANNEL_COUNT],
             maximum_drift_ppm,
+            maximum_transmit_uncertainty,
         })
     }
 
@@ -95,6 +150,15 @@ impl AcquisitionTracker {
         if observation.timing_uncertainty_us == 0 {
             return Err(AcquisitionTrackerError::EmptyTimingUncertainty);
         }
+        let timing_uncertainty_us = observation
+            .timing_uncertainty_us
+            .max(MINIMUM_ACQUISITION_UNCERTAINTY_US);
+        if timing_uncertainty_us > self.maximum_transmit_uncertainty.micros() {
+            return Err(AcquisitionTrackerError::TimingUncertaintyExceeded {
+                actual_us: timing_uncertainty_us,
+                maximum_us: self.maximum_transmit_uncertainty.micros(),
+            });
+        }
         let channel_index = TurboChannelIndex::new(observation.channel_index).map_err(|_| {
             AcquisitionTrackerError::ChannelOutsideHopSet {
                 channel_index: observation.channel_index,
@@ -108,10 +172,10 @@ impl AcquisitionTracker {
             + observation.completion_offset_us;
 
         let Some(previous) = self.estimate else {
-            self.start(observation, observed_phase_us)?;
-            return Ok(AcquisitionOutcome::Provisional { observations: 1 });
+            let candidate = self.start(observation, observed_phase_us)?;
+            return Ok(AcquisitionOutcome::Candidate { candidate });
         };
-        if observation.received_at < previous.observed_at() {
+        if observation.received_at <= previous.observed_at() {
             return Err(AcquisitionTrackerError::NonMonotonicObservation);
         }
         let predicted = previous
@@ -122,10 +186,10 @@ impl AcquisitionTracker {
         let error_us = aligned_schedule_us.abs_diff(predicted.center_schedule_us());
         let tolerated_us = predicted
             .uncertainty_us()
-            .saturating_add(observation.timing_uncertainty_us);
+            .saturating_add(timing_uncertainty_us);
         if error_us > tolerated_us {
-            self.start(observation, observed_phase_us)?;
-            return Ok(AcquisitionOutcome::ContradictionReset);
+            let candidate = self.start(observation, observed_phase_us)?;
+            return Ok(AcquisitionOutcome::ContradictionReset { candidate });
         }
 
         self.observations = self.observations.saturating_add(1);
@@ -135,20 +199,17 @@ impl AcquisitionTracker {
             .iter()
             .filter(|observed| **observed)
             .count() as u8;
-        let uncertainty_us = observation
-            .timing_uncertainty_us
-            .max(MINIMUM_ACQUISITION_UNCERTAINTY_US);
-        let phase = AcquiredReceivePhase::new(
+        let candidate = AcquisitionCandidate::new(
             observation.received_at,
             ScheduleMicros::new(aligned_schedule_us),
-            uncertainty_us,
+            timing_uncertainty_us,
             self.maximum_drift_ppm,
             self.observations,
             distinct_channels,
         )
         .map_err(AcquisitionTrackerError::Clock)?;
-        self.estimate = Some(phase);
-        Ok(AcquisitionOutcome::ReceivePhase { phase })
+        self.estimate = Some(candidate);
+        Ok(self.outcome_for(candidate))
     }
 
     pub fn corroborate_normal_traffic(
@@ -185,24 +246,34 @@ impl AcquisitionTracker {
         &mut self,
         observation: AcquisitionObservation,
         schedule_phase_us: u64,
-    ) -> Result<(), AcquisitionTrackerError> {
+    ) -> Result<AcquisitionCandidate, AcquisitionTrackerError> {
         self.observations = 1;
         self.observed_channels = [false; TURBO_CHANNEL_COUNT];
         self.observed_channels[observation.channel_index] = true;
-        self.estimate = Some(
-            AcquiredReceivePhase::new(
-                observation.received_at,
-                ScheduleMicros::new(schedule_phase_us),
-                observation
-                    .timing_uncertainty_us
-                    .max(MINIMUM_ACQUISITION_UNCERTAINTY_US),
-                self.maximum_drift_ppm,
-                1,
-                1,
-            )
-            .map_err(AcquisitionTrackerError::Clock)?,
-        );
-        Ok(())
+        let candidate = AcquisitionCandidate::new(
+            observation.received_at,
+            ScheduleMicros::new(schedule_phase_us),
+            observation
+                .timing_uncertainty_us
+                .max(MINIMUM_ACQUISITION_UNCERTAINTY_US),
+            self.maximum_drift_ppm,
+            1,
+            1,
+        )
+        .map_err(AcquisitionTrackerError::Clock)?;
+        self.estimate = Some(candidate);
+        Ok(candidate)
+    }
+
+    fn outcome_for(&self, candidate: AcquisitionCandidate) -> AcquisitionOutcome {
+        if candidate.observations() < US915_TURBO_SPEC.acquisition_observations()
+            || candidate.distinct_channels() < US915_TURBO_SPEC.acquisition_distinct_channels()
+        {
+            return AcquisitionOutcome::Candidate { candidate };
+        }
+        AcquisitionOutcome::Operational {
+            schedule: ValidatedAcquiredSchedule { candidate },
+        }
     }
 }
 

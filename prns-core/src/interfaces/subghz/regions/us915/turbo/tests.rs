@@ -107,6 +107,47 @@ fn final_clear_grant(channel_index: usize, issued_at: u64) -> FinalClearGrant {
     }
 }
 
+fn acquisition_observation(cycle_index: u8, timing_uncertainty_us: u64) -> AcquisitionObservation {
+    acquisition_observation_with_offset(cycle_index, timing_uncertainty_us, 0)
+}
+
+fn acquisition_observation_with_offset(
+    cycle_index: u8,
+    timing_uncertainty_us: u64,
+    monotonic_offset_us: u64,
+) -> AcquisitionObservation {
+    let cycle = SupercycleCycle::new(cycle_index).unwrap();
+    let beacon = AcquisitionBeacon::new(cycle, 0).unwrap();
+    let global_slot = u64::from(cycle_index) * TURBO_CHANNEL_COUNT as u64;
+    let received_at = global_slot * US915_TURBO_SPEC.slot_us()
+        + beacon.completes_at_slot_offset_us(US915_TURBO_SPEC.phy())
+        + monotonic_offset_us;
+    AcquisitionObservation::from_beacon(
+        MonotonicMicros::new(received_at),
+        global_slot_channel(global_slot),
+        beacon,
+        US915_TURBO_SPEC.phy(),
+        timing_uncertainty_us,
+    )
+}
+
+fn validated_acquired_schedule() -> ValidatedAcquiredSchedule {
+    let maximum_uncertainty = MaximumTransmitUncertainty::new(1_000).unwrap();
+    let mut tracker = AcquisitionTracker::new(40, maximum_uncertainty).unwrap();
+    assert!(matches!(
+        tracker.observe(acquisition_observation(0, 500)).unwrap(),
+        AcquisitionOutcome::Candidate { .. }
+    ));
+    assert!(matches!(
+        tracker.observe(acquisition_observation(1, 500)).unwrap(),
+        AcquisitionOutcome::Candidate { .. }
+    ));
+    match tracker.observe(acquisition_observation(2, 500)).unwrap() {
+        AcquisitionOutcome::Operational { schedule } => schedule,
+        outcome => panic!("expected operational acquisition, got {outcome:?}"),
+    }
+}
+
 #[test]
 fn us915_turbo_profile_fully_names_the_phy() {
     let profile = US915_TURBO_SPEC.phy();
@@ -149,6 +190,8 @@ fn us915_turbo_spec_owns_the_complete_schedule_contract() {
     assert_eq!(US915_TURBO_SPEC.boot_quarantine_us(), 10_000_000);
     assert_eq!(US915_TURBO_SPEC.scan_stride(), 7);
     assert_eq!(US915_TURBO_SPEC.scan_dwell_us(), 341_000);
+    assert_eq!(US915_TURBO_SPEC.acquisition_observations(), 3);
+    assert_eq!(US915_TURBO_SPEC.acquisition_distinct_channels(), 3);
 }
 
 #[test]
@@ -434,29 +477,203 @@ fn reassembly_lifetime_rejects_a_late_final_fragment() {
 }
 
 #[test]
-fn acquisition_evidence_never_becomes_transmit_authority() {
-    let mut tracker = AcquisitionTracker::new(40).unwrap();
+fn acquisition_graduates_only_after_three_distinct_quality_observations() {
+    let mut tracker =
+        AcquisitionTracker::new(40, MaximumTransmitUncertainty::new(1_000).unwrap()).unwrap();
+    for cycle_index in 0..3u8 {
+        let outcome = tracker
+            .observe(acquisition_observation(cycle_index, 500))
+            .unwrap();
+        if cycle_index < 2 {
+            assert!(matches!(outcome, AcquisitionOutcome::Candidate { .. }));
+        } else {
+            let AcquisitionOutcome::Operational { schedule } = outcome else {
+                panic!("expected operational acquisition, got {outcome:?}")
+            };
+            assert_eq!(schedule.observations(), 3);
+            assert_eq!(schedule.distinct_channels(), 3);
+        }
+    }
+}
+
+#[test]
+fn repeated_channel_evidence_cannot_finish_acquisition() {
+    let mut tracker =
+        AcquisitionTracker::new(40, MaximumTransmitUncertainty::new(1_000).unwrap()).unwrap();
+    let channel = TurboChannelIndex::new(23).unwrap();
     for cycle_index in 0..3u8 {
         let cycle = SupercycleCycle::new(cycle_index).unwrap();
+        let position = US915_TURBO_SPEC.slot_position_for_channel(cycle, channel);
+        let global_slot =
+            u64::from(cycle_index) * TURBO_CHANNEL_COUNT as u64 + u64::from(position.index());
         let beacon = AcquisitionBeacon::new(cycle, 0).unwrap();
-        let global_slot = u64::from(cycle_index) * TURBO_CHANNEL_COUNT as u64;
         let received_at = global_slot * US915_TURBO_SPEC.slot_us()
             + beacon.completes_at_slot_offset_us(US915_TURBO_SPEC.phy());
         let outcome = tracker
             .observe(AcquisitionObservation::from_beacon(
                 MonotonicMicros::new(received_at),
-                global_slot_channel(global_slot),
+                channel.index(),
                 beacon,
                 US915_TURBO_SPEC.phy(),
                 500,
             ))
             .unwrap();
-        if cycle_index == 0 {
-            assert_eq!(outcome, AcquisitionOutcome::Provisional { observations: 1 });
-        } else {
-            assert!(matches!(outcome, AcquisitionOutcome::ReceivePhase { .. }));
-        }
+        assert!(matches!(outcome, AcquisitionOutcome::Candidate { .. }));
     }
+}
+
+#[test]
+fn contradiction_discards_all_prior_graduation_progress() {
+    let mut tracker =
+        AcquisitionTracker::new(40, MaximumTransmitUncertainty::new(1_000).unwrap()).unwrap();
+    assert!(matches!(
+        tracker.observe(acquisition_observation(0, 500)).unwrap(),
+        AcquisitionOutcome::Candidate { .. }
+    ));
+    let reset = tracker
+        .observe(acquisition_observation_with_offset(1, 500, 100_000))
+        .unwrap();
+    let AcquisitionOutcome::ContradictionReset { candidate } = reset else {
+        panic!("contradictory evidence must reset acquisition")
+    };
+    assert_eq!(candidate.observations(), 1);
+    assert_eq!(candidate.distinct_channels(), 1);
+    assert!(matches!(
+        tracker
+            .observe(acquisition_observation_with_offset(2, 500, 100_000))
+            .unwrap(),
+        AcquisitionOutcome::Candidate { .. }
+    ));
+    assert!(matches!(
+        tracker
+            .observe(acquisition_observation_with_offset(3, 500, 100_000))
+            .unwrap(),
+        AcquisitionOutcome::Operational { .. }
+    ));
+}
+
+#[test]
+fn imprecise_observations_do_not_advance_acquisition() {
+    let mut tracker =
+        AcquisitionTracker::new(40, MaximumTransmitUncertainty::new(1_000).unwrap()).unwrap();
+    assert_eq!(
+        tracker.observe(acquisition_observation(0, 1_001)),
+        Err(AcquisitionTrackerError::TimingUncertaintyExceeded {
+            actual_us: 1_001,
+            maximum_us: 1_000,
+        })
+    );
+    let AcquisitionOutcome::Candidate { candidate } =
+        tracker.observe(acquisition_observation(1, 500)).unwrap()
+    else {
+        panic!("first accepted observation must remain a candidate")
+    };
+    assert_eq!(candidate.observations(), 1);
+}
+
+#[test]
+fn validated_acquisition_can_drive_the_complete_transmit_state_machine() {
+    let schedule = validated_acquired_schedule();
+    let window = schedule.window_at(schedule.observed_at()).unwrap();
+    let now = schedule.observed_at().micros() + 10_000;
+    let channel = scheduled_channel(window.center_schedule_us() + 10_000);
+    let receive_dwell =
+        TurboRadioDwell::new(MonotonicMicros::new(now), MonotonicMicros::new(now + 1_000)).unwrap();
+    assert_eq!(
+        schedule
+            .authorize_receive(receive_dwell)
+            .unwrap()
+            .channel_index(),
+        TurboChannelIndex::new(channel).unwrap()
+    );
+    let mut transmitter = Us915TurboTransmitter::new_with_acquired_schedule(
+        MonotonicMicros::new(0),
+        schedule,
+        configuration(7, hardware_support()),
+    )
+    .unwrap();
+    let prepared = transmitter
+        .prepare_after_final_clear(
+            final_clear_grant(channel, now),
+            MonotonicMicros::new(now),
+            DatagramId::new([7, 8, 9]),
+            &[1, 2, 3],
+        )
+        .unwrap();
+    let keyed_airtime_us = prepared.keyed_airtime_us();
+    let active = transmitter
+        .mark_rf_started(prepared, MonotonicMicros::new(now + 1))
+        .unwrap();
+    assert!(transmitter
+        .complete(
+            active,
+            MonotonicMicros::new(now + keyed_airtime_us + 1),
+            keyed_airtime_us,
+        )
+        .is_ok());
+}
+
+#[test]
+fn acquired_transmit_authority_expires_with_its_uncertainty_budget() {
+    let schedule = validated_acquired_schedule();
+    let now = schedule.observed_at().micros() + 20_000_000;
+    let window = schedule.window_at(MonotonicMicros::new(now)).unwrap();
+    let channel = scheduled_channel(window.center_schedule_us());
+    let mut transmitter = Us915TurboTransmitter::new_with_acquired_schedule(
+        MonotonicMicros::new(0),
+        schedule,
+        configuration(8, hardware_support()),
+    )
+    .unwrap();
+    assert_eq!(
+        transmitter
+            .prepare_after_final_clear(
+                final_clear_grant(channel, now),
+                MonotonicMicros::new(now),
+                DatagramId::new([8, 9, 10]),
+                &[1, 2, 3],
+            )
+            .err(),
+        Some(TurboTransmissionError::Clock(
+            ClockError::TransmitUncertaintyExceeded {
+                actual_us: 1_300,
+                maximum_us: 1_000,
+            }
+        ))
+    );
+}
+
+#[test]
+fn authoritative_time_replaces_acquired_time_through_quarantine() {
+    let schedule = validated_acquired_schedule();
+    let observed_at = schedule.observed_at().micros() + 1_000;
+    let mut transmitter = Us915TurboTransmitter::new_with_acquired_schedule(
+        MonotonicMicros::new(0),
+        schedule,
+        configuration(9, hardware_support()),
+    )
+    .unwrap();
+    assert_eq!(
+        transmitter
+            .update_clock(
+                MonotonicMicros::new(observed_at),
+                ScheduleMicros::new(1_900_000_000_000_000),
+                100,
+                1,
+                TrustedTimeSource::Gnss,
+                UtcTimescale::PosixUnsmeared,
+            )
+            .unwrap(),
+        ClockUpdateDisposition::Discontinuous {
+            transmit_not_before_us: observed_at + US915_TURBO_SPEC.boot_quarantine_us(),
+        }
+    );
+    assert_eq!(
+        transmitter.status(MonotonicMicros::new(observed_at)),
+        TurboTransmitterStatus::Quarantined {
+            transmit_not_before_us: observed_at + US915_TURBO_SPEC.boot_quarantine_us(),
+        }
+    );
 }
 
 #[test]

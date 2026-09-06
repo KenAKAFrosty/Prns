@@ -254,7 +254,10 @@ pub fn simulate_acquisition(
                 observations = observations.saturating_add(1);
                 observed_channels[schedule_channel] = true;
                 let distinct_channels = observed_channels.iter().filter(|seen| **seen).count();
-                if observations >= 3 && distinct_channels >= 2 {
+                if observations >= US915_TURBO_SPEC.acquisition_observations()
+                    && distinct_channels
+                        >= usize::from(US915_TURBO_SPEC.acquisition_distinct_channels())
+                {
                     break Some(completion);
                 }
             }

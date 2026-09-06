@@ -13,6 +13,8 @@ const TURBO_MAXIMUM_MEASURED_BANDWIDTH_HZ: u32 = 500_000;
 const TURBO_BOOT_QUARANTINE_US: u64 = 10_000_000;
 const TURBO_SCAN_STRIDE: usize = 7;
 const TURBO_SCAN_DWELL_US: u64 = 341_000;
+const TURBO_ACQUISITION_OBSERVATIONS: u8 = 3;
+const TURBO_ACQUISITION_DISTINCT_CHANNELS: u8 = 3;
 
 const TURBO_CHANNELS: [Frequency; TURBO_CHANNEL_COUNT] = channels();
 
@@ -33,6 +35,8 @@ pub static US915_TURBO_SPEC: Us915TurboSpec = Us915TurboSpec::new(Us915TurboSpec
     boot_quarantine_us: TURBO_BOOT_QUARANTINE_US,
     scan_stride: TURBO_SCAN_STRIDE,
     scan_dwell_us: TURBO_SCAN_DWELL_US,
+    acquisition_observations: TURBO_ACQUISITION_OBSERVATIONS,
+    acquisition_distinct_channels: TURBO_ACQUISITION_DISTINCT_CHANNELS,
 });
 
 struct Us915TurboSpecParameters {
@@ -46,6 +50,8 @@ struct Us915TurboSpecParameters {
     boot_quarantine_us: u64,
     scan_stride: usize,
     scan_dwell_us: u64,
+    acquisition_observations: u8,
+    acquisition_distinct_channels: u8,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -62,6 +68,8 @@ pub struct Us915TurboSpec {
     boot_quarantine_us: u64,
     scan_stride: usize,
     scan_dwell_us: u64,
+    acquisition_observations: u8,
+    acquisition_distinct_channels: u8,
 }
 
 impl Us915TurboSpec {
@@ -78,6 +86,10 @@ impl Us915TurboSpec {
         assert!(parameters.scan_dwell_us != 0);
         assert!(!parameters.scan_dwell_us.is_multiple_of(parameters.slot_us));
         assert!(!parameters.slot_us.is_multiple_of(parameters.scan_dwell_us));
+        assert!(parameters.acquisition_observations >= 2);
+        assert!(parameters.acquisition_distinct_channels >= 2);
+        assert!(parameters.acquisition_distinct_channels <= parameters.acquisition_observations);
+        assert!(parameters.acquisition_distinct_channels as usize <= TURBO_CHANNEL_COUNT);
         assert!(matches!(parameters.phy.validate(), Ok(())));
         let occupancy_limit = ChannelOccupancyLimit::from_known_within_regulatory_maximum(
             parameters.channel_occupancy_budget_us,
@@ -109,6 +121,8 @@ impl Us915TurboSpec {
             boot_quarantine_us: parameters.boot_quarantine_us,
             scan_stride: parameters.scan_stride,
             scan_dwell_us: parameters.scan_dwell_us,
+            acquisition_observations: parameters.acquisition_observations,
+            acquisition_distinct_channels: parameters.acquisition_distinct_channels,
         }
     }
 
@@ -162,6 +176,14 @@ impl Us915TurboSpec {
 
     pub const fn scan_dwell_us(&self) -> u64 {
         self.scan_dwell_us
+    }
+
+    pub const fn acquisition_observations(&self) -> u8 {
+        self.acquisition_observations
+    }
+
+    pub const fn acquisition_distinct_channels(&self) -> u8 {
+        self.acquisition_distinct_channels
     }
 
     pub(crate) const fn channel_order_at(&self, index: usize) -> u8 {

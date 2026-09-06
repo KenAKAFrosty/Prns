@@ -5,6 +5,7 @@ mod clock;
 mod frame;
 mod occupancy;
 mod profile;
+mod radio_execution;
 mod schedule;
 #[cfg(feature = "std")]
 mod simulation;
@@ -15,7 +16,7 @@ pub use crate::interfaces::subghz::MonotonicMicros;
 
 pub use acquisition::{
     AcquisitionCorroboration, AcquisitionObservation, AcquisitionOutcome, AcquisitionTracker,
-    AcquisitionTrackerError,
+    AcquisitionTrackerConfigurationError, AcquisitionTrackerError, ValidatedAcquiredSchedule,
 };
 pub use beacon::{
     acquisition_beacon_listen_window_us, base_cycle_at, AcquisitionBeacon,
@@ -30,8 +31,9 @@ pub use channel_access::{
     TURBO_SELECTED_TXOP,
 };
 pub use clock::{
-    AcquiredReceivePhase, ClockError, ClockWindow, ScheduleMicros, TrustedScheduleClock,
-    TrustedTimeSource, UtcTimescale,
+    AcquisitionCandidate, ClockError, ClockWindow, MaximumTransmitUncertainty,
+    MaximumTransmitUncertaintyError, ScheduleMicros, TrustedScheduleClock, TrustedTimeSource,
+    UtcTimescale,
 };
 pub use frame::{
     decode_frame, encode_acquisition, encode_datagram, DatagramId, DecodedTurboFrame,
@@ -45,6 +47,9 @@ pub use profile::{
     PacketCrc, PacketMode, ReceiverBandwidth, TurboHardwareSupport, TurboPhyCapability,
     TurboPhyProfile, TurboProfileError, TURBO_AIR_FRAME_MAX, TURBO_DATA_HEADER_BYTES,
     TURBO_FRAME_DATA_MAX, TURBO_LOGICAL_PACKET_MAX,
+};
+pub use radio_execution::{
+    TurboRadioDwell, TurboRadioDwellError, TurboReceiveLease, TurboReceiveLeaseError,
 };
 pub use schedule::{
     ChannelLookupError, OpportunityRejection, SupercycleCycle, SupercycleCycleError,
@@ -60,10 +65,10 @@ pub use simulation::{
 };
 pub use spec::{Us915TurboSpec, TURBO_CHANNEL_COUNT, US915_TURBO_SPEC};
 pub use transmission::{
-    ActiveTurboTransmission, ClockUpdateDisposition, MaximumTransmitUncertainty,
-    MaximumTransmitUncertaintyError, PreparedTurboTransmission, TurboFault, TurboTransmissionError,
-    TurboTransmissionReport, TurboTransmitterInstanceId, TurboTransmitterInstanceIdError,
-    TurboTransmitterStatus, Us915TurboConfiguration, Us915TurboTransmitter,
+    ActiveTurboTransmission, ClockUpdateDisposition, PreparedTurboTransmission, TurboFault,
+    TurboTransmissionError, TurboTransmissionReport, TurboTransmitterInstanceId,
+    TurboTransmitterInstanceIdError, TurboTransmitterStatus, Us915TurboConfiguration,
+    Us915TurboTransmitter,
 };
 
 #[cfg(test)]

@@ -1663,6 +1663,12 @@ group = "subghz"
 tiers = ["release", "scheduled"]
 
 [[kani]]
+name = "granted_receive_lease_keeps_every_instant_on_one_slot"
+source = "prns-core/src/interfaces/subghz/regions/us915/turbo/radio_execution.rs"
+group = "subghz"
+tiers = ["release", "scheduled"]
+
+[[kani]]
 name = "clock_uncertainty_never_shrinks_during_holdover"
 source = "prns-core/src/interfaces/subghz/regions/us915/turbo/clock.rs"
 group = "subghz"
