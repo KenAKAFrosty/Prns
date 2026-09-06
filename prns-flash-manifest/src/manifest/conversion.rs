@@ -317,17 +317,19 @@ fn convert_target(
                         variant.softdevice_version,
                     )
                     .map_err(|error| invalid_part_values(&board_slug, &path, &error.to_string()))?;
-                    let fwid = parse_hex_u16(&variant.fwid).ok_or_else(|| {
+                    let fwid = crate::canonical_hex::parse_u16(&variant.fwid).ok_or_else(|| {
                         invalid_part_values(&board_slug, &path, "FWID is not canonical hexadecimal")
                     })?;
-                    let application_base =
-                        parse_hex_u32(&variant.application_base).ok_or_else(|| {
-                            invalid_part_values(
-                                &board_slug,
-                                &path,
-                                "application base is not canonical hexadecimal",
-                            )
-                        })?;
+                    let application_base = crate::canonical_hex::parse_u32(
+                        &variant.application_base,
+                    )
+                    .ok_or_else(|| {
+                        invalid_part_values(
+                            &board_slug,
+                            &path,
+                            "application base is not canonical hexadecimal",
+                        )
+                    })?;
                     if application_base != application.start() {
                         return Err(invalid_part_values(
                             &board_slug,
@@ -335,13 +337,14 @@ fn convert_target(
                             "application base disagrees with the memory profile",
                         ));
                     }
-                    let family_id = parse_hex_u32(&variant.family_id).ok_or_else(|| {
-                        invalid_part_values(
-                            &board_slug,
-                            &path,
-                            "UF2 family ID is not canonical hexadecimal",
-                        )
-                    })?;
+                    let family_id = crate::canonical_hex::parse_u32(&variant.family_id)
+                        .ok_or_else(|| {
+                            invalid_part_values(
+                                &board_slug,
+                                &path,
+                                "UF2 family ID is not canonical hexadecimal",
+                            )
+                        })?;
                     Ok(Uf2Variant {
                         compatibility: Uf2Compatibility::new(
                             softdevice,
@@ -440,13 +443,14 @@ fn convert_target(
                 board_id_match: catalog_build.recovery.board_identity.validated().map_err(
                     |error| invalid_part_values(&board_slug, &recovery_path, &error.to_string()),
                 )?,
-                family_id: parse_hex_u32(&manifest.recovery.family_id).ok_or_else(|| {
-                    invalid_part_values(
-                        &board_slug,
-                        &recovery_path,
-                        "UF2 family ID is not canonical hexadecimal",
-                    )
-                })?,
+                family_id: crate::canonical_hex::parse_u32(&manifest.recovery.family_id)
+                    .ok_or_else(|| {
+                        invalid_part_values(
+                            &board_slug,
+                            &recovery_path,
+                            "UF2 family ID is not canonical hexadecimal",
+                        )
+                    })?,
                 artifact: convert_nrf_serial_dfu_artifact(
                     &board_slug,
                     manifest.recovery.artifact,
@@ -481,20 +485,23 @@ fn convert_nrf_serial_dfu_compatibility(
     path: &str,
     compatibility: crate::NrfSerialDfuCompatibility,
 ) -> Result<ValidatedNrfSerialDfuCompatibility, ManifestError> {
-    let fwid = parse_hex_u16(&compatibility.fwid)
+    let fwid = crate::canonical_hex::parse_u16(&compatibility.fwid)
         .filter(|fwid| *fwid != 0xfffe)
         .ok_or_else(|| invalid_part_values(board, path, "FWID is not an exact hexadecimal ID"))?;
-    let device_type = parse_hex_u16(&compatibility.device_type).ok_or_else(|| {
-        invalid_part_values(board, path, "device type is not canonical hexadecimal")
-    })?;
-    let application_base = parse_hex_u32(&compatibility.application_base).ok_or_else(|| {
-        invalid_part_values(board, path, "application base is not canonical hexadecimal")
-    })?;
-    let application_end_exclusive = parse_hex_u32(&compatibility.application_end_exclusive)
-        .filter(|end| application_base < *end)
-        .ok_or_else(|| {
-            invalid_part_values(board, path, "application region is empty or malformed")
+    let device_type =
+        crate::canonical_hex::parse_u16(&compatibility.device_type).ok_or_else(|| {
+            invalid_part_values(board, path, "device type is not canonical hexadecimal")
         })?;
+    let application_base = crate::canonical_hex::parse_u32(&compatibility.application_base)
+        .ok_or_else(|| {
+            invalid_part_values(board, path, "application base is not canonical hexadecimal")
+        })?;
+    let application_end_exclusive =
+        crate::canonical_hex::parse_u32(&compatibility.application_end_exclusive)
+            .filter(|end| application_base < *end)
+            .ok_or_else(|| {
+                invalid_part_values(board, path, "application region is empty or malformed")
+            })?;
     Ok(ValidatedNrfSerialDfuCompatibility {
         softdevice: SoftdeviceIdentity::parse(
             &compatibility.softdevice_family,
@@ -531,26 +538,6 @@ fn convert_nrf_serial_dfu_artifact(
         sha256: Sha256Digest::parse(part.sha256)
             .map_err(|error| invalid_part_values(board, &part.path, &error.to_string()))?,
     })
-}
-
-fn parse_hex_u16(value: &str) -> Option<u16> {
-    let digits = value.strip_prefix("0x")?;
-    (digits.len() == 4
-        && digits
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()))
-    .then(|| u16::from_str_radix(digits, 16).ok())
-    .flatten()
-}
-
-fn parse_hex_u32(value: &str) -> Option<u32> {
-    let digits = value.strip_prefix("0x")?;
-    (digits.len() == 8
-        && digits
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()))
-    .then(|| u32::from_str_radix(digits, 16).ok())
-    .flatten()
 }
 
 fn required_target_value<T>(

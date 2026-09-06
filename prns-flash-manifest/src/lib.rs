@@ -1,5 +1,6 @@
 //! Shared release contract for the Personal Hopspot web and CLI flashers.
 
+mod canonical_hex;
 mod catalog;
 mod domain;
 mod manifest;
@@ -47,8 +48,8 @@ pub use trust::{
     TrustError, PINNED_MINISIGN_PUBLIC_KEY,
 };
 pub use uf2::{
-    validate_nrf_serial_dfu_recovery_artifact, validate_uf2_artifact, Uf2ArtifactError,
-    Uf2BootloaderIdentity, Uf2IdentityError,
+    validate_nrf_serial_dfu_recovery_artifact, validate_uf2_artifact, validate_uf2_build_artifact,
+    Uf2ArtifactError, Uf2BootloaderIdentity, Uf2BuildArtifactError, Uf2IdentityError,
 };
 
 pub const FLASH_MANIFEST_SCHEMA: u32 = 3;

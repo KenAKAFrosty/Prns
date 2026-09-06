@@ -333,10 +333,12 @@ fn validate_nrf_serial_dfu(
             ));
         }
     }
-    let application_base = parse_hex_u32(&manifest.compatibility.application_base)
-        .ok_or_else(|| mismatch(target, "Nordic serial DFU application base"))?;
-    let application_end = parse_hex_u32(&manifest.compatibility.application_end_exclusive)
-        .ok_or_else(|| mismatch(target, "Nordic serial DFU application end"))?;
+    let application_base =
+        crate::canonical_hex::parse_u32(&manifest.compatibility.application_base)
+            .ok_or_else(|| mismatch(target, "Nordic serial DFU application base"))?;
+    let application_end =
+        crate::canonical_hex::parse_u32(&manifest.compatibility.application_end_exclusive)
+            .ok_or_else(|| mismatch(target, "Nordic serial DFU application end"))?;
     application_end
         .checked_sub(application_base)
         .ok_or_else(|| mismatch(target, "Nordic serial DFU application region"))?;
@@ -414,7 +416,8 @@ fn validate_uf2_variants(
         if variant.softdevice_family != expected.softdevice_family
             || variant.softdevice_version != expected.softdevice_version
             || variant.fwid != expected.fwid
-            || parse_hex_u32(&variant.application_base) != Some(expected_application.start())
+            || crate::canonical_hex::parse_u32(&variant.application_base)
+                != Some(expected_application.start())
             || variant.family_id != expected.family_id
             || variant.path != expected_path
         {
@@ -522,16 +525,6 @@ fn validate_esp_part<'a>(
     }
     ranges.insert(offset, (erase_end, part.path.as_str()));
     Ok(())
-}
-
-fn parse_hex_u32(value: &str) -> Option<u32> {
-    let digits = value.strip_prefix("0x")?;
-    (digits.len() == 8
-        && digits
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()))
-    .then(|| u32::from_str_radix(digits, 16).ok())
-    .flatten()
 }
 
 fn release_domain_error(error: impl fmt::Display) -> ManifestError {

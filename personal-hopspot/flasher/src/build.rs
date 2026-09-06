@@ -7,10 +7,10 @@ use personal_hopspot_builder::platform::nrf52840::serial_dfu as serial_dfu_build
 use personal_hopspot_builder::platform::nrf52840::uf2 as uf2_builder;
 use personal_hopspot_builder::{BuildContext, BuildVersion};
 use prns_flash_manifest::{
-    validate_nrf_serial_dfu_recovery_artifact, validate_uf2_artifact, BoardBuild, BoardCatalog,
-    BoardCatalogEntry, FlashManifest, FlashPart, ManifestTargetSetPolicy, NrfSerialDfuManifest,
-    OfflineKeySigningInfo, ReleaseChannel, ReleaseInfo, ReleaseTarget, ReleaseVersion,
-    SoftdeviceIdentity, TargetManifest, Uf2VariantManifest, FLASH_MANIFEST_SCHEMA,
+    validate_nrf_serial_dfu_recovery_artifact, BoardBuild, BoardCatalog, BoardCatalogEntry,
+    FlashManifest, FlashPart, ManifestTargetSetPolicy, NrfSerialDfuManifest, OfflineKeySigningInfo,
+    ReleaseChannel, ReleaseInfo, ReleaseTarget, ReleaseVersion, SoftdeviceIdentity, TargetManifest,
+    Uf2VariantManifest, FLASH_MANIFEST_SCHEMA,
 };
 
 use crate::cli::ChannelArg;
@@ -319,14 +319,6 @@ fn build_uf2(
         return Err(AppError::developer_artifact(
             "built UF2 descriptor and payload counts disagree",
         ));
-    }
-    for (variant, built) in validated_uf2.variants().iter().zip(&built_variants) {
-        validate_uf2_artifact(variant, built.bytes()).map_err(|error| {
-            AppError::developer_artifact(format!(
-                "built UF2 {} is invalid: {error}",
-                variant.part().path()
-            ))
-        })?;
     }
     reporter.phase(
         Phase::ArtifactReady,

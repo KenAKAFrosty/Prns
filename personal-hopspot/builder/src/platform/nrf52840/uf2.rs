@@ -2,8 +2,8 @@ use std::fs;
 use std::process::Command;
 
 use prns_flash_manifest::{
-    sha256_hex, BoardCatalogEntry, Uf2ApplicationLink, Uf2Build, Uf2BuildVariant,
-    Uf2VariantManifest,
+    sha256_hex, validate_uf2_build_artifact, BoardCatalogEntry, Uf2ApplicationLink, Uf2Build,
+    Uf2BuildVariant, Uf2VariantManifest,
 };
 
 use crate::architecture::adapter_for_rust_target;
@@ -117,6 +117,9 @@ pub fn build(
     )?;
     let bytes = fs::read(&uf2)
         .map_err(|error| BuildError::Artifact(format!("could not read UF2: {error}")))?;
+    validate_uf2_build_artifact(variant, &bytes).map_err(|error| {
+        BuildError::Artifact(format!("built UF2 {} is invalid: {error}", uf2.display()))
+    })?;
     let descriptor = Uf2VariantManifest {
         softdevice_family: variant.softdevice_family.clone(),
         softdevice_version: variant.softdevice_version.clone(),

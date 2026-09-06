@@ -237,11 +237,11 @@ impl NrfSerialDfuSerialTransport {
         {
             return Err(NrfSerialDfuSerialTransportError::InvalidRecoveryBootloaderStrings);
         }
-        let request = parse_hex_u8(&self.managed_application.request)
+        let request = crate::canonical_hex::parse_u8(&self.managed_application.request)
             .ok_or(NrfSerialDfuSerialTransportError::InvalidManagedApplicationRequest)?;
-        let value = parse_hex_u16(&self.managed_application.value)
+        let value = crate::canonical_hex::parse_u16(&self.managed_application.value)
             .ok_or(NrfSerialDfuSerialTransportError::InvalidManagedApplicationValue)?;
-        let index = parse_hex_u16(&self.managed_application.index)
+        let index = crate::canonical_hex::parse_u16(&self.managed_application.index)
             .ok_or(NrfSerialDfuSerialTransportError::InvalidManagedApplicationIndex)?;
         use prns_core::interfaces::usb_auto::{
             BOOTLOADER_ENTRY_CONTROL_INDEX, BOOTLOADER_ENTRY_CONTROL_REQUEST,
@@ -612,36 +612,6 @@ fn validate_uf2_board_identities(boards: &[BoardCatalogEntry]) -> Result<(), Cat
     Ok(())
 }
 
-fn parse_hex_u16(value: &str) -> Option<u16> {
-    let digits = value.strip_prefix("0x")?;
-    (digits.len() == 4
-        && digits
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()))
-    .then(|| u16::from_str_radix(digits, 16).ok())
-    .flatten()
-}
-
-fn parse_hex_u8(value: &str) -> Option<u8> {
-    let digits = value.strip_prefix("0x")?;
-    (digits.len() == 2
-        && digits
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()))
-    .then(|| u8::from_str_radix(digits, 16).ok())
-    .flatten()
-}
-
-fn parse_hex_u32(value: &str) -> Option<u32> {
-    let digits = value.strip_prefix("0x")?;
-    (digits.len() == 8
-        && digits
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()))
-    .then(|| u32::from_str_radix(digits, 16).ok())
-    .flatten()
-}
-
 struct PinnedUf2Recipe {
     preparation_profile: PreparationProfile,
     package: &'static str,
@@ -789,7 +759,7 @@ fn matches_pinned_uf2_recipe(board: &BoardCatalogEntry, build: &Uf2Build) -> boo
                 memory.architecture().rust_target() == build.rust_target
                     && application.start().is_multiple_of(0x1000)
                     && application.end_exclusive().is_multiple_of(0x1000)
-            }) && parse_hex_u32(&variant.family_id).is_some()
+            }) && crate::canonical_hex::parse_u32(&variant.family_id).is_some()
         })
 }
 
@@ -825,21 +795,23 @@ fn valid_nrf_serial_dfu_build(build: &NrfSerialDfuBuild) -> bool {
             compatibility.softdevice_version.clone(),
         )
         .is_ok()
-        && parse_hex_u16(&compatibility.fwid).is_some_and(|fwid| fwid != 0xfffe)
-        && parse_hex_u16(&compatibility.device_type).is_some()
+        && crate::canonical_hex::parse_u16(&compatibility.fwid).is_some_and(|fwid| fwid != 0xfffe)
+        && crate::canonical_hex::parse_u16(&compatibility.device_type).is_some()
         && compatibility.device_revision != 0
         && application_region_is_valid
         && Uf2MountLabel::parse(recovery.mount_label.clone()).is_ok()
         && recovery.board_identity.validated().is_ok()
-        && parse_hex_u32(&recovery.family_id).is_some()
+        && crate::canonical_hex::parse_u32(&recovery.family_id).is_some()
         && valid_artifact_filename(&recovery.filename, ".uf2")
         && recovery.filename != build.application_filename
         && recovery.filename != build.init_packet_filename
 }
 
 fn parse_usb_vendor_product_id(identity: &UsbVendorProductId) -> Option<UsbVidPid> {
-    let vendor_id = parse_hex_u16(&identity.vendor_id).filter(|value| *value != 0)?;
-    let product_id = parse_hex_u16(&identity.product_id).filter(|value| *value != 0)?;
+    let vendor_id =
+        crate::canonical_hex::parse_u16(&identity.vendor_id).filter(|value| *value != 0)?;
+    let product_id =
+        crate::canonical_hex::parse_u16(&identity.product_id).filter(|value| *value != 0)?;
     Some(UsbVidPid {
         vendor_id,
         product_id,

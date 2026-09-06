@@ -2,7 +2,10 @@ use std::collections::BTreeSet;
 
 use thiserror::Error;
 
-use crate::{NrfSerialDfuTarget, SoftdeviceIdentity, Uf2BoardIdMatch, Uf2Variant};
+use crate::{
+    MemoryProfileReferenceError, NrfSerialDfuTarget, SoftdeviceIdentity, Uf2BoardIdMatch,
+    Uf2BuildVariant, Uf2Variant,
+};
 
 const MAX_INFO_UF2_BYTES: usize = 4096;
 const MAX_INFO_UF2_LINE_BYTES: usize = 512;
@@ -170,6 +173,24 @@ pub enum Uf2IdentityError {
     MissingField(&'static str),
 }
 
+pub fn validate_uf2_build_artifact(
+    variant: &Uf2BuildVariant,
+    bytes: &[u8],
+) -> Result<(), Uf2BuildArtifactError> {
+    let memory = variant.memory_layout()?;
+    let transport = memory.transport_envelope();
+    let family_id = crate::canonical_hex::parse_u32(&variant.family_id)
+        .ok_or_else(|| Uf2BuildArtifactError::FamilyId(variant.family_id.clone()))?;
+    validate_uf2_bytes(
+        transport.start(),
+        transport.end_exclusive(),
+        memory.firmware_owned(),
+        family_id,
+        bytes,
+    )?;
+    Ok(())
+}
+
 pub fn validate_uf2_artifact(variant: &Uf2Variant, bytes: &[u8]) -> Result<(), Uf2ArtifactError> {
     validate_uf2_bytes(
         variant.compatibility().application_base(),
@@ -322,6 +343,16 @@ pub enum Uf2ArtifactError {
     ApplicationData(u32),
 }
 
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum Uf2BuildArtifactError {
+    #[error(transparent)]
+    MemoryProfile(#[from] MemoryProfileReferenceError),
+    #[error("UF2 family ID {0:?} is not canonical hexadecimal")]
+    FamilyId(String),
+    #[error(transparent)]
+    Artifact(#[from] Uf2ArtifactError),
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -379,6 +410,32 @@ mod tests {
             bytes.extend_from_slice(&block);
         }
         bytes
+    }
+
+    #[test]
+    fn build_artifacts_are_checked_against_the_catalog_memory_contract(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let catalog = crate::board_catalog()?;
+        let board = catalog.board("t-echo").ok_or("missing T-Echo")?;
+        let crate::BoardBuild::Uf2(build) = &board.build else {
+            return Err("T-Echo does not use UF2".into());
+        };
+        let variant = build.variants.first().ok_or("missing UF2 variant")?;
+        let memory = variant.memory_layout()?;
+        let transport = memory.transport_envelope();
+        let firmware = memory.firmware_owned();
+        let valid = artifact(transport.start(), 0xada5_2840, 1);
+        assert_eq!(validate_uf2_build_artifact(variant, &valid), Ok(()));
+
+        let blocks = (firmware.end_exclusive() - transport.start()) / UF2_PAYLOAD_BYTES + 1;
+        let overflow = artifact(transport.start(), 0xada5_2840, blocks);
+        assert!(matches!(
+            validate_uf2_build_artifact(variant, &overflow),
+            Err(Uf2BuildArtifactError::Artifact(
+                Uf2ArtifactError::FirmwareOwnership(_)
+            ))
+        ));
+        Ok(())
     }
 
     #[test]
