@@ -1,5 +1,6 @@
 mod context;
 mod error;
+pub mod platform;
 mod toolchain;
 
 pub use context::{default_artifact_root, BuildContext, BuildVersion};

@@ -2,12 +2,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use espflash::flasher::{FlashData, FlashFrequency, FlashMode, FlashSettings, FlashSize};
-use espflash::image_format::{idf::IdfBootloaderFormat, ImageFormat};
-use espflash::target::{Chip, XtalFrequency};
+use personal_hopspot_builder::platform::esp as esp_builder;
 use personal_hopspot_builder::{
-    configure_xtensa_toolchain, embedded_cargo_command, llvm_objcopy, run_status, BuildContext,
-    BuildVersion,
+    embedded_cargo_command, llvm_objcopy, run_status, BuildContext, BuildVersion,
 };
 use prns_flash_manifest::{
     sha256_hex, validate_nrf_serial_dfu_recovery_artifact, validate_uf2_artifact, BoardBuild,
@@ -26,12 +23,6 @@ use crate::cli::ChannelArg;
 use crate::error::AppError;
 use crate::events::{Phase, Reporter};
 use crate::release::PreparedTarget;
-
-const PARTITION_TABLE_OFFSET: u32 = 0x8000;
-struct BuiltPart {
-    descriptor: FlashPart,
-    bytes: Vec<u8>,
-}
 
 pub(crate) struct BuildOutput {
     prepared: Option<PreparedTarget>,
@@ -238,13 +229,7 @@ fn build_esp(
         Some(&board.slug),
         &format!("Building {} developer firmware…", board.display_name),
     );
-    let crate_dir = context
-        .repository()
-        .join("personal-hopspot")
-        .join("embedded")
-        .join("esp32");
-    let partition_table = crate_dir.join(&build.partition_table);
-    let parts = build_esp_parts(board, build, context, &crate_dir, &partition_table)?;
+    let built = esp_builder::build(context, board, build)?;
     let output_dir = context.board_output(&board.slug);
     fs::create_dir_all(&output_dir).map_err(|error| {
         AppError::developer_artifact(format!(
@@ -252,24 +237,34 @@ fn build_esp(
             output_dir.display()
         ))
     })?;
-    for part in &parts {
-        let filename = Path::new(&part.descriptor.path)
+    for part in built.parts() {
+        let filename = Path::new(&part.descriptor().path)
             .file_name()
             .ok_or_else(|| AppError::developer_artifact("firmware part path has no filename"))?;
-        atomic_write(&output_dir.join(filename), &part.bytes)?;
+        atomic_write(&output_dir.join(filename), part.bytes())?;
     }
     let target = target_record(
         board,
-        BuiltTargetArtifacts::Esp(parts.iter().map(|part| part.descriptor.clone()).collect()),
+        BuiltTargetArtifacts::Esp(
+            built
+                .parts()
+                .iter()
+                .map(|part| part.descriptor().clone())
+                .collect(),
+        ),
     );
     write_target_record(&output_dir, &target)?;
     write_source_capability_record(&output_dir, board)?;
     let (version, target) = validated_prepared_target(board, context.version(), target)?;
-    report_sparse_size(board, &parts, reporter)?;
+    report_sparse_size(board, built.parts(), reporter)?;
     let prepared = PreparedTarget::bind(
         version,
         target,
-        parts.into_iter().map(|part| part.bytes).collect(),
+        built
+            .into_parts()
+            .into_iter()
+            .map(esp_builder::Part::into_bytes)
+            .collect(),
     )
     .map_err(|error| AppError::developer_artifact(error.to_string()))?;
     let target_record = output_dir.join("target.json");
@@ -278,113 +273,6 @@ fn build_esp(
         output_dir,
         target_record,
     })
-}
-
-fn build_esp_parts(
-    board: &BoardCatalogEntry,
-    build: &prns_flash_manifest::EspBuild,
-    context: &BuildContext<'_>,
-    crate_dir: &Path,
-    partition_table: &Path,
-) -> Result<Vec<BuiltPart>, AppError> {
-    let application_offset = build
-        .memory_layout()
-        .map_err(|error| AppError::developer_manifest(error.to_string()))?
-        .transport_envelope()
-        .start();
-    let elf = crate_dir
-        .join("target")
-        .join(&build.rust_target)
-        .join("release")
-        .join(&build.binary);
-    let mut cargo = embedded_cargo_command();
-    cargo
-        .arg("build")
-        .arg("--release")
-        .arg("--locked")
-        .arg("--package")
-        .arg(&build.package)
-        .arg("--bin")
-        .arg(&build.binary)
-        .arg("--target")
-        .arg(&build.rust_target)
-        .arg("-Zbuild-std=core,alloc")
-        .env("PRNS_BUILD_VERSION", context.version())
-        .current_dir(crate_dir);
-    if let Some(source_digest) = context.source_digest() {
-        cargo.env("PRNS_BUILD_SOURCE_DIGEST", source_digest);
-    }
-    if build.rust_target.starts_with("xtensa-") {
-        configure_xtensa_toolchain(&mut cargo)?;
-    }
-    run_status(&mut cargo, "embedded ESP cargo build")?;
-
-    let elf_bytes = fs::read(&elf).map_err(|error| {
-        AppError::developer_artifact(format!("could not read {}: {error}", elf.display()))
-    })?;
-    let chip = build.chip.parse::<Chip>().map_err(|error| {
-        AppError::developer_build(format!("invalid chip {:?}: {error}", build.chip))
-    })?;
-    let flash_size = match board.flash_size {
-        Some(4_194_304) => FlashSize::_4Mb,
-        Some(8_388_608) => FlashSize::_8Mb,
-        Some(16_777_216) => FlashSize::_16Mb,
-        other => {
-            return Err(AppError::developer_build(format!(
-                "unsupported catalog flash size {other:?}"
-            )));
-        }
-    };
-    let flash_data = FlashData::new(
-        FlashSettings::new(
-            Some(FlashMode::Dio),
-            Some(flash_size),
-            Some(FlashFrequency::_40Mhz),
-        ),
-        0,
-        None,
-        chip,
-        XtalFrequency::_40Mhz,
-    );
-    let image = IdfBootloaderFormat::new(
-        &elf_bytes,
-        &flash_data,
-        Some(partition_table),
-        None,
-        Some(PARTITION_TABLE_OFFSET),
-        Some("factory"),
-    )
-    .map_err(|error| {
-        AppError::developer_build(format!("could not construct sparse ESP image: {error}"))
-    })?;
-    let mut parts = Vec::new();
-    for segment in ImageFormat::from(image).flash_segments() {
-        let (kind, filename) = match segment.addr {
-            PARTITION_TABLE_OFFSET => (FlashPartKind::PartitionTable, "partition-table.bin"),
-            address if address == application_offset => {
-                (FlashPartKind::Application, "application.bin")
-            }
-            _ if segment.addr < PARTITION_TABLE_OFFSET => {
-                (FlashPartKind::Bootloader, "bootloader.bin")
-            }
-            address => {
-                return Err(AppError::developer_build(format!(
-                    "unexpected sparse ESP segment at 0x{address:x}"
-                )));
-            }
-        };
-        let bytes = segment.data.into_owned();
-        let descriptor = FlashPart {
-            kind,
-            path: context.release_part_path(&board.slug, filename),
-            offset: Some(segment.addr),
-            size: bytes.len() as u64,
-            sha256: sha256_hex(&bytes),
-        };
-        parts.push(BuiltPart { descriptor, bytes });
-    }
-    parts.sort_by_key(|part| part.descriptor.offset);
-    Ok(parts)
 }
 
 fn build_uf2(
@@ -879,12 +767,12 @@ fn write_target_record(output_dir: &Path, target: &TargetManifest) -> Result<(),
 
 fn report_sparse_size(
     board: &BoardCatalogEntry,
-    parts: &[BuiltPart],
+    parts: &[esp_builder::Part],
     reporter: Reporter,
 ) -> Result<(), AppError> {
     let total = parts
         .iter()
-        .map(|part| part.bytes.len() as u64)
+        .map(|part| part.bytes().len() as u64)
         .sum::<u64>();
     if let Some((baseline, maximum)) = sparse_size_gate(&board.slug) {
         if total > maximum {

@@ -10,6 +10,7 @@ publish = false
 description = "Shared embedded firmware build and packaging pipeline for Personal Hopspot."
 
 [dependencies]
+espflash = { version = "=4.5.0", default-features = false }
 prns-flash-manifest = { path = "../../prns-flash-manifest" }
 thiserror = "2.0"
 
