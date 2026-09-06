@@ -2895,6 +2895,7 @@ name = "personal-hopspot-builder"
 version = "0.1.0"
 dependencies = [
  "espflash",
+ "personal-hopspot-memory",
  "prns-flash-manifest",
  "prns-nrf-dfu",
  "thiserror 2.0.18",

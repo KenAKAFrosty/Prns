@@ -1,11 +1,7 @@
-mod xtensa;
-
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::BuildError;
-
-pub use xtensa::configure_xtensa_toolchain;
 
 pub fn embedded_cargo_command() -> Command {
     let mut command = Command::new("cargo");
@@ -16,7 +12,11 @@ pub fn embedded_cargo_command() -> Command {
 }
 
 pub fn rust_host_triple() -> Result<String, BuildError> {
-    let version = capture_stdout(Command::new("rustc").arg("-vV"), "rustc -vV")?;
+    rust_host_triple_for(None)
+}
+
+fn rust_host_triple_for(directory: Option<&Path>) -> Result<String, BuildError> {
+    let version = capture_stdout(configured_rustc(directory).arg("-vV"), "rustc -vV")?;
     version
         .lines()
         .find_map(|line| line.strip_prefix("host: ").map(str::to_string))
@@ -24,14 +24,46 @@ pub fn rust_host_triple() -> Result<String, BuildError> {
 }
 
 pub fn llvm_objcopy() -> Result<PathBuf, BuildError> {
-    let host_triple = rust_host_triple()?;
-    let sysroot = capture_stdout(Command::new("rustc").arg("--print").arg("sysroot"), "rustc")?;
-    Ok(Path::new(sysroot.trim())
+    rust_tool("llvm-objcopy")
+}
+
+pub(crate) fn rust_tool(name: &str) -> Result<PathBuf, BuildError> {
+    rust_tool_for(None, name)
+}
+
+pub(crate) fn rust_tool_for_cargo(cargo: &Command, name: &str) -> Result<PathBuf, BuildError> {
+    rust_tool_for(cargo.get_current_dir(), name)
+}
+
+fn rust_tool_for(directory: Option<&Path>, name: &str) -> Result<PathBuf, BuildError> {
+    let host_triple = rust_host_triple_for(directory)?;
+    let sysroot = capture_stdout(
+        configured_rustc(directory).arg("--print").arg("sysroot"),
+        "rustc",
+    )?;
+    let path = Path::new(sysroot.trim())
         .join("lib")
         .join("rustlib")
         .join(host_triple.trim())
         .join("bin")
-        .join("llvm-objcopy"))
+        .join(name);
+    if path.is_file() {
+        Ok(path)
+    } else {
+        Err(BuildError::Toolchain(format!(
+            "Rust tool {name:?} was not found at {}",
+            path.display()
+        )))
+    }
+}
+
+fn configured_rustc(directory: Option<&Path>) -> Command {
+    let mut command = Command::new("rustc");
+    command.env_remove("RUSTUP_TOOLCHAIN");
+    if let Some(directory) = directory {
+        command.current_dir(directory);
+    }
+    command
 }
 
 pub fn run_status(command: &mut Command, label: &str) -> Result<(), BuildError> {

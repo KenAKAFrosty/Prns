@@ -7,6 +7,7 @@ use prns_flash_manifest::{
     Uf2VariantManifest,
 };
 
+use crate::architecture::adapter_for_rust_target;
 use crate::{embedded_cargo_command, llvm_objcopy, run_status, BuildContext, BuildError};
 
 #[derive(Debug)]
@@ -65,6 +66,7 @@ pub fn build(
         .arg("--target-dir")
         .arg(&target_directory)
         .current_dir(&crate_dir);
+    adapter_for_rust_target(&recipe.rust_target)?.configure_cargo(&mut cargo)?;
     run_status(&mut cargo, &format!("{} cargo build", board.display_name))?;
 
     let elf = target_directory

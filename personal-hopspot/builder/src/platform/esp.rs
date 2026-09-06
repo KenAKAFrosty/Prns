@@ -6,9 +6,8 @@ use espflash::image_format::{idf::IdfBootloaderFormat, ImageFormat};
 use espflash::target::{Chip, XtalFrequency};
 use prns_flash_manifest::{sha256_hex, BoardCatalogEntry, EspBuild, FlashPart, FlashPartKind};
 
-use crate::{
-    configure_xtensa_toolchain, embedded_cargo_command, run_status, BuildContext, BuildError,
-};
+use crate::architecture::adapter_for_rust_target;
+use crate::{embedded_cargo_command, run_status, BuildContext, BuildError};
 
 const PARTITION_TABLE_OFFSET: u32 = 0x8000;
 
@@ -90,9 +89,7 @@ pub fn build(
     if let Some(source_digest) = context.source_digest() {
         cargo.env("PRNS_BUILD_SOURCE_DIGEST", source_digest);
     }
-    if recipe.rust_target.starts_with("xtensa-") {
-        configure_xtensa_toolchain(&mut cargo)?;
-    }
+    adapter_for_rust_target(&recipe.rust_target)?.configure_cargo(&mut cargo)?;
     run_status(&mut cargo, "embedded ESP cargo build")?;
 
     let elf_bytes = fs::read(&elf).map_err(|error| {

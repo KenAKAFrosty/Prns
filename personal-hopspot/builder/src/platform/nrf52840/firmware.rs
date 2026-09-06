@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use crate::architecture::adapter_for_rust_target;
 use crate::{embedded_cargo_command, run_status, BuildContext, BuildError};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,6 +51,7 @@ pub fn build(
         .arg(&target_directory)
         .env("PRNS_BUILD_VERSION", context.version())
         .current_dir(crate_dir);
+    adapter_for_rust_target(recipe.rust_target)?.configure_cargo(&mut cargo)?;
     run_status(&mut cargo, &format!("{target_id} cargo build"))?;
 
     Ok(Output {

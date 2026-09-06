@@ -5,30 +5,42 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use personal_hopspot_memory::ProcessorArchitecture;
+
+use super::{Adapter, LinkerFlavor};
 use crate::BuildError;
 
-struct XtensaToolchainEnv {
+const LINKER_PROGRAM: &str = "xtensa-esp32s3-elf-gcc";
+
+pub(super) static ADAPTER: Adapter = Adapter::new(
+    "xtensa-esp32s3-gnu-ld",
+    ProcessorArchitecture::XtensaEsp32S3,
+    LinkerFlavor::GnuLd,
+    LINKER_PROGRAM,
+    configure_linker,
+);
+
+struct ToolchainEnvironment {
     path: OsString,
     libclang_path: Option<OsString>,
 }
 
-pub fn configure_xtensa_toolchain(command: &mut Command) -> Result<PathBuf, BuildError> {
-    let env = xtensa_toolchain_env()?;
-    let linker = find_on_path("xtensa-esp32s3-elf-gcc", &env.path).ok_or_else(|| {
-        BuildError::Toolchain(
-            "xtensa-esp32s3-elf-gcc was not found; install the Xtensa Rust toolchain or update export-esp.sh"
-                .to_string(),
-        )
+fn configure_linker(command: &mut Command) -> Result<PathBuf, BuildError> {
+    let environment = toolchain_environment()?;
+    let linker = find_on_path(LINKER_PROGRAM, &environment.path).ok_or_else(|| {
+        BuildError::Toolchain(format!(
+            "{LINKER_PROGRAM} was not found; install the Xtensa Rust toolchain or update export-esp.sh"
+        ))
     })?;
 
-    command.env("PATH", &env.path);
-    if let Some(libclang_path) = env.libclang_path {
+    command.env("PATH", &environment.path);
+    if let Some(libclang_path) = environment.libclang_path {
         command.env("LIBCLANG_PATH", libclang_path);
     }
     Ok(linker)
 }
 
-fn xtensa_toolchain_env() -> Result<XtensaToolchainEnv, BuildError> {
+fn toolchain_environment() -> Result<ToolchainEnvironment, BuildError> {
     let mut path_entries = Vec::new();
     let mut libclang_path = env::var_os("LIBCLANG_PATH");
 
@@ -49,7 +61,7 @@ fn xtensa_toolchain_env() -> Result<XtensaToolchainEnv, BuildError> {
             }
         }
 
-        collect_xtensa_toolchain_bins(
+        collect_toolchain_bins(
             &home
                 .join(".rustup")
                 .join("toolchains")
@@ -69,7 +81,7 @@ fn xtensa_toolchain_env() -> Result<XtensaToolchainEnv, BuildError> {
         BuildError::Toolchain(format!("failed to build Xtensa toolchain PATH: {error}"))
     })?;
 
-    Ok(XtensaToolchainEnv {
+    Ok(ToolchainEnvironment {
         path,
         libclang_path,
     })
@@ -113,7 +125,7 @@ fn expand_export_path(value: &str, home: &Path) -> PathBuf {
     }
 }
 
-fn collect_xtensa_toolchain_bins(root: &Path, path_entries: &mut Vec<PathBuf>) {
+fn collect_toolchain_bins(root: &Path, path_entries: &mut Vec<PathBuf>) {
     let flat_bin = root.join("bin");
     if flat_bin.is_dir() {
         path_entries.push(flat_bin);

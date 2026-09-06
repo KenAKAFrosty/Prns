@@ -12,6 +12,7 @@ use prns_nrf_dfu::{
     DfuDeviceType, DfuImage, SoftdeviceFirmwareId, SoftdeviceRequirements,
 };
 
+use crate::architecture::adapter_for_rust_target;
 use crate::artifact::publish;
 use crate::{embedded_cargo_command, llvm_objcopy, run_status, BuildContext, BuildError};
 
@@ -79,6 +80,7 @@ pub fn build(
         .arg(&target_directory)
         .env("PRNS_BUILD_VERSION", context.version())
         .current_dir(&crate_dir);
+    adapter_for_rust_target(&recipe.rust_target)?.configure_cargo(&mut cargo)?;
     run_status(&mut cargo, "Nordic serial DFU cargo build")?;
 
     let elf = target_directory

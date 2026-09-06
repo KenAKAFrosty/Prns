@@ -5,8 +5,9 @@ mod tests;
 
 use std::collections::BTreeSet;
 
+use personal_hopspot_builder::architecture::{adapter_for, Adapter};
 use personal_hopspot_builder::BuildError;
-use personal_hopspot_memory::{MemoryProfileId, ProcessorArchitecture, ValidationError};
+use personal_hopspot_memory::{MemoryProfileId, ValidationError};
 use prns_flash_manifest::{
     BoardBuild, BoardCatalog, BoardCatalogEntry, EspBuild, MemoryProfileReferenceError,
     NrfSerialDfuBuild, Uf2Build, Uf2BuildVariant,
@@ -21,7 +22,7 @@ pub(crate) struct Target<'a> {
     id: String,
     display_name: String,
     profile: MemoryProfileId,
-    architecture: ProcessorArchitecture,
+    adapter: &'static Adapter,
     recipe: TargetRecipe<'a>,
 }
 
@@ -85,7 +86,7 @@ impl<'a> Matrix<'a> {
                         id: memory.id().0.to_string(),
                         display_name: board.display_name.clone(),
                         profile: memory.id(),
-                        architecture: memory.architecture(),
+                        adapter: adapter_for(memory.architecture()),
                         recipe: TargetRecipe::Esp { board, recipe },
                     });
                 }
@@ -104,7 +105,7 @@ impl<'a> Matrix<'a> {
                                 board.display_name, variant.softdevice_version
                             ),
                             profile: memory.id(),
-                            architecture: memory.architecture(),
+                            adapter: adapter_for(memory.architecture()),
                             recipe: TargetRecipe::Uf2 {
                                 board,
                                 recipe,
@@ -125,7 +126,7 @@ impl<'a> Matrix<'a> {
                         id: memory.id().0.to_string(),
                         display_name: board.display_name.clone(),
                         profile: memory.id(),
-                        architecture: memory.architecture(),
+                        adapter: adapter_for(memory.architecture()),
                         recipe: TargetRecipe::SerialDfu { board, recipe },
                     });
                 }
@@ -143,7 +144,7 @@ impl<'a> Matrix<'a> {
             id: mesh_tower_v2::ID.to_string(),
             display_name: mesh_tower_v2::DISPLAY_NAME.to_string(),
             profile: profile.id,
-            architecture: profile.architecture,
+            adapter: adapter_for(profile.architecture),
             recipe: TargetRecipe::MeshTowerV2,
         });
 
@@ -181,7 +182,7 @@ impl Target<'_> {
         self.profile
     }
 
-    pub(crate) const fn architecture(&self) -> ProcessorArchitecture {
-        self.architecture
+    pub(crate) const fn adapter(&self) -> &'static Adapter {
+        self.adapter
     }
 }

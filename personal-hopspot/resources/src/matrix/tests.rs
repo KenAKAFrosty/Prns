@@ -11,7 +11,8 @@ fn canonical_matrix_has_eleven_unique_profile_bound_targets(
             (
                 target.id(),
                 target.profile().0,
-                target.architecture().rust_target(),
+                target.adapter().rust_target(),
+                target.adapter().id().as_str(),
             )
         })
         .collect::<Vec<_>>();
@@ -19,25 +20,72 @@ fn canonical_matrix_has_eleven_unique_profile_bound_targets(
     assert_eq!(
         targets,
         [
-            ("heltec-v4", "heltec-v4", "xtensa-esp32s3-none-elf"),
-            ("heltec-v4-r8", "heltec-v4-r8", "xtensa-esp32s3-none-elf"),
-            ("heltec-e290", "heltec-e290", "xtensa-esp32s3-none-elf"),
+            (
+                "heltec-v4",
+                "heltec-v4",
+                "xtensa-esp32s3-none-elf",
+                "xtensa-esp32s3-gnu-ld"
+            ),
+            (
+                "heltec-v4-r8",
+                "heltec-v4-r8",
+                "xtensa-esp32s3-none-elf",
+                "xtensa-esp32s3-gnu-ld"
+            ),
+            (
+                "heltec-e290",
+                "heltec-e290",
+                "xtensa-esp32s3-none-elf",
+                "xtensa-esp32s3-gnu-ld"
+            ),
             (
                 "t-beam-supreme",
                 "t-beam-supreme",
-                "xtensa-esp32s3-none-elf"
+                "xtensa-esp32s3-none-elf",
+                "xtensa-esp32s3-gnu-ld"
             ),
             (
                 "xiao-esp32-c6",
                 "xiao-esp32-c6",
-                "riscv32imac-unknown-none-elf"
+                "riscv32imac-unknown-none-elf",
+                "riscv32imac-rust-lld"
             ),
-            ("t-echo-s140-v6", "t-echo-s140-v6", "thumbv7em-none-eabihf"),
-            ("t-echo-s140-v7", "t-echo-s140-v7", "thumbv7em-none-eabihf"),
-            ("t114", "t114", "thumbv7em-none-eabihf"),
-            ("t096", "t096", "thumbv7em-none-eabihf"),
-            ("t1000-e", "t1000-e", "thumbv7em-none-eabihf"),
-            ("mesh-tower-v2", "mesh-tower-v2", "thumbv7em-none-eabihf"),
+            (
+                "t-echo-s140-v6",
+                "t-echo-s140-v6",
+                "thumbv7em-none-eabihf",
+                "thumbv7em-rust-lld"
+            ),
+            (
+                "t-echo-s140-v7",
+                "t-echo-s140-v7",
+                "thumbv7em-none-eabihf",
+                "thumbv7em-rust-lld"
+            ),
+            (
+                "t114",
+                "t114",
+                "thumbv7em-none-eabihf",
+                "thumbv7em-rust-lld"
+            ),
+            (
+                "t096",
+                "t096",
+                "thumbv7em-none-eabihf",
+                "thumbv7em-rust-lld"
+            ),
+            (
+                "t1000-e",
+                "t1000-e",
+                "thumbv7em-none-eabihf",
+                "thumbv7em-rust-lld"
+            ),
+            (
+                "mesh-tower-v2",
+                "mesh-tower-v2",
+                "thumbv7em-none-eabihf",
+                "thumbv7em-rust-lld"
+            ),
         ]
     );
     Ok(())

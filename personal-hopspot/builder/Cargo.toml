@@ -11,6 +11,7 @@ description = "Shared embedded firmware build and packaging pipeline for Persona
 
 [dependencies]
 espflash = { version = "=4.5.0", default-features = false }
+personal-hopspot-memory = { path = "../memory" }
 prns-flash-manifest = { path = "../../prns-flash-manifest" }
 prns-nrf-dfu = { path = "../../prns-nrf-dfu" }
 thiserror = "2.0"
