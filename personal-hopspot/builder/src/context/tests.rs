@@ -18,7 +18,7 @@ fn developer_context_owns_validated_identity_and_paths() -> Result<(), BuildErro
     );
     assert_eq!(
         context.work_output("t-echo"),
-        Path::new("/repository/target/flash-artifacts/work/t-echo")
+        Path::new("/artifacts/work/t-echo")
     );
     assert_eq!(
         context.release_part_path("t-echo", "application.uf2"),
@@ -68,6 +68,10 @@ fn evidence_context_separates_linker_maps_by_lto_mode() -> Result<(), BuildError
     assert_eq!(
         context.cargo_target_directory("t114"),
         Some(PathBuf::from("/artifacts/thin/work/t114/cargo"))
+    );
+    assert_eq!(
+        context.work_output("t114"),
+        PathBuf::from("/artifacts/thin/work/t114")
     );
     let pending = context.pending_linker_map_path("t114");
     assert!(pending.as_ref().is_some_and(|path| {

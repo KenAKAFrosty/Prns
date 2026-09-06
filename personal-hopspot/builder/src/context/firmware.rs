@@ -55,18 +55,18 @@ impl BuildContext<'_> {
     pub fn linker_map_path(&self, target_id: &str) -> Option<PathBuf> {
         self.intent
             .is_resource_report()
-            .then(|| self.evidence_work_output(target_id).join("linker.map"))
+            .then(|| self.work_output(target_id).join("linker.map"))
     }
 
     pub fn cargo_target_directory(&self, target_id: &str) -> Option<PathBuf> {
         self.intent
             .is_resource_report()
-            .then(|| self.evidence_work_output(target_id).join("cargo"))
+            .then(|| self.work_output(target_id).join("cargo"))
     }
 
     pub fn pending_linker_map_path(&self, target_id: &str) -> Option<PathBuf> {
         self.intent.is_resource_report().then(|| {
-            self.evidence_work_output(target_id)
+            self.work_output(target_id)
                 .join(format!("linker.{}.map", self.evidence_run_id))
         })
     }
@@ -96,7 +96,7 @@ impl BuildContext<'_> {
         adapter: &Adapter,
         command: &mut Command,
     ) -> Result<LinkerMapCapture, BuildError> {
-        let output = self.evidence_work_output(target_id);
+        let output = self.work_output(target_id);
         let published = output.join("linker.map");
         let pending = output.join(format!("linker.{}.map", self.evidence_run_id));
         let parent = pending.parent().ok_or_else(|| {
@@ -148,9 +148,5 @@ impl BuildContext<'_> {
             ))
         })?;
         Ok(capture.published)
-    }
-
-    fn evidence_work_output(&self, target_id: &str) -> PathBuf {
-        self.configured_output_root().join("work").join(target_id)
     }
 }

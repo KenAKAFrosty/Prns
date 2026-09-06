@@ -78,11 +78,7 @@ impl<'a> BuildContext<'a> {
     }
 
     pub fn work_output(&self, board_slug: &str) -> PathBuf {
-        self.repository
-            .join("target")
-            .join("flash-artifacts")
-            .join("work")
-            .join(board_slug)
+        self.configured_output_root().join("work").join(board_slug)
     }
 
     pub fn release_part_path(&self, board_slug: &str, filename: &str) -> String {
