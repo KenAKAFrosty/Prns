@@ -699,6 +699,8 @@ impl<S: StorageLayout> EngineState<S> {
         ) {
             AdvertisementWriteOutcome::Wrote => {
                 self.links.note_outbound(&reservation.link_id, now);
+                #[cfg(feature = "runtime-metrics")]
+                self.record_successful_resource_advertisement(index, now);
                 wake.link_deadlines = self.link_deadlines_wake();
                 self.outgoing_resources.state_mut(index).retries_left = MAX_ADVERTISEMENT_RETRIES;
                 self.outgoing_resources
@@ -1174,6 +1176,8 @@ impl<S: StorageLayout> EngineState<S> {
                 self.links.note_outbound(&link_id, now);
                 wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
                 if let Some(index) = self.outgoing_resources.lookup(&link_id, &hash) {
+                    #[cfg(feature = "runtime-metrics")]
+                    self.record_successful_resource_advertisement(index, now);
                     self.outgoing_resources.state_mut(index).retries_left =
                         MAX_ADVERTISEMENT_RETRIES;
                     self.outgoing_resources
@@ -1257,7 +1261,7 @@ impl<S: StorageLayout> EngineState<S> {
         let Some(index) = self.outgoing_resources.lookup(&link_id, &hash) else {
             return Resolved(IngestPacketOutcome::Ignored(IgnoreReason::Superseded));
         };
-        let state = self.outgoing_resources.state(index);
+        let state = *self.outgoing_resources.state(index);
         if state.status.is_off_wire() {
             return Resolved(IngestPacketOutcome::Ignored(IgnoreReason::Superseded));
         }
@@ -1268,6 +1272,21 @@ impl<S: StorageLayout> EngineState<S> {
         let correlation = state.correlation;
         let last_segment = state.segment_index >= state.total_segments;
         self.outgoing_resources.remove(&link_id, &hash);
+        #[cfg(feature = "runtime-metrics")]
+        {
+            if let Some(enqueued_at) = state.metrics_last_frame_enqueued_at {
+                self.record_resource_last_frame_to_proof(enqueued_at, arrived_at);
+            }
+            if last_segment {
+                self.clear_resource_continuation_proof(link_id);
+            } else {
+                self.retain_resource_continuation_proof(
+                    link_id,
+                    state.segment_index.saturating_add(1),
+                    arrived_at,
+                );
+            }
+        }
         if last_segment {
             self.outgoing_assemblies.clear(&link_id);
         }
@@ -1368,6 +1387,8 @@ impl<S: StorageLayout> EngineState<S> {
 
         let scope_start = self.outgoing_resources.state(index).scope_start;
         let mut originated_outbound = false;
+        #[cfg(feature = "runtime-metrics")]
+        let mut first_frame_enqueued = false;
         for part in serve_part_indices(
             self.outgoing_resources.names_flat(index),
             scope_start,
@@ -1380,7 +1401,7 @@ impl<S: StorageLayout> EngineState<S> {
             let end = (start + sdu).min(sealed_len);
             let mut fill = |slot: &mut [u8]| -> Option<usize> {
                 let sealed = outgoing.sealed_transfer(index);
-                write_link_raw_packet(
+                let wire_bytes = write_link_raw_packet(
                     link_id,
                     PacketType::Data,
                     WireContext::Resource,
@@ -1388,7 +1409,12 @@ impl<S: StorageLayout> EngineState<S> {
                     &sealed[start..end],
                     slot,
                 )
-                .ok()
+                .ok()?;
+                #[cfg(feature = "runtime-metrics")]
+                {
+                    first_frame_enqueued = true;
+                }
+                Some(wire_bytes)
             };
             sink(EngineReaction::Directive(Directive::EmitFrame {
                 target: fire_on,
@@ -1463,6 +1489,18 @@ impl<S: StorageLayout> EngineState<S> {
             }
         }
 
+        #[cfg(feature = "runtime-metrics")]
+        if first_frame_enqueued {
+            let advertised_at = self
+                .outgoing_resources
+                .state_mut(index)
+                .metrics_advertised_at
+                .take();
+            if let Some(advertised_at) = advertised_at {
+                self.record_resource_advertisement_to_request(advertised_at, now);
+            }
+        }
+
         if originated_outbound {
             self.links.note_outbound(link_id, now);
         }
@@ -1471,6 +1509,10 @@ impl<S: StorageLayout> EngineState<S> {
         if state.sent_part_count == state.part_count {
             state.status = OutgoingResourceStatus::AwaitingProof;
             state.retries_left = AWAITING_PROOF_RETRIES;
+            #[cfg(feature = "runtime-metrics")]
+            {
+                state.metrics_last_frame_enqueued_at = Some(now);
+            }
             self.outgoing_resources
                 .set_timeout_at(index, Some(awaiting_proof_deadline(now, rtt_millis)));
         }
@@ -1952,11 +1994,15 @@ impl<S: StorageLayout> EngineState<S> {
         ) {
             AdvertisementWriteOutcome::Wrote => {
                 self.links.note_outbound(link_id, now);
+                #[cfg(feature = "runtime-metrics")]
+                self.record_successful_resource_advertisement(index, now);
                 self.outgoing_resources.state_mut(index).retries_left = MAX_ADVERTISEMENT_RETRIES;
                 self.outgoing_resources
                     .set_timeout_at(index, Some(advertised_deadline(now, rtt_millis)));
             }
             AdvertisementWriteOutcome::DidNotWrite => {
+                #[cfg(feature = "runtime-metrics")]
+                self.clear_resource_continuation_proof(*link_id);
                 let state = self.outgoing_resources.state(index);
                 let id = state.command_id;
                 let correlation = state.correlation;
@@ -1978,6 +2024,8 @@ impl<S: StorageLayout> EngineState<S> {
     where
         K: FnMut(EngineReaction<'_, Work>) + ?Sized,
     {
+        #[cfg(feature = "runtime-metrics")]
+        self.clear_resource_continuation_proof(*link_id);
         while let Some(index) = self.outgoing_resources.staged_index(link_id) {
             let state = self.outgoing_resources.state(index);
             let id = state.command_id;
@@ -2013,6 +2061,8 @@ impl<S: StorageLayout> EngineState<S> {
         let correlation = state.correlation;
         self.outgoing_resources.remove(link_id, hash);
         self.outgoing_assemblies.clear(link_id);
+        #[cfg(feature = "runtime-metrics")]
+        self.clear_resource_continuation_proof(*link_id);
         if let ActiveLinkLookup::Active(link) = self.links.active_view(link_id) {
             let key = link.key;
             let mtu = link.mtu;
@@ -2133,6 +2183,8 @@ impl<S: StorageLayout> EngineState<S> {
                     AdvertisementWriteOutcome::Wrote
                 ) {
                     self.links.note_outbound(&link_id, now);
+                    #[cfg(feature = "runtime-metrics")]
+                    self.record_successful_resource_advertisement(index, now);
                 }
                 let state = self.outgoing_resources.state_mut(index);
                 state.retries_left -= 1;
@@ -2167,6 +2219,18 @@ impl<S: StorageLayout> EngineState<S> {
                     .set_timeout_at(index, Some(awaiting_proof_deadline(now, rtt_millis)));
             }
         }
+    }
+
+    #[cfg(feature = "runtime-metrics")]
+    fn record_successful_resource_advertisement(&mut self, index: usize, now: InstantMillis) {
+        let link_id = *self.outgoing_resources.link_at(index);
+        let state = self.outgoing_resources.state_mut(index);
+        if state.metrics_advertised_at.is_some() {
+            return;
+        }
+        state.metrics_advertised_at = Some(now);
+        let segment_index = state.segment_index;
+        self.record_resource_continuation_advertisement(link_id, segment_index, now);
     }
 }
 
@@ -4243,6 +4307,16 @@ mod tests {
             engine.outgoing_resources.earliest_timeout_at().is_some(),
             "the promoted advertisement arms its own watchdog",
         );
+        #[cfg(feature = "runtime-metrics")]
+        {
+            let rounds = engine.metrics_snapshot().resources.rounds;
+            assert_eq!(rounds.advertisement_to_request.observations, 1);
+            assert_eq!(rounds.advertisement_to_request.total_millis, 500);
+            assert_eq!(rounds.last_frame_to_proof.observations, 1);
+            assert_eq!(rounds.last_frame_to_proof.total_millis, 1_000);
+            assert_eq!(rounds.proof_to_next_advertisement.observations, 1);
+            assert_eq!(rounds.proof_to_next_advertisement.total_millis, 0);
+        }
     }
 
     #[test]

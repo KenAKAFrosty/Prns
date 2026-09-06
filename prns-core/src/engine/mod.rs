@@ -43,6 +43,7 @@ cfg_if::cfg_if! {
             InterfaceAnnounceMetricsSnapshot, InterfaceKindCounts, PathRequestIngressCounts,
             PathRequestIngressOutcome, PathRequestRelayCounts, PathRequestRelayOutcome,
             ResourceAdmissionEvent, ResourceAdmissionEventCounts, ResourceDirectionMetricsSnapshot,
+            ResourceRoundIntervalMetricsSnapshot, ResourceRoundMetricsSnapshot,
         };
     }
 }

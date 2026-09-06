@@ -78,6 +78,8 @@ trait CommandLane {
     fn poll_recv(&mut self, context: &mut std::task::Context<'_>) -> Poll<Option<HostCommand>>;
 }
 
+const RESOURCE_PART_HASH_OFFLOAD_MINIMUM_INPUT_BYTES: usize = 8 * 1024;
+
 struct NoLocalCommands;
 
 impl CommandLane for NoLocalCommands {
@@ -312,7 +314,9 @@ async fn run_inner<S, H, J, P, A, C>(
         None => ResourceSealExecution::Inline,
     });
     engine.set_resource_part_hash_lane(match crypto_pool.as_ref() {
-        Some(_) => ResourcePartHashLane::External,
+        Some(_) => ResourcePartHashLane::ExternalAtOrAbove {
+            minimum_input_bytes: RESOURCE_PART_HASH_OFFLOAD_MINIMUM_INPUT_BYTES,
+        },
         None => ResourcePartHashLane::Inline,
     });
     let mut clock = ManifoldClock::new(&host);
@@ -446,6 +450,8 @@ async fn run_inner<S, H, J, P, A, C>(
                 max_frames_per_lane: scheduler_policy.inbound_per_lane(),
                 max_frames_total: scheduler_policy.inbound_turn_budget(work_remaining),
                 owed_work: &mut owed_work,
+                #[cfg(feature = "runtime-metrics")]
+                manifold_metrics: &mut manifold_metrics,
                 now,
             });
             work_remaining = work_remaining.saturating_sub(processed);

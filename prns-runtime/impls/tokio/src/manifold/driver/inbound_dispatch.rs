@@ -1,5 +1,7 @@
 use tokio::sync::mpsc::UnboundedReceiver;
 
+#[cfg(feature = "runtime-metrics")]
+use crate::engine::Directive;
 use crate::engine::{
     ClassifiedInboundPacket, CryptoOwed, EngineReaction, EngineState, IngestIo, InstantMillis,
     Journaled, OwedWork, ProofRequest, WakeSchedules,
@@ -15,6 +17,8 @@ use crate::routing::links::resources::ResourceOffer;
 use crate::routing::links::LinkId;
 use crate::runtime::InterfaceStore;
 use crate::storage::StorageLayout;
+#[cfg(feature = "runtime-metrics")]
+use crate::wire::{WireContext, WirePacketHeader};
 
 use super::crypto_pool::{run_link_sign_job, CryptoPool, LinkSignCompleted, LinkSignJob};
 use super::egress::{
@@ -55,6 +59,13 @@ impl IngressPacketSpan {
 struct DeferredResourcePartHash {
     plan: ResourcePartHashPlan,
     part: std::ops::Range<usize>,
+}
+
+#[cfg(feature = "runtime-metrics")]
+#[derive(Clone, Copy)]
+enum ResourceControlPacket {
+    Request(LinkId),
+    Reset(LinkId),
 }
 
 // Ingress adds ordering barriers to the common reaction route. Keeping those
@@ -135,6 +146,8 @@ pub(super) struct InboundDispatch {
     unmask_scratch: std::boxed::Box<[u8]>,
     link_signs: std::vec::Vec<LinkSignJob>,
     inline_link_signs: std::vec::Vec<LinkSignJob>,
+    #[cfg(feature = "runtime-metrics")]
+    resource_request_frame_completions: std::vec::Vec<(LinkId, std::time::Instant)>,
     /// LINKIDENTIFY changes the authority attached to a link. Later frames from its ingress lane
     /// cannot overtake that verdict merely because signature verification ran on a worker.
     link_identity_barriers: std::vec::Vec<(InterfaceId, LinkId)>,
@@ -147,6 +160,8 @@ impl InboundDispatch {
             unmask_scratch: std::vec![0u8; frame_capacity].into_boxed_slice(),
             link_signs: std::vec::Vec::new(),
             inline_link_signs: std::vec::Vec::new(),
+            #[cfg(feature = "runtime-metrics")]
+            resource_request_frame_completions: std::vec::Vec::new(),
             link_identity_barriers: std::vec::Vec::new(),
         }
     }
@@ -211,6 +226,8 @@ impl InboundDispatch {
             max_frames_per_lane,
             max_frames_total,
             owed_work,
+            #[cfg(feature = "runtime-metrics")]
+            manifold_metrics,
             now,
         } = context;
         let Self {
@@ -218,6 +235,8 @@ impl InboundDispatch {
             unmask_scratch,
             link_signs,
             inline_link_signs,
+            #[cfg(feature = "runtime-metrics")]
+            resource_request_frame_completions,
             link_identity_barriers,
         } = self;
         let mut processed_frames = 0;
@@ -296,6 +315,30 @@ impl InboundDispatch {
                     None => (slot.frame_mut(), IngressBufferSource::GrantSlot),
                 };
                 let packet_span = IngressPacketSpan::of(bytes);
+                #[cfg(feature = "runtime-metrics")]
+                let resource_control =
+                    WirePacketHeader::parse(bytes).ok().and_then(|(header, _)| {
+                        let link_id = LinkId::from_address(header.address);
+                        match header.context {
+                            WireContext::ResourceRequest => {
+                                Some(ResourceControlPacket::Request(link_id))
+                            }
+                            WireContext::ResourceProof
+                            | WireContext::ResourceInitiatorCancel
+                            | WireContext::ResourceReceiverCancel
+                            | WireContext::LinkClose => Some(ResourceControlPacket::Reset(link_id)),
+                            _ => None,
+                        }
+                    });
+                #[cfg(feature = "runtime-metrics")]
+                let resource_request_started_at = match resource_control {
+                    Some(ResourceControlPacket::Request(_)) => Some(std::time::Instant::now()),
+                    Some(ResourceControlPacket::Reset(_)) | None => None,
+                };
+                #[cfg(feature = "runtime-metrics")]
+                let mut resource_first_frame_elapsed = None;
+                #[cfg(feature = "runtime-metrics")]
+                let mut resource_last_frame_enqueued_at = None;
                 let mut packet = ClassifiedInboundPacket::classify(InboundPacket {
                     arrived_at: now,
                     source_interface: source,
@@ -312,6 +355,12 @@ impl InboundDispatch {
                         should_prove,
                         should_accept_resource,
                         sink: &mut |reaction| {
+                            #[cfg(feature = "runtime-metrics")]
+                            let resource_frame = resource_request_started_at.is_some()
+                                && matches!(
+                                    &reaction,
+                                    EngineReaction::Directive(Directive::EmitFrame { .. })
+                                );
                             route_ingress_reaction_with_owed_work(
                                 reaction,
                                 &mut topology.egress,
@@ -328,9 +377,53 @@ impl InboundDispatch {
                                 source,
                                 now,
                             );
+                            #[cfg(feature = "runtime-metrics")]
+                            if resource_frame {
+                                let enqueued_at = std::time::Instant::now();
+                                if resource_first_frame_elapsed.is_none() {
+                                    resource_first_frame_elapsed = resource_request_started_at
+                                        .map(|started_at| enqueued_at.duration_since(started_at));
+                                }
+                                resource_last_frame_enqueued_at = Some(enqueued_at);
+                            }
                         },
                     },
                 );
+                #[cfg(feature = "runtime-metrics")]
+                if let Some(elapsed) = resource_first_frame_elapsed {
+                    manifold_metrics.record_resource_request_to_first_frame(elapsed);
+                }
+                #[cfg(feature = "runtime-metrics")]
+                match (resource_control, resource_last_frame_enqueued_at) {
+                    (
+                        Some(ResourceControlPacket::Request(link_id)),
+                        Some(last_frame_enqueued_at),
+                    ) => {
+                        if let Some(index) = resource_request_frame_completions
+                            .iter()
+                            .position(|(completed_link, _)| *completed_link == link_id)
+                        {
+                            let (_, previous_completion) =
+                                resource_request_frame_completions[index];
+                            if let Some(started_at) = resource_request_started_at {
+                                if let Some(elapsed) =
+                                    started_at.checked_duration_since(previous_completion)
+                                {
+                                    manifold_metrics.record_resource_request_round_gap(elapsed);
+                                }
+                            }
+                            resource_request_frame_completions[index].1 = last_frame_enqueued_at;
+                        } else {
+                            resource_request_frame_completions
+                                .push((link_id, last_frame_enqueued_at));
+                        }
+                    }
+                    (Some(ResourceControlPacket::Reset(link_id)), _) => {
+                        resource_request_frame_completions
+                            .retain(|(completed_link, _)| *completed_link != link_id);
+                    }
+                    (Some(ResourceControlPacket::Request(_)), None) | (None, _) => {}
+                }
                 if let (Some(recorder), Some(violation)) =
                     (&frame_accounting, ingest_report.protocol_violation)
                 {
@@ -482,6 +575,8 @@ where
     pub(super) max_frames_per_lane: usize,
     pub(super) max_frames_total: usize,
     pub(super) owed_work: &'a mut PendingOwedWork,
+    #[cfg(feature = "runtime-metrics")]
+    pub(super) manifold_metrics: &'a mut super::scheduling_metrics::ManifoldMetrics,
     pub(super) now: InstantMillis,
 }
 

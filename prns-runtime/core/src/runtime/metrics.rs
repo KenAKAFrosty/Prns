@@ -360,6 +360,12 @@ pub struct ManifoldMetricsSnapshot {
     pub maximum_inline_work_micros: u64,
     pub maximum_timer_lateness_ms: u64,
     pub maximum_pacer_lateness_ms: u64,
+    pub resource_request_to_first_frame_observations: u64,
+    pub resource_request_to_first_frame_total_micros: u64,
+    pub maximum_resource_request_to_first_frame_micros: u64,
+    pub resource_request_round_gap_observations: u64,
+    pub resource_request_round_gap_total_micros: u64,
+    pub maximum_resource_request_round_gap_micros: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
