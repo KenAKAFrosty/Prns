@@ -58,10 +58,11 @@ pub use schedule::{
 };
 #[cfg(feature = "std")]
 pub use simulation::{
-    simulate_acquisition, simulate_contention, simulate_link, AcquisitionSimulation,
-    AcquisitionSimulationError, AcquisitionSimulationResult, ContentionSimulation,
-    ContentionSimulationError, ContentionSimulationResult, LinkSimulation, LinkSimulationError,
-    LinkSimulationResult, PositionMeters, PropagationModel, PropagationModelError,
+    simulate_acquisition, simulate_contention, simulate_link, AcquisitionEnvironment,
+    AcquisitionSimulation, AcquisitionSimulationError, AcquisitionSimulationResult,
+    ContentionSimulation, ContentionSimulationError, ContentionSimulationResult, LinkSimulation,
+    LinkSimulationError, LinkSimulationResult, PositionMeters, PropagationModel,
+    PropagationModelError,
 };
 pub use spec::{Us915TurboSpec, TURBO_CHANNEL_COUNT, US915_TURBO_SPEC};
 pub use transmission::{

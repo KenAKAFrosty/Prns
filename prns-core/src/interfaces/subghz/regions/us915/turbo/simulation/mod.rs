@@ -1,48 +1,21 @@
+mod acquisition;
+
+pub use acquisition::{
+    simulate_acquisition, AcquisitionEnvironment, AcquisitionSimulation,
+    AcquisitionSimulationError, AcquisitionSimulationResult,
+};
+
 use super::{
-    acquisition_beacon_listen_window_us, AcquisitionBeacon, CapabilitySupport, ChannelAccess,
-    ChannelAccessAction, ChannelAccessEvent, ContentionClass, ContentionPolicy, DatagramId,
-    MaximumTransmitUncertainty, ScheduleMicros, TransmissionTimingBudget, TrustedScheduleClock,
-    TrustedTimeSource, TurboGlobalSlot, TurboHardwareSupport, TurboPhyProfile, TurboProfileError,
-    Us915TurboConfiguration, Us915TurboTransmitter, UtcTimescale, TURBO_CHANNEL_COUNT,
-    TURBO_LOGICAL_PACKET_MAX, US915_TURBO_SPEC,
+    CapabilitySupport, ChannelAccess, ChannelAccessAction, ChannelAccessEvent, ContentionClass,
+    ContentionPolicy, DatagramId, MaximumTransmitUncertainty, ScheduleMicros,
+    TransmissionTimingBudget, TrustedScheduleClock, TrustedTimeSource, TurboHardwareSupport,
+    TurboPhyProfile, TurboProfileError, Us915TurboConfiguration, Us915TurboTransmitter,
+    UtcTimescale, TURBO_LOGICAL_PACKET_MAX, US915_TURBO_SPEC,
 };
 use crate::interfaces::subghz::regions::us915::frequency_hopping::{
     AntennaGainDeciDb, ConductedPowerDbm, MeasuredTwentyDbBandwidth, Us915PowerInputs,
 };
 use crate::interfaces::subghz::MonotonicMicros;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AcquisitionSimulation {
-    pub seed: u64,
-    pub trials: u32,
-    pub scanner_dwell_us: u64,
-    pub beacon_opportunity_per_mille: u16,
-    pub packet_loss_per_mille: u16,
-    pub maximum_search_us: u64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AcquisitionSimulationError {
-    EmptyTrials,
-    EmptyScannerDwell,
-    EmptySearchPeriod,
-    ProbabilityOutsideRange { per_mille: u16 },
-    Profile(TurboProfileError),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AcquisitionSimulationResult {
-    pub acquired_trials: u32,
-    pub missed_trials: u32,
-    pub p50_acquisition_us: u64,
-    pub p95_acquisition_us: u64,
-    pub p99_acquisition_us: u64,
-    pub maximum_acquisition_us: u64,
-    pub average_scanner_rx_us: u64,
-    pub average_scanner_retunes: u64,
-    pub beacons_transmitted: u64,
-    pub maintenance_airtime_parts_per_million: u32,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ContentionSimulation {
@@ -151,152 +124,6 @@ pub struct LinkSimulationResult {
     pub nominal_link_margin_db: f64,
     pub deliveries: u32,
     pub delivery_per_mille: u16,
-}
-
-pub fn simulate_acquisition(
-    input: AcquisitionSimulation,
-    profile: TurboPhyProfile,
-) -> Result<AcquisitionSimulationResult, AcquisitionSimulationError> {
-    if input.trials == 0 {
-        return Err(AcquisitionSimulationError::EmptyTrials);
-    }
-    if input.scanner_dwell_us == 0 {
-        return Err(AcquisitionSimulationError::EmptyScannerDwell);
-    }
-    if input.maximum_search_us == 0 {
-        return Err(AcquisitionSimulationError::EmptySearchPeriod);
-    }
-    for per_mille in [
-        input.beacon_opportunity_per_mille,
-        input.packet_loss_per_mille,
-    ] {
-        if per_mille > 1_000 {
-            return Err(AcquisitionSimulationError::ProbabilityOutsideRange { per_mille });
-        }
-    }
-    profile
-        .validate()
-        .map_err(AcquisitionSimulationError::Profile)?;
-    let mut rng = DeterministicRng::new(input.seed);
-    let mut latencies = std::vec::Vec::with_capacity(input.trials as usize);
-    let mut total_rx_us = 0u64;
-    let mut total_retunes = 0u64;
-    let mut considered_beacon_slots = 0u64;
-    let mut beacons_transmitted = 0u64;
-    let beacon_airtime_us = profile.time_on_air_us(super::ACQUISITION_BEACON_BYTES);
-    let beacon_listen_window_us = acquisition_beacon_listen_window_us(profile);
-    for _ in 0..input.trials {
-        let scan_origin = rng.next_u64() % input.scanner_dwell_us;
-        let scan_channel = rng.next_u64() as usize % TURBO_CHANNEL_COUNT;
-        let schedule_origin = rng.next_u64() % US915_TURBO_SPEC.slot_us();
-        let mut observed_channels = [false; TURBO_CHANNEL_COUNT];
-        let mut observations = 0u8;
-        let mut beacon_cycle = 0u64;
-        let mut trial_rx_us = 0u64;
-        let mut trial_retunes = 0u64;
-        let acquired_at = loop {
-            let candidate_position = rng.next_u64() % TURBO_CHANNEL_COUNT as u64;
-            let global_slot = beacon_cycle
-                .saturating_mul(TURBO_CHANNEL_COUNT as u64)
-                .saturating_add(candidate_position);
-            let Ok(global_slot) = TurboGlobalSlot::new(global_slot) else {
-                break None;
-            };
-            let cycle = US915_TURBO_SPEC.slot_for_global_slot(global_slot).cycle();
-            let beacon = AcquisitionBeacon::from_entropy(cycle, rng.next_u16());
-            let completion = schedule_origin
-                .saturating_add(
-                    global_slot
-                        .index()
-                        .saturating_mul(US915_TURBO_SPEC.slot_us()),
-                )
-                .saturating_add(beacon.completes_at_slot_offset_us(profile));
-            if completion > input.maximum_search_us {
-                break None;
-            }
-            considered_beacon_slots = considered_beacon_slots.saturating_add(1);
-            let beacon_available = random_event(&mut rng, input.beacon_opportunity_per_mille);
-            if beacon_available {
-                beacons_transmitted = beacons_transmitted.saturating_add(1);
-            }
-            let schedule_channel = US915_TURBO_SPEC
-                .slot_at(ScheduleMicros::new(
-                    completion.saturating_sub(schedule_origin),
-                ))
-                .channel_index()
-                .index();
-            let (listening_channel, received_without_retune) = if observations == 0 {
-                let beacon_start = completion.saturating_sub(beacon_airtime_us);
-                let scan_step_at_start =
-                    beacon_start.saturating_add(scan_origin) / input.scanner_dwell_us;
-                let scan_step_at_end = completion.saturating_sub(1).saturating_add(scan_origin)
-                    / input.scanner_dwell_us;
-                trial_retunes = scan_step_at_end;
-                (
-                    (scan_channel + scan_step_at_start as usize * US915_TURBO_SPEC.scan_stride())
-                        % TURBO_CHANNEL_COUNT,
-                    scan_step_at_start == scan_step_at_end,
-                )
-            } else {
-                trial_retunes = trial_retunes.saturating_add(1);
-                trial_rx_us = trial_rx_us.saturating_add(beacon_listen_window_us);
-                (schedule_channel, true)
-            };
-            let lost = random_event(&mut rng, input.packet_loss_per_mille);
-            if beacon_available
-                && received_without_retune
-                && listening_channel == schedule_channel
-                && !lost
-            {
-                if observations == 0 {
-                    trial_rx_us = completion;
-                }
-                observations = observations.saturating_add(1);
-                observed_channels[schedule_channel] = true;
-                let distinct_channels = observed_channels.iter().filter(|seen| **seen).count();
-                if observations >= US915_TURBO_SPEC.acquisition_observations()
-                    && distinct_channels
-                        >= usize::from(US915_TURBO_SPEC.acquisition_distinct_channels())
-                {
-                    break Some(completion);
-                }
-            }
-            beacon_cycle = beacon_cycle.saturating_add(1);
-        };
-        if observations == 0 {
-            trial_rx_us = input.maximum_search_us;
-            trial_retunes = input.maximum_search_us.div_ceil(input.scanner_dwell_us);
-        }
-        total_rx_us = total_rx_us.saturating_add(trial_rx_us);
-        total_retunes = total_retunes.saturating_add(trial_retunes);
-        if let Some(acquired_at) = acquired_at {
-            latencies.push(acquired_at);
-        }
-    }
-    latencies.sort_unstable();
-    let acquired_trials = latencies.len() as u32;
-    let missed_trials = input.trials.saturating_sub(acquired_trials);
-    let maintenance_airtime_parts_per_million = beacons_transmitted
-        .saturating_mul(beacon_airtime_us)
-        .saturating_mul(1_000_000)
-        .div_ceil(
-            considered_beacon_slots
-                .saturating_mul(US915_TURBO_SPEC.cycle_us())
-                .max(1),
-        )
-        .min(1_000_000) as u32;
-    Ok(AcquisitionSimulationResult {
-        acquired_trials,
-        missed_trials,
-        p50_acquisition_us: percentile(&latencies, 50),
-        p95_acquisition_us: percentile(&latencies, 95),
-        p99_acquisition_us: percentile(&latencies, 99),
-        maximum_acquisition_us: latencies.last().copied().unwrap_or(0),
-        average_scanner_rx_us: total_rx_us / u64::from(input.trials),
-        average_scanner_retunes: total_retunes / u64::from(input.trials),
-        beacons_transmitted,
-        maintenance_airtime_parts_per_million,
-    })
 }
 
 pub fn simulate_contention(
