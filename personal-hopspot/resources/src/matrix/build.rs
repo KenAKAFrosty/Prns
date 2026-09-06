@@ -8,6 +8,7 @@ use super::{mesh_tower_v2, MatrixError, Target, TargetRecipe};
 pub(crate) struct BuildEvidence {
     firmware: FirmwareEvidence,
     artifacts: Vec<ArtifactEvidence>,
+    firmware_image_bytes: u64,
 }
 
 pub(crate) struct ArtifactEvidence {
@@ -21,6 +22,7 @@ impl Target<'_> {
             TargetRecipe::Esp { board, recipe } => {
                 esp::build(context, board, recipe).map(|output| BuildEvidence {
                     firmware: output.firmware().clone(),
+                    firmware_image_bytes: output.firmware_image_bytes(),
                     artifacts: output
                         .parts()
                         .iter()
@@ -38,6 +40,7 @@ impl Target<'_> {
             } => {
                 nrf52840::uf2::build(context, board, recipe, variant).map(|output| BuildEvidence {
                     firmware: output.firmware().clone(),
+                    firmware_image_bytes: output.firmware_image_bytes(),
                     artifacts: vec![ArtifactEvidence {
                         path: output.descriptor().path.clone(),
                         bytes: output.descriptor().size,
@@ -49,6 +52,7 @@ impl Target<'_> {
                     let manifest = output.manifest();
                     BuildEvidence {
                         firmware: output.firmware().clone(),
+                        firmware_image_bytes: output.firmware_image_bytes(),
                         artifacts: [
                             &manifest.application,
                             &manifest.init_packet,
@@ -64,9 +68,10 @@ impl Target<'_> {
                 })
             }
             TargetRecipe::MeshTowerV2 => {
-                nrf52840::firmware::build(context, self.id(), mesh_tower_v2::recipe()).map(
-                    |firmware| BuildEvidence {
-                        firmware,
+                nrf52840::firmware::build(context, self.profile(), mesh_tower_v2::recipe()).map(
+                    |output| BuildEvidence {
+                        firmware: output.firmware().clone(),
+                        firmware_image_bytes: output.firmware_image_bytes(),
                         artifacts: Vec::new(),
                     },
                 )
@@ -96,6 +101,10 @@ impl BuildEvidence {
 
     pub(crate) const fn firmware(&self) -> &FirmwareEvidence {
         &self.firmware
+    }
+
+    pub(crate) const fn firmware_image_bytes(&self) -> u64 {
+        self.firmware_image_bytes
     }
 
     pub(crate) fn package_bytes(&self) -> u64 {

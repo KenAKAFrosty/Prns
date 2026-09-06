@@ -13,9 +13,9 @@ use prns_nrf_dfu::{
 
 use crate::architecture::adapter_for_rust_target;
 use crate::artifact::publish;
-use crate::{
-    embedded_cargo_command, llvm_objcopy, run_status, BuildContext, BuildError, FirmwareEvidence,
-};
+use crate::{embedded_cargo_command, run_status, BuildContext, BuildError, FirmwareEvidence};
+
+use super::binary;
 
 #[derive(Debug)]
 pub struct Output {
@@ -32,6 +32,10 @@ impl Output {
 
     pub const fn manifest(&self) -> &NrfSerialDfuManifest {
         &self.manifest
+    }
+
+    pub fn firmware_image_bytes(&self) -> u64 {
+        self.application.len() as u64
     }
 
     pub fn into_transfer_artifacts(self) -> (Vec<u8>, Vec<u8>) {
@@ -83,18 +87,8 @@ pub fn build(
     let firmware = context.finish_firmware_build(elf.clone(), capture)?;
 
     let work_dir = context.work_output(&board.slug);
-    fs::create_dir_all(&work_dir).map_err(|error| {
-        BuildError::Artifact(format!("could not create work directory: {error}"))
-    })?;
     let application_path = work_dir.join(&recipe.application_filename);
-    run_status(
-        Command::new(llvm_objcopy()?.as_os_str())
-            .arg("-O")
-            .arg("binary")
-            .arg(&elf)
-            .arg(&application_path),
-        "llvm-objcopy",
-    )?;
+    binary::extract(&elf, &application_path)?;
     let application = fs::read(&application_path).map_err(|error| {
         BuildError::Artifact(format!(
             "could not read {}: {error}",

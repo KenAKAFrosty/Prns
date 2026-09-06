@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use personal_hopspot_builder::artifact::publish;
 use personal_hopspot_builder::{BuildContext, BuildError, ToolchainEvidence};
+use personal_hopspot_memory::MemoryProfile;
 use serde::Serialize;
 use thiserror::Error;
 
@@ -12,7 +13,7 @@ use super::contract;
 use super::fingerprint::fingerprint;
 use super::model::{
     AnalysisState, ArchitectureIdentity, ArtifactIdentity, BuildIdentity, BuildStatus,
-    ResourceReport, TargetIdentity, ToolchainIdentity, SCHEMA_VERSION,
+    FirmwareFlashUsage, ResourceReport, TargetIdentity, ToolchainIdentity, SCHEMA_VERSION,
 };
 
 const CARGO_PROFILE: &str = "release";
@@ -23,6 +24,14 @@ pub(crate) enum ReportError {
     Contract(#[from] contract::ContractIdentityError),
     #[error("build for {target:?} did not capture resource evidence")]
     MissingResourceEvidence { target: String },
+    #[error("memory profile {profile:?} has no firmware-owned region {region:?}")]
+    MissingFirmwareRegion { profile: String, region: String },
+    #[error("firmware image for {target:?} uses {actual} bytes but its region holds {maximum}")]
+    FirmwareOverflow {
+        target: String,
+        actual: u64,
+        maximum: u64,
+    },
     #[error("could not inspect linker map {path}: {source}")]
     LinkerMapMetadata {
         path: PathBuf,
@@ -83,6 +92,11 @@ fn build(
         toolchain: toolchain_identity(adapter.linker_program(), toolchain)?,
         memory_contract: contract::identity(target.profile())?,
         status: BuildStatus::Success,
+        firmware_flash: firmware_flash_usage(
+            target.id(),
+            target.profile(),
+            evidence.firmware_image_bytes(),
+        )?,
         artifacts: evidence
             .artifacts()
             .iter()
@@ -92,6 +106,36 @@ fn build(
             })
             .collect(),
         analysis: AnalysisState::Pending { linker_map_bytes },
+    })
+}
+
+pub(super) fn firmware_flash_usage(
+    target_id: &str,
+    profile: &MemoryProfile,
+    image_bytes: u64,
+) -> Result<FirmwareFlashUsage, ReportError> {
+    let region_id = profile.firmware.firmware_owned_region;
+    let region = profile
+        .region(region_id)
+        .ok_or_else(|| ReportError::MissingFirmwareRegion {
+            profile: profile.id.as_str().to_string(),
+            region: region_id.0.to_string(),
+        })?;
+    let maximum = region.range.byte_len();
+    let headroom_bytes =
+        maximum
+            .checked_sub(image_bytes)
+            .ok_or_else(|| ReportError::FirmwareOverflow {
+                target: target_id.to_string(),
+                actual: image_bytes,
+                maximum,
+            })?;
+    Ok(FirmwareFlashUsage {
+        region: region.id.0.to_string(),
+        start: region.range.start(),
+        end: region.range.end(),
+        image_bytes,
+        headroom_bytes,
     })
 }
 

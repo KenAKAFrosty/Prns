@@ -14,6 +14,7 @@ pub(super) struct ResourceReport {
     pub toolchain: ToolchainIdentity,
     pub memory_contract: MemoryContractIdentity,
     pub status: BuildStatus,
+    pub firmware_flash: FirmwareFlashUsage,
     pub artifacts: Vec<ArtifactIdentity>,
     pub analysis: AnalysisState,
 }
@@ -130,6 +131,16 @@ pub(super) enum ReservationAccountingIdentity {
 #[serde(rename_all = "kebab-case")]
 pub(super) enum BuildStatus {
     Success,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct FirmwareFlashUsage {
+    pub region: String,
+    pub start: u64,
+    pub end: u64,
+    pub image_bytes: u64,
+    pub headroom_bytes: u64,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]

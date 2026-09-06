@@ -36,6 +36,7 @@ impl Part {
 pub struct Output {
     firmware: FirmwareEvidence,
     parts: Vec<Part>,
+    firmware_image_bytes: u64,
 }
 
 impl Output {
@@ -45,6 +46,10 @@ impl Output {
 
     pub fn parts(&self) -> &[Part] {
         &self.parts
+    }
+
+    pub const fn firmware_image_bytes(&self) -> u64 {
+        self.firmware_image_bytes
     }
 
     pub fn into_parts(self) -> Vec<Part> {
@@ -145,7 +150,16 @@ pub fn build(
     validate_esp_sparse_image(board, parts.iter().map(Part::descriptor)).map_err(|error| {
         BuildError::Artifact(format!("built sparse ESP image is invalid: {error}"))
     })?;
-    Ok(Output { firmware, parts })
+    let firmware_image_bytes = parts
+        .iter()
+        .find(|part| part.descriptor.kind == FlashPartKind::Application)
+        .map(|part| part.descriptor.size)
+        .ok_or_else(|| BuildError::Artifact("built sparse ESP image has no application".into()))?;
+    Ok(Output {
+        firmware,
+        parts,
+        firmware_image_bytes,
+    })
 }
 
 fn flash_size(bytes: Option<u32>) -> Result<FlashSize, BuildError> {

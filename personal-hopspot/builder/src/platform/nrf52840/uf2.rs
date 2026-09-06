@@ -6,16 +6,16 @@ use prns_flash_manifest::{
     Uf2BuildVariant, Uf2VariantManifest,
 };
 
+use super::binary;
 use crate::architecture::adapter_for_rust_target;
-use crate::{
-    embedded_cargo_command, llvm_objcopy, run_status, BuildContext, BuildError, FirmwareEvidence,
-};
+use crate::{embedded_cargo_command, run_status, BuildContext, BuildError, FirmwareEvidence};
 
 #[derive(Debug)]
 pub struct Output {
     firmware: FirmwareEvidence,
     descriptor: Uf2VariantManifest,
     bytes: Vec<u8>,
+    firmware_image_bytes: u64,
 }
 
 impl Output {
@@ -29,6 +29,10 @@ impl Output {
 
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
+    }
+
+    pub const fn firmware_image_bytes(&self) -> u64 {
+        self.firmware_image_bytes
     }
 
     pub fn into_bytes(self) -> Vec<u8> {
@@ -45,7 +49,7 @@ pub fn build(
     let memory = variant
         .memory_layout()
         .map_err(|error| BuildError::Manifest(error.to_string()))?;
-    let application = memory.transport_envelope();
+    let application = memory.firmware_owned();
     let application_base = format!("0x{:08x}", application.start());
     let crate_dir = context
         .repository()
@@ -79,18 +83,8 @@ pub fn build(
     let firmware = context.finish_firmware_build(elf.clone(), capture)?;
 
     let work_dir = context.work_output(&board.slug);
-    fs::create_dir_all(&work_dir).map_err(|error| {
-        BuildError::Artifact(format!("could not create work directory: {error}"))
-    })?;
     let binary = work_dir.join(format!("{}.bin", variant.softdevice_version));
-    run_status(
-        Command::new(llvm_objcopy()?.as_os_str())
-            .arg("-O")
-            .arg("binary")
-            .arg(&elf)
-            .arg(&binary),
-        "llvm-objcopy",
-    )?;
+    let firmware_image_bytes = binary::extract(&elf, &binary)?;
 
     let output_dir = context.board_output(&board.slug);
     fs::create_dir_all(&output_dir).map_err(|error| {
@@ -134,6 +128,7 @@ pub fn build(
         firmware,
         descriptor,
         bytes,
+        firmware_image_bytes,
     })
 }
 

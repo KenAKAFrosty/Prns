@@ -1,3 +1,6 @@
+use personal_hopspot_memory::MemoryProfile;
+
+use super::binary;
 use crate::architecture::adapter_for_rust_target;
 use crate::{embedded_cargo_command, run_status, BuildContext, BuildError, FirmwareEvidence};
 
@@ -9,11 +12,28 @@ pub struct Recipe<'a> {
     pub cargo_features: &'a str,
 }
 
+#[derive(Debug)]
+pub struct Output {
+    firmware: FirmwareEvidence,
+    firmware_image_bytes: u64,
+}
+
+impl Output {
+    pub const fn firmware(&self) -> &FirmwareEvidence {
+        &self.firmware
+    }
+
+    pub const fn firmware_image_bytes(&self) -> u64 {
+        self.firmware_image_bytes
+    }
+}
+
 pub fn build(
     context: &BuildContext<'_>,
-    target_id: &str,
+    profile: &MemoryProfile,
     recipe: Recipe<'_>,
-) -> Result<FirmwareEvidence, BuildError> {
+) -> Result<Output, BuildError> {
+    let target_id = profile.id.as_str();
     let crate_dir = context
         .repository()
         .join("personal-hopspot")
@@ -47,5 +67,11 @@ pub fn build(
     let adapter = adapter_for_rust_target(recipe.rust_target)?;
     let capture = context.configure_firmware_cargo(target_id, adapter, &mut cargo)?;
     run_status(&mut cargo, &format!("{target_id} cargo build"))?;
-    context.finish_firmware_build(elf, capture)
+    let firmware = context.finish_firmware_build(elf.clone(), capture)?;
+    let binary = context.work_output(target_id).join("firmware.bin");
+    let firmware_image_bytes = binary::extract(&elf, &binary)?;
+    Ok(Output {
+        firmware,
+        firmware_image_bytes,
+    })
 }

@@ -4,7 +4,7 @@ use personal_hopspot_builder::{BuildContext, BuildIntent, BuildVersion, LtoMode}
 use personal_hopspot_memory::T114;
 use serde_json::{json, Value};
 
-use super::build::build_identity;
+use super::build::{build_identity, firmware_flash_usage, ReportError};
 use super::contract;
 use super::model::{ResourceReport, SCHEMA_VERSION};
 use crate::matrix::RecipeIdentity;
@@ -89,6 +89,28 @@ fn memory_contract_fingerprint_changes_with_profile_semantics(
     Ok(())
 }
 
+#[test]
+fn firmware_flash_usage_is_bounded_by_the_owned_region() -> Result<(), ReportError> {
+    let region = T114
+        .region(T114.firmware.firmware_owned_region)
+        .ok_or_else(|| ReportError::MissingFirmwareRegion {
+            profile: T114.id.as_str().to_string(),
+            region: T114.firmware.firmware_owned_region.0.to_string(),
+        })?;
+    let capacity = region.range.byte_len();
+    let usage = firmware_flash_usage("t114", &T114, capacity - 1)?;
+    assert_eq!(usage.headroom_bytes, 1);
+    assert!(matches!(
+        firmware_flash_usage("t114", &T114, capacity + 1),
+        Err(ReportError::FirmwareOverflow {
+            actual,
+            maximum,
+            ..
+        }) if actual == capacity + 1 && maximum == capacity
+    ));
+    Ok(())
+}
+
 fn recipe() -> RecipeIdentity<'static> {
     RecipeIdentity {
         kind: "nrf-serial-dfu",
@@ -143,6 +165,13 @@ fn report_value() -> Value {
             "runtime_reservations": []
         },
         "status": "success",
+        "firmware_flash": {
+            "region": "firmware",
+            "start": 155648,
+            "end": 921600,
+            "image_bytes": 700000,
+            "headroom_bytes": 65952
+        },
         "artifacts": [{"path": "firmware.bin", "bytes": 42}],
         "analysis": {"status": "pending", "linker_map_bytes": 128}
     })
