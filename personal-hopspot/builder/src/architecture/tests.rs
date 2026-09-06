@@ -33,26 +33,30 @@ fn adapters_define_target_and_linker_identity() {
             "thumbv7em-none-eabihf",
             LinkerFlavor::RustLld,
             "rust-lld",
+            &["-flavor", "gnu", "--version"][..],
         ),
         (
             ProcessorArchitecture::RiscV32Imac,
             "riscv32imac-unknown-none-elf",
             LinkerFlavor::RustLld,
             "rust-lld",
+            &["-flavor", "gnu", "--version"][..],
         ),
         (
             ProcessorArchitecture::XtensaEsp32S3,
             "xtensa-esp32s3-none-elf",
             LinkerFlavor::GnuLd,
             "xtensa-esp32s3-elf-gcc",
+            &["--version"][..],
         ),
     ];
 
-    for (architecture, rust_target, linker_flavor, linker_program) in expected {
+    for (architecture, rust_target, linker_flavor, linker_program, version_arguments) in expected {
         let adapter = adapter_for(architecture);
         assert_eq!(adapter.rust_target(), rust_target);
         assert_eq!(adapter.linker_flavor(), linker_flavor);
         assert_eq!(adapter.linker_program(), linker_program);
+        assert_eq!(adapter.linker_version_arguments(), version_arguments);
         assert_eq!(
             adapter_for_rust_target(rust_target).ok().map(Adapter::id),
             Some(adapter.id())

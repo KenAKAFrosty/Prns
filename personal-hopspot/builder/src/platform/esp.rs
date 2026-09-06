@@ -94,9 +94,9 @@ pub fn build(
         cargo.env("PRNS_BUILD_SOURCE_DIGEST", source_digest);
     }
     let adapter = adapter_for_rust_target(&recipe.rust_target)?;
-    let linker_map = context.configure_firmware_cargo(memory.id().0, adapter, &mut cargo)?;
+    let capture = context.configure_firmware_cargo(memory.id().0, adapter, &mut cargo)?;
     run_status(&mut cargo, "embedded ESP cargo build")?;
-    let linker_map = context.publish_linker_map(linker_map)?;
+    let firmware = context.finish_firmware_build(elf.clone(), capture)?;
 
     let elf_bytes = fs::read(&elf).map_err(|error| {
         BuildError::Artifact(format!("could not read {}: {error}", elf.display()))
@@ -140,10 +140,7 @@ pub fn build(
         parts.push(Part { descriptor, bytes });
     }
     parts.sort_by_key(|part| part.descriptor.offset);
-    Ok(Output {
-        firmware: FirmwareEvidence::new(elf, linker_map),
-        parts,
-    })
+    Ok(Output { firmware, parts })
 }
 
 fn flash_size(bytes: Option<u32>) -> Result<FlashSize, BuildError> {

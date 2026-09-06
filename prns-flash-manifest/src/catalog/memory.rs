@@ -123,6 +123,11 @@ pub struct ResolvedMemoryProfile {
 
 impl ResolvedMemoryProfile {
     #[must_use]
+    pub const fn profile(self) -> &'static MemoryProfile {
+        self.profile
+    }
+
+    #[must_use]
     pub const fn id(self) -> MemoryProfileId {
         self.id
     }

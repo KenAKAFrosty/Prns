@@ -91,9 +91,9 @@ pub fn build(
         .env("PRNS_BUILD_VERSION", context.version())
         .current_dir(&crate_dir);
     let adapter = adapter_for_rust_target(&recipe.rust_target)?;
-    let linker_map = context.configure_firmware_cargo(memory.id().0, adapter, &mut cargo)?;
+    let capture = context.configure_firmware_cargo(memory.id().0, adapter, &mut cargo)?;
     run_status(&mut cargo, "Nordic serial DFU cargo build")?;
-    let linker_map = context.publish_linker_map(linker_map)?;
+    let firmware = context.finish_firmware_build(elf.clone(), capture)?;
 
     let work_dir = context.work_output(&board.slug);
     fs::create_dir_all(&work_dir).map_err(|error| {
@@ -188,7 +188,7 @@ pub fn build(
     DfuImage::from_artifacts(&application, &init_packet, &init_packet_spec)
         .map_err(|error| BuildError::Artifact(error.to_string()))?;
     Ok(Output {
-        firmware: FirmwareEvidence::new(elf, linker_map),
+        firmware,
         manifest,
         application,
         init_packet,

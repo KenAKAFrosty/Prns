@@ -74,9 +74,9 @@ pub fn build(
         .arg(&target_directory)
         .current_dir(&crate_dir);
     let adapter = adapter_for_rust_target(&recipe.rust_target)?;
-    let linker_map = context.configure_firmware_cargo(memory.id().0, adapter, &mut cargo)?;
+    let capture = context.configure_firmware_cargo(memory.id().0, adapter, &mut cargo)?;
     run_status(&mut cargo, &format!("{} cargo build", board.display_name))?;
-    let linker_map = context.publish_linker_map(linker_map)?;
+    let firmware = context.finish_firmware_build(elf.clone(), capture)?;
 
     let work_dir = context.work_output(&board.slug);
     fs::create_dir_all(&work_dir).map_err(|error| {
@@ -128,7 +128,7 @@ pub fn build(
         sha256: sha256_hex(&bytes),
     };
     Ok(Output {
-        firmware: FirmwareEvidence::new(elf, linker_map),
+        firmware,
         descriptor,
         bytes,
     })

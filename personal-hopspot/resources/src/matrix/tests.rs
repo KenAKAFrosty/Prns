@@ -10,7 +10,7 @@ fn canonical_matrix_has_eleven_unique_profile_bound_targets(
         .map(|target| {
             (
                 target.id(),
-                target.profile().0,
+                target.profile().id.0,
                 target.adapter().rust_target(),
                 target.adapter().id().as_str(),
             )

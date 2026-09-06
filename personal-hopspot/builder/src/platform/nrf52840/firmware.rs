@@ -45,9 +45,7 @@ pub fn build(
         .env("PRNS_BUILD_VERSION", context.version())
         .current_dir(crate_dir);
     let adapter = adapter_for_rust_target(recipe.rust_target)?;
-    let linker_map = context.configure_firmware_cargo(target_id, adapter, &mut cargo)?;
+    let capture = context.configure_firmware_cargo(target_id, adapter, &mut cargo)?;
     run_status(&mut cargo, &format!("{target_id} cargo build"))?;
-    let linker_map = context.publish_linker_map(linker_map)?;
-
-    Ok(FirmwareEvidence::new(elf, linker_map))
+    context.finish_firmware_build(elf, capture)
 }

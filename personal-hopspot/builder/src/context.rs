@@ -70,7 +70,7 @@ impl<'a> BuildContext<'a> {
     }
 
     pub fn board_output(&self, board_slug: &str) -> PathBuf {
-        self.build_output_root()
+        self.configured_output_root()
             .join("firmware")
             .join("hopspot")
             .join(board_slug)
@@ -89,7 +89,7 @@ impl<'a> BuildContext<'a> {
         format!("firmware/hopspot/{board_slug}/{}/{filename}", self.version)
     }
 
-    fn build_output_root(&self) -> PathBuf {
+    pub fn configured_output_root(&self) -> PathBuf {
         if self.configuration.isolates_artifacts() {
             self.output_root.join(self.configuration.lto().as_str())
         } else {

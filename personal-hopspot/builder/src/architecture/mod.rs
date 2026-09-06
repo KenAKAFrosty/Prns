@@ -45,6 +45,7 @@ pub struct Adapter {
     architecture: ProcessorArchitecture,
     linker_flavor: LinkerFlavor,
     linker_program: &'static str,
+    linker_version_arguments: &'static [&'static str],
     configure_linker: fn(&mut Command) -> Result<PathBuf, BuildError>,
     linker_map_argument: fn(&Path) -> OsString,
 }
@@ -55,6 +56,7 @@ impl Adapter {
         architecture: ProcessorArchitecture,
         linker_flavor: LinkerFlavor,
         linker_program: &'static str,
+        linker_version_arguments: &'static [&'static str],
         configure_linker: fn(&mut Command) -> Result<PathBuf, BuildError>,
         linker_map_argument: fn(&Path) -> OsString,
     ) -> Self {
@@ -63,6 +65,7 @@ impl Adapter {
             architecture,
             linker_flavor,
             linker_program,
+            linker_version_arguments,
             configure_linker,
             linker_map_argument,
         }
@@ -91,6 +94,10 @@ impl Adapter {
     #[must_use]
     pub const fn linker_program(&self) -> &'static str {
         self.linker_program
+    }
+
+    pub(crate) const fn linker_version_arguments(&self) -> &'static [&'static str] {
+        self.linker_version_arguments
     }
 
     pub fn configure_cargo(&self, command: &mut Command) -> Result<PathBuf, BuildError> {

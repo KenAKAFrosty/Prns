@@ -13,6 +13,7 @@ pub(super) static ADAPTER: Adapter = Adapter::new(
     ProcessorArchitecture::RiscV32Imac,
     LinkerFlavor::RustLld,
     "rust-lld",
+    &["-flavor", "gnu", "--version"],
     configure_linker,
     linker_map_argument,
 );

@@ -1,5 +1,6 @@
 mod contracts;
 mod matrix;
+mod report;
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -96,6 +97,8 @@ enum ResourceError {
     Matrix(#[from] MatrixError),
     #[error(transparent)]
     Build(#[from] BuildError),
+    #[error(transparent)]
+    Report(#[from] report::ReportError),
 }
 
 fn main() -> ExitCode {
@@ -165,7 +168,7 @@ fn build_report(target: &Target<'_>, context: &BuildContext<'_>) -> Result<(), R
         "EMBEDDED_RESOURCE_BUILD: target={} name={:?} profile={} architecture={} adapter={} linker={} lto={} artifacts={} package_bytes={} elf={}",
         target.id(),
         target.display_name(),
-        target.profile().0,
+        target.profile().id.0,
         adapter.rust_target(),
         adapter.id().as_str(),
         adapter.linker_flavor().as_str(),
@@ -180,6 +183,8 @@ fn build_report(target: &Target<'_>, context: &BuildContext<'_>) -> Result<(), R
     if let Some(linker_map) = evidence.linker_map() {
         println!("linker-map {}", linker_map.display());
     }
+    let report = report::write(target, context, &evidence)?;
+    println!("report {}", report.display());
     Ok(())
 }
 

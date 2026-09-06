@@ -14,6 +14,7 @@ clap = { version = "4.5", features = ["derive"] }
 personal-hopspot-builder = { path = "../builder" }
 personal-hopspot-memory = { path = "../memory" }
 prns-flash-manifest = { path = "../../prns-flash-manifest" }
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0"
 

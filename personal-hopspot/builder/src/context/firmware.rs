@@ -2,13 +2,19 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use crate::architecture::Adapter;
-use crate::BuildError;
+use crate::toolchain::capture_toolchain_evidence;
+use crate::{BuildError, FirmwareEvidence, ToolchainEvidence};
 
 use super::BuildContext;
 
 pub(crate) struct LinkerMapCapture {
     pending: PathBuf,
     published: PathBuf,
+}
+
+pub(crate) struct FirmwareBuildCapture {
+    linker_map: Option<LinkerMapCapture>,
+    toolchain: Option<ToolchainEvidence>,
 }
 
 impl BuildContext<'_> {
@@ -25,11 +31,57 @@ impl BuildContext<'_> {
         target_id: &str,
         adapter: &Adapter,
         command: &mut Command,
-    ) -> Result<Option<LinkerMapCapture>, BuildError> {
+    ) -> Result<FirmwareBuildCapture, BuildError> {
         if let Some(lto) = self.configuration.lto().cargo_value() {
             command.env("CARGO_PROFILE_RELEASE_LTO", lto);
         }
-        adapter.configure_cargo(command)?;
+        let linker = adapter.configure_cargo(command)?;
+        let toolchain = self
+            .configuration
+            .captures_linker_map()
+            .then(|| capture_toolchain_evidence(command, adapter, &linker))
+            .transpose()?;
+        let linker_map = self.prepare_linker_map(target_id, adapter, command)?;
+        Ok(FirmwareBuildCapture {
+            linker_map,
+            toolchain,
+        })
+    }
+
+    pub fn linker_map_path(&self, target_id: &str) -> Option<PathBuf> {
+        self.configuration
+            .captures_linker_map()
+            .then(|| self.evidence_work_output(target_id).join("linker.map"))
+    }
+
+    pub fn cargo_target_directory(&self, target_id: &str) -> Option<PathBuf> {
+        self.configuration
+            .isolates_artifacts()
+            .then(|| self.evidence_work_output(target_id).join("cargo"))
+    }
+
+    pub fn pending_linker_map_path(&self, target_id: &str) -> Option<PathBuf> {
+        self.configuration.captures_linker_map().then(|| {
+            self.evidence_work_output(target_id)
+                .join(format!("linker.{}.map", self.evidence_run_id))
+        })
+    }
+
+    pub(crate) fn finish_firmware_build(
+        &self,
+        elf: PathBuf,
+        capture: FirmwareBuildCapture,
+    ) -> Result<FirmwareEvidence, BuildError> {
+        let linker_map = self.publish_linker_map(capture.linker_map)?;
+        Ok(FirmwareEvidence::new(elf, linker_map, capture.toolchain))
+    }
+
+    fn prepare_linker_map(
+        &self,
+        target_id: &str,
+        adapter: &Adapter,
+        command: &mut Command,
+    ) -> Result<Option<LinkerMapCapture>, BuildError> {
         let Some(published) = self.linker_map_path(target_id) else {
             return Ok(None);
         };
@@ -55,26 +107,7 @@ impl BuildContext<'_> {
         Ok(Some(LinkerMapCapture { pending, published }))
     }
 
-    pub fn linker_map_path(&self, target_id: &str) -> Option<PathBuf> {
-        self.configuration
-            .captures_linker_map()
-            .then(|| self.evidence_work_output(target_id).join("linker.map"))
-    }
-
-    pub fn cargo_target_directory(&self, target_id: &str) -> Option<PathBuf> {
-        self.configuration
-            .isolates_artifacts()
-            .then(|| self.evidence_work_output(target_id).join("cargo"))
-    }
-
-    pub fn pending_linker_map_path(&self, target_id: &str) -> Option<PathBuf> {
-        self.configuration.captures_linker_map().then(|| {
-            self.evidence_work_output(target_id)
-                .join(format!("linker.{}.map", self.evidence_run_id))
-        })
-    }
-
-    pub(crate) fn publish_linker_map(
+    fn publish_linker_map(
         &self,
         capture: Option<LinkerMapCapture>,
     ) -> Result<Option<PathBuf>, BuildError> {
@@ -113,6 +146,6 @@ impl BuildContext<'_> {
     }
 
     fn evidence_work_output(&self, target_id: &str) -> PathBuf {
-        self.build_output_root().join("work").join(target_id)
+        self.configured_output_root().join("work").join(target_id)
     }
 }

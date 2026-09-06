@@ -3,6 +3,8 @@ use std::process::{Command, Stdio};
 
 use crate::BuildError;
 
+pub(crate) use evidence::capture_toolchain_evidence;
+
 pub fn embedded_cargo_command() -> Command {
     let mut command = Command::new("cargo");
     command
@@ -118,3 +120,4 @@ mod tests {
         );
     }
 }
+mod evidence;

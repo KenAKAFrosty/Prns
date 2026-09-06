@@ -17,6 +17,7 @@ pub(super) static ADAPTER: Adapter = Adapter::new(
     ProcessorArchitecture::XtensaEsp32S3,
     LinkerFlavor::GnuLd,
     LINKER_PROGRAM,
+    &["--version"],
     configure_linker,
     linker_map_argument,
 );

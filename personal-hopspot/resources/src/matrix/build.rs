@@ -92,6 +92,10 @@ impl BuildEvidence {
         self.firmware.linker_map()
     }
 
+    pub(crate) const fn firmware(&self) -> &FirmwareEvidence {
+        &self.firmware
+    }
+
     pub(crate) fn package_bytes(&self) -> u64 {
         self.artifacts.iter().map(|artifact| artifact.bytes).sum()
     }
