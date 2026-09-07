@@ -210,16 +210,63 @@ fn discover_reports(root: &Path) -> Result<Vec<PathBuf>, SummaryError> {
         });
     }
     let mut reports = Vec::new();
-    discover_directory(root, &mut reports)?;
+    if root.file_name().and_then(|name| name.to_str()) == Some("reports") {
+        discover_report_directory(root, &mut reports)?;
+    } else {
+        discover_fragment_directories(root, &mut reports)?;
+    }
     reports.sort();
     Ok(reports)
 }
 
-fn discover_directory(directory: &Path, reports: &mut Vec<PathBuf>) -> Result<(), SummaryError> {
+fn discover_fragment_directories(
+    directory: &Path,
+    reports: &mut Vec<PathBuf>,
+) -> Result<(), SummaryError> {
+    let entries = directory_entries(directory)?;
+    for (path, kind) in &entries {
+        if kind.is_symlink() {
+            return Err(SummaryError::SymbolicLink { path: path.clone() });
+        }
+        if path.file_name().and_then(|name| name.to_str()) == Some("reports") {
+            if !kind.is_dir() {
+                return Err(SummaryError::InvalidReportLayout { path: path.clone() });
+            }
+            return discover_report_directory(path, reports);
+        }
+    }
+    for (path, kind) in entries {
+        if kind.is_dir() {
+            discover_fragment_directories(&path, reports)?;
+        }
+    }
+    Ok(())
+}
+
+fn discover_report_directory(
+    directory: &Path,
+    reports: &mut Vec<PathBuf>,
+) -> Result<(), SummaryError> {
+    for (path, kind) in directory_entries(directory)? {
+        if kind.is_symlink() {
+            return Err(SummaryError::SymbolicLink { path });
+        }
+        if kind.is_dir() {
+            return Err(SummaryError::InvalidReportLayout { path });
+        }
+        if kind.is_file() && path.extension().and_then(|value| value.to_str()) == Some("json") {
+            reports.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn directory_entries(directory: &Path) -> Result<Vec<(PathBuf, fs::FileType)>, SummaryError> {
     let entries = fs::read_dir(directory).map_err(|source| SummaryError::ReadDirectory {
         path: directory.to_path_buf(),
         source,
     })?;
+    let mut collected = Vec::new();
     for entry in entries {
         let entry = entry.map_err(|source| SummaryError::ReadDirectory {
             path: directory.to_path_buf(),
@@ -232,18 +279,10 @@ fn discover_directory(directory: &Path, reports: &mut Vec<PathBuf>) -> Result<()
                 path: path.clone(),
                 source,
             })?;
-        if kind.is_symlink() {
-            return Err(SummaryError::SymbolicLink { path });
-        }
-        if kind.is_dir() {
-            discover_directory(&path, reports)?;
-        } else if kind.is_file()
-            && path.extension().and_then(|value| value.to_str()) == Some("json")
-        {
-            reports.push(path);
-        }
+        collected.push((path, kind));
     }
-    Ok(())
+    collected.sort_by(|left, right| left.0.cmp(&right.0));
+    Ok(collected)
 }
 
 fn validate_linker_map(path: &Path, report: &ResourceReport) -> Result<(), SummaryError> {

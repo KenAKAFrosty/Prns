@@ -31,6 +31,18 @@ fn summary_merges_catalog_order_and_reports_numeric_deltas(
             value["static_ram"]["value"][0]["capacity"]["headroom_bytes"] = json!(4_954);
         }
     })?;
+    let cargo_metadata = reports
+        .join("embedded-resources-esp")
+        .join("work")
+        .join("heltec-v4")
+        .join("cargo")
+        .join(".rustc_info.json");
+    std::fs::create_dir_all(
+        cargo_metadata
+            .parent()
+            .ok_or("Cargo metadata has no parent")?,
+    )?;
+    std::fs::write(&cargo_metadata, b"not a resource report")?;
 
     let output = temporary.path().join("summary");
     let outcome = summarize(&matrix, &context, &reports, &baseline, &output)?;
@@ -86,7 +98,10 @@ fn summary_rejects_duplicate_and_missing_fragment_targets_before_writing(
     let baseline = prepare_baseline(temporary.path(), &matrix, &context)?;
     let reports = temporary.path().join("fragments");
     let paths = write_reports(&reports, &matrix, &context, |_, _| {})?;
-    let duplicate = reports.join("duplicate").join("heltec-v4.json");
+    let duplicate = reports
+        .join("duplicate")
+        .join("reports")
+        .join("heltec-v4.json");
     std::fs::create_dir_all(duplicate.parent().ok_or("duplicate has no parent")?)?;
     std::fs::copy(&paths[0], &duplicate)?;
     let output = temporary.path().join("summary");
