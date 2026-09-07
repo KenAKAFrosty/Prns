@@ -100,6 +100,22 @@ fn summary_rejects_duplicate_and_missing_fragment_targets_before_writing(
     assert!(!output.exists());
 
     std::fs::remove_file(duplicate)?;
+    let last = paths.last().ok_or("matrix produced no reports")?;
+    let linker_map = last
+        .parent()
+        .and_then(Path::parent)
+        .ok_or("report has no fragment root")?
+        .join("work")
+        .join("mesh-tower-v2")
+        .join("linker.map");
+    std::fs::remove_file(&linker_map)?;
+    assert!(matches!(
+        summarize(&matrix, &context, &reports, &baseline, &output),
+        Err(SummaryError::LinkerMapMetadata { path, .. }) if path == linker_map
+    ));
+    assert!(!output.exists());
+
+    std::fs::write(&linker_map, vec![0; 128])?;
     let missing = paths.last().ok_or("matrix produced no reports")?;
     std::fs::remove_file(missing)?;
     assert!(matches!(
@@ -186,6 +202,16 @@ fn write_reports(
                 .join(format!("{}.json", target.id()));
             std::fs::create_dir_all(path.parent().ok_or("report has no parent")?)?;
             std::fs::write(&path, serde_json::to_vec(&report)?)?;
+            let linker_map = root
+                .join(platform)
+                .join("work")
+                .join(target.id())
+                .join("linker.map");
+            std::fs::create_dir_all(linker_map.parent().ok_or("map has no parent")?)?;
+            std::fs::write(
+                linker_map,
+                vec![0; usize::try_from(report.analysis.linker_map_bytes)?],
+            )?;
             Ok(path)
         })
         .collect()

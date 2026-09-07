@@ -496,9 +496,13 @@ def validate() -> list[str]:
         'release toolchain esp install -- "${RUNNER_TEMP}/prns-esp-tools"',
         "embedded-resources-nrf52840",
         "embedded-resources-esp",
+        "embedded-resources-matrix",
+        "resources summarize",
+        "GITHUB_STEP_SUMMARY",
         "EMBEDDED_SELECTION_RESULT: ${{ needs.embedded-resource-selection.result }}",
         "EMBEDDED_REQUIRED: ${{ needs.embedded-resource-selection.outputs.required }}",
         "ESP32_RESULT: ${{ needs.esp32-firmware.result }}",
+        "EMBEDDED_SUMMARY_RESULT: ${{ needs.embedded-resource-summary.result }}",
     ):
         if product_matrix_gate not in ci:
             errors.append(
@@ -515,10 +519,45 @@ def validate() -> list[str]:
     for job_name in ("no-std-embedded", "esp32-firmware"):
         if selection_condition not in ci_jobs.get(job_name, ""):
             errors.append(f"ci.yml {job_name} does not use the shared resource selection")
+    summary_job = ci_jobs.get("embedded-resource-summary", "")
+    for dependency in (
+        "embedded-resource-selection",
+        "no-std-embedded",
+        "esp32-firmware",
+    ):
+        if f"- {dependency}" not in summary_job:
+            errors.append(f"embedded resource summary does not depend on {dependency}")
+    download_action = (
+        "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
+    )
+    if summary_job.count(download_action) != 2 or "merge-multiple" in summary_job:
+        errors.append("embedded resource summary does not preserve its two evidence fragments")
+    for artifact in ("embedded-resources-nrf52840", "embedded-resources-esp"):
+        if f"name: {artifact}" not in summary_job:
+            errors.append(f"embedded resource summary does not download {artifact}")
+    for summary_gate in (
+        "always() && needs.embedded-resource-selection.result == 'success'",
+        "--reports target/flash-artifacts/resources/fragments",
+        "--output target/flash-artifacts/resources/matrix",
+        'matrix/matrix.md >> "$GITHUB_STEP_SUMMARY"',
+        "fragments/**/reports/*.json",
+        "fragments/**/work/*/linker.map",
+        "if-no-files-found: error",
+    ):
+        if summary_gate not in summary_job:
+            errors.append(f"embedded resource summary is missing gate {summary_gate!r}")
     release_critical = ci_jobs.get("release-critical", "")
+    for result_name, successful_result in (
+        ("nRF", 'test "$EMBEDDED_RESULT" = "success"'),
+        ("ESP", 'test "$ESP32_RESULT" = "success"'),
+        ("summary", 'test "$EMBEDDED_SUMMARY_RESULT" = "success"'),
+    ):
+        if successful_result not in release_critical:
+            errors.append(f"release-critical does not require a successful {result_name} result")
     for result_name, skipped_result in (
         ("nRF", 'test "$EMBEDDED_RESULT" = "skipped"'),
         ("ESP", 'test "$ESP32_RESULT" = "skipped"'),
+        ("summary", 'test "$EMBEDDED_SUMMARY_RESULT" = "skipped"'),
     ):
         if skipped_result not in release_critical:
             errors.append(

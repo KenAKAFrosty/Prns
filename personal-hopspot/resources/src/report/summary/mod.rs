@@ -49,6 +49,22 @@ pub(crate) enum SummaryError {
     },
     #[error("resource evidence contains a symbolic link: {path}")]
     SymbolicLink { path: PathBuf },
+    #[error("resource report has no canonical fragment layout: {path}")]
+    InvalidReportLayout { path: PathBuf },
+    #[error("could not inspect linker map {path}: {source}")]
+    LinkerMapMetadata {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("linker map is not a regular file: {path}")]
+    InvalidLinkerMap { path: PathBuf },
+    #[error("linker map {path} contains {actual} bytes, but its report records {expected} bytes")]
+    LinkerMapSize {
+        path: PathBuf,
+        actual: u64,
+        expected: u64,
+    },
     #[error("{set} resource evidence repeats target {target:?}")]
     DuplicateTarget { set: EvidenceSet, target: String },
     #[error("{set} resource evidence is missing target {target:?}")]
@@ -77,6 +93,11 @@ pub(crate) struct SummaryOutcome {
     json: PathBuf,
     markdown: PathBuf,
     targets: usize,
+}
+
+struct CurrentReport {
+    path: PathBuf,
+    report: ResourceReport,
 }
 
 struct RamTotals {
@@ -113,7 +134,10 @@ pub(crate) fn summarize(
         if path.file_stem().and_then(|stem| stem.to_str()) != Some(target.as_str()) {
             return Err(SummaryError::MismatchedPath { path, target });
         }
-        if current_reports.insert(target.clone(), report).is_some() {
+        if current_reports
+            .insert(target.clone(), CurrentReport { path, report })
+            .is_some()
+        {
             return Err(SummaryError::DuplicateTarget {
                 set: EvidenceSet::Current,
                 target,
@@ -138,9 +162,14 @@ pub(crate) fn summarize(
                     target: target.id().to_string(),
                 })?;
         baseline::validate_target(target, context, &baseline_report)?;
-        baseline::validate_target(target, context, &current)?;
-        compare::require_matrix_compatible(&baseline_report, &current)?;
-        targets.push(target_summary(target.id(), &baseline_report, &current)?);
+        validate_linker_map(&current.path, &current.report)?;
+        baseline::validate_target(target, context, &current.report)?;
+        compare::require_matrix_compatible(&baseline_report, &current.report)?;
+        targets.push(target_summary(
+            target.id(),
+            &baseline_report,
+            &current.report,
+        )?);
     }
     reject_unexpected(EvidenceSet::Baseline, baseline_reports.keys().next())?;
     reject_unexpected(EvidenceSet::Current, current_reports.keys().next())?;
@@ -213,6 +242,43 @@ fn discover_directory(directory: &Path, reports: &mut Vec<PathBuf>) -> Result<()
         {
             reports.push(path);
         }
+    }
+    Ok(())
+}
+
+fn validate_linker_map(path: &Path, report: &ResourceReport) -> Result<(), SummaryError> {
+    let reports = path
+        .parent()
+        .filter(|parent| parent.file_name().and_then(|name| name.to_str()) == Some("reports"))
+        .ok_or_else(|| SummaryError::InvalidReportLayout {
+            path: path.to_path_buf(),
+        })?;
+    let fragment = reports
+        .parent()
+        .ok_or_else(|| SummaryError::InvalidReportLayout {
+            path: path.to_path_buf(),
+        })?;
+    let linker_map = fragment
+        .join("work")
+        .join(&report.target.id)
+        .join("linker.map");
+    let metadata =
+        fs::symlink_metadata(&linker_map).map_err(|source| SummaryError::LinkerMapMetadata {
+            path: linker_map.clone(),
+            source,
+        })?;
+    if metadata.file_type().is_symlink() {
+        return Err(SummaryError::SymbolicLink { path: linker_map });
+    }
+    if !metadata.is_file() {
+        return Err(SummaryError::InvalidLinkerMap { path: linker_map });
+    }
+    if metadata.len() != report.analysis.linker_map_bytes {
+        return Err(SummaryError::LinkerMapSize {
+            path: linker_map,
+            actual: metadata.len(),
+            expected: report.analysis.linker_map_bytes,
+        });
     }
     Ok(())
 }
