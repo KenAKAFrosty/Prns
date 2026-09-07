@@ -208,7 +208,7 @@ pub(super) fn radio_config(profile: RadioProfile) -> RadioConfig {
         spreading_factor,
         bandwidth,
         coding_rate,
-    } = profile.modulation;
+    } = profile.modulation();
     let spreading_factor = match spreading_factor {
         ProfileSpreadingFactor::Sf5 => SpreadingFactor::Sf5,
         ProfileSpreadingFactor::Sf6 => SpreadingFactor::Sf6,
@@ -231,20 +231,20 @@ pub(super) fn radio_config(profile: RadioProfile) -> RadioConfig {
         ProfileCodingRate::Cr48 => CodingRate::Cr4_8,
     };
     RadioConfig {
-        frequency_hz: profile.frequency.hz(),
+        frequency_hz: profile.frequency().hz(),
         modulation: LoraModulation {
             spreading_factor,
             bandwidth,
             coding_rate,
         },
         packet: LoraPacket {
-            preamble_symbols: profile.preamble.count(),
+            preamble_symbols: profile.preamble().count(),
             header: HeaderMode::Explicit,
             crc: PayloadCrc::Enabled,
             invert_iq: InvertIq::Standard,
         },
         network: LoRaNetwork::Reticulum,
-        tx_power_dbm: profile.tx_power.dbm(),
+        tx_power_dbm: profile.tx_power().dbm(),
     }
 }
 

@@ -656,7 +656,7 @@ fn print_metrics(
     after_egress: EgressMetricsSnapshot,
 ) {
     println!(
-        "METRICS role={role} bulk_jobs={} bulk_queue_wait_max_micros={} bulk_service_max_micros={} latency_jobs={} latency_queue_wait_max_micros={} latency_service_max_micros={} verify_jobs={} verify_queue_wait_max_micros={} verify_service_max_micros={} work_deferrals={} turns={} budget_yields={} turn_max_micros={} completion_batch_max={} inbound_batch_max={} command_batch_max={} owed_batch_max={} timer_lateness_max_ms={} pacer_lateness_max_ms={} egress_frames={} egress_full_drops={}",
+        "METRICS role={role} bulk_jobs={} bulk_queue_wait_max_micros={} bulk_service_max_micros={} latency_jobs={} latency_queue_wait_max_micros={} latency_service_max_micros={} verify_jobs={} verify_queue_wait_max_micros={} verify_service_max_micros={} work_deferrals={} turns={} budget_yields={} turn_max_micros={} completion_batch_max={} inbound_batch_max={} command_batch_max={} owed_batch_max={} timer_lateness_max_ms={} pacer_lateness_max_ms={} egress_frames={} egress_backpressured_frames={} egress_pending_frames={} egress_max_pending_frames={} egress_full_drops={}",
         after_crypto
             .bulk
             .completed_jobs
@@ -692,6 +692,11 @@ fn print_metrics(
         after_egress
             .enqueued_frames
             .saturating_sub(before_egress.enqueued_frames),
+        after_egress
+            .backpressured_frames
+            .saturating_sub(before_egress.backpressured_frames),
+        after_egress.pending_frames,
+        after_egress.maximum_pending_frames,
         after_egress
             .full_lane_drops
             .saturating_sub(before_egress.full_lane_drops),

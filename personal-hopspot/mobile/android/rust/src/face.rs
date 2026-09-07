@@ -91,9 +91,9 @@ impl HopspotFace {
             | UiAction::ControlGnss(_)
             | UiAction::ToggleStationUplink
             | UiAction::OpenDocs
-            | UiAction::OpenLoRaEditor
-            | UiAction::SetLoRaProfile(_)
-            | UiAction::ResetLoRaProfile
+            | UiAction::OpenSubGEditor
+            | UiAction::SetSubGConfiguration(_)
+            | UiAction::ClearSubGConfiguration
             | UiAction::SwapRadioMode => {}
         }
         action

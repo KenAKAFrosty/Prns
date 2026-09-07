@@ -1,4 +1,4 @@
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncWrite};
 
 use prns_core::engine::InstantMillis;
 #[cfg(feature = "i2p")]
@@ -16,13 +16,69 @@ use prns_core::interfaces::kiss_framing::{self, KissScanner};
 ))]
 use prns_core::interfaces::rns_serial_framing::{self, RnsSerialScanner};
 use prns_core::interfaces::{BitrateBps, FrameSink};
+#[cfg(any(target_os = "windows", test))]
+use prns_core::interfaces::{BROADCAST_WIRE_FRAME_LEN, IFAC_MAX_SIZE};
 use prns_core::units::DurationMillis;
+#[cfg(any(target_os = "windows", test))]
+use prns_core::wire::{WireContext, WirePacketHeader};
 use prns_runtime::manifold::airtime::{frame_airtime_us, AirtimeLedger};
 use prns_runtime::manifold::driver::TokioInterfaceStatus;
 use prns_runtime::manifold::interface_seam::InterfaceSeam;
 use prns_runtime::manifold::throughput::ThroughputLedger;
 
 const OUTBOUND_BATCH_TARGET_BYTES: usize = 256 * 1024;
+#[cfg(any(target_os = "windows", test))]
+const RESOURCE_WINDOW_BATCH_TARGET_BYTES: usize = 768 * 1024;
+#[cfg(any(target_os = "windows", test))]
+const RESOURCE_WINDOW_BATCH_FRAME_MAX_BYTES: usize = 8 * 1024 + IFAC_MAX_SIZE;
+
+#[cfg(any(target_os = "windows", test))]
+#[derive(Debug, PartialEq, Eq)]
+enum OutboundBatchClass {
+    LatencyBounded,
+    WindowBatchableResource,
+    CompatibilitySizedResource,
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn outbound_batch_class(frame: &[u8]) -> OutboundBatchClass {
+    match WirePacketHeader::parse(frame) {
+        Ok((header, _))
+            if header.context == WireContext::Resource
+                && frame.len() <= BROADCAST_WIRE_FRAME_LEN =>
+        {
+            OutboundBatchClass::CompatibilitySizedResource
+        }
+        Ok((header, _))
+            if header.context == WireContext::Resource
+                && frame.len() <= RESOURCE_WINDOW_BATCH_FRAME_MAX_BYTES =>
+        {
+            OutboundBatchClass::WindowBatchableResource
+        }
+        Ok(_) | Err(_) => OutboundBatchClass::LatencyBounded,
+    }
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_outbound_batch_target_bytes(frame: &[u8], buffer_capacity: usize) -> usize {
+    match outbound_batch_class(frame) {
+        OutboundBatchClass::LatencyBounded => OUTBOUND_BATCH_TARGET_BYTES.min(buffer_capacity),
+        OutboundBatchClass::WindowBatchableResource => {
+            RESOURCE_WINDOW_BATCH_TARGET_BYTES.min(buffer_capacity)
+        }
+        OutboundBatchClass::CompatibilitySizedResource => buffer_capacity,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn outbound_batch_target_bytes(frame: &[u8], buffer_capacity: usize) -> usize {
+    windows_outbound_batch_target_bytes(frame, buffer_capacity)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn outbound_batch_target_bytes(_frame: &[u8], buffer_capacity: usize) -> usize {
+    OUTBOUND_BATCH_TARGET_BYTES.min(buffer_capacity)
+}
 
 pub trait StreamDeframer {
     fn new() -> Self;
@@ -189,6 +245,104 @@ trait StreamWatchdog {
     async fn wait_for_tick(&mut self, started: tokio::time::Instant) -> I2pWatchdogVerdict;
 }
 
+#[derive(Clone, Copy)]
+enum StreamPollOrder {
+    ReadFirst,
+    WriteFirst,
+}
+
+enum StreamProgress {
+    Read(std::io::Result<usize>),
+    Write(std::io::Result<usize>),
+}
+
+#[derive(Clone, Copy)]
+enum PendingWriteClass {
+    Ordinary,
+    Keepalive,
+}
+
+struct PendingWrite {
+    len: usize,
+    written: usize,
+    class: PendingWriteClass,
+}
+
+fn poll_stream_read<S: AsyncRead + Unpin>(
+    stream: &mut S,
+    read_buf: &mut [u8],
+    cx: &mut std::task::Context<'_>,
+) -> std::task::Poll<std::io::Result<usize>> {
+    let mut destination = tokio::io::ReadBuf::new(read_buf);
+    match std::pin::Pin::new(stream).poll_read(cx, &mut destination) {
+        std::task::Poll::Ready(Ok(())) => std::task::Poll::Ready(Ok(destination.filled().len())),
+        std::task::Poll::Ready(Err(error)) => std::task::Poll::Ready(Err(error)),
+        std::task::Poll::Pending => std::task::Poll::Pending,
+    }
+}
+
+fn poll_stream_write<S: AsyncWrite + Unpin>(
+    stream: &mut S,
+    write_buf: &[u8],
+    cx: &mut std::task::Context<'_>,
+) -> std::task::Poll<std::io::Result<usize>> {
+    std::pin::Pin::new(stream).poll_write(cx, write_buf)
+}
+
+async fn next_stream_progress<S: AsyncRead + AsyncWrite + Unpin>(
+    stream: &mut S,
+    read_buf: &mut [u8],
+    write_buf: Option<&[u8]>,
+    poll_order: StreamPollOrder,
+) -> StreamProgress {
+    std::future::poll_fn(|cx| match (poll_order, write_buf) {
+        (StreamPollOrder::ReadFirst, Some(write_buf)) => {
+            match poll_stream_read(stream, read_buf, cx) {
+                std::task::Poll::Ready(read) => std::task::Poll::Ready(StreamProgress::Read(read)),
+                std::task::Poll::Pending => {
+                    poll_stream_write(stream, write_buf, cx).map(StreamProgress::Write)
+                }
+            }
+        }
+        (StreamPollOrder::WriteFirst, Some(write_buf)) => {
+            match poll_stream_write(stream, write_buf, cx) {
+                std::task::Poll::Ready(written) => {
+                    std::task::Poll::Ready(StreamProgress::Write(written))
+                }
+                std::task::Poll::Pending => {
+                    poll_stream_read(stream, read_buf, cx).map(StreamProgress::Read)
+                }
+            }
+        }
+        (_, None) => poll_stream_read(stream, read_buf, cx).map(StreamProgress::Read),
+    })
+    .await
+}
+
+fn keepalive_write(frame_buf: &mut [u8]) -> PendingWrite {
+    frame_buf[..HDLC_KEEPALIVE.len()].copy_from_slice(&HDLC_KEEPALIVE);
+    PendingWrite {
+        len: HDLC_KEEPALIVE.len(),
+        written: 0,
+        class: PendingWriteClass::Keepalive,
+    }
+}
+
+fn record_tx_write(
+    status: &TokioInterfaceStatus,
+    throughput: &mut ThroughputLedger,
+    airtime: &mut AirtimeLedger,
+    started: tokio::time::Instant,
+    bitrate: BitrateBps,
+    written: usize,
+) {
+    status.add_tx(written as u64);
+    let now = InstantMillis(started.elapsed().as_millis() as u64);
+    throughput.record_tx(now, written as u64);
+    status.set_transfer_rates(throughput.rates());
+    status.set_airtime(airtime.record_tx(now, frame_airtime_us(written, bitrate)));
+}
+
 #[cfg(any(
     feature = "tcp",
     feature = "serial",
@@ -328,10 +482,60 @@ async fn serve_inner<F, const READ_LEN: usize, const FRAMED_LEN: usize, S, Seam,
     deframer.reset();
     let read_buf: &mut [u8] = read_buf;
     let frame_buf: &mut [u8] = frame_buf;
+    let mut pending_write: Option<PendingWrite> = None;
+    let mut deferred_outbound: Option<std::vec::Vec<u8>> = None;
+    let mut poll_order = StreamPollOrder::WriteFirst;
 
     loop {
+        if pending_write.is_none() {
+            if let Some(outbound) = deferred_outbound.take() {
+                pending_write = F::encode(&outbound, frame_buf).map(|len| PendingWrite {
+                    len,
+                    written: 0,
+                    class: PendingWriteClass::Ordinary,
+                });
+            }
+        }
+        let write_buf = pending_write
+            .as_ref()
+            .map(|pending| &frame_buf[pending.written..pending.len]);
         tokio::select! {
-            read = stream.read(&mut *read_buf) => {
+            progress = next_stream_progress(&mut stream, read_buf, write_buf, poll_order) => {
+                let read = match progress {
+                    StreamProgress::Read(read) => {
+                        poll_order = StreamPollOrder::WriteFirst;
+                        read
+                    }
+                    StreamProgress::Write(written) => {
+                        poll_order = StreamPollOrder::ReadFirst;
+                        let written = match written {
+                            Ok(0) | Err(_) => return,
+                            Ok(written) => written,
+                        };
+                        let completed = {
+                            let Some(pending) = pending_write.as_mut() else {
+                                return;
+                            };
+                            pending.written += written;
+                            (pending.written == pending.len).then_some((pending.class, pending.len))
+                        };
+                        if let Some((class, written)) = completed {
+                            pending_write = None;
+                            if matches!(class, PendingWriteClass::Ordinary) {
+                                watchdog.observe_ordinary_write(elapsed_millis(started));
+                                record_tx_write(
+                                    status,
+                                    throughput,
+                                    airtime,
+                                    started,
+                                    bitrate,
+                                    written,
+                                );
+                            }
+                        }
+                        continue;
+                    }
+                };
                 let read = match read {
                     Ok(0) | Err(_) => return,
                     Ok(read) => read,
@@ -362,18 +566,12 @@ async fn serve_inner<F, const READ_LEN: usize, const FRAMED_LEN: usize, S, Seam,
                     }
                 }
             }
-            outbound = seam.next_outbound() => {
+            outbound = seam.next_outbound(), if pending_write.is_none() => {
+                let batch_target = outbound_batch_target_bytes(outbound, frame_buf.len());
                 let Some(mut filled) = F::encode(outbound, &mut *frame_buf) else {
                     continue;
                 };
-                let mut record_tx_write = |written: usize| {
-                    status.add_tx(written as u64);
-                    let now = InstantMillis(started.elapsed().as_millis() as u64);
-                    throughput.record_tx(now, written as u64);
-                    status.set_transfer_rates(throughput.rates());
-                    status.set_airtime(airtime.record_tx(now, frame_airtime_us(written, bitrate)));
-                };
-                while filled < OUTBOUND_BATCH_TARGET_BYTES {
+                while filled < batch_target {
                     let Some(next) = seam.try_next_outbound() else {
                         break;
                     };
@@ -381,38 +579,29 @@ async fn serve_inner<F, const READ_LEN: usize, const FRAMED_LEN: usize, S, Seam,
                         filled += more;
                         continue;
                     }
-                    if stream.write_all(&frame_buf[..filled]).await.is_err() {
-                        return;
-                    }
-                    watchdog.observe_ordinary_write(elapsed_millis(started));
-                    record_tx_write(filled);
-                    filled = F::encode(next, &mut *frame_buf).unwrap_or(0);
+                    deferred_outbound = Some(next.to_vec());
                     break;
                 }
                 if filled > 0 {
-                    if stream.write_all(&frame_buf[..filled]).await.is_err() {
-                        return;
-                    }
-                    watchdog.observe_ordinary_write(elapsed_millis(started));
-                    record_tx_write(filled);
+                    pending_write = Some(PendingWrite {
+                        len: filled,
+                        written: 0,
+                        class: PendingWriteClass::Ordinary,
+                    });
                 }
             }
-            verdict = watchdog.wait_for_tick(started) => {
+            verdict = watchdog.wait_for_tick(started), if pending_write.is_none() => {
                 match verdict {
                     I2pWatchdogVerdict::Continue => {}
                     I2pWatchdogVerdict::Degrade => {
                         status.set_connection(prns_core::interfaces::ConnectionState::Degraded);
                     }
                     I2pWatchdogVerdict::TransmitKeepalive => {
-                        if stream.write_all(&HDLC_KEEPALIVE).await.is_err() {
-                            return;
-                        }
+                        pending_write = Some(keepalive_write(frame_buf));
                     }
                     I2pWatchdogVerdict::DegradeAndTransmitKeepalive => {
                         status.set_connection(prns_core::interfaces::ConnectionState::Degraded);
-                        if stream.write_all(&HDLC_KEEPALIVE).await.is_err() {
-                            return;
-                        }
+                        pending_write = Some(keepalive_write(frame_buf));
                     }
                     I2pWatchdogVerdict::Disconnect => return,
                 }
@@ -430,6 +619,7 @@ mod tests {
     use super::*;
     use prns_core::interfaces::rns_serial_framing::RnsSerialDecoder;
     use prns_core::interfaces::{ConnectionState, FrameSinkError, InterfaceId};
+    use prns_core::wire::HEADER_MIN_LEN;
     use prns_runtime::manifold::driver::{tokio_grant_lane, TokioGrantConsumer};
     use std::pin::Pin;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -439,6 +629,7 @@ mod tests {
     struct LaneSeam {
         outbound: TokioGrantConsumer,
         inbound: std::vec::Vec<u8>,
+        inbound_commits: Arc<AtomicUsize>,
     }
 
     #[derive(Default)]
@@ -516,6 +707,68 @@ mod tests {
         assert_eq!(tiny.frame_len(), 0);
     }
 
+    #[test]
+    fn resource_frame_width_selects_its_batching_class() {
+        const BUFFER_CAPACITY: usize = OUTBOUND_BATCH_TARGET_BYTES * 4;
+        let mut frame = std::vec![0u8; BROADCAST_WIRE_FRAME_LEN];
+        frame[HEADER_MIN_LEN - 1] = WireContext::Resource.to_byte();
+        assert_eq!(
+            outbound_batch_class(&frame),
+            OutboundBatchClass::CompatibilitySizedResource
+        );
+        assert_eq!(
+            windows_outbound_batch_target_bytes(&frame, BUFFER_CAPACITY),
+            BUFFER_CAPACITY
+        );
+
+        frame[HEADER_MIN_LEN - 1] = WireContext::None.to_byte();
+        assert_eq!(
+            outbound_batch_class(&frame),
+            OutboundBatchClass::LatencyBounded
+        );
+        assert_eq!(
+            windows_outbound_batch_target_bytes(&frame, BUFFER_CAPACITY),
+            OUTBOUND_BATCH_TARGET_BYTES
+        );
+        assert_eq!(
+            outbound_batch_class(&frame[..HEADER_MIN_LEN - 1]),
+            OutboundBatchClass::LatencyBounded
+        );
+
+        frame.resize(RESOURCE_WINDOW_BATCH_FRAME_MAX_BYTES, 0);
+        frame[HEADER_MIN_LEN - 1] = WireContext::Resource.to_byte();
+        assert_eq!(
+            outbound_batch_class(&frame),
+            OutboundBatchClass::WindowBatchableResource
+        );
+        assert_eq!(
+            windows_outbound_batch_target_bytes(&frame, BUFFER_CAPACITY),
+            RESOURCE_WINDOW_BATCH_TARGET_BYTES
+        );
+
+        frame.push(0);
+        assert_eq!(
+            outbound_batch_class(&frame),
+            OutboundBatchClass::LatencyBounded
+        );
+        assert_eq!(
+            windows_outbound_batch_target_bytes(&frame, BUFFER_CAPACITY),
+            OUTBOUND_BATCH_TARGET_BYTES
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn non_windows_resource_batching_remains_latency_bounded() {
+        const BUFFER_CAPACITY: usize = OUTBOUND_BATCH_TARGET_BYTES * 4;
+        let mut frame = std::vec![0u8; RESOURCE_WINDOW_BATCH_FRAME_MAX_BYTES];
+        frame[HEADER_MIN_LEN - 1] = WireContext::Resource.to_byte();
+        assert_eq!(
+            outbound_batch_target_bytes(&frame, BUFFER_CAPACITY),
+            OUTBOUND_BATCH_TARGET_BYTES
+        );
+    }
+
     impl InterfaceSeam for LaneSeam {
         fn fill_random(&mut self, bytes: &mut [u8]) {
             bytes.fill(0);
@@ -526,6 +779,7 @@ mod tests {
         }
 
         async fn commit_inbound(&mut self) {
+            self.inbound_commits.fetch_add(1, Ordering::Relaxed);
             self.inbound.clear();
         }
 
@@ -601,6 +855,7 @@ mod tests {
             let mut seam = LaneSeam {
                 outbound: consumer,
                 inbound: std::vec::Vec::new(),
+                inbound_commits: Arc::new(AtomicUsize::new(0)),
             };
             let status = TokioInterfaceStatus::new_accounted(
                 InterfaceId::new([7u8; 8]),
@@ -677,6 +932,7 @@ mod tests {
             let mut seam = LaneSeam {
                 outbound: consumer,
                 inbound: std::vec::Vec::new(),
+                inbound_commits: Arc::new(AtomicUsize::new(0)),
             };
             let status = TokioInterfaceStatus::new_accounted(
                 InterfaceId::new([8u8; 8]),
@@ -712,6 +968,162 @@ mod tests {
             }
         }
         assert_eq!(decoded, payloads);
+        assert_eq!(writes.load(Ordering::Relaxed), 2);
+
+        drop(far);
+        served.await.expect("the serve loop returns on stream drop");
+    }
+
+    #[tokio::test]
+    async fn inbound_frames_advance_while_an_opposite_write_is_backpressured() {
+        let outbound = [0x11; 4096];
+        let (mut producer, consumer) = tokio_grant_lane(4096, 1);
+        producer
+            .try_grant()
+            .expect("the lane has a free slot")
+            .fill(&outbound);
+        producer.commit();
+
+        let (near, mut far) = tokio::io::duplex(64);
+        let writes = Arc::new(AtomicUsize::new(0));
+        let counted = WriteCounting {
+            stream: near,
+            writes: writes.clone(),
+        };
+        let inbound_commits = Arc::new(AtomicUsize::new(0));
+        let observed_commits = inbound_commits.clone();
+
+        let served = tokio::spawn(async move {
+            let mut buffers = FramedBuffers::<HdlcFraming, 4096, 8192>::new();
+            let mut seam = LaneSeam {
+                outbound: consumer,
+                inbound: std::vec::Vec::new(),
+                inbound_commits,
+            };
+            let status = TokioInterfaceStatus::new_accounted(
+                InterfaceId::new([9u8; 8]),
+                ConnectionState::Connected,
+            );
+            let mut airtime = AirtimeLedger::default();
+            let mut throughput = ThroughputLedger::new();
+            let mut meters = WireMeters {
+                status: &status,
+                airtime: &mut airtime,
+                throughput: &mut throughput,
+                bitrate: BitrateBps::guess(1_000_000),
+                started: tokio::time::Instant::now(),
+            };
+            serve(counted, &mut buffers, &mut seam, &mut meters).await;
+        });
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while writes.load(Ordering::Relaxed) == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the outbound write starts");
+
+        let mut inbound = [0u8; 64];
+        let inbound_len = HdlcFraming::encode(b"inbound", &mut inbound).expect("the frame fits");
+        tokio::io::AsyncWriteExt::write_all(&mut far, &inbound[..inbound_len])
+            .await
+            .expect("the inbound direction remains writable");
+
+        tokio::time::timeout(std::time::Duration::from_millis(250), async {
+            while observed_commits.load(Ordering::Relaxed) == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the inbound frame advances independently of the blocked write");
+
+        let mut decoder = RnsSerialDecoder::<4096>::new();
+        let mut decoded = None;
+        let mut buf = [0u8; 64];
+        while decoded.is_none() {
+            let read = tokio::io::AsyncReadExt::read(&mut far, &mut buf)
+                .await
+                .expect("the backpressured frame remains readable");
+            assert_ne!(read, 0, "the stream stays up until the frame arrives");
+            let mut offset = 0;
+            while offset < read {
+                if let Ok(Some(frame)) = decoder.feed_slice_next(&buf[..read], &mut offset) {
+                    if !frame.is_empty() {
+                        decoded = Some(frame.to_vec());
+                    }
+                }
+            }
+        }
+        assert_eq!(decoded.as_deref(), Some(outbound.as_slice()));
+        assert!(writes.load(Ordering::Relaxed) > 1);
+
+        drop(far);
+        served.await.expect("the serve loop returns on stream drop");
+    }
+
+    #[tokio::test]
+    async fn a_frame_that_overflows_a_partial_batch_retains_order_and_bytes() {
+        const FRAMED_LEN: usize = 128;
+        let first = [prns_core::interfaces::rns_serial_framing::FLAG; 30];
+        let second = [prns_core::interfaces::rns_serial_framing::FLAG; 60];
+        let (mut producer, consumer) = tokio_grant_lane(second.len(), 2);
+        for payload in [&first[..], &second[..]] {
+            producer
+                .try_grant()
+                .expect("the lane has a free slot")
+                .fill(payload);
+            producer.commit();
+        }
+
+        let (near, mut far) = tokio::io::duplex(1024);
+        let writes = Arc::new(AtomicUsize::new(0));
+        let counted = WriteCounting {
+            stream: near,
+            writes: writes.clone(),
+        };
+
+        let served = tokio::spawn(async move {
+            let mut buffers = FramedBuffers::<HdlcFraming, FRAMED_LEN, FRAMED_LEN>::new();
+            let mut seam = LaneSeam {
+                outbound: consumer,
+                inbound: std::vec::Vec::new(),
+                inbound_commits: Arc::new(AtomicUsize::new(0)),
+            };
+            let status = TokioInterfaceStatus::new_accounted(
+                InterfaceId::new([10u8; 8]),
+                ConnectionState::Connected,
+            );
+            let mut airtime = AirtimeLedger::default();
+            let mut throughput = ThroughputLedger::new();
+            let mut meters = WireMeters {
+                status: &status,
+                airtime: &mut airtime,
+                throughput: &mut throughput,
+                bitrate: BitrateBps::guess(1_000_000),
+                started: tokio::time::Instant::now(),
+            };
+            serve(counted, &mut buffers, &mut seam, &mut meters).await;
+        });
+
+        let mut decoder = RnsSerialDecoder::<FRAMED_LEN>::new();
+        let mut decoded: std::vec::Vec<std::vec::Vec<u8>> = std::vec::Vec::new();
+        let mut buf = [0u8; FRAMED_LEN];
+        while decoded.len() < 2 {
+            let read = tokio::io::AsyncReadExt::read(&mut far, &mut buf)
+                .await
+                .expect("the wire remains readable");
+            assert_ne!(read, 0, "the stream stays up until both frames arrive");
+            let mut offset = 0;
+            while offset < read {
+                if let Ok(Some(frame)) = decoder.feed_slice_next(&buf[..read], &mut offset) {
+                    if !frame.is_empty() {
+                        decoded.push(frame.to_vec());
+                    }
+                }
+            }
+        }
+        assert_eq!(decoded, [first.to_vec(), second.to_vec()]);
         assert_eq!(writes.load(Ordering::Relaxed), 2);
 
         drop(far);

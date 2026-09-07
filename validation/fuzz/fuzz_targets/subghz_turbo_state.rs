@@ -1,20 +1,51 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use prns_core::interfaces::subghz::frequency_hopping::{
+use prns_core::interfaces::subghz::regions::us915::frequency_hopping::{
     AntennaGainDeciDb, ConductedPowerDbm, MeasuredTwentyDbBandwidth, Us915PowerInputs,
 };
-use prns_core::interfaces::subghz::turbo::{
-    decode_frame, AcquisitionBeacon, AcquisitionObservation, AcquisitionTracker, CapabilitySupport,
-    ChannelAccess, ChannelAccessAction, ChannelAccessEvent, ContentionClass, ContentionPolicy,
-    DatagramId, MaximumTransmitUncertainty, MonotonicMicros, ReassemblyLifetime, ScheduleMicros,
-    TransmissionTimingBudget, TrustedScheduleClock, TrustedTimeSource, TurboHardwareSupport,
-    TurboReassembler, TurboTransmitterInstanceId, Us915TurboConfiguration, Us915TurboTransmitter,
-    UtcTimescale, TURBO_CHANNEL_COUNT, US915_TURBO_PHY,
+use prns_core::interfaces::subghz::regions::us915::turbo::{
+    decode_frame, AcquisitionBeacon, AcquisitionObservation, AcquisitionOutcome,
+    AcquisitionTracker, CapabilitySupport, ChannelAccess, ChannelAccessAction, ChannelAccessEvent,
+    ContentionClass, ContentionPolicy, DatagramId, MaximumTransmitUncertainty, MonotonicMicros,
+    ReassemblyLifetime, ScheduleMicros, SupercycleCycle, TransmissionTimingBudget,
+    TrustedScheduleClock, TrustedTimeSource, TurboGlobalSlot, TurboHardwareSupport,
+    TurboRadioDwell, TurboReassembler, TurboTransmitterInstanceId, Us915TurboConfiguration,
+    Us915TurboTransmitter, UtcTimescale, ValidatedAcquiredSchedule, TURBO_CHANNEL_COUNT,
+    US915_TURBO_SPEC,
 };
 use prns_core::interfaces::subghz::{
     ChannelAssessmentPolicy, ChannelNoiseFloorBank, ChannelSample,
 };
+
+fn validated_acquired_schedule(
+    maximum_drift_ppm: u32,
+    maximum_uncertainty: MaximumTransmitUncertainty,
+) -> ValidatedAcquiredSchedule {
+    let mut tracker = AcquisitionTracker::new(maximum_drift_ppm, maximum_uncertainty).unwrap();
+    for cycle_index in 0..US915_TURBO_SPEC.acquisition_observations() {
+        let cycle = SupercycleCycle::new(cycle_index).unwrap();
+        let global_slot = u64::from(cycle_index) * TURBO_CHANNEL_COUNT as u64;
+        let slot =
+            US915_TURBO_SPEC.slot_for_global_slot(TurboGlobalSlot::new(global_slot).unwrap());
+        let beacon = AcquisitionBeacon::new(cycle, cycle_index).unwrap();
+        let received_at = global_slot * US915_TURBO_SPEC.slot_us()
+            + beacon.completes_at_slot_offset_us(US915_TURBO_SPEC.phy());
+        let outcome = tracker
+            .observe(AcquisitionObservation::from_beacon(
+                MonotonicMicros::new(received_at),
+                slot.channel_index().index(),
+                beacon,
+                US915_TURBO_SPEC.phy(),
+                500,
+            ))
+            .unwrap();
+        if let AcquisitionOutcome::Operational { schedule } = outcome {
+            return schedule;
+        }
+    }
+    unreachable!()
+}
 
 fuzz_target!(|bytes: &[u8]| {
     let mut reassembler = TurboReassembler::new(ReassemblyLifetime::new(1_000_000).unwrap());
@@ -26,7 +57,8 @@ fuzz_target!(|bytes: &[u8]| {
     }
 
     let drift_ppm = bytes.first().copied().unwrap_or(1) as u32 + 1;
-    let mut tracker = AcquisitionTracker::new(drift_ppm).unwrap();
+    let maximum_uncertainty = MaximumTransmitUncertainty::new(5_000).unwrap();
+    let mut tracker = AcquisitionTracker::new(drift_ppm, maximum_uncertainty).unwrap();
     let mut noise =
         ChannelNoiseFloorBank::<TURBO_CHANNEL_COUNT, 8>::new(ChannelAssessmentPolicy::turbo())
             .unwrap();
@@ -48,17 +80,21 @@ fuzz_target!(|bytes: &[u8]| {
         let mut padded = [0u8; 8];
         padded[..chunk.len()].copy_from_slice(chunk);
         let received_at = u64::from_le_bytes(padded);
-        let cycle = prns_core::interfaces::subghz::turbo::supercycle_cycle_at(received_at);
+        let schedule_slot = US915_TURBO_SPEC.slot_at(ScheduleMicros::new(received_at));
+        let cycle = schedule_slot.cycle();
         let beacon =
             AcquisitionBeacon::from_entropy(cycle, u16::from_le_bytes([padded[0], padded[1]]));
-        let channel = prns_core::interfaces::subghz::turbo::channel_index_at(received_at);
-        let _ = tracker.observe(AcquisitionObservation::from_beacon(
+        let channel = schedule_slot.channel_index().index();
+        let outcome = tracker.observe(AcquisitionObservation::from_beacon(
             MonotonicMicros::new(received_at),
             channel,
             beacon,
-            US915_TURBO_PHY,
+            US915_TURBO_SPEC.phy(),
             u64::from(padded[2]) + 1,
         ));
+        if let Ok(AcquisitionOutcome::Operational { schedule }) = outcome {
+            let _ = schedule.window_at(MonotonicMicros::new(received_at));
+        }
     }
 
     let clock = TrustedScheduleClock::new(
@@ -70,6 +106,19 @@ fuzz_target!(|bytes: &[u8]| {
         UtcTimescale::PosixUnsmeared,
     )
     .unwrap();
+    for chunk in bytes.chunks(16) {
+        let mut padded = [0u8; 16];
+        padded[..chunk.len()].copy_from_slice(chunk);
+        let begins_at = u64::from_le_bytes(padded[..8].try_into().unwrap());
+        let duration_us = u64::from_le_bytes(padded[8..].try_into().unwrap());
+        let ends_before = begins_at.saturating_add(duration_us);
+        if let Ok(dwell) = TurboRadioDwell::new(
+            MonotonicMicros::new(begins_at),
+            MonotonicMicros::new(ends_before),
+        ) {
+            let _ = clock.authorize_receive(dwell);
+        }
+    }
     let timing = TransmissionTimingBudget::new(1_000, 500, 1_000, 250, 1_000).unwrap();
     let power = Us915PowerInputs::new(
         ConductedPowerDbm::new(22).unwrap(),
@@ -88,23 +137,31 @@ fuzz_target!(|bytes: &[u8]| {
         sync_word: CapabilitySupport::Supported,
         crc: CapabilitySupport::Supported,
     };
-    let mut transmitter = Us915TurboTransmitter::new(
-        MonotonicMicros::new(0),
-        clock,
-        Us915TurboConfiguration::new(
-            MeasuredTwentyDbBandwidth::new(400_000).unwrap(),
-            timing,
-            MaximumTransmitUncertainty::new(5_000).unwrap(),
-            power,
-            hardware_support,
-            TurboTransmitterInstanceId::new(1).unwrap(),
-        ),
-    )
-    .unwrap();
+    let configuration = Us915TurboConfiguration::new(
+        MeasuredTwentyDbBandwidth::new(400_000).unwrap(),
+        timing,
+        maximum_uncertainty,
+        power,
+        hardware_support,
+        TurboTransmitterInstanceId::new(1).unwrap(),
+    );
+    let mut transmitter = if bytes.first().copied().unwrap_or(0) & 4 == 0 {
+        Us915TurboTransmitter::new(MonotonicMicros::new(0), clock, configuration).unwrap()
+    } else {
+        Us915TurboTransmitter::new_with_acquired_schedule(
+            MonotonicMicros::new(0),
+            validated_acquired_schedule(drift_ppm, maximum_uncertainty),
+            configuration,
+        )
+        .unwrap()
+    };
 
     for (index, chunk) in bytes.chunks(32).enumerate().take(64) {
-        let now = 10_100_000u64.saturating_add(index as u64 * 400_000);
-        let channel = prns_core::interfaces::subghz::turbo::channel_index_at(now);
+        let now = 50_100_000u64.saturating_add(index as u64 * 400_000);
+        let channel = US915_TURBO_SPEC
+            .slot_at(ScheduleMicros::new(now))
+            .channel_index()
+            .index();
         let mut access = ChannelAccess::begin(
             ContentionPolicy::turbo(),
             channel,

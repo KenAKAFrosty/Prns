@@ -1,4 +1,6 @@
-use super::super::MonotonicMicros;
+use crate::interfaces::subghz::MonotonicMicros;
+
+const MAXIMUM_DRIFT_PPM: u32 = 1_000_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ScheduleMicros(u64);
@@ -37,7 +39,7 @@ pub struct TrustedScheduleClock {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AcquiredReceivePhase {
+pub struct AcquisitionCandidate {
     observed_at: MonotonicMicros,
     schedule_at_observation: ScheduleMicros,
     uncertainty_us: u64,
@@ -47,9 +49,18 @@ pub struct AcquiredReceivePhase {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MaximumTransmitUncertainty(u64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MaximumTransmitUncertaintyError {
+    Empty,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClockError {
     EmptyUncertainty,
     EmptyDriftBound,
+    DriftBoundOutsideRange { ppm: u32, maximum_ppm: u32 },
     MonotonicTimeWentBackward,
     TimeRangeOverflow,
     TransmitUncertaintyExceeded { actual_us: u64, maximum_us: u64 },
@@ -83,6 +94,32 @@ impl ClockWindow {
 
     pub const fn latest_schedule_us(self) -> u64 {
         self.center_schedule_us.saturating_add(self.uncertainty_us)
+    }
+
+    pub(super) fn require_transmit_uncertainty(
+        self,
+        maximum_uncertainty: MaximumTransmitUncertainty,
+    ) -> Result<Self, ClockError> {
+        if self.uncertainty_us() > maximum_uncertainty.micros() {
+            return Err(ClockError::TransmitUncertaintyExceeded {
+                actual_us: self.uncertainty_us(),
+                maximum_us: maximum_uncertainty.micros(),
+            });
+        }
+        Ok(self)
+    }
+}
+
+impl MaximumTransmitUncertainty {
+    pub const fn new(micros: u64) -> Result<Self, MaximumTransmitUncertaintyError> {
+        if micros == 0 {
+            return Err(MaximumTransmitUncertaintyError::Empty);
+        }
+        Ok(Self(micros))
+    }
+
+    pub const fn micros(self) -> u64 {
+        self.0
     }
 }
 
@@ -119,8 +156,8 @@ impl TrustedScheduleClock {
         if uncertainty_us == 0 {
             return Err(ClockError::EmptyUncertainty);
         }
-        if maximum_drift_ppm == 0 {
-            return Err(ClockError::EmptyDriftBound);
+        if let Err(error) = validate_drift_bound(maximum_drift_ppm) {
+            return Err(error);
         }
         Ok(Self {
             observed_at,
@@ -153,16 +190,10 @@ impl TrustedScheduleClock {
     pub fn transmit_window_at(
         self,
         now: MonotonicMicros,
-        maximum_uncertainty_us: u64,
+        maximum_uncertainty: MaximumTransmitUncertainty,
     ) -> Result<ClockWindow, ClockError> {
-        let window = self.window_at(now)?;
-        if window.uncertainty_us() > maximum_uncertainty_us {
-            return Err(ClockError::TransmitUncertaintyExceeded {
-                actual_us: window.uncertainty_us(),
-                maximum_us: maximum_uncertainty_us,
-            });
-        }
-        Ok(window)
+        self.window_at(now)?
+            .require_transmit_uncertainty(maximum_uncertainty)
     }
 
     pub(crate) fn assess_update(
@@ -199,7 +230,7 @@ impl TrustedScheduleClock {
     }
 }
 
-impl AcquiredReceivePhase {
+impl AcquisitionCandidate {
     pub(crate) const fn new(
         observed_at: MonotonicMicros,
         schedule_at_observation: ScheduleMicros,
@@ -211,8 +242,8 @@ impl AcquiredReceivePhase {
         if uncertainty_us == 0 {
             return Err(ClockError::EmptyUncertainty);
         }
-        if maximum_drift_ppm == 0 {
-            return Err(ClockError::EmptyDriftBound);
+        if let Err(error) = validate_drift_bound(maximum_drift_ppm) {
+            return Err(error);
         }
         Ok(Self {
             observed_at,
@@ -236,6 +267,10 @@ impl AcquiredReceivePhase {
         self.distinct_channels
     }
 
+    pub const fn uncertainty_us(self) -> u64 {
+        self.uncertainty_us
+    }
+
     pub fn window_at(self, now: MonotonicMicros) -> Result<ClockWindow, ClockError> {
         window_at(
             self.observed_at,
@@ -245,6 +280,19 @@ impl AcquiredReceivePhase {
             now,
         )
     }
+}
+
+pub(crate) const fn validate_drift_bound(maximum_drift_ppm: u32) -> Result<(), ClockError> {
+    if maximum_drift_ppm == 0 {
+        return Err(ClockError::EmptyDriftBound);
+    }
+    if maximum_drift_ppm > MAXIMUM_DRIFT_PPM {
+        return Err(ClockError::DriftBoundOutsideRange {
+            ppm: maximum_drift_ppm,
+            maximum_ppm: MAXIMUM_DRIFT_PPM,
+        });
+    }
+    Ok(())
 }
 
 fn window_at(

@@ -6,3 +6,6 @@ pub use model::{
     MeasuredTwentyDbBandwidthError, Us915HopSet, Us915HoppingModel, Us915HoppingModelError,
     Us915PowerBudget, Us915PowerBudgetError, Us915PowerClass, Us915PowerInputs,
 };
+
+#[cfg(test)]
+mod tests;

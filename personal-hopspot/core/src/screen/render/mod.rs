@@ -23,10 +23,10 @@ use gnss::draw_gnss_panel;
 use layout::*;
 #[cfg(feature = "remote-control-pairing")]
 use menus::draw_remote_control_pairing;
-use menus::lora::draw_lora_editor;
+use menus::subg::draw_subg_editor;
 use menus::{
     draw_global_menu, draw_interface_menu, draw_limits_page, draw_notice, draw_radio_confirm,
-    draw_sleeping,
+    draw_sleeping, draw_subg_clear_confirm,
 };
 
 pub(super) fn draw<D: DrawTarget<Color = BinaryColor>>(
@@ -50,8 +50,8 @@ pub(super) fn draw<D: DrawTarget<Color = BinaryColor>>(
         return;
     }
 
-    if let UiMode::LoRaEditor { screen, profile } = state.mode {
-        draw_lora_editor(display, screen, &profile);
+    if let UiMode::SubGEditor { screen, profile } = state.mode {
+        draw_subg_editor(display, screen, &profile);
         return;
     }
 
@@ -68,6 +68,11 @@ pub(super) fn draw<D: DrawTarget<Color = BinaryColor>>(
 
     if let UiMode::ConfirmRadioSwap { confirm } = state.mode {
         draw_radio_confirm(display, confirm, state.access_point);
+        return;
+    }
+
+    if let UiMode::ConfirmSubGClear { confirm } = state.mode {
+        draw_subg_clear_confirm(display, confirm);
         return;
     }
 

@@ -23,6 +23,24 @@ use super::host_protocol::{
 };
 use super::HeapFrameSlot;
 
+const INLINE_RESOURCE_OPEN_MAX_BYTES: usize = 8 * 1024;
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum ResourceOpenExecution {
+    Manifold,
+    CryptoWorker,
+}
+
+impl ResourceOpenExecution {
+    pub(super) fn for_sealed_byte_len(sealed_byte_len: usize) -> Self {
+        if sealed_byte_len <= INLINE_RESOURCE_OPEN_MAX_BYTES {
+            Self::Manifold
+        } else {
+            Self::CryptoWorker
+        }
+    }
+}
+
 struct PendingResourceBuild {
     plan: ResourceBuildPlan,
     workspace: ResourceBuildWorkspace,
@@ -152,46 +170,53 @@ impl PendingOwedWork {
         owed: ResourceOpenOwed<'_>,
         pool: Option<&CryptoPool>,
     ) {
-        if pool.is_some() {
-            let ResourceOpenOwed {
-                link_id,
-                hash,
-                span_start,
-                state,
-                bytes,
-                residence,
-                other_transfers_in_flight: _,
-            } = owed;
-            self.push_ready(CryptoJob::OpenSpan(Box::new(OpenSpanJob {
-                link_id,
-                hash,
-                span_start,
-                state,
-                residence,
-                buffer: OpenSpanBuffer::Span(bytes.to_vec()),
-            })));
-        } else {
-            let completed = owed.fulfill_inline();
-            let opened = match completed.opened {
-                OpenedResourceSpan::InPlace { byte_len } => OpenedSpanResult::InPlace { byte_len },
-                OpenedResourceSpan::Returned(bytes) => OpenedSpanResult::Owned(bytes.to_vec()),
-                OpenedResourceSpan::ReturnedTransfer {
-                    transfer,
-                    span_byte_len,
-                } => OpenedSpanResult::Transfer {
-                    bytes: transfer,
-                    span_byte_len,
-                },
-            };
-            self.completed.push_back(CryptoResult::SpanOpened {
-                link_id: completed.link_id,
-                hash: completed.hash,
-                span_start: completed.span_start,
-                state: completed.state,
-                residence: completed.residence,
-                opened,
-            });
+        let execution = match pool {
+            Some(_) => ResourceOpenExecution::for_sealed_byte_len(owed.state.sealed_byte_len()),
+            None => ResourceOpenExecution::Manifold,
+        };
+        match execution {
+            ResourceOpenExecution::CryptoWorker => {
+                let ResourceOpenOwed {
+                    link_id,
+                    hash,
+                    span_start,
+                    state,
+                    bytes,
+                    residence,
+                    other_transfers_in_flight: _,
+                } = owed;
+                self.push_ready(CryptoJob::OpenSpan(Box::new(OpenSpanJob {
+                    link_id,
+                    hash,
+                    span_start,
+                    state,
+                    residence,
+                    buffer: OpenSpanBuffer::Span(bytes.to_vec()),
+                })));
+                return;
+            }
+            ResourceOpenExecution::Manifold => {}
         }
+        let completed = owed.fulfill_inline();
+        let opened = match completed.opened {
+            OpenedResourceSpan::InPlace { byte_len } => OpenedSpanResult::InPlace { byte_len },
+            OpenedResourceSpan::Returned(bytes) => OpenedSpanResult::Owned(bytes.to_vec()),
+            OpenedResourceSpan::ReturnedTransfer {
+                transfer,
+                span_byte_len,
+            } => OpenedSpanResult::Transfer {
+                bytes: transfer,
+                span_byte_len,
+            },
+        };
+        self.completed.push_back(CryptoResult::SpanOpened {
+            link_id: completed.link_id,
+            hash: completed.hash,
+            span_start: completed.span_start,
+            state: completed.state,
+            residence: completed.residence,
+            opened,
+        });
     }
 
     pub(super) fn push_deferred_transfer_open(
@@ -417,5 +442,17 @@ mod tests {
             pending.bulk.front(),
             Some(PendingJob::Ready(CryptoJob::ScheduledTest(job))) if job.id == 1
         ));
+    }
+
+    #[test]
+    fn resource_open_execution_keeps_small_tokens_on_the_manifold() {
+        assert_eq!(
+            ResourceOpenExecution::for_sealed_byte_len(INLINE_RESOURCE_OPEN_MAX_BYTES),
+            ResourceOpenExecution::Manifold
+        );
+        assert_eq!(
+            ResourceOpenExecution::for_sealed_byte_len(INLINE_RESOURCE_OPEN_MAX_BYTES + 1),
+            ResourceOpenExecution::CryptoWorker
+        );
     }
 }

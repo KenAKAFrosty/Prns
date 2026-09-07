@@ -1,13 +1,14 @@
 use super::*;
-use crate::interfaces::subghz::turbo::{
-    TURBO_CHANNEL_COUNT, TURBO_OCCUPANCY_LIMIT_US, US915_TURBO_CHANNELS,
+use crate::interfaces::subghz::frequency_hopping::{
+    audit_frequency_occupancy, FrequencyOccupancyError, HopTransmission,
 };
+use crate::interfaces::subghz::regions::us915::turbo::{TURBO_CHANNEL_COUNT, US915_TURBO_SPEC};
 use crate::interfaces::subghz::MonotonicMicros;
 
 fn model() -> Us915HoppingModel {
     Us915HoppingModel::new(
         MeasuredTwentyDbBandwidth::new(500_000).unwrap(),
-        ChannelOccupancyLimit::new(TURBO_OCCUPANCY_LIMIT_US).unwrap(),
+        ChannelOccupancyLimit::new(US915_TURBO_SPEC.channel_occupancy_budget_us()).unwrap(),
     )
     .unwrap()
 }
@@ -29,14 +30,14 @@ fn wide_us915_model_requires_at_least_twenty_five_channels() {
 
 #[test]
 fn turbo_channels_form_a_valid_us915_hop_set() {
-    let hop_set = Us915HopSet::new(model(), US915_TURBO_CHANNELS).unwrap();
-    assert_eq!(hop_set.channels(), &US915_TURBO_CHANNELS);
+    let hop_set = Us915HopSet::new(model(), *US915_TURBO_SPEC.channels()).unwrap();
+    assert_eq!(hop_set.channels(), US915_TURBO_SPEC.channels());
     assert_eq!(TURBO_CHANNEL_COUNT, 51);
 }
 
 #[test]
 fn offline_oracle_rejects_the_first_excess_microsecond() {
-    let hop_set = Us915HopSet::new(model(), US915_TURBO_CHANNELS).unwrap();
+    let hop_set = Us915HopSet::new(model(), *US915_TURBO_SPEC.channels()).unwrap();
     let transmissions = [
         HopTransmission::new(0, MonotonicMicros::new(0), 300_000).unwrap(),
         HopTransmission::new(0, MonotonicMicros::new(5_000_000), 90_001).unwrap(),
@@ -53,7 +54,7 @@ fn offline_oracle_rejects_the_first_excess_microsecond() {
 
 #[test]
 fn ten_second_quarantine_leaves_no_prior_transmission_in_the_window() {
-    let hop_set = Us915HopSet::new(model(), US915_TURBO_CHANNELS).unwrap();
+    let hop_set = Us915HopSet::new(model(), *US915_TURBO_SPEC.channels()).unwrap();
     let transmissions = [
         HopTransmission::new(0, MonotonicMicros::new(0), 390_000).unwrap(),
         HopTransmission::new(0, MonotonicMicros::new(10_400_000), 390_000).unwrap(),

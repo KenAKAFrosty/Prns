@@ -2,6 +2,7 @@ use core::fmt::Write as _;
 
 use personal_hopspot_core as hopspot;
 use personal_rns::bluetooth_auto::BluetoothAutoStatus;
+use personal_rns::interfaces::subghz::SubGConfigurationState;
 use personal_rns::interfaces::{InterfaceId, InterfaceSnapshot, InterfaceStatus, Membership};
 
 use super::bluetooth_auto::{BLE_SHARED, BLE_SUPERVISOR_ID, MEMBERS};
@@ -45,12 +46,13 @@ pub(super) fn build_snapshots(
 
 pub(super) fn build_cards(
     snapshots: &[InterfaceSnapshot],
+    subg_configuration: SubGConfigurationState,
     lora_id: InterfaceId,
     usb_id: InterfaceId,
 ) -> heapless::Vec<hopspot::Card, { MEMBERS + 4 }> {
     let classify = |id: InterfaceId| -> Option<(hopspot::CardKind, hopspot::CardLabel)> {
         if id == lora_id {
-            Some((hopspot::CardKind::LoRa, hopspot::card_label("LoRa")))
+            Some(hopspot::subg_card(subg_configuration))
         } else if id == usb_id {
             Some((hopspot::CardKind::Usb, hopspot::card_label("USB")))
         } else if id == BLE_SUPERVISOR_ID {

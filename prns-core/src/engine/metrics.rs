@@ -8,6 +8,8 @@ use crate::routing::ingress::{AnnounceIngest, IgnoreReason, IngestPacketOutcome}
 use crate::routing::links::handshake::LinkRttError;
 use crate::storage::StorageLayout;
 
+use super::InstantMillis;
+
 use super::state::EngineState;
 
 prns_macros::iterable_enum! {
@@ -407,11 +409,42 @@ pub struct ResourceDirectionMetricsSnapshot {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ResourceRoundIntervalMetricsSnapshot {
+    pub observations: u64,
+    pub total_millis: u64,
+    pub maximum_millis: u64,
+}
+
+impl ResourceRoundIntervalMetricsSnapshot {
+    fn record(&mut self, started_at: InstantMillis, completed_at: InstantMillis) {
+        let elapsed = completed_at.0.saturating_sub(started_at.0);
+        self.observations = self.observations.saturating_add(1);
+        self.total_millis = self.total_millis.saturating_add(elapsed);
+        self.maximum_millis = self.maximum_millis.max(elapsed);
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ResourceRoundMetricsSnapshot {
+    pub advertisement_to_request: ResourceRoundIntervalMetricsSnapshot,
+    pub last_frame_to_proof: ResourceRoundIntervalMetricsSnapshot,
+    pub proof_to_next_advertisement: ResourceRoundIntervalMetricsSnapshot,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct ResourceContinuationProofTiming {
+    pub(crate) link_id: crate::routing::links::LinkId,
+    pub(crate) next_segment_index: u64,
+    pub(crate) arrived_at: InstantMillis,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct EngineResourceMetricsSnapshot {
     pub incoming: ResourceDirectionMetricsSnapshot,
     pub outgoing: ResourceDirectionMetricsSnapshot,
     pub pending_depth: u32,
     pub admission_events: ResourceAdmissionEventCounts,
+    pub rounds: ResourceRoundMetricsSnapshot,
 }
 
 prns_macros::iterable_enum! {
@@ -540,6 +573,81 @@ pub struct EngineMetricsSnapshot {
 impl<S: StorageLayout> EngineState<S> {
     pub(crate) fn record_resource_admission_event(&mut self, event: ResourceAdmissionEvent) {
         self.resource_admission_event_counts.record(event);
+    }
+
+    pub(crate) fn record_resource_advertisement_to_request(
+        &mut self,
+        advertised_at: InstantMillis,
+        requested_at: InstantMillis,
+    ) {
+        self.resource_round_metrics
+            .advertisement_to_request
+            .record(advertised_at, requested_at);
+    }
+
+    pub(crate) fn record_resource_last_frame_to_proof(
+        &mut self,
+        enqueued_at: InstantMillis,
+        proof_at: InstantMillis,
+    ) {
+        self.resource_round_metrics
+            .last_frame_to_proof
+            .record(enqueued_at, proof_at);
+    }
+
+    pub(crate) fn retain_resource_continuation_proof(
+        &mut self,
+        link_id: crate::routing::links::LinkId,
+        next_segment_index: u64,
+        arrived_at: InstantMillis,
+    ) {
+        if let Some(timing) = self
+            .resource_continuation_proof_timings
+            .iter_mut()
+            .find(|timing| timing.link_id == link_id)
+        {
+            *timing = ResourceContinuationProofTiming {
+                link_id,
+                next_segment_index,
+                arrived_at,
+            };
+            return;
+        }
+        self.resource_continuation_proof_timings
+            .push(ResourceContinuationProofTiming {
+                link_id,
+                next_segment_index,
+                arrived_at,
+            });
+    }
+
+    pub(crate) fn record_resource_continuation_advertisement(
+        &mut self,
+        link_id: crate::routing::links::LinkId,
+        segment_index: u64,
+        advertised_at: InstantMillis,
+    ) {
+        let Some(index) = self
+            .resource_continuation_proof_timings
+            .iter()
+            .position(|timing| {
+                timing.link_id == link_id && timing.next_segment_index == segment_index
+            })
+        else {
+            return;
+        };
+        let timing = self.resource_continuation_proof_timings.swap_remove(index);
+        self.resource_round_metrics
+            .proof_to_next_advertisement
+            .record(timing.arrived_at, advertised_at);
+    }
+
+    pub(crate) fn clear_resource_continuation_proof(
+        &mut self,
+        link_id: crate::routing::links::LinkId,
+    ) {
+        self.resource_continuation_proof_timings
+            .retain(|timing| timing.link_id != link_id);
     }
 
     pub fn attach_metrics_interface(

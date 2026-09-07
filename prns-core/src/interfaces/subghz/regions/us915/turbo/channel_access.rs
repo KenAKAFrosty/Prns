@@ -1,5 +1,5 @@
-use super::super::MonotonicMicros;
-use super::schedule::TURBO_CHANNEL_COUNT;
+use super::spec::TURBO_CHANNEL_COUNT;
+use crate::interfaces::subghz::MonotonicMicros;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogicalPacketTxop {

@@ -8,9 +8,9 @@ use static_cell::{ConstStaticCell, StaticCell};
 
 use personal_hopspot_core as hopspot;
 use personal_rns::engine::IssuedCommand;
-#[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
-use personal_rns::interfaces::lora::US915_AUTO_LORA_PROFILE;
 use personal_rns::interfaces::lora::{AirtimePolicy, LORA_MAX_PAYLOAD};
+#[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
+use personal_rns::interfaces::subghz::SubGConfigurationState;
 use personal_rns::interfaces::usb_auto::{WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID};
 use personal_rns::interfaces::{ConnectionState, InterfaceId};
 use personal_rns::lora::{LoRaControl, LoRaInterface, LoRaInterfaceInput, LoRaSpectrumStatus};
@@ -323,12 +323,13 @@ pub async fn run(spawner: Spawner) -> ! {
     );
     let mut manifold_lanes = ManifoldLanes::new();
     #[cfg(any(feature = "board-t096", feature = "board-t114"))]
-    let loaded_lora_profile = selected::load_profile(shared_flash).await;
+    let loaded_subg_configuration = selected::load_subg_configuration(shared_flash).await;
     #[cfg(any(feature = "board-t096", feature = "board-t114"))]
-    let lora_profile = loaded_lora_profile.profile;
+    let subg_configuration = loaded_subg_configuration.state;
     #[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
-    let lora_profile = US915_AUTO_LORA_PROFILE;
-    let lora_id = LoraInterface::interface_id(&lora_profile);
+    let subg_configuration = SubGConfigurationState::Unconfigured;
+    let lora_id = LoraInterface::interface_id_for_configuration(subg_configuration)
+        .unwrap_or_else(|_| LoraInterface::unconfigured_interface_id());
     static LORA_STATUS: StaticCell<EmbassyInterfaceStatus> = StaticCell::new();
     let lora_status: &'static EmbassyInterfaceStatus = LORA_STATUS.init(
         EmbassyInterfaceStatus::new_accounted(lora_id, ConnectionState::Initializing),
@@ -339,7 +340,7 @@ pub async fn run(spawner: Spawner) -> ! {
         ConstStaticCell::new([0; LORA_TX_QUEUE_BYTES]);
     let lora = match LoRaInterface::new(LoRaInterfaceInput {
         radio,
-        profile: lora_profile,
+        configuration: subg_configuration,
         airtime_policy: AirtimePolicy::Regional,
         tx_queue: LORA_TX_QUEUE.take(),
         control: &LORA_CONTROL,
@@ -446,10 +447,10 @@ pub async fn run(spawner: Spawner) -> ! {
         let face = selected::face(selected::FaceInput {
             display,
             battery,
-            profile_store: loaded_lora_profile.store,
+            subg_configuration_store: loaded_subg_configuration.store,
             identity_startup_notice,
-            profile_startup_notice: loaded_lora_profile.startup_notice,
-            lora_profile,
+            subg_startup_notice: loaded_subg_configuration.startup_notice,
+            subg_configuration,
             lora_status,
             usb_status,
             lora_spectrum,
@@ -470,10 +471,10 @@ pub async fn run(spawner: Spawner) -> ! {
         let face = selected::face(selected::FaceInput {
             display,
             battery,
-            profile_store: loaded_lora_profile.store,
+            subg_configuration_store: loaded_subg_configuration.store,
             identity_startup_notice,
-            profile_startup_notice: loaded_lora_profile.startup_notice,
-            lora_profile,
+            subg_startup_notice: loaded_subg_configuration.startup_notice,
+            subg_configuration,
             lora_status,
             usb_status,
             lora_spectrum,

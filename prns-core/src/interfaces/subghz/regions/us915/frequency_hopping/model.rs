@@ -1,7 +1,9 @@
 use core::array;
 
-use super::super::super::super::{Frequency, Region};
-use super::super::super::{HoppingRegion, ObservationWindow};
+use crate::interfaces::subghz::frequency_hopping::{
+    HoppingRegion, MaximumChannelOccupancy, ObservationWindow,
+};
+use crate::interfaces::subghz::{Frequency, RegulatoryRegion};
 
 const FCC_CHANNEL_CLASS_THRESHOLD_HZ: u32 = 250_000;
 const FCC_MAXIMUM_HOPPING_CHANNEL_BANDWIDTH_HZ: u32 = 500_000;
@@ -34,6 +36,11 @@ impl MeasuredTwentyDbBandwidth {
     pub const fn hz(self) -> u32 {
         self.0
     }
+
+    pub(crate) const fn from_known_nonzero(hz: u32) -> Self {
+        assert!(hz != 0);
+        Self(hz)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,6 +68,12 @@ impl ChannelOccupancyLimit {
 
     pub const fn micros(self) -> u64 {
         self.0
+    }
+
+    pub(crate) const fn from_known_within_regulatory_maximum(micros: u64) -> Self {
+        assert!(micros != 0);
+        assert!(micros <= FCC_REGULATORY_MAXIMUM_CHANNEL_OCCUPANCY_US);
+        Self(micros)
     }
 }
 
@@ -238,6 +251,17 @@ impl Us915HoppingModel {
         })
     }
 
+    pub(crate) const fn from_known_valid(
+        measured_twenty_db_bandwidth: MeasuredTwentyDbBandwidth,
+        channel_occupancy_limit: ChannelOccupancyLimit,
+    ) -> Self {
+        assert!(measured_twenty_db_bandwidth.hz() <= FCC_MAXIMUM_HOPPING_CHANNEL_BANDWIDTH_HZ);
+        Self {
+            measured_twenty_db_bandwidth,
+            channel_occupancy_limit,
+        }
+    }
+
     pub const fn measured_twenty_db_bandwidth(self) -> MeasuredTwentyDbBandwidth {
         self.measured_twenty_db_bandwidth
     }
@@ -404,8 +428,8 @@ impl<const N: usize> Us915HopSet<N> {
 }
 
 impl<const N: usize> HoppingRegion<N> for Us915HopSet<N> {
-    fn radio_region(&self) -> Region {
-        Region::Us915
+    fn radio_region(&self) -> RegulatoryRegion {
+        RegulatoryRegion::Us915
     }
 
     fn channels(&self) -> &[Frequency; N] {
@@ -416,13 +440,15 @@ impl<const N: usize> HoppingRegion<N> for Us915HopSet<N> {
         ObservationWindow::from_known_nonzero(self.model.observation_window_us())
     }
 
-    fn channel_occupancy_limit(&self) -> ChannelOccupancyLimit {
-        self.model.channel_occupancy_limit()
+    fn maximum_channel_occupancy(&self) -> MaximumChannelOccupancy {
+        MaximumChannelOccupancy::from_known_nonzero(self.model.channel_occupancy_limit().micros())
     }
 }
 
 fn allowed_center_band(model: Us915HoppingModel) -> (u32, u32) {
-    let (minimum_hz, maximum_hz) = Region::Us915.band();
+    let range = RegulatoryRegion::Us915.frequency_range();
+    let minimum_hz = range.minimum().hz();
+    let maximum_hz = range.maximum().hz();
     let measured_hz = model.measured_twenty_db_bandwidth().hz();
     let lower_half_hz = measured_hz / 2;
     let upper_half_hz = measured_hz - lower_half_hz;

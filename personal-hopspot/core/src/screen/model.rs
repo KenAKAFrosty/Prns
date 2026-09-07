@@ -1,7 +1,27 @@
 use core::fmt::Write as _;
 
 use heapless::{String as HString, Vec as HVec};
+use personal_rns::interfaces::subghz::{SubGConfigurationState, SubGMode};
 use personal_rns::interfaces::{ConnectionState, InterfaceId};
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SubGCardState {
+    Setup,
+    AutoLoRa,
+    ManualLoRa,
+}
+
+impl From<SubGConfigurationState> for SubGCardState {
+    fn from(configuration: SubGConfigurationState) -> Self {
+        match configuration {
+            SubGConfigurationState::Unconfigured => Self::Setup,
+            SubGConfigurationState::Configured(configuration) => match configuration.mode() {
+                SubGMode::AutoLoRa => Self::AutoLoRa,
+                SubGMode::ManualLoRa => Self::ManualLoRa,
+            },
+        }
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CardKind {
@@ -10,7 +30,7 @@ pub enum CardKind {
     WifiStationDisabled,
     Usb,
     Ble,
-    LoRa,
+    SubG(SubGCardState),
     EspNow,
     SharedInstance,
     Tcp,
@@ -31,6 +51,17 @@ pub fn card_label(text: &str) -> CardLabel {
         }
     }
     label
+}
+
+#[must_use]
+pub fn subg_card(configuration: SubGConfigurationState) -> (CardKind, CardLabel) {
+    let state = SubGCardState::from(configuration);
+    let label = match state {
+        SubGCardState::Setup => "SubG",
+        SubGCardState::AutoLoRa => "AutoLoRa",
+        SubGCardState::ManualLoRa => "Man LoRa",
+    };
+    (CardKind::SubG(state), card_label(label))
 }
 
 const INTERFACE_MENU_DETAIL_TEXT_CAP: usize = 15;
@@ -388,7 +419,7 @@ pub(crate) fn sort_cards_for_display<const N: usize>(cards: &mut HVec<Card, N>) 
 
 const fn card_display_rank(kind: CardKind) -> u8 {
     match kind {
-        CardKind::LoRa => 0,
+        CardKind::SubG(_) => 0,
         CardKind::Wifi | CardKind::WifiStation | CardKind::WifiStationDisabled => 1,
         CardKind::Ble => 2,
         CardKind::EspNow => 3,

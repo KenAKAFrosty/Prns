@@ -1,6 +1,6 @@
-use prns_core::interfaces::subghz::turbo::{
+use prns_core::interfaces::subghz::regions::us915::turbo::{
     simulate_acquisition, simulate_contention, AcquisitionSimulation, AcquisitionSimulationError,
-    ContentionSimulation, ContentionSimulationError, TURBO_SCAN_DWELL_US, US915_TURBO_PHY,
+    ContentionSimulation, ContentionSimulationError, US915_TURBO_SPEC,
 };
 
 const EVIDENCE_SEED: u64 = 0x5052_4e53_5455_5242;
@@ -41,7 +41,7 @@ fn main() -> Result<(), EvidenceError> {
         101_000,
         217_000,
         299_000,
-        TURBO_SCAN_DWELL_US,
+        US915_TURBO_SPEC.scan_dwell_us(),
         377_000,
         400_000,
     ] {
@@ -54,7 +54,7 @@ fn main() -> Result<(), EvidenceError> {
                 packet_loss_per_mille: 100,
                 maximum_search_us: 1_800_000_000,
             },
-            US915_TURBO_PHY,
+            US915_TURBO_SPEC.phy(),
         )?;
         println!(
             "{scanner_dwell_us},{},{},{},{},{},{},{},{},{}",
@@ -82,7 +82,7 @@ fn main() -> Result<(), EvidenceError> {
                 rounds: 1_000,
                 packet_loss_per_mille: 100,
             },
-            US915_TURBO_PHY,
+            US915_TURBO_SPEC.phy(),
         )?;
         println!(
             "{nodes},{},{},{},{},{}",

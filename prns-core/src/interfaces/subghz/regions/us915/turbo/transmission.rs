@@ -1,29 +1,23 @@
-use super::super::frequency_hopping::{
+use super::acquisition::ValidatedAcquiredSchedule;
+use super::channel_access::FinalClearGrant;
+use super::clock::{
+    ClockError, ClockWindow, MaximumTransmitUncertainty, ScheduleMicros, TrustedScheduleClock,
+    TrustedTimeSource, UtcTimescale,
+};
+use super::frame::{encode_datagram, DatagramId, EncodedDatagram, TurboFrameError};
+use super::occupancy::{OccupancyError, OccupancyReservation, TurboOccupancyLedger};
+use super::profile::{TurboHardwareSupport, TurboProfileError};
+use super::schedule::{
+    opportunity_for, OpportunityRejection, TransmissionTimingBudget, TurboChannelIndex,
+    TurboOpportunity,
+};
+use super::spec::{TURBO_CHANNEL_COUNT, US915_TURBO_SPEC};
+use crate::interfaces::subghz::regions::us915::frequency_hopping::{
     ChannelOccupancyLimit, ChannelOccupancyLimitError, ConductedPowerDbm, HopSetError,
     MeasuredTwentyDbBandwidth, Us915HopSet, Us915HoppingModel, Us915HoppingModelError,
     Us915PowerBudget, Us915PowerBudgetError, Us915PowerInputs,
 };
-use super::super::{Frequency, MonotonicMicros};
-use super::channel_access::FinalClearGrant;
-use super::clock::{
-    ClockError, ScheduleMicros, TrustedScheduleClock, TrustedTimeSource, UtcTimescale,
-};
-use super::frame::{encode_datagram, DatagramId, EncodedDatagram, TurboFrameError};
-use super::occupancy::{OccupancyError, OccupancyReservation, TurboOccupancyLedger};
-use super::profile::{TurboHardwareSupport, TurboProfileError, US915_TURBO_PHY};
-use super::schedule::{
-    channel_index_at, opportunity_for, supercycle_cycle_at, OpportunityRejection,
-    TransmissionTimingBudget, TurboOpportunity, TURBO_BOOT_QUARANTINE_US, TURBO_CHANNEL_COUNT,
-    TURBO_OCCUPANCY_LIMIT_US, US915_TURBO_CHANNELS,
-};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MaximumTransmitUncertainty(u64);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MaximumTransmitUncertaintyError {
-    Empty,
-}
+use crate::interfaces::subghz::{Frequency, MonotonicMicros};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TurboTransmitterInstanceId(u64);
@@ -42,19 +36,6 @@ impl TurboTransmitterInstanceId {
     }
 
     pub const fn value(self) -> u64 {
-        self.0
-    }
-}
-
-impl MaximumTransmitUncertainty {
-    pub const fn new(micros: u64) -> Result<Self, MaximumTransmitUncertaintyError> {
-        if micros == 0 {
-            return Err(MaximumTransmitUncertaintyError::Empty);
-        }
-        Ok(Self(micros))
-    }
-
-    pub const fn micros(self) -> u64 {
         self.0
     }
 }
@@ -116,6 +97,32 @@ enum TransmitterState {
     Faulted { reason: TurboFault },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TransmitSchedule {
+    Trusted(TrustedScheduleClock),
+    Acquired(ValidatedAcquiredSchedule),
+}
+
+impl TransmitSchedule {
+    fn window_at(self, now: MonotonicMicros) -> Result<ClockWindow, ClockError> {
+        match self {
+            Self::Trusted(clock) => clock.window_at(now),
+            Self::Acquired(schedule) => schedule.window_at(now),
+        }
+    }
+
+    fn transmit_window_at(
+        self,
+        now: MonotonicMicros,
+        maximum_uncertainty: MaximumTransmitUncertainty,
+    ) -> Result<ClockWindow, ClockError> {
+        match self {
+            Self::Trusted(clock) => clock.transmit_window_at(now, maximum_uncertainty),
+            Self::Acquired(schedule) => schedule.transmit_window_at(now, maximum_uncertainty),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct PreparedTurboTransmission {
     instance_id: TurboTransmitterInstanceId,
@@ -134,8 +141,7 @@ impl PreparedTurboTransmission {
     pub const fn frequency(&self) -> Frequency {
         self.opportunity.frequency()
     }
-
-    pub const fn channel_index(&self) -> usize {
+    pub const fn channel_index(&self) -> TurboChannelIndex {
         self.opportunity.channel_index()
     }
 
@@ -217,7 +223,7 @@ pub enum TurboTransmissionError {
 
 pub struct Us915TurboTransmitter {
     state: TransmitterState,
-    clock: TrustedScheduleClock,
+    schedule: TransmitSchedule,
     timing: TransmissionTimingBudget,
     maximum_transmit_uncertainty: MaximumTransmitUncertainty,
     power: Us915PowerBudget,
@@ -233,35 +239,62 @@ impl Us915TurboTransmitter {
         clock: TrustedScheduleClock,
         configuration: Us915TurboConfiguration,
     ) -> Result<Self, TurboTransmissionError> {
-        US915_TURBO_PHY
+        Self::from_schedule(booted_at, TransmitSchedule::Trusted(clock), configuration)
+    }
+
+    pub fn new_with_acquired_schedule(
+        booted_at: MonotonicMicros,
+        schedule: ValidatedAcquiredSchedule,
+        configuration: Us915TurboConfiguration,
+    ) -> Result<Self, TurboTransmissionError> {
+        Self::from_schedule(
+            booted_at,
+            TransmitSchedule::Acquired(schedule),
+            configuration,
+        )
+    }
+
+    fn from_schedule(
+        booted_at: MonotonicMicros,
+        schedule: TransmitSchedule,
+        configuration: Us915TurboConfiguration,
+    ) -> Result<Self, TurboTransmissionError> {
+        US915_TURBO_SPEC
+            .phy()
             .validate()
             .map_err(TurboTransmissionError::Profile)?;
-        US915_TURBO_PHY
+        US915_TURBO_SPEC
+            .phy()
             .verify_hardware(configuration.hardware_support)
             .map_err(TurboTransmissionError::Profile)?;
-        if configuration.measured_bandwidth.hz() < 250_000 {
+        if configuration.measured_bandwidth.hz() < US915_TURBO_SPEC.minimum_measured_bandwidth_hz()
+        {
             return Err(TurboTransmissionError::BandwidthBelowTurboMinimum {
                 measured_hz: configuration.measured_bandwidth.hz(),
-                minimum_hz: 250_000,
+                minimum_hz: US915_TURBO_SPEC.minimum_measured_bandwidth_hz(),
             });
         }
-        let occupancy_limit = ChannelOccupancyLimit::new(TURBO_OCCUPANCY_LIMIT_US)
-            .map_err(TurboTransmissionError::OccupancyLimit)?;
+        let occupancy_limit =
+            ChannelOccupancyLimit::new(US915_TURBO_SPEC.channel_occupancy_budget_us())
+                .map_err(TurboTransmissionError::OccupancyLimit)?;
         let model = Us915HoppingModel::new(configuration.measured_bandwidth, occupancy_limit)
             .map_err(TurboTransmissionError::RegulatoryModel)?;
-        Us915HopSet::new(model, US915_TURBO_CHANNELS).map_err(TurboTransmissionError::HopSet)?;
+        Us915HopSet::new(model, *US915_TURBO_SPEC.channels())
+            .map_err(TurboTransmissionError::HopSet)?;
         let power =
             Us915PowerBudget::for_hop_count(TURBO_CHANNEL_COUNT, configuration.power_inputs)
                 .map_err(TurboTransmissionError::Power)?;
         Ok(Self {
             state: TransmitterState::Idle,
-            clock,
+            schedule,
             timing: configuration.timing,
             maximum_transmit_uncertainty: configuration.maximum_transmit_uncertainty,
             power,
             occupancy: TurboOccupancyLedger::new(),
             quarantine_until: MonotonicMicros::new(
-                booted_at.micros().saturating_add(TURBO_BOOT_QUARANTINE_US),
+                booted_at
+                    .micros()
+                    .saturating_add(US915_TURBO_SPEC.boot_quarantine_us()),
             ),
             instance_id: configuration.instance_id,
             next_generation: 0,
@@ -295,29 +328,47 @@ impl Us915TurboTransmitter {
         source: TrustedTimeSource,
         timescale: UtcTimescale,
     ) -> Result<ClockUpdateDisposition, TurboTransmissionError> {
-        let update = self
-            .clock
-            .assess_update(
-                observed_at,
-                supplied_schedule,
-                uncertainty_us,
-                maximum_drift_ppm,
-                source,
-                timescale,
-            )
-            .map_err(TurboTransmissionError::Clock)?;
-        let discontinuous = matches!(
-            update,
-            super::clock::TrustedClockUpdate::Discontinuous { .. }
-        );
-        self.clock = update.clock();
+        let (clock, discontinuous) = match self.schedule {
+            TransmitSchedule::Trusted(clock) => {
+                let update = clock
+                    .assess_update(
+                        observed_at,
+                        supplied_schedule,
+                        uncertainty_us,
+                        maximum_drift_ppm,
+                        source,
+                        timescale,
+                    )
+                    .map_err(TurboTransmissionError::Clock)?;
+                (
+                    update.clock(),
+                    matches!(
+                        update,
+                        super::clock::TrustedClockUpdate::Discontinuous { .. }
+                    ),
+                )
+            }
+            TransmitSchedule::Acquired(_) => (
+                TrustedScheduleClock::new(
+                    observed_at,
+                    supplied_schedule,
+                    uncertainty_us,
+                    maximum_drift_ppm,
+                    source,
+                    timescale,
+                )
+                .map_err(TurboTransmissionError::Clock)?,
+                true,
+            ),
+        };
+        self.schedule = TransmitSchedule::Trusted(clock);
         if !discontinuous {
             return Ok(ClockUpdateDisposition::Continuous);
         }
         self.quarantine_until = MonotonicMicros::new(
             observed_at
                 .micros()
-                .saturating_add(TURBO_BOOT_QUARANTINE_US),
+                .saturating_add(US915_TURBO_SPEC.boot_quarantine_us()),
         );
         if !matches!(self.state, TransmitterState::Idle) {
             self.state = TransmitterState::Faulted {
@@ -347,21 +398,23 @@ impl Us915TurboTransmitter {
             });
         }
         let window = self
-            .clock
-            .transmit_window_at(now, self.maximum_transmit_uncertainty.micros())
+            .schedule
+            .transmit_window_at(now, self.maximum_transmit_uncertainty)
             .map_err(TurboTransmissionError::Clock)?;
-        let cycle = supercycle_cycle_at(window.center_schedule_us());
+        let schedule_slot =
+            US915_TURBO_SPEC.slot_at(ScheduleMicros::new(window.center_schedule_us()));
+        let cycle = schedule_slot.cycle();
         let datagram =
             encode_datagram(cycle, datagram_id, payload).map_err(TurboTransmissionError::Frame)?;
-        let opportunity = opportunity_for(window, US915_TURBO_PHY, &datagram, self.timing)
+        let opportunity = opportunity_for(window, US915_TURBO_SPEC.phy(), &datagram, self.timing)
             .map_err(TurboTransmissionError::Opportunity)?;
-        if grant.channel_index() != opportunity.channel_index() {
+        if grant.channel_index() != opportunity.channel_index().index() {
             return Err(TurboTransmissionError::FinalClearFromWrongChannel {
-                expected: opportunity.channel_index(),
+                expected: opportunity.channel_index().index(),
                 actual: grant.channel_index(),
             });
         }
-        let keyed_airtime_us = datagram.keyed_airtime_us(US915_TURBO_PHY);
+        let keyed_airtime_us = datagram.keyed_airtime_us(US915_TURBO_SPEC.phy());
         let required_elapsed_us = keyed_airtime_us.saturating_add(if datagram.frame_count() == 2 {
             self.timing.interframe_us()
         } else {
@@ -370,8 +423,8 @@ impl Us915TurboTransmitter {
         let reservation = self
             .occupancy
             .reserve(
-                opportunity.channel_index(),
-                opportunity.global_slot(),
+                opportunity.channel_index().index(),
+                opportunity.global_slot().index(),
                 now,
                 keyed_airtime_us,
             )
@@ -429,8 +482,8 @@ impl Us915TurboTransmitter {
             });
         }
         let window = match self
-            .clock
-            .transmit_window_at(actual_start, self.maximum_transmit_uncertainty.micros())
+            .schedule
+            .transmit_window_at(actual_start, self.maximum_transmit_uncertainty)
         {
             Ok(window) => window,
             Err(error) => {
@@ -438,9 +491,12 @@ impl Us915TurboTransmitter {
                 return Err(TurboTransmissionError::Clock(error));
             }
         };
-        let actual_channel = channel_index_at(window.center_schedule_us());
-        if actual_channel != prepared.opportunity.channel_index() {
-            let expected = prepared.opportunity.channel_index();
+        let actual_channel = US915_TURBO_SPEC
+            .slot_at(ScheduleMicros::new(window.center_schedule_us()))
+            .channel_index()
+            .index();
+        if actual_channel != prepared.opportunity.channel_index().index() {
+            let expected = prepared.opportunity.channel_index().index();
             self.release_invalid_preparation(prepared.reservation)?;
             return Err(TurboTransmissionError::RfStartedOnWrongChannel {
                 expected,
@@ -551,7 +607,7 @@ impl Us915TurboTransmitter {
                 reason: TurboFault::OccupancyInvariant,
             });
         }
-        let completion_window = match self.clock.window_at(completed_at) {
+        let completion_window = match self.schedule.window_at(completed_at) {
             Ok(window) => window,
             Err(_) => {
                 self.state = TransmitterState::Faulted {

@@ -17,6 +17,24 @@ pub fn descriptor(
         .descriptor(id)
 }
 
+pub fn unconfigured_descriptor(id: InterfaceId) -> InterfaceDescriptor {
+    InterfaceDefaults {
+        capabilities: InterfaceCapabilities {
+            ingress: IngressCapability::Disabled,
+            egress: EgressCapability::Disabled,
+        },
+        mode: InterfaceMode::Full,
+        gravity: crate::interfaces::InterfaceGravityDefault::FromBitrate,
+        bitrate: BitrateBps::guess(BitrateBps::MINIMUM),
+        mtu: MtuPolicy::fixed(LORA_MAX_PAYLOAD),
+        announce_rate_limit: None,
+        announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
+        airtime_duty_cycle: None,
+    }
+    .configured(ConfiguredInterfacePolicy::default())
+    .descriptor(id)
+}
+
 pub fn defaults(
     profile: &RadioProfile,
     airtime_duty_cycle: Option<AirtimeDutyCycle>,
@@ -39,7 +57,8 @@ pub fn defaults(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interfaces::lora::{Region, US915_AUTO_LORA_PROFILE};
+    use crate::interfaces::subghz::regions::us915::US915_AUTO_LORA_PROFILE;
+    use crate::interfaces::subghz::RegulatoryRegion;
     use crate::interfaces::INTERFACE_ID_LEN;
 
     #[test]
@@ -66,7 +85,7 @@ mod tests {
     #[test]
     fn descriptor_uses_the_supplied_duty_cycle() {
         let id = InterfaceId::new([0x5C; INTERFACE_ID_LEN]);
-        let eu_preset = Region::Eu868.regulatory_duty_cycle();
+        let eu_preset = RegulatoryRegion::Eu868.regulatory_duty_cycle();
         let d = descriptor(id, &US915_AUTO_LORA_PROFILE, eu_preset);
         assert_eq!(d.airtime_duty_cycle, eu_preset);
         let none = descriptor(id, &US915_AUTO_LORA_PROFILE, None);

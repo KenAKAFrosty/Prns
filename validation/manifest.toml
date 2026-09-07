@@ -1771,27 +1771,63 @@ path = "fuzz_targets/subghz_turbo_state.rs"
 group = "subghz"
 tiers = ["release", "scheduled"]
 
+[[fuzz_target]]
+name = "subghz_configuration"
+path = "fuzz_targets/subghz_configuration.rs"
+group = "subghz"
+tiers = ["release", "scheduled"]
+
 [[kani]]
 name = "every_schedule_time_selects_a_valid_turbo_channel"
-source = "prns-core/src/interfaces/subghz/turbo/schedule.rs"
+source = "prns-core/src/interfaces/subghz/regions/us915/turbo/schedule.rs"
+group = "subghz"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "global_slot_construction_matches_representable_start_times"
+source = "prns-core/src/interfaces/subghz/regions/us915/turbo/schedule.rs"
+group = "subghz"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "schedule_slot_reconstructs_bounded_time"
+source = "prns-core/src/interfaces/subghz/regions/us915/turbo/schedule.rs"
 group = "subghz"
 tiers = ["release", "scheduled"]
 
 [[kani]]
 name = "every_cycle_and_position_selects_a_valid_channel"
-source = "prns-core/src/interfaces/subghz/turbo/schedule.rs"
+source = "prns-core/src/interfaces/subghz/regions/us915/turbo/schedule.rs"
+group = "subghz"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "schedule_repeats_after_one_complete_supercycle"
+source = "prns-core/src/interfaces/subghz/regions/us915/turbo/schedule.rs"
+group = "subghz"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "channel_position_lookup_round_trips"
+source = "prns-core/src/interfaces/subghz/regions/us915/turbo/schedule.rs"
+group = "subghz"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "granted_receive_lease_keeps_every_instant_on_one_slot"
+source = "prns-core/src/interfaces/subghz/regions/us915/turbo/radio_execution.rs"
 group = "subghz"
 tiers = ["release", "scheduled"]
 
 [[kani]]
 name = "clock_uncertainty_never_shrinks_during_holdover"
-source = "prns-core/src/interfaces/subghz/turbo/clock.rs"
+source = "prns-core/src/interfaces/subghz/regions/us915/turbo/clock.rs"
 group = "subghz"
 tiers = ["release", "scheduled"]
 
 [[kani]]
 name = "channel_access_never_grants_without_a_final_clear"
-source = "prns-core/src/interfaces/subghz/turbo/channel_access.rs"
+source = "prns-core/src/interfaces/subghz/regions/us915/turbo/channel_access.rs"
 group = "subghz"
 tiers = ["release", "scheduled"]
 
@@ -1802,8 +1838,20 @@ group = "subghz"
 tiers = ["release", "scheduled"]
 
 [[kani]]
+name = "contained_channel_centers_never_escape_the_frequency_range"
+source = "prns-core/src/interfaces/subghz/types.rs"
+group = "subghz"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "accepting_a_wider_channel_also_accepts_every_narrower_channel"
+source = "prns-core/src/interfaces/subghz/types.rs"
+group = "subghz"
+tiers = ["release", "scheduled"]
+
+[[kani]]
 name = "accepted_reservation_never_exceeds_occupancy_or_balance_limit"
-source = "prns-core/src/interfaces/subghz/turbo/occupancy.rs"
+source = "prns-core/src/interfaces/subghz/regions/us915/turbo/occupancy.rs"
 group = "subghz"
 tiers = ["release", "scheduled"]
 

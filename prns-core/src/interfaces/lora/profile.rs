@@ -1,6 +1,6 @@
 use heapless::Vec as HeaplessVec;
 
-use crate::interfaces::subghz::{Frequency, Region, TxPower};
+use crate::interfaces::subghz::{Frequency, SubGRegion, TxPower};
 use crate::interfaces::AirtimeDutyCycle;
 
 use super::modulation::{CodingRate, LoraBandwidth, Modulation, SpreadingFactor};
@@ -25,14 +25,15 @@ impl PreambleSymbols {
 /// Why a LoRa radio profile cannot be applied safely.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RadioProfileError {
-    FrequencyOutsideRegion {
-        region: Region,
-        frequency_hz: u32,
+    NominalChannelOutsideRegion {
+        region: SubGRegion,
+        center_hz: u32,
+        bandwidth_hz: u32,
         minimum_hz: u32,
         maximum_hz: u32,
     },
     TransmitPowerAboveRegionLimit {
-        region: Region,
+        region: SubGRegion,
         power_dbm: i8,
         maximum_dbm: i8,
     },
@@ -63,21 +64,24 @@ pub enum AirtimePolicy {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AirtimePolicyError {
     MissingLimitForRegulatedRegion {
-        region: Region,
+        region: SubGRegion,
     },
     InvalidLimitPerMille {
         limit: u16,
     },
     EmptyQueueBudget,
     WeakerThanRegionalLimit {
-        region: Region,
+        region: SubGRegion,
         regional_limit_per_mille: u16,
         fixed_limit_per_mille: Option<u16>,
     },
 }
 
 impl AirtimePolicy {
-    pub fn resolve(self, region: Region) -> Result<Option<AirtimeDutyCycle>, AirtimePolicyError> {
+    pub fn resolve(
+        self,
+        region: SubGRegion,
+    ) -> Result<Option<AirtimeDutyCycle>, AirtimePolicyError> {
         let regional = region.regulatory_duty_cycle();
         let resolved = match self {
             Self::Regional => return Ok(regional),
@@ -172,23 +176,104 @@ impl ModemPreset {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RadioProfile {
-    pub frequency: Frequency,
-    pub modulation: Modulation,
-    pub tx_power: TxPower,
-    pub preamble: PreambleSymbols,
-    pub region: Region,
+    frequency: Frequency,
+    modulation: Modulation,
+    tx_power: TxPower,
+    preamble: PreambleSymbols,
+    region: SubGRegion,
 }
 
 impl RadioProfile {
+    pub const fn new(
+        region: SubGRegion,
+        frequency: Frequency,
+        modulation: Modulation,
+        tx_power: TxPower,
+        preamble: PreambleSymbols,
+    ) -> Result<Self, RadioProfileError> {
+        let profile = Self {
+            frequency,
+            modulation,
+            tx_power,
+            preamble,
+            region,
+        };
+        match profile.validate() {
+            Ok(()) => Ok(profile),
+            Err(error) => Err(error),
+        }
+    }
+
+    pub const fn frequency(self) -> Frequency {
+        self.frequency
+    }
+
+    pub const fn modulation(self) -> Modulation {
+        self.modulation
+    }
+
+    pub const fn tx_power(self) -> TxPower {
+        self.tx_power
+    }
+
+    pub const fn preamble(self) -> PreambleSymbols {
+        self.preamble
+    }
+
+    pub const fn region(self) -> SubGRegion {
+        self.region
+    }
+
+    pub const fn with_frequency(self, frequency: Frequency) -> Result<Self, RadioProfileError> {
+        Self::new(
+            self.region,
+            frequency,
+            self.modulation,
+            self.tx_power,
+            self.preamble,
+        )
+    }
+
+    pub const fn with_modulation(self, modulation: Modulation) -> Result<Self, RadioProfileError> {
+        Self::new(
+            self.region,
+            self.frequency,
+            modulation,
+            self.tx_power,
+            self.preamble,
+        )
+    }
+
+    pub const fn with_tx_power(self, tx_power: TxPower) -> Result<Self, RadioProfileError> {
+        Self::new(
+            self.region,
+            self.frequency,
+            self.modulation,
+            tx_power,
+            self.preamble,
+        )
+    }
+
+    pub const fn with_preamble(self, preamble: PreambleSymbols) -> Result<Self, RadioProfileError> {
+        Self::new(
+            self.region,
+            self.frequency,
+            self.modulation,
+            self.tx_power,
+            preamble,
+        )
+    }
+
     pub const fn validate(self) -> Result<(), RadioProfileError> {
-        let frequency_hz = self.frequency.hz();
-        let (minimum_hz, maximum_hz) = self.region.band();
-        if frequency_hz < minimum_hz || frequency_hz > maximum_hz {
-            return Err(RadioProfileError::FrequencyOutsideRegion {
+        let range = self.region.frequency_range();
+        let Modulation::Lora { bandwidth, .. } = self.modulation;
+        if !range.contains_nominal_channel(self.frequency, bandwidth.hz()) {
+            return Err(RadioProfileError::NominalChannelOutsideRegion {
                 region: self.region,
-                frequency_hz,
-                minimum_hz,
-                maximum_hz,
+                center_hz: self.frequency.hz(),
+                bandwidth_hz: bandwidth.hz(),
+                minimum_hz: range.minimum().hz(),
+                maximum_hz: range.maximum().hz(),
             });
         }
         let power_dbm = self.tx_power.dbm();
@@ -247,18 +332,6 @@ impl RadioProfile {
     }
 }
 
-pub const US915_AUTO_LORA_PROFILE: RadioProfile = RadioProfile {
-    frequency: Frequency::new(921_500_000),
-    modulation: Modulation::Lora {
-        spreading_factor: SpreadingFactor::Sf7,
-        bandwidth: LoraBandwidth::Bw500kHz,
-        coding_rate: CodingRate::Cr45,
-    },
-    tx_power: TxPower::new(22),
-    preamble: PreambleSymbols::new(18),
-    region: Region::Us915,
-};
-
 pub fn channel_tag(profile: &RadioProfile) -> HeaplessVec<u8, CHANNEL_TAG_CAP> {
     let mut tag = HeaplessVec::new();
     let _ = tag.extend_from_slice(&profile.frequency.hz().to_be_bytes());
@@ -277,32 +350,33 @@ pub fn channel_tag(profile: &RadioProfile) -> HeaplessVec<u8, CHANNEL_TAG_CAP> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::interfaces::subghz::regions::us915::US915_AUTO_LORA_PROFILE;
+    use crate::interfaces::subghz::{RegulatoryRegion, SubGRegion};
     use crate::interfaces::{InterfaceId, InterfaceKind};
 
     #[test]
     fn time_on_air_matches_the_rnode_firmware_formula() {
         assert_eq!(US915_AUTO_LORA_PROFILE.time_on_air_us(167), 68_525);
-        let long_slow = RadioProfile {
-            modulation: ModemPreset::LongSlow.modulation(),
-            ..US915_AUTO_LORA_PROFILE
-        };
+        let long_slow = US915_AUTO_LORA_PROFILE
+            .with_modulation(ModemPreset::LongSlow.modulation())
+            .unwrap();
         assert_eq!(long_slow.time_on_air_us(255), 14_203_289);
-        let sub_sf7 = RadioProfile {
-            modulation: Modulation::Lora {
+        let sub_sf7 = US915_AUTO_LORA_PROFILE
+            .with_modulation(Modulation::Lora {
                 spreading_factor: SpreadingFactor::Sf6,
                 bandwidth: LoraBandwidth::Bw500kHz,
                 coding_rate: CodingRate::Cr45,
-            },
-            preamble: PreambleSymbols::new(12),
-            ..US915_AUTO_LORA_PROFILE
-        };
+            })
+            .unwrap()
+            .with_preamble(PreambleSymbols::new(12))
+            .unwrap();
         assert_eq!(sub_sf7.time_on_air_us(50), 13_834);
     }
 
     #[test]
     fn auto_lora_profile_uses_the_fastest_supported_lora_shape() {
         assert_eq!(
-            US915_AUTO_LORA_PROFILE.modulation,
+            US915_AUTO_LORA_PROFILE.modulation(),
             Modulation::Lora {
                 spreading_factor: SpreadingFactor::Sf7,
                 bandwidth: LoraBandwidth::Bw500kHz,
@@ -310,7 +384,7 @@ mod tests {
             }
         );
         assert_eq!(
-            US915_AUTO_LORA_PROFILE.frequency,
+            US915_AUTO_LORA_PROFILE.frequency(),
             Frequency::new(921_500_000)
         );
     }
@@ -324,21 +398,23 @@ mod tests {
 
     #[test]
     fn regions_cycle_through_all_values() {
-        let mut region = Region::Us915;
-        for _ in 0..Region::ALL.len() {
+        let mut region = RegulatoryRegion::Us915;
+        for _ in 0..RegulatoryRegion::ALL.len() {
             region = region.next();
         }
-        assert_eq!(region, Region::Us915);
+        assert_eq!(region, RegulatoryRegion::Us915);
     }
 
     #[test]
-    fn every_region_default_frequency_sits_inside_its_band() {
-        for region in Region::ALL {
-            let (lo, hi) = region.band();
-            let default = region.default_frequency().hz();
+    fn every_region_default_channel_sits_inside_its_frequency_range() {
+        for region in RegulatoryRegion::ALL {
+            let defaults = SubGRegion::Regulated(region).manual_lora_defaults();
+            let Modulation::Lora { bandwidth, .. } = defaults.modulation();
             assert!(
-                (lo..=hi).contains(&default),
-                "{}: default {default} outside band {lo}..={hi}",
+                region
+                    .frequency_range()
+                    .contains_nominal_channel(defaults.frequency(), bandwidth.hz()),
+                "{} default channel is outside its frequency range",
                 region.label()
             );
         }
@@ -362,12 +438,13 @@ mod tests {
     #[test]
     fn changing_the_channel_settings_re_keys_the_interface_id() {
         let a = US915_AUTO_LORA_PROFILE;
-        let mut b = US915_AUTO_LORA_PROFILE;
-        b.modulation = Modulation::Lora {
-            spreading_factor: SpreadingFactor::Sf10,
-            bandwidth: LoraBandwidth::Bw125kHz,
-            coding_rate: CodingRate::Cr45,
-        };
+        let b = US915_AUTO_LORA_PROFILE
+            .with_modulation(Modulation::Lora {
+                spreading_factor: SpreadingFactor::Sf10,
+                bandwidth: LoraBandwidth::Bw125kHz,
+                coding_rate: CodingRate::Cr45,
+            })
+            .unwrap();
         let id_a = InterfaceId::from_channel_tag(InterfaceKind::LoRa, &channel_tag(&a));
         let id_b = InterfaceId::from_channel_tag(InterfaceKind::LoRa, &channel_tag(&b));
         assert_ne!(id_a, id_b);
@@ -377,79 +454,76 @@ mod tests {
 
     #[test]
     fn local_knobs_do_not_re_key_identity() {
-        let mut low = US915_AUTO_LORA_PROFILE;
-        let mut high = US915_AUTO_LORA_PROFILE;
-        low.tx_power = TxPower::new(2);
-        high.tx_power = TxPower::new(22);
-        high.preamble = PreambleSymbols::new(24);
+        let low = US915_AUTO_LORA_PROFILE
+            .with_tx_power(TxPower::new(2))
+            .unwrap();
+        let high = US915_AUTO_LORA_PROFILE
+            .with_preamble(PreambleSymbols::new(24))
+            .unwrap();
         assert_eq!(channel_tag(&low), channel_tag(&high));
     }
 
     #[test]
     fn region_duty_cycles_follow_the_eu_subband_rules() {
-        let eu868 = Region::Eu868
+        let eu868 = RegulatoryRegion::Eu868
             .regulatory_duty_cycle()
             .expect("EU 868 is duty-limited");
         assert_eq!(eu868.limit_long_per_mille, Some(10));
         assert_eq!(eu868.limit_short_per_mille, None);
         assert_eq!(
-            Region::Eu433
+            RegulatoryRegion::Eu433
                 .regulatory_duty_cycle()
                 .expect("EU 433 is duty-limited")
                 .limit_long_per_mille,
             Some(100)
         );
         assert_eq!(
-            Region::Eu869
+            RegulatoryRegion::Eu869
                 .regulatory_duty_cycle()
                 .unwrap()
                 .limit_long_per_mille,
             Some(100)
         );
-        assert!(Region::Us915.regulatory_duty_cycle().is_none());
-        assert!(Region::As923.regulatory_duty_cycle().is_none());
-        assert!(Region::Unlimited.regulatory_duty_cycle().is_none());
-    }
-
-    #[test]
-    fn region_is_a_local_knob_outside_the_channel_tag() {
-        let mut a = US915_AUTO_LORA_PROFILE;
-        let mut b = US915_AUTO_LORA_PROFILE;
-        a.region = Region::Eu868;
-        b.region = Region::Unlimited;
-        assert_eq!(channel_tag(&a), channel_tag(&b));
+        assert!(RegulatoryRegion::Us915.regulatory_duty_cycle().is_none());
+        assert!(RegulatoryRegion::As923.regulatory_duty_cycle().is_none());
+        assert!(SubGRegion::Custom.regulatory_duty_cycle().is_none());
     }
 
     #[test]
     fn profiles_reject_out_of_band_frequency_power_and_empty_preambles() {
         assert_eq!(US915_AUTO_LORA_PROFILE.validate(), Ok(()));
 
-        let mut outside_band = US915_AUTO_LORA_PROFILE;
-        outside_band.frequency = Frequency::new(868_300_000);
         assert!(matches!(
-            outside_band.validate(),
-            Err(RadioProfileError::FrequencyOutsideRegion {
-                region: Region::Us915,
+            RadioProfile::new(
+                SubGRegion::Regulated(RegulatoryRegion::Us915),
+                Frequency::new(868_300_000),
+                US915_AUTO_LORA_PROFILE.modulation(),
+                US915_AUTO_LORA_PROFILE.tx_power(),
+                US915_AUTO_LORA_PROFILE.preamble(),
+            ),
+            Err(RadioProfileError::NominalChannelOutsideRegion {
+                region: SubGRegion::Regulated(RegulatoryRegion::Us915),
                 ..
             })
         ));
 
-        let mut excessive_power = US915_AUTO_LORA_PROFILE;
-        excessive_power.region = Region::Eu868;
-        excessive_power.frequency = Region::Eu868.default_frequency();
         assert_eq!(
-            excessive_power.validate(),
+            RadioProfile::new(
+                SubGRegion::Regulated(RegulatoryRegion::Eu868),
+                RegulatoryRegion::Eu868.default_frequency(),
+                US915_AUTO_LORA_PROFILE.modulation(),
+                TxPower::new(22),
+                US915_AUTO_LORA_PROFILE.preamble(),
+            ),
             Err(RadioProfileError::TransmitPowerAboveRegionLimit {
-                region: Region::Eu868,
+                region: SubGRegion::Regulated(RegulatoryRegion::Eu868),
                 power_dbm: 22,
                 maximum_dbm: 14,
             })
         );
 
-        let mut empty_preamble = US915_AUTO_LORA_PROFILE;
-        empty_preamble.preamble = PreambleSymbols::new(0);
         assert_eq!(
-            empty_preamble.validate(),
+            US915_AUTO_LORA_PROFILE.with_preamble(PreambleSymbols::new(0)),
             Err(RadioProfileError::EmptyPreamble)
         );
     }
@@ -462,13 +536,14 @@ mod tests {
             max_queued_airtime_ms: 2_000,
         };
         assert_eq!(
-            AirtimePolicy::Fixed(Some(tighter)).resolve(Region::Eu868),
+            AirtimePolicy::Fixed(Some(tighter))
+                .resolve(SubGRegion::Regulated(RegulatoryRegion::Eu868)),
             Ok(Some(tighter))
         );
         assert_eq!(
-            AirtimePolicy::Fixed(None).resolve(Region::Eu868),
+            AirtimePolicy::Fixed(None).resolve(SubGRegion::Regulated(RegulatoryRegion::Eu868)),
             Err(AirtimePolicyError::MissingLimitForRegulatedRegion {
-                region: Region::Eu868,
+                region: SubGRegion::Regulated(RegulatoryRegion::Eu868),
             })
         );
         assert!(matches!(
@@ -477,11 +552,11 @@ mod tests {
                 limit_long_per_mille: Some(20),
                 max_queued_airtime_ms: 2_000,
             }))
-            .resolve(Region::Eu868),
+            .resolve(SubGRegion::Regulated(RegulatoryRegion::Eu868)),
             Err(AirtimePolicyError::WeakerThanRegionalLimit { .. })
         ));
         assert_eq!(
-            AirtimePolicy::Fixed(None).resolve(Region::Unlimited),
+            AirtimePolicy::Fixed(None).resolve(SubGRegion::Custom),
             Ok(None)
         );
     }

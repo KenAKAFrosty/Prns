@@ -168,6 +168,10 @@ pub struct OutgoingResourceState {
     pub retries_left: u8,
     pub command_id: CommandId,
     pub correlation: ResourceCorrelation,
+    #[cfg(feature = "runtime-metrics")]
+    pub metrics_advertised_at: Option<InstantMillis>,
+    #[cfg(feature = "runtime-metrics")]
+    pub metrics_last_frame_enqueued_at: Option<InstantMillis>,
 }
 
 // The vacant-slot value for fixed-capacity tables to initialize with, never a live resource's state; a successful [track](OutgoingResources::track) writes every field.
@@ -195,6 +199,10 @@ impl Default for OutgoingResourceState {
             retries_left: 0,
             command_id: CommandId(0),
             correlation: ResourceCorrelation::Unsolicited,
+            #[cfg(feature = "runtime-metrics")]
+            metrics_advertised_at: None,
+            #[cfg(feature = "runtime-metrics")]
+            metrics_last_frame_enqueued_at: None,
         }
     }
 }
@@ -622,6 +630,10 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
                     retries_left: 0,
                     command_id,
                     correlation,
+                    #[cfg(feature = "runtime-metrics")]
+                    metrics_advertised_at: None,
+                    #[cfg(feature = "runtime-metrics")]
+                    metrics_last_frame_enqueued_at: None,
                 };
                 self.refresh_earliest_timeout();
                 Ok(built.hash)
@@ -819,6 +831,10 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
             retries_left: 0,
             command_id: reserved.command_id,
             correlation: reserved.correlation,
+            #[cfg(feature = "runtime-metrics")]
+            metrics_advertised_at: None,
+            #[cfg(feature = "runtime-metrics")]
+            metrics_last_frame_enqueued_at: None,
         };
         self.refresh_earliest_timeout();
         ResourceBuildLanding::Built(built.hash)

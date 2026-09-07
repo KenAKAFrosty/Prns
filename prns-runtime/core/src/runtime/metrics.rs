@@ -306,12 +306,16 @@ pub struct EgressLaneMetricsSnapshot {
     pub logical_interface: InterfaceId,
     pub capacity: u32,
     pub occupancy: u32,
+    pub pending: u32,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EgressMetricsSnapshot {
     pub enqueued_frames: u64,
     pub unavailable_frame_skips: u64,
+    pub backpressured_frames: u64,
+    pub pending_frames: u32,
+    pub maximum_pending_frames: u32,
     pub full_lane_drops: u64,
     pub missing_lane_drops: u64,
     pub ifac_rejected_frames: u64,
@@ -356,6 +360,12 @@ pub struct ManifoldMetricsSnapshot {
     pub maximum_inline_work_micros: u64,
     pub maximum_timer_lateness_ms: u64,
     pub maximum_pacer_lateness_ms: u64,
+    pub resource_request_to_first_frame_observations: u64,
+    pub resource_request_to_first_frame_total_micros: u64,
+    pub maximum_resource_request_to_first_frame_micros: u64,
+    pub resource_request_round_gap_observations: u64,
+    pub resource_request_round_gap_total_micros: u64,
+    pub maximum_resource_request_round_gap_micros: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

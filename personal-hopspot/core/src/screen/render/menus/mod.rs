@@ -1,4 +1,4 @@
-pub(in crate::screen) mod lora;
+pub(in crate::screen) mod subg;
 
 use core::fmt::Write as _;
 
@@ -14,6 +14,7 @@ use personal_rns::interfaces::ConnectionState;
 use crate::screen::limits::{limit_page_count, LimitRow, LimitValue, LIMITS_PER_PAGE};
 use crate::screen::model::{
     Card, CardKind, InterfaceMenuDetailKind, InterfaceMenuDetailRow, InterfaceMenuDetails,
+    SubGCardState,
 };
 use crate::screen::state::{
     interface_menu_items, AccessPointState, SharedInstanceConfigExport, UiNotice, UiState,
@@ -38,7 +39,7 @@ pub(in crate::screen) const fn station_uplink_action_label(kind: CardKind) -> Op
         CardKind::Wifi
         | CardKind::Usb
         | CardKind::Ble
-        | CardKind::LoRa
+        | CardKind::SubG(_)
         | CardKind::EspNow
         | CardKind::SharedInstance
         | CardKind::Tcp
@@ -250,6 +251,42 @@ pub(super) fn draw_radio_confirm<D: DrawTarget<Color = BinaryColor>>(
     let _ = Text::with_baseline(
         "restarts",
         Point::new(2, MENU_ITEM_TOP + 18),
+        body,
+        Baseline::Top,
+    )
+    .draw(display);
+    draw_menu_item(display, MENU_ITEM_TOP + 31, "No", !confirm);
+    draw_menu_item(display, MENU_ITEM_TOP + 44, "Yes", confirm);
+}
+
+pub(super) fn draw_subg_clear_confirm<D: DrawTarget<Color = BinaryColor>>(
+    display: &mut D,
+    confirm: bool,
+) {
+    let header_style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
+    let _ = Text::with_baseline(
+        "SubG",
+        Point::new(NAME_TEXT_X, MENU_HEADER_Y),
+        header_style,
+        Baseline::Top,
+    )
+    .draw(display);
+    line(
+        display,
+        Point::new(0, MENU_DIVIDER_Y),
+        Point::new(WIDTH - 1, MENU_DIVIDER_Y),
+    );
+    let body = MonoTextStyle::new(&FONT_5X8, BinaryColor::On);
+    let _ = Text::with_baseline(
+        "Clear config?",
+        Point::new(2, MENU_ITEM_TOP),
+        body,
+        Baseline::Top,
+    )
+    .draw(display);
+    let _ = Text::with_baseline(
+        "RF stops",
+        Point::new(2, MENU_ITEM_TOP + 12),
         body,
         Baseline::Top,
     )
@@ -539,7 +576,9 @@ pub(in crate::screen) fn draw_interface_menu<D: DrawTarget<Color = BinaryColor>>
 
     let items = interface_menu_items(card.kind, shared_instance_config_export);
     for (index, item) in items.iter().enumerate() {
-        let label = if index == POWER_MENU_ITEM {
+        let label = if matches!(card.kind, CardKind::SubG(SubGCardState::Setup)) {
+            item
+        } else if index == POWER_MENU_ITEM {
             if card.connection == ConnectionState::Disabled {
                 "Turn On"
             } else {
