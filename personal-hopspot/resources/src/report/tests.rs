@@ -146,6 +146,28 @@ fn compatible_reports_call_out_lto_and_resource_deltas() -> Result<(), Box<dyn s
     after_value["analysis"]["allocated_sections"]["value"][0]["run_end"] = json!(155_688);
     after_value["analysis"]["allocated_sections"]["value"][0]["run_bytes"] = json!(40);
     after_value["analysis"]["allocated_sections"]["value"][0]["load_bytes"] = json!(40);
+    after_value["analysis"]["flash_attribution"]["value"]["crates"]["coverage"] = json!({
+        "analyzed_bytes": 45,
+        "attributed_bytes": 43,
+        "unclassified_bytes": 2
+    });
+    after_value["analysis"]["flash_attribution"]["value"]["crates"]["largest"][0]["bytes"] =
+        json!(42);
+    after_value["analysis"]["flash_attribution"]["value"]["crates"]["largest"]
+        .as_array_mut()
+        .ok_or("crate attribution fixture is not an array")?
+        .push(json!({"name": "new-crate", "bytes": 1}));
+    after_value["analysis"]["flash_attribution"]["value"]["symbols"]["coverage"] = json!({
+        "analyzed_bytes": 45,
+        "attributed_bytes": 43,
+        "unclassified_bytes": 2
+    });
+    after_value["analysis"]["flash_attribution"]["value"]["symbols"]["largest"][0]["bytes"] =
+        json!(42);
+    after_value["analysis"]["flash_attribution"]["value"]["symbols"]["largest"]
+        .as_array_mut()
+        .ok_or("symbol attribution fixture is not an array")?
+        .push(json!({"name": "new_crate::run", "bytes": 1}));
     let after: ResourceReport = serde_json::from_value(after_value)?;
     compare::validate_report(Path::new("before.json"), &before)?;
     compare::validate_report(Path::new("after.json"), &after)?;
@@ -160,6 +182,11 @@ fn compatible_reports_call_out_lto_and_resource_deltas() -> Result<(), Box<dyn s
     assert!(rendered.contains("flash headroom 65952 -> 66952 (+1000)"));
     assert!(rendered.contains("ram internal-sram headroom 5004 -> 6004 (+1000)"));
     assert!(rendered.contains("section code load 42 -> 40 (-2)"));
+    assert!(rendered.contains("attribution evidence complete -> complete"));
+    assert!(rendered.contains("attribution crates analyzed 42 -> 45 (+3)"));
+    assert!(rendered.contains("attribution crates candidate 1 40 -> 42 (+2) \"example\""));
+    assert!(rendered.contains("attribution crates candidate 2 not-ranked -> 1 \"new-crate\""));
+    assert!(rendered.contains("attribution symbols candidate 1 40 -> 42 (+2) \"example::run\""));
     Ok(())
 }
 
@@ -184,6 +211,8 @@ fn successful_and_overflowing_builds_compare_without_invented_deltas(
     assert!(introduced.contains("status success -> memory-overflow"));
     assert!(introduced.contains("overflow \"FLASH\" none -> 86240"));
     assert!(introduced.contains("flash evidence complete -> unavailable"));
+    assert!(introduced.contains("attribution evidence complete -> partial"));
+    assert!(introduced.contains("attribution crates candidate 1 40 -> 40 (0) \"example\""));
     assert!(!introduced.contains("flash image"));
 
     let resolved = compare::render_comparison(
@@ -193,6 +222,27 @@ fn successful_and_overflowing_builds_compare_without_invented_deltas(
     );
     assert!(resolved.contains("status memory-overflow -> success"));
     assert!(resolved.contains("overflow \"FLASH\" 86240 -> none"));
+    Ok(())
+}
+
+#[test]
+fn unavailable_attribution_does_not_invent_candidates() -> Result<(), Box<dyn std::error::Error>> {
+    let before: ResourceReport = serde_json::from_value(report_value())?;
+    let mut after_value = report_value();
+    make_overflow(&mut after_value, "FLASH", 86_240);
+    after_value["analysis"]["flash_attribution"] = json!({"kind": "unavailable"});
+    let after: ResourceReport = serde_json::from_value(after_value)?;
+    compare::validate_report(Path::new("before.json"), &before)?;
+    compare::validate_report(Path::new("after.json"), &after)?;
+
+    let rendered = compare::render_comparison(
+        &compare::compare_reports(&before, &after)?,
+        Path::new("before.json"),
+        Path::new("after.json"),
+    );
+    assert!(rendered.contains("attribution evidence complete -> unavailable"));
+    assert!(!rendered.contains("attribution crates candidate"));
+    assert!(!rendered.contains("attribution symbols candidate"));
     Ok(())
 }
 

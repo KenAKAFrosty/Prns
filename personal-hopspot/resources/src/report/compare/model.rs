@@ -9,6 +9,7 @@ pub(in crate::report) struct ResourceComparison {
     pub(super) artifacts: EvidenceComparison<Vec<ArtifactComparison>>,
     pub(super) ram: EvidenceComparison<Vec<RamComparison>>,
     pub(super) sections: EvidenceComparison<Vec<SectionComparison>>,
+    pub(super) attribution: AttributionComparison,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -90,6 +91,52 @@ pub(super) struct SectionComparison {
     pub(super) kind: &'static str,
     pub(super) run_bytes: ByteComparison,
     pub(super) load_bytes: ByteComparison,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum AttributionComparison {
+    Comparable {
+        before: EvidenceAvailability,
+        after: EvidenceAvailability,
+        categories: Box<AttributionCategoriesComparison>,
+    },
+    NotComparable {
+        before: EvidenceAvailability,
+        after: EvidenceAvailability,
+    },
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct AttributionCategoriesComparison {
+    pub(super) crates: AttributionCategoryComparison,
+    pub(super) symbols: AttributionCategoryComparison,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct AttributionCategoryComparison {
+    pub(super) coverage: AttributionCoverageComparison,
+    pub(super) candidates: Vec<AttributionCandidateComparison>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct AttributionCoverageComparison {
+    pub(super) analyzed: ByteComparison,
+    pub(super) attributed: ByteComparison,
+    pub(super) unclassified: ByteComparison,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct AttributionCandidateComparison {
+    pub(super) rank: usize,
+    pub(super) name: String,
+    pub(super) before: AttributionCandidateBaseline,
+    pub(super) after_bytes: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum AttributionCandidateBaseline {
+    Ranked(u64),
+    NotRanked,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

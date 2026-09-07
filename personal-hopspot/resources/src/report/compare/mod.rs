@@ -9,14 +9,16 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 use super::model::{
-    ArtifactIdentity, BuildIdentity, BuildStatus, Evidence, FirmwareFlashUsage,
-    MemoryOverflowIdentity, RamBackingUsage, RamCapacityIdentity, ResourceReport,
-    SectionKindIdentity, SectionUsage,
+    ArtifactIdentity, AttributionCategoryIdentity, AttributionEntryIdentity, BuildIdentity,
+    BuildStatus, Evidence, FirmwareFlashUsage, FlashAttributionIdentity, MemoryOverflowIdentity,
+    RamBackingUsage, RamCapacityIdentity, ResourceReport, SectionKindIdentity, SectionUsage,
 };
 use model::{
-    ArtifactComparison, ByteComparison, EvidenceAvailability, EvidenceComparison, FlashComparison,
-    OverflowComparison, OverflowState, RamComparison, RamHeadroomComparison, ResourceComparison,
-    SectionComparison, SettingDifference, StatusComparison, StatusKind,
+    ArtifactComparison, AttributionCandidateBaseline, AttributionCandidateComparison,
+    AttributionCategoriesComparison, AttributionCategoryComparison, AttributionComparison,
+    AttributionCoverageComparison, ByteComparison, EvidenceAvailability, EvidenceComparison,
+    FlashComparison, OverflowComparison, OverflowState, RamComparison, RamHeadroomComparison,
+    ResourceComparison, SectionComparison, SettingDifference, StatusComparison, StatusKind,
 };
 
 const SECTION_KINDS: [(SectionKindIdentity, &str); 5] = [
@@ -26,6 +28,7 @@ const SECTION_KINDS: [(SectionKindIdentity, &str); 5] = [
     (SectionKindIdentity::ZeroFill, "zero-fill"),
     (SectionKindIdentity::Other, "other"),
 ];
+const ATTRIBUTION_CANDIDATE_LIMIT: usize = 10;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CompatibilityDimension {
@@ -209,7 +212,81 @@ fn compare_reports_with(
             &after.analysis.allocated_sections,
             |before, after| compare_sections(before, after),
         )?,
+        attribution: compare_attribution(
+            &before.analysis.flash_attribution,
+            &after.analysis.flash_attribution,
+        ),
     })
+}
+
+fn compare_attribution(
+    before: &Evidence<FlashAttributionIdentity>,
+    after: &Evidence<FlashAttributionIdentity>,
+) -> AttributionComparison {
+    let before_availability = evidence_availability(before);
+    let after_availability = evidence_availability(after);
+    match (before, after) {
+        (Evidence::Unavailable, _) | (_, Evidence::Unavailable) => {
+            AttributionComparison::NotComparable {
+                before: before_availability,
+                after: after_availability,
+            }
+        }
+        (
+            Evidence::Complete(before) | Evidence::Partial(before),
+            Evidence::Complete(after) | Evidence::Partial(after),
+        ) => AttributionComparison::Comparable {
+            before: before_availability,
+            after: after_availability,
+            categories: Box::new(AttributionCategoriesComparison {
+                crates: compare_attribution_category(&before.crates, &after.crates),
+                symbols: compare_attribution_category(&before.symbols, &after.symbols),
+            }),
+        },
+    }
+}
+
+fn compare_attribution_category(
+    before: &AttributionCategoryIdentity,
+    after: &AttributionCategoryIdentity,
+) -> AttributionCategoryComparison {
+    AttributionCategoryComparison {
+        coverage: AttributionCoverageComparison {
+            analyzed: ByteComparison::new(
+                before.coverage.analyzed_bytes,
+                after.coverage.analyzed_bytes,
+            ),
+            attributed: ByteComparison::new(
+                before.coverage.attributed_bytes,
+                after.coverage.attributed_bytes,
+            ),
+            unclassified: ByteComparison::new(
+                before.coverage.unclassified_bytes,
+                after.coverage.unclassified_bytes,
+            ),
+        },
+        candidates: after
+            .largest
+            .iter()
+            .take(ATTRIBUTION_CANDIDATE_LIMIT)
+            .enumerate()
+            .map(|(index, entry)| AttributionCandidateComparison {
+                rank: index + 1,
+                name: entry.name.clone(),
+                before: ranked_bytes(&before.largest, &entry.name),
+                after_bytes: entry.bytes,
+            })
+            .collect(),
+    }
+}
+
+fn ranked_bytes(entries: &[AttributionEntryIdentity], name: &str) -> AttributionCandidateBaseline {
+    entries
+        .iter()
+        .find(|entry| entry.name == name)
+        .map_or(AttributionCandidateBaseline::NotRanked, |entry| {
+            AttributionCandidateBaseline::Ranked(entry.bytes)
+        })
 }
 
 fn compare_status(before: &BuildStatus, after: &BuildStatus) -> StatusComparison {

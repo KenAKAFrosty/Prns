@@ -1,9 +1,10 @@
 use std::path::Path;
 
 use super::model::{
-    ArtifactComparison, ByteComparison, EvidenceComparison, FlashComparison, OverflowComparison,
-    OverflowState, RamComparison, RamHeadroomComparison, ResourceComparison, SectionComparison,
-    SettingDifference, StatusComparison,
+    ArtifactComparison, AttributionCandidateBaseline, AttributionCandidateComparison,
+    AttributionCategoryComparison, AttributionComparison, ByteComparison, EvidenceComparison,
+    FlashComparison, OverflowComparison, OverflowState, RamComparison, RamHeadroomComparison,
+    ResourceComparison, SectionComparison, SettingDifference, StatusComparison,
 };
 
 pub(super) fn render(comparison: &ResourceComparison, before: &Path, after: &Path) -> String {
@@ -48,7 +49,70 @@ pub(super) fn render(comparison: &ResourceComparison, before: &Path, after: &Pat
             }
         },
     );
+    attribution(&mut output, &comparison.attribution);
     output
+}
+
+fn attribution(output: &mut String, comparison: &AttributionComparison) {
+    let (before, after, categories) = match comparison {
+        AttributionComparison::Comparable {
+            before,
+            after,
+            categories,
+        } => (before, after, Some(categories)),
+        AttributionComparison::NotComparable { before, after } => (before, after, None),
+    };
+    output.push_str(&format!("attribution evidence {before} -> {after}\n"));
+    if let Some(categories) = categories {
+        attribution_category(output, "crates", &categories.crates);
+        attribution_category(output, "symbols", &categories.symbols);
+    }
+}
+
+fn attribution_category(
+    output: &mut String,
+    name: &str,
+    comparison: &AttributionCategoryComparison,
+) {
+    metric(
+        output,
+        &format!("attribution {name} analyzed"),
+        comparison.coverage.analyzed,
+    );
+    metric(
+        output,
+        &format!("attribution {name} attributed"),
+        comparison.coverage.attributed,
+    );
+    metric(
+        output,
+        &format!("attribution {name} unclassified"),
+        comparison.coverage.unclassified,
+    );
+    for candidate in &comparison.candidates {
+        attribution_candidate(output, name, candidate);
+    }
+}
+
+fn attribution_candidate(
+    output: &mut String,
+    category: &str,
+    comparison: &AttributionCandidateComparison,
+) {
+    let (before, delta) = match comparison.before {
+        AttributionCandidateBaseline::Ranked(before) => (
+            before.to_string(),
+            format!(
+                " ({})",
+                ByteComparison::new(before, comparison.after_bytes).delta
+            ),
+        ),
+        AttributionCandidateBaseline::NotRanked => ("not-ranked".to_string(), String::new()),
+    };
+    output.push_str(&format!(
+        "attribution {category} candidate {} {before} -> {}{delta} {:?}\n",
+        comparison.rank, comparison.after_bytes, comparison.name
+    ));
 }
 
 fn status(output: &mut String, comparison: &StatusComparison) {
