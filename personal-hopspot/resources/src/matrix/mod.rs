@@ -30,6 +30,12 @@ pub(crate) struct Target<'a> {
     recipe: TargetRecipe<'a>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TargetPlatform {
+    Esp,
+    Nrf52840,
+}
+
 #[derive(Clone, Copy)]
 enum TargetRecipe<'a> {
     Esp {
@@ -188,6 +194,15 @@ impl Target<'_> {
 
     pub(crate) const fn adapter(&self) -> &'static Adapter {
         self.adapter
+    }
+
+    pub(crate) const fn platform(&self) -> TargetPlatform {
+        match self.recipe {
+            TargetRecipe::Esp { .. } => TargetPlatform::Esp,
+            TargetRecipe::Uf2 { .. }
+            | TargetRecipe::SerialDfu { .. }
+            | TargetRecipe::MeshTowerV2 => TargetPlatform::Nrf52840,
+        }
     }
 
     pub(crate) fn recipe_identity(&self) -> RecipeIdentity<'_> {

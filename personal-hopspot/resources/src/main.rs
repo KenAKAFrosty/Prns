@@ -14,7 +14,7 @@ use personal_hopspot_builder::{
 use thiserror::Error;
 
 use contracts::{ContractOutcome, ContractsMode};
-use matrix::{Matrix, MatrixError, Target};
+use matrix::{Matrix, MatrixError, Target, TargetPlatform};
 
 #[derive(Parser)]
 #[command(name = "personal-hopspot-resources")]
@@ -68,10 +68,27 @@ struct ReportArguments {
     all: bool,
     #[arg(long)]
     target: Option<String>,
+    #[arg(long, value_enum, conflicts_with = "target")]
+    platform: Option<PlatformArgument>,
     #[arg(long, value_enum, default_value_t)]
     lto: LtoArgument,
     #[arg(long)]
     allow_overflow: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum PlatformArgument {
+    Esp,
+    Nrf52840,
+}
+
+impl From<PlatformArgument> for TargetPlatform {
+    fn from(value: PlatformArgument) -> Self {
+        match value {
+            PlatformArgument::Esp => Self::Esp,
+            PlatformArgument::Nrf52840 => Self::Nrf52840,
+        }
+    }
 }
 
 enum OverflowPolicy {
@@ -191,7 +208,11 @@ fn build_reports(root: &Path, arguments: &ReportArguments) -> Result<(), Resourc
     let context =
         BuildContext::new(root, &output_root, BuildVersion::Repository)?.with_intent(intent);
     if arguments.all {
-        for target in matrix.iter() {
+        let platform = arguments.platform.map(TargetPlatform::from);
+        for target in matrix
+            .iter()
+            .filter(|target| platform.is_none_or(|platform| target.platform() == platform))
+        {
             build_report(target, &context, arguments.overflow_policy())?;
         }
     } else if let Some(target) = &arguments.target {
@@ -299,6 +320,26 @@ mod tests {
     fn report_scope_is_required_and_exclusive() {
         assert!(Cli::try_parse_from(["resources", "report"]).is_err());
         assert!(Cli::try_parse_from(["resources", "report", "--all", "--target", "t114"]).is_err());
+        assert!(Cli::try_parse_from([
+            "resources",
+            "report",
+            "--target",
+            "t114",
+            "--platform",
+            "esp"
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn report_accepts_catalog_derived_platform_selection() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let cli = Cli::try_parse_from(["resources", "report", "--all", "--platform", "nrf52840"])?;
+        let ResourceCommand::Report(arguments) = cli.command else {
+            return Err("report command was not parsed".into());
+        };
+        assert_eq!(arguments.platform, Some(PlatformArgument::Nrf52840));
+        Ok(())
     }
 
     #[test]

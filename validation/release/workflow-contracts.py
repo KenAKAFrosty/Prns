@@ -490,15 +490,50 @@ def validate() -> list[str]:
     if "RUSTUP_TOOLCHAIN: 1.90.0" not in ci or "toolchain: 1.90.0" not in ci:
         errors.append("ci.yml does not explicitly force and install the Rust 1.90.0 MSRV")
     for product_matrix_gate in (
+        "validation/hygiene/embedded_resource_selection.py",
         "run --suite embedded-builds",
         "run --suite esp32-firmware-check",
         'release toolchain esp install -- "${RUNNER_TEMP}/prns-esp-tools"',
+        "embedded-resources-nrf52840",
+        "embedded-resources-esp",
+        "EMBEDDED_SELECTION_RESULT: ${{ needs.embedded-resource-selection.result }}",
+        "EMBEDDED_REQUIRED: ${{ needs.embedded-resource-selection.outputs.required }}",
         "ESP32_RESULT: ${{ needs.esp32-firmware.result }}",
     ):
         if product_matrix_gate not in ci:
             errors.append(
                 f"ci.yml is missing required product-matrix gate {product_matrix_gate!r}"
             )
+    ci_jobs = dict(workflow_jobs(ci))
+    selection_job = ci_jobs.get("embedded-resource-selection", "")
+    if (
+        "fetch-depth: 0" not in selection_job
+        or "required: ${{ steps.resources.outputs.required }}" not in selection_job
+    ):
+        errors.append("embedded resource selection does not expose a full-history decision")
+    selection_condition = "if: needs.embedded-resource-selection.outputs.required == 'true'"
+    for job_name in ("no-std-embedded", "esp32-firmware"):
+        if selection_condition not in ci_jobs.get(job_name, ""):
+            errors.append(f"ci.yml {job_name} does not use the shared resource selection")
+    release_critical = ci_jobs.get("release-critical", "")
+    for result_name, skipped_result in (
+        ("nRF", 'test "$EMBEDDED_RESULT" = "skipped"'),
+        ("ESP", 'test "$ESP32_RESULT" = "skipped"'),
+    ):
+        if skipped_result not in release_critical:
+            errors.append(
+                f"release-critical does not distinguish an intentional {result_name} skip"
+            )
+    embedded = (ROOT / "validation" / "platforms" / "embedded.sh").read_text(
+        encoding="utf-8"
+    )
+    esp32 = (
+        ROOT / "validation" / "platforms" / "esp32-firmware-check.sh"
+    ).read_text(encoding="utf-8")
+    if "resources report --all --platform nrf52840" not in embedded:
+        errors.append("embedded lane does not produce the catalog-derived nRF resource fragment")
+    if "resources report --all --platform esp" not in esp32:
+        errors.append("ESP lane does not produce the catalog-derived ESP resource fragment")
     if 'node-version: "24.18.0"' not in ci:
         errors.append("ci.yml does not test the release web graph with Node 24.18.0")
     for browser_gate in (

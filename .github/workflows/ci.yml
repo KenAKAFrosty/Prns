@@ -324,7 +324,23 @@ jobs:
       - run: cargo check --workspace --locked
         working-directory: prnsd
 
+  embedded-resource-selection:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      required: ${{ steps.resources.outputs.required }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: false
+      - id: resources
+        run: python3 validation/hygiene/embedded_resource_selection.py
+
   no-std-embedded:
+    needs: embedded-resource-selection
+    if: needs.embedded-resource-selection.outputs.required == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -338,8 +354,20 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
       - name: complete no_std and nRF52840 firmware matrix
         run: python3 validation/run.py run --suite embedded-builds --expected-sha "$GITHUB_SHA"
+      - name: upload nRF embedded resource evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: embedded-resources-nrf52840
+          retention-days: 7
+          if-no-files-found: warn
+          path: |
+            target/flash-artifacts/resources/configured/reports/*.json
+            target/flash-artifacts/resources/configured/work/*/linker.map
 
   esp32-firmware:
+    needs: embedded-resource-selection
+    if: needs.embedded-resource-selection.outputs.required == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -358,6 +386,16 @@ jobs:
           shared-key: esp32-firmware-check
       - name: compile every ESP32 shipping face on its real architecture
         run: python3 validation/run.py run --suite esp32-firmware-check --expected-sha "$GITHUB_SHA"
+      - name: upload ESP embedded resource evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: embedded-resources-esp
+          retention-days: 7
+          if-no-files-found: warn
+          path: |
+            target/flash-artifacts/resources/configured/reports/*.json
+            target/flash-artifacts/resources/configured/work/*/linker.map
 
   android-service:
     # Android is now more than a foreground Activity shell: the Hopspot app packages a foreground
@@ -584,6 +622,7 @@ jobs:
       - flasher-contracts
       - release-workflow-contracts
       - msrv
+      - embedded-resource-selection
       - no-std-embedded
       - esp32-firmware
       - android-service
@@ -602,6 +641,8 @@ jobs:
       FLASHER_RESULT: ${{ needs.flasher-contracts.result }}
       WORKFLOWS_RESULT: ${{ needs.release-workflow-contracts.result }}
       MSRV_RESULT: ${{ needs.msrv.result }}
+      EMBEDDED_SELECTION_RESULT: ${{ needs.embedded-resource-selection.result }}
+      EMBEDDED_REQUIRED: ${{ needs.embedded-resource-selection.outputs.required }}
       EMBEDDED_RESULT: ${{ needs.no-std-embedded.result }}
       ESP32_RESULT: ${{ needs.esp32-firmware.result }}
       ANDROID_RESULT: ${{ needs.android-service.result }}
@@ -621,8 +662,7 @@ jobs:
             "$FLASHER_RESULT" \
             "$WORKFLOWS_RESULT" \
             "$MSRV_RESULT" \
-            "$EMBEDDED_RESULT" \
-            "$ESP32_RESULT" \
+            "$EMBEDDED_SELECTION_RESULT" \
             "$ANDROID_RESULT" \
             "$APPLE_RESULT" \
             "$WINDOWS_RESULT" \
@@ -630,3 +670,11 @@ jobs:
             "$DENY_RESULT"; do
             test "$result" = "success"
           done
+          if [ "$EMBEDDED_REQUIRED" = "true" ]; then
+            test "$EMBEDDED_RESULT" = "success"
+            test "$ESP32_RESULT" = "success"
+          else
+            test "$EMBEDDED_REQUIRED" = "false"
+            test "$EMBEDDED_RESULT" = "skipped"
+            test "$ESP32_RESULT" = "skipped"
+          fi
