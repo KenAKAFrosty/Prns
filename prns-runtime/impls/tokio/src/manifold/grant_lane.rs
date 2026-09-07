@@ -306,9 +306,11 @@ impl TokioGrantConsumer {
                 if self.producer_parked.load(Ordering::Acquire)
                     && self.producer_parked.swap(false, Ordering::AcqRel)
                 {
-                    self.free_ready.notify_one();
-                    if let Some((interface, notify)) = &self.release_notify {
-                        let _ = notify.send(*interface);
+                    match &self.release_notify {
+                        Some((interface, notify)) => {
+                            let _ = notify.send(*interface);
+                        }
+                        None => self.free_ready.notify_one(),
                     }
                 }
             }
@@ -394,8 +396,8 @@ mod tests {
         assert_eq!(producer.occupancy(), 0);
     }
 
-    #[test]
-    fn armed_release_notifies_the_manifold_once() {
+    #[tokio::test]
+    async fn armed_release_notifies_only_the_manifold_once() {
         let id = InterfaceId::new([0xD1; 8]);
         let (notify, mut notified) = tokio::sync::mpsc::unbounded_channel();
         let (mut producer, mut consumer) = tokio_grant_lane(64, 1);
@@ -414,6 +416,11 @@ mod tests {
         consumer.release();
         assert_eq!(notified.try_recv(), Ok(id));
         assert!(notified.try_recv().is_err());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), producer.free_ready.notified())
+                .await
+                .is_err(),
+        );
     }
 
     #[test]
