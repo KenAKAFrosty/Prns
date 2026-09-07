@@ -1,9 +1,11 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use prns_core::interfaces::{FrameSink, FrameSinkError, InterfaceId, PacketPhyStats};
+use prns_core::interfaces::{FrameSink, FrameSinkError, PacketPhyStats};
 use rtrb::{Consumer, Producer, PushError, RingBuffer};
-use tokio::sync::{mpsc::UnboundedSender, Notify};
+use tokio::sync::Notify;
+
+use super::driver::ManifoldWakeSender;
 
 pub fn tokio_grant_lane(slot_cap: usize, depth: usize) -> (TokioGrantProducer, TokioGrantConsumer) {
     let depth = depth.max(1);
@@ -14,7 +16,6 @@ pub fn tokio_grant_lane(slot_cap: usize, depth: usize) -> (TokioGrantProducer, T
     let free_ready = Arc::new(Notify::new());
     let producer_parked = Arc::new(AtomicBool::new(false));
     let consumer_parked = Arc::new(AtomicBool::new(false));
-    let announced = Arc::new(AtomicBool::new(false));
     (
         TokioGrantProducer {
             slot_cap,
@@ -28,7 +29,6 @@ pub fn tokio_grant_lane(slot_cap: usize, depth: usize) -> (TokioGrantProducer, T
             free_ready: free_ready.clone(),
             producer_parked: producer_parked.clone(),
             consumer_parked: consumer_parked.clone(),
-            announced: announced.clone(),
         },
         TokioGrantConsumer {
             expedited: expedited_slots,
@@ -39,7 +39,6 @@ pub fn tokio_grant_lane(slot_cap: usize, depth: usize) -> (TokioGrantProducer, T
             free_ready,
             producer_parked,
             consumer_parked,
-            announced,
             expedited_streak: 0,
             release_notify: None,
         },
@@ -128,7 +127,6 @@ pub struct TokioGrantProducer {
     free_ready: Arc<Notify>,
     producer_parked: Arc<AtomicBool>,
     consumer_parked: Arc<AtomicBool>,
-    announced: Arc<AtomicBool>,
 }
 
 impl TokioGrantProducer {
@@ -201,10 +199,6 @@ impl TokioGrantProducer {
         }
     }
 
-    pub fn needs_announce(&self) -> bool {
-        !self.announced.swap(true, Ordering::AcqRel)
-    }
-
     pub(super) fn arm_release_wake(&self) {
         self.producer_parked.store(true, Ordering::Release);
     }
@@ -223,9 +217,8 @@ pub struct TokioGrantConsumer {
     free_ready: Arc<Notify>,
     producer_parked: Arc<AtomicBool>,
     consumer_parked: Arc<AtomicBool>,
-    announced: Arc<AtomicBool>,
     expedited_streak: usize,
-    release_notify: Option<(InterfaceId, UnboundedSender<InterfaceId>)>,
+    release_notify: Option<ManifoldWakeSender>,
 }
 
 pub(super) const EXPEDITED_BURST: usize = 8;
@@ -236,12 +229,8 @@ enum GrantQueue {
 }
 
 impl TokioGrantConsumer {
-    pub(super) fn notify_releases_to(
-        &mut self,
-        interface: InterfaceId,
-        notify: UnboundedSender<InterfaceId>,
-    ) {
-        self.release_notify = Some((interface, notify));
+    pub(super) fn notify_releases_to(&mut self, notify: ManifoldWakeSender) {
+        self.release_notify = Some(notify);
     }
 
     pub fn try_peek(&mut self) -> Option<&mut HeapFrameSlot> {
@@ -306,18 +295,14 @@ impl TokioGrantConsumer {
                 if self.producer_parked.load(Ordering::Acquire)
                     && self.producer_parked.swap(false, Ordering::AcqRel)
                 {
-                    self.free_ready.notify_one();
-                    if let Some((interface, notify)) = &self.release_notify {
-                        let _ = notify.send(*interface);
+                    match &self.release_notify {
+                        Some(notify) => notify.signal(),
+                        None => self.free_ready.notify_one(),
                     }
                 }
             }
             Err(PushError::Full(_)) => {}
         }
-    }
-
-    pub fn acknowledge(&mut self) {
-        self.announced.store(false, Ordering::Release);
     }
 }
 
@@ -394,26 +379,36 @@ mod tests {
         assert_eq!(producer.occupancy(), 0);
     }
 
-    #[test]
-    fn armed_release_notifies_the_manifold_once() {
-        let id = InterfaceId::new([0xD1; 8]);
-        let (notify, mut notified) = tokio::sync::mpsc::unbounded_channel();
+    #[tokio::test]
+    async fn armed_release_notifies_only_the_manifold_once() {
+        let (notify, notified) = super::super::driver::manifold_wake();
         let (mut producer, mut consumer) = tokio_grant_lane(64, 1);
-        consumer.notify_releases_to(id, notify);
+        consumer.notify_releases_to(notify);
 
         producer.try_grant().unwrap().fill(b"hot");
         producer.commit();
         consumer.try_peek().unwrap();
         consumer.release();
-        assert!(notified.try_recv().is_err());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), notified.wait())
+                .await
+                .is_err(),
+        );
 
         producer.try_grant().unwrap().fill(b"parked");
         producer.commit();
         consumer.try_peek().unwrap();
         producer.arm_release_wake();
+        notified.arm();
         consumer.release();
-        assert_eq!(notified.try_recv(), Ok(id));
-        assert!(notified.try_recv().is_err());
+        tokio::time::timeout(Duration::from_millis(20), notified.wait())
+            .await
+            .expect("the manifold wakes");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), producer.free_ready.notified())
+                .await
+                .is_err(),
+        );
     }
 
     #[test]
@@ -617,34 +612,6 @@ mod tests {
         received.frame_mut()[0] ^= 0x20;
         assert_eq!(&received.frame()[..3], b"The");
         consumer.release();
-    }
-
-    #[test]
-    fn a_burst_earns_one_announcement_until_the_consumer_acknowledges() {
-        let (mut producer, mut consumer) = tokio_grant_lane(64, 8);
-
-        producer.try_grant().expect("lane grants").fill(b"one");
-        producer.commit();
-        assert!(producer.needs_announce(), "the first commit announces");
-
-        producer.try_grant().expect("lane grants").fill(b"two");
-        producer.commit();
-        assert!(
-            !producer.needs_announce(),
-            "a burst behind an unconsumed announcement stays silent",
-        );
-
-        consumer.acknowledge();
-        while consumer.try_peek().is_some() {
-            consumer.release();
-        }
-
-        producer.try_grant().expect("lane grants").fill(b"three");
-        producer.commit();
-        assert!(
-            producer.needs_announce(),
-            "a commit after the acknowledge announces again",
-        );
     }
 
     #[tokio::test]

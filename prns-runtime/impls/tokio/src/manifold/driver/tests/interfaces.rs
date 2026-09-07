@@ -30,7 +30,7 @@ async fn ifac_members_hear_each_other_and_strangers_stay_outside() {
         },
     ];
 
-    let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
+    let (wake_tx, wake_rx) = manifold_wake();
     let (source_in_tx, source_in_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
     let (peer_in_tx, peer_in_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
     let (source_wire_in_tx, source_wire_in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
@@ -41,8 +41,7 @@ async fn ifac_members_hear_each_other_and_strangers_stay_outside() {
         wire_in: source_wire_in_rx,
         wire_out: source_wire_out_tx,
     };
-    let source_seam =
-        TokioInterfaceSeam::new(source, source_in_tx, notify_tx.clone(), source_out_rx);
+    let source_seam = TokioInterfaceSeam::new(source, source_in_tx, wake_tx.clone(), source_out_rx);
 
     let (_peer_wire_in_tx, peer_wire_in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
     let (peer_wire_out_tx, mut peer_wire_out_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
@@ -52,8 +51,8 @@ async fn ifac_members_hear_each_other_and_strangers_stay_outside() {
         wire_in: peer_wire_in_rx,
         wire_out: peer_wire_out_tx,
     };
-    let peer_seam = TokioInterfaceSeam::new(peer, peer_in_tx, notify_tx.clone(), peer_out_rx);
-    drop(notify_tx);
+    let peer_seam = TokioInterfaceSeam::new(peer, peer_in_tx, wake_tx.clone(), peer_out_rx);
+    drop(wake_tx);
 
     let egress = Egress::new(std::vec![(source, source_out_tx), (peer, peer_out_tx)]);
     let (_command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
@@ -70,7 +69,7 @@ async fn ifac_members_hear_each_other_and_strangers_stay_outside() {
         ManifoldWiring {
             interfaces,
             ifacs,
-            notify: notify_rx,
+            wake: wake_rx,
             inbound_lanes: std::vec![(source, source_in_rx), (peer, peer_in_rx)],
             commands: command_rx,
             egress,
@@ -148,7 +147,7 @@ async fn a_dynamic_interface_drains_a_frame_queued_before_attachment() {
     let mut engine = EngineState::<TestStorageLayout>::default();
     pin_transport_id(&mut engine, TEST_TRANSPORT_ID);
 
-    let (_notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
+    let (_wake_tx, wake_rx) = manifold_wake();
     let (command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
     let (heard_tx, mut heard_rx) = mpsc::unbounded_channel::<DestinationHash>();
     let app = move |journaled: Journaled<'_>| {
@@ -163,7 +162,7 @@ async fn a_dynamic_interface_drains_a_frame_queued_before_attachment() {
         ManifoldWiring {
             interfaces: std::vec![],
             ifacs: std::vec![],
-            notify: notify_rx,
+            wake: wake_rx,
             inbound_lanes: std::vec![],
             commands: command_rx,
             egress: Egress::new(std::vec![]),
@@ -217,7 +216,7 @@ async fn protocol_violations_are_attributed_to_the_source_recorder() {
     let mut engine = EngineState::<TestStorageLayout>::default();
     pin_transport_id(&mut engine, TEST_TRANSPORT_ID);
 
-    let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
+    let (wake_tx, wake_rx) = manifold_wake();
     let (command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
     let (heard_tx, mut heard_rx) = mpsc::unbounded_channel::<DestinationHash>();
     let app = move |journaled: Journaled<'_>| {
@@ -231,7 +230,7 @@ async fn protocol_violations_are_attributed_to_the_source_recorder() {
         ManifoldWiring {
             interfaces: std::vec![],
             ifacs: std::vec![],
-            notify: notify_rx,
+            wake: wake_rx,
             inbound_lanes: std::vec![],
             commands: command_rx,
             egress: Egress::new(std::vec![]),
@@ -273,13 +272,13 @@ async fn protocol_violations_are_attributed_to_the_source_recorder() {
 
     malformed_in.try_grant().unwrap().fill(&[0x01]);
     malformed_in.commit();
-    notify_tx.send(malformed_source).unwrap();
+    wake_tx.signal();
     valid_in
         .try_grant()
         .unwrap()
         .fill(&bytes_from_hex(RNS_1_4_2_ANNOUNCE));
     valid_in.commit();
-    notify_tx.send(valid_source).unwrap();
+    wake_tx.signal();
     tokio::time::timeout(Duration::from_secs(2), heard_rx.recv())
         .await
         .unwrap()
@@ -289,7 +288,7 @@ async fn protocol_violations_are_attributed_to_the_source_recorder() {
     invalid_signature[103] ^= 1;
     valid_in.try_grant().unwrap().fill(&invalid_signature);
     valid_in.commit();
-    notify_tx.send(valid_source).unwrap();
+    wake_tx.signal();
     tokio::time::timeout(Duration::from_secs(2), async {
         loop {
             if valid_status
@@ -331,7 +330,7 @@ async fn dynamic_ifac_state_arrives_and_leaves_with_its_interface() {
     pin_transport_id(&mut engine, TEST_TRANSPORT_ID);
     let network = IfacContext::derive(Some("testnet"), Some("s3cret"), IfacSize::NARROW).unwrap();
 
-    let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
+    let (wake_tx, wake_rx) = manifold_wake();
     let (command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
     let (heard_tx, mut heard_rx) = mpsc::unbounded_channel::<DestinationHash>();
     let app = move |journaled: Journaled<'_>| {
@@ -346,7 +345,7 @@ async fn dynamic_ifac_state_arrives_and_leaves_with_its_interface() {
         ManifoldWiring {
             interfaces: std::vec![],
             ifacs: std::vec![],
-            notify: notify_rx,
+            wake: wake_rx,
             inbound_lanes: std::vec![],
             commands: command_rx,
             egress: Egress::new(std::vec![]),
@@ -377,7 +376,7 @@ async fn dynamic_ifac_state_arrives_and_leaves_with_its_interface() {
         .unwrap()
         .fill(&masked[..masked_len]);
     protected_in.commit();
-    notify_tx.send(source).unwrap();
+    wake_tx.signal();
     tokio::time::timeout(Duration::from_secs(2), heard_rx.recv())
         .await
         .unwrap()
@@ -407,7 +406,7 @@ async fn dynamic_ifac_state_arrives_and_leaves_with_its_interface() {
     let open = bytes_from_hex(RNS_1_4_2_RATCHETED_ANNOUNCE);
     open_in.try_grant().unwrap().fill(&open);
     open_in.commit();
-    notify_tx.send(source).unwrap();
+    wake_tx.signal();
     tokio::time::timeout(Duration::from_secs(2), heard_rx.recv())
         .await
         .unwrap()

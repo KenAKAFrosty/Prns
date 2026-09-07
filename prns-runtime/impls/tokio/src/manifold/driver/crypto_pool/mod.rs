@@ -736,14 +736,71 @@ pub(super) struct CryptoCompletion {
     pub(super) timing: CompletedJobTiming,
 }
 
+const COMPLETION_WAIT_ARMED: usize = 1 << (usize::BITS - 1);
+const COMPLETION_READY_MASK: usize = !COMPLETION_WAIT_ARMED;
+
+struct CompletionReadiness(AtomicUsize);
+
+impl CompletionReadiness {
+    fn new() -> Self {
+        Self(AtomicUsize::new(0))
+    }
+
+    fn ready_count(&self) -> usize {
+        self.0.load(Ordering::Acquire) & COMPLETION_READY_MASK
+    }
+
+    fn has_ready(&self) -> bool {
+        self.ready_count() > 0
+    }
+
+    fn reserve(&self, count: usize) {
+        debug_assert!(count <= COMPLETION_READY_MASK);
+        debug_assert!(
+            self.0.load(Ordering::Relaxed) & COMPLETION_READY_MASK <= COMPLETION_READY_MASK - count
+        );
+        self.0.fetch_add(count, Ordering::Release);
+    }
+
+    fn release(&self, count: usize) {
+        let previous = self.0.fetch_sub(count, Ordering::AcqRel);
+        debug_assert!((previous & COMPLETION_READY_MASK) >= count);
+    }
+
+    fn prepare_wait(&self) -> bool {
+        if self.has_ready() {
+            return true;
+        }
+        let previous = self.0.fetch_or(COMPLETION_WAIT_ARMED, Ordering::AcqRel);
+        if previous & COMPLETION_READY_MASK == 0 {
+            return false;
+        }
+        self.0.fetch_and(COMPLETION_READY_MASK, Ordering::AcqRel);
+        true
+    }
+
+    fn take_wait_arm(&self) -> bool {
+        self.0.fetch_and(COMPLETION_READY_MASK, Ordering::AcqRel) & COMPLETION_WAIT_ARMED != 0
+    }
+
+    fn notify_if_armed(&self, completion_wake: &Notify) {
+        if self.wait_is_armed() && self.take_wait_arm() {
+            completion_wake.notify_one();
+        }
+    }
+
+    fn clear(&self) {
+        self.0.store(0, Ordering::Release);
+    }
+
+    fn wait_is_armed(&self) -> bool {
+        self.0.load(Ordering::Acquire) & COMPLETION_WAIT_ARMED != 0
+    }
+}
+
 struct CryptoPoolState {
     queued_jobs: AtomicUsize,
-    /// Durable readiness behind the coalescing `Notify`: a cancelled manifold wait can lose its
-    /// place in Tokio's waiter queue, but it cannot lose this count or strand a result ring.
-    ready_results: AtomicUsize,
-    /// Armed only while the manifold can actually sleep waiting for a completion. Workers keep
-    /// payloads in their SPSC rings and enter Tokio's wake path only on this state transition.
-    completion_wake_armed: AtomicBool,
+    completion_readiness: CompletionReadiness,
     warm_worker: AtomicUsize,
     backpressure_depth: usize,
     shutdown: AtomicBool,
@@ -818,8 +875,7 @@ impl CryptoPool {
         let worker_count = workers.max(1);
         let state = Arc::new(CryptoPoolState {
             queued_jobs: AtomicUsize::new(0),
-            ready_results: AtomicUsize::new(0),
-            completion_wake_armed: AtomicBool::new(false),
+            completion_readiness: CompletionReadiness::new(),
             warm_worker: AtomicUsize::new(NO_WARM_WORKER),
             backpressure_depth: crypto_backpressure_depth(workers),
             shutdown: AtomicBool::new(false),
@@ -1272,8 +1328,7 @@ impl CryptoPool {
                 .as_mut()
                 .and_then(|consumer| consumer.pop().ok());
             if let Some(scheduled) = result {
-                let previous = self.state.ready_results.fetch_sub(1, Ordering::AcqRel);
-                debug_assert!(previous > 0, "a result ring held an uncounted completion");
+                self.state.completion_readiness.release(1);
                 self.next_completion
                     .set(if worker + 1 == self.workers.len() {
                         0
@@ -1297,35 +1352,11 @@ impl CryptoPool {
     }
 
     pub(super) fn has_completion(&self) -> bool {
-        self.state.ready_results.load(Ordering::Acquire) > 0
+        self.state.completion_readiness.has_ready()
     }
 
-    pub(super) fn disarm_completion_wait(&self) {
-        self.state
-            .completion_wake_armed
-            .store(false, Ordering::Release);
-    }
-
-    /// Returns true when a completion is already durable; otherwise arms the single Tokio wake
-    /// and closes the producer race with a second readiness observation before the caller waits.
     pub(super) fn prepare_completion_wait(&self) -> bool {
-        if self.has_completion() {
-            self.state
-                .completion_wake_armed
-                .store(false, Ordering::Release);
-            return true;
-        }
-        self.state
-            .completion_wake_armed
-            .store(true, Ordering::Release);
-        if self.has_completion() {
-            self.state
-                .completion_wake_armed
-                .store(false, Ordering::Release);
-            true
-        } else {
-            false
-        }
+        self.state.completion_readiness.prepare_wait()
     }
 
     pub(super) fn has_queue_capacity(&self, additional: usize) -> bool {
@@ -1424,7 +1455,7 @@ impl Drop for CryptoPool {
             worker.result_consumer.get_mut().take();
         }
         self.state.queued_jobs.store(0, Ordering::Release);
-        self.state.ready_results.store(0, Ordering::Release);
+        self.state.completion_readiness.clear();
     }
 }
 
@@ -2227,20 +2258,20 @@ fn publish_crypto_result(
     // Reserve readiness before publishing into the ring. The manifold may be draining a different
     // worker concurrently; counting first prevents it from observing an uncounted result between
     // the ring's publish and a later atomic increment.
-    state.ready_results.fetch_add(1, Ordering::Release);
+    state.completion_readiness.reserve(1);
     loop {
         if state.shutdown.load(Ordering::Acquire) {
-            state.ready_results.fetch_sub(1, Ordering::Release);
+            state.completion_readiness.release(1);
             return false;
         }
         match results.push(pending) {
             Ok(()) => {
-                notify_completion_if_armed(state, completion_wake);
+                state.completion_readiness.notify_if_armed(completion_wake);
                 return true;
             }
             Err(PushError::Full(returned)) => {
                 pending = returned;
-                notify_completion_if_armed(state, completion_wake);
+                state.completion_readiness.notify_if_armed(completion_wake);
                 std::thread::yield_now();
             }
         }
@@ -2257,14 +2288,14 @@ fn publish_crypto_results(
     if count == 0 {
         return true;
     }
-    state.ready_results.fetch_add(count, Ordering::Release);
+    state.completion_readiness.reserve(count);
     loop {
         if state.shutdown.load(Ordering::Acquire) {
-            state.ready_results.fetch_sub(count, Ordering::Release);
+            state.completion_readiness.release(count);
             return false;
         }
         if results.slots() < count {
-            notify_completion_if_armed(state, completion_wake);
+            state.completion_readiness.notify_if_armed(completion_wake);
             std::thread::yield_now();
             continue;
         }
@@ -2273,14 +2304,8 @@ fn publish_crypto_results(
         };
         let written = chunk.fill_from_iter(pending);
         debug_assert_eq!(written, count);
-        notify_completion_if_armed(state, completion_wake);
+        state.completion_readiness.notify_if_armed(completion_wake);
         return true;
-    }
-}
-
-fn notify_completion_if_armed(state: &CryptoPoolState, completion_wake: &Notify) {
-    if state.completion_wake_armed.swap(false, Ordering::AcqRel) {
-        completion_wake.notify_one();
     }
 }
 

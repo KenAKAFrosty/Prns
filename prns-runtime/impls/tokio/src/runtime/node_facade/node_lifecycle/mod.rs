@@ -4,7 +4,7 @@ use std::future::{poll_fn, Future};
 use std::marker::PhantomData;
 use std::panic::AssertUnwindSafe;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Wake, Waker};
 
@@ -20,7 +20,6 @@ use crate::engine::{
 };
 use crate::identity::held::HoldIdentityError;
 use crate::identity::{IdentityHash, Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use crate::interfaces::InterfaceId;
 use crate::manifold::driver::{
     self as manifold_driver, CryptoPoolConfig, Egress, HostCommand, SchedulerPolicy, TokioClock,
     TokioHost,
@@ -81,7 +80,7 @@ pub struct PrnsNode<St, R, F, S: StorageLayout> {
     local_commands: Option<manifold_driver::LocalCommandProducer>,
     pub(super) host: TokioHost,
     pub(super) node: AssembledNode<St, R, F, S>,
-    notify_rx: UnboundedReceiver<InterfaceId>,
+    manifold_wake: manifold_driver::ManifoldWakeReceiver,
     command_rx: UnboundedReceiver<HostCommand>,
     local_command_rx: manifold_driver::LocalCommandConsumer,
     remote_control_controller_grants_rx: RemoteControlControllerGrantReceiver,
@@ -169,28 +168,38 @@ impl ExecutorThreadAnchor {
     }
 }
 
+const REQUEST_TASK_READY: u8 = 1;
+const REQUEST_TASK_POLLING: u8 = 1 << 1;
+
 struct RequestTaskWake {
-    ready: AtomicBool,
-    polling: AtomicBool,
+    state: AtomicU8,
     parent: AtomicWaker,
 }
 
 impl RequestTaskWake {
     fn new() -> Self {
         Self {
-            ready: AtomicBool::new(true),
-            polling: AtomicBool::new(false),
+            state: AtomicU8::new(REQUEST_TASK_READY),
             parent: AtomicWaker::new(),
         }
     }
 
+    fn begin_poll(&self) -> bool {
+        self.state.swap(REQUEST_TASK_POLLING, Ordering::AcqRel) & REQUEST_TASK_READY != 0
+    }
+
     fn take_ready(&self) -> bool {
-        self.ready.swap(false, Ordering::AcqRel)
+        self.state.load(Ordering::Acquire) & REQUEST_TASK_READY != 0
+            && self.state.fetch_and(!REQUEST_TASK_READY, Ordering::AcqRel) & REQUEST_TASK_READY != 0
     }
 
     fn finish_poll(&self) {
-        self.polling.store(false, Ordering::Release);
-        if self.ready.load(Ordering::Acquire) {
+        if self
+            .state
+            .fetch_and(!REQUEST_TASK_POLLING, Ordering::AcqRel)
+            & REQUEST_TASK_READY
+            != 0
+        {
             self.parent.wake();
         }
     }
@@ -202,7 +211,8 @@ impl Wake for RequestTaskWake {
     }
 
     fn wake_by_ref(self: &Arc<Self>) {
-        if !self.ready.swap(true, Ordering::AcqRel) && !self.polling.load(Ordering::Acquire) {
+        let previous = self.state.fetch_or(REQUEST_TASK_READY, Ordering::AcqRel);
+        if previous & (REQUEST_TASK_READY | REQUEST_TASK_POLLING) == 0 {
             self.parent.wake();
         }
     }
@@ -228,13 +238,11 @@ async fn run_executor_local_node_tasks(
     let mut interface_first = true;
     let result = poll_fn(|parent_context| {
         request_wake.parent.register(parent_context.waker());
-        request_wake.polling.store(true, Ordering::Release);
-        let mut request_ready = request_wake.take_ready();
+        let mut request_ready = request_wake.begin_poll();
 
         macro_rules! poll_child {
             ($child:ident, $context:expr, $panic:expr) => {
                 if let Poll::Ready(result) = $child.as_mut().poll($context) {
-                    request_wake.polling.store(false, Ordering::Release);
                     return Poll::Ready(result.map_err(|_| $panic));
                 }
             };
@@ -262,7 +270,6 @@ async fn run_executor_local_node_tasks(
         if request_ready {
             let mut request_context = Context::from_waker(&request_waker);
             if let Poll::Ready(result) = request_endpoints.as_mut().poll(&mut request_context) {
-                request_wake.polling.store(false, Ordering::Release);
                 return Poll::Ready(match result {
                     Ok(Ok(())) => Ok(()),
                     Ok(Err(failure)) => Err(
@@ -427,7 +434,7 @@ where
         P: persistence::PersistenceIntent,
         B: FnOnce(PrnsNodeHandle) -> PrnsNodeRecipe<'a, D, St, R, F, I, S, P>,
     {
-        let (notify_tx, notify_rx) = mpsc::unbounded_channel();
+        let (manifold_wake_tx, manifold_wake_rx) = manifold_driver::manifold_wake();
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         let (local_commands, local_command_rx) =
             manifold_driver::local_command_lane(LOCAL_COMMAND_DEPTH);
@@ -441,7 +448,7 @@ where
             commands: command_tx,
             ids: Arc::new(AtomicU64::new(0)),
             attachment_epochs: Arc::new(AtomicU64::new(0)),
-            notify_tx,
+            manifold_wake: manifold_wake_tx,
             iface_build: iface_build_tx,
             interfaces: Arc::new(Mutex::new(HashMap::new())),
             store: InterfaceStore::new(),
@@ -466,7 +473,7 @@ where
                     .unwrap_or_else(persistence::wall_clock_timeline_origin),
             ),
             node,
-            notify_rx,
+            manifold_wake: manifold_wake_rx,
             command_rx,
             local_command_rx,
             remote_control_controller_grants_rx,
@@ -730,7 +737,7 @@ where
             local_commands: _,
             host,
             node,
-            notify_rx,
+            manifold_wake,
             command_rx,
             local_command_rx,
             mut remote_control_controller_grants_rx,
@@ -787,7 +794,7 @@ where
                 manifold_driver::ManifoldWiring {
                     interfaces: std::vec::Vec::new(),
                     ifacs: std::vec::Vec::new(),
-                    notify: notify_rx,
+                    wake: manifold_wake,
                     inbound_lanes: std::vec::Vec::new(),
                     commands: command_rx,
                     egress,

@@ -148,6 +148,24 @@ fn validated_acquired_schedule() -> ValidatedAcquiredSchedule {
     }
 }
 
+#[cfg(feature = "std")]
+fn acquisition_simulation(environment: AcquisitionEnvironment) -> AcquisitionSimulation {
+    AcquisitionSimulation {
+        seed: 0x5052_4e53_4143_5155,
+        trials: 256,
+        scanner_dwell_us: US915_TURBO_SPEC.scan_dwell_us(),
+        beacon_opportunity_per_mille: 1_000,
+        packet_loss_per_mille: 0,
+        maximum_search_us: 1_800_000_000,
+        maximum_clock_drift_ppm: 40,
+        actual_clock_drift_ppm: 20,
+        observation_timing_uncertainty_us: 500,
+        timestamp_error_span_us: 250,
+        maximum_transmit_uncertainty: MaximumTransmitUncertainty::new(5_000).unwrap(),
+        environment,
+    }
+}
+
 #[test]
 fn us915_turbo_profile_fully_names_the_phy() {
     let profile = US915_TURBO_SPEC.phy();
@@ -926,6 +944,102 @@ fn deterministic_contention_simulation_executes_the_production_state_machines() 
     assert!(result.delivered_packets > 0);
     assert!(result.occupied_airtime_us >= result.delivered_packets * 17_024);
     assert!(result.jain_fairness_millionths >= 800_000);
+}
+
+#[cfg(feature = "std")]
+#[test]
+fn acquisition_simulation_graduates_only_through_the_production_tracker() {
+    let input = acquisition_simulation(AcquisitionEnvironment::SingleSchedule);
+    let result = simulate_acquisition(input, US915_TURBO_SPEC.phy()).unwrap();
+    assert!(result.acquired_trials > 0);
+    assert_eq!(result.off_primary_schedule_acquisitions, 0);
+    assert_eq!(result.contradiction_resets, 0);
+    assert_eq!(result.maximum_primary_phase_error_us, 0);
+}
+
+#[cfg(feature = "std")]
+#[test]
+fn mixed_schedule_population_can_graduate_either_coherent_phase() {
+    let input = acquisition_simulation(AcquisitionEnvironment::MixedSchedules {
+        alternate_per_mille: 500,
+        alternate_cycle_offset: 1,
+    });
+    let result = simulate_acquisition(input, US915_TURBO_SPEC.phy()).unwrap();
+    assert!(result.acquired_trials > result.off_primary_schedule_acquisitions);
+    assert!(result.off_primary_schedule_acquisitions > 0);
+    assert!(result.maximum_primary_phase_error_us >= US915_TURBO_SPEC.cycle_us());
+}
+
+#[cfg(feature = "std")]
+#[test]
+fn mixed_completion_timing_forces_contradiction_resets() {
+    let input = acquisition_simulation(AcquisitionEnvironment::MixedCompletionTiming {
+        displaced_per_mille: 500,
+        completion_displacement_us: 2_000,
+    });
+    let result = simulate_acquisition(input, US915_TURBO_SPEC.phy()).unwrap();
+    assert!(result.contradiction_resets > 0);
+    assert!(result.acquired_trials > 0);
+}
+
+#[cfg(feature = "std")]
+#[test]
+fn acquisition_simulation_rejects_invalid_clock_and_environment_models_up_front() {
+    let baseline = acquisition_simulation(AcquisitionEnvironment::SingleSchedule);
+    assert_eq!(
+        simulate_acquisition(
+            AcquisitionSimulation {
+                actual_clock_drift_ppm: 41,
+                ..baseline
+            },
+            US915_TURBO_SPEC.phy(),
+        ),
+        Err(AcquisitionSimulationError::ActualClockDriftExceedsBound {
+            actual_ppm: 41,
+            maximum_ppm: 40,
+        })
+    );
+    assert_eq!(
+        simulate_acquisition(
+            AcquisitionSimulation {
+                timestamp_error_span_us: 501,
+                ..baseline
+            },
+            US915_TURBO_SPEC.phy(),
+        ),
+        Err(
+            AcquisitionSimulationError::TimestampErrorExceedsDeclaredUncertainty {
+                error_us: 501,
+                uncertainty_us: 500,
+            }
+        )
+    );
+    assert_eq!(
+        simulate_acquisition(
+            AcquisitionSimulation {
+                environment: AcquisitionEnvironment::MixedSchedules {
+                    alternate_per_mille: 500,
+                    alternate_cycle_offset: 0,
+                },
+                ..baseline
+            },
+            US915_TURBO_SPEC.phy(),
+        ),
+        Err(AcquisitionSimulationError::AlternateCycleOffsetOutsideRange { cycle_offset: 0 })
+    );
+    assert_eq!(
+        simulate_acquisition(
+            AcquisitionSimulation {
+                environment: AcquisitionEnvironment::MixedCompletionTiming {
+                    displaced_per_mille: 500,
+                    completion_displacement_us: 0,
+                },
+                ..baseline
+            },
+            US915_TURBO_SPEC.phy(),
+        ),
+        Err(AcquisitionSimulationError::EmptyCompletionDisplacement)
+    );
 }
 
 proptest! {
