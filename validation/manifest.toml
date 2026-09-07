@@ -64,6 +64,7 @@ cargo_manifests = [
     "benchmarks/Cargo.toml",
     "docs/command/Cargo.toml",
     "docs/website/Cargo.toml",
+    "personal-hopspot/builder/Cargo.toml",
     "personal-hopspot/core/Cargo.toml",
     "personal-hopspot/desktop/Cargo.toml",
     "personal-hopspot/embedded/esp32/Cargo.toml",
@@ -87,8 +88,10 @@ cargo_manifests = [
     "personal-hopspot/embedded/nrf52840/vendor/nrf-softdevice/nrf-softdevice-s140-v6/Cargo.toml",
     "personal-hopspot/embedded/nrf52840/vendor/nrf-softdevice/nrf-softdevice-s140-v7/Cargo.toml",
     "personal-hopspot/flasher/Cargo.toml",
+    "personal-hopspot/memory/Cargo.toml",
     "personal-hopspot/mobile/android/rust/Cargo.toml",
     "personal-hopspot/mobile/ios/rust/Cargo.toml",
+    "personal-hopspot/resources/Cargo.toml",
     "personal-hopspot/sdk/hopspot/Cargo.toml",
     "personal-rns/Cargo.toml",
     "prns-config/Cargo.toml",
@@ -411,7 +414,7 @@ platform = "any"
 toolchain = "python"
 timeout_seconds = 120
 command = ["__RUNNER_PYTHON__", "tools/prns", "verify"]
-inputs = ["tools/prns", "tools/tasks.toml", "tools/repo/cargo-check.py", "tools/README.md", ".githooks/pre-push", "validation/hygiene/pre-push-ci-parity.py"]
+inputs = ["tools/prns", "tools/tasks.toml", "tools/repo/cargo-check.py", "tools/README.md", ".githooks/pre-push", "validation/hygiene/embedded_resource_selection.py", "validation/hygiene/pre-push-ci-parity.py"]
 artifacts = "validation-artifacts/results/tool-registry"
 
 [[suite]]
