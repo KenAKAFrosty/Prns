@@ -1018,10 +1018,18 @@ impl CryptoPool {
             }
             return None;
         }
+        let verification_workers = worker_slots
+            .iter()
+            .filter(|worker| worker.role.accepts(CryptoJobClass::Verify))
+            .count();
+        let verification_parallelism = performance_core_count()
+            .map_or(verification_workers, |performance_cores| {
+                performance_cores.min(verification_workers)
+            });
         Some(Self {
             state,
             workers: worker_slots,
-            verify_batch_target: verify_batch_target(worker_count, performance_core_count()),
+            verify_batch_target: verify_batch_target(worker_count, verification_parallelism),
             maximum_outstanding_work: crypto_backpressure_work(worker_count),
             resource_part_hash_jobs: Cell::new(0),
             next_equal_load: Cell::new(0),
@@ -1544,12 +1552,17 @@ fn crypto_backpressure_work(workers: usize) -> usize {
     workers.max(1).saturating_mul(CRYPTO_WORK_PER_WORKER)
 }
 
-fn verify_batch_target(workers: usize, performance_cores: Option<usize>) -> usize {
+fn verify_batch_target(workers: usize, verification_parallelism: usize) -> usize {
     let workers = workers.max(1);
-    let effective_parallelism = performance_cores.unwrap_or(workers).clamp(1, workers);
+    let effective_parallelism = verification_parallelism.clamp(1, workers);
+    let maximum_affinity_batch = if effective_parallelism > 2 {
+        MAX_INTERACTIVE_CRYPTO_BATCH / 2
+    } else {
+        MAX_INTERACTIVE_CRYPTO_BATCH
+    };
     crypto_backpressure_depth(workers)
         .div_ceil(effective_parallelism)
-        .clamp(2, MAX_INTERACTIVE_CRYPTO_BATCH)
+        .clamp(2, maximum_affinity_batch)
 }
 
 const WORKER_VERIFIER_CACHE_DEPTH: usize = 8;
