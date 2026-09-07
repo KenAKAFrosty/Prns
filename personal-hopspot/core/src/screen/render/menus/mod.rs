@@ -300,6 +300,24 @@ pub(super) fn draw_remote_control_pairing<D: DrawTarget<Color = BinaryColor>>(
     display: &mut D,
     state: &UiState,
 ) {
+    draw_remote_control_pairing_content(
+        display,
+        state.remote_control_state(),
+        state.remote_control_now(),
+        state.remote_control_pairing_approval_selected(),
+    );
+}
+
+#[cfg(feature = "remote-control-pairing")]
+pub(in crate::screen) fn draw_remote_control_pairing_content<
+    D: DrawTarget<Color = BinaryColor>,
+    Attempt: Copy + Eq,
+>(
+    display: &mut D,
+    pairing: crate::RemoteControlTargetPairingState<Attempt>,
+    now: personal_rns::units::InstantMillis,
+    approve_selected: bool,
+) {
     let header_style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
     let _ = Text::with_baseline(
         "Remote",
@@ -314,7 +332,6 @@ pub(super) fn draw_remote_control_pairing<D: DrawTarget<Color = BinaryColor>>(
         Point::new(WIDTH - 1, MENU_DIVIDER_Y),
     );
 
-    let pairing = state.remote_control_state();
     let body = MonoTextStyle::new(&FONT_5X8, BinaryColor::On);
     let small = MonoTextStyle::new(&FONT_4X6, BinaryColor::On);
     let draw_body = |display: &mut D, y: i32, label: &str| {
@@ -335,9 +352,9 @@ pub(super) fn draw_remote_control_pairing<D: DrawTarget<Color = BinaryColor>>(
             let _ = write!(code, "{:08X}", pairing.invitation_code().unwrap_or(0));
             draw_body(display, MENU_ITEM_TOP + 10, &code);
             let mut expiry: HString<20> = HString::new();
-            let remaining = pairing.expires_at().map_or(0, |expires_at| {
-                expires_at.0.saturating_sub(state.remote_control_now().0)
-            });
+            let remaining = pairing
+                .expires_at()
+                .map_or(0, |expires_at| expires_at.0.saturating_sub(now.0));
             let seconds = remaining.saturating_add(999) / 1_000;
             let _ = write!(expiry, "expires {seconds}s");
             draw_small(display, MENU_ITEM_TOP + 25, &expiry);
@@ -348,23 +365,14 @@ pub(super) fn draw_remote_control_pairing<D: DrawTarget<Color = BinaryColor>>(
             let mut code: HString<12> = HString::new();
             let _ = write!(code, "{:06}", pairing.confirmation_code().unwrap_or(0));
             draw_body(display, MENU_ITEM_TOP + 10, &code);
-            draw_menu_item(
-                display,
-                MENU_ITEM_TOP + 28,
-                "Reject",
-                !state.remote_control_pairing_approval_selected(),
-            );
-            draw_menu_item(
-                display,
-                MENU_ITEM_TOP + 41,
-                "Approve",
-                state.remote_control_pairing_approval_selected(),
-            );
+            draw_menu_item(display, MENU_ITEM_TOP + 28, "Reject", !approve_selected);
+            draw_menu_item(display, MENU_ITEM_TOP + 41, "Approve", approve_selected);
         }
         RemoteControlTargetPairingPhase::AwaitingControllerCommit => {
             draw_body(display, MENU_ITEM_TOP, "Approved");
-            draw_small(display, MENU_ITEM_TOP + 16, "waiting controller");
-            draw_small(display, MENU_ITEM_TOP + 29, "not paired yet");
+            draw_small(display, MENU_ITEM_TOP + 16, "waiting for");
+            draw_small(display, MENU_ITEM_TOP + 23, "controller");
+            draw_small(display, MENU_ITEM_TOP + 36, "not paired yet");
         }
         RemoteControlTargetPairingPhase::Authorizing => {
             draw_body(display, MENU_ITEM_TOP, "Authorizing");
@@ -398,7 +406,7 @@ pub(super) fn draw_remote_control_pairing<D: DrawTarget<Color = BinaryColor>>(
                 .failure()
                 .map_or("unknown", |failure| match failure {
                     crate::RemoteControlTargetPairingFailure::Projection => "projection",
-                    crate::RemoteControlTargetPairingFailure::Correlation => "attempt mismatch",
+                    crate::RemoteControlTargetPairingFailure::Correlation => "wrong attempt",
                     crate::RemoteControlTargetPairingFailure::Open => "open pairing",
                     crate::RemoteControlTargetPairingFailure::Close => "close pairing",
                     crate::RemoteControlTargetPairingFailure::Approval => "approve pairing",
@@ -406,9 +414,7 @@ pub(super) fn draw_remote_control_pairing<D: DrawTarget<Color = BinaryColor>>(
                     crate::RemoteControlTargetPairingFailure::Persistence => "save grant",
                     crate::RemoteControlTargetPairingFailure::PairingExpiry => "expiry cleanup",
                     crate::RemoteControlTargetPairingFailure::LinkClosed => "pairing link",
-                    crate::RemoteControlTargetPairingFailure::CompletionExpired => {
-                        "completion expired"
-                    }
+                    crate::RemoteControlTargetPairingFailure::CompletionExpired => "reply expired",
                 });
             draw_small(display, MENU_ITEM_TOP + 16, reason);
             draw_small(display, MENU_ITEM_TOP + 32, "hold close");
