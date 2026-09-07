@@ -297,6 +297,108 @@ fn paired_status_lines_fit_the_narrow_display() {
 }
 
 #[test]
+#[cfg(feature = "remote-control-pairing")]
+fn every_pairing_screen_draws_inside_the_narrow_display() {
+    use crate::{RemoteControlTargetPairingFailure, RemoteControlTargetPairingState};
+    use personal_rns::remote_control::MAX_REMOTE_CONTROL_PAIRING_EXPIRES_AFTER;
+    use personal_rns::units::InstantMillis;
+
+    // Unlike PanelDisplay, this target rejects clipping instead of silently
+    // discarding it. Exercise the renderer itself, including action backings.
+    struct BoundsCheckedDisplay;
+
+    impl OriginDimensions for BoundsCheckedDisplay {
+        fn size(&self) -> Size {
+            Size::new(WIDTH as u32, HEIGHT as u32)
+        }
+    }
+
+    impl DrawTarget for BoundsCheckedDisplay {
+        type Color = BinaryColor;
+        type Error = Infallible;
+
+        fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
+        where
+            I: IntoIterator<Item = Pixel<Self::Color>>,
+        {
+            for Pixel(point, _) in pixels {
+                assert!(
+                    self.bounding_box().contains(point),
+                    "pairing content draws outside {WIDTH}x{HEIGHT} at {point:?}"
+                );
+            }
+            Ok(())
+        }
+    }
+
+    let check = |pairing: RemoteControlTargetPairingState<u8>| {
+        for approve_selected in [false, true] {
+            draw_remote_control_pairing_content(
+                &mut BoundsCheckedDisplay,
+                pairing,
+                InstantMillis(0),
+                approve_selected,
+            );
+        }
+    };
+
+    let mut pairing = RemoteControlTargetPairingState::new();
+    check(pairing);
+    pairing.begin_opening();
+    check(pairing);
+    // Exercise fixed-width code extremes and the largest legal countdown.
+    for (code, expires_at) in [
+        (0, 0),
+        (u32::MAX, MAX_REMOTE_CONTROL_PAIRING_EXPIRES_AFTER.0),
+    ] {
+        pairing.opened(code, InstantMillis(expires_at));
+        check(pairing);
+    }
+    for code in [0, 999_999] {
+        pairing.confirmation_required(1, code, InstantMillis(60_000));
+        check(pairing);
+    }
+    let confirmation = pairing;
+    pairing.awaiting_controller_commit(1);
+    check(pairing);
+    pairing.authorizing(1);
+    check(pairing);
+    pairing.persisted(1);
+    check(pairing);
+    pairing.stable_announcement_settled(true);
+    check(pairing);
+    pairing.stable_announcement_settled(false);
+    check(pairing);
+
+    let mut rejected = confirmation;
+    rejected.rejected(1);
+    check(rejected);
+    let mut expired = confirmation;
+    expired.expired(Some(1));
+    check(expired);
+    let mut cancelled = confirmation;
+    cancelled.cancelled();
+    check(cancelled);
+
+    for failure in [
+        RemoteControlTargetPairingFailure::Projection,
+        RemoteControlTargetPairingFailure::Correlation,
+        RemoteControlTargetPairingFailure::Open,
+        RemoteControlTargetPairingFailure::Close,
+        RemoteControlTargetPairingFailure::Approval,
+        RemoteControlTargetPairingFailure::Rejection,
+        RemoteControlTargetPairingFailure::Persistence,
+        RemoteControlTargetPairingFailure::PairingExpiry,
+        RemoteControlTargetPairingFailure::LinkClosed,
+        RemoteControlTargetPairingFailure::CompletionExpired,
+    ] {
+        let mut failed = confirmation;
+        failed.operation_failed(Some(1), failure);
+        check(failed);
+    }
+}
+
+#[test]
 fn render_shows_selected_interface_menu() {
     let mut display = MockDisplay::new();
     display.set_allow_overdraw(true);

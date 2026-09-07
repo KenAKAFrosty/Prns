@@ -41,7 +41,9 @@ use super::render::menus::{
     station_uplink_action_label,
 };
 #[cfg(feature = "remote-control-pairing")]
-use super::render::menus::{menu_item_char_width, pairing_status_lines};
+use super::render::menus::{
+    draw_remote_control_pairing_content, menu_item_char_width, pairing_status_lines,
+};
 use super::render::metrics::{
     compact_numeric_width, draw_compact_number, fmt_activity_age, fmt_bytes, fmt_count,
     fmt_rate_bytes_per_sec,
