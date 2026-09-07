@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll};
+use std::task::{Context, Poll, Wake, Waker};
 
 use crate::engine::test_support::{
     fixed_secret_key, personal_node_destination, sealed_single_packet,
@@ -37,7 +37,7 @@ use super::super::super::request_endpoints::{
 use super::super::test_remote_control_service;
 use super::{
     notify_accepted_announce, persistence_restored_diagnostic, run_executor_local_node_tasks,
-    AcceptedAnnounceObserver, NodeRunError, PrnsNode,
+    AcceptedAnnounceObserver, NodeRunError, PrnsNode, RequestTaskWake,
 };
 
 static TEST_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -48,6 +48,18 @@ struct PollTrace {
     completes_on: Option<usize>,
     wake_on_pending: bool,
     trace: Arc<Mutex<Vec<u8>>>,
+}
+
+struct WakeCounter(AtomicUsize);
+
+impl Wake for WakeCounter {
+    fn wake(self: Arc<Self>) {
+        self.0.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.0.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 impl Future for PollTrace {
@@ -265,6 +277,43 @@ async fn executor_local_tasks_pair_the_hot_pipeline_without_repolling_dormant_re
         [b'I', b'M', b'R', b'M', b'I', b'I', b'M'],
         "manifold and interface stay coupled while the dormant request runner is polled once",
     );
+}
+
+#[test]
+fn concurrent_request_poll_completion_and_wake_do_not_strand_readiness() {
+    const HANDOFFS: usize = 2_048;
+
+    let request_wake = Arc::new(RequestTaskWake::new());
+    let wake_count = Arc::new(WakeCounter(AtomicUsize::new(0)));
+    let parent = Waker::from(wake_count.clone());
+    request_wake.parent.register(&parent);
+    assert!(request_wake.begin_poll());
+    request_wake.finish_poll();
+
+    let start = Arc::new(std::sync::Barrier::new(2));
+    let finished = Arc::new(std::sync::Barrier::new(2));
+    std::thread::scope(|scope| {
+        let thread_request_wake = request_wake.clone();
+        let thread_start = start.clone();
+        let thread_finished = finished.clone();
+        scope.spawn(move || {
+            for _ in 0..HANDOFFS {
+                thread_start.wait();
+                thread_request_wake.wake_by_ref();
+                thread_finished.wait();
+            }
+        });
+
+        for expected_wakes in 1..=HANDOFFS {
+            request_wake.parent.register(&parent);
+            assert!(!request_wake.begin_poll());
+            start.wait();
+            request_wake.finish_poll();
+            finished.wait();
+            assert_eq!(wake_count.0.load(Ordering::Relaxed), expected_wakes);
+            assert!(request_wake.take_ready());
+        }
+    });
 }
 
 #[test]
