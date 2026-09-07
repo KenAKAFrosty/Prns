@@ -33,19 +33,93 @@ fn report_schema_rejects_malformed_fingerprints() {
 }
 
 #[test]
+fn overflow_reports_preserve_only_available_evidence() -> Result<(), Box<dyn std::error::Error>> {
+    let mut value = report_value();
+    value["status"] = json!({
+        "kind": "memory-overflow",
+        "regions": [{"linker_region": "FLASH", "overflow_bytes": 86_240}]
+    });
+    value["firmware_flash"] = json!({"kind": "unavailable"});
+    value["static_ram"] = json!({"kind": "unavailable"});
+    value["artifacts"] = json!({"kind": "unavailable"});
+    value["analysis"]["allocated_sections"] = json!({"kind": "unavailable"});
+    let report: ResourceReport = serde_json::from_value(value.clone())?;
+    compare::validate_report(Path::new("overflow.json"), &report)?;
+    assert_eq!(serde_json::to_value(report)?, value);
+    Ok(())
+}
+
+#[test]
+fn overflow_reports_require_region_evidence() -> Result<(), Box<dyn std::error::Error>> {
+    let mut value = report_value();
+    value["status"] = json!({"kind": "memory-overflow", "regions": []});
+    let report: ResourceReport = serde_json::from_value(value)?;
+    assert!(matches!(
+        compare::validate_report(Path::new("overflow.json"), &report),
+        Err(ComparisonError::MissingOverflowEvidence { .. })
+    ));
+    Ok(())
+}
+
+#[test]
+fn overflow_reports_require_positive_region_sizes() -> Result<(), Box<dyn std::error::Error>> {
+    let mut value = report_value();
+    value["status"] = json!({
+        "kind": "memory-overflow",
+        "regions": [{"linker_region": "FLASH", "overflow_bytes": 0}]
+    });
+    let report: ResourceReport = serde_json::from_value(value)?;
+    assert!(matches!(
+        compare::validate_report(Path::new("overflow.json"), &report),
+        Err(ComparisonError::InvalidOverflowEvidence { .. })
+    ));
+    Ok(())
+}
+
+#[test]
+fn successful_reports_require_complete_evidence() -> Result<(), Box<dyn std::error::Error>> {
+    let mut value = report_value();
+    value["firmware_flash"] = json!({"kind": "unavailable"});
+    let report: ResourceReport = serde_json::from_value(value)?;
+    assert!(matches!(
+        compare::validate_report(Path::new("success.json"), &report),
+        Err(ComparisonError::MissingFlashEvidence { .. })
+    ));
+    Ok(())
+}
+
+#[test]
+fn overflow_reports_reject_duplicate_regions() -> Result<(), Box<dyn std::error::Error>> {
+    let mut value = report_value();
+    value["status"] = json!({
+        "kind": "memory-overflow",
+        "regions": [
+            {"linker_region": "FLASH", "overflow_bytes": 1},
+            {"linker_region": "FLASH", "overflow_bytes": 2}
+        ]
+    });
+    let report: ResourceReport = serde_json::from_value(value)?;
+    assert!(matches!(
+        compare::validate_report(Path::new("overflow.json"), &report),
+        Err(ComparisonError::InvalidOverflowEvidence { .. })
+    ));
+    Ok(())
+}
+
+#[test]
 fn compatible_reports_call_out_lto_and_resource_deltas() -> Result<(), Box<dyn std::error::Error>> {
     let before: ResourceReport = serde_json::from_value(report_value())?;
     let mut after_value = report_value();
     after_value["build"]["fingerprint"] = Value::String("b".repeat(64));
     after_value["build"]["lto"] = Value::String("thin".to_string());
-    after_value["firmware_flash"]["image_bytes"] = json!(699_000);
-    after_value["firmware_flash"]["headroom_bytes"] = json!(66_952);
-    after_value["artifacts"][0]["bytes"] = json!(40);
-    after_value["static_ram"][0]["static_section_bytes"] = json!(137_356);
-    after_value["static_ram"][0]["capacity"]["headroom_bytes"] = json!(6_004);
-    after_value["analysis"]["allocated_sections"][0]["run_end"] = json!(155_688);
-    after_value["analysis"]["allocated_sections"][0]["run_bytes"] = json!(40);
-    after_value["analysis"]["allocated_sections"][0]["load_bytes"] = json!(40);
+    after_value["firmware_flash"]["value"]["image_bytes"] = json!(699_000);
+    after_value["firmware_flash"]["value"]["headroom_bytes"] = json!(66_952);
+    after_value["artifacts"]["value"][0]["bytes"] = json!(40);
+    after_value["static_ram"]["value"][0]["static_section_bytes"] = json!(137_356);
+    after_value["static_ram"]["value"][0]["capacity"]["headroom_bytes"] = json!(6_004);
+    after_value["analysis"]["allocated_sections"]["value"][0]["run_end"] = json!(155_688);
+    after_value["analysis"]["allocated_sections"]["value"][0]["run_bytes"] = json!(40);
+    after_value["analysis"]["allocated_sections"]["value"][0]["load_bytes"] = json!(40);
     let after: ResourceReport = serde_json::from_value(after_value)?;
     compare::validate_report(Path::new("before.json"), &before)?;
     compare::validate_report(Path::new("after.json"), &after)?;
@@ -83,7 +157,7 @@ fn memory_contract_changes_are_not_compared_as_resource_deltas(
 fn malformed_ram_accounting_is_rejected_before_comparison() -> Result<(), Box<dyn std::error::Error>>
 {
     let mut value = report_value();
-    value["static_ram"][0]["capacity"]["headroom_bytes"] = json!(5_005);
+    value["static_ram"]["value"][0]["capacity"]["headroom_bytes"] = json!(5_005);
     let report: ResourceReport = serde_json::from_value(value)?;
     assert!(matches!(
         compare::validate_report(Path::new("report.json"), &report),
@@ -95,7 +169,7 @@ fn malformed_ram_accounting_is_rejected_before_comparison() -> Result<(), Box<dy
 #[test]
 fn build_only_reports_need_no_transport_artifacts() -> Result<(), Box<dyn std::error::Error>> {
     let mut value = report_value();
-    value["artifacts"] = json!([]);
+    value["artifacts"]["value"] = json!([]);
     let before: ResourceReport = serde_json::from_value(value.clone())?;
     let after: ResourceReport = serde_json::from_value(value)?;
     compare::validate_report(Path::new("before.json"), &before)?;
@@ -243,53 +317,65 @@ fn report_value() -> Value {
             },
             "runtime_reservations": []
         },
-        "status": "success",
+        "status": {"kind": "success"},
         "firmware_flash": {
-            "region": "firmware",
-            "start": 155648,
-            "end": 921600,
-            "image_bytes": 700000,
-            "headroom_bytes": 65952
-        },
-        "static_ram": [
-            {
-                "backing_store": "internal-sram",
-                "address_spaces": ["internal-ram"],
-                "capacity": {
-                    "kind": "known",
-                    "bytes": 212992,
-                    "headroom_bytes": 5004
-                },
-                "static_section_bytes": 138356,
-                "linker_padding_bytes": 0,
-                "additional_reservation_bytes": 69632,
-                "included_reservation_bytes": 0,
-                "external_reservation_bytes": 0
+            "kind": "complete",
+            "value": {
+                "region": "firmware",
+                "start": 155648,
+                "end": 921600,
+                "image_bytes": 700000,
+                "headroom_bytes": 65952
             }
-        ],
-        "artifacts": [{"path": "firmware.bin", "bytes": 42}],
-        "analysis": {
-            "linker_map_bytes": 128,
-            "allocated_sections": [
+        },
+        "static_ram": {
+            "kind": "complete",
+            "value": [
                 {
-                    "name": ".text",
-                    "kind": "code",
-                    "run_address": 155648,
-                    "run_end": 155690,
-                    "run_bytes": 42,
-                    "load_bytes": 42,
-                    "alignment": 4
-                },
-                {
-                    "name": ".bss",
-                    "kind": "zero-fill",
-                    "run_address": 536920064,
-                    "run_end": 536920128,
-                    "run_bytes": 64,
-                    "load_bytes": 0,
-                    "alignment": 8
+                    "backing_store": "internal-sram",
+                    "address_spaces": ["internal-ram"],
+                    "capacity": {
+                        "kind": "known",
+                        "bytes": 212992,
+                        "headroom_bytes": 5004
+                    },
+                    "static_section_bytes": 138356,
+                    "linker_padding_bytes": 0,
+                    "additional_reservation_bytes": 69632,
+                    "included_reservation_bytes": 0,
+                    "external_reservation_bytes": 0
                 }
             ]
+        },
+        "artifacts": {
+            "kind": "complete",
+            "value": [{"path": "firmware.bin", "bytes": 42}]
+        },
+        "analysis": {
+            "linker_map_bytes": 128,
+            "allocated_sections": {
+                "kind": "complete",
+                "value": [
+                    {
+                        "name": ".text",
+                        "kind": "code",
+                        "run_address": 155648,
+                        "run_end": 155690,
+                        "run_bytes": 42,
+                        "load_bytes": 42,
+                        "alignment": 4
+                    },
+                    {
+                        "name": ".bss",
+                        "kind": "zero-fill",
+                        "run_address": 536920064,
+                        "run_end": 536920128,
+                        "run_bytes": 64,
+                        "load_bytes": 0,
+                        "alignment": 8
+                    }
+                ]
+            }
         }
     })
 }

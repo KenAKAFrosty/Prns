@@ -2,7 +2,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use personal_hopspot_builder::artifact::publish;
-use personal_hopspot_builder::{BuildContext, BuildError, ToolchainEvidence};
+use personal_hopspot_builder::{BuildContext, BuildError, LinkOverflowEvidence, ToolchainEvidence};
 use personal_hopspot_memory::MemoryProfile;
 use serde::Serialize;
 use thiserror::Error;
@@ -13,9 +13,10 @@ use crate::matrix::{BuildEvidence, RecipeIdentity, Target};
 use super::contract;
 use super::fingerprint::fingerprint;
 use super::model::{
-    AnalysisEvidence, ArchitectureIdentity, ArtifactIdentity, BuildIdentity, BuildStatus,
-    FirmwareFlashUsage, RamBackingUsage, RamCapacityIdentity, ResourceReport, SectionKindIdentity,
-    SectionUsage, TargetIdentity, ToolchainIdentity, SCHEMA_VERSION,
+    AnalysisEvidence, ArchitectureIdentity, ArtifactIdentity, BuildIdentity, BuildStatus, Evidence,
+    FirmwareFlashUsage, MemoryOverflowIdentity, RamBackingUsage, RamCapacityIdentity,
+    ResourceReport, SectionKindIdentity, SectionUsage, TargetIdentity, ToolchainIdentity,
+    SCHEMA_VERSION,
 };
 
 const CARGO_PROFILE: &str = "release";
@@ -26,6 +27,8 @@ pub(crate) enum ReportError {
     Contract(#[from] contract::ContractIdentityError),
     #[error("build for {target:?} did not capture resource evidence")]
     MissingResourceEvidence { target: String },
+    #[error("overflow evidence for {actual:?} does not belong to target {expected:?}")]
+    MismatchedOverflowTarget { expected: String, actual: String },
     #[error("memory profile {profile:?} has no firmware-owned region {region:?}")]
     MissingFirmwareRegion { profile: String, region: String },
     #[error("firmware image for {target:?} uses {actual} bytes but its region holds {maximum}")]
@@ -56,7 +59,56 @@ pub(crate) fn write(
     evidence: &BuildEvidence,
 ) -> Result<PathBuf, ReportError> {
     let report = build(target, context, evidence)?;
-    let mut bytes = serde_json::to_vec_pretty(&report)?;
+    publish_report(context, target, &report)
+}
+
+pub(crate) fn write_overflow(
+    target: &Target<'_>,
+    context: &BuildContext<'_>,
+    evidence: &LinkOverflowEvidence,
+) -> Result<PathBuf, ReportError> {
+    if evidence.target() != target.id() {
+        return Err(ReportError::MismatchedOverflowTarget {
+            expected: target.id().to_string(),
+            actual: evidence.target().to_string(),
+        });
+    }
+    let adapter = target.adapter();
+    let linker_map_bytes = linker_map_size(evidence.linker_map())?;
+    let report = ResourceReport {
+        schema_version: SCHEMA_VERSION,
+        target: target_identity(target),
+        architecture: architecture_identity(target),
+        build: build_identity(context, target.recipe_identity())?,
+        toolchain: toolchain_identity(adapter.linker_program(), evidence.toolchain())?,
+        memory_contract: contract::identity(target.profile())?,
+        status: BuildStatus::MemoryOverflow {
+            regions: evidence
+                .overflows()
+                .iter()
+                .map(|overflow| MemoryOverflowIdentity {
+                    linker_region: overflow.region().to_string(),
+                    overflow_bytes: overflow.bytes(),
+                })
+                .collect(),
+        },
+        firmware_flash: Evidence::Unavailable,
+        static_ram: Evidence::Unavailable,
+        artifacts: Evidence::Unavailable,
+        analysis: AnalysisEvidence {
+            linker_map_bytes,
+            allocated_sections: Evidence::Unavailable,
+        },
+    };
+    publish_report(context, target, &report)
+}
+
+fn publish_report(
+    context: &BuildContext<'_>,
+    target: &Target<'_>,
+    report: &ResourceReport,
+) -> Result<PathBuf, ReportError> {
+    let mut bytes = serde_json::to_vec_pretty(report)?;
     bytes.push(b'\n');
     let path = context
         .configured_output_root()
@@ -126,39 +178,50 @@ fn build(
 
     Ok(ResourceReport {
         schema_version: SCHEMA_VERSION,
-        target: TargetIdentity {
-            id: target.id().to_string(),
-            display_name: target.display_name().to_string(),
-            memory_profile: target.profile().id.0.to_string(),
-        },
-        architecture: ArchitectureIdentity {
-            rust_target: adapter.rust_target().to_string(),
-            adapter: adapter.id().as_str().to_string(),
-            linker_flavor: adapter.linker_flavor().as_str().to_string(),
-        },
+        target: target_identity(target),
+        architecture: architecture_identity(target),
         build: build_identity(context, recipe)?,
         toolchain: toolchain_identity(adapter.linker_program(), toolchain)?,
         memory_contract: contract::identity(target.profile())?,
         status: BuildStatus::Success,
-        firmware_flash: firmware_flash_usage(
+        firmware_flash: Evidence::Complete(firmware_flash_usage(
             target.id(),
             target.profile(),
             evidence.firmware_image_bytes(),
-        )?,
-        static_ram,
-        artifacts: evidence
-            .artifacts()
-            .iter()
-            .map(|artifact| ArtifactIdentity {
-                path: artifact.path().to_string(),
-                bytes: artifact.bytes(),
-            })
-            .collect(),
+        )?),
+        static_ram: Evidence::Complete(static_ram),
+        artifacts: Evidence::Complete(
+            evidence
+                .artifacts()
+                .iter()
+                .map(|artifact| ArtifactIdentity {
+                    path: artifact.path().to_string(),
+                    bytes: artifact.bytes(),
+                })
+                .collect(),
+        ),
         analysis: AnalysisEvidence {
             linker_map_bytes,
-            allocated_sections,
+            allocated_sections: Evidence::Complete(allocated_sections),
         },
     })
+}
+
+fn target_identity(target: &Target<'_>) -> TargetIdentity {
+    TargetIdentity {
+        id: target.id().to_string(),
+        display_name: target.display_name().to_string(),
+        memory_profile: target.profile().id.0.to_string(),
+    }
+}
+
+fn architecture_identity(target: &Target<'_>) -> ArchitectureIdentity {
+    let adapter = target.adapter();
+    ArchitectureIdentity {
+        rust_target: adapter.rust_target().to_string(),
+        adapter: adapter.id().as_str().to_string(),
+        linker_flavor: adapter.linker_flavor().as_str().to_string(),
+    }
 }
 
 const fn section_kind_identity(kind: SectionKind) -> SectionKindIdentity {

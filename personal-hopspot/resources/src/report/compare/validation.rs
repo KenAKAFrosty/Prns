@@ -2,7 +2,8 @@ use std::fs;
 use std::path::Path;
 
 use super::super::model::{
-    ArtifactIdentity, RamBackingUsage, RamCapacityIdentity, ResourceReport, SectionKindIdentity,
+    ArtifactIdentity, BuildStatus, Evidence, FirmwareFlashUsage, MemoryOverflowIdentity,
+    RamBackingUsage, RamCapacityIdentity, ResourceReport, SectionKindIdentity, SectionUsage,
     SCHEMA_VERSION,
 };
 use super::{ComparisonError, SECTION_KINDS};
@@ -30,14 +31,102 @@ pub(super) fn validate_report(path: &Path, report: &ResourceReport) -> Result<()
             supported: SCHEMA_VERSION,
         });
     }
-    validate_flash(path, report)?;
-    validate_artifacts(path, &report.artifacts)?;
-    validate_ram(path, &report.static_ram)?;
-    validate_sections(path, report)
+    validate_linker_map(path, report)?;
+    match &report.status {
+        BuildStatus::Success => validate_success(path, report),
+        BuildStatus::MemoryOverflow { regions } => {
+            validate_overflows(path, regions)?;
+            validate_available(path, report)
+        }
+    }
 }
 
-fn validate_flash(path: &Path, report: &ResourceReport) -> Result<(), ComparisonError> {
-    let flash = &report.firmware_flash;
+fn validate_success(path: &Path, report: &ResourceReport) -> Result<(), ComparisonError> {
+    let flash =
+        report
+            .firmware_flash
+            .complete()
+            .ok_or_else(|| ComparisonError::MissingFlashEvidence {
+                path: path.to_path_buf(),
+            })?;
+    let artifacts =
+        report
+            .artifacts
+            .complete()
+            .ok_or_else(|| ComparisonError::MissingArtifactEvidence {
+                path: path.to_path_buf(),
+            })?;
+    let ram = report
+        .static_ram
+        .complete()
+        .ok_or_else(|| ComparisonError::MissingRamEvidence {
+            path: path.to_path_buf(),
+        })?;
+    let sections = report
+        .analysis
+        .allocated_sections
+        .complete()
+        .ok_or_else(|| ComparisonError::MissingSectionEvidence {
+            path: path.to_path_buf(),
+        })?;
+    validate_flash(path, flash)?;
+    validate_artifacts(path, artifacts)?;
+    validate_ram(path, ram)?;
+    validate_sections(path, sections)
+}
+
+fn validate_available(path: &Path, report: &ResourceReport) -> Result<(), ComparisonError> {
+    if let Evidence::Complete(flash) | Evidence::Partial(flash) = &report.firmware_flash {
+        validate_flash(path, flash)?;
+    }
+    if let Evidence::Complete(artifacts) | Evidence::Partial(artifacts) = &report.artifacts {
+        validate_artifacts(path, artifacts)?;
+    }
+    if let Evidence::Complete(ram) | Evidence::Partial(ram) = &report.static_ram {
+        validate_ram(path, ram)?;
+    }
+    if let Evidence::Complete(sections) | Evidence::Partial(sections) =
+        &report.analysis.allocated_sections
+    {
+        validate_sections(path, sections)?;
+    }
+    Ok(())
+}
+
+fn validate_overflows(
+    path: &Path,
+    overflows: &[MemoryOverflowIdentity],
+) -> Result<(), ComparisonError> {
+    if overflows.is_empty() {
+        return Err(ComparisonError::MissingOverflowEvidence {
+            path: path.to_path_buf(),
+        });
+    }
+    for (index, overflow) in overflows.iter().enumerate() {
+        let duplicate = overflows[..index]
+            .iter()
+            .any(|prior| prior.linker_region == overflow.linker_region);
+        if overflow.linker_region.is_empty() || overflow.overflow_bytes == 0 || duplicate {
+            return Err(ComparisonError::InvalidOverflowEvidence {
+                path: path.to_path_buf(),
+                linker_region: overflow.linker_region.clone(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_linker_map(path: &Path, report: &ResourceReport) -> Result<(), ComparisonError> {
+    if report.analysis.linker_map_bytes == 0 {
+        Err(ComparisonError::MissingLinkerMapEvidence {
+            path: path.to_path_buf(),
+        })
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_flash(path: &Path, flash: &FirmwareFlashUsage) -> Result<(), ComparisonError> {
     let valid = flash
         .end
         .checked_sub(flash.start)
@@ -134,18 +223,13 @@ fn validate_ram(path: &Path, ram: &[RamBackingUsage]) -> Result<(), ComparisonEr
     Ok(())
 }
 
-fn validate_sections(path: &Path, report: &ResourceReport) -> Result<(), ComparisonError> {
-    if report.analysis.linker_map_bytes == 0 {
-        return Err(ComparisonError::MissingLinkerMapEvidence {
-            path: path.to_path_buf(),
-        });
-    }
-    if report.analysis.allocated_sections.is_empty() {
+fn validate_sections(path: &Path, sections: &[SectionUsage]) -> Result<(), ComparisonError> {
+    if sections.is_empty() {
         return Err(ComparisonError::MissingSectionEvidence {
             path: path.to_path_buf(),
         });
     }
-    for section in &report.analysis.allocated_sections {
+    for section in sections {
         let valid = !section.name.is_empty()
             && section.run_end.checked_sub(section.run_address) == Some(section.run_bytes)
             && section.run_bytes != 0
@@ -160,9 +244,7 @@ fn validate_sections(path: &Path, report: &ResourceReport) -> Result<(), Compari
         }
     }
     for (kind, name) in SECTION_KINDS {
-        let valid = report
-            .analysis
-            .allocated_sections
+        let valid = sections
             .iter()
             .filter(|section| section.kind == kind)
             .try_fold((0_u64, 0_u64), |(run, load), section| {

@@ -69,6 +69,23 @@ struct ReportArguments {
     target: Option<String>,
     #[arg(long, value_enum, default_value_t)]
     lto: LtoArgument,
+    #[arg(long)]
+    allow_overflow: bool,
+}
+
+enum OverflowPolicy {
+    Reject,
+    Report,
+}
+
+impl ReportArguments {
+    const fn overflow_policy(&self) -> OverflowPolicy {
+        if self.allow_overflow {
+            OverflowPolicy::Report
+        } else {
+            OverflowPolicy::Reject
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
@@ -169,16 +186,58 @@ fn build_reports(root: &Path, arguments: &ReportArguments) -> Result<(), Resourc
         BuildContext::new(root, &output_root, BuildVersion::Repository)?.with_intent(intent);
     if arguments.all {
         for target in matrix.iter() {
-            build_report(target, &context)?;
+            build_report(target, &context, arguments.overflow_policy())?;
         }
     } else if let Some(target) = &arguments.target {
-        build_report(matrix.target(target)?, &context)?;
+        build_report(
+            matrix.target(target)?,
+            &context,
+            arguments.overflow_policy(),
+        )?;
     }
     Ok(())
 }
 
-fn build_report(target: &Target<'_>, context: &BuildContext<'_>) -> Result<(), ResourceError> {
-    let evidence = target.build(context)?;
+fn build_report(
+    target: &Target<'_>,
+    context: &BuildContext<'_>,
+    overflow_policy: OverflowPolicy,
+) -> Result<(), ResourceError> {
+    match (overflow_policy, target.build(context)) {
+        (_, Ok(evidence)) => write_success_report(target, context, &evidence),
+        (
+            OverflowPolicy::Report,
+            Err(MatrixError::Build {
+                source: BuildError::LinkOverflow(evidence),
+                ..
+            }),
+        ) => {
+            println!(
+                "EMBEDDED_RESOURCE_OVERFLOW: target={} lto={} linker-map={}",
+                target.id(),
+                context.intent().lto().as_str(),
+                evidence.linker_map().display()
+            );
+            for overflow in evidence.overflows().iter() {
+                println!(
+                    "overflow region={:?} bytes={}",
+                    overflow.region(),
+                    overflow.bytes()
+                );
+            }
+            let report = report::write_overflow(target, context, &evidence)?;
+            println!("report {}", report.display());
+            Ok(())
+        }
+        (_, Err(error)) => Err(error.into()),
+    }
+}
+
+fn write_success_report(
+    target: &Target<'_>,
+    context: &BuildContext<'_>,
+    evidence: &matrix::BuildEvidence,
+) -> Result<(), ResourceError> {
     let adapter = target.adapter();
     println!(
         "EMBEDDED_RESOURCE_BUILD: target={} name={:?} profile={} architecture={} adapter={} linker={} lto={} artifacts={} package_bytes={} elf={}",
@@ -199,7 +258,7 @@ fn build_report(target: &Target<'_>, context: &BuildContext<'_>) -> Result<(), R
     if let Some(linker_map) = evidence.linker_map() {
         println!("linker-map {}", linker_map.display());
     }
-    let report = report::write(target, context, &evidence)?;
+    let report = report::write(target, context, evidence)?;
     println!("report {}", report.display());
     Ok(())
 }
@@ -223,6 +282,27 @@ mod tests {
         };
         assert_eq!(arguments.target.as_deref(), Some("t114"));
         assert_eq!(arguments.lto, LtoArgument::Thin);
+        assert!(!arguments.allow_overflow);
+        Ok(())
+    }
+
+    #[test]
+    fn report_accepts_explicit_overflow_evidence_policy() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let cli = Cli::try_parse_from([
+            "resources",
+            "report",
+            "--target",
+            "t-echo-s140-v6",
+            "--allow-overflow",
+        ])?;
+        let ResourceCommand::Report(arguments) = cli.command else {
+            return Err("report command was not parsed".into());
+        };
+        assert!(matches!(
+            arguments.overflow_policy(),
+            OverflowPolicy::Report
+        ));
         Ok(())
     }
 

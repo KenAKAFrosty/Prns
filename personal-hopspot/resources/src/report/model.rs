@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::fingerprint::Fingerprint;
 
-pub(super) const SCHEMA_VERSION: u32 = 2;
+pub(super) const SCHEMA_VERSION: u32 = 3;
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -14,9 +14,9 @@ pub(super) struct ResourceReport {
     pub toolchain: ToolchainIdentity,
     pub memory_contract: MemoryContractIdentity,
     pub status: BuildStatus,
-    pub firmware_flash: FirmwareFlashUsage,
-    pub static_ram: Vec<RamBackingUsage>,
-    pub artifacts: Vec<ArtifactIdentity>,
+    pub firmware_flash: Evidence<FirmwareFlashUsage>,
+    pub static_ram: Evidence<Vec<RamBackingUsage>>,
+    pub artifacts: Evidence<Vec<ArtifactIdentity>>,
     pub analysis: AnalysisEvidence,
 }
 
@@ -128,10 +128,42 @@ pub(super) enum ReservationAccountingIdentity {
     External,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub(super) enum BuildStatus {
     Success,
+    MemoryOverflow {
+        regions: Vec<MemoryOverflowIdentity>,
+    },
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct MemoryOverflowIdentity {
+    pub linker_region: String,
+    pub overflow_bytes: u64,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    content = "value",
+    rename_all = "kebab-case",
+    deny_unknown_fields
+)]
+pub(super) enum Evidence<T> {
+    Complete(T),
+    Partial(T),
+    Unavailable,
+}
+
+impl<T> Evidence<T> {
+    pub(super) const fn complete(&self) -> Option<&T> {
+        match self {
+            Self::Complete(value) => Some(value),
+            Self::Partial(_) | Self::Unavailable => None,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -175,7 +207,7 @@ pub(super) struct ArtifactIdentity {
 #[serde(deny_unknown_fields)]
 pub(super) struct AnalysisEvidence {
     pub linker_map_bytes: u64,
-    pub allocated_sections: Vec<SectionUsage>,
+    pub allocated_sections: Evidence<Vec<SectionUsage>>,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]

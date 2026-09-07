@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 use super::model::{
-    ArtifactIdentity, BuildIdentity, RamBackingUsage, RamCapacityIdentity, ResourceReport,
-    SectionKindIdentity,
+    ArtifactIdentity, BuildIdentity, Evidence, RamBackingUsage, RamCapacityIdentity,
+    ResourceReport, SectionKindIdentity, SectionUsage,
 };
 use model::{
     ArtifactComparison, ByteComparison, RamComparison, RamHeadroomComparison, ResourceComparison,
@@ -36,6 +36,7 @@ pub(crate) enum CompatibilityDimension {
     FirmwareRegion,
     ArtifactSet,
     RamTopology,
+    EvidenceAvailability,
 }
 
 #[derive(Debug, Error)]
@@ -62,6 +63,10 @@ pub(crate) enum ComparisonError {
     },
     #[error("resource report {path} has invalid flash accounting")]
     InvalidFlashAccounting { path: PathBuf },
+    #[error("resource report {path} has no flash evidence")]
+    MissingFlashEvidence { path: PathBuf },
+    #[error("resource report {path} has no artifact evidence")]
+    MissingArtifactEvidence { path: PathBuf },
     #[error("resource report {path} has invalid artifact evidence for {artifact:?}")]
     InvalidArtifact { path: PathBuf, artifact: String },
     #[error("resource report {path} repeats artifact {artifact:?}")]
@@ -84,6 +89,13 @@ pub(crate) enum ComparisonError {
     MissingSectionEvidence { path: PathBuf },
     #[error("resource report {path} has invalid section accounting for {section:?}")]
     InvalidSectionAccounting { path: PathBuf, section: String },
+    #[error("resource report {path} has no memory-overflow diagnostics")]
+    MissingOverflowEvidence { path: PathBuf },
+    #[error("resource report {path} has invalid memory-overflow evidence for {linker_region:?}")]
+    InvalidOverflowEvidence {
+        path: PathBuf,
+        linker_region: String,
+    },
     #[error("resource comparison overflowed the {kind} section total")]
     SectionTotalOverflow { kind: &'static str },
     #[error("resource reports are incompatible in {dimension}")]
@@ -139,14 +151,18 @@ pub(super) fn compare_reports(
         before.status == after.status,
         CompatibilityDimension::BuildStatus,
     )?;
+    let before_flash = complete(&before.firmware_flash)?;
+    let after_flash = complete(&after.firmware_flash)?;
     require(
-        before.firmware_flash.region == after.firmware_flash.region
-            && before.firmware_flash.start == after.firmware_flash.start
-            && before.firmware_flash.end == after.firmware_flash.end,
+        before_flash.region == after_flash.region
+            && before_flash.start == after_flash.start
+            && before_flash.end == after_flash.end,
         CompatibilityDimension::FirmwareRegion,
     )?;
-    let artifacts = compare_artifacts(&before.artifacts, &after.artifacts)?;
-    let ram = compare_ram(&before.static_ram, &after.static_ram)?;
+    let artifacts = compare_artifacts(complete(&before.artifacts)?, complete(&after.artifacts)?)?;
+    let ram = compare_ram(complete(&before.static_ram)?, complete(&after.static_ram)?)?;
+    let before_sections = complete(&before.analysis.allocated_sections)?;
+    let after_sections = complete(&after.analysis.allocated_sections)?;
     let settings = if before.build.lto == after.build.lto {
         Vec::new()
     } else {
@@ -158,17 +174,14 @@ pub(super) fn compare_reports(
     Ok(ResourceComparison {
         target: before.target.id.clone(),
         settings,
-        flash_image: ByteComparison::new(
-            before.firmware_flash.image_bytes,
-            after.firmware_flash.image_bytes,
-        ),
+        flash_image: ByteComparison::new(before_flash.image_bytes, after_flash.image_bytes),
         flash_headroom: ByteComparison::new(
-            before.firmware_flash.headroom_bytes,
-            after.firmware_flash.headroom_bytes,
+            before_flash.headroom_bytes,
+            after_flash.headroom_bytes,
         ),
         artifacts,
         ram,
-        sections: compare_sections(before, after)?,
+        sections: compare_sections(before_sections, after_sections)?,
     })
 }
 
@@ -286,8 +299,8 @@ fn compatible_ram(before: &RamBackingUsage, after: &RamBackingUsage) -> bool {
 }
 
 fn compare_sections(
-    before: &ResourceReport,
-    after: &ResourceReport,
+    before: &[SectionUsage],
+    after: &[SectionUsage],
 ) -> Result<Vec<SectionComparison>, ComparisonError> {
     SECTION_KINDS
         .iter()
@@ -305,10 +318,8 @@ fn compare_sections(
         .collect()
 }
 
-fn section_totals(report: &ResourceReport, kind: SectionKindIdentity) -> Option<(u64, u64)> {
-    report
-        .analysis
-        .allocated_sections
+fn section_totals(sections: &[SectionUsage], kind: SectionKindIdentity) -> Option<(u64, u64)> {
+    sections
         .iter()
         .filter(|section| section.kind == kind)
         .try_fold((0_u64, 0_u64), |(run, load), section| {
@@ -317,6 +328,12 @@ fn section_totals(report: &ResourceReport, kind: SectionKindIdentity) -> Option<
                 load.checked_add(section.load_bytes)?,
             ))
         })
+}
+
+fn complete<T>(evidence: &Evidence<T>) -> Result<&T, ComparisonError> {
+    evidence.complete().ok_or(ComparisonError::Incompatible {
+        dimension: CompatibilityDimension::EvidenceAvailability,
+    })
 }
 
 fn require(condition: bool, dimension: CompatibilityDimension) -> Result<(), ComparisonError> {
@@ -339,6 +356,7 @@ impl fmt::Display for CompatibilityDimension {
             Self::FirmwareRegion => "firmware region",
             Self::ArtifactSet => "artifact set",
             Self::RamTopology => "RAM topology",
+            Self::EvidenceAvailability => "evidence availability",
         })
     }
 }
