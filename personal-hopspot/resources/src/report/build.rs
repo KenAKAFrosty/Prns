@@ -13,10 +13,11 @@ use crate::matrix::{BuildEvidence, RecipeIdentity, Target};
 use super::contract;
 use super::fingerprint::fingerprint;
 use super::model::{
-    AnalysisEvidence, ArchitectureIdentity, ArtifactIdentity, BuildIdentity, BuildStatus, Evidence,
-    FirmwareFlashUsage, MemoryOverflowIdentity, RamBackingUsage, RamCapacityIdentity,
-    ResourceReport, SectionKindIdentity, SectionUsage, TargetIdentity, ToolchainIdentity,
-    SCHEMA_VERSION,
+    AnalysisEvidence, ArchitectureIdentity, ArtifactIdentity, AttributionCategoryIdentity,
+    AttributionCoverageIdentity, AttributionEntryIdentity, BuildIdentity, BuildStatus, Evidence,
+    FirmwareFlashUsage, FlashAttributionIdentity, MemoryOverflowIdentity, RamBackingUsage,
+    RamCapacityIdentity, ResourceReport, SectionKindIdentity, SectionUsage, TargetIdentity,
+    ToolchainIdentity, SCHEMA_VERSION,
 };
 
 const CARGO_PROFILE: &str = "release";
@@ -45,6 +46,8 @@ pub(crate) enum ReportError {
     },
     #[error(transparent)]
     Analysis(#[from] AnalysisError),
+    #[error(transparent)]
+    Attribution(#[from] analysis::AttributionError),
     #[error(transparent)]
     RamAnalysis(#[from] RamAnalysisError),
     #[error("could not serialize resource report: {0}")]
@@ -75,6 +78,11 @@ pub(crate) fn write_overflow(
     }
     let adapter = target.adapter();
     let linker_map_bytes = linker_map_size(evidence.linker_map())?;
+    let attribution = analysis::analyze_linker_map(
+        evidence.linker_map(),
+        adapter.linker_flavor(),
+        analysis::AttributionBasis::Partial,
+    )?;
     let report = ResourceReport {
         schema_version: SCHEMA_VERSION,
         target: target_identity(target),
@@ -98,6 +106,7 @@ pub(crate) fn write_overflow(
         analysis: AnalysisEvidence {
             linker_map_bytes,
             allocated_sections: Evidence::Unavailable,
+            flash_attribution: Evidence::Partial(attribution_identity(attribution)),
         },
     };
     publish_report(context, target, &report)
@@ -134,6 +143,11 @@ fn build(
     let linker_map = resource_build.linker_map();
     let linker_map_bytes = linker_map_size(linker_map)?;
     let allocated_sections = analysis::read_allocated_sections(evidence.elf())?;
+    let attribution = analysis::analyze_linker_map(
+        linker_map,
+        adapter.linker_flavor(),
+        analysis::AttributionBasis::Complete(&allocated_sections),
+    )?;
     let static_ram = analysis::analyze_ram(target.profile(), &allocated_sections)?
         .into_iter()
         .map(|usage| RamBackingUsage {
@@ -203,8 +217,44 @@ fn build(
         analysis: AnalysisEvidence {
             linker_map_bytes,
             allocated_sections: Evidence::Complete(allocated_sections),
+            flash_attribution: Evidence::Complete(attribution_identity(attribution)),
         },
     })
+}
+
+fn attribution_identity(analysis: analysis::AttributionAnalysis) -> FlashAttributionIdentity {
+    FlashAttributionIdentity {
+        crates: AttributionCategoryIdentity {
+            coverage: AttributionCoverageIdentity {
+                analyzed_bytes: analysis.crate_coverage.analyzed_bytes,
+                attributed_bytes: analysis.crate_coverage.attributed_bytes,
+                unclassified_bytes: analysis.crate_coverage.unclassified_bytes,
+            },
+            largest: analysis
+                .largest_crates
+                .into_iter()
+                .map(|usage| AttributionEntryIdentity {
+                    name: usage.name,
+                    bytes: usage.bytes,
+                })
+                .collect(),
+        },
+        symbols: AttributionCategoryIdentity {
+            coverage: AttributionCoverageIdentity {
+                analyzed_bytes: analysis.symbol_coverage.analyzed_bytes,
+                attributed_bytes: analysis.symbol_coverage.attributed_bytes,
+                unclassified_bytes: analysis.symbol_coverage.unclassified_bytes,
+            },
+            largest: analysis
+                .largest_symbols
+                .into_iter()
+                .map(|usage| AttributionEntryIdentity {
+                    name: usage.name,
+                    bytes: usage.bytes,
+                })
+                .collect(),
+        },
+    }
 }
 
 fn target_identity(target: &Target<'_>) -> TargetIdentity {

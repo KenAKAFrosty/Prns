@@ -43,6 +43,7 @@ fn overflow_reports_preserve_only_available_evidence() -> Result<(), Box<dyn std
     value["static_ram"] = json!({"kind": "unavailable"});
     value["artifacts"] = json!({"kind": "unavailable"});
     value["analysis"]["allocated_sections"] = json!({"kind": "unavailable"});
+    value["analysis"]["flash_attribution"]["kind"] = json!("partial");
     let report: ResourceReport = serde_json::from_value(value.clone())?;
     compare::validate_report(Path::new("overflow.json"), &report)?;
     assert_eq!(serde_json::to_value(report)?, value);
@@ -84,6 +85,18 @@ fn successful_reports_require_complete_evidence() -> Result<(), Box<dyn std::err
     assert!(matches!(
         compare::validate_report(Path::new("success.json"), &report),
         Err(ComparisonError::MissingFlashEvidence { .. })
+    ));
+    Ok(())
+}
+
+#[test]
+fn successful_reports_require_complete_attribution() -> Result<(), Box<dyn std::error::Error>> {
+    let mut value = report_value();
+    value["analysis"]["flash_attribution"]["kind"] = json!("partial");
+    let report: ResourceReport = serde_json::from_value(value)?;
+    assert!(matches!(
+        compare::validate_report(Path::new("success.json"), &report),
+        Err(ComparisonError::MissingAttributionEvidence { .. })
     ));
     Ok(())
 }
@@ -348,6 +361,7 @@ fn make_overflow(value: &mut Value, linker_region: &str, overflow_bytes: u64) {
     value["static_ram"] = json!({"kind": "unavailable"});
     value["artifacts"] = json!({"kind": "unavailable"});
     value["analysis"]["allocated_sections"] = json!({"kind": "unavailable"});
+    value["analysis"]["flash_attribution"]["kind"] = json!("partial");
 }
 
 fn report_value() -> Value {
@@ -452,6 +466,31 @@ fn report_value() -> Value {
                         "alignment": 8
                     }
                 ]
+            },
+            "flash_attribution": {
+                "kind": "complete",
+                "value": {
+                    "crates": {
+                        "coverage": {
+                            "analyzed_bytes": 42,
+                            "attributed_bytes": 40,
+                            "unclassified_bytes": 2
+                        },
+                        "largest": [
+                            {"name": "example", "bytes": 40}
+                        ]
+                    },
+                    "symbols": {
+                        "coverage": {
+                            "analyzed_bytes": 42,
+                            "attributed_bytes": 40,
+                            "unclassified_bytes": 2
+                        },
+                        "largest": [
+                            {"name": "example::run", "bytes": 40}
+                        ]
+                    }
+                }
             }
         }
     })

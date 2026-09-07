@@ -2,9 +2,9 @@ use std::fs;
 use std::path::Path;
 
 use super::super::model::{
-    ArtifactIdentity, BuildStatus, Evidence, FirmwareFlashUsage, MemoryOverflowIdentity,
-    RamBackingUsage, RamCapacityIdentity, ResourceReport, SectionKindIdentity, SectionUsage,
-    SCHEMA_VERSION,
+    ArtifactIdentity, AttributionCategoryIdentity, BuildStatus, Evidence, FirmwareFlashUsage,
+    FlashAttributionIdentity, MemoryOverflowIdentity, RamBackingUsage, RamCapacityIdentity,
+    ResourceReport, SectionKindIdentity, SectionUsage, SCHEMA_VERSION,
 };
 use super::{ComparisonError, SECTION_KINDS};
 
@@ -69,10 +69,18 @@ fn validate_success(path: &Path, report: &ResourceReport) -> Result<(), Comparis
         .ok_or_else(|| ComparisonError::MissingSectionEvidence {
             path: path.to_path_buf(),
         })?;
+    let attribution = report
+        .analysis
+        .flash_attribution
+        .complete()
+        .ok_or_else(|| ComparisonError::MissingAttributionEvidence {
+            path: path.to_path_buf(),
+        })?;
     validate_flash(path, flash)?;
     validate_artifacts(path, artifacts)?;
     validate_ram(path, ram)?;
-    validate_sections(path, sections)
+    validate_sections(path, sections)?;
+    validate_attribution(path, attribution)
 }
 
 fn validate_available(path: &Path, report: &ResourceReport) -> Result<(), ComparisonError> {
@@ -89,6 +97,11 @@ fn validate_available(path: &Path, report: &ResourceReport) -> Result<(), Compar
         &report.analysis.allocated_sections
     {
         validate_sections(path, sections)?;
+    }
+    if let Evidence::Complete(attribution) | Evidence::Partial(attribution) =
+        &report.analysis.flash_attribution
+    {
+        validate_attribution(path, attribution)?;
     }
     Ok(())
 }
@@ -262,4 +275,71 @@ fn validate_sections(path: &Path, sections: &[SectionUsage]) -> Result<(), Compa
         }
     }
     Ok(())
+}
+
+fn validate_attribution(
+    path: &Path,
+    attribution: &FlashAttributionIdentity,
+) -> Result<(), ComparisonError> {
+    validate_attribution_category(path, "crate", &attribution.crates)?;
+    validate_attribution_category(path, "symbol", &attribution.symbols)?;
+    let valid = attribution.crates.coverage.analyzed_bytes
+        == attribution.symbols.coverage.analyzed_bytes
+        && attribution.crates.coverage.attributed_bytes
+            <= attribution.symbols.coverage.attributed_bytes;
+    if valid {
+        Ok(())
+    } else {
+        Err(ComparisonError::InvalidAttribution {
+            path: path.to_path_buf(),
+            category: "cross-category",
+        })
+    }
+}
+
+fn validate_attribution_category(
+    path: &Path,
+    category: &'static str,
+    attribution: &AttributionCategoryIdentity,
+) -> Result<(), ComparisonError> {
+    let coverage = &attribution.coverage;
+    let accounting_valid = coverage.analyzed_bytes > 0
+        && coverage
+            .attributed_bytes
+            .checked_add(coverage.unclassified_bytes)
+            == Some(coverage.analyzed_bytes);
+    let entries_valid = attribution
+        .largest
+        .iter()
+        .enumerate()
+        .all(|(index, entry)| {
+            let unique = !attribution.largest[..index]
+                .iter()
+                .any(|prior| prior.name == entry.name);
+            let ranked = attribution.largest.get(index + 1).is_none_or(|next| {
+                entry.bytes > next.bytes || (entry.bytes == next.bytes && entry.name < next.name)
+            });
+            !entry.name.is_empty()
+                && entry.bytes > 0
+                && entry.bytes <= coverage.attributed_bytes
+                && unique
+                && ranked
+        });
+    let ranked_bytes = attribution
+        .largest
+        .iter()
+        .try_fold(0_u64, |sum, entry| sum.checked_add(entry.bytes));
+    let presence_valid = (coverage.attributed_bytes == 0) == attribution.largest.is_empty();
+    if accounting_valid
+        && entries_valid
+        && ranked_bytes.is_some_and(|bytes| bytes <= coverage.attributed_bytes)
+        && presence_valid
+    {
+        Ok(())
+    } else {
+        Err(ComparisonError::InvalidAttribution {
+            path: path.to_path_buf(),
+            category,
+        })
+    }
 }

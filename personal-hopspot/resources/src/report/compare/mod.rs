@@ -89,6 +89,13 @@ pub(crate) enum ComparisonError {
     MissingSectionEvidence { path: PathBuf },
     #[error("resource report {path} has invalid section accounting for {section:?}")]
     InvalidSectionAccounting { path: PathBuf, section: String },
+    #[error("resource report {path} has no flash-attribution evidence")]
+    MissingAttributionEvidence { path: PathBuf },
+    #[error("resource report {path} has invalid {category} attribution")]
+    InvalidAttribution {
+        path: PathBuf,
+        category: &'static str,
+    },
     #[error("resource report {path} has no memory-overflow diagnostics")]
     MissingOverflowEvidence { path: PathBuf },
     #[error("resource report {path} has invalid memory-overflow evidence for {linker_region:?}")]

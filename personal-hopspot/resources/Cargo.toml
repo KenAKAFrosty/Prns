@@ -15,6 +15,7 @@ object = { version = "0.39.1", default-features = false, features = ["elf", "rea
 personal-hopspot-builder = { path = "../builder" }
 personal-hopspot-memory = { path = "../memory" }
 prns-flash-manifest = { path = "../../prns-flash-manifest" }
+rustc-demangle = "0.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tempfile = "3.23"

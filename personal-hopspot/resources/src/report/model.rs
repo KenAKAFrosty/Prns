@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::fingerprint::Fingerprint;
 
-pub(super) const SCHEMA_VERSION: u32 = 3;
+pub(super) const SCHEMA_VERSION: u32 = 4;
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -208,6 +208,36 @@ pub(super) struct ArtifactIdentity {
 pub(super) struct AnalysisEvidence {
     pub linker_map_bytes: u64,
     pub allocated_sections: Evidence<Vec<SectionUsage>>,
+    pub flash_attribution: Evidence<FlashAttributionIdentity>,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct FlashAttributionIdentity {
+    pub crates: AttributionCategoryIdentity,
+    pub symbols: AttributionCategoryIdentity,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct AttributionCategoryIdentity {
+    pub coverage: AttributionCoverageIdentity,
+    pub largest: Vec<AttributionEntryIdentity>,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct AttributionCoverageIdentity {
+    pub analyzed_bytes: u64,
+    pub attributed_bytes: u64,
+    pub unclassified_bytes: u64,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct AttributionEntryIdentity {
+    pub name: String,
+    pub bytes: u64,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
