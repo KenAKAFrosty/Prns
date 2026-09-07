@@ -79,8 +79,14 @@ pub fn build(
         .current_dir(&crate_dir);
     let adapter = adapter_for_rust_target(&recipe.rust_target)?;
     let capture = context.configure_firmware_cargo(memory.id().0, adapter, &mut cargo)?;
-    run_status(&mut cargo, &format!("{} cargo build", board.display_name))?;
-    let firmware = context.finish_firmware_build(elf.clone(), capture)?;
+    let firmware = context.run_firmware_build(
+        &mut cargo,
+        &format!("{} cargo build", board.display_name),
+        memory.id().0,
+        adapter,
+        elf.clone(),
+        capture,
+    )?;
 
     let work_dir = context.work_output(&board.slug);
     let binary = work_dir.join(format!("{}.bin", variant.softdevice_version));

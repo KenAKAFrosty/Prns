@@ -8,7 +8,7 @@ use prns_flash_manifest::{
 };
 
 use crate::architecture::adapter_for_rust_target;
-use crate::{embedded_cargo_command, run_status, BuildContext, BuildError, FirmwareEvidence};
+use crate::{embedded_cargo_command, BuildContext, BuildError, FirmwareEvidence};
 
 const PARTITION_TABLE_OFFSET: u32 = 0x8000;
 
@@ -102,8 +102,14 @@ pub fn build(
     }
     let adapter = adapter_for_rust_target(&recipe.rust_target)?;
     let capture = context.configure_firmware_cargo(memory.id().0, adapter, &mut cargo)?;
-    run_status(&mut cargo, "embedded ESP cargo build")?;
-    let firmware = context.finish_firmware_build(elf.clone(), capture)?;
+    let firmware = context.run_firmware_build(
+        &mut cargo,
+        "embedded ESP cargo build",
+        memory.id().0,
+        adapter,
+        elf.clone(),
+        capture,
+    )?;
 
     let elf_bytes = fs::read(&elf).map_err(|error| {
         BuildError::Artifact(format!("could not read {}: {error}", elf.display()))

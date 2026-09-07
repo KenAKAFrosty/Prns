@@ -93,6 +93,24 @@ fn malformed_ram_accounting_is_rejected_before_comparison() -> Result<(), Box<dy
 }
 
 #[test]
+fn build_only_reports_need_no_transport_artifacts() -> Result<(), Box<dyn std::error::Error>> {
+    let mut value = report_value();
+    value["artifacts"] = json!([]);
+    let before: ResourceReport = serde_json::from_value(value.clone())?;
+    let after: ResourceReport = serde_json::from_value(value)?;
+    compare::validate_report(Path::new("before.json"), &before)?;
+    compare::validate_report(Path::new("after.json"), &after)?;
+    let comparison = compare::compare_reports(&before, &after)?;
+    let rendered = compare::render_comparison(
+        &comparison,
+        Path::new("before.json"),
+        Path::new("after.json"),
+    );
+    assert!(rendered.contains("flash image 700000 -> 700000 (0)"));
+    Ok(())
+}
+
+#[test]
 fn build_fingerprint_distinguishes_lto_configuration() -> Result<(), Box<dyn std::error::Error>> {
     let configured = BuildContext::new(
         Path::new("/repository"),

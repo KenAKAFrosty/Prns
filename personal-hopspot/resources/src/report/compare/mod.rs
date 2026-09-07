@@ -62,8 +62,6 @@ pub(crate) enum ComparisonError {
     },
     #[error("resource report {path} has invalid flash accounting")]
     InvalidFlashAccounting { path: PathBuf },
-    #[error("resource report {path} has no artifact evidence")]
-    MissingArtifactEvidence { path: PathBuf },
     #[error("resource report {path} has invalid artifact evidence for {artifact:?}")]
     InvalidArtifact { path: PathBuf, artifact: String },
     #[error("resource report {path} repeats artifact {artifact:?}")]

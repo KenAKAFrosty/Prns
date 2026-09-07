@@ -59,11 +59,6 @@ fn validate_flash(path: &Path, report: &ResourceReport) -> Result<(), Comparison
 }
 
 fn validate_artifacts(path: &Path, artifacts: &[ArtifactIdentity]) -> Result<(), ComparisonError> {
-    if artifacts.is_empty() {
-        return Err(ComparisonError::MissingArtifactEvidence {
-            path: path.to_path_buf(),
-        });
-    }
     for (index, artifact) in artifacts.iter().enumerate() {
         if artifact.path.is_empty() || artifact.bytes == 0 {
             return Err(ComparisonError::InvalidArtifact {

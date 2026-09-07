@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use crate::architecture::MemoryOverflows;
+
 #[derive(Clone, Debug)]
 pub struct FirmwareEvidence {
     elf: PathBuf,
@@ -16,6 +18,16 @@ enum FirmwareEvidenceKind {
 pub struct ResourceBuildEvidence {
     linker_map: PathBuf,
     toolchain: ToolchainEvidence,
+}
+
+#[derive(Debug)]
+pub struct LinkOverflowEvidence {
+    target: String,
+    linker_map: PathBuf,
+    toolchain: ToolchainEvidence,
+    overflows: MemoryOverflows,
+    diagnostics: String,
+    exit_status: String,
 }
 
 impl FirmwareEvidence {
@@ -63,6 +75,69 @@ impl ResourceBuildEvidence {
     #[must_use]
     pub const fn toolchain(&self) -> &ToolchainEvidence {
         &self.toolchain
+    }
+}
+
+impl LinkOverflowEvidence {
+    pub(crate) const fn new(
+        target: String,
+        linker_map: PathBuf,
+        toolchain: ToolchainEvidence,
+        overflows: MemoryOverflows,
+        diagnostics: String,
+        exit_status: String,
+    ) -> Self {
+        Self {
+            target,
+            linker_map,
+            toolchain,
+            overflows,
+            diagnostics,
+            exit_status,
+        }
+    }
+
+    #[must_use]
+    pub fn target(&self) -> &str {
+        &self.target
+    }
+
+    #[must_use]
+    pub fn linker_map(&self) -> &Path {
+        &self.linker_map
+    }
+
+    #[must_use]
+    pub const fn toolchain(&self) -> &ToolchainEvidence {
+        &self.toolchain
+    }
+
+    #[must_use]
+    pub const fn overflows(&self) -> &MemoryOverflows {
+        &self.overflows
+    }
+
+    #[must_use]
+    pub fn diagnostics(&self) -> &str {
+        &self.diagnostics
+    }
+
+    #[must_use]
+    pub fn exit_status(&self) -> &str {
+        &self.exit_status
+    }
+}
+
+impl std::fmt::Display for LinkOverflowEvidence {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let primary = self.overflows.primary();
+        write!(
+            formatter,
+            "{} firmware link overflowed region {:?} by {} bytes",
+            self.target,
+            primary.region(),
+            primary.bytes()
+        )
     }
 }
 

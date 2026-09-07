@@ -382,6 +382,9 @@ impl From<personal_hopspot_builder::BuildError> for AppError {
             error @ personal_hopspot_builder::BuildError::FirmwareOverflow { .. } => {
                 Self::developer_artifact(error.to_string())
             }
+            error @ personal_hopspot_builder::BuildError::LinkOverflow(_) => {
+                Self::developer_artifact(error.to_string())
+            }
             personal_hopspot_builder::BuildError::Manifest(message) => {
                 Self::developer_manifest(message)
             }

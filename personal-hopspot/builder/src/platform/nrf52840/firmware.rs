@@ -2,7 +2,7 @@ use personal_hopspot_memory::MemoryProfile;
 
 use super::binary;
 use crate::architecture::adapter_for_rust_target;
-use crate::{embedded_cargo_command, run_status, BuildContext, BuildError, FirmwareEvidence};
+use crate::{embedded_cargo_command, BuildContext, BuildError, FirmwareEvidence};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Recipe<'a> {
@@ -66,8 +66,14 @@ pub fn build(
         .current_dir(crate_dir);
     let adapter = adapter_for_rust_target(recipe.rust_target)?;
     let capture = context.configure_firmware_cargo(target_id, adapter, &mut cargo)?;
-    run_status(&mut cargo, &format!("{target_id} cargo build"))?;
-    let firmware = context.finish_firmware_build(elf.clone(), capture)?;
+    let firmware = context.run_firmware_build(
+        &mut cargo,
+        &format!("{target_id} cargo build"),
+        target_id,
+        adapter,
+        elf.clone(),
+        capture,
+    )?;
     let binary = context.work_output(target_id).join("firmware.bin");
     let firmware_image_bytes = binary::extract(&elf, &binary)?;
     Ok(Output {

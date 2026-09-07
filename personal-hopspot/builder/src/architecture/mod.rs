@@ -1,3 +1,4 @@
+mod linker;
 mod riscv32imac;
 mod thumbv7em;
 mod xtensa;
@@ -12,6 +13,8 @@ use std::process::Command;
 use personal_hopspot_memory::ProcessorArchitecture;
 
 use crate::BuildError;
+
+pub use linker::{MemoryOverflow, MemoryOverflows};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AdapterId(&'static str);
@@ -108,6 +111,13 @@ impl Adapter {
 
     pub(crate) fn linker_map_argument(&self, path: &Path) -> OsString {
         (self.linker_map_argument)(path)
+    }
+
+    pub(crate) fn detect_memory_overflow(&self, diagnostics: &str) -> Option<MemoryOverflows> {
+        match self.linker_flavor {
+            LinkerFlavor::RustLld => linker::rust_lld::detect(diagnostics),
+            LinkerFlavor::GnuLd => linker::gnu_ld::detect(diagnostics),
+        }
     }
 }
 

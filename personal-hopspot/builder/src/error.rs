@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+use crate::LinkOverflowEvidence;
+
 #[derive(Debug, Error)]
 pub enum BuildError {
     #[error("{0}")]
@@ -16,6 +18,8 @@ pub enum BuildError {
         actual: u64,
         maximum: u64,
     },
+    #[error("{0}")]
+    LinkOverflow(Box<LinkOverflowEvidence>),
     #[error("{0}")]
     Manifest(String),
 }
