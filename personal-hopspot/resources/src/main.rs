@@ -27,6 +27,7 @@ struct Cli {
 enum ResourceCommand {
     Compare(CompareArguments),
     Contracts(ContractsArguments),
+    RefreshBaseline,
     Report(ReportArguments),
 }
 
@@ -125,6 +126,8 @@ enum ResourceError {
     #[error(transparent)]
     Report(#[from] report::ReportError),
     #[error(transparent)]
+    Baseline(#[from] report::BaselineError),
+    #[error(transparent)]
     Comparison(#[from] report::ComparisonError),
 }
 
@@ -169,6 +172,9 @@ fn run(cli: Cli) -> Result<(), ResourceError> {
                 );
             }
         },
+        ResourceCommand::RefreshBaseline => {
+            refresh_baseline(&root)?;
+        }
         ResourceCommand::Report(arguments) => {
             build_reports(&root, &arguments)?;
         }
@@ -198,11 +204,33 @@ fn build_reports(root: &Path, arguments: &ReportArguments) -> Result<(), Resourc
     Ok(())
 }
 
+fn refresh_baseline(root: &Path) -> Result<(), ResourceError> {
+    let catalog = prns_flash_manifest::board_catalog()?;
+    let matrix = Matrix::from_catalog(&catalog)?;
+    let output_root = default_artifact_root(root).join("resources");
+    let context = BuildContext::new(root, &output_root, BuildVersion::Repository)?.with_intent(
+        BuildIntent::ResourceReport {
+            lto: LtoMode::Configured,
+        },
+    );
+    let reports = matrix
+        .iter()
+        .map(|target| build_report(target, &context, OverflowPolicy::Reject))
+        .collect::<Result<Vec<_>, _>>()?;
+    let outcome = report::refresh_baseline(root, &matrix, &context, &reports)?;
+    println!(
+        "EMBEDDED_RESOURCE_BASELINE: targets={} path={}",
+        outcome.targets(),
+        outcome.path().display()
+    );
+    Ok(())
+}
+
 fn build_report(
     target: &Target<'_>,
     context: &BuildContext<'_>,
     overflow_policy: OverflowPolicy,
-) -> Result<(), ResourceError> {
+) -> Result<PathBuf, ResourceError> {
     match (overflow_policy, target.build(context)) {
         (_, Ok(evidence)) => write_success_report(target, context, &evidence),
         (
@@ -227,7 +255,7 @@ fn build_report(
             }
             let report = report::write_overflow(target, context, &evidence)?;
             println!("report {}", report.display());
-            Ok(())
+            Ok(report)
         }
         (_, Err(error)) => Err(error.into()),
     }
@@ -237,7 +265,7 @@ fn write_success_report(
     target: &Target<'_>,
     context: &BuildContext<'_>,
     evidence: &matrix::BuildEvidence,
-) -> Result<(), ResourceError> {
+) -> Result<PathBuf, ResourceError> {
     let adapter = target.adapter();
     println!(
         "EMBEDDED_RESOURCE_BUILD: target={} name={:?} profile={} architecture={} adapter={} linker={} lto={} artifacts={} package_bytes={} elf={}",
@@ -260,7 +288,7 @@ fn write_success_report(
     }
     let report = report::write(target, context, evidence)?;
     println!("report {}", report.display());
-    Ok(())
+    Ok(report)
 }
 
 #[cfg(test)]
@@ -315,6 +343,15 @@ mod tests {
         };
         assert_eq!(arguments.before, Path::new("before.json"));
         assert_eq!(arguments.after, Path::new("after.json"));
+        Ok(())
+    }
+
+    #[test]
+    fn refresh_baseline_accepts_no_selection_or_codegen_override(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let cli = Cli::try_parse_from(["resources", "refresh-baseline"])?;
+        assert!(matches!(cli.command, ResourceCommand::RefreshBaseline));
+        assert!(Cli::try_parse_from(["resources", "refresh-baseline", "--lto", "thin"]).is_err());
         Ok(())
     }
 }

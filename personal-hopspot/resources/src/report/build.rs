@@ -257,7 +257,7 @@ fn attribution_identity(analysis: analysis::AttributionAnalysis) -> FlashAttribu
     }
 }
 
-fn target_identity(target: &Target<'_>) -> TargetIdentity {
+pub(super) fn target_identity(target: &Target<'_>) -> TargetIdentity {
     TargetIdentity {
         id: target.id().to_string(),
         display_name: target.display_name().to_string(),
@@ -265,7 +265,7 @@ fn target_identity(target: &Target<'_>) -> TargetIdentity {
     }
 }
 
-fn architecture_identity(target: &Target<'_>) -> ArchitectureIdentity {
+pub(super) fn architecture_identity(target: &Target<'_>) -> ArchitectureIdentity {
     let adapter = target.adapter();
     ArchitectureIdentity {
         rust_target: adapter.rust_target().to_string(),

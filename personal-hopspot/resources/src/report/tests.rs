@@ -364,7 +364,7 @@ fn make_overflow(value: &mut Value, linker_region: &str, overflow_bytes: u64) {
     value["analysis"]["flash_attribution"]["kind"] = json!("partial");
 }
 
-fn report_value() -> Value {
+pub(super) fn report_value() -> Value {
     let fingerprint = "a".repeat(64);
     json!({
         "schema_version": SCHEMA_VERSION,

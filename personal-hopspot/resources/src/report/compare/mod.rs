@@ -116,6 +116,10 @@ pub(crate) fn compare_files(before: &Path, after: &Path) -> Result<String, Compa
     Ok(render::render(&comparison, before, after))
 }
 
+pub(in crate::report) fn load_report(path: &Path) -> Result<ResourceReport, ComparisonError> {
+    validation::load(path)
+}
+
 #[cfg(test)]
 pub(super) fn validate_report(path: &Path, report: &ResourceReport) -> Result<(), ComparisonError> {
     validation::validate_report(path, report)
