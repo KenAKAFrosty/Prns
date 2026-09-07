@@ -148,6 +148,7 @@ fn validated_acquired_schedule() -> ValidatedAcquiredSchedule {
     }
 }
 
+#[cfg(feature = "std")]
 fn acquisition_simulation(environment: AcquisitionEnvironment) -> AcquisitionSimulation {
     AcquisitionSimulation {
         seed: 0x5052_4e53_4143_5155,
@@ -945,6 +946,7 @@ fn deterministic_contention_simulation_executes_the_production_state_machines() 
     assert!(result.jain_fairness_millionths >= 800_000);
 }
 
+#[cfg(feature = "std")]
 #[test]
 fn acquisition_simulation_graduates_only_through_the_production_tracker() {
     let input = acquisition_simulation(AcquisitionEnvironment::SingleSchedule);
@@ -955,6 +957,7 @@ fn acquisition_simulation_graduates_only_through_the_production_tracker() {
     assert_eq!(result.maximum_primary_phase_error_us, 0);
 }
 
+#[cfg(feature = "std")]
 #[test]
 fn mixed_schedule_population_can_graduate_either_coherent_phase() {
     let input = acquisition_simulation(AcquisitionEnvironment::MixedSchedules {
@@ -967,6 +970,7 @@ fn mixed_schedule_population_can_graduate_either_coherent_phase() {
     assert!(result.maximum_primary_phase_error_us >= US915_TURBO_SPEC.cycle_us());
 }
 
+#[cfg(feature = "std")]
 #[test]
 fn mixed_completion_timing_forces_contradiction_resets() {
     let input = acquisition_simulation(AcquisitionEnvironment::MixedCompletionTiming {
@@ -978,6 +982,7 @@ fn mixed_completion_timing_forces_contradiction_resets() {
     assert!(result.acquired_trials > 0);
 }
 
+#[cfg(feature = "std")]
 #[test]
 fn acquisition_simulation_rejects_invalid_clock_and_environment_models_up_front() {
     let baseline = acquisition_simulation(AcquisitionEnvironment::SingleSchedule);
