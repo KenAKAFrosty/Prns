@@ -627,11 +627,15 @@ mod tests {
         producer.commit();
         assert!(producer.needs_announce(), "the first commit announces");
 
+        while consumer.try_peek().is_some() {
+            consumer.release();
+        }
+
         producer.try_grant().expect("lane grants").fill(b"two");
         producer.commit();
         assert!(
             !producer.needs_announce(),
-            "a burst behind an unconsumed announcement stays silent",
+            "an arrival before the consumer acknowledges stays silent",
         );
 
         consumer.acknowledge();

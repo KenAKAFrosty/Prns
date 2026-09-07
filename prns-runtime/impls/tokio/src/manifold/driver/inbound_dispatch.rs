@@ -264,7 +264,6 @@ impl InboundDispatch {
             else {
                 continue;
             };
-            lane.acknowledge();
             for _ in 0..max_frames_per_lane {
                 if processed_frames == max_frames_total {
                     break;
@@ -541,11 +540,18 @@ impl InboundDispatch {
             }
         }
         ready_lanes.retain(|source| {
-            topology
+            let Some((_, lane)) = topology
                 .inbound_lanes
                 .iter_mut()
                 .find(|(id, _)| id == source)
-                .is_some_and(|(_, lane)| lane.try_peek().is_some())
+            else {
+                return false;
+            };
+            if lane.try_peek().is_some() {
+                return true;
+            }
+            lane.acknowledge();
+            lane.try_peek().is_some()
         });
         if ready_lanes.len() > 1 {
             ready_lanes.rotate_left(1);
