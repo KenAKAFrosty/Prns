@@ -380,7 +380,6 @@ async fn run_inner<S, H, J, P, A, C>(
             .as_ref()
             .filter(|pool| !egress_backpressured && pool.has_completion())
         {
-            pool.disarm_completion_wait();
             let mut next = pool.pop_completion();
             let now = clock.observe_step(&host);
             let mut seal_buf = [0u8; crate::wire::BROADCAST_MTU];

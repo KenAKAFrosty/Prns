@@ -320,6 +320,85 @@ async fn completion_wake_carries_no_payload_and_result_moves_through_worker_ring
     assert!(!pool.has_completion());
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn concurrent_completion_arm_handoffs_do_not_strand_results() {
+    const HANDOFFS: usize = 2_048;
+
+    let completion_wake = Arc::new(Notify::new());
+    let pool = CryptoPool::spawn(1, completion_wake.clone()).expect("worker spawns");
+
+    for id in 0..HANDOFFS {
+        let job_id = u8::try_from(id % (usize::from(u8::MAX) + 1)).unwrap();
+        pool.submit(CryptoJob::ScheduledTest(ScheduledTestJob {
+            id: job_id,
+            class: CryptoJobClass::Latency,
+            started: None,
+            release: None,
+        }));
+        if !pool.prepare_completion_wait() {
+            tokio::time::timeout(Duration::from_secs(1), completion_wake.notified())
+                .await
+                .expect("the worker wakes the armed manifold");
+        }
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        let completion = loop {
+            if let Some(completion) = pool.pop_completion() {
+                break completion;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the durable result reaches its ring"
+            );
+            tokio::task::yield_now().await;
+        };
+        assert!(matches!(completion.result, CryptoResult::ScheduledTest(got) if got == job_id));
+        pool.record_completed(
+            completion.worker.expect("pool completion"),
+            completion.class,
+            completion.work,
+            &completion.timing,
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_completion_bursts_do_not_strand_worker_rings() {
+    const BURSTS: usize = 512;
+    const BURST: usize = 4;
+
+    let completion_wake = Arc::new(Notify::new());
+    let pool = CryptoPool::spawn(4, completion_wake.clone()).expect("workers spawn");
+
+    for burst in 0..BURSTS {
+        for offset in 0..BURST {
+            let id = u8::try_from((burst * BURST + offset) % (usize::from(u8::MAX) + 1)).unwrap();
+            pool.submit(CryptoJob::ScheduledTest(ScheduledTestJob {
+                id,
+                class: CryptoJobClass::Latency,
+                started: None,
+                release: None,
+            }));
+        }
+        let mut completed = 0;
+        while completed < BURST {
+            if !pool.prepare_completion_wait() {
+                tokio::time::timeout(Duration::from_secs(1), completion_wake.notified())
+                    .await
+                    .expect("a worker wakes the armed manifold");
+            }
+            while let Some(completion) = pool.pop_completion() {
+                pool.record_completed(
+                    completion.worker.expect("pool completion"),
+                    completion.class,
+                    completion.work,
+                    &completion.timing,
+                );
+                completed += 1;
+            }
+        }
+    }
+}
+
 #[tokio::test]
 async fn link_receipt_signing_moves_metadata_and_signature_through_the_worker_ring() {
     use crate::crypto::{ed25519_public_key, ed25519_verify, Ed25519SecretKey};
@@ -503,21 +582,29 @@ fn same_link_receipt_backlog_routes_in_load_balanced_pairs() {
 
 #[test]
 fn completion_wait_arm_closes_ready_before_and_after_arm_races() {
-    let pool = CryptoPool::spawn(1, Arc::new(Notify::new())).expect("worker spawns");
+    let readiness = CompletionReadiness::new();
+    let completion_wake = Notify::new();
 
-    assert!(!pool.prepare_completion_wait());
+    readiness.reserve(1);
+    assert!(readiness.prepare_wait());
+    assert!(!readiness.wait_is_armed());
+    readiness.notify_if_armed(&completion_wake);
+    readiness.release(1);
+
+    assert!(!readiness.prepare_wait());
     assert!(
-        pool.state.completion_wake_armed.load(Ordering::Acquire),
+        readiness.wait_is_armed(),
         "an empty pool arms its one Tokio hole-punch"
     );
 
-    pool.state.ready_results.store(1, Ordering::Release);
-    assert!(pool.prepare_completion_wait());
+    readiness.reserve(1);
+    readiness.notify_if_armed(&completion_wake);
+    assert!(readiness.prepare_wait());
     assert!(
-        !pool.state.completion_wake_armed.load(Ordering::Acquire),
+        !readiness.wait_is_armed(),
         "durable readiness disarms a redundant notification"
     );
-    pool.state.ready_results.store(0, Ordering::Release);
+    readiness.release(1);
 }
 
 #[test]
@@ -604,7 +691,7 @@ fn command_sized_burst_backpressures_without_dropping_jobs_or_results() {
     }
 
     assert_eq!(pool.state.queued_jobs.load(Ordering::Acquire), 0);
-    assert_eq!(pool.state.ready_results.load(Ordering::Acquire), 0);
+    assert_eq!(pool.state.completion_readiness.ready_count(), 0);
     assert!(!pool.has_completion());
 }
 
