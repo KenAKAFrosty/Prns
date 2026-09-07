@@ -476,16 +476,24 @@ mod enabled {
         #[test]
         fn swift_allowlist_accepts_exactly_the_tested_event_codes() {
             let swift = include_str!("../../../sdk/expo/ios/PrnsAppRestorationProbe.swift");
-            let allowlist = swift
-                .split_once("private let prnsRestorationEvents: Set<String> = [")
-                .expect("Swift must retain the explicit event allowlist")
+            let diagnostics = include_str!("../../../sdk/expo/ios/PrnsIosDiagnostics.swift");
+            let allowlist = diagnostics
+                .split_once("enum RestorationEvent: String {")
+                .expect("Swift must retain the typed event allowlist")
                 .1
-                .split_once(']')
+                .split_once('}')
                 .expect("Swift event allowlist must close")
                 .0;
             let actual = allowlist
                 .lines()
-                .filter_map(|line| line.trim().strip_prefix('"')?.strip_suffix("\","))
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(|line| {
+                    line.strip_prefix("case ")
+                        .and_then(|case| case.split_once(" = \""))
+                        .and_then(|(_, raw_value)| raw_value.strip_suffix('"'))
+                        .expect("each restoration case must declare an explicit string code")
+                })
                 .collect::<std::collections::BTreeSet<_>>();
             let expected = [
                 "central_state_restored",
@@ -499,6 +507,7 @@ mod enabled {
             .chain(DIAGNOSTIC_CASES.iter().map(|(_, _, code)| *code))
             .collect::<std::collections::BTreeSet<_>>();
             assert_eq!(actual, expected);
+            assert!(swift.contains("PrnsIosDiagnostics.RestorationEvent(rawValue: code)"));
             assert!(swift.starts_with("#if DEBUG\n"));
             assert!(swift.trim_end().ends_with("#endif"));
         }
