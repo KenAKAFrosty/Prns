@@ -5,6 +5,7 @@ use personal_hopspot_memory::T114;
 use serde_json::{json, Value};
 
 use super::build::{build_identity, firmware_flash_usage, ReportError};
+use super::compare::{self, ComparisonError, CompatibilityDimension};
 use super::contract;
 use super::model::{ResourceReport, SCHEMA_VERSION};
 use crate::matrix::RecipeIdentity;
@@ -29,6 +30,66 @@ fn report_schema_rejects_malformed_fingerprints() {
     let mut value = report_value();
     value["build"]["fingerprint"] = Value::String("invalid".to_string());
     assert!(serde_json::from_value::<ResourceReport>(value).is_err());
+}
+
+#[test]
+fn compatible_reports_call_out_lto_and_resource_deltas() -> Result<(), Box<dyn std::error::Error>> {
+    let before: ResourceReport = serde_json::from_value(report_value())?;
+    let mut after_value = report_value();
+    after_value["build"]["fingerprint"] = Value::String("b".repeat(64));
+    after_value["build"]["lto"] = Value::String("thin".to_string());
+    after_value["firmware_flash"]["image_bytes"] = json!(699_000);
+    after_value["firmware_flash"]["headroom_bytes"] = json!(66_952);
+    after_value["artifacts"][0]["bytes"] = json!(40);
+    after_value["static_ram"][0]["static_section_bytes"] = json!(137_356);
+    after_value["static_ram"][0]["capacity"]["headroom_bytes"] = json!(6_004);
+    after_value["analysis"]["allocated_sections"][0]["run_end"] = json!(155_688);
+    after_value["analysis"]["allocated_sections"][0]["run_bytes"] = json!(40);
+    after_value["analysis"]["allocated_sections"][0]["load_bytes"] = json!(40);
+    let after: ResourceReport = serde_json::from_value(after_value)?;
+    compare::validate_report(Path::new("before.json"), &before)?;
+    compare::validate_report(Path::new("after.json"), &after)?;
+    let comparison = compare::compare_reports(&before, &after)?;
+    let rendered = compare::render_comparison(
+        &comparison,
+        Path::new("before.json"),
+        Path::new("after.json"),
+    );
+    assert!(rendered.contains("setting lto configured -> thin"));
+    assert!(rendered.contains("flash image 700000 -> 699000 (-1000)"));
+    assert!(rendered.contains("flash headroom 65952 -> 66952 (+1000)"));
+    assert!(rendered.contains("ram internal-sram headroom 5004 -> 6004 (+1000)"));
+    assert!(rendered.contains("section code load 42 -> 40 (-2)"));
+    Ok(())
+}
+
+#[test]
+fn memory_contract_changes_are_not_compared_as_resource_deltas(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let before: ResourceReport = serde_json::from_value(report_value())?;
+    let mut after_value = report_value();
+    after_value["memory_contract"]["fingerprint"] = Value::String("b".repeat(64));
+    let after: ResourceReport = serde_json::from_value(after_value)?;
+    assert!(matches!(
+        compare::compare_reports(&before, &after),
+        Err(ComparisonError::Incompatible {
+            dimension: CompatibilityDimension::MemoryContract,
+        })
+    ));
+    Ok(())
+}
+
+#[test]
+fn malformed_ram_accounting_is_rejected_before_comparison() -> Result<(), Box<dyn std::error::Error>>
+{
+    let mut value = report_value();
+    value["static_ram"][0]["capacity"]["headroom_bytes"] = json!(5_005);
+    let report: ResourceReport = serde_json::from_value(value)?;
+    assert!(matches!(
+        compare::validate_report(Path::new("report.json"), &report),
+        Err(ComparisonError::InvalidRamAccounting { .. })
+    ));
+    Ok(())
 }
 
 #[test]

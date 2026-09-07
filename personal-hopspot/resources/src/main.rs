@@ -25,8 +25,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum ResourceCommand {
+    Compare(CompareArguments),
     Contracts(ContractsArguments),
     Report(ReportArguments),
+}
+
+#[derive(Args)]
+struct CompareArguments {
+    before: PathBuf,
+    after: PathBuf,
 }
 
 #[derive(Args)]
@@ -100,6 +107,8 @@ enum ResourceError {
     Build(#[from] BuildError),
     #[error(transparent)]
     Report(#[from] report::ReportError),
+    #[error(transparent)]
+    Comparison(#[from] report::ComparisonError),
 }
 
 fn main() -> ExitCode {
@@ -121,6 +130,12 @@ fn run(cli: Cli) -> Result<(), ResourceError> {
         }
     })?;
     match cli.command {
+        ResourceCommand::Compare(arguments) => {
+            print!(
+                "{}",
+                report::compare_files(&arguments.before, &arguments.after)?
+            );
+        }
         ResourceCommand::Contracts(arguments) => match contracts::run(&root, arguments.mode())? {
             ContractOutcome::Verified { artifact_count } => {
                 println!(
@@ -208,6 +223,18 @@ mod tests {
         };
         assert_eq!(arguments.target.as_deref(), Some("t114"));
         assert_eq!(arguments.lto, LtoArgument::Thin);
+        Ok(())
+    }
+
+    #[test]
+    fn compare_requires_exactly_two_report_paths() -> Result<(), Box<dyn std::error::Error>> {
+        assert!(Cli::try_parse_from(["resources", "compare", "before.json"]).is_err());
+        let cli = Cli::try_parse_from(["resources", "compare", "before.json", "after.json"])?;
+        let ResourceCommand::Compare(arguments) = cli.command else {
+            return Err("compare command was not parsed".into());
+        };
+        assert_eq!(arguments.before, Path::new("before.json"));
+        assert_eq!(arguments.after, Path::new("after.json"));
         Ok(())
     }
 }
