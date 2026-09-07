@@ -138,6 +138,69 @@ fn compatible_reports_call_out_lto_and_resource_deltas() -> Result<(), Box<dyn s
 }
 
 #[test]
+fn successful_and_overflowing_builds_compare_without_invented_deltas(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let before: ResourceReport = serde_json::from_value(report_value())?;
+    let mut after_value = report_value();
+    after_value["build"]["fingerprint"] = Value::String("b".repeat(64));
+    after_value["build"]["lto"] = Value::String("thin".to_string());
+    make_overflow(&mut after_value, "FLASH", 86_240);
+    let after: ResourceReport = serde_json::from_value(after_value)?;
+    compare::validate_report(Path::new("before.json"), &before)?;
+    compare::validate_report(Path::new("after.json"), &after)?;
+
+    let introduced = compare::render_comparison(
+        &compare::compare_reports(&before, &after)?,
+        Path::new("before.json"),
+        Path::new("after.json"),
+    );
+    assert!(introduced.contains("setting lto configured -> thin"));
+    assert!(introduced.contains("status success -> memory-overflow"));
+    assert!(introduced.contains("overflow \"FLASH\" none -> 86240"));
+    assert!(introduced.contains("flash evidence complete -> unavailable"));
+    assert!(!introduced.contains("flash image"));
+
+    let resolved = compare::render_comparison(
+        &compare::compare_reports(&after, &before)?,
+        Path::new("after.json"),
+        Path::new("before.json"),
+    );
+    assert!(resolved.contains("status memory-overflow -> success"));
+    assert!(resolved.contains("overflow \"FLASH\" 86240 -> none"));
+    Ok(())
+}
+
+#[test]
+fn overflow_comparisons_track_changed_and_unreported_regions(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut before_value = report_value();
+    make_overflow(&mut before_value, "FLASH", 86_240);
+    let before: ResourceReport = serde_json::from_value(before_value)?;
+
+    let mut after_value = report_value();
+    make_overflow(&mut after_value, "FLASH", 80_000);
+    let after: ResourceReport = serde_json::from_value(after_value)?;
+    let changed = compare::render_comparison(
+        &compare::compare_reports(&before, &after)?,
+        Path::new("before.json"),
+        Path::new("after.json"),
+    );
+    assert!(changed.contains("overflow \"FLASH\" 86240 -> 80000 (-6240)"));
+
+    let mut other_value = report_value();
+    make_overflow(&mut other_value, "RAM", 4_096);
+    let other: ResourceReport = serde_json::from_value(other_value)?;
+    let moved = compare::render_comparison(
+        &compare::compare_reports(&before, &other)?,
+        Path::new("before.json"),
+        Path::new("after.json"),
+    );
+    assert!(moved.contains("overflow \"FLASH\" 86240 -> not-reported"));
+    assert!(moved.contains("overflow \"RAM\" not-reported -> 4096"));
+    Ok(())
+}
+
+#[test]
 fn memory_contract_changes_are_not_compared_as_resource_deltas(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let before: ResourceReport = serde_json::from_value(report_value())?;
@@ -271,6 +334,20 @@ fn recipe() -> RecipeIdentity<'static> {
         binary: "personal-hopspot-t114",
         features: vec!["t114"],
     }
+}
+
+fn make_overflow(value: &mut Value, linker_region: &str, overflow_bytes: u64) {
+    value["status"] = json!({
+        "kind": "memory-overflow",
+        "regions": [{
+            "linker_region": linker_region,
+            "overflow_bytes": overflow_bytes
+        }]
+    });
+    value["firmware_flash"] = json!({"kind": "unavailable"});
+    value["static_ram"] = json!({"kind": "unavailable"});
+    value["artifacts"] = json!({"kind": "unavailable"});
+    value["analysis"]["allocated_sections"] = json!({"kind": "unavailable"});
 }
 
 fn report_value() -> Value {

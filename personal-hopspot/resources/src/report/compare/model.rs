@@ -4,16 +4,65 @@ use std::fmt;
 pub(in crate::report) struct ResourceComparison {
     pub(super) target: String,
     pub(super) settings: Vec<SettingDifference>,
-    pub(super) flash_image: ByteComparison,
-    pub(super) flash_headroom: ByteComparison,
-    pub(super) artifacts: Vec<ArtifactComparison>,
-    pub(super) ram: Vec<RamComparison>,
-    pub(super) sections: Vec<SectionComparison>,
+    pub(super) status: StatusComparison,
+    pub(super) flash: EvidenceComparison<FlashComparison>,
+    pub(super) artifacts: EvidenceComparison<Vec<ArtifactComparison>>,
+    pub(super) ram: EvidenceComparison<Vec<RamComparison>>,
+    pub(super) sections: EvidenceComparison<Vec<SectionComparison>>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum SettingDifference {
     Lto { before: String, after: String },
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct StatusComparison {
+    pub(super) before: StatusKind,
+    pub(super) after: StatusKind,
+    pub(super) overflows: Vec<OverflowComparison>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum StatusKind {
+    Success,
+    MemoryOverflow,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct OverflowComparison {
+    pub(super) linker_region: String,
+    pub(super) before: OverflowState,
+    pub(super) after: OverflowState,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum OverflowState {
+    NoOverflow,
+    NotReported,
+    Overflow(u64),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum EvidenceComparison<T> {
+    Comparable(T),
+    NotComparable {
+        before: EvidenceAvailability,
+        after: EvidenceAvailability,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum EvidenceAvailability {
+    Complete,
+    Partial,
+    Unavailable,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct FlashComparison {
+    pub(super) image: ByteComparison,
+    pub(super) headroom: ByteComparison,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -80,6 +129,35 @@ impl fmt::Display for ByteDelta {
             Self::Decrease(bytes) => write!(formatter, "-{bytes}"),
             Self::Unchanged => formatter.write_str("0"),
             Self::Increase(bytes) => write!(formatter, "+{bytes}"),
+        }
+    }
+}
+
+impl fmt::Display for StatusKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Success => "success",
+            Self::MemoryOverflow => "memory-overflow",
+        })
+    }
+}
+
+impl fmt::Display for EvidenceAvailability {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Complete => "complete",
+            Self::Partial => "partial",
+            Self::Unavailable => "unavailable",
+        })
+    }
+}
+
+impl fmt::Display for OverflowState {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoOverflow => formatter.write_str("none"),
+            Self::NotReported => formatter.write_str("not-reported"),
+            Self::Overflow(bytes) => write!(formatter, "{bytes}"),
         }
     }
 }

@@ -9,12 +9,14 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 use super::model::{
-    ArtifactIdentity, BuildIdentity, Evidence, RamBackingUsage, RamCapacityIdentity,
-    ResourceReport, SectionKindIdentity, SectionUsage,
+    ArtifactIdentity, BuildIdentity, BuildStatus, Evidence, FirmwareFlashUsage,
+    MemoryOverflowIdentity, RamBackingUsage, RamCapacityIdentity, ResourceReport,
+    SectionKindIdentity, SectionUsage,
 };
 use model::{
-    ArtifactComparison, ByteComparison, RamComparison, RamHeadroomComparison, ResourceComparison,
-    SectionComparison, SettingDifference,
+    ArtifactComparison, ByteComparison, EvidenceAvailability, EvidenceComparison, FlashComparison,
+    OverflowComparison, OverflowState, RamComparison, RamHeadroomComparison, ResourceComparison,
+    SectionComparison, SettingDifference, StatusComparison, StatusKind,
 };
 
 const SECTION_KINDS: [(SectionKindIdentity, &str); 5] = [
@@ -32,11 +34,9 @@ pub(crate) enum CompatibilityDimension {
     BuildRecipe,
     Toolchain,
     MemoryContract,
-    BuildStatus,
     FirmwareRegion,
     ArtifactSet,
     RamTopology,
-    EvidenceAvailability,
 }
 
 #[derive(Debug, Error)]
@@ -147,22 +147,6 @@ pub(super) fn compare_reports(
         before.memory_contract == after.memory_contract,
         CompatibilityDimension::MemoryContract,
     )?;
-    require(
-        before.status == after.status,
-        CompatibilityDimension::BuildStatus,
-    )?;
-    let before_flash = complete(&before.firmware_flash)?;
-    let after_flash = complete(&after.firmware_flash)?;
-    require(
-        before_flash.region == after_flash.region
-            && before_flash.start == after_flash.start
-            && before_flash.end == after_flash.end,
-        CompatibilityDimension::FirmwareRegion,
-    )?;
-    let artifacts = compare_artifacts(complete(&before.artifacts)?, complete(&after.artifacts)?)?;
-    let ram = compare_ram(complete(&before.static_ram)?, complete(&after.static_ram)?)?;
-    let before_sections = complete(&before.analysis.allocated_sections)?;
-    let after_sections = complete(&after.analysis.allocated_sections)?;
     let settings = if before.build.lto == after.build.lto {
         Vec::new()
     } else {
@@ -174,14 +158,107 @@ pub(super) fn compare_reports(
     Ok(ResourceComparison {
         target: before.target.id.clone(),
         settings,
-        flash_image: ByteComparison::new(before_flash.image_bytes, after_flash.image_bytes),
-        flash_headroom: ByteComparison::new(
-            before_flash.headroom_bytes,
-            after_flash.headroom_bytes,
-        ),
-        artifacts,
-        ram,
-        sections: compare_sections(before_sections, after_sections)?,
+        status: compare_status(&before.status, &after.status),
+        flash: compare_evidence(&before.firmware_flash, &after.firmware_flash, compare_flash)?,
+        artifacts: compare_evidence(&before.artifacts, &after.artifacts, |before, after| {
+            compare_artifacts(before, after)
+        })?,
+        ram: compare_evidence(&before.static_ram, &after.static_ram, |before, after| {
+            compare_ram(before, after)
+        })?,
+        sections: compare_evidence(
+            &before.analysis.allocated_sections,
+            &after.analysis.allocated_sections,
+            |before, after| compare_sections(before, after),
+        )?,
+    })
+}
+
+fn compare_status(before: &BuildStatus, after: &BuildStatus) -> StatusComparison {
+    let mut regions = overflow_regions(before)
+        .iter()
+        .map(|overflow| overflow.linker_region.as_str())
+        .collect::<Vec<_>>();
+    for overflow in overflow_regions(after) {
+        if !regions.contains(&overflow.linker_region.as_str()) {
+            regions.push(&overflow.linker_region);
+        }
+    }
+    StatusComparison {
+        before: status_kind(before),
+        after: status_kind(after),
+        overflows: regions
+            .into_iter()
+            .map(|linker_region| OverflowComparison {
+                linker_region: linker_region.to_string(),
+                before: overflow_state(before, linker_region),
+                after: overflow_state(after, linker_region),
+            })
+            .collect(),
+    }
+}
+
+const fn status_kind(status: &BuildStatus) -> StatusKind {
+    match status {
+        BuildStatus::Success => StatusKind::Success,
+        BuildStatus::MemoryOverflow { .. } => StatusKind::MemoryOverflow,
+    }
+}
+
+fn overflow_regions(status: &BuildStatus) -> &[MemoryOverflowIdentity] {
+    match status {
+        BuildStatus::Success => &[],
+        BuildStatus::MemoryOverflow { regions } => regions,
+    }
+}
+
+fn overflow_state(status: &BuildStatus, linker_region: &str) -> OverflowState {
+    match status {
+        BuildStatus::Success => OverflowState::NoOverflow,
+        BuildStatus::MemoryOverflow { regions } => regions
+            .iter()
+            .find(|overflow| overflow.linker_region == linker_region)
+            .map_or(OverflowState::NotReported, |overflow| {
+                OverflowState::Overflow(overflow.overflow_bytes)
+            }),
+    }
+}
+
+fn compare_evidence<T, U>(
+    before: &Evidence<T>,
+    after: &Evidence<T>,
+    compare: impl FnOnce(&T, &T) -> Result<U, ComparisonError>,
+) -> Result<EvidenceComparison<U>, ComparisonError> {
+    match (before, after) {
+        (Evidence::Complete(before), Evidence::Complete(after)) => {
+            compare(before, after).map(EvidenceComparison::Comparable)
+        }
+        _ => Ok(EvidenceComparison::NotComparable {
+            before: evidence_availability(before),
+            after: evidence_availability(after),
+        }),
+    }
+}
+
+const fn evidence_availability<T>(evidence: &Evidence<T>) -> EvidenceAvailability {
+    match evidence {
+        Evidence::Complete(_) => EvidenceAvailability::Complete,
+        Evidence::Partial(_) => EvidenceAvailability::Partial,
+        Evidence::Unavailable => EvidenceAvailability::Unavailable,
+    }
+}
+
+fn compare_flash(
+    before: &FirmwareFlashUsage,
+    after: &FirmwareFlashUsage,
+) -> Result<FlashComparison, ComparisonError> {
+    require(
+        before.region == after.region && before.start == after.start && before.end == after.end,
+        CompatibilityDimension::FirmwareRegion,
+    )?;
+    Ok(FlashComparison {
+        image: ByteComparison::new(before.image_bytes, after.image_bytes),
+        headroom: ByteComparison::new(before.headroom_bytes, after.headroom_bytes),
     })
 }
 
@@ -330,12 +407,6 @@ fn section_totals(sections: &[SectionUsage], kind: SectionKindIdentity) -> Optio
         })
 }
 
-fn complete<T>(evidence: &Evidence<T>) -> Result<&T, ComparisonError> {
-    evidence.complete().ok_or(ComparisonError::Incompatible {
-        dimension: CompatibilityDimension::EvidenceAvailability,
-    })
-}
-
 fn require(condition: bool, dimension: CompatibilityDimension) -> Result<(), ComparisonError> {
     if condition {
         Ok(())
@@ -352,11 +423,9 @@ impl fmt::Display for CompatibilityDimension {
             Self::BuildRecipe => "build recipe",
             Self::Toolchain => "toolchain identity",
             Self::MemoryContract => "memory contract",
-            Self::BuildStatus => "build status",
             Self::FirmwareRegion => "firmware region",
             Self::ArtifactSet => "artifact set",
             Self::RamTopology => "RAM topology",
-            Self::EvidenceAvailability => "evidence availability",
         })
     }
 }
