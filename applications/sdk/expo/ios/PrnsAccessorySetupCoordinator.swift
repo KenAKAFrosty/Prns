@@ -25,26 +25,9 @@ enum PrnsNativeStartInterruption: LocalizedError {
 final class PrnsAccessorySetupCoordinator {
   static let shared = PrnsAccessorySetupCoordinator()
 
-  private enum Phase: String {
-    case activating
-    case failed
-    case ready
-    case setupRequired
-  }
-
-  private enum PickerPhase: String {
-    case idle
-    case presented
-    case presenting
-  }
-
-  private enum NativeStartPhase: String {
-    case failed
-    case notRequested
-    case running
-    case starting
-    case stopping
-  }
+  private typealias Phase = PrnsIosDiagnostics.AccessorySetupPhase
+  private typealias PickerPhase = PrnsIosDiagnostics.AccessoryPickerPhase
+  private typealias NativeStartPhase = PrnsIosDiagnostics.NativeStartPhase
 
   private let session = ASAccessorySession()
   private var activated = false
@@ -362,13 +345,12 @@ final class PrnsAccessorySetupCoordinator {
       object: nil,
       userInfo: ["status": status]
     )
-    NSLog(
-      "PRNS_IOS_ASK phase=%@ picker=%@ authorized=%ld nativeStart=%@ restoration=%@",
-      phase.rawValue,
-      pickerPhase.rawValue,
-      authorizedAccessoryCount,
-      nativeStartPhase.rawValue,
-      restorationDispatch.launchRequested.description
+    PrnsIosDiagnostics.accessorySetup(
+      phase: phase,
+      picker: pickerPhase,
+      authorizedCount: authorizedAccessoryCount,
+      nativeStart: nativeStartPhase,
+      restoration: restorationDispatch.launchRequested
     )
   }
 

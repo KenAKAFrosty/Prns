@@ -1,49 +1,6 @@
 #if DEBUG
 import Foundation
 
-private let prnsRestorationEvents: Set<String> = [
-  "central_characteristic_discovery_failed",
-  "central_columba_subscribed",
-  "central_connect_failed",
-  "central_connected",
-  "central_control_buffer_overflow",
-  "central_control_subscribed",
-  "central_control_subscribing",
-  "central_data_buffer_overflow",
-  "central_dial_failed",
-  "central_dial_inbound_session_yielded",
-  "central_dial_missing_peripheral",
-  "central_dial_started",
-  "central_dial_system_connection_yielded",
-  "central_dial_timeout",
-  "central_disconnected",
-  "central_manager_ready",
-  "central_manager_timeout",
-  "central_peer_sighted",
-  "central_pending_connection_resumed",
-  "central_radio_disabled",
-  "central_radio_enabled",
-  "central_scan_already_scanning",
-  "central_scan_already_stopped",
-  "central_scan_decision_restart",
-  "central_scan_decision_start",
-  "central_scan_decision_stop",
-  "central_scan_job_radio_disabled",
-  "central_scan_job_started",
-  "central_scan_requested_off",
-  "central_scan_requested_on",
-  "central_scan_restarted",
-  "central_scan_started",
-  "central_scan_state_query",
-  "central_scan_stopped",
-  "central_service_discovery_failed",
-  "central_session_resumed",
-  "central_state_restored",
-  "central_subscription_failed",
-  "logger_installed",
-  "logger_unavailable",
-]
-
 @_cdecl("prns_app_ios_restoration_probe_emit")
 func prnsAppIosRestorationProbeEmit(
   _ sequence: UInt64,
@@ -54,11 +11,9 @@ func prnsAppIosRestorationProbeEmit(
     return
   }
   let code = String(decoding: UnsafeBufferPointer(start: codePointer, count: Int(codeLength)), as: UTF8.self)
-  guard prnsRestorationEvents.contains(code) else {
+  guard let event = PrnsIosDiagnostics.RestorationEvent(rawValue: code) else {
     return
   }
-  // Match the lifecycle sink so devicectl --console can capture these breadcrumbs.
-  // NSLog also reaches unified logging; use one tagged sink to avoid duplicate events.
-  NSLog("PRNS_IOS_RESTORATION sequence=%llu event=%@", sequence, code)
+  PrnsIosDiagnostics.restoration(sequence: sequence, event: event)
 }
 #endif

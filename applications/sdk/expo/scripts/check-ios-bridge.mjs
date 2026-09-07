@@ -31,6 +31,7 @@ const restorationProbe = readFileSync(
   resolve(packageRoot, "ios/PrnsAppRestorationProbe.swift"),
   "utf8",
 );
+const iosDiagnostics = readFileSync(resolve(packageRoot, "ios/PrnsIosDiagnostics.swift"), "utf8");
 const moduleConfig = JSON.parse(
   readFileSync(resolve(packageRoot, "expo-module.config.json"), "utf8"),
 );
@@ -469,18 +470,49 @@ assert.match(restorationProbe, /\n#endif\s*$/);
 assert.match(
   restorationProbe,
   /@_cdecl\("prns_app_ios_restoration_probe_emit"\)/,
-  "the private Rust callback must terminate in the Debug-only console-visible sink",
+  "the private Rust callback must terminate in the Debug-only tagged sink",
 );
 assert.match(
   restorationProbe,
-  /NSLog\("PRNS_IOS_RESTORATION sequence=%llu event=%@", sequence, code\)/,
+  /guard let event = PrnsIosDiagnostics\.RestorationEvent\(rawValue: code\)[\s\S]*?PrnsIosDiagnostics\.restoration\(sequence: sequence, event: event\)/,
 );
-assert.equal(restorationProbe.match(/\bNSLog\(/g)?.length, 1);
 assert.doesNotMatch(
-  restorationProbe,
-  /\b(?:Logger|os_log)\s*\(/,
-  "the restoration sink must not duplicate console events in a second unified-log sink",
+  `${restorationProbe}\n${coordinator}\n${accessoryCoordinator}\n${iosDiagnostics}`,
+  /\bNSLog\s*\(/,
+  "diagnostics must not rely on NSLog being forwarded into the USB unified-log stream",
 );
+assertOne(iosDiagnostics, /\bLogger\(/, "one explicit unified-log sink owns these diagnostics");
+assert.match(
+  iosDiagnostics,
+  /logger\.notice\("\\\(channel\.rawValue, privacy: \.public\) \\\(message, privacy: \.public\)"\)/,
+  "message text must expose the payload-free tag and fields explicitly, not just category metadata",
+);
+assert.match(
+  iosDiagnostics,
+  /private static func emit\(_ channel: Channel, _ message: String\)/,
+  "only the typed diagnostic entry points may reach the public unified-log sink",
+);
+assert.match(
+  iosDiagnostics,
+  /#if DEBUG\s+(?:\/\/[^\n]*\n\s*)*fputs\("\\\(channel\.rawValue\) \\\(message\)\\n", stderr\)\s+#endif/,
+  "Debug builds must retain a direct stderr mirror for devicectl console capture",
+);
+assert.match(iosDiagnostics, /enum LifecycleEvent \{[\s\S]*?case nativeOutcome\(/);
+assert.match(
+  iosDiagnostics,
+  /static func accessorySetup\(\s*phase: AccessorySetupPhase,[\s\S]*?restoration: Bool/,
+);
+assert.match(
+  iosDiagnostics,
+  /static func restoration\(sequence: UInt64, event: RestorationEvent\)/,
+);
+assert.doesNotMatch(
+  `${restorationProbe}\n${coordinator}\n${accessoryCoordinator}`,
+  /PrnsIosDiagnostics\.emit/,
+  "callers must use typed diagnostic APIs rather than publish arbitrary strings",
+);
+assert.match(coordinator, /PrnsIosDiagnostics\.lifecycle\(event\)/);
+assert.match(accessoryCoordinator, /PrnsIosDiagnostics\.accessorySetup\(/);
 assert.doesNotMatch(
   `${restorationProbe}\n${nativeRestorationProbe}`,
   /peripheral_service_restored|bluetooth_auto::macos::peripheral/,
@@ -488,7 +520,7 @@ assert.doesNotMatch(
 );
 assert.match(
   restorationProbe,
-  /codeLength > 0, codeLength <= 64[\s\S]*?prnsRestorationEvents\.contains\(code\)/,
+  /codeLength > 0, codeLength <= 64[\s\S]*?RestorationEvent\(rawValue: code\)/,
   "the restoration sink must accept only bounded allowlisted event codes",
 );
 assert.match(
@@ -745,6 +777,7 @@ try {
       "swiftc",
       "-D",
       "DEBUG",
+      resolve(packageRoot, "ios/PrnsIosDiagnostics.swift"),
       probeSource,
       resolve(packageRoot, "scripts/PrnsAppRestorationProbeTests.swift"),
       "-o",
@@ -756,7 +789,7 @@ try {
   assert.ifError(probeResult.error);
   assert.equal(probeResult.status, 0, probeResult.stderr);
   assert.equal(probeResult.stdout, "");
-  const probeTag = "PRNS_IOS_RESTORATION ";
+  const probeTag = "PRNS_IOS_";
   const probeLines = probeResult.stderr
     .split("\n")
     .filter((line) => line.includes(probeTag))
@@ -764,13 +797,22 @@ try {
   assert.deepEqual(
     probeLines,
     [
+      "PRNS_IOS_LIFECYCLE launch centralRestoration=true protectedData=false",
+      "PRNS_IOS_ASK phase=ready picker=idle authorized=1 nativeStart=running restoration=true",
+      "PRNS_IOS_LIFECYCLE prepare outcome=prepared stage=none",
+      "PRNS_IOS_LIFECYCLE start outcome=failed stage=runtime",
+      "PRNS_IOS_LIFECYCLE prepare outcome=unknown stage=unknown",
       "PRNS_IOS_RESTORATION sequence=17 event=logger_installed",
       "PRNS_IOS_RESTORATION sequence=18 event=central_scan_already_scanning",
       "PRNS_IOS_RESTORATION sequence=18446744073709551615 event=central_scan_started",
     ],
-    "each valid probe must reach stderr once; invalid codes must stay silent",
+    "each diagnostic channel must reach stderr once; invalid probe codes must stay silent",
   );
-  assert.doesNotMatch(probeResult.stderr, /private-peer|private-error/);
+  assert.doesNotMatch(
+    probeResult.stderr,
+    /private-peer|private-error|private-outcome|private-stage/,
+    "unknown native values and rejected restoration payloads must never become public",
+  );
   const releaseProbeObject = resolve(recoveryTestDirectory, "probe-release.o");
   execFileSync(
     "xcrun",
@@ -784,6 +826,27 @@ try {
     releaseProbeSymbols,
     /prns_app_ios_restoration_probe_emit|prnsAppIosRestorationProbeEmit/,
     "non-Debug compilation must omit the diagnostic callback entirely",
+  );
+  const releaseDiagnosticsObject = resolve(recoveryTestDirectory, "diagnostics-release.o");
+  execFileSync(
+    "xcrun",
+    [
+      "swiftc",
+      "-parse-as-library",
+      "-emit-object",
+      resolve(packageRoot, "ios/PrnsIosDiagnostics.swift"),
+      "-o",
+      releaseDiagnosticsObject,
+    ],
+    { stdio: "inherit" },
+  );
+  const releaseDiagnosticsSymbols = execFileSync("xcrun", ["nm", "-g", releaseDiagnosticsObject], {
+    encoding: "utf8",
+  });
+  assert.doesNotMatch(
+    releaseDiagnosticsSymbols,
+    /\b_fputs\b/,
+    "non-Debug diagnostics must omit the stderr mirror",
   );
 } finally {
   rmSync(recoveryTestDirectory, { force: true, recursive: true });

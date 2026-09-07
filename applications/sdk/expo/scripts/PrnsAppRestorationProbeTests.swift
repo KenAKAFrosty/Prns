@@ -3,6 +3,29 @@ import Foundation
 @main
 enum PrnsAppRestorationProbeTests {
   static func main() {
+    PrnsIosDiagnostics.lifecycle(
+      .launch(centralRestoration: true, protectedData: false)
+    )
+    PrnsIosDiagnostics.accessorySetup(
+      phase: .ready,
+      picker: .idle,
+      authorizedCount: 1,
+      nativeStart: .running,
+      restoration: true
+    )
+    PrnsIosDiagnostics.lifecycle(
+      .nativeOutcome(operation: .prepare, type: "prepared", stage: nil)
+    )
+    PrnsIosDiagnostics.lifecycle(
+      .nativeOutcome(operation: .start, type: "failed", stage: "runtime")
+    )
+    PrnsIosDiagnostics.lifecycle(
+      .nativeOutcome(
+        operation: .prepare,
+        type: "private-outcome-must-not-be-logged",
+        stage: "private-stage-must-not-be-logged"
+      )
+    )
     emit(Array("logger_installed".utf8), sequence: 17)
     emit(Array("central_scan_already_scanning".utf8), sequence: 18)
     emit(Array("central_scan_started".utf8), sequence: UInt64.max)

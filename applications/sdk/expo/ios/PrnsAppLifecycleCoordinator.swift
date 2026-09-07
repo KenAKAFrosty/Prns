@@ -21,11 +21,14 @@ final class PrnsAppLifecycleCoordinator: NSObject {
         options?[.bluetoothCentrals]
       ).contains(identifier)
     } catch {
-      Self.log("configuration failed")
+      Self.log(.configurationFailed)
       centralRestoration = false
     }
     Self.log(
-      "launch centralRestoration=\(centralRestoration) protectedData=\(application.isProtectedDataAvailable)"
+      .launch(
+        centralRestoration: centralRestoration,
+        protectedData: application.isProtectedDataAvailable
+      )
     )
     PrnsAccessorySetupCoordinator.shared.activate(
       restorationLaunchRequested: centralRestoration
@@ -78,11 +81,11 @@ final class PrnsAppLifecycleCoordinator: NSObject {
     )
     guard !application.isProtectedDataAvailable else {
       stopWaitingForProtectedData(application: application)
-      Self.log("protected data became available while the retry observer was installed")
+      Self.log(.protectedDataAvailableWhileObserverInstalled)
       prepareAndStartNativeRuntime(application: application)
       return
     }
-    Self.log("start deferred until protected data becomes available")
+    Self.log(.startDeferredUntilProtectedDataAvailable)
   }
 
   @objc
@@ -91,7 +94,7 @@ final class PrnsAppLifecycleCoordinator: NSObject {
       return
     }
     stopWaitingForProtectedData(application: application)
-    Self.log("protected data became available")
+    Self.log(.protectedDataAvailable)
     prepareAndStartNativeRuntime(application: application)
   }
 
@@ -117,7 +120,7 @@ final class PrnsAppLifecycleCoordinator: NSObject {
     } catch {
       protectedDataRecovery.finishAttempt()
       PrnsAccessorySetupCoordinator.shared.restorationStartAuthorizationDidClose()
-      Self.log("restoration start re-armed after Bluetooth authorization closed")
+      Self.log(.restorationStartRearmedAfterAuthorizationClosed)
       return
     }
     protectedDataRecovery.beginAttempt(
@@ -126,7 +129,13 @@ final class PrnsAppLifecycleCoordinator: NSObject {
     do {
       let outcome = try PrnsAppModule.prepareBluetoothCentralRestoration()
       let summary = Self.outcomeSummary(outcome)
-      Self.log("prepare outcome=\(summary.type) stage=\(summary.stage ?? "none")")
+      Self.log(
+        .nativeOutcome(
+          operation: .prepare,
+          type: summary.type,
+          stage: summary.stage
+        )
+      )
       switch summary.type {
       case "prepared", "alreadyPrepared":
         startNativeRuntime(application: application)
@@ -143,7 +152,7 @@ final class PrnsAppLifecycleCoordinator: NSObject {
         return
       }
     } catch {
-      Self.log("prepare bridge failed")
+      Self.log(.prepareBridgeFailed)
       recoverAfterProtectedDataFailure(.bridge, application: application)
     }
   }
@@ -154,7 +163,7 @@ final class PrnsAppLifecycleCoordinator: NSObject {
       inputJSON = try PrnsAppModule.configuredStartInputJSON()
     } catch {
       protectedDataRecovery.finishAttempt()
-      Self.log("configuration failed")
+      Self.log(.configurationFailed)
       return
     }
 
@@ -162,7 +171,13 @@ final class PrnsAppLifecycleCoordinator: NSObject {
       switch result {
       case .success(let outcome):
         let summary = Self.outcomeSummary(outcome)
-        Self.log("start outcome=\(summary.type) stage=\(summary.stage ?? "none")")
+        Self.log(
+          .nativeOutcome(
+            operation: .start,
+            type: summary.type,
+            stage: summary.stage
+          )
+        )
         if summary.type == "failed" {
           self.recoverAfterProtectedDataFailure(
             .native(stage: summary.stage),
@@ -172,7 +187,7 @@ final class PrnsAppLifecycleCoordinator: NSObject {
           self.protectedDataRecovery.finishAttempt()
         }
       case .failure(let error):
-        Self.log("start bridge failed")
+        Self.log(.startBridgeFailed)
         self.recoverAfterProtectedDataFailure(
           error is PrnsNativeStartInterruption ? .cancelled : .bridge,
           application: application
@@ -194,7 +209,7 @@ final class PrnsAppLifecycleCoordinator: NSObject {
     } catch {
       protectedDataRecovery.finishAttempt()
       PrnsAccessorySetupCoordinator.shared.restorationStartAuthorizationDidClose()
-      Self.log("restoration start re-armed after Bluetooth authorization closed")
+      Self.log(.restorationStartRearmedAfterAuthorizationClosed)
       return
     }
     guard protectedDataRecovery.action(for: failure) == .waitForAvailability else {
@@ -215,7 +230,7 @@ final class PrnsAppLifecycleCoordinator: NSObject {
     return (type, object["stage"] as? String)
   }
 
-  nonisolated private static func log(_ message: String) {
-    NSLog("PRNS_IOS_LIFECYCLE %@", message)
+  nonisolated private static func log(_ event: PrnsIosDiagnostics.LifecycleEvent) {
+    PrnsIosDiagnostics.lifecycle(event)
   }
 }
