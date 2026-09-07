@@ -2279,7 +2279,9 @@ fn publish_crypto_results(
 }
 
 fn notify_completion_if_armed(state: &CryptoPoolState, completion_wake: &Notify) {
-    if state.completion_wake_armed.swap(false, Ordering::AcqRel) {
+    if state.completion_wake_armed.load(Ordering::Acquire)
+        && state.completion_wake_armed.swap(false, Ordering::AcqRel)
+    {
         completion_wake.notify_one();
     }
 }
