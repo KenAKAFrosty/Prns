@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use super::build::{build_identity, firmware_flash_usage, ReportError};
 use super::compare::{self, ComparisonError, CompatibilityDimension};
 use super::contract;
-use super::model::{ResourceReport, SCHEMA_VERSION};
+use super::model::{BuildStatus, Evidence, ResourceReport, SCHEMA_VERSION};
 use crate::matrix::RecipeIdentity;
 
 #[test]
@@ -243,6 +243,71 @@ fn unavailable_attribution_does_not_invent_candidates() -> Result<(), Box<dyn st
     assert!(rendered.contains("attribution evidence complete -> unavailable"));
     assert!(!rendered.contains("attribution crates candidate"));
     assert!(!rendered.contains("attribution symbols candidate"));
+    Ok(())
+}
+
+#[test]
+fn preserved_lto_experiment_captures_overflow_and_control() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("experiments/lto");
+    let fat_path = root.join("t-echo-s140-v6-fat.json");
+    let thin_path = root.join("t-echo-s140-v6-thin.json");
+    let control_path = root.join("mesh-tower-v2-thin.json");
+    let fat = compare::load_report(&fat_path)?;
+    let thin = compare::load_report(&thin_path)?;
+    let control = compare::load_report(&control_path)?;
+
+    assert_eq!(fat.target.id, "t-echo-s140-v6");
+    assert_eq!(fat.build.lto, "fat");
+    assert!(matches!(fat.status, BuildStatus::Success));
+    let fat_flash = fat
+        .firmware_flash
+        .complete()
+        .ok_or("fat T-Echo report has no complete flash evidence")?;
+    assert_eq!(
+        (fat_flash.image_bytes, fat_flash.headroom_bytes),
+        (619_968, 6_720)
+    );
+
+    assert_eq!(thin.target, fat.target);
+    assert_eq!(thin.build.lto, "thin");
+    assert!(matches!(
+        &thin.status,
+        BuildStatus::MemoryOverflow { regions }
+            if regions.len() == 1
+                && regions[0].linker_region == "FLASH"
+                && regions[0].overflow_bytes == 86_240
+    ));
+    assert!(matches!(
+        thin.analysis.flash_attribution,
+        Evidence::Partial(_)
+    ));
+
+    assert_eq!(control.target.id, "mesh-tower-v2");
+    assert_eq!(control.build.lto, "thin");
+    assert!(matches!(control.status, BuildStatus::Success));
+    let control_flash = control
+        .firmware_flash
+        .complete()
+        .ok_or("thin MeshTower report has no complete flash evidence")?;
+    assert_eq!(
+        (control_flash.image_bytes, control_flash.headroom_bytes),
+        (652_844, 117_204)
+    );
+    assert_eq!(fat.toolchain, thin.toolchain);
+    assert_eq!(fat.toolchain, control.toolchain);
+
+    let rendered = compare::render_comparison(
+        &compare::compare_reports(&fat, &thin)?,
+        &fat_path,
+        &thin_path,
+    );
+    assert!(rendered.contains("setting lto fat -> thin"));
+    assert!(rendered.contains("overflow \"FLASH\" none -> 86240"));
+    assert!(
+        rendered.contains("attribution crates candidate 1 155616 -> 201772 (+46156) \"prns_core\"")
+    );
+    assert!(rendered.contains("attribution symbols candidate 1 26404 -> 26440 (+36)"));
     Ok(())
 }
 
