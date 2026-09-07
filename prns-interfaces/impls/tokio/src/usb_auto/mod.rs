@@ -747,16 +747,11 @@ mod tests {
             .write_framed(&mut frame)
             .expect("frames the data");
         device.write_all(&frame[..n]).await.expect("the host reads");
-        tokio::time::timeout(Duration::from_secs(2), async {
-            while in_rx.try_peek().is_none() {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("the inbound frame funnels within the window");
-        let received = in_rx
-            .try_peek()
-            .expect("the announced frame is in the lane");
+        // The manifold wake is coalesced, not an interface-ID notification.
+        // Observe this interface's grant lane directly for bounded delivery.
+        let received = tokio::time::timeout(Duration::from_secs(2), in_rx.peek())
+            .await
+            .expect("the inbound frame funnels within the window");
         assert_eq!(received.frame(), &inbound_packet);
         in_rx.release();
 
