@@ -55,11 +55,14 @@ class MockRuntime extends MockRuntimeBase {
   readonly removed: RuntimeRemoveInterfaceInput[] = [];
   readonly ingests: RuntimeIngestOptions[] = [];
   readonly destinations: RuntimeRegisterSingleDestinationOptions[] = [];
+  readonly events: unknown[] = [];
   outbound: unknown[] = [];
+  outboundDrains = 0;
   routeSnapshots: unknown[] = [];
   destinationIdentities: unknown[] = [];
   registerFailure: Error | undefined;
   #revision = 0;
+  #commandId = 0n;
 
   constructor(identity: IdentitySecretKey) {
     super();
@@ -100,7 +103,15 @@ class MockRuntime extends MockRuntimeBase {
   }
 
   announce(_options: RuntimeAnnounceOptions): bigint {
-    return 1n;
+    const id = ++this.#commandId;
+    this.events.push({
+      type: "commandSettled",
+      id,
+      result: "succeeded",
+      kind: "Announced",
+    });
+    this.#revision += 1;
+    return id;
   }
 
   sendSinglePacket(
@@ -121,10 +132,11 @@ class MockRuntime extends MockRuntimeBase {
   }
 
   drainEvents(): unknown[] {
-    return [];
+    return this.events.splice(0);
   }
 
   drainOutbound(): unknown[] {
+    this.outboundDrains += 1;
     const outbound = this.outbound;
     this.outbound = [];
     return outbound;
@@ -350,6 +362,17 @@ async function main(): Promise<void> {
       target: { type: "interface", interfaceId: session.interfaceId },
       bytes: packetFrame(new Uint8Array([9, 8, 7])),
     });
+    const idleDrains = runtime.outboundDrains;
+    await wait(40);
+    assert(
+      runtime.outboundDrains === idleDrains,
+      "idle runtime output is not polled",
+    );
+    assert(
+      Number(socket.sent.length) === 0,
+      "output waits for a runtime activity boundary",
+    );
+    await advanceRuntime(prns);
     await waitFor(() => socket.sent.length === 1, "outbound frame was sent");
     assertBytes(socket.sent[0], [9, 8, 7], "outbound bytes are exact");
     assert(socket.sentPayloads[0] instanceof Uint8Array, "outbound avoids a buffer copy");
@@ -360,6 +383,7 @@ async function main(): Promise<void> {
       target: { type: "interface", interfaceId: session.interfaceId },
       bytes: packetFrame(new Uint8Array([7, 8, 9])),
     });
+    await advanceRuntime(prns);
     await wait(40);
     assert(socket.sent.length === 1, "buffer pressure pauses outbound frames");
     socket.bufferedAmount = 0;
@@ -396,6 +420,7 @@ async function main(): Promise<void> {
       target: { type: "interface", interfaceId: silentAuto.interfaceId },
       bytes: packetFrame(VALID_PACKET),
     });
+    await advanceRuntime(prns);
     await wait(40);
     assert(
       silentAutoSocket.sent.length === 0,
@@ -422,6 +447,7 @@ async function main(): Promise<void> {
       target: { type: "interface", interfaceId: silentAuto.interfaceId },
       bytes: packetFrame(VALID_PACKET),
     });
+    await advanceRuntime(prns);
     await waitFor(
       () => silentAutoSocket.sent.length === 2,
       "outbound resumes after late KISS evidence",
@@ -449,6 +475,7 @@ async function main(): Promise<void> {
       target: { type: "interface", interfaceId: kissAuto.interfaceId },
       bytes: packetFrame(VALID_PACKET),
     });
+    await advanceRuntime(prns);
     await wait(40);
     assert(
       kissAutoSocket.sent.length === 0,
@@ -548,6 +575,7 @@ async function main(): Promise<void> {
       },
       bytes: packetFrame(new Uint8Array([12, 13])),
     });
+    await advanceRuntime(prns);
     await waitFor(
       () => fanoutSocketA.sent.length === 1 && fanoutSocketB.sent.length === 1,
       "broadcast reaches every WebSocket session",
@@ -560,6 +588,7 @@ async function main(): Promise<void> {
       target: { type: "interface", interfaceId: fanoutB.interfaceId },
       bytes: packetFrame(new Uint8Array([14])),
     });
+    await advanceRuntime(prns);
     await wait(40);
     for (let index = 0; index < 65; index += 1) {
       runtime.outbound.push({
@@ -572,6 +601,7 @@ async function main(): Promise<void> {
         bytes: packetFrame(new Uint8Array([index])),
       });
     }
+    await advanceRuntime(prns);
     await waitFor(() => fanoutSocketA.sent.length === 66, "fast fanout keeps draining");
     fanoutSocketB.bufferedAmount = 0;
     await waitFor(
@@ -644,6 +674,7 @@ async function main(): Promise<void> {
       },
       bytes: packetFrame(new Uint8Array([23])),
     });
+    await advanceRuntime(prns);
     await wait(40);
     assert(
       stableRendezvousSocket.sent.length === 1,
@@ -895,6 +926,16 @@ function fixedIdentityStore(): IdentityStore {
 
 function fixedEntropy(length: number) {
   return Tag("Filled", entropyBytes(new Uint8Array(length).fill(42)));
+}
+
+async function advanceRuntime(prns: Prns): Promise<void> {
+  // The event-driven runtime sleeps until a command or ingress advances it.
+  // Queuing fixture output alone must not wake or poll its outbound consumers.
+  const outcome = await prns.announce(destinationHash(new Uint8Array(16).fill(1)));
+  assert(
+    outcome.tag === "Succeeded" && outcome.data.tag === "Announced",
+    "the public command advances and settles the mock runtime",
+  );
 }
 
 function sendBytes(data: string | ArrayBufferLike | Blob | ArrayBufferView): Uint8Array {

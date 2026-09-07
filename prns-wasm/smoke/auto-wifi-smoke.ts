@@ -112,7 +112,30 @@ class MockRuntime extends MockRuntimeBase {
   }
 
   snapshot(): unknown {
-    return { type: "snapshot" };
+    const removed = new Set(
+      this.removed.map((entry) => Array.from(entry.interfaceId).join(",")),
+    );
+    return {
+      type: "snapshot",
+      revision: BigInt(
+        this.registered.length + this.removed.length + this.ingested.length,
+      ),
+      ingestedPackets: this.ingested.length,
+      ingestedCommands: 0,
+      routes: 0,
+      scheduledAnnounces: 0,
+      interfaces: this.registered
+        .map((options, index) => ({
+          id: interfaceId(new Uint8Array([0, 0, 0, 0, 0, 0, 0, index + 1])),
+          kind: options.kind,
+          bitrateBps: options.bitrateBps,
+          hardwareMtu: options.hardwareMtu,
+          routes: 0,
+          links: 0,
+          transportedLinks: 0,
+        }))
+        .filter(({ id }) => !removed.has(Array.from(id).join(","))),
+    };
   }
 }
 
