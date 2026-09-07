@@ -361,11 +361,30 @@ fn toolchain_identity(
         linker_version: evidence.linker_version(),
     };
     Ok(ToolchainIdentity {
-        fingerprint: fingerprint(&body)?,
+        fingerprint: toolchain_fingerprint(
+            body.rustc_version,
+            body.cargo_version,
+            body.linker_program,
+            body.linker_version,
+        )?,
         rustc_version: body.rustc_version.to_string(),
         cargo_version: body.cargo_version.to_string(),
         linker_program: body.linker_program.to_string(),
         linker_version: body.linker_version.to_string(),
+    })
+}
+
+pub(super) fn toolchain_fingerprint(
+    rustc_version: &str,
+    cargo_version: &str,
+    linker_program: &str,
+    linker_version: &str,
+) -> Result<super::fingerprint::Fingerprint, serde_json::Error> {
+    fingerprint(&ToolchainFingerprint {
+        rustc_version,
+        cargo_version,
+        linker_program,
+        linker_version,
     })
 }
 

@@ -29,12 +29,23 @@ enum ResourceCommand {
     Contracts(ContractsArguments),
     RefreshBaseline,
     Report(ReportArguments),
+    Summarize(SummarizeArguments),
 }
 
 #[derive(Args)]
 struct CompareArguments {
     before: PathBuf,
     after: PathBuf,
+}
+
+#[derive(Args)]
+struct SummarizeArguments {
+    #[arg(long)]
+    reports: PathBuf,
+    #[arg(long)]
+    output: PathBuf,
+    #[arg(long)]
+    baseline: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -146,6 +157,8 @@ enum ResourceError {
     Baseline(#[from] report::BaselineError),
     #[error(transparent)]
     Comparison(#[from] report::ComparisonError),
+    #[error(transparent)]
+    Summary(#[from] report::SummaryError),
 }
 
 fn main() -> ExitCode {
@@ -195,7 +208,38 @@ fn run(cli: Cli) -> Result<(), ResourceError> {
         ResourceCommand::Report(arguments) => {
             build_reports(&root, &arguments)?;
         }
+        ResourceCommand::Summarize(arguments) => {
+            summarize_reports(&root, arguments)?;
+        }
     }
+    Ok(())
+}
+
+fn summarize_reports(root: &Path, arguments: SummarizeArguments) -> Result<(), ResourceError> {
+    let catalog = prns_flash_manifest::board_catalog()?;
+    let matrix = Matrix::from_catalog(&catalog)?;
+    let output_root = default_artifact_root(root).join("resources");
+    let context = BuildContext::new(root, &output_root, BuildVersion::Repository)?.with_intent(
+        BuildIntent::ResourceReport {
+            lto: LtoMode::Configured,
+        },
+    );
+    let baseline = arguments
+        .baseline
+        .unwrap_or_else(|| report::baseline_path(root));
+    let outcome = report::summarize(
+        &matrix,
+        &context,
+        &arguments.reports,
+        &baseline,
+        &arguments.output,
+    )?;
+    println!(
+        "EMBEDDED_RESOURCE_MATRIX: targets={} json={} markdown={}",
+        outcome.targets(),
+        outcome.json().display(),
+        outcome.markdown().display()
+    );
     Ok(())
 }
 
@@ -394,5 +438,19 @@ mod tests {
         assert!(matches!(cli.command, ResourceCommand::RefreshBaseline));
         assert!(Cli::try_parse_from(["resources", "refresh-baseline", "--lto", "thin"]).is_err());
         Ok(())
+    }
+
+    #[test]
+    fn summarize_requires_report_and_output_roots() {
+        assert!(Cli::try_parse_from(["resources", "summarize"]).is_err());
+        assert!(Cli::try_parse_from([
+            "resources",
+            "summarize",
+            "--reports",
+            "reports",
+            "--output",
+            "summary",
+        ])
+        .is_ok());
     }
 }

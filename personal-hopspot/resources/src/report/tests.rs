@@ -33,6 +33,19 @@ fn report_schema_rejects_malformed_fingerprints() {
 }
 
 #[test]
+fn report_validation_rejects_a_tampered_toolchain_identity(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut value = report_value();
+    value["toolchain"]["rustc_version"] = json!("tampered");
+    let report: ResourceReport = serde_json::from_value(value)?;
+    assert!(matches!(
+        compare::validate_report(Path::new("report.json"), &report),
+        Err(ComparisonError::InvalidToolchainIdentity { .. })
+    ));
+    Ok(())
+}
+
+#[test]
 fn overflow_reports_preserve_only_available_evidence() -> Result<(), Box<dyn std::error::Error>> {
     let mut value = report_value();
     value["status"] = json!({
@@ -366,6 +379,7 @@ fn make_overflow(value: &mut Value, linker_region: &str, overflow_bytes: u64) {
 
 pub(super) fn report_value() -> Value {
     let fingerprint = "a".repeat(64);
+    let toolchain_fingerprint = "6e58e90c146639570099ad73f47e6e4a617f4e082daf70fb83c6719d3bc18129";
     json!({
         "schema_version": SCHEMA_VERSION,
         "target": {
@@ -389,7 +403,7 @@ pub(super) fn report_value() -> Value {
             "lto": "configured"
         },
         "toolchain": {
-            "fingerprint": fingerprint,
+            "fingerprint": toolchain_fingerprint,
             "rustc_version": "rustc 1.0.0",
             "cargo_version": "cargo 1.0.0",
             "linker_program": "rust-lld",

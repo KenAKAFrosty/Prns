@@ -31,6 +31,7 @@ pub(super) fn validate_report(path: &Path, report: &ResourceReport) -> Result<()
             supported: SCHEMA_VERSION,
         });
     }
+    validate_toolchain(path, report)?;
     validate_linker_map(path, report)?;
     match &report.status {
         BuildStatus::Success => validate_success(path, report),
@@ -38,6 +39,28 @@ pub(super) fn validate_report(path: &Path, report: &ResourceReport) -> Result<()
             validate_overflows(path, regions)?;
             validate_available(path, report)
         }
+    }
+}
+
+fn validate_toolchain(path: &Path, report: &ResourceReport) -> Result<(), ComparisonError> {
+    let toolchain = &report.toolchain;
+    let valid = !toolchain.rustc_version.is_empty()
+        && !toolchain.cargo_version.is_empty()
+        && !toolchain.linker_program.is_empty()
+        && !toolchain.linker_version.is_empty()
+        && super::super::build::toolchain_fingerprint(
+            &toolchain.rustc_version,
+            &toolchain.cargo_version,
+            &toolchain.linker_program,
+            &toolchain.linker_version,
+        )
+        .is_ok_and(|fingerprint| fingerprint == toolchain.fingerprint);
+    if valid {
+        Ok(())
+    } else {
+        Err(ComparisonError::InvalidToolchainIdentity {
+            path: path.to_path_buf(),
+        })
     }
 }
 

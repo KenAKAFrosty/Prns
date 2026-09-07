@@ -79,6 +79,39 @@ fn refresh_rejects_experimental_codegen() -> Result<(), Box<dyn std::error::Erro
     Ok(())
 }
 
+#[test]
+fn load_rejects_unknown_baseline_and_report_schemas() -> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempfile::tempdir()?;
+    let path = temporary.path().join("baseline.json");
+    std::fs::write(
+        &path,
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": BASELINE_SCHEMA_VERSION + 1,
+            "report_schema_version": SCHEMA_VERSION,
+            "targets": []
+        }))?,
+    )?;
+    assert!(matches!(
+        load(&path),
+        Err(BaselineError::UnsupportedSchema { actual, .. })
+            if actual == BASELINE_SCHEMA_VERSION + 1
+    ));
+    std::fs::write(
+        &path,
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": BASELINE_SCHEMA_VERSION,
+            "report_schema_version": SCHEMA_VERSION + 1,
+            "targets": []
+        }))?,
+    )?;
+    assert!(matches!(
+        load(&path),
+        Err(BaselineError::UnsupportedReportSchema { actual, .. })
+            if actual == SCHEMA_VERSION + 1
+    ));
+    Ok(())
+}
+
 fn context<'a>(
     repository: &'a Path,
     output: &'a Path,

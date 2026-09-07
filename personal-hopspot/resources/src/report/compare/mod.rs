@@ -85,6 +85,8 @@ pub(crate) enum ComparisonError {
     },
     #[error("resource report {path} has no linker-map evidence")]
     MissingLinkerMapEvidence { path: PathBuf },
+    #[error("resource report {path} has an invalid toolchain identity")]
+    InvalidToolchainIdentity { path: PathBuf },
     #[error("resource report {path} has no allocated-section evidence")]
     MissingSectionEvidence { path: PathBuf },
     #[error("resource report {path} has invalid section accounting for {section:?}")]
@@ -120,8 +122,10 @@ pub(in crate::report) fn load_report(path: &Path) -> Result<ResourceReport, Comp
     validation::load(path)
 }
 
-#[cfg(test)]
-pub(super) fn validate_report(path: &Path, report: &ResourceReport) -> Result<(), ComparisonError> {
+pub(in crate::report) fn validate_report(
+    path: &Path,
+    report: &ResourceReport,
+) -> Result<(), ComparisonError> {
     validation::validate_report(path, report)
 }
 
@@ -138,6 +142,27 @@ pub(super) fn compare_reports(
     before: &ResourceReport,
     after: &ResourceReport,
 ) -> Result<ResourceComparison, ComparisonError> {
+    compare_reports_with(before, after, ToolchainCompatibility::Exact)
+}
+
+pub(in crate::report) fn require_matrix_compatible(
+    before: &ResourceReport,
+    after: &ResourceReport,
+) -> Result<(), ComparisonError> {
+    compare_reports_with(before, after, ToolchainCompatibility::MayDiffer).map(drop)
+}
+
+#[derive(Clone, Copy)]
+enum ToolchainCompatibility {
+    Exact,
+    MayDiffer,
+}
+
+fn compare_reports_with(
+    before: &ResourceReport,
+    after: &ResourceReport,
+    toolchain_compatibility: ToolchainCompatibility,
+) -> Result<ResourceComparison, ComparisonError> {
     require(
         before.target == after.target,
         CompatibilityDimension::Target,
@@ -150,10 +175,12 @@ pub(super) fn compare_reports(
         compatible_build(&before.build, &after.build),
         CompatibilityDimension::BuildRecipe,
     )?;
-    require(
-        before.toolchain == after.toolchain,
-        CompatibilityDimension::Toolchain,
-    )?;
+    if matches!(toolchain_compatibility, ToolchainCompatibility::Exact) {
+        require(
+            before.toolchain == after.toolchain,
+            CompatibilityDimension::Toolchain,
+        )?;
+    }
     require(
         before.memory_contract == after.memory_contract,
         CompatibilityDimension::MemoryContract,
