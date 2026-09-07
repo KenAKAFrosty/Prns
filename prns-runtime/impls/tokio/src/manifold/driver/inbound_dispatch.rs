@@ -1,5 +1,3 @@
-use tokio::sync::mpsc::UnboundedReceiver;
-
 #[cfg(feature = "runtime-metrics")]
 use crate::engine::Directive;
 use crate::engine::{
@@ -189,9 +187,11 @@ impl InboundDispatch {
         }
     }
 
-    pub(super) fn collect_ready(&mut self, notify: &mut UnboundedReceiver<InterfaceId>) {
-        while let Ok(source) = notify.try_recv() {
-            self.mark_ready(source);
+    pub(super) fn discover_ready(&mut self, topology: &mut InterfaceTopology) {
+        for (source, lane) in &mut topology.inbound_lanes {
+            if lane.try_peek().is_some() && !self.ready_lanes.contains(source) {
+                self.ready_lanes.push(*source);
+            }
         }
     }
 
@@ -540,18 +540,11 @@ impl InboundDispatch {
             }
         }
         ready_lanes.retain(|source| {
-            let Some((_, lane)) = topology
+            topology
                 .inbound_lanes
                 .iter_mut()
                 .find(|(id, _)| id == source)
-            else {
-                return false;
-            };
-            if lane.try_peek().is_some() {
-                return true;
-            }
-            lane.acknowledge();
-            lane.try_peek().is_some()
+                .is_some_and(|(_, lane)| lane.try_peek().is_some())
         });
         if ready_lanes.len() > 1 {
             ready_lanes.rotate_left(1);

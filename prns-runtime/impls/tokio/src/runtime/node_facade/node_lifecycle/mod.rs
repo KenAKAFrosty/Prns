@@ -20,7 +20,6 @@ use crate::engine::{
 };
 use crate::identity::held::HoldIdentityError;
 use crate::identity::{IdentityHash, Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use crate::interfaces::InterfaceId;
 use crate::manifold::driver::{
     self as manifold_driver, CryptoPoolConfig, Egress, HostCommand, SchedulerPolicy, TokioClock,
     TokioHost,
@@ -81,7 +80,7 @@ pub struct PrnsNode<St, R, F, S: StorageLayout> {
     local_commands: Option<manifold_driver::LocalCommandProducer>,
     pub(super) host: TokioHost,
     pub(super) node: AssembledNode<St, R, F, S>,
-    notify_rx: UnboundedReceiver<InterfaceId>,
+    manifold_wake: manifold_driver::ManifoldWakeReceiver,
     command_rx: UnboundedReceiver<HostCommand>,
     local_command_rx: manifold_driver::LocalCommandConsumer,
     remote_control_controller_grants_rx: RemoteControlControllerGrantReceiver,
@@ -427,7 +426,7 @@ where
         P: persistence::PersistenceIntent,
         B: FnOnce(PrnsNodeHandle) -> PrnsNodeRecipe<'a, D, St, R, F, I, S, P>,
     {
-        let (notify_tx, notify_rx) = mpsc::unbounded_channel();
+        let (manifold_wake_tx, manifold_wake_rx) = manifold_driver::manifold_wake();
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         let (local_commands, local_command_rx) =
             manifold_driver::local_command_lane(LOCAL_COMMAND_DEPTH);
@@ -441,7 +440,7 @@ where
             commands: command_tx,
             ids: Arc::new(AtomicU64::new(0)),
             attachment_epochs: Arc::new(AtomicU64::new(0)),
-            notify_tx,
+            manifold_wake: manifold_wake_tx,
             iface_build: iface_build_tx,
             interfaces: Arc::new(Mutex::new(HashMap::new())),
             store: InterfaceStore::new(),
@@ -466,7 +465,7 @@ where
                     .unwrap_or_else(persistence::wall_clock_timeline_origin),
             ),
             node,
-            notify_rx,
+            manifold_wake: manifold_wake_rx,
             command_rx,
             local_command_rx,
             remote_control_controller_grants_rx,
@@ -730,7 +729,7 @@ where
             local_commands: _,
             host,
             node,
-            notify_rx,
+            manifold_wake,
             command_rx,
             local_command_rx,
             mut remote_control_controller_grants_rx,
@@ -787,7 +786,7 @@ where
                 manifold_driver::ManifoldWiring {
                     interfaces: std::vec::Vec::new(),
                     ifacs: std::vec::Vec::new(),
-                    notify: notify_rx,
+                    wake: manifold_wake,
                     inbound_lanes: std::vec::Vec::new(),
                     commands: command_rx,
                     egress,

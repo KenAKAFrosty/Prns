@@ -28,6 +28,7 @@ mod interface_status;
 mod interface_topology;
 mod journal_delivery;
 mod local_command_lane;
+mod manifold_wake;
 mod owed_work;
 #[cfg(feature = "runtime-metrics")]
 mod scheduling_metrics;
@@ -52,6 +53,8 @@ pub use interface_status::TokioInterfaceStatus;
 pub(crate) use local_command_lane::{
     local_command_lane, LocalCommandConsumer, LocalCommandProducer,
 };
+use manifold_wake::ManifoldWakeEvent;
+pub use manifold_wake::{manifold_wake, ManifoldWakeReceiver, ManifoldWakeSender};
 pub use prns_runtime::runtime::{
     PersistedStateSnapshot, SelfRatchetSnapshot, SelfRatchetsSnapshot,
 };
@@ -114,7 +117,7 @@ impl CommandLane for LocalCommandConsumer {
 pub struct ManifoldWiring {
     pub interfaces: std::vec::Vec<InterfaceDescriptor>,
     pub ifacs: std::vec::Vec<InterfaceIfac>,
-    pub notify: UnboundedReceiver<InterfaceId>,
+    pub wake: ManifoldWakeReceiver,
     pub inbound_lanes: std::vec::Vec<(InterfaceId, TokioGrantConsumer)>,
     pub commands: UnboundedReceiver<HostCommand>,
     pub egress: Egress,
@@ -278,7 +281,7 @@ async fn run_inner<S, H, J, P, A, C>(
     let ManifoldWiring {
         interfaces,
         ifacs,
-        mut notify,
+        wake,
         inbound_lanes,
         mut commands,
         egress,
@@ -330,6 +333,7 @@ async fn run_inner<S, H, J, P, A, C>(
     let mut local_command_streak = 0usize;
     let mut local_commands_enabled = local_commands.enabled();
     let mut hot_turns = 0usize;
+    let mut manifold_wait_armed = false;
     loop {
         #[cfg(feature = "runtime-metrics")]
         let turn_started = std::time::Instant::now();
@@ -357,9 +361,7 @@ async fn run_inner<S, H, J, P, A, C>(
                 armed = Some((at, reason));
             }
         }
-        // Announcements carry only lane identity. Pull every already-durable notification without
-        // registering a Tokio waiter; the SPSC lane remains the source of truth for frame data.
-        inbound.collect_ready(&mut notify);
+        inbound.discover_ready(&mut topology);
         let mut work_remaining = scheduler_policy.turn_work();
         let flushed_egress = topology.egress.flush_pending(work_remaining);
         work_remaining = work_remaining.saturating_sub(flushed_egress);
@@ -658,6 +660,10 @@ async fn run_inner<S, H, J, P, A, C>(
         manifold_metrics.record_turn(turn_started, turn_activity, work_remaining == 0);
 
         if progressed {
+            if manifold_wait_armed {
+                wake.disarm();
+                manifold_wait_armed = false;
+            }
             if work_remaining == 0 {
                 hot_turns = 0;
                 tokio::task::yield_now().await;
@@ -690,6 +696,12 @@ async fn run_inner<S, H, J, P, A, C>(
             continue;
         }
 
+        if !manifold_wait_armed {
+            wake.arm();
+            manifold_wait_armed = true;
+            continue;
+        }
+
         tokio::select! {
             local_issued = poll_fn(|context| local_commands.poll_recv(context)),
                 if local_commands_enabled && pending_command.is_none() => {
@@ -701,10 +713,10 @@ async fn run_inner<S, H, J, P, A, C>(
                     None => local_commands_enabled = false,
                 }
             }
-            arrived = notify.recv() => {
-                let Some(source) = arrived else { return };
-                inbound.mark_ready(source);
-            }
+            event = wake.wait() => match event {
+                ManifoldWakeEvent::Signaled => manifold_wait_armed = false,
+                ManifoldWakeEvent::SendersDropped => return,
+            },
             issued = commands.recv(), if pending_command.is_none() => {
                 let Some(issued) = issued else { return };
                 pending_command = Some(issued);

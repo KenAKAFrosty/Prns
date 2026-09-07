@@ -6,7 +6,7 @@ async fn routing_control_drops_a_live_route_and_journals_the_explicit_removal() 
     let engine = EngineState::<TestStorageLayout>::default();
     let store = InterfaceStore::new();
     let mut store_changes = store.subscribe();
-    let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
+    let (wake_tx, wake_rx) = manifold_wake();
     let (mut inbound_tx, inbound_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
     let (command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
     let handle = PrnsNodeHandle::over(command_tx);
@@ -65,7 +65,7 @@ async fn routing_control_drops_a_live_route_and_journals_the_explicit_removal() 
         ManifoldWiring {
             interfaces: std::vec![descriptor(source)],
             ifacs: std::vec![],
-            notify: notify_rx,
+            wake: wake_rx,
             inbound_lanes: std::vec![(source, inbound_rx)],
             commands: command_rx,
             egress: Egress::new(std::vec![]),
@@ -78,7 +78,7 @@ async fn routing_control_drops_a_live_route_and_journals_the_explicit_removal() 
     let announce = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
     inbound_tx.try_grant().unwrap().fill(&announce);
     inbound_tx.commit();
-    notify_tx.send(source).unwrap();
+    wake_tx.signal();
     let destination = tokio::time::timeout(Duration::from_secs(2), heard_rx.recv())
         .await
         .unwrap()
@@ -134,7 +134,7 @@ async fn the_manifold_culls_an_expired_route_at_its_deadline() {
     let interfaces = std::vec![descriptor(source)];
     let engine = EngineState::<TestStorageLayout>::default();
 
-    let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
+    let (wake_tx, wake_rx) = manifold_wake();
     let (source_in_tx, source_in_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
     let (wire_in_tx, wire_in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
     let (wire_out_tx, _wire_out_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
@@ -144,8 +144,8 @@ async fn the_manifold_culls_an_expired_route_at_its_deadline() {
         wire_in: wire_in_rx,
         wire_out: wire_out_tx,
     };
-    let seam = TokioInterfaceSeam::new(source, source_in_tx, notify_tx.clone(), out_rx);
-    drop(notify_tx);
+    let seam = TokioInterfaceSeam::new(source, source_in_tx, wake_tx.clone(), out_rx);
+    drop(wake_tx);
     let egress = Egress::new(std::vec![(source, out_tx)]);
     let (command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
 
@@ -207,7 +207,7 @@ async fn the_manifold_culls_an_expired_route_at_its_deadline() {
         ManifoldWiring {
             interfaces,
             ifacs: std::vec![],
-            notify: notify_rx,
+            wake: wake_rx,
             inbound_lanes: std::vec![(source, source_in_rx)],
             commands: command_rx,
             egress,

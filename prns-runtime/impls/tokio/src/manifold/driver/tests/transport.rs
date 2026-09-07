@@ -9,7 +9,7 @@ async fn a_loopback_frame_crosses_the_seam_and_the_rebroadcast_leaves_through_th
     let mut engine = EngineState::<TestStorageLayout>::default();
     pin_transport_id(&mut engine, TEST_TRANSPORT_ID);
 
-    let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
+    let (wake_tx, wake_rx) = manifold_wake();
     let (source_in_tx, source_in_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
     let (peer_in_tx, peer_in_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
 
@@ -21,8 +21,7 @@ async fn a_loopback_frame_crosses_the_seam_and_the_rebroadcast_leaves_through_th
         wire_in: source_wire_in_rx,
         wire_out: source_wire_out_tx,
     };
-    let source_seam =
-        TokioInterfaceSeam::new(source, source_in_tx, notify_tx.clone(), source_out_rx);
+    let source_seam = TokioInterfaceSeam::new(source, source_in_tx, wake_tx.clone(), source_out_rx);
 
     let (_peer_wire_in_tx, peer_wire_in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
     let (peer_wire_out_tx, mut peer_wire_out_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
@@ -32,9 +31,9 @@ async fn a_loopback_frame_crosses_the_seam_and_the_rebroadcast_leaves_through_th
         wire_in: peer_wire_in_rx,
         wire_out: peer_wire_out_tx,
     };
-    let peer_seam = TokioInterfaceSeam::new(peer, peer_in_tx, notify_tx.clone(), peer_out_rx);
+    let peer_seam = TokioInterfaceSeam::new(peer, peer_in_tx, wake_tx.clone(), peer_out_rx);
 
-    drop(notify_tx);
+    drop(wake_tx);
 
     let egress = Egress::new(std::vec![(source, source_out_tx), (peer, peer_out_tx)]);
 
@@ -87,7 +86,7 @@ async fn a_loopback_frame_crosses_the_seam_and_the_rebroadcast_leaves_through_th
         ManifoldWiring {
             interfaces,
             ifacs: std::vec![],
-            notify: notify_rx,
+            wake: wake_rx,
             inbound_lanes: std::vec![(source, source_in_rx), (peer, peer_in_rx)],
             commands: command_rx,
             egress,
@@ -148,7 +147,7 @@ async fn a_capped_link_holds_a_rebroadcast_burst_then_drains_it_over_time() {
     let mut engine = EngineState::<TestStorageLayout>::default();
     pin_transport_id(&mut engine, TEST_TRANSPORT_ID);
 
-    let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
+    let (wake_tx, wake_rx) = manifold_wake();
     let (source_in_tx, source_in_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
     let (peer_in_tx, peer_in_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
 
@@ -160,8 +159,7 @@ async fn a_capped_link_holds_a_rebroadcast_burst_then_drains_it_over_time() {
         wire_in: source_wire_in_rx,
         wire_out: source_wire_out_tx,
     };
-    let source_seam =
-        TokioInterfaceSeam::new(source, source_in_tx, notify_tx.clone(), source_out_rx);
+    let source_seam = TokioInterfaceSeam::new(source, source_in_tx, wake_tx.clone(), source_out_rx);
 
     let (_peer_wire_in_tx, peer_wire_in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
     let (peer_wire_out_tx, mut peer_wire_out_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
@@ -171,9 +169,9 @@ async fn a_capped_link_holds_a_rebroadcast_burst_then_drains_it_over_time() {
         wire_in: peer_wire_in_rx,
         wire_out: peer_wire_out_tx,
     };
-    let peer_seam = TokioInterfaceSeam::new(peer, peer_in_tx, notify_tx.clone(), peer_out_rx);
+    let peer_seam = TokioInterfaceSeam::new(peer, peer_in_tx, wake_tx.clone(), peer_out_rx);
 
-    drop(notify_tx);
+    drop(wake_tx);
 
     let egress = Egress::new(std::vec![(source, source_out_tx), (peer, peer_out_tx)]);
     let (_command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
@@ -185,7 +183,7 @@ async fn a_capped_link_holds_a_rebroadcast_burst_then_drains_it_over_time() {
         ManifoldWiring {
             interfaces,
             ifacs: std::vec![],
-            notify: notify_rx,
+            wake: wake_rx,
             inbound_lanes: std::vec![(source, source_in_rx), (peer, peer_in_rx)],
             commands: command_rx,
             egress,
@@ -251,7 +249,7 @@ async fn the_manifold_re_emits_a_rebroadcast_once_more_then_retires_it() {
     let mut engine = EngineState::<TestStorageLayout>::default();
     pin_transport_id(&mut engine, TEST_TRANSPORT_ID);
 
-    let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
+    let (wake_tx, wake_rx) = manifold_wake();
     let (source_in_tx, source_in_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
     let (peer_in_tx, peer_in_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
 
@@ -263,8 +261,7 @@ async fn the_manifold_re_emits_a_rebroadcast_once_more_then_retires_it() {
         wire_in: source_wire_in_rx,
         wire_out: source_wire_out_tx,
     };
-    let source_seam =
-        TokioInterfaceSeam::new(source, source_in_tx, notify_tx.clone(), source_out_rx);
+    let source_seam = TokioInterfaceSeam::new(source, source_in_tx, wake_tx.clone(), source_out_rx);
 
     let (_peer_wire_in_tx, peer_wire_in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
     let (peer_wire_out_tx, mut peer_wire_out_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
@@ -274,9 +271,9 @@ async fn the_manifold_re_emits_a_rebroadcast_once_more_then_retires_it() {
         wire_in: peer_wire_in_rx,
         wire_out: peer_wire_out_tx,
     };
-    let peer_seam = TokioInterfaceSeam::new(peer, peer_in_tx, notify_tx.clone(), peer_out_rx);
+    let peer_seam = TokioInterfaceSeam::new(peer, peer_in_tx, wake_tx.clone(), peer_out_rx);
 
-    drop(notify_tx);
+    drop(wake_tx);
 
     let egress = Egress::new(std::vec![(source, source_out_tx), (peer, peer_out_tx)]);
     let (_command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
@@ -287,7 +284,7 @@ async fn the_manifold_re_emits_a_rebroadcast_once_more_then_retires_it() {
         ManifoldWiring {
             interfaces,
             ifacs: std::vec![],
-            notify: notify_rx,
+            wake: wake_rx,
             inbound_lanes: std::vec![(source, source_in_rx), (peer, peer_in_rx)],
             commands: command_rx,
             egress,
@@ -401,7 +398,7 @@ async fn a_delivery_answers_with_a_proof_directive_on_the_arrival_lane() {
     let source = InterfaceId::new([0xA1; 8]);
     let interfaces = std::vec![descriptor(source)];
 
-    let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
+    let (wake_tx, wake_rx) = manifold_wake();
     let (mut source_in_tx, source_in_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
     let (_command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
     let (source_out_tx, mut source_out_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
@@ -455,7 +452,7 @@ async fn a_delivery_answers_with_a_proof_directive_on_the_arrival_lane() {
         ManifoldWiring {
             interfaces,
             ifacs: std::vec![],
-            notify: notify_rx,
+            wake: wake_rx,
             inbound_lanes: std::vec![(source, source_in_rx)],
             commands: command_rx,
             egress,
@@ -468,9 +465,7 @@ async fn a_delivery_answers_with_a_proof_directive_on_the_arrival_lane() {
         .expect("an empty lane grants")
         .fill(&raw);
     source_in_tx.commit();
-    notify_tx
-        .send(source)
-        .expect("the manifold task holds the receiver");
+    wake_tx.signal();
 
     tokio::time::timeout(Duration::from_secs(2), delivered_rx.recv())
         .await

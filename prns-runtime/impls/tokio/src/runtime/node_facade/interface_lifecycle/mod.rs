@@ -17,7 +17,8 @@ use crate::interfaces::{
     InterfaceKind, InterfaceOriginKind, InterfaceSnapshot, Membership, ReportsStatus, StatusView,
 };
 use crate::manifold::driver::{
-    tokio_grant_lane, AddInterfaceCommand, HostCommand, TokioInterfaceSeam,
+    tokio_grant_lane, AddInterfaceCommand, HostCommand, ManifoldWakeReceiver, ManifoldWakeSender,
+    TokioInterfaceSeam,
 };
 use crate::manifold::interface_seam::{frame_cap_for, Interface};
 use crate::node_introspection::{
@@ -163,7 +164,7 @@ impl PrnsNodeHandle {
         let attached = attach_interface(
             &self.commands,
             &self.iface_build,
-            &self.notify_tx,
+            &self.manifold_wake,
             interface,
             InterfaceWiring {
                 descriptor,
@@ -349,7 +350,7 @@ impl PrnsNodeHandle {
             supervisor_id: id,
             commands: self.commands.clone(),
             iface_build: self.iface_build.clone(),
-            notify_tx: self.notify_tx.clone(),
+            manifold_wake: self.manifold_wake.clone(),
             interfaces: self.interfaces.clone(),
             attachment_epochs: self.attachment_epochs.clone(),
             ifac,
@@ -502,7 +503,7 @@ struct InterfaceWiring {
 fn attach_interface<I>(
     commands: &UnboundedSender<HostCommand>,
     iface_build: &UnboundedSender<DriverMsg>,
-    notify_tx: &UnboundedSender<InterfaceId>,
+    manifold_wake: &ManifoldWakeSender,
     interface: I,
     wiring: InterfaceWiring,
 ) -> AttachedInterface
@@ -526,7 +527,7 @@ where
     let depth = lane_depth_for(slot_cap);
     let (in_producer, in_consumer) = tokio_grant_lane(slot_cap, depth);
     let (out_producer, out_consumer) = tokio_grant_lane(slot_cap, depth);
-    let seam = TokioInterfaceSeam::new(id, in_producer, notify_tx.clone(), out_consumer)
+    let seam = TokioInterfaceSeam::new(id, in_producer, manifold_wake.clone(), out_consumer)
         .with_origin(placement.origin)
         .with_commands(commands.clone());
     let build: Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()>>> + Send> =
@@ -557,7 +558,7 @@ pub struct Fleet {
     supervisor_id: InterfaceId,
     commands: UnboundedSender<HostCommand>,
     iface_build: UnboundedSender<DriverMsg>,
-    notify_tx: UnboundedSender<InterfaceId>,
+    manifold_wake: ManifoldWakeSender,
     interfaces: Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>,
     attachment_epochs: Arc<AtomicU64>,
     ifac: Option<RuntimeIfac>,
@@ -588,7 +589,7 @@ impl Fleet {
         let attached = attach_interface(
             &self.commands,
             &self.iface_build,
-            &self.notify_tx,
+            &self.manifold_wake,
             interface,
             InterfaceWiring {
                 descriptor,
@@ -623,12 +624,12 @@ impl Fleet {
     pub fn detached(supervisor_id: InterfaceId) -> (Self, DetachedFleet) {
         let (commands, commands_rx) = mpsc::unbounded_channel();
         let (iface_build, iface_build_rx) = mpsc::unbounded_channel();
-        let (notify_tx, notify_rx) = mpsc::unbounded_channel();
+        let (manifold_wake, manifold_wake_rx) = crate::manifold::driver::manifold_wake();
         let fleet = Fleet {
             supervisor_id,
             commands,
             iface_build,
-            notify_tx,
+            manifold_wake,
             interfaces: Arc::new(Mutex::new(HashMap::new())),
             attachment_epochs: Arc::new(AtomicU64::new(0)),
             ifac: None,
@@ -637,7 +638,7 @@ impl Fleet {
         let tail = DetachedFleet {
             _commands: commands_rx,
             _iface_build: iface_build_rx,
-            _notify: notify_rx,
+            _manifold_wake: manifold_wake_rx,
         };
         (fleet, tail)
     }
@@ -647,7 +648,7 @@ impl Fleet {
 pub struct DetachedFleet {
     _commands: UnboundedReceiver<HostCommand>,
     _iface_build: UnboundedReceiver<DriverMsg>,
-    _notify: UnboundedReceiver<InterfaceId>,
+    _manifold_wake: ManifoldWakeReceiver,
 }
 
 /// An interface supervisor: a node that owns no wire of its own but runs a discovery loop and stands up a fleet member per validated connection. Attached with [`PrnsNodeHandle::supervise`].

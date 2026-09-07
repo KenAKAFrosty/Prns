@@ -128,7 +128,7 @@ pub struct PrnsNodeHandle {
     commands: UnboundedSender<HostCommand>,
     ids: Arc<AtomicU64>,
     attachment_epochs: Arc<AtomicU64>,
-    notify_tx: UnboundedSender<InterfaceId>,
+    manifold_wake: crate::manifold::driver::ManifoldWakeSender,
     iface_build: UnboundedSender<DriverMsg>,
     interfaces: Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>,
     store: InterfaceStore,
@@ -248,7 +248,7 @@ impl PrnsNodeHandle {
         RemoteControlControllerGrantReceiver,
         RemoteControlTargetAccessReceiver,
     ) {
-        let (notify_tx, _notify_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (manifold_wake, _manifold_wake_rx) = crate::manifold::driver::manifold_wake();
         let (iface_build, _iface_build_rx) = tokio::sync::mpsc::unbounded_channel();
         let (remote_control_controller_grants, remote_control_controller_grants_rx) =
             remote_control_controller_grant_lane();
@@ -259,7 +259,7 @@ impl PrnsNodeHandle {
                 commands,
                 ids: Arc::new(AtomicU64::new(0)),
                 attachment_epochs: Arc::new(AtomicU64::new(0)),
-                notify_tx,
+                manifold_wake,
                 iface_build,
                 interfaces: Arc::new(Mutex::new(HashMap::new())),
                 store: InterfaceStore::new(),

@@ -98,15 +98,15 @@ fn deferred_link_traffic_overtakes_bulk_with_the_same_bounded_streak() {
     assert_eq!(consumer.try_peek().unwrap().frame()[19], 8);
 }
 
-#[test]
-fn saturated_egress_defers_its_source_without_blocking_an_independent_lane() {
+#[tokio::test]
+async fn saturated_egress_defers_its_source_without_blocking_an_independent_lane() {
     let source = InterfaceId::new([0x81; 8]);
     let independent_source = InterfaceId::new([0x82; 8]);
     let target = InterfaceId::new([0x83; 8]);
     let independent_target = InterfaceId::new([0x84; 8]);
-    let (release_notify, mut releases) = tokio::sync::mpsc::unbounded_channel();
+    let (release_notify, releases) = super::super::manifold_wake();
     let (target_producer, mut target_consumer) = tokio_grant_lane(64, 1);
-    target_consumer.notify_releases_to(target, release_notify);
+    target_consumer.notify_releases_to(release_notify);
     let (independent_producer, mut independent_consumer) = tokio_grant_lane(64, 1);
     let mut egress = Egress::new(std::vec![
         (target, target_producer),
@@ -138,14 +138,20 @@ fn saturated_egress_defers_its_source_without_blocking_an_independent_lane() {
     assert!(egress.blocks_source(independent_source));
 
     assert_eq!(target_consumer.try_peek().unwrap().frame(), b"first");
+    releases.arm();
     target_consumer.release();
-    assert_eq!(releases.try_recv(), Ok(target));
+    tokio::time::timeout(std::time::Duration::from_millis(20), releases.wait())
+        .await
+        .expect("the manifold wakes for released egress capacity");
     assert_eq!(egress.flush_pending(1), 1);
     assert_eq!(target_consumer.try_peek().unwrap().frame(), b"deferred");
     assert!(!egress.blocks_source(source));
     assert!(egress.blocks_source(independent_source));
+    releases.arm();
     target_consumer.release();
-    assert_eq!(releases.try_recv(), Ok(target));
+    tokio::time::timeout(std::time::Duration::from_millis(20), releases.wait())
+        .await
+        .expect("the manifold wakes for the next release");
     assert_eq!(egress.flush_pending(1), 1);
     assert_eq!(
         target_consumer.try_peek().unwrap().frame(),

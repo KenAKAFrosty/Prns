@@ -30,7 +30,7 @@ async fn a_commanded_announce_fans_to_every_interface_and_settles() {
     let second = InterfaceId::new([0xB2; 8]);
     let interfaces = std::vec![descriptor(first), descriptor(second)];
 
-    let (_notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
+    let (_wake_tx, wake_rx) = manifold_wake();
     let (command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
     let (first_out_tx, mut first_out_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
     let (second_out_tx, mut second_out_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
@@ -84,7 +84,7 @@ async fn a_commanded_announce_fans_to_every_interface_and_settles() {
         ManifoldWiring {
             interfaces,
             ifacs: std::vec![],
-            notify: notify_rx,
+            wake: wake_rx,
             inbound_lanes: std::vec![],
             commands: command_rx,
             egress,
