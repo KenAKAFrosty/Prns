@@ -185,7 +185,7 @@ impl RequestTaskWake {
     }
 
     fn take_ready(&self) -> bool {
-        self.ready.swap(false, Ordering::AcqRel)
+        self.ready.load(Ordering::Acquire) && self.ready.swap(false, Ordering::AcqRel)
     }
 
     fn finish_poll(&self) {
