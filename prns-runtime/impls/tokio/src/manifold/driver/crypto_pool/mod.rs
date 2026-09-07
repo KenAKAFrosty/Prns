@@ -144,7 +144,7 @@ impl CryptoPoolConfig {
 const MANIFOLD_IO_HEADROOM: usize = 2;
 const MIN_POOL_WORKERS: usize = 4;
 const MAX_EFFICIENCY_SPILLOVER_WORKERS: usize = 2;
-const RESOURCE_PART_HASH_CONCURRENCY: usize = 1;
+const RESOURCE_PART_HASH_CONCURRENCY: usize = 2;
 
 impl PoolWorkers {
     fn resolve(self) -> NonZeroUsize {
