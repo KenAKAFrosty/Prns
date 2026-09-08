@@ -1,33 +1,10 @@
-use std::sync::atomic::{fence, AtomicBool, Ordering};
 use std::sync::Arc;
 
 use prns_core::interfaces::{FrameSink, FrameSinkError, PacketPhyStats};
 use rtrb::{Consumer, Producer, PushError, RingBuffer};
 use tokio::sync::Notify;
 
-use super::driver::ManifoldWakeSender;
-
-struct LaneWakeArm(AtomicBool);
-
-impl LaneWakeArm {
-    fn new() -> Self {
-        Self(AtomicBool::new(false))
-    }
-
-    fn arm_before_recheck(&self) {
-        self.0.store(true, Ordering::Release);
-        fence(Ordering::SeqCst);
-    }
-
-    fn disarm(&self) {
-        self.0.store(false, Ordering::Release);
-    }
-
-    fn take_after_publish(&self) -> bool {
-        fence(Ordering::SeqCst);
-        self.0.load(Ordering::Acquire) && self.0.swap(false, Ordering::AcqRel)
-    }
-}
+use super::{driver::ManifoldWakeSender, WakeArm};
 
 pub fn tokio_grant_lane(slot_cap: usize, depth: usize) -> (TokioGrantProducer, TokioGrantConsumer) {
     let depth = depth.max(1);
@@ -36,8 +13,8 @@ pub fn tokio_grant_lane(slot_cap: usize, depth: usize) -> (TokioGrantProducer, T
     let (recycled_slots, recycled) = RingBuffer::new(depth);
     let filled_ready = Arc::new(Notify::new());
     let free_ready = Arc::new(Notify::new());
-    let producer_parked = Arc::new(LaneWakeArm::new());
-    let consumer_parked = Arc::new(LaneWakeArm::new());
+    let producer_parked = Arc::new(WakeArm::new());
+    let consumer_parked = Arc::new(WakeArm::new());
     (
         TokioGrantProducer {
             slot_cap,
@@ -147,8 +124,8 @@ pub struct TokioGrantProducer {
     pub(super) granted: Option<HeapFrameSlot>,
     filled_ready: Arc<Notify>,
     free_ready: Arc<Notify>,
-    producer_parked: Arc<LaneWakeArm>,
-    consumer_parked: Arc<LaneWakeArm>,
+    producer_parked: Arc<WakeArm>,
+    consumer_parked: Arc<WakeArm>,
 }
 
 impl TokioGrantProducer {
@@ -237,8 +214,8 @@ pub struct TokioGrantConsumer {
     peeked: Option<HeapFrameSlot>,
     filled_ready: Arc<Notify>,
     free_ready: Arc<Notify>,
-    producer_parked: Arc<LaneWakeArm>,
-    consumer_parked: Arc<LaneWakeArm>,
+    producer_parked: Arc<WakeArm>,
+    consumer_parked: Arc<WakeArm>,
     expedited_streak: usize,
     release_notify: Option<ManifoldWakeSender>,
 }
