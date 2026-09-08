@@ -129,8 +129,24 @@ The application still has a development identifier and local debug signing.
   application. This passes one foreground Android Bluetooth pairing and
   authenticated Describe exchange. No reboot or watchdog warning occurred in
   that captured run. The earlier button-triggered freeze remains unresolved;
-  success with extra logging is not evidence that it is fixed. Pairing retention
-  across phone/board restarts and physical Android LXMF delivery remain untested.
+  success with extra logging is not evidence that it is fixed.
+- The installed standalone app retained its identities and pairing after an
+  explicit Android force-stop and cold relaunch into a new process. Bluetooth
+  reconnected and the first authenticated Describe returned in 189 ms. A
+  subsequent deliberate USB reset of the board also preserved usable
+  authorization: after Bluetooth reconnected, a fresh Describe returned in
+  199 ms without re-pairing or restarting the phone app. This checks an app
+  process restart and a board reset, not a phone OS reboot or sudden power loss.
+- During a short screen-off, secure-keyguard observation, a second deliberate
+  board reset was followed by automatic Bluetooth discovery, subscriptions,
+  and L2CAP reconnection in the same Android process. The foreground service
+  remained active. After the user unlocked the phone, an authenticated Describe
+  returned in 191 ms. The first post-unlock request reached the board but its
+  UI result was not captured; the recorded success is the repeat, not proof of
+  first-attempt delivery. The phone was USB-powered and not in Doze. This
+  demonstrates short locked transport recovery, not locked message delivery,
+  long-idle reliability, or battery-powered behavior. Physical Android LXMF
+  delivery remains untested.
 
 The detached mobility gate passes for application commit `789aec2e1` against
 the recorded Prns revision. This includes exact dependency resolution,
@@ -138,9 +154,9 @@ generated contracts, the application gate, and bidirectional native/Python
 LXMF delivery with verified proofs. It does not build an Android APK or run
 that exchange on the phone.
 
-The full physical lifecycle matrix remains pending. Screen locking, explicit
-Stop/restart, denied/regranted permissions,
-radio/peer recovery, process eviction, background delivery, and newer Android
+The full physical lifecycle matrix remains pending beyond the narrow checks
+above. Explicit service Stop/restart, denied/regranted permissions, Bluetooth
+radio changes, prolonged peer loss, OS process eviction, background delivery, and newer Android
 permission/service behavior remain unqualified. See [Android development](android.md)
 for the repeatable acceptance sequence and the temporary runtime-restart behavior
 when the Bluetooth listener changes.
