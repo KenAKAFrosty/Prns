@@ -31,7 +31,7 @@ const SECTION_KINDS: [(SectionKindIdentity, &str); 5] = [
 const ATTRIBUTION_CANDIDATE_LIMIT: usize = 10;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum CompatibilityDimension {
+pub enum CompatibilityDimension {
     Target,
     Architecture,
     BuildRecipe,
@@ -43,7 +43,7 @@ pub(crate) enum CompatibilityDimension {
 }
 
 #[derive(Debug, Error)]
-pub(crate) enum ComparisonError {
+pub enum ComparisonError {
     #[error("could not read resource report {path}: {source}")]
     Read {
         path: PathBuf,
@@ -90,6 +90,8 @@ pub(crate) enum ComparisonError {
     MissingLinkerMapEvidence { path: PathBuf },
     #[error("resource report {path} has an invalid toolchain identity")]
     InvalidToolchainIdentity { path: PathBuf },
+    #[error("resource report {path} has an invalid report fingerprint")]
+    InvalidReportFingerprint { path: PathBuf },
     #[error("resource report {path} has no allocated-section evidence")]
     MissingSectionEvidence { path: PathBuf },
     #[error("resource report {path} has invalid section accounting for {section:?}")]
@@ -121,7 +123,7 @@ pub(crate) fn compare_files(before: &Path, after: &Path) -> Result<String, Compa
     Ok(render::render(&comparison, before, after))
 }
 
-pub(in crate::report) fn load_report(path: &Path) -> Result<ResourceReport, ComparisonError> {
+pub(super) fn load_report(path: &Path) -> Result<ResourceReport, ComparisonError> {
     validation::load(path)
 }
 

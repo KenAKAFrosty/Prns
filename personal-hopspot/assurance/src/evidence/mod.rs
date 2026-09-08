@@ -1,0 +1,10 @@
+mod aggregate;
+mod discovery;
+mod validation;
+
+pub use aggregate::{assemble, AggregateError};
+pub use discovery::{discover_proofs, discover_resources, DiscoveryError};
+pub use validation::{
+    load_canonical_matrix, load_matrix, validate_canonical as validate_matrix,
+    MatrixValidationError,
+};

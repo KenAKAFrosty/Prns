@@ -64,6 +64,7 @@ cargo_manifests = [
     "benchmarks/Cargo.toml",
     "docs/command/Cargo.toml",
     "docs/website/Cargo.toml",
+    "personal-hopspot/assurance/Cargo.toml",
     "personal-hopspot/builder/Cargo.toml",
     "personal-hopspot/core/Cargo.toml",
     "personal-hopspot/desktop/Cargo.toml",
@@ -415,7 +416,7 @@ platform = "any"
 toolchain = "python"
 timeout_seconds = 120
 command = ["__RUNNER_PYTHON__", "tools/prns", "verify"]
-inputs = ["tools/prns", "tools/tasks.toml", "tools/repo/cargo-check.py", "tools/README.md", ".githooks/pre-push", "validation/hygiene/embedded_resource_selection.py", "validation/hygiene/pre-push-ci-parity.py"]
+inputs = ["tools/prns", "tools/tasks.toml", "tools/repo/cargo-check.py", "tools/README.md", ".githooks/pre-push", "validation/hygiene/embedded_assurance_selection.py", "validation/hygiene/pre-push-ci-parity.py"]
 artifacts = "validation-artifacts/results/tool-registry"
 
 [[suite]]

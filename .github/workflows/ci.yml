@@ -328,15 +328,19 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
-      required: ${{ steps.resources.outputs.required }}
+      required: ${{ steps.assurance.outputs.resources_required }}
+      resources_required: ${{ steps.assurance.outputs.resources_required }}
+      miri_required: ${{ steps.assurance.outputs.miri_required }}
+      isa_required: ${{ steps.assurance.outputs.isa_required }}
+      pilots_required: ${{ steps.assurance.outputs.pilots_required }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
           persist-credentials: false
           submodules: false
-      - id: resources
-        run: python3 validation/hygiene/embedded_resource_selection.py
+      - id: assurance
+        run: python3 validation/hygiene/embedded_assurance_selection.py
 
   no-std-embedded:
     needs: embedded-resource-selection

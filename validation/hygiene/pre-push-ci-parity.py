@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
 
-from embedded_resource_selection import affected_paths as embedded_resource_paths
+from embedded_assurance_selection import Lane, selection_for_paths
 
 
 ZERO_SHA = "0" * 40
@@ -83,7 +83,8 @@ def plan_for_paths(paths: set[str]) -> tuple[Gate, ...]:
             )
         )
 
-    if embedded_resource_paths(paths):
+    embedded = selection_for_paths(paths)
+    if embedded.required(Lane.RESOURCES):
         gates.append(
             Gate(
                 "embedded resource matrix",

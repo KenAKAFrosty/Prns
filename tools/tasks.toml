@@ -55,6 +55,16 @@ entrypoint = ["bash", "tools/build/android.sh"]
 requires = ["bash", "cargo"]
 
 [[task]]
+id = "build.embedded.assurance"
+summary = "Compose embedded resource evidence with executable proof results."
+domain = "build"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci", "release"]
+entrypoint = ["bash", "tools/build/embedded-assurance.sh"]
+requires = ["bash", "cargo"]
+
+[[task]]
 id = "build.embedded.resources"
 summary = "Build embedded resource evidence and generate or verify memory contracts."
 domain = "build"

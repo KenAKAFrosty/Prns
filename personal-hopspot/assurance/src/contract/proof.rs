@@ -1,0 +1,439 @@
+use std::collections::BTreeSet;
+use std::fmt;
+
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+use super::{
+    ArchitectureId, ComponentId, EvidenceFingerprint, EvidencePath, PlatformId, RunnerId,
+    ScenarioId, SourceCommit, TargetId,
+};
+
+pub const PROOF_FRAGMENT_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "id", rename_all = "kebab-case")]
+pub enum Subject {
+    Architecture(ArchitectureId),
+    Component(ComponentId),
+    Platform(PlatformId),
+    Target(TargetId),
+}
+
+impl fmt::Display for Subject {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Architecture(id) => write!(formatter, "architecture:{id}"),
+            Self::Component(id) => write!(formatter, "component:{id}"),
+            Self::Platform(id) => write!(formatter, "platform:{id}"),
+            Self::Target(id) => write!(formatter, "target:{id}"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProofKind {
+    Miri,
+    PlatformEmulation,
+    TargetIsa,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum SourceCustody {
+    CleanCommit {
+        commit: SourceCommit,
+    },
+    WorkingTree {
+        head: SourceCommit,
+        diff_fingerprint: EvidenceFingerprint,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourceIdentity {
+    pub custody: SourceCustody,
+    pub scenario_fingerprint: EvidenceFingerprint,
+}
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ToolKind {
+    Cargo,
+    Linker,
+    Miri,
+    Qemu,
+    Renode,
+    Rustc,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolIdentity {
+    pub kind: ToolKind,
+    pub version: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MiriCoverage {
+    Stacked,
+    StackedAndTree,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PlatformMilestone {
+    ApplicationEntry,
+    RuntimeInitialized,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum ProofEvidence {
+    Miri {
+        coverage: MiriCoverage,
+        completed_tests: u32,
+    },
+    PlatformEmulation {
+        platform: PlatformId,
+        milestone: PlatformMilestone,
+        transcript_fingerprint: EvidenceFingerprint,
+    },
+    TargetIsa {
+        architecture: ArchitectureId,
+        completed_scenarios: u32,
+        transcript_fingerprint: EvidenceFingerprint,
+    },
+}
+
+impl ProofEvidence {
+    #[must_use]
+    pub const fn kind(&self) -> ProofKind {
+        match self {
+            Self::Miri { .. } => ProofKind::Miri,
+            Self::PlatformEmulation { .. } => ProofKind::PlatformEmulation,
+            Self::TargetIsa { .. } => ProofKind::TargetIsa,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FailureKind {
+    Crash,
+    MemoryOverflow,
+    ScenarioMismatch,
+    StructuralViolation,
+    Timeout,
+    ToolFailure,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Failure {
+    pub kind: FailureKind,
+    pub diagnostic: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EvidenceGap {
+    Assembly,
+    IndirectCall,
+    InterruptNesting,
+    MissingMetadata,
+    MissingRoot,
+    UnsupportedPeripheral,
+    VendorObject,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum UnavailableReason {
+    EvidenceNotProduced,
+    EmulatorUnavailable,
+    RunnerNotInstalled,
+    ToolchainUnavailable,
+    UnsupportedByContract,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum Verdict<T> {
+    Passed { evidence: T },
+    Failed { failure: Failure },
+    Partial { evidence: T, gaps: Vec<EvidenceGap> },
+    Unavailable { reason: UnavailableReason },
+}
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProofArtifactKind {
+    Log,
+    Transcript,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvidenceArtifact {
+    pub kind: ProofArtifactKind,
+    pub path: EvidencePath,
+    pub bytes: u64,
+    pub fingerprint: EvidenceFingerprint,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProofFragment {
+    pub schema_version: u32,
+    pub subject: Subject,
+    pub scenario: ScenarioId,
+    pub proof: ProofKind,
+    pub runner: RunnerId,
+    pub source: SourceIdentity,
+    pub tools: Vec<ToolIdentity>,
+    pub verdict: Verdict<ProofEvidence>,
+    pub artifacts: Vec<EvidenceArtifact>,
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum ProofContractError {
+    #[error("proof fragment uses schema {actual}, expected {expected}")]
+    UnsupportedSchema { actual: u32, expected: u32 },
+    #[error("proof fragment has no tool identities")]
+    MissingTools,
+    #[error("proof fragment has an empty tool version for {0:?}")]
+    EmptyToolVersion(ToolKind),
+    #[error("proof fragment repeats tool identity {0:?}")]
+    DuplicateTool(ToolKind),
+    #[error("proof fragment has an empty failure diagnostic")]
+    EmptyFailureDiagnostic,
+    #[error("partial proof fragment has no evidence gaps")]
+    MissingEvidenceGaps,
+    #[error("proof fragment declares {declared:?} but contains {actual:?} evidence")]
+    EvidenceKindMismatch {
+        declared: ProofKind,
+        actual: ProofKind,
+    },
+    #[error("proof fragment evidence does not belong to subject {0:?}")]
+    EvidenceSubjectMismatch(Subject),
+    #[error("proof fragment contains an empty artifact")]
+    EmptyArtifact,
+    #[error("proof fragment repeats artifact {0}")]
+    DuplicateArtifact(EvidencePath),
+}
+
+impl ProofFragment {
+    pub fn validate(&self) -> Result<(), ProofContractError> {
+        if self.schema_version != PROOF_FRAGMENT_SCHEMA_VERSION {
+            return Err(ProofContractError::UnsupportedSchema {
+                actual: self.schema_version,
+                expected: PROOF_FRAGMENT_SCHEMA_VERSION,
+            });
+        }
+        validate_tools(&self.tools)?;
+        validate_verdict(self.proof, &self.subject, &self.verdict)?;
+        validate_artifacts(&self.artifacts)
+    }
+}
+
+fn validate_tools(tools: &[ToolIdentity]) -> Result<(), ProofContractError> {
+    if tools.is_empty() {
+        return Err(ProofContractError::MissingTools);
+    }
+    let mut kinds = BTreeSet::new();
+    for tool in tools {
+        if tool.version.trim().is_empty() {
+            return Err(ProofContractError::EmptyToolVersion(tool.kind));
+        }
+        if !kinds.insert(tool.kind) {
+            return Err(ProofContractError::DuplicateTool(tool.kind));
+        }
+    }
+    Ok(())
+}
+
+fn validate_verdict(
+    declared: ProofKind,
+    subject: &Subject,
+    verdict: &Verdict<ProofEvidence>,
+) -> Result<(), ProofContractError> {
+    match verdict {
+        Verdict::Passed { evidence } => validate_evidence(declared, subject, evidence),
+        Verdict::Failed { failure } => {
+            if failure.diagnostic.trim().is_empty() {
+                Err(ProofContractError::EmptyFailureDiagnostic)
+            } else {
+                Ok(())
+            }
+        }
+        Verdict::Partial { evidence, gaps } => {
+            if gaps.is_empty() {
+                return Err(ProofContractError::MissingEvidenceGaps);
+            }
+            validate_evidence(declared, subject, evidence)
+        }
+        Verdict::Unavailable { .. } => Ok(()),
+    }
+}
+
+fn validate_evidence(
+    declared: ProofKind,
+    subject: &Subject,
+    evidence: &ProofEvidence,
+) -> Result<(), ProofContractError> {
+    if evidence.kind() != declared {
+        return Err(ProofContractError::EvidenceKindMismatch {
+            declared,
+            actual: evidence.kind(),
+        });
+    }
+    let matches = match (subject, evidence) {
+        (
+            Subject::Component(_),
+            ProofEvidence::Miri {
+                completed_tests, ..
+            },
+        ) => *completed_tests > 0,
+        (
+            Subject::Architecture(subject),
+            ProofEvidence::TargetIsa {
+                architecture,
+                completed_scenarios,
+                ..
+            },
+        ) => subject == architecture && *completed_scenarios > 0,
+        (Subject::Platform(subject), ProofEvidence::PlatformEmulation { platform, .. }) => {
+            subject == platform
+        }
+        _ => false,
+    };
+    if matches {
+        Ok(())
+    } else {
+        Err(ProofContractError::EvidenceSubjectMismatch(subject.clone()))
+    }
+}
+
+fn validate_artifacts(artifacts: &[EvidenceArtifact]) -> Result<(), ProofContractError> {
+    let mut paths = BTreeSet::new();
+    for artifact in artifacts {
+        if artifact.bytes == 0 {
+            return Err(ProofContractError::EmptyArtifact);
+        }
+        if !paths.insert(artifact.path.clone()) {
+            return Err(ProofContractError::DuplicateArtifact(artifact.path.clone()));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        ArchitectureId, ComponentId, EvidenceFingerprint, EvidenceGap, MiriCoverage,
+        ProofContractError, ProofEvidence, ProofFragment, ProofKind, RunnerId, ScenarioId,
+        SourceCommit, SourceCustody, SourceIdentity, Subject, ToolIdentity, ToolKind, Verdict,
+        PROOF_FRAGMENT_SCHEMA_VERSION,
+    };
+
+    fn fingerprint(byte: char) -> Result<EvidenceFingerprint, crate::contract::ValueError> {
+        EvidenceFingerprint::parse(byte.to_string().repeat(64))
+    }
+
+    fn fragment() -> Result<ProofFragment, Box<dyn std::error::Error>> {
+        Ok(ProofFragment {
+            schema_version: PROOF_FRAGMENT_SCHEMA_VERSION,
+            subject: Subject::Component(ComponentId::parse("sx126x")?),
+            scenario: ScenarioId::parse("sx126x-state-machine")?,
+            proof: ProofKind::Miri,
+            runner: RunnerId::parse("miri-stacked")?,
+            source: SourceIdentity {
+                custody: SourceCustody::CleanCommit {
+                    commit: SourceCommit::parse("a".repeat(40))?,
+                },
+                scenario_fingerprint: fingerprint('b')?,
+            },
+            tools: vec![ToolIdentity {
+                kind: ToolKind::Miri,
+                version: "miri 1".to_string(),
+            }],
+            verdict: Verdict::Passed {
+                evidence: ProofEvidence::Miri {
+                    coverage: MiriCoverage::Stacked,
+                    completed_tests: 4,
+                },
+            },
+            artifacts: Vec::new(),
+        })
+    }
+
+    #[test]
+    fn valid_component_proof_satisfies_the_contract() -> Result<(), Box<dyn std::error::Error>> {
+        fragment()?.validate()?;
+        Ok(())
+    }
+
+    #[test]
+    fn partial_proof_requires_a_named_gap() -> Result<(), Box<dyn std::error::Error>> {
+        let mut fragment = fragment()?;
+        fragment.verdict = Verdict::Partial {
+            evidence: ProofEvidence::Miri {
+                coverage: MiriCoverage::StackedAndTree,
+                completed_tests: 4,
+            },
+            gaps: Vec::new(),
+        };
+        assert_eq!(
+            fragment.validate(),
+            Err(ProofContractError::MissingEvidenceGaps)
+        );
+        if let Verdict::Partial { gaps, .. } = &mut fragment.verdict {
+            gaps.push(EvidenceGap::MissingMetadata);
+        }
+        fragment.validate()?;
+        Ok(())
+    }
+
+    #[test]
+    fn evidence_kind_and_subject_must_match() -> Result<(), Box<dyn std::error::Error>> {
+        let mut fragment = fragment()?;
+        fragment.verdict = Verdict::Passed {
+            evidence: ProofEvidence::TargetIsa {
+                architecture: ArchitectureId::parse("thumbv7em")?,
+                completed_scenarios: 1,
+                transcript_fingerprint: fingerprint('c')?,
+            },
+        };
+        assert!(matches!(
+            fragment.validate(),
+            Err(ProofContractError::EvidenceKindMismatch {
+                declared: ProofKind::Miri,
+                actual: ProofKind::TargetIsa,
+            })
+        ));
+        fragment.proof = ProofKind::TargetIsa;
+        assert!(matches!(
+            fragment.validate(),
+            Err(ProofContractError::EvidenceSubjectMismatch(_))
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn tool_identities_are_unique_and_nonempty() -> Result<(), Box<dyn std::error::Error>> {
+        let mut fragment = fragment()?;
+        fragment.tools.push(ToolIdentity {
+            kind: ToolKind::Miri,
+            version: "miri 2".to_string(),
+        });
+        assert_eq!(
+            fragment.validate(),
+            Err(ProofContractError::DuplicateTool(ToolKind::Miri))
+        );
+        Ok(())
+    }
+}

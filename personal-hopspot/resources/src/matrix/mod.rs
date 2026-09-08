@@ -18,6 +18,42 @@ use thiserror::Error;
 pub(crate) use build::BuildEvidence;
 pub(crate) use recipe::RecipeIdentity;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CanonicalTarget {
+    id: String,
+    display_name: String,
+    memory_profile: String,
+    rust_target: String,
+    architecture_adapter: String,
+}
+
+impl CanonicalTarget {
+    #[must_use]
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    #[must_use]
+    pub fn display_name(&self) -> &str {
+        &self.display_name
+    }
+
+    #[must_use]
+    pub fn memory_profile(&self) -> &str {
+        &self.memory_profile
+    }
+
+    #[must_use]
+    pub fn rust_target(&self) -> &str {
+        &self.rust_target
+    }
+
+    #[must_use]
+    pub fn architecture_adapter(&self) -> &str {
+        &self.architecture_adapter
+    }
+}
+
 pub(crate) struct Matrix<'a> {
     targets: Vec<Target<'a>>,
 }
@@ -55,7 +91,7 @@ enum TargetRecipe<'a> {
 }
 
 #[derive(Debug, Error)]
-pub(crate) enum MatrixError {
+pub enum MatrixError {
     #[error("resource target {target:?} has an invalid memory profile: {source}")]
     CatalogProfile {
         target: String,
@@ -77,6 +113,29 @@ pub(crate) enum MatrixError {
         #[source]
         source: BuildError,
     },
+}
+
+#[derive(Debug, Error)]
+pub enum CanonicalMatrixError {
+    #[error(transparent)]
+    Catalog(#[from] prns_flash_manifest::CatalogError),
+    #[error(transparent)]
+    Matrix(#[from] MatrixError),
+}
+
+pub fn canonical_targets() -> Result<Vec<CanonicalTarget>, CanonicalMatrixError> {
+    let catalog = prns_flash_manifest::board_catalog()?;
+    let matrix = Matrix::from_catalog(&catalog)?;
+    Ok(matrix
+        .iter()
+        .map(|target| CanonicalTarget {
+            id: target.id().to_string(),
+            display_name: target.display_name().to_string(),
+            memory_profile: target.profile().id.0.to_string(),
+            rust_target: target.adapter().rust_target().to_string(),
+            architecture_adapter: target.adapter().id().as_str().to_string(),
+        })
+        .collect())
 }
 
 impl<'a> Matrix<'a> {

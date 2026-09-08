@@ -490,7 +490,7 @@ def validate() -> list[str]:
     if "RUSTUP_TOOLCHAIN: 1.90.0" not in ci or "toolchain: 1.90.0" not in ci:
         errors.append("ci.yml does not explicitly force and install the Rust 1.90.0 MSRV")
     for product_matrix_gate in (
-        "validation/hygiene/embedded_resource_selection.py",
+        "validation/hygiene/embedded_assurance_selection.py",
         "run --suite embedded-builds",
         "run --suite esp32-firmware-check",
         'release toolchain esp install -- "${RUNNER_TEMP}/prns-esp-tools"',
@@ -512,7 +512,10 @@ def validate() -> list[str]:
     selection_job = ci_jobs.get("embedded-resource-selection", "")
     if (
         "fetch-depth: 0" not in selection_job
-        or "required: ${{ steps.resources.outputs.required }}" not in selection_job
+        or "required: ${{ steps.assurance.outputs.resources_required }}" not in selection_job
+        or "miri_required: ${{ steps.assurance.outputs.miri_required }}" not in selection_job
+        or "isa_required: ${{ steps.assurance.outputs.isa_required }}" not in selection_job
+        or "pilots_required: ${{ steps.assurance.outputs.pilots_required }}" not in selection_job
     ):
         errors.append("embedded resource selection does not expose a full-history decision")
     selection_condition = "if: needs.embedded-resource-selection.outputs.required == 'true'"
