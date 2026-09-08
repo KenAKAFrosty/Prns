@@ -74,7 +74,7 @@ pub use introspection::{ActiveLinkSnapshot, AnnounceRateState, RouteSnapshot};
 pub use node_egress::ReemitAnnounce;
 #[cfg(test)]
 pub(crate) use node_ingress::drive_packet_to_quiescence;
-pub use node_ingress::{IngestIo, IngestPacketReport};
+pub use node_ingress::{IngestIo, IngestPacketReport, RequestIngressDiagnostic};
 #[cfg(all(feature = "resource-work-offload", feature = "alloc"))]
 pub use reaction::ResourceOpenWorkspace;
 pub use reaction::{
@@ -103,7 +103,8 @@ pub use remote_control::{
     RemoteControlControllerPairingResponseEffect, RemoteControlServiceConfiguration,
 };
 pub use remote_control_pairing::{
-    ConfigureRemoteControlPairingError, RemoteControlPairingResponseDispatchFailure,
+    ConfigureRemoteControlPairingError, RemoteControlPairingDispatchDiagnostic,
+    RemoteControlPairingRequestDiagnostic, RemoteControlPairingResponseDispatchFailure,
 };
 pub(crate) use settlement::settle;
 pub use state::{
