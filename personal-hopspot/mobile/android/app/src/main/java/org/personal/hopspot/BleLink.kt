@@ -27,13 +27,12 @@ import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.os.Build
 import android.os.ParcelUuid
+import android.os.SystemClock
 import android.util.Log
 import java.nio.ByteBuffer
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArraySet
-import java.util.concurrent.Semaphore
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 @TargetApi(Build.VERSION_CODES.Q)
@@ -99,25 +98,11 @@ class BleLink(private val context: Context) {
         Columba,
     }
 
-    private enum class GattOperationKind {
-        Mtu,
-        ServiceDiscovery,
-        CharacteristicRead,
-        DescriptorWrite,
-        ClientWrite,
-        ServerNotify,
-    }
-
     private enum class OutboundAdmission {
         Accepted,
         Busy,
         Terminal,
     }
-
-    private data class PendingGattOperation(
-        val kind: GattOperationKind,
-        val characteristic: UUID?,
-    )
 
     private class LinkState(
         val connId: Int,
@@ -125,11 +110,7 @@ class BleLink(private val context: Context) {
         val dialed: Boolean,
         @Volatile var peerProtocol: BlePeerProtocol,
     ) {
-        private val operationGate = Semaphore(1)
-        val servicesRequested = AtomicBoolean(false)
-
-        @Volatile
-        private var pendingGattOperation: PendingGattOperation? = null
+        val gattState = GattState()
 
         @Volatile
         var central: BluetoothDevice? = null
@@ -155,36 +136,13 @@ class BleLink(private val context: Context) {
         @Volatile
         var openingL2capSocket: BluetoothSocket? = null
 
-        @Synchronized
-        fun beginGattOperation(operation: PendingGattOperation): Boolean {
-            if (!operationGate.tryAcquire()) {
-                return false
-            }
-            pendingGattOperation = operation
-            return true
-        }
+        fun beginGattOperation(operation: PendingGattOperation): Boolean =
+            gattState.begin(operation)
 
-        @Synchronized
-        fun completeGattOperation(kind: GattOperationKind, characteristic: UUID? = null): Boolean {
-            val pending = pendingGattOperation ?: return false
-            if (pending.kind != kind ||
-                characteristic != null && pending.characteristic != characteristic
-            ) {
-                return false
-            }
-            pendingGattOperation = null
-            operationGate.release()
-            return true
-        }
+        fun completeGattOperation(kind: GattOperationKind, characteristic: UUID? = null): Boolean =
+            gattState.complete(kind, characteristic)
 
-        @Synchronized
-        fun cancelGattOperation(operation: PendingGattOperation) {
-            if (pendingGattOperation != operation) {
-                return
-            }
-            pendingGattOperation = null
-            operationGate.release()
-        }
+        fun cancelGattOperation(operation: PendingGattOperation) = gattState.cancel(operation)
     }
 
     private val scanCallback = object : ScanCallback() {
@@ -1059,15 +1017,21 @@ class BleLink(private val context: Context) {
                     }
                     link.clientGatt = gatt
                     connectedAddrs.add(address)
+                    if (!link.gattState.beginStartup(SystemClock.elapsedRealtime())) {
+                        return
+                    }
                     val mtuOperation = PendingGattOperation(GattOperationKind.Mtu, null)
-                    val mtuRequested = link.beginGattOperation(mtuOperation) &&
-                        runCatching { gatt.requestMtu(MAX_ATT_MTU) }.getOrDefault(false)
+                    if (!link.beginGattOperation(mtuOperation)) {
+                        closeLink(connId)
+                        return
+                    }
+                    val mtuRequested = runCatching { gatt.requestMtu(MAX_ATT_MTU) }.getOrDefault(false)
                     Log.i(TAG, "dialer[$connId] connected; requested mtu=$mtuRequested")
                     if (!mtuRequested) {
                         link.cancelGattOperation(mtuOperation)
                         requestClientServices(gatt, link, "mtu request rejected")
                     }
-                    scheduleClientOpenFallback(connId, address, gatt)
+                    scheduleClientOpenTimeout(connId, address, gatt)
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                     Log.i(TAG, "dialer[$connId] $address disconnected status=$status")
                     if (!linkedConnIds.remove(connId)) {
@@ -1091,16 +1055,22 @@ class BleLink(private val context: Context) {
                 if (!running || !radioActive) {
                     return
                 }
-                links[connId]?.completeGattOperation(GattOperationKind.Mtu)
+                val link = links[connId] ?: return
+                if (!link.completeGattOperation(GattOperationKind.Mtu)) {
+                    return
+                }
                 Log.i(TAG, "dialer[$connId] att mtu=$mtu status=$status")
-                links[connId]?.let { requestClientServices(gatt, it, "mtu changed") }
+                requestClientServices(gatt, link, "mtu changed")
             }
 
             override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
                 if (!running || !radioActive) {
                     return
                 }
-                links[connId]?.completeGattOperation(GattOperationKind.ServiceDiscovery)
+                val link = links[connId] ?: return
+                if (!link.completeGattOperation(GattOperationKind.ServiceDiscovery)) {
+                    return
+                }
                 if (status != BluetoothGatt.GATT_SUCCESS) {
                     Log.w(TAG, "dialer[$connId] service discovery failed status=$status")
                     runCatching { gatt.disconnect() }
@@ -1189,10 +1159,14 @@ class BleLink(private val context: Context) {
                 if (characteristic.uuid != COLUMBA_IDENTITY) {
                     return
                 }
-                links[connId]?.completeGattOperation(
-                    GattOperationKind.CharacteristicRead,
-                    characteristic.uuid,
-                )
+                val link = links[connId] ?: return
+                if (!link.completeGattOperation(
+                        GattOperationKind.CharacteristicRead,
+                        characteristic.uuid,
+                    )
+                ) {
+                    return
+                }
                 if (status != BluetoothGatt.GATT_SUCCESS || value.size != COLUMBA_IDENTITY_LEN) {
                     Log.w(
                         TAG,
@@ -1201,7 +1175,6 @@ class BleLink(private val context: Context) {
                     runCatching { gatt.disconnect() }
                     return
                 }
-                val link = links[connId] ?: return
                 val tx = link.clientColumbaTx
                 if (tx == null) {
                     Log.w(TAG, "dialer[$connId] Columba TX missing after identity read")
@@ -1229,10 +1202,14 @@ class BleLink(private val context: Context) {
                 if (!running || !radioActive) {
                     return
                 }
-                links[connId]?.completeGattOperation(
-                    GattOperationKind.DescriptorWrite,
-                    descriptor.characteristic.uuid,
-                )
+                val link = links[connId] ?: return
+                if (!link.completeGattOperation(
+                        GattOperationKind.DescriptorWrite,
+                        descriptor.characteristic.uuid,
+                    )
+                ) {
+                    return
+                }
                 Log.i(
                     TAG,
                     "dialer[$connId] cccd ${descriptor.characteristic.uuid} status=$status",
@@ -1243,11 +1220,13 @@ class BleLink(private val context: Context) {
                     return
                 }
                 if (descriptor.characteristic.uuid == COLUMBA_TX) {
-                    val link = links[connId] ?: return
                     val identity = link.peerIdentity
                     if (identity == null) {
                         Log.w(TAG, "dialer[$connId] Columba TX subscribe failed status=$status")
                         runCatching { gatt.disconnect() }
+                        return
+                    }
+                    if (!link.gattState.markReady()) {
                         return
                     }
                     Log.i(TAG, "dialer[$connId] $address subscribed (Columba TX ready)")
@@ -1276,6 +1255,9 @@ class BleLink(private val context: Context) {
                         return
                     }
                     Log.w(TAG, "dialer[$connId] data CCCD null — DATA notifications NOT enabled")
+                }
+                if (!link.gattState.markReady()) {
+                    return
                 }
                 Log.i(TAG, "dialer[$connId] $address subscribed (control + data ready)")
                 linkedConnIds.add(connId)
@@ -1325,14 +1307,10 @@ class BleLink(private val context: Context) {
         }
 
     private fun requestClientServices(gatt: BluetoothGatt, link: LinkState, reason: String) {
-        if (!link.servicesRequested.compareAndSet(false, true)) {
+        if (!link.gattState.beginServiceDiscovery()) {
             return
         }
         val operation = PendingGattOperation(GattOperationKind.ServiceDiscovery, null)
-        if (!link.beginGattOperation(operation)) {
-            link.servicesRequested.set(false)
-            return
-        }
         val started = runCatching { gatt.discoverServices() }.getOrDefault(false)
         Log.i(TAG, "dialer[${link.connId}] discovering services after $reason started=$started")
         if (!started) {
@@ -1385,16 +1363,15 @@ class BleLink(private val context: Context) {
         return false
     }
 
-    private fun scheduleClientOpenFallback(connId: Int, address: String, gatt: BluetoothGatt) {
-        startLinkWorker(connId, "client-fallback-$connId") {
-            Thread.sleep(MTU_DISCOVERY_FALLBACK_MS)
-            val link = links[connId]
-            if (running && radioActive && link != null && !linkedConnIds.contains(connId)) {
-                link.cancelGattOperation(PendingGattOperation(GattOperationKind.Mtu, null))
-                requestClientServices(gatt, link, "mtu callback timeout")
-            }
-            Thread.sleep(CLIENT_LINK_READY_TIMEOUT_MS - MTU_DISCOVERY_FALLBACK_MS)
-            if (running && radioActive && links.containsKey(connId) && !linkedConnIds.contains(connId)) {
+    private fun scheduleClientOpenTimeout(connId: Int, address: String, gatt: BluetoothGatt) {
+        startLinkWorker(connId, "client-timeout-$connId") {
+            // Android still owns an accepted MTU request until its callback. A missing callback
+            // closes the link at the startup deadline; it cannot authorize service discovery.
+            Thread.sleep(CLIENT_LINK_READY_TIMEOUT_MS)
+            val link = links[connId] ?: return@startLinkWorker
+            if (running && radioActive &&
+                link.gattState.expireStartup(SystemClock.elapsedRealtime(), CLIENT_LINK_READY_TIMEOUT_MS)
+            ) {
                 Log.w(TAG, "dialer[$connId] $address did not become a Prns link; closing stale GATT")
                 runCatching { gatt.disconnect() }
                 closeLink(connId)
@@ -1413,6 +1390,7 @@ class BleLink(private val context: Context) {
             NativeBridge.nativeBleDisconnected(connId)
             return
         }
+        link.gattState.close()
         inboundByAddr.remove(link.address, connId)
         columbaSubscribedCentrals.remove(link.address)
         dialingAddrs.remove(link.address)
@@ -1714,7 +1692,6 @@ class BleLink(private val context: Context) {
         private const val RADIO_STATE_RETRY_MS = 1_000L
         private const val RSSI_NONE = 127
         private const val MAX_ATT_MTU = 517
-        private const val MTU_DISCOVERY_FALLBACK_MS = 750L
         private const val CLIENT_LINK_READY_TIMEOUT_MS = 8_000L
         private const val WORKER_SHUTDOWN_TIMEOUT_MS = 2_000L
         private const val GATT_BUSY_RETRY_MS = 4L
