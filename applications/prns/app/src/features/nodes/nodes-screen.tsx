@@ -16,6 +16,7 @@ import {
   Subheading,
 } from "@/ui/primitives";
 import { formatBytes, formatRequestKind, formatRuntime } from "./format";
+import { AndroidBluetoothCard } from "./android-bluetooth-card";
 
 export function NodesScreen() {
   const runtime = useDevelopmentRuntime();
@@ -37,6 +38,7 @@ export function NodesScreen() {
       <Badge>Your network</Badge>
       <ScreenHeading>Nodes</ScreenHeading>
       <BodyText>Manage this device and the nodes paired with it.</BodyText>
+      <AndroidBluetoothCard />
 
       {runtime.accessorySetup?.phase === "setupRequired" ? (
         <Card>

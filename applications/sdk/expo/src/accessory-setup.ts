@@ -1,5 +1,5 @@
 import { NativePayloadError } from "./hydrate";
-import type { PrnsAppNativeModule } from "./native";
+import type { AppleAccessorySetupNativeModule } from "./native";
 
 export type AccessorySetupStatus = {
   readonly phase: "activating" | "failed" | "ready" | "setupRequired";
@@ -60,7 +60,7 @@ const pickerOutcomes = new Set<AccessorySetupPickerOutcome["type"]>([
 ]);
 
 export function createAccessorySetupRuntime(
-  nativeModule: PrnsAppNativeModule,
+  nativeModule: AppleAccessorySetupNativeModule,
 ): AccessorySetupRuntime {
   return {
     readStatus: async () => parseStatus(await nativeModule.accessorySetupStatus()),

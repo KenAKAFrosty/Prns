@@ -8,12 +8,6 @@ export type PrnsAppNativeModule = {
   readonly previewIdentityImport: (identity: readonly number[]) => Promise<string>;
   readonly createGeneratedIdentity: () => Promise<string>;
   readonly createImportedIdentity: (identity: readonly number[]) => Promise<string>;
-  readonly accessorySetupStatus: () => Promise<string>;
-  readonly showAccessorySetupPicker: () => Promise<string>;
-  readonly addListener: (
-    eventName: "onAccessorySetupStatus",
-    listener: (event: { readonly status: string }) => void,
-  ) => EventSubscription;
   readonly start: (inputJson: string) => Promise<string>;
   readonly snapshot: () => Promise<string>;
   readonly initiatePairing: (inputJson: string) => Promise<string>;
@@ -39,6 +33,29 @@ export type PrnsAppNativeModule = {
   readonly reset: () => Promise<string>;
 };
 
+export type AppleAccessorySetupNativeModule = {
+  readonly accessorySetupStatus: () => Promise<string>;
+  readonly showAccessorySetupPicker: () => Promise<string>;
+  readonly addListener: (
+    eventName: "onAccessorySetupStatus",
+    listener: (event: { readonly status: string }) => void,
+  ) => EventSubscription;
+};
+
+export type AndroidRuntimeNativeModule = {
+  readonly androidRuntimeStatus: () => Promise<string>;
+  readonly requestBluetoothPermissions: () => Promise<string>;
+  readonly requestBackgroundBluetoothPermission: () => Promise<string>;
+  readonly addListener: (
+    eventName: "onAndroidRuntimeStatus",
+    listener: (event: { readonly status: string }) => void,
+  ) => EventSubscription;
+};
+
+// These wrappers describe separate platform capabilities. Only the selected
+// platform provider calls its capability; the shared runtime requires neither.
+export const nativeAccessorySetup = requireNativeModule<AppleAccessorySetupNativeModule>("PrnsApp");
+export const nativeAndroidRuntime = requireNativeModule<AndroidRuntimeNativeModule>("PrnsApp");
 const nativePrnsApp = requireNativeModule<PrnsAppNativeModule>("PrnsApp");
 
 export default nativePrnsApp;

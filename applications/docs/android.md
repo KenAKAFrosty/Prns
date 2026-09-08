@@ -1,0 +1,80 @@
+# Android development
+
+The Android application targets Android 10 (API 29) and newer. This is the
+minimum version used by the upstream Bluetooth L2CAP transport, not the compile
+or target SDK. The Expo/React Native toolchain currently compiles and targets
+API 36. The first intended hardware target is a Galaxy S9+ running Android 10.
+
+## Ownership
+
+The Kotlin Expo module translates values and platform lifecycle into the same
+application-owned Rust runtime used by iOS. It does not run Personal Hopspot's
+separate engine. A non-exported foreground service owns the platform adapters;
+React reloads and Activity destruction do not stop the node. The service has an
+ongoing notification and an explicit Stop action. Android may still terminate
+the process. A sticky service restart reopens the stored identity and the last
+successful start configuration; a user Stop clears that restart intent.
+
+Identity, grants, contacts, and messages remain Rust-owned under the application's
+private `noBackupFilesDir/prns/development` directory. These are disposable
+development records, not a secure-storage or migration guarantee.
+
+Bluetooth uses the public upstream Android backend and an attributed adaptation
+of its Kotlin transport glue. Android permissions and discovery are independent
+of Apple AccessorySetupKit and of RemoteControl invitation/grant pairing. The
+node and TCP interface can start without granting Bluetooth permission.
+
+## Build
+
+Install the Android SDK/NDK, JDK 21, the repository Rust toolchain, and the Rust
+`aarch64-linux-android` target. Set `ANDROID_HOME` to the SDK directory and install
+the application JavaScript dependencies as described in the app README.
+
+From `applications/`:
+
+```sh
+npm run native:android:client
+npm run native:android:standalone
+```
+
+The first command builds a development client that uses Metro. The second bundles
+JavaScript into a standalone development APK. Both use the development application
+identifier and local debug signing; neither is a production distribution build.
+Generated Android projects and native build outputs are ignored. The tracked
+Expo config plugin, module sources, and build scripts are the source of truth.
+
+Builds select `arm64-v8a` by default to limit disk and build time. Set
+`PRNS_ANDROID_ABIS=x86_64` for an Intel emulator, or a comma-separated list for both
+supported ABIs. Rust and APK packaging use 16 KB page alignment. Native sources
+are rebuilt through Cargo's incremental graph on every Android native build.
+
+Install the resulting APK using an explicitly selected device. For the Metro
+client, forward that device's Metro port over USB; do not assume another phone's
+connection settings. The standalone APK does not need a Metro connection.
+
+## Permissions and limits
+
+On Android 10–11, Bluetooth discovery requires location permission and enabled
+Location services. Background discovery requires a separate background-location
+grant. The UI requests these separately and only after an explicit user action.
+On Android 12+, discovery uses Nearby devices permissions. The service does not
+make these grants implicit or bypass Android's foreground-service launch limits.
+
+The runtime uses a connected-device service for communication with external
+Bluetooth/network peers. This is not a blanket promise that every future
+interface can run indefinitely in the background. Wi-Fi Auto, USB, Wi-Fi Aware,
+and Wi-Fi Direct are not enabled by this initial Android composition.
+
+## Acceptance sequence
+
+1. Build/link/package checks; shared SDK/UI and Rust tests; Android callback tests.
+2. Real-device startup, identity creation/reopen, contacts, and controlled TCP
+   RemoteControl/LXMF communication.
+3. Bluetooth discovery, invitation/code approval, authenticated remote request,
+   and message delivery with the intended board.
+4. UI recreation, screen locking, denied/regranted permissions, Bluetooth toggles,
+   peer loss/recovery, explicit Stop, and process restart. Record failures as well
+   as successful retries. Repeat with bundled JavaScript and Metro stopped.
+
+Passing compilation or emulator tests does not qualify physical Bluetooth or
+background delivery. Current results are recorded in `validation.md`.

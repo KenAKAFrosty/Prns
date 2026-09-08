@@ -1,6 +1,6 @@
 import { NativePayloadError } from "./hydrate";
 import { createAccessorySetupRuntime, parseAccessorySetupStatus } from "./accessory-setup";
-import type { PrnsAppNativeModule } from "./native";
+import type { AppleAccessorySetupNativeModule } from "./native";
 
 const readyStatus = JSON.stringify({
   phase: "ready",
@@ -12,13 +12,15 @@ const readyStatus = JSON.stringify({
   lastError: null,
 });
 
-function nativeSetupFixture(overrides: Partial<PrnsAppNativeModule> = {}): PrnsAppNativeModule {
+function nativeSetupFixture(
+  overrides: Partial<AppleAccessorySetupNativeModule> = {},
+): AppleAccessorySetupNativeModule {
   return {
     accessorySetupStatus: jest.fn(async () => readyStatus),
     showAccessorySetupPicker: jest.fn(async () => JSON.stringify({ type: "completed" })),
     addListener: jest.fn(() => ({ remove: jest.fn() })),
     ...overrides,
-  } as PrnsAppNativeModule;
+  };
 }
 
 describe("app-owned AccessorySetupKit bridge", () => {

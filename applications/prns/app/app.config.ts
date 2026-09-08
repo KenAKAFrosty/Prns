@@ -37,10 +37,11 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     ...config,
     name: selection.name,
     slug: selection.slug,
+    scheme: selection.identifier,
     version: "0.0.0",
     orientation: "default",
     userInterfaceStyle: "automatic",
-    plugins: ["expo-router", "./tools/with-ios-18"],
+    plugins: ["expo-router", "./tools/with-ios-18", "./tools/with-android-runtime"],
     ios: {
       ...config.ios,
       bundleIdentifier: selection.identifier,
@@ -63,6 +64,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     android: {
       ...config.android,
       package: selection.identifier,
+      allowBackup: false,
     },
     web: {
       ...config.web,

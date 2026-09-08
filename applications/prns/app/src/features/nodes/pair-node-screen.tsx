@@ -22,6 +22,7 @@ import {
 import { TextField } from "@/ui/text-field";
 import { useAppPalette } from "@/ui/theme";
 import { formatBytes, formatRequestKind } from "./format";
+import { AndroidBluetoothCard } from "./android-bluetooth-card";
 
 type RemoteControlPairingState = DevelopmentNodeSnapshot["pairing"];
 type RemoteControlPairingCandidate = DevelopmentNodeSnapshot["pairingCandidates"][number];
@@ -128,11 +129,13 @@ export function PairNodeScreen({
       <Badge>Secure pairing</Badge>
       <ScreenHeading>Pair a node</ScreenHeading>
       <BodyText>
-        First choose a nearby Bluetooth node. Then open secure pairing on the node you want to
-        manage, enter its invitation, and compare the confirmation code on both devices.
+        {runtime.availability.platform === "android"
+          ? "Open secure pairing on the node you want to manage. When it appears below, enter its invitation and compare the confirmation code on both devices."
+          : "First choose a nearby Bluetooth node. Then open secure pairing on the node you want to manage, enter its invitation, and compare the confirmation code on both devices."}
       </BodyText>
 
-      {runtime.availability.type === "available" ? (
+      <AndroidBluetoothCard />
+      {runtime.availability.type === "available" && runtime.availability.platform === "ios" ? (
         <AccessorySetupCard
           feedback={setupFeedback}
           onShow={() => void showAccessorySetup()}
@@ -150,7 +153,8 @@ export function PairNodeScreen({
         </Card>
       ) : null}
 
-      {runtime.phase === "starting" && runtime.accessorySetup?.phase === "ready" ? (
+      {runtime.phase === "starting" &&
+      (runtime.accessorySetup?.phase === "ready" || runtime.availability.platform === "android") ? (
         <Card>
           <Subheading>Getting ready</Subheading>
           <Badge>Starting</Badge>

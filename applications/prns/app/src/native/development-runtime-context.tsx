@@ -39,6 +39,7 @@ import {
 
 import { runtimeProvider } from "@/native/runtime-provider";
 import type { RuntimeProvider } from "./runtime-provider.types";
+import { useAndroidRuntime, type AndroidRuntimeView } from "./use-android-runtime";
 
 export type RuntimeCommandResult<Outcome> =
   | { readonly type: "outcome"; readonly outcome: Outcome }
@@ -51,6 +52,7 @@ export type DevelopmentRuntimeView = {
   readonly availability: RuntimeProvider["availability"];
   readonly accessorySetup: AccessorySetupStatus | null;
   readonly accessorySetupFailure: string | null;
+  readonly androidRuntime: AndroidRuntimeView | null;
   readonly phase: "unavailable" | "starting" | "ready" | "failed";
   readonly snapshot: DevelopmentNodeSnapshot | null;
   readonly lifecycleFailure: string | null;
@@ -108,6 +110,9 @@ export function DevelopmentRuntimeProvider({
   refreshActive = true,
 }: DevelopmentRuntimeProviderProps) {
   const selectedProvider = provider ?? runtimeProvider;
+  const androidCapability =
+    "androidRuntime" in selectedProvider ? selectedProvider.androidRuntime : undefined;
+  const androidRuntime = useAndroidRuntime(androidCapability);
   const [phase, setPhase] = useState<DevelopmentRuntimeView["phase"]>(
     selectedProvider.availability.type === "available" ? "starting" : "unavailable",
   );
@@ -434,6 +439,7 @@ export function DevelopmentRuntimeProvider({
       availability: selectedProvider.availability,
       accessorySetup,
       accessorySetupFailure,
+      androidRuntime: androidCapability === undefined ? null : androidRuntime,
       phase,
       snapshot,
       lifecycleFailure,
@@ -458,6 +464,8 @@ export function DevelopmentRuntimeProvider({
       approvePairing,
       accessorySetup,
       accessorySetupFailure,
+      androidRuntime,
+      androidCapability,
       backgroundFailure,
       describeTarget,
       announceTarget,

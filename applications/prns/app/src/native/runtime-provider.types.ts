@@ -1,5 +1,6 @@
 import type {
   AccessorySetupRuntime,
+  AndroidRuntime,
   DevelopmentRuntime,
   DevelopmentRuntimeScopeOptions,
   scopedDevelopmentRuntime,
@@ -9,9 +10,10 @@ export type RuntimeProvider =
   | {
       readonly availability: {
         readonly type: "available";
-        readonly platform: "ios";
+        readonly platform: "ios" | "android";
       };
       readonly accessorySetup?: AccessorySetupRuntime;
+      readonly androidRuntime?: AndroidRuntime;
       readonly runtime: DevelopmentRuntime;
       readonly acquire: (
         options: DevelopmentRuntimeScopeOptions,

@@ -47,6 +47,7 @@ function assertVariant(
   const checks: ReadonlyArray<readonly [string, unknown, string]> = [
     ["name", config.name, expected.name],
     ["slug", config.slug, expected.slug],
+    ["scheme", config.scheme, expected.identifier],
     ["ios.bundleIdentifier", ios.bundleIdentifier, expected.identifier],
     ["android.package", android.package, expected.identifier],
     ["web.bundler", web.bundler, "metro"],
@@ -105,6 +106,12 @@ function assertVariant(
   ) {
     fail(`${variant}.ios.infoPlist must declare only the central Bluetooth background mode`);
   }
+  if (android.allowBackup !== false) {
+    fail(`${variant}.android must disable backups of disposable development state`);
+  }
+  if (!Array.isArray(config.plugins) || !config.plugins.includes("./tools/with-android-runtime")) {
+    fail(`${variant} must apply the Android API 29 runtime plugin`);
+  }
 }
 
 assertVariant("development", {
@@ -127,4 +134,6 @@ if (invalid.status === 0) {
   fail("PRNS_APP_VARIANT=preview must be rejected");
 }
 
-console.log("config:check: coordinates and variant-isolated ASK central declarations are exact");
+console.log(
+  "config:check: variant coordinates, ASK declarations, and Android runtime policy are exact",
+);

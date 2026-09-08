@@ -1,7 +1,10 @@
 {
-  "platforms": ["apple"],
+  "platforms": ["apple", "android"],
   "apple": {
     "modules": ["PrnsAppModule"],
     "appDelegateSubscribers": ["PrnsAppDelegateSubscriber"]
+  },
+  "android": {
+    "modules": ["rs.reticulum.prns.app.expo.PrnsAppModule"]
   }
 }

@@ -28,6 +28,8 @@
     "native:ios:client": "bash sdk/expo/ios/build-development-client.sh",
     "native:ios:device": "bash sdk/expo/ios/build-development-client.sh --device",
     "native:ios": "npm run native:ios:archives && npm run native:ios:client",
+    "native:android:client": "bash sdk/expo/android/build-client.sh",
+    "native:android:standalone": "bash sdk/expo/android/build-client.sh --standalone",
     "start": "npm --prefix prns/app run start",
     "start:web": "npm --prefix prns/app run start:web",
     "versions:check": "npm --prefix prns/app run versions:check",

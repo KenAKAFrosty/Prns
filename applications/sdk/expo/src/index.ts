@@ -1,6 +1,14 @@
 import { createDevelopmentRuntime } from "./facade";
 import { createAccessorySetupRuntime } from "./accessory-setup";
-import nativePrnsApp from "./native";
+import { createAndroidRuntime } from "./android-runtime";
+import nativePrnsApp, { nativeAccessorySetup, nativeAndroidRuntime } from "./native";
+
+export {
+  createAndroidRuntime,
+  parseAndroidRuntimeStatus,
+  type AndroidRuntime,
+  type AndroidRuntimeStatus,
+} from "./android-runtime";
 
 export { HOST_CONTRACT_FINGERPRINT, NATIVE_CONTRACT_FINGERPRINT } from "./contract.generated";
 export {
@@ -70,7 +78,8 @@ export {
 export { NativePayloadError } from "./hydrate";
 
 export const developmentRuntime = createDevelopmentRuntime(nativePrnsApp);
-export const accessorySetupRuntime = createAccessorySetupRuntime(nativePrnsApp);
+export const accessorySetupRuntime = createAccessorySetupRuntime(nativeAccessorySetup);
+export const androidRuntime = createAndroidRuntime(nativeAndroidRuntime);
 
 export const {
   announceLxmf,

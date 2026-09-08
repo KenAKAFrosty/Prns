@@ -1,6 +1,7 @@
 import type {
   AccessorySetupRuntime,
   AccessorySetupStatus,
+  AndroidRuntimeStatus,
   DevelopmentNodeSnapshot,
   DevelopmentRuntime,
   DevelopmentRuntimeStartError,
@@ -223,6 +224,125 @@ function RuntimeViewProbe({
 }
 
 describe("Foundation 1 Nodes runtime binding", () => {
+  it.each([
+    [{ bluetoothPermission: "blocked" as const }, "Open app settings"],
+    [{ bluetoothRadio: "unsupported" as const }, "Bluetooth is not available on this device."],
+    [
+      { bluetoothRadio: "off" as const },
+      "Turn on Bluetooth in Android Settings, then return to prns.",
+    ],
+    [
+      { locationServices: "off" as const },
+      "Turn on Location in Android Settings to let this version of Android discover nearby Bluetooth nodes.",
+    ],
+  ])("keeps Android access limitations truthful: %j", async (overrides, expected) => {
+    const original = fakeProvider(jest.fn());
+    if (!("acquire" in original)) throw new Error("expected native fixture");
+    const { accessorySetup: _accessorySetup, ...shared } = original;
+    const status: AndroidRuntimeStatus = {
+      revision: 1,
+      bluetoothPermission: "granted",
+      backgroundDiscovery: "notRequired",
+      bluetoothRadio: "on",
+      locationServices: "on",
+      service: "running",
+      lastError: null,
+      ...overrides,
+    };
+    const request = jest.fn(async () => status);
+    const provider: RuntimeProvider = {
+      ...shared,
+      availability: { type: "available", platform: "android" },
+      androidRuntime: {
+        readStatus: async () => status,
+        requestBluetoothPermissions: request,
+        requestBackgroundBluetoothPermission: request,
+        addStatusListener: () => ({ remove: jest.fn() }),
+      },
+    };
+    const view = render(
+      <DevelopmentRuntimeProvider provider={provider}>
+        <PairNodeScreen selectedCandidateId={undefined} />
+      </DevelopmentRuntimeProvider>,
+    );
+    await waitFor(() => expect(view.getByText(expected)).toBeTruthy());
+    expect(
+      view.queryByText("Bluetooth is available. Nearby nodes will appear when discovered."),
+    ).toBeNull();
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it("runs Android without Bluetooth permission and exposes its own explicit access flow", async () => {
+    const original = fakeProvider(jest.fn());
+    if (!("acquire" in original)) throw new Error("expected native fixture");
+    const { accessorySetup: _accessorySetup, ...shared } = original;
+    const status: AndroidRuntimeStatus = {
+      revision: 1,
+      bluetoothPermission: "notRequested",
+      backgroundDiscovery: "notGranted",
+      bluetoothRadio: "on",
+      locationServices: "on",
+      service: "running",
+      lastError: null,
+    };
+    const request = jest.fn(async () => ({
+      ...status,
+      revision: 2,
+      bluetoothPermission: "granted" as const,
+    }));
+    const requestBackground = jest.fn(async () => ({
+      ...status,
+      revision: 3,
+      bluetoothPermission: "granted" as const,
+      backgroundDiscovery: "granted" as const,
+    }));
+    const acquire = jest.fn(shared.acquire);
+    const provider: RuntimeProvider = {
+      ...shared,
+      availability: { type: "available", platform: "android" },
+      acquire,
+      androidRuntime: {
+        readStatus: async () => status,
+        requestBluetoothPermissions: request,
+        requestBackgroundBluetoothPermission: requestBackground,
+        addStatusListener: () => ({ remove: jest.fn() }),
+      },
+    };
+    const publish = jest.fn<void, [DevelopmentRuntimeView]>();
+    const view = render(
+      <DevelopmentRuntimeProvider provider={provider}>
+        <RuntimeViewProbe publish={publish} />
+        <PairNodeScreen selectedCandidateId={undefined} />
+      </DevelopmentRuntimeProvider>,
+    );
+    await waitFor(() =>
+      expect(publish).toHaveBeenLastCalledWith(expect.objectContaining({ phase: "ready" })),
+    );
+    expect(acquire).toHaveBeenCalledTimes(1);
+    expect(request).not.toHaveBeenCalled();
+    expect(requestBackground).not.toHaveBeenCalled();
+    expect(view.queryByRole("button", { name: "Choose a Bluetooth node" })).toBeNull();
+    expect(
+      view.getByText(
+        "Your identity, contacts, and other connections do not need Bluetooth access.",
+      ),
+    ).toBeTruthy();
+    fireEvent.press(view.getByRole("button", { name: "Allow Bluetooth" }));
+    await waitFor(() =>
+      expect(
+        view.getByText("Bluetooth is available. Nearby nodes will appear when discovered."),
+      ).toBeTruthy(),
+    );
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(requestBackground).not.toHaveBeenCalled();
+    fireEvent.press(view.getByRole("button", { name: "Allow background discovery" }));
+    await waitFor(() => expect(requestBackground).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(view.queryByRole("button", { name: "Allow background discovery" })).toBeNull(),
+    );
+    expect(acquire).toHaveBeenCalledTimes(1);
+  });
+
   it("polls snapshots only for visible Nodes and Inbox routes", () => {
     expect(routeConsumesDevelopmentSnapshot("/nodes")).toBe(true);
     expect(routeConsumesDevelopmentSnapshot("/nodes/pair")).toBe(true);

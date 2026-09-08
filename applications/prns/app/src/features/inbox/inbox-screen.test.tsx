@@ -12,7 +12,7 @@ import { destinationHash } from "personal-rns/contract";
 import type { ReactNode } from "react";
 
 import type { RuntimeCommandResult } from "@/native/development-runtime-context";
-import { ComposeScreen, ConversationScreen, InboxScreen } from "./inbox-screen.ios";
+import { ComposeScreen, ConversationScreen, InboxScreen } from "./inbox-screen.native";
 
 const mockReplace = jest.fn();
 const mockDestination = destinationHash(Uint8Array.from({ length: 16 }, (_, index) => index));
