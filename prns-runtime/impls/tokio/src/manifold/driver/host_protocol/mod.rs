@@ -163,7 +163,44 @@ pub struct AddInterfaceCommand {
 #[derive(Debug)]
 enum HostResourceStorage {
     Owned(std::vec::Vec<u8>),
+    Recyclable {
+        bytes: std::vec::Vec<u8>,
+        recycler: HostResourceRecycler,
+    },
     Shared(Arc<[u8]>),
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct HostResourceRecycler {
+    buffers: Arc<std::sync::Mutex<std::vec::Vec<std::vec::Vec<u8>>>>,
+    maximum_buffers: usize,
+}
+
+impl HostResourceRecycler {
+    pub(crate) fn bounded(maximum_buffers: usize) -> Self {
+        Self {
+            buffers: Arc::new(std::sync::Mutex::new(std::vec::Vec::new())),
+            maximum_buffers,
+        }
+    }
+
+    pub(crate) fn take(&self) -> std::vec::Vec<u8> {
+        self.buffers
+            .try_lock()
+            .ok()
+            .and_then(|mut buffers| buffers.pop())
+            .unwrap_or_default()
+    }
+
+    fn recycle(&self, bytes: std::vec::Vec<u8>) {
+        let Ok(mut buffers) = self.buffers.try_lock() else {
+            return;
+        };
+        if buffers.len() == self.maximum_buffers {
+            return;
+        }
+        buffers.push(bytes);
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -182,6 +219,7 @@ impl HostResourcePayload {
     pub fn as_slice(&self) -> &[u8] {
         match &self.storage {
             HostResourceStorage::Owned(bytes) => &bytes[..self.len],
+            HostResourceStorage::Recyclable { bytes, .. } => &bytes[..self.len],
             HostResourceStorage::Shared(bytes) => &bytes[..self.len],
         }
     }
@@ -204,6 +242,23 @@ impl HostResourcePayload {
             storage: HostResourceStorage::Shared(bytes),
             len,
         })
+    }
+
+    pub(crate) fn recyclable(bytes: std::vec::Vec<u8>, recycler: HostResourceRecycler) -> Self {
+        let len = bytes.len();
+        Self {
+            storage: HostResourceStorage::Recyclable { bytes, recycler },
+            len,
+        }
+    }
+}
+
+impl Drop for HostResourcePayload {
+    fn drop(&mut self) {
+        let HostResourceStorage::Recyclable { bytes, recycler } = &mut self.storage else {
+            return;
+        };
+        recycler.recycle(core::mem::take(bytes));
     }
 }
 
