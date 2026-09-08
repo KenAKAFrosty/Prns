@@ -170,6 +170,18 @@ The application still has a development identifier and local debug signing.
   bidirectional fixture reached its deadline despite the successful inbound
   delivery; it did not produce a combined success result. The delayed fixture's
   26 focused tests pass.
+- A fresh peer subsequently received a new message's delivery proof after the
+  user reported unplugging the Galaxy. USB device observations before and after
+  the proof, plus the bounded connection observer, showed the phone absent.
+  The peer first discovered the exact phone destination with explicit path
+  requests through the board. The phone was requested to remain locked and off
+  all chargers; its screen, charging, and Doze state could not be independently
+  inspected while disconnected. Confirmation of those conditions and the exact
+  new message ID in the post-unlock inbox remain pending. The sender was stopped
+  deliberately after this one-way proof, without attempting a phone reply.
+  This is not a combined bidirectional pass, passive recovery, or long-idle
+  qualification. The discovery helper's 30 focused tests pass; host tests do
+  not opt into physical-peer path discovery.
 - At the start of that later test, before any agent-requested reset or flash,
   the board's current boot reported `SysRtcWdt` as its last reset cause. This
   identifies an RTC watchdog reset but not the stalled task or triggering action.
