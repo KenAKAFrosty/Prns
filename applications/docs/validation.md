@@ -95,8 +95,8 @@ The application still has a development identifier and local debug signing.
   subscriptions. The app subsequently receives the board's pairing announcement
   and sends pairing traffic over its Bluetooth-only composition.
 - The first physical Android pairing attempt still timed out before confirmed
-  pairing. No authenticated remote request or Android LXMF exchange has passed
-  yet. The invitation's remaining time and packet counters are not sufficient
+  pairing. No authenticated remote request had passed at that point. The
+  invitation's remaining time and packet counters are not sufficient
   evidence to attribute that failure to a particular cause.
 - Investigation reproduced an Embassy Bluetooth receiver defect: joined frames
   lost their trailing frames, and frames split across L2CAP reads were discarded.
@@ -106,13 +106,13 @@ The application still has a development identifier and local debug signing.
   and booted successfully on the USB-connected E290. The first fresh invitation
   with that firmware still timed out before confirmation. Its USB monitor had
   disconnected before the attempt, so it provides no request-ingress evidence.
-  The framing defect is fixed; the remaining physical pairing failure is not
-  yet explained.
+  The framing defect is fixed; those physical pairing failures are not
+  individually explained by the available evidence.
 - A later fresh invitation reached the confirmation step on the Galaxy and
   board, and the user confirmed matching codes. Pressing the board button to
   select acceptance was followed by a freeze and restart. The phone was not
-  approved, and pairing/grant persistence remains unverified. This is progress
-  beyond the invitation step, not a completed Android pairing check.
+  approved, and no grant was confirmed in that attempt. That trial reached
+  confirmation but did not complete pairing.
 - Source tests also exposed an invitation-window mismatch: the target rejected
   a new attempt when its configured confirmation timeout no longer fit, even
   while the invitation remained open. The target now signs a timeout bounded
@@ -120,6 +120,17 @@ The application still has a development identifier and local debug signing.
   The combined app-tree RemoteControl test subset passes (186 tests). The
   isolated correction also passes no-std/alloc checks and strict Clippy; its
   registered Kani proof has not run because `cargo-kani` is unavailable.
+- A subsequent fresh pairing completed on both devices with diagnostic firmware
+  based on `b3f8fe243434` plus temporary button/reset logging and DEBUG enabled.
+  The app showed **Paired**, listed the target in Nodes, and its first read-only
+  **Check node connection** returned **Connected** in 190 ms. The board log
+  recorded the pairing offer, both button events and successful display
+  refreshes, controller commit, and the later request forwarded to the
+  application. This passes one foreground Android Bluetooth pairing and
+  authenticated Describe exchange. No reboot or watchdog warning occurred in
+  that captured run. The earlier button-triggered freeze remains unresolved;
+  success with extra logging is not evidence that it is fixed. Pairing retention
+  across phone/board restarts and physical Android LXMF delivery remain untested.
 
 The detached mobility gate passes for application commit `789aec2e1` against
 the recorded Prns revision. This includes exact dependency resolution,
