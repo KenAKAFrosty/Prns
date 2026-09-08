@@ -160,11 +160,16 @@ The application still has a development identifier and local debug signing.
   not Resources, propagation, locked delivery, or phone OS reboot durability.
 - A later delayed inbound test obtained a proof for a new LXMF message while
   the Galaxy remained securely locked with its screen off. The same Android
-  process and foreground service were present before and after. This establishes
-  short locked protocol delivery on USB power; matching the new message ID and
-  verification state in the post-unlock inbox is still pending. It is not a
-  Doze, battery-powered, notification, or mailbox-retention result. The delayed
-  fixture's 26 focused tests pass.
+  process and foreground service were present before and after. After unlock,
+  the real inbox showed the exact proof-matched message ID, content, **Verified
+  source**, and **Received** state. Those fields also survived an explicit app
+  force-stop and cold relaunch into a new process, with the peer already stopped.
+  This establishes short locked delivery on USB power and app-process mailbox
+  retention, not Doze, battery-powered delivery, notifications, or phone OS
+  reboot durability. No phone reply was attempted in this run, so the combined
+  bidirectional fixture reached its deadline despite the successful inbound
+  delivery; it did not produce a combined success result. The delayed fixture's
+  26 focused tests pass.
 - At the start of that later test, before any agent-requested reset or flash,
   the board's current boot reported `SysRtcWdt` as its last reset cause. This
   identifies an RTC watchdog reset but not the stalled task or triggering action.
@@ -180,7 +185,8 @@ that exchange on the phone.
 
 The full physical lifecycle matrix remains pending beyond the narrow checks
 above. Explicit service Stop/restart, denied/regranted permissions, Bluetooth
-radio changes, prolonged peer loss, OS process eviction, background delivery, and newer Android
+radio changes, prolonged peer loss, OS process eviction, battery-powered or
+long-idle background delivery, and newer Android
 permission/service behavior remain unqualified. See [Android development](android.md)
 for the repeatable acceptance sequence and the temporary runtime-restart behavior
 when the Bluetooth listener changes.
