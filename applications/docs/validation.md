@@ -77,6 +77,9 @@ The application still has a development identifier and local debug signing.
   Its saved identity survives reinstalling the development APK. The foreground
   service remains present after leaving the app, and returning preserves the
   native process and increasing Host uptime.
+- Foreground Bluetooth access and the separate background-discovery location
+  grant complete through Android's permission dialogs. This verifies the
+  permission flow, not discovery or delivery while the phone is locked.
 - An on-device test loads the actual JNI library, checks the bridge contract
   and malformed requests, then preserves an identity and contact across a
   complete native stop/start. It runs in an isolated test application, not the
@@ -96,8 +99,14 @@ The application still has a development identifier and local debug signing.
   yet. The invitation's remaining time and packet counters are not sufficient
   evidence to attribute that failure to a particular cause.
 
-The current Android source has not yet passed the detached mobility gate or
-the full physical lifecycle matrix. Screen locking, permission changes,
+The detached mobility gate passes for application commit `789aec2e1` against
+the recorded Prns revision. This includes exact dependency resolution,
+generated contracts, the application gate, and bidirectional native/Python
+LXMF delivery with verified proofs. It does not build an Android APK or run
+that exchange on the phone.
+
+The full physical lifecycle matrix remains pending. Screen locking, explicit
+Stop/restart, denied/regranted permissions,
 radio/peer recovery, process eviction, background delivery, and newer Android
 permission/service behavior remain unqualified. See [Android development](android.md)
 for the repeatable acceptance sequence and the temporary runtime-restart behavior
