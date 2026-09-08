@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use crate::lemire_index::HeapLemireIndex;
+use crate::lemire_index::{HeapIndexEntry, HeapLemireIndex};
 use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome};
 
 #[derive(Debug, Default)]
@@ -54,15 +54,20 @@ impl PacketHashHistory for HeapPacketHashHistory {
     }
 
     fn remember(&mut self, hash: PacketHash) -> RememberPacketOutcome {
-        if self.contains(&hash) {
-            return RememberPacketOutcome::AlreadyKnown;
+        let current_len = self.current.len();
+        match self.current.index.entry(&hash, &self.current.hashes) {
+            HeapIndexEntry::Occupied => return RememberPacketOutcome::AlreadyKnown,
+            HeapIndexEntry::Vacant(vacancy) => {
+                if self.previous.contains(&hash) {
+                    return RememberPacketOutcome::AlreadyKnown;
+                }
+                if current_len < Self::RNS_GENERATION_CAPACITY {
+                    self.current.hashes.push(hash);
+                    vacancy.insert(current_len, &self.current.hashes);
+                    return RememberPacketOutcome::StoredFresh;
+                }
+            }
         }
-
-        if self.current.len() < Self::RNS_GENERATION_CAPACITY {
-            self.current.insert(hash);
-            return RememberPacketOutcome::StoredFresh;
-        }
-
         core::mem::swap(&mut self.current, &mut self.previous);
         self.current.clear_retaining_capacity();
         self.current.insert(hash);
@@ -73,6 +78,14 @@ impl PacketHashHistory for HeapPacketHashHistory {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn numbered_hash(number: u64) -> PacketHash {
+        let key = number.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        let mut bytes = [0u8; 32];
+        bytes[..8].copy_from_slice(&key.to_be_bytes());
+        bytes[8..16].copy_from_slice(&number.to_be_bytes());
+        PacketHash::new(bytes)
+    }
 
     #[test]
     fn remembers_and_reports_duplicates() {
@@ -108,5 +121,33 @@ mod tests {
             assert!(history.contains(hash));
             assert_eq!(history.remember(*hash), RememberPacketOutcome::AlreadyKnown);
         }
+    }
+
+    #[test]
+    fn rotation_retains_the_full_generation_for_duplicate_detection() {
+        let mut history = HeapPacketHashHistory::default();
+        for number in 0..HeapPacketHashHistory::RNS_GENERATION_CAPACITY as u64 {
+            assert_eq!(
+                history.remember(numbered_hash(number)),
+                RememberPacketOutcome::StoredFresh
+            );
+        }
+
+        assert_eq!(
+            history.remember(numbered_hash(
+                HeapPacketHashHistory::RNS_GENERATION_CAPACITY as u64
+            )),
+            RememberPacketOutcome::StoredAfterRotation
+        );
+        assert_eq!(
+            history.remember(numbered_hash(0)),
+            RememberPacketOutcome::AlreadyKnown
+        );
+        assert_eq!(
+            history.remember(numbered_hash(
+                HeapPacketHashHistory::RNS_GENERATION_CAPACITY as u64
+            )),
+            RememberPacketOutcome::AlreadyKnown
+        );
     }
 }

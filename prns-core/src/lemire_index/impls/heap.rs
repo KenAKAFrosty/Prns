@@ -5,6 +5,21 @@ pub struct HeapLemireIndex {
     slots: alloc::vec::Vec<u32>,
 }
 
+pub(crate) enum HeapIndexEntry<'a> {
+    Occupied,
+    Vacant(HeapIndexVacantEntry<'a>),
+}
+
+pub(crate) struct HeapIndexVacantEntry<'a> {
+    index: &'a mut HeapLemireIndex,
+    position: usize,
+}
+
+enum ProbePosition {
+    Occupied(usize),
+    Vacant(usize),
+}
+
 impl Default for HeapLemireIndex {
     fn default() -> Self {
         let mut slots = alloc::vec::Vec::new();
@@ -22,18 +37,25 @@ impl HeapLemireIndex {
         ((key as u128 * self.slots.len() as u128) >> u64::BITS) as usize
     }
 
-    fn position<R: IndexRow>(&self, target: &R::Key, rows: &[R]) -> Option<usize> {
+    fn probe<R: IndexRow>(&self, target: &R::Key, rows: &[R]) -> ProbePosition {
         let n = self.slots.len();
         let mut pos = self.bucket(target.lemire_key());
         loop {
             let slot = self.slots[pos];
             if slot == Self::EMPTY {
-                return None;
+                return ProbePosition::Vacant(pos);
             }
             if rows[slot as usize].index_key() == target {
-                return Some(pos);
+                return ProbePosition::Occupied(pos);
             }
             pos = (pos + 1) % n;
+        }
+    }
+
+    fn position<R: IndexRow>(&self, target: &R::Key, rows: &[R]) -> Option<usize> {
+        match self.probe(target, rows) {
+            ProbePosition::Occupied(position) => Some(position),
+            ProbePosition::Vacant(_) => None,
         }
     }
 
@@ -60,6 +82,16 @@ impl HeapLemireIndex {
 
     pub fn contains<R: IndexRow>(&self, target: &R::Key, rows: &[R]) -> bool {
         self.position(target, rows).is_some()
+    }
+
+    pub(crate) fn entry<R: IndexRow>(&mut self, target: &R::Key, rows: &[R]) -> HeapIndexEntry<'_> {
+        match self.probe(target, rows) {
+            ProbePosition::Occupied(_) => HeapIndexEntry::Occupied,
+            ProbePosition::Vacant(position) => HeapIndexEntry::Vacant(HeapIndexVacantEntry {
+                index: self,
+                position,
+            }),
+        }
     }
 
     /// The caller pushes the row first, so `rows` already holds `slot`.
@@ -162,5 +194,20 @@ impl HeapLemireIndex {
 
     pub fn clear(&mut self) {
         self.slots.fill(Self::EMPTY);
+    }
+}
+
+impl HeapIndexVacantEntry<'_> {
+    pub(crate) fn insert<R: IndexRow>(self, slot: usize, rows: &[R]) {
+        if exceeds_two_thirds_load(rows.len(), self.index.slots.len()) {
+            self.index.rebuild(rows);
+            return;
+        }
+        debug_assert!(
+            slot < HeapLemireIndex::MAX_ROWS,
+            "HeapLemireIndex cannot represent this row number as u32"
+        );
+        debug_assert_eq!(self.index.slots[self.position], HeapLemireIndex::EMPTY);
+        self.index.slots[self.position] = slot as u32;
     }
 }
