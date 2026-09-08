@@ -170,6 +170,11 @@ mod tests {
     use personal_rns::persistence::{
         read_routing_table_snapshot, FileStore, PersistedStore, SnapshotRegion,
     };
+    use personal_rns::remote_control::{
+        RemoteControlControllerIdentitySecret, RemoteControlInitialAccess,
+        RemoteControlNodeIdentitySecrets, RemoteControlSelfAnnouncement, RemoteControlService,
+        RemoteControlTargetIdentitySecret,
+    };
     use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
     use personal_rns::runtime::{
         Diagnostic, ManuallyAttached, NoPersistence, PreConfiguredDestination, PrnsNodeRecipe,
@@ -257,11 +262,11 @@ mod tests {
         let server_address = server.local_addr().unwrap().to_string();
         let node_a = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: None,
+            remote_control: test_remote_control(),
             pre_configured_destinations: [test_destination(0xA1)],
             app_state: (),
             storage: GrowableHeap,
             request_endpoints: personal_rns::request_endpoints![],
-            remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
             interfaces: ManuallyAttached,
             persistence: NoPersistence,
             on_event: |_event, _state| {},
@@ -280,11 +285,11 @@ mod tests {
         let (_rotated_tx, rotated_rx) = tokio::sync::mpsc::unbounded_channel::<DestinationHash>();
         let node_b = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: None,
+            remote_control: test_remote_control(),
             pre_configured_destinations: [test_destination(0xB2)],
             app_state: (),
             storage: GrowableHeap,
             request_endpoints: personal_rns::request_endpoints![],
-            remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
             interfaces: |handle: &PrnsNodeHandle| {
                 handle.attach(client);
             },
@@ -357,11 +362,11 @@ mod tests {
         let restarted_address = restarted_server.local_addr().unwrap().to_string();
         let mut restarted_node = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: Some(Zeroizing::new([0xB3; IDENTITY_SECRET_KEY_LEN])),
+            remote_control: test_remote_control(),
             pre_configured_destinations: [test_destination(0xB2)],
             app_state: (),
             storage: GrowableHeap,
             request_endpoints: personal_rns::request_endpoints![],
-            remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
             interfaces: ManuallyAttached,
             persistence: NoPersistence,
             on_event: |_event, _state| {},
@@ -383,11 +388,11 @@ mod tests {
         );
         let requester_node = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: None,
+            remote_control: test_remote_control(),
             pre_configured_destinations: std::iter::empty::<PreConfiguredDestination<'static>>(),
             app_state: (),
             storage: GrowableHeap,
             request_endpoints: personal_rns::request_endpoints![],
-            remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
             interfaces: move |handle: &PrnsNodeHandle| {
                 handle.attach(requester_client);
             },
@@ -417,6 +422,23 @@ mod tests {
         assert_eq!(found.hops.0, 2);
     }
 
+    fn test_remote_control() -> RemoteControlService<'static> {
+        let identity_secrets = RemoteControlNodeIdentitySecrets::new(
+            RemoteControlControllerIdentitySecret::from(Zeroizing::new(
+                [0x43; IDENTITY_SECRET_KEY_LEN],
+            )),
+            RemoteControlTargetIdentitySecret::from(Zeroizing::new(
+                [0x54; IDENTITY_SECRET_KEY_LEN],
+            )),
+        )
+        .expect("test controller and target identities must remain distinct");
+        RemoteControlService::new(
+            identity_secrets,
+            RemoteControlInitialAccess::Nobody,
+            RemoteControlSelfAnnouncement::Unavailable,
+        )
+    }
+
     fn test_destination(byte: u8) -> PreConfiguredDestination<'static> {
         PreConfiguredDestination::Single {
             resource_strategy:
@@ -443,11 +465,11 @@ mod tests {
     {
         PrnsNode::new(PrnsNodeRecipe {
             transport_identity: None,
+            remote_control: test_remote_control(),
             pre_configured_destinations: [destination],
             app_state: (),
             storage: GrowableHeap,
             request_endpoints: personal_rns::request_endpoints![],
-            remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
             interfaces: ManuallyAttached,
             persistence: NoPersistence,
             on_event,
