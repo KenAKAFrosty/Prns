@@ -3,7 +3,8 @@ use super::relay::{RelayAudience, RelayPathRequest};
 
 use crate::crypto::X25519SecretKey;
 use crate::engine::remote_control_pairing::{
-    RemoteControlPairingRequestIngress, RemoteControlPairingRequestIngressOutcome,
+    RemoteControlPairingRequestDiagnostic, RemoteControlPairingRequestIngress,
+    RemoteControlPairingRequestIngressOutcome,
 };
 use crate::engine::settlement::settle;
 use crate::engine::LinkClosedReason;
@@ -17,7 +18,7 @@ use crate::engine::{
 use crate::identity::{IdentitySigner, ENCRYPTION_IV_LEN};
 use crate::interfaces::AttachedInterfaces;
 use crate::interfaces::{Egress, InboundPacket};
-use crate::routing::ingress::{ClassifiedInboundPacket, IngestEffects};
+use crate::routing::ingress::{ClassifiedInboundPacket, IgnoreReason, IngestEffects, Ingress};
 use crate::routing::links::channel::receive::receive as channel_receive;
 use crate::routing::links::establish::link_mtu_ceiling;
 use crate::routing::links::handshake::{negotiated_link_mtu, LinkProofSignOwed};
@@ -32,7 +33,7 @@ use crate::routing::links::resources::send::ResourceSealExecution;
 use crate::routing::links::resources::ResourceOffer;
 use crate::routing::proof::ProofRequest;
 use crate::storage::StorageLayout;
-use crate::wire::{BROADCAST_MTU, HEADER_MAX_LEN};
+use crate::wire::{DestinationType, WireContext, BROADCAST_MTU, HEADER_MAX_LEN};
 
 pub struct IngestIo<'a, FillEntropy, OnProofRequest, OnResourceOffer, Sink>
 where
@@ -53,6 +54,21 @@ where
 pub struct IngestPacketReport {
     pub wake_schedules: WakeSchedules,
     pub protocol_violation: Option<ProtocolViolationKind>,
+    /// Local-only disposition of a classified link request packet, without payloads or peer identifiers.
+    /// Unlike `protocol_violation`, this also reports ordinary policy rejection (including
+    /// requests arriving before their peer has been identified) and pairing outcomes.
+    /// Unclassifiable packets and packets forwarded without local handling have no request report.
+    pub request: Option<RequestIngressDiagnostic>,
+}
+
+/// Observability of link request ingress. Reporting this does not send a response,
+/// change an admission decision, or add application journal events.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequestIngressDiagnostic {
+    Ignored(IgnoreReason),
+    InterfaceMismatch,
+    ForwardedToApplication,
+    Pairing(RemoteControlPairingRequestDiagnostic),
 }
 
 impl<S: StorageLayout> EngineState<S> {
@@ -154,9 +170,21 @@ impl<S: StorageLayout> EngineState<S> {
             sink,
         } = io;
         let (source, ingress) = packet.into_parts();
+        let is_request = matches!(&ingress, Ingress::Data { data, .. }
+            if data.header.destination_type == DestinationType::Link
+                && data.header.context == WireContext::Request);
         let mut wake_schedule_changes = WakeSchedules::UNCHANGED;
         let mut effects = IngestEffects::default();
         let outcome = self.ingest_classified_with_effects(ingress, interfaces, &mut effects);
+        let mut request = match &outcome {
+            IngestPacketOutcome::Ignored(reason) if is_request => {
+                Some(RequestIngressDiagnostic::Ignored(*reason))
+            }
+            IngestPacketOutcome::LinkInterfaceMismatch { .. } if is_request => {
+                Some(RequestIngressDiagnostic::InterfaceMismatch)
+            }
+            _ => None,
+        };
 
         //Consider cfg-gating this on metrics/observability?
         let protocol_violation = ProtocolViolationKind::of_outcome(&outcome);
@@ -386,7 +414,10 @@ impl<S: StorageLayout> EngineState<S> {
                     fill_random,
                     sink,
                 ) {
-                    RemoteControlPairingRequestIngressOutcome::Pairing(_pairing_outcome) => {
+                    RemoteControlPairingRequestIngressOutcome::Pairing(pairing_outcome) => {
+                        request = Some(RequestIngressDiagnostic::Pairing(
+                            pairing_outcome.diagnostic(),
+                        ));
                         wake_schedule_changes.remote_control_pairing =
                             self.remote_control_pairing_wake();
                         wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
@@ -395,6 +426,7 @@ impl<S: StorageLayout> EngineState<S> {
                         wake_schedule_changes.channel_timeouts = self.channel_timeouts_wake();
                     }
                     RemoteControlPairingRequestIngressOutcome::ForwardToApplication => {
+                        request = Some(RequestIngressDiagnostic::ForwardedToApplication);
                         sink(EngineReaction::Journaled(Journaled::RequestReceived {
                             destination,
                             link_id,
@@ -827,6 +859,68 @@ impl<S: StorageLayout> EngineState<S> {
         IngestPacketReport {
             wake_schedules: wake_schedule_changes,
             protocol_violation,
+            request,
         }
+    }
+}
+
+#[cfg(test)]
+mod diagnostic_tests {
+    use super::*;
+
+    #[test]
+    fn request_ingress_diagnostics_debug_contains_only_discriminants() {
+        use crate::routing::links::handshake::LinkRttError;
+        for (reason, expected) in [
+            (IgnoreReason::Consumed, "Consumed"),
+            (IgnoreReason::Malformed, "Malformed"),
+            (IgnoreReason::UnhandledContext, "UnhandledContext"),
+            (IgnoreReason::Duplicate, "Duplicate"),
+            (IgnoreReason::Superseded, "Superseded"),
+            (IgnoreReason::NotForUs, "NotForUs"),
+            (IgnoreReason::NoRoute, "NoRoute"),
+            (IgnoreReason::HopLimitReached, "HopLimitReached"),
+            (IgnoreReason::LoopPrevented, "LoopPrevented"),
+            (IgnoreReason::RouteUnresponsive, "RouteUnresponsive"),
+            (IgnoreReason::OtherInstance, "OtherInstance"),
+            (IgnoreReason::UnknownLink, "UnknownLink"),
+            (IgnoreReason::LinkPhaseMismatch, "LinkPhaseMismatch"),
+            (
+                IgnoreReason::LinkRttError(LinkRttError::Malformed),
+                "LinkRttError(Malformed)",
+            ),
+            (
+                IgnoreReason::LinkRttError(LinkRttError::InvalidToken),
+                "LinkRttError(InvalidToken)",
+            ),
+            (
+                IgnoreReason::LinkRttError(LinkRttError::BufferTooShort),
+                "LinkRttError(BufferTooShort)",
+            ),
+            (IgnoreReason::DecryptFailed, "DecryptFailed"),
+            (IgnoreReason::ProofInvalid, "ProofInvalid"),
+            (IgnoreReason::UnknownIdentity, "UnknownIdentity"),
+            (IgnoreReason::LinkRequestsRefused, "LinkRequestsRefused"),
+            (IgnoreReason::PermissionDenied, "PermissionDenied"),
+            (IgnoreReason::RateLimited, "RateLimited"),
+            (IgnoreReason::CapacityExhausted, "CapacityExhausted"),
+            (IgnoreReason::RequestTooLarge, "RequestTooLarge"),
+            (IgnoreReason::StrategyDeclined, "StrategyDeclined"),
+            (IgnoreReason::UnmatchedResponse, "UnmatchedResponse"),
+            (IgnoreReason::IfacRefused, "IfacRefused"),
+        ] {
+            assert_eq!(
+                std::format!("{:?}", RequestIngressDiagnostic::Ignored(reason)),
+                std::format!("Ignored({expected})"),
+            );
+        }
+        assert_eq!(
+            std::format!("{:?}", RequestIngressDiagnostic::InterfaceMismatch),
+            "InterfaceMismatch"
+        );
+        assert_eq!(
+            std::format!("{:?}", RequestIngressDiagnostic::ForwardedToApplication),
+            "ForwardedToApplication"
+        );
     }
 }
