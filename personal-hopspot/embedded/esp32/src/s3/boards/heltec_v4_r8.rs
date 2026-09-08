@@ -143,7 +143,8 @@ impl Esp32S3Board for HeltecV4R8Board {
     const NODE_ANNOUNCE_APP_DATA: &'static [u8] = NODE_ANNOUNCE_APP_DATA;
     const BOOT_BANNER: &'static str = "HOPSPOT_HELTECV4_R8";
     const USB_INTERFACE_ID: InterfaceId = USB_INTERFACE_ID;
-    const FLASH_LAYOUT: screen::HopspotS3FlashLayout = screen::S3_16_MIB_FLASH_LAYOUT;
+    const MEMORY_PROFILE: &'static personal_hopspot_memory::MemoryProfile =
+        &personal_hopspot_memory::HELTEC_V4_R8;
     type Display = ImmediateBoardDisplay<HeltecDisplay>;
     type Battery = HeltecR8Battery;
     type Gnss = NoGnss;
@@ -164,7 +165,7 @@ impl Esp32S3Board for HeltecV4R8Board {
             }
         );
         let runtime_bootstrap =
-            s3::bootstrap_s3_runtime(&mut p.RNG, &mut p.ADC1, Self::FLASH_LAYOUT).await;
+            s3::bootstrap_s3_runtime(&mut p.RNG, &mut p.ADC1, Self::MEMORY_PROFILE).await;
 
         s3::boot_stage(s3::BootPhase::DisplayHardwareBegin);
         // OLED (V4-R8: Vext on GPIO40 active-low; pulse RST; I2C0 on 17/18).

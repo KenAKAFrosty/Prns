@@ -72,10 +72,7 @@ mod simulation_tests;
 mod transmit_queue;
 
 use control::LoRaConfigurationCommand;
-pub use control::{
-    LoRaApplyOutcome, LoRaConfigurationRejection, LoRaControl, LoRaRadioConfigurationOperation,
-    PreviousLoRaConfigurationRecovery,
-};
+pub use control::{LoRaApplyOutcome, LoRaControl, LoRaControlTarget, LoRaController};
 
 use airtime_quantum::ServiceAge;
 use channel_access::{
@@ -669,16 +666,16 @@ async fn apply_profile<R: LoRaRadio>(
     lifecycle: DynamicSender<'_, InterfaceLifecycle>,
     activation: RadioActivation,
     radio_state: &mut LoRaRadioState,
-) -> Result<(), LoRaConfigurationRejection> {
+) -> LoRaApplyOutcome {
     let requested_duty = match validate_profile_request(radio, requested, airtime_policy) {
         Ok(duty) => duty,
         Err(error) => {
             crate::diagnostic_log::warn!("RNS_LORA rejected profile: {error:?}");
-            return Err(configuration_rejection(error));
+            return LoRaApplyOutcome::Rejected;
         }
     };
     if requested == *profile && requested_duty == *duty {
-        return Ok(());
+        return LoRaApplyOutcome::Applied;
     }
 
     let previous = *profile;
@@ -688,29 +685,23 @@ async fn apply_profile<R: LoRaRadio>(
             crate::diagnostic_log::warn!(
                 "RNS_LORA reconfigure init failed: {error:?}; restoring prior profile"
             );
-            let recovery = previous_configuration_recovery(
+            previous_configuration_recovery(
                 reinit_radio(radio, &previous, spectrum).await,
                 status,
                 radio_state,
             );
-            return Err(LoRaConfigurationRejection::Radio {
-                operation: LoRaRadioConfigurationOperation::Initialize,
-                previous: recovery,
-            });
+            return LoRaApplyOutcome::Rejected;
         }
         if let Err(error) = radio.arm_rx().await {
             crate::diagnostic_log::warn!(
                 "RNS_LORA reconfigure RX arm failed: {error:?}; restoring prior profile"
             );
-            let recovery = previous_configuration_recovery(
+            previous_configuration_recovery(
                 reinit_radio(radio, &previous, spectrum).await,
                 status,
                 radio_state,
             );
-            return Err(LoRaConfigurationRejection::Radio {
-                operation: LoRaRadioConfigurationOperation::ArmReceive,
-                previous: recovery,
-            });
+            return LoRaApplyOutcome::Rejected;
         }
         *radio_state = LoRaRadioState::Receiving;
     }
@@ -730,41 +721,22 @@ async fn apply_profile<R: LoRaRadio>(
             })
             .await;
     }
-    Ok(())
-}
-
-const fn configuration_rejection(error: LoRaConfigError) -> LoRaConfigurationRejection {
-    match error {
-        LoRaConfigError::Profile(error) => LoRaConfigurationRejection::Profile(error),
-        LoRaConfigError::RadioCompatibility(error) => {
-            LoRaConfigurationRejection::RadioCompatibility(error)
-        }
-        LoRaConfigError::AirtimePolicy(error) => LoRaConfigurationRejection::AirtimePolicy(error),
-    }
+    LoRaApplyOutcome::Applied
 }
 
 fn previous_configuration_recovery(
     recovery: RadioReinitialization,
     status: &EmbassyInterfaceStatus,
     radio_state: &mut LoRaRadioState,
-) -> PreviousLoRaConfigurationRecovery {
+) {
     match recovery {
         RadioReinitialization::Recovered => {
             *radio_state = LoRaRadioState::Receiving;
-            PreviousLoRaConfigurationRecovery::Restored
         }
         RadioReinitialization::Failed => {
             *radio_state = LoRaRadioState::Unknown;
             status.set_connection(ConnectionState::Disconnected);
-            PreviousLoRaConfigurationRecovery::Failed
         }
-    }
-}
-
-const fn apply_outcome(result: Result<(), LoRaConfigurationRejection>) -> LoRaApplyOutcome {
-    match result {
-        Ok(()) => LoRaApplyOutcome::Applied,
-        Err(error) => LoRaApplyOutcome::Rejected(error),
     }
 }
 
@@ -776,15 +748,12 @@ async fn clear_configuration<R: LoRaRadio, Seam: InterfaceSeam>(
     backlog: &mut TransmitBacklog<'_>,
     seam: &mut Seam,
     radio_state: &mut LoRaRadioState,
-) -> Result<(), LoRaConfigurationRejection> {
+) -> LoRaApplyOutcome {
     if !matches!(radio_state, LoRaRadioState::Idle) {
         if let Err(error) = radio.idle().await {
             *radio_state = LoRaRadioState::Unknown;
             crate::diagnostic_log::warn!("RNS_LORA clear failed to idle radio: {error:?}");
-            return Err(LoRaConfigurationRejection::Radio {
-                operation: LoRaRadioConfigurationOperation::Idle,
-                previous: PreviousLoRaConfigurationRecovery::NotAttempted,
-            });
+            return LoRaApplyOutcome::Rejected;
         }
         *radio_state = LoRaRadioState::Idle;
     }
@@ -800,7 +769,7 @@ async fn clear_configuration<R: LoRaRadio, Seam: InterfaceSeam>(
     }
     lifecycle.send(message).await;
     status.set_connection(ConnectionState::Disabled);
-    Ok(())
+    LoRaApplyOutcome::Applied
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -815,7 +784,7 @@ pub struct LoRaInterfaceInput<'a, R: LoRaRadio> {
     pub configuration: SubGConfigurationState,
     pub airtime_policy: AirtimePolicy,
     pub tx_queue: &'a mut [u8],
-    pub control: &'a LoRaControl,
+    pub control: LoRaControlTarget<'a>,
     pub status: &'a EmbassyInterfaceStatus,
     pub spectrum: &'a LoRaSpectrumStatus,
     pub lifecycle: DynamicSender<'a, InterfaceLifecycle>,
@@ -836,14 +805,13 @@ pub struct LoRaInterface<'a, R: LoRaRadio> {
     airtime_policy: AirtimePolicy,
     tag: HeaplessVec<u8, CHANNEL_TAG_CAP>,
     tx_queue: &'a mut [u8],
-    control: &'a LoRaControl,
+    control: LoRaControlTarget<'a>,
     status: &'a EmbassyInterfaceStatus,
     spectrum: &'a LoRaSpectrumStatus,
     lifecycle: DynamicSender<'a, InterfaceLifecycle>,
 }
 
 impl<'a, R: LoRaRadio> LoRaInterface<'a, R> {
-    /// The id a radio on `profile` will carry — for the caller that stands its [`EmbassyInterfaceStatus`] up under the same key before building the interface.
     #[must_use]
     pub fn interface_id(profile: &RadioProfile) -> InterfaceId {
         InterfaceId::from_channel_tag(InterfaceKind::LoRa, &lora::channel_tag(profile))
@@ -852,18 +820,6 @@ impl<'a, R: LoRaRadio> LoRaInterface<'a, R> {
     #[must_use]
     pub fn unconfigured_interface_id() -> InterfaceId {
         unconfigured_interface_id()
-    }
-
-    pub fn interface_id_for_configuration(
-        configuration: SubGConfigurationState,
-    ) -> Result<InterfaceId, LoRaConfigError> {
-        match configuration {
-            SubGConfigurationState::Unconfigured => Ok(Self::unconfigured_interface_id()),
-            SubGConfigurationState::Configured(configuration) => {
-                let ResolvedSubGMode::LoRa(profile) = configuration.resolve();
-                Ok(Self::interface_id(&profile))
-            }
-        }
     }
 
     pub fn new(input: LoRaInterfaceInput<'a, R>) -> Result<Self, LoRaConfigError> {
@@ -995,12 +951,8 @@ impl<R: LoRaRadio> Interface for LoRaInterface<'_, R> {
                                             crate::diagnostic_log::warn!(
                                                 "RNS_LORA rejected profile: {error:?}"
                                             );
-                                            control.complete(
-                                                request.id,
-                                                LoRaApplyOutcome::Rejected(
-                                                    configuration_rejection(error),
-                                                ),
-                                            );
+                                            control
+                                                .complete(request.id, LoRaApplyOutcome::Rejected);
                                             continue;
                                         }
                                     };
@@ -1011,15 +963,7 @@ impl<R: LoRaRadio> Interface for LoRaInterface<'_, R> {
                                                 "RNS_LORA configuration init failed: {error:?}"
                                             );
                                             control
-                                                .complete(
-                                                    request.id,
-                                                    LoRaApplyOutcome::Rejected(
-                                                        LoRaConfigurationRejection::Radio {
-                                                            operation: LoRaRadioConfigurationOperation::Initialize,
-                                                            previous: PreviousLoRaConfigurationRecovery::NotAttempted,
-                                                        },
-                                                    ),
-                                                );
+                                                .complete(request.id, LoRaApplyOutcome::Rejected);
                                             continue;
                                         }
                                         if let Err(error) = radio.arm_rx().await {
@@ -1032,15 +976,7 @@ impl<R: LoRaRadio> Interface for LoRaInterface<'_, R> {
                                                 LoRaRadioState::Unknown
                                             };
                                             control
-                                                .complete(
-                                                    request.id,
-                                                    LoRaApplyOutcome::Rejected(
-                                                        LoRaConfigurationRejection::Radio {
-                                                            operation: LoRaRadioConfigurationOperation::ArmReceive,
-                                                            previous: PreviousLoRaConfigurationRecovery::NotAttempted,
-                                                        },
-                                                    ),
-                                                );
+                                                .complete(request.id, LoRaApplyOutcome::Rejected);
                                             continue;
                                         }
                                         radio_state = LoRaRadioState::Receiving;
@@ -1198,7 +1134,7 @@ impl<R: LoRaRadio> Interface for LoRaInterface<'_, R> {
                                             &mut radio_state,
                                         )
                                         .await;
-                                        if outcome.is_ok() {
+                                        if matches!(outcome, LoRaApplyOutcome::Applied) {
                                             control.complete(request.id, LoRaApplyOutcome::Applied);
                                             configuration = LoRaRuntimeConfiguration::Unconfigured;
                                             continue 'configuration;
@@ -1206,7 +1142,7 @@ impl<R: LoRaRadio> Interface for LoRaInterface<'_, R> {
                                         outcome
                                     }
                                 };
-                                control.complete(request.id, apply_outcome(outcome));
+                                control.complete(request.id, outcome);
                             }
                             Either3::Third(()) => {
                                 if let Err(error) = radio.idle().await {
@@ -1327,7 +1263,7 @@ impl<R: LoRaRadio> Interface for LoRaInterface<'_, R> {
                                         &mut radio_state,
                                     )
                                     .await;
-                                    if outcome.is_ok() {
+                                    if matches!(outcome, LoRaApplyOutcome::Applied) {
                                         control.complete(request.id, LoRaApplyOutcome::Applied);
                                         configuration = LoRaRuntimeConfiguration::Unconfigured;
                                         continue 'configuration;
@@ -1335,7 +1271,7 @@ impl<R: LoRaRadio> Interface for LoRaInterface<'_, R> {
                                     outcome
                                 }
                             };
-                            if outcome.is_ok() {
+                            if matches!(outcome, LoRaApplyOutcome::Applied) {
                                 let now = InstantMillis(started.elapsed().as_millis());
                                 reassembler = LoRaReassembler::new();
                                 activity.frame_finished();
@@ -1350,7 +1286,7 @@ impl<R: LoRaRadio> Interface for LoRaInterface<'_, R> {
                                 duty_was_held = false;
                                 reported_deferrals = 0;
                             }
-                            control.complete(request.id, apply_outcome(outcome));
+                            control.complete(request.id, outcome);
                         }
                         Either5::Second(()) => continue,
                         Either5::Third(Ok(event)) => {
@@ -1729,7 +1665,7 @@ impl<R: LoRaRadio> Interface for LoRaInterface<'_, R> {
                                         &mut radio_state,
                                     )
                                     .await;
-                                    if outcome.is_ok() {
+                                    if matches!(outcome, LoRaApplyOutcome::Applied) {
                                         control.complete(request.id, LoRaApplyOutcome::Applied);
                                         configuration = LoRaRuntimeConfiguration::Unconfigured;
                                         continue 'configuration;
@@ -1737,14 +1673,14 @@ impl<R: LoRaRadio> Interface for LoRaInterface<'_, R> {
                                     outcome
                                 }
                             };
-                            if outcome.is_ok() {
+                            if matches!(outcome, LoRaApplyOutcome::Applied) {
                                 reassembler = LoRaReassembler::new();
                                 activity.frame_finished();
                                 noise = NoiseFloor::new();
                                 service_age.reset(profile);
                                 continuation = false;
                             }
-                            control.complete(request.id, apply_outcome(outcome));
+                            control.complete(request.id, outcome);
                         }
                         Either4::Second(()) => continue,
                         Either4::Third(Ok(event)) => {
@@ -1949,7 +1885,7 @@ mod tests {
         calls: Rc<RadioCalls>,
         configuration: SubGConfigurationState,
         tx_queue: &'a mut [u8],
-        control: &'a LoRaControl,
+        control: LoRaControlTarget<'a>,
         status: &'a EmbassyInterfaceStatus,
         spectrum: &'a LoRaSpectrumStatus,
         lifecycle: DynamicSender<'a, InterfaceLifecycle>,
@@ -1996,7 +1932,8 @@ mod tests {
     fn unconfigured_interface_idles_once_without_arming_or_sensing() {
         let calls = Rc::new(RadioCalls::default());
         let mut tx_queue = [0; LORA_TX_QUEUE_BYTES];
-        let control = LoRaControl::new();
+        let mut control = LoRaControl::new();
+        let (_controller, target) = control.split();
         let status = EmbassyInterfaceStatus::new_accounted(
             LoRaInterface::<RecordingRadio>::unconfigured_interface_id(),
             ConnectionState::Initializing,
@@ -2007,11 +1944,12 @@ mod tests {
             calls.clone(),
             SubGConfigurationState::Unconfigured,
             &mut tx_queue,
-            &control,
+            target,
             &status,
             &spectrum,
             lifecycle.dyn_sender(),
         );
+        status.set_id(interface.id());
         let seam = RecordingInboundSeam {
             sink: std::vec::Vec::new(),
             delivered: std::vec::Vec::new(),
@@ -2034,7 +1972,8 @@ mod tests {
         let calls = Rc::new(RadioCalls::default());
         calls.idle_failures.set(1);
         let mut tx_queue = [0; LORA_TX_QUEUE_BYTES];
-        let control = LoRaControl::new();
+        let mut control = LoRaControl::new();
+        let (mut controller, target) = control.split();
         let status = EmbassyInterfaceStatus::new_accounted(
             LoRaInterface::<RecordingRadio>::unconfigured_interface_id(),
             ConnectionState::Initializing,
@@ -2045,11 +1984,12 @@ mod tests {
             calls.clone(),
             SubGConfigurationState::Unconfigured,
             &mut tx_queue,
-            &control,
+            target,
             &status,
             &spectrum,
             lifecycle.dyn_sender(),
         );
+        status.set_id(interface.id());
         let seam = RecordingInboundSeam {
             sink: std::vec::Vec::new(),
             delivered: std::vec::Vec::new(),
@@ -2061,7 +2001,7 @@ mod tests {
                     while calls.idle.get() < 2 {
                         Timer::after(Duration::from_millis(1)).await;
                     }
-                    assert_eq!(control.clear().await, LoRaApplyOutcome::Applied);
+                    assert_eq!(controller.clear().await, LoRaApplyOutcome::Applied);
                 },
                 interface.run(seam),
             )
@@ -2081,7 +2021,8 @@ mod tests {
     fn configuration_activates_and_clear_returns_the_same_interface_to_idle() {
         let calls = Rc::new(RadioCalls::default());
         let mut tx_queue = [0; LORA_TX_QUEUE_BYTES];
-        let control = LoRaControl::new();
+        let mut control = LoRaControl::new();
+        let (mut controller, target) = control.split();
         let status = EmbassyInterfaceStatus::new_accounted(
             LoRaInterface::<RecordingRadio>::unconfigured_interface_id(),
             ConnectionState::Initializing,
@@ -2092,11 +2033,12 @@ mod tests {
             calls.clone(),
             SubGConfigurationState::Unconfigured,
             &mut tx_queue,
-            &control,
+            target,
             &status,
             &spectrum,
             lifecycle.dyn_sender(),
         );
+        status.set_id(interface.id());
         let seam = RecordingInboundSeam {
             sink: std::vec::Vec::new(),
             delivered: std::vec::Vec::new(),
@@ -2107,10 +2049,10 @@ mod tests {
                 async {
                     let configuration = SubGConfigurationState::Configured(Us915::auto_lora());
                     assert_eq!(
-                        control.apply_configuration(configuration).await,
+                        controller.apply_configuration(configuration).await,
                         LoRaApplyOutcome::Applied
                     );
-                    assert_eq!(control.clear().await, LoRaApplyOutcome::Applied);
+                    assert_eq!(controller.clear().await, LoRaApplyOutcome::Applied);
                 },
                 interface.run(seam),
             )
@@ -2137,10 +2079,11 @@ mod tests {
     fn clear_is_serviced_while_the_configured_interface_is_power_disabled() {
         let calls = Rc::new(RadioCalls::default());
         let mut tx_queue = [0; LORA_TX_QUEUE_BYTES];
-        let control = LoRaControl::new();
+        let mut control = LoRaControl::new();
+        let (mut controller, target) = control.split();
         let configuration = SubGConfigurationState::Configured(Us915::auto_lora());
         let status = EmbassyInterfaceStatus::new_accounted(
-            LoRaInterface::<RecordingRadio>::interface_id_for_configuration(configuration).unwrap(),
+            LoRaInterface::<RecordingRadio>::unconfigured_interface_id(),
             ConnectionState::Initializing,
         );
         let spectrum = LoRaSpectrumStatus::new();
@@ -2149,7 +2092,7 @@ mod tests {
             calls.clone(),
             configuration,
             &mut tx_queue,
-            &control,
+            target,
             &status,
             &spectrum,
             lifecycle.dyn_sender(),
@@ -2163,7 +2106,7 @@ mod tests {
             match select(
                 async {
                     status.disable();
-                    assert_eq!(control.clear().await, LoRaApplyOutcome::Applied);
+                    assert_eq!(controller.clear().await, LoRaApplyOutcome::Applied);
                 },
                 interface.run(seam),
             )
@@ -2188,10 +2131,11 @@ mod tests {
     fn applying_while_power_disabled_changes_configuration_without_rf_activity() {
         let calls = Rc::new(RadioCalls::default());
         let mut tx_queue = [0; LORA_TX_QUEUE_BYTES];
-        let control = LoRaControl::new();
+        let mut control = LoRaControl::new();
+        let (mut controller, target) = control.split();
         let configuration = SubGConfigurationState::Configured(Us915::auto_lora());
         let status = EmbassyInterfaceStatus::new_accounted(
-            LoRaInterface::<RecordingRadio>::interface_id_for_configuration(configuration).unwrap(),
+            LoRaInterface::<RecordingRadio>::unconfigured_interface_id(),
             ConnectionState::Initializing,
         );
         let spectrum = LoRaSpectrumStatus::new();
@@ -2200,7 +2144,7 @@ mod tests {
             calls.clone(),
             configuration,
             &mut tx_queue,
-            &control,
+            target,
             &status,
             &spectrum,
             lifecycle.dyn_sender(),
@@ -2217,7 +2161,7 @@ mod tests {
             match select(
                 async {
                     status.disable();
-                    assert_eq!(control.apply(requested).await, LoRaApplyOutcome::Applied);
+                    assert_eq!(controller.apply(requested).await, LoRaApplyOutcome::Applied);
                 },
                 interface.run(seam),
             )
@@ -2239,10 +2183,11 @@ mod tests {
         let calls = Rc::new(RadioCalls::default());
         calls.initialize_failures.set(1);
         let mut tx_queue = [0; LORA_TX_QUEUE_BYTES];
-        let control = LoRaControl::new();
+        let mut control = LoRaControl::new();
+        let (mut controller, target) = control.split();
         let configuration = SubGConfigurationState::Configured(Us915::auto_lora());
         let status = EmbassyInterfaceStatus::new_accounted(
-            LoRaInterface::<RecordingRadio>::interface_id_for_configuration(configuration).unwrap(),
+            LoRaInterface::<RecordingRadio>::unconfigured_interface_id(),
             ConnectionState::Initializing,
         );
         let spectrum = LoRaSpectrumStatus::new();
@@ -2251,7 +2196,7 @@ mod tests {
             calls.clone(),
             configuration,
             &mut tx_queue,
-            &control,
+            target,
             &status,
             &spectrum,
             lifecycle.dyn_sender(),
@@ -2267,7 +2212,7 @@ mod tests {
                     while calls.arm_rx.get() == 0 {
                         Timer::after(Duration::from_millis(1)).await;
                     }
-                    assert_eq!(control.clear().await, LoRaApplyOutcome::Applied);
+                    assert_eq!(controller.clear().await, LoRaApplyOutcome::Applied);
                 },
                 interface.run(seam),
             )

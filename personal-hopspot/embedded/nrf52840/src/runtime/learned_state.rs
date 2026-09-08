@@ -20,6 +20,9 @@ use crate::storage::Nrf52840Storage as Storage;
 
 const FLASH_CAPACITY: usize = 1024 * 1024;
 const PENDING: usize = 8;
+const MINIMUM_JOURNAL_ARENA_BYTES: usize = 2
+    * (board::JOURNAL_LAYOUT.timebase_regions[1] - board::JOURNAL_LAYOUT.timebase_regions[0])
+        as usize;
 
 #[cfg(not(feature = "board-t1000e"))]
 type FlashDriver = Flash;
@@ -40,14 +43,10 @@ const _: () = assert!(
 const _: () = assert!(
     Storage::MAX_COMPACTED_FLASH_JOURNAL_BYTES <= board::JOURNAL_LAYOUT.arenas[1].len() as usize
 );
-const _: () = assert!(
-    personal_hopspot_core::NRF52840_MIN_ARENA_BYTES
-        <= board::JOURNAL_LAYOUT.arenas[0].len() as usize
-);
-const _: () = assert!(
-    personal_hopspot_core::NRF52840_MIN_ARENA_BYTES
-        <= board::JOURNAL_LAYOUT.arenas[1].len() as usize
-);
+const _: () =
+    assert!(MINIMUM_JOURNAL_ARENA_BYTES <= board::JOURNAL_LAYOUT.arenas[0].len() as usize);
+const _: () =
+    assert!(MINIMUM_JOURNAL_ARENA_BYTES <= board::JOURNAL_LAYOUT.arenas[1].len() as usize);
 
 static PERSISTENCE_STATE: AtomicU8 = AtomicU8::new(PersistenceState::Durable.encode());
 

@@ -104,6 +104,8 @@ mod flash;
 #[cfg(any(target_arch = "riscv32", target_arch = "xtensa"))]
 mod identity;
 #[cfg(any(target_arch = "riscv32", target_arch = "xtensa"))]
+mod memory;
+#[cfg(any(target_arch = "riscv32", target_arch = "xtensa"))]
 mod persistence;
 
 #[cfg(any(test, all(target_arch = "xtensa", not(feature = "esp32s3fn8"))))]

@@ -9,6 +9,42 @@ use super::values::{
     Sha256Digest, Uf2BoardIdMatch, Uf2MountLabel,
 };
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ApplicationAddressRange {
+    start: u32,
+    end_exclusive: u32,
+}
+
+impl ApplicationAddressRange {
+    pub(crate) const fn new(start: u32, end_exclusive: u32) -> Self {
+        assert!(start < end_exclusive);
+        Self {
+            start,
+            end_exclusive,
+        }
+    }
+
+    #[must_use]
+    pub const fn start(self) -> u32 {
+        self.start
+    }
+
+    #[must_use]
+    pub const fn end_exclusive(self) -> u32 {
+        self.end_exclusive
+    }
+
+    #[must_use]
+    pub const fn byte_len(self) -> u32 {
+        self.end_exclusive - self.start
+    }
+
+    #[must_use]
+    pub const fn contains(self, start: u32, end_exclusive: u32) -> bool {
+        self.start <= start && start < end_exclusive && end_exclusive <= self.end_exclusive
+    }
+}
+
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SoftdeviceFamily {
     S140,
@@ -255,12 +291,17 @@ pub struct Uf2Part {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Uf2Variant {
     pub(crate) compatibility: Uf2Compatibility,
+    pub(crate) firmware_owned: ApplicationAddressRange,
     pub(crate) part: Uf2Part,
 }
 
 impl Uf2Variant {
     pub fn compatibility(&self) -> &Uf2Compatibility {
         &self.compatibility
+    }
+
+    pub const fn firmware_owned(&self) -> ApplicationAddressRange {
+        self.firmware_owned
     }
 
     pub fn part(&self) -> &Uf2Part {
@@ -497,6 +538,7 @@ pub struct NrfSerialDfuTarget {
     pub(crate) identity: TargetIdentity,
     pub(crate) serial_transport: ValidatedNrfSerialDfuSerialTransport,
     pub(crate) compatibility: ValidatedNrfSerialDfuCompatibility,
+    pub(crate) firmware_owned: ApplicationAddressRange,
     pub(crate) application: NrfSerialDfuArtifact,
     pub(crate) init_packet: NrfSerialDfuArtifact,
     pub(crate) recovery: NrfSerialDfuRecovery,
@@ -509,6 +551,10 @@ impl NrfSerialDfuTarget {
 
     pub fn compatibility(&self) -> &ValidatedNrfSerialDfuCompatibility {
         &self.compatibility
+    }
+
+    pub const fn firmware_owned(&self) -> ApplicationAddressRange {
+        self.firmware_owned
     }
 
     pub fn application(&self) -> &NrfSerialDfuArtifact {
@@ -591,6 +637,7 @@ pub struct EspSerialTarget {
     pub(crate) flash_frequency: FlashFrequency,
     pub(crate) before_reset: BeforeResetStrategy,
     pub(crate) after_reset: AfterResetStrategy,
+    pub(crate) firmware_owned: ApplicationAddressRange,
     pub(crate) parts: Vec<EspFlashPart>,
     pub(crate) provisioning: Option<ProvisioningSlot>,
 }
@@ -618,6 +665,10 @@ impl EspSerialTarget {
 
     pub const fn after_reset(&self) -> AfterResetStrategy {
         self.after_reset
+    }
+
+    pub const fn firmware_owned(&self) -> ApplicationAddressRange {
+        self.firmware_owned
     }
 
     pub fn parts(&self) -> &[EspFlashPart] {

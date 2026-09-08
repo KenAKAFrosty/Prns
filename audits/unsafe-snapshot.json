@@ -15685,6 +15685,27 @@
     },
     {
       "graphs": {
+        "esp32-c6": [],
+        "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
+        "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-wireless-stick-lite-v3": [],
+        "esp32-s3-tbeam": [],
+        "nrf52840": []
+      },
+      "name": "personal-hopspot-memory",
+      "source": "personal-hopspot/memory",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.1.0"
+    },
+    {
+      "graphs": {
         "android": [
           "alloc",
           "bluetooth-auto",

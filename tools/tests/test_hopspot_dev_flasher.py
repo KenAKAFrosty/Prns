@@ -405,7 +405,12 @@ class CandidateValidationTests(unittest.TestCase):
         payload = (
             f"version={self.identity.version} source={self.identity.digest}"
         ).encode("ascii")
-        part = self.artifact(f"firmware/{board}/application.bin", payload, kind="application")
+        part = self.artifact(
+            f"firmware/{board}/application.bin",
+            payload,
+            kind="application",
+            offset=0x10000,
+        )
         return {
             "board_slug": board,
             "transport": "esp-serial",
@@ -500,8 +505,12 @@ class CandidateValidationTests(unittest.TestCase):
                     "softdevice_family": "s140",
                     "softdevice_version": "7.3.0",
                     "fwid": "0x0123",
+                    "device_type": "0x0052",
+                    "device_revision": 52840,
+                    "application_version": "not-enforced",
                     "application_base": "0x00027000",
                     "application_end_exclusive": "0x000ea000",
+                    "bank_layout": "single",
                 },
                 "application": application,
                 "init_packet": init_packet,

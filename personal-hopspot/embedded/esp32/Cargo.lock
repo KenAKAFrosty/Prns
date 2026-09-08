@@ -2496,6 +2496,7 @@ dependencies = [
  "heapless 0.8.0",
  "log",
  "personal-hopspot-core",
+ "personal-hopspot-memory",
  "personal-rns",
  "portable-atomic",
  "prns-core",
@@ -2504,6 +2505,10 @@ dependencies = [
  "static_cell",
  "trouble-host",
 ]
+
+[[package]]
+name = "personal-hopspot-memory"
+version = "0.1.0"
 
 [[package]]
 name = "personal-rns"

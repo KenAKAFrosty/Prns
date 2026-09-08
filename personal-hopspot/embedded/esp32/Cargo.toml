@@ -55,6 +55,7 @@ wifi-security-probe = []
 [dependencies]
 cfg-if = "1.0"
 personal-hopspot-core = { path = "../../core", default-features = false, features = ["embedded"] }
+personal-hopspot-memory = { path = "../../memory" }
 embedded-graphics = { version = "0.8", optional = true }
 heapless = { version = "0.8", default-features = false }
 embedded-storage = "0.3"

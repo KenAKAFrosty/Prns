@@ -36,7 +36,8 @@ impl Esp32S3Board for HeltecE290Board {
     const NODE_ANNOUNCE_APP_DATA: &'static [u8] = NODE_ANNOUNCE_APP_DATA;
     const BOOT_BANNER: &'static str = "HOPSPOT_HELTEC_E290";
     const USB_INTERFACE_ID: InterfaceId = USB_INTERFACE_ID;
-    const FLASH_LAYOUT: screen::HopspotS3FlashLayout = screen::S3_16_MIB_FLASH_LAYOUT;
+    const MEMORY_PROFILE: &'static personal_hopspot_memory::MemoryProfile =
+        &personal_hopspot_memory::HELTEC_E290;
     type Display = RetainedBoardDisplay<E290Display>;
     type Battery = screen::NoBattery;
     type Gnss = NoGnss;
@@ -63,7 +64,7 @@ impl Esp32S3Board for HeltecE290Board {
             }
         );
         let runtime_bootstrap =
-            s3::bootstrap_s3_runtime(&mut p.RNG, &mut p.ADC1, Self::FLASH_LAYOUT).await;
+            s3::bootstrap_s3_runtime(&mut p.RNG, &mut p.ADC1, Self::MEMORY_PROFILE).await;
 
         s3::boot_stage(s3::BootPhase::DisplayHardwareBegin);
         let display_busy = Input::new(p.GPIO6, InputConfig::default());

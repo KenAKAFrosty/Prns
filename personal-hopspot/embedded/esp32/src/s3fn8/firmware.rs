@@ -1,5 +1,5 @@
 use super::*;
-use personal_hopspot_core::S3_8_MIB_FLASH_LAYOUT;
+use personal_hopspot_memory::HELTEC_WIRELESS_STICK_LITE_V3;
 use personal_rns::interfaces::lora::AirtimePolicy;
 use personal_rns::lora::{LoRaInterfaceInput, LoRaSpectrumStatus};
 use personal_rns::remote_control::{
@@ -11,6 +11,7 @@ const ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x27Personal Hopspot Wireless Stick L
 const NODE_ANNOUNCE_APP_DATA: &[u8] = b"Personal Hopspot Wireless Stick Lite V3";
 
 pub async fn run(spawner: Spawner) {
+    let memory = crate::memory::EspFirmwareMemory::new(&HELTEC_WIRELESS_STICK_LITE_V3);
     let S3Fn8Hardware {
         usb_rx,
         usb_tx,
@@ -26,13 +27,13 @@ pub async fn run(spawner: Spawner) {
 
     let mut boot_entropy = entropy::seed_runtime_entropy(&identity_entropy)
         .expect("the enabled S3 boot TRNG fills the initial seed");
-    let node_bootstrap = crate::identity::bootstrap_node_identity(&mut boot_entropy);
+    let node_bootstrap = crate::identity::bootstrap_node_identity(&memory, &mut boot_entropy);
     crate::identity::log_persistence("node", node_bootstrap.persistence());
     let remote_control_bootstrap =
-        crate::identity::RemoteControlIdentityFlash::from(S3_8_MIB_FLASH_LAYOUT)
+        crate::identity::RemoteControlIdentityFlash::from_memory(&memory)
             .load_or_generate_with_runtime_entropy(&mut boot_entropy)
             .expect("RemoteControl identity bootstrap failed");
-    let ble_bootstrap = crate::identity::bootstrap_ble_identity(&mut boot_entropy);
+    let ble_bootstrap = crate::identity::bootstrap_ble_identity(&memory, &mut boot_entropy);
     crate::identity::log_persistence("Bluetooth", ble_bootstrap.persistence());
     drop(identity_entropy);
     entropy::install(boot_entropy);
@@ -40,12 +41,12 @@ pub async fn run(spawner: Spawner) {
 
     static FLASH: StaticCell<Mutex<Mtx, crate::flash::EspRomFlash>> = StaticCell::new();
     let flash = FLASH.init(Mutex::new(crate::flash::EspRomFlash::new(
-        S3_8_MIB_FLASH_LAYOUT.flash_capacity,
+        memory.flash_capacity(),
     )));
-    let shared_flash = SharedNorFlash::new(flash, S3_8_MIB_FLASH_LAYOUT.flash_capacity);
+    let shared_flash = SharedNorFlash::new(flash, memory.flash_capacity());
     let mut subg_configuration_store = personal_hopspot_core::SubGConfigurationStore::new(
         shared_flash,
-        S3_8_MIB_FLASH_LAYOUT.radio_profile_pages,
+        memory.radio_profile_pages(),
     );
     let loaded_subg_configuration = match subg_configuration_store.load().await {
         Ok(loaded) => loaded,
@@ -58,24 +59,25 @@ pub async fn run(spawner: Spawner) {
         }
     };
     let subg_configuration = loaded_subg_configuration.state;
-    let lora_id = LoRaInterface::<LoraRadio>::interface_id_for_configuration(subg_configuration)
-        .unwrap_or_else(|_| LoRaInterface::<LoraRadio>::unconfigured_interface_id());
     static LORA_STATUS: StaticCell<EmbassyInterfaceStatus> = StaticCell::new();
-    let lora_status: &'static EmbassyInterfaceStatus = LORA_STATUS.init(
-        EmbassyInterfaceStatus::new_accounted(lora_id, ConnectionState::Initializing),
-    );
+    let lora_status: &'static EmbassyInterfaceStatus =
+        LORA_STATUS.init(EmbassyInterfaceStatus::new_accounted(
+            LoRaInterface::<LoraRadio>::unconfigured_interface_id(),
+            ConnectionState::Initializing,
+        ));
     static LORA_SPECTRUM: StaticCell<LoRaSpectrumStatus> = StaticCell::new();
     let lora_spectrum: &'static LoRaSpectrumStatus = LORA_SPECTRUM.init(LoRaSpectrumStatus::new());
     static LORA_TX_QUEUE: StaticCell<[u8; personal_rns::lora::LORA_TX_QUEUE_BYTES]> =
         StaticCell::new();
     let lora_tx_queue: &'static mut [u8; personal_rns::lora::LORA_TX_QUEUE_BYTES] =
         LORA_TX_QUEUE.init([0; personal_rns::lora::LORA_TX_QUEUE_BYTES]);
+    let (_lora_controller, lora_control) = LORA_CONTROL.init(LoRaControl::new()).split();
     let lora = match LoRaInterface::new(LoRaInterfaceInput {
         radio: lora_radio,
         configuration: subg_configuration,
         airtime_policy: AirtimePolicy::Regional,
         tx_queue: lora_tx_queue,
-        control: &LORA_CONTROL,
+        control: lora_control,
         status: lora_status,
         spectrum: lora_spectrum,
         lifecycle: LIFECYCLE.dyn_sender(),
@@ -83,6 +85,7 @@ pub async fn run(spawner: Spawner) {
         Ok(lora) => lora,
         Err(_) => panic!("the built-in LoRa profile and regional policy are valid"),
     };
+    lora_status.set_id(lora.id());
 
     let node_identity = node_bootstrap.into_identity();
     let transport_secret = node_identity.transport_secret();
@@ -140,7 +143,7 @@ pub async fn run(spawner: Spawner) {
         storage: InternalStorage,
         request_endpoints: personal_hopspot_core::node_pages::NodePageRoutes,
         interfaces: personal_rns::runtime::ManuallyAttached,
-        persistence: crate::persistence::s3fn8(shared_flash, S3_8_MIB_FLASH_LAYOUT.journal),
+        persistence: crate::persistence::s3fn8(shared_flash, &memory),
         on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
     };
 

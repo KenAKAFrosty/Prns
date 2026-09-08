@@ -1,5 +1,10 @@
+mod memory;
+
+use personal_hopspot_memory::RegionRole;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+pub use memory::{MemoryProfileReference, MemoryProfileReferenceError, ResolvedMemoryProfile};
 
 use crate::{
     AfterResetStrategy, BeforeResetStrategy, BoardId, ChipFamily, ImmutableArtifactPath,
@@ -8,8 +13,8 @@ use crate::{
     CONFIG_OFFSET, CONFIG_PASSWORD_MAX_BYTES, CONFIG_SIZE, CONFIG_SSID_MAX_BYTES, CONFIG_VERSION,
 };
 
-const CATALOG_JSON: &str = include_str!("../../release/flash/boards.json");
-const BOARD_CATALOG_SCHEMA: u32 = 4;
+const CATALOG_JSON: &str = include_str!("../../../release/flash/boards.json");
+const BOARD_CATALOG_SCHEMA: u32 = 5;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -100,12 +105,13 @@ pub struct NrfSerialDfuBuild {
     pub package: String,
     pub binary: String,
     pub rust_target: String,
+    pub memory_profile: MemoryProfileReference,
     pub cargo_feature: String,
     pub target_directory: String,
     pub application_filename: String,
     pub init_packet_filename: String,
     pub serial: NrfSerialDfuSerialTransport,
-    pub compatibility: NrfSerialDfuCompatibility,
+    pub compatibility: NrfSerialDfuBuildCompatibility,
     pub recovery: NrfSerialDfuRecoveryBuild,
 }
 
@@ -221,11 +227,11 @@ impl NrfSerialDfuSerialTransport {
         {
             return Err(NrfSerialDfuSerialTransportError::InvalidRecoveryBootloaderStrings);
         }
-        let request = parse_hex_u8(&self.managed_application.request)
+        let request = crate::canonical_hex::parse_u8(&self.managed_application.request)
             .ok_or(NrfSerialDfuSerialTransportError::InvalidManagedApplicationRequest)?;
-        let value = parse_hex_u16(&self.managed_application.value)
+        let value = crate::canonical_hex::parse_u16(&self.managed_application.value)
             .ok_or(NrfSerialDfuSerialTransportError::InvalidManagedApplicationValue)?;
-        let index = parse_hex_u16(&self.managed_application.index)
+        let index = crate::canonical_hex::parse_u16(&self.managed_application.index)
             .ok_or(NrfSerialDfuSerialTransportError::InvalidManagedApplicationIndex)?;
         use prns_core::interfaces::usb_auto::{
             BOOTLOADER_ENTRY_CONTROL_INDEX, BOOTLOADER_ENTRY_CONTROL_REQUEST,
@@ -272,6 +278,18 @@ pub struct NrfSerialDfuCompatibility {
     pub bank_layout: NrfDfuBankLayout,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NrfSerialDfuBuildCompatibility {
+    pub softdevice_family: String,
+    pub softdevice_version: String,
+    pub fwid: String,
+    pub device_type: String,
+    pub device_revision: u16,
+    pub application_version: NrfDfuApplicationVersion,
+    pub bank_layout: NrfDfuBankLayout,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum NrfDfuApplicationVersion {
@@ -299,6 +317,7 @@ pub struct NrfSerialDfuRecoveryBuild {
 pub struct EspBuild {
     pub chip: String,
     pub rust_target: String,
+    pub memory_profile: MemoryProfileReference,
     pub partition_table: String,
     pub package: String,
     pub binary: String,
@@ -351,8 +370,7 @@ pub struct Uf2BuildVariant {
     pub softdevice_family: String,
     pub softdevice_version: String,
     pub fwid: String,
-    pub application_base: String,
-    pub application_end_exclusive: String,
+    pub memory_profile: MemoryProfileReference,
     pub family_id: String,
     pub application_link: Uf2ApplicationLink,
     pub target_directory: String,
@@ -477,7 +495,14 @@ fn validate_transport(board: &BoardCatalogEntry) -> Result<(), CatalogError> {
                     ));
                 }
             };
-            if board.expected_chip.as_deref() != Some(build.chip.as_str())
+            let memory_is_valid = build.memory_layout().is_ok_and(|memory| {
+                memory.architecture().rust_target() == build.rust_target
+                    && board.flash_size == Some(memory.internal_flash_capacity())
+                    && memory.region_for_role(RegionRole::Bootloader).is_ok()
+                    && memory.region_for_role(RegionRole::PartitionTable).is_ok()
+            });
+            if !memory_is_valid
+                || board.expected_chip.as_deref() != Some(build.chip.as_str())
                 || ChipFamily::parse(&build.chip).is_err()
                 || build.flash_size_label != expected_flash_size_label
                 || build.flash_mode != "dio"
@@ -572,36 +597,6 @@ fn validate_uf2_board_identities(boards: &[BoardCatalogEntry]) -> Result<(), Cat
     Ok(())
 }
 
-fn parse_hex_u16(value: &str) -> Option<u16> {
-    let digits = value.strip_prefix("0x")?;
-    (digits.len() == 4
-        && digits
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()))
-    .then(|| u16::from_str_radix(digits, 16).ok())
-    .flatten()
-}
-
-fn parse_hex_u8(value: &str) -> Option<u8> {
-    let digits = value.strip_prefix("0x")?;
-    (digits.len() == 2
-        && digits
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()))
-    .then(|| u8::from_str_radix(digits, 16).ok())
-    .flatten()
-}
-
-fn parse_hex_u32(value: &str) -> Option<u32> {
-    let digits = value.strip_prefix("0x")?;
-    (digits.len() == 8
-        && digits
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()))
-    .then(|| u32::from_str_radix(digits, 16).ok())
-    .flatten()
-}
-
 struct PinnedUf2Recipe {
     preparation_profile: PreparationProfile,
     package: &'static str,
@@ -617,8 +612,7 @@ struct PinnedUf2Variant {
     softdevice_family: &'static str,
     softdevice_version: &'static str,
     fwid: &'static str,
-    application_base: &'static str,
-    application_end_exclusive: &'static str,
+    memory_profile: &'static str,
     family_id: &'static str,
     application_link: Uf2ApplicationLink,
     target_directory: &'static str,
@@ -638,8 +632,7 @@ const T_ECHO_UF2_RECIPE: PinnedUf2Recipe = PinnedUf2Recipe {
             softdevice_family: "s140",
             softdevice_version: "6.1.1",
             fwid: "0x00b6",
-            application_base: "0x00026000",
-            application_end_exclusive: "0x000c0000",
+            memory_profile: "t-echo-s140-v6",
             family_id: "0xada52840",
             application_link: Uf2ApplicationLink::SoftdeviceS140V6,
             target_directory: "target/s140-v6",
@@ -649,8 +642,7 @@ const T_ECHO_UF2_RECIPE: PinnedUf2Recipe = PinnedUf2Recipe {
             softdevice_family: "s140",
             softdevice_version: "7.3.0",
             fwid: "0x0123",
-            application_base: "0x00027000",
-            application_end_exclusive: "0x000c0000",
+            memory_profile: "t-echo-s140-v7",
             family_id: "0xada52840",
             application_link: Uf2ApplicationLink::SoftdeviceS140V7,
             target_directory: "target/s140-v7",
@@ -671,8 +663,7 @@ const T114_UF2_RECIPE: PinnedUf2Recipe = PinnedUf2Recipe {
         softdevice_family: "s140",
         softdevice_version: "6.1.1",
         fwid: "0x00b6",
-        application_base: "0x00026000",
-        application_end_exclusive: "0x000e9000",
+        memory_profile: "t114",
         family_id: "0xada52840",
         application_link: Uf2ApplicationLink::BareMetal,
         target_directory: "target/t114",
@@ -692,8 +683,7 @@ const MESH_POCKET_5000_UF2_RECIPE: PinnedUf2Recipe = PinnedUf2Recipe {
         softdevice_family: "s140",
         softdevice_version: "6.1.1",
         fwid: "0x00b6",
-        application_base: "0x00026000",
-        application_end_exclusive: "0x000e1000",
+        memory_profile: "mesh-pocket-5000",
         family_id: "0xada52840",
         application_link: Uf2ApplicationLink::BareMetal,
         target_directory: "target/mesh-pocket-5000",
@@ -713,8 +703,7 @@ const MESH_POCKET_10000_UF2_RECIPE: PinnedUf2Recipe = PinnedUf2Recipe {
         softdevice_family: "s140",
         softdevice_version: "6.1.1",
         fwid: "0x00b6",
-        application_base: "0x00026000",
-        application_end_exclusive: "0x000e1000",
+        memory_profile: "mesh-pocket-10000",
         family_id: "0xada52840",
         application_link: Uf2ApplicationLink::BareMetal,
         target_directory: "target/mesh-pocket-10000",
@@ -734,8 +723,7 @@ const T096_UF2_RECIPE: PinnedUf2Recipe = PinnedUf2Recipe {
         softdevice_family: "s140",
         softdevice_version: "6.1.1",
         fwid: "0x00b6",
-        application_base: "0x00026000",
-        application_end_exclusive: "0x000e8000",
+        memory_profile: "t096",
         family_id: "0xada52840",
         application_link: Uf2ApplicationLink::SoftdeviceS140V6,
         target_directory: "target/t096",
@@ -773,8 +761,7 @@ fn matches_pinned_uf2_recipe(board: &BoardCatalogEntry, build: &Uf2Build) -> boo
                     variant.softdevice_family.as_str(),
                     variant.softdevice_version.as_str(),
                     variant.fwid.as_str(),
-                    variant.application_base.as_str(),
-                    variant.application_end_exclusive.as_str(),
+                    variant.memory_profile.as_str(),
                     variant.family_id.as_str(),
                     variant.application_link,
                     variant.target_directory.as_str(),
@@ -786,8 +773,7 @@ fn matches_pinned_uf2_recipe(board: &BoardCatalogEntry, build: &Uf2Build) -> boo
                     variant.softdevice_family,
                     variant.softdevice_version,
                     variant.fwid,
-                    variant.application_base,
-                    variant.application_end_exclusive,
+                    variant.memory_profile,
                     variant.family_id,
                     variant.application_link,
                     variant.target_directory,
@@ -795,12 +781,12 @@ fn matches_pinned_uf2_recipe(board: &BoardCatalogEntry, build: &Uf2Build) -> boo
                 )
             }))
         && build.variants.iter().all(|variant| {
-            parse_hex_u32(&variant.application_base)
-                .zip(parse_hex_u32(&variant.application_end_exclusive))
-                .is_some_and(|(base, end)| {
-                    base < end && base % 0x1000 == 0 && end % 0x1000 == 0 && end <= 0x0010_0000
-                })
-                && parse_hex_u32(&variant.family_id).is_some()
+            variant.memory_layout().is_ok_and(|memory| {
+                let application = memory.transport_envelope();
+                memory.architecture().rust_target() == build.rust_target
+                    && application.start().is_multiple_of(0x1000)
+                    && application.end_exclusive().is_multiple_of(0x1000)
+            }) && crate::canonical_hex::parse_u32(&variant.family_id).is_some()
         })
 }
 
@@ -816,14 +802,12 @@ fn valid_uf2_application_usb(application_usb: &Uf2ApplicationUsb) -> bool {
 fn valid_nrf_serial_dfu_build(build: &NrfSerialDfuBuild) -> bool {
     let compatibility = &build.compatibility;
     let recovery = &build.recovery;
-    let application_base = parse_hex_u32(&compatibility.application_base);
-    let application_end = parse_hex_u32(&compatibility.application_end_exclusive);
-    let application_region_is_valid =
-        application_base
-            .zip(application_end)
-            .is_some_and(|(base, end)| {
-                base < end && base % 0x1000 == 0 && end % 0x1000 == 0 && end <= 0x0010_0000
-            });
+    let application_region_is_valid = build.memory_layout().is_ok_and(|memory| {
+        let application = memory.transport_envelope();
+        memory.architecture().rust_target() == build.rust_target
+            && application.start().is_multiple_of(0x1000)
+            && application.end_exclusive().is_multiple_of(0x1000)
+    });
     valid_cargo_name(&build.package)
         && valid_cargo_name(&build.binary)
         && build.rust_target == "thumbv7em-none-eabihf"
@@ -838,21 +822,23 @@ fn valid_nrf_serial_dfu_build(build: &NrfSerialDfuBuild) -> bool {
             compatibility.softdevice_version.clone(),
         )
         .is_ok()
-        && parse_hex_u16(&compatibility.fwid).is_some_and(|fwid| fwid != 0xfffe)
-        && parse_hex_u16(&compatibility.device_type).is_some()
+        && crate::canonical_hex::parse_u16(&compatibility.fwid).is_some_and(|fwid| fwid != 0xfffe)
+        && crate::canonical_hex::parse_u16(&compatibility.device_type).is_some()
         && compatibility.device_revision != 0
         && application_region_is_valid
         && Uf2MountLabel::parse(recovery.mount_label.clone()).is_ok()
         && recovery.board_identity.validated().is_ok()
-        && parse_hex_u32(&recovery.family_id).is_some()
+        && crate::canonical_hex::parse_u32(&recovery.family_id).is_some()
         && valid_artifact_filename(&recovery.filename, ".uf2")
         && recovery.filename != build.application_filename
         && recovery.filename != build.init_packet_filename
 }
 
 fn parse_usb_vendor_product_id(identity: &UsbVendorProductId) -> Option<UsbVidPid> {
-    let vendor_id = parse_hex_u16(&identity.vendor_id).filter(|value| *value != 0)?;
-    let product_id = parse_hex_u16(&identity.product_id).filter(|value| *value != 0)?;
+    let vendor_id =
+        crate::canonical_hex::parse_u16(&identity.vendor_id).filter(|value| *value != 0)?;
+    let product_id =
+        crate::canonical_hex::parse_u16(&identity.product_id).filter(|value| *value != 0)?;
     Some(UsbVidPid {
         vendor_id,
         product_id,
@@ -950,8 +936,24 @@ mod tests {
     #[test]
     fn embedded_catalog_has_shipping_and_qualification_boards() -> Result<(), CatalogError> {
         let catalog = board_catalog()?;
-        assert_eq!(catalog.schema_version, 4);
-        assert!(catalog.shipping_boards().next().is_some());
+        assert_eq!(catalog.schema_version, 5);
+        let slugs = catalog
+            .shipping_boards()
+            .map(|board| board.slug.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            slugs,
+            [
+                "heltec-v4",
+                "heltec-v4-r8",
+                "t-beam-supreme",
+                "xiao-esp32-c6",
+                "t-echo",
+                "t114",
+                "t096",
+                "t1000-e"
+            ]
+        );
         assert!(catalog
             .boards
             .iter()
@@ -1036,6 +1038,93 @@ mod tests {
                 ("t1000-e", None, None),
             ]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn every_catalog_build_resolves_its_canonical_memory_profile(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let catalog = board_catalog()?;
+        let mut bindings = Vec::new();
+        for board in &catalog.boards {
+            match &board.build {
+                BoardBuild::Esp(build) => {
+                    let memory = build.memory_layout()?;
+                    bindings.push((
+                        board.slug.as_str(),
+                        build.memory_profile.as_str(),
+                        memory.architecture().rust_target(),
+                    ));
+                }
+                BoardBuild::Uf2(build) => {
+                    for variant in &build.variants {
+                        let memory = variant.memory_layout()?;
+                        bindings.push((
+                            board.slug.as_str(),
+                            variant.memory_profile.as_str(),
+                            memory.architecture().rust_target(),
+                        ));
+                    }
+                }
+                BoardBuild::NrfSerialDfu(build) => {
+                    let memory = build.memory_layout()?;
+                    bindings.push((
+                        board.slug.as_str(),
+                        build.memory_profile.as_str(),
+                        memory.architecture().rust_target(),
+                    ));
+                }
+            }
+        }
+        assert_eq!(
+            bindings,
+            [
+                ("heltec-v4", "heltec-v4", "xtensa-esp32s3-none-elf"),
+                ("heltec-v4-r8", "heltec-v4-r8", "xtensa-esp32s3-none-elf"),
+                ("heltec-e290", "heltec-e290", "xtensa-esp32s3-none-elf"),
+                (
+                    "heltec-wireless-stick-lite-v3",
+                    "heltec-wireless-stick-lite-v3",
+                    "xtensa-esp32s3-none-elf"
+                ),
+                (
+                    "t-beam-supreme",
+                    "t-beam-supreme",
+                    "xtensa-esp32s3-none-elf"
+                ),
+                (
+                    "xiao-esp32-c6",
+                    "xiao-esp32-c6",
+                    "riscv32imac-unknown-none-elf"
+                ),
+                ("t-echo", "t-echo-s140-v6", "thumbv7em-none-eabihf"),
+                ("t-echo", "t-echo-s140-v7", "thumbv7em-none-eabihf"),
+                ("t114", "t114", "thumbv7em-none-eabihf"),
+                (
+                    "mesh-pocket-5000",
+                    "mesh-pocket-5000",
+                    "thumbv7em-none-eabihf"
+                ),
+                (
+                    "mesh-pocket-10000",
+                    "mesh-pocket-10000",
+                    "thumbv7em-none-eabihf"
+                ),
+                ("t096", "t096", "thumbv7em-none-eabihf"),
+                ("t1000-e", "t1000-e", "thumbv7em-none-eabihf"),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_memory_profiles_are_rejected() -> Result<(), Box<dyn std::error::Error>> {
+        let mut value = serde_json::to_value(board_catalog()?)?;
+        value["boards"][0]["build"]["memory_profile"] = "unknown-profile".into();
+        assert!(matches!(
+            BoardCatalog::from_json(&serde_json::to_vec(&value)?),
+            Err(CatalogError::InvalidBoard { .. })
+        ));
         Ok(())
     }
 
@@ -1143,8 +1232,13 @@ mod tests {
         assert_eq!(variant.softdevice_family, "s140");
         assert_eq!(variant.softdevice_version, "6.1.1");
         assert_eq!(variant.fwid, "0x00b6");
-        assert_eq!(variant.application_base, "0x00026000");
-        assert_eq!(variant.application_end_exclusive, "0x000e8000");
+        assert_eq!(variant.memory_profile.as_str(), "t096");
+        let application = variant
+            .memory_layout()
+            .expect("T096 memory profile")
+            .transport_envelope();
+        assert_eq!(application.start(), 0x0002_6000);
+        assert_eq!(application.end_exclusive(), 0x000e_8000);
         assert_eq!(variant.family_id, "0xada52840");
         assert_eq!(
             variant.application_link,
@@ -1223,8 +1317,12 @@ mod tests {
         assert_eq!(build.compatibility.fwid, "0x0123");
         assert_eq!(build.compatibility.device_type, "0x0052");
         assert_eq!(build.compatibility.device_revision, 52840);
-        assert_eq!(build.compatibility.application_base, "0x00027000");
-        assert_eq!(build.compatibility.application_end_exclusive, "0x000ea000");
+        assert_eq!(build.memory_profile.as_str(), "t1000-e");
+        let compatibility = build
+            .manifest_compatibility()
+            .expect("T1000-E memory profile");
+        assert_eq!(compatibility.application_base, "0x00027000");
+        assert_eq!(compatibility.application_end_exclusive, "0x000ea000");
         assert_eq!(build.compatibility.bank_layout, NrfDfuBankLayout::Single);
         assert_eq!(build.recovery.mount_label, "T1000-E");
         assert_eq!(
@@ -1273,8 +1371,13 @@ mod tests {
         assert_eq!(variant.softdevice_family, "s140");
         assert_eq!(variant.softdevice_version, "6.1.1");
         assert_eq!(variant.fwid, "0x00b6");
-        assert_eq!(variant.application_base, "0x00026000");
-        assert_eq!(variant.application_end_exclusive, "0x000e9000");
+        assert_eq!(variant.memory_profile.as_str(), "t114");
+        let application = variant
+            .memory_layout()
+            .expect("T114 memory profile")
+            .transport_envelope();
+        assert_eq!(application.start(), 0x0002_6000);
+        assert_eq!(application.end_exclusive(), 0x000e_9000);
         assert_eq!(variant.family_id, "0xada52840");
         assert_eq!(variant.application_link, Uf2ApplicationLink::BareMetal);
         assert_eq!(variant.target_directory, "target/t114");
@@ -1447,8 +1550,10 @@ mod tests {
             let [variant] = build.variants.as_slice() else {
                 return Err("expected one MeshPocket artifact".into());
             };
-            assert_eq!(variant.application_base, "0x00026000");
-            assert_eq!(variant.application_end_exclusive, "0x000e1000");
+            assert_eq!(variant.memory_profile.as_str(), slug);
+            let firmware = variant.memory_layout()?.firmware_owned();
+            assert_eq!(firmware.start(), 0x0002_6000);
+            assert_eq!(firmware.end_exclusive(), 0x000e_1000);
         }
         Ok(())
     }

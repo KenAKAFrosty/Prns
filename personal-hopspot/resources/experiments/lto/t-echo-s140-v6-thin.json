@@ -1,0 +1,415 @@
+{
+  "schema_version": 5,
+  "target": {
+    "id": "t-echo-s140-v6",
+    "display_name": "LilyGO T-Echo S140 6.1.1",
+    "memory_profile": "t-echo-s140-v6"
+  },
+  "architecture": {
+    "rust_target": "thumbv7em-none-eabihf",
+    "adapter": "thumbv7em-rust-lld",
+    "linker_flavor": "rust-lld",
+    "rustflags": [
+      "-C",
+      "link-arg=--icf=all",
+      "-C",
+      "llvm-args=-enable-machine-outliner",
+      "-C",
+      "llvm-args=-machine-outliner-reruns=2"
+    ]
+  },
+  "build": {
+    "fingerprint": "25ae0d2553b090cdb0178df94d7345dc603180aa645bf268d1618cdcd3bc0737",
+    "firmware_version": "0.3.7",
+    "cargo_profile": "release",
+    "recipe_kind": "uf2",
+    "package": "t-echo",
+    "binary": "t-echo",
+    "features": [
+      "board-t-echo",
+      "softdevice-s140-v6"
+    ],
+    "lto": "thin"
+  },
+  "toolchain": {
+    "fingerprint": "75a6259eaebb5273ab6bf620ea36e19f31bda7caff1a56a239816a600f70e5f2",
+    "rustc_version": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: aarch64-apple-darwin\nrelease: 1.98.0\nLLVM version: 22.1.8",
+    "cargo_version": "cargo 1.98.0 (797e8a9bc 2026-08-05)",
+    "linker_program": "rust-lld",
+    "linker_version": "LLD 22.1.8 (https://github.com/rust-lang/llvm-project.git 52ed14fcd56afc30f9cccd8ca8ce237c2eef7e04) (compatible with GNU linkers)"
+  },
+  "memory_contract": {
+    "fingerprint": "6d8526c08fb6a427de086e728895a07f756256407a675a176ad8151577f53a1b",
+    "address_spaces": [
+      {
+        "id": "internal-flash",
+        "kind": "internal-flash",
+        "geometry": {
+          "kind": "fixed",
+          "start": 0,
+          "end": 1048576
+        },
+        "backing_store": "internal-flash",
+        "backing_offset": 0
+      },
+      {
+        "id": "internal-ram",
+        "kind": "internal-ram",
+        "geometry": {
+          "kind": "fixed",
+          "start": 536920064,
+          "end": 537133056
+        },
+        "backing_store": "internal-sram",
+        "backing_offset": 49152
+      }
+    ],
+    "regions": [
+      {
+        "id": "platform-firmware",
+        "address_space": "internal-flash",
+        "start": 0,
+        "end": 155648,
+        "alignment": 4096,
+        "owner": "platform",
+        "retention": "immutable",
+        "role": "soft-device"
+      },
+      {
+        "id": "firmware",
+        "address_space": "internal-flash",
+        "start": 155648,
+        "end": 782336,
+        "alignment": 4096,
+        "owner": "firmware-image",
+        "retention": "replace-with-firmware",
+        "role": "firmware-image"
+      },
+      {
+        "id": "remote-control-identity",
+        "address_space": "internal-flash",
+        "start": 782336,
+        "end": 786432,
+        "alignment": 4096,
+        "owner": "device-identity",
+        "retention": "preserve-across-firmware-update",
+        "role": "remote-control-identity"
+      },
+      {
+        "id": "journal",
+        "address_space": "internal-flash",
+        "start": 786432,
+        "end": 954368,
+        "alignment": 4096,
+        "owner": "learned-state",
+        "retention": "preserve-across-firmware-update",
+        "role": "journal"
+      },
+      {
+        "id": "radio-profile",
+        "address_space": "internal-flash",
+        "start": 954368,
+        "end": 962560,
+        "alignment": 4096,
+        "owner": "radio",
+        "retention": "preserve-across-firmware-update",
+        "role": "radio-profile"
+      },
+      {
+        "id": "node-identity",
+        "address_space": "internal-flash",
+        "start": 962560,
+        "end": 966656,
+        "alignment": 4096,
+        "owner": "device-identity",
+        "retention": "preserve-across-firmware-update",
+        "role": "node-identity"
+      },
+      {
+        "id": "ble-identity",
+        "address_space": "internal-flash",
+        "start": 966656,
+        "end": 970752,
+        "alignment": 4096,
+        "owner": "device-identity",
+        "retention": "preserve-across-firmware-update",
+        "role": "ble-identity"
+      },
+      {
+        "id": "reserved",
+        "address_space": "internal-flash",
+        "start": 970752,
+        "end": 1048576,
+        "alignment": 4096,
+        "owner": "factory",
+        "retention": "immutable",
+        "role": "reserved"
+      }
+    ],
+    "firmware_owned_region": "firmware",
+    "transport_envelope": {
+      "address_space": "internal-flash",
+      "start": 155648,
+      "end": 786432,
+      "compatibility": "legacy-envelope"
+    },
+    "runtime_reservations": [
+      {
+        "id": "minimum-runtime-stack",
+        "address_space": "internal-ram",
+        "bytes": 69632,
+        "accounting": {
+          "kind": "dedicated",
+          "charge": "additional-to-static"
+        }
+      }
+    ]
+  },
+  "status": {
+    "kind": "memory-overflow",
+    "regions": [
+      {
+        "linker_region": "FLASH",
+        "overflow_bytes": 86560
+      }
+    ]
+  },
+  "firmware_flash": {
+    "kind": "unavailable"
+  },
+  "static_ram": {
+    "kind": "unavailable"
+  },
+  "artifacts": {
+    "kind": "unavailable"
+  },
+  "analysis": {
+    "linker_map_bytes": 10106819,
+    "allocated_sections": {
+      "kind": "unavailable"
+    },
+    "flash_attribution": {
+      "kind": "partial",
+      "value": {
+        "crates": {
+          "coverage": {
+            "analyzed_bytes": 713240,
+            "attributed_bytes": 548974,
+            "unclassified_bytes": 164266
+          },
+          "largest": [
+            {
+              "name": "prns_core",
+              "bytes": 199770
+            },
+            {
+              "name": "embassy_futures",
+              "bytes": 44964
+            },
+            {
+              "name": "sha2",
+              "bytes": 34404
+            },
+            {
+              "name": "prns_interfaces_embassy",
+              "bytes": 29632
+            },
+            {
+              "name": "personal_hopspot_nrf52840",
+              "bytes": 28525
+            },
+            {
+              "name": "core",
+              "bytes": 27930
+            },
+            {
+              "name": "prns_runtime_embassy",
+              "bytes": 27182
+            },
+            {
+              "name": "personal_hopspot_core",
+              "bytes": 25382
+            },
+            {
+              "name": "embassy_sync",
+              "bytes": 18658
+            },
+            {
+              "name": "embassy_executor",
+              "bytes": 18204
+            },
+            {
+              "name": "curve25519_dalek",
+              "bytes": 18108
+            },
+            {
+              "name": "nrf_softdevice",
+              "bytes": 13123
+            },
+            {
+              "name": "prns_runtime",
+              "bytes": 10164
+            },
+            {
+              "name": "heapless",
+              "bytes": 9696
+            },
+            {
+              "name": "aes",
+              "bytes": 7884
+            },
+            {
+              "name": "embassy_usb",
+              "bytes": 7106
+            },
+            {
+              "name": "embassy_nrf",
+              "bytes": 6210
+            },
+            {
+              "name": "compiler_builtins",
+              "bytes": 5542
+            },
+            {
+              "name": "embedded_graphics",
+              "bytes": 3954
+            },
+            {
+              "name": "embassy_time",
+              "bytes": 3130
+            },
+            {
+              "name": "embedded_hal_bus",
+              "bytes": 1768
+            },
+            {
+              "name": "chacha20",
+              "bytes": 1156
+            },
+            {
+              "name": "ed25519_dalek",
+              "bytes": 1054
+            },
+            {
+              "name": "cbc",
+              "bytes": 888
+            },
+            {
+              "name": "hkdf",
+              "bytes": 722
+            }
+          ]
+        },
+        "symbols": {
+          "coverage": {
+            "analyzed_bytes": 713240,
+            "attributed_bytes": 549434,
+            "unclassified_bytes": 163806
+          },
+          "largest": [
+            {
+              "name": "sha2::sha512::compress512",
+              "bytes": 26440
+            },
+            {
+              "name": "<prns_interfaces_embassy::lora::LoRaInterface<prns_interfaces_embassy::radios::sx126x::Sx126x<embedded_hal_bus::spi::exclusive::ExclusiveDevice<embassy_nrf::spim::Spim, embassy_nrf::gpio::Output, embassy_time::delay::Delay>, embassy_nrf::gpio::Input, embassy_nrf::gpio::Input, embassy_nrf::gpio::Output, embassy_time::de…ocking_mutex::raw::CriticalSectionRawMutex, personal_hopspot_nrf52840::runtime::entropy::NrfEntropySource, 3, 508>>::{closure#0} [sha256:e4e34959a68e]",
+              "bytes": 9620
+            },
+            {
+              "name": "<embassy_futures::join::MaybeDone<prns_runtime_embassy::manifold::driver::pooled_topology::run_pooled<personal_hopspot_nrf52840::storage::Nrf52840Storage, prns_runtime_embassy::manifold::driver::host::EmbassyHost<embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex, personal_hopspot_nrf52840::runtime::entropy::Nr…apshotKeys<8>, fn(prns_runtime_embassy::runtime::embedded_persistence::EmbeddedPersistenceDiagnostic), 8>>>::{closure#0}>>::poll [sha256:662ae80aa2ef]",
+              "bytes": 7684
+            },
+            {
+              "name": "sha2::sha256::compress256",
+              "bytes": 7164
+            },
+            {
+              "name": "<embassy_executor::raw::TaskStorage<t_echo::____embassy_main_task::____embassy_main_task_inner_function::{closure#0}>>::poll",
+              "bytes": 7032
+            },
+            {
+              "name": "<embassy_futures::join::MaybeDone<prns_runtime_embassy::runtime::request_runner::run_router<(), personal_hopspot_core::node_pages::NodePageRoutes, embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex, 2, 4, 0, 0, 4, 403>::{closure#0}>>::poll",
+              "bytes": 6436
+            },
+            {
+              "name": "personal_hopspot_nrf52840::runtime::bluetooth_auto::HUB",
+              "bytes": 6084
+            },
+            {
+              "name": "<embassy_executor::raw::TaskStorage<personal_hopspot_nrf52840::runtime::firmware::__manifold_task_task::__manifold_task_task_inner_function::{closure#0}>>::poll",
+              "bytes": 5852
+            },
+            {
+              "name": "personal_hopspot_core::screen::face_64x128::render",
+              "bytes": 5692
+            },
+            {
+              "name": "<prns_core::engine::state::EngineState<personal_hopspot_nrf52840::storage::Nrf52840Storage>>::ingest_classified_into_report::<prns_runtime_embassy::manifold::driver::pooled_topology::run_pooled<personal_hopspot_nrf52840::storage::Nrf52840Storage, prns_runtime_embassy::manifold::driver::host::EmbassyHost<embassy_sync::b…Keys<8>, fn(prns_runtime_embassy::runtime::embedded_persistence::EmbeddedPersistenceDiagnostic), 8>>>::{closure#0}::{closure#2}> [sha256:9585e997222d]",
+              "bytes": 5004
+            },
+            {
+              "name": "<embassy_futures::join::MaybeDone<<prns_interfaces_embassy::bluetooth_auto::runtime::BluetoothAuto<personal_hopspot_nrf52840::runtime::bluetooth_auto::NrfBleBackend, 5>>::run<embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex, 500, 3, 5>::{closure#0}>>::poll",
+              "bytes": 4996
+            },
+            {
+              "name": "<prns_core::engine::state::EngineState<personal_hopspot_nrf52840::storage::Nrf52840Storage>>::ingest_command_into_with_timing::<prns_runtime_embassy::manifold::driver::pooled_topology::run_pooled<personal_hopspot_nrf52840::storage::Nrf52840Storage, prns_runtime_embassy::manifold::driver::host::EmbassyHost<embassy_sync:…ns_runtime_embassy::runtime::embedded_persistence::EmbeddedPersistenceDiagnostic), 8>>>::{closure#0}::{closure#5}>::{closure#0}> [sha256:a80e6c601e02]",
+              "bytes": 4944
+            },
+            {
+              "name": "personal_hopspot_nrf52840::runtime::bluetooth_auto::L2CAP_POOL_STORE",
+              "bytes": 4527
+            },
+            {
+              "name": "<embassy_executor::raw::TaskStorage<personal_hopspot_nrf52840::runtime::bluetooth_auto::__serve_slot_task::__serve_slot_task_inner_function::{closure#0}>>::poll",
+              "bytes": 4440
+            },
+            {
+              "name": "<embassy_futures::join::MaybeDone<personal_hopspot_nrf52840::runtime::firmware::run::{closure#0}::{closure#5}>>::poll",
+              "bytes": 4152
+            },
+            {
+              "name": "<curve25519_dalek::backend::serial::u32::scalar::Scalar29>::mul",
+              "bytes": 3876
+            },
+            {
+              "name": "prns_runtime_embassy::runtime::remote_control_pairing_authorizations::activate",
+              "bytes": 3046
+            },
+            {
+              "name": "<prns_interfaces_embassy::radios::sx126x::Sx126x<embedded_hal_bus::spi::exclusive::ExclusiveDevice<embassy_nrf::spim::Spim, embassy_nrf::gpio::Output, embassy_time::delay::Delay>, embassy_nrf::gpio::Input, embassy_nrf::gpio::Input, embassy_nrf::gpio::Output, embassy_time::delay::Delay> as prns_interfaces_embassy::radios::radio::LoRaRadio>::initialize::{closure#0}",
+              "bytes": 2796
+            },
+            {
+              "name": "<personal_hopspot_core::screen::state::UiState>::handle_input",
+              "bytes": 2708
+            },
+            {
+              "name": "personal_hopspot_nrf52840::runtime::bluetooth_auto::INBOUND_FRAMES",
+              "bytes": 2700
+            },
+            {
+              "name": "personal_hopspot_nrf52840::runtime::bluetooth_auto::OUTBOUND_FRAMES",
+              "bytes": 2700
+            },
+            {
+              "name": "<embassy_futures::select::Select4<prns_runtime_embassy::runtime::request_runner::next_pairing_persistence_input<embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex>::{closure#0}, <prns_runtime_embassy::runtime::node_facade::command_handle::PrnsNodeHandle<embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex…alSectionRawMutex, prns_runtime_embassy::runtime::request_runner::RunnerRequest<403>, 4>> as core::future::future::Future>::poll [sha256:d2b12b6d4800]",
+              "bytes": 2668
+            },
+            {
+              "name": "<prns_runtime_embassy::runtime::embedded_persistence::EmbeddedFlashPersistence<prns_runtime_embassy::runtime::shared_flash::SharedNorFlash<embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex, nrf_softdevice::flash::Flash>, prns_runtime_embassy::runtime::embedded_persistence::FixedRouteSnapshotKeys<8>, fn(prns_ru…ce::EmbeddedPersistenceDiagnostic), 8>>::progress_compaction::<personal_hopspot_nrf52840::storage::Nrf52840Storage>::{closure#0} [sha256:12775fe29cc5]",
+              "bytes": 2520
+            },
+            {
+              "name": "<prns_core::engine::state::EngineState<personal_hopspot_nrf52840::storage::Nrf52840Storage>>::ingest_classified_with_mode",
+              "bytes": 2100
+            },
+            {
+              "name": "personal_hopspot_nrf52840::runtime::node::INTERFACE_STORE",
+              "bytes": 2060
+            }
+          ]
+        }
+      }
+    }
+  }
+}

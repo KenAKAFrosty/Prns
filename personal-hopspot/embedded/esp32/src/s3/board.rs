@@ -1,4 +1,5 @@
 use super::*;
+use personal_hopspot_memory::MemoryProfile;
 
 #[cfg(feature = "lora")]
 pub(crate) type LoraRadio = Sx126x<
@@ -44,7 +45,7 @@ pub(crate) trait Esp32S3Board {
     const NODE_ANNOUNCE_APP_DATA: &'static [u8];
     const BOOT_BANNER: &'static str;
     const USB_INTERFACE_ID: InterfaceId;
-    const FLASH_LAYOUT: screen::HopspotS3FlashLayout;
+    const MEMORY_PROFILE: &'static MemoryProfile;
     type Display: crate::display_runtime::S3BoardDisplay;
     type Battery: screen::BatterySource;
     type Gnss: GnssProvider;

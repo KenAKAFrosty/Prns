@@ -1062,7 +1062,7 @@ mod tests {
             variants: Vec::new(),
             nrf_serial_dfu: Some(NrfSerialDfuManifest {
                 serial: build.serial.clone(),
-                compatibility: build.compatibility.clone(),
+                compatibility: build.manifest_compatibility()?,
                 application: part(
                     FlashPartKind::DfuApplication,
                     &build.application_filename,

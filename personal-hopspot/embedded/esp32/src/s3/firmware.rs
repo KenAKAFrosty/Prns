@@ -6,6 +6,8 @@ use personal_rns::remote_control::{
     RemoteControlInitialControllerGrants, RemoteControlSelfAnnouncement, RemoteControlService,
 };
 
+use crate::memory::EspFirmwareMemory;
+
 fn display_now() -> MonotonicMillis {
     MonotonicMillis::new(embassy_time::Instant::now().as_millis())
 }
@@ -57,6 +59,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     B::Battery: 'static,
     B::Gnss: 'static,
 {
+    let memory = EspFirmwareMemory::new(B::MEMORY_PROFILE);
     let BoardFace {
         display: board_display,
         battery,
@@ -113,12 +116,12 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     static FLASH: StaticCell<Mutex<CriticalSectionRawMutex, crate::flash::EspRomFlash>> =
         StaticCell::new();
     let flash = FLASH.init(Mutex::new(crate::flash::EspRomFlash::new(
-        B::FLASH_LAYOUT.flash_capacity,
+        memory.flash_capacity(),
     )));
-    let shared_flash = SharedNorFlash::new(flash, B::FLASH_LAYOUT.flash_capacity);
+    let shared_flash = SharedNorFlash::new(flash, memory.flash_capacity());
     #[cfg(feature = "lora")]
     let mut subg_configuration_store =
-        screen::SubGConfigurationStore::new(shared_flash, B::FLASH_LAYOUT.radio_profile_pages);
+        screen::SubGConfigurationStore::new(shared_flash, memory.radio_profile_pages());
     #[cfg(feature = "lora")]
     let loaded_subg_configuration = match subg_configuration_store.load().await {
         Ok(loaded) => loaded,
@@ -141,12 +144,12 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     #[cfg(not(feature = "lora"))]
     let subg_startup_notice: Option<screen::UiNotice> = None;
     #[cfg(feature = "lora")]
-    let lora_id = LoRaInterface::<LoraRadio>::interface_id_for_configuration(subg_configuration)
-        .unwrap_or_else(|_| LoRaInterface::<LoraRadio>::unconfigured_interface_id());
-    #[cfg(feature = "lora")]
     let lora_status: &'static EmbassyInterfaceStatus = mk_static!(
         EmbassyInterfaceStatus,
-        EmbassyInterfaceStatus::new_accounted(lora_id, ConnectionState::Initializing)
+        EmbassyInterfaceStatus::new_accounted(
+            LoRaInterface::<LoraRadio>::unconfigured_interface_id(),
+            ConnectionState::Initializing,
+        )
     );
     #[cfg(feature = "lora")]
     let lora_spectrum: &'static LoRaSpectrumStatus =
@@ -164,12 +167,14 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     #[cfg(feature = "lora")]
     let lora_tx_queue = crate::storage::allocate_lora_tx_queue();
     #[cfg(feature = "lora")]
+    let (mut lora_controller, lora_control) = LORA_CONTROL.init(LoRaControl::new()).split();
+    #[cfg(feature = "lora")]
     let lora = match LoRaInterface::new(LoRaInterfaceInput {
         radio: lora_radio,
         configuration: subg_configuration,
         airtime_policy: AirtimePolicy::Regional,
         tx_queue: lora_tx_queue,
-        control: &LORA_CONTROL,
+        control: lora_control,
         status: lora_status,
         spectrum: lora_spectrum,
         lifecycle: LIFECYCLE.dyn_sender(),
@@ -177,6 +182,8 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         Ok(lora) => lora,
         Err(_) => panic!("the built-in LoRa profile and regional policy must be valid"),
     };
+    #[cfg(feature = "lora")]
+    lora_status.set_id(lora.id());
 
     let remote_control_bootstrap =
         remote_control_bootstrap.expect("RemoteControl identity bootstrap failed");
@@ -255,7 +262,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         storage: EngineStorageType::default(),
         request_endpoints: screen::node_pages::NodePageRoutes,
         interfaces: personal_rns::runtime::ManuallyAttached,
-        persistence: crate::persistence::s3(shared_flash, B::FLASH_LAYOUT.journal),
+        persistence: crate::persistence::s3(shared_flash, &memory),
         on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
     };
 
@@ -896,131 +903,75 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                 screen::UiAction::SetSubGConfiguration(_)
                                 | screen::UiAction::ClearSubGConfiguration => {}
                                 #[cfg(feature = "lora")]
-                                screen::UiAction::SetSubGConfiguration(configuration) => {
+                                action @ (screen::UiAction::SetSubGConfiguration(_)
+                                | screen::UiAction::ClearSubGConfiguration) => {
                                     let previous = working_subg_configuration;
-                                    let requested =
-                                        SubGConfigurationState::Configured(configuration);
-                                    let result = screen::apply_and_persist_subg_configuration(
-                                        || async {
-                                            match LORA_CONTROL.apply_configuration(requested).await
-                                            {
-                                                LoRaApplyOutcome::Applied => {
-                                                    screen::SubGConfigurationStepOutcome::Succeeded
+                                    let requested = if let screen::UiAction::SetSubGConfiguration(
+                                        configuration,
+                                    ) = action
+                                    {
+                                        SubGConfigurationState::Configured(configuration)
+                                    } else {
+                                        SubGConfigurationState::Unconfigured
+                                    };
+                                    let result = match lora_controller
+                                        .apply_configuration(requested)
+                                        .await
+                                    {
+                                        LoRaApplyOutcome::Rejected => {
+                                            log::error!("SubG configuration apply failed");
+                                            screen::SubGConfigurationChangeResult::ApplyFailed
+                                        }
+                                        LoRaApplyOutcome::Applied => {
+                                            let persistence = match requested {
+                                                SubGConfigurationState::Configured(
+                                                    configuration,
+                                                ) => {
+                                                    subg_configuration_store
+                                                        .save(configuration)
+                                                        .await
                                                 }
-                                                LoRaApplyOutcome::Rejected(error) => {
-                                                    log::error!(
-                                                        "SubG configuration apply failed: {error:?}"
-                                                    );
-                                                    screen::SubGConfigurationStepOutcome::Failed
+                                                SubGConfigurationState::Unconfigured => {
+                                                    subg_configuration_store.clear().await
                                                 }
-                                            }
-                                        },
-                                        || async {
-                                            match subg_configuration_store.save(configuration).await
-                                            {
+                                            };
+                                            match persistence {
                                                 screen::SubGConfigurationCommitOutcome::Committed => {
-                                                    screen::SubGConfigurationPersistenceOutcome::Committed
-                                                }
-                                                screen::SubGConfigurationCommitOutcome::NotCommitted(error) => {
-                                                    log::error!(
-                                                        "SubG configuration save failed: {error:?}"
-                                                    );
-                                                    screen::SubGConfigurationPersistenceOutcome::NotCommitted
+                                                    screen::SubGConfigurationChangeResult::Saved
                                                 }
                                                 screen::SubGConfigurationCommitOutcome::Indeterminate(error) => {
                                                     log::error!(
-                                                        "SubG configuration save is indeterminate: {error:?}"
+                                                        "SubG configuration persistence is indeterminate: {error:?}"
                                                     );
-                                                    screen::SubGConfigurationPersistenceOutcome::Indeterminate
+                                                    screen::SubGConfigurationChangeResult::PersistenceUncertain
                                                 }
-                                            }
-                                        },
-                                        || async {
-                                            match LORA_CONTROL.apply_configuration(previous).await {
-                                                LoRaApplyOutcome::Applied => {
-                                                    screen::SubGConfigurationStepOutcome::Succeeded
-                                                }
-                                                LoRaApplyOutcome::Rejected(error) => {
+                                                screen::SubGConfigurationCommitOutcome::NotCommitted(error) => {
                                                     log::error!(
-                                                        "SubG configuration rollback failed: {error:?}"
+                                                        "SubG configuration persistence failed: {error:?}"
                                                     );
-                                                    screen::SubGConfigurationStepOutcome::Failed
+                                                    match lora_controller
+                                                        .apply_configuration(previous)
+                                                        .await
+                                                    {
+                                                        LoRaApplyOutcome::Applied => {
+                                                            screen::SubGConfigurationChangeResult::PersistenceFailed
+                                                        }
+                                                        LoRaApplyOutcome::Rejected => {
+                                                            log::error!(
+                                                                "SubG configuration rollback failed"
+                                                            );
+                                                            screen::SubGConfigurationChangeResult::RollbackFailed
+                                                        }
+                                                    }
                                                 }
                                             }
-                                        },
-                                    )
-                                    .await;
+                                        }
+                                    };
                                     if matches!(
                                         result.active_configuration(),
                                         screen::ActiveSubGConfiguration::Requested
                                     ) {
                                         working_subg_configuration = requested;
-                                    }
-                                    let notice = result.notice();
-                                    show_notice(
-                                        &mut ui_state,
-                                        &mut notice_timer,
-                                        notice,
-                                        NOTICE_DURATION,
-                                    );
-                                }
-                                #[cfg(feature = "lora")]
-                                screen::UiAction::ClearSubGConfiguration => {
-                                    let previous = working_subg_configuration;
-                                    let result = screen::apply_and_persist_subg_configuration(
-                                        || async {
-                                            match LORA_CONTROL.clear().await {
-                                                LoRaApplyOutcome::Applied => {
-                                                    screen::SubGConfigurationStepOutcome::Succeeded
-                                                }
-                                                LoRaApplyOutcome::Rejected(error) => {
-                                                    log::error!(
-                                                        "SubG configuration clear apply failed: {error:?}"
-                                                    );
-                                                    screen::SubGConfigurationStepOutcome::Failed
-                                                }
-                                            }
-                                        },
-                                        || async {
-                                            match subg_configuration_store.clear().await {
-                                                screen::SubGConfigurationCommitOutcome::Committed => {
-                                                    screen::SubGConfigurationPersistenceOutcome::Committed
-                                                }
-                                                screen::SubGConfigurationCommitOutcome::NotCommitted(error) => {
-                                                    log::error!(
-                                                        "SubG configuration clear failed: {error:?}"
-                                                    );
-                                                    screen::SubGConfigurationPersistenceOutcome::NotCommitted
-                                                }
-                                                screen::SubGConfigurationCommitOutcome::Indeterminate(error) => {
-                                                    log::error!(
-                                                        "SubG configuration clear is indeterminate: {error:?}"
-                                                    );
-                                                    screen::SubGConfigurationPersistenceOutcome::Indeterminate
-                                                }
-                                            }
-                                        },
-                                        || async {
-                                            match LORA_CONTROL.apply_configuration(previous).await {
-                                                LoRaApplyOutcome::Applied => {
-                                                    screen::SubGConfigurationStepOutcome::Succeeded
-                                                }
-                                                LoRaApplyOutcome::Rejected(error) => {
-                                                    log::error!(
-                                                        "SubG configuration rollback failed: {error:?}"
-                                                    );
-                                                    screen::SubGConfigurationStepOutcome::Failed
-                                                }
-                                            }
-                                        },
-                                    )
-                                    .await;
-                                    if matches!(
-                                        result.active_configuration(),
-                                        screen::ActiveSubGConfiguration::Requested
-                                    ) {
-                                        working_subg_configuration =
-                                            SubGConfigurationState::Unconfigured;
                                     }
                                     let notice = result.notice();
                                     show_notice(

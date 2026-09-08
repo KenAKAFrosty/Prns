@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 
-BOARD_CATALOG_SCHEMA = 4
+BOARD_CATALOG_SCHEMA = 5
 FLASH_MANIFEST_SCHEMA = 3
 BOARD_AVAILABILITIES = frozenset(("shipping", "qualification"))
 BOARD_TRANSPORTS = frozenset(("esp-serial", "uf2-mass-storage", "nrf-serial-dfu"))
