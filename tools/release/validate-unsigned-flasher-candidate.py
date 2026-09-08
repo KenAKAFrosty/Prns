@@ -21,6 +21,7 @@ from source_snapshot import verify_source_snapshot
 from flasher_manifest import (
     FLASH_MANIFEST_SCHEMA,
     target_artifacts,
+    validate_esp_artifact,
     validate_nrf_serial_dfu_recovery_artifact,
     validate_uf2_artifact,
 )
@@ -53,6 +54,7 @@ REQUIRED_RELEASE_FILES = (
     "qualification/flasher_acceptance_contract.py",
     "qualification/flasher_board_catalog.py",
     "qualification/flasher_manifest.py",
+    "qualification/flasher_memory_contracts.py",
     "qualification/flasher_tester_roster.py",
     "qualification/package-flasher-qualification-evidence.py",
     "qualification/serve-flasher-candidate.py",
@@ -144,6 +146,8 @@ def verify_qualification_kit(root: Path, roster_version: str, tester_roster: Pat
         "qualification/flasher_board_catalog.py": release_tools
         / "flasher_board_catalog.py",
         "qualification/flasher_manifest.py": release_tools / "flasher_manifest.py",
+        "qualification/flasher_memory_contracts.py": release_tools
+        / "flasher_memory_contracts.py",
         "qualification/flasher_tester_roster.py": release_tools / "flasher_tester_roster.py",
         "qualification/flasher_hotfix.py": release_tools / "flasher_hotfix.py",
         "qualification/package-flasher-qualification-evidence.py": release_tools
@@ -382,7 +386,9 @@ def verify(arguments: argparse.Namespace) -> dict:
             if not hosted.is_file() or hosted.read_bytes() != payload:
                 raise ValueError(f"hosted firmware part differs from candidate payload: {relative}")
             if target.get("transport") == "uf2-mass-storage":
-                validate_uf2_artifact(part, payload)
+                validate_uf2_artifact(board_slug, part, payload)
+            if target.get("transport") == "esp-serial":
+                validate_esp_artifact(board_slug, part, payload)
             if part.get("kind") in {"application", "dfu-application"} and source_archive in payload:
                 raise ValueError(
                     f"embedded target {board_slug} must not embed source.zip"

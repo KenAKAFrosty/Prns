@@ -5,7 +5,14 @@ mod identity;
 mod raster;
 mod ssd1680;
 
+#[cfg(feature = "mesh-pocket-battery-10000")]
+use personal_hopspot_memory::MESH_POCKET_10000;
+#[cfg(feature = "mesh-pocket-battery-5000")]
+use personal_hopspot_memory::MESH_POCKET_5000;
+use personal_hopspot_memory::{MemoryProfile, RegionRole};
 use personal_rns::interfaces::InterfaceId;
+
+use crate::memory::NrfFirmwareMemory;
 
 pub(crate) use crate::storage::Nrf52840Storage as Storage;
 pub(crate) use battery::gauge as battery_gauge;
@@ -22,14 +29,20 @@ pub(crate) use identity::{
 
 pub(crate) use super::button::{EVENTS as INPUT_EVENTS, EVENT_CAPACITY as INPUT_EVENT_CAPACITY};
 
+#[cfg(feature = "mesh-pocket-battery-5000")]
+pub(crate) const MEMORY_PROFILE: &MemoryProfile = &MESH_POCKET_5000;
+#[cfg(feature = "mesh-pocket-battery-10000")]
+pub(crate) const MEMORY_PROFILE: &MemoryProfile = &MESH_POCKET_10000;
+
+const MEMORY: NrfFirmwareMemory = NrfFirmwareMemory::new(MEMORY_PROFILE);
+
 pub(crate) const JOURNAL_LAYOUT: personal_rns::persistence::FlashJournalLayout =
-    personal_hopspot_core::HELTEC_DISPLAY_NRF52840_JOURNAL_LAYOUT;
-pub(crate) const RADIO_PROFILE_PAGES: [u32; 2] =
-    personal_hopspot_core::NRF52840_RADIO_PROFILE_PAGES;
+    MEMORY.journal_layout();
+pub(crate) const RADIO_PROFILE_PAGES: [u32; 2] = MEMORY.two_flash_pages(RegionRole::RadioProfile);
+pub(crate) const NODE_IDENTITY_FLASH_OFFSET: u32 = MEMORY.flash_offset(RegionRole::NodeIdentity);
+pub(crate) const BLE_IDENTITY_FLASH_OFFSET: u32 = MEMORY.flash_offset(RegionRole::BleIdentity);
 pub(crate) const REMOTE_CONTROL_IDENTITY_FLASH: super::RemoteControlIdentityFlash =
-    super::RemoteControlIdentityFlash::at(
-        personal_hopspot_core::HELTEC_DISPLAY_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET,
-    );
+    super::RemoteControlIdentityFlash::at(MEMORY.flash_offset(RegionRole::RemoteControlIdentity));
 pub(crate) const USB_MANUFACTURER: &str = "Stay Personal";
 #[cfg(feature = "mesh-pocket-battery-5000")]
 pub(crate) const USB_PRODUCT: &str = "Personal Hopspot (MeshPocket 5000)";

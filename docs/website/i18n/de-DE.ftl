@@ -65,8 +65,8 @@ start-section-label = Wege hinein
 start-section-title = Was willst du hier tun?
 start-section-lead = Wähle den Weg, der dazu passt, wie Prns in deine Arbeit kommt: Hardware, die du flashst, Infrastruktur, die du betreibst, oder Software, die du baust.
 
-start-daemon-headline = Einen Daemon betreiben
-start-daemon-body = Installiere einen schnellen Reticulum-Daemon für Desktops, LXMF-Apps, Backbone-VPS und mehr.
+start-daemon-headline = Reticulum mit prnsd installieren
+start-daemon-body = Ein schneller Reticulum-Daemon für Desktops, LXMF-Apps, Backbone-VPS und mehr.
 start-daemon-code = Drop-in für Standard-Apps
     Liest ~/.reticulum
     Interface-Änderungen live

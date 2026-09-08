@@ -8,6 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = ROOT / "validation" / "hygiene" / "pre-push-ci-parity.py"
+sys.path.insert(0, str(SCRIPT_PATH.parent))
 SPEC = importlib.util.spec_from_file_location("pre_push_ci_parity", SCRIPT_PATH)
 assert SPEC is not None and SPEC.loader is not None
 parity = importlib.util.module_from_spec(SPEC)
@@ -31,7 +32,7 @@ class PrePushCiParityTests(unittest.TestCase):
         self.assertIn("prnsd all-features Clippy", names)
         self.assertIn("prns-wasm wasm32 Clippy", names)
         self.assertIn("JavaScript browser package smoke", names)
-        self.assertIn("embedded build matrix", names)
+        self.assertIn("embedded resource matrix", names)
         self.assertIn("Embassy runtime Clippy", names)
         self.assertIn("unsafe dependency inventory", names)
 
@@ -78,13 +79,13 @@ class PrePushCiParityTests(unittest.TestCase):
             ("advisories", "licenses", "sources", "bans"),
         )
 
-    def test_embassy_change_runs_the_exact_embedded_matrix(self) -> None:
+    def test_embassy_change_links_the_exact_resource_matrix(self) -> None:
         gates = parity.plan_for_paths(
             {"prns-runtime/impls/embassy/src/runtime/request_runner.rs"}
         )
         names = {gate.name for gate in gates}
 
-        self.assertIn("embedded build matrix", names)
+        self.assertIn("embedded resource matrix", names)
         gate = next(gate for gate in gates if gate.name == "Embassy runtime Clippy")
         self.assertEqual(gate.cwd, ROOT / "prns-runtime/impls/embassy")
         self.assertEqual(gate.env, (("RUSTFLAGS", "-D warnings --cfg aes_armv8"),))
@@ -100,6 +101,30 @@ class PrePushCiParityTests(unittest.TestCase):
                 "warnings",
             ),
         )
+
+    def test_memory_catalog_and_toolchain_changes_link_the_resource_matrix(self) -> None:
+        for path in (
+            "personal-hopspot/memory/src/profiles/nrf52840.rs",
+            "prns-flash-manifest/src/catalog.rs",
+            "personal-hopspot/builder/src/toolchain.rs",
+            "tools/release/release-esp-toolchain-identity.sh",
+        ):
+            with self.subTest(path=path):
+                gates = parity.plan_for_paths({path})
+                gate = next(
+                    gate for gate in gates if gate.name == "embedded resource matrix"
+                )
+                self.assertEqual(
+                    gate.command,
+                    (
+                        "./tools/prns",
+                        "build",
+                        "embedded",
+                        "resources",
+                        "report",
+                        "--all",
+                    ),
+                )
 
     def test_tokio_runtime_change_runs_all_features_clippy(self) -> None:
         gates = parity.plan_for_paths(

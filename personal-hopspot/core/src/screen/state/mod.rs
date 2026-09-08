@@ -208,9 +208,8 @@ impl SubGConfigurationChangeResult {
     pub const fn active_configuration(self) -> ActiveSubGConfiguration {
         match self {
             Self::ApplyFailed | Self::PersistenceFailed => ActiveSubGConfiguration::Previous,
-            Self::Saved | Self::PersistenceUncertain | Self::RollbackFailed => {
-                ActiveSubGConfiguration::Requested
-            }
+            Self::PersistenceUncertain | Self::RollbackFailed => ActiveSubGConfiguration::Requested,
+            Self::Saved => ActiveSubGConfiguration::Requested,
         }
     }
 

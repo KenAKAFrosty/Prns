@@ -142,7 +142,7 @@ static USB_STATUS: EmbassyInterfaceStatus =
 static BLE_SHARED: BluetoothAutoShared<BLE_PEER_CAPACITY> =
     BluetoothAutoShared::new(BLE_SUPERVISOR_ID);
 static BLE_OUTBOUND_WAKE: Signal<Mtx, ()> = Signal::new();
-static LORA_CONTROL: LoRaControl = LoRaControl::new();
+static LORA_CONTROL: StaticCell<LoRaControl> = StaticCell::new();
 
 #[embassy_executor::task]
 async fn manifold_task(

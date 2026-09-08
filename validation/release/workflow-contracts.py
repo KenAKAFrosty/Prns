@@ -490,15 +490,89 @@ def validate() -> list[str]:
     if "RUSTUP_TOOLCHAIN: 1.90.0" not in ci or "toolchain: 1.90.0" not in ci:
         errors.append("ci.yml does not explicitly force and install the Rust 1.90.0 MSRV")
     for product_matrix_gate in (
+        "validation/hygiene/embedded_resource_selection.py",
         "run --suite embedded-builds",
         "run --suite esp32-firmware-check",
         'release toolchain esp install -- "${RUNNER_TEMP}/prns-esp-tools"',
+        "embedded-resources-nrf52840",
+        "embedded-resources-esp",
+        "embedded-resources-matrix",
+        "resources summarize",
+        "GITHUB_STEP_SUMMARY",
+        "EMBEDDED_SELECTION_RESULT: ${{ needs.embedded-resource-selection.result }}",
+        "EMBEDDED_REQUIRED: ${{ needs.embedded-resource-selection.outputs.required }}",
         "ESP32_RESULT: ${{ needs.esp32-firmware.result }}",
+        "EMBEDDED_SUMMARY_RESULT: ${{ needs.embedded-resource-summary.result }}",
     ):
         if product_matrix_gate not in ci:
             errors.append(
                 f"ci.yml is missing required product-matrix gate {product_matrix_gate!r}"
             )
+    ci_jobs = dict(workflow_jobs(ci))
+    selection_job = ci_jobs.get("embedded-resource-selection", "")
+    if (
+        "fetch-depth: 0" not in selection_job
+        or "required: ${{ steps.resources.outputs.required }}" not in selection_job
+    ):
+        errors.append("embedded resource selection does not expose a full-history decision")
+    selection_condition = "if: needs.embedded-resource-selection.outputs.required == 'true'"
+    for job_name in ("no-std-embedded", "esp32-firmware"):
+        if selection_condition not in ci_jobs.get(job_name, ""):
+            errors.append(f"ci.yml {job_name} does not use the shared resource selection")
+    summary_job = ci_jobs.get("embedded-resource-summary", "")
+    for dependency in (
+        "embedded-resource-selection",
+        "no-std-embedded",
+        "esp32-firmware",
+    ):
+        if f"- {dependency}" not in summary_job:
+            errors.append(f"embedded resource summary does not depend on {dependency}")
+    download_action = (
+        "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
+    )
+    if summary_job.count(download_action) != 2 or "merge-multiple" in summary_job:
+        errors.append("embedded resource summary does not preserve its two evidence fragments")
+    for artifact in ("embedded-resources-nrf52840", "embedded-resources-esp"):
+        if f"name: {artifact}" not in summary_job:
+            errors.append(f"embedded resource summary does not download {artifact}")
+    for summary_gate in (
+        "always() && needs.embedded-resource-selection.result == 'success'",
+        "--reports target/flash-artifacts/resources/fragments",
+        "--output target/flash-artifacts/resources/matrix",
+        'matrix/matrix.md >> "$GITHUB_STEP_SUMMARY"',
+        "fragments/**/reports/*.json",
+        "fragments/**/work/*/linker.map",
+        "if-no-files-found: error",
+    ):
+        if summary_gate not in summary_job:
+            errors.append(f"embedded resource summary is missing gate {summary_gate!r}")
+    release_critical = ci_jobs.get("release-critical", "")
+    for result_name, successful_result in (
+        ("nRF", 'test "$EMBEDDED_RESULT" = "success"'),
+        ("ESP", 'test "$ESP32_RESULT" = "success"'),
+        ("summary", 'test "$EMBEDDED_SUMMARY_RESULT" = "success"'),
+    ):
+        if successful_result not in release_critical:
+            errors.append(f"release-critical does not require a successful {result_name} result")
+    for result_name, skipped_result in (
+        ("nRF", 'test "$EMBEDDED_RESULT" = "skipped"'),
+        ("ESP", 'test "$ESP32_RESULT" = "skipped"'),
+        ("summary", 'test "$EMBEDDED_SUMMARY_RESULT" = "skipped"'),
+    ):
+        if skipped_result not in release_critical:
+            errors.append(
+                f"release-critical does not distinguish an intentional {result_name} skip"
+            )
+    embedded = (ROOT / "validation" / "platforms" / "embedded.sh").read_text(
+        encoding="utf-8"
+    )
+    esp32 = (
+        ROOT / "validation" / "platforms" / "esp32-firmware-check.sh"
+    ).read_text(encoding="utf-8")
+    if "resources report --all --platform nrf52840" not in embedded:
+        errors.append("embedded lane does not produce the catalog-derived nRF resource fragment")
+    if "resources report --all --platform esp" not in esp32:
+        errors.append("ESP lane does not produce the catalog-derived ESP resource fragment")
     if 'node-version: "24.18.0"' not in ci:
         errors.append("ci.yml does not test the release web graph with Node 24.18.0")
     for browser_gate in (

@@ -412,15 +412,24 @@ mod tests {
                 build
                     .variants
                     .iter()
-                    .map(|variant| Uf2VariantManifest {
-                        softdevice_family: variant.softdevice_family.clone(),
-                        softdevice_version: variant.softdevice_version.clone(),
-                        fwid: variant.fwid.clone(),
-                        application_base: variant.application_base.clone(),
-                        family_id: variant.family_id.clone(),
-                        path: format!("firmware/hopspot/{}/0.2.6/{}", board.slug, variant.filename),
-                        size: 256,
-                        sha256: "a".repeat(64),
+                    .map(|variant| {
+                        let application = variant
+                            .memory_layout()
+                            .expect("UF2 memory profile")
+                            .transport_envelope();
+                        Uf2VariantManifest {
+                            softdevice_family: variant.softdevice_family.clone(),
+                            softdevice_version: variant.softdevice_version.clone(),
+                            fwid: variant.fwid.clone(),
+                            application_base: format!("0x{:08x}", application.start()),
+                            family_id: variant.family_id.clone(),
+                            path: format!(
+                                "firmware/hopspot/{}/0.2.6/{}",
+                                board.slug, variant.filename
+                            ),
+                            size: 256,
+                            sha256: "a".repeat(64),
+                        }
                     })
                     .collect(),
                 None,
@@ -434,7 +443,9 @@ mod tests {
                 Vec::new(),
                 Some(NrfSerialDfuManifest {
                     serial: build.serial.clone(),
-                    compatibility: build.compatibility.clone(),
+                    compatibility: build
+                        .manifest_compatibility()
+                        .expect("Nordic serial DFU memory profile"),
                     application: part(
                         board,
                         FlashPartKind::DfuApplication,
@@ -566,6 +577,8 @@ mod tests {
             variant.compatibility().application_end_exclusive(),
             0x000e_8000
         );
+        assert_eq!(variant.firmware_owned().start(), 0x0002_6000);
+        assert_eq!(variant.firmware_owned().end_exclusive(), 0x000e_1000);
         assert_eq!(variant.compatibility().family_id(), 0xada5_2840);
         assert_eq!(
             variant.part().path().as_str(),
@@ -698,6 +711,36 @@ mod tests {
             target.compatibility().application_end_exclusive(),
             0x000e_a000
         );
+        assert_eq!(target.firmware_owned().start(), 0x0002_7000);
+        assert_eq!(target.firmware_owned().end_exclusive(), 0x000e_9000);
+        Ok(())
+    }
+
+    #[test]
+    fn nrf_manifest_size_cannot_consume_the_legacy_transport_tail(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let catalog = board_catalog()?;
+        let board = catalog.board("t1000-e").ok_or("missing T1000-E")?;
+        let BoardBuild::NrfSerialDfu(build) = &board.build else {
+            return Err("T1000-E did not use Nordic serial DFU".into());
+        };
+        let firmware_owned = build.memory_layout()?.firmware_owned();
+        let mut manifest = valid_manifest()?;
+        let target = manifest
+            .targets
+            .iter_mut()
+            .find(|target| target.board_slug == "t1000-e")
+            .ok_or("missing T1000-E target")?;
+        let dfu = target
+            .nrf_serial_dfu
+            .as_mut()
+            .ok_or("missing Nordic serial DFU payload")?;
+        dfu.application.size = u64::from(firmware_owned.byte_len()) + 1;
+
+        assert!(matches!(
+            manifest.validate(&catalog),
+            Err(ManifestError::InvalidPart { .. })
+        ));
         Ok(())
     }
 
@@ -810,6 +853,25 @@ mod tests {
     }
 
     #[test]
+    fn esp_part_labels_cannot_exchange_profile_regions() -> Result<(), Box<dyn std::error::Error>> {
+        let catalog = board_catalog()?;
+        let mut manifest = valid_manifest()?;
+        let target = manifest
+            .targets
+            .iter_mut()
+            .find(|target| target.board_slug == "heltec-v4")
+            .ok_or("missing Heltec V4 target")?;
+        target.parts[1].offset = Some(0x10000);
+        target.parts[2].offset = Some(0x8000);
+
+        assert!(matches!(
+            manifest.validate(&catalog),
+            Err(ManifestError::InvalidPart { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
     fn byte_disjoint_parts_cannot_share_an_erase_sector() -> Result<(), Box<dyn std::error::Error>>
     {
         let catalog = board_catalog()?;
@@ -836,6 +898,35 @@ mod tests {
             .ok_or("missing test target")?;
         target.parts[1].offset = Some(0xC000);
         target.parts[1].size = 0x1001;
+        assert!(matches!(
+            manifest.validate(&catalog),
+            Err(ManifestError::InvalidPart { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn sector_rounding_cannot_leave_the_esp_firmware_region(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let catalog = board_catalog()?;
+        let board = catalog.board("heltec-v4").ok_or("missing Heltec V4")?;
+        let BoardBuild::Esp(build) = &board.build else {
+            return Err("Heltec V4 did not use an ESP build".into());
+        };
+        let firmware_owned = build.memory_layout()?.firmware_owned();
+        let mut manifest = valid_manifest()?;
+        let target = manifest
+            .targets
+            .iter_mut()
+            .find(|target| target.board_slug == "heltec-v4")
+            .ok_or("missing Heltec V4 target")?;
+        let application = target
+            .parts
+            .iter_mut()
+            .find(|part| part.kind == FlashPartKind::Application)
+            .ok_or("missing ESP application")?;
+        application.size = u64::from(firmware_owned.byte_len()) + 1;
+
         assert!(matches!(
             manifest.validate(&catalog),
             Err(ManifestError::InvalidPart { .. })

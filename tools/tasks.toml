@@ -66,6 +66,16 @@ requires = ["bash", "cargo", "python3"]
 setup = "Install the thumbv7em-none-eabihf Rust target and either uv or Python 3.13.7; uv provisions the pinned interpreter automatically."
 
 [[task]]
+id = "build.embedded.resources"
+summary = "Build embedded resource evidence and generate or verify memory contracts."
+domain = "build"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci", "release"]
+entrypoint = ["bash", "tools/build/embedded-resources.sh"]
+requires = ["bash", "cargo", "python3", "rustc"]
+
+[[task]]
 id = "build.esp32s3-wpa3-radio"
 summary = "Rebuild and verify the pinned ESP32-S3 WPA3-SAE radio archives."
 domain = "build"
@@ -974,6 +984,10 @@ reason = "Shared reproducible build metadata implementation."
 [[internal]]
 path = "tools/release/flasher_manifest.py"
 reason = "Shared signed flash manifest and UF2 validation implementation."
+
+[[internal]]
+path = "tools/release/flasher_memory_contracts.py"
+reason = "Generated release-validator memory projection derived from the embedded profiles."
 
 [[internal]]
 path = "tools/release/flasher_browser_test_trust.py"

@@ -1,0 +1,20 @@
+[package]
+name = "personal-hopspot-builder"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Shared embedded firmware build and packaging pipeline for Personal Hopspot."
+
+[dependencies]
+espflash = { version = "=4.5.0", default-features = false }
+personal-hopspot-memory = { path = "../memory" }
+prns-flash-manifest = { path = "../../prns-flash-manifest" }
+prns-nrf-dfu = { path = "../../prns-nrf-dfu" }
+thiserror = "2.0"
+
+[lints]
+workspace = true

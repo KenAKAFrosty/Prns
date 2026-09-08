@@ -111,6 +111,8 @@ cp "$root/tools/release/flasher_board_catalog.py" \
     "$candidate/qualification/flasher_board_catalog.py"
 cp "$root/tools/release/flasher_manifest.py" \
     "$candidate/qualification/flasher_manifest.py"
+cp "$root/tools/release/flasher_memory_contracts.py" \
+    "$candidate/qualification/flasher_memory_contracts.py"
 cp "$root/tools/release/flasher_tester_roster.py" \
     "$candidate/qualification/flasher_tester_roster.py"
 cp "$root/tools/release/flasher_hotfix.py" \

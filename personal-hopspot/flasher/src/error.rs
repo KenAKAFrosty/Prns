@@ -366,9 +366,77 @@ impl AppError {
     }
 }
 
+impl From<personal_hopspot_builder::BuildError> for AppError {
+    fn from(error: personal_hopspot_builder::BuildError) -> Self {
+        match error {
+            personal_hopspot_builder::BuildError::Repository(message) => {
+                Self::developer_repository(message)
+            }
+            personal_hopspot_builder::BuildError::Toolchain(message) => {
+                Self::developer_toolchain(message)
+            }
+            personal_hopspot_builder::BuildError::Build(message) => Self::developer_build(message),
+            personal_hopspot_builder::BuildError::Artifact(message) => {
+                Self::developer_artifact(message)
+            }
+            error @ personal_hopspot_builder::BuildError::FirmwareOverflow { .. } => {
+                Self::developer_artifact(error.to_string())
+            }
+            error @ personal_hopspot_builder::BuildError::LinkOverflow(_) => {
+                Self::developer_artifact(error.to_string())
+            }
+            personal_hopspot_builder::BuildError::Manifest(message) => {
+                Self::developer_manifest(message)
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{AppError, ErrorCode};
+    use super::{AppError, DeveloperBuildError, ErrorCode};
+
+    #[test]
+    fn shared_build_errors_keep_their_flasher_failure_category() {
+        assert!(matches!(
+            AppError::from(personal_hopspot_builder::BuildError::Repository(
+                "repository".to_string()
+            )),
+            AppError::DeveloperBuild(DeveloperBuildError::Repository(_))
+        ));
+        assert!(matches!(
+            AppError::from(personal_hopspot_builder::BuildError::Toolchain(
+                "toolchain".to_string()
+            )),
+            AppError::DeveloperBuild(DeveloperBuildError::Toolchain(_))
+        ));
+        assert!(matches!(
+            AppError::from(personal_hopspot_builder::BuildError::Build(
+                "build".to_string()
+            )),
+            AppError::DeveloperBuild(DeveloperBuildError::Build(_))
+        ));
+        assert!(matches!(
+            AppError::from(personal_hopspot_builder::BuildError::Artifact(
+                "artifact".to_string()
+            )),
+            AppError::DeveloperBuild(DeveloperBuildError::Artifact(_))
+        ));
+        assert!(matches!(
+            AppError::from(personal_hopspot_builder::BuildError::Manifest(
+                "manifest".to_string()
+            )),
+            AppError::DeveloperBuild(DeveloperBuildError::Manifest(_))
+        ));
+        assert!(matches!(
+            AppError::from(personal_hopspot_builder::BuildError::FirmwareOverflow {
+                target: "target".to_string(),
+                actual: 2,
+                maximum: 1,
+            }),
+            AppError::DeveloperBuild(DeveloperBuildError::Artifact(_))
+        ));
+    }
 
     #[test]
     fn public_error_codes_and_exit_codes_are_stable() {

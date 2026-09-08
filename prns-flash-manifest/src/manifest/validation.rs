@@ -1,10 +1,9 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fmt;
 
 use crate::{
-    BoardBuild, BoardCatalogEntry, FlashPart, FlashPartKind, ImmutableArtifactPath, KeyId,
-    ReleaseVersion, Sha256Digest, SoftdeviceIdentity, Transport, CONFIG_OFFSET,
-    ESP_FLASH_SECTOR_SIZE,
+    BoardBuild, BoardCatalogEntry, EspSparseImageError, FlashPartKind, ImmutableArtifactPath,
+    KeyId, ReleaseVersion, Sha256Digest, SoftdeviceIdentity,
 };
 
 use super::{FlashManifest, ManifestError, ManifestTargetSetPolicy, TargetManifest};
@@ -180,64 +179,29 @@ fn validate_payloads(
         return Err(mismatch(target, "UF2 compatibility selection"));
     }
     let expected_prefix = format!("firmware/hopspot/{}/{version}/", target.board_slug);
-    if target.parts.is_empty() {
-        return Err(invalid_part(target, "", "at least one part is required"));
-    }
-    let mut ranges = BTreeMap::<u32, (u32, &str)>::new();
-    let mut paths = BTreeSet::new();
     for part in &target.parts {
-        if part.size == 0 {
-            return Err(invalid_part(target, &part.path, "size must be nonzero"));
-        }
-        if !part.path.starts_with(&expected_prefix)
-            || ImmutableArtifactPath::parse(part.path.clone()).is_err()
-        {
+        if !part.path.starts_with(&expected_prefix) {
             return Err(invalid_part(
                 target,
                 &part.path,
                 "path is not immutable and relative",
             ));
         }
-        if validate_sha256(&part.sha256).is_err() {
-            return Err(invalid_part(
-                target,
-                &part.path,
-                "SHA-256 must be lowercase hex",
-            ));
-        }
-        if !paths.insert(part.path.as_str()) {
-            return Err(invalid_part(
-                target,
-                &part.path,
-                "artifact path is duplicated",
-            ));
-        }
-        match target.transport {
-            Transport::EspSerial => validate_esp_part(target, part, &mut ranges)?,
-            Transport::Uf2MassStorage => unreachable!(),
-            Transport::NrfSerialDfu => unreachable!(),
-        }
     }
-    if target.transport == Transport::EspSerial {
-        let kinds = target
-            .parts
-            .iter()
-            .map(|part| part.kind)
-            .collect::<Vec<_>>();
-        let required = vec![
-            FlashPartKind::Bootloader,
-            FlashPartKind::PartitionTable,
-            FlashPartKind::Application,
-        ];
-        if kinds != required {
-            return Err(invalid_part(
-                target,
-                "",
-                "ESP parts must be ordered bootloader, partition-table, application",
-            ));
+    crate::validate_esp_sparse_image(board, &target.parts).map_err(|error| {
+        let message = error.to_string();
+        match &error {
+            EspSparseImageError::Build { .. }
+            | EspSparseImageError::MissingFlashSize { .. }
+            | EspSparseImageError::MemoryProfile(_) => mismatch(target, &message),
+            EspSparseImageError::MissingParts | EspSparseImageError::PartOrder { .. } => {
+                invalid_part(target, "", &message)
+            }
+            EspSparseImageError::Part { path, violation } => {
+                invalid_part(target, path, &violation.to_string())
+            }
         }
-    }
-    Ok(())
+    })
 }
 
 fn validate_nrf_serial_dfu(
@@ -249,8 +213,11 @@ fn validate_nrf_serial_dfu(
         .nrf_serial_dfu
         .as_ref()
         .ok_or_else(|| mismatch(target, "Nordic serial DFU artifact contract"))?;
+    let expected_compatibility = build
+        .manifest_compatibility()
+        .map_err(|_| mismatch(target, "Nordic serial DFU memory profile"))?;
     if manifest.serial != build.serial
-        || manifest.compatibility != build.compatibility
+        || manifest.compatibility != expected_compatibility
         || manifest.recovery.mount_label != build.recovery.mount_label
         || manifest.recovery.board_id_prefix != build.recovery.board_identity.value
         || manifest.recovery.family_id != build.recovery.family_id
@@ -310,20 +277,28 @@ fn validate_nrf_serial_dfu(
             ));
         }
     }
-    let application_base = parse_hex_u32(&manifest.compatibility.application_base)
-        .ok_or_else(|| mismatch(target, "Nordic serial DFU application base"))?;
-    let application_end = parse_hex_u32(&manifest.compatibility.application_end_exclusive)
-        .ok_or_else(|| mismatch(target, "Nordic serial DFU application end"))?;
-    let maximum_application_size = u64::from(
-        application_end
-            .checked_sub(application_base)
-            .ok_or_else(|| mismatch(target, "Nordic serial DFU application region"))?,
-    );
+    let application_base =
+        crate::canonical_hex::parse_u32(&manifest.compatibility.application_base)
+            .ok_or_else(|| mismatch(target, "Nordic serial DFU application base"))?;
+    let application_end =
+        crate::canonical_hex::parse_u32(&manifest.compatibility.application_end_exclusive)
+            .ok_or_else(|| mismatch(target, "Nordic serial DFU application end"))?;
+    application_end
+        .checked_sub(application_base)
+        .ok_or_else(|| mismatch(target, "Nordic serial DFU application region"))?;
+    let firmware_owned = build
+        .memory_layout()
+        .map_err(|_| mismatch(target, "Nordic serial DFU memory profile"))?
+        .firmware_owned();
+    if application_base != firmware_owned.start() {
+        return Err(mismatch(target, "Nordic serial DFU firmware-owned region"));
+    }
+    let maximum_application_size = u64::from(firmware_owned.byte_len());
     if manifest.application.size > maximum_application_size {
         return Err(invalid_part(
             target,
             &manifest.application.path,
-            "application exceeds the serial DFU region",
+            "application exceeds the firmware-owned region",
         ));
     }
     Ok(())
@@ -363,6 +338,10 @@ fn validate_uf2_variants(
     let mut identities = BTreeSet::new();
     let mut paths = BTreeSet::new();
     for (variant, expected) in target.variants.iter().zip(expected) {
+        let expected_application = expected
+            .memory_layout()
+            .map_err(|_| mismatch(target, "UF2 memory profile"))?
+            .transport_envelope();
         let identity = (
             variant.softdevice_family.as_str(),
             variant.softdevice_version.as_str(),
@@ -381,7 +360,8 @@ fn validate_uf2_variants(
         if variant.softdevice_family != expected.softdevice_family
             || variant.softdevice_version != expected.softdevice_version
             || variant.fwid != expected.fwid
-            || variant.application_base != expected.application_base
+            || crate::canonical_hex::parse_u32(&variant.application_base)
+                != Some(expected_application.start())
             || variant.family_id != expected.family_id
             || variant.path != expected_path
         {
@@ -417,80 +397,6 @@ fn validate_uf2_variants(
         }
     }
     Ok(())
-}
-
-fn validate_esp_part<'a>(
-    target: &'a TargetManifest,
-    part: &'a FlashPart,
-    ranges: &mut BTreeMap<u32, (u32, &'a str)>,
-) -> Result<(), ManifestError> {
-    let offset = part
-        .offset
-        .ok_or_else(|| invalid_part(target, &part.path, "ESP part requires an offset"))?;
-    let size = u32::try_from(part.size)
-        .map_err(|_| invalid_part(target, &part.path, "part is too large"))?;
-    if offset % ESP_FLASH_SECTOR_SIZE != 0 {
-        return Err(invalid_part(
-            target,
-            &part.path,
-            "offset must be aligned to the 4 KiB flash erase sector",
-        ));
-    }
-    let erase_size = size
-        .checked_add(ESP_FLASH_SECTOR_SIZE - 1)
-        .map(|rounded| rounded / ESP_FLASH_SECTOR_SIZE * ESP_FLASH_SECTOR_SIZE)
-        .ok_or_else(|| invalid_part(target, &part.path, "erase footprint overflows"))?;
-    let erase_end = offset
-        .checked_add(erase_size)
-        .ok_or_else(|| invalid_part(target, &part.path, "erase footprint overflows"))?;
-    let flash_size = target
-        .flash_size
-        .ok_or_else(|| invalid_part(target, &part.path, "ESP target has no flash size"))?;
-    if erase_end > flash_size {
-        return Err(invalid_part(
-            target,
-            &part.path,
-            "sector-rounded erase footprint exceeds physical flash",
-        ));
-    }
-    let config_end = CONFIG_OFFSET + crate::CONFIG_SIZE as u32;
-    if offset < config_end && CONFIG_OFFSET < erase_end {
-        return Err(invalid_part(
-            target,
-            &part.path,
-            "sector-rounded erase footprint overlaps provisioning slot",
-        ));
-    }
-    if let Some((_, (previous_end, previous_path))) = ranges.range(..=offset).next_back() {
-        if *previous_end > offset {
-            return Err(invalid_part(
-                target,
-                &part.path,
-                &format!("overlaps {previous_path:?}"),
-            ));
-        }
-    }
-    if let Some((next_offset, (_, next_path))) = ranges.range(offset..).next() {
-        if erase_end > *next_offset {
-            return Err(invalid_part(
-                target,
-                &part.path,
-                &format!("overlaps {next_path:?}"),
-            ));
-        }
-    }
-    ranges.insert(offset, (erase_end, part.path.as_str()));
-    Ok(())
-}
-
-fn parse_hex_u32(value: &str) -> Option<u32> {
-    let digits = value.strip_prefix("0x")?;
-    (digits.len() == 8
-        && digits
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()))
-    .then(|| u32::from_str_radix(digits, 16).ok())
-    .flatten()
 }
 
 fn release_domain_error(error: impl fmt::Display) -> ManifestError {

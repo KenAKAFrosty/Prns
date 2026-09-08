@@ -4,9 +4,6 @@ use portable_atomic::{AtomicU8, Ordering};
 use allocator_api2::vec::Vec;
 #[cfg(target_arch = "xtensa")]
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-#[cfg(target_arch = "riscv32")]
-use personal_rns::persistence::FlashArenaRange;
-use personal_rns::persistence::FlashJournalLayout;
 #[cfg(any(
     target_arch = "riscv32",
     all(target_arch = "xtensa", feature = "esp32s3fn8")
@@ -24,26 +21,12 @@ use personal_rns::runtime::{RouteSnapshotKeyError, RouteSnapshotKeys};
 use personal_rns::wire::DestinationHash;
 
 use crate::flash::EspRomFlash;
+use crate::memory::EspFirmwareMemory;
 #[cfg(all(target_arch = "xtensa", feature = "esp32s3fn8"))]
 use crate::storage::InternalStorage;
 #[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 use crate::storage::{EngineStorageType, PsramAlloc};
 use personal_hopspot_core::PersistenceState;
-
-#[cfg(target_arch = "riscv32")]
-pub const C6_FLASH_CAPACITY: usize = 4 * 1024 * 1024;
-#[cfg(target_arch = "xtensa")]
-pub const S3_ARENA_BYTES: usize = 191 * 4096;
-#[cfg(target_arch = "riscv32")]
-pub const C6_ARENA_BYTES: usize = 15 * 4096;
-#[cfg(target_arch = "riscv32")]
-pub const C6_LAYOUT: FlashJournalLayout = FlashJournalLayout::new(
-    [0x3E0000, 0x3E1000],
-    [
-        FlashArenaRange::new(0x3E2000, 0x3F1000),
-        FlashArenaRange::new(0x3F1000, 0x400000),
-    ],
-);
 
 #[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 const S3_PENDING: usize = 64;
@@ -113,10 +96,11 @@ pub type C6Persistence = EmbeddedFlashPersistence<
 static PERSISTENCE_STATE: AtomicU8 = AtomicU8::new(PersistenceState::Durable.encode());
 
 #[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
-pub fn s3(flash: S3SharedFlash, layout: FlashJournalLayout) -> S3Persistence {
+pub fn s3(flash: S3SharedFlash, memory: &EspFirmwareMemory) -> S3Persistence {
+    assert!(memory.journal_supports(EngineStorageType::MAX_COMPACTED_FLASH_JOURNAL_BYTES));
     EmbeddedFlashPersistence::new(
         flash,
-        layout,
+        memory.journal_layout(),
         EmbeddedPersistencePolicy::hopspot_default(EmbeddedCompactionPolicy::hopspot(
             EngineStorageType::MAX_CRITICAL_FLASH_JOURNAL_BYTES,
         )),
@@ -126,10 +110,11 @@ pub fn s3(flash: S3SharedFlash, layout: FlashJournalLayout) -> S3Persistence {
 }
 
 #[cfg(all(target_arch = "xtensa", feature = "esp32s3fn8"))]
-pub fn s3fn8(flash: S3SharedFlash, layout: FlashJournalLayout) -> S3Fn8Persistence {
+pub fn s3fn8(flash: S3SharedFlash, memory: &EspFirmwareMemory) -> S3Fn8Persistence {
+    assert!(memory.journal_supports(InternalStorage::MAX_COMPACTED_FLASH_JOURNAL_BYTES));
     EmbeddedFlashPersistence::new(
         flash,
-        layout,
+        memory.journal_layout(),
         EmbeddedPersistencePolicy::hopspot_default(EmbeddedCompactionPolicy::hopspot(
             InternalStorage::MAX_CRITICAL_FLASH_JOURNAL_BYTES,
         )),
@@ -139,10 +124,11 @@ pub fn s3fn8(flash: S3SharedFlash, layout: FlashJournalLayout) -> S3Fn8Persisten
 }
 
 #[cfg(target_arch = "riscv32")]
-pub fn c6() -> C6Persistence {
+pub fn c6(memory: &EspFirmwareMemory) -> C6Persistence {
+    assert!(memory.journal_supports(crate::storage::C6Storage::MAX_COMPACTED_FLASH_JOURNAL_BYTES));
     EmbeddedFlashPersistence::new(
-        EspRomFlash::new(C6_FLASH_CAPACITY),
-        C6_LAYOUT,
+        EspRomFlash::new(memory.flash_capacity()),
+        memory.journal_layout(),
         EmbeddedPersistencePolicy::hopspot_default(EmbeddedCompactionPolicy::hopspot(
             crate::storage::C6Storage::MAX_CRITICAL_FLASH_JOURNAL_BYTES,
         )),

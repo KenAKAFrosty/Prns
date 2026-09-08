@@ -97,6 +97,7 @@ compile_error!("MeshPocket battery-capacity features require board-mesh-pocket")
 mod boards;
 #[cfg(any(feature = "board-t096", feature = "board-t114"))]
 mod immediate_display;
+mod memory;
 #[cfg(any(feature = "board-t-echo", feature = "board-mesh-pocket"))]
 mod retained_display;
 #[cfg(any(

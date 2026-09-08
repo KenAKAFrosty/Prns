@@ -322,7 +322,8 @@ impl Esp32S3Board for TBeamSupremeBoard {
     const NODE_ANNOUNCE_APP_DATA: &'static [u8] = NODE_ANNOUNCE_APP_DATA;
     const BOOT_BANNER: &'static str = "HOPSPOT_TBEAM_SUPREME";
     const USB_INTERFACE_ID: InterfaceId = USB_INTERFACE_ID;
-    const FLASH_LAYOUT: screen::HopspotS3FlashLayout = screen::S3_8_MIB_FLASH_LAYOUT;
+    const MEMORY_PROFILE: &'static personal_hopspot_memory::MemoryProfile =
+        &personal_hopspot_memory::T_BEAM_SUPREME;
     type Display = ImmediateBoardDisplay<Sh1106I2c<TBeamI2c>>;
     type Battery = Axp2101Battery;
     type Gnss = TBeamSupremeGnss;
@@ -332,7 +333,7 @@ impl Esp32S3Board for TBeamSupremeBoard {
     ) -> S3BoardHardware<Self::Display, Self::Battery, Self::Gnss> {
         let (sw_int1, timebase, rtc) = s3::boot_common!(p, Self::BOOT_BANNER);
         let runtime_bootstrap =
-            s3::bootstrap_s3_runtime(&mut p.RNG, &mut p.ADC1, Self::FLASH_LAYOUT).await;
+            s3::bootstrap_s3_runtime(&mut p.RNG, &mut p.ADC1, Self::MEMORY_PROFILE).await;
 
         s3::boot_stage(s3::BootPhase::DisplayHardwareBegin);
         // AXP2101 PMU first (I2C1 on SDA 42 / SCL 41): the LoRa + OLED rails boot OFF, so nothing else

@@ -16,7 +16,9 @@ use personal_rns::interfaces::lora::AirtimePolicy;
 use personal_rns::interfaces::subghz::SubGConfigurationState;
 use personal_rns::interfaces::usb_auto::{WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID};
 use personal_rns::interfaces::{ConnectionState, InterfaceStatus};
-use personal_rns::lora::{LoRaApplyOutcome, LoRaInterface, LoRaInterfaceInput, LoRaSpectrumStatus};
+use personal_rns::lora::{
+    LoRaApplyOutcome, LoRaControl, LoRaInterface, LoRaInterfaceInput, LoRaSpectrumStatus,
+};
 use personal_rns::manifold::embassy::{EmbassyHost, EmbassyInterfaceStatus};
 use personal_rns::manifold::interface_seam::Interface;
 use personal_rns::remote_control::{
@@ -223,23 +225,25 @@ pub async fn run(spawner: Spawner) -> ! {
     );
     let mut manifold_lanes = ManifoldLanes::new();
     let subg_configuration = loaded_subg_configuration.state;
-    let lora_id = LoRaInterface::<board::Radio>::interface_id_for_configuration(subg_configuration)
-        .unwrap_or_else(|_| LoRaInterface::<board::Radio>::unconfigured_interface_id());
     static LORA_STATUS: StaticCell<EmbassyInterfaceStatus> = StaticCell::new();
-    let lora_status: &'static EmbassyInterfaceStatus = LORA_STATUS.init(
-        EmbassyInterfaceStatus::new_accounted(lora_id, ConnectionState::Initializing),
-    );
+    let lora_status: &'static EmbassyInterfaceStatus =
+        LORA_STATUS.init(EmbassyInterfaceStatus::new_accounted(
+            LoRaInterface::<board::Radio>::unconfigured_interface_id(),
+            ConnectionState::Initializing,
+        ));
     static LORA_SPECTRUM: StaticCell<LoRaSpectrumStatus> = StaticCell::new();
     let lora_spectrum: &'static LoRaSpectrumStatus = LORA_SPECTRUM.init(LoRaSpectrumStatus::new());
     static LORA_TX_QUEUE: ConstStaticCell<[u8; LORA_TX_QUEUE_BYTES]> =
         ConstStaticCell::new([0; LORA_TX_QUEUE_BYTES]);
     let lora_tx_queue = LORA_TX_QUEUE.take();
+    static LORA_CONTROL: StaticCell<LoRaControl> = StaticCell::new();
+    let (mut lora_controller, lora_control) = LORA_CONTROL.init(LoRaControl::new()).split();
     let lora = match LoRaInterface::new(LoRaInterfaceInput {
         radio,
         configuration: subg_configuration,
         airtime_policy: AirtimePolicy::Regional,
         tx_queue: lora_tx_queue,
-        control: &LORA_CONTROL,
+        control: lora_control,
         status: lora_status,
         spectrum: lora_spectrum,
         lifecycle: LIFECYCLE.dyn_sender(),
@@ -247,6 +251,7 @@ pub async fn run(spawner: Spawner) -> ! {
         Ok(lora) => lora,
         Err(_) => panic!("the built-in LoRa profile and regional policy must be valid"),
     };
+    lora_status.set_id(lora.id());
 
     let (usb_tx, usb_rx) = class.split();
     static USB_STATUS: StaticCell<EmbassyInterfaceStatus> = StaticCell::new();
@@ -609,19 +614,15 @@ pub async fn run(spawner: Spawner) -> ! {
                                     } else {
                                         SubGConfigurationState::Unconfigured
                                     };
-                                let result = hopspot::apply_and_persist_subg_configuration(
-                                    || async {
-                                        match LORA_CONTROL.apply_configuration(requested).await {
-                                            LoRaApplyOutcome::Applied => {
-                                                hopspot::SubGConfigurationStepOutcome::Succeeded
-                                            }
-                                            LoRaApplyOutcome::Rejected(_) => {
-                                                hopspot::SubGConfigurationStepOutcome::Failed
-                                            }
-                                        }
-                                    },
-                                    || async {
-                                        let outcome = match requested {
+                                let result = match lora_controller
+                                    .apply_configuration(requested)
+                                    .await
+                                {
+                                    LoRaApplyOutcome::Rejected => {
+                                        hopspot::SubGConfigurationChangeResult::ApplyFailed
+                                    }
+                                    LoRaApplyOutcome::Applied => {
+                                        let persistence = match requested {
                                             SubGConfigurationState::Configured(configuration) => {
                                                 subg_configuration_store.save(configuration).await
                                             }
@@ -629,30 +630,25 @@ pub async fn run(spawner: Spawner) -> ! {
                                                 subg_configuration_store.clear().await
                                             }
                                         };
-                                        match outcome {
+                                        match persistence {
                                             hopspot::SubGConfigurationCommitOutcome::Committed => {
-                                                hopspot::SubGConfigurationPersistenceOutcome::Committed
+                                                hopspot::SubGConfigurationChangeResult::Saved
                                             }
-                                            hopspot::SubGConfigurationCommitOutcome::NotCommitted(_) => {
-                                                hopspot::SubGConfigurationPersistenceOutcome::NotCommitted
-                                            }
-                                            hopspot::SubGConfigurationCommitOutcome::Indeterminate(_) => {
-                                                hopspot::SubGConfigurationPersistenceOutcome::Indeterminate
-                                            }
+                                            hopspot::SubGConfigurationCommitOutcome::Indeterminate(
+                                                _,
+                                            ) => hopspot::SubGConfigurationChangeResult::PersistenceUncertain,
+                                            hopspot::SubGConfigurationCommitOutcome::NotCommitted(
+                                                _,
+                                            ) => match lora_controller
+                                                .apply_configuration(previous)
+                                                .await
+                                            {
+                                                LoRaApplyOutcome::Applied => hopspot::SubGConfigurationChangeResult::PersistenceFailed,
+                                                LoRaApplyOutcome::Rejected => hopspot::SubGConfigurationChangeResult::RollbackFailed,
+                                            },
                                         }
-                                    },
-                                    || async {
-                                        match LORA_CONTROL.apply_configuration(previous).await {
-                                            LoRaApplyOutcome::Applied => {
-                                                hopspot::SubGConfigurationStepOutcome::Succeeded
-                                            }
-                                            LoRaApplyOutcome::Rejected(_) => {
-                                                hopspot::SubGConfigurationStepOutcome::Failed
-                                            }
-                                        }
-                                    },
-                                )
-                                .await;
+                                    }
+                                };
                                 if matches!(
                                     result.active_configuration(),
                                     hopspot::ActiveSubGConfiguration::Requested

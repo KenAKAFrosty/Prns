@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
 
+from embedded_resource_selection import affected_paths as embedded_resource_paths
+
 
 ZERO_SHA = "0" * 40
 ROOT = Path(__file__).resolve().parents[2]
@@ -81,30 +83,18 @@ def plan_for_paths(paths: set[str]) -> tuple[Gate, ...]:
             )
         )
 
-    embedded_surface = (
-        "Cargo.toml" in paths
-        or "Cargo.lock" in paths
-        or _has_prefix(
-            paths,
-            (
-                "personal-rns/",
-                "personal-hopspot/core/",
-                "personal-hopspot/embedded/esp32/",
-                "personal-hopspot/embedded/nrf52840/",
-                "prns-core/",
-                "prns-interfaces/impls/embassy/",
-                "prns-runtime/core/",
-                "prns-runtime/impls/embassy/",
-                "validation/platforms/embedded.sh",
-                "validation/platforms/no-std-esp-build.sh",
-            ),
-        )
-    )
-    if embedded_surface:
+    if embedded_resource_paths(paths):
         gates.append(
             Gate(
-                "embedded build matrix",
-                ("bash", "validation/platforms/embedded.sh"),
+                "embedded resource matrix",
+                (
+                    "./tools/prns",
+                    "build",
+                    "embedded",
+                    "resources",
+                    "report",
+                    "--all",
+                ),
             )
         )
         gates.append(

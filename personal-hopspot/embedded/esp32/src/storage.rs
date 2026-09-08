@@ -73,14 +73,6 @@ const _: () = assert!(
 
 #[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 const _: () = assert!(
-    EngineStorageType::MAX_COMPACTED_FLASH_JOURNAL_BYTES <= crate::persistence::S3_ARENA_BYTES
-);
-#[cfg(all(target_arch = "xtensa", feature = "esp32s3fn8"))]
-const _: () = assert!(
-    InternalStorage::MAX_COMPACTED_FLASH_JOURNAL_BYTES <= crate::persistence::S3_ARENA_BYTES
-);
-#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
-const _: () = assert!(
     core::mem::size_of::<
         <EngineStorageType as personal_rns::storage::StorageLayout>::PendingResourceOffers,
     >() == 3 * core::mem::size_of::<usize>()
@@ -312,7 +304,7 @@ mod internal {
         const CHANNEL_REORDER_DEPTH: usize = 1;
         const LINK_MTU: usize = EMBEDDED_MAX_LINK_MTU;
         const CHANNEL_MESSAGE_BYTES: usize = channel_mdu(Self::LINK_MTU);
-        pub(super) const MAX_COMPACTED_FLASH_JOURNAL_BYTES: usize = Self::TRACKED_DESTINATIONS
+        pub(crate) const MAX_COMPACTED_FLASH_JOURNAL_BYTES: usize = Self::TRACKED_DESTINATIONS
             * (personal_rns::persistence::flash_journal_record_storage_len(
                 personal_rns::persistence::maximum_route_upsert_payload_len(0, 0),
                 4,
@@ -421,8 +413,3 @@ mod internal {
         >;
     }
 }
-
-#[cfg(target_arch = "riscv32")]
-const _: () = assert!(
-    InternalStorage::MAX_COMPACTED_FLASH_JOURNAL_BYTES <= crate::persistence::C6_ARENA_BYTES
-);

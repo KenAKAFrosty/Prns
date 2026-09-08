@@ -6,8 +6,14 @@ mod raster;
 mod ssd1681;
 
 use embassy_futures::join::join;
+#[cfg(feature = "softdevice-s140-v6")]
+use personal_hopspot_memory::T_ECHO_S140_V6;
+#[cfg(not(feature = "softdevice-s140-v6"))]
+use personal_hopspot_memory::T_ECHO_S140_V7;
+use personal_hopspot_memory::{MemoryProfile, RegionRole};
 use personal_rns::interfaces::InterfaceId;
 
+use crate::memory::NrfFirmwareMemory;
 pub(crate) use crate::storage::Nrf52840Storage as Storage;
 pub(crate) use display::retained_policy;
 pub(crate) use hardware::{
@@ -36,14 +42,20 @@ pub(crate) async fn drive_controls(controls: Controls) -> ! {
     core::future::pending().await
 }
 
+#[cfg(feature = "softdevice-s140-v6")]
+pub(crate) const MEMORY_PROFILE: &MemoryProfile = &T_ECHO_S140_V6;
+#[cfg(not(feature = "softdevice-s140-v6"))]
+pub(crate) const MEMORY_PROFILE: &MemoryProfile = &T_ECHO_S140_V7;
+
+const MEMORY: NrfFirmwareMemory = NrfFirmwareMemory::new(MEMORY_PROFILE);
+
 pub(crate) const JOURNAL_LAYOUT: personal_rns::persistence::FlashJournalLayout =
-    personal_hopspot_core::T_ECHO_JOURNAL_LAYOUT;
-pub(crate) const RADIO_PROFILE_PAGES: [u32; 2] =
-    personal_hopspot_core::NRF52840_RADIO_PROFILE_PAGES;
+    MEMORY.journal_layout();
+pub(crate) const RADIO_PROFILE_PAGES: [u32; 2] = MEMORY.two_flash_pages(RegionRole::RadioProfile);
+pub(crate) const NODE_IDENTITY_FLASH_OFFSET: u32 = MEMORY.flash_offset(RegionRole::NodeIdentity);
+pub(crate) const BLE_IDENTITY_FLASH_OFFSET: u32 = MEMORY.flash_offset(RegionRole::BleIdentity);
 pub(crate) const REMOTE_CONTROL_IDENTITY_FLASH: super::RemoteControlIdentityFlash =
-    super::RemoteControlIdentityFlash::at(
-        personal_hopspot_core::T_ECHO_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET,
-    );
+    super::RemoteControlIdentityFlash::at(MEMORY.flash_offset(RegionRole::RemoteControlIdentity));
 pub(crate) const USB_MANUFACTURER: &str = "Stay Personal";
 pub(crate) const USB_PRODUCT: &str = "Personal Hopspot (T-Echo)";
 pub(crate) const USB_SERIAL_NUMBER: &str = "PERSONAL-RNS-TECHO-HOP";

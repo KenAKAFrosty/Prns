@@ -1,40 +1,12 @@
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::mutex::Mutex;
 use embassy_sync::signal::Signal;
-use prns_core::interfaces::lora::{
-    AirtimePolicyError, RadioProfile, RadioProfileCompatibilityError, RadioProfileError,
-};
+use prns_core::interfaces::lora::RadioProfile;
 use prns_core::interfaces::subghz::{ResolvedSubGMode, SubGConfigurationState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoRaApplyOutcome {
     Applied,
-    Rejected(LoRaConfigurationRejection),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LoRaRadioConfigurationOperation {
-    Initialize,
-    ArmReceive,
-    Idle,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PreviousLoRaConfigurationRecovery {
-    NotAttempted,
-    Restored,
-    Failed,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LoRaConfigurationRejection {
-    Profile(RadioProfileError),
-    RadioCompatibility(RadioProfileCompatibilityError),
-    AirtimePolicy(AirtimePolicyError),
-    Radio {
-        operation: LoRaRadioConfigurationOperation,
-        previous: PreviousLoRaConfigurationRecovery,
-    },
+    Rejected,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,7 +30,15 @@ struct LoRaApplyResult {
 pub struct LoRaControl {
     requests: Signal<CriticalSectionRawMutex, LoRaApplyRequest>,
     results: Signal<CriticalSectionRawMutex, LoRaApplyResult>,
-    request_gate: Mutex<CriticalSectionRawMutex, u32>,
+}
+
+pub struct LoRaController<'a> {
+    control: &'a LoRaControl,
+    next_id: u32,
+}
+
+pub struct LoRaControlTarget<'a> {
+    control: &'a LoRaControl,
 }
 
 impl LoRaControl {
@@ -67,38 +47,47 @@ impl LoRaControl {
         Self {
             requests: Signal::new(),
             results: Signal::new(),
-            request_gate: Mutex::new(1),
         }
     }
 
-    async fn request(&self, command: LoRaConfigurationCommand) -> LoRaApplyOutcome {
-        let mut next_id = self.request_gate.lock().await;
-        let id = *next_id;
-        *next_id = id.wrapping_add(1);
-        self.requests.signal(LoRaApplyRequest { id, command });
+    pub fn split(&mut self) -> (LoRaController<'_>, LoRaControlTarget<'_>) {
+        (
+            LoRaController {
+                control: self,
+                next_id: 1,
+            },
+            LoRaControlTarget { control: self },
+        )
+    }
+}
+
+impl<'a> LoRaController<'a> {
+    async fn request(&mut self, command: LoRaConfigurationCommand) -> LoRaApplyOutcome {
+        let id = self.next_id;
+        self.next_id = id.wrapping_add(1);
+        self.control
+            .requests
+            .signal(LoRaApplyRequest { id, command });
         loop {
-            let result = self.results.wait().await;
+            let result = self.control.results.wait().await;
             if result.id == id {
                 return result.outcome;
             }
         }
     }
 
-    pub fn apply(
-        &self,
-        profile: RadioProfile,
-    ) -> impl core::future::Future<Output = LoRaApplyOutcome> + '_ {
-        self.request(LoRaConfigurationCommand::Apply(profile))
+    pub async fn apply(&mut self, profile: RadioProfile) -> LoRaApplyOutcome {
+        self.request(LoRaConfigurationCommand::Apply(profile)).await
     }
 
-    pub fn clear(&self) -> impl core::future::Future<Output = LoRaApplyOutcome> + '_ {
-        self.request(LoRaConfigurationCommand::Clear)
+    pub async fn clear(&mut self) -> LoRaApplyOutcome {
+        self.request(LoRaConfigurationCommand::Clear).await
     }
 
-    pub fn apply_configuration(
-        &self,
+    pub async fn apply_configuration(
+        &mut self,
         configuration: SubGConfigurationState,
-    ) -> impl core::future::Future<Output = LoRaApplyOutcome> + '_ {
+    ) -> LoRaApplyOutcome {
         let command = match configuration {
             SubGConfigurationState::Unconfigured => LoRaConfigurationCommand::Clear,
             SubGConfigurationState::Configured(configuration) => {
@@ -106,15 +95,17 @@ impl LoRaControl {
                 LoRaConfigurationCommand::Apply(profile)
             }
         };
-        self.request(command)
+        self.request(command).await
     }
+}
 
+impl LoRaControlTarget<'_> {
     pub(super) fn wait(&self) -> impl core::future::Future<Output = LoRaApplyRequest> + '_ {
-        self.requests.wait()
+        self.control.requests.wait()
     }
 
     pub(super) fn complete(&self, id: u32, outcome: LoRaApplyOutcome) {
-        self.results.signal(LoRaApplyResult { id, outcome });
+        self.control.results.signal(LoRaApplyResult { id, outcome });
     }
 }
 
@@ -129,7 +120,7 @@ mod tests {
     use super::*;
     use core::future::Future;
     use core::task::{Context, Poll};
-    use embassy_futures::join::{join, join3};
+    use embassy_futures::join::join;
     use prns_core::interfaces::lora::TxPower;
     use prns_core::interfaces::subghz::regions::us915::US915_AUTO_LORA_PROFILE;
     use std::boxed::Box;
@@ -148,89 +139,88 @@ mod tests {
 
     #[test]
     fn stale_results_cannot_settle_a_new_request() {
-        let control = LoRaControl::new();
-        control.results.signal(LoRaApplyResult {
-            id: 0,
-            outcome: LoRaApplyOutcome::Applied,
-        });
+        let mut control = LoRaControl::new();
+        let (mut controller, target) = control.split();
+        target.complete(0, LoRaApplyOutcome::Applied);
         let requested = US915_AUTO_LORA_PROFILE
             .with_tx_power(TxPower::new(12))
             .unwrap();
-        let rejected = LoRaConfigurationRejection::Radio {
-            operation: LoRaRadioConfigurationOperation::Initialize,
-            previous: PreviousLoRaConfigurationRecovery::NotAttempted,
-        };
-        let (outcome, ()) = block_on(join(control.apply(requested), async {
-            let request = control.wait().await;
+        let (outcome, ()) = block_on(join(controller.apply(requested), async {
+            let request = target.wait().await;
             assert_eq!(request.command, LoRaConfigurationCommand::Apply(requested));
-            control.complete(request.id, LoRaApplyOutcome::Rejected(rejected));
+            target.complete(request.id, LoRaApplyOutcome::Rejected);
         }));
-        assert_eq!(outcome, LoRaApplyOutcome::Rejected(rejected));
+        assert_eq!(outcome, LoRaApplyOutcome::Rejected);
     }
 
     #[test]
-    fn concurrent_callers_each_receive_their_own_ordered_result() {
-        let control = LoRaControl::new();
+    fn sequential_requests_each_receive_their_own_ordered_result() {
+        let mut control = LoRaControl::new();
+        let (mut controller, target) = control.split();
         let first = US915_AUTO_LORA_PROFILE;
         let second = first.with_tx_power(TxPower::new(12)).unwrap();
-        let rejected = LoRaConfigurationRejection::Radio {
-            operation: LoRaRadioConfigurationOperation::ArmReceive,
-            previous: PreviousLoRaConfigurationRecovery::Restored,
-        };
-        let (first_outcome, second_outcome, ()) =
-            block_on(join3(control.apply(first), control.apply(second), async {
-                let first_request = control.wait().await;
+        let ((first_outcome, second_outcome), ()) = block_on(join(
+            async {
+                let first_outcome = controller.apply(first).await;
+                let second_outcome = controller.apply(second).await;
+                (first_outcome, second_outcome)
+            },
+            async {
+                let first_request = target.wait().await;
                 assert_eq!(
                     first_request.command,
                     LoRaConfigurationCommand::Apply(first)
                 );
-                control.complete(first_request.id, LoRaApplyOutcome::Applied);
-                let second_request = control.wait().await;
+                target.complete(first_request.id, LoRaApplyOutcome::Applied);
+                let second_request = target.wait().await;
                 assert_eq!(
                     second_request.command,
                     LoRaConfigurationCommand::Apply(second)
                 );
-                control.complete(second_request.id, LoRaApplyOutcome::Rejected(rejected));
-            }));
+                target.complete(second_request.id, LoRaApplyOutcome::Rejected);
+            },
+        ));
         assert_eq!(first_outcome, LoRaApplyOutcome::Applied);
-        assert_eq!(second_outcome, LoRaApplyOutcome::Rejected(rejected));
+        assert_eq!(second_outcome, LoRaApplyOutcome::Rejected);
     }
 
     #[test]
     fn cancellation_before_intake_replaces_the_abandoned_request() {
-        let control = LoRaControl::new();
+        let mut control = LoRaControl::new();
+        let (mut controller, target) = control.split();
         let first = US915_AUTO_LORA_PROFILE;
         let second = first.with_tx_power(TxPower::new(12)).unwrap();
-        let mut cancelled = Box::pin(control.apply(first));
+        let mut cancelled = Box::pin(controller.apply(first));
         let mut context = Context::from_waker(Waker::noop());
         assert_eq!(cancelled.as_mut().poll(&mut context), Poll::Pending);
         drop(cancelled);
 
-        let (outcome, ()) = block_on(join(control.apply(second), async {
-            let current = control.wait().await;
+        let (outcome, ()) = block_on(join(controller.apply(second), async {
+            let current = target.wait().await;
             assert_eq!(current.command, LoRaConfigurationCommand::Apply(second));
-            control.complete(current.id, LoRaApplyOutcome::Applied);
+            target.complete(current.id, LoRaApplyOutcome::Applied);
         }));
         assert_eq!(outcome, LoRaApplyOutcome::Applied);
     }
 
     #[test]
     fn cancellation_after_intake_cannot_poison_the_next_request() {
-        let control = LoRaControl::new();
+        let mut control = LoRaControl::new();
+        let (mut controller, target) = control.split();
         let first = US915_AUTO_LORA_PROFILE;
         let second = first.with_tx_power(TxPower::new(12)).unwrap();
-        let mut cancelled = Box::pin(control.apply(first));
+        let mut cancelled = Box::pin(controller.apply(first));
         let mut context = Context::from_waker(Waker::noop());
         assert_eq!(cancelled.as_mut().poll(&mut context), Poll::Pending);
-        let abandoned = block_on(control.wait());
+        let abandoned = block_on(target.wait());
         assert_eq!(abandoned.command, LoRaConfigurationCommand::Apply(first));
         drop(cancelled);
 
-        let (outcome, ()) = block_on(join(control.apply(second), async {
-            control.complete(abandoned.id, LoRaApplyOutcome::Applied);
-            let current = control.wait().await;
+        let (outcome, ()) = block_on(join(controller.apply(second), async {
+            target.complete(abandoned.id, LoRaApplyOutcome::Applied);
+            let current = target.wait().await;
             assert_eq!(current.command, LoRaConfigurationCommand::Apply(second));
-            control.complete(current.id, LoRaApplyOutcome::Applied);
+            target.complete(current.id, LoRaApplyOutcome::Applied);
         }));
         assert_eq!(outcome, LoRaApplyOutcome::Applied);
     }

@@ -5,7 +5,6 @@ use personal_rns::engine::IssuedCommand;
 use personal_rns::interfaces::bluetooth_auto::BLE_HW_MTU;
 use personal_rns::interfaces::lora::LORA_MAX_PAYLOAD;
 use personal_rns::interfaces::InterfaceId;
-use personal_rns::lora::LoRaControl;
 use personal_rns::manifold::embassy::{EmbassyHost, InterfaceLifecycle};
 use personal_rns::manifold::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
 use personal_rns::runtime::{
@@ -65,7 +64,6 @@ pub(super) type Node = PrnsNode<
 >;
 pub(super) type ManifoldLanes = ManifoldLaneSet<Mtx, LANE_COUNT, NOTIFY_CAP>;
 
-pub(super) static LORA_CONTROL: LoRaControl = LoRaControl::new();
 pub(super) static NOTIFY: Channel<Mtx, InterfaceId, NOTIFY_CAP> = Channel::new();
 pub(super) static COMMANDS: Channel<Mtx, IssuedCommand, COMMANDS_CAP> = Channel::new();
 pub(super) static LIFECYCLE: Channel<Mtx, InterfaceLifecycle, LIFECYCLE_CAP> = Channel::new();
