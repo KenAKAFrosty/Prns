@@ -43,8 +43,6 @@ import java.nio.ByteBuffer
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArraySet
-import java.util.concurrent.Semaphore
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.TimeUnit
@@ -233,25 +231,11 @@ class PrnsBluetoothLink(
         Columba,
     }
 
-    private enum class GattOperationKind {
-        Mtu,
-        ServiceDiscovery,
-        CharacteristicRead,
-        DescriptorWrite,
-        ClientWrite,
-        ServerNotify,
-    }
-
     private enum class OutboundAdmission {
         Accepted,
         Busy,
         Terminal,
     }
-
-    private data class PendingGattOperation(
-        val kind: GattOperationKind,
-        val characteristic: UUID?,
-    )
 
     private class LinkState(
         val connId: Int,
@@ -259,12 +243,7 @@ class PrnsBluetoothLink(
         val dialed: Boolean,
         @Volatile var peerProtocol: BlePeerProtocol,
     ) {
-        private val operationGate = Semaphore(1)
-        val servicesRequested = AtomicBoolean(false)
-        val fallbackScheduled = AtomicBoolean(false)
-
-        @Volatile
-        private var pendingGattOperation: PendingGattOperation? = null
+        val gattState = PrnsGattState()
 
         @Volatile
         var central: BluetoothDevice? = null
@@ -290,36 +269,12 @@ class PrnsBluetoothLink(
         @Volatile
         var openingL2capSocket: BluetoothSocket? = null
 
-        @Synchronized
-        fun beginGattOperation(operation: PendingGattOperation): Boolean {
-            if (!operationGate.tryAcquire()) {
-                return false
-            }
-            pendingGattOperation = operation
-            return true
-        }
+        fun beginGattOperation(operation: PendingGattOperation): Boolean = gattState.begin(operation)
 
-        @Synchronized
-        fun completeGattOperation(kind: GattOperationKind, characteristic: UUID? = null): Boolean {
-            val pending = pendingGattOperation ?: return false
-            if (pending.kind != kind ||
-                characteristic != null && pending.characteristic != characteristic
-            ) {
-                return false
-            }
-            pendingGattOperation = null
-            operationGate.release()
-            return true
-        }
+        fun completeGattOperation(kind: GattOperationKind, characteristic: UUID? = null): Boolean =
+            gattState.complete(kind, characteristic)
 
-        @Synchronized
-        fun cancelGattOperation(operation: PendingGattOperation) {
-            if (pendingGattOperation != operation) {
-                return
-            }
-            pendingGattOperation = null
-            operationGate.release()
-        }
+        fun cancelGattOperation(operation: PendingGattOperation): Boolean = gattState.cancel(operation)
     }
 
     private fun scanCallback(epoch: Long) = object : ScanCallback() {
@@ -1291,15 +1246,20 @@ class PrnsBluetoothLink(
                         }
                         link.clientGatt = gatt
                         connectedAddrs.add(address)
+                        if (!link.gattState.beginStartup(System.nanoTime() / 1_000_000)) return
+                        scheduleClientOpenWatchdog(connId, address, gatt)
                         val mtuOperation = PendingGattOperation(GattOperationKind.Mtu, null)
-                        val mtuRequested = link.beginGattOperation(mtuOperation) &&
-                            runCatching { gatt.requestMtu(MAX_ATT_MTU) }.getOrDefault(false)
+                        // Failed admission is not a rejected Android request: a duplicate
+                        // connection callback must never release an existing MTU operation.
+                        if (!link.beginGattOperation(mtuOperation)) return
+                        val mtuRequested = runCatching {
+                            gatt.requestMtu(MAX_ATT_MTU)
+                        }.getOrDefault(false)
                         Log.i(TAG, "dialer[$connId] connected; requested mtu=$mtuRequested")
                         if (!mtuRequested) {
                             link.cancelGattOperation(mtuOperation)
                             requestClientServices(gatt, link, "mtu request rejected")
                         }
-                        scheduleClientOpenFallback(connId, address, gatt)
                     } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                         Log.i(TAG, "dialer[$connId] $address disconnected status=$status")
                         if (!linkedConnIds.remove(connId)) {
@@ -1325,9 +1285,10 @@ class PrnsBluetoothLink(
                     if (!running || !radioActive) {
                         return
                     }
-                    links[connId]?.completeGattOperation(GattOperationKind.Mtu)
+                    val link = links[connId] ?: return
+                    if (!link.completeGattOperation(GattOperationKind.Mtu)) return
                     Log.i(TAG, "dialer[$connId] att mtu=$mtu status=$status")
-                    links[connId]?.let { requestClientServices(gatt, it, "mtu changed") }
+                    requestClientServices(gatt, link, "mtu changed")
                 }
             }
 
@@ -1336,7 +1297,9 @@ class PrnsBluetoothLink(
                     if (!running || !radioActive) {
                         return
                     }
-                    links[connId]?.completeGattOperation(GattOperationKind.ServiceDiscovery)
+                    if (links[connId]?.completeGattOperation(GattOperationKind.ServiceDiscovery) != true) {
+                        return
+                    }
                     if (status != BluetoothGatt.GATT_SUCCESS) {
                         Log.w(TAG, "dialer[$connId] service discovery failed status=$status")
                         runCatching { gatt.disconnect() }
@@ -1430,10 +1393,10 @@ class PrnsBluetoothLink(
                 if (characteristic.uuid != COLUMBA_IDENTITY) {
                     return
                 }
-                links[connId]?.completeGattOperation(
+                if (links[connId]?.completeGattOperation(
                     GattOperationKind.CharacteristicRead,
                     characteristic.uuid,
-                )
+                ) != true) return
                 if (status != BluetoothGatt.GATT_SUCCESS || value.size != COLUMBA_IDENTITY_LEN) {
                     Log.w(
                         TAG,
@@ -1471,10 +1434,11 @@ class PrnsBluetoothLink(
                     if (!running || !radioActive) {
                         return
                     }
-                    links[connId]?.completeGattOperation(
+                    val link = links[connId] ?: return
+                    if (!link.completeGattOperation(
                         GattOperationKind.DescriptorWrite,
                         descriptor.characteristic.uuid,
-                    )
+                    )) return
                     Log.i(
                         TAG,
                         "dialer[$connId] cccd ${descriptor.characteristic.uuid} status=$status",
@@ -1485,7 +1449,6 @@ class PrnsBluetoothLink(
                         return
                     }
                     if (descriptor.characteristic.uuid == COLUMBA_TX) {
-                        val link = links[connId] ?: return
                         val identity = link.peerIdentity
                         if (identity == null) {
                             Log.w(TAG, "dialer[$connId] Columba TX subscribe failed status=$status")
@@ -1493,9 +1456,10 @@ class PrnsBluetoothLink(
                             return
                         }
                         Log.i(TAG, "dialer[$connId] $address subscribed (Columba TX ready)")
-                        linkedConnIds.add(connId)
                         val octets = parseMac(address)
                         if (octets != null) {
+                            if (!link.gattState.markReady()) return
+                            linkedConnIds.add(connId)
                             if (!PrnsBluetoothNative.nativeBleColumbaLinkUp(
                                 connId,
                                 directBufferOf(octets),
@@ -1520,9 +1484,10 @@ class PrnsBluetoothLink(
                         Log.w(TAG, "dialer[$connId] data CCCD null — DATA notifications NOT enabled")
                     }
                     Log.i(TAG, "dialer[$connId] $address subscribed (control + data ready)")
-                    linkedConnIds.add(connId)
                     val octets = parseMac(address)
                     if (octets != null) {
+                        if (!link.gattState.markReady()) return
+                        linkedConnIds.add(connId)
                         val direct = ByteBuffer.allocateDirect(6)
                         direct.put(octets)
                         if (!PrnsBluetoothNative.nativeBleLinkUp(connId, direct, RSSI_NONE, true)) {
@@ -1572,14 +1537,8 @@ class PrnsBluetoothLink(
         }
 
     private fun requestClientServices(gatt: BluetoothGatt, link: LinkState, reason: String) {
-        if (!link.servicesRequested.compareAndSet(false, true)) {
-            return
-        }
+        if (!link.gattState.beginServiceDiscovery()) return
         val operation = PendingGattOperation(GattOperationKind.ServiceDiscovery, null)
-        if (!link.beginGattOperation(operation)) {
-            link.servicesRequested.set(false)
-            return
-        }
         val started = runCatching { gatt.discoverServices() }.getOrDefault(false)
         Log.i(TAG, "dialer[${link.connId}] discovering services after $reason started=$started")
         if (!started) {
@@ -1632,17 +1591,16 @@ class PrnsBluetoothLink(
         return false
     }
 
-    private fun scheduleClientOpenFallback(connId: Int, address: String, gatt: BluetoothGatt) {
-        if (links[connId]?.fallbackScheduled?.compareAndSet(false, true) != true) return
-        startLinkWorker(connId, "client-fallback-$connId") {
-            Thread.sleep(MTU_DISCOVERY_FALLBACK_MS)
+    private fun scheduleClientOpenWatchdog(connId: Int, address: String, gatt: BluetoothGatt) {
+        startLinkWorker(connId, "client-watchdog-$connId") {
+            // A local timeout cannot cancel Android's MTU request. Wait for its
+            // callback, or close the whole unready link at the terminal deadline.
+            Thread.sleep(CLIENT_LINK_READY_TIMEOUT_MS)
             val link = links[connId]
-            if (running && radioActive && link != null && !linkedConnIds.contains(connId)) {
-                link.cancelGattOperation(PendingGattOperation(GattOperationKind.Mtu, null))
-                requestClientServices(gatt, link, "mtu callback timeout")
-            }
-            Thread.sleep(CLIENT_LINK_READY_TIMEOUT_MS - MTU_DISCOVERY_FALLBACK_MS)
-            if (running && radioActive && links.containsKey(connId) && !linkedConnIds.contains(connId)) {
+            if (running && radioActive && link != null && link.gattState.expireStartup(
+                System.nanoTime() / 1_000_000,
+                CLIENT_LINK_READY_TIMEOUT_MS,
+            )) {
                 Log.w(TAG, "dialer[$connId] $address did not become a Prns link; closing stale GATT")
                 runCatching { gatt.disconnect() }
                 closeLink(connId)
@@ -1661,6 +1619,7 @@ class PrnsBluetoothLink(
             PrnsBluetoothNative.nativeBleDisconnected(connId)
             return
         }
+        link.gattState.close()
         inboundByAddr.remove(link.address, connId)
         columbaSubscribedCentrals.remove(link.address)
         dialingAddrs.remove(link.address)
@@ -2030,7 +1989,6 @@ class PrnsBluetoothLink(
         private const val RADIO_STATE_RETRY_MS = 1_000L
         private const val RSSI_NONE = 127
         private const val MAX_ATT_MTU = 517
-        private const val MTU_DISCOVERY_FALLBACK_MS = 750L
         private const val CLIENT_LINK_READY_TIMEOUT_MS = 8_000L
         private const val WORKER_SHUTDOWN_TIMEOUT_MS = 2_000L
         private const val GATT_BUSY_RETRY_MS = 4L
