@@ -255,6 +255,10 @@ pub(crate) async fn run_pooled<
                             source,
                             report.protocol_violation,
                         );
+                        #[cfg(feature = "log")]
+                        if let Some(request) = report.request {
+                            log::debug!(target: "prns::request", "request ingress: {request:?}");
+                        }
                         lane.release();
                         let mut step_delta = report.wake_schedules;
                         step_delta.merge(completion_delta);
