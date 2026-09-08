@@ -3,7 +3,7 @@
 The Android application targets Android 10 (API 29) and newer. This is the
 minimum version used by the upstream Bluetooth L2CAP transport, not the compile
 or target SDK. The Expo/React Native toolchain currently compiles and targets
-API 36. The first intended hardware target is a Galaxy S9+ running Android 10.
+API 36. Initial physical checks use a Galaxy S9+ running Android 10.
 
 ## Ownership
 
@@ -64,6 +64,13 @@ The runtime uses a connected-device service for communication with external
 Bluetooth/network peers. This is not a blanket promise that every future
 interface can run indefinitely in the background. Wi-Fi Auto, USB, Wi-Fi Aware,
 and Wi-Fi Direct are not enabled by this initial Android composition.
+
+The current upstream backend reads the local Bluetooth listener's PSM at
+interface startup. If Android replaces that listener with a different PSM,
+the app explicitly restarts its native runtime with the same saved identity.
+This also interrupts any TCP connections. Live capability refresh belongs in
+the shared Bluetooth backend; this restart is a temporary recovery boundary,
+not a claim of seamless radio-toggle recovery.
 
 ## Acceptance sequence
 

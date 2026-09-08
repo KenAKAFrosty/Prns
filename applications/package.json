@@ -22,7 +22,7 @@
     "mobility:test": "python3 -m unittest discover --start-directory tools/detached-consumer-check --pattern 'test_*.py' --verbose",
     "mobility:verify": "bash ci/verify_detached.sh",
     "lxmf:verify": "bash ci/verify_lxmf.sh",
-    "native:test": "cargo test --locked --manifest-path Cargo.toml -p prns-app-native --features host-test",
+    "native:test": "cargo test --locked --manifest-path Cargo.toml -p prns-app-native --features host-test,android",
     "native:verify": "npm run compatibility:check && npm run api:check && npm run native:test && npm --prefix sdk/expo run verify",
     "native:ios:archives": "env PLATFORM_NAME=iphonesimulator ARCHS=arm64 bash sdk/expo/ios/build-rust.sh && env PLATFORM_NAME=iphoneos ARCHS=arm64 bash sdk/expo/ios/build-rust.sh",
     "native:ios:client": "bash sdk/expo/ios/build-development-client.sh",

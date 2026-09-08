@@ -64,6 +64,45 @@ guaranteed wake, or reliable RemoteControl/LXMF recovery. The proof packet was
 not an LXMF message. Developer-induced termination is not memory-pressure
 eviction, an App Switcher force quit, or a pre-first-unlock test.
 
+## Initial Android observations
+
+September 8, 2026 bring-up used one Galaxy S9+ running Android 10 (API 29).
+The application still has a development identifier and local debug signing.
+
+- ARM64 debug and standalone development APKs build and package successfully.
+  The standalone APK contains its JavaScript bundle, enforces API 29 as its
+  minimum, and passes 16 KB packaging alignment checks; the Rust library's
+  load segments also use 16 KB alignment.
+- The standalone app opens with Metro stopped and no USB Metro forwarding.
+  Its saved identity survives reinstalling the development APK. The foreground
+  service remains present after leaving the app, and returning preserves the
+  native process and increasing Host uptime.
+- An on-device test loads the actual JNI library, checks the bridge contract
+  and malformed requests, then preserves an identity and contact across a
+  complete native stop/start. It runs in an isolated test application, not the
+  interactive app's storage. This is not an OS process-death or Bluetooth test.
+- The ordinary application gate passes, including 126 native unit tests, one
+  controlled TCP lifecycle integration test, 69 SDK tests, 168 UI tests, Expo
+  configuration/Doctor, and web export. Android builds additionally pass 27
+  JVM adapter/lifecycle regressions and release lint. Host-based Android tests
+  are now included in the ordinary native test command.
+- The original Bluetooth startup repeatedly timed out after a 750 ms fallback
+  began service discovery before Android completed MTU negotiation. Waiting for
+  the matching callback allows the same phone to complete discovery and both
+  subscriptions. The app subsequently receives the board's pairing announcement
+  and sends pairing traffic over its Bluetooth-only composition.
+- The first physical Android pairing attempt still timed out before confirmed
+  pairing. No authenticated remote request or Android LXMF exchange has passed
+  yet. The invitation's remaining time and packet counters are not sufficient
+  evidence to attribute that failure to a particular cause.
+
+The current Android source has not yet passed the detached mobility gate or
+the full physical lifecycle matrix. Screen locking, permission changes,
+radio/peer recovery, process eviction, background delivery, and newer Android
+permission/service behavior remain unqualified. See [Android development](android.md)
+for the repeatable acceptance sequence and the temporary runtime-restart behavior
+when the Bluetooth listener changes.
+
 ## Remaining work
 
 - Make stale-route recovery and caller-timeout cancellation deterministic in
@@ -72,7 +111,7 @@ eviction, an App Switcher force quit, or a pre-first-unlock test.
   authorized force-quit behavior and its negative control, Bluetooth changes,
   and cold-start/storage boundaries. Include UI recovery and first-attempt
   delivery outcomes, not only native startup markers.
-- Complete Android providers and device coverage, broader board/transport
+- Complete Android device coverage, broader board/transport
   coverage, release packaging, and migration/upgrade qualification.
 
 The iOS implementation is not foreground-only: its process-owned Host and

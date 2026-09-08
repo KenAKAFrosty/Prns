@@ -61,6 +61,25 @@ destination as a direct one-hop Bluetooth route. This foreground physical check
 used no manual node announcement, re-pairing, or reset. It does not establish
 reliable background recovery; see the [validation summary](../../docs/validation.md).
 
+## Android development
+
+The Android app supports Android 10 (API 29) and newer. A foreground service
+owns the same Rust runtime used by iOS, with Android Bluetooth and permission
+handling. Its ongoing notification provides an explicit Stop action; closing a
+screen does not stop the node.
+
+See [Android development](../../docs/android.md) for setup, permission behavior,
+and the physical acceptance sequence. To build a standalone development APK
+with bundled JavaScript and no Metro requirement:
+
+```sh
+npm --prefix applications run native:android:standalone
+```
+
+This uses the development identifier and local debug signing, not production
+distribution credentials. Check the [validation summary](../../docs/validation.md)
+before treating background operation or a particular transport as qualified.
+
 ## iOS native lifetime and Bluetooth restoration
 
 The implemented direct-LXMF slice retains one native node for the iOS process,
