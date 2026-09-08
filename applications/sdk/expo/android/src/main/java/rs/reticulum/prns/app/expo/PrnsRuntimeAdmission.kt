@@ -3,15 +3,17 @@ package rs.reticulum.prns.app.expo
 /**
  * Admission only: the existing lifecycle executor still serializes native work.
  *
- * A start remains current until completion or cancellation. Check its ticket
- * both when receiving the service intent and when entering the queued worker,
- * so a Stop/Reset between those points cannot resurrect the runtime.
+ * A start remains current until completion or cancellation. Recheck its ticket
+ * and the active owner when entering the queued worker: Stop, startup failure,
+ * or destruction can retire that owner after intent admission. A retained owner
+ * may retry teardown, but cannot start or refresh until a replacement owns it.
  */
 internal class PrnsRuntimeAdmission<Owner : Any> {
   private var epoch = 0L
   private var nextTicket = 0L
   private val pending = linkedMapOf<Long, Long>()
   private var owner: Owner? = null
+  private var ownerRetiring = false
 
   @Synchronized
   fun enqueueStart(): Long {
@@ -23,13 +25,22 @@ internal class PrnsRuntimeAdmission<Owner : Any> {
   @Synchronized
   fun isStartCurrent(ticket: Long): Boolean = pending[ticket] == epoch
 
+  /** A current ticket cannot restart an owner whose teardown has already begun. */
+  @Synchronized
+  fun canStart(candidate: Owner, ticket: Long): Boolean =
+    owner === candidate && !ownerRetiring && pending[ticket] == epoch
+
+  @Synchronized
+  fun isOwnerActive(candidate: Owner): Boolean = owner === candidate && !ownerRetiring
+
   @Synchronized
   fun completeStart(ticket: Long): Boolean = pending.remove(ticket) != null
 
-  /** Returns pending request IDs so the caller can reject their promises. */
+  /** Retire the current owner and return pending IDs for promise cancellation. */
   @Synchronized
-  fun invalidateStarts(): List<Long> {
+  fun beginStop(): List<Long> {
     epoch = Math.addExact(epoch, 1L)
+    if (owner != null) ownerRetiring = true
     val cancelled = pending.keys.toList()
     pending.clear()
     return cancelled
@@ -38,8 +49,19 @@ internal class PrnsRuntimeAdmission<Owner : Any> {
   /** Equal values are not interchangeable owners; identity must match. */
   @Synchronized
   fun reserveOwner(candidate: Owner): Boolean {
-    if (owner == null) owner = candidate
+    if (owner == null) {
+      owner = candidate
+      ownerRetiring = false
+    }
     return owner === candidate
+  }
+
+  /** Retirement is irreversible for this owner, including after a failed drain. */
+  @Synchronized
+  fun retireOwner(candidate: Owner): Boolean {
+    if (owner !== candidate) return false
+    ownerRetiring = true
+    return true
   }
 
   @Synchronized
@@ -50,6 +72,7 @@ internal class PrnsRuntimeAdmission<Owner : Any> {
   fun releaseOwner(candidate: Owner, drained: Boolean): Boolean {
     if (!drained || owner !== candidate) return false
     owner = null
+    ownerRetiring = false
     return true
   }
 }

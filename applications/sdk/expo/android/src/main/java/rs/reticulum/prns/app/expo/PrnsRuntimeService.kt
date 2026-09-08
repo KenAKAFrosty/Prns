@@ -25,6 +25,7 @@ class PrnsRuntimeService : Service() {
   @Volatile private var engineRunning = false
   @Volatile private var finishing = false
   @Volatile private var ownsRuntime = false
+  @Volatile private var serviceDestroyed = false
   @Volatile private var bluetoothGeneration = 0L
   private var publishedPsm: Int? = null
   private val radioReceiver = object : BroadcastReceiver() {
@@ -49,10 +50,14 @@ class PrnsRuntimeService : Service() {
   override fun onBind(intent: Intent?): IBinder? = null
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+    // Stop remains available for a retained owner after an incomplete drain.
+    if (intent?.action == ACTION_STOP) {
+      stopRuntime(this, false, null)
+      return START_NOT_STICKY
+    }
     val requestId = intent?.getLongExtra(EXTRA_REQUEST, 0) ?: PrnsAndroidRuntime.admission.enqueueStart()
-    if (!ownsRuntime || finishing) {
-      PrnsAndroidRuntime.admission.completeStart(requestId)
-      requests.remove(requestId)?.reject("ERR_PRNS_SERVICE", "The previous node is still stopping", null)
+    if (!ownsRuntime || finishing || serviceDestroyed || !PrnsAndroidRuntime.admission.isOwnerActive(this)) {
+      rejectStart(requestId, "The previous node is still stopping")
       stopSelf(startId)
       return START_NOT_STICKY
     }
@@ -65,11 +70,8 @@ class PrnsRuntimeService : Service() {
       stopSelf()
       return START_NOT_STICKY
     }
-    if (intent?.action == ACTION_STOP) {
-      stopRuntime(this, false, null)
-      return START_NOT_STICKY
-    }
     if (!PrnsAndroidRuntime.admission.isStartCurrent(requestId)) {
+      rejectStart(requestId, "Node start was cancelled by Stop or Reset")
       if (!engineRunning && !bridgePrepared) stopSelf(startId)
       return START_NOT_STICKY
     }
@@ -81,7 +83,11 @@ class PrnsRuntimeService : Service() {
       return START_NOT_STICKY
     }
     PrnsAndroidRuntime.lifecycle.execute {
-      if (!PrnsAndroidRuntime.admission.isStartCurrent(requestId)) return@execute
+      // The service can retire while this worker waits behind Stop or a failed Start.
+      if (!ownsRuntime || finishing || serviceDestroyed || !PrnsAndroidRuntime.admission.canStart(this, requestId)) {
+        rejectStart(requestId, "Node start was cancelled because its service is stopping")
+        return@execute
+      }
       try {
         PrnsAndroidRuntime.update(this, "starting")
         if (!engineRunning && !bridgePrepared) {
@@ -110,7 +116,7 @@ class PrnsRuntimeService : Service() {
   }
 
   internal fun refreshBluetooth() {
-    if (!bridgePrepared || finishing) return
+    if (!bridgePrepared || finishing || serviceDestroyed || !PrnsAndroidRuntime.admission.isOwnerActive(this)) return
     bluetooth?.setAppForeground(PrnsAndroidRuntime.appForeground)
     if (PrnsAndroidRuntime.bluetoothReady(this)) {
       if (bluetooth?.status?.state in setOf(PrnsBluetoothLink.State.Stopping, PrnsBluetoothLink.State.Failed, PrnsBluetoothLink.State.Unavailable)) {
@@ -122,14 +128,14 @@ class PrnsRuntimeService : Service() {
           applicationContext,
           onStatus = { status ->
             PrnsAndroidRuntime.lifecycle.execute {
-              if (generation == bluetoothGeneration && ownsRuntime && !finishing) {
+              if (generation == bluetoothGeneration && ownsRuntime && !finishing && PrnsAndroidRuntime.admission.isOwnerActive(this)) {
                 PrnsAndroidRuntime.update(applicationContext, error = status.reason)
               }
             }
           },
           onPsmPublished = { psm ->
             PrnsAndroidRuntime.lifecycle.execute {
-              if (generation == bluetoothGeneration && ownsRuntime && !finishing) {
+              if (generation == bluetoothGeneration && ownsRuntime && !finishing && PrnsAndroidRuntime.admission.isOwnerActive(this)) {
                 val previous = publishedPsm
                 publishedPsm = psm
                 if (previous != null && previous != psm && engineRunning) reconnectBluetooth()
@@ -148,6 +154,7 @@ class PrnsRuntimeService : Service() {
   }
 
   private fun reconnectBluetooth() {
+    if (finishing || serviceDestroyed || !PrnsAndroidRuntime.admission.isOwnerActive(this)) return
     // Upstream currently samples the local L2CAP PSM only at interface startup.
     // A replacement listener therefore needs a full, explicit generation restart.
     // Keep the service/identity, but do not pretend unrelated TCP is uninterrupted.
@@ -176,6 +183,7 @@ class PrnsRuntimeService : Service() {
   }
 
   private fun cleanupFailedStart() {
+    PrnsAndroidRuntime.admission.retireOwner(this)
     getSharedPreferences(PREFERENCES, MODE_PRIVATE).edit().remove("startInput").apply()
     val drained = bluetooth?.stop() ?: true
     if (drained) {
@@ -186,12 +194,14 @@ class PrnsRuntimeService : Service() {
         engineRunning = false
         publishedPsm = null
         finishing = true
+        releaseDestroyedOwner()
         stopSelf()
       }
     }
   }
 
   private fun stopNative(reset: Boolean): String {
+    PrnsAndroidRuntime.admission.retireOwner(this)
     getSharedPreferences(PREFERENCES, MODE_PRIVATE).edit().remove("startInput").apply()
     PrnsAndroidRuntime.update(this, "stopping")
     check(bluetooth?.stop() ?: true) { "Bluetooth workers are still stopping; try Stop again" }
@@ -204,6 +214,7 @@ class PrnsRuntimeService : Service() {
       engineRunning = false
       publishedPsm = null
       finishing = true
+      releaseDestroyedOwner()
       PrnsAndroidRuntime.update(this, "stopped")
       stopForeground(STOP_FOREGROUND_REMOVE)
       stopSelf()
@@ -214,6 +225,8 @@ class PrnsRuntimeService : Service() {
   }
 
   override fun onDestroy() {
+    serviceDestroyed = true
+    PrnsAndroidRuntime.admission.retireOwner(this)
     if (!ownsRuntime) {
       super.onDestroy()
       return
@@ -226,11 +239,26 @@ class PrnsRuntimeService : Service() {
         PrnsAndroidRuntime.update(this, "stopping", it.message)
       }
       if (finishing) {
-        PrnsAndroidRuntime.admission.releaseOwner(this, drained = true)
-        ownsRuntime = false
+        releaseDestroyedOwner()
       }
     }
     super.onDestroy()
+  }
+
+  private fun releaseDestroyedOwner() {
+    // onDestroy is delivered only once. If its first drain failed, a later
+    // explicit Stop must release the retained owner itself after draining.
+    if (serviceDestroyed && finishing) {
+      PrnsAndroidRuntime.admission.releaseOwner(this, drained = true)
+      ownsRuntime = false
+    }
+  }
+
+  private fun rejectStart(requestId: Long, reason: String) {
+    PrnsAndroidRuntime.admission.completeStart(requestId)
+    // Always remove the promise: Stop may have invalidated a ticket just before
+    // startRuntime registered its promise in the concurrent map.
+    requests.remove(requestId)?.reject("ERR_PRNS_CANCELLED", reason, null)
   }
 
   private fun notification(): Notification {
@@ -273,7 +301,7 @@ class PrnsRuntimeService : Service() {
     }
 
     internal fun stopRuntime(context: Context, reset: Boolean, promise: Promise?) {
-      PrnsAndroidRuntime.admission.invalidateStarts().forEach { id ->
+      PrnsAndroidRuntime.admission.beginStop().forEach { id ->
         requests.remove(id)?.reject("ERR_PRNS_CANCELLED", "Node start was cancelled by Stop or Reset", null)
       }
       PrnsAndroidRuntime.lifecycle.execute {
