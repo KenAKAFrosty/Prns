@@ -167,12 +167,7 @@ fn validate_flash(path: &Path, flash: &FirmwareFlashUsage) -> Result<(), Compari
         .end
         .checked_sub(flash.start)
         .filter(|capacity| *capacity != 0)
-        .and_then(|capacity| {
-            flash
-                .image_bytes
-                .checked_add(flash.headroom_bytes)
-                .map(|used| (capacity, used))
-        })
+        .zip(flash.image_bytes.checked_add(flash.headroom_bytes))
         .is_some_and(|(capacity, used)| flash.image_bytes != 0 && capacity == used);
     if valid {
         Ok(())
