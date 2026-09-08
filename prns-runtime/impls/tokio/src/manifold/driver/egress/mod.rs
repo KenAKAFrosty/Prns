@@ -17,9 +17,9 @@ use crate::runtime::{
     AnnounceBackpressureEvent, AnnounceEgressOutcome, EgressLaneMetricsSnapshot,
     EgressMetricsSnapshot,
 };
-use crate::wire::{WireContext, WirePacketHeader};
+use crate::wire::{WireContext, WirePacketHeader, HEADER_MAX_LEN};
 
-use super::TokioGrantProducer;
+use super::{HeapFrameSlot, TokioGrantProducer};
 use pending::{EgressOrigin, PendingEgressQueue};
 
 mod pending;
@@ -65,6 +65,11 @@ enum EgressTryEnqueueOutcome {
     Enqueued,
     LaneFull,
     LaneMissing,
+}
+
+pub(super) enum ForwardedSlotOutcome {
+    Moved { vacated: HeapFrameSlot },
+    CopyRequired { source: HeapFrameSlot },
 }
 
 #[derive(Clone, Copy)]
@@ -186,6 +191,58 @@ impl Egress {
             }
         }
         EgressTryEnqueueOutcome::LaneMissing
+    }
+
+    pub(super) fn try_move_forwarded_slot(
+        &mut self,
+        target: InterfaceId,
+        header: WirePacketHeader,
+        payload: std::ops::Range<usize>,
+        mut source: HeapFrameSlot,
+    ) -> ForwardedSlotOutcome {
+        if payload.start > payload.end
+            || payload.end > source.len
+            || header.wire_len() != payload.start
+        {
+            return ForwardedSlotOutcome::CopyRequired { source };
+        }
+        let has_pending = self.pending_frames > 0;
+        for lane in &mut self.lanes {
+            if lane.id != target {
+                continue;
+            }
+            if has_pending && !lane.pending.is_empty() {
+                return ForwardedSlotOutcome::CopyRequired { source };
+            }
+            let Some(destination) = lane.producer.try_grant() else {
+                return ForwardedSlotOutcome::CopyRequired { source };
+            };
+            if payload.end > destination.cap {
+                return ForwardedSlotOutcome::CopyRequired { source };
+            }
+            let Ok(header_len) = header.write(&mut source.bytes[..payload.start]) else {
+                return ForwardedSlotOutcome::CopyRequired { source };
+            };
+            debug_assert_eq!(header_len, payload.start);
+
+            source.bytes.truncate(payload.end);
+            std::mem::swap(&mut destination.bytes, &mut source.bytes);
+            destination.len = payload.end;
+            destination.packet_phy = Default::default();
+            source.bytes.clear();
+            source.len = 0;
+            source.packet_phy = Default::default();
+            match egress_queue(destination.frame()) {
+                EgressQueue::Expedited => lane.producer.commit_expedited(),
+                EgressQueue::Bulk => lane.producer.commit(),
+            }
+            #[cfg(feature = "runtime-metrics")]
+            {
+                self.metrics.enqueued_frames = self.metrics.enqueued_frames.saturating_add(1);
+            }
+            return ForwardedSlotOutcome::Moved { vacated: source };
+        }
+        ForwardedSlotOutcome::CopyRequired { source }
     }
 
     #[cold]
@@ -799,6 +856,18 @@ impl DirectiveEgress for TokioDirectiveEgress<'_> {
         );
     }
 
+    fn forward_frame(&mut self, target: InterfaceId, header: WirePacketHeader, payload: &[u8]) {
+        forward_for_wire(
+            self.egress,
+            self.ifacs,
+            target,
+            header,
+            payload,
+            self.scratch,
+            self.origin,
+        );
+    }
+
     #[cfg(feature = "runtime-metrics")]
     fn send_measured_local_announce(&mut self, target: InterfaceId, bytes: &[u8]) {
         enqueue_pacerless_announce_for_wire(
@@ -861,6 +930,52 @@ fn emit_for_wire(
         }
         None => egress.emit(target, size_hint, fill, &mut scratch.emit, origin),
     }
+}
+
+fn forward_for_wire(
+    egress: &mut Egress,
+    ifacs: &[InterfaceIfac],
+    target: InterfaceId,
+    header: WirePacketHeader,
+    payload: &[u8],
+    scratch: &mut WireScratch,
+    origin: EgressOrigin,
+) {
+    emit_for_wire(
+        egress,
+        ifacs,
+        target,
+        HEADER_MAX_LEN + payload.len(),
+        &mut |slot| {
+            let header_len = header.write(slot).ok()?;
+            let frame_len = header_len.checked_add(payload.len())?;
+            let destination = slot.get_mut(header_len..frame_len)?;
+            destination.copy_from_slice(payload);
+            Some(frame_len)
+        },
+        scratch,
+        origin,
+    );
+}
+
+pub(super) fn forward_from_ingress(
+    egress: &mut Egress,
+    ifacs: &[InterfaceIfac],
+    source: InterfaceId,
+    target: InterfaceId,
+    header: WirePacketHeader,
+    payload: &[u8],
+    scratch: &mut WireScratch,
+) {
+    forward_for_wire(
+        egress,
+        ifacs,
+        target,
+        header,
+        payload,
+        scratch,
+        EgressOrigin::Ingress(source),
+    );
 }
 
 pub(super) fn ifac_for(ifacs: &[InterfaceIfac], id: InterfaceId) -> Option<&InterfaceIfac> {

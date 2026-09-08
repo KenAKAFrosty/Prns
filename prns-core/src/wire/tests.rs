@@ -24,7 +24,8 @@ fn type1_header_round_trips() {
 
     let mut buf = [0u8; 64];
     let written = header.write(&mut buf).unwrap();
-    assert_eq!(written, 2 + TRUNCATED_HASH_BYTE_LEN + 1);
+    assert_eq!(written, header.wire_len());
+    assert_eq!(header.wire_len(), HEADER_MIN_LEN);
 
     let (parsed, payload) = WirePacketHeader::parse(&buf[..written]).unwrap();
     assert_eq!(parsed, header);
@@ -47,7 +48,8 @@ fn type2_header_round_trips_with_every_one_bit_set() {
 
     let mut buf = [0u8; 64];
     let written = header.write(&mut buf).unwrap();
-    assert_eq!(written, 2 + 2 * TRUNCATED_HASH_BYTE_LEN + 1);
+    assert_eq!(written, header.wire_len());
+    assert_eq!(header.wire_len(), HEADER_MAX_LEN);
 
     let (parsed, payload) = WirePacketHeader::parse(&buf[..written]).unwrap();
     assert_eq!(parsed, header);

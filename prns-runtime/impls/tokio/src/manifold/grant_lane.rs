@@ -1,11 +1,10 @@
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use prns_core::interfaces::{FrameSink, FrameSinkError, PacketPhyStats};
 use rtrb::{Consumer, Producer, PushError, RingBuffer};
 use tokio::sync::Notify;
 
-use super::driver::ManifoldWakeSender;
+use super::{driver::ManifoldWakeSender, WakeArm};
 
 pub fn tokio_grant_lane(slot_cap: usize, depth: usize) -> (TokioGrantProducer, TokioGrantConsumer) {
     let depth = depth.max(1);
@@ -14,8 +13,8 @@ pub fn tokio_grant_lane(slot_cap: usize, depth: usize) -> (TokioGrantProducer, T
     let (recycled_slots, recycled) = RingBuffer::new(depth);
     let filled_ready = Arc::new(Notify::new());
     let free_ready = Arc::new(Notify::new());
-    let producer_parked = Arc::new(AtomicBool::new(false));
-    let consumer_parked = Arc::new(AtomicBool::new(false));
+    let producer_parked = Arc::new(WakeArm::new());
+    let consumer_parked = Arc::new(WakeArm::new());
     (
         TokioGrantProducer {
             slot_cap,
@@ -125,8 +124,8 @@ pub struct TokioGrantProducer {
     pub(super) granted: Option<HeapFrameSlot>,
     filled_ready: Arc<Notify>,
     free_ready: Arc<Notify>,
-    producer_parked: Arc<AtomicBool>,
-    consumer_parked: Arc<AtomicBool>,
+    producer_parked: Arc<WakeArm>,
+    consumer_parked: Arc<WakeArm>,
 }
 
 impl TokioGrantProducer {
@@ -163,10 +162,10 @@ impl TokioGrantProducer {
                 None => {
                     // The ring is authoritative. Advertise the cold waiter, then recheck it so a
                     // release racing this arm either wakes us or is observed synchronously.
-                    self.producer_parked.store(true, Ordering::Release);
+                    self.producer_parked.arm_before_recheck();
                     match self.pop_free_slot() {
                         Some(slot) => {
-                            self.producer_parked.store(false, Ordering::Release);
+                            self.producer_parked.disarm();
                             self.granted = Some(slot);
                         }
                         None => self.free_ready.notified().await,
@@ -190,21 +189,21 @@ impl TokioGrantProducer {
                 GrantQueue::Expedited => self.expedited.push(slot).is_ok(),
                 GrantQueue::Regular => self.regular.push(slot).is_ok(),
             };
-            if committed
-                && self.consumer_parked.load(Ordering::Acquire)
-                && self.consumer_parked.swap(false, Ordering::AcqRel)
-            {
+            if !committed {
+                return;
+            }
+            if self.consumer_parked.take_after_publish() {
                 self.filled_ready.notify_one();
             }
         }
     }
 
     pub(super) fn arm_release_wake(&self) {
-        self.producer_parked.store(true, Ordering::Release);
+        self.producer_parked.arm_before_recheck();
     }
 
     pub(super) fn disarm_release_wake(&self) {
-        self.producer_parked.store(false, Ordering::Release);
+        self.producer_parked.disarm();
     }
 }
 
@@ -215,8 +214,8 @@ pub struct TokioGrantConsumer {
     peeked: Option<HeapFrameSlot>,
     filled_ready: Arc<Notify>,
     free_ready: Arc<Notify>,
-    producer_parked: Arc<AtomicBool>,
-    consumer_parked: Arc<AtomicBool>,
+    producer_parked: Arc<WakeArm>,
+    consumer_parked: Arc<WakeArm>,
     expedited_streak: usize,
     release_notify: Option<ManifoldWakeSender>,
 }
@@ -250,10 +249,10 @@ impl TokioGrantConsumer {
                 None => {
                     // See `grant`: the post-arm recheck closes the empty-to-filled race without
                     // paying Tokio's wake machinery while this consumer is actively draining.
-                    self.consumer_parked.store(true, Ordering::Release);
+                    self.consumer_parked.arm_before_recheck();
                     match self.pop_next() {
                         Some(slot) => {
-                            self.consumer_parked.store(false, Ordering::Release);
+                            self.consumer_parked.disarm();
                             self.peeked = Some(slot);
                         }
                         None => self.filled_ready.notified().await,
@@ -292,9 +291,7 @@ impl TokioGrantConsumer {
     pub(crate) fn return_slot(&mut self, slot: HeapFrameSlot) {
         match self.recycled.push(slot) {
             Ok(()) => {
-                if self.producer_parked.load(Ordering::Acquire)
-                    && self.producer_parked.swap(false, Ordering::AcqRel)
-                {
+                if self.producer_parked.take_after_publish() {
                     match &self.release_notify {
                         Some(notify) => notify.signal(),
                         None => self.free_ready.notify_one(),
@@ -488,6 +485,30 @@ mod tests {
 
         producer.commit();
         assert_eq!(consumer.peek().await.frame(), b"next");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn concurrent_lane_handoffs_do_not_strand() {
+        let (mut producer, mut consumer) = tokio_grant_lane(4, 1);
+        let producer = tokio::spawn(async move {
+            for sequence in 0..4_096u32 {
+                producer.grant().await.fill(&sequence.to_le_bytes());
+                producer.commit();
+            }
+        });
+        let consumer = tokio::spawn(async move {
+            for sequence in 0..4_096u32 {
+                assert_eq!(consumer.peek().await.frame(), sequence.to_le_bytes());
+                consumer.release();
+            }
+        });
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            producer.await.unwrap();
+            consumer.await.unwrap();
+        })
+        .await
+        .expect("concurrent lane handoffs complete");
     }
 
     #[tokio::test]

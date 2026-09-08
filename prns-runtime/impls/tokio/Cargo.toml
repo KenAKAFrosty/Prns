@@ -32,8 +32,8 @@ parallel-resource-hash = ["prns-core/parallel-resource-hash"]
 tracing = ["dep:tracing"]
 
 [dependencies]
-prns-core = { version = "=0.3.7", path = "../../../prns-core", default-features = false, features = ["tokio-host", "ed25519-batch", "resource-work-offload"] }
-prns-runtime = { version = "=0.3.7", path = "../../core", default-features = false, features = ["resource-bzip2"] }
+prns-core = { version = "=0.3.7", path = "../../../prns-core", default-features = false, features = ["tokio-host", "ed25519-batch", "resource-work-offload", "movable-frame-forwarding"] }
+prns-runtime = { version = "=0.3.7", path = "../../core", default-features = false, features = ["resource-bzip2", "movable-frame-forwarding"] }
 heapless = { version = "0.8", default-features = false }
 tokio = { version = "1", default-features = false, features = ["rt", "macros", "sync", "time", "io-util", "fs"] }
 rtrb = { version = "0.3.5", default-features = false }

@@ -5,13 +5,14 @@ use std::task::{Context, Poll};
 use futures_util::task::AtomicWaker;
 use rtrb::{Consumer, PopError, Producer, PushError, RingBuffer};
 
+use super::super::WakeArm;
 use super::HostCommand;
 
 pub(crate) struct LocalCommandProducer {
     commands: Producer<HostCommand>,
     producer_open: Arc<AtomicBool>,
     consumer_open: Arc<AtomicBool>,
-    consumer_parked: Arc<AtomicBool>,
+    consumer_parked: Arc<WakeArm>,
     consumer_waker: Arc<AtomicWaker>,
 }
 
@@ -19,7 +20,7 @@ pub(crate) struct LocalCommandConsumer {
     commands: Consumer<HostCommand>,
     producer_open: Arc<AtomicBool>,
     consumer_open: Arc<AtomicBool>,
-    consumer_parked: Arc<AtomicBool>,
+    consumer_parked: Arc<WakeArm>,
     consumer_waker: Arc<AtomicWaker>,
 }
 
@@ -27,7 +28,7 @@ pub(crate) fn local_command_lane(depth: usize) -> (LocalCommandProducer, LocalCo
     let (producer, consumer) = RingBuffer::new(depth.max(1));
     let producer_open = Arc::new(AtomicBool::new(true));
     let consumer_open = Arc::new(AtomicBool::new(true));
-    let consumer_parked = Arc::new(AtomicBool::new(false));
+    let consumer_parked = Arc::new(WakeArm::new());
     let consumer_waker = Arc::new(AtomicWaker::new());
     (
         LocalCommandProducer {
@@ -57,9 +58,7 @@ impl LocalCommandProducer {
         }
         match self.commands.push(command) {
             Ok(()) => {
-                if self.consumer_parked.load(Ordering::Acquire)
-                    && self.consumer_parked.swap(false, Ordering::AcqRel)
-                {
+                if self.consumer_parked.take_after_publish() {
                     self.consumer_waker.wake();
                 }
                 Ok(())
@@ -72,9 +71,7 @@ impl LocalCommandProducer {
 impl Drop for LocalCommandProducer {
     fn drop(&mut self) {
         self.producer_open.store(false, Ordering::Release);
-        if self.consumer_parked.load(Ordering::Acquire)
-            && self.consumer_parked.swap(false, Ordering::AcqRel)
-        {
+        if self.consumer_parked.take_after_publish() {
             self.consumer_waker.wake();
         }
     }
@@ -82,7 +79,7 @@ impl Drop for LocalCommandProducer {
 
 impl LocalCommandConsumer {
     pub(crate) fn try_recv(&mut self) -> Option<HostCommand> {
-        self.consumer_parked.store(false, Ordering::Release);
+        self.consumer_parked.disarm();
         self.commands.pop().ok()
     }
 
@@ -97,14 +94,14 @@ impl LocalCommandConsumer {
         // The ring owns readiness. Publish the cold waiter, then recheck both data and closure so
         // a producer racing this arm either wakes us or becomes synchronously visible.
         self.consumer_waker.register(context.waker());
-        self.consumer_parked.store(true, Ordering::Release);
+        self.consumer_parked.arm_before_recheck();
         match self.commands.pop() {
             Ok(command) => {
-                self.consumer_parked.store(false, Ordering::Release);
+                self.consumer_parked.disarm();
                 Poll::Ready(Some(command))
             }
             Err(PopError::Empty) if !self.producer_open.load(Ordering::Acquire) => {
-                self.consumer_parked.store(false, Ordering::Release);
+                self.consumer_parked.disarm();
                 Poll::Ready(None)
             }
             Err(PopError::Empty) => Poll::Pending,
@@ -115,7 +112,7 @@ impl LocalCommandConsumer {
 impl Drop for LocalCommandConsumer {
     fn drop(&mut self) {
         self.consumer_open.store(false, Ordering::Release);
-        self.consumer_parked.store(false, Ordering::Release);
+        self.consumer_parked.disarm();
     }
 }
 
@@ -180,5 +177,39 @@ mod tests {
         let receive = poll_fn(|context| consumer.poll_recv(context));
         let ((), received) = tokio::join!(send, receive);
         assert_eq!(id(received.unwrap()), CommandId(3));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn concurrent_local_command_handoffs_do_not_strand() {
+        let (mut producer, mut consumer) = local_command_lane(1);
+        let producer = tokio::spawn(async move {
+            for sequence in 0..4_096 {
+                let mut pending = command(sequence);
+                loop {
+                    match producer.send(pending) {
+                        Ok(()) => break,
+                        Err(returned) => {
+                            pending = returned;
+                            tokio::task::yield_now().await;
+                        }
+                    }
+                }
+            }
+        });
+        let consumer = tokio::spawn(async move {
+            for sequence in 0..4_096 {
+                let received = poll_fn(|context| consumer.poll_recv(context))
+                    .await
+                    .expect("producer remains open");
+                assert_eq!(id(received), CommandId(sequence));
+            }
+        });
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            producer.await.unwrap();
+            consumer.await.unwrap();
+        })
+        .await
+        .expect("local command handoffs complete");
     }
 }

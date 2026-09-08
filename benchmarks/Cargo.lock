@@ -1350,6 +1350,7 @@ dependencies = [
  "allocator-api2",
  "criterion",
  "dhat",
+ "futures-util",
  "getrandom 0.2.17",
  "heapless 0.8.0",
  "iai-callgrind",
