@@ -76,7 +76,8 @@ const SIGHTING_DEPTH: usize = PEER_CAPACITY * 2;
 const SIGHTING_COALESCE_MS: u64 = 2_000;
 const RADIO_WAITERS: usize = 2;
 
-/// One L2CAP SDU carries one length-prefixed stream frame; modest credits and MPS keep two RX reservations inside the packet pool alongside GATT and TX.
+/// Size an SDU for one maximum length-prefixed frame. Stream peers may split or coalesce
+/// frames across SDUs; modest credits and MPS keep two RX reservations inside the packet pool.
 pub const L2CAP_PSM: u16 = 0x0080;
 const L2CAP_SDU_LEN: usize = STREAM_FRAME_PREFIX_LEN + BLE_HW_MTU;
 const L2CAP_SDU_LENGTH_PREFIX_LEN: u16 = size_of::<u16>() as u16;

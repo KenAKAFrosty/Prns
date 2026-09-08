@@ -1,5 +1,6 @@
 use super::backend::{BleHub, DialTarget, SlotChannels, TransientClientRetryOutcome};
 use super::*;
+use prns_core::interfaces::bluetooth_auto::StreamDeframer;
 
 /// Trouble allocates an ATT packet before awaiting its bounded outbound queue. A short GATT burst
 /// can therefore observe the shared packet pool between the controller returning one packet and
@@ -214,24 +215,42 @@ async fn l2cap_pump<T: TroubleTransport>(
             }
         }
     };
-    let inbound = async {
-        let mut rx = alloc::boxed::Box::new([0u8; L2CAP_SDU_LEN]);
-        loop {
-            let read = match reader.receive(stack, rx.as_mut()).await {
-                Ok(read) => read,
-                Err(error) => {
-                    crate::diagnostic_log::warn!("ble: L2CAP receive failed: {error:?}");
-                    return L2capPumpExit::Inbound;
-                }
-            };
-            hub.note_link_activity();
-            if read < STREAM_FRAME_PREFIX_LEN {
-                continue;
+    let inbound = receive_l2cap_frames(hub, inbound_frames, data_in_tx, async |rx| {
+        reader.receive(stack, rx).await
+    });
+    match select(outbound, inbound).await {
+        Either::First(exit) | Either::Second(exit) => exit,
+    }
+}
+
+async fn receive_l2cap_frames<E: core::fmt::Debug>(
+    hub: &BleHub,
+    inbound_frames: &'static BleFramePool,
+    data_in_tx: Sender<'static, BridgeMutex, BleFrameLease, FRAME_QUEUE_DEPTH>,
+    mut receive: impl AsyncFnMut(&mut [u8]) -> Result<usize, E>,
+) -> L2capPumpExit {
+    let mut rx = alloc::boxed::Box::new([0u8; L2CAP_SDU_LEN]);
+    // Stream peers may split a frame across SDUs or coalesce several into one.
+    // One incomplete maximum frame plus the next SDU fits this bounded buffer.
+    let mut deframer = alloc::boxed::Box::new(StreamDeframer::<{ 2 * L2CAP_SDU_LEN }>::new());
+    loop {
+        let read = match receive(rx.as_mut()).await {
+            Ok(read) => read,
+            Err(error) => {
+                crate::diagnostic_log::warn!("ble: L2CAP receive failed: {error:?}");
+                return L2capPumpExit::Inbound;
             }
-            let len = u16::from_be_bytes([rx[0], rx[1]]) as usize;
-            let body = &rx[STREAM_FRAME_PREFIX_LEN..read];
-            if body.len() < len {
-                continue;
+        };
+        hub.note_link_activity();
+        if !deframer.absorb(&rx[..read]) {
+            crate::diagnostic_log::warn!("ble: L2CAP stream framing buffer exceeded");
+            return L2capPumpExit::Inbound;
+        }
+        // absorb copied the SDU, so reuse its scratch buffer for each decoded frame.
+        while let Some(len) = deframer.next_frame(rx.as_mut()) {
+            if len > FRAME_CAP {
+                crate::diagnostic_log::warn!("ble: L2CAP frame exceeds the interface MTU");
+                return L2capPumpExit::Inbound;
             }
             let frame = match inbound_frames.lease().await {
                 Ok(frame) => frame,
@@ -240,13 +259,12 @@ async fn l2cap_pump<T: TroubleTransport>(
                     return L2capPumpExit::FramePool;
                 }
             };
-            if frame.fill(&body[..len]).await.is_ok() {
-                data_in_tx.send(frame).await;
+            if let Err(error) = frame.fill(&rx[..len]).await {
+                crate::diagnostic_log::warn!("ble L2CAP frame fill failed: {error:?}");
+                return L2capPumpExit::FramePool;
             }
+            data_in_tx.send(frame).await;
         }
-    };
-    match select(outbound, inbound).await {
-        Either::First(exit) | Either::Second(exit) => exit,
     }
 }
 
@@ -1040,6 +1058,250 @@ mod tests {
 
     use super::*;
     use crate::bluetooth_auto::BluetoothAutoShared;
+
+    fn receive_chunks(chunks: &[&[u8]]) -> (L2capPumpExit, std::vec::Vec<std::vec::Vec<u8>>) {
+        static SHARED: BluetoothAutoShared<PEER_CAPACITY> =
+            BluetoothAutoShared::new(InterfaceId::new([0x5a; 8]));
+        let hub = BleHub::new(BluetoothAutoStatus::new(&SHARED));
+        let pool = alloc::boxed::Box::leak(alloc::boxed::Box::new(BleFramePool::new()));
+        let queue = alloc::boxed::Box::leak(alloc::boxed::Box::new(Channel::new()));
+        let mut chunks = chunks.iter();
+        let mut receive = pin!(receive_l2cap_frames(
+            &hub,
+            pool,
+            queue.sender(),
+            async |out| {
+                let Some(chunk) = chunks.next() else {
+                    return Err(trouble_host::Error::Disconnected);
+                };
+                out[..chunk.len()].copy_from_slice(chunk);
+                Ok(chunk.len())
+            }
+        ));
+        let mut context = Context::from_waker(Waker::noop());
+        let mut frames = std::vec::Vec::new();
+        for _ in 0..1024 {
+            let result = receive.as_mut().poll(&mut context);
+            while let Ok(frame) = queue.try_receive() {
+                frames.push(embassy_futures::block_on(frame.lock()).to_vec());
+            }
+            if let Poll::Ready(exit) = result {
+                return (exit, frames);
+            }
+        }
+        panic!("bounded L2CAP receiver fixture did not finish");
+    }
+
+    fn stream_frame(payload: &[u8]) -> std::vec::Vec<u8> {
+        let mut wire = std::vec![0; STREAM_FRAME_PREFIX_LEN + payload.len()];
+        encode_stream_frame(payload, &mut wire).unwrap();
+        wire
+    }
+
+    #[test]
+    fn l2cap_receiver_preserves_coalesced_frames() {
+        let first = [0x75; 100];
+        let second = [0xa4; 100];
+        let mut wire = stream_frame(&first);
+        wire.extend_from_slice(&stream_frame(&second));
+        let (exit, frames) = receive_chunks(&[&wire]);
+        assert_eq!(exit, L2capPumpExit::Inbound);
+        assert_eq!(frames, [first.to_vec(), second.to_vec()]);
+    }
+
+    #[test]
+    fn l2cap_receiver_preserves_split_prefix() {
+        let payload = [0x75; 100];
+        let wire = stream_frame(&payload);
+        let (_, frames) = receive_chunks(&[&wire[..1], &wire[1..]]);
+        assert_eq!(frames, [payload.to_vec()]);
+    }
+
+    #[test]
+    fn l2cap_receiver_preserves_split_body() {
+        let payload = [0x75; 100];
+        let wire = stream_frame(&payload);
+        let (_, frames) = receive_chunks(&[&wire[..31], &wire[31..]]);
+        assert_eq!(frames, [payload.to_vec()]);
+    }
+
+    #[test]
+    fn l2cap_receiver_preserves_a_maximum_frame_at_every_split_boundary() {
+        let payload = [0x42; FRAME_CAP];
+        let wire = stream_frame(&payload);
+        for split in 1..wire.len() {
+            let (_, frames) = receive_chunks(&[&wire[..split], &wire[split..]]);
+            assert_eq!(frames, [payload.to_vec()], "split at byte {split}");
+        }
+    }
+
+    #[test]
+    fn l2cap_receiver_fits_a_partial_maximum_frame_and_the_next_sdu() {
+        let first = [0x42; FRAME_CAP];
+        let second = [0x65; FRAME_CAP];
+        let mut wire = stream_frame(&first);
+        wire.extend_from_slice(&stream_frame(&second));
+        let (_, frames) = receive_chunks(&[
+            &wire[..L2CAP_SDU_LEN - 1],
+            &wire[L2CAP_SDU_LEN - 1..2 * L2CAP_SDU_LEN - 1],
+            &wire[2 * L2CAP_SDU_LEN - 1..],
+        ]);
+        assert_eq!(frames, [first.to_vec(), second.to_vec()]);
+    }
+
+    #[test]
+    fn l2cap_receiver_discards_only_the_truncated_tail_when_the_reader_closes() {
+        let first = stream_frame(b"complete");
+        let second = stream_frame(b"incomplete");
+        for end in 0..second.len() {
+            let mut wire = first.clone();
+            wire.extend_from_slice(&second[..end]);
+            let (exit, frames) = receive_chunks(&[&wire]);
+            assert_eq!(exit, L2capPumpExit::Inbound);
+            assert_eq!(frames, [b"complete".to_vec()]);
+        }
+    }
+
+    #[test]
+    fn l2cap_receiver_keeps_empty_sdu_and_empty_frame_semantics() {
+        let mut wire = stream_frame(b"");
+        wire.extend_from_slice(&stream_frame(b"next"));
+        let (_, frames) = receive_chunks(&[&[], &wire]);
+        assert_eq!(frames, [b"".to_vec(), b"next".to_vec()]);
+    }
+
+    #[test]
+    fn l2cap_receiver_rejects_a_frame_larger_than_the_pool_capacity() {
+        let mut wire = stream_frame(&[0x42; FRAME_CAP + 1]);
+        wire.extend_from_slice(&stream_frame(b"must not resynchronize"));
+        let (exit, frames) = receive_chunks(&[&wire[..L2CAP_SDU_LEN], &wire[L2CAP_SDU_LEN..]]);
+        assert_eq!(exit, L2capPumpExit::Inbound);
+        assert!(frames.is_empty());
+    }
+
+    #[test]
+    fn l2cap_receiver_closes_on_bounded_overflow_without_admitting_malformed_data() {
+        // An impossible 65535-byte declaration must not grow storage or allow later
+        // bytes to be interpreted as a fresh frame after the buffer is exhausted.
+        let malformed = [0xff; L2CAP_SDU_LEN];
+        let valid = stream_frame(b"must not resynchronize");
+        let (exit, frames) = receive_chunks(&[&malformed, &malformed, &[0xff], &valid]);
+        assert_eq!(exit, L2capPumpExit::Inbound);
+        assert!(frames.is_empty());
+    }
+
+    #[test]
+    fn l2cap_receiver_waits_for_pool_capacity_before_reading_more() {
+        static SHARED: BluetoothAutoShared<PEER_CAPACITY> =
+            BluetoothAutoShared::new(InterfaceId::new([0x5b; 8]));
+        static POOL: BleFramePool = BleFramePool::new();
+        static QUEUE: Channel<BridgeMutex, BleFrameLease, FRAME_QUEUE_DEPTH> = Channel::new();
+        let hub = BleHub::new(BluetoothAutoStatus::new(&SHARED));
+        let mut held = heapless_09::Vec::<_, PEER_CAPACITY>::new();
+        for _ in 0..PEER_CAPACITY {
+            assert!(held.push(POOL.try_lease().unwrap().unwrap()).is_ok());
+        }
+        let reads = core::cell::Cell::new(0);
+        let wire = stream_frame(b"wait for capacity");
+        let mut receive = pin!(receive_l2cap_frames(
+            &hub,
+            &POOL,
+            QUEUE.sender(),
+            async |out| {
+                reads.set(reads.get() + 1);
+                if reads.get() != 1 {
+                    return Err(trouble_host::Error::Disconnected);
+                }
+                out[..wire.len()].copy_from_slice(&wire);
+                Ok(wire.len())
+            }
+        ));
+        let mut context = Context::from_waker(Waker::noop());
+        assert_eq!(receive.as_mut().poll(&mut context), Poll::Pending);
+        assert_eq!(reads.get(), 1);
+        assert!(QUEUE.try_receive().is_err());
+        assert!(POOL.try_lease().unwrap().is_none());
+
+        drop(held.pop());
+        assert_eq!(
+            receive.as_mut().poll(&mut context),
+            Poll::Ready(L2capPumpExit::Inbound)
+        );
+        let frame = QUEUE.try_receive().unwrap();
+        assert_eq!(
+            &*embassy_futures::block_on(frame.lock()),
+            b"wait for capacity"
+        );
+        drop(frame);
+        drop(held);
+        let mut recovered = heapless_09::Vec::<_, PEER_CAPACITY>::new();
+        for _ in 0..PEER_CAPACITY {
+            assert!(recovered.push(POOL.try_lease().unwrap().unwrap()).is_ok());
+        }
+        assert!(POOL.try_lease().unwrap().is_none());
+    }
+
+    #[test]
+    fn l2cap_receiver_preserves_coalesced_frames_across_queue_backpressure() {
+        let mut wire = std::vec::Vec::new();
+        let expected: std::vec::Vec<_> = (0..FRAME_QUEUE_DEPTH + 3)
+            .map(|index| std::vec![index as u8; 20])
+            .collect();
+        for frame in &expected {
+            wire.extend_from_slice(&stream_frame(frame));
+        }
+        // The fixture polls the real receiver, then consumes the real queue. More
+        // coalesced frames than queue slots must block, not disappear or overflow.
+        let (_, frames) = receive_chunks(&[&wire]);
+        assert_eq!(frames, expected);
+    }
+
+    #[test]
+    fn l2cap_receiver_cancellation_releases_a_frame_waiting_for_queue_capacity() {
+        static SHARED: BluetoothAutoShared<PEER_CAPACITY> =
+            BluetoothAutoShared::new(InterfaceId::new([0x5c; 8]));
+        static POOL: BleFramePool = BleFramePool::new();
+        static QUEUE: Channel<BridgeMutex, BleFrameLease, FRAME_QUEUE_DEPTH> = Channel::new();
+        let hub = BleHub::new(BluetoothAutoStatus::new(&SHARED));
+        for _ in 0..FRAME_QUEUE_DEPTH {
+            assert!(QUEUE.try_send(POOL.try_lease().unwrap().unwrap()).is_ok());
+        }
+        let reads = core::cell::Cell::new(0);
+        let wire = stream_frame(b"waiting for queue");
+        let mut receive = alloc::boxed::Box::pin(receive_l2cap_frames(
+            &hub,
+            &POOL,
+            QUEUE.sender(),
+            async |out| {
+                reads.set(reads.get() + 1);
+                if reads.get() != 1 {
+                    return Err(trouble_host::Error::Disconnected);
+                }
+                out[..wire.len()].copy_from_slice(&wire);
+                Ok(wire.len())
+            },
+        ));
+        let mut context = Context::from_waker(Waker::noop());
+        assert_eq!(receive.as_mut().poll(&mut context), Poll::Pending);
+        assert_eq!(reads.get(), 1);
+        let mut held = heapless_09::Vec::<_, PEER_CAPACITY>::new();
+        while let Some(frame) = POOL.try_lease().unwrap() {
+            assert!(held.push(frame).is_ok());
+        }
+        assert_eq!(held.len(), PEER_CAPACITY - FRAME_QUEUE_DEPTH - 1);
+
+        drop(receive);
+        assert!(held.push(POOL.try_lease().unwrap().unwrap()).is_ok());
+        assert!(POOL.try_lease().unwrap().is_none());
+        while let Ok(frame) = QUEUE.try_receive() {
+            drop(frame);
+        }
+        drop(held);
+        let mut recovered = heapless_09::Vec::<_, PEER_CAPACITY>::new();
+        for _ in 0..PEER_CAPACITY {
+            assert!(recovered.push(POOL.try_lease().unwrap().unwrap()).is_ok());
+        }
+    }
 
     #[test]
     fn initial_credits_cover_exactly_one_largest_l2cap_sdu() {
