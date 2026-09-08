@@ -158,11 +158,13 @@ impl<Src: BleSource, Snk: BleSink> Interface for BluetoothPeer<Src, Snk> {
                 }
             }
         }
+        let closed = self.closed.take();
+        drop(self);
         if let Some(ClosedSignal {
             identity,
             address,
             sink,
-        }) = self.closed.take()
+        }) = closed
         {
             let _ = sink.send((identity, address));
             std::future::pending::<()>().await;
