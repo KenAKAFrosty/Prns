@@ -16556,6 +16556,7 @@
           "ed25519-batch",
           "embassy-host",
           "flash",
+          "movable-frame-forwarding",
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
@@ -16571,6 +16572,7 @@
           "i2p",
           "interface-discovery",
           "interface-discovery-archive",
+          "movable-frame-forwarding",
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
@@ -16588,6 +16590,7 @@
           "i2p",
           "interface-discovery",
           "interface-discovery-archive",
+          "movable-frame-forwarding",
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
@@ -16605,6 +16608,7 @@
           "i2p",
           "interface-discovery",
           "interface-discovery-archive",
+          "movable-frame-forwarding",
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
@@ -16619,6 +16623,7 @@
           "ed25519-batch",
           "embassy-host",
           "flash",
+          "movable-frame-forwarding",
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
@@ -16631,6 +16636,7 @@
           "ed25519-batch",
           "embassy-host",
           "flash",
+          "movable-frame-forwarding",
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
@@ -16643,6 +16649,7 @@
           "ed25519-batch",
           "embassy-host",
           "flash",
+          "movable-frame-forwarding",
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
@@ -16665,6 +16672,7 @@
           "embassy-host",
           "external-alloc",
           "flash",
+          "movable-frame-forwarding",
           "resource-work-offload",
           "std",
           "tokio-host"
@@ -16675,6 +16683,7 @@
           "embassy-host",
           "external-alloc",
           "flash",
+          "movable-frame-forwarding",
           "resource-work-offload",
           "std",
           "tokio-host"
@@ -16685,6 +16694,7 @@
           "embassy-host",
           "external-alloc",
           "flash",
+          "movable-frame-forwarding",
           "resource-work-offload",
           "std",
           "tokio-host"
@@ -16695,6 +16705,7 @@
           "embassy-host",
           "external-alloc",
           "flash",
+          "movable-frame-forwarding",
           "resource-work-offload",
           "std",
           "tokio-host"
@@ -16705,6 +16716,7 @@
           "embassy-host",
           "external-alloc",
           "flash",
+          "movable-frame-forwarding",
           "resource-work-offload",
           "std",
           "tokio-host"
@@ -16715,6 +16727,7 @@
           "embassy-host",
           "external-alloc",
           "flash",
+          "movable-frame-forwarding",
           "resource-work-offload",
           "std",
           "tokio-host"
@@ -16726,6 +16739,7 @@
           "flash",
           "i2p",
           "interface-discovery",
+          "movable-frame-forwarding",
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
@@ -16739,6 +16753,7 @@
           "flash",
           "i2p",
           "interface-discovery",
+          "movable-frame-forwarding",
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
@@ -16752,6 +16767,7 @@
           "flash",
           "i2p",
           "interface-discovery",
+          "movable-frame-forwarding",
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
@@ -16763,6 +16779,7 @@
           "ed25519-batch",
           "embassy-host",
           "flash",
+          "movable-frame-forwarding",
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
@@ -16774,6 +16791,7 @@
           "ed25519-batch",
           "embassy-host",
           "flash",
+          "movable-frame-forwarding",
           "resource-work-offload",
           "std",
           "tokio-host"
@@ -17379,6 +17397,7 @@
       "graphs": {
         "android": [
           "alloc",
+          "movable-frame-forwarding",
           "resource-bzip2",
           "rns-management",
           "std"
@@ -17387,6 +17406,7 @@
           "alloc",
           "interface-discovery",
           "interface-discovery-archive",
+          "movable-frame-forwarding",
           "resource-bzip2",
           "rns-management",
           "rnx",
@@ -17396,6 +17416,7 @@
           "alloc",
           "interface-discovery",
           "interface-discovery-archive",
+          "movable-frame-forwarding",
           "resource-bzip2",
           "rns-management",
           "rnx",
@@ -17405,6 +17426,7 @@
           "alloc",
           "interface-discovery",
           "interface-discovery-archive",
+          "movable-frame-forwarding",
           "resource-bzip2",
           "rns-management",
           "rnx",
@@ -17412,18 +17434,21 @@
         ],
         "desktop-linux": [
           "alloc",
+          "movable-frame-forwarding",
           "resource-bzip2",
           "rns-management",
           "std"
         ],
         "desktop-macos": [
           "alloc",
+          "movable-frame-forwarding",
           "resource-bzip2",
           "rns-management",
           "std"
         ],
         "desktop-windows": [
           "alloc",
+          "movable-frame-forwarding",
           "resource-bzip2",
           "rns-management",
           "std"
@@ -17436,64 +17461,75 @@
         "esp32-c6": [
           "alloc",
           "external-alloc",
+          "movable-frame-forwarding",
           "resource-bzip2",
           "std"
         ],
         "esp32-s3-heltec": [
           "alloc",
           "external-alloc",
+          "movable-frame-forwarding",
           "resource-bzip2",
           "std"
         ],
         "esp32-s3-heltec-e290": [
           "alloc",
           "external-alloc",
+          "movable-frame-forwarding",
           "resource-bzip2",
           "std"
         ],
         "esp32-s3-heltec-r8": [
           "alloc",
           "external-alloc",
+          "movable-frame-forwarding",
           "resource-bzip2",
           "std"
         ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "alloc",
           "external-alloc",
+          "movable-frame-forwarding",
           "resource-bzip2",
           "std"
         ],
         "esp32-s3-tbeam": [
           "alloc",
           "external-alloc",
+          "movable-frame-forwarding",
           "resource-bzip2",
           "std"
         ],
         "host-c-linux": [
           "alloc",
           "interface-discovery",
+          "movable-frame-forwarding",
           "resource-bzip2",
           "std"
         ],
         "host-c-macos": [
           "alloc",
           "interface-discovery",
+          "movable-frame-forwarding",
           "resource-bzip2",
           "std"
         ],
         "host-c-windows": [
           "alloc",
           "interface-discovery",
+          "movable-frame-forwarding",
           "resource-bzip2",
           "std"
         ],
         "ios": [
           "alloc",
+          "movable-frame-forwarding",
           "resource-bzip2",
           "std"
         ],
         "nrf52840": [
           "alloc",
+          "movable-frame-forwarding",
           "resource-bzip2",
           "std"
         ],
