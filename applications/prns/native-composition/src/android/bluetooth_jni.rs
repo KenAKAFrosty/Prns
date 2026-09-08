@@ -50,7 +50,18 @@ pub extern "system" fn Java_rs_reticulum_prns_app_expo_PrnsBluetoothNative_nativ
     observed: jlong,
     timeout_millis: jlong,
 ) -> jlong {
-    ble_bridge().wait_for_work(observed as u64, timeout_millis.clamp(1, 1_000) as u64) as jlong
+    ble_bridge().wait_for_work(observed as u64, bounded_work_wait_millis(timeout_millis)) as jlong
+}
+
+fn bounded_work_wait_millis(requested: jlong) -> u64 {
+    // Kotlin uses zero for upstream's indefinite idle wait. Keep the app's one-second
+    // shutdown fallback without converting idle pumps into one-millisecond polling.
+    // The shared generation signal still wakes all pumps immediately for work or stop.
+    if requested == 0 {
+        1_000
+    } else {
+        requested.clamp(1, 1_000) as u64
+    }
 }
 
 #[no_mangle]
@@ -419,4 +430,58 @@ pub extern "system" fn Java_rs_reticulum_prns_app_expo_PrnsBluetoothNative_nativ
     // nothing else aliases it while we write the 4-byte conn id and 2-byte PSM into it.
     let out = unsafe { core::slice::from_raw_parts_mut(address, 6) };
     jboolean::from(ble_bridge().next_l2cap_open(out))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bounded_work_wait_millis;
+    use prns_ffi::bluetooth_auto::android::AndroidBleBridge;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    #[test]
+    fn idle_wait_keeps_the_bounded_fallback_without_millisecond_polling() {
+        for (requested, expected) in [
+            (-1, 1),
+            (0, 1_000),
+            (1, 1),
+            (4, 4),
+            (1_000, 1_000),
+            (1_001, 1_000),
+            (i64::MAX, 1_000),
+        ] {
+            assert_eq!(bounded_work_wait_millis(requested), expected);
+        }
+    }
+
+    #[test]
+    fn idle_wait_sleeps_until_work_or_shutdown_wakes_the_shared_generation() {
+        let bridge = AndroidBleBridge::new();
+        let worker_bridge = bridge.clone();
+        let generation = bridge.work_generation();
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            entered_tx.send(()).unwrap();
+            let next = worker_bridge.wait_for_work(generation, bounded_work_wait_millis(0));
+            done_tx.send(next).unwrap();
+        });
+
+        entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(
+            done_rx.recv_timeout(Duration::from_millis(25)),
+            Err(mpsc::RecvTimeoutError::Timeout),
+            "an idle pump must not return every millisecond",
+        );
+        // Kotlin stop calls this same wake before joining its workers; it must not wait
+        // for the one-second fallback. A wake before wait also cannot be lost.
+        bridge.wake_work();
+        let next = done_rx.recv_timeout(Duration::from_millis(250)).unwrap();
+        assert_ne!(next, generation);
+        worker.join().unwrap();
+        assert_eq!(
+            bridge.wait_for_work(generation, bounded_work_wait_millis(0)),
+            next,
+        );
+    }
 }
