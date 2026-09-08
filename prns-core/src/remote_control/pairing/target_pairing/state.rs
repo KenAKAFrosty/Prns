@@ -1,12 +1,13 @@
 use crate::identity::IdentitySigner;
 use crate::remote_control::RemoteControlControllerGrant;
 use crate::routing::links::LinkId;
-use crate::units::InstantMillis;
+use crate::units::{DurationMillis, InstantMillis};
 
 use super::super::{
-    RemoteControlPairingAttemptId, RemoteControlPairingCompleted, RemoteControlPairingContext,
+    RemoteControlPairingAttemptId, RemoteControlPairingAttemptTimeout,
+    RemoteControlPairingCompleted, RemoteControlPairingContext,
     RemoteControlPairingInvitationProofInvalid, RemoteControlPairingPreparedOffer,
-    RemoteControlPairingSession, RemoteControlPairingTranscript,
+    RemoteControlPairingSession, RemoteControlPairingTranscript, RemoteControlPairingWindow,
 };
 use super::model::*;
 
@@ -141,7 +142,11 @@ impl RemoteControlTargetPairingState {
         if let Some(active) = self.active_attempt_id() {
             return BeginRemoteControlTargetPairingOutcome::Busy { active };
         }
-        let attempt_timeout = session.attempt_timeout();
+        let attempt_timeout = attempt_timeout_for_remaining_window(
+            session.attempt_timeout(),
+            started_at,
+            session.window(),
+        );
         let window = match RemoteControlTargetPairingAttemptWindow::new(
             started_at,
             attempt_timeout,
@@ -813,6 +818,19 @@ impl RemoteControlTargetPairingState {
             }
         }
     }
+}
+
+pub(super) fn attempt_timeout_for_remaining_window(
+    configured: RemoteControlPairingAttemptTimeout,
+    started_at: InstantMillis,
+    pairing_window: &RemoteControlPairingWindow,
+) -> RemoteControlPairingAttemptTimeout {
+    let remaining = pairing_window.expires_at().0.saturating_sub(started_at.0);
+    let bounded = DurationMillis(configured.duration().0.min(remaining));
+    // A still-open invitation may have less than the configured attempt duration left.
+    // For an elapsed window, retain the configured timeout so the strict constructor
+    // returns its existing PairingWindowElapsed error rather than admitting zero time.
+    RemoteControlPairingAttemptTimeout::try_from(bounded).unwrap_or(configured)
 }
 
 fn abort_active(
