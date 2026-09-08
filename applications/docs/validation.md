@@ -174,14 +174,20 @@ The application still has a development identifier and local debug signing.
   user reported unplugging the Galaxy. USB device observations before and after
   the proof, plus the bounded connection observer, showed the phone absent.
   The peer first discovered the exact phone destination with explicit path
-  requests through the board. The phone was requested to remain locked and off
-  all chargers; its screen, charging, and Doze state could not be independently
-  inspected while disconnected. Confirmation of those conditions and the exact
-  new message ID in the post-unlock inbox remain pending. The sender was stopped
-  deliberately after this one-way proof, without attempting a phone reply.
-  This is not a combined bidirectional pass, passive recovery, or long-idle
-  qualification. The discovery helper's 30 focused tests pass; host tests do
-  not opt into physical-peer path discovery.
+  requests through the board. After reconnection, Android's battery history
+  showed discharging with no charger, screen off, and `device_idle=light`
+  spanning both submission and proof. The proof was about 54 seconds after
+  light-idle entry; charging and screen-on transitions occurred much later.
+  The inbox showed the exact proof-matched message ID, content, **Verified
+  source**, and **Received** state. All remained after an explicit app
+  force-stop/cold relaunch into a new process, with the peer already stopped.
+  This qualifies one battery-powered, screen-off delivery during Android-reported
+  light idle, plus app-process mailbox retention. It does not establish secure
+  keyguard state, deep Doze, prolonged idle, notifications, or power-loss
+  durability. The sender was stopped deliberately after the one-way proof,
+  without attempting a phone reply: this is not a combined bidirectional pass
+  or passive route recovery. The discovery helper's 30 focused tests pass;
+  host tests do not opt into physical-peer path discovery.
 - At the start of that later test, before any agent-requested reset or flash,
   the board's current boot reported `SysRtcWdt` as its last reset cause. This
   identifies an RTC watchdog reset but not the stalled task or triggering action.
@@ -197,7 +203,7 @@ that exchange on the phone.
 
 The full physical lifecycle matrix remains pending beyond the narrow checks
 above. Explicit service Stop/restart, denied/regranted permissions, Bluetooth
-radio changes, prolonged peer loss, OS process eviction, battery-powered or
+radio changes, prolonged peer loss, OS process eviction, deep Doze or
 long-idle background delivery, and newer Android
 permission/service behavior remain unqualified. See [Android development](android.md)
 for the repeatable acceptance sequence and the temporary runtime-restart behavior

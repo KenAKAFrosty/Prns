@@ -133,3 +133,11 @@ hash in the inbox and its source-verification state before claiming app receipt.
 Record charging/Doze state separately; a short USB-powered run does not establish
 battery-powered idle reliability. The host gate always uses its default delay,
 regardless of an exported physical-test delay.
+
+For an unplugged trial, correlate the phone's recorded battery history after
+reconnection with the peer's proof time. Retain the history's wall-clock anchor,
+any clock adjustments, and charging, screen, and device-idle transitions; unrelated
+application events are not needed. Distinguish `device_idle=light` from deep idle
+and from the separate `screen_doze` display state. The history anchor has only
+whole-second precision, and screen-off history does not establish secure keyguard
+state. Still match the exact message in the inbox before recording app receipt.
