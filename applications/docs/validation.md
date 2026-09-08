@@ -145,8 +145,19 @@ The application still has a development identifier and local debug signing.
   UI result was not captured; the recorded success is the repeat, not proof of
   first-attempt delivery. The phone was USB-powered and not in Doze. This
   demonstrates short locked transport recovery, not locked message delivery,
-  long-idle reliability, or battery-powered behavior. Physical Android LXMF
-  delivery remains untested.
+  long-idle reliability, or battery-powered behavior.
+- A foreground LXMF exchange passed over the actual installed Android app's
+  Bluetooth-only interface, through the board's existing TCP connection, to a
+  pinned Python peer on the development Mac. Python 3.13.7, RNS 1.5.2, and
+  LXMF 1.1.0 used the recorded dependency pins. The fixture was restricted to
+  the phone's exact messaging destination. The phone received `python-to-rust`
+  with **Verified source**, then sent `rust-to-python`; the peer verified the
+  source and received its outbound delivery proof. The app showed **Delivered
+  in 106 ms**. Both message IDs, contents, verification, and delivery state
+  remained after another explicit app force-stop/cold relaunch, with the test
+  peer already stopped. The fixture's 20 focused tests pass. This qualifies one
+  small direct-message exchange in both directions and app-process persistence,
+  not Resources, propagation, locked delivery, or phone OS reboot durability.
 
 The detached mobility gate passes for application commit `789aec2e1` against
 the recorded Prns revision. This includes exact dependency resolution,
