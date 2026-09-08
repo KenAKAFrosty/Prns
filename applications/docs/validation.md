@@ -155,9 +155,22 @@ The application still has a development identifier and local debug signing.
   source and received its outbound delivery proof. The app showed **Delivered
   in 106 ms**. Both message IDs, contents, verification, and delivery state
   remained after another explicit app force-stop/cold relaunch, with the test
-  peer already stopped. The fixture's 20 focused tests pass. This qualifies one
+  peer already stopped. This qualifies one
   small direct-message exchange in both directions and app-process persistence,
   not Resources, propagation, locked delivery, or phone OS reboot durability.
+- A later delayed inbound test obtained a proof for a new LXMF message while
+  the Galaxy remained securely locked with its screen off. The same Android
+  process and foreground service were present before and after. This establishes
+  short locked protocol delivery on USB power; matching the new message ID and
+  verification state in the post-unlock inbox is still pending. It is not a
+  Doze, battery-powered, notification, or mailbox-retention result. The delayed
+  fixture's 26 focused tests pass.
+- At the start of that later test, before any agent-requested reset or flash,
+  the board's current boot reported `SysRtcWdt` as its last reset cause. This
+  identifies an RTC watchdog reset but not the stalled task or triggering action.
+  The capture began after the reset; repeated health samples are the same
+  latched cause, not evidence of repeated resets. The prior button-freeze issue
+  remains open.
 
 The detached mobility gate passes for application commit `789aec2e1` against
 the recorded Prns revision. This includes exact dependency resolution,
