@@ -16,6 +16,7 @@ from tcp_fixture import (
     DEFAULT_LISTEN_IP,
     EXPECTED_DESTINATION_ENV,
     LISTEN_IP_ENV,
+    OUTBOUND_DELAY_ENV,
     RUST_OBSERVED_MARKER,
     WILDCARD_OPT_IN_ENV,
 )
@@ -40,6 +41,7 @@ def host_environment(inherited: Mapping[str, str], work: Path, port: int) -> dic
     environment.pop(WILDCARD_OPT_IN_ENV, None)
     # The isolated Rust peer has its own destination, not a physical phone's.
     environment.pop(EXPECTED_DESTINATION_ENV, None)
+    environment.pop(OUTBOUND_DELAY_ENV, None)
     return environment
 
 

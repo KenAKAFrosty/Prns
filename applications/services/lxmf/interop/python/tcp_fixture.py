@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import ipaddress
+import math
 from collections.abc import Mapping
 
 
 LISTEN_IP_ENV = "PRNS_LXMF_LISTEN_IP"
 WILDCARD_OPT_IN_ENV = "PRNS_LXMF_ALLOW_WILDCARD_BIND"
 EXPECTED_DESTINATION_ENV = "PRNS_LXMF_EXPECTED_DESTINATION"
+OUTBOUND_DELAY_ENV = "PRNS_LXMF_OUTBOUND_DELAY_SECONDS"
+DEFAULT_OUTBOUND_DELAY_SECONDS = 1.0
 DEFAULT_LISTEN_IP = "127.0.0.1"
 RUST_OBSERVED_MARKER = "PINNED_PYTHON_LXMF_RUST_OBSERVED"
 
@@ -42,6 +45,29 @@ def environment_expected_destination(environment: Mapping[str, str]) -> bytes | 
     if value is None:
         return None
     return validated_destination(value, label=EXPECTED_DESTINATION_ENV)
+
+
+def validated_outbound_delay(
+    value: str | float, *, exchange_timeout_seconds: float, label: str
+) -> float:
+    error = f"{label} must be finite, at least 1 second, and less than the exchange timeout"
+    try:
+        delay = float(value)
+    except ValueError as cause:
+        raise ValueError(error) from cause
+    if not math.isfinite(delay) or not 1 <= delay < exchange_timeout_seconds:
+        raise ValueError(error)
+    return delay
+
+
+def environment_outbound_delay(
+    environment: Mapping[str, str], exchange_timeout_seconds: float
+) -> float:
+    return validated_outbound_delay(
+        environment.get(OUTBOUND_DELAY_ENV, DEFAULT_OUTBOUND_DELAY_SECONDS),
+        exchange_timeout_seconds=exchange_timeout_seconds,
+        label=OUTBOUND_DELAY_ENV,
+    )
 
 
 def validated_port(port: int) -> int:

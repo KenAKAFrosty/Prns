@@ -112,3 +112,16 @@ title `Rust` and body `rust-to-python`. Require **Delivered** in the app and
 The fixture exits and removes its temporary peer state after completion or
 timeout; app messages are retained. This checks small direct Link messages,
 not Resources, propagation, or background delivery.
+
+For a locked-delivery check, add `--outbound-delay-seconds 30` (finite, at least
+one second, and less than the exchange timeout). The delay starts when the
+expected phone's announcement is observed. Record that the secure keyguard is
+showing and the screen is off before the delay elapses; record those states
+again after the peer emits `PINNED_PYTHON_LXMF_OUTBOUND_PROOF`. The one-shot
+`OUTBOUND_SUBMITTED` and `OUTBOUND_PROOF` markers include UTC timestamps and the
+same packed message hash. These are fixture observation times, not exact radio
+transmission or storage-commit times. After unlocking, verify that exact message
+hash in the inbox and its source-verification state before claiming app receipt.
+Record charging/Doze state separately; a short USB-powered run does not establish
+battery-powered idle reliability. The host gate always uses its default delay,
+regardless of an exported physical-test delay.

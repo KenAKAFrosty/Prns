@@ -14,20 +14,27 @@ import LXMF
 import live_tcp_lxmf_peer
 import run_physical_tcp_lxmf
 from live_tcp_lxmf_peer import (
+    OUTBOUND_PROOF_MARKER,
+    OUTBOUND_SUBMITTED_MARKER,
     RustDeliverySeeker,
     receive_rust_message,
+    report_outbound_marker,
+    report_outbound_proof,
     report_rust_observed,
     source_verification_failure,
+    submit_outbound_if_due,
 )
 from run_live_tcp_lxmf import host_environment
 from run_physical_tcp_lxmf import arguments
 from tcp_fixture import (
     EXPECTED_DESTINATION_ENV,
     LISTEN_IP_ENV,
+    OUTBOUND_DELAY_ENV,
     RUST_OBSERVED_MARKER,
     WILDCARD_OPT_IN_ENV,
     environment_expected_destination,
     environment_listen_ip,
+    environment_outbound_delay,
     server_configuration,
     tcp_target,
 )
@@ -37,6 +44,7 @@ class TcpFixtureTests(unittest.TestCase):
     def test_host_environment_does_not_inherit_physical_peer_selection(self) -> None:
         inherited = {
             EXPECTED_DESTINATION_ENV: "0123456789abcdef0123456789abcdef",
+            OUTBOUND_DELAY_ENV: "nan",
             LISTEN_IP_ENV: "0.0.0.0",
             WILDCARD_OPT_IN_ENV: "1",
             "PRNS_LXMF_TCP_PORT": "4242",
@@ -47,6 +55,8 @@ class TcpFixtureTests(unittest.TestCase):
         environment = host_environment(inherited, pathlib.Path("/host-fixture"), 5678)
         self.assertNotIn(EXPECTED_DESTINATION_ENV, environment)
         self.assertIsNone(environment_expected_destination(environment))
+        self.assertNotIn(OUTBOUND_DELAY_ENV, environment)
+        self.assertEqual(environment_outbound_delay(environment, 45), 1.0)
         self.assertNotIn(WILDCARD_OPT_IN_ENV, environment)
         self.assertEqual(environment_listen_ip(environment), "127.0.0.1")
         self.assertEqual(environment["PRNS_LXMF_TCP_PORT"], "5678")
@@ -149,20 +159,43 @@ class TcpFixtureTests(unittest.TestCase):
                         arguments(["--expected-destination", invalid])
                 self.assertEqual(stopped.exception.code, 2)
 
+    def test_outbound_delay_environment_is_finite_and_below_exchange_timeout(self) -> None:
+        self.assertEqual(environment_outbound_delay({}, 60), 1.0)
+        self.assertEqual(environment_outbound_delay({OUTBOUND_DELAY_ENV: "12.5"}, 60), 12.5)
+        for invalid in ("", "other", "nan", "inf", "-inf", "-1", "0", "0.999", "60", "61"):
+            with self.subTest(value=invalid):
+                with self.assertRaisesRegex(ValueError, OUTBOUND_DELAY_ENV):
+                    environment_outbound_delay({OUTBOUND_DELAY_ENV: invalid}, 60)
+
+    def test_physical_launcher_validates_outbound_delay_against_its_timeout(self) -> None:
+        self.assertEqual(arguments([]).outbound_delay_seconds, 1.0)
+        self.assertEqual(
+            arguments(["--timeout-seconds", "60", "--outbound-delay-seconds", "12.5"]).outbound_delay_seconds,
+            12.5,
+        )
+        for invalid in ("other", "nan", "inf", "-inf", "-1", "0", "0.999", "60", "61"):
+            with self.subTest(value=invalid):
+                with contextlib.redirect_stderr(io.StringIO()):
+                    with self.assertRaises(SystemExit) as stopped:
+                        arguments(["--timeout-seconds", "60", f"--outbound-delay-seconds={invalid}"])
+                self.assertEqual(stopped.exception.code, 2)
+
     def test_physical_launcher_passes_only_explicit_expected_destination(self) -> None:
         destination = "0123456789ABCDEF0123456789ABCDEF"
-        for selected in (None, destination):
-            with self.subTest(expected_destination=selected):
+        for selected, delay in ((None, None), (destination, 12.5)):
+            with self.subTest(expected_destination=selected, outbound_delay=delay):
                 argv = ["--port", "4242"]
                 if selected is not None:
                     argv.extend(["--expected-destination", selected])
+                if delay is not None:
+                    argv.extend(["--outbound-delay-seconds", str(delay)])
                 process = mock.Mock()
                 process.wait.return_value = 0
                 process.poll.return_value = 0
                 with (
                     mock.patch.dict(
                         run_physical_tcp_lxmf.os.environ,
-                        {EXPECTED_DESTINATION_ENV: "f" * 32},
+                        {EXPECTED_DESTINATION_ENV: "f" * 32, OUTBOUND_DELAY_ENV: "999"},
                         clear=True,
                     ),
                     mock.patch.object(run_physical_tcp_lxmf, "available_port") as available,
@@ -187,6 +220,10 @@ class TcpFixtureTests(unittest.TestCase):
                     self.assertEqual(environment[EXPECTED_DESTINATION_ENV], destination.lower())
                 self.assertEqual(environment["PRNS_LXMF_TCP_PORT"], "4242")
                 self.assertEqual(environment["PRNS_LXMF_CONFIG_DIR"], "/fixture-test/rns")
+                self.assertEqual(
+                    environment_outbound_delay(environment, 300),
+                    1.0 if delay is None else delay,
+                )
 
     def test_peer_rejects_invalid_expected_destination_before_network_or_state(self) -> None:
         with (
@@ -203,8 +240,93 @@ class TcpFixtureTests(unittest.TestCase):
         path.assert_not_called()
         reticulum.assert_not_called()
 
+    def test_peer_rejects_invalid_outbound_delay_before_network_or_state(self) -> None:
+        with (
+            mock.patch.dict(
+                live_tcp_lxmf_peer.os.environ,
+                {"PRNS_LXMF_TCP_PORT": "4242", OUTBOUND_DELAY_ENV: "nan"},
+                clear=True,
+            ),
+            mock.patch.object(live_tcp_lxmf_peer.pathlib, "Path") as path,
+            mock.patch.object(live_tcp_lxmf_peer.RNS, "Reticulum") as reticulum,
+        ):
+            with self.assertRaisesRegex(ValueError, OUTBOUND_DELAY_ENV):
+                live_tcp_lxmf_peer.main()
+        path.assert_not_called()
+        reticulum.assert_not_called()
+
 
 class PeerProtocolTests(unittest.TestCase):
+    def test_outbound_waits_for_selected_peer_and_delay_then_submits_once(self) -> None:
+        state = {"outbound": None, "rust_destination": None, "rust_observed_at": None}
+        remote = object()
+        local = object()
+        outbound = SimpleNamespace(hash=None)
+        message_hash = bytes(range(32))
+        output = io.StringIO()
+
+        def handle_outbound(message):
+            self.assertIs(message, outbound)
+            self.assertEqual(output.getvalue(), "")
+            message.hash = message_hash
+
+        router = SimpleNamespace(handle_outbound=mock.Mock(side_effect=handle_outbound))
+        with (
+            mock.patch.object(live_tcp_lxmf_peer.LXMF, "LXMessage", return_value=outbound) as message,
+            mock.patch.object(live_tcp_lxmf_peer.time, "time", return_value=1000.125),
+        ):
+            self.assertFalse(submit_outbound_if_due(state, local, router, 30, now=100, stream=output))
+            state["rust_destination"] = remote
+            state["rust_observed_at"] = 100.0
+            self.assertFalse(submit_outbound_if_due(state, local, router, 30, now=129.999, stream=output))
+            message.assert_not_called()
+            self.assertTrue(submit_outbound_if_due(state, local, router, 30, now=130, stream=output))
+            self.assertFalse(submit_outbound_if_due(state, local, router, 30, now=131, stream=output))
+            self.assertFalse(report_outbound_marker(state, OUTBOUND_SUBMITTED_MARKER, stream=output))
+            message.assert_called_once_with(
+                remote, local, content=b"python-to-rust", title=b"Python", desired_method=message.DIRECT
+            )
+        router.handle_outbound.assert_called_once_with(outbound)
+        self.assertEqual(
+            output.getvalue(),
+            f"{OUTBOUND_SUBMITTED_MARKER} timestamp=1970-01-01T00:16:40.125Z message_hash={message_hash.hex()}\n",
+        )
+
+    def test_proof_marker_requires_delivered_state_and_reports_exact_hash_once(self) -> None:
+        state = {"outbound": None}
+        output = io.StringIO()
+        self.assertFalse(report_outbound_proof(state, stream=output))
+        outbound = SimpleNamespace(hash=bytes(range(32)), state=LXMF.LXMessage.OUTBOUND)
+        state["outbound"] = outbound
+        for status in (
+            LXMF.LXMessage.OUTBOUND,
+            LXMF.LXMessage.SENT,
+            LXMF.LXMessage.FAILED,
+            LXMF.LXMessage.REJECTED,
+            LXMF.LXMessage.CANCELLED,
+        ):
+            outbound.state = status
+            self.assertFalse(report_outbound_proof(state, stream=output))
+        self.assertEqual(output.getvalue(), "")
+        outbound.state = LXMF.LXMessage.DELIVERED
+        with mock.patch.object(live_tcp_lxmf_peer.time, "time", return_value=1001.25):
+            self.assertTrue(report_outbound_proof(state, stream=output))
+            self.assertFalse(report_outbound_proof(state, stream=output))
+        self.assertEqual(
+            output.getvalue(),
+            f"{OUTBOUND_PROOF_MARKER} timestamp=1970-01-01T00:16:41.250Z message_hash={outbound.hash.hex()}\n",
+        )
+
+    def test_outbound_marker_refuses_missing_or_truncated_message_hash(self) -> None:
+        for invalid in (None, bytes(16), "00" * 32):
+            with self.subTest(message_hash=invalid):
+                state = {"outbound": SimpleNamespace(hash=invalid)}
+                output = io.StringIO()
+                with self.assertRaisesRegex(RuntimeError, "packed 32-byte hash"):
+                    report_outbound_marker(state, OUTBOUND_SUBMITTED_MARKER, stream=output)
+                self.assertEqual(output.getvalue(), "")
+                self.assertNotIn(OUTBOUND_SUBMITTED_MARKER, state)
+
     def test_expected_receiver_ignores_other_sources_before_payload_checks(self) -> None:
         expected = bytes([2]) * 16
         state = {"received": False, "failure": None}

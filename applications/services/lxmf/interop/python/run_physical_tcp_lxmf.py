@@ -14,13 +14,16 @@ import tempfile
 
 from tcp_fixture import (
     DEFAULT_LISTEN_IP,
+    DEFAULT_OUTBOUND_DELAY_SECONDS,
     EXPECTED_DESTINATION_ENV,
     LISTEN_IP_ENV,
+    OUTBOUND_DELAY_ENV,
     RUST_OBSERVED_MARKER,
     WILDCARD_OPT_IN_ENV,
     tcp_target,
     validated_destination,
     validated_ip,
+    validated_outbound_delay,
     validated_port,
 )
 
@@ -61,6 +64,12 @@ def arguments(argv: list[str] | None = None) -> argparse.Namespace:
         default=300,
         help="exchange deadline from 1 through 3600 seconds",
     )
+    parser.add_argument(
+        "--outbound-delay-seconds",
+        type=float,
+        default=DEFAULT_OUTBOUND_DELAY_SECONDS,
+        help="wait after observing the app before sending; at least 1 second and less than the exchange timeout",
+    )
     parsed = parser.parse_args(argv)
 
     try:
@@ -84,6 +93,11 @@ def arguments(argv: list[str] | None = None) -> argparse.Namespace:
             ).hex()
         if not 1 <= parsed.timeout_seconds <= 3600:
             parser.error("--timeout-seconds must be from 1 through 3600")
+        parsed.outbound_delay_seconds = validated_outbound_delay(
+            parsed.outbound_delay_seconds,
+            exchange_timeout_seconds=parsed.timeout_seconds,
+            label="--outbound-delay-seconds",
+        )
     except ValueError as error:
         parser.error(str(error))
 
@@ -129,6 +143,7 @@ def main(argv: list[str] | None = None) -> int:
     environment[LISTEN_IP_ENV] = str(selected.listen_address)
     environment["PRNS_LXMF_TCP_PORT"] = str(port)
     environment["PRNS_LXMF_EXCHANGE_TIMEOUT_SECONDS"] = str(selected.timeout_seconds)
+    environment[OUTBOUND_DELAY_ENV] = str(selected.outbound_delay_seconds)
     # Only this invocation's explicit option may restrict the physical fixture.
     if selected.expected_destination is None:
         environment.pop(EXPECTED_DESTINATION_ENV, None)

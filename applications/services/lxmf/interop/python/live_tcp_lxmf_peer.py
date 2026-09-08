@@ -7,6 +7,7 @@ import os
 import pathlib
 import sys
 import time
+from datetime import datetime, timezone
 
 import LXMF
 import RNS
@@ -15,6 +16,7 @@ from tcp_fixture import (
     RUST_OBSERVED_MARKER,
     environment_expected_destination,
     environment_listen_ip,
+    environment_outbound_delay,
     server_configuration,
 )
 
@@ -22,6 +24,8 @@ from tcp_fixture import (
 EXPECTED_FROM_RUST = b"rust-to-python"
 SENT_FROM_PYTHON = b"python-to-rust"
 PEER_SECRET = bytes([0x52]) * 64
+OUTBOUND_SUBMITTED_MARKER = "PINNED_PYTHON_LXMF_OUTBOUND_SUBMITTED"
+OUTBOUND_PROOF_MARKER = "PINNED_PYTHON_LXMF_OUTBOUND_PROOF"
 
 
 _MISSING_REASON = object()
@@ -61,6 +65,51 @@ def report_rust_observed(
     output = sys.stdout if stream is None else stream
     print(f"{RUST_OBSERVED_MARKER} {destination_hash.hex()}", file=output, flush=True)
     return True
+
+
+def report_outbound_marker(state: dict[str, object], marker: str, *, stream=None) -> bool:
+    """Log each outbound milestone once, using the packed LXMF message hash."""
+    if state.get(marker) is True:
+        return False
+    message_hash = state["outbound"].hash
+    if not isinstance(message_hash, bytes) or len(message_hash) != 32:
+        raise RuntimeError("outbound LXMF message did not expose its packed 32-byte hash")
+    timestamp = datetime.fromtimestamp(time.time(), timezone.utc).isoformat(timespec="milliseconds")
+    timestamp = timestamp.replace("+00:00", "Z")
+    output = sys.stdout if stream is None else stream
+    print(f"{marker} timestamp={timestamp} message_hash={message_hash.hex()}", file=output, flush=True)
+    state[marker] = True
+    return True
+
+
+def submit_outbound_if_due(
+    state: dict[str, object], delivery, router, delay_seconds: float, *, now: float, stream=None
+) -> bool:
+    if (
+        state["outbound"] is not None
+        or state["rust_destination"] is None
+        or now - state["rust_observed_at"] < delay_seconds
+    ):
+        return False
+    outbound = LXMF.LXMessage(
+        state["rust_destination"],
+        delivery,
+        content=SENT_FROM_PYTHON,
+        title=b"Python",
+        desired_method=LXMF.LXMessage.DIRECT,
+    )
+    state["outbound"] = outbound
+    router.handle_outbound(outbound)
+    # Submission packs the message; it is not evidence of a radio transmission.
+    report_outbound_marker(state, OUTBOUND_SUBMITTED_MARKER, stream=stream)
+    return True
+
+
+def report_outbound_proof(state: dict[str, object], *, stream=None) -> bool:
+    outbound = state["outbound"]
+    if outbound is None or outbound.state != LXMF.LXMessage.DELIVERED:
+        return False
+    return report_outbound_marker(state, OUTBOUND_PROOF_MARKER, stream=stream)
 
 
 def receive_rust_message(
@@ -129,12 +178,6 @@ def main() -> int:
     port = int(os.environ["PRNS_LXMF_TCP_PORT"])
     listen_ip = environment_listen_ip(os.environ)
     expected_destination = environment_expected_destination(os.environ)
-    config_dir = pathlib.Path(os.environ["PRNS_LXMF_CONFIG_DIR"])
-    config_dir.mkdir(parents=True, exist_ok=True)
-    config_dir.joinpath("config").write_text(
-        server_configuration(port, listen_ip), encoding="utf-8"
-    )
-    loglevel = int(os.environ.get("PRNS_LXMF_PYTHON_LOGLEVEL", RNS.LOG_ERROR))
     exchange_timeout_seconds = float(
         os.environ.get("PRNS_LXMF_EXCHANGE_TIMEOUT_SECONDS", "45")
     )
@@ -142,6 +185,13 @@ def main() -> int:
         raise RuntimeError(
             "PRNS_LXMF_EXCHANGE_TIMEOUT_SECONDS must be from 1 through 3600"
         )
+    outbound_delay_seconds = environment_outbound_delay(os.environ, exchange_timeout_seconds)
+    config_dir = pathlib.Path(os.environ["PRNS_LXMF_CONFIG_DIR"])
+    config_dir.mkdir(parents=True, exist_ok=True)
+    config_dir.joinpath("config").write_text(
+        server_configuration(port, listen_ip), encoding="utf-8"
+    )
+    loglevel = int(os.environ.get("PRNS_LXMF_PYTHON_LOGLEVEL", RNS.LOG_ERROR))
     RNS.Reticulum(configdir=str(config_dir), loglevel=loglevel)
 
     identity = RNS.Identity.from_bytes(PEER_SECRET)
@@ -185,20 +235,9 @@ def main() -> int:
         if time.time() - last_announce >= 0.4:
             router.announce(delivery.hash)
             last_announce = time.time()
-        if (
-            state["outbound"] is None
-            and state["rust_destination"] is not None
-            and time.time() - state["rust_observed_at"] >= 1.0
-        ):
-            outbound = LXMF.LXMessage(
-                state["rust_destination"],
-                delivery,
-                content=SENT_FROM_PYTHON,
-                title=b"Python",
-                desired_method=LXMF.LXMessage.DIRECT,
-            )
-            state["outbound"] = outbound
-            router.handle_outbound(outbound)
+        submit_outbound_if_due(
+            state, delivery, router, outbound_delay_seconds, now=time.time()
+        )
         outbound = state["outbound"]
         if (
             outbound is not None
@@ -216,6 +255,7 @@ def main() -> int:
         outbound_delivered = (
             outbound is not None and outbound.state == LXMF.LXMessage.DELIVERED
         )
+        report_outbound_proof(state)
         if outbound is not None and outbound.state in (
             LXMF.LXMessage.FAILED,
             LXMF.LXMessage.REJECTED,
