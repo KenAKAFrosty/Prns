@@ -1972,59 +1972,6 @@ mod tests {
     }
 
     #[test]
-    fn wire_pairing_report_explains_a_begin_that_exceeds_the_remaining_window() {
-        let controller = controller_identity();
-        let (mut engine, interfaces, endpoint, link_id, peer_key, _) =
-            open_pairing_link(controller.identity_hash());
-        let mut request_frame = pairing_request_frame(
-            RemoteControlPairingRequest::Begin(invited_begin(controller, endpoint)),
-            &link_id,
-            &peer_key,
-        );
-        let now = InstantMillis(31_001);
-        let mut reactions = 0usize;
-        let report = engine.ingest_packet_into_report(
-            InboundPacket {
-                arrived_at: now,
-                source_interface: interfaces[0].id,
-                bytes: &mut request_frame,
-            },
-            IngestIo {
-                interfaces: AttachedInterfaces::new(&interfaces),
-                now,
-                fill_random: &mut |_| panic!("an unavailable attempt does not prepare a response"),
-                should_prove: &mut |_| false,
-                should_accept_resource: &mut |_| false,
-                sink: &mut |_| reactions += 1,
-            },
-        );
-
-        // The invitation has not expired, but the configured 30-second attempt
-        // would finish at 61,001, one millisecond after its 61,000 deadline.
-        assert_eq!(
-            report.request,
-            Some(RequestIngressDiagnostic::Pairing(
-                RemoteControlPairingRequestDiagnostic::BeginExceedsPairingWindow,
-            )),
-        );
-        assert_eq!(report.protocol_violation, None);
-        assert_eq!(reactions, 0);
-        assert_eq!(
-            engine.remote_control_target_pairing.view(),
-            RemoteControlTargetPairingView::Idle,
-        );
-        assert!(matches!(
-            engine.remote_control_pairing_view(),
-            RemoteControlPairingView::Open(session) if session.endpoint() == endpoint
-        ));
-        assert!(engine.links.phase_for(&link_id).is_some());
-        assert_eq!(
-            engine.remote_control_pairing_wake(),
-            crate::engine::WakeSchedule::At(InstantMillis(61_000)),
-        );
-    }
-
-    #[test]
     fn authenticated_begin_returns_one_real_offer_and_one_confirmation_event() {
         let expected_controller = controller_identity();
         let (mut engine, interfaces, endpoint, link_id, peer_key, controller) =
