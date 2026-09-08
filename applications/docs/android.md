@@ -85,3 +85,30 @@ not a claim of seamless radio-toggle recovery.
 
 Passing compilation or emulator tests does not qualify physical Bluetooth or
 background delivery. Current results are recorded in `validation.md`.
+
+### Controlled physical messaging peer
+
+`services/lxmf/interop/python/run_physical_tcp_lxmf.py` runs the pinned Python
+peer without substituting a desktop Rust app for the phone. Its Python
+environment and dependency pins are defined in `ci/verify_lxmf.sh`.
+Use a concrete `--listen-ip`, an available `--port`, a bounded
+`--timeout-seconds`, and `--expected-destination` set to the test phone's exact
+32-hex-character **lxmf.delivery destination**, not its primary or controller
+identity hash. The peer ignores other destinations when selecting a recipient
+and when checking incoming messages. Omitting this option retains the
+first-observed-peer behavior used by isolated host tests.
+
+The standalone Android build has Bluetooth enabled but no runtime TCP editor.
+A connected transport board can forward between Bluetooth and its configured
+TCP interface to reach the peer. Confirm that route and its endpoints before
+starting; do not change normal board or daemon configuration implicitly.
+
+In Inbox, select **Share messaging address** and wait for the peer's
+`PINNED_PYTHON_LXMF_RUST_OBSERVED` marker for the expected destination. The
+incoming message must show title `Python`, body `python-to-rust`, and
+**Verified source**. Reply to the peer destination printed at startup with
+title `Rust` and body `rust-to-python`. Require **Delivered** in the app and
+`PINNED_PYTHON_LXMF_OK inbound=verified outbound=proof links=two` from the peer.
+The fixture exits and removes its temporary peer state after completion or
+timeout; app messages are retained. This checks small direct Link messages,
+not Resources, propagation, or background delivery.

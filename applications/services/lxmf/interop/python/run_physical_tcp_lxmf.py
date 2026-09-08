@@ -14,10 +14,12 @@ import tempfile
 
 from tcp_fixture import (
     DEFAULT_LISTEN_IP,
+    EXPECTED_DESTINATION_ENV,
     LISTEN_IP_ENV,
     RUST_OBSERVED_MARKER,
     WILDCARD_OPT_IN_ENV,
     tcp_target,
+    validated_destination,
     validated_ip,
     validated_port,
 )
@@ -44,6 +46,10 @@ def arguments(argv: list[str] | None = None) -> argparse.Namespace:
         help="concrete address the phone should use; required for a wildcard bind",
     )
     parser.add_argument("--port", type=int, help="fixed TCP port; defaults to an available port")
+    parser.add_argument(
+        "--expected-destination",
+        help="reply only to this app's 32-hex-character lxmf.delivery destination",
+    )
     parser.add_argument(
         "--allow-wildcard-bind",
         action="store_true",
@@ -72,6 +78,10 @@ def arguments(argv: list[str] | None = None) -> argparse.Namespace:
             parser.error("listen and advertise addresses must use the same IP family")
         if parsed.port is not None:
             validated_port(parsed.port)
+        if parsed.expected_destination is not None:
+            parsed.expected_destination = validated_destination(
+                parsed.expected_destination, label="--expected-destination"
+            ).hex()
         if not 1 <= parsed.timeout_seconds <= 3600:
             parser.error("--timeout-seconds must be from 1 through 3600")
     except ValueError as error:
@@ -119,6 +129,11 @@ def main(argv: list[str] | None = None) -> int:
     environment[LISTEN_IP_ENV] = str(selected.listen_address)
     environment["PRNS_LXMF_TCP_PORT"] = str(port)
     environment["PRNS_LXMF_EXCHANGE_TIMEOUT_SECONDS"] = str(selected.timeout_seconds)
+    # Only this invocation's explicit option may restrict the physical fixture.
+    if selected.expected_destination is None:
+        environment.pop(EXPECTED_DESTINATION_ENV, None)
+    else:
+        environment[EXPECTED_DESTINATION_ENV] = selected.expected_destination
     if selected.listen_address.is_unspecified:
         environment[WILDCARD_OPT_IN_ENV] = "1"
     else:

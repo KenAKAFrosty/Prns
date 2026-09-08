@@ -8,6 +8,7 @@ from collections.abc import Mapping
 
 LISTEN_IP_ENV = "PRNS_LXMF_LISTEN_IP"
 WILDCARD_OPT_IN_ENV = "PRNS_LXMF_ALLOW_WILDCARD_BIND"
+EXPECTED_DESTINATION_ENV = "PRNS_LXMF_EXPECTED_DESTINATION"
 DEFAULT_LISTEN_IP = "127.0.0.1"
 RUST_OBSERVED_MARKER = "PINNED_PYTHON_LXMF_RUST_OBSERVED"
 
@@ -28,6 +29,19 @@ def environment_listen_ip(environment: Mapping[str, str]) -> str:
             f"{LISTEN_IP_ENV}={address} requires explicit {WILDCARD_OPT_IN_ENV}=1"
         )
     return str(address)
+
+
+def validated_destination(value: str, *, label: str) -> bytes:
+    if len(value) != 32 or any(character not in "0123456789abcdefABCDEF" for character in value):
+        raise ValueError(f"{label} must be exactly 32 hexadecimal characters")
+    return bytes.fromhex(value)
+
+
+def environment_expected_destination(environment: Mapping[str, str]) -> bytes | None:
+    value = environment.get(EXPECTED_DESTINATION_ENV)
+    if value is None:
+        return None
+    return validated_destination(value, label=EXPECTED_DESTINATION_ENV)
 
 
 def validated_port(port: int) -> int:
