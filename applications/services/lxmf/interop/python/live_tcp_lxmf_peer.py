@@ -26,6 +26,8 @@ SENT_FROM_PYTHON = b"python-to-rust"
 PEER_SECRET = bytes([0x52]) * 64
 OUTBOUND_SUBMITTED_MARKER = "PINNED_PYTHON_LXMF_OUTBOUND_SUBMITTED"
 OUTBOUND_PROOF_MARKER = "PINNED_PYTHON_LXMF_OUTBOUND_PROOF"
+PATH_REQUEST_MARKER = "PINNED_PYTHON_LXMF_PATH_REQUEST"
+PATH_REQUEST_INTERVAL_SECONDS = 10.0
 
 
 _MISSING_REASON = object()
@@ -133,6 +135,35 @@ def receive_rust_message(
     state["received"] = True
 
 
+def request_expected_path_if_due(
+    state: dict[str, object], expected_destination: bytes | None, *, deadline: float, stream=None
+) -> bool:
+    """Discover only an explicitly selected peer, within the monotonic exchange deadline."""
+    if (
+        expected_destination is None
+        or state["rust_destination"] is not None
+        or state["failure"] is not None
+    ):
+        return False
+    now = time.monotonic()
+    if now >= deadline:
+        return False
+    last_request = state.get("last_path_request_at")
+    if last_request is not None and now - last_request < PATH_REQUEST_INTERVAL_SECONDS:
+        return False
+    RNS.Transport.request_path(expected_destination)
+    state["last_path_request_at"] = now
+    timestamp = datetime.fromtimestamp(time.time(), timezone.utc).isoformat(timespec="milliseconds")
+    timestamp = timestamp.replace("+00:00", "Z")
+    output = sys.stdout if stream is None else stream
+    print(
+        f"{PATH_REQUEST_MARKER} timestamp={timestamp} destination={expected_destination.hex()}",
+        file=output,
+        flush=True,
+    )
+    return True
+
+
 class RustDeliverySeeker:
     """Select the expected app, or the first non-self peer for isolated host gates."""
 
@@ -147,6 +178,7 @@ class RustDeliverySeeker:
         self.state = state
         self.local_destination = local_destination
         self.expected_destination = expected_destination
+        self.receive_path_responses = expected_destination is not None
 
     def received_announce(self, destination_hash, announced_identity, app_data):
         del app_data
@@ -226,12 +258,13 @@ def main() -> int:
         RustDeliverySeeker(state, delivery.hash, expected_destination)
     )
     print(f"PINNED_PYTHON_LXMF_UP {delivery.hash.hex()}", flush=True)
-    deadline = time.time() + exchange_timeout_seconds
+    deadline = time.monotonic() + exchange_timeout_seconds
     last_announce = 0.0
     last_progress = 0.0
-    while time.time() < deadline:
+    while time.monotonic() < deadline:
         if state["failure"] is not None:
             raise RuntimeError(state["failure"])
+        request_expected_path_if_due(state, expected_destination, deadline=deadline)
         if time.time() - last_announce >= 0.4:
             router.announce(delivery.hash)
             last_announce = time.time()

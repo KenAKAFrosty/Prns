@@ -98,6 +98,14 @@ identity hash. The peer ignores other destinations when selecting a recipient
 and when checking incoming messages. Omitting this option retains the
 first-observed-peer behavior used by isolated host tests.
 
+With an explicit expected destination, the peer also requests that destination's
+path while it is unknown, at most once every ten seconds within the exchange
+deadline. It accepts a validated path response only for that expected identity
+association. This can discover a previously announced phone through a transport
+board without touching the phone UI. Host auto-selection does not request paths
+or opt into path responses. Record this extra discovery traffic when interpreting
+background checks; discovery is not a delivery proof or a passive recovery test.
+
 The standalone Android build has Bluetooth enabled but no runtime TCP editor.
 A connected transport board can forward between Bluetooth and its configured
 TCP interface to reach the peer. Confirm that route and its endpoints before

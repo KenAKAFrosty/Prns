@@ -16,11 +16,13 @@ import run_physical_tcp_lxmf
 from live_tcp_lxmf_peer import (
     OUTBOUND_PROOF_MARKER,
     OUTBOUND_SUBMITTED_MARKER,
+    PATH_REQUEST_MARKER,
     RustDeliverySeeker,
     receive_rust_message,
     report_outbound_marker,
     report_outbound_proof,
     report_rust_observed,
+    request_expected_path_if_due,
     source_verification_failure,
     submit_outbound_if_due,
 )
@@ -257,6 +259,76 @@ class TcpFixtureTests(unittest.TestCase):
 
 
 class PeerProtocolTests(unittest.TestCase):
+    def test_host_auto_selection_never_requests_a_path(self) -> None:
+        state = self.seeker_state()
+        before = state.copy()
+        output = io.StringIO()
+        with mock.patch.object(live_tcp_lxmf_peer.RNS.Transport, "request_path") as request:
+            self.assertFalse(request_expected_path_if_due(state, None, deadline=100, stream=output))
+        request.assert_not_called()
+        self.assertEqual(state, before)
+        self.assertEqual(output.getvalue(), "")
+
+    def test_explicit_path_request_uses_exact_target_and_monotonic_retry_interval(self) -> None:
+        expected = bytes(range(16))
+        state = self.seeker_state()
+        output = io.StringIO()
+        with (
+            mock.patch.object(live_tcp_lxmf_peer.RNS.Transport, "request_path") as request,
+            mock.patch.object(live_tcp_lxmf_peer.time, "monotonic") as monotonic,
+            mock.patch.object(live_tcp_lxmf_peer.time, "time") as wall_clock,
+        ):
+            monotonic.return_value = 100.0
+            wall_clock.return_value = 1000.125
+            self.assertTrue(request_expected_path_if_due(state, expected, deadline=200, stream=output))
+            request.assert_called_once_with(expected)
+            self.assertEqual(state["last_path_request_at"], 100.0)
+            for now in (100.0, 105.0, 109.999):
+                monotonic.return_value = now
+                wall_clock.return_value = 999999.0
+                self.assertFalse(request_expected_path_if_due(state, expected, deadline=200, stream=output))
+            request.assert_called_once_with(expected)
+            monotonic.return_value = 110.0
+            wall_clock.return_value = 1.0
+            self.assertTrue(request_expected_path_if_due(state, expected, deadline=200, stream=output))
+            self.assertEqual(request.call_args_list, [mock.call(expected), mock.call(expected)])
+            self.assertEqual(state["last_path_request_at"], 110.0)
+        self.assertEqual(
+            output.getvalue(),
+            f"{PATH_REQUEST_MARKER} timestamp=1970-01-01T00:16:40.125Z destination={expected.hex()}\n"
+            f"{PATH_REQUEST_MARKER} timestamp=1970-01-01T00:00:01.000Z destination={expected.hex()}\n",
+        )
+
+    def test_path_request_stops_at_deadline_or_after_selection_or_failure(self) -> None:
+        for fields, now in (
+            ({}, 200.0),
+            ({}, 201.0),
+            ({"rust_destination": object()}, 100.0),
+            ({"failure": "association mismatched"}, 100.0),
+        ):
+            with self.subTest(fields=fields, now=now):
+                state = self.seeker_state()
+                state.update(fields)
+                before = state.copy()
+                output = io.StringIO()
+                with (
+                    mock.patch.object(live_tcp_lxmf_peer.RNS.Transport, "request_path") as request,
+                    mock.patch.object(live_tcp_lxmf_peer.time, "monotonic", return_value=now),
+                ):
+                    self.assertFalse(
+                        request_expected_path_if_due(state, bytes(range(16)), deadline=200, stream=output)
+                    )
+                request.assert_not_called()
+                self.assertEqual(state, before)
+                self.assertEqual(output.getvalue(), "")
+
+    def test_path_response_callbacks_are_opted_in_only_for_an_explicit_peer(self) -> None:
+        local = bytes([1]) * 16
+        self.assertFalse(RustDeliverySeeker(self.seeker_state(), local).receive_path_responses)
+        self.assertTrue(
+            RustDeliverySeeker(self.seeker_state(), local, bytes([2]) * 16).receive_path_responses
+        )
+
     def test_outbound_waits_for_selected_peer_and_delay_then_submits_once(self) -> None:
         state = {"outbound": None, "rust_destination": None, "rust_observed_at": None}
         remote = object()
