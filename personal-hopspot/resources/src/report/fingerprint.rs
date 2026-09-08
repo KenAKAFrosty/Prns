@@ -12,6 +12,10 @@ impl Fingerprint {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    pub(super) fn parse(value: String) -> Result<Self, prns_flash_manifest::DomainValueError> {
+        Sha256Digest::parse(value).map(|digest| Self(digest.as_str().to_string()))
+    }
 }
 
 impl Serialize for Fingerprint {

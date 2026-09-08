@@ -32,6 +32,76 @@ pub enum LinkerFlavor {
     GnuLd,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DisassemblerFlavor {
+    LlvmObjdump,
+    GnuObjdump,
+}
+
+impl DisassemblerFlavor {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::LlvmObjdump => "llvm-objdump",
+            Self::GnuObjdump => "gnu-objdump",
+        }
+    }
+}
+
+#[derive(Debug)]
+struct DisassemblerTool {
+    flavor: DisassemblerFlavor,
+    program: &'static str,
+    version_arguments: &'static [&'static str],
+    resolve: fn() -> Result<PathBuf, BuildError>,
+}
+
+impl DisassemblerTool {
+    const fn new(
+        flavor: DisassemblerFlavor,
+        program: &'static str,
+        version_arguments: &'static [&'static str],
+        resolve: fn() -> Result<PathBuf, BuildError>,
+    ) -> Self {
+        Self {
+            flavor,
+            program,
+            version_arguments,
+            resolve,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct ResolvedDisassembler {
+    flavor: DisassemblerFlavor,
+    program: &'static str,
+    path: PathBuf,
+    version_arguments: &'static [&'static str],
+}
+
+impl ResolvedDisassembler {
+    #[must_use]
+    pub const fn flavor(&self) -> DisassemblerFlavor {
+        self.flavor
+    }
+
+    #[must_use]
+    pub const fn program(&self) -> &'static str {
+        self.program
+    }
+
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    #[must_use]
+    pub const fn version_arguments(&self) -> &'static [&'static str] {
+        self.version_arguments
+    }
+}
+
 impl LinkerFlavor {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -47,6 +117,8 @@ struct LinkerTool {
     flavor: LinkerFlavor,
     program: &'static str,
     version_arguments: &'static [&'static str],
+    configure: fn(&mut Command) -> Result<PathBuf, BuildError>,
+    map_argument: fn(&Path) -> OsString,
 }
 
 impl LinkerTool {
@@ -54,11 +126,15 @@ impl LinkerTool {
         flavor: LinkerFlavor,
         program: &'static str,
         version_arguments: &'static [&'static str],
+        configure: fn(&mut Command) -> Result<PathBuf, BuildError>,
+        map_argument: fn(&Path) -> OsString,
     ) -> Self {
         Self {
             flavor,
             program,
             version_arguments,
+            configure,
+            map_argument,
         }
     }
 }
@@ -69,8 +145,7 @@ pub struct Adapter {
     architecture: ProcessorArchitecture,
     linker: LinkerTool,
     rustflags: &'static [&'static str],
-    configure_linker: fn(&mut Command) -> Result<PathBuf, BuildError>,
-    linker_map_argument: fn(&Path) -> OsString,
+    disassembler: DisassemblerTool,
 }
 
 impl Adapter {
@@ -79,16 +154,14 @@ impl Adapter {
         architecture: ProcessorArchitecture,
         linker: LinkerTool,
         rustflags: &'static [&'static str],
-        configure_linker: fn(&mut Command) -> Result<PathBuf, BuildError>,
-        linker_map_argument: fn(&Path) -> OsString,
+        disassembler: DisassemblerTool,
     ) -> Self {
         Self {
             id: AdapterId(id),
             architecture,
             linker,
             rustflags,
-            configure_linker,
-            linker_map_argument,
+            disassembler,
         }
     }
 
@@ -128,7 +201,7 @@ impl Adapter {
 
     pub fn configure_cargo(&self, command: &mut Command) -> Result<PathBuf, BuildError> {
         self.configure_rustflags(command);
-        let linker = (self.configure_linker)(command)?;
+        let linker = (self.linker.configure)(command)?;
         command.env(cargo_linker_environment(self.rust_target()), &linker);
         Ok(linker)
     }
@@ -141,7 +214,26 @@ impl Adapter {
     }
 
     pub(crate) fn linker_map_argument(&self, path: &Path) -> OsString {
-        (self.linker_map_argument)(path)
+        (self.linker.map_argument)(path)
+    }
+
+    pub fn resolve_disassembler(&self) -> Result<ResolvedDisassembler, BuildError> {
+        Ok(ResolvedDisassembler {
+            flavor: self.disassembler.flavor,
+            program: self.disassembler.program,
+            path: (self.disassembler.resolve)()?,
+            version_arguments: self.disassembler.version_arguments,
+        })
+    }
+
+    #[must_use]
+    pub const fn disassembler_flavor(&self) -> DisassemblerFlavor {
+        self.disassembler.flavor
+    }
+
+    #[must_use]
+    pub const fn disassembler_program(&self) -> &'static str {
+        self.disassembler.program
     }
 
     pub(crate) fn detect_memory_overflow(&self, diagnostics: &str) -> Option<MemoryOverflows> {

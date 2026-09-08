@@ -8,7 +8,7 @@ use super::*;
 use crate::matrix::{Matrix, Target, TargetPlatform};
 use crate::report::build::{architecture_identity, build_identity, target_identity};
 use crate::report::contract;
-use crate::report::tests::report_value;
+use crate::report::tests::{report_value, retarget_executable};
 
 #[test]
 fn summary_merges_catalog_order_and_reports_numeric_deltas(
@@ -202,6 +202,7 @@ fn write_reports(
             let mut report: ResourceReport = serde_json::from_value(report_value())?;
             report.target = target_identity(target);
             report.architecture = architecture_identity(target);
+            retarget_executable(&mut report, target);
             report.build = build_identity(context, target.recipe_identity())?;
             report.memory_contract = contract::identity(target.profile())?;
             let mut value = serde_json::to_value(report)?;

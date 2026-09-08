@@ -7,7 +7,9 @@ use personal_hopspot_memory::MemoryProfile;
 use serde::Serialize;
 use thiserror::Error;
 
-use crate::analysis::{self, AnalysisError, RamAnalysisError, RamCapacity, SectionKind};
+use crate::analysis::{
+    self, AnalysisError, ExecutableError, RamAnalysisError, RamCapacity, SectionKind,
+};
 use crate::matrix::{BuildEvidence, RecipeIdentity, Target};
 
 use super::contract;
@@ -47,9 +49,13 @@ pub(crate) enum ReportError {
     #[error(transparent)]
     Analysis(#[from] AnalysisError),
     #[error(transparent)]
+    Executable(#[from] ExecutableError),
+    #[error(transparent)]
     Attribution(#[from] analysis::AttributionError),
     #[error(transparent)]
     RamAnalysis(#[from] RamAnalysisError),
+    #[error(transparent)]
+    ExecutableReport(#[from] super::executable::ExecutableReportError),
     #[error("could not serialize resource report: {0}")]
     Serialize(#[from] serde_json::Error),
     #[error("could not publish resource report: {0}")]
@@ -107,6 +113,7 @@ pub(crate) fn write_overflow(
             linker_map_bytes,
             allocated_sections: Evidence::Unavailable,
             flash_attribution: Evidence::Partial(attribution_identity(attribution)),
+            executable: Evidence::Unavailable,
         },
     };
     publish_report(context, target, &report)
@@ -143,6 +150,12 @@ fn build(
     let linker_map = resource_build.linker_map();
     let linker_map_bytes = linker_map_size(linker_map)?;
     let allocated_sections = analysis::read_allocated_sections(evidence.elf())?;
+    let executable = analysis::analyze_executable(
+        evidence.elf(),
+        target.profile(),
+        adapter,
+        evidence.firmware_image_bytes(),
+    )?;
     let attribution = analysis::analyze_linker_map(
         linker_map,
         adapter.linker_flavor(),
@@ -218,6 +231,12 @@ fn build(
             linker_map_bytes,
             allocated_sections: Evidence::Complete(allocated_sections),
             flash_attribution: Evidence::Complete(attribution_identity(attribution)),
+            executable: Evidence::Complete(super::executable::identity(
+                context,
+                target.id(),
+                adapter.rust_target(),
+                executable,
+            )?),
         },
     })
 }

@@ -2,9 +2,11 @@ use std::fs;
 use std::path::Path;
 
 use super::super::model::{
-    ArtifactIdentity, AttributionCategoryIdentity, BuildStatus, Evidence, FirmwareFlashUsage,
-    FlashAttributionIdentity, MemoryOverflowIdentity, RamBackingUsage, RamCapacityIdentity,
-    ResourceReport, SectionKindIdentity, SectionUsage, SCHEMA_VERSION,
+    ArtifactIdentity, AttributionCategoryIdentity, BuildStatus, Evidence, ExecutableIdentity,
+    FirmwareFlashUsage, FlashAttributionIdentity, FunctionBoundaryIdentity,
+    FunctionNormalizationIdentity, LoadPermissionIdentity, MemoryOverflowIdentity, RamBackingUsage,
+    RamCapacityIdentity, ResourceReport, SectionKindIdentity, SectionUsage,
+    StartupAnchorRoleIdentity, SCHEMA_VERSION,
 };
 use super::{ComparisonError, SECTION_KINDS};
 
@@ -99,11 +101,17 @@ fn validate_success(path: &Path, report: &ResourceReport) -> Result<(), Comparis
         .ok_or_else(|| ComparisonError::MissingAttributionEvidence {
             path: path.to_path_buf(),
         })?;
+    let executable = report.analysis.executable.complete().ok_or_else(|| {
+        ComparisonError::MissingExecutableEvidence {
+            path: path.to_path_buf(),
+        }
+    })?;
     validate_flash(path, flash)?;
     validate_artifacts(path, artifacts)?;
     validate_ram(path, ram)?;
     validate_sections(path, sections)?;
-    validate_attribution(path, attribution)
+    validate_attribution(path, attribution)?;
+    validate_executable(path, report, executable)
 }
 
 fn validate_available(path: &Path, report: &ResourceReport) -> Result<(), ComparisonError> {
@@ -126,7 +134,208 @@ fn validate_available(path: &Path, report: &ResourceReport) -> Result<(), Compar
     {
         validate_attribution(path, attribution)?;
     }
+    if let Evidence::Complete(executable) | Evidence::Partial(executable) =
+        &report.analysis.executable
+    {
+        validate_executable(path, report, executable)?;
+    }
     Ok(())
+}
+
+fn validate_executable(
+    path: &Path,
+    report: &ResourceReport,
+    executable: &ExecutableIdentity,
+) -> Result<(), ComparisonError> {
+    executable_valid(
+        path,
+        executable.rust_target == report.architecture.rust_target,
+        "Rust target does not match report architecture",
+    )?;
+    executable_valid(
+        path,
+        matches!(
+            executable.byte_order,
+            super::super::model::ByteOrderIdentity::Little
+        ),
+        "ELF identity is incomplete or unsupported",
+    )?;
+    executable_valid(
+        path,
+        !executable.load_segments.is_empty(),
+        "load segment inventory is empty",
+    )?;
+    for segment in &executable.load_segments {
+        let ranges_valid = segment.run_end.checked_sub(segment.run_address)
+            == Some(segment.memory_bytes)
+            && segment.load_end.checked_sub(segment.load_address) == Some(segment.memory_bytes);
+        let permissions_valid = !segment.permissions.is_empty()
+            && segment
+                .permissions
+                .iter()
+                .enumerate()
+                .all(|(index, permission)| !segment.permissions[..index].contains(permission));
+        executable_valid(
+            path,
+            ranges_valid
+                && segment.memory_bytes != 0
+                && segment.file_bytes <= segment.memory_bytes
+                && segment.alignment.is_power_of_two()
+                && permissions_valid,
+            "load segment accounting is invalid",
+        )?;
+    }
+    executable_valid(
+        path,
+        executable.load_segments.iter().any(|segment| {
+            segment
+                .permissions
+                .contains(&LoadPermissionIdentity::Execute)
+                && segment.run_address <= executable.entry_point
+                && executable.entry_point < segment.run_end
+        }),
+        "entry point is outside executable load segments",
+    )?;
+    executable_valid(
+        path,
+        !executable.executable_sections.is_empty(),
+        "executable section inventory is empty",
+    )?;
+    for (index, section) in executable.executable_sections.iter().enumerate() {
+        executable_valid(
+            path,
+            !section.name.is_empty()
+                && section.end.checked_sub(section.address) == Some(section.bytes)
+                && section.bytes != 0
+                && section.alignment.is_power_of_two()
+                && !executable.executable_sections[..index]
+                    .iter()
+                    .any(|prior| prior.address < section.end && section.address < prior.end),
+            "executable section accounting is invalid",
+        )?;
+    }
+    executable_valid(
+        path,
+        !executable.startup.entry_section.is_empty()
+            && !executable.startup.entry_symbol.is_empty()
+            && executable
+                .executable_sections
+                .iter()
+                .any(|section| section.name == executable.startup.entry_section),
+        "startup entry identity is invalid",
+    )?;
+    let entry_anchors = executable
+        .startup
+        .anchors
+        .iter()
+        .filter(|anchor| anchor.role == StartupAnchorRoleIdentity::EntryPoint)
+        .collect::<Vec<_>>();
+    executable_valid(
+        path,
+        entry_anchors.len() == 1
+            && entry_anchors[0].address == executable.entry_point
+            && entry_anchors[0].section == executable.startup.entry_section
+            && executable
+                .startup
+                .anchors
+                .iter()
+                .enumerate()
+                .all(|(index, anchor)| {
+                    !anchor.section.is_empty()
+                        && !executable.startup.anchors[..index]
+                            .iter()
+                            .any(|prior| prior.role == anchor.role)
+                }),
+        "startup anchors are invalid",
+    )?;
+    validate_functions(path, &report.target.id, executable)?;
+    let executable_bytes = executable
+        .executable_sections
+        .iter()
+        .try_fold(0_u64, |total, section| total.checked_add(section.bytes));
+    executable_valid(
+        path,
+        executable_bytes == Some(executable.disassembly.executable_bytes)
+            && executable
+                .disassembly
+                .decoded_bytes
+                .checked_add(executable.disassembly.undecoded_bytes)
+                == Some(executable.disassembly.executable_bytes)
+            && executable.disassembly.decoded_bytes != 0
+            && executable.disassembly.instruction_count != 0
+            && executable.disassembly.adapter == executable.architecture
+            && !executable.disassembly.program.is_empty()
+            && !executable.disassembly.version.is_empty(),
+        "disassembly accounting is invalid",
+    )
+}
+
+fn validate_functions(
+    path: &Path,
+    target_id: &str,
+    executable: &ExecutableIdentity,
+) -> Result<(), ComparisonError> {
+    let functions = &executable.functions;
+    let executable_bytes = executable
+        .executable_sections
+        .iter()
+        .try_fold(0_u64, |total, section| total.checked_add(section.bytes));
+    executable_valid(
+        path,
+        functions.normalization == FunctionNormalizationIdentity::LinkedFunctionBodySha256V1
+            && functions.boundary_count != 0
+            && functions.boundaries_artifact.path
+                == format!("work/{target_id}/function-boundaries.json")
+            && functions.boundaries_artifact.bytes != 0
+            && functions
+                .classified_bytes
+                .checked_add(functions.unclassified_bytes)
+                == executable_bytes,
+        "function coverage is invalid",
+    )?;
+    executable_valid(
+        path,
+        functions.largest.len() <= 20
+            && !functions.largest.is_empty()
+            && u64::try_from(functions.largest.len())
+                .is_ok_and(|count| count <= functions.boundary_count)
+            && functions
+                .largest
+                .iter()
+                .enumerate()
+                .all(|(index, boundary)| {
+                    let ranked = functions.largest.get(index + 1).is_none_or(|next| {
+                        boundary.bytes > next.bytes
+                            || (boundary.bytes == next.bytes && boundary.name < next.name)
+                    });
+                    ranked && valid_function_boundary(executable, boundary)
+                }),
+        "largest-function ranking is invalid",
+    )
+}
+
+fn valid_function_boundary(
+    executable: &ExecutableIdentity,
+    boundary: &FunctionBoundaryIdentity,
+) -> bool {
+    !boundary.name.is_empty()
+        && boundary.end.checked_sub(boundary.address) == Some(boundary.bytes)
+        && boundary.bytes != 0
+        && executable
+            .executable_sections
+            .iter()
+            .any(|section| section.address <= boundary.address && boundary.end <= section.end)
+}
+
+fn executable_valid(path: &Path, valid: bool, reason: &'static str) -> Result<(), ComparisonError> {
+    if valid {
+        Ok(())
+    } else {
+        Err(ComparisonError::InvalidExecutableEvidence {
+            path: path.to_path_buf(),
+            reason,
+        })
+    }
 }
 
 fn validate_overflows(

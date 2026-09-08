@@ -7,18 +7,29 @@ use std::process::Command;
 
 use personal_hopspot_memory::ProcessorArchitecture;
 
-use super::{Adapter, LinkerFlavor, LinkerTool};
+use super::{Adapter, DisassemblerFlavor, DisassemblerTool, LinkerFlavor, LinkerTool};
 use crate::BuildError;
 
 const LINKER_PROGRAM: &str = "xtensa-esp32s3-elf-gcc";
+const DISASSEMBLER_PROGRAM: &str = "xtensa-esp32s3-elf-objdump";
 
 pub(super) static ADAPTER: Adapter = Adapter::new(
     "xtensa-esp32s3-gnu-ld",
     ProcessorArchitecture::XtensaEsp32S3,
-    LinkerTool::new(LinkerFlavor::GnuLd, LINKER_PROGRAM, &["--version"]),
+    LinkerTool::new(
+        LinkerFlavor::GnuLd,
+        LINKER_PROGRAM,
+        &["--version"],
+        configure_linker,
+        linker_map_argument,
+    ),
     &["-C", "link-arg=-Tlinkall.x", "-C", "force-frame-pointers"],
-    configure_linker,
-    linker_map_argument,
+    DisassemblerTool::new(
+        DisassemblerFlavor::GnuObjdump,
+        DISASSEMBLER_PROGRAM,
+        &["--version"],
+        resolve_disassembler,
+    ),
 );
 
 struct ToolchainEnvironment {
@@ -39,6 +50,15 @@ fn configure_linker(command: &mut Command) -> Result<PathBuf, BuildError> {
         command.env("LIBCLANG_PATH", libclang_path);
     }
     Ok(linker)
+}
+
+fn resolve_disassembler() -> Result<PathBuf, BuildError> {
+    let environment = toolchain_environment()?;
+    find_on_path(DISASSEMBLER_PROGRAM, &environment.path).ok_or_else(|| {
+        BuildError::Toolchain(format!(
+            "{DISASSEMBLER_PROGRAM} was not found; install the Xtensa Rust toolchain or update export-esp.sh"
+        ))
+    })
 }
 
 fn linker_map_argument(path: &Path) -> OsString {

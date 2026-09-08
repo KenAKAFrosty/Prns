@@ -3,6 +3,7 @@ mod build;
 mod compare;
 mod contract;
 mod document;
+mod executable;
 mod fingerprint;
 mod model;
 mod summary;

@@ -1,0 +1,397 @@
+mod riscv32imac;
+mod thumbv7em;
+mod xtensa_esp32s3;
+
+use std::path::Path;
+
+use object::read::elf::ProgramHeader;
+use object::{Object, ObjectSection, ObjectSymbol, SectionFlags};
+use personal_hopspot_memory::{
+    AddressRange, AddressSpaceGeometry, MemoryProfile, ProcessorArchitecture,
+};
+
+use super::{ExecutableError, ExecutableSection, StartupStructure};
+
+type AddressNormalizer = fn(u64) -> u64;
+type PlacementValidator = for<'data> fn(
+    &Path,
+    &MemoryProfile,
+    &object::File<'data>,
+    &[u8],
+) -> Result<(), ExecutableError>;
+type StartupAnalyzer = for<'data> fn(
+    &Path,
+    &MemoryProfile,
+    &object::File<'data>,
+    &[ExecutableSection],
+    u64,
+) -> Result<StartupStructure, ExecutableError>;
+type InstructionDecoder = fn(&str) -> Option<DecodedInstruction>;
+
+pub(super) struct AssuranceAdapter {
+    id: &'static str,
+    object_architecture: object::Architecture,
+    normalize_code_address: AddressNormalizer,
+    validate_allocated_sections: PlacementValidator,
+    startup: StartupAnalyzer,
+    decoded_instruction: InstructionDecoder,
+}
+
+impl AssuranceAdapter {
+    const fn new(
+        id: &'static str,
+        object_architecture: object::Architecture,
+        normalize_code_address: AddressNormalizer,
+        validate_allocated_sections: PlacementValidator,
+        startup: StartupAnalyzer,
+        decoded_instruction: InstructionDecoder,
+    ) -> Self {
+        Self {
+            id,
+            object_architecture,
+            normalize_code_address,
+            validate_allocated_sections,
+            startup,
+            decoded_instruction,
+        }
+    }
+
+    pub(super) const fn id(&self) -> &'static str {
+        self.id
+    }
+
+    pub(super) const fn object_architecture(&self) -> object::Architecture {
+        self.object_architecture
+    }
+
+    pub(super) fn normalize_code_address(&self, address: u64) -> u64 {
+        (self.normalize_code_address)(address)
+    }
+
+    pub(super) const fn code_address_normalizer(&self) -> AddressNormalizer {
+        self.normalize_code_address
+    }
+
+    pub(super) fn validate_allocated_sections(
+        &self,
+        path: &Path,
+        profile: &MemoryProfile,
+        object: &object::File<'_>,
+        bytes: &[u8],
+    ) -> Result<(), ExecutableError> {
+        (self.validate_allocated_sections)(path, profile, object, bytes)
+    }
+
+    pub(super) fn startup(
+        &self,
+        path: &Path,
+        profile: &MemoryProfile,
+        object: &object::File<'_>,
+        sections: &[ExecutableSection],
+        entry: u64,
+    ) -> Result<StartupStructure, ExecutableError> {
+        (self.startup)(path, profile, object, sections, entry)
+    }
+
+    pub(super) fn decoded_instruction(&self, line: &str) -> Option<DecodedInstruction> {
+        (self.decoded_instruction)(line)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct DecodedInstruction {
+    pub(super) address: u64,
+    pub(super) bytes: u64,
+}
+
+impl DecodedInstruction {
+    pub(super) fn end(self) -> u64 {
+        self.address + self.bytes
+    }
+
+    pub(super) fn range(self) -> AddressRange {
+        AddressRange::new(self.address, self.end())
+    }
+}
+
+pub(super) const fn adapter_for(architecture: ProcessorArchitecture) -> &'static AssuranceAdapter {
+    match architecture {
+        ProcessorArchitecture::ThumbV7em => &thumbv7em::ADAPTER,
+        ProcessorArchitecture::RiscV32Imac => &riscv32imac::ADAPTER,
+        ProcessorArchitecture::XtensaEsp32S3 => &xtensa_esp32s3::ADAPTER,
+    }
+}
+
+pub(super) fn validate_fixed_placement(
+    path: &Path,
+    profile: &MemoryProfile,
+    object: &object::File<'_>,
+) -> Result<(), ExecutableError> {
+    for section in object
+        .sections()
+        .filter(|section| section.size() != 0 && is_allocated(section.flags()))
+    {
+        let name = section_name(path, &section)?;
+        let range = section_range(&name, section.address(), section.size())?;
+        if !profile.address_spaces.iter().any(|space| {
+            matches!(space.geometry, AddressSpaceGeometry::Fixed(bounds) if bounds.contains(range))
+        }) {
+            return Err(ExecutableError::UnmappedSection {
+                section: name,
+                start: range.start(),
+                end: range.end(),
+            });
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn validate_windowed_placement(
+    path: &Path,
+    object: &object::File<'_>,
+    windows: &[AddressRange],
+) -> Result<(), ExecutableError> {
+    for section in object
+        .sections()
+        .filter(|section| section.size() != 0 && is_allocated(section.flags()))
+    {
+        let name = section_name(path, &section)?;
+        let range = section_range(&name, section.address(), section.size())?;
+        if !windows.iter().any(|window| window.contains(range)) {
+            return Err(ExecutableError::UnmappedSection {
+                section: name,
+                start: range.start(),
+                end: range.end(),
+            });
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn validate_flash_loads(
+    path: &Path,
+    profile: &MemoryProfile,
+    object: &object::File<'_>,
+    bytes: &[u8],
+) -> Result<(), ExecutableError> {
+    let elf =
+        object::read::elf::ElfFile32::<object::Endianness>::parse(bytes).map_err(|source| {
+            ExecutableError::Parse {
+                path: path.to_path_buf(),
+                source,
+            }
+        })?;
+    let endian = elf.endian();
+    let firmware = profile
+        .region(profile.firmware.firmware_owned_region)
+        .ok_or_else(|| ExecutableError::FirmwareOwnership {
+            start: 0,
+            bytes: 0,
+            region: profile.firmware.firmware_owned_region.0.to_string(),
+        })?;
+    for section in object
+        .sections()
+        .filter(|section| section.size() != 0 && is_allocated(section.flags()))
+    {
+        let Some((section_offset, section_bytes)) = section.file_range() else {
+            continue;
+        };
+        if section_bytes == 0 {
+            continue;
+        }
+        let name = section_name(path, &section)?;
+        let Some(segment) = elf.elf_program_headers().iter().find(|segment| {
+            if segment.p_type(endian) != object::elf::PT_LOAD {
+                return false;
+            }
+            let start = u64::from(segment.p_offset(endian));
+            let end = start.saturating_add(u64::from(segment.p_filesz(endian)));
+            start <= section_offset && section_offset.saturating_add(section_bytes) <= end
+        }) else {
+            return Err(ExecutableError::UnmappedSection {
+                section: name,
+                start: section.address(),
+                end: section.address().saturating_add(section.size()),
+            });
+        };
+        let load_start = u64::from(segment.p_paddr(endian))
+            .saturating_add(section_offset - u64::from(segment.p_offset(endian)));
+        let load_range = section_range(&name, load_start, section_bytes)?;
+        if !firmware.range.contains(load_range) {
+            let region = profile
+                .regions
+                .iter()
+                .find(|region| {
+                    region.address_space == firmware.address_space
+                        && region.range.overlaps(load_range)
+                })
+                .map_or("outside-declared-flash", |region| region.id.0);
+            return Err(ExecutableError::ProtectedRegion {
+                section: name,
+                start: load_range.start(),
+                end: load_range.end(),
+                region: region.to_string(),
+            });
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn entry_section(
+    sections: &[ExecutableSection],
+    entry: u64,
+    normalize: fn(u64) -> u64,
+) -> Result<String, ExecutableError> {
+    let normalized = normalize(entry);
+    sections
+        .iter()
+        .find(|section| section.range.start() <= normalized && normalized < section.range.end())
+        .map(|section| section.name.clone())
+        .ok_or(ExecutableError::EntryOutsideExecutableCode { entry })
+}
+
+pub(super) fn require_symbol(
+    object: &object::File<'_>,
+    symbol_name: &'static str,
+    expected: u64,
+    normalize: fn(u64) -> u64,
+) -> Result<(), ExecutableError> {
+    let found = object.symbols().any(|symbol| {
+        symbol.is_definition()
+            && symbol.name().is_ok_and(|name| name == symbol_name)
+            && normalize(symbol.address()) == normalize(expected)
+    });
+    if found {
+        Ok(())
+    } else {
+        Err(ExecutableError::InvalidStartupSymbol {
+            symbol: symbol_name,
+            expected,
+        })
+    }
+}
+
+pub(super) fn executable_section<'a>(
+    sections: &'a [ExecutableSection],
+    name: &'static str,
+) -> Result<&'a ExecutableSection, ExecutableError> {
+    sections
+        .iter()
+        .find(|section| section.name == name)
+        .ok_or(ExecutableError::MissingStartupSection { section: name })
+}
+
+pub(super) fn parse_instruction(line: &str, widths: &[u64]) -> Option<DecodedInstruction> {
+    let (address, body) = line.trim().split_once(':')?;
+    let address = u64::from_str_radix(address.trim(), 16).ok()?;
+    let mut tokens = body.split_whitespace();
+    let mut bytes = 0_u64;
+    let mut mnemonic = None;
+    for token in tokens.by_ref() {
+        if token.len() % 2 == 0
+            && !token.is_empty()
+            && token.bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            bytes = bytes.checked_add(u64::try_from(token.len() / 2).ok()?)?;
+        } else {
+            mnemonic = Some(token);
+            break;
+        }
+    }
+    let mnemonic = mnemonic?;
+    if !widths.contains(&bytes) || mnemonic.starts_with('.') || mnemonic.starts_with('<') {
+        return None;
+    }
+    address.checked_add(bytes)?;
+    Some(DecodedInstruction { address, bytes })
+}
+
+fn section_name<'data>(
+    path: &Path,
+    section: &impl ObjectSection<'data>,
+) -> Result<String, ExecutableError> {
+    section
+        .name()
+        .map(str::to_string)
+        .map_err(|source| ExecutableError::SectionName {
+            path: path.to_path_buf(),
+            index: section.index().0,
+            source,
+        })
+}
+
+fn section_range(section: &str, start: u64, bytes: u64) -> Result<AddressRange, ExecutableError> {
+    AddressRange::from_start_and_size(start, bytes).map_err(|_| ExecutableError::UnmappedSection {
+        section: section.to_string(),
+        start,
+        end: start.saturating_add(bytes),
+    })
+}
+
+fn is_allocated(flags: SectionFlags) -> bool {
+    matches!(
+        flags,
+        SectionFlags::Elf { sh_flags } if sh_flags & u64::from(object::elf::SHF_ALLOC) != 0
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn registry_resolves_every_memory_architecture() {
+        let expected = [
+            (ProcessorArchitecture::ThumbV7em, "thumbv7em"),
+            (ProcessorArchitecture::RiscV32Imac, "riscv32imac"),
+            (ProcessorArchitecture::XtensaEsp32S3, "xtensa-esp32s3"),
+        ];
+        for (architecture, id) in expected {
+            assert_eq!(adapter_for(architecture).id(), id);
+        }
+    }
+
+    #[test]
+    fn architecture_disassembly_formats_have_exact_widths() {
+        assert_eq!(
+            thumbv7em::ADAPTER.decoded_instruction("26100: f007 fb04  bl 0x2d70c"),
+            Some(DecodedInstruction {
+                address: 0x26100,
+                bytes: 4,
+            })
+        );
+        assert_eq!(
+            riscv32imac::ADAPTER.decoded_instruction("42040036: c114  sw a3, 0x0(a0)"),
+            Some(DecodedInstruction {
+                address: 0x42040036,
+                bytes: 2,
+            })
+        );
+        assert_eq!(
+            riscv32imac::ADAPTER.decoded_instruction("42040020: 0dfc0517  auipc a0, 0xdfc0"),
+            Some(DecodedInstruction {
+                address: 0x42040020,
+                bytes: 4,
+            })
+        );
+        assert_eq!(
+            xtensa_esp32s3::ADAPTER.decoded_instruction("40378878: 002136  entry a1, 16"),
+            Some(DecodedInstruction {
+                address: 0x40378878,
+                bytes: 3,
+            })
+        );
+        assert_eq!(
+            xtensa_esp32s3::ADAPTER.decoded_instruction("403788ae: 81  .byte 0x81"),
+            None
+        );
+    }
+
+    #[test]
+    fn instruction_parser_rejects_malformed_evidence() {
+        assert_eq!(parse_instruction("not disassembly", &[2, 4]), None);
+        assert_eq!(parse_instruction("1000: xyz  add", &[2, 4]), None);
+        assert_eq!(parse_instruction("1000: 001122  add", &[2, 4]), None);
+        assert_eq!(parse_instruction("1000: 0011  .word 0", &[2, 4]), None);
+    }
+}

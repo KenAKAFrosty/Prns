@@ -1,5 +1,5 @@
 {
-  "schema_version": 5,
+  "schema_version": 6,
   "target": {
     "id": "mesh-tower-v2",
     "display_name": "Heltec MeshTower V2",
@@ -204,7 +204,7 @@
     "value": []
   },
   "analysis": {
-    "linker_map_bytes": 9771779,
+    "linker_map_bytes": 9771789,
     "allocated_sections": {
       "kind": "complete",
       "value": [
@@ -475,6 +475,298 @@
               "bytes": 1780
             }
           ]
+        }
+      }
+    },
+    "executable": {
+      "kind": "complete",
+      "value": {
+        "rust_target": "thumbv7em-none-eabihf",
+        "architecture": "thumbv7em",
+        "byte_order": "little",
+        "entry_point": 155905,
+        "load_segments": [
+          {
+            "file_offset": 0,
+            "run_address": 131072,
+            "run_end": 131412,
+            "load_address": 131072,
+            "load_end": 131412,
+            "file_bytes": 340,
+            "memory_bytes": 340,
+            "alignment": 65536,
+            "permissions": [
+              "read"
+            ]
+          },
+          {
+            "file_offset": 24576,
+            "run_address": 155648,
+            "run_end": 155904,
+            "load_address": 155648,
+            "load_end": 155904,
+            "file_bytes": 256,
+            "memory_bytes": 256,
+            "alignment": 65536,
+            "permissions": [
+              "read"
+            ]
+          },
+          {
+            "file_offset": 24832,
+            "run_address": 155904,
+            "run_end": 664812,
+            "load_address": 155904,
+            "load_end": 664812,
+            "file_bytes": 508908,
+            "memory_bytes": 508908,
+            "alignment": 65536,
+            "permissions": [
+              "read",
+              "execute"
+            ]
+          },
+          {
+            "file_offset": 533744,
+            "run_address": 664816,
+            "run_end": 787260,
+            "load_address": 664816,
+            "load_end": 787260,
+            "file_bytes": 122444,
+            "memory_bytes": 122444,
+            "alignment": 65536,
+            "permissions": [
+              "read"
+            ]
+          },
+          {
+            "file_offset": 704512,
+            "run_address": 536920064,
+            "run_end": 536939956,
+            "load_address": 787264,
+            "load_end": 807156,
+            "file_bytes": 19892,
+            "memory_bytes": 19892,
+            "alignment": 65536,
+            "permissions": [
+              "read",
+              "write"
+            ]
+          },
+          {
+            "file_offset": 789944,
+            "run_address": 536939960,
+            "run_end": 537052100,
+            "load_address": 536939960,
+            "load_end": 537052100,
+            "file_bytes": 0,
+            "memory_bytes": 112140,
+            "alignment": 65536,
+            "permissions": [
+              "read",
+              "write"
+            ]
+          }
+        ],
+        "executable_sections": [
+          {
+            "name": ".text",
+            "address": 155904,
+            "end": 664812,
+            "bytes": 508908,
+            "alignment": 8,
+            "fingerprint": "9a6c2dcbff91495d4f4029f99b558eab81847985a51a59d1d336c153be0c05a5"
+          }
+        ],
+        "startup": {
+          "entry_section": ".text",
+          "entry_symbol": "__stext",
+          "anchors": [
+            {
+              "role": "entry-point",
+              "address": 155905,
+              "section": ".text"
+            },
+            {
+              "role": "initial-stack-pointer",
+              "address": 537133056,
+              "section": ".vector_table"
+            },
+            {
+              "role": "reset-vector",
+              "address": 155905,
+              "section": ".vector_table"
+            },
+            {
+              "role": "exception-vectors",
+              "address": 155648,
+              "section": ".vector_table"
+            }
+          ]
+        },
+        "functions": {
+          "normalization": "linked-function-body-sha256-v1",
+          "boundary_count": 5708,
+          "boundaries_fingerprint": "e7ee7a80bc2c30f41c7163b846d325dba667f8017f1d29782124f8b8f78bdcd9",
+          "boundaries_artifact": {
+            "path": "work/mesh-tower-v2/function-boundaries.json",
+            "bytes": 1710952,
+            "fingerprint": "8f0ec87c533ec4cd9c2fca91dc88c94e12d21dcd520fc56607a4a7bee3c5ead9"
+          },
+          "classified_bytes": 508354,
+          "unclassified_bytes": 554,
+          "largest": [
+            {
+              "name": "sha2::sha512::compress512",
+              "address": 630404,
+              "end": 656844,
+              "bytes": 26440,
+              "fingerprint": "9dbbba8c534483ac28ceb03be2bc1f5a28cdee9b16354113269a5fe40a99c7ad"
+            },
+            {
+              "name": "<prns_interfaces_embassy::lora::LoRaInterface<prns_interfaces_embassy::radios::sx126x::Sx126x<embedded_hal_bus::spi::exclusive::ExclusiveDevice<embassy_nrf::spi…onal_hopspot_nrf52840::runtime::entropy::NrfEntropySource, 3, 508>>::{closure#0} [sha256:e4e34959a68e]",
+              "address": 329860,
+              "end": 339488,
+              "bytes": 9628,
+              "fingerprint": "ced1426eb9a131bb9f3b2235bfb5815506d3f60952a050cab5419530713d3978"
+            },
+            {
+              "name": "<embassy_futures::join::MaybeDone<prns_runtime_embassy::manifold::driver::pooled_topology::run_pooled<personal_hopspot_nrf52840::storage::Nrf52840Storage, prns_…:embedded_persistence::EmbeddedPersistenceDiagnostic), 8>>>::{closure#0}>>::poll [sha256:80f1dedc2a61]",
+              "address": 370196,
+              "end": 377880,
+              "bytes": 7684,
+              "fingerprint": "f45a15f0e1961989caa6445d6de51f90ead5475f92ecc0acdcea20ab87c664ca"
+            },
+            {
+              "name": "sha2::sha256::compress256",
+              "address": 623240,
+              "end": 630404,
+              "bytes": 7164,
+              "fingerprint": "3e3fd4e88ae8507f40098c1d680b82258fc94ddf41a2901fe72e2bfed4afddb1"
+            },
+            {
+              "name": "<embassy_futures::join::MaybeDone<prns_runtime_embassy::runtime::request_runner::run_router<(), personal_hopspot_core::node_pages::NodePageRoutes, embassy_sync:…ng_mutex::raw::CriticalSectionRawMutex, 2, 4, 0, 0, 4, 403>::{closure#0}>>::poll [sha256:b5f75d778739]",
+              "address": 363588,
+              "end": 370024,
+              "bytes": 6436,
+              "fingerprint": "291cb89462451e3dac3dbb9fa8fd0b7a07ba5ce6bf7b290bc250c54333d1af25"
+            },
+            {
+              "name": "<embassy_executor::raw::TaskStorage<personal_hopspot_nrf52840::runtime::headless::__manifold_task_task::__manifold_task_task_inner_function::{closure#0}>>::poll",
+              "address": 423320,
+              "end": 429172,
+              "bytes": 5852,
+              "fingerprint": "977d786a687279ff6f8ff0c4cb25de6ada08a0e1fbabfa3ab084f3d0efb0f6f3"
+            },
+            {
+              "name": "<prns_core::engine::state::EngineState<personal_hopspot_nrf52840::storage::Nrf52840Storage>>::ingest_classified_into_report::<prns_runtime_embassy::manifold::dr…ded_persistence::EmbeddedPersistenceDiagnostic), 8>>>::{closure#0}::{closure#2}> [sha256:f3cb80915df3]",
+              "address": 228920,
+              "end": 233924,
+              "bytes": 5004,
+              "fingerprint": "fa2a4248ddb176a9227a058884ed20c889e9c3ac04bbfc48aa9eeb73bae511ba"
+            },
+            {
+              "name": "<embassy_futures::join::MaybeDone<<prns_interfaces_embassy::bluetooth_auto::runtime::BluetoothAuto<personal_hopspot_nrf52840::runtime::bluetooth_auto::NrfBleBac…c::blocking_mutex::raw::CriticalSectionRawMutex, 500, 3, 7>::{closure#0}>>::poll [sha256:c05845b950f5]",
+              "address": 358236,
+              "end": 363232,
+              "bytes": 4996,
+              "fingerprint": "dc0dad7820ab47fec66565d6a7186b51741463fd7beb79513160cd0139f2e0cc"
+            },
+            {
+              "name": "<prns_core::engine::state::EngineState<personal_hopspot_nrf52840::storage::Nrf52840Storage>>::ingest_command_into_with_timing::<prns_runtime_embassy::manifold::…e::EmbeddedPersistenceDiagnostic), 8>>>::{closure#0}::{closure#5}>::{closure#0}> [sha256:0d6d4208548e]",
+              "address": 212748,
+              "end": 217692,
+              "bytes": 4944,
+              "fingerprint": "d7ab720a3c4bd36b5262e5a938a44ebd4bfb50d6d9d2287c2f9119a9dc96605d"
+            },
+            {
+              "name": "<embassy_executor::raw::TaskStorage<personal_hopspot_nrf52840::runtime::bluetooth_auto::__serve_slot_task::__serve_slot_task_inner_function::{closure#0}>>::poll",
+              "address": 418776,
+              "end": 423220,
+              "bytes": 4444,
+              "fingerprint": "c82f83f62a83c83caf9881096be0b5f1a92e708b06bf2ed94038bec43d8b8fe1"
+            },
+            {
+              "name": "<embassy_executor::raw::TaskStorage<heltec_mesh_tower_v2::____embassy_main_task::____embassy_main_task_inner_function::{closure#0}>>::poll",
+              "address": 197716,
+              "end": 201864,
+              "bytes": 4148,
+              "fingerprint": "f2283bb2c95c4ea2f4621c14a01c503ffff2dd71c837be3fffaa4ea1ebce97af"
+            },
+            {
+              "name": "<curve25519_dalek::backend::serial::u32::scalar::Scalar29>::mul",
+              "address": 173080,
+              "end": 176956,
+              "bytes": 3876,
+              "fingerprint": "aacffdc9cb93e394471344daed53aa22174548f8119b6031b105e64d01a0da00"
+            },
+            {
+              "name": "prns_runtime_embassy::runtime::remote_control_pairing_authorizations::activate",
+              "address": 618492,
+              "end": 621538,
+              "bytes": 3046,
+              "fingerprint": "8658e92494d067a0762b93442f4b13b3baab64c5789398d85348e4721d454764"
+            },
+            {
+              "name": "<prns_interfaces_embassy::radios::sx126x::Sx126x<embedded_hal_bus::spi::exclusive::ExclusiveDevice<embassy_nrf::spim::Spim, embassy_nrf::gpio::Output, embassy_t…> as prns_interfaces_embassy::radios::radio::LoRaRadio>::initialize::{closure#0} [sha256:ef9c999764e7]",
+              "address": 350792,
+              "end": 353612,
+              "bytes": 2820,
+              "fingerprint": "c54534dc4d0606a63c4fdb5cc7c06857acb0c769d4c90a9e0ed5be4b5f8d0693"
+            },
+            {
+              "name": "<embassy_futures::select::Select4<prns_runtime_embassy::runtime::request_runner::next_pairing_persistence_input<embassy_sync::blocking_mutex::raw::CriticalSecti…::request_runner::RunnerRequest<403>, 4>> as core::future::future::Future>::poll [sha256:d2b12b6d4800]",
+              "address": 503356,
+              "end": 506024,
+              "bytes": 2668,
+              "fingerprint": "d84fd4ab21619e8cc7bc2084395068caa5f32e28e6fe5e32080fcf0ab254113b"
+            },
+            {
+              "name": "<prns_runtime_embassy::runtime::embedded_persistence::EmbeddedFlashPersistence<prns_runtime_embassy::runtime::shared_flash::SharedNorFlash<embassy_sync::blockin…s_compaction::<personal_hopspot_nrf52840::storage::Nrf52840Storage>::{closure#0} [sha256:12775fe29cc5]",
+              "address": 316248,
+              "end": 318772,
+              "bytes": 2524,
+              "fingerprint": "5c440752caa0ff78e35da60ab0bfea0f4ac0b33585a9fcba9d3c736a9ebe06cf"
+            },
+            {
+              "name": "<prns_core::engine::state::EngineState<personal_hopspot_nrf52840::storage::Nrf52840Storage>>::ingest_classified_with_mode",
+              "address": 398700,
+              "end": 400804,
+              "bytes": 2104,
+              "fingerprint": "243dadd07effd6b05212d383da6829e27db195d7d838a32141e54fa9857475fb"
+            },
+            {
+              "name": "<curve25519_dalek::scalar::Scalar>::reduce",
+              "address": 180596,
+              "end": 182512,
+              "bytes": 1916,
+              "fingerprint": "12c58ffd72f1e6cc8ba73b1da2e1d81b8dc783bf55488a6961e4821ac5bb354a"
+            },
+            {
+              "name": "<curve25519_dalek::backend::serial::u32::scalar::Scalar29>::montgomery_mul",
+              "address": 170976,
+              "end": 172864,
+              "bytes": 1888,
+              "fingerprint": "e8d0054d187b1e36849e35a1c0593954a747801cfad246a88d882a2ab7f9ae6d"
+            },
+            {
+              "name": "<embassy_futures::join::MaybeDone<<embassy_usb::UsbDevice<embassy_nrf::usb::Driver<&embassy_nrf::usb::vbus_detect::SoftwareVbusDetect>>>::run::{closure#0}>>::poll",
+              "address": 379756,
+              "end": 381536,
+              "bytes": 1780,
+              "fingerprint": "c02b113b8145def4bfe361b57837a4deb2ba988fe624e8eaa316875f494c0e64"
+            }
+          ]
+        },
+        "disassembly": {
+          "adapter": "thumbv7em",
+          "flavor": "llvm-objdump",
+          "program": "llvm-objdump",
+          "version": "LLVM version 22.1.8-rust-1.98.0-stable",
+          "executable_bytes": 508908,
+          "decoded_bytes": 492240,
+          "undecoded_bytes": 16668,
+          "instruction_count": 176828
         }
       }
     }

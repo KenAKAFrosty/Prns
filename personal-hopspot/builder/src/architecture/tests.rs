@@ -42,6 +42,8 @@ fn adapters_define_target_and_linker_identity() {
                 "-C",
                 "llvm-args=-machine-outliner-reruns=2",
             ][..],
+            DisassemblerFlavor::LlvmObjdump,
+            "llvm-objdump",
         ),
         (
             ProcessorArchitecture::RiscV32Imac,
@@ -50,6 +52,8 @@ fn adapters_define_target_and_linker_identity() {
             "rust-lld",
             &["-flavor", "gnu", "--version"][..],
             &["-C", "link-arg=-Tlinkall.x"][..],
+            DisassemblerFlavor::LlvmObjdump,
+            "llvm-objdump",
         ),
         (
             ProcessorArchitecture::XtensaEsp32S3,
@@ -58,11 +62,21 @@ fn adapters_define_target_and_linker_identity() {
             "xtensa-esp32s3-elf-gcc",
             &["--version"][..],
             &["-C", "link-arg=-Tlinkall.x", "-C", "force-frame-pointers"][..],
+            DisassemblerFlavor::GnuObjdump,
+            "xtensa-esp32s3-elf-objdump",
         ),
     ];
 
-    for (architecture, rust_target, linker_flavor, linker_program, version_arguments, rustflags) in
-        expected
+    for (
+        architecture,
+        rust_target,
+        linker_flavor,
+        linker_program,
+        version_arguments,
+        rustflags,
+        disassembler_flavor,
+        disassembler_program,
+    ) in expected
     {
         let adapter = adapter_for(architecture);
         assert_eq!(adapter.rust_target(), rust_target);
@@ -70,6 +84,8 @@ fn adapters_define_target_and_linker_identity() {
         assert_eq!(adapter.linker_program(), linker_program);
         assert_eq!(adapter.linker_version_arguments(), version_arguments);
         assert_eq!(adapter.rustflags(), rustflags);
+        assert_eq!(adapter.disassembler_flavor(), disassembler_flavor);
+        assert_eq!(adapter.disassembler_program(), disassembler_program);
         assert_eq!(
             adapter_for_rust_target(rust_target).ok().map(Adapter::id),
             Some(adapter.id())

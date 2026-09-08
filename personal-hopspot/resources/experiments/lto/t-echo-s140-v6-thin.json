@@ -1,5 +1,5 @@
 {
-  "schema_version": 5,
+  "schema_version": 6,
   "target": {
     "id": "t-echo-s140-v6",
     "display_name": "LilyGO T-Echo S140 6.1.1",
@@ -410,6 +410,9 @@
           ]
         }
       }
+    },
+    "executable": {
+      "kind": "unavailable"
     }
   }
 }

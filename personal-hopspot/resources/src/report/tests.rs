@@ -57,6 +57,7 @@ fn overflow_reports_preserve_only_available_evidence() -> Result<(), Box<dyn std
     value["artifacts"] = json!({"kind": "unavailable"});
     value["analysis"]["allocated_sections"] = json!({"kind": "unavailable"});
     value["analysis"]["flash_attribution"]["kind"] = json!("partial");
+    value["analysis"]["executable"] = json!({"kind": "unavailable"});
     let report: ResourceReport = serde_json::from_value(value.clone())?;
     compare::validate_report(Path::new("overflow.json"), &report)?;
     assert_eq!(serde_json::to_value(report)?, value);
@@ -115,6 +116,48 @@ fn successful_reports_require_complete_attribution() -> Result<(), Box<dyn std::
 }
 
 #[test]
+fn successful_reports_require_complete_executable_evidence(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut value = report_value();
+    value["analysis"]["executable"] =
+        json!({"kind": "partial", "value": value["analysis"]["executable"]["value"].clone()});
+    let report: ResourceReport = serde_json::from_value(value)?;
+    assert!(matches!(
+        compare::validate_report(Path::new("success.json"), &report),
+        Err(ComparisonError::MissingExecutableEvidence { .. })
+    ));
+    Ok(())
+}
+
+#[test]
+fn malformed_executable_evidence_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
+    for mutation in [
+        |value: &mut Value| {
+            value["analysis"]["executable"]["value"]["rust_target"] = json!("wrong-target");
+        },
+        |value: &mut Value| {
+            value["analysis"]["executable"]["value"]["load_segments"][0]["run_end"] =
+                json!(155_691);
+        },
+        |value: &mut Value| {
+            value["analysis"]["executable"]["value"]["functions"]["boundary_count"] = json!(0);
+        },
+        |value: &mut Value| {
+            value["analysis"]["executable"]["value"]["disassembly"]["decoded_bytes"] = json!(41);
+        },
+    ] {
+        let mut value = report_value();
+        mutation(&mut value);
+        let report: ResourceReport = serde_json::from_value(value)?;
+        assert!(matches!(
+            compare::validate_report(Path::new("malformed.json"), &report),
+            Err(ComparisonError::InvalidExecutableEvidence { .. })
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn overflow_reports_reject_duplicate_regions() -> Result<(), Box<dyn std::error::Error>> {
     let mut value = report_value();
     value["status"] = json!({
@@ -168,7 +211,30 @@ fn compatible_reports_call_out_lto_and_resource_deltas() -> Result<(), Box<dyn s
         .as_array_mut()
         .ok_or("symbol attribution fixture is not an array")?
         .push(json!({"name": "new_crate::run", "bytes": 1}));
-    let after: ResourceReport = serde_json::from_value(after_value)?;
+    let mut after: ResourceReport = serde_json::from_value(after_value)?;
+    let executable = match &mut after.analysis.executable {
+        Evidence::Complete(executable) => executable,
+        Evidence::Partial(_) | Evidence::Unavailable => {
+            return Err("fixture has no complete executable evidence".into());
+        }
+    };
+    executable.load_segments[0].run_end = 155_688;
+    executable.load_segments[0].load_end = 155_688;
+    executable.load_segments[0].file_bytes = 40;
+    executable.load_segments[0].memory_bytes = 40;
+    executable.executable_sections[0].end = 155_688;
+    executable.executable_sections[0].bytes = 40;
+    executable.executable_sections[0].fingerprint =
+        super::fingerprint::Fingerprint::parse("b".repeat(64))?;
+    executable.functions.classified_bytes = 40;
+    executable.functions.largest[0].end = 155_688;
+    executable.functions.largest[0].bytes = 40;
+    executable.functions.largest[0].fingerprint =
+        super::fingerprint::Fingerprint::parse("b".repeat(64))?;
+    executable.functions.boundaries_fingerprint =
+        super::fingerprint::Fingerprint::parse("b".repeat(64))?;
+    executable.disassembly.executable_bytes = 40;
+    executable.disassembly.decoded_bytes = 40;
     compare::validate_report(Path::new("before.json"), &before)?;
     compare::validate_report(Path::new("after.json"), &after)?;
     let comparison = compare::compare_reports(&before, &after)?;
@@ -187,6 +253,11 @@ fn compatible_reports_call_out_lto_and_resource_deltas() -> Result<(), Box<dyn s
     assert!(rendered.contains("attribution crates candidate 1 40 -> 42 (+2) \"example\""));
     assert!(rendered.contains("attribution crates candidate 2 not-ranked -> 1 \"new-crate\""));
     assert!(rendered.contains("attribution symbols candidate 1 40 -> 42 (+2) \"example::run\""));
+    assert!(rendered.contains("machine executable 42 -> 40 (-2)"));
+    assert!(rendered.contains("machine section changed \".text\""));
+    assert!(rendered.contains("machine function-boundaries changed"));
+    assert!(rendered.contains("machine functions 1 -> 1"));
+    assert!(rendered.contains("machine ranked-function changed \"example::run\""));
     Ok(())
 }
 
@@ -494,6 +565,10 @@ fn make_overflow(value: &mut Value, linker_region: &str, overflow_bytes: u64) {
 
 pub(super) fn report_value() -> Value {
     let fingerprint = "a".repeat(64);
+    let boundary_encoding = format!(
+        "[{{\"name\":\"example::run\",\"address\":155648,\"end\":155690,\"bytes\":42,\"fingerprint\":\"{fingerprint}\"}}]"
+    );
+    let boundaries_fingerprint = prns_flash_manifest::sha256_hex(boundary_encoding.as_bytes());
     let toolchain_fingerprint = "6e58e90c146639570099ad73f47e6e4a617f4e082daf70fb83c6719d3bc18129";
     json!({
         "schema_version": SCHEMA_VERSION,
@@ -628,7 +703,102 @@ pub(super) fn report_value() -> Value {
                         ]
                     }
                 }
+            },
+            "executable": {
+                "kind": "complete",
+                "value": {
+                    "rust_target": "thumbv7em-none-eabihf",
+                    "architecture": "thumbv7em",
+                    "byte_order": "little",
+                    "entry_point": 155649,
+                    "load_segments": [
+                        {
+                            "file_offset": 0,
+                            "run_address": 155648,
+                            "run_end": 155690,
+                            "load_address": 155648,
+                            "load_end": 155690,
+                            "file_bytes": 42,
+                            "memory_bytes": 42,
+                            "alignment": 4,
+                            "permissions": ["read", "execute"]
+                        }
+                    ],
+                    "executable_sections": [
+                        {
+                            "name": ".text",
+                            "address": 155648,
+                            "end": 155690,
+                            "bytes": 42,
+                            "alignment": 4,
+                            "fingerprint": fingerprint
+                        }
+                    ],
+                    "startup": {
+                        "entry_section": ".text",
+                        "entry_symbol": "__stext",
+                        "anchors": [
+                            {
+                                "role": "entry-point",
+                                "address": 155649,
+                                "section": ".text"
+                            },
+                            {
+                                "role": "initial-stack-pointer",
+                                "address": 536920064,
+                                "section": ".vector_table"
+                            },
+                            {
+                                "role": "reset-vector",
+                                "address": 155649,
+                                "section": ".vector_table"
+                            }
+                        ]
+                    },
+                    "functions": {
+                        "normalization": "linked-function-body-sha256-v1",
+                        "boundary_count": 1,
+                        "boundaries_fingerprint": boundaries_fingerprint,
+                        "boundaries_artifact": {
+                            "path": "work/t114/function-boundaries.json",
+                            "bytes": 128,
+                            "fingerprint": fingerprint
+                        },
+                        "classified_bytes": 42,
+                        "unclassified_bytes": 0,
+                        "largest": [
+                            {
+                                "name": "example::run",
+                                "address": 155648,
+                                "end": 155690,
+                                "bytes": 42,
+                                "fingerprint": fingerprint
+                            }
+                        ]
+                    },
+                    "disassembly": {
+                        "adapter": "thumbv7em",
+                        "flavor": "llvm-objdump",
+                        "program": "llvm-objdump",
+                        "version": "LLVM 1.0.0",
+                        "executable_bytes": 42,
+                        "decoded_bytes": 42,
+                        "undecoded_bytes": 0,
+                        "instruction_count": 10
+                    }
+                }
             }
         }
     })
+}
+
+pub(super) fn retarget_executable(report: &mut ResourceReport, target: &crate::matrix::Target<'_>) {
+    if let Evidence::Complete(executable) = &mut report.analysis.executable {
+        executable.rust_target = target.adapter().rust_target().to_string();
+        executable.architecture =
+            super::executable::architecture_identity(target.profile().architecture);
+        executable.disassembly.adapter = executable.architecture;
+        executable.functions.boundaries_artifact.path =
+            format!("work/{}/function-boundaries.json", target.id());
+    }
 }

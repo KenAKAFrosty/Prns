@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use personal_hopspot_builder::{BuildContext, BuildIntent, BuildVersion, LtoMode};
 
 use super::*;
-use crate::report::tests::report_value;
+use crate::report::tests::{report_value, retarget_executable};
 
 #[test]
 fn refresh_writes_the_complete_matrix_in_canonical_order() -> Result<(), Box<dyn std::error::Error>>
@@ -132,6 +132,7 @@ fn write_reports(
             let mut report: ResourceReport = serde_json::from_value(report_value())?;
             report.target = target_identity(target);
             report.architecture = architecture_identity(target);
+            retarget_executable(&mut report, target);
             report.build = build_identity(context, target.recipe_identity())?;
             report.memory_contract = contract::identity(target.profile())?;
             let path = root.join("reports").join(format!("{}.json", target.id()));

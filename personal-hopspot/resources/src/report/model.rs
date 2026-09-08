@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::fingerprint::Fingerprint;
 
-pub(super) const SCHEMA_VERSION: u32 = 5;
+pub(super) const SCHEMA_VERSION: u32 = 6;
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -210,6 +210,151 @@ pub(super) struct AnalysisEvidence {
     pub linker_map_bytes: u64,
     pub allocated_sections: Evidence<Vec<SectionUsage>>,
     pub flash_attribution: Evidence<FlashAttributionIdentity>,
+    pub executable: Evidence<ExecutableIdentity>,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ExecutableIdentity {
+    pub rust_target: String,
+    pub architecture: ExecutableArchitectureIdentity,
+    pub byte_order: ByteOrderIdentity,
+    pub entry_point: u64,
+    pub load_segments: Vec<LoadSegmentIdentity>,
+    pub executable_sections: Vec<ExecutableSectionIdentity>,
+    pub startup: StartupStructureIdentity,
+    pub functions: FunctionAnalysisIdentity,
+    pub disassembly: DisassemblyIdentity,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum ExecutableArchitectureIdentity {
+    Thumbv7em,
+    Riscv32imac,
+    XtensaEsp32s3,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum ByteOrderIdentity {
+    Little,
+    Big,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct LoadSegmentIdentity {
+    pub file_offset: u64,
+    pub run_address: u64,
+    pub run_end: u64,
+    pub load_address: u64,
+    pub load_end: u64,
+    pub file_bytes: u64,
+    pub memory_bytes: u64,
+    pub alignment: u64,
+    pub permissions: Vec<LoadPermissionIdentity>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum LoadPermissionIdentity {
+    Read,
+    Write,
+    Execute,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ExecutableSectionIdentity {
+    pub name: String,
+    pub address: u64,
+    pub end: u64,
+    pub bytes: u64,
+    pub alignment: u64,
+    pub fingerprint: Fingerprint,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct StartupStructureIdentity {
+    pub entry_section: String,
+    pub entry_symbol: String,
+    pub anchors: Vec<StartupAnchorIdentity>,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct StartupAnchorIdentity {
+    pub role: StartupAnchorRoleIdentity,
+    pub address: u64,
+    pub section: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum StartupAnchorRoleIdentity {
+    EntryPoint,
+    InitialStackPointer,
+    ResetVector,
+    TrapVector,
+    ExceptionVectors,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct FunctionAnalysisIdentity {
+    pub normalization: FunctionNormalizationIdentity,
+    pub boundary_count: u64,
+    pub boundaries_fingerprint: Fingerprint,
+    pub boundaries_artifact: EvidenceArtifactIdentity,
+    pub classified_bytes: u64,
+    pub unclassified_bytes: u64,
+    pub largest: Vec<FunctionBoundaryIdentity>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum FunctionNormalizationIdentity {
+    LinkedFunctionBodySha256V1,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct EvidenceArtifactIdentity {
+    pub path: String,
+    pub bytes: u64,
+    pub fingerprint: Fingerprint,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct FunctionBoundaryIdentity {
+    pub name: String,
+    pub address: u64,
+    pub end: u64,
+    pub bytes: u64,
+    pub fingerprint: Fingerprint,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct DisassemblyIdentity {
+    pub adapter: ExecutableArchitectureIdentity,
+    pub flavor: DisassemblerFlavorIdentity,
+    pub program: String,
+    pub version: String,
+    pub executable_bytes: u64,
+    pub decoded_bytes: u64,
+    pub undecoded_bytes: u64,
+    pub instruction_count: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum DisassemblerFlavorIdentity {
+    LlvmObjdump,
+    GnuObjdump,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]

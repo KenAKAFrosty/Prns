@@ -10,6 +10,7 @@ pub(in crate::report) struct ResourceComparison {
     pub(super) ram: EvidenceComparison<Vec<RamComparison>>,
     pub(super) sections: EvidenceComparison<Vec<SectionComparison>>,
     pub(super) attribution: AttributionComparison,
+    pub(super) executable: EvidenceComparison<ExecutableComparison>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -91,6 +92,25 @@ pub(super) struct SectionComparison {
     pub(super) kind: &'static str,
     pub(super) run_bytes: ByteComparison,
     pub(super) load_bytes: ByteComparison,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct ExecutableComparison {
+    pub(super) entry_point: ChangeState,
+    pub(super) section_bytes: ByteComparison,
+    pub(super) changed_sections: Vec<String>,
+    pub(super) function_boundaries: ChangeState,
+    pub(super) functions_before: u64,
+    pub(super) functions_after: u64,
+    pub(super) changed_ranked_functions: Vec<String>,
+    pub(super) decoded_bytes: ByteComparison,
+    pub(super) undecoded_bytes: ByteComparison,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ChangeState {
+    Unchanged,
+    Changed,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -206,5 +226,14 @@ impl fmt::Display for OverflowState {
             Self::NotReported => formatter.write_str("not-reported"),
             Self::Overflow(bytes) => write!(formatter, "{bytes}"),
         }
+    }
+}
+
+impl fmt::Display for ChangeState {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Unchanged => "unchanged",
+            Self::Changed => "changed",
+        })
     }
 }

@@ -2,6 +2,7 @@ mod model;
 mod render;
 mod validation;
 
+use std::collections::BTreeSet;
 use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -10,15 +11,17 @@ use thiserror::Error;
 
 use super::model::{
     ArtifactIdentity, AttributionCategoryIdentity, AttributionEntryIdentity, BuildIdentity,
-    BuildStatus, Evidence, FirmwareFlashUsage, FlashAttributionIdentity, MemoryOverflowIdentity,
-    RamBackingUsage, RamCapacityIdentity, ResourceReport, SectionKindIdentity, SectionUsage,
+    BuildStatus, Evidence, ExecutableIdentity, FirmwareFlashUsage, FlashAttributionIdentity,
+    MemoryOverflowIdentity, RamBackingUsage, RamCapacityIdentity, ResourceReport,
+    SectionKindIdentity, SectionUsage,
 };
 use model::{
     ArtifactComparison, AttributionCandidateBaseline, AttributionCandidateComparison,
     AttributionCategoriesComparison, AttributionCategoryComparison, AttributionComparison,
-    AttributionCoverageComparison, ByteComparison, EvidenceAvailability, EvidenceComparison,
-    FlashComparison, OverflowComparison, OverflowState, RamComparison, RamHeadroomComparison,
-    ResourceComparison, SectionComparison, SettingDifference, StatusComparison, StatusKind,
+    AttributionCoverageComparison, ByteComparison, ChangeState, EvidenceAvailability,
+    EvidenceComparison, ExecutableComparison, FlashComparison, OverflowComparison, OverflowState,
+    RamComparison, RamHeadroomComparison, ResourceComparison, SectionComparison, SettingDifference,
+    StatusComparison, StatusKind,
 };
 
 const SECTION_KINDS: [(SectionKindIdentity, &str); 5] = [
@@ -98,6 +101,10 @@ pub enum ComparisonError {
     InvalidSectionAccounting { path: PathBuf, section: String },
     #[error("resource report {path} has no flash-attribution evidence")]
     MissingAttributionEvidence { path: PathBuf },
+    #[error("resource report {path} has no executable evidence")]
+    MissingExecutableEvidence { path: PathBuf },
+    #[error("resource report {path} has invalid executable evidence: {reason}")]
+    InvalidExecutableEvidence { path: PathBuf, reason: &'static str },
     #[error("resource report {path} has invalid {category} attribution")]
     InvalidAttribution {
         path: PathBuf,
@@ -218,7 +225,104 @@ fn compare_reports_with(
             &before.analysis.flash_attribution,
             &after.analysis.flash_attribution,
         ),
+        executable: compare_evidence(
+            &before.analysis.executable,
+            &after.analysis.executable,
+            |before, after| Ok(compare_executable(before, after)),
+        )?,
     })
+}
+
+fn compare_executable(
+    before: &ExecutableIdentity,
+    after: &ExecutableIdentity,
+) -> ExecutableComparison {
+    let section_names = before
+        .executable_sections
+        .iter()
+        .map(|section| section.name.as_str())
+        .chain(
+            after
+                .executable_sections
+                .iter()
+                .map(|section| section.name.as_str()),
+        )
+        .collect::<BTreeSet<_>>();
+    let changed_sections = section_names
+        .into_iter()
+        .filter(|name| {
+            let before = before
+                .executable_sections
+                .iter()
+                .find(|section| section.name == **name);
+            let after = after
+                .executable_sections
+                .iter()
+                .find(|section| section.name == **name);
+            before != after
+        })
+        .map(str::to_string)
+        .collect();
+    let ranked_names = before
+        .functions
+        .largest
+        .iter()
+        .map(|function| function.name.as_str())
+        .chain(
+            after
+                .functions
+                .largest
+                .iter()
+                .map(|function| function.name.as_str()),
+        )
+        .collect::<BTreeSet<_>>();
+    let changed_ranked_functions = ranked_names
+        .into_iter()
+        .filter(|name| {
+            let before = before
+                .functions
+                .largest
+                .iter()
+                .find(|function| function.name == **name);
+            let after = after
+                .functions
+                .largest
+                .iter()
+                .find(|function| function.name == **name);
+            before != after
+        })
+        .map(str::to_string)
+        .collect();
+    ExecutableComparison {
+        entry_point: change_state(before.entry_point == after.entry_point),
+        section_bytes: ByteComparison::new(
+            before.disassembly.executable_bytes,
+            after.disassembly.executable_bytes,
+        ),
+        changed_sections,
+        function_boundaries: change_state(
+            before.functions.boundaries_fingerprint == after.functions.boundaries_fingerprint,
+        ),
+        functions_before: before.functions.boundary_count,
+        functions_after: after.functions.boundary_count,
+        changed_ranked_functions,
+        decoded_bytes: ByteComparison::new(
+            before.disassembly.decoded_bytes,
+            after.disassembly.decoded_bytes,
+        ),
+        undecoded_bytes: ByteComparison::new(
+            before.disassembly.undecoded_bytes,
+            after.disassembly.undecoded_bytes,
+        ),
+    }
+}
+
+const fn change_state(unchanged: bool) -> ChangeState {
+    if unchanged {
+        ChangeState::Unchanged
+    } else {
+        ChangeState::Changed
+    }
 }
 
 fn compare_attribution(

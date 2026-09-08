@@ -3,8 +3,9 @@ use std::path::Path;
 use super::model::{
     ArtifactComparison, AttributionCandidateBaseline, AttributionCandidateComparison,
     AttributionCategoryComparison, AttributionComparison, ByteComparison, EvidenceComparison,
-    FlashComparison, OverflowComparison, OverflowState, RamComparison, RamHeadroomComparison,
-    ResourceComparison, SectionComparison, SettingDifference, StatusComparison,
+    ExecutableComparison, FlashComparison, OverflowComparison, OverflowState, RamComparison,
+    RamHeadroomComparison, ResourceComparison, SectionComparison, SettingDifference,
+    StatusComparison,
 };
 
 pub(super) fn render(comparison: &ResourceComparison, before: &Path, after: &Path) -> String {
@@ -50,7 +51,38 @@ pub(super) fn render(comparison: &ResourceComparison, before: &Path, after: &Pat
         },
     );
     attribution(&mut output, &comparison.attribution);
+    evidence(
+        &mut output,
+        "executable",
+        &comparison.executable,
+        executable,
+    );
     output
+}
+
+fn executable(output: &mut String, comparison: &ExecutableComparison) {
+    output.push_str(&format!("machine entry-point {}\n", comparison.entry_point));
+    metric(output, "machine executable", comparison.section_bytes);
+    output.push_str(&format!(
+        "machine sections changed {}\n",
+        comparison.changed_sections.len()
+    ));
+    for section in &comparison.changed_sections {
+        output.push_str(&format!("machine section changed {section:?}\n"));
+    }
+    output.push_str(&format!(
+        "machine function-boundaries {}\n",
+        comparison.function_boundaries
+    ));
+    output.push_str(&format!(
+        "machine functions {} -> {}\n",
+        comparison.functions_before, comparison.functions_after
+    ));
+    for function in &comparison.changed_ranked_functions {
+        output.push_str(&format!("machine ranked-function changed {function:?}\n"));
+    }
+    metric(output, "machine decoded", comparison.decoded_bytes);
+    metric(output, "machine undecoded", comparison.undecoded_bytes);
 }
 
 fn attribution(output: &mut String, comparison: &AttributionComparison) {
