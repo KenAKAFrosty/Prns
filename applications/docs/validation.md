@@ -108,6 +108,18 @@ The application still has a development identifier and local debug signing.
   disconnected before the attempt, so it provides no request-ingress evidence.
   The framing defect is fixed; the remaining physical pairing failure is not
   yet explained.
+- A later fresh invitation reached the confirmation step on the Galaxy and
+  board, and the user confirmed matching codes. Pressing the board button to
+  select acceptance was followed by a freeze and restart. The phone was not
+  approved, and pairing/grant persistence remains unverified. This is progress
+  beyond the invitation step, not a completed Android pairing check.
+- Source tests also exposed an invitation-window mismatch: the target rejected
+  a new attempt when its configured confirmation timeout no longer fit, even
+  while the invitation remained open. The target now signs a timeout bounded
+  by the remaining window, without extending approval or authorization expiry.
+  The combined app-tree RemoteControl test subset passes (186 tests). The
+  isolated correction also passes no-std/alloc checks and strict Clippy; its
+  registered Kani proof has not run because `cargo-kani` is unavailable.
 
 The detached mobility gate passes for application commit `789aec2e1` against
 the recorded Prns revision. This includes exact dependency resolution,
