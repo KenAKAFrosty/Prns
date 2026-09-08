@@ -43,6 +43,7 @@ cfg_if::cfg_if! {
             InterfaceAnnounceMetricsSnapshot, InterfaceKindCounts, PathRequestIngressCounts,
             PathRequestIngressOutcome, PathRequestRelayCounts, PathRequestRelayOutcome,
             ResourceAdmissionEvent, ResourceAdmissionEventCounts, ResourceDirectionMetricsSnapshot,
+            ResourceRoundIntervalMetricsSnapshot, ResourceRoundMetricsSnapshot,
         };
     }
 }
@@ -74,16 +75,19 @@ pub use node_egress::ReemitAnnounce;
 #[cfg(test)]
 pub(crate) use node_ingress::drive_packet_to_quiescence;
 pub use node_ingress::{IngestIo, IngestPacketReport};
+#[cfg(all(feature = "resource-work-offload", feature = "alloc"))]
+pub use reaction::ResourceOpenWorkspace;
 pub use reaction::{
     CryptoOwed, Directive, EngineReaction, FanTarget, Journaled, LinkClosedReason, NoOwedWork,
     OpenedResourceSpan, OwedWork, PersistenceFlushCause, PersistenceFlushTarget,
     ResourceDecompressionCompleted, ResourceDecompressionOwed, ResourceOpenCompleted,
-    ResourceOpenOwed,
+    ResourceOpenOwed, ResourceOpenSpanResidence,
 };
 #[cfg(feature = "resource-work-offload")]
 pub use reaction::{
-    WholeResourceOpenCompleted, WholeResourceOpenLanding, WholeResourceOpenOutcome,
-    WholeResourceOpenOwed, WholeResourceOpenPlan, WholeResourceOpenReservation,
+    StreamedResourceOpenReservation, WholeResourceOpenCompleted, WholeResourceOpenLanding,
+    WholeResourceOpenOutcome, WholeResourceOpenOwed, WholeResourceOpenPlan,
+    WholeResourceOpenReservation,
 };
 pub use registration::{
     PersistedRoutePreflightError, PersistedRouteSignaturePending, PersistedRouteVerificationError,

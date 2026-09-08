@@ -12,7 +12,7 @@ use embedded_graphics_simulator::{
 };
 use heapless::Vec as HVec;
 use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, PrnsCommand};
-use personal_rns::interfaces::lora::{RadioProfile, DEFAULT_915_PROFILE};
+use personal_rns::interfaces::subghz::SubGConfigurationState;
 use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus};
 use personal_rns::storage::{GrowableHeap, StorageLayout};
 use sdl2::event::{Event, WindowEvent};
@@ -568,7 +568,7 @@ pub(super) fn run_window(handles: WindowHandles) {
     let apply_action = move |action: UiAction,
                              selected_id: Option<InterfaceId>,
                              ui_state: &mut UiState,
-                             working_lora_profile: &mut RadioProfile,
+                             working_subg_configuration: &mut SubGConfigurationState,
                              notice_until: &mut Option<Instant>| match action
     {
         UiAction::None => {}
@@ -662,16 +662,16 @@ pub(super) fn run_window(handles: WindowHandles) {
             _ => {}
         },
         UiAction::ToggleStationUplink => {}
-        UiAction::OpenLoRaEditor => ui_state.open_lora_editor(*working_lora_profile),
-        UiAction::SetLoRaProfile(profile) => {
+        UiAction::OpenSubGEditor => ui_state.open_subg_editor(*working_subg_configuration),
+        UiAction::SetSubGConfiguration(configuration) => {
             ui_state.show_notice(screen::UiNotice::Saved);
             *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
-            *working_lora_profile = profile;
+            *working_subg_configuration = SubGConfigurationState::Configured(configuration);
         }
-        UiAction::ResetLoRaProfile => {
+        UiAction::ClearSubGConfiguration => {
             ui_state.show_notice(screen::UiNotice::Saved);
             *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
-            *working_lora_profile = DEFAULT_915_PROFILE;
+            *working_subg_configuration = SubGConfigurationState::Unconfigured;
         }
         UiAction::SwapRadioMode => {}
         UiAction::OpenDocs => {}
@@ -679,7 +679,7 @@ pub(super) fn run_window(handles: WindowHandles) {
     };
 
     let mut ui_state = ui_state();
-    let mut working_lora_profile = DEFAULT_915_PROFILE;
+    let mut working_subg_configuration = SubGConfigurationState::Unconfigured;
     let mut notice_until: Option<Instant> = None;
     let mut active_press: Option<PressStart> = None;
     let mut last_logged: HashMap<InterfaceId, LoggedStatus> = HashMap::new();
@@ -711,7 +711,7 @@ pub(super) fn run_window(handles: WindowHandles) {
                             UiAction::Announce,
                             None,
                             &mut ui_state,
-                            &mut working_lora_profile,
+                            &mut working_subg_configuration,
                             &mut notice_until,
                         );
                         needs_redraw = true;
@@ -748,7 +748,7 @@ pub(super) fn run_window(handles: WindowHandles) {
                         released,
                         selected,
                         &mut ui_state,
-                        &mut working_lora_profile,
+                        &mut working_subg_configuration,
                         &mut notice_until,
                     );
                     needs_redraw = true;
@@ -770,7 +770,7 @@ pub(super) fn run_window(handles: WindowHandles) {
                         released,
                         selected,
                         &mut ui_state,
-                        &mut working_lora_profile,
+                        &mut working_subg_configuration,
                         &mut notice_until,
                     );
                     needs_redraw = true;
@@ -789,7 +789,7 @@ pub(super) fn run_window(handles: WindowHandles) {
             long_press,
             selected,
             &mut ui_state,
-            &mut working_lora_profile,
+            &mut working_subg_configuration,
             &mut notice_until,
         );
 

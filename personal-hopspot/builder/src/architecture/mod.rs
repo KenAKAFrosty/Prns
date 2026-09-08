@@ -43,12 +43,32 @@ impl LinkerFlavor {
 }
 
 #[derive(Debug)]
+struct LinkerTool {
+    flavor: LinkerFlavor,
+    program: &'static str,
+    version_arguments: &'static [&'static str],
+}
+
+impl LinkerTool {
+    const fn new(
+        flavor: LinkerFlavor,
+        program: &'static str,
+        version_arguments: &'static [&'static str],
+    ) -> Self {
+        Self {
+            flavor,
+            program,
+            version_arguments,
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct Adapter {
     id: AdapterId,
     architecture: ProcessorArchitecture,
-    linker_flavor: LinkerFlavor,
-    linker_program: &'static str,
-    linker_version_arguments: &'static [&'static str],
+    linker: LinkerTool,
+    rustflags: &'static [&'static str],
     configure_linker: fn(&mut Command) -> Result<PathBuf, BuildError>,
     linker_map_argument: fn(&Path) -> OsString,
 }
@@ -57,18 +77,16 @@ impl Adapter {
     const fn new(
         id: &'static str,
         architecture: ProcessorArchitecture,
-        linker_flavor: LinkerFlavor,
-        linker_program: &'static str,
-        linker_version_arguments: &'static [&'static str],
+        linker: LinkerTool,
+        rustflags: &'static [&'static str],
         configure_linker: fn(&mut Command) -> Result<PathBuf, BuildError>,
         linker_map_argument: fn(&Path) -> OsString,
     ) -> Self {
         Self {
             id: AdapterId(id),
             architecture,
-            linker_flavor,
-            linker_program,
-            linker_version_arguments,
+            linker,
+            rustflags,
             configure_linker,
             linker_map_argument,
         }
@@ -91,22 +109,35 @@ impl Adapter {
 
     #[must_use]
     pub const fn linker_flavor(&self) -> LinkerFlavor {
-        self.linker_flavor
+        self.linker.flavor
     }
 
     #[must_use]
     pub const fn linker_program(&self) -> &'static str {
-        self.linker_program
+        self.linker.program
     }
 
     pub(crate) const fn linker_version_arguments(&self) -> &'static [&'static str] {
-        self.linker_version_arguments
+        self.linker.version_arguments
+    }
+
+    #[must_use]
+    pub const fn rustflags(&self) -> &'static [&'static str] {
+        self.rustflags
     }
 
     pub fn configure_cargo(&self, command: &mut Command) -> Result<PathBuf, BuildError> {
+        self.configure_rustflags(command);
         let linker = (self.configure_linker)(command)?;
         command.env(cargo_linker_environment(self.rust_target()), &linker);
         Ok(linker)
+    }
+
+    fn configure_rustflags(&self, command: &mut Command) {
+        command.env_remove(cargo_rustflags_environment(self.rust_target()));
+        if !self.rustflags.is_empty() {
+            command.env("RUSTFLAGS", self.rustflags.join(" "));
+        }
     }
 
     pub(crate) fn linker_map_argument(&self, path: &Path) -> OsString {
@@ -114,7 +145,7 @@ impl Adapter {
     }
 
     pub(crate) fn detect_memory_overflow(&self, diagnostics: &str) -> Option<MemoryOverflows> {
-        match self.linker_flavor {
+        match self.linker.flavor {
             LinkerFlavor::RustLld => linker::rust_lld::detect(diagnostics),
             LinkerFlavor::GnuLd => linker::gnu_ld::detect(diagnostics),
         }
@@ -143,6 +174,13 @@ pub fn adapter_for_rust_target(rust_target: &str) -> Result<&'static Adapter, Bu
 fn cargo_linker_environment(rust_target: &str) -> String {
     format!(
         "CARGO_TARGET_{}_LINKER",
+        rust_target.replace('-', "_").to_ascii_uppercase()
+    )
+}
+
+fn cargo_rustflags_environment(rust_target: &str) -> String {
+    format!(
+        "CARGO_TARGET_{}_RUSTFLAGS",
         rust_target.replace('-', "_").to_ascii_uppercase()
     )
 }

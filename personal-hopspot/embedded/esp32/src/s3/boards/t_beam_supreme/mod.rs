@@ -210,7 +210,9 @@ const SH1106_PANEL: screen::face_64x128::PanelSize =
 const SH1106_TRANSFORM: screen::face_64x128::PanelTransform =
     match screen::face_64x128::PanelTransform::centered(
         SH1106_PANEL,
-        screen::face_64x128::PanelScale::OneToOne,
+        screen::face_64x128::PanelScaling::SampledDestinationPixels(
+            screen::face_64x128::PanelScale::OneToOne,
+        ),
         screen::face_64x128::QuarterTurn::Clockwise,
     ) {
         Ok(transform) => transform,

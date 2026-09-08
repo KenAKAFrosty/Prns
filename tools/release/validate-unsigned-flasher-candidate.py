@@ -14,6 +14,7 @@ from flasher_build_metadata import validate_metadata
 from flasher_browser_test_trust import find_browser_test_trust_leaks
 from flasher_hotfix import verify_candidate as verify_hotfix_candidate
 from flasher_reproducibility import validate_report as validate_reproducibility_report
+from flasher_sparse_sizes import SHIPPING_BOARDS
 from flasher_sparse_sizes import build_report as build_sparse_size_report
 from flasher_website_history import allowed_historical_signatures, validate_candidate_history
 from source_snapshot import verify_source_snapshot
@@ -33,16 +34,6 @@ CLI_TARGETS = {
     "aarch64-unknown-linux-gnu": ".tar.gz",
     "x86_64-pc-windows-msvc": ".zip",
 }
-SHIPPING_BOARDS = {
-    "heltec-v4",
-    "heltec-v4-r8",
-    "t-beam-supreme",
-    "xiao-esp32-c6",
-    "t-echo",
-    "t114",
-    "t096",
-    "t1000-e",
-}
 REQUIRED_RELEASE_FILES = (
     "VERSION",
     "flash-manifest.json",
@@ -61,6 +52,7 @@ REQUIRED_RELEASE_FILES = (
     "qualification/create-flasher-acceptance.py",
     "qualification/validate-flasher-acceptance.py",
     "qualification/flasher_acceptance_contract.py",
+    "qualification/flasher_board_catalog.py",
     "qualification/flasher_manifest.py",
     "qualification/flasher_memory_contracts.py",
     "qualification/flasher_tester_roster.py",
@@ -151,6 +143,8 @@ def verify_qualification_kit(root: Path, roster_version: str, tester_roster: Pat
         "qualification/validate-flasher-acceptance.py": release_tools / "validate-flasher-acceptance.py",
         "qualification/flasher_acceptance_contract.py": release_tools
         / "flasher_acceptance_contract.py",
+        "qualification/flasher_board_catalog.py": release_tools
+        / "flasher_board_catalog.py",
         "qualification/flasher_manifest.py": release_tools / "flasher_manifest.py",
         "qualification/flasher_memory_contracts.py": release_tools
         / "flasher_memory_contracts.py",

@@ -21,6 +21,7 @@ pub mod rnode;
 pub mod rns_management;
 pub mod serial;
 pub mod shared_instance;
+pub mod subghz;
 pub mod tcp;
 pub mod udp;
 pub mod usb_auto;

@@ -2,25 +2,25 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use prns_core::interfaces::{FrameSink, FrameSinkError, PacketPhyStats};
-use rtrb::{Consumer, PopError, Producer, PushError, RingBuffer};
+use rtrb::{Consumer, Producer, PushError, RingBuffer};
 use tokio::sync::Notify;
+
+use super::driver::ManifoldWakeSender;
 
 pub fn tokio_grant_lane(slot_cap: usize, depth: usize) -> (TokioGrantProducer, TokioGrantConsumer) {
     let depth = depth.max(1);
     let (expedited, expedited_slots) = RingBuffer::new(depth);
     let (regular, regular_slots) = RingBuffer::new(depth);
-    let (mut free_slots, free) = RingBuffer::new(depth);
-    for _ in 0..depth {
-        let _ = free_slots.push(HeapFrameSlot::empty(slot_cap));
-    }
+    let (recycled_slots, recycled) = RingBuffer::new(depth);
     let filled_ready = Arc::new(Notify::new());
     let free_ready = Arc::new(Notify::new());
     let producer_parked = Arc::new(AtomicBool::new(false));
     let consumer_parked = Arc::new(AtomicBool::new(false));
-    let announced = Arc::new(AtomicBool::new(false));
     (
         TokioGrantProducer {
-            free,
+            slot_cap,
+            vacant_slots: depth,
+            recycled,
             expedited,
             regular,
             capacity: depth,
@@ -29,19 +29,18 @@ pub fn tokio_grant_lane(slot_cap: usize, depth: usize) -> (TokioGrantProducer, T
             free_ready: free_ready.clone(),
             producer_parked: producer_parked.clone(),
             consumer_parked: consumer_parked.clone(),
-            announced: announced.clone(),
         },
         TokioGrantConsumer {
             expedited: expedited_slots,
             regular: regular_slots,
-            free: free_slots,
+            recycled: recycled_slots,
             peeked: None,
             filled_ready,
             free_ready,
             producer_parked,
             consumer_parked,
-            announced,
             expedited_streak: 0,
+            release_notify: None,
         },
     )
 }
@@ -117,7 +116,9 @@ impl FrameSink for HeapFrameSlot {
 }
 
 pub struct TokioGrantProducer {
-    free: Consumer<HeapFrameSlot>,
+    slot_cap: usize,
+    vacant_slots: usize,
+    recycled: Consumer<HeapFrameSlot>,
     expedited: Producer<HeapFrameSlot>,
     regular: Producer<HeapFrameSlot>,
     capacity: usize,
@@ -126,7 +127,6 @@ pub struct TokioGrantProducer {
     free_ready: Arc<Notify>,
     producer_parked: Arc<AtomicBool>,
     consumer_parked: Arc<AtomicBool>,
-    announced: Arc<AtomicBool>,
 }
 
 impl TokioGrantProducer {
@@ -135,14 +135,22 @@ impl TokioGrantProducer {
     }
 
     pub fn occupancy(&self) -> usize {
-        self.capacity().saturating_sub(self.free.slots())
+        self.capacity()
+            .saturating_sub(self.vacant_slots.saturating_add(self.recycled.slots()))
     }
 
     pub fn try_grant(&mut self) -> Option<&mut HeapFrameSlot> {
         if self.granted.is_none() {
-            self.granted = self.free.pop().ok();
+            self.granted = self.pop_free_slot();
         }
         self.granted.as_mut()
+    }
+
+    fn pop_free_slot(&mut self) -> Option<HeapFrameSlot> {
+        self.recycled.pop().ok().or_else(|| {
+            self.vacant_slots = self.vacant_slots.checked_sub(1)?;
+            Some(HeapFrameSlot::empty(self.slot_cap))
+        })
     }
 
     pub async fn grant(&mut self) -> &mut HeapFrameSlot {
@@ -150,18 +158,18 @@ impl TokioGrantProducer {
             if let Some(slot) = self.granted.take() {
                 return self.granted.insert(slot);
             }
-            match self.free.pop() {
-                Ok(slot) => self.granted = Some(slot),
-                Err(PopError::Empty) => {
+            match self.pop_free_slot() {
+                Some(slot) => self.granted = Some(slot),
+                None => {
                     // The ring is authoritative. Advertise the cold waiter, then recheck it so a
                     // release racing this arm either wakes us or is observed synchronously.
                     self.producer_parked.store(true, Ordering::Release);
-                    match self.free.pop() {
-                        Ok(slot) => {
+                    match self.pop_free_slot() {
+                        Some(slot) => {
                             self.producer_parked.store(false, Ordering::Release);
                             self.granted = Some(slot);
                         }
-                        Err(PopError::Empty) => self.free_ready.notified().await,
+                        None => self.free_ready.notified().await,
                     }
                 }
             }
@@ -191,25 +199,29 @@ impl TokioGrantProducer {
         }
     }
 
-    pub fn needs_announce(&self) -> bool {
-        !self.announced.swap(true, Ordering::AcqRel)
+    pub(super) fn arm_release_wake(&self) {
+        self.producer_parked.store(true, Ordering::Release);
+    }
+
+    pub(super) fn disarm_release_wake(&self) {
+        self.producer_parked.store(false, Ordering::Release);
     }
 }
 
 pub struct TokioGrantConsumer {
     expedited: Consumer<HeapFrameSlot>,
     regular: Consumer<HeapFrameSlot>,
-    free: Producer<HeapFrameSlot>,
+    recycled: Producer<HeapFrameSlot>,
     peeked: Option<HeapFrameSlot>,
     filled_ready: Arc<Notify>,
     free_ready: Arc<Notify>,
     producer_parked: Arc<AtomicBool>,
     consumer_parked: Arc<AtomicBool>,
-    announced: Arc<AtomicBool>,
     expedited_streak: usize,
+    release_notify: Option<ManifoldWakeSender>,
 }
 
-const EXPEDITED_BURST: usize = 8;
+pub(super) const EXPEDITED_BURST: usize = 8;
 
 enum GrantQueue {
     Expedited,
@@ -217,6 +229,10 @@ enum GrantQueue {
 }
 
 impl TokioGrantConsumer {
+    pub(super) fn notify_releases_to(&mut self, notify: ManifoldWakeSender) {
+        self.release_notify = Some(notify);
+    }
+
     pub fn try_peek(&mut self) -> Option<&mut HeapFrameSlot> {
         if self.peeked.is_none() {
             self.peeked = self.pop_next();
@@ -274,20 +290,19 @@ impl TokioGrantConsumer {
     }
 
     pub(crate) fn return_slot(&mut self, slot: HeapFrameSlot) {
-        match self.free.push(slot) {
+        match self.recycled.push(slot) {
             Ok(()) => {
                 if self.producer_parked.load(Ordering::Acquire)
                     && self.producer_parked.swap(false, Ordering::AcqRel)
                 {
-                    self.free_ready.notify_one();
+                    match &self.release_notify {
+                        Some(notify) => notify.signal(),
+                        None => self.free_ready.notify_one(),
+                    }
                 }
             }
             Err(PushError::Full(_)) => {}
         }
-    }
-
-    pub fn acknowledge(&mut self) {
-        self.announced.store(false, Ordering::Release);
     }
 }
 
@@ -328,6 +343,72 @@ mod tests {
 
         consumer.return_slot(slot);
         assert_eq!(producer.try_grant().unwrap().bytes.as_ptr(), allocation);
+    }
+
+    #[test]
+    fn a_returned_slot_is_reused_before_untouched_burst_capacity() {
+        let (mut producer, mut consumer) = tokio_grant_lane(64, 3);
+        producer.try_grant().unwrap().fill(&[7; 48]);
+        let allocation = producer.granted.as_ref().unwrap().bytes.as_ptr();
+        producer.commit();
+        consumer.try_peek().unwrap();
+        consumer.release();
+
+        assert_eq!(producer.try_grant().unwrap().bytes.as_ptr(), allocation);
+    }
+
+    #[test]
+    fn sequential_frames_grow_only_the_recycled_high_water_slot() {
+        let (mut producer, mut consumer) = tokio_grant_lane(64, 3);
+        let mut allocation = None;
+
+        for _ in 0..32 {
+            let slot = producer.try_grant().unwrap();
+            slot.fill(&[7; 48]);
+            match allocation {
+                Some(allocation) => assert_eq!(slot.bytes.as_ptr(), allocation),
+                None => allocation = Some(slot.bytes.as_ptr()),
+            }
+            producer.commit();
+            consumer.try_peek().unwrap();
+            consumer.release();
+        }
+
+        assert_eq!(producer.vacant_slots, 2);
+        assert_eq!(producer.recycled.slots(), 1);
+        assert_eq!(producer.occupancy(), 0);
+    }
+
+    #[tokio::test]
+    async fn armed_release_notifies_only_the_manifold_once() {
+        let (notify, notified) = super::super::driver::manifold_wake();
+        let (mut producer, mut consumer) = tokio_grant_lane(64, 1);
+        consumer.notify_releases_to(notify);
+
+        producer.try_grant().unwrap().fill(b"hot");
+        producer.commit();
+        consumer.try_peek().unwrap();
+        consumer.release();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), notified.wait())
+                .await
+                .is_err(),
+        );
+
+        producer.try_grant().unwrap().fill(b"parked");
+        producer.commit();
+        consumer.try_peek().unwrap();
+        producer.arm_release_wake();
+        notified.arm();
+        consumer.release();
+        tokio::time::timeout(Duration::from_millis(20), notified.wait())
+            .await
+            .expect("the manifold wakes");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), producer.free_ready.notified())
+                .await
+                .is_err(),
+        );
     }
 
     #[test]
@@ -531,34 +612,6 @@ mod tests {
         received.frame_mut()[0] ^= 0x20;
         assert_eq!(&received.frame()[..3], b"The");
         consumer.release();
-    }
-
-    #[test]
-    fn a_burst_earns_one_announcement_until_the_consumer_acknowledges() {
-        let (mut producer, mut consumer) = tokio_grant_lane(64, 8);
-
-        producer.try_grant().expect("lane grants").fill(b"one");
-        producer.commit();
-        assert!(producer.needs_announce(), "the first commit announces");
-
-        producer.try_grant().expect("lane grants").fill(b"two");
-        producer.commit();
-        assert!(
-            !producer.needs_announce(),
-            "a burst behind an unconsumed announcement stays silent",
-        );
-
-        consumer.acknowledge();
-        while consumer.try_peek().is_some() {
-            consumer.release();
-        }
-
-        producer.try_grant().expect("lane grants").fill(b"three");
-        producer.commit();
-        assert!(
-            producer.needs_announce(),
-            "a commit after the acknowledge announces again",
-        );
     }
 
     #[tokio::test]

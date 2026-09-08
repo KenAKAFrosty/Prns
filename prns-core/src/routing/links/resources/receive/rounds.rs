@@ -172,7 +172,10 @@ impl<S: StorageLayout> EngineState<S> {
         }
         let part: &[u8] = data.payload;
         #[cfg(feature = "resource-work-offload")]
-        if self.resource_part_hash_lane == ResourcePartHashLane::External {
+        if matches!(
+            self.resource_part_hash_lane,
+            ResourcePartHashLane::ExternalAtOrAbove { .. }
+        ) {
             let mut reservations = None;
             for index in 0..self.incoming_resources.len() {
                 if self.incoming_resources.link_at(index) != &link_id {
@@ -198,7 +201,10 @@ impl<S: StorageLayout> EngineState<S> {
                     },
                 };
             }
-            if let Some(reservations) = reservations {
+            if let Some(reservations) = reservations.filter(|reservations| {
+                self.resource_part_hash_lane
+                    .offloads(part.len(), reservations.len())
+            }) {
                 return IngestPacketOutcome::OwesResourcePartHash(ResourcePartHashOwed {
                     plan: ResourcePartHashPlan {
                         reservations,
@@ -1454,7 +1460,9 @@ mod loop_tests {
         let advertisement = advertise_from(&mut sender, &data, None);
         let pull = feed(&mut receiver, &advertisement, 2_000);
         let serve = feed(&mut sender, &pull.frames[0].1, 2_100);
-        receiver.resource_part_hash_lane = ResourcePartHashLane::External;
+        receiver.resource_part_hash_lane = ResourcePartHashLane::ExternalAtOrAbove {
+            minimum_input_bytes: 0,
+        };
 
         let mut raw = serve.frames[0].1.clone();
         let mut hashed = None;
@@ -1505,6 +1513,55 @@ mod loop_tests {
         let state = receiver.incoming_resources.state(index);
         assert_eq!(state.received_part_count, 1);
         assert_eq!(state.request_response_bytes_per_second, expected_rate);
+    }
+
+    #[cfg(feature = "resource-work-offload")]
+    #[test]
+    fn a_part_below_the_external_hash_threshold_lands_inline() {
+        let mut sender = engine_with_active_link();
+        let mut receiver = engine_with_active_link();
+        accept_everything(&mut receiver);
+        let data = eight_part_payload();
+
+        let advertisement = advertise_from(&mut sender, &data, None);
+        let pull = feed(&mut receiver, &advertisement, 2_000);
+        let serve = feed(&mut sender, &pull.frames[0].1, 2_100);
+        receiver.resource_part_hash_lane = ResourcePartHashLane::ExternalAtOrAbove {
+            minimum_input_bytes: usize::MAX,
+        };
+
+        let mut raw = serve.frames[0].1.clone();
+        let mut owed_hash = false;
+        receiver.ingest_packet_into(
+            crate::interfaces::InboundPacket {
+                arrived_at: InstantMillis(2_200),
+                source_interface: lane(),
+                bytes: &mut raw,
+            },
+            IngestIo {
+                interfaces: AttachedInterfaces::new(&[
+                    crate::engine::test_support::routable_descriptor(lane()),
+                ]),
+                now: InstantMillis(2_200),
+                fill_random: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
+                should_prove: &mut |_: &crate::engine::ProofRequest| false,
+                should_accept_resource:
+                    &mut |_: &crate::routing::links::resources::ResourceOffer| false,
+                sink: &mut |reaction| {
+                    if matches!(
+                        reaction,
+                        EngineReaction::Directive(Directive::Fulfill(OwedWork::ResourcePartHash(
+                            _
+                        )))
+                    ) {
+                        owed_hash = true;
+                    }
+                },
+            },
+        );
+
+        assert!(!owed_hash);
+        assert_eq!(receiver.incoming_resources.state(0).received_part_count, 1);
     }
 
     #[test]

@@ -3,8 +3,8 @@
 The acceptance record is evidence for one exact signed candidate, not a checklist or a place to
 record intentions. Generate it only after the public prerelease exists. The generator binds the
 manifest, manifest signature, signed-candidate archive, and signed roster by exact identity and
-produces eighteen physical rows, three Firefox Web Serial rows, one unsupported-browser row, and
-five native installer rows as `not-run`:
+produces every manifest-derived physical row, three Firefox Web Serial rows, one
+unsupported-browser row, and five native installer rows as `not-run`:
 
 ```sh
 PUBLISHED_AT="$(gh release view vVERSION --json publishedAt --jq .publishedAt)"
@@ -31,8 +31,8 @@ prerelease. This records a deliberate deferred check; it never counts as hardwar
 ## Physical runs
 
 `runs` contains one result for every board and surface (`web` or `cli`) plus separate S140 6.1.1
-and 7.3.0 T-Echo results on both surfaces: eighteen rows. The pinned S140 6.1.1 variant for T114
-and T096 contributes one row per surface. The signed roster assigns each
+and 7.3.0 T-Echo results on both surfaces. The pinned S140 6.1.1 variant for T114 and T096
+contributes one row per surface. The signed roster assigns each
 board/surface pair to one supported host, with Linux, macOS, and Windows
 collectively represented on both surfaces. One person may hold multiple or all assignments; an
 assignment is a coverage obligation, not a distinct-person requirement. Each row records:
@@ -79,7 +79,7 @@ manifest and surface:
 
 - Web: permission denial, navigation warning, and device MD5 mismatch.
 - CLI: unavailable port and write-verification failure.
-- Heltec/T-Beam: Preserve, Configure, and Clear.
+- Targets whose signed manifest declares provisioning: Preserve, Configure, and Clear.
 - Targets sharing a chip: explicit same-chip board confirmation.
 
 The T-Echo, T114, and T096 use the UF2 contract. The web route proves signed download verification, truthful
@@ -89,8 +89,9 @@ matching signed variant, and never upload or retain the descriptor. It must not 
 mount detection, filesystem sync, or device-side verification. Its CLI route proves exact
 foundation detection, zero/one/multiple mounts, copy/flush/sync failures, mount disappearance,
 bounded reboot detection and timeout, newly enumerated application USB identity, and post-flash
-boot. Each compatibility row also proves the interfaces declared by that board. Evidence bytes may
-not be reused between the T-Echo S140 6.1.1 and 7.3.0 rows or between distinct boards.
+boot. Every physical row also proves each interface declared by its signed manifest target.
+Evidence bytes may not be reused between the T-Echo S140 6.1.1 and 7.3.0 rows or between distinct
+boards.
 
 T-1000E uses the Nordic serial-DFU contract. Both surfaces prove the exact signed application,
 init packet, and manifest-bound recovery UF2; exact application/bootloader identity; reliable

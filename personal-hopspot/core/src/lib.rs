@@ -13,10 +13,10 @@ mod identity;
 mod mobile;
 pub mod node_pages;
 mod persistence;
-mod radio_profile_store;
 #[cfg(feature = "display")]
 mod screen;
 mod soft_ap;
+mod subg_configuration_store;
 
 pub use destinations::{
     hopspot_destination_hashes, HopspotDestinationHashes, HopspotDestinationSet,
@@ -52,21 +52,23 @@ pub use prns_core::capabilities::power::{
     BatteryGauge, BatteryPercent, BatterySource, ChargingState, ExternalPowerState, NoBattery,
     PowerSnapshot,
 };
-pub use radio_profile_store::{
-    LoadedRadioProfile, RadioProfileLoadNotice, RadioProfileStore, RadioProfileStoreError,
-};
 #[cfg(feature = "display")]
 pub use screen::{
-    apply_and_persist_radio_profile, card_label, card_label_max_chars, tcp_card_label,
-    AccessPointState, BluetoothRecoveryMenuDetails, Card, CardActivityTracker, CardKind, CardLabel,
-    GnssAvailability, InputEvent, InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess,
-    PersistenceNotice, PresentedNoticeTimer, RadioProfileChangeResult, ScreenContent,
-    SharedInstanceConfigExport, UiAction, UiConfiguration, UiNotice, UiState, UserBlanking,
-    WifiNetworkStatus, WifiStationStatus,
+    apply_and_persist_subg_configuration, card_label, card_label_max_chars, subg_card,
+    tcp_card_label, AccessPointState, ActiveSubGConfiguration, BluetoothRecoveryMenuDetails, Card,
+    CardActivityTracker, CardKind, CardLabel, GnssAvailability, InputEvent, InterfaceMenuDetails,
+    LoRaSpectrumMenuDetails, LocalDocsAccess, PersistenceNotice, PresentedNoticeTimer,
+    ScreenContent, SharedInstanceConfigExport, SubGCardState, SubGConfigurationChangeResult,
+    SubGConfigurationPersistenceOutcome, SubGConfigurationStepOutcome, UiAction, UiConfiguration,
+    UiNotice, UiState, UserBlanking, WifiNetworkStatus, WifiStationStatus,
 };
 #[cfg(feature = "display")]
 pub use screen::{display, face_64x128};
 pub use soft_ap::SoftApLeaseTable;
+pub use subg_configuration_store::{
+    LoadedSubGConfiguration, SubGConfigurationCommitOutcome, SubGConfigurationFlashOperation,
+    SubGConfigurationLoadNotice, SubGConfigurationStore, SubGConfigurationStoreError,
+};
 
 use personal_rns::engine::{
     EngineProtocolPolicy, LinkMtuDiscovery, LocalHopCountOverride, ProofForm,
@@ -251,7 +253,10 @@ mod tests {
         ];
 
         let cards: heapless::Vec<Card, 4> = snapshots_to_cards(&snapshots, |id| match id.kind() {
-            Some(InterfaceKind::LoRa) => Some((CardKind::LoRa, card_label("LoRa"))),
+            Some(InterfaceKind::LoRa) => Some((
+                CardKind::SubG(SubGCardState::AutoLoRa),
+                card_label("AutoLoRa"),
+            )),
             Some(InterfaceKind::UsbAutoDevice) => Some((CardKind::Usb, card_label("USB"))),
             Some(InterfaceKind::BluetoothAuto) => Some((CardKind::Ble, card_label("BLE"))),
             Some(InterfaceKind::AutoWifi) => Some((CardKind::Wifi, card_label("LAN"))),
@@ -261,7 +266,12 @@ mod tests {
         let kinds: heapless::Vec<CardKind, 4> = cards.iter().map(|card| card.kind).collect();
         assert_eq!(
             kinds.as_slice(),
-            &[CardKind::LoRa, CardKind::Wifi, CardKind::Ble, CardKind::Usb]
+            &[
+                CardKind::SubG(SubGCardState::AutoLoRa),
+                CardKind::Wifi,
+                CardKind::Ble,
+                CardKind::Usb,
+            ]
         );
     }
 

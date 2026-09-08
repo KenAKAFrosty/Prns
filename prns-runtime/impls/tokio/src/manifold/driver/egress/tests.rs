@@ -56,12 +56,139 @@ fn link_traffic_overtakes_buffered_resource_parts() {
     );
 }
 
+#[test]
+fn deferred_link_traffic_overtakes_bulk_with_the_same_bounded_streak() {
+    let source = InterfaceId::new([0x80; 8]);
+    let target = InterfaceId::new([0x8F; 8]);
+    let (producer, mut consumer) = tokio_grant_lane(64, 1);
+    let mut egress = Egress::new(std::vec![(target, producer)]);
+    let mut resource_part = [0u8; 20];
+    resource_part[18] = WireContext::Resource.to_byte();
+    resource_part[19] = 0xFE;
+
+    assert_eq!(
+        egress.enqueue_from_ingress(source, target, b"occupy"),
+        EgressEnqueueOutcome::Enqueued
+    );
+    assert_eq!(
+        egress.enqueue_from_ingress(source, target, &resource_part),
+        EgressEnqueueOutcome::Deferred
+    );
+    for index in 0..9u8 {
+        let mut link_traffic = [0u8; 20];
+        link_traffic[18] = WireContext::None.to_byte();
+        link_traffic[19] = index;
+        assert_eq!(
+            egress.enqueue_from_ingress(source, target, &link_traffic),
+            EgressEnqueueOutcome::Deferred
+        );
+    }
+
+    consumer.try_peek().unwrap();
+    consumer.release();
+    for expected in 0..8u8 {
+        assert_eq!(egress.flush_pending(1), 1);
+        assert_eq!(consumer.try_peek().unwrap().frame()[19], expected);
+        consumer.release();
+    }
+    assert_eq!(egress.flush_pending(1), 1);
+    assert_eq!(consumer.try_peek().unwrap().frame(), &resource_part);
+    consumer.release();
+    assert_eq!(egress.flush_pending(1), 1);
+    assert_eq!(consumer.try_peek().unwrap().frame()[19], 8);
+}
+
+#[tokio::test]
+async fn saturated_egress_defers_its_source_without_blocking_an_independent_lane() {
+    let source = InterfaceId::new([0x81; 8]);
+    let independent_source = InterfaceId::new([0x82; 8]);
+    let target = InterfaceId::new([0x83; 8]);
+    let independent_target = InterfaceId::new([0x84; 8]);
+    let (release_notify, releases) = super::super::manifold_wake();
+    let (target_producer, mut target_consumer) = tokio_grant_lane(64, 1);
+    target_consumer.notify_releases_to(release_notify);
+    let (independent_producer, mut independent_consumer) = tokio_grant_lane(64, 1);
+    let mut egress = Egress::new(std::vec![
+        (target, target_producer),
+        (independent_target, independent_producer),
+    ]);
+
+    assert_eq!(
+        egress.enqueue_from_ingress(source, target, b"first"),
+        EgressEnqueueOutcome::Enqueued
+    );
+    assert_eq!(
+        egress.enqueue_from_ingress(source, target, b"deferred"),
+        EgressEnqueueOutcome::Deferred
+    );
+    assert!(egress.blocks_source(source));
+    assert!(!egress.blocks_source(independent_source));
+    assert_eq!(
+        egress.enqueue_from_ingress(independent_source, independent_target, b"independent"),
+        EgressEnqueueOutcome::Enqueued
+    );
+    assert_eq!(
+        independent_consumer.try_peek().unwrap().frame(),
+        b"independent"
+    );
+    assert_eq!(
+        egress.enqueue_from_ingress(independent_source, target, b"second deferred"),
+        EgressEnqueueOutcome::Deferred
+    );
+    assert!(egress.blocks_source(independent_source));
+
+    assert_eq!(target_consumer.try_peek().unwrap().frame(), b"first");
+    releases.arm();
+    target_consumer.release();
+    tokio::time::timeout(std::time::Duration::from_millis(20), releases.wait())
+        .await
+        .expect("the manifold wakes for released egress capacity");
+    assert_eq!(egress.flush_pending(1), 1);
+    assert_eq!(target_consumer.try_peek().unwrap().frame(), b"deferred");
+    assert!(!egress.blocks_source(source));
+    assert!(egress.blocks_source(independent_source));
+    releases.arm();
+    target_consumer.release();
+    tokio::time::timeout(std::time::Duration::from_millis(20), releases.wait())
+        .await
+        .expect("the manifold wakes for the next release");
+    assert_eq!(egress.flush_pending(1), 1);
+    assert_eq!(
+        target_consumer.try_peek().unwrap().frame(),
+        b"second deferred"
+    );
+    assert!(!egress.blocks_source(independent_source));
+}
+
+#[test]
+fn removing_a_lane_retires_its_pending_continuation() {
+    let source = InterfaceId::new([0x85; 8]);
+    let target = InterfaceId::new([0x86; 8]);
+    let (producer, _consumer) = tokio_grant_lane(64, 1);
+    let mut egress = Egress::new(std::vec![(target, producer)]);
+
+    assert_eq!(
+        egress.enqueue_from_ingress(source, target, b"first"),
+        EgressEnqueueOutcome::Enqueued
+    );
+    assert_eq!(
+        egress.enqueue_from_ingress(source, target, b"deferred"),
+        EgressEnqueueOutcome::Deferred
+    );
+    assert!(egress.has_pending());
+
+    egress.remove_lane(target);
+
+    assert!(!egress.has_pending());
+    assert!(!egress.blocks_source(source));
+}
+
 #[cfg(feature = "runtime-metrics")]
 #[test]
-fn egress_metrics_distinguish_enqueued_full_and_missing_lanes() {
+fn egress_metrics_capture_backpressure_and_missing_lanes() {
     let id = InterfaceId::new([0x91; 8]);
     let missing = InterfaceId::new([0x92; 8]);
-    let (producer, _consumer) = tokio_grant_lane(64, 1);
+    let (producer, mut consumer) = tokio_grant_lane(64, 1);
     let mut egress = Egress::new(std::vec![(id, producer)]);
 
     egress.enqueue(id, b"first");
@@ -72,7 +199,9 @@ fn egress_metrics_distinguish_enqueued_full_and_missing_lanes() {
         egress.metrics_snapshot(&[], InstantMillis(0)),
         EgressMetricsSnapshot {
             enqueued_frames: 1,
-            full_lane_drops: 1,
+            backpressured_frames: 1,
+            pending_frames: 1,
+            maximum_pending_frames: 1,
             missing_lane_drops: 1,
             announces: crate::runtime::AnnounceEgressMetricsSnapshot {
                 interfaces: std::vec![crate::runtime::InterfaceAnnounceEgressMetricsSnapshot {
@@ -91,10 +220,19 @@ fn egress_metrics_distinguish_enqueued_full_and_missing_lanes() {
                 logical_interface: id,
                 capacity: 1,
                 occupancy: 1,
+                pending: 1,
             }],
             ..Default::default()
         }
     );
+    assert_eq!(consumer.try_peek().unwrap().frame(), b"first");
+    consumer.release();
+    assert_eq!(egress.flush_pending(1), 1);
+    assert_eq!(consumer.try_peek().unwrap().frame(), b"full");
+    let snapshot = egress.metrics_snapshot(&[], InstantMillis(0));
+    assert_eq!(snapshot.enqueued_frames, 2);
+    assert_eq!(snapshot.pending_frames, 0);
+    assert_eq!(snapshot.maximum_pending_frames, 1);
 }
 
 #[cfg(feature = "runtime-metrics")]
@@ -110,8 +248,22 @@ fn egress_metrics_distinguish_ifac_rejection_from_successful_masking() {
     let clean = [0u8; 3];
     let mut masked = [0u8; 64];
 
-    enqueue_for_wire(&mut egress, &ifacs, id, &clean, &mut masked);
-    enqueue_for_wire(&mut egress, &ifacs, id, &clean, &mut masked[..clean.len()]);
+    enqueue_for_wire(
+        &mut egress,
+        &ifacs,
+        id,
+        &clean,
+        &mut masked,
+        EgressOrigin::Internal,
+    );
+    enqueue_for_wire(
+        &mut egress,
+        &ifacs,
+        id,
+        &clean,
+        &mut masked[..clean.len()],
+        EgressOrigin::Internal,
+    );
 
     assert_eq!(consumer.try_peek().unwrap().frame().len(), 11);
     assert_eq!(
@@ -136,6 +288,7 @@ fn egress_metrics_distinguish_ifac_rejection_from_successful_masking() {
                 logical_interface: id,
                 capacity: 1,
                 occupancy: 1,
+                pending: 0,
             }],
             ..Default::default()
         }
@@ -585,6 +738,7 @@ fn online_only_directives_skip_disconnected_interfaces() {
             pacers: &mut pacers,
             scratch: &mut scratch,
             now: InstantMillis(1_000),
+            origin: EgressOrigin::Internal,
         };
         directive_egress.send_if_online(id, b"disconnected", &mut on_send);
     }
@@ -600,6 +754,7 @@ fn online_only_directives_skip_disconnected_interfaces() {
             pacers: &mut pacers,
             scratch: &mut scratch,
             now: InstantMillis(1_100),
+            origin: EgressOrigin::Internal,
         };
         directive_egress.send_if_online(id, b"connected", &mut on_send);
     }

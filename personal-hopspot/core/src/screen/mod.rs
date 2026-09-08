@@ -8,16 +8,17 @@ mod state;
 
 pub(crate) use model::sort_cards_for_display;
 pub use model::{
-    card_label, tcp_card_label, BluetoothRecoveryMenuDetails, Card, CardActivityTracker, CardKind,
-    CardLabel, InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess, ScreenContent,
-    WifiNetworkStatus, WifiStationStatus,
+    card_label, subg_card, tcp_card_label, BluetoothRecoveryMenuDetails, Card, CardActivityTracker,
+    CardKind, CardLabel, InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess,
+    ScreenContent, SubGCardState, WifiNetworkStatus, WifiStationStatus,
 };
 pub use notice::PresentedNoticeTimer;
 pub use render::cards::card_label_max_chars;
 pub use state::{
-    apply_and_persist_radio_profile, AccessPointState, GnssAvailability, InputEvent,
-    PersistenceNotice, RadioProfileChangeResult, SharedInstanceConfigExport, UiAction,
-    UiConfiguration, UiNotice, UiState, UserBlanking,
+    apply_and_persist_subg_configuration, AccessPointState, ActiveSubGConfiguration,
+    GnssAvailability, InputEvent, PersistenceNotice, SharedInstanceConfigExport,
+    SubGConfigurationChangeResult, SubGConfigurationPersistenceOutcome,
+    SubGConfigurationStepOutcome, UiAction, UiConfiguration, UiNotice, UiState, UserBlanking,
 };
 
 #[cfg(test)]

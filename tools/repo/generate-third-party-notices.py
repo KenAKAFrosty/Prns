@@ -48,6 +48,11 @@ GRAPHS = (
         "xtensa-esp32s3-none-elf",
     ),
     (
+        "ESP32-S3 Heltec Wireless Stick Lite V3",
+        "personal-hopspot/embedded/esp32/boards/heltec-wireless-stick-lite-v3/Cargo.toml",
+        "xtensa-esp32s3-none-elf",
+    ),
+    (
         "ESP32-S3 Heltec",
         "personal-hopspot/embedded/esp32/boards/heltec-v4/Cargo.toml",
         "xtensa-esp32s3-none-elf",

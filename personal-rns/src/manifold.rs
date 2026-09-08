@@ -10,12 +10,12 @@ pub mod tokio {
     };
     pub use prns_runtime_tokio::manifold::driver::{
         run, run_with_deciders, run_with_store, run_with_store_and_deciders, tokio_grant_lane,
-        AddInterfaceCommand, CryptoPoolConfig, Egress, HeapFrameSlot, HostCommand,
-        HostResourceMetadata, HostResourcePayload, HostResourcePayloadError, ManifoldWiring,
-        PoolWorkers, ProvideDecompressedHostCommand, RequestAnyHostCommand, ResourceInbound,
-        RespondAnyHostCommand, SendResourceHostCommand, SendResourceSegmentHostCommand,
-        StreamInbound, TokioClock, TokioGrantConsumer, TokioGrantProducer, TokioHost,
-        TokioInterfaceSeam, TokioInterfaceStatus,
+        AddInterfaceCommand, CryptoPoolConfig, CryptoWorkerPlacement, Egress, HeapFrameSlot,
+        HostCommand, HostResourceMetadata, HostResourcePayload, HostResourcePayloadError,
+        ManifoldWiring, PoolWorkers, ProvideDecompressedHostCommand, RequestAnyHostCommand,
+        ResourceInbound, RespondAnyHostCommand, SendResourceHostCommand,
+        SendResourceSegmentHostCommand, StreamInbound, TokioClock, TokioGrantConsumer,
+        TokioGrantProducer, TokioHost, TokioInterfaceSeam, TokioInterfaceStatus,
     };
 
     #[cfg(feature = "scheduler-tuning")]

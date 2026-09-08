@@ -64,7 +64,8 @@ use personal_rns::interfaces::esp_now::{
     self as espnow_core, Channel as EspNowChannel, ChannelPolicy, ESP_NOW_V2_AIR_MTU,
 };
 #[cfg(feature = "lora")]
-use personal_rns::interfaces::lora::{AirtimePolicy, DEFAULT_915_PROFILE, LORA_MAX_PAYLOAD};
+use personal_rns::interfaces::lora::{AirtimePolicy, LORA_MAX_PAYLOAD};
+use personal_rns::interfaces::subghz::SubGConfigurationState;
 use personal_rns::interfaces::usb_auto::device_descriptor;
 use personal_rns::interfaces::wifi_auto as wifi_auto_contract;
 use personal_rns::interfaces::BitrateBps;
@@ -92,7 +93,7 @@ use personal_rns::storage::StorageLayout;
 use personal_rns::tcp::{
     TcpClient, TcpClientInput, TcpClientTarget, TcpSocketBuffers, TCP_DNS_HOSTNAME_MAX_BYTES,
 };
-use personal_rns::usb_auto::{UsbAutoDevice, UsbAutoDeviceInput};
+use personal_rns::usb_auto::{PhysicalHostPresence, UsbAutoDevice, UsbAutoDeviceInput};
 use personal_rns::wifi_auto::{
     tcp_rendezvous, AutoWifi, AutoWifiSegment, AutoWifiShared, AutoWifiStatus, AutoWifiTopology,
     TcpRendezvousBuffers, TcpRendezvousClients, TcpRendezvousServer, TcpRendezvousStorage,
@@ -280,7 +281,7 @@ const BLE_SUPERVISOR_ID: InterfaceId =
 static BLE_SHARED: BluetoothAutoShared<BLE_PEER_CAPACITY> =
     BluetoothAutoShared::new(BLE_SUPERVISOR_ID);
 #[cfg(feature = "lora")]
-static LORA_CONTROL: LoRaControl = LoRaControl::new();
+static LORA_CONTROL: StaticCell<LoRaControl> = StaticCell::new();
 static USB_MANIFOLD_LANE: StaticManifoldLane<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, LANE_DEPTH, 0> =
     StaticManifoldLane::new();
 static TCP_MANIFOLD_LANE: StaticManifoldLane<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, LANE_DEPTH, 0> =
@@ -450,7 +451,8 @@ async fn usb_device_task(
         rx,
         tx,
         status,
-        host_present,
+        bitrate: personal_rns::interfaces::usb_auto::DEVICE_USB_BITRATE_BPS,
+        host_presence: PhysicalHostPresence::new(host_present),
     });
     device.run(seam).await
 }

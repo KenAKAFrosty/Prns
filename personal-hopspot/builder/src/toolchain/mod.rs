@@ -9,7 +9,8 @@ pub fn embedded_cargo_command() -> Command {
     let mut command = Command::new("cargo");
     command
         .env_remove("RUSTUP_TOOLCHAIN")
-        .env_remove("RUSTFLAGS");
+        .env_remove("RUSTFLAGS")
+        .env_remove("CARGO_TARGET_DIR");
     command
 }
 
@@ -114,6 +115,7 @@ mod tests {
         assert_eq!(
             environments,
             BTreeMap::from([
+                (OsStr::new("CARGO_TARGET_DIR"), None),
                 (OsStr::new("RUSTFLAGS"), None),
                 (OsStr::new("RUSTUP_TOOLCHAIN"), None),
             ])

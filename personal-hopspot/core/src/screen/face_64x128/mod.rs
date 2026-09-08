@@ -7,7 +7,7 @@ use super::{InterfaceMenuDetails, ScreenContent, UiState};
 
 pub use frame::{Frame, FRAME_BYTES, HEIGHT, WIDTH};
 pub use transform::{
-    LogicalPoint, MappedPoint, PanelScale, PanelSize, PanelSizeError, PanelTransform,
+    LogicalPoint, MappedPoint, PanelScale, PanelScaling, PanelSize, PanelSizeError, PanelTransform,
     PanelViewport, PhysicalPoint, PointMapError, QuarterTurn, TransformError,
 };
 

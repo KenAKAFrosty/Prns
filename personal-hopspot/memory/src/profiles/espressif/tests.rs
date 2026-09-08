@@ -17,6 +17,7 @@ fn partition_tables_bind_to_generic_regions() {
         &HELTEC_V4,
         &HELTEC_V4_R8,
         &HELTEC_E290,
+        &HELTEC_WIRELESS_STICK_LITE_V3,
         &T_BEAM_SUPREME,
         &XIAO_ESP32_C6,
     ] {
@@ -38,7 +39,16 @@ fn checked_partition_csvs_match_the_canonical_profiles() {
         assert_partition_csv(profile, sixteen_mib);
     }
     assert_partition_csv(&T_BEAM_SUPREME, eight_mib);
+    assert_partition_csv(&HELTEC_WIRELESS_STICK_LITE_V3, eight_mib);
     assert_partition_csv(&XIAO_ESP32_C6, four_mib);
+}
+
+#[test]
+fn wireless_stick_lite_does_not_claim_external_psram() {
+    assert!(HELTEC_WIRELESS_STICK_LITE_V3
+        .address_spaces
+        .iter()
+        .all(|space| space.kind != crate::AddressSpaceKind::ExternalPsram));
 }
 
 #[test]

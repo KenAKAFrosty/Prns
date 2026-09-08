@@ -199,6 +199,11 @@ pub struct EngineState<S: StorageLayout> {
     pub(crate) path_request_relay_counts: super::PathRequestRelayCounts,
     #[cfg(feature = "runtime-metrics")]
     pub(crate) resource_admission_event_counts: super::ResourceAdmissionEventCounts,
+    #[cfg(feature = "runtime-metrics")]
+    pub(crate) resource_round_metrics: super::ResourceRoundMetricsSnapshot,
+    #[cfg(feature = "runtime-metrics")]
+    pub(crate) resource_continuation_proof_timings:
+        Vec<super::metrics::ResourceContinuationProofTiming>,
     pub(crate) routing_table: EngineRoutingTable<S>,
     pub(crate) route_evidence_id_issuer: RouteEvidenceIdIssuer,
     pub(crate) destination_identities:
@@ -271,6 +276,10 @@ impl<S: StorageLayout> Default for EngineState<S> {
             path_request_relay_counts: Default::default(),
             #[cfg(feature = "runtime-metrics")]
             resource_admission_event_counts: Default::default(),
+            #[cfg(feature = "runtime-metrics")]
+            resource_round_metrics: Default::default(),
+            #[cfg(feature = "runtime-metrics")]
+            resource_continuation_proof_timings: Vec::new(),
             routing_table: Default::default(),
             route_evidence_id_issuer: RouteEvidenceIdIssuer::default(),
             destination_identities: DestinationIdentities::default(),
@@ -355,6 +364,10 @@ impl<S: StorageLayout> EngineState<S> {
             write!(path_request_relay_counts, Default::default());
             #[cfg(feature = "runtime-metrics")]
             write!(resource_admission_event_counts, Default::default());
+            #[cfg(feature = "runtime-metrics")]
+            write!(resource_round_metrics, Default::default());
+            #[cfg(feature = "runtime-metrics")]
+            write!(resource_continuation_proof_timings, Vec::new());
             write!(routing_table, Default::default());
             write!(route_evidence_id_issuer, RouteEvidenceIdIssuer::default());
             write!(destination_identities, DestinationIdentities::default());
@@ -582,6 +595,7 @@ impl<S: StorageLayout> EngineState<S> {
                 pending_depth: u32::try_from(self.pending_resource_offers.len())
                     .unwrap_or(u32::MAX),
                 admission_events: self.resource_admission_event_counts,
+                rounds: self.resource_round_metrics,
             },
             route_count: u32::try_from(self.routing_table.route_count()).unwrap_or(u32::MAX),
             link_count: u32::try_from(self.links.active_link_count()).unwrap_or(u32::MAX),

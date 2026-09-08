@@ -42,11 +42,15 @@ pub fn compress_resource_candidate(data: &[u8], packed_metadata: Option<&[u8]>) 
 /// the payload as-is with the `c` flag clear. For already-dense bytes bz2 only adds overhead,
 /// so the reference, and we, decline it.
 ///
+/// For 1–8 KiB inputs, a conservative adjacent-pair uniqueness screen rejects near-random
+/// payloads before bz2 allocates its block workspace. A mistaken rejection remains wire-legal but
+/// larger, so the 15/16 threshold deliberately admits ambiguous inputs to the reference compressor.
+///
 /// The reference pays the full attempt on every input; on dense data that is where a bulk
 /// sender's whole core goes (~80 ms per 1 MiB segment against ~3 ms of engine work), so past
 /// [`SAMPLE_GATE_LEN`] we first compress a head/middle/tail sample and decline outright when
-/// even the sample refuses to shrink. A kept stream is still the whole-input level-9 attempt,
-/// byte-identical to the reference's; the sample only buys the decline early. The corner this
+/// even the sample refuses to shrink. A kept stream is still byte-identical to the reference's
+/// whole-input level-9 output; the sample only buys the decline early. The corner this
 /// trades away: a large payload whose only compressible run hides between the sample points
 /// ships uncompressed — wire-legal, just larger than the reference would have sent it.
 ///
@@ -57,6 +61,9 @@ pub fn compress_resource_candidate(data: &[u8], packed_metadata: Option<&[u8]>) 
 /// entirely below that length — under half the payload — can hide.
 #[must_use]
 pub fn compress_if_smaller(data: &[u8]) -> Option<Vec<u8>> {
+    if adjacent_pairs_are_dense(data) {
+        return None;
+    }
     if data.len() >= SAMPLE_GATE_LEN && !sample_shrinks(data) {
         return None;
     }
@@ -68,6 +75,31 @@ pub fn compress_if_smaller(data: &[u8]) -> Option<Vec<u8>> {
 pub const SAMPLE_GATE_LEN: usize = 256 * 1024;
 
 const SAMPLE_SLICE_LEN: usize = 16 * 1024;
+const DENSE_PAIR_GATE_MIN_LEN: usize = 1024;
+const DENSE_PAIR_GATE_MAX_LEN: usize = 8192;
+const BYTE_PAIR_COUNT: usize = 1 << 16;
+const BITS_PER_WORD: usize = u64::BITS as usize;
+const DENSE_PAIR_UNIQUENESS_NUMERATOR: usize = 15;
+const DENSE_PAIR_UNIQUENESS_DENOMINATOR: usize = 16;
+
+fn adjacent_pairs_are_dense(data: &[u8]) -> bool {
+    if !(DENSE_PAIR_GATE_MIN_LEN..=DENSE_PAIR_GATE_MAX_LEN).contains(&data.len()) {
+        return false;
+    }
+    let mut pairs = [0u64; BYTE_PAIR_COUNT / BITS_PER_WORD];
+    let mut distinct = 0usize;
+    for pair in data.windows(2) {
+        let value = usize::from(u16::from_be_bytes([pair[0], pair[1]]));
+        let word = value / BITS_PER_WORD;
+        let bit = 1u64 << (value % BITS_PER_WORD);
+        if pairs[word] & bit == 0 {
+            pairs[word] |= bit;
+            distinct += 1;
+        }
+    }
+    distinct * DENSE_PAIR_UNIQUENESS_DENOMINATOR
+        >= (data.len() - 1) * DENSE_PAIR_UNIQUENESS_NUMERATOR
+}
 
 fn sample_shrinks(data: &[u8]) -> bool {
     let mut sample = Vec::with_capacity(3 * SAMPLE_SLICE_LEN);
@@ -78,10 +110,25 @@ fn sample_shrinks(data: &[u8]) -> bool {
 }
 
 fn bz2_if_smaller(data: &[u8]) -> Option<Vec<u8>> {
-    let mut compressor = Compress::new(Compression::best(), 0);
+    const BZ2_BLOCK_BYTES: usize = 100_000;
+    const BZ2_BLOCK_OVERFLOW_GUARD_BYTES: usize = 19;
+    const BZ2_REFERENCE_BLOCK_LEVEL: usize = 9;
+    const BZ2_REFERENCE_BLOCK_LEVEL_HEADER: u8 = b'9';
+    let level = data
+        .len()
+        .saturating_add(BZ2_BLOCK_OVERFLOW_GUARD_BYTES)
+        .div_ceil(BZ2_BLOCK_BYTES)
+        .clamp(1, BZ2_REFERENCE_BLOCK_LEVEL) as u32;
+    let mut compressed = bz2_if_smaller_with_level(data, Compression::new(level))?;
+    *compressed.get_mut(3)? = BZ2_REFERENCE_BLOCK_LEVEL_HEADER;
+    Some(compressed)
+}
+
+fn bz2_if_smaller_with_level(data: &[u8], level: Compression) -> Option<Vec<u8>> {
+    let mut compressor = Compress::new(level, 0);
     let mut compressed = Vec::with_capacity(bz2_worst_case_len(data.len()));
     match compressor.compress_vec(data, &mut compressed, bzip2::Action::Finish) {
-        Ok(Status::StreamEnd) => (compressed.len() < data.len()).then_some(compressed),
+        Ok(Status::StreamEnd) if compressed.len() < data.len() => Some(compressed),
         _ => None,
     }
 }
@@ -181,6 +228,23 @@ mod tests {
     }
 
     #[test]
+    fn adaptive_block_workspace_preserves_level_nine_output_across_boundaries() {
+        for len in [99_981, 99_982, 399_981, 399_982, 799_981, 799_982] {
+            let data = b"reticulum resources ride the link "
+                .iter()
+                .copied()
+                .cycle()
+                .take(len)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                bz2_if_smaller(&data),
+                bz2_if_smaller_with_level(&data, Compression::best()),
+                "input length {len}",
+            );
+        }
+    }
+
+    #[test]
     fn the_reference_stream_inflates_back_to_its_input() {
         let input = reference_input();
         let inflated = decompress_bounded(&bytes_from_hex(CASE1_BZ2), input.len() as u64);
@@ -192,7 +256,10 @@ mod tests {
     /// bz2 cannot shrink these, so they exercise the decline branch and the incompressible
     /// round trip without a real RNG in the test.
     fn xorshift_bytes(len: usize) -> Vec<u8> {
-        let mut x = 0x2545_f491_4f6c_dd1du64;
+        xorshift_bytes_from(0x2545_f491_4f6c_dd1d, len)
+    }
+
+    fn xorshift_bytes_from(mut x: u64, len: usize) -> Vec<u8> {
         let mut out = Vec::with_capacity(len + 8);
         while out.len() < len {
             x ^= x << 13;
@@ -230,6 +297,39 @@ mod tests {
     #[test]
     fn incompressible_data_declines_compression() {
         assert_eq!(compress_if_smaller(&xorshift_bytes(1024)), None);
+    }
+
+    #[test]
+    fn dense_small_payloads_skip_the_bz2_attempt() {
+        for len in [1024, 1360, 2048, 4096] {
+            assert!(adjacent_pairs_are_dense(&xorshift_bytes(len)));
+        }
+    }
+
+    #[test]
+    fn dense_small_payload_gate_agrees_with_bz2_across_varied_noise() {
+        for seed in 1u64..=32 {
+            for len in [1024, 1360, 2048, 4096, 8192] {
+                let data = xorshift_bytes_from(seed.wrapping_mul(0x2545_f491_4f6c_dd1d), len);
+                if adjacent_pairs_are_dense(&data) {
+                    assert_eq!(bz2_if_smaller(&data), None);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn small_payloads_with_compressible_structure_reach_bz2() {
+        let periodic: Vec<u8> = (0u8..=u8::MAX).cycle().take(4096).collect();
+        let repeated_block: Vec<u8> = xorshift_bytes(2048)
+            .into_iter()
+            .cycle()
+            .take(4096)
+            .collect();
+        for data in [reference_input(), periodic, repeated_block] {
+            assert!(!adjacent_pairs_are_dense(&data));
+            assert!(compress_if_smaller(&data).is_some());
+        }
     }
 
     #[test]

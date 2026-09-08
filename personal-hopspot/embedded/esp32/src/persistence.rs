@@ -1,39 +1,49 @@
 use portable_atomic::{AtomicU8, Ordering};
 
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 use allocator_api2::vec::Vec;
 #[cfg(target_arch = "xtensa")]
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-#[cfg(target_arch = "riscv32")]
+#[cfg(any(
+    target_arch = "riscv32",
+    all(target_arch = "xtensa", feature = "esp32s3fn8")
+))]
 use personal_rns::runtime::FixedRouteSnapshotKeys;
+#[cfg(target_arch = "xtensa")]
+use personal_rns::runtime::SharedNorFlash;
 use personal_rns::runtime::{
     EmbeddedCompactionPolicy, EmbeddedFlashPersistence, EmbeddedPersistenceDiagnostic,
     EmbeddedPersistencePolicy,
 };
-#[cfg(target_arch = "xtensa")]
-use personal_rns::runtime::{RouteSnapshotKeyError, RouteSnapshotKeys, SharedNorFlash};
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
+use personal_rns::runtime::{RouteSnapshotKeyError, RouteSnapshotKeys};
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 use personal_rns::wire::DestinationHash;
 
 use crate::flash::EspRomFlash;
 use crate::memory::EspFirmwareMemory;
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", feature = "esp32s3fn8"))]
+use crate::storage::InternalStorage;
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 use crate::storage::{EngineStorageType, PsramAlloc};
 use personal_hopspot_core::PersistenceState;
 
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 const S3_PENDING: usize = 64;
-#[cfg(target_arch = "riscv32")]
-const C6_PENDING: usize = 32;
+#[cfg(any(
+    target_arch = "riscv32",
+    all(target_arch = "xtensa", feature = "esp32s3fn8")
+))]
+const INTERNAL_PENDING: usize = 32;
 
 #[cfg(target_arch = "xtensa")]
 pub type S3SharedFlash = SharedNorFlash<'static, CriticalSectionRawMutex, EspRomFlash>;
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 pub struct S3RouteSnapshotKeys {
     keys: Vec<DestinationHash, PsramAlloc>,
 }
 
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 impl S3RouteSnapshotKeys {
     fn new() -> Self {
         Self {
@@ -42,7 +52,7 @@ impl S3RouteSnapshotKeys {
     }
 }
 
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 impl RouteSnapshotKeys for S3RouteSnapshotKeys {
     fn clear(&mut self) {
         self.keys.clear();
@@ -61,24 +71,31 @@ impl RouteSnapshotKeys for S3RouteSnapshotKeys {
     }
 }
 
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 pub type S3Persistence = EmbeddedFlashPersistence<
     S3SharedFlash,
     S3RouteSnapshotKeys,
     fn(EmbeddedPersistenceDiagnostic),
     S3_PENDING,
 >;
+#[cfg(all(target_arch = "xtensa", feature = "esp32s3fn8"))]
+pub type S3Fn8Persistence = EmbeddedFlashPersistence<
+    S3SharedFlash,
+    FixedRouteSnapshotKeys<{ InternalStorage::TRACKED_DESTINATIONS }>,
+    fn(EmbeddedPersistenceDiagnostic),
+    INTERNAL_PENDING,
+>;
 #[cfg(target_arch = "riscv32")]
 pub type C6Persistence = EmbeddedFlashPersistence<
     EspRomFlash,
     FixedRouteSnapshotKeys<{ crate::storage::C6Storage::TRACKED_DESTINATIONS }>,
     fn(EmbeddedPersistenceDiagnostic),
-    C6_PENDING,
+    INTERNAL_PENDING,
 >;
 
 static PERSISTENCE_STATE: AtomicU8 = AtomicU8::new(PersistenceState::Durable.encode());
 
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 pub fn s3(flash: S3SharedFlash, memory: &EspFirmwareMemory) -> S3Persistence {
     assert!(memory.journal_supports(EngineStorageType::MAX_COMPACTED_FLASH_JOURNAL_BYTES));
     EmbeddedFlashPersistence::new(
@@ -88,6 +105,20 @@ pub fn s3(flash: S3SharedFlash, memory: &EspFirmwareMemory) -> S3Persistence {
             EngineStorageType::MAX_CRITICAL_FLASH_JOURNAL_BYTES,
         )),
         S3RouteSnapshotKeys::new(),
+        observe as fn(EmbeddedPersistenceDiagnostic),
+    )
+}
+
+#[cfg(all(target_arch = "xtensa", feature = "esp32s3fn8"))]
+pub fn s3fn8(flash: S3SharedFlash, memory: &EspFirmwareMemory) -> S3Fn8Persistence {
+    assert!(memory.journal_supports(InternalStorage::MAX_COMPACTED_FLASH_JOURNAL_BYTES));
+    EmbeddedFlashPersistence::new(
+        flash,
+        memory.journal_layout(),
+        EmbeddedPersistencePolicy::hopspot_default(EmbeddedCompactionPolicy::hopspot(
+            InternalStorage::MAX_CRITICAL_FLASH_JOURNAL_BYTES,
+        )),
+        FixedRouteSnapshotKeys::new(),
         observe as fn(EmbeddedPersistenceDiagnostic),
     )
 }
@@ -106,7 +137,7 @@ pub fn c6(memory: &EspFirmwareMemory) -> C6Persistence {
     )
 }
 
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 pub fn persistence_state() -> PersistenceState {
     PersistenceState::decode(PERSISTENCE_STATE.load(Ordering::Acquire))
 }

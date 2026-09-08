@@ -1,6 +1,9 @@
 use std::collections::VecDeque;
 
-use crate::engine::{CryptoOwed, OpenedResourceSpan, OwedWork, ResourceOpenOwed};
+use crate::engine::{
+    CryptoOwed, OpenedResourceSpan, OwedWork, ResourceOpenOwed, ResourceOpenSpanResidence,
+    ResourceOpenWorkspace, StreamedResourceOpenReservation,
+};
 use crate::manifold::Host;
 use crate::routing::links::resources::receive::part_hash::{
     ResourcePartHashOwed, ResourcePartHashPlan,
@@ -11,13 +14,32 @@ use crate::routing::links::resources::send::{
 use crate::routing::links::resources::ResourceMetadata;
 
 use super::crypto_pool::{
-    run_crypto_job_inline, CryptoJob, CryptoPool, CryptoResult, OpenSpanJob, OpenedSpanResult,
-    ResourceBuildJob, ResourceDecompressionJob, ResourcePartHashBuffer, ResourcePartHashJob,
+    run_crypto_job_inline, CryptoJob, CryptoPool, CryptoResult, OpenSpanBuffer, OpenSpanJob,
+    OpenedSpanResult, ResourceBuildJob, ResourceDecompressionJob, ResourcePartHashBuffer,
+    ResourcePartHashJob,
 };
 use super::host_protocol::{
     HostResourceDigestPreparation, HostResourceMetadata, HostResourcePayload,
 };
 use super::HeapFrameSlot;
+
+const INLINE_RESOURCE_OPEN_MAX_BYTES: usize = 8 * 1024;
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum ResourceOpenExecution {
+    Manifold,
+    CryptoWorker,
+}
+
+impl ResourceOpenExecution {
+    pub(super) fn for_sealed_byte_len(sealed_byte_len: usize) -> Self {
+        if sealed_byte_len <= INLINE_RESOURCE_OPEN_MAX_BYTES {
+            Self::Manifold
+        } else {
+            Self::CryptoWorker
+        }
+    }
+}
 
 struct PendingResourceBuild {
     plan: ResourceBuildPlan,
@@ -31,6 +53,14 @@ struct PendingResourceBuild {
 struct PendingResourceSeal {
     plan: ResourceSealPlan,
     plaintext: Vec<u8>,
+}
+
+pub(super) struct DeferredTransferOpen {
+    pub(super) link_id: crate::routing::links::LinkId,
+    pub(super) hash: crate::routing::links::resources::ResourceHash,
+    pub(super) span_start: usize,
+    pub(super) state: crate::routing::links::resources::streamed_open::StreamedOpen,
+    pub(super) reservation: StreamedResourceOpenReservation,
 }
 
 // Keeping completed inline work by value avoids adding an allocation to the zero-copy open path.
@@ -140,36 +170,76 @@ impl PendingOwedWork {
         owed: ResourceOpenOwed<'_>,
         pool: Option<&CryptoPool>,
     ) {
-        if pool.is_some() {
-            let ResourceOpenOwed {
-                link_id,
-                hash,
-                span_start,
-                state,
-                bytes,
-                other_transfers_in_flight: _,
-            } = owed;
-            self.push_ready(CryptoJob::OpenSpan(Box::new(OpenSpanJob {
-                link_id,
-                hash,
-                span_start,
-                state,
-                bytes: bytes.to_vec(),
-            })));
-        } else {
-            let completed = owed.fulfill_inline();
-            let opened = match completed.opened {
-                OpenedResourceSpan::InPlace { byte_len } => OpenedSpanResult::InPlace { byte_len },
-                OpenedResourceSpan::Returned(bytes) => OpenedSpanResult::Owned(bytes.to_vec()),
-            };
-            self.completed.push_back(CryptoResult::SpanOpened {
-                link_id: completed.link_id,
-                hash: completed.hash,
-                span_start: completed.span_start,
-                state: completed.state,
-                opened,
-            });
+        let execution = match pool {
+            Some(_) => ResourceOpenExecution::for_sealed_byte_len(owed.state.sealed_byte_len()),
+            None => ResourceOpenExecution::Manifold,
+        };
+        match execution {
+            ResourceOpenExecution::CryptoWorker => {
+                let ResourceOpenOwed {
+                    link_id,
+                    hash,
+                    span_start,
+                    state,
+                    bytes,
+                    residence,
+                    other_transfers_in_flight: _,
+                } = owed;
+                self.push_ready(CryptoJob::OpenSpan(Box::new(OpenSpanJob {
+                    link_id,
+                    hash,
+                    span_start,
+                    state,
+                    residence,
+                    buffer: OpenSpanBuffer::Span(bytes.to_vec()),
+                })));
+                return;
+            }
+            ResourceOpenExecution::Manifold => {}
         }
+        let completed = owed.fulfill_inline();
+        let opened = match completed.opened {
+            OpenedResourceSpan::InPlace { byte_len } => OpenedSpanResult::InPlace { byte_len },
+            OpenedResourceSpan::Returned(bytes) => OpenedSpanResult::Owned(bytes.to_vec()),
+            OpenedResourceSpan::ReturnedTransfer {
+                transfer,
+                span_byte_len,
+            } => OpenedSpanResult::Transfer {
+                bytes: transfer,
+                span_byte_len,
+            },
+        };
+        self.completed.push_back(CryptoResult::SpanOpened {
+            link_id: completed.link_id,
+            hash: completed.hash,
+            span_start: completed.span_start,
+            state: completed.state,
+            residence: completed.residence,
+            opened,
+        });
+    }
+
+    pub(super) fn push_deferred_transfer_open(
+        &mut self,
+        deferred: DeferredTransferOpen,
+        workspace: ResourceOpenWorkspace,
+    ) {
+        let buffer = match workspace {
+            ResourceOpenWorkspace::CopiedSpan(bytes) => OpenSpanBuffer::Span(bytes),
+            ResourceOpenWorkspace::DetachedTransfer(bytes) => OpenSpanBuffer::Transfer {
+                bytes,
+                span: deferred.reservation.span_start()..deferred.reservation.span_end(),
+            },
+            ResourceOpenWorkspace::Stale => return,
+        };
+        self.push_ready(CryptoJob::OpenSpan(Box::new(OpenSpanJob {
+            link_id: deferred.link_id,
+            hash: deferred.hash,
+            span_start: deferred.span_start,
+            state: deferred.state,
+            residence: ResourceOpenSpanResidence::Transferable(deferred.reservation),
+            buffer,
+        })));
     }
 
     pub(super) fn push_crypto(&mut self, owed: CryptoOwed) {
@@ -372,5 +442,17 @@ mod tests {
             pending.bulk.front(),
             Some(PendingJob::Ready(CryptoJob::ScheduledTest(job))) if job.id == 1
         ));
+    }
+
+    #[test]
+    fn resource_open_execution_keeps_small_tokens_on_the_manifold() {
+        assert_eq!(
+            ResourceOpenExecution::for_sealed_byte_len(INLINE_RESOURCE_OPEN_MAX_BYTES),
+            ResourceOpenExecution::Manifold
+        );
+        assert_eq!(
+            ResourceOpenExecution::for_sealed_byte_len(INLINE_RESOURCE_OPEN_MAX_BYTES + 1),
+            ResourceOpenExecution::CryptoWorker
+        );
     }
 }

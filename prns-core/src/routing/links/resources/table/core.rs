@@ -168,6 +168,10 @@ pub struct OutgoingResourceState {
     pub retries_left: u8,
     pub command_id: CommandId,
     pub correlation: ResourceCorrelation,
+    #[cfg(feature = "runtime-metrics")]
+    pub metrics_advertised_at: Option<InstantMillis>,
+    #[cfg(feature = "runtime-metrics")]
+    pub metrics_last_frame_enqueued_at: Option<InstantMillis>,
 }
 
 // The vacant-slot value for fixed-capacity tables to initialize with, never a live resource's state; a successful [track](OutgoingResources::track) writes every field.
@@ -195,6 +199,10 @@ impl Default for OutgoingResourceState {
             retries_left: 0,
             command_id: CommandId(0),
             correlation: ResourceCorrelation::Unsolicited,
+            #[cfg(feature = "runtime-metrics")]
+            metrics_advertised_at: None,
+            #[cfg(feature = "runtime-metrics")]
+            metrics_last_frame_enqueued_at: None,
         }
     }
 }
@@ -622,6 +630,10 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
                     retries_left: 0,
                     command_id,
                     correlation,
+                    #[cfg(feature = "runtime-metrics")]
+                    metrics_advertised_at: None,
+                    #[cfg(feature = "runtime-metrics")]
+                    metrics_last_frame_enqueued_at: None,
                 };
                 self.refresh_earliest_timeout();
                 Ok(built.hash)
@@ -819,6 +831,10 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
             retries_left: 0,
             command_id: reserved.command_id,
             correlation: reserved.correlation,
+            #[cfg(feature = "runtime-metrics")]
+            metrics_advertised_at: None,
+            #[cfg(feature = "runtime-metrics")]
+            metrics_last_frame_enqueued_at: None,
         };
         self.refresh_earliest_timeout();
         ResourceBuildLanding::Built(built.hash)
@@ -1496,6 +1512,29 @@ impl<C: ResourceTable<IncomingResourceState>> IncomingResources<C> {
             &self.table.transfer(index)[..len],
             self.table.streamed_open(index),
         )
+    }
+
+    pub(crate) fn streamed_open(&self, index: usize) -> &OpenProgress {
+        self.table.streamed_open(index)
+    }
+
+    #[cfg(all(feature = "resource-work-offload", feature = "alloc"))]
+    pub(crate) fn transfer_is_resident(&self, index: usize) -> bool {
+        !self.table.transfer(index).is_empty()
+    }
+
+    #[cfg(all(feature = "resource-work-offload", feature = "alloc"))]
+    pub(crate) fn detach_transfer(&mut self, index: usize) -> ResourceTransferDetach {
+        self.table.detach_transfer(index)
+    }
+
+    #[cfg(all(feature = "resource-work-offload", feature = "alloc"))]
+    pub(crate) fn restore_transfer(
+        &mut self,
+        index: usize,
+        transfer: Vec<u8>,
+    ) -> ResourceTransferRestore {
+        self.table.restore_transfer(index, transfer)
     }
 
     pub fn link_at(&self, index: usize) -> &LinkId {

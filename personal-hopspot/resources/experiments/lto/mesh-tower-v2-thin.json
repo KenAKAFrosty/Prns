@@ -1,5 +1,5 @@
 {
-  "schema_version": 4,
+  "schema_version": 5,
   "target": {
     "id": "mesh-tower-v2",
     "display_name": "Heltec MeshTower V2",
@@ -8,7 +8,15 @@
   "architecture": {
     "rust_target": "thumbv7em-none-eabihf",
     "adapter": "thumbv7em-rust-lld",
-    "linker_flavor": "rust-lld"
+    "linker_flavor": "rust-lld",
+    "rustflags": [
+      "-C",
+      "link-arg=--icf=all",
+      "-C",
+      "llvm-args=-enable-machine-outliner",
+      "-C",
+      "llvm-args=-machine-outliner-reruns=2"
+    ]
   },
   "build": {
     "fingerprint": "74d9f869b050e0b1ba67977463a84c5461efacc91bb505dd60382c9b8d2fd181",
@@ -166,8 +174,8 @@
       "region": "firmware",
       "start": 155648,
       "end": 925696,
-      "image_bytes": 652844,
-      "headroom_bytes": 117204
+      "image_bytes": 651508,
+      "headroom_bytes": 118540
     }
   },
   "static_ram": {
@@ -181,9 +189,9 @@
         "capacity": {
           "kind": "known",
           "bytes": 212992,
-          "headroom_bytes": 11452
+          "headroom_bytes": 11324
         },
-        "static_section_bytes": 131904,
+        "static_section_bytes": 132032,
         "linker_padding_bytes": 4,
         "additional_reservation_bytes": 69632,
         "included_reservation_bytes": 0,
@@ -196,7 +204,7 @@
     "value": []
   },
   "analysis": {
-    "linker_map_bytes": 9727363,
+    "linker_map_bytes": 9771779,
     "allocated_sections": {
       "kind": "complete",
       "value": [
@@ -213,35 +221,35 @@
           "name": ".text",
           "kind": "code",
           "run_address": 155904,
-          "run_end": 666748,
-          "run_bytes": 510844,
-          "load_bytes": 510844,
+          "run_end": 664812,
+          "run_bytes": 508908,
+          "load_bytes": 508908,
           "alignment": 8
         },
         {
           "name": ".rodata",
           "kind": "read-only-data",
-          "run_address": 666752,
-          "run_end": 788564,
-          "run_bytes": 121812,
-          "load_bytes": 121812,
+          "run_address": 664816,
+          "run_end": 787260,
+          "run_bytes": 122444,
+          "load_bytes": 122444,
           "alignment": 8
         },
         {
           "name": ".data",
           "kind": "initialized-data",
           "run_address": 536920064,
-          "run_end": 536939988,
-          "run_bytes": 19924,
-          "load_bytes": 19924,
+          "run_end": 536939956,
+          "run_bytes": 19892,
+          "load_bytes": 19892,
           "alignment": 8
         },
         {
           "name": ".bss",
           "kind": "zero-fill",
-          "run_address": 536939992,
-          "run_end": 537051972,
-          "run_bytes": 111980,
+          "run_address": 536939960,
+          "run_end": 537052100,
+          "run_bytes": 112140,
           "load_bytes": 0,
           "alignment": 8
         }
@@ -252,70 +260,70 @@
       "value": {
         "crates": {
           "coverage": {
-            "analyzed_bytes": 652836,
-            "attributed_bytes": 503850,
-            "unclassified_bytes": 148986
+            "analyzed_bytes": 651500,
+            "attributed_bytes": 501384,
+            "unclassified_bytes": 150116
           },
           "largest": [
             {
               "name": "prns_core",
-              "bytes": 201504
+              "bytes": 199064
             },
             {
               "name": "embassy_futures",
-              "bytes": 47814
+              "bytes": 40226
             },
             {
               "name": "sha2",
               "bytes": 34404
             },
             {
+              "name": "prns_interfaces_embassy",
+              "bytes": 29210
+            },
+            {
               "name": "prns_runtime_embassy",
-              "bytes": 27514
+              "bytes": 26868
             },
             {
               "name": "personal_hopspot_nrf52840",
-              "bytes": 25307
+              "bytes": 25269
             },
             {
               "name": "core",
-              "bytes": 25010
+              "bytes": 23544
             },
             {
               "name": "embassy_sync",
-              "bytes": 18952
-            },
-            {
-              "name": "prns_interfaces_embassy",
-              "bytes": 18610
+              "bytes": 18712
             },
             {
               "name": "curve25519_dalek",
-              "bytes": 18142
+              "bytes": 18108
             },
             {
               "name": "embassy_executor",
-              "bytes": 15370
+              "bytes": 15324
             },
             {
               "name": "nrf_softdevice",
-              "bytes": 13123
+              "bytes": 13115
             },
             {
               "name": "prns_runtime",
-              "bytes": 10238
+              "bytes": 10178
             },
             {
               "name": "heapless",
-              "bytes": 9042
+              "bytes": 8806
             },
             {
               "name": "aes",
-              "bytes": 7888
+              "bytes": 7884
             },
             {
               "name": "embassy_usb",
-              "bytes": 7140
+              "bytes": 7104
             },
             {
               "name": "compiler_builtins",
@@ -323,15 +331,15 @@
             },
             {
               "name": "embassy_nrf",
-              "bytes": 4780
+              "bytes": 4776
             },
             {
               "name": "embassy_time",
-              "bytes": 3186
+              "bytes": 3132
             },
             {
               "name": "personal_hopspot_core",
-              "bytes": 2220
+              "bytes": 2216
             },
             {
               "name": "chacha20",
@@ -355,15 +363,15 @@
             },
             {
               "name": "hmac",
-              "bytes": 600
+              "bytes": 480
             }
           ]
         },
         "symbols": {
           "coverage": {
-            "analyzed_bytes": 652836,
-            "attributed_bytes": 504264,
-            "unclassified_bytes": 148572
+            "analyzed_bytes": 651500,
+            "attributed_bytes": 501732,
+            "unclassified_bytes": 149768
           },
           "largest": [
             {
@@ -371,8 +379,8 @@
               "bytes": 26440
             },
             {
-              "name": "<embassy_futures::join::MaybeDone<<prns_interfaces_embassy::lora::LoRaInterface<prns_interfaces_embassy::radios::sx126x::Sx126x<embedded_hal_bus::spi::exclusive::ExclusiveDevice<embassy_nrf::spim::Spim, embassy_nrf::gpio::Output, embassy_time::delay::Delay>, embassy_nrf::gpio::Input, embassy_nrf::gpio::Input, embassy_n…utex::raw::CriticalSectionRawMutex, personal_hopspot_nrf52840::runtime::entropy::NrfEntropySource, 3, 508>>::{closure#0}>>::poll [sha256:dca3b7dabe32]",
-              "bytes": 7904
+              "name": "<prns_interfaces_embassy::lora::LoRaInterface<prns_interfaces_embassy::radios::sx126x::Sx126x<embedded_hal_bus::spi::exclusive::ExclusiveDevice<embassy_nrf::spim::Spim, embassy_nrf::gpio::Output, embassy_time::delay::Delay>, embassy_nrf::gpio::Input, embassy_nrf::gpio::Input, embassy_nrf::gpio::Output, embassy_time::de…ocking_mutex::raw::CriticalSectionRawMutex, personal_hopspot_nrf52840::runtime::entropy::NrfEntropySource, 3, 508>>::{closure#0} [sha256:e4e34959a68e]",
+              "bytes": 9628
             },
             {
               "name": "<embassy_futures::join::MaybeDone<prns_runtime_embassy::manifold::driver::pooled_topology::run_pooled<personal_hopspot_nrf52840::storage::Nrf52840Storage, prns_runtime_embassy::manifold::driver::host::EmbassyHost<embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex, personal_hopspot_nrf52840::runtime::entropy::Nr…apshotKeys<8>, fn(prns_runtime_embassy::runtime::embedded_persistence::EmbeddedPersistenceDiagnostic), 8>>>::{closure#0}>>::poll [sha256:80f1dedc2a61]",
@@ -384,7 +392,7 @@
             },
             {
               "name": "<embassy_futures::join::MaybeDone<prns_runtime_embassy::runtime::request_runner::run_router<(), personal_hopspot_core::node_pages::NodePageRoutes, embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex, 2, 4, 0, 0, 4, 403>::{closure#0}>>::poll",
-              "bytes": 6512
+              "bytes": 6436
             },
             {
               "name": "personal_hopspot_nrf52840::runtime::bluetooth_auto::HUB",
@@ -392,19 +400,19 @@
             },
             {
               "name": "<embassy_executor::raw::TaskStorage<personal_hopspot_nrf52840::runtime::headless::__manifold_task_task::__manifold_task_task_inner_function::{closure#0}>>::poll",
-              "bytes": 5864
+              "bytes": 5852
             },
             {
               "name": "<prns_core::engine::state::EngineState<personal_hopspot_nrf52840::storage::Nrf52840Storage>>::ingest_classified_into_report::<prns_runtime_embassy::manifold::driver::pooled_topology::run_pooled<personal_hopspot_nrf52840::storage::Nrf52840Storage, prns_runtime_embassy::manifold::driver::host::EmbassyHost<embassy_sync::b…Keys<8>, fn(prns_runtime_embassy::runtime::embedded_persistence::EmbeddedPersistenceDiagnostic), 8>>>::{closure#0}::{closure#2}> [sha256:f3cb80915df3]",
-              "bytes": 5040
+              "bytes": 5004
             },
             {
               "name": "<embassy_futures::join::MaybeDone<<prns_interfaces_embassy::bluetooth_auto::runtime::BluetoothAuto<personal_hopspot_nrf52840::runtime::bluetooth_auto::NrfBleBackend, 5>>::run<embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex, 500, 3, 7>::{closure#0}>>::poll",
-              "bytes": 4984
+              "bytes": 4996
             },
             {
               "name": "<prns_core::engine::state::EngineState<personal_hopspot_nrf52840::storage::Nrf52840Storage>>::ingest_command_into_with_timing::<prns_runtime_embassy::manifold::driver::pooled_topology::run_pooled<personal_hopspot_nrf52840::storage::Nrf52840Storage, prns_runtime_embassy::manifold::driver::host::EmbassyHost<embassy_sync:…ns_runtime_embassy::runtime::embedded_persistence::EmbeddedPersistenceDiagnostic), 8>>>::{closure#0}::{closure#5}>::{closure#0}> [sha256:0d6d4208548e]",
-              "bytes": 4952
+              "bytes": 4944
             },
             {
               "name": "personal_hopspot_nrf52840::runtime::bluetooth_auto::L2CAP_POOL_STORE",
@@ -416,7 +424,7 @@
             },
             {
               "name": "<embassy_executor::raw::TaskStorage<heltec_mesh_tower_v2::____embassy_main_task::____embassy_main_task_inner_function::{closure#0}>>::poll",
-              "bytes": 4164
+              "bytes": 4148
             },
             {
               "name": "<curve25519_dalek::backend::serial::u32::scalar::Scalar29>::mul",
@@ -428,7 +436,7 @@
             },
             {
               "name": "<prns_interfaces_embassy::radios::sx126x::Sx126x<embedded_hal_bus::spi::exclusive::ExclusiveDevice<embassy_nrf::spim::Spim, embassy_nrf::gpio::Output, embassy_time::delay::Delay>, embassy_nrf::gpio::Input, embassy_nrf::gpio::Input, embassy_nrf::gpio::Output, embassy_time::delay::Delay> as prns_interfaces_embassy::radios::radio::LoRaRadio>::initialize::{closure#0}",
-              "bytes": 2824
+              "bytes": 2820
             },
             {
               "name": "personal_hopspot_nrf52840::runtime::bluetooth_auto::INBOUND_FRAMES",
@@ -444,11 +452,11 @@
             },
             {
               "name": "<prns_runtime_embassy::runtime::embedded_persistence::EmbeddedFlashPersistence<prns_runtime_embassy::runtime::shared_flash::SharedNorFlash<embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex, nrf_softdevice::flash::Flash>, prns_runtime_embassy::runtime::embedded_persistence::FixedRouteSnapshotKeys<8>, fn(prns_ru…ce::EmbeddedPersistenceDiagnostic), 8>>::progress_compaction::<personal_hopspot_nrf52840::storage::Nrf52840Storage>::{closure#0} [sha256:12775fe29cc5]",
-              "bytes": 2528
+              "bytes": 2524
             },
             {
               "name": "<prns_core::engine::state::EngineState<personal_hopspot_nrf52840::storage::Nrf52840Storage>>::ingest_classified_with_mode",
-              "bytes": 2112
+              "bytes": 2104
             },
             {
               "name": "personal_hopspot_nrf52840::runtime::headless::INTERFACE_STORE",

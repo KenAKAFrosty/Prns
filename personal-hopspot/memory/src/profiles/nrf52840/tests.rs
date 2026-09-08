@@ -65,6 +65,16 @@ fn memory_x_layouts_derive_from_each_canonical_profile() {
             AddressRange::new(0x2000_C000, 0x2004_0000),
         ),
         (
+            &MESH_POCKET_5000,
+            AddressRange::new(0x26000, 0xE1000),
+            AddressRange::new(0x2000_C000, 0x2004_0000),
+        ),
+        (
+            &MESH_POCKET_10000,
+            AddressRange::new(0x26000, 0xE1000),
+            AddressRange::new(0x2000_C000, 0x2004_0000),
+        ),
+        (
             &T1000_E,
             AddressRange::new(0x27000, 0xE9000),
             AddressRange::new(0x2001_0000, 0x2004_0000),

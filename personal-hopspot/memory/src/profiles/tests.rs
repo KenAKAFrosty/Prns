@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn every_canonical_profile_is_unique_and_valid() {
-    assert_eq!(ALL_MEMORY_PROFILES.len(), 11);
+    assert_eq!(ALL_MEMORY_PROFILES.len(), 14);
     for (index, profile) in ALL_MEMORY_PROFILES.iter().enumerate() {
         assert_eq!(profile.validate(), Ok(()), "{}", profile.id.0);
         assert_eq!(memory_profile(profile.id), Some(*profile));
@@ -35,7 +35,8 @@ fn architecture_matrix_has_three_adapters_without_board_specific_architectures()
         "thumbv7em-none-eabihf"
     );
     assert_eq!(T096.architecture, T114.architecture);
-    assert_eq!(T114.architecture, MESH_TOWER_V2.architecture);
+    assert_eq!(T114.architecture, MESH_POCKET_5000.architecture);
+    assert_eq!(MESH_POCKET_5000.architecture, MESH_TOWER_V2.architecture);
 }
 
 #[test]

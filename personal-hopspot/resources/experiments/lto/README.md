@@ -1,17 +1,17 @@
 # nRF52840 LTO experiment
 
-These reports preserve the phase-one LTO experiment reproduced from clean
-`trunk` at `62b2c6e27` on 2026-09-07. All three builds used the same toolchain
-fingerprint recorded in the reports.
+These reports preserve the phase-one LTO experiment reproduced from the source
+state committed alongside them on 2026-09-07. All three builds used the same
+toolchain fingerprint and Arm codegen policy recorded in the reports.
 
 | Target | LTO | Result | Flash evidence | RAM headroom |
 |---|---|---|---:|---:|
-| T-Echo S140 v6 | fat | success | 619,968 B image; 6,720 B headroom | 5,004 B |
-| T-Echo S140 v6 | thin | memory overflow | 86,240 B beyond `FLASH` | unavailable after failed link |
-| MeshTower V2 | thin | success | 652,844 B image; 117,204 B headroom | 11,452 B |
+| T-Echo S140 v6 | fat | success | 621,976 B image; 4,712 B headroom | 4,816 B |
+| T-Echo S140 v6 | thin | memory overflow | 86,560 B beyond `FLASH` | unavailable after failed link |
+| MeshTower V2 | thin | success | 651,508 B image; 118,540 B headroom | 11,324 B |
 
-The T-Echo comparison reports 92,952 additional analyzed flash bytes under
-thin LTO. Of that increase, 26,667 bytes are attributed and 66,285 bytes are
+The T-Echo comparison reports 91,272 additional analyzed flash bytes under
+thin LTO. Of that increase, 25,887 bytes are attributed and 65,385 bytes are
 unclassified. The report's ranked crate and symbol lists are advisory; the
 linker overflow and region accounting are authoritative.
 

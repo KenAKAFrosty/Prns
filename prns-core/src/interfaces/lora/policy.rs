@@ -17,6 +17,24 @@ pub fn descriptor(
         .descriptor(id)
 }
 
+pub fn unconfigured_descriptor(id: InterfaceId) -> InterfaceDescriptor {
+    InterfaceDefaults {
+        capabilities: InterfaceCapabilities {
+            ingress: IngressCapability::Disabled,
+            egress: EgressCapability::Disabled,
+        },
+        mode: InterfaceMode::Full,
+        gravity: crate::interfaces::InterfaceGravityDefault::FromBitrate,
+        bitrate: BitrateBps::guess(BitrateBps::MINIMUM),
+        mtu: MtuPolicy::fixed(LORA_MAX_PAYLOAD),
+        announce_rate_limit: None,
+        announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
+        airtime_duty_cycle: None,
+    }
+    .configured(ConfiguredInterfacePolicy::default())
+    .descriptor(id)
+}
+
 pub fn defaults(
     profile: &RadioProfile,
     airtime_duty_cycle: Option<AirtimeDutyCycle>,
@@ -39,14 +57,15 @@ pub fn defaults(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interfaces::lora::{Region, DEFAULT_915_PROFILE};
+    use crate::interfaces::subghz::regions::us915::US915_AUTO_LORA_PROFILE;
+    use crate::interfaces::subghz::RegulatoryRegion;
     use crate::interfaces::INTERFACE_ID_LEN;
 
     #[test]
     fn descriptor_is_a_repeating_shared_half_duplex_interface() {
         let d = descriptor(
             InterfaceId::new([0x5C; INTERFACE_ID_LEN]),
-            &DEFAULT_915_PROFILE,
+            &US915_AUTO_LORA_PROFILE,
             None,
         );
         assert!(matches!(d.mode, InterfaceMode::Full));
@@ -58,7 +77,7 @@ mod tests {
         assert_eq!(d.hardware_mtu, Some(LORA_MAX_PAYLOAD));
         assert_eq!(
             d.bitrate,
-            BitrateBps::new(u64::from(DEFAULT_915_PROFILE.nominal_bitrate_bps())).unwrap()
+            BitrateBps::new(u64::from(US915_AUTO_LORA_PROFILE.nominal_bitrate_bps())).unwrap()
         );
         assert_eq!(d.announce_bandwidth_cap, AnnounceBandwidthCap::RNS_DEFAULT);
     }
@@ -66,10 +85,10 @@ mod tests {
     #[test]
     fn descriptor_uses_the_supplied_duty_cycle() {
         let id = InterfaceId::new([0x5C; INTERFACE_ID_LEN]);
-        let eu_preset = Region::Eu868.regulatory_duty_cycle();
-        let d = descriptor(id, &DEFAULT_915_PROFILE, eu_preset);
+        let eu_preset = RegulatoryRegion::Eu868.regulatory_duty_cycle();
+        let d = descriptor(id, &US915_AUTO_LORA_PROFILE, eu_preset);
         assert_eq!(d.airtime_duty_cycle, eu_preset);
-        let none = descriptor(id, &DEFAULT_915_PROFILE, None);
+        let none = descriptor(id, &US915_AUTO_LORA_PROFILE, None);
         assert_eq!(none.airtime_duty_cycle, None);
     }
 }

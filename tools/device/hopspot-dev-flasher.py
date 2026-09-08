@@ -520,8 +520,10 @@ def build_website(
         [
             "dx",
             "build",
-            "--platform",
-            "web",
+            "--web",
+            "--ssg",
+            "--force-sequential",
+            "true",
             "--debug-symbols",
             "false",
             "--release",
@@ -535,6 +537,22 @@ def build_website(
     )
     if not (output / "index.html").is_file():
         raise DeveloperFlasherError("local developer website build did not produce index.html")
+    run_process(
+        [
+            "cargo",
+            "run",
+            "--locked",
+            "--features",
+            "local-dev-flasher",
+            "--bin",
+            "finalize_ssg",
+            "--",
+            output,
+        ],
+        cwd=WEBSITE,
+        environment=environment,
+        label="local developer SSG finalization",
+    )
     shutil.copytree(output, website_stage, dirs_exist_ok=True)
     sanitize_website_stage(website_stage)
     assets = website_stage / "assets"

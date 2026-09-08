@@ -7,7 +7,7 @@ publish = false
 description = "Personal Hopspot firmware for the Seeed Studio XIAO ESP32-C6"
 
 [dependencies]
-personal-hopspot-esp32 = { path = "../..", default-features = false, features = ["bluetooth-auto", "esp-now", "usb"] }
+personal-hopspot-esp32 = { path = "../..", default-features = false, features = ["bluetooth-auto", "esp-now", "jtag-logging", "usb"] }
 embassy-executor = { version = "0.10", default-features = false }
 esp-hal = { version = "1.1", features = ["esp32c6", "unstable"] }
 esp-rtos = { version = "0.3.0", features = ["esp32c6", "embassy", "esp-radio"] }

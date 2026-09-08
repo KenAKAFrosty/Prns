@@ -4,16 +4,19 @@ use std::process::Command;
 
 use personal_hopspot_memory::ProcessorArchitecture;
 
-use super::{Adapter, LinkerFlavor};
+use super::{Adapter, LinkerFlavor, LinkerTool};
 use crate::toolchain::rust_tool_for_cargo;
 use crate::BuildError;
 
 pub(super) static ADAPTER: Adapter = Adapter::new(
     "riscv32imac-rust-lld",
     ProcessorArchitecture::RiscV32Imac,
-    LinkerFlavor::RustLld,
-    "rust-lld",
-    &["-flavor", "gnu", "--version"],
+    LinkerTool::new(
+        LinkerFlavor::RustLld,
+        "rust-lld",
+        &["-flavor", "gnu", "--version"],
+    ),
+    &["-C", "link-arg=-Tlinkall.x"],
     configure_linker,
     linker_map_argument,
 );

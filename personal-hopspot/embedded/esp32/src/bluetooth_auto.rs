@@ -21,8 +21,10 @@ use trouble_host::prelude::*;
 
 #[cfg(target_arch = "riscv32")]
 use crate::c6::{BLE_PEER_CAPACITY, LIFECYCLE_CAP, NOTIFY_CAP};
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 use crate::s3::{BLE_PEER_CAPACITY, LIFECYCLE_CAP, NOTIFY_CAP};
+#[cfg(all(target_arch = "xtensa", feature = "esp32s3fn8"))]
+use crate::s3fn8::{BLE_PEER_CAPACITY, LIFECYCLE_CAP, NOTIFY_CAP};
 
 type BleFleet = Fleet<BridgeMutex, BLE_HW_MTU, NOTIFY_CAP, LIFECYCLE_CAP>;
 type Transport = CooperativeTransport<BleConnector<'static>>;
@@ -91,7 +93,7 @@ async fn serve_owned_slot(
     .await
 }
 
-#[cfg(target_arch = "xtensa")]
+#[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
 #[embassy_executor::task(pool_size = 4)]
 async fn serve_slot_task(run: core::pin::Pin<&'static mut dyn core::future::Future<Output = ()>>) {
     run.await
@@ -99,6 +101,18 @@ async fn serve_slot_task(run: core::pin::Pin<&'static mut dyn core::future::Futu
 
 #[cfg(target_arch = "riscv32")]
 #[embassy_executor::task(pool_size = 8)]
+async fn serve_slot_task(
+    idx: usize,
+    hub: &'static BleHub,
+    stack: &'static HostStack,
+    server: &'static GattServer,
+    gatt: ReticulumGattOwned,
+) {
+    serve_owned_slot(idx, hub, stack, server, gatt).await
+}
+
+#[cfg(all(target_arch = "xtensa", feature = "esp32s3fn8"))]
+#[embassy_executor::task(pool_size = 4)]
 async fn serve_slot_task(
     idx: usize,
     hub: &'static BleHub,
@@ -210,7 +224,7 @@ pub async fn run(
             columba_tx_uuid: columba_tx_uuid.clone(),
             columba_identity_uuid: columba_identity_uuid.clone(),
         };
-        #[cfg(target_arch = "xtensa")]
+        #[cfg(all(target_arch = "xtensa", not(feature = "esp32s3fn8")))]
         {
             let run =
                 crate::storage::allocate_psram(serve_owned_slot(idx, hub, stack, server, gatt));
@@ -219,7 +233,10 @@ pub async fn run(
                 unsafe { core::pin::Pin::new_unchecked(run) };
             spawner.spawn(serve_slot_task(run).expect("ble slot task fits"));
         }
-        #[cfg(target_arch = "riscv32")]
+        #[cfg(any(
+            target_arch = "riscv32",
+            all(target_arch = "xtensa", feature = "esp32s3fn8")
+        ))]
         spawner.spawn(serve_slot_task(idx, hub, stack, server, gatt).expect("ble slot task fits"));
     }
 

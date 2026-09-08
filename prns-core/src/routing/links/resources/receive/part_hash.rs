@@ -3,7 +3,7 @@ use crate::engine::InstantMillis;
 use crate::routing::ingress::{IgnoreReason, IngestPacketOutcome};
 use crate::routing::links::resources::ResourceHash;
 #[cfg(feature = "resource-work-offload")]
-use crate::routing::links::resources::{map_hash, SaltNonce, MAP_HASH_LEN};
+use crate::routing::links::resources::{map_hash, SaltNonce, MAP_HASH_LEN, RESOURCE_NONCE_LEN};
 use crate::routing::links::LinkId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -11,7 +11,26 @@ use crate::routing::links::LinkId;
 pub enum ResourcePartHashLane {
     #[default]
     Inline,
-    External,
+    ExternalAtOrAbove {
+        minimum_input_bytes: usize,
+    },
+}
+
+#[cfg(feature = "resource-work-offload")]
+impl ResourcePartHashLane {
+    pub(crate) fn offloads(self, part_byte_len: usize, candidate_count: usize) -> bool {
+        match self {
+            Self::Inline => false,
+            Self::ExternalAtOrAbove {
+                minimum_input_bytes,
+            } => {
+                part_byte_len
+                    .saturating_add(RESOURCE_NONCE_LEN)
+                    .saturating_mul(candidate_count)
+                    >= minimum_input_bytes
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,6 +67,15 @@ impl ResourcePartHashReservations {
                 Ok(Self::Four([first, second, third, reservation]))
             }
             Self::Four(_) => Err(ResourcePartHashCandidateCapacityReached),
+        }
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        match self {
+            Self::One(_) => 1,
+            Self::Two(_) => 2,
+            Self::Three(_) => 3,
+            Self::Four(_) => 4,
         }
     }
 }
@@ -261,5 +289,15 @@ mod tests {
             .including(reservation(4))
             .unwrap();
         assert!(reservations.including(reservation(5)).is_err());
+    }
+
+    #[test]
+    fn external_hashing_accounts_for_every_candidate_input() {
+        let lane = ResourcePartHashLane::ExternalAtOrAbove {
+            minimum_input_bytes: 8 * 1024,
+        };
+        assert!(!lane.offloads(2_043, 4));
+        assert!(lane.offloads(2_044, 4));
+        assert!(!ResourcePartHashLane::Inline.offloads(usize::MAX, usize::MAX));
     }
 }

@@ -6,23 +6,24 @@ use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::Rectangle;
 use embedded_graphics::text::{Baseline, Text};
-use personal_rns::interfaces::lora::{Modulation, RadioProfile, Region};
+use personal_rns::interfaces::lora::{Modulation, RadioProfile};
+use personal_rns::interfaces::subghz::SubGRegion;
 
-use crate::screen::state::lora::{
-    channel_count, current_channel, scroll_start, CustomRow, EditMode, FreqPlace, FreqRow,
-    LoRaScreen, PresetChoice, CUSTOM_ROWS, FREQ_ROWS, LORA_REGION_CANCEL, LORA_REGION_COUNT,
-    PRESET_CHOICES,
+use crate::screen::state::subg::{
+    channel_count, current_channel, scroll_start, subg_mode_choices, subg_region_choice, CustomRow,
+    EditMode, FreqPlace, FreqRow, PresetChoice, SubGModeChoice, SubGRegionChoice, SubGScreen,
+    CUSTOM_ROWS, FREQ_ROWS, PRESET_CHOICES, SUBG_REGION_COUNT,
 };
 
 use super::super::layout::*;
 use super::super::primitives::fill;
 
-pub(in crate::screen) const LORA_EDITOR_TOP: i32 = CARD_TOP + 2;
-pub(in crate::screen) const LORA_DOT_X: i32 = 1;
-const LORA_DOT_SIZE: u32 = 2;
-const LORA_ROW_TEXT_X: i32 = 6;
-const LORA_ROW_BACKING_H: u32 = 10;
-const LORA_VISIBLE_ROWS: usize = 7;
+pub(in crate::screen) const SUBG_EDITOR_TOP: i32 = CARD_TOP + 2;
+pub(in crate::screen) const SUBG_DOT_X: i32 = 1;
+const SUBG_DOT_SIZE: u32 = 2;
+const SUBG_ROW_TEXT_X: i32 = 6;
+const SUBG_ROW_BACKING_H: u32 = 10;
+const SUBG_VISIBLE_ROWS: usize = 7;
 
 fn custom_row_label(row: CustomRow) -> &'static str {
     match row {
@@ -42,7 +43,7 @@ fn custom_row_value(row: CustomRow, profile: &RadioProfile) -> heapless::String<
         spreading_factor,
         bandwidth,
         coding_rate,
-    } = profile.modulation;
+    } = profile.modulation();
     let mut value = heapless::String::new();
     match row {
         CustomRow::SpreadingFactor => {
@@ -55,7 +56,7 @@ fn custom_row_value(row: CustomRow, profile: &RadioProfile) -> heapless::String<
             let _ = write!(value, "4/{}", coding_rate.denominator());
         }
         CustomRow::TxPower => {
-            let _ = write!(value, "{} dBm", profile.tx_power.dbm());
+            let _ = write!(value, "{} dBm", profile.tx_power().dbm());
         }
         CustomRow::FreqMhz | CustomRow::FreqKhz | CustomRow::Save | CustomRow::Back => {}
     }
@@ -122,7 +123,7 @@ fn lora_custom_row_text(
         return text;
     }
     let label = custom_row_label(row);
-    let hz = profile.frequency.hz();
+    let hz = profile.frequency().hz();
     let active_place = match edit {
         EditMode::Freq { place } if selected => Some(place),
         _ => None,
@@ -148,7 +149,7 @@ fn lora_custom_row_text(
     text
 }
 
-fn draw_lora_list_row<D: DrawTarget<Color = BinaryColor>>(
+fn draw_subg_list_row<D: DrawTarget<Color = BinaryColor>>(
     display: &mut D,
     y: i32,
     text: &str,
@@ -161,8 +162,8 @@ fn draw_lora_list_row<D: DrawTarget<Color = BinaryColor>>(
         (&FONT_5X8, FONT_5X8_CHAR_W)
     };
     let color = if selected {
-        let width = (LORA_ROW_TEXT_X + character_count * character_width + 1).max(0) as u32;
-        let _ = Rectangle::new(Point::new(0, y - 1), Size::new(width, LORA_ROW_BACKING_H))
+        let width = (SUBG_ROW_TEXT_X + character_count * character_width + 1).max(0) as u32;
+        let _ = Rectangle::new(Point::new(0, y - 1), Size::new(width, SUBG_ROW_BACKING_H))
             .into_styled(fill(BinaryColor::On))
             .draw(display);
         BinaryColor::Off
@@ -170,33 +171,49 @@ fn draw_lora_list_row<D: DrawTarget<Color = BinaryColor>>(
         BinaryColor::On
     };
     let _ = Rectangle::new(
-        Point::new(LORA_DOT_X, y + 3),
-        Size::new(LORA_DOT_SIZE, LORA_DOT_SIZE),
+        Point::new(SUBG_DOT_X, y + 3),
+        Size::new(SUBG_DOT_SIZE, SUBG_DOT_SIZE),
     )
     .into_styled(fill(color))
     .draw(display);
     let style = MonoTextStyle::new(font, color);
-    let _ = Text::with_baseline(text, Point::new(LORA_ROW_TEXT_X, y), style, Baseline::Top)
+    let _ = Text::with_baseline(text, Point::new(SUBG_ROW_TEXT_X, y), style, Baseline::Top)
         .draw(display);
 }
 
 fn lora_row_uses_compact_font(text: &str) -> bool {
-    LORA_ROW_TEXT_X + text.chars().count() as i32 * FONT_5X8_CHAR_W > WIDTH
+    SUBG_ROW_TEXT_X + text.chars().count() as i32 * FONT_5X8_CHAR_W > WIDTH
 }
 
 fn region_choice_label(index: usize) -> &'static str {
-    if index == LORA_REGION_CANCEL {
-        "Cancel"
-    } else {
-        Region::ALL[index.min(Region::ALL.len() - 1)].label()
+    match subg_region_choice(index) {
+        SubGRegionChoice::Region(region) => region.label(),
+        SubGRegionChoice::Cancel => "Cancel",
     }
 }
 
-fn draw_lora_region_picker<D: DrawTarget<Color = BinaryColor>>(display: &mut D, cursor: usize) {
-    let start = scroll_start(cursor, LORA_REGION_COUNT, LORA_VISIBLE_ROWS);
-    for slot in start..(start + LORA_VISIBLE_ROWS).min(LORA_REGION_COUNT) {
-        let y = LORA_EDITOR_TOP + (slot - start) as i32 * MENU_ITEM_STEP;
-        draw_lora_list_row(display, y, region_choice_label(slot), slot == cursor);
+fn draw_subg_region_picker<D: DrawTarget<Color = BinaryColor>>(display: &mut D, cursor: usize) {
+    let start = scroll_start(cursor, SUBG_REGION_COUNT, SUBG_VISIBLE_ROWS);
+    for slot in start..(start + SUBG_VISIBLE_ROWS).min(SUBG_REGION_COUNT) {
+        let y = SUBG_EDITOR_TOP + (slot - start) as i32 * MENU_ITEM_STEP;
+        draw_subg_list_row(display, y, region_choice_label(slot), slot == cursor);
+    }
+}
+
+fn draw_subg_mode_picker<D: DrawTarget<Color = BinaryColor>>(
+    display: &mut D,
+    cursor: usize,
+    region: SubGRegion,
+) {
+    let choices = subg_mode_choices(region);
+    for (slot, choice) in choices.iter().enumerate() {
+        let y = SUBG_EDITOR_TOP + slot as i32 * MENU_ITEM_STEP;
+        let label = match choice {
+            SubGModeChoice::AutoLoRa => "Auto LoRa",
+            SubGModeChoice::ManualLoRa => "Manual LoRa",
+            SubGModeChoice::Back => "Back",
+        };
+        draw_subg_list_row(display, y, label, slot == cursor);
     }
 }
 
@@ -210,8 +227,8 @@ fn preset_choice_label(choice: PresetChoice) -> &'static str {
 
 fn draw_lora_preset_picker<D: DrawTarget<Color = BinaryColor>>(display: &mut D, cursor: usize) {
     for (slot, &choice) in PRESET_CHOICES.iter().enumerate() {
-        let y = LORA_EDITOR_TOP + slot as i32 * MENU_ITEM_STEP;
-        draw_lora_list_row(display, y, preset_choice_label(choice), slot == cursor);
+        let y = SUBG_EDITOR_TOP + slot as i32 * MENU_ITEM_STEP;
+        draw_subg_list_row(display, y, preset_choice_label(choice), slot == cursor);
     }
 }
 
@@ -222,10 +239,10 @@ fn draw_lora_custom<D: DrawTarget<Color = BinaryColor>>(
     profile: &RadioProfile,
 ) {
     for (slot, &row) in CUSTOM_ROWS.iter().enumerate() {
-        let y = LORA_EDITOR_TOP + slot as i32 * MENU_ITEM_STEP;
+        let y = SUBG_EDITOR_TOP + slot as i32 * MENU_ITEM_STEP;
         let selected = row == cursor;
         let text = lora_custom_row_text(row, edit, selected, profile);
-        draw_lora_list_row(display, y, &text, selected);
+        draw_subg_list_row(display, y, &text, selected);
     }
 }
 
@@ -236,7 +253,7 @@ fn lora_freq_row_text(
     profile: &RadioProfile,
 ) -> heapless::String<16> {
     let mut text = heapless::String::new();
-    let hz = profile.frequency.hz();
+    let hz = profile.frequency().hz();
     let active_place = match edit {
         EditMode::Freq { place } if selected => Some(place),
         _ => None,
@@ -276,41 +293,42 @@ fn draw_lora_frequency<D: DrawTarget<Color = BinaryColor>>(
     profile: &RadioProfile,
 ) {
     for (slot, &row) in FREQ_ROWS.iter().enumerate() {
-        let y = LORA_EDITOR_TOP + slot as i32 * MENU_ITEM_STEP;
+        let y = SUBG_EDITOR_TOP + slot as i32 * MENU_ITEM_STEP;
         let selected = row == cursor;
         let text = lora_freq_row_text(row, edit, selected, profile);
-        draw_lora_list_row(display, y, &text, selected);
+        draw_subg_list_row(display, y, &text, selected);
     }
 }
 
-pub(in crate::screen::render) fn draw_lora_editor<D: DrawTarget<Color = BinaryColor>>(
+pub(in crate::screen::render) fn draw_subg_editor<D: DrawTarget<Color = BinaryColor>>(
     display: &mut D,
-    screen: LoRaScreen,
+    screen: SubGScreen,
     profile: &RadioProfile,
 ) {
     match screen {
-        LoRaScreen::Region { cursor } => draw_lora_region_picker(display, cursor),
-        LoRaScreen::Preset { cursor } => draw_lora_preset_picker(display, cursor),
-        LoRaScreen::Frequency { cursor, edit } => {
+        SubGScreen::Region { cursor } => draw_subg_region_picker(display, cursor),
+        SubGScreen::Mode { cursor } => draw_subg_mode_picker(display, cursor, profile.region()),
+        SubGScreen::Preset { cursor } => draw_lora_preset_picker(display, cursor),
+        SubGScreen::Frequency { cursor, edit } => {
             draw_lora_frequency(display, cursor, edit, profile)
         }
-        LoRaScreen::Custom { cursor, edit } => draw_lora_custom(display, cursor, edit, profile),
+        SubGScreen::Custom { cursor, edit } => draw_lora_custom(display, cursor, edit, profile),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use personal_rns::interfaces::lora::DEFAULT_915_PROFILE;
+    use personal_rns::interfaces::subghz::regions::us915::US915_AUTO_LORA_PROFILE;
 
     #[test]
     fn radio_values_use_their_natural_quantities_and_unit_order() {
         assert_eq!(
-            custom_row_value(CustomRow::Bandwidth, &DEFAULT_915_PROFILE).as_str(),
-            "250 kHz"
+            custom_row_value(CustomRow::Bandwidth, &US915_AUTO_LORA_PROFILE).as_str(),
+            "500 kHz"
         );
         assert_eq!(
-            custom_row_value(CustomRow::TxPower, &DEFAULT_915_PROFILE).as_str(),
+            custom_row_value(CustomRow::TxPower, &US915_AUTO_LORA_PROFILE).as_str(),
             "22 dBm"
         );
         assert_eq!(
@@ -318,20 +336,20 @@ mod tests {
                 FreqRow::Mhz,
                 EditMode::Browsing,
                 false,
-                &DEFAULT_915_PROFILE,
+                &US915_AUTO_LORA_PROFILE,
             )
             .as_str(),
-            "915 MHz"
+            "921 MHz"
         );
         assert_eq!(
             lora_freq_row_text(
                 FreqRow::Khz,
                 EditMode::Browsing,
                 false,
-                &DEFAULT_915_PROFILE,
+                &US915_AUTO_LORA_PROFILE,
             )
             .as_str(),
-            "000 kHz"
+            "500 kHz"
         );
     }
 
@@ -347,14 +365,14 @@ mod tests {
     #[test]
     fn selected_unit_bearing_rows_fit_the_constrained_display() {
         for row in [CustomRow::Bandwidth, CustomRow::TxPower] {
-            let text = lora_custom_row_text(row, EditMode::Field, true, &DEFAULT_915_PROFILE);
+            let text = lora_custom_row_text(row, EditMode::Field, true, &US915_AUTO_LORA_PROFILE);
             let character_width = if lora_row_uses_compact_font(&text) {
                 FONT_4X6_CHAR_W
             } else {
                 FONT_5X8_CHAR_W
             };
             assert!(
-                LORA_ROW_TEXT_X + text.chars().count() as i32 * character_width <= WIDTH,
+                SUBG_ROW_TEXT_X + text.chars().count() as i32 * character_width <= WIDTH,
                 "{text:?} exceeds the display width"
             );
         }

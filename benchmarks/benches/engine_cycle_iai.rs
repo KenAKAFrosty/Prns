@@ -215,12 +215,19 @@ fn framed_payload() -> Vec<u8> {
     framed
 }
 
+fn primed_framing_decoder() -> (rns_serial_framing::RnsSerialDecoder<512>, Vec<u8>) {
+    let framed = framed_payload();
+    let mut decoder = rns_serial_framing::RnsSerialDecoder::new();
+    decoder.feed_slice(&framed, |_| {});
+    (decoder, framed)
+}
+
 #[library_benchmark]
-#[bench::p300(setup = framed_payload)]
-fn framing_decode(framed: Vec<u8>) {
+#[bench::p300(setup = primed_framing_decoder)]
+fn framing_decode(input: (rns_serial_framing::RnsSerialDecoder<512>, Vec<u8>)) {
+    let (mut decoder, framed) = input;
     let mut decoded = 0usize;
     for _ in 0..FRAMING_ITERS {
-        let mut decoder = rns_serial_framing::RnsSerialDecoder::<512>::new();
         decoder.feed_slice(black_box(&framed), |frame| {
             decoded += frame.len();
         });
@@ -262,7 +269,7 @@ fn full_window_channels() -> HeapChannelTable {
 #[bench::full_window(setup = full_window_channels)]
 fn channel_deadline_stretch(mut table: HeapChannelTable) {
     for index in 0..CHANNEL_COUNT {
-        for sub in 0..IN_FLIGHT {
+        for sub in (0..IN_FLIGHT).rev() {
             let current = table.outstanding_timeout_at(index, sub);
             table.set_outstanding_timeout_at(
                 black_box(index),

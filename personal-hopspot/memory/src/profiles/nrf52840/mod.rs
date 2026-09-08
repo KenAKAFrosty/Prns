@@ -449,6 +449,26 @@ pub const T114: MemoryProfile = MemoryProfile {
     runtime_reservations: &NRF_RUNTIME_RESERVATIONS,
 };
 
+pub const MESH_POCKET_5000: MemoryProfile = MemoryProfile {
+    id: MemoryProfileId("mesh-pocket-5000"),
+    architecture: ProcessorArchitecture::ThumbV7em,
+    address_spaces: &NRF52840_S140_RAM_SPACES,
+    regions: &T114_REGIONS,
+    firmware: firmware_placement(0x26000, 0xE1000, 0xE1000),
+    journals: &HELTEC_DISPLAY_JOURNALS,
+    runtime_reservations: &NRF_RUNTIME_RESERVATIONS,
+};
+
+pub const MESH_POCKET_10000: MemoryProfile = MemoryProfile {
+    id: MemoryProfileId("mesh-pocket-10000"),
+    architecture: ProcessorArchitecture::ThumbV7em,
+    address_spaces: &NRF52840_S140_RAM_SPACES,
+    regions: &T114_REGIONS,
+    firmware: firmware_placement(0x26000, 0xE1000, 0xE1000),
+    journals: &HELTEC_DISPLAY_JOURNALS,
+    runtime_reservations: &NRF_RUNTIME_RESERVATIONS,
+};
+
 pub const T1000_E: MemoryProfile = MemoryProfile {
     id: MemoryProfileId("t1000-e"),
     architecture: ProcessorArchitecture::ThumbV7em,
@@ -469,11 +489,13 @@ pub const MESH_TOWER_V2: MemoryProfile = MemoryProfile {
     runtime_reservations: &NRF_RUNTIME_RESERVATIONS,
 };
 
-const NRF52840_MEMORY_X_PROFILES: [MemoryProfileId; 6] = [
+const NRF52840_MEMORY_X_PROFILES: [MemoryProfileId; 8] = [
     T_ECHO_S140_V6.id,
     T_ECHO_S140_V7.id,
     T096.id,
     T114.id,
+    MESH_POCKET_5000.id,
+    MESH_POCKET_10000.id,
     T1000_E.id,
     MESH_TOWER_V2.id,
 ];

@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::fingerprint::Fingerprint;
 
-pub(super) const SCHEMA_VERSION: u32 = 4;
+pub(super) const SCHEMA_VERSION: u32 = 5;
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -34,6 +34,7 @@ pub(super) struct ArchitectureIdentity {
     pub rust_target: String,
     pub adapter: String,
     pub linker_flavor: String,
+    pub rustflags: Vec<String>,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]

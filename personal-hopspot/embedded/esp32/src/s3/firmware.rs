@@ -120,35 +120,36 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     )));
     let shared_flash = SharedNorFlash::new(flash, memory.flash_capacity());
     #[cfg(feature = "lora")]
-    let mut lora_profile_store =
-        screen::RadioProfileStore::new(shared_flash, memory.radio_profile_pages());
+    let mut subg_configuration_store =
+        screen::SubGConfigurationStore::new(shared_flash, memory.radio_profile_pages());
     #[cfg(feature = "lora")]
-    let loaded_lora_profile = match lora_profile_store.load(DEFAULT_915_PROFILE).await {
+    let loaded_subg_configuration = match subg_configuration_store.load().await {
         Ok(loaded) => loaded,
         Err(error) => {
-            log::error!("LoRa profile restore failed: {error:?}");
-            screen::LoadedRadioProfile {
-                profile: DEFAULT_915_PROFILE,
-                follows_default: true,
-                notice: Some(screen::RadioProfileLoadNotice::Reset),
+            log::error!("SubG configuration restore failed: {error:?}");
+            screen::LoadedSubGConfiguration {
+                state: SubGConfigurationState::Unconfigured,
+                notice: Some(screen::SubGConfigurationLoadNotice::Reset),
             }
         }
     };
     #[cfg(feature = "lora")]
-    let lora_profile = loaded_lora_profile.profile;
+    let subg_configuration = loaded_subg_configuration.state;
     #[cfg(feature = "lora")]
-    let profile_startup_notice = loaded_lora_profile.notice.map(|notice| match notice {
-        screen::RadioProfileLoadNotice::Recovered => screen::UiNotice::ProfileRecovered,
-        screen::RadioProfileLoadNotice::Reset => screen::UiNotice::ProfileReset,
+    let subg_startup_notice = loaded_subg_configuration.notice.map(|notice| match notice {
+        screen::SubGConfigurationLoadNotice::Migrated => screen::UiNotice::SubGMigrated,
+        screen::SubGConfigurationLoadNotice::Recovered => screen::UiNotice::SubGRecovered,
+        screen::SubGConfigurationLoadNotice::Reset => screen::UiNotice::SubGReset,
     });
     #[cfg(not(feature = "lora"))]
-    let profile_startup_notice: Option<screen::UiNotice> = None;
-    #[cfg(feature = "lora")]
-    let lora_id = LoRaInterface::<LoraRadio>::interface_id(&lora_profile);
+    let subg_startup_notice: Option<screen::UiNotice> = None;
     #[cfg(feature = "lora")]
     let lora_status: &'static EmbassyInterfaceStatus = mk_static!(
         EmbassyInterfaceStatus,
-        EmbassyInterfaceStatus::new_accounted(lora_id, ConnectionState::Initializing)
+        EmbassyInterfaceStatus::new_accounted(
+            LoRaInterface::<LoraRadio>::unconfigured_interface_id(),
+            ConnectionState::Initializing,
+        )
     );
     #[cfg(feature = "lora")]
     let lora_spectrum: &'static LoRaSpectrumStatus =
@@ -166,12 +167,14 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     #[cfg(feature = "lora")]
     let lora_tx_queue = crate::storage::allocate_lora_tx_queue();
     #[cfg(feature = "lora")]
+    let (mut lora_controller, lora_control) = LORA_CONTROL.init(LoRaControl::new()).split();
+    #[cfg(feature = "lora")]
     let lora = match LoRaInterface::new(LoRaInterfaceInput {
         radio: lora_radio,
-        profile: lora_profile,
+        configuration: subg_configuration,
         airtime_policy: AirtimePolicy::Regional,
         tx_queue: lora_tx_queue,
-        control: &LORA_CONTROL,
+        control: lora_control,
         status: lora_status,
         spectrum: lora_spectrum,
         lifecycle: LIFECYCLE.dyn_sender(),
@@ -179,6 +182,8 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         Ok(lora) => lora,
         Err(_) => panic!("the built-in LoRa profile and regional policy must be valid"),
     };
+    #[cfg(feature = "lora")]
+    lora_status.set_id(lora.id());
 
     let remote_control_bootstrap =
         remote_control_bootstrap.expect("RemoteControl identity bootstrap failed");
@@ -273,7 +278,10 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let usb_lane = manifold_lanes
         .claim_accounted_interface_with_outbound_buffer(
             &USB_MANIFOLD_LANE,
-            device_descriptor(usb_id),
+            device_descriptor(
+                usb_id,
+                personal_rns::interfaces::usb_auto::DEVICE_USB_BITRATE_BPS,
+            ),
             usb_outbound,
             usb_status,
         )
@@ -443,10 +451,10 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             shared_instance_config_export: screen::SharedInstanceConfigExport::Unavailable,
             gnss: B::Gnss::AVAILABILITY,
         });
-        let startup_notice = identity_startup_notice.or(profile_startup_notice);
+        let startup_notice = identity_startup_notice.or(subg_startup_notice);
         let mut pending_startup_notice = identity_startup_notice
             .is_some()
-            .then_some(profile_startup_notice)
+            .then_some(subg_startup_notice)
             .flatten();
         let mut notice_timer = screen::PresentedNoticeTimer::new();
         if let Some(notice) = startup_notice {
@@ -458,7 +466,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             );
         }
         #[cfg(feature = "lora")]
-        let mut working_lora_profile = lora_profile;
+        let mut working_subg_configuration = subg_configuration;
         let mut battery_state = screen::PowerSnapshot::UNKNOWN;
         let mut sampled_battery_state = screen::PowerSnapshot::UNKNOWN;
         let mut battery_gauge = screen::BatteryGauge::lipo();
@@ -502,9 +510,14 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 lora_card_status,
                 espnow_card_status,
             );
+            #[cfg(feature = "lora")]
+            let subg_card_configuration = Some(working_subg_configuration);
+            #[cfg(not(feature = "lora"))]
+            let subg_card_configuration = None;
             let tcp_card_config = wifi_config.tcp_client.as_ref();
             let mut cards = build_cards(
                 &snapshots,
+                subg_card_configuration,
                 usb_status.id(),
                 wifi_id,
                 tcp_id,
@@ -822,7 +835,9 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                         }
                                         // LoRa profile changes deliberately retag the interface,
                                         // while the card's role remains stable across that retag.
-                                        if !handled && card.kind() == screen::CardKind::LoRa {
+                                        if !handled
+                                            && matches!(card.kind(), screen::CardKind::SubG(_))
+                                        {
                                             if let Some(status) = lora_card_status {
                                                 show_toggle_notice(status.is_enabled());
                                                 status.toggle_enabled();
@@ -880,66 +895,83 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                         status.toggle_station_uplink();
                                     }
                                 }
-                                screen::UiAction::OpenLoRaEditor => {
+                                screen::UiAction::OpenSubGEditor => {
                                     #[cfg(feature = "lora")]
-                                    ui_state.open_lora_editor(working_lora_profile);
+                                    ui_state.open_subg_editor(working_subg_configuration);
                                 }
                                 #[cfg(not(feature = "lora"))]
-                                screen::UiAction::SetLoRaProfile(_)
-                                | screen::UiAction::ResetLoRaProfile => {}
+                                screen::UiAction::SetSubGConfiguration(_)
+                                | screen::UiAction::ClearSubGConfiguration => {}
                                 #[cfg(feature = "lora")]
-                                screen::UiAction::SetLoRaProfile(profile) => {
-                                    let result = screen::apply_and_persist_radio_profile(
-                                        async {
-                                            LORA_CONTROL.apply(profile).await
-                                                == LoRaApplyOutcome::Applied
-                                        },
-                                        || async {
-                                            match lora_profile_store.save(profile).await {
-                                                Ok(()) => true,
-                                                Err(error) => {
+                                action @ (screen::UiAction::SetSubGConfiguration(_)
+                                | screen::UiAction::ClearSubGConfiguration) => {
+                                    let previous = working_subg_configuration;
+                                    let requested = if let screen::UiAction::SetSubGConfiguration(
+                                        configuration,
+                                    ) = action
+                                    {
+                                        SubGConfigurationState::Configured(configuration)
+                                    } else {
+                                        SubGConfigurationState::Unconfigured
+                                    };
+                                    let result = match lora_controller
+                                        .apply_configuration(requested)
+                                        .await
+                                    {
+                                        LoRaApplyOutcome::Rejected => {
+                                            log::error!("SubG configuration apply failed");
+                                            screen::SubGConfigurationChangeResult::ApplyFailed
+                                        }
+                                        LoRaApplyOutcome::Applied => {
+                                            let persistence = match requested {
+                                                SubGConfigurationState::Configured(
+                                                    configuration,
+                                                ) => {
+                                                    subg_configuration_store
+                                                        .save(configuration)
+                                                        .await
+                                                }
+                                                SubGConfigurationState::Unconfigured => {
+                                                    subg_configuration_store.clear().await
+                                                }
+                                            };
+                                            match persistence {
+                                                screen::SubGConfigurationCommitOutcome::Committed => {
+                                                    screen::SubGConfigurationChangeResult::Saved
+                                                }
+                                                screen::SubGConfigurationCommitOutcome::Indeterminate(error) => {
                                                     log::error!(
-                                                        "LoRa profile save failed: {error:?}"
+                                                        "SubG configuration persistence is indeterminate: {error:?}"
                                                     );
-                                                    false
+                                                    screen::SubGConfigurationChangeResult::PersistenceUncertain
+                                                }
+                                                screen::SubGConfigurationCommitOutcome::NotCommitted(error) => {
+                                                    log::error!(
+                                                        "SubG configuration persistence failed: {error:?}"
+                                                    );
+                                                    match lora_controller
+                                                        .apply_configuration(previous)
+                                                        .await
+                                                    {
+                                                        LoRaApplyOutcome::Applied => {
+                                                            screen::SubGConfigurationChangeResult::PersistenceFailed
+                                                        }
+                                                        LoRaApplyOutcome::Rejected => {
+                                                            log::error!(
+                                                                "SubG configuration rollback failed"
+                                                            );
+                                                            screen::SubGConfigurationChangeResult::RollbackFailed
+                                                        }
+                                                    }
                                                 }
                                             }
-                                        },
-                                    )
-                                    .await;
-                                    if result.applied() {
-                                        working_lora_profile = profile;
-                                    }
-                                    let notice = result.notice();
-                                    show_notice(
-                                        &mut ui_state,
-                                        &mut notice_timer,
-                                        notice,
-                                        NOTICE_DURATION,
-                                    );
-                                }
-                                #[cfg(feature = "lora")]
-                                screen::UiAction::ResetLoRaProfile => {
-                                    let result = screen::apply_and_persist_radio_profile(
-                                        async {
-                                            LORA_CONTROL.apply(DEFAULT_915_PROFILE).await
-                                                == LoRaApplyOutcome::Applied
-                                        },
-                                        || async {
-                                            match lora_profile_store.reset().await {
-                                                Ok(()) => true,
-                                                Err(error) => {
-                                                    log::error!(
-                                                        "LoRa profile reset failed: {error:?}"
-                                                    );
-                                                    false
-                                                }
-                                            }
-                                        },
-                                    )
-                                    .await;
-                                    if result.applied() {
-                                        working_lora_profile = DEFAULT_915_PROFILE;
+                                        }
+                                    };
+                                    if matches!(
+                                        result.active_configuration(),
+                                        screen::ActiveSubGConfiguration::Requested
+                                    ) {
+                                        working_subg_configuration = requested;
                                     }
                                     let notice = result.notice();
                                     show_notice(

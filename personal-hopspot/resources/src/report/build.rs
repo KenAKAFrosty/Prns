@@ -271,6 +271,11 @@ pub(super) fn architecture_identity(target: &Target<'_>) -> ArchitectureIdentity
         rust_target: adapter.rust_target().to_string(),
         adapter: adapter.id().as_str().to_string(),
         linker_flavor: adapter.linker_flavor().as_str().to_string(),
+        rustflags: adapter
+            .rustflags()
+            .iter()
+            .map(|argument| (*argument).to_string())
+            .collect(),
     }
 }
 

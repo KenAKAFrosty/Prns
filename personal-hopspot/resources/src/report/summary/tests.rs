@@ -47,7 +47,7 @@ fn summary_merges_catalog_order_and_reports_numeric_deltas(
     let output = temporary.path().join("summary");
     let outcome = summarize(&matrix, &context, &reports, &baseline, &output)?;
     let summary: MatrixSummary = serde_json::from_slice(&std::fs::read(outcome.json())?)?;
-    assert_eq!(outcome.targets(), 11);
+    assert_eq!(outcome.targets(), 14);
     assert_eq!(summary.schema_version, model::SCHEMA_VERSION);
     assert_eq!(
         summary

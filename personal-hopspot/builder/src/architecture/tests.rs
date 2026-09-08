@@ -34,6 +34,14 @@ fn adapters_define_target_and_linker_identity() {
             LinkerFlavor::RustLld,
             "rust-lld",
             &["-flavor", "gnu", "--version"][..],
+            &[
+                "-C",
+                "link-arg=--icf=all",
+                "-C",
+                "llvm-args=-enable-machine-outliner",
+                "-C",
+                "llvm-args=-machine-outliner-reruns=2",
+            ][..],
         ),
         (
             ProcessorArchitecture::RiscV32Imac,
@@ -41,6 +49,7 @@ fn adapters_define_target_and_linker_identity() {
             LinkerFlavor::RustLld,
             "rust-lld",
             &["-flavor", "gnu", "--version"][..],
+            &["-C", "link-arg=-Tlinkall.x"][..],
         ),
         (
             ProcessorArchitecture::XtensaEsp32S3,
@@ -48,15 +57,19 @@ fn adapters_define_target_and_linker_identity() {
             LinkerFlavor::GnuLd,
             "xtensa-esp32s3-elf-gcc",
             &["--version"][..],
+            &["-C", "link-arg=-Tlinkall.x", "-C", "force-frame-pointers"][..],
         ),
     ];
 
-    for (architecture, rust_target, linker_flavor, linker_program, version_arguments) in expected {
+    for (architecture, rust_target, linker_flavor, linker_program, version_arguments, rustflags) in
+        expected
+    {
         let adapter = adapter_for(architecture);
         assert_eq!(adapter.rust_target(), rust_target);
         assert_eq!(adapter.linker_flavor(), linker_flavor);
         assert_eq!(adapter.linker_program(), linker_program);
         assert_eq!(adapter.linker_version_arguments(), version_arguments);
+        assert_eq!(adapter.rustflags(), rustflags);
         assert_eq!(
             adapter_for_rust_target(rust_target).ok().map(Adapter::id),
             Some(adapter.id())
@@ -79,6 +92,43 @@ fn linker_environment_is_derived_from_the_rust_target() {
             .and_then(|(_, value)| value),
         Some(OsStr::new("/tools/rust-lld"))
     );
+}
+
+#[test]
+fn thumb_codegen_policy_is_applied_to_cargo() {
+    let adapter = adapter_for(ProcessorArchitecture::ThumbV7em);
+    let mut command = Command::new("cargo");
+    command.env(
+        cargo_rustflags_environment(adapter.rust_target()),
+        "inherited flags",
+    );
+    adapter.configure_rustflags(&mut command);
+
+    assert_eq!(
+        command
+            .get_envs()
+            .find(|(key, _)| *key == OsStr::new("RUSTFLAGS"))
+            .and_then(|(_, value)| value),
+        Some(OsStr::new(
+            "-C link-arg=--icf=all -C llvm-args=-enable-machine-outliner -C llvm-args=-machine-outliner-reruns=2"
+        ))
+    );
+    assert_eq!(
+        command
+            .get_envs()
+            .find(|(key, _)| { *key == OsStr::new("CARGO_TARGET_THUMBV7EM_NONE_EABIHF_RUSTFLAGS") })
+            .and_then(|(_, value)| value),
+        None
+    );
+}
+
+#[test]
+fn esp_cargo_aliases_mirror_adapter_rustflags() {
+    let config = include_str!("../../../embedded/esp32/.cargo/config.toml");
+    assert!(config.contains(
+        "rustflags = [\"-C\", \"link-arg=-Tlinkall.x\", \"-C\", \"force-frame-pointers\"]"
+    ));
+    assert!(config.contains("rustflags = [\"-C\", \"link-arg=-Tlinkall.x\"]"));
 }
 
 #[test]

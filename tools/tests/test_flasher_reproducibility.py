@@ -28,7 +28,12 @@ from flasher_build_metadata import (
 from flasher_candidate_output import resolve_output
 from flasher_reproducibility import validate_report
 from flasher_rustdoc import normalize_generic_pages, workspace_package_names
-from flasher_sparse_sizes import MERGED_BASELINES, SPARSE_BASELINES, build_report
+from flasher_sparse_sizes import (
+    MERGED_BASELINES,
+    SHIPPING_BOARDS,
+    SPARSE_BASELINES,
+    build_report,
+)
 from source_snapshot import (
     REQUIRED_SOURCE_FILES,
     package_source_snapshot,
@@ -61,6 +66,7 @@ def manifest(
     *,
     heltec_size: int = 1_000_000,
     heltec_r8_size: int = 1_000_000,
+    wireless_stick_size: int = 1_000_000,
     t_beam_size: int = 1_000_000,
     xiao_size: int = 900_000,
     source_size: int | None = None,
@@ -123,6 +129,16 @@ def manifest(
             },
         ],
     }
+    if "heltec-wireless-stick-lite-v3" in SHIPPING_BOARDS:
+        value["targets"].insert(
+            2,
+            {
+                "board_slug": "heltec-wireless-stick-lite-v3",
+                "transport": "esp-serial",
+                "parts": [{"size": wireless_stick_size}],
+                "variants": [],
+            },
+        )
     if source_size is not None:
         for target in value["targets"]:
             if target["board_slug"] in {"heltec-v4", "heltec-v4-r8", "t-beam-supreme"}:
@@ -519,7 +535,7 @@ class FlasherReproducibilityTests(unittest.TestCase):
 
     def test_sparse_report_covers_all_boards_and_enforces_sixty_percent(self) -> None:
         report = build_report(manifest())
-        self.assertEqual(len(report["targets"]), 8)
+        self.assertEqual(len(report["targets"]), len(SHIPPING_BOARDS))
         self.assertEqual(report["aggregate_esp"]["gate"], "passed")
         heltec = next(
             target for target in report["targets"] if target["board_slug"] == "heltec-v4"

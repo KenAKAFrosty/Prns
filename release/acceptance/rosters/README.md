@@ -1,10 +1,20 @@
 # Flasher tester rosters
 
-Before building the candidate that will be signed, create `VERSION.json` here from
-`../roster-template.json`. It must contain sixteen physical board/surface assignments, three Firefox
-Web Serial assignments, one Safari fallback assignment, and five published-archive installer
-assignments. The physical assignments collectively cover Linux, macOS, and Windows on both
-surfaces. Use public nonsecret identities such as `github:handle`, not email addresses.
+Before building the candidate that will be signed, create `VERSION.json` here from the
+catalog-aware template:
+
+```sh
+./tools/prns release tester-roster create -- \
+  --version VERSION \
+  --output release/acceptance/rosters/VERSION.json
+```
+
+The command selects exactly the catalog's current shipping boards. The resulting roster must
+contain one physical assignment for every shipping board on both surfaces, three Firefox Web
+Serial assignments, one Safari fallback assignment, and five published-archive installer
+assignments. Replace every template identity and date before validation. The physical assignments
+collectively cover Linux, macOS, and Windows on both surfaces. Use public nonsecret identities such
+as `github:handle`, not email addresses.
 
 The same person may hold multiple or all assignments. The roster models required coverage, not a
 minimum team size. Every physical assignment confirms access to its named board, working cables,

@@ -266,7 +266,7 @@ fn preserved_lto_experiment_captures_overflow_and_control() -> Result<(), Box<dy
         .ok_or("fat T-Echo report has no complete flash evidence")?;
     assert_eq!(
         (fat_flash.image_bytes, fat_flash.headroom_bytes),
-        (619_968, 6_720)
+        (621_976, 4_712)
     );
 
     assert_eq!(thin.target, fat.target);
@@ -276,7 +276,7 @@ fn preserved_lto_experiment_captures_overflow_and_control() -> Result<(), Box<dy
         BuildStatus::MemoryOverflow { regions }
             if regions.len() == 1
                 && regions[0].linker_region == "FLASH"
-                && regions[0].overflow_bytes == 86_240
+                && regions[0].overflow_bytes == 86_560
     ));
     assert!(matches!(
         thin.analysis.flash_attribution,
@@ -292,7 +292,7 @@ fn preserved_lto_experiment_captures_overflow_and_control() -> Result<(), Box<dy
         .ok_or("thin MeshTower report has no complete flash evidence")?;
     assert_eq!(
         (control_flash.image_bytes, control_flash.headroom_bytes),
-        (652_844, 117_204)
+        (651_508, 118_540)
     );
     assert_eq!(fat.toolchain, thin.toolchain);
     assert_eq!(fat.toolchain, control.toolchain);
@@ -303,9 +303,9 @@ fn preserved_lto_experiment_captures_overflow_and_control() -> Result<(), Box<dy
         &thin_path,
     );
     assert!(rendered.contains("setting lto fat -> thin"));
-    assert!(rendered.contains("overflow \"FLASH\" none -> 86240"));
+    assert!(rendered.contains("overflow \"FLASH\" none -> 86560"));
     assert!(
-        rendered.contains("attribution crates candidate 1 155616 -> 201772 (+46156) \"prns_core\"")
+        rendered.contains("attribution crates candidate 1 154592 -> 199770 (+45178) \"prns_core\"")
     );
     assert!(rendered.contains("attribution symbols candidate 1 26404 -> 26440 (+36)"));
     Ok(())
@@ -505,7 +505,15 @@ pub(super) fn report_value() -> Value {
         "architecture": {
             "rust_target": "thumbv7em-none-eabihf",
             "adapter": "thumbv7em-rust-lld",
-            "linker_flavor": "rust-lld"
+            "linker_flavor": "rust-lld",
+            "rustflags": [
+                "-C",
+                "link-arg=--icf=all",
+                "-C",
+                "llvm-args=-enable-machine-outliner",
+                "-C",
+                "llvm-args=-machine-outliner-reruns=2"
+            ]
         },
         "build": {
             "fingerprint": fingerprint,

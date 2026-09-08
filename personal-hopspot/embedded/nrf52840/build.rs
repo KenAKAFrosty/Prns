@@ -3,15 +3,18 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use personal_hopspot_memory::{
-    MemoryProfile, NrfMemoryXLayout, MESH_TOWER_V2, NRF52840_MEMORY_X_BINDING, T096, T1000_E, T114,
-    T_ECHO_S140_V6, T_ECHO_S140_V7,
+    MemoryProfile, NrfMemoryXLayout, MESH_POCKET_10000, MESH_POCKET_5000, MESH_TOWER_V2,
+    NRF52840_MEMORY_X_BINDING, T096, T1000_E, T114, T_ECHO_S140_V6, T_ECHO_S140_V7,
 };
 
 const BOARD_T_ECHO_FEATURE: &str = "CARGO_FEATURE_BOARD_T_ECHO";
 const BOARD_T096_FEATURE: &str = "CARGO_FEATURE_BOARD_T096";
 const BOARD_T114_FEATURE: &str = "CARGO_FEATURE_BOARD_T114";
+const BOARD_MESH_POCKET_FEATURE: &str = "CARGO_FEATURE_BOARD_MESH_POCKET";
 const BOARD_T1000E_FEATURE: &str = "CARGO_FEATURE_BOARD_T1000E";
 const BOARD_MESH_TOWER_V2_FEATURE: &str = "CARGO_FEATURE_BOARD_MESH_TOWER_V2";
+const MESH_POCKET_5000_FEATURE: &str = "CARGO_FEATURE_MESH_POCKET_BATTERY_5000";
+const MESH_POCKET_10000_FEATURE: &str = "CARGO_FEATURE_MESH_POCKET_BATTERY_10000";
 const S140_V6_FEATURE: &str = "CARGO_FEATURE_SOFTDEVICE_S140_V6";
 const S140_V7_FEATURE: &str = "CARGO_FEATURE_SOFTDEVICE_S140_V7";
 
@@ -19,6 +22,7 @@ enum Board {
     TEcho,
     T096,
     T114,
+    MeshPocket,
     T1000e,
     MeshTowerV2,
 }
@@ -46,6 +50,11 @@ fn main() {
         (Board::T114, Some(Softdevice::S140V7)) => {
             panic!("T114 does not support S140 7.x")
         }
+        (Board::MeshPocket, Some(Softdevice::S140V6)) => mesh_pocket_profile(),
+        (Board::MeshPocket, None) => panic!("MeshPocket requires softdevice-s140-v6"),
+        (Board::MeshPocket, Some(Softdevice::S140V7)) => {
+            panic!("MeshPocket does not support S140 7.x")
+        }
         (Board::T1000e, None) => &T1000_E,
         (Board::MeshTowerV2, Some(Softdevice::S140V6)) => &MESH_TOWER_V2,
         (Board::MeshTowerV2, None) => {
@@ -67,6 +76,17 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
 }
 
+fn mesh_pocket_profile() -> &'static MemoryProfile {
+    match (
+        env::var_os(MESH_POCKET_5000_FEATURE).is_some(),
+        env::var_os(MESH_POCKET_10000_FEATURE).is_some(),
+    ) {
+        (true, false) => &MESH_POCKET_5000,
+        (false, true) => &MESH_POCKET_10000,
+        _ => panic!("MeshPocket requires exactly one battery-capacity feature"),
+    }
+}
+
 fn write_nrf52840_memory(out: &Path, layout: NrfMemoryXLayout) {
     let application_flash_origin = layout.application_flash.start();
     let application_flash_bytes = layout.application_flash.byte_len();
@@ -84,15 +104,19 @@ fn selected_board() -> Board {
         env::var_os(BOARD_T_ECHO_FEATURE).is_some(),
         env::var_os(BOARD_T096_FEATURE).is_some(),
         env::var_os(BOARD_T114_FEATURE).is_some(),
+        env::var_os(BOARD_MESH_POCKET_FEATURE).is_some(),
         env::var_os(BOARD_T1000E_FEATURE).is_some(),
         env::var_os(BOARD_MESH_TOWER_V2_FEATURE).is_some(),
     ) {
-        (true, false, false, false, false) => Board::TEcho,
-        (false, true, false, false, false) => Board::T096,
-        (false, false, true, false, false) => Board::T114,
-        (false, false, false, true, false) => Board::T1000e,
-        (false, false, false, false, true) => Board::MeshTowerV2,
-        (false, false, false, false, false) => panic!("select exactly one nRF52840 board feature"),
+        (true, false, false, false, false, false) => Board::TEcho,
+        (false, true, false, false, false, false) => Board::T096,
+        (false, false, true, false, false, false) => Board::T114,
+        (false, false, false, true, false, false) => Board::MeshPocket,
+        (false, false, false, false, true, false) => Board::T1000e,
+        (false, false, false, false, false, true) => Board::MeshTowerV2,
+        (false, false, false, false, false, false) => {
+            panic!("select exactly one nRF52840 board feature")
+        }
         _ => panic!("nRF52840 board features are mutually exclusive"),
     }
 }

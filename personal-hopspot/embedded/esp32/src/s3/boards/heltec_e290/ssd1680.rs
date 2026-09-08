@@ -1,6 +1,7 @@
 use embedded_graphics::geometry::Point;
 use personal_hopspot_core::face_64x128::{
-    Frame, MappedPoint, PanelScale, PanelSize, PanelTransform, PhysicalPoint, QuarterTurn,
+    Frame, MappedPoint, PanelScale, PanelScaling, PanelSize, PanelTransform, PhysicalPoint,
+    QuarterTurn,
 };
 
 pub(crate) const PANEL_WIDTH: u32 = 296;
@@ -12,11 +13,14 @@ const PANEL_SIZE: PanelSize = match PanelSize::new(PANEL_WIDTH, PANEL_HEIGHT) {
     Ok(size) => size,
     Err(_) => panic!("the E290 panel dimensions are nonzero"),
 };
-const FRONT_FACING_TRANSFORM: PanelTransform =
-    match PanelTransform::centered(PANEL_SIZE, PanelScale::TwoToOne, QuarterTurn::Clockwise) {
-        Ok(transform) => transform,
-        Err(_) => panic!("the E290 face fits the physical panel"),
-    };
+const FRONT_FACING_TRANSFORM: PanelTransform = match PanelTransform::centered(
+    PANEL_SIZE,
+    PanelScaling::PaintedSourceRectangles(PanelScale::TwoToOne),
+    QuarterTurn::Clockwise,
+) {
+    Ok(transform) => transform,
+    Err(_) => panic!("the E290 face fits the physical panel"),
+};
 
 const _: () = assert!(PANEL_HEIGHT.is_multiple_of(8));
 const _: () = assert!(FRAME_BYTES == 4_736);

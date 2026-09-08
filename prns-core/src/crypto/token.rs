@@ -223,6 +223,10 @@ pub struct TokenOpenStream {
 }
 
 impl TokenOpenStream {
+    pub fn sealed_byte_len(&self) -> usize {
+        self.token_len
+    }
+
     /// `token_len` is the whole token's length; the shapes refused are exactly [`token_open_in_place`]'s `Malformed`.
     #[allow(clippy::expect_used)]
     pub fn begin(
@@ -391,6 +395,7 @@ mod stream_tests {
             let mut one_shot = token.clone();
 
             let mut stream = begin(&key, &token);
+            assert_eq!(stream.sealed_byte_len(), token.len());
             let mut collected = std::vec::Vec::new();
             let mut contiguous = 0usize;
             for step in [1usize, 15, 16, 17, 464, 464, usize::MAX] {

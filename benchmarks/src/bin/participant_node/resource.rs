@@ -38,7 +38,9 @@ pub(super) async fn run_resource_endpoint(
                 Some(Event::Heard(destination))
             }
             PrnsEvent::Diagnostic(Diagnostic::LinkEstablished(_)) => Some(Event::LinkUp),
-            PrnsEvent::Diagnostic(Diagnostic::LinkClosed { .. }) => Some(Event::Closed),
+            PrnsEvent::Diagnostic(Diagnostic::LinkClosed { link_id, reason }) => {
+                Some(Event::Closed { link_id, reason })
+            }
             PrnsEvent::Message(Message::Resource { link_id, data, .. }) => {
                 Some(Event::ResourceIn {
                     link_id,
@@ -86,8 +88,6 @@ pub(super) async fn run_resource_endpoint(
             respond_resource_runtime(
                 destination,
                 announce_every,
-                duration,
-                drain_grace(&manifest.profile),
                 initiators,
                 &commands,
                 event_rx,
@@ -119,8 +119,6 @@ pub(super) async fn run_resource_endpoint(
 pub(super) async fn respond_resource_runtime(
     destination: DestinationHash,
     announce_every: Duration,
-    duration: Duration,
-    drain: Duration,
     initiator_count: usize,
     commands: &PrnsNodeHandle,
     mut events: mpsc::Receiver<Event>,
@@ -130,7 +128,6 @@ pub(super) async fn respond_resource_runtime(
     let mut measurement_ready = false;
     let mut announce = tokio::time::interval(announce_every);
     let mut announcing = true;
-    let report_at = tokio::time::Instant::now() + duration + drain + DRAIN_GRACE;
     let mut received = 0u64;
     let mut payload_bytes = 0u64;
     let mut target = None;
@@ -147,10 +144,6 @@ pub(super) async fn respond_resource_runtime(
                 {
                     return;
                 }
-            }
-            _ = tokio::time::sleep_until(report_at) => {
-                println!("RESULT received={received} payload_bytes={payload_bytes}");
-                return;
             }
             requested = &mut collection_target, if target.is_none() => {
                 target = Some(requested.expect("runner supplied collection target"));
@@ -177,7 +170,7 @@ pub(super) async fn respond_resource_runtime(
                             }))
                             .expect("resource acknowledgement is accepted");
                     }
-                    Some(Event::Closed) => {}
+                    Some(Event::Closed { .. }) => {}
                     None => return,
                     Some(_) => {}
                 }
@@ -327,6 +320,41 @@ pub(super) async fn initiate_resource_runtime(
         percentile(&transfer_ms, 0.50),
         percentile(&transfer_ms, 0.99),
     );
+    #[cfg(feature = "scheduler-probe")]
+    if let Some(snapshot) = commands.metrics_snapshot().await {
+        let rounds = snapshot.engine.resources.rounds;
+        println!(
+            "RESOURCE_ROUND_METRICS \
+             advertisement_to_request_count={} advertisement_to_request_total_ms={} advertisement_to_request_max_ms={} \
+             request_to_first_frame_count={} request_to_first_frame_total_us={} request_to_first_frame_max_us={} \
+             request_round_gap_count={} request_round_gap_total_us={} request_round_gap_max_us={} \
+             last_frame_to_proof_count={} last_frame_to_proof_total_ms={} last_frame_to_proof_max_ms={} \
+             proof_to_next_advertisement_count={} proof_to_next_advertisement_total_ms={} proof_to_next_advertisement_max_ms={}",
+            rounds.advertisement_to_request.observations,
+            rounds.advertisement_to_request.total_millis,
+            rounds.advertisement_to_request.maximum_millis,
+            snapshot
+                .manifold
+                .resource_request_to_first_frame_observations,
+            snapshot
+                .manifold
+                .resource_request_to_first_frame_total_micros,
+            snapshot
+                .manifold
+                .maximum_resource_request_to_first_frame_micros,
+            snapshot.manifold.resource_request_round_gap_observations,
+            snapshot.manifold.resource_request_round_gap_total_micros,
+            snapshot
+                .manifold
+                .maximum_resource_request_round_gap_micros,
+            rounds.last_frame_to_proof.observations,
+            rounds.last_frame_to_proof.total_millis,
+            rounds.last_frame_to_proof.maximum_millis,
+            rounds.proof_to_next_advertisement.observations,
+            rounds.proof_to_next_advertisement.total_millis,
+            rounds.proof_to_next_advertisement.maximum_millis,
+        );
+    }
     tokio::task::spawn_blocking(await_collection_release)
         .await
         .expect("collection release task");

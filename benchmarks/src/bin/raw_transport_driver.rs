@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -846,30 +847,50 @@ struct OutstandingSlot {
     occupied: bool,
 }
 
+struct OutstandingEntries {
+    slots: Vec<OutstandingSlot>,
+    displaced: HashMap<u64, [u8; 32]>,
+}
+
 struct Outstanding {
-    slots: Mutex<Vec<OutstandingSlot>>,
+    entries: Mutex<OutstandingEntries>,
     count: AtomicU64,
+    displacements: AtomicU64,
     slot_errors: AtomicU64,
 }
 
 impl Outstanding {
     fn new(capacity: usize) -> Self {
         Self {
-            slots: Mutex::new(vec![OutstandingSlot::default(); capacity]),
+            entries: Mutex::new(OutstandingEntries {
+                slots: vec![OutstandingSlot::default(); capacity.max(1)],
+                displaced: HashMap::new(),
+            }),
             count: AtomicU64::new(0),
+            displacements: AtomicU64::new(0),
             slot_errors: AtomicU64::new(0),
         }
     }
 
     fn insert(&self, sequence: u64, hash: [u8; 32]) -> bool {
-        let mut slots = self.slots.lock().expect("outstanding ring");
-        let index = sequence as usize % slots.len();
-        let slot = &mut slots[index];
-        if slot.occupied {
+        let mut entries = self.entries.lock().expect("outstanding ring");
+        let index = sequence as usize % entries.slots.len();
+        let occupied = entries.slots[index];
+        if (occupied.occupied && occupied.sequence == sequence)
+            || entries.displaced.contains_key(&sequence)
+        {
             self.slot_errors.fetch_add(1, Ordering::Relaxed);
             return false;
         }
-        *slot = OutstandingSlot {
+        if occupied.occupied {
+            if entries.displaced.contains_key(&occupied.sequence) {
+                self.slot_errors.fetch_add(1, Ordering::Relaxed);
+                return false;
+            }
+            entries.displaced.insert(occupied.sequence, occupied.hash);
+            self.displacements.fetch_add(1, Ordering::Relaxed);
+        }
+        entries.slots[index] = OutstandingSlot {
             sequence,
             hash,
             occupied: true,
@@ -879,21 +900,28 @@ impl Outstanding {
     }
 
     fn remove(&self, sequence: u64) -> Option<[u8; 32]> {
-        let mut slots = self.slots.lock().expect("outstanding ring");
-        let index = sequence as usize % slots.len();
-        let slot = &mut slots[index];
-        if !slot.occupied || slot.sequence != sequence {
-            return None;
+        let mut entries = self.entries.lock().expect("outstanding ring");
+        let index = sequence as usize % entries.slots.len();
+        let slot = &mut entries.slots[index];
+        let removed = if slot.occupied && slot.sequence == sequence {
+            slot.occupied = false;
+            Some(slot.hash)
+        } else {
+            entries.displaced.remove(&sequence)
+        };
+        if removed.is_some() {
+            self.count.fetch_sub(1, Ordering::AcqRel);
         }
-        slot.occupied = false;
-        self.count.fetch_sub(1, Ordering::AcqRel);
-        Some(slot.hash)
+        removed
     }
 
     fn get(&self, sequence: u64) -> Option<[u8; 32]> {
-        let slots = self.slots.lock().expect("outstanding ring");
-        let slot = &slots[sequence as usize % slots.len()];
-        (slot.occupied && slot.sequence == sequence).then_some(slot.hash)
+        let entries = self.entries.lock().expect("outstanding ring");
+        let slot = &entries.slots[sequence as usize % entries.slots.len()];
+        if slot.occupied && slot.sequence == sequence {
+            return Some(slot.hash);
+        }
+        entries.displaced.get(&sequence).copied()
     }
 
     fn len(&self) -> usize {
@@ -906,6 +934,10 @@ impl Outstanding {
 
     fn slot_errors(&self) -> u64 {
         self.slot_errors.load(Ordering::Relaxed)
+    }
+
+    fn displacements(&self) -> u64 {
+        self.displacements.load(Ordering::Relaxed)
     }
 }
 
@@ -1712,6 +1744,8 @@ async fn run_resource_measurement(measurement: ResourceMeasurement) -> io::Resul
     let buffer_pool_misses = shared_a.buffer_pool_misses.load(Ordering::Relaxed)
         + shared_b.buffer_pool_misses.load(Ordering::Relaxed);
     let slot_errors = shared_a.outstanding.slot_errors() + shared_b.outstanding.slot_errors();
+    let outstanding_displacements =
+        shared_a.outstanding.displacements() + shared_b.outstanding.displacements();
     let available_credits = credits_a.available_permits() + credits_b.available_permits();
     let credit_leaks = profile
         .window
@@ -1739,7 +1773,8 @@ async fn run_resource_measurement(measurement: ResourceMeasurement) -> io::Resul
          harness_calibration_ms={harness_calibration_ms} harness_headroom={} \
          missing={} duplicates={} corrupt={} reordered={} unexpected={} timed_out_frames={} \
          drain_timeouts={} outstanding={} maintenance_announces={} negotiated_link_mtu_bytes={} \
-         resource_payload_bytes_per_frame={} buffer_pool_misses={} credit_leaks={}",
+         resource_payload_bytes_per_frame={} buffer_pool_misses={} credit_leaks={} \
+         outstanding_displacements={}",
         if cfg!(debug_assertions) {
             "debug"
         } else {
@@ -1776,6 +1811,7 @@ async fn run_resource_measurement(measurement: ResourceMeasurement) -> io::Resul
         payload_len,
         buffer_pool_misses,
         credit_leaks,
+        outstanding_displacements,
     );
     Ok(())
 }
@@ -2466,7 +2502,19 @@ async fn run() -> io::Result<()> {
         .await;
     }
 
-    let harness_rates = calibrate(manifest.profile.clone(), smoke, None).await?;
+    let window = std::env::var("BENCHMARK_TRANSPORT_WINDOW")
+        .ok()
+        .map(|value| {
+            value
+                .parse::<std::num::NonZeroUsize>()
+                .map(std::num::NonZeroUsize::get)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))
+        })
+        .transpose()?
+        .unwrap_or(manifest.profile.window);
+    let mut calibration_profile = manifest.profile.clone();
+    calibration_profile.window = window;
+    let harness_rates = calibrate(calibration_profile, smoke, None).await?;
     let harness_rate = harness_rates.limiting();
     println!(
         "HARNESS source_payload_bytes_per_sec={:.1} sink_payload_bytes_per_sec={:.1} \
@@ -2500,7 +2548,6 @@ async fn run() -> io::Result<()> {
     )
     .await?;
 
-    let window = manifest.profile.window;
     let max_payload_len = manifest
         .profile
         .payload_max
@@ -2666,6 +2713,8 @@ async fn run() -> io::Result<()> {
     let buffer_pool_misses = shared_a.buffer_pool_misses.load(Ordering::Relaxed)
         + shared_b.buffer_pool_misses.load(Ordering::Relaxed);
     let slot_errors = shared_a.outstanding.slot_errors() + shared_b.outstanding.slot_errors();
+    let outstanding_displacements =
+        shared_a.outstanding.displacements() + shared_b.outstanding.displacements();
     let available_credits = credits_a.available_permits() + credits_b.available_permits();
     let credit_leaks = window.saturating_mul(2).saturating_sub(available_credits);
     let missing = sent.saturating_sub(carried);
@@ -2690,7 +2739,7 @@ async fn run() -> io::Result<()> {
          harness_calibration_ms={harness_calibration_ms} harness_headroom={} \
          missing={} duplicates={} corrupt={} reordered={} unexpected={} timed_out_frames={} \
          drain_timeouts={} outstanding={} maintenance_announces={} buffer_pool_misses={} \
-         credit_leaks={}",
+         credit_leaks={} outstanding_displacements={} transport_window={}",
         if cfg!(debug_assertions) {
             "debug"
         } else {
@@ -2726,6 +2775,8 @@ async fn run() -> io::Result<()> {
         maintenance_announces,
         buffer_pool_misses,
         credit_leaks,
+        outstanding_displacements,
+        window,
     );
     Ok(())
 }
@@ -2985,15 +3036,18 @@ mod tests {
     }
 
     #[test]
-    fn outstanding_ring_detects_duplicates_and_reuses_sequence_slots() {
+    fn outstanding_ring_preserves_displaced_entries_and_detects_duplicates() {
         let outstanding = Outstanding::new(2);
         assert!(outstanding.insert(1, [1; 32]));
         assert_eq!(outstanding.get(1), Some([1; 32]));
+        assert!(outstanding.insert(3, [3; 32]));
+        assert_eq!(outstanding.displacements(), 1);
+        assert_eq!(outstanding.get(1), Some([1; 32]));
+        assert_eq!(outstanding.get(3), Some([3; 32]));
         assert!(!outstanding.insert(3, [3; 32]));
         assert_eq!(outstanding.slot_errors(), 1);
         assert_eq!(outstanding.remove(1), Some([1; 32]));
         assert_eq!(outstanding.get(1), None);
-        assert!(outstanding.insert(3, [3; 32]));
         assert_eq!(outstanding.remove(3), Some([3; 32]));
         assert!(outstanding.is_empty());
     }

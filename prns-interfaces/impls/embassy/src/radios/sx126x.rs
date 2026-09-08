@@ -785,7 +785,7 @@ where
         &self,
         profile: RadioProfile,
     ) -> Result<(), RadioProfileCompatibilityError> {
-        let power_dbm = profile.tx_power.dbm();
+        let power_dbm = profile.tx_power().dbm();
         let (minimum_dbm, maximum_dbm) = self.config.external_power_amplifier.map_or(
             (MIN_TX_POWER_DBM, MAX_TX_POWER_DBM),
             |amplifier| {
@@ -821,6 +821,10 @@ where
 
     async fn initialize(&mut self, profile: RadioProfile) -> Result<(), Self::Error> {
         Sx126x::init(self, radio_config(profile)).await
+    }
+
+    async fn idle(&mut self) -> Result<(), Self::Error> {
+        self.standby().await
     }
 
     async fn arm_rx(&mut self) -> Result<(), Self::Error> {
@@ -865,7 +869,7 @@ fn radio_config(profile: RadioProfile) -> RadioConfig {
         spreading_factor,
         bandwidth,
         coding_rate,
-    } = profile.modulation;
+    } = profile.modulation();
     let spreading_factor = match spreading_factor {
         ProfileSpreadingFactor::Sf5 => SpreadingFactor::Sf5,
         ProfileSpreadingFactor::Sf6 => SpreadingFactor::Sf6,
@@ -888,20 +892,20 @@ fn radio_config(profile: RadioProfile) -> RadioConfig {
         ProfileCodingRate::Cr48 => CodingRate::Cr4_8,
     };
     RadioConfig {
-        frequency_hz: profile.frequency.hz(),
+        frequency_hz: profile.frequency().hz(),
         modulation: Modulation::Lora {
             spreading_factor,
             bandwidth,
             coding_rate,
         },
         packet: LoraPacket {
-            preamble_symbols: profile.preamble.count(),
+            preamble_symbols: profile.preamble().count(),
             explicit_header: true,
             crc_on: true,
             invert_iq: false,
         },
         network: LoRaNetwork::Reticulum,
-        tx_power_dbm: profile.tx_power.dbm(),
+        tx_power_dbm: profile.tx_power().dbm(),
     }
 }
 
@@ -963,7 +967,8 @@ mod tests {
     use embedded_hal_async::delay::DelayNs;
     use embedded_hal_async::digital::Wait;
     use embedded_hal_async::spi::SpiDevice;
-    use prns_core::interfaces::lora::{TxPower, DEFAULT_915_PROFILE};
+    use prns_core::interfaces::lora::TxPower;
+    use prns_core::interfaces::subghz::regions::us915::US915_AUTO_LORA_PROFILE;
 
     #[derive(Debug)]
     struct MockErr;
@@ -1241,12 +1246,12 @@ mod tests {
     #[test]
     fn reticulum_profile_maps_to_the_existing_sx126x_configuration() {
         assert_eq!(
-            radio_config(DEFAULT_915_PROFILE),
+            radio_config(US915_AUTO_LORA_PROFILE),
             RadioConfig {
-                frequency_hz: 915_000_000,
+                frequency_hz: 921_500_000,
                 modulation: Modulation::Lora {
-                    spreading_factor: SpreadingFactor::Sf9,
-                    bandwidth: Bandwidth::Bw250,
+                    spreading_factor: SpreadingFactor::Sf7,
+                    bandwidth: Bandwidth::Bw500,
                     coding_rate: CodingRate::Cr4_5,
                 },
                 packet: LoraPacket {
@@ -1293,8 +1298,9 @@ mod tests {
     #[test]
     fn sx126x_owns_its_transmit_power_compatibility() {
         let radio = mock_radio();
-        let mut profile = DEFAULT_915_PROFILE;
-        profile.tx_power = TxPower::new(MIN_TX_POWER_DBM - 1);
+        let profile = US915_AUTO_LORA_PROFILE
+            .with_tx_power(TxPower::new(MIN_TX_POWER_DBM - 1))
+            .unwrap();
         assert_eq!(profile.validate(), Ok(()));
         assert_eq!(
             radio.validate_profile(profile),
@@ -1330,8 +1336,9 @@ mod tests {
             board,
         );
 
-        let mut profile = DEFAULT_915_PROFILE;
-        profile.tx_power = TxPower::new(4);
+        let profile = US915_AUTO_LORA_PROFILE
+            .with_tx_power(TxPower::new(4))
+            .unwrap();
         assert_eq!(
             radio.validate_profile(profile),
             Err(
@@ -1343,7 +1350,7 @@ mod tests {
             )
         );
 
-        block_on(radio.init(radio_config(DEFAULT_915_PROFILE))).expect("init");
+        block_on(radio.init(radio_config(US915_AUTO_LORA_PROFILE))).expect("init");
         assert_eq!(radio.tx_power_dbm, 8);
         assert!(
             log.borrow()

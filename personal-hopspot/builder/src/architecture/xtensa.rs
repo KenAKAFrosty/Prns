@@ -7,7 +7,7 @@ use std::process::Command;
 
 use personal_hopspot_memory::ProcessorArchitecture;
 
-use super::{Adapter, LinkerFlavor};
+use super::{Adapter, LinkerFlavor, LinkerTool};
 use crate::BuildError;
 
 const LINKER_PROGRAM: &str = "xtensa-esp32s3-elf-gcc";
@@ -15,9 +15,8 @@ const LINKER_PROGRAM: &str = "xtensa-esp32s3-elf-gcc";
 pub(super) static ADAPTER: Adapter = Adapter::new(
     "xtensa-esp32s3-gnu-ld",
     ProcessorArchitecture::XtensaEsp32S3,
-    LinkerFlavor::GnuLd,
-    LINKER_PROGRAM,
-    &["--version"],
+    LinkerTool::new(LinkerFlavor::GnuLd, LINKER_PROGRAM, &["--version"]),
+    &["-C", "link-arg=-Tlinkall.x", "-C", "force-frame-pointers"],
     configure_linker,
     linker_map_argument,
 );

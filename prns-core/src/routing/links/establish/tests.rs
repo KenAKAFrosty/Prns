@@ -4248,12 +4248,13 @@ fn a_fat_interface_negotiates_up_to_the_engine_ceiling_and_no_further() {
 #[test]
 fn the_real_usb_descriptors_negotiate_their_declared_ceilings() {
     use crate::interfaces::usb_auto::{
-        device_descriptor, host_descriptor, DEVICE_USB_HW_MTU, HOST_USB_HW_MTU,
+        device_descriptor, host_descriptor, DEVICE_USB_BITRATE_BPS, DEVICE_USB_HW_MTU,
+        HOST_USB_HW_MTU,
     };
     use crate::routing::links::MAX_LINK_MTU;
 
     let host = host_descriptor(arrival());
-    let device = device_descriptor(arrival());
+    let device = device_descriptor(arrival(), DEVICE_USB_BITRATE_BPS);
     assert_eq!(host.hardware_mtu, Some(HOST_USB_HW_MTU));
     assert_eq!(device.hardware_mtu, Some(DEVICE_USB_HW_MTU));
 

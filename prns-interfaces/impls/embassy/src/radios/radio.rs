@@ -37,6 +37,8 @@ pub trait LoRaRadio {
 
     async fn initialize(&mut self, profile: RadioProfile) -> Result<(), Self::Error>;
 
+    async fn idle(&mut self) -> Result<(), Self::Error>;
+
     async fn arm_rx(&mut self) -> Result<(), Self::Error>;
 
     async fn transmit(&mut self, payload: &[u8]) -> Result<(), Self::Error>;

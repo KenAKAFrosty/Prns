@@ -3,14 +3,16 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::interfaces::{FrameSink, InterfaceId, InterfaceOriginKind, PacketPhyStats};
 use crate::manifold::interface_seam::InterfaceSeam;
 
-use super::{HostCommand, TokioEntropy, TokioGrantConsumer, TokioGrantProducer};
+use super::{
+    HostCommand, ManifoldWakeSender, TokioEntropy, TokioGrantConsumer, TokioGrantProducer,
+};
 
 /// The tokio side of one interface's seam: `next_inbound` frames funnel into the manifold's one inbound stream (tagged with this interface's id), and `next_outbound` parks on this interface's own outbound queue until the manifold enqueues a frame for it.
 pub struct TokioInterfaceSeam {
     id: InterfaceId,
     origin: InterfaceOriginKind,
     inbound: TokioGrantProducer,
-    notify: UnboundedSender<InterfaceId>,
+    wake: ManifoldWakeSender,
     outbound: TokioGrantConsumer,
     commands: Option<UnboundedSender<HostCommand>>,
     entropy: TokioEntropy,
@@ -21,14 +23,15 @@ impl TokioInterfaceSeam {
     pub fn new(
         id: InterfaceId,
         inbound: TokioGrantProducer,
-        notify: UnboundedSender<InterfaceId>,
-        outbound: TokioGrantConsumer,
+        wake: ManifoldWakeSender,
+        mut outbound: TokioGrantConsumer,
     ) -> Self {
+        outbound.notify_releases_to(wake.clone());
         Self {
             id,
             origin: InterfaceOriginKind::Configured,
             inbound,
-            notify,
+            wake,
             outbound,
             commands: None,
             entropy: TokioEntropy,
@@ -70,9 +73,7 @@ impl InterfaceSeam for TokioInterfaceSeam {
         }
         slot.len = slot.bytes.len();
         self.inbound.commit();
-        if self.inbound.needs_announce() {
-            let _ = self.notify.send(self.id);
-        }
+        self.wake.signal();
     }
 
     async fn next_inbound_with_phy(&mut self, frame: &[u8], packet_phy: PacketPhyStats) {
@@ -119,10 +120,10 @@ mod tests {
         let id = InterfaceId::new([0xC7; 8]);
         let (in_producer, _in_consumer) = tokio_grant_lane(64, 2);
         let (_out_producer, out_consumer) = tokio_grant_lane(64, 2);
-        let (notify_tx, _notify_rx) = mpsc::unbounded_channel();
+        let (wake, _wake_rx) = super::super::manifold_wake();
         let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<HostCommand>();
         let mut seam =
-            TokioInterfaceSeam::new(id, in_producer, notify_tx, out_consumer).with_commands(cmd_tx);
+            TokioInterfaceSeam::new(id, in_producer, wake, out_consumer).with_commands(cmd_tx);
 
         seam.request_tunnel_synthesis().await;
 
@@ -137,8 +138,8 @@ mod tests {
         let id = InterfaceId::new([0xC8; 8]);
         let (in_producer, _in_consumer) = tokio_grant_lane(64, 2);
         let (_out_producer, out_consumer) = tokio_grant_lane(64, 2);
-        let (notify_tx, _notify_rx) = mpsc::unbounded_channel();
-        let mut seam = TokioInterfaceSeam::new(id, in_producer, notify_tx, out_consumer);
+        let (wake, _wake_rx) = super::super::manifold_wake();
+        let mut seam = TokioInterfaceSeam::new(id, in_producer, wake, out_consumer);
 
         seam.request_tunnel_synthesis().await;
     }
@@ -148,8 +149,8 @@ mod tests {
         let id = InterfaceId::new([0xC9; 8]);
         let (in_producer, mut in_consumer) = tokio_grant_lane(64, 2);
         let (_out_producer, out_consumer) = tokio_grant_lane(64, 2);
-        let (notify_tx, _notify_rx) = mpsc::unbounded_channel();
-        let mut seam = TokioInterfaceSeam::new(id, in_producer, notify_tx, out_consumer);
+        let (wake, _wake_rx) = super::super::manifold_wake();
+        let mut seam = TokioInterfaceSeam::new(id, in_producer, wake, out_consumer);
         let packet_phy = PacketPhyStats {
             rssi: Some(RssiDbm::new(-91)),
             snr: Some(SnrQuarterDb::new(-7)),

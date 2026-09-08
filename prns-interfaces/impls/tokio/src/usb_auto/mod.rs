@@ -44,8 +44,9 @@ use candidate::HandshakeTimeoutDisposition;
 const FALLBACK_SCAN_INTERVAL: Duration = Duration::from_secs(1);
 /// Repeats the handshake while a newly opened board may still be booting.
 const PROBE_INTERVAL: Duration = Duration::from_millis(500);
-const LIVENESS_PROBE_INTERVAL: Duration = Duration::from_secs(2);
-const LIVENESS_TIMEOUT: Duration = Duration::from_secs(6);
+const LIVENESS_PROBE_INTERVAL: Duration =
+    Duration::from_millis(contract::HOST_HEARTBEAT_INTERVAL_MS);
+const LIVENESS_TIMEOUT: Duration = Duration::from_millis(contract::HOST_HEARTBEAT_TIMEOUT_MS);
 /// Masks brief CDC close-and-reopen cycles on Android without reporting a disconnected link between handshakes.
 const RECENT_LINK_GRACE: Duration = Duration::from_secs(3);
 /// Backs off a busy or re-enumerating target so failures do not become a once-per-second error storm.

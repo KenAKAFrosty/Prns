@@ -28,7 +28,7 @@ async fn pooled_crypto_resumes_a_verified_pairing_availability_as_one_typed_obse
         engine.configure_remote_control_pairing(target_identity),
         Ok(RemoteControlPairingAvailabilityDestination::canonical()),
     );
-    let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
+    let (wake_tx, wake_rx) = manifold_wake();
     let (mut inbound_tx, inbound_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
     let (_command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
     let (observed_tx, mut observed_rx) = mpsc::unbounded_channel();
@@ -51,7 +51,7 @@ async fn pooled_crypto_resumes_a_verified_pairing_availability_as_one_typed_obse
         ManifoldWiring {
             interfaces: std::vec![descriptor(SOURCE)],
             ifacs: std::vec![],
-            notify: notify_rx,
+            wake: wake_rx,
             inbound_lanes: std::vec![(SOURCE, inbound_rx)],
             commands: command_rx,
             egress: Egress::new(std::vec![]),
@@ -60,13 +60,14 @@ async fn pooled_crypto_resumes_a_verified_pairing_availability_as_one_typed_obse
         InterfaceStore::new(),
         CryptoPoolConfig::Pooled {
             workers: PoolWorkers::Fixed(NonZeroUsize::MIN),
+            placement: super::super::CryptoWorkerPlacement::SchedulerManaged,
         },
     ));
 
     let wire = pairing_availability_wire();
     inbound_tx.try_grant().unwrap().fill(&wire);
     inbound_tx.commit();
-    notify_tx.send(SOURCE).unwrap();
+    wake_tx.signal();
 
     let (endpoint, observed_at, expires_at, hops, source_interface, public_app_data) =
         tokio::time::timeout(Duration::from_secs(2), observed_rx.recv())

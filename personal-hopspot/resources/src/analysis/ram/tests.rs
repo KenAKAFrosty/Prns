@@ -1,4 +1,6 @@
-use personal_hopspot_memory::{AddressRange, HELTEC_V4, T_ECHO_S140_V6, XIAO_ESP32_C6};
+use personal_hopspot_memory::{
+    AddressRange, HELTEC_V4, HELTEC_WIRELESS_STICK_LITE_V3, T_ECHO_S140_V6, XIAO_ESP32_C6,
+};
 
 use super::*;
 use crate::analysis::SectionKind;
@@ -164,6 +166,40 @@ fn xtensa_alias_claims_and_distinct_ram_banks_are_accounted_once() {
         backing(&usage, "external-psram").capacity,
         RamCapacity::RuntimeDetected
     );
+}
+
+#[test]
+fn unused_xtensa_reclaimed_ram_needs_no_synthetic_section() {
+    let data_origin = 0x3FC8_8000;
+    let dummy_bytes = 0x1000;
+    let bss_bytes = 70_000;
+    let stack_bytes = 10_000;
+    let sections = [
+        section(
+            ".rwdata_dummy",
+            SectionKind::ZeroFill,
+            data_origin,
+            dummy_bytes,
+        ),
+        section(
+            ".bss",
+            SectionKind::ZeroFill,
+            data_origin + dummy_bytes,
+            bss_bytes,
+        ),
+        section(
+            ".stack",
+            SectionKind::ZeroFill,
+            data_origin + dummy_bytes + bss_bytes,
+            stack_bytes,
+        ),
+    ];
+
+    let usage = analyze(&HELTEC_WIRELESS_STICK_LITE_V3, &sections)
+        .expect("valid S3FN8 evidence without reclaimed-RAM allocations");
+    let reclaimed = backing(&usage, "reclaimed-sram");
+    assert_eq!(reclaimed.static_section_bytes, 0);
+    assert_eq!(reclaimed.included_reservation_bytes, 0);
 }
 
 fn section(name: &str, kind: SectionKind, start: u64, bytes: u64) -> AllocatedSection {

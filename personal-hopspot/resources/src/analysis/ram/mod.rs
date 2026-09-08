@@ -263,6 +263,26 @@ pub(super) fn required_space(
     })
 }
 
+pub(super) fn optional_space(
+    profile: &MemoryProfile,
+    kind: AddressSpaceKind,
+) -> Result<Option<&AddressSpace>, RamAnalysisError> {
+    let mut matches = profile
+        .address_spaces
+        .iter()
+        .filter(|space| space.kind == kind);
+    let Some(space) = matches.next() else {
+        return Ok(None);
+    };
+    if matches.next().is_some() {
+        return Err(RamAnalysisError::InvalidAddressSpaceTopology {
+            profile: profile.id.as_str(),
+            kind,
+        });
+    }
+    Ok(Some(space))
+}
+
 pub(super) fn required_section<'a>(
     architecture: ProcessorArchitecture,
     sections: &'a [AllocatedSection],
@@ -296,6 +316,31 @@ pub(super) fn required_section_kind<'a>(
         });
     }
     Ok(section)
+}
+
+pub(super) fn optional_section_kind<'a>(
+    architecture: ProcessorArchitecture,
+    sections: &'a [AllocatedSection],
+    name: &'static str,
+    kind: SectionKind,
+) -> Result<Option<&'a AllocatedSection>, RamAnalysisError> {
+    let mut matches = sections.iter().filter(|section| section.name() == name);
+    let Some(section) = matches.next() else {
+        return Ok(None);
+    };
+    if matches.next().is_some() {
+        return Err(RamAnalysisError::DuplicateSection {
+            architecture,
+            section: name,
+        });
+    }
+    if section.kind() != kind || (kind == SectionKind::ZeroFill && section.load_bytes() != 0) {
+        return Err(RamAnalysisError::InvalidSectionRole {
+            architecture,
+            section: name.to_string(),
+        });
+    }
+    Ok(Some(section))
 }
 
 pub(super) fn fixed_capacity(

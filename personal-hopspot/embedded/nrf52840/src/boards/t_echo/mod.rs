@@ -5,6 +5,7 @@ mod input;
 mod raster;
 mod ssd1681;
 
+use embassy_futures::join::join;
 #[cfg(feature = "softdevice-s140-v6")]
 use personal_hopspot_memory::T_ECHO_S140_V6;
 #[cfg(not(feature = "softdevice-s140-v6"))]
@@ -23,9 +24,23 @@ pub(crate) use hardware::{
 pub(crate) use identity::{
     bootstrap_ble_identity, bootstrap_node_identity, startup_notice as identity_startup_notice,
 };
-pub(crate) use input::{
-    drive_button, drive_frontlight, EVENTS as INPUT_EVENTS, EVENT_CAPACITY as INPUT_EVENT_CAPACITY,
-};
+pub(crate) use input::{EVENTS as INPUT_EVENTS, EVENT_CAPACITY as INPUT_EVENT_CAPACITY};
+
+pub(crate) type BatteryGauge = personal_hopspot_core::BatteryGauge;
+
+pub(crate) const fn battery_gauge() -> BatteryGauge {
+    BatteryGauge::lipo()
+}
+
+pub(crate) async fn drive_controls(controls: Controls) -> ! {
+    let Controls { button, frontlight } = controls;
+    let _ = join(
+        input::drive_button(button),
+        input::drive_frontlight(frontlight),
+    )
+    .await;
+    core::future::pending().await
+}
 
 #[cfg(feature = "softdevice-s140-v6")]
 pub(crate) const MEMORY_PROFILE: &MemoryProfile = &T_ECHO_S140_V6;

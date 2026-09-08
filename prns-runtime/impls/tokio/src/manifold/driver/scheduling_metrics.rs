@@ -74,6 +74,38 @@ impl ManifoldMetrics {
             .maximum_pacer_lateness_ms
             .max(observed.saturating_sub(deadline));
     }
+
+    pub(super) fn record_resource_request_to_first_frame(&mut self, elapsed: std::time::Duration) {
+        let micros = duration_micros(elapsed);
+        self.snapshot.resource_request_to_first_frame_observations = self
+            .snapshot
+            .resource_request_to_first_frame_observations
+            .saturating_add(1);
+        self.snapshot.resource_request_to_first_frame_total_micros = self
+            .snapshot
+            .resource_request_to_first_frame_total_micros
+            .saturating_add(micros);
+        self.snapshot.maximum_resource_request_to_first_frame_micros = self
+            .snapshot
+            .maximum_resource_request_to_first_frame_micros
+            .max(micros);
+    }
+
+    pub(super) fn record_resource_request_round_gap(&mut self, elapsed: std::time::Duration) {
+        let micros = duration_micros(elapsed);
+        self.snapshot.resource_request_round_gap_observations = self
+            .snapshot
+            .resource_request_round_gap_observations
+            .saturating_add(1);
+        self.snapshot.resource_request_round_gap_total_micros = self
+            .snapshot
+            .resource_request_round_gap_total_micros
+            .saturating_add(micros);
+        self.snapshot.maximum_resource_request_round_gap_micros = self
+            .snapshot
+            .maximum_resource_request_round_gap_micros
+            .max(micros);
+    }
 }
 
 fn bounded_u32(value: usize) -> u32 {
@@ -82,4 +114,35 @@ fn bounded_u32(value: usize) -> u32 {
 
 fn elapsed_micros(started_at: std::time::Instant) -> u64 {
     u64::try_from(started_at.elapsed().as_micros()).unwrap_or(u64::MAX)
+}
+
+fn duration_micros(elapsed: std::time::Duration) -> u64 {
+    u64::try_from(elapsed.as_micros()).unwrap_or(u64::MAX)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resource_round_intervals_accumulate_totals_and_maxima() {
+        let mut metrics = ManifoldMetrics::default();
+        metrics.record_resource_request_to_first_frame(std::time::Duration::from_micros(7));
+        metrics.record_resource_request_to_first_frame(std::time::Duration::from_micros(11));
+        metrics.record_resource_request_round_gap(std::time::Duration::from_micros(13));
+        metrics.record_resource_request_round_gap(std::time::Duration::from_micros(17));
+
+        assert_eq!(
+            metrics.snapshot(),
+            ManifoldMetricsSnapshot {
+                resource_request_to_first_frame_observations: 2,
+                resource_request_to_first_frame_total_micros: 18,
+                maximum_resource_request_to_first_frame_micros: 11,
+                resource_request_round_gap_observations: 2,
+                resource_request_round_gap_total_micros: 30,
+                maximum_resource_request_round_gap_micros: 17,
+                ..ManifoldMetricsSnapshot::default()
+            }
+        );
+    }
 }

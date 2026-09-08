@@ -23,6 +23,14 @@ ESP_MEMORY_CONTRACTS = {
             "partition-table": (0x00008000, 0x00009000),
         },
     },
+    "heltec-wireless-stick-lite-v3": {
+        "profile": "heltec-wireless-stick-lite-v3",
+        "regions": {
+            "application": (0x00010000, 0x0067d000),
+            "bootloader": (0x00000000, 0x00008000),
+            "partition-table": (0x00008000, 0x00009000),
+        },
+    },
     "t-beam-supreme": {
         "profile": "t-beam-supreme",
         "regions": {
@@ -56,6 +64,16 @@ UF2_MEMORY_CONTRACTS = {
         "profile": "t114",
         "firmware_owned": (0x00026000, 0x000e1000),
         "transport_envelope": (0x00026000, 0x000e9000),
+    },
+    ("mesh-pocket-5000", "s140", "6.1.1", "0x00b6", 0x00026000, "0xada52840"): {
+        "profile": "mesh-pocket-5000",
+        "firmware_owned": (0x00026000, 0x000e1000),
+        "transport_envelope": (0x00026000, 0x000e1000),
+    },
+    ("mesh-pocket-10000", "s140", "6.1.1", "0x00b6", 0x00026000, "0xada52840"): {
+        "profile": "mesh-pocket-10000",
+        "firmware_owned": (0x00026000, 0x000e1000),
+        "transport_envelope": (0x00026000, 0x000e1000),
     },
     ("t096", "s140", "6.1.1", "0x00b6", 0x00026000, "0xada52840"): {
         "profile": "t096",

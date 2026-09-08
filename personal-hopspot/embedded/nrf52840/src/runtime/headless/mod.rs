@@ -8,9 +8,9 @@ use static_cell::{ConstStaticCell, StaticCell};
 
 use personal_hopspot_core as hopspot;
 use personal_rns::engine::IssuedCommand;
-#[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
-use personal_rns::interfaces::lora::DEFAULT_915_PROFILE;
 use personal_rns::interfaces::lora::{AirtimePolicy, LORA_MAX_PAYLOAD};
+#[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
+use personal_rns::interfaces::subghz::SubGConfigurationState;
 use personal_rns::interfaces::usb_auto::{WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID};
 use personal_rns::interfaces::{ConnectionState, InterfaceId};
 use personal_rns::lora::{LoRaControl, LoRaInterface, LoRaInterfaceInput, LoRaSpectrumStatus};
@@ -26,7 +26,7 @@ use personal_rns::runtime::{
 };
 use personal_rns::storage::{StorageCapacity, StorageLayout};
 use personal_rns::usb_auto::{
-    UsbAutoDevice, UsbAutoDeviceInput, WebUsbAutoClass, WebUsbAutoState,
+    ProtocolHostPresence, UsbAutoDevice, UsbAutoDeviceInput, WebUsbAutoClass, WebUsbAutoState,
     WEBUSB_AUTO_CONTROL_BUFFER_BYTES, WEBUSB_AUTO_MSOS_DESCRIPTOR_BYTES, WEBUSB_AUTO_PACKET_SIZE,
 };
 
@@ -125,7 +125,6 @@ type Node = PrnsNode<
 >;
 type ManifoldLanes = ManifoldLaneSet<Mtx, LANE_COUNT, NOTIFY_CAP>;
 
-static LORA_CONTROL: LoRaControl = LoRaControl::new();
 static NOTIFY: Channel<Mtx, InterfaceId, NOTIFY_CAP> = Channel::new();
 static COMMANDS: Channel<Mtx, IssuedCommand, COMMANDS_CAP> = Channel::new();
 static LIFECYCLE: Channel<Mtx, InterfaceLifecycle, LIFECYCLE_CAP> = Channel::new();
@@ -323,26 +322,32 @@ pub async fn run(spawner: Spawner) -> ! {
     );
     let mut manifold_lanes = ManifoldLanes::new();
     #[cfg(any(feature = "board-t096", feature = "board-t114"))]
-    let loaded_lora_profile = selected::load_profile(shared_flash).await;
+    let loaded_subg_configuration = selected::load_subg_configuration(shared_flash).await;
     #[cfg(any(feature = "board-t096", feature = "board-t114"))]
-    let lora_profile = loaded_lora_profile.profile;
+    let subg_configuration = loaded_subg_configuration.state;
     #[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
-    let lora_profile = DEFAULT_915_PROFILE;
-    let lora_id = LoraInterface::interface_id(&lora_profile);
+    let subg_configuration = SubGConfigurationState::Unconfigured;
     static LORA_STATUS: StaticCell<EmbassyInterfaceStatus> = StaticCell::new();
-    let lora_status: &'static EmbassyInterfaceStatus = LORA_STATUS.init(
-        EmbassyInterfaceStatus::new_accounted(lora_id, ConnectionState::Initializing),
-    );
+    let lora_status: &'static EmbassyInterfaceStatus =
+        LORA_STATUS.init(EmbassyInterfaceStatus::new_accounted(
+            LoraInterface::unconfigured_interface_id(),
+            ConnectionState::Initializing,
+        ));
     static LORA_SPECTRUM: StaticCell<LoRaSpectrumStatus> = StaticCell::new();
     let lora_spectrum: &'static LoRaSpectrumStatus = LORA_SPECTRUM.init(LoRaSpectrumStatus::new());
     static LORA_TX_QUEUE: ConstStaticCell<[u8; LORA_TX_QUEUE_BYTES]> =
         ConstStaticCell::new([0; LORA_TX_QUEUE_BYTES]);
+    static LORA_CONTROL: StaticCell<LoRaControl> = StaticCell::new();
+    #[cfg(any(feature = "board-t096", feature = "board-t114"))]
+    let (lora_controller, lora_control) = LORA_CONTROL.init(LoRaControl::new()).split();
+    #[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
+    let (_lora_controller, lora_control) = LORA_CONTROL.init(LoRaControl::new()).split();
     let lora = match LoRaInterface::new(LoRaInterfaceInput {
         radio,
-        profile: lora_profile,
+        configuration: subg_configuration,
         airtime_policy: AirtimePolicy::Regional,
         tx_queue: LORA_TX_QUEUE.take(),
-        control: &LORA_CONTROL,
+        control: lora_control,
         status: lora_status,
         spectrum: lora_spectrum,
         lifecycle: LIFECYCLE.dyn_sender(),
@@ -350,6 +355,7 @@ pub async fn run(spawner: Spawner) -> ! {
         Ok(lora) => lora,
         Err(_) => panic!("the built-in LoRa profile and regional policy must be valid"),
     };
+    lora_status.set_id(lora.id());
 
     let (usb_tx, usb_rx) = class.split();
     static USB_STATUS: StaticCell<EmbassyInterfaceStatus> = StaticCell::new();
@@ -360,7 +366,8 @@ pub async fn run(spawner: Spawner) -> ! {
         rx: usb_rx,
         tx: usb_tx,
         status: usb_status,
-        host_present: || true,
+        bitrate: personal_rns::interfaces::usb_auto::DEVICE_USB_BITRATE_BPS,
+        host_presence: ProtocolHostPresence::new(),
     });
 
     let lora_lane = manifold_lanes
@@ -445,13 +452,14 @@ pub async fn run(spawner: Spawner) -> ! {
         let face = selected::face(selected::FaceInput {
             display,
             battery,
-            profile_store: loaded_lora_profile.store,
+            subg_configuration_store: loaded_subg_configuration.store,
             identity_startup_notice,
-            profile_startup_notice: loaded_lora_profile.startup_notice,
-            lora_profile,
+            subg_startup_notice: loaded_subg_configuration.startup_notice,
+            subg_configuration,
             lora_status,
             usb_status,
             lora_spectrum,
+            lora_controller,
             node_page_destination,
         });
         selected::run(
@@ -469,13 +477,14 @@ pub async fn run(spawner: Spawner) -> ! {
         let face = selected::face(selected::FaceInput {
             display,
             battery,
-            profile_store: loaded_lora_profile.store,
+            subg_configuration_store: loaded_subg_configuration.store,
             identity_startup_notice,
-            profile_startup_notice: loaded_lora_profile.startup_notice,
-            lora_profile,
+            subg_startup_notice: loaded_subg_configuration.startup_notice,
+            subg_configuration,
             lora_status,
             usb_status,
             lora_spectrum,
+            lora_controller,
             node_page_destination,
         });
         selected::run(

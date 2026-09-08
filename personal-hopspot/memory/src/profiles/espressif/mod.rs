@@ -43,6 +43,15 @@ const ESP32S3_16_MIB_FIXED_PSRAM_SPACES: [AddressSpace; 8] = esp32s3_spaces(
 );
 const ESP32S3_8_MIB_RUNTIME_PSRAM_SPACES: [AddressSpace; 8] =
     esp32s3_spaces(8 * MIB, AddressSpaceGeometry::RuntimeDetected);
+const ESP32S3_8_MIB_NO_PSRAM_SPACES: [AddressSpace; 7] = [
+    ESP32S3_8_MIB_RUNTIME_PSRAM_SPACES[0],
+    ESP32S3_8_MIB_RUNTIME_PSRAM_SPACES[1],
+    ESP32S3_8_MIB_RUNTIME_PSRAM_SPACES[2],
+    ESP32S3_8_MIB_RUNTIME_PSRAM_SPACES[3],
+    ESP32S3_8_MIB_RUNTIME_PSRAM_SPACES[4],
+    ESP32S3_8_MIB_RUNTIME_PSRAM_SPACES[5],
+    ESP32S3_8_MIB_RUNTIME_PSRAM_SPACES[6],
+];
 
 const fn esp32s3_spaces(
     flash_bytes: u64,
@@ -382,6 +391,16 @@ const C6_RUNTIME_RESERVATIONS: [RuntimeReservation; 1] = [RuntimeReservation {
     },
 }];
 
+const S3FN8_RUNTIME_RESERVATIONS: [RuntimeReservation; 1] = [RuntimeReservation {
+    id: ReservationId("internal-heap"),
+    address_space: DRAM,
+    bytes: 64 * KIB,
+    accounting: ReservationAccounting::SharedPool {
+        pool: ReservationPoolId("internal-heap"),
+        charge: ReservationCharge::IncludedInStaticImage,
+    },
+}];
+
 pub const HELTEC_V4: MemoryProfile = MemoryProfile {
     id: MemoryProfileId("heltec-v4"),
     architecture: ProcessorArchitecture::XtensaEsp32S3,
@@ -420,6 +439,16 @@ pub const T_BEAM_SUPREME: MemoryProfile = MemoryProfile {
     firmware: firmware_placement(0x10000, 0x67D000, 0x67D000),
     journals: &ESP_8_MIB_JOURNALS,
     runtime_reservations: &S3_RUNTIME_RESERVATIONS,
+};
+
+pub const HELTEC_WIRELESS_STICK_LITE_V3: MemoryProfile = MemoryProfile {
+    id: MemoryProfileId("heltec-wireless-stick-lite-v3"),
+    architecture: ProcessorArchitecture::XtensaEsp32S3,
+    address_spaces: &ESP32S3_8_MIB_NO_PSRAM_SPACES,
+    regions: &ESP_8_MIB_REGIONS,
+    firmware: firmware_placement(0x10000, 0x67D000, 0x67D000),
+    journals: &ESP_8_MIB_JOURNALS,
+    runtime_reservations: &S3FN8_RUNTIME_RESERVATIONS,
 };
 
 pub const XIAO_ESP32_C6: MemoryProfile = MemoryProfile {
@@ -508,7 +537,8 @@ const ESP_4_MIB_PARTITIONS: [EspPartitionBinding; 8] = [
 ];
 
 const ESP_16_MIB_PROFILES: [MemoryProfileId; 3] = [HELTEC_V4.id, HELTEC_V4_R8.id, HELTEC_E290.id];
-const ESP_8_MIB_PROFILES: [MemoryProfileId; 1] = [T_BEAM_SUPREME.id];
+const ESP_8_MIB_PROFILES: [MemoryProfileId; 2] =
+    [T_BEAM_SUPREME.id, HELTEC_WIRELESS_STICK_LITE_V3.id];
 const ESP_4_MIB_PROFILES: [MemoryProfileId; 1] = [XIAO_ESP32_C6.id];
 
 pub const ESP_16_MIB_PARTITION_TABLE: EspPartitionTable = EspPartitionTable {

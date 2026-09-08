@@ -3,8 +3,9 @@ use personal_hopspot_memory::{
 };
 
 use super::{
-    arena_allocation, fixed_capacity, fixed_space_allocation, required_section_kind,
-    required_space, BackingAllocation, CapacityEvidence, RamAnalysisError,
+    arena_allocation, fixed_capacity, fixed_space_allocation, optional_section_kind,
+    optional_space, required_section_kind, required_space, BackingAllocation, CapacityEvidence,
+    RamAnalysisError,
 };
 use crate::analysis::{AllocatedSection, SectionKind};
 
@@ -62,7 +63,7 @@ pub(super) fn allocations(
     )?];
 
     let reclaimed = required_space(profile, AddressSpaceKind::ReclaimedRam)?;
-    let reclaimed_section = required_section_kind(
+    let reclaimed_section = optional_section_kind(
         profile.architecture,
         sections,
         ".dram2_uninit",
@@ -71,7 +72,7 @@ pub(super) fn allocations(
     allocations.push(BackingAllocation::new(
         reclaimed.backing_store,
         CapacityEvidence::Known(fixed_capacity(profile, reclaimed)?),
-        reclaimed_section.run_range().byte_len(),
+        reclaimed_section.map_or(0, |section| section.run_range().byte_len()),
         0,
     ));
 
@@ -96,23 +97,24 @@ pub(super) fn allocations(
         )?);
     }
 
-    let external = required_space(profile, AddressSpaceKind::ExternalPsram)?;
-    let capacity = match external.geometry {
-        AddressSpaceGeometry::Fixed(range) => CapacityEvidence::Known(range.byte_len()),
-        AddressSpaceGeometry::FixedCapacity { bytes } => CapacityEvidence::Known(bytes),
-        AddressSpaceGeometry::RuntimeDetected => CapacityEvidence::RuntimeDetected,
-        AddressSpaceGeometry::LinkerDefined => {
-            return Err(RamAnalysisError::InvalidAddressSpaceTopology {
-                profile: profile.id.as_str(),
-                kind: external.kind,
-            });
-        }
-    };
-    allocations.push(BackingAllocation::new(
-        external.backing_store,
-        capacity,
-        0,
-        0,
-    ));
+    if let Some(external) = optional_space(profile, AddressSpaceKind::ExternalPsram)? {
+        let capacity = match external.geometry {
+            AddressSpaceGeometry::Fixed(range) => CapacityEvidence::Known(range.byte_len()),
+            AddressSpaceGeometry::FixedCapacity { bytes } => CapacityEvidence::Known(bytes),
+            AddressSpaceGeometry::RuntimeDetected => CapacityEvidence::RuntimeDetected,
+            AddressSpaceGeometry::LinkerDefined => {
+                return Err(RamAnalysisError::InvalidAddressSpaceTopology {
+                    profile: profile.id.as_str(),
+                    kind: external.kind,
+                });
+            }
+        };
+        allocations.push(BackingAllocation::new(
+            external.backing_store,
+            capacity,
+            0,
+            0,
+        ));
+    }
     Ok(allocations)
 }

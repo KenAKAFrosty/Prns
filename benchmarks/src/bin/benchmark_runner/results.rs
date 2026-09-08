@@ -554,6 +554,7 @@ pub(super) fn file_results(
             ("timed_out_frames", "frames"),
             ("drain_timeouts", "frames"),
             ("outstanding", "frames"),
+            ("outstanding_displacements", "frames"),
             ("buffer_pool_misses", "frames"),
             ("credit_leaks", "permits"),
             ("negotiated_link_mtu_bytes", "bytes"),

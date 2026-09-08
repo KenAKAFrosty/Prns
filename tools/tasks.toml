@@ -98,6 +98,28 @@ requires = ["bash", "cargo", "python3", "rustc"]
 setup = "Install Rust with rustup so the nRF52840 target and llvm-tools-preview component declared by the firmware workspace are available."
 
 [[task]]
+id = "build.hopspot.mesh-pocket-5000"
+summary = "Build the Heltec MeshPocket 5000 mAh firmware and package its recovery-compatible developer UF2."
+domain = "build"
+effect = "workspace-write"
+platforms = ["linux", "macos"]
+audience = ["developer", "ci"]
+entrypoint = ["bash", "tools/build/hopspot-nrf52840.sh", "mesh-pocket-5000"]
+requires = ["bash", "cargo", "python3", "rustc"]
+setup = "Install Rust with rustup so the nRF52840 target and llvm-tools-preview component declared by the firmware workspace are available."
+
+[[task]]
+id = "build.hopspot.mesh-pocket-10000"
+summary = "Build the Heltec MeshPocket 10000 mAh firmware and package its recovery-compatible developer UF2."
+domain = "build"
+effect = "workspace-write"
+platforms = ["linux", "macos"]
+audience = ["developer", "ci"]
+entrypoint = ["bash", "tools/build/hopspot-nrf52840.sh", "mesh-pocket-10000"]
+requires = ["bash", "cargo", "python3", "rustc"]
+setup = "Install Rust with rustup so the nRF52840 target and llvm-tools-preview component declared by the firmware workspace are available."
+
+[[task]]
 id = "build.hopspot.t1000e"
 summary = "Build the headless T1000-E firmware and package its recovery-compatible developer UF2."
 domain = "build"
@@ -291,6 +313,16 @@ platforms = ["any"]
 audience = ["developer"]
 entrypoint = ["python", "tools/device/hopspot-dev-flasher.py"]
 requires = ["cargo", "dx", "git", "npm", "python"]
+
+[[task]]
+id = "device.hopspot.flash-local"
+summary = "Build and flash one cataloged Hopspot board from the current working tree."
+domain = "device"
+effect = "device-write"
+platforms = ["any"]
+audience = ["developer"]
+entrypoint = ["python", "tools/device/hopspot-flash-local.py"]
+requires = ["cargo", "python"]
 
 [[task]]
 id = "repo.cargo-check"
@@ -803,6 +835,16 @@ entrypoint = ["python3", "tools/release/validate-flasher-prerelease.py"]
 requires = ["python3"]
 
 [[task]]
+id = "release.tester-roster.create"
+summary = "Create a versioned tester-roster scaffold from the catalog-aware template."
+domain = "release"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["operator", "release"]
+entrypoint = ["python3", "tools/release/create-flasher-tester-roster.py"]
+requires = ["python3"]
+
+[[task]]
 id = "release.tester-roster.validate"
 summary = "Validate that a version's tester roster covers every shipping target."
 domain = "release"
@@ -919,6 +961,10 @@ reason = "Validated local developer candidate boundary shared by the developer f
 [[internal]]
 path = "tools/release/flasher_acceptance_contract.py"
 reason = "Shared acceptance schema and scaffold implementation used by release commands and bundled qualification tools."
+
+[[internal]]
+path = "tools/release/flasher_board_catalog.py"
+reason = "Shared release-board projection from the authoritative catalog or an immutable candidate manifest."
 
 [[internal]]
 path = "tools/release/flasher_build_metadata.py"
