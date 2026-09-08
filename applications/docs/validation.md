@@ -98,6 +98,16 @@ The application still has a development identifier and local debug signing.
   pairing. No authenticated remote request or Android LXMF exchange has passed
   yet. The invitation's remaining time and packet counters are not sufficient
   evidence to attribute that failure to a particular cause.
+- Investigation reproduced an Embassy Bluetooth receiver defect: joined frames
+  lost their trailing frames, and frames split across L2CAP reads were discarded.
+  The shared stream-deframing correction passes 12 receiver regressions, the
+  full 185-test Embassy suite, strict Clippy, and two no-std target checks.
+  Integrated firmware `735859ffba03` was built, flashed without erasing settings,
+  and booted successfully on the USB-connected E290. The first fresh invitation
+  with that firmware still timed out before confirmation. Its USB monitor had
+  disconnected before the attempt, so it provides no request-ingress evidence.
+  The framing defect is fixed; the remaining physical pairing failure is not
+  yet explained.
 
 The detached mobility gate passes for application commit `789aec2e1` against
 the recorded Prns revision. This includes exact dependency resolution,
