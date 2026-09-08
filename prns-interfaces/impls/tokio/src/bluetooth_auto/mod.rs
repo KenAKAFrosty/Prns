@@ -3,6 +3,9 @@ mod host;
 mod linux;
 mod runtime;
 
+#[cfg(test)]
+mod ba_sim;
+
 pub use host::{
     AttachedBle, AttachedBluetoothLe, AutoBle, AutoBluetoothLe, ConfiguredAutoBle,
     ConfiguredAutoBluetoothLe,
