@@ -76,9 +76,12 @@ class DetachedConsumerCheckTests(unittest.TestCase):
             dependencies = {
                 "personal-rns": "personal-rns",
                 "prns-core": "prns-core",
+                "prns-ffi": "prns-ffi",
                 "prns-host": "prns-host/core",
                 "prns-host-snapshot": "prns-host/impls/snapshot",
             }
+            reviewed, _ = mobility.rust_packages(mobility.load_compatibility())
+            self.assertTrue(set(dependencies).issubset(reviewed))
             declarations = []
             for package, relative in dependencies.items():
                 source = repository / relative
@@ -88,7 +91,12 @@ class DetachedConsumerCheckTests(unittest.TestCase):
                     encoding="utf-8",
                 )
                 path = os.path.relpath(source, crate)
-                declarations.append(f'{package} = {{ path = "{path}" }}')
+                options = (
+                    ", default-features = false, optional = true"
+                    if package == "prns-ffi"
+                    else ""
+                )
+                declarations.append(f'{package} = {{ path = "{path}"{options} }}')
             (crate / "Cargo.toml").write_text(
                 '[package]\nname = "fixture"\nversion = "0.0.0"\n\n[dependencies]\n'
                 + "\n".join(declarations)
@@ -96,10 +104,18 @@ class DetachedConsumerCheckTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
+            compatibility = self.cargo_compatibility(dependencies)
+            source_only = json.loads(json.dumps(compatibility))
+            source_only["prns"]["rustPackages"]["direct"].remove("prns-ffi")
+            with self.assertRaisesRegex(
+                mobility.QualificationFailure, "unreviewed external Cargo dependency prns-ffi"
+            ):
+                mobility.cargo_rewrite_plan(applications, repository, source_only)
+
             rewrites = mobility.cargo_rewrite_plan(
                 applications,
                 repository,
-                self.cargo_compatibility(dependencies),
+                compatibility,
             )
             revision = "1" * 40
             mobility.rewrite_cargo_dependencies(
@@ -111,8 +127,9 @@ class DetachedConsumerCheckTests(unittest.TestCase):
 
             rendered = (crate / "Cargo.toml").read_text(encoding="utf-8")
             self.assertNotIn("path =", rendered)
-            self.assertEqual(rendered.count('git = "file:///exact/prns"'), 4)
-            self.assertEqual(rendered.count(f'rev = "{revision}"'), 4)
+            self.assertEqual(rendered.count('git = "file:///exact/prns"'), 5)
+            self.assertEqual(rendered.count(f'rev = "{revision}"'), 5)
+            self.assertIn("default-features = false, optional = true", rendered)
             mobility.reject_external_cargo_paths(applications)
 
     def test_cargo_scanner_rejects_unhandled_dependency_table(self) -> None:

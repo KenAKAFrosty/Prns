@@ -25,6 +25,7 @@
       "direct": [
         "personal-rns",
         "prns-core",
+        "prns-ffi",
         "prns-host",
         "prns-host-snapshot",
         "prns-interfaces-tokio"
