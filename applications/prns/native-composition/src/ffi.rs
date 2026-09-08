@@ -719,6 +719,11 @@ where
     }
 }
 
+#[cfg(feature = "android")]
+pub(crate) fn invalid_bridge_input(detail: &'static str) -> PrnsAppBytes {
+    encode_bridge_failure(&BridgeFailure::invalid_input(detail))
+}
+
 unsafe fn invoke_path<T>(
     path_ptr: *const u8,
     path_len: usize,

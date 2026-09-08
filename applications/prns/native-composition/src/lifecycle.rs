@@ -120,6 +120,8 @@ struct PreparedAppleBluetoothOwner<T> {
 
 struct WorkerBluetoothPreparation {
     preparation: AppleBluetoothPreparation,
+    #[cfg(all(feature = "android", target_os = "android"))]
+    android: crate::android::BluetoothSession,
     #[cfg(all(feature = "apple", target_os = "ios"))]
     owner_key: AppleBluetoothOwnerKey,
     #[cfg(all(feature = "apple", target_os = "ios"))]
@@ -217,7 +219,9 @@ enum Command {
 struct HostAttachment {
     #[cfg(all(feature = "apple", any(target_os = "ios", target_os = "macos")))]
     bluetooth: Option<personal_rns::bluetooth_auto::AttachedBle>,
-    #[cfg(any(feature = "apple", feature = "host-test"))]
+    #[cfg(all(feature = "android", target_os = "android"))]
+    android_bluetooth: Option<personal_rns::bluetooth_auto::BluetoothAutoStatus>,
+    #[cfg(any(feature = "apple", feature = "android", feature = "host-test"))]
     tcp: Option<personal_rns::runtime::AttachedInterface>,
 }
 
@@ -856,9 +860,23 @@ fn start_configured_with_supervisor(
         identity: bluetooth_identity,
         prepared: prepared_bluetooth,
     };
+    #[cfg(all(feature = "android", target_os = "android"))]
+    let android_bluetooth = match crate::android::take_prepared_bluetooth() {
+        Some(session) => session,
+        None => {
+            return DevelopmentNodeStartOutcome::Failed {
+                stage: DevelopmentNodeFailureStage::Contract,
+                detail:
+                    "The Android service must reserve its Bluetooth bridge before node startup."
+                        .to_owned(),
+            };
+        }
+    };
     #[cfg(not(all(feature = "apple", target_os = "ios")))]
     let worker_bluetooth_preparation = WorkerBluetoothPreparation {
         preparation: bluetooth_preparation,
+        #[cfg(all(feature = "android", target_os = "android"))]
+        android: android_bluetooth,
     };
     supervisor.snapshots.begin_generation(primary_identity);
     supervisor
@@ -2526,20 +2544,30 @@ async fn run_generation(
     let handle = node.handle();
     let clock = node.clock();
 
-    #[cfg(any(feature = "apple", feature = "host-test"))]
+    #[cfg(any(feature = "apple", feature = "android", feature = "host-test"))]
     let mut host_attachment = HostAttachment::default();
-    #[cfg(not(any(feature = "apple", feature = "host-test")))]
+    #[cfg(not(any(feature = "apple", feature = "android", feature = "host-test")))]
     let host_attachment = HostAttachment::default();
     #[cfg(all(feature = "apple", any(target_os = "ios", target_os = "macos")))]
     {
         host_attachment.bluetooth = Some(handle.attach(prepared_bluetooth));
     }
-    #[cfg(any(feature = "apple", feature = "host-test"))]
+    #[cfg(all(feature = "android", target_os = "android"))]
+    let _android_bluetooth_session = {
+        let session = bluetooth_preparation.android;
+        let bluetooth = session.interface(bluetooth_identity);
+        host_attachment.android_bluetooth = Some(bluetooth.status());
+        // Platform readiness (including permissions and the local PSM) is awaited
+        // inside this supervised transport, never by the node startup transaction.
+        handle.supervise(bluetooth);
+        session
+    };
+    #[cfg(any(feature = "apple", feature = "android", feature = "host-test"))]
     if let Some(target) = development_tcp_target {
         host_attachment.tcp =
             Some(handle.attach(personal_rns::tcp::TcpClientInterface::new(target)));
     }
-    #[cfg(not(any(feature = "apple", feature = "host-test")))]
+    #[cfg(not(any(feature = "apple", feature = "android", feature = "host-test")))]
     if development_tcp_target.is_some() {
         return Err(boot_failure(
             &ready,
@@ -3563,17 +3591,24 @@ impl HostAttachment {
         {
             self.bluetooth.is_none()
         }
-        #[cfg(not(all(feature = "apple", any(target_os = "ios", target_os = "macos"))))]
+        #[cfg(all(feature = "android", target_os = "android"))]
+        {
+            self.android_bluetooth.is_none()
+        }
+        #[cfg(not(any(
+            all(feature = "apple", any(target_os = "ios", target_os = "macos")),
+            all(feature = "android", target_os = "android")
+        )))]
         {
             true
         }
     }
 
     fn metadata(&self) -> Vec<HostInterfaceAttachment> {
-        #[cfg(not(any(feature = "apple", feature = "host-test")))]
+        #[cfg(not(any(feature = "apple", feature = "android", feature = "host-test")))]
         return Vec::new();
 
-        #[cfg(any(feature = "apple", feature = "host-test"))]
+        #[cfg(any(feature = "apple", feature = "android", feature = "host-test"))]
         let mut attachments = Vec::new();
         #[cfg(all(feature = "apple", any(target_os = "ios", target_os = "macos")))]
         if let Some(attached) = self.bluetooth.as_ref() {
@@ -3582,19 +3617,27 @@ impl HostAttachment {
                 InterfaceKind::AutomaticBluetoothLe,
             ));
         }
-        #[cfg(any(feature = "apple", feature = "host-test"))]
+        #[cfg(all(feature = "android", target_os = "android"))]
+        if let Some(status) = self.android_bluetooth.as_ref() {
+            use personal_rns::interfaces::InterfaceStatus as _;
+            attachments.push(HostInterfaceAttachment::new(
+                status.id(),
+                InterfaceKind::AutomaticBluetoothLe,
+            ));
+        }
+        #[cfg(any(feature = "apple", feature = "android", feature = "host-test"))]
         if let Some(attached) = self.tcp.as_ref() {
             attachments.push(HostInterfaceAttachment::new(
                 attached.id(),
                 InterfaceKind::TcpClient,
             ));
         }
-        #[cfg(any(feature = "apple", feature = "host-test"))]
+        #[cfg(any(feature = "apple", feature = "android", feature = "host-test"))]
         attachments
     }
 
     fn backend_info(&self) -> BackendInfo {
-        #[cfg(any(feature = "apple", feature = "host-test"))]
+        #[cfg(any(feature = "apple", feature = "android", feature = "host-test"))]
         {
             let mut capabilities = vec![Capability::Bluetooth];
             let mut interface_kinds = vec![InterfaceKind::AutomaticBluetoothLe];
@@ -3605,7 +3648,7 @@ impl HostAttachment {
             BackendInfo::new(BackendKind::Native, capabilities, interface_kinds)
         }
 
-        #[cfg(not(any(feature = "apple", feature = "host-test")))]
+        #[cfg(not(any(feature = "apple", feature = "android", feature = "host-test")))]
         BackendInfo::new(
             BackendKind::Native,
             [Capability::Bluetooth],
@@ -6769,7 +6812,7 @@ mod tests {
         let bluetooth_record = std::fs::read(&bluetooth_path).unwrap_or_default();
         assert_eq!(bluetooth_record.len(), 40);
         assert_eq!(stop(), DevelopmentNodeStopOutcome::Stopped);
-        #[cfg(any(feature = "apple", feature = "host-test"))]
+        #[cfg(any(feature = "apple", feature = "android", feature = "host-test"))]
         {
             assert!(matches!(
                 start_configured(
@@ -6792,7 +6835,7 @@ mod tests {
             );
             assert_eq!(stop(), DevelopmentNodeStopOutcome::Stopped);
         }
-        #[cfg(not(any(feature = "apple", feature = "host-test")))]
+        #[cfg(not(any(feature = "apple", feature = "android", feature = "host-test")))]
         {
             assert!(matches!(
                 start_configured(

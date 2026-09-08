@@ -1,5 +1,7 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 
+#[cfg(feature = "android")]
+mod android;
 pub mod contract;
 mod development_store;
 mod directory;
