@@ -19,6 +19,7 @@ from live_tcp_lxmf_peer import (
     report_rust_observed,
     source_verification_failure,
 )
+from run_live_tcp_lxmf import host_environment
 from run_physical_tcp_lxmf import arguments
 from tcp_fixture import (
     EXPECTED_DESTINATION_ENV,
@@ -33,6 +34,27 @@ from tcp_fixture import (
 
 
 class TcpFixtureTests(unittest.TestCase):
+    def test_host_environment_does_not_inherit_physical_peer_selection(self) -> None:
+        inherited = {
+            EXPECTED_DESTINATION_ENV: "0123456789abcdef0123456789abcdef",
+            LISTEN_IP_ENV: "0.0.0.0",
+            WILDCARD_OPT_IN_ENV: "1",
+            "PRNS_LXMF_TCP_PORT": "4242",
+            "PRNS_LXMF_CONFIG_DIR": "/physical/rns",
+            "CARGO_TARGET_DIR": "/existing/target",
+        }
+        before = inherited.copy()
+        environment = host_environment(inherited, pathlib.Path("/host-fixture"), 5678)
+        self.assertNotIn(EXPECTED_DESTINATION_ENV, environment)
+        self.assertIsNone(environment_expected_destination(environment))
+        self.assertNotIn(WILDCARD_OPT_IN_ENV, environment)
+        self.assertEqual(environment_listen_ip(environment), "127.0.0.1")
+        self.assertEqual(environment["PRNS_LXMF_TCP_PORT"], "5678")
+        self.assertEqual(environment["PRNS_LXMF_CONFIG_DIR"], "/host-fixture/rns")
+        self.assertEqual(environment["PYTHONIOENCODING"], "utf-8:strict")
+        self.assertEqual(environment["CARGO_TARGET_DIR"], "/existing/target")
+        self.assertEqual(inherited, before)
+
     def test_listen_defaults_to_loopback(self) -> None:
         self.assertEqual(environment_listen_ip({}), "127.0.0.1")
 

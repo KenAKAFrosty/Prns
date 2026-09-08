@@ -9,10 +9,12 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Mapping
 from pathlib import Path
 
 from tcp_fixture import (
     DEFAULT_LISTEN_IP,
+    EXPECTED_DESTINATION_ENV,
     LISTEN_IP_ENV,
     RUST_OBSERVED_MARKER,
     WILDCARD_OPT_IN_ENV,
@@ -27,6 +29,18 @@ PYTHON_SUCCESS = "PINNED_PYTHON_LXMF_OK inbound=verified outbound=proof links=tw
 RUST_SUCCESS = "PRNS_LXMF_LIVE_OK inbound=verified outbound=proof links=two"
 START_TIMEOUT_SECONDS = 15.0
 EXCHANGE_TIMEOUT_SECONDS = 60.0
+
+
+def host_environment(inherited: Mapping[str, str], work: Path, port: int) -> dict[str, str]:
+    environment = dict(inherited)
+    environment["PYTHONIOENCODING"] = "utf-8:strict"
+    environment["PRNS_LXMF_TCP_PORT"] = str(port)
+    environment["PRNS_LXMF_CONFIG_DIR"] = str(work / "rns")
+    environment[LISTEN_IP_ENV] = DEFAULT_LISTEN_IP
+    environment.pop(WILDCARD_OPT_IN_ENV, None)
+    # The isolated Rust peer has its own destination, not a physical phone's.
+    environment.pop(EXPECTED_DESTINATION_ENV, None)
+    return environment
 
 
 def available_port() -> int:
@@ -82,12 +96,7 @@ def main() -> int:
         python_log = work / "python.log"
         rust_log = work / "rust.log"
         port = available_port()
-        environment = os.environ.copy()
-        environment["PYTHONIOENCODING"] = "utf-8:strict"
-        environment["PRNS_LXMF_TCP_PORT"] = str(port)
-        environment["PRNS_LXMF_CONFIG_DIR"] = str(work / "rns")
-        environment[LISTEN_IP_ENV] = DEFAULT_LISTEN_IP
-        environment.pop(WILDCARD_OPT_IN_ENV, None)
+        environment = host_environment(os.environ, work, port)
         try:
             with python_log.open("wb") as output:
                 python_process = subprocess.Popen(
