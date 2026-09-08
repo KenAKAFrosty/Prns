@@ -14,7 +14,7 @@ use embassy_sync::signal::Signal;
 use embassy_time::{with_timeout, Duration, Timer};
 
 use nrf_softdevice::ble::{
-    central, gatt_client, gatt_server, l2cap, peripheral, Address, Connection, GattError,
+    central, gatt_client, gatt_server, l2cap, peripheral, Address, Connection, GattError, TxPower,
 };
 use nrf_softdevice::{raw, RawError, SocEvent, Softdevice};
 
@@ -714,10 +714,55 @@ fn preferred_conn_params() -> raw::ble_gap_conn_params_t {
     }
 }
 
+/// MeshTower V2 BLE uses the nRF52840 internal 2.4 GHz radio (the KCT8103L FEM is LoRa-only).
+#[cfg(feature = "board-mesh-tower-v2")]
+fn preferred_tx_power() -> TxPower {
+    TxPower::Plus8dBm
+}
+
+#[cfg(not(feature = "board-mesh-tower-v2"))]
+fn preferred_tx_power() -> TxPower {
+    TxPower::ZerodBm
+}
+
+fn peripheral_adv_config() -> peripheral::Config {
+    let mut config = peripheral::Config::default();
+    config.tx_power = preferred_tx_power();
+    config
+}
+
+fn idle_scan_config() -> central::ScanConfig<'static> {
+    central::ScanConfig {
+        active: false,
+        extended: false,
+        interval: IDLE_SCAN_INTERVAL,
+        window: IDLE_SCAN_WINDOW,
+        timeout: SCAN_WINDOW_TICKS,
+        tx_power: preferred_tx_power(),
+        ..Default::default()
+    }
+}
+
 fn initiate_data_length_extension(conn: &mut Connection) {
     // `None` asks the SoftDevice for the largest data length supported by this build's connection
     // event and RAM configuration. Peers without DLE support retain the mandatory 27-byte floor.
     let _ = conn.data_length_update(None);
+}
+
+fn tune_link(conn: &mut Connection) {
+    if preferred_tx_power() != TxPower::ZerodBm {
+        if let Some(handle) = conn.handle() {
+            let ret = unsafe {
+                raw::sd_ble_gap_tx_power_set(
+                    raw::BLE_GAP_TX_POWER_ROLES_BLE_GAP_TX_POWER_ROLE_CONN as _,
+                    handle,
+                    preferred_tx_power() as i8,
+                )
+            };
+            let _ = RawError::convert(ret);
+        }
+    }
+    initiate_data_length_extension(conn);
 }
 
 #[derive(Clone, Copy)]
@@ -1082,10 +1127,11 @@ async fn serve_central(
     config.scan_config.timeout = CONNECT_WINDOW_TICKS;
     config.scan_config.interval = CONNECT_SCAN_INTERVAL;
     config.scan_config.window = CONNECT_SCAN_WINDOW;
+    config.scan_config.tx_power = preferred_tx_power();
     config.conn_params = preferred_conn_params();
     let conn = match select(central::connect(sd, &config), worker.wait_for_close()).await {
         Either::First(Ok(mut conn)) => {
-            initiate_data_length_extension(&mut conn);
+            tune_link(&mut conn);
             conn
         }
         Either::First(Err(_)) => {
@@ -1322,11 +1368,12 @@ pub(super) async fn serve_slot(
         slot.reset();
         match job {
             SlotJob::Accept {
-                connection: conn,
+                connection: mut conn,
                 slot: lease,
             } => {
                 let ConnectionSlotOwners { worker, link } = lease.activate();
                 slot.set_address(conn.peer_address().bytes());
+                tune_link(&mut conn);
                 serve_peripheral(l2cap, server, &conn, slot, hub, link, &worker).await;
             }
             SlotJob::Dial {
@@ -1364,7 +1411,7 @@ pub(super) async fn acceptor(sd: &'static Softdevice, hub: &'static BleHub) -> !
             adv_data: &adv_buf[..adv_len],
             scan_data: &scan_data,
         };
-        let adv_config = peripheral::Config::default();
+        let adv_config = peripheral_adv_config();
         let advertise = peripheral::advertise_connectable(sd, adv, &adv_config);
         match select(advertise, hub.advertise.wait()).await {
             Either::First(Ok(conn)) => {
@@ -1395,14 +1442,7 @@ pub(super) async fn scanner(sd: &'static Softdevice, hub: &'static BleHub) -> ! 
             continue;
         }
         let central_radio = hub.acquire_central_radio().await;
-        let config = central::ScanConfig {
-            active: false,
-            extended: false,
-            interval: IDLE_SCAN_INTERVAL,
-            window: IDLE_SCAN_WINDOW,
-            timeout: SCAN_WINDOW_TICKS,
-            ..Default::default()
-        };
+        let config = idle_scan_config();
         let scan = central::scan(sd, &config, |report| {
             if report.data.len == 0 {
                 return None;
