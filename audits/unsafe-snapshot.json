@@ -16854,11 +16854,11 @@
       "name": "prns-ffi",
       "source": "prns-ffi",
       "unsafe": {
-        "blocks": 138,
+        "blocks": 132,
         "externs": 3,
         "functions": 0,
         "impls": 22,
-        "tokens": 199
+        "tokens": 193
       },
       "version": "0.3.7"
     },
