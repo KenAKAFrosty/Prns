@@ -243,6 +243,13 @@ published prerequisite branches were not rewritten.
   the installed diagnostic image is explicitly not a clean-tree release image.
   No watchdog timing or button policy was changed. The intermittent freeze
   remains unresolved pending a captured reproduction.
+- The user subsequently reported that the requested menu check seemed normal,
+  with no freeze. Separately, the bounded 20-minute diagnostic capture completed
+  with advancing core heartbeats, successful watchdog feeds, and successful
+  display refreshes; no stall or subsequent reset was recorded. No button
+  markers were captured, so the manual check cannot be correlated with that
+  log window. This is a successful user-reported check, not proof that the
+  intermittent freeze is fixed.
 
 The full physical lifecycle matrix remains pending beyond the narrow checks
 above. Explicit service Stop/restart, denied/regranted permissions, Bluetooth
