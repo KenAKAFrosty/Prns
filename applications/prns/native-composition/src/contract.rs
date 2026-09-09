@@ -5,19 +5,38 @@ use ts_rs::{Config, TS};
 pub const CONTRACT_FINGERPRINT: &str = env!("PRNS_APP_CONTRACT_FINGERPRINT");
 pub const HOST_CONTRACT_FINGERPRINT: &str = env!("PRNS_HOST_CONTRACT_FINGERPRINT");
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+/// Exact application integer. The legacy JSON bridge retains decimal strings.
+#[derive(Debug, Clone, PartialEq, Eq, TS)]
 #[ts(type = "string")]
-pub struct U64String(pub String);
+pub struct U64String(pub u64);
+
+impl Serialize for U64String {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.0.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for U64String {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        crate::lxmf::parse_canonical_u64(&value)
+            .map(Self)
+            .ok_or_else(|| {
+                serde::de::Error::custom("expected a canonical unsigned 64-bit decimal string")
+            })
+    }
+}
 
 impl From<u64> for U64String {
     fn from(value: u64) -> Self {
-        Self(value.to_string())
+        Self(value)
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename_all = "camelCase")]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Record))]
 pub struct DevelopmentNodeSnapshot {
     pub contract_fingerprint: String,
     pub revision: U64String,
@@ -38,6 +57,7 @@ pub struct DevelopmentNodeSnapshot {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[ts(rename_all = "camelCase")]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Record))]
 pub struct DevelopmentNodeStartInput {
     pub development_tcp_target: Option<String>,
 }
@@ -45,6 +65,7 @@ pub struct DevelopmentNodeStartInput {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename_all = "camelCase")]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum DevelopmentNodeRuntime {
     Stopped,
     Starting,
@@ -64,6 +85,7 @@ pub enum DevelopmentNodeRuntime {
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum PrimaryIdentityState {
     Missing,
     Present { identity_hash: Vec<u8> },
@@ -77,6 +99,7 @@ pub enum PrimaryIdentityState {
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum LocalHostState {
     Stopped {
         last_start_failure: Option<String>,
@@ -142,6 +165,7 @@ impl Serialize for LocalHostState {
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum IdentityImportPreviewOutcome {
     Valid { identity_hash: Vec<u8> },
     InvalidLength,
@@ -158,6 +182,7 @@ pub enum IdentityImportPreviewOutcome {
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum IdentityCreationOutcome {
     Created { identity_hash: Vec<u8> },
     AlreadyExists,
@@ -169,6 +194,7 @@ pub enum IdentityCreationOutcome {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[ts(rename_all = "camelCase")]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Record))]
 pub struct Contact {
     #[ts(type = "Array<number>")]
     pub destination: [u8; 16],
@@ -181,6 +207,7 @@ pub struct Contact {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[ts(rename_all = "camelCase")]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Record))]
 pub struct ContactDestinationInput {
     #[ts(type = "Array<number>")]
     pub destination: [u8; 16],
@@ -189,6 +216,7 @@ pub struct ContactDestinationInput {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[ts(rename_all = "camelCase")]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Record))]
 pub struct CreateManualContactInput {
     #[ts(type = "Array<number>")]
     pub destination: [u8; 16],
@@ -200,6 +228,7 @@ pub struct CreateManualContactInput {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[ts(rename_all = "camelCase")]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Record))]
 pub struct SetContactAliasInput {
     #[ts(type = "Array<number>")]
     pub destination: [u8; 16],
@@ -209,6 +238,7 @@ pub struct SetContactAliasInput {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[ts(rename_all = "camelCase")]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Record))]
 pub struct SetContactPinnedInput {
     #[ts(type = "Array<number>")]
     pub destination: [u8; 16],
@@ -302,6 +332,7 @@ impl<'de> Deserialize<'de> for SetContactAliasInput {
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum ContactMutationOutcome {
     Saved {
         contact: Contact,
@@ -345,6 +376,7 @@ pub enum ContactMutationOutcome {
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum ContactLookupOutcome {
     Found { contact: Contact },
     NotFound,
@@ -363,6 +395,7 @@ pub enum ContactLookupOutcome {
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum ContactListOutcome {
     Listed { contacts: Vec<Contact> },
     DevelopmentUnavailable { detail: String },
@@ -380,6 +413,7 @@ pub enum ContactListOutcome {
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum LxmfText {
     Utf8 {
         value: String,
@@ -393,6 +427,7 @@ pub enum LxmfText {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename_all = "camelCase")]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Record))]
 pub struct LxmfPeerSummary {
     #[ts(type = "Array<number>")]
     pub destination: [u8; 16],
@@ -404,6 +439,7 @@ pub struct LxmfPeerSummary {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename_all = "camelCase")]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum LxmfDirection {
     Inbound,
     Outbound,
@@ -412,6 +448,7 @@ pub enum LxmfDirection {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename_all = "camelCase")]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum LxmfVerification {
     Verified,
     SourceUnknown,
@@ -421,6 +458,7 @@ pub enum LxmfVerification {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename_all = "camelCase")]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum LxmfDeliveryFailure {
     NoRoute,
     LinkFailed,
@@ -439,6 +477,7 @@ pub enum LxmfDeliveryFailure {
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum LxmfDeliveryState {
     Received,
     Queued {
@@ -463,6 +502,7 @@ pub enum LxmfDeliveryState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename_all = "camelCase")]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Record))]
 pub struct LxmfMessage {
     pub local_record_id: U64String,
     #[ts(type = "Array<number>")]
@@ -482,6 +522,7 @@ pub struct LxmfMessage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename_all = "camelCase")]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum LxmfHealthState {
     Ready,
     Degraded,
@@ -491,6 +532,7 @@ pub enum LxmfHealthState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename_all = "camelCase")]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Record))]
 pub struct LxmfHealth {
     pub state: LxmfHealthState,
     pub inbound_overflow_count: U64String,
@@ -509,6 +551,7 @@ impl LxmfHealth {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[ts(rename_all = "camelCase")]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Record))]
 pub struct SendDirectTextInput {
     #[ts(type = "Array<number>")]
     pub destination: [u8; 16],
@@ -519,6 +562,7 @@ pub struct SendDirectTextInput {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[ts(rename_all = "camelCase")]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Record))]
 pub struct MeasureLxmfTextInput {
     pub title: String,
     pub content: String,
@@ -527,6 +571,7 @@ pub struct MeasureLxmfTextInput {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[ts(rename_all = "camelCase")]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Record))]
 pub struct ListLxmfMessagesInput {
     #[ts(type = "Array<number> | null")]
     pub peer: Option<[u8; 16]>,
@@ -537,6 +582,7 @@ pub struct ListLxmfMessagesInput {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[ts(rename_all = "camelCase")]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Record))]
 pub struct RetryLxmfMessageInput {
     pub local_record_id: U64String,
 }
@@ -544,6 +590,7 @@ pub struct RetryLxmfMessageInput {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[ts(rename_all = "camelCase")]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Record))]
 pub struct CancelLxmfMessageInput {
     pub local_record_id: U64String,
 }
@@ -559,6 +606,7 @@ pub struct CancelLxmfMessageInput {
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum LxmfPeerListOutcome {
     Listed { peers: Vec<LxmfPeerSummary> },
     LocalNodeStopped,
@@ -576,6 +624,7 @@ pub enum LxmfPeerListOutcome {
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum LxmfMessageListOutcome {
     Listed { messages: Vec<LxmfMessage> },
     InvalidInput { detail: String },
@@ -594,6 +643,7 @@ pub enum LxmfMessageListOutcome {
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum AnnounceLxmfOutcome {
     Announced,
     LocalNodeStopped,
@@ -612,6 +662,7 @@ pub enum AnnounceLxmfOutcome {
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum SendDirectTextOutcome {
     Accepted { local_record_id: U64String },
     NeedsResource { wire_bytes: u32 },
@@ -632,6 +683,7 @@ pub enum SendDirectTextOutcome {
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum RetryLxmfMessageOutcome {
     Accepted { local_record_id: U64String },
     NotFound,
@@ -651,6 +703,7 @@ pub enum RetryLxmfMessageOutcome {
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum CancelLxmfMessageOutcome {
     Cancelled { local_record_id: U64String },
     NotFound,
@@ -672,6 +725,7 @@ pub enum CancelLxmfMessageOutcome {
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum MeasureLxmfTextOutcome {
     Measured {
         wire_bytes: u32,
@@ -696,6 +750,7 @@ pub enum MeasureLxmfTextOutcome {
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum RemoteControlPairingState {
     BluetoothUnavailable,
     Searching,
@@ -733,6 +788,7 @@ pub enum RemoteControlPairingState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename_all = "camelCase")]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Record))]
 pub struct RemoteControlPairingCandidate {
     pub candidate_id: String,
     pub display_name: Option<String>,
@@ -744,6 +800,7 @@ pub struct RemoteControlPairingCandidate {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename_all = "camelCase")]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum RemoteControlRequestKind {
     Describe,
     AnnounceSelf,
@@ -752,6 +809,7 @@ pub enum RemoteControlRequestKind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename_all = "camelCase")]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Record))]
 pub struct RemoteControlTargetSnapshot {
     pub target_identity_fingerprint: Vec<u8>,
     pub destination: Vec<u8>,
@@ -762,6 +820,7 @@ pub struct RemoteControlTargetSnapshot {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename_all = "camelCase")]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Record))]
 pub struct DevelopmentNodeOperation {
     pub kind: DevelopmentNodeOperationKind,
     pub started_at_millis: U64String,
@@ -770,6 +829,7 @@ pub struct DevelopmentNodeOperation {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename_all = "camelCase")]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum DevelopmentNodeOperationKind {
     Pairing,
     Describe,
@@ -780,6 +840,7 @@ pub enum DevelopmentNodeOperationKind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename_all = "camelCase")]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Record))]
 pub struct DevelopmentNodeFailure {
     pub stage: DevelopmentNodeFailureStage,
     pub detail: String,
@@ -788,6 +849,7 @@ pub struct DevelopmentNodeFailure {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename_all = "camelCase")]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum DevelopmentNodeFailureStage {
     Storage,
     Identity,
@@ -801,6 +863,7 @@ pub enum DevelopmentNodeFailureStage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename_all = "camelCase")]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum AppleBluetoothRestorationPreparationFailureStage {
     Contract,
     Storage,
@@ -819,6 +882,7 @@ pub enum AppleBluetoothRestorationPreparationFailureStage {
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum AppleBluetoothRestorationPreparationOutcome {
     Prepared,
     AlreadyPrepared,
@@ -832,6 +896,7 @@ pub enum AppleBluetoothRestorationPreparationOutcome {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename_all = "camelCase")]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum RemoteControlPairingFailureStage {
     Input,
     Candidate,
@@ -849,6 +914,7 @@ pub enum RemoteControlPairingFailureStage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename_all = "camelCase")]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum DevelopmentNodeStopStage {
     CommandAdmission,
     TargetConnection,
@@ -860,6 +926,7 @@ pub enum DevelopmentNodeStopStage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename_all = "camelCase")]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum RemoteControlDescribeFailureStage {
     Input,
     Inventory,
@@ -883,6 +950,7 @@ pub enum RemoteControlDescribeFailureStage {
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum DevelopmentNodeStartOutcome {
     Started {
         snapshot: DevelopmentNodeSnapshot,
@@ -907,6 +975,7 @@ pub enum DevelopmentNodeStartOutcome {
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum DevelopmentNodeStopOutcome {
     Stopped,
     AlreadyStopped,
@@ -927,6 +996,7 @@ pub enum DevelopmentNodeStopOutcome {
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum RemoteControlPairingCommandOutcome {
     Accepted {
         snapshot: Box<DevelopmentNodeSnapshot>,
@@ -949,6 +1019,7 @@ pub enum RemoteControlPairingCommandOutcome {
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum RemoteControlDescribeOutcome {
     Described {
         target: RemoteControlTargetSnapshot,
@@ -966,6 +1037,7 @@ pub enum RemoteControlDescribeOutcome {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename_all = "camelCase")]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Record))]
 pub struct InitiateRemoteControlPairingInput {
     pub candidate_id: String,
     pub invitation_code: String,
@@ -974,6 +1046,7 @@ pub struct InitiateRemoteControlPairingInput {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename_all = "camelCase")]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Record))]
 pub struct RemoteControlPairingDecisionInput {
     pub attempt_id: String,
 }
@@ -981,6 +1054,7 @@ pub struct RemoteControlPairingDecisionInput {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename_all = "camelCase")]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Record))]
 pub struct DescribeRemoteControlTargetInput {
     pub target_identity_fingerprint: Vec<u8>,
 }
@@ -988,6 +1062,7 @@ pub struct DescribeRemoteControlTargetInput {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename_all = "camelCase")]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Record))]
 pub struct AnnounceRemoteControlTargetInput {
     pub target_identity_fingerprint: Vec<u8>,
 }
@@ -996,6 +1071,7 @@ pub struct AnnounceRemoteControlTargetInput {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename_all = "camelCase")]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Record))]
 pub struct RemoteControlAnnounceOperation {
     pub operation_id: U64String,
     pub target_identity_fingerprint: Vec<u8>,
@@ -1013,6 +1089,7 @@ pub struct RemoteControlAnnounceOperation {
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum RemoteControlAnnounceStatus {
     Pending,
     Announced {
@@ -1032,6 +1109,7 @@ pub enum RemoteControlAnnounceStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename_all = "camelCase")]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum RemoteControlAnnounceFailureStage {
     Busy,
     Input,
@@ -1047,6 +1125,7 @@ pub enum RemoteControlAnnounceFailureStage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename_all = "camelCase")]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum RemoteControlAnnounceUnknownReason {
     DeliveryUnconfirmed,
     Timeout,
@@ -1066,6 +1145,7 @@ pub enum RemoteControlAnnounceUnknownReason {
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum RemoteControlAnnounceOutcome {
     Accepted {
         operation: RemoteControlAnnounceOperation,
@@ -1759,6 +1839,39 @@ fn host_fixture() -> prns_host::HostSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "uniffi-bindings")]
+    #[test]
+    fn uniffi_full_snapshot_roundtrip_preserves_canonical_host_and_exact_integers() {
+        let mut snapshot = DevelopmentNodeSnapshot::stopped();
+        snapshot.generation_id = U64String(u64::MAX);
+        snapshot.revision = U64String(1_u64 << 53);
+        snapshot.local_host = LocalHostState::Running {
+            host: Box::new(host_fixture()),
+        };
+        let bytes =
+            <DevelopmentNodeSnapshot as uniffi::Lower<crate::UniFfiTag>>::lower(snapshot.clone());
+        let decoded = <DevelopmentNodeSnapshot as uniffi::Lift<crate::UniFfiTag>>::try_lift(bytes)
+            .expect("typed snapshot");
+        assert_eq!(decoded, snapshot);
+        assert_eq!(
+            serde_json::to_string(&decoded).expect("canonical JSON"),
+            serde_json::to_string(&snapshot).expect("canonical JSON")
+        );
+    }
+
+    #[test]
+    fn exact_integer_input_rejects_noncanonical_or_out_of_range_strings() {
+        for value in ["", "01", "-1", "+1", " 1", "18446744073709551616"] {
+            assert!(serde_json::from_str::<U64String>(&format!("\"{value}\"")).is_err());
+        }
+        for value in [0, (1_u64 << 53) - 1, 1_u64 << 53, u64::MAX] {
+            assert_eq!(
+                serde_json::from_str::<U64String>(&format!("\"{value}\"")).expect("exact integer"),
+                U64String(value)
+            );
+        }
+    }
 
     #[test]
     fn every_u64_fixture_is_an_exact_decimal_string() {

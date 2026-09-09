@@ -151,6 +151,8 @@ struct IdentityOwner {
 }
 
 struct Worker {
+    #[cfg_attr(not(feature = "uniffi-bindings"), allow(dead_code))]
+    runtime: Arc<OnceLock<tokio::runtime::Handle>>,
     commands: mpsc::Sender<Command>,
     shutdown: ShutdownSignal,
     done: std_mpsc::Receiver<WorkerResult>,
@@ -177,6 +179,8 @@ impl ShutdownSignal {
 enum Command {
     AnnounceSelf(RemoteControlAnnounceOperation),
     Snapshot(std_mpsc::SyncSender<DevelopmentNodeSnapshot>),
+    #[cfg(feature = "uniffi-bindings")]
+    SnapshotAsync(oneshot::Sender<DevelopmentNodeSnapshot>),
     Initiate(
         InitiateRemoteControlPairingInput,
         std_mpsc::SyncSender<RemoteControlPairingCommandOutcome>,
@@ -901,10 +905,13 @@ fn start_configured_with_supervisor(
     #[cfg(all(feature = "apple", target_os = "ios"))]
     let bluetooth_owner_key_for_worker = worker_bluetooth_preparation.owner_key.clone();
     let worker_shutdown = shutdown.clone();
+    let runtime = Arc::new(OnceLock::new());
+    let worker_runtime = Arc::clone(&runtime);
     let join = std::thread::Builder::new()
         .name("prns-app-native".to_owned())
         .spawn(move || {
             let result = run_worker(
+                worker_runtime,
                 paths,
                 primary_identity_secret,
                 mailbox_submitter,
@@ -935,6 +942,7 @@ fn start_configured_with_supervisor(
         }
     };
     state.worker = Some(Worker {
+        runtime,
         commands: command_tx,
         shutdown,
         done: done_rx,
@@ -1024,6 +1032,82 @@ fn snapshot_with_supervisor(supervisor: &Supervisor) -> DevelopmentNodeSnapshot 
             );
             supervisor.snapshots.read()
         }
+    }
+}
+
+/// A runtime-neutral future for the actor's full snapshot query.
+#[cfg(feature = "uniffi-bindings")]
+pub(crate) async fn snapshot_async() -> DevelopmentNodeSnapshot {
+    snapshot_async_with_supervisor(supervisor()).await
+}
+
+#[cfg(feature = "uniffi-bindings")]
+async fn snapshot_async_with_supervisor(supervisor: &Supervisor) -> DevelopmentNodeSnapshot {
+    // Start/Stop hold this mutex while completing bounded native transitions.
+    // A JSI caller must never wait for that lock on the JavaScript thread.
+    let (commands, runtime, generation) = {
+        let state = match supervisor.state.try_lock() {
+            Ok(state) => state,
+            Err(std::sync::TryLockError::Poisoned(error)) => error.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => return supervisor.snapshots.read(),
+        };
+        let current = supervisor.snapshots.read();
+        if current.runtime != DevelopmentNodeRuntime::Running
+            || current
+                .last_announcement
+                .as_ref()
+                .is_some_and(|operation| operation.status == RemoteControlAnnounceStatus::Pending)
+        {
+            return current;
+        }
+        let Some(worker) = &state.worker else {
+            return current;
+        };
+        let Some(runtime) = worker.runtime.get() else {
+            return current;
+        };
+        (
+            worker.commands.clone(),
+            runtime.clone(),
+            current.generation_id,
+        )
+    };
+    let (response, receiver) = oneshot::channel();
+    if commands.try_send(Command::SnapshotAsync(response)).is_err() {
+        supervisor
+            .snapshots
+            .set_local_host_unavailable_for_generation(
+                generation,
+                "The local Host snapshot command could not be admitted.".to_owned(),
+            );
+        return supervisor.snapshots.read();
+    }
+    // The timer and waiter run on the node's existing runtime. Aborting the
+    // exported future drops this task's receiver, retiring a queued read.
+    let mut waiter = CancelOnDrop(
+        runtime.spawn(async move { tokio::time::timeout(SNAPSHOT_TIMEOUT, receiver).await }),
+    );
+    match (&mut waiter.0).await {
+        Ok(Ok(Ok(snapshot))) => snapshot,
+        _ => {
+            supervisor
+                .snapshots
+                .set_local_host_unavailable_for_generation(
+                    generation,
+                    "The local Host snapshot command exceeded its bounded wait.".to_owned(),
+                );
+            supervisor.snapshots.read()
+        }
+    }
+}
+
+#[cfg(feature = "uniffi-bindings")]
+struct CancelOnDrop<T>(tokio::task::JoinHandle<T>);
+
+#[cfg(feature = "uniffi-bindings")]
+impl<T> Drop for CancelOnDrop<T> {
+    fn drop(&mut self) {
+        self.0.abort();
     }
 }
 
@@ -1440,11 +1524,7 @@ fn retry_lxmf_message_with_supervisor(
     storage_root: &Path,
     input: RetryLxmfMessageInput,
 ) -> RetryLxmfMessageOutcome {
-    let Some(local_record_id) = crate::lxmf::parse_canonical_u64(&input.local_record_id.0) else {
-        return RetryLxmfMessageOutcome::DevelopmentUnavailable {
-            detail: "localRecordId must be a canonical unsigned 64-bit decimal string".to_owned(),
-        };
-    };
+    let local_record_id = input.local_record_id.0;
     let paths = match prepare_storage(storage_root) {
         Ok(paths) => paths,
         Err(detail) => return RetryLxmfMessageOutcome::DevelopmentUnavailable { detail },
@@ -1537,11 +1617,7 @@ fn cancel_lxmf_message_with_supervisor(
     storage_root: &Path,
     input: CancelLxmfMessageInput,
 ) -> CancelLxmfMessageOutcome {
-    let Some(local_record_id) = crate::lxmf::parse_canonical_u64(&input.local_record_id.0) else {
-        return CancelLxmfMessageOutcome::DevelopmentUnavailable {
-            detail: "localRecordId must be a canonical unsigned 64-bit decimal string".to_owned(),
-        };
-    };
+    let local_record_id = input.local_record_id.0;
     let cancelled_at_millis = wall_clock_millis();
     let paths = match prepare_storage(storage_root) {
         Ok(paths) => paths,
@@ -2354,6 +2430,7 @@ fn join_finished_worker(worker: &mut Worker) {
 
 #[allow(clippy::too_many_arguments)]
 fn run_worker(
+    published_runtime: Arc<OnceLock<tokio::runtime::Handle>>,
     paths: NodeStoragePaths,
     primary_identity_secret: IdentitySecretKey,
     mailbox_submitter: Arc<dyn prns_lxmf::mailbox::MailboxSubmitter>,
@@ -2374,6 +2451,7 @@ fn run_worker(
             let _ = ready.send(Err((DevelopmentNodeFailureStage::Runtime, detail.clone())));
             (DevelopmentNodeStopStage::Worker, detail)
         })?;
+    let _ = published_runtime.set(runtime.handle().clone());
     runtime.block_on(run_generation(
         paths,
         primary_identity_secret,
@@ -3042,6 +3120,19 @@ async fn run_actor_loop(
                         snapshots,
                     ).await;
                     let _ = response.send(snapshots.read());
+                }
+                #[cfg(feature = "uniffi-bindings")]
+                Some(Command::SnapshotAsync(mut response)) => {
+                    if !response.is_closed() {
+                        tokio::select! {
+                            biased;
+                            () = response.closed() => {},
+                            () = refresh_host_snapshot(
+                                handle, host_attachment, &persistence,
+                                &mut host_revision, started, snapshots,
+                            ) => { let _ = response.send(snapshots.read()); }
+                        }
+                    }
                 }
                 Some(Command::Initiate(input, response)) => {
                     let outcome = if controls.pairing_in_progress() {
@@ -4244,6 +4335,7 @@ mod tests {
             identity: BleIdentity::new([0xa5; 16]),
         };
         Worker {
+            runtime: Arc::new(OnceLock::new()),
             commands,
             shutdown,
             done,
@@ -4593,7 +4685,7 @@ mod tests {
             crate::contract::LxmfDeliveryState::Failed {
                 failed_attempts: U64String(ref value),
                 last_failure: crate::contract::LxmfDeliveryFailure::DeliveryTimedOut,
-            } if value == "1"
+            } if *value == 1
         ));
 
         assert_eq!(
@@ -6235,6 +6327,117 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "uniffi-bindings")]
+    fn async_snapshot_test_owner() -> (Arc<Supervisor>, mpsc::Receiver<Command>) {
+        let supervisor = Arc::new(Supervisor {
+            snapshots: Arc::new(SnapshotStore::new()),
+            operation_admitted: Arc::new(AtomicBool::new(false)),
+            state: Mutex::new(SupervisorState::default()),
+        });
+        supervisor
+            .snapshots
+            .begin_generation(PrimaryIdentityState::Missing);
+        supervisor
+            .snapshots
+            .set_runtime(DevelopmentNodeRuntime::Running);
+        supervisor.snapshots.set_local_host(running_host_state());
+        let (commands, receiver) = mpsc::channel(COMMAND_LANE_CAPACITY);
+        let (shutdown, _) = watch::channel(false);
+        let (_, done) = std_mpsc::sync_channel(1);
+        let worker = test_worker(
+            commands,
+            ShutdownSignal {
+                sender: shutdown,
+                requested: Arc::new(AtomicBool::new(false)),
+            },
+            done,
+            None,
+            PathBuf::from("/unused"),
+        );
+        worker
+            .runtime
+            .set(tokio::runtime::Handle::current())
+            .expect("one runtime");
+        supervisor.lock_state().worker = Some(worker);
+        (supervisor, receiver)
+    }
+
+    #[cfg(feature = "uniffi-bindings")]
+    #[tokio::test]
+    async fn generated_snapshot_yields_and_uses_existing_actor() {
+        let (supervisor, mut commands) = async_snapshot_test_owner();
+        let owner = Arc::clone(&supervisor);
+        let query = tokio::spawn(async move { snapshot_async_with_supervisor(&owner).await });
+        let Some(Command::SnapshotAsync(response)) = commands.recv().await else {
+            panic!("async read")
+        };
+        assert!(!query.is_finished());
+        tokio::task::yield_now().await;
+        supervisor
+            .snapshots
+            .update(|snapshot| snapshot.revision = U64String(42));
+        let expected = supervisor.snapshots.read();
+        response.send(expected.clone()).expect("live query");
+        assert_eq!(query.await.expect("query completion"), expected);
+    }
+
+    #[cfg(feature = "uniffi-bindings")]
+    #[tokio::test]
+    async fn generated_snapshot_cancellation_retires_waiter_without_stopping_node() {
+        let (supervisor, mut commands) = async_snapshot_test_owner();
+        let owner = Arc::clone(&supervisor);
+        let query = tokio::spawn(async move { snapshot_async_with_supervisor(&owner).await });
+        let Some(Command::SnapshotAsync(mut response)) = commands.recv().await else {
+            panic!("async read")
+        };
+        query.abort();
+        assert!(query.await.expect_err("cancelled query").is_cancelled());
+        tokio::time::timeout(Duration::from_secs(1), response.closed())
+            .await
+            .expect("waiter retired");
+        assert_eq!(
+            supervisor.snapshots.read().runtime,
+            DevelopmentNodeRuntime::Running
+        );
+        assert!(supervisor.lock_state().worker.is_some());
+    }
+
+    #[cfg(feature = "uniffi-bindings")]
+    #[tokio::test(start_paused = true)]
+    async fn generated_snapshot_timeout_does_not_mutate_a_replacement_generation() {
+        let (supervisor, mut commands) = async_snapshot_test_owner();
+        let owner = Arc::clone(&supervisor);
+        let query = tokio::spawn(async move { snapshot_async_with_supervisor(&owner).await });
+        let Some(Command::SnapshotAsync(_response)) = commands.recv().await else {
+            panic!("async read")
+        };
+        supervisor
+            .snapshots
+            .begin_generation(PrimaryIdentityState::Missing);
+        supervisor
+            .snapshots
+            .set_runtime(DevelopmentNodeRuntime::Running);
+        supervisor.snapshots.set_local_host(running_host_state());
+        let replacement = supervisor.snapshots.read();
+        tokio::time::advance(SNAPSHOT_TIMEOUT + Duration::from_secs(1)).await;
+        assert_eq!(query.await.expect("timeout settled"), replacement);
+        assert_eq!(supervisor.snapshots.read(), replacement);
+    }
+
+    #[cfg(feature = "uniffi-bindings")]
+    #[tokio::test]
+    async fn generated_snapshot_never_waits_for_native_lifecycle_lock() {
+        let (supervisor, _commands) = async_snapshot_test_owner();
+        let held = supervisor.lock_state();
+        let expected = supervisor.snapshots.read();
+        let mut query = std::pin::pin!(snapshot_async_with_supervisor(&supervisor));
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        assert_eq!(
+            std::future::Future::poll(query.as_mut(), &mut context),
+            std::task::Poll::Ready(expected)
+        );
+        drop(held);
+    }
     #[test]
     fn snapshot_failure_settles_before_a_concurrent_lifecycle_reset() {
         let supervisor = Arc::new(Supervisor {

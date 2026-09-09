@@ -32,3 +32,9 @@ pub mod host_test {
         crate::remote_control::describe(handle, &snapshots, input).await
     }
 }
+
+#[cfg(feature = "uniffi-bindings")]
+pub mod bindings;
+
+#[cfg(feature = "uniffi-bindings")]
+uniffi::setup_scaffolding!();

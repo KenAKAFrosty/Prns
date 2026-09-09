@@ -63,17 +63,7 @@ pub(crate) fn mailbox_list_request(
             detail: format!("limit must be an integer from 1 through {MAX_MESSAGE_PAGE_SIZE}"),
         });
     }
-    let before = match input.before {
-        Some(value) => match parse_canonical_u64(&value.0) {
-            Some(value) => Some(value),
-            None => {
-                return Err(LxmfMessageListOutcome::InvalidInput {
-                    detail: "before must be a canonical unsigned 64-bit decimal string".to_owned(),
-                });
-            }
-        },
-        None => None,
-    };
+    let before = input.before.map(|value| value.0);
     Ok(MailboxListRequest {
         peer: input.peer,
         direction: None::<MailboxDirectionFilter>,

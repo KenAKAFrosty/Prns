@@ -35,12 +35,7 @@ impl SnapshotStore {
 
     pub fn update(&self, update: impl FnOnce(&mut DevelopmentNodeSnapshot)) {
         let mut snapshot = self.lock();
-        let next = snapshot
-            .revision
-            .0
-            .parse::<u64>()
-            .unwrap_or_default()
-            .saturating_add(1);
+        let next = snapshot.revision.0.saturating_add(1);
         update(&mut snapshot);
         snapshot.revision = U64String::from(next);
     }
@@ -54,12 +49,7 @@ impl SnapshotStore {
         if snapshot.primary_identity == primary_identity {
             return;
         }
-        let next = snapshot
-            .revision
-            .0
-            .parse::<u64>()
-            .unwrap_or_default()
-            .saturating_add(1);
+        let next = snapshot.revision.0.saturating_add(1);
         snapshot.primary_identity = primary_identity;
         snapshot.revision = U64String::from(next);
     }
@@ -69,12 +59,7 @@ impl SnapshotStore {
         if snapshot.local_host == local_host {
             return;
         }
-        let next = snapshot
-            .revision
-            .0
-            .parse::<u64>()
-            .unwrap_or_default()
-            .saturating_add(1);
+        let next = snapshot.revision.0.saturating_add(1);
         snapshot.local_host = local_host;
         snapshot.revision = U64String::from(next);
     }
@@ -88,14 +73,23 @@ impl SnapshotStore {
         if snapshot.local_host == local_host {
             return;
         }
-        let next = snapshot
-            .revision
-            .0
-            .parse::<u64>()
-            .unwrap_or_default()
-            .saturating_add(1);
+        let next = snapshot.revision.0.saturating_add(1);
         snapshot.local_host = local_host;
         snapshot.revision = U64String::from(next);
+    }
+
+    /// An asynchronous read from a retired generation must not mark its successor
+    /// unavailable when its own actor or timeout completes later.
+    #[cfg(feature = "uniffi-bindings")]
+    pub fn set_local_host_unavailable_for_generation(&self, generation: U64String, detail: String) {
+        let mut snapshot = self.lock();
+        if snapshot.runtime != DevelopmentNodeRuntime::Running
+            || snapshot.generation_id != generation
+        {
+            return;
+        }
+        snapshot.local_host = LocalHostState::Unavailable { detail };
+        snapshot.revision = U64String(snapshot.revision.0.saturating_add(1));
     }
 
     /// Publish an LXMF refresh hint through the aggregate's existing revision.
@@ -112,12 +106,7 @@ impl SnapshotStore {
         if snapshot.lxmf.state == LxmfHealthState::Degraded {
             return;
         }
-        let next = snapshot
-            .revision
-            .0
-            .parse::<u64>()
-            .unwrap_or_default()
-            .saturating_add(1);
+        let next = snapshot.revision.0.saturating_add(1);
         snapshot.lxmf.state = LxmfHealthState::Degraded;
         snapshot.revision = U64String::from(next);
     }
@@ -195,14 +184,7 @@ impl SnapshotStore {
             .store(false, Ordering::Release);
         self.update(|snapshot| {
             let mut next = DevelopmentNodeSnapshot::stopped();
-            next.generation_id = U64String::from(
-                snapshot
-                    .revision
-                    .0
-                    .parse::<u64>()
-                    .unwrap_or_default()
-                    .saturating_add(1),
-            );
+            next.generation_id = U64String::from(snapshot.revision.0.saturating_add(1));
             next.last_announcement = snapshot.last_announcement.clone();
             interrupt_announcement(&mut next.last_announcement);
             next.runtime = DevelopmentNodeRuntime::Starting;

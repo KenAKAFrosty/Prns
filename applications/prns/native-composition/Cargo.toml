@@ -18,8 +18,15 @@ crate-type = ["staticlib", "cdylib", "lib"]
 name = "export_contract"
 path = "src/bin/export_contract.rs"
 
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi_bindgen.rs"
+required-features = ["uniffi-bindgen"]
+
 [features]
 default = []
+uniffi-bindings = ["dep:uniffi"]
+uniffi-bindgen = ["uniffi-bindings", "uniffi/cli", "uniffi/cargo-metadata"]
 apple = [
     "dep:prns-interfaces-tokio",
     "personal-rns/bluetooth-auto",
@@ -36,6 +43,7 @@ android = [
 ios-restoration-probe = ["apple", "dep:log", "prns-interfaces-tokio/log"]
 
 [dependencies]
+uniffi = { version = "=0.31.2", optional = true, default-features = false }
 personal-rns = { path = "../../../personal-rns", default-features = false, features = ["tokio-host"] }
 prns-lxmf = { path = "../../services/lxmf", default-features = false, features = ["redb-mailbox", "tokio-host"] }
 prns-core = { path = "../../../prns-core", default-features = false, features = ["std"] }

@@ -1349,8 +1349,8 @@ mod tests {
                 encoded.len(),
                 |decoded_path, input| {
                     assert_eq!(decoded_path, Path::new("/tmp/prns/durable-mailbox"));
-                    assert_eq!(input.local_record_id.0, u64::MAX.to_string());
-                    json!({ "type": "accepted", "localRecordId": input.local_record_id.0 })
+                    assert_eq!(input.local_record_id.0, u64::MAX);
+                    json!({ "type": "accepted", "localRecordId": input.local_record_id })
                 },
             )
         };
@@ -1368,7 +1368,7 @@ mod tests {
                 encoded.len(),
                 |decoded_path, input| {
                     assert_eq!(decoded_path, Path::new("/tmp/prns/durable-mailbox"));
-                    json!({ "type": "cancelled", "localRecordId": input.local_record_id.0 })
+                    json!({ "type": "cancelled", "localRecordId": input.local_record_id })
                 },
             )
         };
