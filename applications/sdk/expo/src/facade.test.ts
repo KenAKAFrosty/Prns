@@ -199,6 +199,66 @@ test("prepares offline storage once, retries failed preparation, and prepares ag
   expect(prepareStorage).toHaveBeenCalledTimes(3);
 });
 
+test("a first cold offline retry prepares storage before outbound admission without starting the node", async () => {
+  const calls: string[] = [];
+  let prepared = false;
+  const accepted = Bindings.RetryLxmfMessageOutcome.Accepted.new({ localRecordId: 42n });
+  const native = nativeModule({
+    prepareStorage: jest.fn(async () => {
+      calls.push("storage");
+      prepared = true;
+      return encode(
+        codecs.FfiConverterTypeNativeStoragePreparationOutcome,
+        Bindings.NativeStoragePreparationOutcome.Prepared.new(),
+      );
+    }),
+    prepareOutbound: jest.fn(async () => {
+      calls.push("outbound");
+      expect(prepared).toBe(true);
+    }),
+  });
+  const retryLxmfMessage = jest.fn(async () => {
+    calls.push("retry");
+    // Rust's offline mailbox admission requires an already prepared owner.
+    expect(prepared).toBe(true);
+    return accepted;
+  });
+  const { runtime, api } = setup({ retryLxmfMessage }, native);
+  expect(await runtime.retryLxmfMessage(42n)).toBe(accepted);
+  expect(calls).toEqual(["storage", "outbound", "retry"]);
+  expect(retryLxmfMessage).toHaveBeenCalledTimes(1);
+  expect(api.listContacts).not.toHaveBeenCalled();
+  expect(api.readSnapshot).not.toHaveBeenCalled();
+  expect(native.start).not.toHaveBeenCalled();
+});
+
+test("cold retry does not refresh outbound or submit when storage preparation fails or is cancelled", async () => {
+  for (const cancelled of [false, true]) {
+    const controller = new AbortController();
+    const native = nativeModule({
+      prepareStorage: jest.fn(async () => {
+        if (cancelled) controller.abort();
+        return encode(
+          codecs.FfiConverterTypeNativeStoragePreparationOutcome,
+          cancelled
+            ? Bindings.NativeStoragePreparationOutcome.Prepared.new()
+            : Bindings.NativeStoragePreparationOutcome.DevelopmentResetRequired.new({
+                reason: "unsupported store",
+              }),
+        );
+      }),
+    });
+    const retryLxmfMessage = jest.fn(async () =>
+      Bindings.RetryLxmfMessageOutcome.Accepted.new({ localRecordId: 42n }),
+    );
+    const { runtime } = setup({ retryLxmfMessage }, native);
+    await expect(runtime.retryLxmfMessage(42n, controller.signal)).rejects.toBeDefined();
+    expect(native.prepareOutbound).not.toHaveBeenCalled();
+    expect(retryLxmfMessage).not.toHaveBeenCalled();
+    expect(native.start).not.toHaveBeenCalled();
+  }
+});
+
 test("passes optional fields, bytes, exact integers, and results unchanged", async () => {
   const destination = new Uint8Array(16).fill(0x44);
   const accepted = Bindings.RetryLxmfMessageOutcome.Accepted.new({

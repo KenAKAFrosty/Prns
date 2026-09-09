@@ -100,11 +100,16 @@ export function createDevelopmentRuntime(
   const call = async <T>(
     operation: (api: typeof Bindings) => Promise<T> | T,
     signal?: AbortSignal,
-    preparation?: "storage" | "outbound",
+    preparation?: "storage" | "outbound" | "storageAndOutbound",
   ): Promise<T> => {
     const api = await bindings(signal);
-    if (preparation === "storage") await prepareStorage();
-    if (preparation === "outbound") await getNativeModule().prepareOutbound();
+    if (preparation === "storage" || preparation === "storageAndOutbound") {
+      await prepareStorage();
+      throwIfAborted(signal);
+    }
+    if (preparation === "outbound" || preparation === "storageAndOutbound") {
+      await getNativeModule().prepareOutbound();
+    }
     throwIfAborted(signal);
     return operation(api);
   };
@@ -200,7 +205,7 @@ export function createDevelopmentRuntime(
       call(
         (api) => api.retryLxmfMessage({ localRecordId }, asyncOptions(signal)),
         signal,
-        "outbound",
+        "storageAndOutbound",
       ),
     cancelLxmfMessage: (localRecordId: bigint, signal?: AbortSignal) =>
       call(
