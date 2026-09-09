@@ -129,6 +129,7 @@ public final class PrnsAppModule: Module {
   @MainActor
   static func startAuthorized(
     _ input: DevelopmentNodeStartInput,
+    prepareRestoration: (() throws -> Void)? = nil,
     completion: @escaping (Result<DevelopmentNodeStartOutcome, Error>) -> Void
   ) {
     let startGeneration: UInt64
@@ -145,29 +146,30 @@ public final class PrnsAppModule: Module {
       completion(.failure(error))
       return
     }
-    nativeQueue.async(flags: .barrier) {
-      do {
-        try DispatchQueue.main.sync {
-          try PrnsAccessorySetupCoordinator.shared.requireAuthorized(
-            startGeneration: startGeneration
-          )
-        }
-        let outcome = try startWithCentralRestoration(input)
-        DispatchQueue.main.async {
+    PrnsNativeStartDispatch.enqueue(
+      on: nativeQueue,
+      validate: {
+        try PrnsAccessorySetupCoordinator.shared.requireAuthorized(
+          startGeneration: startGeneration
+        )
+      },
+      prepare: prepareRestoration,
+      start: { try startWithCentralRestoration(input) },
+      completion: { result in
+        switch result {
+        case .success(let outcome):
           PrnsAccessorySetupCoordinator.shared.nativeStartDidFinish(
             outcome: outcome,
             startGeneration: startGeneration
           )
-        }
-      } catch {
-        DispatchQueue.main.async {
+        case .failure(let error):
           PrnsAccessorySetupCoordinator.shared.nativeStartDidFail(
             error,
             startGeneration: startGeneration
           )
         }
       }
-    }
+    )
   }
 
   static func configuredStartInput() -> DevelopmentNodeStartInput {

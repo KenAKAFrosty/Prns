@@ -17,6 +17,10 @@ const restorationDispatch = readFileSync(
   resolve(packageRoot, "ios/PrnsRestorationDispatch.swift"),
   "utf8",
 );
+const nativeStartDispatch = readFileSync(
+  resolve(packageRoot, "ios/PrnsNativeStartDispatch.swift"),
+  "utf8",
+);
 const accessoryCoordinator = readFileSync(
   resolve(packageRoot, "ios/PrnsAccessorySetupCoordinator.swift"),
   "utf8",
@@ -132,7 +136,12 @@ assert.doesNotMatch(
   /\bOnDestroy\b/,
   "Expo module teardown must not stop process-owned Rust",
 );
-assert.match(swift, /nativeQueue\.async\(flags: \.barrier\)/);
+assert.match(nativeStartDispatch, /queue\.async\(flags: \.barrier\)/);
+assert.match(
+  nativeStartDispatch,
+  /DispatchQueue\.main\.sync \{ try validate\(\) \}[\s\S]*?if let prepare \{\s*try prepare\(\)\s*try DispatchQueue\.main\.sync \{ try validate\(\) \}[\s\S]*?return try start\(\)/,
+  "native restoration must prepare off-main and revalidate admission before starting",
+);
 assert.match(
   coordinator,
   /PrnsAccessorySetupCoordinator\.shared\.activate\([\s\S]*?restorationLaunchRequested: centralRestoration[\s\S]*?prepareAndStartNativeRuntime/,
@@ -140,7 +149,7 @@ assert.match(
 );
 assert.match(
   `${accessoryCoordinator}\n${coordinator}`,
-  /claimIfAuthorized\(nativeStartAuthorized\)[\s\S]*?restorationReady\(\)[\s\S]*?requireAuthorized\(\)[\s\S]*?prepareBluetoothCentralRestoration\(\)[\s\S]*?case \.prepared, \.alreadyPrepared:[\s\S]*?startNativeRuntime/,
+  /claimIfAuthorized\(nativeStartAuthorized\)[\s\S]*?restorationReady\(\)[\s\S]*?requireAuthorized\(\)[\s\S]*?startNativeRuntime\(application: application\)/,
   "restoration must wait for ASK activation plus an authorized Bluetooth accessory",
 );
 const iosPreparedBluetooth =
@@ -174,8 +183,18 @@ assert.match(
 );
 assert.match(
   coordinator,
-  /private func prepareAndStartNativeRuntime\(application: UIApplication\) \{\s+do \{\s+try PrnsAccessorySetupCoordinator\.shared\.requireAuthorized\(\)[\s\S]*?protectedDataRecovery\.beginAttempt\([\s\S]*?prepareBluetoothCentralRestoration\(\)/,
-  "every initial and resumed attempt must revalidate ASK immediately before manager preparation",
+  /private func prepareAndStartNativeRuntime\(application: UIApplication\) \{\s+do \{\s+try PrnsAccessorySetupCoordinator\.shared\.requireAuthorized\(\)[\s\S]*?protectedDataRecovery\.beginAttempt\([\s\S]*?startNativeRuntime\(application: application\)/,
+  "every initial and resumed attempt must revalidate ASK before native startup admission",
+);
+assert.match(
+  coordinator,
+  /startAuthorized\(input, prepareRestoration: Self\.prepareRestoration\)/,
+  "restoration preparation must use the generation-admitted native startup queue",
+);
+assert.match(
+  swift,
+  /requestNativeStart[\s\S]*?PrnsNativeStartDispatch\.enqueue\([\s\S]*?prepare: prepareRestoration[\s\S]*?start: \{ try startWithCentralRestoration/,
+  "restoration and ordinary startup must share one generation and native owner",
 );
 assert.doesNotMatch(
   coordinator,

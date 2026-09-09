@@ -9,6 +9,11 @@ final class PrnsAppLifecycleCoordinator: NSObject {
   private var protectedDataRecovery = PrnsProtectedDataRecovery()
   private var waitingForProtectedData = false
 
+  private struct PreparationFailure: LocalizedError {
+    let recovery: PrnsProtectedDataRecovery.Failure
+    var errorDescription: String? { "Bluetooth restoration could not be prepared." }
+  }
+
   func launch(
     application: UIApplication,
     options: [UIApplication.LaunchOptionsKey: Any]?
@@ -126,38 +131,36 @@ final class PrnsAppLifecycleCoordinator: NSObject {
     protectedDataRecovery.beginAttempt(
       protectedDataAvailable: application.isProtectedDataAvailable
     )
+    // Admit the generation now, before any background preparation. This keeps
+    // native launch independent of JS and coalesces a concurrent app Start.
+    startNativeRuntime(application: application)
+  }
+
+  nonisolated private static func prepareRestoration() throws {
+    let outcome: AppleBluetoothRestorationPreparationOutcome
     do {
-      let outcome = try PrnsAppModule.prepareBluetoothCentralRestoration()
-      let summary = Self.outcomeSummary(outcome)
-      Self.log(
-        .nativeOutcome(
-          operation: .prepare,
-          type: summary.type,
-          stage: summary.stage
-        )
-      )
-      switch outcome {
-      case .prepared, .alreadyPrepared:
-        startNativeRuntime(application: application)
-      case .alreadyRunning:
-        protectedDataRecovery.finishAttempt()
-        return
-      case .failed:
-        recoverAfterProtectedDataFailure(
-          .native(stage: summary.stage),
-          application: application
-        )
-      }
+      outcome = try PrnsAppModule.prepareBluetoothCentralRestoration()
     } catch {
       Self.log(.prepareBridgeFailed)
-      recoverAfterProtectedDataFailure(.bridge, application: application)
+      throw PreparationFailure(recovery: .bridge)
+    }
+    let summary = Self.outcomeSummary(outcome)
+    Self.log(
+      .nativeOutcome(
+        operation: .prepare,
+        type: summary.type,
+        stage: summary.stage
+      )
+    )
+    if case .failed = outcome {
+      throw PreparationFailure(recovery: .native(stage: summary.stage))
     }
   }
 
   private func startNativeRuntime(application: UIApplication) {
     let input = PrnsAppModule.configuredStartInput()
 
-    PrnsAppModule.startAuthorized(input) { result in
+    PrnsAppModule.startAuthorized(input, prepareRestoration: Self.prepareRestoration) { result in
       switch result {
       case .success(let outcome):
         let summary = Self.outcomeSummary(outcome)
@@ -177,6 +180,10 @@ final class PrnsAppLifecycleCoordinator: NSObject {
           self.protectedDataRecovery.finishAttempt()
         }
       case .failure(let error):
+        if let preparation = error as? PreparationFailure {
+          self.recoverAfterProtectedDataFailure(preparation.recovery, application: application)
+          return
+        }
         Self.log(.startBridgeFailed)
         self.recoverAfterProtectedDataFailure(
           error is PrnsNativeStartInterruption ? .cancelled : .bridge,

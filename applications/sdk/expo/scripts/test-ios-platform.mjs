@@ -29,6 +29,21 @@ try {
   );
   execFileSync(recoveryTestExecutable, [], { stdio: "inherit" });
 
+  const dispatchTestExecutable = resolve(recoveryTestDirectory, "start-dispatch-tests");
+  execFileSync(
+    "xcrun",
+    [
+      "swiftc",
+      "-warnings-as-errors",
+      resolve(packageRoot, "ios/PrnsNativeStartDispatch.swift"),
+      resolve(packageRoot, "scripts/PrnsNativeStartDispatchTests.swift"),
+      "-o",
+      dispatchTestExecutable,
+    ],
+    { stdio: "inherit" },
+  );
+  execFileSync(dispatchTestExecutable, [], { stdio: "inherit", timeout: 15000 });
+
   const probeSource = resolve(packageRoot, "ios/PrnsAppRestorationProbe.swift");
   const probeTestExecutable = resolve(recoveryTestDirectory, "probe-tests");
   execFileSync(
@@ -112,4 +127,6 @@ try {
   rmSync(recoveryTestDirectory, { force: true, recursive: true });
 }
 
-console.log("ios:test: Swift recovery, restoration diagnostics and release-symbol checks passed");
+console.log(
+  "ios:test: Swift startup dispatch, recovery, restoration diagnostics and release-symbol checks passed",
+);
