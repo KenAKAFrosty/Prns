@@ -37,12 +37,13 @@ observations remain tied to their recorded builds.
    actions. Retained-grant checks and messaging now have bounded evidence on
    both platforms, tied to their exact recorded builds rather than transferred
    across rebuilds. They are not fresh-pairing acceptance.
-3. Repeat recovery, delivery and the first request with no foreground
-   intervention before the planned resume. The prior restoration trial passed
-   later message/request UI checks, but included possible user activity. Keep
-   natural suspension, repeated restoration, force-quit and protected-data cases explicit;
-   the SIGTERM trial does not qualify them. Preserve the firmware size gate: the
-   passing integrated T-Echo build still has just 616 bytes spare.
+3. Repeat the completed no-touch receipt/resume journey with a complete native
+   timeline and investigate its 32.024-second submission-to-proof delay. One
+   controlled off-screen message and first resumed Check (359 ms) passed; the
+   earlier logged restoration trial remains separate because of possible user
+   activity. Natural suspension, quiet idle, Metro-off, force-quit and
+   protected-data cases remain explicit qualification work. Preserve the firmware
+   size gate: the passing integrated T-Echo build still has just 616 bytes spare.
 
 Finish this bounded transition before expanding the product surface.
 

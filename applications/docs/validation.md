@@ -19,7 +19,7 @@ different evidence. Do not transfer physical acceptance between their binaries.
 | Earlier physical Android 10 builds | Pairing, direct messaging, Stop/Start, permission recovery, offline retry/cancel, retention, and twenty-two clean radio cycles | Qualification of the generated-binding build, newer Android versions, deep Doze, or power-loss durability |
 | Generated-binding Android follow-up, before footprint integration | Existing-grant checks, Stop/Start without resurrection, two-way Python LXMF messaging and cold-process retention | Fresh pairing, controlled radio recovery, held-request cancellation or qualification of the later rebuilt APK |
 | Current generated-binding Android APK | Cold retained-grant check, one real Settings Bluetooth cycle with successful first reconnect check, and retained-data spot-check | Fresh pairing, repeated messaging, full controller power-off, long idle or controlled cancellation |
-| Current generated-binding iOS framework | Initial disconnected timeout; retained-grant checks, foreground two-way Python LXMF and restart retention; logged restoration-requested relaunch after developer SIGTERM, disconnect/fresh reconnect, incoming proof and later stored-message/request UI verification | Initial-failure cause or fix, repeated recovery, fresh pairing or full lifecycle qualification; possible user foreground activity excludes controlled background reconnection/delivery and first-request qualification |
+| Current generated-binding iOS framework | Initial timeout, later foreground checks/two-way messaging and restart retention; logged SIGTERM restoration trial; separate controlled off-screen receipt, stored-message UI and first resumed Check in 359 ms | Initial-failure cause or fix, fresh pairing, repeated recovery or full lifecycle qualification; no native timeline for the controlled repeat, no continuously locked/naturally suspended or Metro-off qualification |
 
 The [generated-binding checkpoint](../checkpoints/2026-09-09-validation.md#generated-binding-cutover)
 records the harness and integrated test boundaries. The [clean Android checkpoint](../checkpoints/2026-09-09-validation.md#clean-combined-checkpoint--september-9)
@@ -31,17 +31,15 @@ The [follow-up checkpoint](../checkpoints/2026-09-09-follow-up.md) records the
 three completed source fixes, firmware measurements and bounded phone journeys.
 Its final detached/Swift gates and bounded Android radio smoke passed. The iOS
 framework later passed foreground checks and two-way messaging, but its initial
-disconnected timeout remains unexplained. A separate developer-SIGTERM trial
-captured a restoration-requested native relaunch and incoming-message proof,
-including an intervening disconnect and fresh connection, not seamless recovery.
-The user reported probably opening the app during the reconnection/delivery
-interval, so neither is a controlled background result. Later foreground
-inspection of the same restored process verified the stored message and a
-348 ms node check. First-attempt recovery still requires a controlled repeat.
-The second fixture was stopped after incoming proof without a
-phone-to-peer submission, not counted as another two-way pass. The checkpoint
-preserves the earlier missing restart timeline and chooser-visibility question,
-alongside the successful Mirroring focus-and-scroll retest.
+disconnected timeout remains unexplained. A logged developer-SIGTERM restoration
+trial included possible user foreground activity and does not qualify background
+reconnection/delivery. A separate agreed no-touch repeat proved one off-screen
+incoming message before foregrounding; its first resumed Check took 359 ms and
+the stored message was verified in the UI. That repeat has no native startup
+timeline and a 32.024-second submission-to-proof delay. Neither trial adds a
+second full two-way pass. Continuous lock, natural suspension, quiet idle and
+Metro-off behavior remain unqualified. The checkpoint preserves the separate
+chronologies, missing logs, chooser question and successful scrolling retest.
 
 ## Repeatable checks
 
@@ -86,8 +84,9 @@ failures; these are different commands, neither silently waived.
   guards and isolated native import tests.
 - iOS natural suspension and repeated restoration, authorized force-quit
   behavior and negative controls, protected-storage boundaries, and
-  post-restoration UI/first-delivery recovery. One developer-SIGTERM relaunch
-  does not qualify OS reclamation or App-Switcher force quit.
+  repeatable delivery/resume recovery with complete native timelines. The bounded
+  SIGTERM and off-screen trials do not qualify OS reclamation or App-Switcher
+  force quit.
 - Newer Android permission/service and notification-channel behavior, deeper
   and longer battery idle, and wider board/transport coverage.
 - Release/R8/signing, upgrades, retained-data migrations, and security/custody
