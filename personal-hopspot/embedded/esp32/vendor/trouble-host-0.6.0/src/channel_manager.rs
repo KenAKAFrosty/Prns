@@ -137,6 +137,10 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         let mut state = self.state.borrow_mut();
         for storage in state.channels.iter_mut() {
             if Some(conn) == storage.conn {
+                // A disconnected channel cannot deliver its queued packets. Release them now:
+                // a new connection needs pool capacity before this channel slot can be reused.
+                // Clear before closing so even a full queue admits the receiver wake sentinel.
+                storage.inbound.clear();
                 let _ = storage.inbound.close();
                 #[cfg(not(feature = "l2cap-sdu-reassembly-optimization"))]
                 storage.reassembly.clear();
@@ -1249,11 +1253,139 @@ mod tests {
     extern crate std;
 
     use bt_hci::param::{AddrKind, BdAddr, LeConnRole, Status};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::task::{Wake, Waker};
 
     use super::*;
     use crate::mock_controller::MockController;
     use crate::prelude::{ConnParams, DefaultPacketPool};
-    use crate::HostResources;
+    use crate::{HostResources, Packet};
+
+    // Isolate this regression from the default pool used by other parallel tests.
+    static PACKETS_IN_USE: AtomicUsize = AtomicUsize::new(0);
+
+    struct EightPacketPool;
+    struct CountedPacket([u8; 27]);
+
+    impl PacketPool for EightPacketPool {
+        type Packet = CountedPacket;
+        const MTU: usize = 27;
+
+        fn capacity() -> usize {
+            8
+        }
+
+        fn allocate() -> Option<CountedPacket> {
+            PACKETS_IN_USE
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |count| {
+                    (count < 8).then_some(count + 1)
+                })
+                .ok()
+                .map(|_| CountedPacket([0; 27]))
+        }
+    }
+
+    impl Packet for CountedPacket {}
+    impl AsRef<[u8]> for CountedPacket {
+        fn as_ref(&self) -> &[u8] {
+            &self.0
+        }
+    }
+    impl AsMut<[u8]> for CountedPacket {
+        fn as_mut(&mut self) -> &mut [u8] {
+            &mut self.0
+        }
+    }
+    impl Drop for CountedPacket {
+        fn drop(&mut self) {
+            PACKETS_IN_USE.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    #[derive(Default)]
+    struct WakeCounter(AtomicUsize);
+
+    impl Wake for WakeCounter {
+        fn wake(self: Arc<Self>) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn disconnected_releases_full_inbound_pool_before_channel_reuse() {
+        let mut resources: HostResources<EightPacketPool, 1, 1> = HostResources::new();
+        let ble = crate::new(MockController::new(), &mut resources).host;
+        let conn = ConnHandle::new(33);
+        let index = ble
+            .channels
+            .alloc(conn, |storage| storage.state = ChannelState::Connected)
+            .unwrap();
+        ble.channels.inc_ref(index);
+        let channel = L2capChannel::new(index, &ble.channels);
+        let queued = EightPacketPool::capacity().min(config::L2CAP_RX_QUEUE_SIZE);
+        let other_packets: std::vec::Vec<_> = (queued..EightPacketPool::capacity())
+            .map(|_| EightPacketPool::allocate().unwrap())
+            .collect();
+
+        ble.channels.with_mut(|state| {
+            for _ in 0..queued {
+                let packet = EightPacketPool::allocate().unwrap();
+                state.channels[index.0 as usize]
+                    .inbound
+                    .try_send(Pdu::new(packet, 1))
+                    .unwrap();
+            }
+        });
+        assert!(EightPacketPool::allocate().is_none());
+
+        ble.channels.disconnected(conn).unwrap();
+
+        // New ATT traffic needs a packet before a new L2CAP channel can be allocated.
+        // The application may still hold the old channel handle during that interval.
+        let packets: std::vec::Vec<_> = (0..queued)
+            .map(|_| EightPacketPool::allocate().expect("disconnected channel retained a packet"))
+            .collect();
+        assert!(EightPacketPool::allocate().is_none());
+        let waker = futures::task::noop_waker();
+        let mut cx = Context::from_waker(&waker);
+        ble.channels.with_mut(|state| {
+            assert!(matches!(
+                state.channels[index.0 as usize].inbound.poll_receive(&mut cx),
+                Poll::Ready(None)
+            ));
+        });
+        drop(channel);
+        drop(packets);
+        drop(other_packets);
+        assert_eq!(PACKETS_IN_USE.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn disconnected_wakes_pending_receiver_with_channel_closed() {
+        use core::future::Future;
+
+        let mut resources: HostResources<DefaultPacketPool, 1, 1> = HostResources::new();
+        let ble = crate::new(MockController::new(), &mut resources).host;
+        let conn = ConnHandle::new(33);
+        let index = ble
+            .channels
+            .alloc(conn, |storage| storage.state = ChannelState::Connected)
+            .unwrap();
+        let wake_counter = Arc::new(WakeCounter::default());
+        let waker = Waker::from(wake_counter.clone());
+        let mut cx = Context::from_waker(&waker);
+        let mut receive = core::pin::pin!(ble.channels.receive_pdu(&ble.connections, index));
+        assert!(receive.as_mut().poll(&mut cx).is_pending());
+
+        ble.channels.disconnected(conn).unwrap();
+
+        assert_eq!(wake_counter.0.load(Ordering::SeqCst), 1);
+        assert!(matches!(
+            receive.as_mut().poll(&mut cx),
+            Poll::Ready(Err(Error::ChannelClosed))
+        ));
+    }
 
     #[test]
     fn channel_refcount() {
