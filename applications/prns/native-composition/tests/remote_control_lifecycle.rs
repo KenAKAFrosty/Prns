@@ -465,19 +465,35 @@ async fn durable_restart_describe_and_unavailable_target() {
     assert_links_retired(&target).await;
 
     target.stop().await;
+    wait_for_snapshot(
+        "the unavailable target has no online controller transport",
+        EXCHANGE_TIMEOUT,
+        |snapshot| {
+            matches!(
+                &snapshot.local_host,
+                LocalHostState::Running { host } if host.runtime.online_interface_count == 0
+            )
+        },
+    )
+    .await;
     let unavailable = tokio::time::timeout(
         UNAVAILABLE_TARGET_TIMEOUT,
         app_describe(target.identity_fingerprint.clone()),
     )
     .await
     .expect("unavailable target settles within the aggregate bound");
-    assert!(matches!(
-        unavailable,
-        RemoteControlDescribeOutcome::Failed {
-            stage: RemoteControlDescribeFailureStage::Link,
-            ..
-        }
-    ));
+    // A retained route is not permission to send through an offline interface.
+    // Readiness now fails during preflight, before attempting Link establishment.
+    assert!(
+        matches!(
+            unavailable,
+            RemoteControlDescribeOutcome::Failed {
+                stage: RemoteControlDescribeFailureStage::Route,
+                ..
+            }
+        ),
+        "offline readiness must fail before opening a Link: {unavailable:?}",
+    );
     assert_links_retired(&target).await;
     stop_controller().await;
 }

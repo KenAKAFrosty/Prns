@@ -21,4 +21,14 @@ pub mod host_test {
         announce_self, approve, create_generated_identity, describe, initiate, reject, snapshot,
         start_configured, stop,
     };
+
+    /// Exercise the application operation against a controlled public runtime.
+    pub async fn describe_with_handle(
+        handle: &personal_rns::prelude::PrnsNodeHandle,
+        input: crate::contract::DescribeRemoteControlTargetInput,
+    ) -> crate::contract::RemoteControlDescribeOutcome {
+        let snapshots = crate::snapshot::SnapshotStore::new();
+        snapshots.set_runtime(crate::contract::DevelopmentNodeRuntime::Running);
+        crate::remote_control::describe(handle, &snapshots, input).await
+    }
 }

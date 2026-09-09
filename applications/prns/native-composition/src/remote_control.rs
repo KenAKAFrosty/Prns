@@ -1,16 +1,19 @@
 use core::future::Future;
+use core::time::Duration;
 
 use personal_rns::engine::{
     EstablishLinkFailure, EstablishLinkRejection, SendRequestFailure, SendRequestRejection,
     WriteEstablishLinkRejection,
 };
 use personal_rns::identity::IdentityHash;
-use personal_rns::node_introspection::NodeIntrospection;
+use personal_rns::interfaces::InterfaceId;
+use personal_rns::node_introspection::{InterfaceTimingSnapshot, NodeIntrospection};
 use personal_rns::prelude::{
     ConnectRemoteControlTargetError, PrnsNodeHandle, RemoteControlError,
     RemoteControlTargetAccessControl, RemoteControlTargetHandle, RemoteControlTargetOperationError,
     SendError,
 };
+use personal_rns::routing::links::LinkId;
 use personal_rns::runtime::RequestPathError;
 use personal_rns::wire::DestinationHash;
 
@@ -85,8 +88,11 @@ pub async fn describe(
             return fail_describe_reachable_connect(snapshots, error);
         }
     };
+    let _link = CloseTargetLink {
+        handle,
+        id: connected.connection().link_id(),
+    };
     let result = connected.describe().await;
-    let _closed = connected.close();
     match result {
         Ok((description, rtt)) => {
             let available_requests = request_kinds(description.available_requests());
@@ -132,6 +138,10 @@ pub async fn announce_self(
             Ok(connected) => connected,
             Err(error) => return announce_reachable_connect_failure(error),
         };
+    let _link = CloseTargetLink {
+        handle,
+        id: connected.connection().link_id(),
+    };
     // Recheck the live target's capabilities: persisted permissions alone do not
     // establish that the target still supports or authorizes this operation.
     let status = match connected.describe().await {
@@ -157,8 +167,67 @@ pub async fn announce_self(
             stage: AnnounceStage::Request,
         },
     };
-    let _closed = connected.close();
     status
+}
+
+// The public target handle requires explicit close. Own that obligation across
+// cancellation as well as normal completion of an app-owned connected session.
+// An upstream Link still being established/identified has not reached this
+// scope; cancelling its waiter does not imply immediate engine cancellation.
+struct CloseTargetLink<'a> {
+    handle: &'a PrnsNodeHandle,
+    id: LinkId,
+}
+
+impl Drop for CloseTargetLink<'_> {
+    fn drop(&mut self) {
+        let _closed = self.handle.close_link(self.id);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TargetReadiness {
+    RouteReady,
+    DiscoveryReady,
+    Waiting,
+}
+
+const TRANSPORT_READINESS_WAIT: Duration = Duration::from_secs(5);
+const TRANSPORT_READINESS_POLL: Duration = Duration::from_millis(100);
+
+fn target_readiness(
+    route_interface: Option<InterfaceId>,
+    interfaces: &[InterfaceTimingSnapshot],
+) -> TargetReadiness {
+    let mut discovery_ready = false;
+    for interface in interfaces {
+        if !interface.connection.is_online() || !interface.capabilities.allows_transmit() {
+            continue;
+        }
+        if Some(interface.id) == route_interface {
+            return TargetReadiness::RouteReady;
+        }
+        discovery_ready = true;
+    }
+    if discovery_ready {
+        TargetReadiness::DiscoveryReady
+    } else {
+        TargetReadiness::Waiting
+    }
+}
+
+async fn observe_target_readiness(
+    handle: &PrnsNodeHandle,
+    destination: DestinationHash,
+) -> TargetReadiness {
+    let route = handle.route(destination).await;
+    // Current app transports (Bluetooth/TCP) publish status. Unlike the folded
+    // UI inventory, this excludes discovery supervisors without a data lane.
+    // It is not a universal predicate for custom interfaces without status.
+    target_readiness(
+        route.map(|route| route.interface),
+        &handle.interface_timing_inventory(),
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -181,12 +250,12 @@ async fn connect_reachable_target<'a>(
     RemoteControlTargetHandle<'a>,
     ReachableTargetConnectionError<ConnectRemoteControlTargetError>,
 > {
-    // `request_path` is the engine-owned, bitrate-aware bounded wait for a matching
-    // accepted announcement. Do not add a second timer or retry a RemoteControl
-    // request here: discovery must settle before the Link is opened.
+    // Stored routes can outlive their interfaces. Wait for live app transport
+    // status before sending anything. Discovery remains one engine-owned path
+    // request, not a retry of the application operation.
     connect_reachable_target_with(
         destination,
-        |destination| async move { handle.route(destination).await.is_some() },
+        |destination| observe_target_readiness(handle, destination),
         |destination| async move {
             handle
                 .request_path(destination)
@@ -202,30 +271,51 @@ async fn connect_reachable_target<'a>(
 async fn connect_reachable_target_with<
     Connection,
     ConnectionError,
-    HasRoute,
-    HasRouteFuture,
+    Observe,
+    ObserveFuture,
     RequestPath,
     RequestPathFuture,
     Connect,
     ConnectFuture,
 >(
     destination: DestinationHash,
-    has_route: HasRoute,
+    mut observe: Observe,
     request_path: RequestPath,
     connect: Connect,
 ) -> Result<Connection, ReachableTargetConnectionError<ConnectionError>>
 where
-    HasRoute: FnOnce(DestinationHash) -> HasRouteFuture,
-    HasRouteFuture: Future<Output = bool>,
+    Observe: FnMut(DestinationHash) -> ObserveFuture,
+    ObserveFuture: Future<Output = TargetReadiness>,
     RequestPath: FnOnce(DestinationHash) -> RequestPathFuture,
     RequestPathFuture: Future<Output = Result<(), ReachabilityFailure>>,
     Connect: FnOnce() -> ConnectFuture,
     ConnectFuture: Future<Output = Result<Connection, ConnectionError>>,
 {
-    if !has_route(destination).await {
+    // This is a bounded condition wait, not a delay after granting permission.
+    // Describe's admission-time deadline/caller/Stop also owns and can drop this
+    // entire future. An announcement has this finite preflight bound too.
+    let ready = tokio::time::timeout(TRANSPORT_READINESS_WAIT, async {
+        loop {
+            let ready = observe(destination).await;
+            if ready != TargetReadiness::Waiting {
+                return ready;
+            }
+            tokio::time::sleep(TRANSPORT_READINESS_POLL).await;
+        }
+    })
+    .await
+    .map_err(|_| ReachableTargetConnectionError::Reachability(ReachabilityFailure::Route))?;
+    if ready == TargetReadiness::DiscoveryReady {
         request_path(destination)
             .await
             .map_err(ReachableTargetConnectionError::Reachability)?;
+        // A matching announcement can settle discovery just before its lane
+        // departs. Recheck once; do not connect blindly or replay discovery.
+        if observe(destination).await != TargetReadiness::RouteReady {
+            return Err(ReachableTargetConnectionError::Reachability(
+                ReachabilityFailure::Route,
+            ));
+        }
     }
     connect()
         .await
@@ -530,6 +620,172 @@ mod tests {
     use super::*;
 
     #[test]
+    fn readiness_requires_the_actual_routes_live_transmitting_interface() {
+        use personal_rns::interfaces::{
+            BitrateBps, ConnectionState, EgressCapability, IngressCapability,
+            InterfaceCapabilities, TransportCapability,
+        };
+        let id = InterfaceId::new([0x21; 8]);
+        let other = InterfaceId::new([0x22; 8]);
+        let mut interface = InterfaceTimingSnapshot {
+            id,
+            bitrate: BitrateBps::guess(1_000_000),
+            capabilities: InterfaceCapabilities {
+                ingress: IngressCapability::Enabled,
+                egress: EgressCapability::Enabled(TransportCapability::NoTransport),
+            },
+            connection: ConnectionState::Connected,
+        };
+        // A discovery supervisor alone has no descriptor-bearing data interface.
+        assert_eq!(target_readiness(Some(id), &[]), TargetReadiness::Waiting);
+        assert_eq!(target_readiness(None, &[]), TargetReadiness::Waiting);
+        for state in [
+            ConnectionState::Initializing,
+            ConnectionState::Reconnecting,
+            ConnectionState::Failed,
+            ConnectionState::Disconnected,
+            ConnectionState::Disabled,
+            ConnectionState::Unknown,
+        ] {
+            interface.connection = state;
+            assert_eq!(
+                target_readiness(Some(id), &[interface]),
+                TargetReadiness::Waiting
+            );
+        }
+        for state in [ConnectionState::Connected, ConnectionState::Degraded] {
+            interface.connection = state;
+            assert_eq!(
+                target_readiness(Some(id), &[interface]),
+                TargetReadiness::RouteReady
+            );
+            assert_eq!(
+                target_readiness(Some(other), &[interface]),
+                TargetReadiness::DiscoveryReady
+            );
+            assert_eq!(
+                target_readiness(None, &[interface]),
+                TargetReadiness::DiscoveryReady
+            );
+        }
+        interface.capabilities.egress = EgressCapability::Disabled;
+        assert_eq!(
+            target_readiness(Some(id), &[interface]),
+            TargetReadiness::Waiting
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn readiness_wait_sends_nothing_until_the_route_returns() {
+        let readiness = core::cell::Cell::new(TargetReadiness::Waiting);
+        let paths = core::cell::Cell::new(0);
+        let connections = core::cell::Cell::new(0);
+        let mut pending = Box::pin(connect_reachable_target_with(
+            DestinationHash::new([0x61; 16]),
+            |_| core::future::ready(readiness.get()),
+            |_| {
+                paths.set(paths.get() + 1);
+                core::future::ready(Ok(()))
+            },
+            || {
+                connections.set(connections.get() + 1);
+                core::future::ready(Ok::<_, ()>(7))
+            },
+        ));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(250), &mut pending)
+                .await
+                .is_err()
+        );
+        assert_eq!((paths.get(), connections.get()), (0, 0));
+        readiness.set(TargetReadiness::RouteReady);
+        assert_eq!(pending.await, Ok(7));
+        assert_eq!((paths.get(), connections.get()), (0, 1));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn cancelled_readiness_wait_cannot_send_when_the_interface_returns() {
+        let readiness = core::cell::Cell::new(TargetReadiness::Waiting);
+        let paths = core::cell::Cell::new(0);
+        let connections = core::cell::Cell::new(0);
+        let mut pending = Box::pin(connect_reachable_target_with(
+            DestinationHash::new([0x62; 16]),
+            |_| core::future::ready(readiness.get()),
+            |_| {
+                paths.set(paths.get() + 1);
+                core::future::ready(Ok(()))
+            },
+            || {
+                connections.set(connections.get() + 1);
+                core::future::ready(Ok::<_, ()>(7))
+            },
+        ));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(250), &mut pending)
+                .await
+                .is_err()
+        );
+        drop(pending);
+        readiness.set(TargetReadiness::RouteReady);
+        tokio::time::advance(TRANSPORT_READINESS_WAIT).await;
+        assert_eq!((paths.get(), connections.get()), (0, 0));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn unavailable_transport_has_a_finite_preflight_without_network_emission() {
+        let paths = core::cell::Cell::new(0);
+        let connections = core::cell::Cell::new(0);
+        let started = tokio::time::Instant::now();
+        let result = connect_reachable_target_with(
+            DestinationHash::new([0x63; 16]),
+            |_| core::future::ready(TargetReadiness::Waiting),
+            |_| {
+                paths.set(paths.get() + 1);
+                core::future::ready(Ok(()))
+            },
+            || {
+                connections.set(connections.get() + 1);
+                core::future::ready(Ok::<_, ()>(7))
+            },
+        )
+        .await;
+        assert_eq!(
+            result,
+            Err(ReachableTargetConnectionError::Reachability(
+                ReachabilityFailure::Route
+            ))
+        );
+        assert_eq!(started.elapsed(), TRANSPORT_READINESS_WAIT);
+        assert_eq!((paths.get(), connections.get()), (0, 0));
+    }
+
+    #[tokio::test]
+    async fn discovery_settlement_does_not_use_a_route_whose_interface_has_departed() {
+        let paths = core::cell::Cell::new(0);
+        let connections = core::cell::Cell::new(0);
+        let result = connect_reachable_target_with(
+            DestinationHash::new([0x64; 16]),
+            |_| core::future::ready(TargetReadiness::DiscoveryReady),
+            |_| {
+                paths.set(paths.get() + 1);
+                core::future::ready(Ok(()))
+            },
+            || {
+                connections.set(connections.get() + 1);
+                core::future::ready(Ok::<_, ()>(7))
+            },
+        )
+        .await;
+        assert_eq!(
+            result,
+            Err(ReachableTargetConnectionError::Reachability(
+                ReachabilityFailure::Route
+            ))
+        );
+        assert_eq!((paths.get(), connections.get()), (1, 0));
+    }
+
+    #[test]
     fn announcement_settlement_preserves_remote_outcomes_and_ambiguous_delivery() {
         use personal_rns::runtime::RemoteControlAnnounceSelfFailure as Failure;
         for (failure, expected) in [
@@ -727,7 +983,7 @@ mod tests {
             destination,
             |observed| {
                 assert_eq!(observed, destination);
-                core::future::ready(true)
+                core::future::ready(TargetReadiness::RouteReady)
             },
             |observed| {
                 assert_eq!(observed, destination);
@@ -756,8 +1012,13 @@ mod tests {
             destination,
             |observed| {
                 assert_eq!(observed, destination);
-                assert_eq!(phase.replace(1), 0);
-                core::future::ready(false)
+                core::future::ready(if phase.get() == 0 {
+                    phase.set(1);
+                    TargetReadiness::DiscoveryReady
+                } else {
+                    assert_eq!(phase.replace(3), 2);
+                    TargetReadiness::RouteReady
+                })
             },
             |observed| {
                 assert_eq!(phase.replace(2), 1);
@@ -765,7 +1026,7 @@ mod tests {
                 core::future::ready(Ok(()))
             },
             || {
-                assert_eq!(phase.replace(3), 2);
+                assert_eq!(phase.replace(4), 3);
                 core::future::ready(Result::<_, ()>::Ok(8_u8))
             },
         )
@@ -773,7 +1034,7 @@ mod tests {
 
         assert_eq!(result, Ok(8));
         assert_eq!(requested.get(), Some(destination));
-        assert_eq!(phase.get(), 3);
+        assert_eq!(phase.get(), 4);
     }
 
     #[tokio::test]
@@ -783,7 +1044,7 @@ mod tests {
 
         let result = connect_reachable_target_with(
             destination,
-            |_| core::future::ready(false),
+            |_| core::future::ready(TargetReadiness::DiscoveryReady),
             |observed| {
                 assert_eq!(observed, destination);
                 core::future::ready(Err(ReachabilityFailure::Route))
@@ -818,7 +1079,7 @@ mod tests {
         let (settle, settled) = tokio::sync::oneshot::channel();
         let pending = connect_reachable_target_with(
             destination,
-            |_| core::future::ready(false),
+            |_| core::future::ready(TargetReadiness::DiscoveryReady),
             move |observed| async move {
                 assert_eq!(observed, destination);
                 settled.await.expect("the discovery test settles")

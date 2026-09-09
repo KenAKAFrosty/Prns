@@ -32,7 +32,7 @@ use prns_host::{BackendInfo, BackendKind, Capability, InterfaceKind, Persistence
 use prns_host_snapshot::{assemble_host_snapshot, HostInterfaceAttachment};
 #[cfg(all(feature = "apple", target_os = "ios"))]
 use prns_interfaces_tokio::bluetooth_auto::PreparedAutoBle;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinSet;
 
 use crate::contract::{
@@ -189,10 +189,7 @@ enum Command {
         RemoteControlPairingDecisionInput,
         std_mpsc::SyncSender<RemoteControlPairingCommandOutcome>,
     ),
-    Describe(
-        DescribeRemoteControlTargetInput,
-        std_mpsc::SyncSender<RemoteControlDescribeOutcome>,
-    ),
+    Describe(DescribeCommand),
     ObservedIdentity(
         [u8; 16],
         std_mpsc::SyncSender<Result<Option<[u8; 16]>, String>>,
@@ -213,6 +210,13 @@ enum Command {
         SendDirectTextInput,
         std_mpsc::SyncSender<SendDirectTextOutcome>,
     ),
+}
+
+struct DescribeCommand {
+    input: DescribeRemoteControlTargetInput,
+    response: std_mpsc::SyncSender<RemoteControlDescribeOutcome>,
+    deadline: tokio::time::Instant,
+    caller: oneshot::Receiver<()>,
 }
 
 #[derive(Default)]
@@ -1054,7 +1058,16 @@ pub fn describe(input: DescribeRemoteControlTargetInput) -> RemoteControlDescrib
         return RemoteControlDescribeOutcome::Busy;
     }
     let (response_tx, response_rx) = std_mpsc::sync_channel(1);
-    match commands.try_send(Command::Describe(input, response_tx)) {
+    let (caller, cancelled) = oneshot::channel();
+    // The queue and network work share the caller's one budget. A command that
+    // waited in the lane must not receive another full timeout when it starts.
+    let deadline = tokio::time::Instant::now() + COMMAND_TIMEOUT;
+    match commands.try_send(Command::Describe(DescribeCommand {
+        input,
+        response: response_tx,
+        deadline,
+        caller: cancelled,
+    })) {
         Ok(()) => {}
         Err(mpsc::error::TrySendError::Full(_)) => {
             supervisor()
@@ -1072,12 +1085,13 @@ pub fn describe(input: DescribeRemoteControlTargetInput) -> RemoteControlDescrib
             };
         }
     }
-    response_rx
-        .recv_timeout(COMMAND_TIMEOUT)
-        .unwrap_or_else(|_| RemoteControlDescribeOutcome::Failed {
-            stage: RemoteControlDescribeFailureStage::Timeout,
-            detail: "The native Describe command exceeded its bounded wait.".to_owned(),
-        })
+    let outcome = response_rx
+        .recv_timeout(deadline.saturating_duration_since(tokio::time::Instant::now()))
+        .unwrap_or_else(|_| describe_timed_out());
+    // Wake the actor even if this caller returns before its deadline. The actor
+    // owns release of admission; clearing it here could overlap the next command.
+    drop(caller);
+    outcome
 }
 
 /// Admit once without tying remote settlement to the lifetime of the bridge call.
@@ -2736,6 +2750,85 @@ fn map_node_run_error(
     (stage, format!("{context}: {error}"))
 }
 
+fn describe_timed_out() -> RemoteControlDescribeOutcome {
+    RemoteControlDescribeOutcome::Failed {
+        stage: RemoteControlDescribeFailureStage::Timeout,
+        detail: "The native Describe command exceeded its bounded wait.".to_owned(),
+    }
+}
+
+struct DescribeAdmission<'a> {
+    snapshots: &'a SnapshotStore,
+    admitted: &'a AtomicBool,
+}
+
+impl Drop for DescribeAdmission<'_> {
+    fn drop(&mut self) {
+        if self
+            .snapshots
+            .read()
+            .active_operation
+            .is_some_and(|operation| operation.kind == DevelopmentNodeOperationKind::Describe)
+        {
+            self.snapshots.update(|snapshot| {
+                if snapshot.active_operation.as_ref().is_some_and(|operation| {
+                    operation.kind == DevelopmentNodeOperationKind::Describe
+                }) {
+                    snapshot.active_operation = None;
+                }
+            });
+        }
+        self.admitted.store(false, Ordering::Release);
+    }
+}
+
+/// Describe is a read, unlike the separately retained AnnounceSelf operation.
+/// Drop its owned future when the caller leaves, its admission deadline expires,
+/// or shutdown wins. Return true when the actor must continue shutdown directly.
+async fn run_describe_command<F>(
+    command: DescribeCommand,
+    snapshots: &SnapshotStore,
+    admitted: &AtomicBool,
+    shutdown: &mut watch::Receiver<bool>,
+    operation: impl FnOnce(DescribeRemoteControlTargetInput) -> F,
+) -> bool
+where
+    F: std::future::Future<Output = RemoteControlDescribeOutcome>,
+{
+    let DescribeCommand {
+        input,
+        response,
+        deadline,
+        mut caller,
+    } = command;
+    let admission = DescribeAdmission {
+        snapshots,
+        admitted,
+    };
+    let stopping = async {
+        loop {
+            if *shutdown.borrow() || shutdown.changed().await.is_err() {
+                return;
+            }
+        }
+    };
+    let (outcome, stop) = tokio::select! {
+        biased;
+        () = stopping => (RemoteControlDescribeOutcome::Failed {
+            stage: RemoteControlDescribeFailureStage::Node,
+            detail: "The native Prns node stopped while Describe was running.".to_owned(),
+        }, true),
+        _ = &mut caller => (describe_timed_out(), false),
+        () = tokio::time::sleep_until(deadline) => (describe_timed_out(), false),
+        // Keep invocation lazy: an already expired or cancelled queued command
+        // must not start a route request or any other network operation.
+        outcome = async { operation(input).await } => (outcome, false),
+    };
+    drop(admission);
+    let _ = response.send(outcome);
+    stop
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn run_actor(
     handle: PrnsNodeHandle,
@@ -2969,14 +3062,25 @@ async fn run_actor_loop(
                     operation_admitted.store(false, Ordering::Release);
                     let _ = response.send(outcome);
                 }
-                Some(Command::Describe(input, response)) => {
-                    let outcome = if controls.pairing_in_progress() {
-                        RemoteControlDescribeOutcome::Busy
-                    } else {
-                        crate::remote_control::describe(handle, snapshots, input).await
-                    };
-                    operation_admitted.store(false, Ordering::Release);
-                    let _ = response.send(outcome);
+                Some(Command::Describe(command)) => {
+                    let stop = run_describe_command(
+                        command,
+                        snapshots,
+                        operation_admitted,
+                        &mut shutdown_rx,
+                        |input| async {
+                            if controls.pairing_in_progress() {
+                                RemoteControlDescribeOutcome::Busy
+                            } else {
+                                crate::remote_control::describe(handle, snapshots, input).await
+                            }
+                        },
+                    ).await;
+                    if stop {
+                        commands.close();
+                        snapshots.set_runtime(DevelopmentNodeRuntime::Stopping);
+                        return Ok(());
+                    }
                 }
                 Some(Command::AnnounceSelf(operation)) => {
                     let status = if controls.pairing_in_progress() {
@@ -3733,6 +3837,260 @@ fn wall_clock_millis() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_describe_command(
+        deadline: tokio::time::Instant,
+    ) -> (
+        DescribeCommand,
+        oneshot::Sender<()>,
+        std_mpsc::Receiver<RemoteControlDescribeOutcome>,
+    ) {
+        let (response, receiver) = std_mpsc::sync_channel(1);
+        let (caller, cancelled) = oneshot::channel();
+        (
+            DescribeCommand {
+                input: DescribeRemoteControlTargetInput {
+                    target_identity_fingerprint: vec![1; 16],
+                },
+                response,
+                deadline,
+                caller: cancelled,
+            },
+            caller,
+            receiver,
+        )
+    }
+
+    struct DescribeDropProbe(Arc<AtomicBool>);
+
+    impl Drop for DescribeDropProbe {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Release);
+        }
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum DescribeInterruption {
+        Deadline,
+        CallerLeft,
+        Shutdown,
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn describe_held_future_releases_operation_and_admission_on_each_interruption() {
+        for interruption in [
+            DescribeInterruption::Deadline,
+            DescribeInterruption::CallerLeft,
+            DescribeInterruption::Shutdown,
+        ] {
+            let snapshots = Arc::new(SnapshotStore::new());
+            snapshots.set_runtime(DevelopmentNodeRuntime::Running);
+            let admitted = Arc::new(AtomicBool::new(true));
+            let dropped = Arc::new(AtomicBool::new(false));
+            let entered = Arc::new(tokio::sync::Notify::new());
+            let started = tokio::time::Instant::now();
+            let (command, caller, response) = test_describe_command(started + COMMAND_TIMEOUT);
+            let mut caller = Some(caller);
+            let (shutdown, mut shutdown_rx) = watch::channel(false);
+            let running_snapshots = Arc::clone(&snapshots);
+            let running_admitted = Arc::clone(&admitted);
+            let running_dropped = Arc::clone(&dropped);
+            let running_entered = Arc::clone(&entered);
+            let actor = tokio::spawn(async move {
+                run_describe_command(
+                    command,
+                    &running_snapshots,
+                    &running_admitted,
+                    &mut shutdown_rx,
+                    |_input| async {
+                        let _probe = DescribeDropProbe(running_dropped);
+                        running_snapshots.update(|snapshot| {
+                            snapshot.active_operation = Some(DevelopmentNodeOperation {
+                                kind: DevelopmentNodeOperationKind::Describe,
+                                started_at_millis: U64String::from(0),
+                            });
+                        });
+                        running_entered.notify_one();
+                        std::future::pending().await
+                    },
+                )
+                .await
+            });
+            entered.notified().await;
+            assert!(admitted.load(Ordering::Acquire));
+            assert!(snapshots.read().active_operation.is_some());
+            match interruption {
+                DescribeInterruption::Deadline => {
+                    tokio::time::advance(COMMAND_TIMEOUT - Duration::from_millis(1)).await;
+                    tokio::task::yield_now().await;
+                    assert!(!actor.is_finished());
+                    tokio::time::advance(Duration::from_millis(1)).await;
+                }
+                DescribeInterruption::CallerLeft => drop(caller.take()),
+                DescribeInterruption::Shutdown => shutdown.send(true).expect("request Stop"),
+            }
+            let stopping = actor.await.expect("Describe actor settles");
+            assert_eq!(
+                stopping,
+                matches!(interruption, DescribeInterruption::Shutdown)
+            );
+            let expected_stage = if stopping {
+                RemoteControlDescribeFailureStage::Node
+            } else {
+                RemoteControlDescribeFailureStage::Timeout
+            };
+            assert!(matches!(
+                response.try_recv().expect("caller receives the terminal result"),
+                RemoteControlDescribeOutcome::Failed { stage, .. } if stage == expected_stage
+            ));
+            assert!(dropped.load(Ordering::Acquire), "{interruption:?}");
+            assert!(!admitted.load(Ordering::Acquire), "{interruption:?}");
+            assert!(
+                snapshots.read().active_operation.is_none(),
+                "{interruption:?}"
+            );
+            if !matches!(interruption, DescribeInterruption::Deadline) {
+                assert_eq!(tokio::time::Instant::now(), started);
+            }
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn describe_expired_or_abandoned_in_queue_never_starts_network_work() {
+        for abandoned in [false, true] {
+            let snapshots = SnapshotStore::new();
+            let admitted = AtomicBool::new(true);
+            let (command, caller, response) =
+                test_describe_command(tokio::time::Instant::now() + COMMAND_TIMEOUT);
+            let mut caller = Some(caller);
+            if abandoned {
+                drop(caller.take());
+            } else {
+                tokio::time::advance(COMMAND_TIMEOUT).await;
+            }
+            let (_shutdown, mut shutdown_rx) = watch::channel(false);
+            let invoked = AtomicBool::new(false);
+            assert!(
+                !run_describe_command(command, &snapshots, &admitted, &mut shutdown_rx, |_input| {
+                    invoked.store(true, Ordering::Release);
+                    std::future::ready(RemoteControlDescribeOutcome::Busy)
+                },)
+                .await
+            );
+            assert!(!invoked.load(Ordering::Acquire));
+            assert!(!admitted.load(Ordering::Acquire));
+            assert!(matches!(
+                response.try_recv().expect("expired command settles"),
+                RemoteControlDescribeOutcome::Failed {
+                    stage: RemoteControlDescribeFailureStage::Timeout,
+                    ..
+                }
+            ));
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn describe_queue_time_consumes_the_network_wait_budget() {
+        let snapshots = SnapshotStore::new();
+        let admitted = AtomicBool::new(true);
+        let started = tokio::time::Instant::now();
+        let (command, _caller, response) = test_describe_command(started + COMMAND_TIMEOUT);
+        let (_shutdown, mut shutdown_rx) = watch::channel(false);
+        let queued_for = Duration::from_secs(15);
+        tokio::time::advance(queued_for).await;
+        let entered = tokio::sync::Notify::new();
+        let (stopping, ()) = tokio::join!(
+            run_describe_command(
+                command,
+                &snapshots,
+                &admitted,
+                &mut shutdown_rx,
+                |_input| async {
+                    entered.notify_one();
+                    std::future::pending().await
+                }
+            ),
+            async {
+                entered.notified().await;
+                tokio::time::advance(COMMAND_TIMEOUT - queued_for - Duration::from_millis(1)).await;
+                tokio::task::yield_now().await;
+                assert!(admitted.load(Ordering::Acquire));
+                tokio::time::advance(Duration::from_millis(1)).await;
+            },
+        );
+        assert!(!stopping);
+        assert_eq!(tokio::time::Instant::now(), started + COMMAND_TIMEOUT);
+        assert!(!admitted.load(Ordering::Acquire));
+        assert!(matches!(
+            response
+                .try_recv()
+                .expect("original deadline settles the command"),
+            RemoteControlDescribeOutcome::Failed {
+                stage: RemoteControlDescribeFailureStage::Timeout,
+                ..
+            }
+        ));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn describe_shutdown_has_priority_over_expiry_and_ready_network_work() {
+        let snapshots = SnapshotStore::new();
+        let admitted = AtomicBool::new(true);
+        let (command, _caller, response) = test_describe_command(tokio::time::Instant::now());
+        let (_shutdown, mut shutdown_rx) = watch::channel(true);
+        let invoked = AtomicBool::new(false);
+        assert!(
+            run_describe_command(command, &snapshots, &admitted, &mut shutdown_rx, |_input| {
+                invoked.store(true, Ordering::Release);
+                std::future::ready(RemoteControlDescribeOutcome::Busy)
+            },)
+            .await
+        );
+        assert!(!invoked.load(Ordering::Acquire));
+        assert!(!admitted.load(Ordering::Acquire));
+        assert!(matches!(
+            response
+                .try_recv()
+                .expect("shutdown replies without waiting"),
+            RemoteControlDescribeOutcome::Failed {
+                stage: RemoteControlDescribeFailureStage::Node,
+                ..
+            }
+        ));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn describe_busy_does_not_clear_a_pairing_operation_or_retained_announcement() {
+        let snapshots = SnapshotStore::new();
+        snapshots.update(|snapshot| {
+            snapshot.active_operation = Some(DevelopmentNodeOperation {
+                kind: DevelopmentNodeOperationKind::Pairing,
+                started_at_millis: U64String::from(0),
+            });
+            snapshot.last_announcement = Some(RemoteControlAnnounceOperation {
+                operation_id: U64String::from(1),
+                target_identity_fingerprint: vec![1; 16],
+                status: RemoteControlAnnounceStatus::Pending,
+            });
+        });
+        let before = snapshots.read();
+        let admitted = AtomicBool::new(true);
+        let (command, _caller, response) =
+            test_describe_command(tokio::time::Instant::now() + COMMAND_TIMEOUT);
+        let (_shutdown, mut shutdown_rx) = watch::channel(false);
+        assert!(
+            !run_describe_command(command, &snapshots, &admitted, &mut shutdown_rx, |_input| {
+                std::future::ready(RemoteControlDescribeOutcome::Busy)
+            },)
+            .await
+        );
+        assert_eq!(
+            response.try_recv().expect("busy reply"),
+            RemoteControlDescribeOutcome::Busy
+        );
+        assert_eq!(snapshots.read(), before);
+        assert!(!admitted.load(Ordering::Acquire));
+    }
 
     #[test]
     fn worker_terminal_paths_do_not_leave_an_announcement_pending() {
