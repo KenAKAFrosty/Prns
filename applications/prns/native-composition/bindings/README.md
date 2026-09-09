@@ -1,143 +1,123 @@
-# Generated-binding pilot
+# Generated application bindings
 
-`uniffi-bindings` is the default feature of the existing `prns-app-native` crate. It adds no node
-constructor or runtime: `read_snapshot()` submits to the existing supervisor and
-returns the existing full `DevelopmentNodeSnapshot`. `binding_contract()` returns
-both app and canonical Host contract identifiers. Native startup's generation ID
-and primary identity can be compared directly with the generated snapshot.
+`@prns-internal/native-bindings` is the generated interface to the existing
+`prns-app-native` composition. UniFFI is enabled by default. Swift/Kotlin
+lifecycle owners and generated JavaScript calls use one `prns_app` shared native
+image per target, with the same supervisor, storage owner, generation and node
+identity. Native startup and iOS restoration can precede JavaScript. Loading or
+reloading JavaScript does not construct another node or Tokio runtime.
+
+## Generate and build
+
+From the repository root:
+
+```sh
+npm --prefix applications run api:generate
+npm --prefix applications run api:check
+npm --prefix applications run bindings:ios -- --sim-only --targets aarch64-apple-ios-sim
+npm --prefix applications run bindings:android -- --targets arm64-v8a --release
+```
+
+Generation refreshes TypeScript, Swift, Kotlin, semantic contract fingerprints
+and the canonical HostSnapshot adapters from the same Rust API. Checking rejects
+stale output without rewriting it. The mobile commands build the shared image
+owned by this package; the normal native client build helpers invoke them before
+Expo prebuild and autolinking. The Expo module must not link or package a second
+copy of `prns_app`.
+
+See the [generation guide](../../../tools/generated-bindings/README.md) for
+toolchain requirements, target selection and disposable build caches. Generated
+files are outputs of that workflow and must not be edited directly.
+
+## Imports and platform admission
+
+Use `@prns-internal/native-bindings` for types, enum factories, generated
+converters and fingerprint constants. This entry is safe to import on web and
+does not install the native runtime. The `/native` entry installs the JSI runtime
+and initializes the generated UniFFI ABI checks. The Expo SDK loads it lazily
+after checking native capability, then checks the app and canonical Host semantic
+fingerprints separately. Application code should use that SDK so platform
+admission accompanies execution.
+
+The execution boundary is:
+
+- `readSnapshot` and nineteen domain operations call generated async bindings:
+  pairing initiate/approve/reject, Describe/AnnounceSelf, seven contact operations
+  and seven LXMF operations. `previewIdentityImport` is a bounded synchronous
+  parse of exactly 64 bytes; `bindingContract` reads immutable identifiers.
+- Seven Expo methods retain platform-owned storage, identity and lifecycle
+  admission: `prepareStorage`, `inspectIdentity`, `createGeneratedIdentity`,
+  `createImportedIdentity`, `start`, `stop` and `reset`. Inputs and results cross
+  Expo as owned byte arrays using the generated UniFFI codecs, without a
+  handwritten domain model or field-by-field mapping.
+- `prepareOutbound` retains the platform preflight before outbound work.
+  Accessory setup, permissions and platform status events remain native concerns.
+
+The synchronous generated `native*` functions are for Swift/Kotlin background
+or lifecycle queues only. They can perform storage I/O or wait for Start/Stop;
+JavaScript must use the Expo admission methods instead. Storage preparation
+establishes the existing database owner before offline async access. Async calls
+cannot supply filesystem paths or silently reopen storage after reset. Native
+Start uses that same owner.
+
+## Canonical values
 
 Application counters and identifiers use Rust `u64`, generated as exact
-`bigint` / `UInt64` / `ULong`. There is no decimal-string wrapper, handwritten
-domain C ABI, generic Android domain dispatcher, or parallel ts-rs/JSON model.
-The fingerprint-only `export_contract` binary emits semantic app/Host identifiers
-as JSON; it accepts the existing `--fingerprints` invocation.
+TypeScript `bigint`, Swift `UInt64` and Kotlin `ULong`. Keep them exact through
+arithmetic and comparisons. Canonical Host `safeUint` fields remain checked
+JavaScript numbers, while canonical exact counters remain `bigint`.
 
-## Canonical HostSnapshot
+`host_contract.py` resolves the app's locked `prns-host` dependency through Cargo
+metadata and reads its canonical `host-contract-v1.json` schema. It generates
+transport records and conversions over the actual Rust `HostSnapshot`, custom
+type configuration and the TypeScript adapter to `personal-rns/contract`.
+Canonical state remains owned by `prns_host`; the no_std core has no UniFFI
+dependency. There is no second handwritten snapshot or JSON/ts-rs contract.
 
-Run `python3 applications/tools/generated-bindings/host_contract.py` from the repository root.
-The generator locates the app's locked `prns-host` dependency using Cargo metadata
-and reads its canonical `../schema/host-contract-v1.json` HostSnapshot closure and emits:
+Generated types support `exactOptionalPropertyTypes`. UniFFI `None` uses
+`undefined`; the canonical Host adapter omits absent optional properties as its
+contract requires. Generated tagged enum variants use `.tag` and, for payloads,
+`.inner`. Fixed 16/32-byte inputs validate during lifting. Contact normalization,
+identity and pin rules, mailbox pagination and other input bounds remain shared
+Rust semantic checks; TypeScript types alone do not validate foreign inputs.
 
-- `src/bindings/host_generated.rs`: transport records and conversions over the
-  actual `prns_host` records, validated fixed bytes and canonical enum names.
-- `uniffi.toml`: checked safe-integer and branded-byte TypeScript conversions,
-  plus Swift/Kotlin module naming.
-- `bindings/typescript/host-adapter.generated.ts`: conversion to the existing
-  `personal-rns/contract` types, including omitted optional properties.
+## Cancellation and ownership
 
-The generator owns these serialization artifacts. Runtime state and inspection
-remain canonical `prns_host::HostSnapshot`, and the no_std core does not depend on
-UniFFI. `--check` rejects stale outputs. `safeUint` stays a checked JS number;
-exact `u64` counters stay bigint. The small adapters are generated, not another
-handwritten domain model.
+Generated async functions accept optional `{ signal: AbortSignal }`. The SDK
+forwards caller signals, including Effect interruption, and checks cancellation
+after platform preflight before submitting domain work. Aborting a caller or
+tearing down its JavaScript runtime releases its generated future without
+stopping the native node.
 
-## Generate from one native library
+Describe cancellation drops its app-owned network future and releases admission;
+its deadline and priority Stop also bound the operation. Cancellation cannot undo
+upstream work already issued before a Link handle is available. Accepted contact
+and mailbox mutations, sends and retained announcement operations remain owned
+by their native lanes after the caller departs. Stop drains admitted durable
+work. A rejected caller promise therefore does not prove that an accepted write
+was rolled back and must not trigger an automatic retry.
 
-Keep Cargo targets on the external drive. Example environment for this pilot:
+Async admission uses bounded lanes and nonblocking supervisor access. It performs
+no path resolution, database opening, synchronous response wait or worker join
+on Hermes. A process-wide timer driver keeps offline query deadlines working;
+it owns neither an executor nor a node.
 
-```sh
-export CARGO_TARGET_DIR=/Volumes/wavlink/dev/prns-jsi2/app-target
-```
+## Runtime scope and validation
 
-Build the host library from the repository root:
+The runtime and generator use the exact jsi2 source revision and ordered patches
+recorded in the [vendor distribution](../../../vendor/ubrn/README.md). The current
+patches cover strict optional properties, JavaScript runtime teardown, Android
+queue teardown and Apple framework version metadata. They are shared runtime
+maintenance, separate from the generated application API; the vendor guide
+documents verification and eventual replacement with an upstream release.
 
-```sh
-cargo build --locked --manifest-path applications/Cargo.toml \
-  -p prns-app-native --features uniffi-bindings,host-test --lib
-```
+This API uses generated future-completion callbacks, not application-defined
+UniFFI callback interfaces. Bluetooth callbacks and platform events retain their
+existing native ownership. Adding callback interfaces or new runtime features
+requires separate support and lifecycle validation.
 
-For iOS/Android builds, use `apple`/`android` instead of `host-test`. Swift/Kotlin
-platform lifecycle owners and jsi2 MUST use the same built native image; do not
-link a static copy beside the dynamic image loaded by JavaScript.
-
-Generate jsi2 from `applications/prns/native-composition`, using the pinned,
-strict-TypeScript-fixed generator executable in `UBRN_BIN`:
-
-```sh
-"$UBRN_BIN" generate jsi2 bindings --library "$CARGO_TARGET_DIR/debug/libprns_app.dylib" \
-  --ts-dir bindings/typescript --lib-name prns_app --no-format
-node bindings/normalize-generated.mjs
-```
-
-The generated `prns_app.ts` and `prns_app-ffi.ts` must stay adjacent to
-`host-adapter.generated.ts`. Their async functions accept `{signal}` for caller cancellation. Module initialization and its UniFFI checksums follow
-jsi2's generated entry point. The app/Host fingerprints retain their separate
-semantic compatibility role.
-
-Build the development-only native generator with feature `uniffi-bindgen`, then
-run it with the explicit config (unlike the jsi2 CLI's metadata discovery):
-
-```sh
-cargo build --locked --manifest-path applications/Cargo.toml \
-  -p prns-app-native --features uniffi-bindgen,host-test --bin uniffi-bindgen
-"$CARGO_TARGET_DIR/debug/uniffi-bindgen" generate \
-  --library "$CARGO_TARGET_DIR/debug/libprns_app.dylib" \
-  --config applications/prns/native-composition/uniffi.toml \
-  --language swift --language kotlin --no-format --out-dir "$NATIVE_BINDINGS_OUTPUT"
-```
-
-Swift module name is `PrnsAppBindings`; Kotlin package is
-`rs.reticulum.prns.app.bindings`. Kotlin's library name is `prns_app`.
-
-## Validation
-
-```sh
-python3 applications/tools/generated-bindings/host_contract.py --check
-cargo test --locked --manifest-path applications/Cargo.toml -p prns-app-native \
-  --features uniffi-bindings,host-test --lib --test generated_snapshot
-cargo clippy --locked --manifest-path applications/Cargo.toml -p prns-app-native \
-  --features uniffi-bindings,host-test --lib --tests -- -D warnings
-node --test applications/prns/native-composition/bindings/tests/host_adapter.test.mjs
-```
-
-The focused tests cover full UniFFI binary snapshot round-trip, native-before-
-foreign-executor ownership, exact integers, canonical HostSnapshot conversion,
-async yielding, cancellation without stopping the node, lifecycle lock
-contention, and a stale timeout that must not mutate a replacement generation.
-They do not substitute for actual iOS/Android reload and lifecycle integration.
-
-The existing platform admission remains required: iOS accessory/protected-data
-startup, Android foreground-service/Bluetooth ownership, and Android outbound
-preflight. Snapshot reads do not drive radio recovery.
-
-
-## Native bootstrap and remaining API
-
-Native lifecycle owners call synchronous `native*` functions only from their
-existing background/lifecycle queues. These may perform blocking I/O or wait for
-Start/Stop. They must not be called directly on Hermes:
-
-- `nativePrepareStorage(storageRoot)` initializes the existing supervisor-owned
-  database and returns `NativeStoragePreparationOutcome`: `Prepared`,
-  `Unavailable { detail }`, or `DevelopmentResetRequired { reason }`.
-- `nativeInspectIdentity`, `nativeCreateGeneratedIdentity`, and
-  `nativeCreateImportedIdentity` use that platform's protected storage path.
-- `nativeStart`, `nativeStartWithAppleBluetoothCentralRestoration`,
-  `nativePrepareAppleBluetoothCentralRestoration`, `nativeStop`, and `nativeReset`
-  preserve the existing process-owned supervisor and platform admission order.
-
-`previewIdentityImport` is a bounded synchronous parse requiring exactly64 bytes.
-The nineteen domain operations use async exports: pairing initiate/approve/reject,
-Describe/AnnounceSelf, seven contact operations, and seven LXMF operations.
-All storage operations use the owner established by native bootstrap; JavaScript
-cannot supply paths or silently open/reopen the database. Reset requires another
-native bootstrap before offline database access. Start already establishes the
-same owner as part of its existing composition.
-
-Async admission uses `try_lock`, bounded existing lanes, and oneshot responses.
-No asynchronous entry performs path resolution, database opening, synchronous
-reply waiting, or completed-worker joining. A process-wide `futures-timer` timer
-driver preserves query deadlines when no Tokio node runtime exists; it does not
-execute commands or own a node. Describe caller drop retires its network future
-and admission. Accepted contact/mailbox mutations and sends remain owned and
-stop-drained after caller cancellation; no synthetic write timeout invites a
-second insert while the first may still commit.
-
-UniFFI uses explicit optional-value tags: generated `undefined` is the semantic
-`None`, replacing the old JSON-only distinction between a missing field and
-`null`. Fixed16/32-byte inputs validate in custom lifts; u64 values stay exact.
-Contact normalization, pin/identity rules, mailbox pagination, pairing input and
-text semantics remain shared Rust checks. Native input/path/restoration size
-bounds remain shared Rust semantic checks. Swift/Kotlin/JS generated codecs may carry
-native lifecycle outcomes through the small Expo admission wrappers without
-handwritten field mappings or a JSON compatibility model.
+`npm --prefix applications run native:test` covers full snapshot transport,
+native-before-JavaScript ownership, exact integers, cold offline storage,
+generation-safe deadlines, caller cancellation and durable writes after caller
+drop. `api:check` verifies generated outputs. These host checks complement actual
+iOS/Android startup, reload and lifecycle validation; they do not replace it.

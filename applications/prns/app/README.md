@@ -39,7 +39,9 @@ has one 20-second deadline starting at admission, including queueing, readiness,
 discovery, connection, and response time. Deadline expiry, native caller
 departure, or priority Stop drops the app-owned Describe future and releases
 its active-operation and admission state. An expired queued command never
-starts network work. This is not a JavaScript promise-cancellation API.
+starts network work. Generated async bindings accept an `AbortSignal`; the SDK
+forwards it, including Effect interruption, so JavaScript caller cancellation
+also releases Describe's app-owned future without stopping the native node.
 
 Once a target connection has been returned, an app-owned guard queues Link
 closure on completion or cancellation. Earlier establishment/identification
