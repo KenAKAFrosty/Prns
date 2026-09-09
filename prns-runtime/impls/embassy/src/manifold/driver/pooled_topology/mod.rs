@@ -210,7 +210,9 @@ pub(crate) async fn run_pooled<
                         });
                         retain_packet_phy(store, &mut packet, packet_phy);
                         let mut owed_work = InlineOwedWorkQueue::new();
-                        let report = engine.ingest_classified_into_report(
+                        let report = engine.ingest_classified_into_report_with_request_diagnostics::<
+                            { cfg!(feature = "log") }, _, _, _, _,
+                        >(
                             packet,
                             IngestIo {
                                 interfaces: AttachedInterfaces::new(&*descriptors),

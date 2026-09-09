@@ -58,6 +58,7 @@ pub struct IngestPacketReport {
     /// Unlike `protocol_violation`, this also reports ordinary policy rejection (including
     /// requests arriving before their peer has been identified) and pairing outcomes.
     /// Unclassifiable packets and packets forwarded without local handling have no request report.
+    /// Callers explicitly opting out of request diagnostics also receive `None` here.
     pub request: Option<RequestIngressDiagnostic>,
 }
 
@@ -118,7 +119,7 @@ impl<S: StorageLayout> EngineState<S> {
         A: FnMut(&ResourceOffer) -> bool,
         K: FnMut(EngineReaction<'_, OwedWork<'_>>),
     {
-        self.ingest_packet_into_report(packet, io).wake_schedules
+        self.ingest_classified_into(ClassifiedInboundPacket::classify(packet), io)
     }
 
     pub fn ingest_packet_into_report<F, P, A, K>(
@@ -146,11 +147,37 @@ impl<S: StorageLayout> EngineState<S> {
         A: FnMut(&ResourceOffer) -> bool,
         K: FnMut(EngineReaction<'_, OwedWork<'_>>),
     {
-        self.ingest_classified_into_report(packet, io)
+        self.ingest_classified_into_report_with_request_diagnostics::<false, _, _, _, _>(packet, io)
             .wake_schedules
     }
 
     pub fn ingest_classified_into_report<F, P, A, K>(
+        &mut self,
+        packet: ClassifiedInboundPacket<'_>,
+        io: IngestIo<'_, F, P, A, K>,
+    ) -> IngestPacketReport
+    where
+        F: FnMut(&mut [u8]),
+        P: FnMut(&ProofRequest) -> bool,
+        A: FnMut(&ResourceOffer) -> bool,
+        K: FnMut(EngineReaction<'_, OwedWork<'_>>),
+    {
+        self.ingest_classified_into_report_with_request_diagnostics::<true, _, _, _, _>(packet, io)
+    }
+
+    /// Ingest with an explicit compile-time choice of request diagnostics.
+    ///
+    /// Disabling collection only leaves `report.request` empty. Wake schedules,
+    /// protocol violations, admission decisions, emitted work and journal events
+    /// are unchanged. Consumers that never inspect request reports can avoid
+    /// materializing the pairing projection on constrained targets.
+    pub fn ingest_classified_into_report_with_request_diagnostics<
+        const REQUEST_DIAGNOSTICS: bool,
+        F,
+        P,
+        A,
+        K,
+    >(
         &mut self,
         packet: ClassifiedInboundPacket<'_>,
         io: IngestIo<'_, F, P, A, K>,
@@ -170,7 +197,8 @@ impl<S: StorageLayout> EngineState<S> {
             sink,
         } = io;
         let (source, ingress) = packet.into_parts();
-        let is_request = matches!(&ingress, Ingress::Data { data, .. }
+        let is_request = REQUEST_DIAGNOSTICS
+            && matches!(&ingress, Ingress::Data { data, .. }
             if data.header.destination_type == DestinationType::Link
                 && data.header.context == WireContext::Request);
         let mut wake_schedule_changes = WakeSchedules::UNCHANGED;
@@ -400,24 +428,23 @@ impl<S: StorageLayout> EngineState<S> {
                 rtt,
                 data,
             } => {
-                match self.ingest_remote_control_pairing_request(
-                    RemoteControlPairingRequestIngress {
-                        destination,
-                        link_id,
-                        request_id,
-                        requester,
-                        path_hash,
-                        data,
-                    },
-                    interfaces,
-                    now,
-                    fill_random,
-                    sink,
-                ) {
-                    RemoteControlPairingRequestIngressOutcome::Pairing(pairing_outcome) => {
-                        request = Some(RequestIngressDiagnostic::Pairing(
-                            pairing_outcome.diagnostic(),
-                        ));
+                match self
+                    .ingest_remote_control_pairing_request_report::<REQUEST_DIAGNOSTICS, _, _>(
+                        RemoteControlPairingRequestIngress {
+                            destination,
+                            link_id,
+                            request_id,
+                            requester,
+                            path_hash,
+                            data,
+                        },
+                        interfaces,
+                        now,
+                        fill_random,
+                        sink,
+                    ) {
+                    RemoteControlPairingRequestIngressOutcome::Pairing(diagnostic) => {
+                        request = diagnostic.map(RequestIngressDiagnostic::Pairing);
                         wake_schedule_changes.remote_control_pairing =
                             self.remote_control_pairing_wake();
                         wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
@@ -426,7 +453,8 @@ impl<S: StorageLayout> EngineState<S> {
                         wake_schedule_changes.channel_timeouts = self.channel_timeouts_wake();
                     }
                     RemoteControlPairingRequestIngressOutcome::ForwardToApplication => {
-                        request = Some(RequestIngressDiagnostic::ForwardedToApplication);
+                        request = REQUEST_DIAGNOSTICS
+                            .then_some(RequestIngressDiagnostic::ForwardedToApplication);
                         sink(EngineReaction::Journaled(Journaled::RequestReceived {
                             destination,
                             link_id,
