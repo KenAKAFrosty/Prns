@@ -12,9 +12,20 @@ import {
 } from "react-native";
 
 import { radius, space, useAppPalette } from "./theme";
+import { AndroidKeyboardScreen } from "./android-keyboard-screen";
 
 export function Screen({ children }: PropsWithChildren) {
   const palette = useAppPalette();
+  if (Platform.OS === "android") {
+    return (
+      <AndroidKeyboardScreen
+        style={[styles.screen, { backgroundColor: palette.background }]}
+        contentContainerStyle={styles.screenContent}
+      >
+        {children}
+      </AndroidKeyboardScreen>
+    );
+  }
   return (
     <ScrollView
       style={[styles.screen, { backgroundColor: palette.background }]}

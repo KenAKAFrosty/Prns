@@ -3,6 +3,7 @@ import { useState } from "react";
 import { StyleSheet } from "react-native";
 
 import { TextField } from "./text-field";
+import { FieldKeyboardContext } from "./android-keyboard-screen";
 
 describe("TextField", () => {
   it("keeps its visible label while editing and preserves input callbacks", () => {
@@ -46,5 +47,38 @@ describe("TextField", () => {
     const view = render(<TextField label="Message" multiline onChangeText={onChangeText} />);
     fireEvent.changeText(view.getByLabelText("Message"), "First line\nSecond line");
     expect(onChangeText).toHaveBeenCalledWith("First line\nSecond line");
+  });
+
+  it("notifies its Android screen about focus and caret changes while preserving caller callbacks", () => {
+    const focus = jest.fn();
+    const blur = jest.fn();
+    const reveal = jest.fn();
+    const onSelectionChange = jest.fn();
+    const onContentSizeChange = jest.fn();
+    const view = render(
+      <FieldKeyboardContext.Provider value={{ focus, blur, reveal, maximumInputHeight: 100 }}>
+        <TextField
+          label="Message"
+          multiline
+          onSelectionChange={onSelectionChange}
+          onContentSizeChange={onContentSizeChange}
+        />
+      </FieldKeyboardContext.Provider>,
+    );
+    const input = view.getByLabelText("Message");
+    fireEvent(input, "focus", { nativeEvent: {} });
+    const selection = { nativeEvent: { selection: { start: 2, end: 2 } } };
+    const content = { nativeEvent: { contentSize: { width: 320, height: 180 } } };
+    fireEvent(input, "selectionChange", selection);
+    fireEvent(input, "contentSizeChange", content);
+    expect(focus).toHaveBeenCalledTimes(1);
+    expect(reveal).toHaveBeenCalledTimes(2);
+    expect(onSelectionChange).toHaveBeenCalledWith(selection);
+    expect(onContentSizeChange).toHaveBeenCalledWith(content);
+    expect(StyleSheet.flatten(input.props.style)).toMatchObject({ minHeight: 100, maxHeight: 100 });
+    fireEvent(input, "blur", { nativeEvent: {} });
+    expect(blur).toHaveBeenCalledTimes(1);
+    view.unmount();
+    expect(blur).toHaveBeenCalledTimes(2);
   });
 });
