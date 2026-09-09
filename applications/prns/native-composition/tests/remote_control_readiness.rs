@@ -19,7 +19,8 @@ use prns_app::contract::{DescribeRemoteControlTargetInput, RemoteControlDescribe
 use prns_app::host_test::describe_with_handle;
 
 const FIXTURE_TIMEOUT: Duration = Duration::from_secs(18);
-const DETACHED_OBSERVATION: Duration = Duration::from_millis(250);
+// Real radio recovery can exceed the former five-second readiness cutoff.
+const DETACHED_OBSERVATION: Duration = Duration::from_secs(6);
 
 #[tokio::test(flavor = "current_thread")]
 async fn describe_waits_for_the_retained_route_interface_to_return() {

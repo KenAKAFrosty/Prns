@@ -37,6 +37,9 @@ use tokio::task::JoinHandle;
 
 const EXCHANGE_TIMEOUT: Duration = Duration::from_secs(12);
 const UNAVAILABLE_TARGET_TIMEOUT: Duration = Duration::from_secs(18);
+// Harness slack above Describe's one twenty-second admission deadline. The
+// separate unavailable AnnounceSelf bound remains unchanged.
+const UNAVAILABLE_DESCRIBE_TIMEOUT: Duration = Duration::from_secs(25);
 const NORMAL_PAIRING_WINDOW: DurationMillis = DurationMillis(30_000);
 const NORMAL_ATTEMPT_TIMEOUT: DurationMillis = DurationMillis(10_000);
 
@@ -477,18 +480,19 @@ async fn durable_restart_describe_and_unavailable_target() {
     )
     .await;
     let unavailable = tokio::time::timeout(
-        UNAVAILABLE_TARGET_TIMEOUT,
+        UNAVAILABLE_DESCRIBE_TIMEOUT,
         app_describe(target.identity_fingerprint.clone()),
     )
     .await
     .expect("unavailable target settles within the aggregate bound");
     // A retained route is not permission to send through an offline interface.
-    // Readiness now fails during preflight, before attempting Link establishment.
+    // With no returning interface, the original Describe deadline expires
+    // during readiness, before attempting Link establishment.
     assert!(
         matches!(
             unavailable,
             RemoteControlDescribeOutcome::Failed {
-                stage: RemoteControlDescribeFailureStage::Route,
+                stage: RemoteControlDescribeFailureStage::Timeout,
                 ..
             }
         ),

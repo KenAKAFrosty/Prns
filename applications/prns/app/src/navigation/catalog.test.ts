@@ -78,7 +78,16 @@ describe("screen catalog", () => {
     ["contacts.index", "Contacts are available on iOS and Android."],
     ["nodes.index", "Node management is available on iOS and Android."],
     ["nodes.local", "Detailed node status is available on iOS and Android."],
+    ["nodes.pair", "Pairing is available on iOS and Android with Bluetooth and a nearby node."],
   ] as const)("describes the supported mobile platforms for %s", (id, limitation) => {
     expect(screenById(id).limitation).toBe(limitation);
+  });
+
+  it("describes both supported paired-node controls without promising access", () => {
+    expect(screenById("nodes.managed")).toMatchObject({
+      summary: "View a paired node, check its connection, and share its address.",
+      limitation:
+        "Connection checks and node address sharing are available when the node allows them.",
+    });
   });
 });

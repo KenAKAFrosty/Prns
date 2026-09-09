@@ -29,7 +29,8 @@ pub mod host_test {
     ) -> crate::contract::RemoteControlDescribeOutcome {
         let snapshots = crate::snapshot::SnapshotStore::new();
         snapshots.set_runtime(crate::contract::DevelopmentNodeRuntime::Running);
-        crate::remote_control::describe(handle, &snapshots, input).await
+        let deadline = tokio::time::Instant::now() + crate::lifecycle::COMMAND_TIMEOUT;
+        crate::remote_control::describe(handle, &snapshots, input, deadline).await
     }
 }
 

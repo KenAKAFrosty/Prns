@@ -11,9 +11,11 @@ The Kotlin Expo module translates values and platform lifecycle into the same
 application-owned Rust runtime used by iOS. It does not run Personal Hopspot's
 separate engine. A non-exported foreground service owns the platform adapters;
 React reloads and Activity destruction do not stop the node. The service has an
-ongoing notification and an explicit Stop action. Android may still terminate
-the process. A sticky service restart reopens the stored identity and the last
-successful start configuration; a user Stop clears that restart intent.
+ongoing connection notification when Android permits it. Both its Stop action
+and the in-app **Stop node** control use the same service-owned shutdown.
+Android may still terminate the process. A sticky service restart reopens the
+stored identity and the last successful start configuration; a user Stop clears
+that restart intent.
 
 After notification Stop, ordinary navigation or returning to the app leaves the
 node stopped. **Start node** on Nodes or This device explicitly starts it again
@@ -29,6 +31,23 @@ Bluetooth uses the public upstream Android backend and an attributed adaptation
 of its Kotlin transport glue. Android permissions and discovery are independent
 of Apple AccessorySetupKit and of RemoteControl invitation/grant pairing. The
 node and TCP interface can start without granting Bluetooth permission.
+
+## Node controls
+
+On **Nodes** or **This device**, select **Stop node** to stop this device's
+connections without deleting its identity, pairings, contacts, or messages.
+Wait for stopping to finish before selecting **Start node**. Leaving the page
+or returning to the app does not restart it. The in-app Stop control remains
+available independently of notification permission.
+
+The running-node notification also provides **Stop** outside the app. If it is
+not enabled, **Allow node notification** requests notification permission on
+Android 13 and newer. When Android has blocked notifications for the app or its
+connection channel, **Open notification settings** opens the app's Android
+settings instead; enable the relevant notification there. Returning to the app
+refreshes the reported setting. This permission is separate from Bluetooth and
+background discovery, and does not enable message alerts. It is not required to
+start the node or use the in-app Stop control.
 
 ## Build
 
@@ -78,18 +97,93 @@ This also interrupts any TCP connections. Live capability refresh belongs in
 the shared Bluetooth backend; this restart is a temporary recovery boundary,
 not a claim of seamless radio-toggle recovery.
 
+### Current device checkpoint
+
+Standalone Android 10 checks now cover in-app Stop/Start, Stop with notifications
+disabled, permission recovery, keyboard-visible text and cursor editing, node
+address sharing, and small direct messages in both directions. Identity, pairing,
+contact, and mailbox retention have bounded app-process restart evidence. Valid
+identity import also passes through the actual JNI runtime in isolated test
+storage; the interactive picker check does not replace the app's saved identity.
+See [validation results](validation.md#later-standalone-android-acceptance) for
+the exact scope and checkpoint boundaries.
+
+The September 9 clean combined build includes ordered radio recovery, both
+L2CAP buffer corrections, GATT client-queue cleanup, and Describe's updated
+readiness deadline. Twenty-two physical radio off/on cycles completed with a
+successful first node check and no repeated missing-MTU stall. Unlike the earlier
+diagnostic trials, these checks had no added two-second harness delay. Some
+result captures required manual confirmation after harness guards paused; this
+is not a claim of twenty-two automatic script passes.
+
+On that same clean build, Stop/Home/return stayed stopped, explicit Start's
+first check succeeded, the deleted contact remained absent after a cold app
+restart, both actual-JNI tests passed, and a fresh two-way message exchange and
+node-address share passed. Controlled offline tests also passed: retry/cancel
+while stopped did not start the service, failed/cancelled messages did not send
+on reconnection, and an explicit retry delivered the original message without
+creating another mailbox record. These are bounded application-observation
+checks, not exactly-once wire-delivery guarantees. The final copy-only rebuild
+also passed its gates and an install/cold-launch smoke check, preserving message
+states, contacts, and pairing; its first node check succeeded. The Android 10
+implementation of the current iOS app feature set is ready for development
+handoff with the limits below.
+See the [clean combined
+checkpoint](validation.md#clean-combined-checkpoint--september-9) for exact builds,
+evidence, and the preceding failed comparisons. This is bounded evidence on one
+Galaxy S9+/Android 10 and one board, not universal Android qualification. Newer
+Android permission/service behavior and deep Doze remain unqualified.
+
+### Connection readiness and bounded requests
+
+An enabled Bluetooth permission or a stored route does not establish that its
+interface is ready. Before a RemoteControl connection, the app checks the
+route's actual interface for online, transmit-capable status. Describe waits
+within the time remaining in its original 20-second admission deadline;
+address sharing keeps its separate five-second readiness wait. A usable route
+connects directly; otherwise an available transmitting interface permits one
+path request for the authorized target. After discovery, the route's interface is
+checked again. There is no automatic replay of the RemoteControl operation or
+of path discovery when an interface later appears.
+
+This readiness check uses the status published by the current Bluetooth and
+TCP transports. It is not a general readiness guarantee for arbitrary custom
+interfaces that do not publish that status, nor a guarantee that a ready peer
+will answer.
+
+Describe's native command has one 20-second deadline starting at admission,
+including time spent queued, waiting for a transport, connecting, and reading
+the response. Readiness does not start a second 20-second allowance or impose
+an unconditional delay. The clean checkpoint above includes this follow-up.
+The actor drops its Describe future if that deadline expires,
+the native caller leaves, or Stop is requested, and releases its active-operation
+and admission state. An expired queued command does not begin network work.
+This is not a new cancellation API for disposing of a JavaScript promise.
+
+Once an authorized target connection has been returned, an app-owned guard
+queues link closure on normal completion or cancellation. Before that point,
+an upstream link may still be establishing or identifying: dropping its waiter
+does not prove that the engine immediately cancelled the issued work. Engine
+settlement/expiry and full node shutdown remain separate boundaries. Address
+sharing retains its existing admitted-operation and unknown-outcome handling;
+it is not given Describe's caller-cancellation semantics.
+
 ## Acceptance sequence
 
 1. Build/link/package checks; shared SDK/UI and Rust tests; Android callback tests.
-2. Real-device startup, identity creation/reopen, contacts, and controlled TCP
-   RemoteControl/LXMF communication.
+2. Real-device startup, generated/imported identity reopen in isolated native
+   tests, picker preview/cancel/rejection without replacing an existing identity,
+   contact pin/unpin/delete, and controlled TCP RemoteControl/LXMF communication.
 3. Bluetooth discovery, invitation/code approval, authenticated remote request,
    and message delivery with the intended board.
 4. UI recreation, screen locking, denied/regranted permissions, Bluetooth toggles,
-   peer loss/recovery, notification Stop followed by in-app Start, and process
-   restart. Verify that ordinary navigation/resume after Stop does not start the
-   service, and that Start retains pairing and mailbox data. Record failures as well
-   as successful retries. Repeat with bundled JavaScript and Metro stopped.
+   peer loss/recovery, both in-app and notification Stop followed by in-app
+   Start, and process restart. Verify that ordinary navigation/resume after
+   Stop does not start the service, and that Start retains pairing and mailbox
+   data. Check in-app Stop with notifications disabled, and notification
+   permission/channel recovery separately. Submit the first node check while
+   reconnecting, not only after the interface is already ready. Record failures
+   as well as successful retries. Repeat with bundled JavaScript and Metro stopped.
 
 Passing compilation or emulator tests does not qualify physical Bluetooth or
 background delivery. Current results are recorded in `validation.md`.
