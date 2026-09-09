@@ -1,5 +1,5 @@
 {
-  "schema_version": 6,
+  "schema_version": 7,
   "target": {
     "id": "t-echo-s140-v6",
     "display_name": "LilyGO T-Echo S140 6.1.1",
@@ -184,7 +184,7 @@
     "kind": "unavailable"
   },
   "analysis": {
-    "linker_map_bytes": 10106819,
+    "linker_map_bytes": 11946538,
     "allocated_sections": {
       "kind": "unavailable"
     },
@@ -412,6 +412,9 @@
       }
     },
     "executable": {
+      "kind": "unavailable"
+    },
+    "async_memory": {
       "kind": "unavailable"
     }
   }

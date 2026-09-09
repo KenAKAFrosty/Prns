@@ -75,6 +75,7 @@ pub(super) fn analyze(
         decoded_bytes,
         undecoded_bytes: executable_bytes - decoded_bytes,
         instruction_count,
+        instructions: decoded,
     })
 }
 

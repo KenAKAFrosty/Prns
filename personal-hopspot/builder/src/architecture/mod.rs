@@ -12,7 +12,9 @@ use std::process::Command;
 
 use personal_hopspot_memory::ProcessorArchitecture;
 
-use crate::BuildError;
+use crate::{BuildError, BuildIntent};
+
+const STACK_SIZE_EVIDENCE_RUSTFLAGS: [&str; 2] = ["-Z", "emit-stack-sizes=yes"];
 
 pub use linker::{MemoryOverflow, MemoryOverflows};
 
@@ -36,6 +38,12 @@ pub enum LinkerFlavor {
 pub enum DisassemblerFlavor {
     LlvmObjdump,
     GnuObjdump,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StackFrameEvidence {
+    LlvmStackSizes,
+    DwarfDebugFrame,
 }
 
 impl DisassemblerFlavor {
@@ -146,6 +154,7 @@ pub struct Adapter {
     linker: LinkerTool,
     rustflags: &'static [&'static str],
     disassembler: DisassemblerTool,
+    stack_frame_evidence: StackFrameEvidence,
 }
 
 impl Adapter {
@@ -155,6 +164,7 @@ impl Adapter {
         linker: LinkerTool,
         rustflags: &'static [&'static str],
         disassembler: DisassemblerTool,
+        stack_frame_evidence: StackFrameEvidence,
     ) -> Self {
         Self {
             id: AdapterId(id),
@@ -162,6 +172,7 @@ impl Adapter {
             linker,
             rustflags,
             disassembler,
+            stack_frame_evidence,
         }
     }
 
@@ -195,21 +206,47 @@ impl Adapter {
     }
 
     #[must_use]
-    pub const fn rustflags(&self) -> &'static [&'static str] {
+    pub const fn firmware_rustflags(&self) -> &'static [&'static str] {
         self.rustflags
     }
 
-    pub fn configure_cargo(&self, command: &mut Command) -> Result<PathBuf, BuildError> {
-        self.configure_rustflags(command);
+    #[must_use]
+    pub fn rustflags(&self, intent: BuildIntent) -> Vec<&'static str> {
+        let mut rustflags = self.rustflags.to_vec();
+        if intent.is_resource_report()
+            && self.stack_frame_evidence == StackFrameEvidence::LlvmStackSizes
+        {
+            rustflags.extend(STACK_SIZE_EVIDENCE_RUSTFLAGS);
+        }
+        rustflags
+    }
+
+    #[must_use]
+    pub const fn stack_frame_evidence(&self) -> StackFrameEvidence {
+        self.stack_frame_evidence
+    }
+
+    pub fn configure_cargo(
+        &self,
+        command: &mut Command,
+        intent: BuildIntent,
+    ) -> Result<PathBuf, BuildError> {
+        self.configure_rustflags(command, intent);
         let linker = (self.linker.configure)(command)?;
         command.env(cargo_linker_environment(self.rust_target()), &linker);
         Ok(linker)
     }
 
-    fn configure_rustflags(&self, command: &mut Command) {
+    fn configure_rustflags(&self, command: &mut Command, intent: BuildIntent) {
         command.env_remove(cargo_rustflags_environment(self.rust_target()));
-        if !self.rustflags.is_empty() {
-            command.env("RUSTFLAGS", self.rustflags.join(" "));
+        if intent.is_resource_report()
+            && self.stack_frame_evidence == StackFrameEvidence::LlvmStackSizes
+        {
+            command.env("RUSTC_BOOTSTRAP", "1");
+        }
+        let rustflags = self.rustflags(intent);
+        if !rustflags.is_empty() {
+            command.env("RUSTFLAGS", rustflags.join(" "));
         }
     }
 

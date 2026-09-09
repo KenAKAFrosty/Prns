@@ -58,6 +58,7 @@ fn overflow_reports_preserve_only_available_evidence() -> Result<(), Box<dyn std
     value["analysis"]["allocated_sections"] = json!({"kind": "unavailable"});
     value["analysis"]["flash_attribution"]["kind"] = json!("partial");
     value["analysis"]["executable"] = json!({"kind": "unavailable"});
+    value["analysis"]["async_memory"] = json!({"kind": "unavailable"});
     let report: ResourceReport = serde_json::from_value(value.clone())?;
     compare::validate_report(Path::new("overflow.json"), &report)?;
     assert_eq!(serde_json::to_value(report)?, value);
@@ -130,6 +131,19 @@ fn successful_reports_require_complete_executable_evidence(
 }
 
 #[test]
+fn successful_reports_require_complete_async_memory_evidence(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut value = report_value();
+    value["analysis"]["async_memory"]["kind"] = json!("partial");
+    let report: ResourceReport = serde_json::from_value(value)?;
+    assert!(matches!(
+        compare::validate_report(Path::new("success.json"), &report),
+        Err(ComparisonError::MissingAsyncMemoryEvidence { .. })
+    ));
+    Ok(())
+}
+
+#[test]
 fn malformed_executable_evidence_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
     for mutation in [
         |value: &mut Value| {
@@ -152,6 +166,64 @@ fn malformed_executable_evidence_is_rejected() -> Result<(), Box<dyn std::error:
         assert!(matches!(
             compare::validate_report(Path::new("malformed.json"), &report),
             Err(ComparisonError::InvalidExecutableEvidence { .. })
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn malformed_stack_evidence_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
+    for mutation in [
+        |value: &mut Value| {
+            value["analysis"]["executable"]["value"]["stack"]["kind"] = json!("complete");
+        },
+        |value: &mut Value| {
+            value["analysis"]["executable"]["value"]["stack"]["value"]["largest_known_path"]
+                ["bytes"] = json!(31);
+        },
+        |value: &mut Value| {
+            value["analysis"]["executable"]["value"]["stack"]["value"]["limit"]["headroom_bytes"] =
+                json!(69_599);
+        },
+        |value: &mut Value| {
+            value["analysis"]["executable"]["value"]["stack"]["value"]["frame_source"] =
+                json!("dwarf-debug-frame");
+        },
+    ] {
+        let mut value = report_value();
+        mutation(&mut value);
+        let report: ResourceReport = serde_json::from_value(value)?;
+        assert!(matches!(
+            compare::validate_report(Path::new("malformed.json"), &report),
+            Err(ComparisonError::InvalidExecutableEvidence { .. })
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn malformed_async_memory_evidence_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
+    for mutation in [
+        |value: &mut Value| {
+            value["analysis"]["async_memory"]["value"]["task_pool_bytes"] = json!(31);
+        },
+        |value: &mut Value| {
+            value["analysis"]["async_memory"]["value"]["task_pools"][0]["address"] =
+                json!(536_920_128);
+        },
+        |value: &mut Value| {
+            value["analysis"]["async_memory"]["value"]["scenario_futures"] = json!({
+                "kind": "measured",
+                "futures": [{"scenario": "duplicate", "bytes": 1}, {"scenario": "duplicate", "bytes": 2}]
+            });
+        },
+    ] {
+        let mut value = report_value();
+        mutation(&mut value);
+        let report: ResourceReport = serde_json::from_value(value)?;
+        assert!(matches!(
+            compare::validate_report(Path::new("malformed.json"), &report),
+            Err(ComparisonError::InvalidAsyncMemoryEvidence { .. })
         ));
     }
     Ok(())
@@ -184,6 +256,7 @@ fn compatible_reports_call_out_lto_and_resource_deltas() -> Result<(), Box<dyn s
     after_value["firmware_flash"]["value"]["image_bytes"] = json!(699_000);
     after_value["firmware_flash"]["value"]["headroom_bytes"] = json!(66_952);
     after_value["artifacts"]["value"][0]["bytes"] = json!(40);
+    after_value["artifacts"]["value"][0]["fingerprint"] = Value::String("b".repeat(64));
     after_value["static_ram"]["value"][0]["static_section_bytes"] = json!(137_356);
     after_value["static_ram"]["value"][0]["capacity"]["headroom_bytes"] = json!(6_004);
     after_value["analysis"]["allocated_sections"]["value"][0]["run_end"] = json!(155_688);
@@ -235,6 +308,24 @@ fn compatible_reports_call_out_lto_and_resource_deltas() -> Result<(), Box<dyn s
         super::fingerprint::Fingerprint::parse("b".repeat(64))?;
     executable.disassembly.executable_bytes = 40;
     executable.disassembly.decoded_bytes = 40;
+    let stack = match &mut executable.stack {
+        Evidence::Complete(stack) | Evidence::Partial(stack) => stack,
+        Evidence::Unavailable => return Err("fixture has no stack evidence".into()),
+    };
+    stack.largest_frames[0].bytes = 24;
+    stack.largest_known_path.bytes = 24;
+    stack.largest_known_path.frames[0].frame_bytes = 24;
+    if let super::model::StackLimitIdentity::Declared { headroom_bytes, .. } = &mut stack.limit {
+        *headroom_bytes = 69_608;
+    }
+    let async_memory = match &mut after.analysis.async_memory {
+        Evidence::Complete(async_memory) => async_memory,
+        Evidence::Partial(_) | Evidence::Unavailable => {
+            return Err("fixture has no complete async-memory evidence".into());
+        }
+    };
+    async_memory.task_pool_bytes = 24;
+    async_memory.task_pools[0].bytes = 24;
     compare::validate_report(Path::new("before.json"), &before)?;
     compare::validate_report(Path::new("after.json"), &after)?;
     let comparison = compare::compare_reports(&before, &after)?;
@@ -246,6 +337,7 @@ fn compatible_reports_call_out_lto_and_resource_deltas() -> Result<(), Box<dyn s
     assert!(rendered.contains("setting lto configured -> thin"));
     assert!(rendered.contains("flash image 700000 -> 699000 (-1000)"));
     assert!(rendered.contains("flash headroom 65952 -> 66952 (+1000)"));
+    assert!(rendered.contains("artifact \"firmware.bin\" fingerprint changed"));
     assert!(rendered.contains("ram internal-sram headroom 5004 -> 6004 (+1000)"));
     assert!(rendered.contains("section code load 42 -> 40 (-2)"));
     assert!(rendered.contains("attribution evidence complete -> complete"));
@@ -258,6 +350,16 @@ fn compatible_reports_call_out_lto_and_resource_deltas() -> Result<(), Box<dyn s
     assert!(rendered.contains("machine function-boundaries changed"));
     assert!(rendered.contains("machine functions 1 -> 1"));
     assert!(rendered.contains("machine ranked-function changed \"example::run\""));
+    assert!(rendered.contains("stack evidence partial -> partial"));
+    assert!(rendered.contains("stack frame-source unchanged"));
+    assert!(rendered.contains("stack frame-source evidence 5 -> 5 (0)"));
+    assert!(rendered.contains("stack known-path lower-bound 32 -> 24 (-8)"));
+    assert!(rendered.contains("stack known-path headroom 69600 -> 69608 (+8)"));
+    assert!(rendered.contains("async task-pool total 32 -> 24 (-8)"));
+    assert!(rendered.contains("async task-pool \"example::run\" 32 -> 24 (-8)"));
+    assert!(rendered.contains(
+        "async scenario-futures unavailable semantic-harness-not-produced -> semantic-harness-not-produced"
+    ));
     Ok(())
 }
 
@@ -561,6 +663,8 @@ fn make_overflow(value: &mut Value, linker_region: &str, overflow_bytes: u64) {
     value["artifacts"] = json!({"kind": "unavailable"});
     value["analysis"]["allocated_sections"] = json!({"kind": "unavailable"});
     value["analysis"]["flash_attribution"]["kind"] = json!("partial");
+    value["analysis"]["executable"] = json!({"kind": "unavailable"});
+    value["analysis"]["async_memory"] = json!({"kind": "unavailable"});
 }
 
 pub(super) fn report_value() -> Value {
@@ -570,7 +674,7 @@ pub(super) fn report_value() -> Value {
     );
     let boundaries_fingerprint = prns_flash_manifest::sha256_hex(boundary_encoding.as_bytes());
     let toolchain_fingerprint = "6e58e90c146639570099ad73f47e6e4a617f4e082daf70fb83c6719d3bc18129";
-    json!({
+    let mut value = json!({
         "schema_version": SCHEMA_VERSION,
         "target": {
             "id": "t114",
@@ -618,7 +722,15 @@ pub(super) fn report_value() -> Value {
                 "end": 1,
                 "compatibility": "exact-firmware-region"
             },
-            "runtime_reservations": []
+            "runtime_reservations": [{
+                "id": "minimum-runtime-stack",
+                "address_space": "internal-ram",
+                "bytes": 69632,
+                "accounting": {
+                    "kind": "dedicated",
+                    "charge": "additional"
+                }
+            }]
         },
         "status": {"kind": "success"},
         "firmware_flash": {
@@ -652,7 +764,11 @@ pub(super) fn report_value() -> Value {
         },
         "artifacts": {
             "kind": "complete",
-            "value": [{"path": "firmware.bin", "bytes": 42}]
+            "value": [{
+                "path": "firmware.bin",
+                "bytes": 42,
+                "fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }]
         },
         "analysis": {
             "linker_map_bytes": 128,
@@ -789,6 +905,75 @@ pub(super) fn report_value() -> Value {
                 }
             }
         }
+    });
+    value["analysis"]["executable"]["value"]["stack"] = stack_value(&fingerprint);
+    value["analysis"]["async_memory"] = async_memory_value();
+    value
+}
+
+fn stack_value(fingerprint: &str) -> Value {
+    json!({
+        "kind": "partial",
+        "value": {
+            "frame_source": "llvm-stack-sizes",
+            "source_bytes": 5,
+            "frame_count": 1,
+            "functions_without_frames": 0,
+            "largest_frames": [{
+                "name": "example::run",
+                "address": 155648,
+                "bytes": 32
+            }],
+            "roots": [{
+                "role": "startup",
+                "name": "example::run",
+                "address": 155648
+            }],
+            "direct_call_count": 0,
+            "largest_known_path": {
+                "bytes": 32,
+                "frames": [{
+                    "name": "example::run",
+                    "address": 155648,
+                    "frame_bytes": 32
+                }]
+            },
+            "limit": {
+                "kind": "declared",
+                "reservation": "minimum-runtime-stack",
+                "bytes": 69632,
+                "headroom_bytes": 69600
+            },
+            "gaps": [{
+                "kind": "interrupt-nesting-unmodeled",
+                "occurrences": 1
+            }],
+            "artifact": {
+                "path": "work/t114/stack-evidence.json",
+                "bytes": 128,
+                "fingerprint": fingerprint
+            }
+        }
+    })
+}
+
+fn async_memory_value() -> Value {
+    json!({
+        "kind": "complete",
+        "value": {
+            "task_pool_accounting": "included-in-static-ram",
+            "task_pool_bytes": 32,
+            "task_pools": [{
+                "task": "example::run",
+                "address": 536920064,
+                "bytes": 32,
+                "section": ".bss"
+            }],
+            "scenario_futures": {
+                "kind": "unavailable",
+                "reason": "semantic-harness-not-produced"
+            }
+        }
     })
 }
 
@@ -800,5 +985,40 @@ pub(super) fn retarget_executable(report: &mut ResourceReport, target: &crate::m
         executable.disassembly.adapter = executable.architecture;
         executable.functions.boundaries_artifact.path =
             format!("work/{}/function-boundaries.json", target.id());
+        if let Evidence::Complete(stack) | Evidence::Partial(stack) = &mut executable.stack {
+            stack.artifact.path = format!("work/{}/stack-evidence.json", target.id());
+            match target.profile().architecture {
+                personal_hopspot_memory::ProcessorArchitecture::ThumbV7em => {
+                    stack.frame_source = super::model::StackFrameSourceIdentity::LlvmStackSizes;
+                    let reservation = target
+                        .profile()
+                        .runtime_reservations
+                        .iter()
+                        .find(|reservation| reservation.id.0 == "minimum-runtime-stack")
+                        .expect("Arm fixture profile has a stack reservation");
+                    stack.limit = super::model::StackLimitIdentity::Declared {
+                        reservation: reservation.id.0.to_string(),
+                        bytes: reservation.bytes,
+                        headroom_bytes: reservation.bytes - stack.largest_known_path.bytes,
+                    };
+                    stack.gaps.retain(|gap| {
+                        gap.kind != super::model::StackAnalysisGapKindIdentity::StackLimitUndeclared
+                    });
+                }
+                personal_hopspot_memory::ProcessorArchitecture::RiscV32Imac
+                | personal_hopspot_memory::ProcessorArchitecture::XtensaEsp32S3 => {
+                    stack.frame_source = super::model::StackFrameSourceIdentity::DwarfDebugFrame;
+                    stack.limit = super::model::StackLimitIdentity::Undeclared;
+                    if !stack.gaps.iter().any(|gap| {
+                        gap.kind == super::model::StackAnalysisGapKindIdentity::StackLimitUndeclared
+                    }) {
+                        stack.gaps.push(super::model::StackAnalysisGapIdentity {
+                            kind: super::model::StackAnalysisGapKindIdentity::StackLimitUndeclared,
+                            occurrences: 1,
+                        });
+                    }
+                }
+            }
+        }
     }
 }

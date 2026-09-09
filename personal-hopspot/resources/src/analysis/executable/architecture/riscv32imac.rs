@@ -3,8 +3,8 @@ use std::path::Path;
 use personal_hopspot_memory::{AddressRange, MemoryProfile};
 
 use super::{
-    entry_section, executable_section, parse_instruction, require_symbol,
-    validate_windowed_placement, AssuranceAdapter, DecodedInstruction,
+    direct_operand, entry_section, executable_section, parse_instruction, require_symbol,
+    validate_windowed_placement, AssuranceAdapter, CallTarget, DecodedInstruction, StackLimit,
 };
 use crate::analysis::executable::{
     ExecutableError, ExecutableSection, StartupAnchor, StartupAnchorRole, StartupStructure,
@@ -17,14 +17,17 @@ const WINDOWS: [AddressRange; 2] = [
     AddressRange::new(0x4200_0000, 0x4240_0000),
 ];
 
-pub(super) static ADAPTER: AssuranceAdapter = AssuranceAdapter::new(
-    "riscv32imac",
-    object::Architecture::Riscv32,
-    normalize,
-    validate,
+pub(super) static ADAPTER: AssuranceAdapter = AssuranceAdapter {
+    id: "riscv32imac",
+    object_architecture: object::Architecture::Riscv32,
+    normalize_code_address: normalize,
+    validate_allocated_sections: validate,
     startup,
     decoded_instruction,
-);
+    call_target,
+    stack_limit: StackLimit::Undeclared,
+    dwarf_cfa_registers: &[2],
+};
 
 fn normalize(address: u64) -> u64 {
     address
@@ -69,4 +72,56 @@ fn startup(
 
 fn decoded_instruction(line: &str) -> Option<DecodedInstruction> {
     parse_instruction(line, &[2, 4])
+}
+
+fn call_target(instructions: &[DecodedInstruction], index: usize) -> CallTarget {
+    let instruction = &instructions[index];
+    match instruction.mnemonic.as_str() {
+        "jal" | "c.jal" | "call" => direct_operand(&instruction.operands)
+            .map(CallTarget::Direct)
+            .unwrap_or(CallTarget::UnresolvedDirect),
+        "jalr" | "c.jalr" => resolve_jalr(instructions, index)
+            .map(CallTarget::Direct)
+            .unwrap_or(CallTarget::Indirect),
+        _ => CallTarget::NotCall,
+    }
+}
+
+fn resolve_jalr(instructions: &[DecodedInstruction], index: usize) -> Option<u64> {
+    let instruction = &instructions[index];
+    let previous = index
+        .checked_sub(1)
+        .and_then(|index| instructions.get(index))?;
+    if previous.mnemonic != "auipc" {
+        return None;
+    }
+    let (base_register, upper) = previous.operands.split_once(',')?;
+    let (offset, call_register) = jalr_operands(&instruction.operands)?;
+    if base_register.trim() != call_register {
+        return None;
+    }
+    let upper = parse_signed_immediate(upper.trim())?;
+    let base = i128::from(previous.address) + (upper << 12);
+    u64::try_from(base + i128::from(offset)).ok()
+}
+
+fn jalr_operands(operands: &str) -> Option<(i64, &str)> {
+    let operands = operands.split(['<', '@']).next().unwrap_or(operands).trim();
+    let address = operands.rsplit(',').next()?.trim();
+    let (offset, register) = address.split_once('(')?;
+    let register = register.strip_suffix(')')?.trim();
+    Some((
+        i64::try_from(parse_signed_immediate(offset.trim())?).ok()?,
+        register,
+    ))
+}
+
+fn parse_signed_immediate(value: &str) -> Option<i128> {
+    if let Some(value) = value.strip_prefix("-0x") {
+        return i128::from_str_radix(value, 16).ok().map(|value| -value);
+    }
+    if let Some(value) = value.strip_prefix("0x") {
+        return i128::from_str_radix(value, 16).ok();
+    }
+    value.parse().ok()
 }

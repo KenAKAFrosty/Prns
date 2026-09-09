@@ -10,18 +10,22 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 use super::model::{
-    ArtifactIdentity, AttributionCategoryIdentity, AttributionEntryIdentity, BuildIdentity,
-    BuildStatus, Evidence, ExecutableIdentity, FirmwareFlashUsage, FlashAttributionIdentity,
-    MemoryOverflowIdentity, RamBackingUsage, RamCapacityIdentity, ResourceReport,
-    SectionKindIdentity, SectionUsage,
+    ArtifactIdentity, AsyncMemoryIdentity, AttributionCategoryIdentity, AttributionEntryIdentity,
+    BuildIdentity, BuildStatus, Evidence, ExecutableIdentity, FirmwareFlashUsage,
+    FlashAttributionIdentity, FutureSizeUnavailableReasonIdentity, MemoryOverflowIdentity,
+    RamBackingUsage, RamCapacityIdentity, ResourceReport, ScenarioFutureSizesIdentity,
+    SectionKindIdentity, SectionUsage, StackAnalysisGapKindIdentity, StackAnalysisIdentity,
+    StackLimitIdentity,
 };
 use model::{
-    ArtifactComparison, AttributionCandidateBaseline, AttributionCandidateComparison,
-    AttributionCategoriesComparison, AttributionCategoryComparison, AttributionComparison,
-    AttributionCoverageComparison, ByteComparison, ChangeState, EvidenceAvailability,
-    EvidenceComparison, ExecutableComparison, FlashComparison, OverflowComparison, OverflowState,
-    RamComparison, RamHeadroomComparison, ResourceComparison, SectionComparison, SettingDifference,
-    StatusComparison, StatusKind,
+    ArtifactComparison, AsyncMemoryComparison, AttributionCandidateBaseline,
+    AttributionCandidateComparison, AttributionCategoriesComparison, AttributionCategoryComparison,
+    AttributionComparison, AttributionCoverageComparison, ByteComparison, ChangeState,
+    CountComparison, EvidenceAvailability, EvidenceComparison, ExecutableComparison,
+    FlashComparison, NamedCountComparison, NamedSizeComparison, OverflowComparison, OverflowState,
+    RamComparison, RamHeadroomComparison, ResourceComparison, ScenarioFutureComparison,
+    SectionComparison, SettingDifference, StackComparison, StackEvidenceComparison,
+    StackLimitComparison, StatusComparison, StatusKind,
 };
 
 const SECTION_KINDS: [(SectionKindIdentity, &str); 5] = [
@@ -103,8 +107,12 @@ pub enum ComparisonError {
     MissingAttributionEvidence { path: PathBuf },
     #[error("resource report {path} has no executable evidence")]
     MissingExecutableEvidence { path: PathBuf },
+    #[error("resource report {path} has no async-memory evidence")]
+    MissingAsyncMemoryEvidence { path: PathBuf },
     #[error("resource report {path} has invalid executable evidence: {reason}")]
     InvalidExecutableEvidence { path: PathBuf, reason: &'static str },
+    #[error("resource report {path} has invalid async-memory evidence")]
+    InvalidAsyncMemoryEvidence { path: PathBuf },
     #[error("resource report {path} has invalid {category} attribution")]
     InvalidAttribution {
         path: PathBuf,
@@ -230,7 +238,239 @@ fn compare_reports_with(
             &after.analysis.executable,
             |before, after| Ok(compare_executable(before, after)),
         )?,
+        stack: compare_stack_evidence(&before.analysis.executable, &after.analysis.executable),
+        async_memory: compare_evidence(
+            &before.analysis.async_memory,
+            &after.analysis.async_memory,
+            |before, after| Ok(compare_async_memory(before, after)),
+        )?,
     })
+}
+
+fn compare_stack_evidence(
+    before: &Evidence<ExecutableIdentity>,
+    after: &Evidence<ExecutableIdentity>,
+) -> StackEvidenceComparison {
+    let (before_availability, before_stack) = stack_evidence(before);
+    let (after_availability, after_stack) = stack_evidence(after);
+    match (before_stack, after_stack) {
+        (Some(before), Some(after)) => StackEvidenceComparison::Comparable {
+            before: before_availability,
+            after: after_availability,
+            value: Box::new(compare_stack(before, after)),
+        },
+        _ => StackEvidenceComparison::NotComparable {
+            before: before_availability,
+            after: after_availability,
+        },
+    }
+}
+
+fn stack_evidence(
+    executable: &Evidence<ExecutableIdentity>,
+) -> (EvidenceAvailability, Option<&StackAnalysisIdentity>) {
+    let executable = match executable {
+        Evidence::Complete(executable) | Evidence::Partial(executable) => executable,
+        Evidence::Unavailable => return (EvidenceAvailability::Unavailable, None),
+    };
+    match &executable.stack {
+        Evidence::Complete(stack) => (EvidenceAvailability::Complete, Some(stack)),
+        Evidence::Partial(stack) => (EvidenceAvailability::Partial, Some(stack)),
+        Evidence::Unavailable => (EvidenceAvailability::Unavailable, None),
+    }
+}
+
+fn compare_stack(before: &StackAnalysisIdentity, after: &StackAnalysisIdentity) -> StackComparison {
+    let frame_names = before
+        .largest_frames
+        .iter()
+        .map(|frame| frame.name.as_str())
+        .chain(after.largest_frames.iter().map(|frame| frame.name.as_str()))
+        .collect::<BTreeSet<_>>();
+    let gap_names = before
+        .gaps
+        .iter()
+        .map(|gap| stack_gap_name(gap.kind))
+        .chain(after.gaps.iter().map(|gap| stack_gap_name(gap.kind)))
+        .collect::<BTreeSet<_>>();
+    StackComparison {
+        frame_source: change_state(before.frame_source == after.frame_source),
+        source_bytes: ByteComparison::new(before.source_bytes, after.source_bytes),
+        frames: CountComparison::new(before.frame_count, after.frame_count),
+        known_path: ByteComparison::new(
+            before.largest_known_path.bytes,
+            after.largest_known_path.bytes,
+        ),
+        changed_largest_frames: frame_names
+            .into_iter()
+            .filter(|name| {
+                before
+                    .largest_frames
+                    .iter()
+                    .find(|frame| frame.name == **name)
+                    != after
+                        .largest_frames
+                        .iter()
+                        .find(|frame| frame.name == **name)
+            })
+            .map(str::to_string)
+            .collect(),
+        limit: match (&before.limit, &after.limit) {
+            (
+                StackLimitIdentity::Declared {
+                    reservation,
+                    bytes,
+                    headroom_bytes: before,
+                },
+                StackLimitIdentity::Declared {
+                    reservation: after_reservation,
+                    bytes: after_bytes,
+                    headroom_bytes: after,
+                },
+            ) if reservation == after_reservation && bytes == after_bytes => {
+                StackLimitComparison::Declared {
+                    reservation: reservation.clone(),
+                    bytes: *bytes,
+                    headroom: ByteComparison::new(*before, *after),
+                }
+            }
+            (StackLimitIdentity::Undeclared, StackLimitIdentity::Undeclared) => {
+                StackLimitComparison::Undeclared
+            }
+            _ => StackLimitComparison::Changed,
+        },
+        gaps: gap_names
+            .into_iter()
+            .map(|name| NamedCountComparison {
+                name: name.to_string(),
+                count: CountComparison::new(
+                    stack_gap_count(before, name),
+                    stack_gap_count(after, name),
+                ),
+            })
+            .collect(),
+    }
+}
+
+fn stack_gap_count(stack: &StackAnalysisIdentity, name: &str) -> u64 {
+    stack
+        .gaps
+        .iter()
+        .find(|gap| stack_gap_name(gap.kind) == name)
+        .map_or(0, |gap| gap.occurrences)
+}
+
+const fn stack_gap_name(kind: StackAnalysisGapKindIdentity) -> &'static str {
+    match kind {
+        StackAnalysisGapKindIdentity::FunctionsWithoutFrameEvidence => {
+            "functions-without-frame-evidence"
+        }
+        StackAnalysisGapKindIdentity::ForeignOrAssemblyFrames => "foreign-or-assembly-frames",
+        StackAnalysisGapKindIdentity::FrameEvidenceWithoutFunction => {
+            "frame-evidence-without-function"
+        }
+        StackAnalysisGapKindIdentity::UnsupportedCfaRule => "unsupported-cfa-rule",
+        StackAnalysisGapKindIdentity::CallSiteOutsideFunction => "call-site-outside-function",
+        StackAnalysisGapKindIdentity::DirectCallOutsideFunctions => "direct-call-outside-functions",
+        StackAnalysisGapKindIdentity::UnresolvedDirectCall => "unresolved-direct-call",
+        StackAnalysisGapKindIdentity::IndirectCall => "indirect-call",
+        StackAnalysisGapKindIdentity::RecursiveCallCycle => "recursive-call-cycle",
+        StackAnalysisGapKindIdentity::RootOutsideFunctions => "root-outside-functions",
+        StackAnalysisGapKindIdentity::InterruptRootsUnresolved => "interrupt-roots-unresolved",
+        StackAnalysisGapKindIdentity::DynamicAllocationNotProvenAbsent => {
+            "dynamic-allocation-not-proven-absent"
+        }
+        StackAnalysisGapKindIdentity::InterruptNestingUnmodeled => "interrupt-nesting-unmodeled",
+        StackAnalysisGapKindIdentity::StackLimitUndeclared => "stack-limit-undeclared",
+    }
+}
+
+fn compare_async_memory(
+    before: &AsyncMemoryIdentity,
+    after: &AsyncMemoryIdentity,
+) -> AsyncMemoryComparison {
+    AsyncMemoryComparison {
+        task_pool_total: ByteComparison::new(before.task_pool_bytes, after.task_pool_bytes),
+        task_pools: named_sizes(
+            before
+                .task_pools
+                .iter()
+                .map(|pool| (pool.task.as_str(), pool.bytes)),
+            after
+                .task_pools
+                .iter()
+                .map(|pool| (pool.task.as_str(), pool.bytes)),
+        ),
+        scenario_futures: compare_scenario_futures(
+            &before.scenario_futures,
+            &after.scenario_futures,
+        ),
+    }
+}
+
+fn compare_scenario_futures(
+    before: &ScenarioFutureSizesIdentity,
+    after: &ScenarioFutureSizesIdentity,
+) -> ScenarioFutureComparison {
+    match (before, after) {
+        (
+            ScenarioFutureSizesIdentity::Measured { futures: before },
+            ScenarioFutureSizesIdentity::Measured { futures: after },
+        ) => ScenarioFutureComparison::Measured(named_sizes(
+            before
+                .iter()
+                .map(|future| (future.scenario.as_str(), future.bytes)),
+            after
+                .iter()
+                .map(|future| (future.scenario.as_str(), future.bytes)),
+        )),
+        (
+            ScenarioFutureSizesIdentity::Unavailable { reason: before },
+            ScenarioFutureSizesIdentity::Unavailable { reason: after },
+        ) => ScenarioFutureComparison::Unavailable {
+            before: future_reason(*before).to_string(),
+            after: future_reason(*after).to_string(),
+        },
+        _ => ScenarioFutureComparison::AvailabilityChanged {
+            before: scenario_future_state(before).to_string(),
+            after: scenario_future_state(after).to_string(),
+        },
+    }
+}
+
+fn named_sizes<'a>(
+    before: impl Iterator<Item = (&'a str, u64)>,
+    after: impl Iterator<Item = (&'a str, u64)>,
+) -> Vec<NamedSizeComparison> {
+    let before = before.collect::<std::collections::BTreeMap<_, _>>();
+    let after = after.collect::<std::collections::BTreeMap<_, _>>();
+    before
+        .keys()
+        .chain(after.keys())
+        .copied()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .map(|name| NamedSizeComparison {
+            name: name.to_string(),
+            before: before.get(name).copied(),
+            after: after.get(name).copied(),
+        })
+        .collect()
+}
+
+const fn future_reason(reason: FutureSizeUnavailableReasonIdentity) -> &'static str {
+    match reason {
+        FutureSizeUnavailableReasonIdentity::SemanticHarnessNotProduced => {
+            "semantic-harness-not-produced"
+        }
+    }
+}
+
+const fn scenario_future_state(futures: &ScenarioFutureSizesIdentity) -> &'static str {
+    match futures {
+        ScenarioFutureSizesIdentity::Measured { .. } => "measured",
+        ScenarioFutureSizesIdentity::Unavailable { reason } => future_reason(*reason),
+    }
 }
 
 fn compare_executable(
@@ -517,6 +757,7 @@ fn compare_artifacts(
             Ok(ArtifactComparison {
                 path: artifact.path.clone(),
                 bytes: ByteComparison::new(artifact.bytes, other.bytes),
+                fingerprint: change_state(artifact.fingerprint == other.fingerprint),
             })
         })
         .collect()

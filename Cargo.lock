@@ -2939,6 +2939,7 @@ name = "personal-hopspot-resources"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "gimli",
  "object",
  "personal-hopspot-builder",
  "personal-hopspot-memory",

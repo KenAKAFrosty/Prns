@@ -1,11 +1,12 @@
 use std::path::Path;
 
 use super::model::{
-    ArtifactComparison, AttributionCandidateBaseline, AttributionCandidateComparison,
-    AttributionCategoryComparison, AttributionComparison, ByteComparison, EvidenceComparison,
-    ExecutableComparison, FlashComparison, OverflowComparison, OverflowState, RamComparison,
-    RamHeadroomComparison, ResourceComparison, SectionComparison, SettingDifference,
-    StatusComparison,
+    ArtifactComparison, AsyncMemoryComparison, AttributionCandidateBaseline,
+    AttributionCandidateComparison, AttributionCategoryComparison, AttributionComparison,
+    ByteComparison, CountComparison, EvidenceComparison, ExecutableComparison, FlashComparison,
+    NamedSizeComparison, OverflowComparison, OverflowState, RamComparison, RamHeadroomComparison,
+    ResourceComparison, ScenarioFutureComparison, SectionComparison, SettingDifference,
+    StackEvidenceComparison, StackLimitComparison, StatusComparison,
 };
 
 pub(super) fn render(comparison: &ResourceComparison, before: &Path, after: &Path) -> String {
@@ -57,7 +58,90 @@ pub(super) fn render(comparison: &ResourceComparison, before: &Path, after: &Pat
         &comparison.executable,
         executable,
     );
+    stack(&mut output, &comparison.stack);
+    evidence(
+        &mut output,
+        "async-memory",
+        &comparison.async_memory,
+        async_memory,
+    );
     output
+}
+
+fn stack(output: &mut String, comparison: &StackEvidenceComparison) {
+    let (before, after, value) = match comparison {
+        StackEvidenceComparison::Comparable {
+            before,
+            after,
+            value,
+        } => (before, after, Some(value)),
+        StackEvidenceComparison::NotComparable { before, after } => (before, after, None),
+    };
+    output.push_str(&format!("stack evidence {before} -> {after}\n"));
+    let Some(value) = value else {
+        return;
+    };
+    output.push_str(&format!("stack frame-source {}\n", value.frame_source));
+    metric(output, "stack frame-source evidence", value.source_bytes);
+    count_metric(output, "stack frames", value.frames);
+    metric(output, "stack known-path lower-bound", value.known_path);
+    for function in &value.changed_largest_frames {
+        output.push_str(&format!("stack ranked-frame changed {function:?}\n"));
+    }
+    match &value.limit {
+        StackLimitComparison::Declared {
+            reservation,
+            bytes,
+            headroom,
+        } => {
+            output.push_str(&format!("stack limit {reservation:?} {bytes}\n"));
+            metric(output, "stack known-path headroom", *headroom);
+        }
+        StackLimitComparison::Undeclared => output.push_str("stack limit undeclared\n"),
+        StackLimitComparison::Changed => output.push_str("stack limit changed\n"),
+    }
+    for gap in &value.gaps {
+        count_metric(output, &format!("stack gap {}", gap.name), gap.count);
+    }
+}
+
+fn async_memory(output: &mut String, comparison: &AsyncMemoryComparison) {
+    metric(output, "async task-pool total", comparison.task_pool_total);
+    for pool in &comparison.task_pools {
+        named_size(output, "async task-pool", pool);
+    }
+    match &comparison.scenario_futures {
+        ScenarioFutureComparison::Measured(futures) => {
+            for future in futures {
+                named_size(output, "async scenario-future", future);
+            }
+        }
+        ScenarioFutureComparison::Unavailable { before, after } => output.push_str(&format!(
+            "async scenario-futures unavailable {before} -> {after}\n"
+        )),
+        ScenarioFutureComparison::AvailabilityChanged { before, after } => {
+            output.push_str(&format!("async scenario-futures {before} -> {after}\n"))
+        }
+    }
+}
+
+fn named_size(output: &mut String, category: &str, comparison: &NamedSizeComparison) {
+    match (comparison.before, comparison.after) {
+        (Some(before), Some(after)) => metric(
+            output,
+            &format!("{category} {:?}", comparison.name),
+            ByteComparison::new(before, after),
+        ),
+        (Some(before), None) => output.push_str(&format!(
+            "{category} {:?} {before} -> not-present\n",
+            comparison.name
+        )),
+        (None, Some(after)) => output.push_str(&format!(
+            "{category} {:?} not-present -> {after}\n",
+            comparison.name
+        )),
+        (None, None) => {}
+    }
 }
 
 fn executable(output: &mut String, comparison: &ExecutableComparison) {
@@ -198,12 +282,23 @@ fn metric(output: &mut String, name: &str, comparison: ByteComparison) {
     output.push('\n');
 }
 
+fn count_metric(output: &mut String, name: &str, comparison: CountComparison) {
+    output.push_str(&format!(
+        "{name} {} -> {} ({})\n",
+        comparison.before, comparison.after, comparison.delta
+    ));
+}
+
 fn artifact_metric(output: &mut String, artifact: &ArtifactComparison) {
     metric(
         output,
         &format!("artifact {:?}", artifact.path),
         artifact.bytes,
     );
+    output.push_str(&format!(
+        "artifact {:?} fingerprint {}\n",
+        artifact.path, artifact.fingerprint
+    ));
 }
 
 fn ram_metrics(output: &mut String, ram: &RamComparison) {

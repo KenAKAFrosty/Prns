@@ -4,7 +4,9 @@ use std::process::Command;
 
 use personal_hopspot_memory::ProcessorArchitecture;
 
-use super::{Adapter, DisassemblerFlavor, DisassemblerTool, LinkerFlavor, LinkerTool};
+use super::{
+    Adapter, DisassemblerFlavor, DisassemblerTool, LinkerFlavor, LinkerTool, StackFrameEvidence,
+};
 use crate::toolchain::{rust_tool, rust_tool_for_cargo};
 use crate::BuildError;
 
@@ -25,6 +27,7 @@ pub(super) static ADAPTER: Adapter = Adapter::new(
         &["--version"],
         resolve_disassembler,
     ),
+    StackFrameEvidence::DwarfDebugFrame,
 );
 
 fn configure_linker(command: &mut Command) -> Result<PathBuf, BuildError> {

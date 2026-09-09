@@ -1,8 +1,12 @@
+mod async_memory;
 mod attribution;
 mod elf;
 pub(crate) mod executable;
 mod ram;
 
+pub(crate) use async_memory::{
+    analyze as analyze_async_memory, AsyncMemoryAnalysis, AsyncMemoryError,
+};
 pub(crate) use attribution::{
     analyze_linker_map, AttributionAnalysis, AttributionBasis, AttributionError,
 };

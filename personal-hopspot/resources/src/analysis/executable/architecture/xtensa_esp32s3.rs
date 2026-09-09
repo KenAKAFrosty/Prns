@@ -3,8 +3,8 @@ use std::path::Path;
 use personal_hopspot_memory::{AddressRange, MemoryProfile};
 
 use super::{
-    entry_section, executable_section, parse_instruction, require_symbol,
-    validate_windowed_placement, AssuranceAdapter, DecodedInstruction,
+    direct_operand, entry_section, executable_section, parse_instruction, require_symbol,
+    validate_windowed_placement, AssuranceAdapter, CallTarget, DecodedInstruction, StackLimit,
 };
 use crate::analysis::executable::{
     ExecutableError, ExecutableSection, StartupAnchor, StartupAnchorRole, StartupStructure,
@@ -21,14 +21,17 @@ const WINDOWS: [AddressRange; 6] = [
     AddressRange::new(0x600F_E000, 0x6010_0000),
 ];
 
-pub(super) static ADAPTER: AssuranceAdapter = AssuranceAdapter::new(
-    "xtensa-esp32s3",
-    object::Architecture::Xtensa,
-    normalize,
-    validate,
+pub(super) static ADAPTER: AssuranceAdapter = AssuranceAdapter {
+    id: "xtensa-esp32s3",
+    object_architecture: object::Architecture::Xtensa,
+    normalize_code_address: normalize,
+    validate_allocated_sections: validate,
     startup,
     decoded_instruction,
-);
+    call_target,
+    stack_limit: StackLimit::Undeclared,
+    dwarf_cfa_registers: &[1, 7],
+};
 
 fn normalize(address: u64) -> u64 {
     address
@@ -73,4 +76,15 @@ fn startup(
 
 fn decoded_instruction(line: &str) -> Option<DecodedInstruction> {
     parse_instruction(line, &[2, 3])
+}
+
+fn call_target(instructions: &[DecodedInstruction], index: usize) -> CallTarget {
+    let instruction = &instructions[index];
+    match instruction.mnemonic.as_str() {
+        "call0" | "call4" | "call8" | "call12" => direct_operand(&instruction.operands)
+            .map(CallTarget::Direct)
+            .unwrap_or(CallTarget::UnresolvedDirect),
+        "callx0" | "callx4" | "callx8" | "callx12" => CallTarget::Indirect,
+        _ => CallTarget::NotCall,
+    }
 }

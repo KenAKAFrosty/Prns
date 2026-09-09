@@ -41,7 +41,7 @@ impl BuildContext<'_> {
         if let Some(lto) = self.intent.lto().cargo_value() {
             command.env("CARGO_PROFILE_RELEASE_LTO", lto);
         }
-        let linker = adapter.configure_cargo(command)?;
+        let linker = adapter.configure_cargo(command, self.intent)?;
         match self.intent {
             crate::BuildIntent::Firmware => Ok(FirmwareBuildCapture::Firmware),
             crate::BuildIntent::ResourceReport { .. } => {

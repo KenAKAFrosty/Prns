@@ -27,35 +27,27 @@ type StartupAnalyzer = for<'data> fn(
     u64,
 ) -> Result<StartupStructure, ExecutableError>;
 type InstructionDecoder = fn(&str) -> Option<DecodedInstruction>;
+type CallDecoder = fn(&[DecodedInstruction], usize) -> CallTarget;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum StackLimit {
+    RuntimeReservation(&'static str),
+    Undeclared,
+}
 
 pub(super) struct AssuranceAdapter {
-    id: &'static str,
-    object_architecture: object::Architecture,
-    normalize_code_address: AddressNormalizer,
-    validate_allocated_sections: PlacementValidator,
-    startup: StartupAnalyzer,
-    decoded_instruction: InstructionDecoder,
+    pub(super) id: &'static str,
+    pub(super) object_architecture: object::Architecture,
+    pub(super) normalize_code_address: AddressNormalizer,
+    pub(super) validate_allocated_sections: PlacementValidator,
+    pub(super) startup: StartupAnalyzer,
+    pub(super) decoded_instruction: InstructionDecoder,
+    pub(super) call_target: CallDecoder,
+    pub(super) stack_limit: StackLimit,
+    pub(super) dwarf_cfa_registers: &'static [u16],
 }
 
 impl AssuranceAdapter {
-    const fn new(
-        id: &'static str,
-        object_architecture: object::Architecture,
-        normalize_code_address: AddressNormalizer,
-        validate_allocated_sections: PlacementValidator,
-        startup: StartupAnalyzer,
-        decoded_instruction: InstructionDecoder,
-    ) -> Self {
-        Self {
-            id,
-            object_architecture,
-            normalize_code_address,
-            validate_allocated_sections,
-            startup,
-            decoded_instruction,
-        }
-    }
-
     pub(super) const fn id(&self) -> &'static str {
         self.id
     }
@@ -96,22 +88,48 @@ impl AssuranceAdapter {
     pub(super) fn decoded_instruction(&self, line: &str) -> Option<DecodedInstruction> {
         (self.decoded_instruction)(line)
     }
+
+    pub(super) fn call_target(
+        &self,
+        instructions: &[DecodedInstruction],
+        index: usize,
+    ) -> CallTarget {
+        (self.call_target)(instructions, index)
+    }
+
+    pub(super) const fn stack_limit(&self) -> StackLimit {
+        self.stack_limit
+    }
+
+    pub(super) const fn dwarf_cfa_registers(&self) -> &'static [u16] {
+        self.dwarf_cfa_registers
+    }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct DecodedInstruction {
     pub(super) address: u64,
     pub(super) bytes: u64,
+    pub(super) mnemonic: String,
+    pub(super) operands: String,
 }
 
 impl DecodedInstruction {
-    pub(super) fn end(self) -> u64 {
+    pub(super) fn end(&self) -> u64 {
         self.address + self.bytes
     }
 
-    pub(super) fn range(self) -> AddressRange {
+    pub(super) fn range(&self) -> AddressRange {
         AddressRange::new(self.address, self.end())
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum CallTarget {
+    NotCall,
+    Direct(u64),
+    UnresolvedDirect,
+    Indirect,
 }
 
 pub(super) const fn adapter_for(architecture: ProcessorArchitecture) -> &'static AssuranceAdapter {
@@ -303,7 +321,26 @@ pub(super) fn parse_instruction(line: &str, widths: &[u64]) -> Option<DecodedIns
         return None;
     }
     address.checked_add(bytes)?;
-    Some(DecodedInstruction { address, bytes })
+    Some(DecodedInstruction {
+        address,
+        bytes,
+        mnemonic: mnemonic.to_ascii_lowercase(),
+        operands: tokens.collect::<Vec<_>>().join(" "),
+    })
+}
+
+pub(super) fn direct_operand(operands: &str) -> Option<u64> {
+    operands
+        .split(['<', '@'])
+        .next()?
+        .split([',', ' ', '\t'])
+        .filter(|token| !token.is_empty())
+        .rev()
+        .find_map(|token| {
+            let token = token.trim_matches(['#', '<', '>', '[', ']']);
+            let token = token.strip_prefix("0x").unwrap_or(token);
+            u64::from_str_radix(token, 16).ok()
+        })
 }
 
 fn section_name<'data>(
@@ -358,6 +395,8 @@ mod tests {
             Some(DecodedInstruction {
                 address: 0x26100,
                 bytes: 4,
+                mnemonic: "bl".to_string(),
+                operands: "0x2d70c".to_string(),
             })
         );
         assert_eq!(
@@ -365,6 +404,8 @@ mod tests {
             Some(DecodedInstruction {
                 address: 0x42040036,
                 bytes: 2,
+                mnemonic: "sw".to_string(),
+                operands: "a3, 0x0(a0)".to_string(),
             })
         );
         assert_eq!(
@@ -372,6 +413,8 @@ mod tests {
             Some(DecodedInstruction {
                 address: 0x42040020,
                 bytes: 4,
+                mnemonic: "auipc".to_string(),
+                operands: "a0, 0xdfc0".to_string(),
             })
         );
         assert_eq!(
@@ -379,6 +422,8 @@ mod tests {
             Some(DecodedInstruction {
                 address: 0x40378878,
                 bytes: 3,
+                mnemonic: "entry".to_string(),
+                operands: "a1, 16".to_string(),
             })
         );
         assert_eq!(
@@ -393,5 +438,37 @@ mod tests {
         assert_eq!(parse_instruction("1000: xyz  add", &[2, 4]), None);
         assert_eq!(parse_instruction("1000: 001122  add", &[2, 4]), None);
         assert_eq!(parse_instruction("1000: 0011  .word 0", &[2, 4]), None);
+    }
+
+    #[test]
+    fn architecture_call_decoders_distinguish_direct_and_indirect_calls() {
+        let arm = [thumbv7em::ADAPTER
+            .decoded_instruction("26100: f007 fb04  bl 0x2d70c <callee> @ imm = #0x7610")
+            .expect("Arm instruction")];
+        assert_eq!(
+            thumbv7em::ADAPTER.call_target(&arm, 0),
+            CallTarget::Direct(0x2d70c)
+        );
+
+        let riscv = [
+            riscv32imac::ADAPTER
+                .decoded_instruction("42040020: 0dfc0517  auipc a0, 0xdfc0")
+                .expect("RISC-V upper address"),
+            riscv32imac::ADAPTER
+                .decoded_instruction("42040024: fe0500e7  jalr -32(a0) <callee>")
+                .expect("RISC-V indirect jump"),
+        ];
+        assert_eq!(
+            riscv32imac::ADAPTER.call_target(&riscv, 1),
+            CallTarget::Direct(0x50000000)
+        );
+
+        let xtensa = [xtensa_esp32s3::ADAPTER
+            .decoded_instruction("40378878: 0021c5  call8 0x40379094")
+            .expect("Xtensa instruction")];
+        assert_eq!(
+            xtensa_esp32s3::ADAPTER.call_target(&xtensa, 0),
+            CallTarget::Direct(0x40379094)
+        );
     }
 }

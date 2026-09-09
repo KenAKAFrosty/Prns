@@ -1,3 +1,4 @@
+mod async_memory;
 mod baseline;
 mod build;
 mod compare;

@@ -4,8 +4,8 @@ use object::{Object, ObjectSection};
 use personal_hopspot_memory::{AddressSpaceGeometry, AddressSpaceKind, MemoryProfile};
 
 use super::{
-    entry_section, parse_instruction, require_symbol, validate_fixed_placement,
-    validate_flash_loads, AssuranceAdapter, DecodedInstruction,
+    direct_operand, entry_section, parse_instruction, require_symbol, validate_fixed_placement,
+    validate_flash_loads, AssuranceAdapter, CallTarget, DecodedInstruction, StackLimit,
 };
 use crate::analysis::executable::{
     ExecutableError, ExecutableSection, StartupAnchor, StartupAnchorRole, StartupStructure,
@@ -14,14 +14,17 @@ use crate::analysis::executable::{
 const VECTOR_SECTION: &str = ".vector_table";
 const ENTRY_SYMBOL: &str = "__stext";
 
-pub(super) static ADAPTER: AssuranceAdapter = AssuranceAdapter::new(
-    "thumbv7em",
-    object::Architecture::Arm,
-    normalize,
-    validate,
+pub(super) static ADAPTER: AssuranceAdapter = AssuranceAdapter {
+    id: "thumbv7em",
+    object_architecture: object::Architecture::Arm,
+    normalize_code_address: normalize,
+    validate_allocated_sections: validate,
     startup,
     decoded_instruction,
-);
+    call_target,
+    stack_limit: StackLimit::RuntimeReservation("minimum-runtime-stack"),
+    dwarf_cfa_registers: &[],
+};
 
 fn normalize(address: u64) -> u64 {
     address & !1
@@ -116,4 +119,18 @@ fn startup(
 
 fn decoded_instruction(line: &str) -> Option<DecodedInstruction> {
     parse_instruction(line, &[2, 4])
+}
+
+fn call_target(instructions: &[DecodedInstruction], index: usize) -> CallTarget {
+    let instruction = &instructions[index];
+    match instruction.mnemonic.as_str() {
+        "bl" | "bl.w" => direct_operand(&instruction.operands)
+            .map(|address| CallTarget::Direct(normalize(address)))
+            .unwrap_or(CallTarget::UnresolvedDirect),
+        "blx" if instruction.operands.trim_start().starts_with('r') => CallTarget::Indirect,
+        "blx" => direct_operand(&instruction.operands)
+            .map(|address| CallTarget::Direct(normalize(address)))
+            .unwrap_or(CallTarget::UnresolvedDirect),
+        _ => CallTarget::NotCall,
+    }
 }

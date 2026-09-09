@@ -44,6 +44,7 @@ fn adapters_define_target_and_linker_identity() {
             ][..],
             DisassemblerFlavor::LlvmObjdump,
             "llvm-objdump",
+            StackFrameEvidence::LlvmStackSizes,
         ),
         (
             ProcessorArchitecture::RiscV32Imac,
@@ -54,6 +55,7 @@ fn adapters_define_target_and_linker_identity() {
             &["-C", "link-arg=-Tlinkall.x"][..],
             DisassemblerFlavor::LlvmObjdump,
             "llvm-objdump",
+            StackFrameEvidence::DwarfDebugFrame,
         ),
         (
             ProcessorArchitecture::XtensaEsp32S3,
@@ -64,6 +66,7 @@ fn adapters_define_target_and_linker_identity() {
             &["-C", "link-arg=-Tlinkall.x", "-C", "force-frame-pointers"][..],
             DisassemblerFlavor::GnuObjdump,
             "xtensa-esp32s3-elf-objdump",
+            StackFrameEvidence::DwarfDebugFrame,
         ),
     ];
 
@@ -76,6 +79,7 @@ fn adapters_define_target_and_linker_identity() {
         rustflags,
         disassembler_flavor,
         disassembler_program,
+        stack_frame_evidence,
     ) in expected
     {
         let adapter = adapter_for(architecture);
@@ -83,9 +87,21 @@ fn adapters_define_target_and_linker_identity() {
         assert_eq!(adapter.linker_flavor(), linker_flavor);
         assert_eq!(adapter.linker_program(), linker_program);
         assert_eq!(adapter.linker_version_arguments(), version_arguments);
-        assert_eq!(adapter.rustflags(), rustflags);
+        assert_eq!(adapter.firmware_rustflags(), rustflags);
+        assert_eq!(adapter.rustflags(BuildIntent::Firmware), rustflags);
+        let mut resource_rustflags = rustflags.to_vec();
+        if stack_frame_evidence == StackFrameEvidence::LlvmStackSizes {
+            resource_rustflags.extend(STACK_SIZE_EVIDENCE_RUSTFLAGS);
+        }
+        assert_eq!(
+            adapter.rustflags(BuildIntent::ResourceReport {
+                lto: crate::LtoMode::Configured,
+            }),
+            resource_rustflags
+        );
         assert_eq!(adapter.disassembler_flavor(), disassembler_flavor);
         assert_eq!(adapter.disassembler_program(), disassembler_program);
+        assert_eq!(adapter.stack_frame_evidence(), stack_frame_evidence);
         assert_eq!(
             adapter_for_rust_target(rust_target).ok().map(Adapter::id),
             Some(adapter.id())
@@ -118,7 +134,7 @@ fn thumb_codegen_policy_is_applied_to_cargo() {
         cargo_rustflags_environment(adapter.rust_target()),
         "inherited flags",
     );
-    adapter.configure_rustflags(&mut command);
+    adapter.configure_rustflags(&mut command, BuildIntent::Firmware);
 
     assert_eq!(
         command
@@ -136,6 +152,70 @@ fn thumb_codegen_policy_is_applied_to_cargo() {
             .and_then(|(_, value)| value),
         None
     );
+}
+
+#[test]
+fn resource_intent_adds_stack_evidence_without_changing_firmware_policy() {
+    let adapter = adapter_for(ProcessorArchitecture::ThumbV7em);
+    let mut firmware = Command::new("cargo");
+    adapter.configure_rustflags(&mut firmware, BuildIntent::Firmware);
+    let mut resource = Command::new("cargo");
+    adapter.configure_rustflags(
+        &mut resource,
+        BuildIntent::ResourceReport {
+            lto: crate::LtoMode::Configured,
+        },
+    );
+
+    assert_eq!(
+        firmware
+            .get_envs()
+            .find(|(key, _)| *key == OsStr::new("RUSTFLAGS"))
+            .and_then(|(_, value)| value),
+        Some(OsStr::new(
+            "-C link-arg=--icf=all -C llvm-args=-enable-machine-outliner -C llvm-args=-machine-outliner-reruns=2"
+        ))
+    );
+    assert_eq!(
+        resource
+            .get_envs()
+            .find(|(key, _)| *key == OsStr::new("RUSTFLAGS"))
+            .and_then(|(_, value)| value),
+        Some(OsStr::new(
+            "-C link-arg=--icf=all -C llvm-args=-enable-machine-outliner -C llvm-args=-machine-outliner-reruns=2 -Z emit-stack-sizes=yes"
+        ))
+    );
+    assert_eq!(
+        resource
+            .get_envs()
+            .find(|(key, _)| *key == OsStr::new("RUSTC_BOOTSTRAP"))
+            .and_then(|(_, value)| value),
+        Some(OsStr::new("1"))
+    );
+}
+
+#[test]
+fn existing_dwarf_evidence_does_not_change_esp_codegen() {
+    for architecture in [
+        ProcessorArchitecture::RiscV32Imac,
+        ProcessorArchitecture::XtensaEsp32S3,
+    ] {
+        let adapter = adapter_for(architecture);
+        let mut firmware = Command::new("cargo");
+        adapter.configure_rustflags(&mut firmware, BuildIntent::Firmware);
+        let mut resource = Command::new("cargo");
+        adapter.configure_rustflags(
+            &mut resource,
+            BuildIntent::ResourceReport {
+                lto: crate::LtoMode::Configured,
+            },
+        );
+
+        assert_eq!(
+            firmware.get_envs().collect::<Vec<_>>(),
+            resource.get_envs().collect::<Vec<_>>()
+        );
+    }
 }
 
 #[test]

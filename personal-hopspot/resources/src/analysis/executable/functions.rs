@@ -21,6 +21,7 @@ pub(crate) struct FunctionBoundary {
     pub(crate) name: String,
     pub(crate) range: AddressRange,
     pub(crate) fingerprint: String,
+    pub(crate) is_embassy_task_poll: bool,
 }
 
 pub(super) fn analyze(
@@ -44,11 +45,14 @@ pub(super) fn analyze(
                 .find(|section| section.range.contains(range))?;
             let start = usize::try_from(address.checked_sub(section.range.start())?).ok()?;
             let end = usize::try_from(range.end().checked_sub(section.range.start())?).ok()?;
-            let name = symbol.name().ok().map(compact_symbol)?;
+            let name = symbol.name().ok().map(display_symbol)?;
+            let is_embassy_task_poll = name.starts_with("<embassy_executor::raw::TaskStorage<")
+                && name.ends_with(">::poll");
             Some(FunctionBoundary {
-                name,
+                name: compact_symbol(&name),
                 range,
                 fingerprint: prns_flash_manifest::sha256_hex(&section.data[start..end]),
+                is_embassy_task_poll,
             })
         })
         .collect::<Vec<_>>();
@@ -63,6 +67,7 @@ pub(super) fn analyze(
         left.range == right.range
             && left.name == right.name
             && left.fingerprint == right.fingerprint
+            && left.is_embassy_task_poll == right.is_embassy_task_poll
     });
 
     let classified_bytes = coverage::covered_bytes(
@@ -101,20 +106,23 @@ pub(super) fn analyze(
     })
 }
 
-fn compact_symbol(symbol: &str) -> String {
-    let demangled = try_demangle(symbol)
+pub(crate) fn display_symbol(symbol: &str) -> String {
+    try_demangle(symbol)
         .map(|value| format!("{value:#}"))
-        .unwrap_or_else(|_| symbol.to_string());
-    if demangled.len() <= SYMBOL_PREFIX_BYTES + SYMBOL_SUFFIX_BYTES {
-        return demangled;
+        .unwrap_or_else(|_| symbol.to_string())
+}
+
+fn compact_symbol(symbol: &str) -> String {
+    if symbol.len() <= SYMBOL_PREFIX_BYTES + SYMBOL_SUFFIX_BYTES {
+        return symbol.to_string();
     }
-    let prefix_end = character_boundary(&demangled, SYMBOL_PREFIX_BYTES);
-    let suffix_start = character_boundary(&demangled, demangled.len() - SYMBOL_SUFFIX_BYTES);
-    let digest = prns_flash_manifest::sha256_hex(demangled.as_bytes());
+    let prefix_end = character_boundary(symbol, SYMBOL_PREFIX_BYTES);
+    let suffix_start = character_boundary(symbol, symbol.len() - SYMBOL_SUFFIX_BYTES);
+    let digest = prns_flash_manifest::sha256_hex(symbol.as_bytes());
     format!(
         "{}…{} [sha256:{}]",
-        &demangled[..prefix_end],
-        &demangled[suffix_start..],
+        &symbol[..prefix_end],
+        &symbol[suffix_start..],
         &digest[..12]
     )
 }

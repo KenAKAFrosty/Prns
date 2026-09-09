@@ -11,6 +11,8 @@ pub(in crate::report) struct ResourceComparison {
     pub(super) sections: EvidenceComparison<Vec<SectionComparison>>,
     pub(super) attribution: AttributionComparison,
     pub(super) executable: EvidenceComparison<ExecutableComparison>,
+    pub(super) stack: StackEvidenceComparison,
+    pub(super) async_memory: EvidenceComparison<AsyncMemoryComparison>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -71,6 +73,7 @@ pub(super) struct FlashComparison {
 pub(super) struct ArtifactComparison {
     pub(super) path: String,
     pub(super) bytes: ByteComparison,
+    pub(super) fingerprint: ChangeState,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -105,6 +108,82 @@ pub(super) struct ExecutableComparison {
     pub(super) changed_ranked_functions: Vec<String>,
     pub(super) decoded_bytes: ByteComparison,
     pub(super) undecoded_bytes: ByteComparison,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum StackEvidenceComparison {
+    Comparable {
+        before: EvidenceAvailability,
+        after: EvidenceAvailability,
+        value: Box<StackComparison>,
+    },
+    NotComparable {
+        before: EvidenceAvailability,
+        after: EvidenceAvailability,
+    },
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct StackComparison {
+    pub(super) frame_source: ChangeState,
+    pub(super) source_bytes: ByteComparison,
+    pub(super) frames: CountComparison,
+    pub(super) known_path: ByteComparison,
+    pub(super) changed_largest_frames: Vec<String>,
+    pub(super) limit: StackLimitComparison,
+    pub(super) gaps: Vec<NamedCountComparison>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum StackLimitComparison {
+    Declared {
+        reservation: String,
+        bytes: u64,
+        headroom: ByteComparison,
+    },
+    Undeclared,
+    Changed,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct AsyncMemoryComparison {
+    pub(super) task_pool_total: ByteComparison,
+    pub(super) task_pools: Vec<NamedSizeComparison>,
+    pub(super) scenario_futures: ScenarioFutureComparison,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum ScenarioFutureComparison {
+    Measured(Vec<NamedSizeComparison>),
+    Unavailable { before: String, after: String },
+    AvailabilityChanged { before: String, after: String },
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct NamedSizeComparison {
+    pub(super) name: String,
+    pub(super) before: Option<u64>,
+    pub(super) after: Option<u64>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct NamedCountComparison {
+    pub(super) name: String,
+    pub(super) count: CountComparison,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct CountComparison {
+    pub(super) before: u64,
+    pub(super) after: u64,
+    pub(super) delta: CountDelta,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum CountDelta {
+    Decrease(u64),
+    Unchanged,
+    Increase(u64),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -190,12 +269,39 @@ impl ByteComparison {
     }
 }
 
+impl CountComparison {
+    pub(super) const fn new(before: u64, after: u64) -> Self {
+        let delta = if before < after {
+            CountDelta::Increase(after - before)
+        } else if before == after {
+            CountDelta::Unchanged
+        } else {
+            CountDelta::Decrease(before - after)
+        };
+        Self {
+            before,
+            after,
+            delta,
+        }
+    }
+}
+
 impl fmt::Display for ByteDelta {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Decrease(bytes) => write!(formatter, "-{bytes}"),
             Self::Unchanged => formatter.write_str("0"),
             Self::Increase(bytes) => write!(formatter, "+{bytes}"),
+        }
+    }
+}
+
+impl fmt::Display for CountDelta {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Decrease(count) => write!(formatter, "-{count}"),
+            Self::Unchanged => formatter.write_str("0"),
+            Self::Increase(count) => write!(formatter, "+{count}"),
         }
     }
 }

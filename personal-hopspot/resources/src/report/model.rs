@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::fingerprint::Fingerprint;
 
-pub(super) const SCHEMA_VERSION: u32 = 6;
+pub(super) const SCHEMA_VERSION: u32 = 7;
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -202,6 +202,7 @@ pub(super) enum RamCapacityIdentity {
 pub(super) struct ArtifactIdentity {
     pub path: String,
     pub bytes: u64,
+    pub fingerprint: Fingerprint,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -211,6 +212,7 @@ pub(super) struct AnalysisEvidence {
     pub allocated_sections: Evidence<Vec<SectionUsage>>,
     pub flash_attribution: Evidence<FlashAttributionIdentity>,
     pub executable: Evidence<ExecutableIdentity>,
+    pub async_memory: Evidence<AsyncMemoryIdentity>,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -225,6 +227,155 @@ pub(super) struct ExecutableIdentity {
     pub startup: StartupStructureIdentity,
     pub functions: FunctionAnalysisIdentity,
     pub disassembly: DisassemblyIdentity,
+    pub stack: Evidence<StackAnalysisIdentity>,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct StackAnalysisIdentity {
+    pub frame_source: StackFrameSourceIdentity,
+    pub source_bytes: u64,
+    pub frame_count: u64,
+    pub functions_without_frames: u64,
+    pub largest_frames: Vec<StackFrameIdentity>,
+    pub roots: Vec<StackRootIdentity>,
+    pub direct_call_count: u64,
+    pub largest_known_path: KnownCallPathIdentity,
+    pub limit: StackLimitIdentity,
+    pub gaps: Vec<StackAnalysisGapIdentity>,
+    pub artifact: EvidenceArtifactIdentity,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum StackFrameSourceIdentity {
+    LlvmStackSizes,
+    DwarfDebugFrame,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct StackFrameIdentity {
+    pub name: String,
+    pub address: u64,
+    pub bytes: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct StackRootIdentity {
+    pub role: StackRootRoleIdentity,
+    pub name: String,
+    pub address: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum StackRootRoleIdentity {
+    Startup,
+    Interrupt,
+    Trap,
+    EmbassyTask,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct KnownCallPathIdentity {
+    pub bytes: u64,
+    pub frames: Vec<KnownCallPathFrameIdentity>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct KnownCallPathFrameIdentity {
+    pub name: String,
+    pub address: u64,
+    pub frame_bytes: u64,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub(super) enum StackLimitIdentity {
+    Declared {
+        reservation: String,
+        bytes: u64,
+        headroom_bytes: u64,
+    },
+    Undeclared,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct StackAnalysisGapIdentity {
+    pub kind: StackAnalysisGapKindIdentity,
+    pub occurrences: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum StackAnalysisGapKindIdentity {
+    FunctionsWithoutFrameEvidence,
+    ForeignOrAssemblyFrames,
+    FrameEvidenceWithoutFunction,
+    UnsupportedCfaRule,
+    CallSiteOutsideFunction,
+    DirectCallOutsideFunctions,
+    UnresolvedDirectCall,
+    IndirectCall,
+    RecursiveCallCycle,
+    RootOutsideFunctions,
+    InterruptRootsUnresolved,
+    DynamicAllocationNotProvenAbsent,
+    InterruptNestingUnmodeled,
+    StackLimitUndeclared,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct AsyncMemoryIdentity {
+    pub task_pool_accounting: TaskPoolAccountingIdentity,
+    pub task_pool_bytes: u64,
+    pub task_pools: Vec<TaskPoolAllocationIdentity>,
+    pub scenario_futures: ScenarioFutureSizesIdentity,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum TaskPoolAccountingIdentity {
+    IncludedInStaticRam,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct TaskPoolAllocationIdentity {
+    pub task: String,
+    pub address: u64,
+    pub bytes: u64,
+    pub section: String,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub(super) enum ScenarioFutureSizesIdentity {
+    Measured {
+        futures: Vec<NamedFutureSizeIdentity>,
+    },
+    Unavailable {
+        reason: FutureSizeUnavailableReasonIdentity,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct NamedFutureSizeIdentity {
+    pub scenario: String,
+    pub bytes: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum FutureSizeUnavailableReasonIdentity {
+    SemanticHarnessNotProduced,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -131,6 +131,21 @@ fn summary_rejects_duplicate_and_missing_fragment_targets_before_writing(
     assert!(!output.exists());
 
     std::fs::write(&linker_map, vec![0; 128])?;
+    let stack_evidence = last
+        .parent()
+        .and_then(Path::parent)
+        .ok_or("report has no fragment root")?
+        .join("work")
+        .join("mesh-tower-v2")
+        .join("stack-evidence.json");
+    std::fs::remove_file(&stack_evidence)?;
+    assert!(matches!(
+        summarize(&matrix, &context, &reports, &baseline, &output),
+        Err(SummaryError::EvidenceArtifactMetadata { path, .. }) if path == stack_evidence
+    ));
+    assert!(!output.exists());
+
+    std::fs::write(&stack_evidence, b"mesh-tower-v2:stack")?;
     let missing = paths.last().ok_or("matrix produced no reports")?;
     std::fs::remove_file(missing)?;
     assert!(matches!(
@@ -207,22 +222,19 @@ fn write_reports(
             report.memory_contract = contract::identity(target.profile())?;
             let mut value = serde_json::to_value(report)?;
             mutate(target, &mut value);
-            let report: ResourceReport = serde_json::from_value(value)?;
+            let mut report: ResourceReport = serde_json::from_value(value)?;
             let platform = match target.platform() {
                 TargetPlatform::Esp => "embedded-resources-esp",
                 TargetPlatform::Nrf52840 => "embedded-resources-nrf52840",
             };
-            let path = root
-                .join(platform)
+            let fragment = root.join(platform);
+            write_evidence_artifacts(&fragment, target.id(), &mut report)?;
+            let path = fragment
                 .join("reports")
                 .join(format!("{}.json", target.id()));
             std::fs::create_dir_all(path.parent().ok_or("report has no parent")?)?;
             std::fs::write(&path, serde_json::to_vec(&report)?)?;
-            let linker_map = root
-                .join(platform)
-                .join("work")
-                .join(target.id())
-                .join("linker.map");
+            let linker_map = fragment.join("work").join(target.id()).join("linker.map");
             std::fs::create_dir_all(linker_map.parent().ok_or("map has no parent")?)?;
             std::fs::write(
                 linker_map,
@@ -231,4 +243,42 @@ fn write_reports(
             Ok(path)
         })
         .collect()
+}
+
+fn write_evidence_artifacts(
+    fragment: &Path,
+    target: &str,
+    report: &mut ResourceReport,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let executable = match &mut report.analysis.executable {
+        Evidence::Complete(executable) => executable,
+        Evidence::Partial(_) | Evidence::Unavailable => {
+            return Err("fixture has no complete executable evidence".into());
+        }
+    };
+    write_evidence_artifact(
+        fragment,
+        &format!("{target}:functions"),
+        &mut executable.functions.boundaries_artifact,
+    )?;
+    let stack = match &mut executable.stack {
+        Evidence::Complete(stack) | Evidence::Partial(stack) => stack,
+        Evidence::Unavailable => return Err("fixture has no stack evidence".into()),
+    };
+    write_evidence_artifact(fragment, &format!("{target}:stack"), &mut stack.artifact)
+}
+
+fn write_evidence_artifact(
+    fragment: &Path,
+    content: &str,
+    artifact: &mut super::super::model::EvidenceArtifactIdentity,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let bytes = content.as_bytes();
+    artifact.bytes = u64::try_from(bytes.len())?;
+    artifact.fingerprint =
+        crate::report::Fingerprint::parse(prns_flash_manifest::sha256_hex(bytes))?;
+    let path = fragment.join(&artifact.path);
+    std::fs::create_dir_all(path.parent().ok_or("evidence artifact has no parent")?)?;
+    std::fs::write(path, bytes)?;
+    Ok(())
 }

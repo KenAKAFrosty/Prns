@@ -2,6 +2,7 @@ mod architecture;
 mod coverage;
 mod disassembly;
 mod functions;
+mod stack;
 
 use std::fs;
 use std::io;
@@ -13,7 +14,11 @@ use personal_hopspot_builder::architecture::{Adapter, DisassemblerFlavor};
 use personal_hopspot_memory::{AddressRange, MemoryProfile, ProcessorArchitecture};
 use thiserror::Error;
 
-pub(crate) use functions::{FunctionAnalysis, FunctionBoundary};
+pub(crate) use functions::{display_symbol, FunctionAnalysis, FunctionBoundary};
+pub(crate) use stack::{
+    KnownCallPath, StackAnalysis, StackAnalysisGapKind, StackFrame, StackLimitAnalysis, StackRoot,
+    StackRootRole,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ByteOrder {
@@ -46,6 +51,7 @@ pub(crate) struct ExecutableAnalysis {
     pub(crate) startup: StartupStructure,
     pub(crate) functions: FunctionAnalysis,
     pub(crate) disassembly: DisassemblyAnalysis,
+    pub(crate) stack: StackAnalysis,
 }
 
 #[derive(Debug)]
@@ -92,6 +98,7 @@ pub(crate) struct DisassemblyAnalysis {
     pub(crate) decoded_bytes: u64,
     pub(crate) undecoded_bytes: u64,
     pub(crate) instruction_count: u64,
+    instructions: Vec<architecture::DecodedInstruction>,
 }
 
 #[derive(Debug, Error)]
@@ -227,6 +234,8 @@ pub(crate) enum ExecutableError {
     },
     #[error("{evidence} cannot be represented in the report schema")]
     CountOverflow { evidence: &'static str },
+    #[error(transparent)]
+    Stack(#[from] stack::StackMetadataError),
     #[error("classified function bytes {classified} exceed executable bytes {executable}")]
     InvalidFunctionCoverage { classified: u64, executable: u64 },
 }
@@ -291,6 +300,17 @@ pub(crate) fn analyze(
         &executable_sections,
         entry_point,
     )?;
+    let stack = stack::analyze(stack::StackAnalysisInput {
+        path,
+        profile,
+        adapter,
+        object: &object,
+        startup: &startup,
+        functions: &functions,
+        instructions: &disassembly.instructions,
+        load_segments: &load_segments,
+        frame_evidence: build_adapter.stack_frame_evidence(),
+    })?;
 
     Ok(ExecutableAnalysis {
         architecture: profile.architecture,
@@ -301,6 +321,7 @@ pub(crate) fn analyze(
         startup,
         functions,
         disassembly,
+        stack,
     })
 }
 

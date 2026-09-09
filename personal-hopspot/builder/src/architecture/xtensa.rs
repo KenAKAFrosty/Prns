@@ -7,7 +7,9 @@ use std::process::Command;
 
 use personal_hopspot_memory::ProcessorArchitecture;
 
-use super::{Adapter, DisassemblerFlavor, DisassemblerTool, LinkerFlavor, LinkerTool};
+use super::{
+    Adapter, DisassemblerFlavor, DisassemblerTool, LinkerFlavor, LinkerTool, StackFrameEvidence,
+};
 use crate::BuildError;
 
 const LINKER_PROGRAM: &str = "xtensa-esp32s3-elf-gcc";
@@ -30,6 +32,7 @@ pub(super) static ADAPTER: Adapter = Adapter::new(
         &["--version"],
         resolve_disassembler,
     ),
+    StackFrameEvidence::DwarfDebugFrame,
 );
 
 struct ToolchainEnvironment {

@@ -2,11 +2,13 @@ use std::fs;
 use std::path::Path;
 
 use super::super::model::{
-    ArtifactIdentity, AttributionCategoryIdentity, BuildStatus, Evidence, ExecutableIdentity,
-    FirmwareFlashUsage, FlashAttributionIdentity, FunctionBoundaryIdentity,
-    FunctionNormalizationIdentity, LoadPermissionIdentity, MemoryOverflowIdentity, RamBackingUsage,
-    RamCapacityIdentity, ResourceReport, SectionKindIdentity, SectionUsage,
-    StartupAnchorRoleIdentity, SCHEMA_VERSION,
+    ArtifactIdentity, AsyncMemoryIdentity, AttributionCategoryIdentity, BuildStatus, Evidence,
+    ExecutableArchitectureIdentity, ExecutableIdentity, FirmwareFlashUsage,
+    FlashAttributionIdentity, FunctionBoundaryIdentity, FunctionNormalizationIdentity,
+    LoadPermissionIdentity, MemoryOverflowIdentity, RamBackingUsage, RamCapacityIdentity,
+    ResourceReport, ScenarioFutureSizesIdentity, SectionKindIdentity, SectionUsage,
+    StackAnalysisGapKindIdentity, StackFrameSourceIdentity, StackLimitIdentity,
+    StartupAnchorRoleIdentity, TaskPoolAccountingIdentity, SCHEMA_VERSION,
 };
 use super::{ComparisonError, SECTION_KINDS};
 
@@ -106,12 +108,18 @@ fn validate_success(path: &Path, report: &ResourceReport) -> Result<(), Comparis
             path: path.to_path_buf(),
         }
     })?;
+    let async_memory = report.analysis.async_memory.complete().ok_or_else(|| {
+        ComparisonError::MissingAsyncMemoryEvidence {
+            path: path.to_path_buf(),
+        }
+    })?;
     validate_flash(path, flash)?;
     validate_artifacts(path, artifacts)?;
     validate_ram(path, ram)?;
     validate_sections(path, sections)?;
     validate_attribution(path, attribution)?;
-    validate_executable(path, report, executable)
+    validate_executable(path, report, executable)?;
+    validate_async_memory(path, sections, async_memory)
 }
 
 fn validate_available(path: &Path, report: &ResourceReport) -> Result<(), ComparisonError> {
@@ -138,6 +146,15 @@ fn validate_available(path: &Path, report: &ResourceReport) -> Result<(), Compar
         &report.analysis.executable
     {
         validate_executable(path, report, executable)?;
+    }
+    if let Evidence::Complete(async_memory) | Evidence::Partial(async_memory) =
+        &report.analysis.async_memory
+    {
+        let sections = match &report.analysis.allocated_sections {
+            Evidence::Complete(sections) | Evidence::Partial(sections) => sections.as_slice(),
+            Evidence::Unavailable => &[],
+        };
+        validate_async_memory(path, sections, async_memory)?;
     }
     Ok(())
 }
@@ -267,7 +284,186 @@ fn validate_executable(
             && !executable.disassembly.program.is_empty()
             && !executable.disassembly.version.is_empty(),
         "disassembly accounting is invalid",
+    )?;
+    validate_stack(path, report, executable)
+}
+
+fn validate_stack(
+    path: &Path,
+    report: &ResourceReport,
+    executable: &ExecutableIdentity,
+) -> Result<(), ComparisonError> {
+    let (stack, partial) = match &executable.stack {
+        Evidence::Complete(stack) => (stack, false),
+        Evidence::Partial(stack) => (stack, true),
+        Evidence::Unavailable => {
+            return executable_valid(path, false, "stack evidence is unavailable");
+        }
+    };
+    let gaps_valid = stack.gaps.iter().enumerate().all(|(index, gap)| {
+        gap.occurrences != 0
+            && !stack.gaps[..index]
+                .iter()
+                .any(|prior| prior.kind == gap.kind)
+    });
+    executable_valid(
+        path,
+        partial == !stack.gaps.is_empty() && gaps_valid,
+        "stack evidence availability does not match its gaps",
+    )?;
+    executable_valid(
+        path,
+        stack.frame_source == expected_stack_frame_source(executable.architecture)
+            && stack.source_bytes != 0
+            && stack.frame_count != 0
+            && stack.functions_without_frames <= executable.functions.boundary_count
+            && stack.largest_frames.len() <= 20
+            && !stack.largest_frames.is_empty()
+            && u64::try_from(stack.largest_frames.len())
+                .is_ok_and(|count| count <= stack.frame_count)
+            && stack
+                .largest_frames
+                .iter()
+                .enumerate()
+                .all(|(index, frame)| {
+                    !frame.name.is_empty()
+                        && executable_address(executable, frame.address)
+                        && stack.largest_frames.get(index + 1).is_none_or(|next| {
+                            frame.bytes > next.bytes
+                                || (frame.bytes == next.bytes && frame.name < next.name)
+                                || (frame.bytes == next.bytes
+                                    && frame.name == next.name
+                                    && frame.address <= next.address)
+                        })
+                }),
+        "stack frame accounting is invalid",
+    )?;
+    executable_valid(
+        path,
+        !stack.roots.is_empty()
+            && stack.roots.iter().enumerate().all(|(index, root)| {
+                !root.name.is_empty()
+                    && executable_address(executable, root.address)
+                    && !stack.roots[..index].iter().any(|prior| prior == root)
+            }),
+        "stack roots are invalid",
+    )?;
+    let path_bytes = stack
+        .largest_known_path
+        .frames
+        .iter()
+        .try_fold(0_u64, |total, frame| total.checked_add(frame.frame_bytes));
+    executable_valid(
+        path,
+        !stack.largest_known_path.frames.is_empty()
+            && path_bytes == Some(stack.largest_known_path.bytes)
+            && stack.largest_known_path.frames.iter().all(|frame| {
+                !frame.name.is_empty() && executable_address(executable, frame.address)
+            }),
+        "known stack path accounting is invalid",
+    )?;
+    let undeclared_gap = stack
+        .gaps
+        .iter()
+        .any(|gap| gap.kind == StackAnalysisGapKindIdentity::StackLimitUndeclared);
+    let limit_valid = match &stack.limit {
+        StackLimitIdentity::Declared {
+            reservation,
+            bytes,
+            headroom_bytes,
+        } => {
+            !reservation.is_empty()
+                && !undeclared_gap
+                && stack.largest_known_path.bytes.checked_add(*headroom_bytes) == Some(*bytes)
+                && report
+                    .memory_contract
+                    .runtime_reservations
+                    .iter()
+                    .any(|candidate| candidate.id == *reservation && candidate.bytes == *bytes)
+        }
+        StackLimitIdentity::Undeclared => undeclared_gap,
+    };
+    executable_valid(path, limit_valid, "stack limit accounting is invalid")?;
+    executable_valid(
+        path,
+        stack.artifact.path == format!("work/{}/stack-evidence.json", report.target.id)
+            && stack.artifact.bytes != 0,
+        "stack evidence artifact is invalid",
     )
+}
+
+const fn expected_stack_frame_source(
+    architecture: ExecutableArchitectureIdentity,
+) -> StackFrameSourceIdentity {
+    match architecture {
+        ExecutableArchitectureIdentity::Thumbv7em => StackFrameSourceIdentity::LlvmStackSizes,
+        ExecutableArchitectureIdentity::Riscv32imac
+        | ExecutableArchitectureIdentity::XtensaEsp32s3 => {
+            StackFrameSourceIdentity::DwarfDebugFrame
+        }
+    }
+}
+
+fn executable_address(executable: &ExecutableIdentity, address: u64) -> bool {
+    executable
+        .executable_sections
+        .iter()
+        .any(|section| section.address <= address && address < section.end)
+}
+
+fn validate_async_memory(
+    path: &Path,
+    sections: &[SectionUsage],
+    async_memory: &AsyncMemoryIdentity,
+) -> Result<(), ComparisonError> {
+    let pools_valid = !async_memory.task_pools.is_empty()
+        && async_memory
+            .task_pools
+            .iter()
+            .enumerate()
+            .all(|(index, pool)| {
+                let end = pool.address.checked_add(pool.bytes);
+                !pool.task.is_empty()
+                    && pool.bytes != 0
+                    && !pool.section.is_empty()
+                    && !async_memory.task_pools[..index]
+                        .iter()
+                        .any(|prior| prior.task == pool.task || prior.address == pool.address)
+                    && sections.iter().any(|section| {
+                        section.name == pool.section
+                            && section.kind == SectionKindIdentity::ZeroFill
+                            && section.run_address <= pool.address
+                            && end.is_some_and(|end| end <= section.run_end)
+                    })
+            });
+    let total = async_memory
+        .task_pools
+        .iter()
+        .try_fold(0_u64, |total, pool| total.checked_add(pool.bytes));
+    let futures_valid = match &async_memory.scenario_futures {
+        ScenarioFutureSizesIdentity::Measured { futures } => {
+            !futures.is_empty()
+                && futures.iter().enumerate().all(|(index, future)| {
+                    !future.scenario.is_empty()
+                        && future.bytes != 0
+                        && !futures[..index]
+                            .iter()
+                            .any(|prior| prior.scenario == future.scenario)
+                })
+        }
+        ScenarioFutureSizesIdentity::Unavailable { .. } => true,
+    };
+    if async_memory.task_pool_accounting == TaskPoolAccountingIdentity::IncludedInStaticRam
+        && pools_valid
+        && total == Some(async_memory.task_pool_bytes)
+        && futures_valid
+    {
+        Ok(())
+    } else {
+        Err(ComparisonError::InvalidAsyncMemoryEvidence {
+            path: path.to_path_buf(),
+        })
+    }
 }
 
 fn validate_functions(

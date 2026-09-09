@@ -13,7 +13,7 @@ use crate::analysis::{
 use crate::matrix::{BuildEvidence, RecipeIdentity, Target};
 
 use super::contract;
-use super::fingerprint::fingerprint;
+use super::fingerprint::{fingerprint, Fingerprint};
 use super::model::{
     AnalysisEvidence, ArchitectureIdentity, ArtifactIdentity, AttributionCategoryIdentity,
     AttributionCoverageIdentity, AttributionEntryIdentity, BuildIdentity, BuildStatus, Evidence,
@@ -51,11 +51,19 @@ pub(crate) enum ReportError {
     #[error(transparent)]
     Executable(#[from] ExecutableError),
     #[error(transparent)]
+    AsyncMemory(#[from] analysis::AsyncMemoryError),
+    #[error(transparent)]
     Attribution(#[from] analysis::AttributionError),
     #[error(transparent)]
     RamAnalysis(#[from] RamAnalysisError),
     #[error(transparent)]
     ExecutableReport(#[from] super::executable::ExecutableReportError),
+    #[error("artifact {path:?} has an invalid fingerprint: {source}")]
+    InvalidArtifactFingerprint {
+        path: String,
+        #[source]
+        source: prns_flash_manifest::DomainValueError,
+    },
     #[error("could not serialize resource report: {0}")]
     Serialize(#[from] serde_json::Error),
     #[error("could not publish resource report: {0}")]
@@ -114,6 +122,7 @@ pub(crate) fn write_overflow(
             allocated_sections: Evidence::Unavailable,
             flash_attribution: Evidence::Partial(attribution_identity(attribution)),
             executable: Evidence::Unavailable,
+            async_memory: Evidence::Unavailable,
         },
     };
     publish_report(context, target, &report)
@@ -156,6 +165,7 @@ fn build(
         adapter,
         evidence.firmware_image_bytes(),
     )?;
+    let async_memory = analysis::analyze_async_memory(evidence.elf())?;
     let attribution = analysis::analyze_linker_map(
         linker_map,
         adapter.linker_flavor(),
@@ -221,11 +231,18 @@ fn build(
             evidence
                 .artifacts()
                 .iter()
-                .map(|artifact| ArtifactIdentity {
-                    path: artifact.path().to_string(),
-                    bytes: artifact.bytes(),
+                .map(|artifact| {
+                    Ok(ArtifactIdentity {
+                        path: artifact.path().to_string(),
+                        bytes: artifact.bytes(),
+                        fingerprint: Fingerprint::parse(artifact.fingerprint().to_string())
+                            .map_err(|source| ReportError::InvalidArtifactFingerprint {
+                                path: artifact.path().to_string(),
+                                source,
+                            })?,
+                    })
                 })
-                .collect(),
+                .collect::<Result<Vec<_>, ReportError>>()?,
         ),
         analysis: AnalysisEvidence {
             linker_map_bytes,
@@ -237,6 +254,7 @@ fn build(
                 adapter.rust_target(),
                 executable,
             )?),
+            async_memory: Evidence::Complete(super::async_memory::identity(async_memory)),
         },
     })
 }
@@ -291,7 +309,7 @@ pub(super) fn architecture_identity(target: &Target<'_>) -> ArchitectureIdentity
         adapter: adapter.id().as_str().to_string(),
         linker_flavor: adapter.linker_flavor().as_str().to_string(),
         rustflags: adapter
-            .rustflags()
+            .firmware_rustflags()
             .iter()
             .map(|argument| (*argument).to_string())
             .collect(),
