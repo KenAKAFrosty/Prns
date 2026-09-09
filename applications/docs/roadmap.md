@@ -37,9 +37,10 @@ observations remain tied to their recorded builds.
    actions. Retained-grant checks and messaging now have bounded evidence on
    both platforms, tied to their exact recorded builds rather than transferred
    across rebuilds. They are not fresh-pairing acceptance.
-3. Finish post-restoration UI/content/retention and first-Check verification,
-   then repeat delivery with a controlled foreground boundary. Keep natural
-   suspension, repeated restoration, force-quit and protected-data cases explicit;
+3. Repeat recovery, delivery and the first request with no foreground
+   intervention before the planned resume. The prior restoration trial passed
+   later message/request UI checks, but included possible user activity. Keep
+   natural suspension, repeated restoration, force-quit and protected-data cases explicit;
    the SIGTERM trial does not qualify them. Preserve the firmware size gate: the
    passing integrated T-Echo build still has just 616 bytes spare.
 
