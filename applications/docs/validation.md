@@ -651,8 +651,36 @@ The Android 10/API 29 implementation is ready for development handoff at the
 current iOS app's feature scope, with the qualification limits below. This is
 not a release or a fresh qualification of iOS background restoration.
 
+### Publication hold: constrained Nordic firmware
+
+The normal push gate stopped on `t-echo-s140-v7`: its linked firmware exceeds
+the configured FLASH region by 1,984 bytes. A matched build of upstream
+`1d4d4ba865` with the same Rust 1.98.1 toolchain succeeds, using 622,120 bytes
+of firmware image with 472 bytes of headroom. The integrated branch adds
+2,448 bytes of `.text` and 136 bytes of `.bss`; `.rodata`, `.data`, the build
+configuration, and the memory layout are unchanged. The final linker alignment
+accounts for the difference between image occupancy and the reported overflow.
+This is an integration regression on a tightly constrained Nordic target, not
+an Android runtime failure or an upstream-only build failure.
+
+All 24 host workspaces, root Clippy, and the external-allocation gate passed.
+Eleven later selected lanes also passed when run separately: seven additional
+Clippy configurations, license-policy parity, both changed-lock dependency
+policies, and the unsafe dependency inventory. Browser smoke compiled its Rust
+module but could not complete because the local `wasm-bindgen 0.2.126` CLI was
+unavailable. These diagnostic continuations do not bypass the failed matrix.
+The full firmware matrix and publishing gate have not passed. The equivalent
+FLASH limitation was disclosed when the draft PR first opened; that earlier
+one-publication hook exception does not authorize another bypass. No flash
+layout, feature set, hook, or CI setting was changed to work around this result.
+Publication needs a separately reviewed footprint correction or an explicit
+exception for updating the draft. Logs: `final-push.log`,
+`techo-upstream-baseline.log`, and `techo-source-footprint-review.md` in the
+evidence directory above.
+
 ## Remaining work
 
+- Resolve the constrained Nordic firmware publication hold above.
 - Pristine interactive import onboarding remains separate from the passed
   picker guards and isolated native import test.
 - Qualify newer Android permission/service behavior, including the Android 13+
