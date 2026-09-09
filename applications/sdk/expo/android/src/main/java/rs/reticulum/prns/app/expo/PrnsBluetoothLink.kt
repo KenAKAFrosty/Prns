@@ -68,6 +68,7 @@ class PrnsBluetoothLink(
     private val lifecycleLock = ReentrantLock()
     private var used = false
     private var radioFailure: String? = null
+    private val radioCycle = PrnsBluetoothRadioCycle()
     private var serviceReady = false
     private var advertisingStarted = false
     private var radioEpoch = 0L
@@ -739,10 +740,14 @@ class PrnsBluetoothLink(
         }
         val unavailable = unavailableReason()
         if (unavailable != null) {
+            radioCycle.observeAvailable(false)
             stopRadio()
             report(State.Unavailable, unavailable)
             return
         }
+        // Only the service may replace a lost listener/native PSM generation.
+        // Reopening here races command admission and starts a redundant scan.
+        if (!radioCycle.observeAvailable(true)) return
         if (radioFailure != null) return
         advertisingWanted = (state and PrnsBluetoothNative.BLE_RADIO_ADVERTISING) != 0
         scanningWanted = (state and PrnsBluetoothNative.BLE_RADIO_SCANNING) != 0

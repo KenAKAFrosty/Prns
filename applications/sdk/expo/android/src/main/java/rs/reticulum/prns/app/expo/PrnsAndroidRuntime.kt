@@ -113,13 +113,14 @@ internal object PrnsAndroidRuntime {
   }
 
   fun call(context: Context, operation: String, input: ByteArray?, promise: Promise) {
-    calls.execute {
-      try {
-        promise.resolve(consume(PrnsNative.nativeCall(operation, storagePath(context), input)))
-      } catch (error: Exception) {
-        promise.reject("ERR_PRNS_NATIVE", error.message, error)
-      }
-    }
+    prnsDispatchNativeCall(
+      operation,
+      lifecycle,
+      calls,
+      refresh = { service?.refreshBluetooth() ?: true },
+      call = { promise.resolve(consume(PrnsNative.nativeCall(operation, storagePath(context), input))) },
+      failed = { error -> promise.reject("ERR_PRNS_NATIVE", error.message, error) },
+    )
   }
 
   // A malformed ABI request is not a generated domain result.

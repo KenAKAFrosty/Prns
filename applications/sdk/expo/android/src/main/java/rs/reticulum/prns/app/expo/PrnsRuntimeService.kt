@@ -26,8 +26,7 @@ class PrnsRuntimeService : Service() {
   @Volatile private var finishing = false
   @Volatile private var ownsRuntime = false
   @Volatile private var serviceDestroyed = false
-  @Volatile private var bluetoothGeneration = 0L
-  private var publishedPsm: Int? = null
+  private val bluetoothGeneration = PrnsBluetoothGeneration()
   private val radioReceiver = object : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) { PrnsAndroidRuntime.refresh(context) }
   }
@@ -115,70 +114,88 @@ class PrnsRuntimeService : Service() {
     return START_STICKY
   }
 
-  internal fun refreshBluetooth() {
-    if (!bridgePrepared || finishing || serviceDestroyed || !PrnsAndroidRuntime.admission.isOwnerActive(this)) return
+  internal fun refreshBluetooth(): Boolean {
+    if (!bridgePrepared || finishing || serviceDestroyed || !PrnsAndroidRuntime.admission.isOwnerActive(this)) return false
     bluetooth?.setAppForeground(PrnsAndroidRuntime.appForeground)
     if (PrnsAndroidRuntime.bluetoothReady(this)) {
       if (bluetooth?.status?.state in setOf(PrnsBluetoothLink.State.Stopping, PrnsBluetoothLink.State.Failed, PrnsBluetoothLink.State.Unavailable)) {
-        if (bluetooth?.stop() == true) bluetooth = null
+        if (bluetooth?.stop() != true) return false
+        bluetooth = null
       }
       if (bluetooth == null) {
-        val generation = ++bluetoothGeneration
+        // A replacement listener receives a new Android PSM. Retire the native
+        // generation BEFORE opening it, not from its later publication callback:
+        // that would start two scans and cancel a Check admitted in between.
+        if (bluetoothGeneration.restartBeforeReplacement(engineRunning)) {
+          return reconnectBluetooth()
+        }
+        val generation = bluetoothGeneration.beginListener()
         val candidate = PrnsBluetoothLink(
           applicationContext,
           onStatus = { status ->
             PrnsAndroidRuntime.lifecycle.execute {
-              if (generation == bluetoothGeneration && ownsRuntime && !finishing && PrnsAndroidRuntime.admission.isOwnerActive(this)) {
+              if (bluetoothGeneration.isCurrent(generation) && ownsRuntime && !finishing && PrnsAndroidRuntime.admission.isOwnerActive(this)) {
                 PrnsAndroidRuntime.update(applicationContext, error = status.reason)
               }
             }
           },
           onPsmPublished = { psm ->
             PrnsAndroidRuntime.lifecycle.execute {
-              if (generation == bluetoothGeneration && ownsRuntime && !finishing && PrnsAndroidRuntime.admission.isOwnerActive(this)) {
-                val previous = publishedPsm
-                publishedPsm = psm
-                if (previous != null && previous != psm && engineRunning) reconnectBluetooth()
+              if (bluetoothGeneration.isCurrent(generation) && ownsRuntime && !finishing && PrnsAndroidRuntime.admission.isOwnerActive(this)) {
+                if (bluetoothGeneration.publish(generation, psm) && engineRunning) reconnectBluetooth()
               }
             }
           },
         )
         candidate.setAppForeground(PrnsAndroidRuntime.appForeground)
         if (candidate.start()) bluetooth = candidate
-        else if (!candidate.stop()) bluetooth = candidate
+        else if (!candidate.stop()) {
+          bluetooth = candidate
+          return false
+        }
       }
     } else if (bluetooth != null) {
       if (bluetooth?.stop() == true) bluetooth = null
-      else PrnsAndroidRuntime.update(this, error = "Bluetooth is still stopping")
+      else {
+        PrnsAndroidRuntime.update(this, error = "Bluetooth is still stopping")
+        return false
+      }
     }
+    return true
   }
 
-  private fun reconnectBluetooth() {
-    if (finishing || serviceDestroyed || !PrnsAndroidRuntime.admission.isOwnerActive(this)) return
+  private fun reconnectBluetooth(): Boolean {
+    if (finishing || serviceDestroyed || !PrnsAndroidRuntime.admission.isOwnerActive(this)) return false
     // Upstream currently samples the local L2CAP PSM only at interface startup.
     // A replacement listener therefore needs a full, explicit generation restart.
+    // The public disable/enable API has no completion acknowledgement, so it
+    // cannot safely replace this ordered drain with an immediate enable toggle.
     // Keep the service/identity, but do not pretend unrelated TCP is uninterrupted.
-    val input = getSharedPreferences(PREFERENCES, MODE_PRIVATE).getString("startInput", null) ?: return
-    try {
+    val input = getSharedPreferences(PREFERENCES, MODE_PRIVATE).getString("startInput", null) ?: return false
+    return try {
       PrnsAndroidRuntime.update(this, "stopping", "Reconnecting after Bluetooth changed")
+      // Retire callbacks already queued by the old listener before draining it.
+      bluetoothGeneration.retireListener()
       check(bluetooth?.stop() ?: true) { "Bluetooth workers are still stopping" }
       bluetooth = null
       check(isStopped(PrnsNative.nativeCall("stop", null, null))) { "Native node is still stopping" }
       check(PrnsNative.nativeReleaseBluetooth()) { "Previous Bluetooth session is still stopping" }
       bridgePrepared = false
       engineRunning = false
-      publishedPsm = null
+      bluetoothGeneration.nativeStopped()
       PrnsAndroidRuntime.update(this, "starting")
       check(PrnsNative.nativePrepareBluetooth()) { "Could not prepare Bluetooth" }
       bridgePrepared = true
-      refreshBluetooth()
+      check(refreshBluetooth()) { "Bluetooth workers are still stopping" }
       val outcome = PrnsAndroidRuntime.consume(PrnsNative.nativeCall("start", PrnsAndroidRuntime.storagePath(this), input.toByteArray(Charsets.UTF_8)))
       check(JSONObject(outcome).optString("type") in setOf("started", "alreadyRunning")) { "Could not restart the node after Bluetooth changed" }
       engineRunning = true
       PrnsAndroidRuntime.update(this, "running")
+      true
     } catch (error: Exception) {
       val cleanupFailure = runCatching { cleanupFailedStart() }.exceptionOrNull()
       PrnsAndroidRuntime.update(this, "failed", cleanupFailure?.message ?: error.message)
+      false
     }
   }
 
@@ -192,7 +209,7 @@ class PrnsRuntimeService : Service() {
       if (isStopped(outcome) && PrnsNative.nativeReleaseBluetooth()) {
         bridgePrepared = false
         engineRunning = false
-        publishedPsm = null
+        bluetoothGeneration.nativeStopped()
         finishing = true
         releaseDestroyedOwner()
         stopSelf()
@@ -212,7 +229,7 @@ class PrnsRuntimeService : Service() {
     if (stopped && PrnsNative.nativeReleaseBluetooth()) {
       bridgePrepared = false
       engineRunning = false
-      publishedPsm = null
+      bluetoothGeneration.nativeStopped()
       finishing = true
       releaseDestroyedOwner()
       PrnsAndroidRuntime.update(this, "stopped")
