@@ -343,3 +343,20 @@ test("generated snapshot codecs preserve canonical host brands, safe counters, a
   expect(result.localHost.inner.host.runtime.rxBytes).toBe(maximum);
   expect(result.localHost.inner.host.interfaces[0]?.interfaceId).toBeInstanceOf(Uint8Array);
 });
+
+test("supports React Native's actual AbortSignal polyfill without modern convenience methods", async () => {
+  const { AbortController: NativeAbortController } =
+    jest.requireActual<typeof import("abort-controller")>("abort-controller");
+  const controller = new NativeAbortController();
+  // React Native exposes this older polyfill as the global AbortSignal.
+  const signal = controller.signal as AbortSignal;
+  expect(signal.throwIfAborted).toBeUndefined();
+  const { runtime, api } = setup();
+  await runtime.readDevelopmentNodeSnapshot(signal);
+  expect(api.readSnapshot).toHaveBeenCalledWith({ signal });
+  controller.abort();
+  await expect(runtime.readDevelopmentNodeSnapshot(signal)).rejects.toMatchObject({
+    name: "AbortError",
+  });
+  expect(api.readSnapshot).toHaveBeenCalledTimes(1);
+});

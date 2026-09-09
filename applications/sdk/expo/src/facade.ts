@@ -1,10 +1,10 @@
+import type * as Bindings from "@prns-internal/native-bindings";
 import {
   bindingModule,
   HOST_CONTRACT_FINGERPRINT,
   NATIVE_CONTRACT_FINGERPRINT,
 } from "@prns-internal/native-bindings";
-import type * as Bindings from "@prns-internal/native-bindings";
-import type { FfiConverter } from "@ubjs/core";
+import { type FfiConverter, UniffiInternalError } from "@ubjs/core";
 import type { PrnsAppNativeModule } from "./native";
 
 export type * from "@prns-internal/native-bindings";
@@ -33,6 +33,11 @@ const codecs = bindingModule.converters;
 const asyncOptions = (signal: AbortSignal | undefined) =>
   signal === undefined ? undefined : { signal };
 
+// RN's AbortSignal polyfill has .aborted and listeners, but no throwIfAborted.
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted === true) throw new UniffiInternalError.AbortError();
+}
+
 /**
  * Domain names and platform admission around the generated functions. Values
  * pass through unchanged; the native supervisor owns the process and storage.
@@ -45,7 +50,7 @@ export function createDevelopmentRuntime(
   let storagePreparation: Promise<void> | undefined;
 
   const bindings = async (signal?: AbortSignal) => {
-    signal?.throwIfAborted();
+    throwIfAborted(signal);
     // Require the platform capability before installing the native player.
     getNativeModule();
     if (verifiedBindings === undefined) {
@@ -66,7 +71,7 @@ export function createDevelopmentRuntime(
         });
     }
     const api = await verifiedBindings;
-    signal?.throwIfAborted();
+    throwIfAborted(signal);
     return api;
   };
   const decode = async <T>(
@@ -100,7 +105,7 @@ export function createDevelopmentRuntime(
     const api = await bindings(signal);
     if (preparation === "storage") await prepareStorage();
     if (preparation === "outbound") await getNativeModule().prepareOutbound();
-    signal?.throwIfAborted();
+    throwIfAborted(signal);
     return operation(api);
   };
 
