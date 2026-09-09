@@ -8,7 +8,7 @@ import type {
   MeasureLxmfTextOutcome,
   SendDirectTextOutcome,
 } from "@prns-internal/expo";
-import { fireEvent, render, waitFor } from "@testing-library/react-native";
+import { act, fireEvent, render, waitFor } from "@testing-library/react-native";
 import { destinationHash } from "personal-rns/contract";
 import type { ReactNode } from "react";
 import type { RuntimeCommandResult } from "@/native/development-runtime-context";
@@ -72,6 +72,15 @@ const mockContact: Contact = {
   identity: undefined,
   alias: "Saved alias",
   pinned: false,
+};
+const waitingAccessorySetup: Bindings.AccessorySetupStatus = {
+  phase: "setupRequired",
+  picker: "idle",
+  authorizedAccessoryCount: 0,
+  nativeStart: "notRequested",
+  restorationLaunchRequested: false,
+  revision: 1,
+  lastError: null,
 };
 const mockSnapshot: DevelopmentNodeSnapshot = {
   contractFingerprint: "test-contract",
@@ -149,7 +158,8 @@ const mockListContacts = jest.fn(async () =>
 );
 const mockContactRuntime = { listContacts: mockListContacts };
 let mockPhase: "unavailable" | "starting" | "ready" | "failed" = "ready";
-let mockActiveSnapshot: DevelopmentNodeSnapshot = mockSnapshot;
+let mockActiveSnapshot: DevelopmentNodeSnapshot | null = mockSnapshot;
+let mockAccessorySetup: Bindings.AccessorySetupStatus | null = null;
 let mockLifecycleFailure: string | null = null;
 jest.mock("expo-router", () => ({
   Link: ({ children }: { readonly children: ReactNode }) => children,
@@ -160,6 +170,7 @@ jest.mock("@/native/development-runtime-context", () => ({
     availability: { type: "available", platform: "ios" },
     phase: mockPhase,
     snapshot: mockActiveSnapshot,
+    accessorySetup: mockAccessorySetup,
     lifecycleFailure: mockLifecycleFailure,
     backgroundFailure: null,
     refreshSnapshot: mockRefreshSnapshot,
@@ -182,6 +193,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockPhase = "ready";
   mockActiveSnapshot = mockSnapshot;
+  mockAccessorySetup = null;
   mockLifecycleFailure = null;
   mockListLxmfPeers.mockResolvedValue({
     type: "outcome",
@@ -404,6 +416,102 @@ describe("durable LXMF screens", () => {
       limit: 100,
     });
   });
+  test("loads saved conversations and contact names during cold Bluetooth authorization wait", async () => {
+    mockPhase = "starting";
+    mockActiveSnapshot = null;
+    mockAccessorySetup = waitingAccessorySetup;
+    const screen = render(<InboxScreen />);
+    expect(await screen.findByText("Saved alias")).toBeTruthy();
+    expect(screen.getByText("Open conversation")).toBeTruthy();
+    expect(screen.getByText("Check Bluetooth access")).toBeTruthy();
+    expect(screen.getAllByText("Bluetooth access needed")).toHaveLength(1);
+    expect(screen.queryByText("Messaging status")).toBeNull();
+    expect(screen.queryByText("Getting ready")).toBeNull();
+    expect(screen.queryByText("No conversations")).toBeNull();
+    expect(screen.queryByText("No messages are saved on this device.")).toBeNull();
+    expect(screen.queryByText("New message")).toBeNull();
+    expect(screen.queryByText("Share messaging address")).toBeNull();
+    expect(mockListContacts).toHaveBeenCalled();
+    expect(mockListLxmfPeers).not.toHaveBeenCalled();
+    expect(mockSendDirectText).not.toHaveBeenCalled();
+    expect(mockAnnounceLxmf).not.toHaveBeenCalled();
+  });
+  test("retains actual messaging health while Bluetooth access is needed", async () => {
+    mockPhase = "starting";
+    mockAccessorySetup = waitingAccessorySetup;
+    mockActiveSnapshot = {
+      ...mockSnapshot,
+      lxmf: { state: Bindings.LxmfHealthState.Degraded, inboundOverflowCount: 0n },
+    };
+    const screen = render(<InboxScreen />);
+    expect(await screen.findByText("Saved alias")).toBeTruthy();
+    expect(screen.getByText("Messaging status")).toBeTruthy();
+    expect(screen.getByText("Limited")).toBeTruthy();
+    expect(screen.getByText("Messages may be delayed until the connection recovers.")).toBeTruthy();
+    expect(screen.getAllByText("Bluetooth access needed")).toHaveLength(1);
+  });
+  test("offers exact durable Retry and Cancel while waiting for Bluetooth without a native session", async () => {
+    mockPhase = "starting";
+    mockActiveSnapshot = null;
+    mockAccessorySetup = waitingAccessorySetup;
+    mockListLxmfMessages.mockResolvedValue({
+      type: "outcome",
+      outcome: Bindings.LxmfMessageListOutcome.Listed.new({
+        messages: [mockFailedMessage, mockQueuedMessage],
+      }),
+    });
+    const screen = render(<ConversationScreen destination={mockDestination} />);
+    expect(await screen.findByText("Retry me")).toBeTruthy();
+    fireEvent.press(screen.getByText("Retry message"));
+    expect(await screen.findByText("Message queued to retry.")).toBeTruthy();
+    expect(mockRetryLxmfMessage).toHaveBeenCalledTimes(1);
+    expect(mockRetryLxmfMessage).toHaveBeenCalledWith(7n);
+    fireEvent.press(screen.getByText("Cancel queued message"));
+    expect(await screen.findByText("Message cancelled.")).toBeTruthy();
+    expect(mockCancelLxmfMessage).toHaveBeenCalledTimes(1);
+    expect(mockCancelLxmfMessage).toHaveBeenCalledWith(8n);
+    expect(screen.queryByLabelText("Message")).toBeNull();
+    expect(mockListLxmfPeers).not.toHaveBeenCalled();
+    expect(mockSendDirectText).not.toHaveBeenCalled();
+  });
+  test.each(["inbox", "conversation"] as const)(
+    "does not claim the %s is empty before the saved-message read completes",
+    async (surface) => {
+      mockPhase = "starting";
+      mockActiveSnapshot = null;
+      let complete: ((result: RuntimeCommandResult<LxmfMessageListOutcome>) => void) | undefined;
+      mockListLxmfMessages.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            complete = resolve;
+          }),
+      );
+      const screen = render(
+        surface === "inbox" ? (
+          <InboxScreen />
+        ) : (
+          <ConversationScreen destination={mockDestination} />
+        ),
+      );
+      expect(screen.getByText("Loading saved messages…")).toBeTruthy();
+      expect(screen.queryByText("No conversations")).toBeNull();
+      expect(screen.queryByText("No messages are saved on this device.")).toBeNull();
+      expect(screen.queryByText("No messages with this contact yet.")).toBeNull();
+      await act(async () =>
+        complete?.({
+          type: "outcome",
+          outcome: Bindings.LxmfMessageListOutcome.Listed.new({ messages: [] }),
+        }),
+      );
+      expect(
+        await screen.findByText(
+          surface === "inbox"
+            ? "No messages are saved on this device."
+            : "No messages with this contact yet.",
+        ),
+      ).toBeTruthy();
+    },
+  );
 });
 
 test("retains the native storage reset outcome through an offline mailbox read", async () => {
@@ -418,4 +526,6 @@ test("retains the native storage reset outcome through an offline mailbox read",
   expect(await screen.findByText("App reset required")).toBeTruthy();
   expect(screen.getByText("Open recovery")).toBeTruthy();
   expect(screen.queryByText(/private storage detail|storage bootstrap failed/)).toBeNull();
+  expect(screen.queryByText("No conversations")).toBeNull();
+  expect(screen.queryByText("No messages are saved on this device.")).toBeNull();
 });

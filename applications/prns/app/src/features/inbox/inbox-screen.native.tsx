@@ -54,6 +54,7 @@ type LxmfData = {
   readonly messages: readonly LxmfMessage[];
   readonly contacts: readonly Contact[];
   readonly pending: boolean;
+  readonly messagesLoaded: boolean;
   readonly failure: string | Bindings.NativeStoragePreparationError | null;
   readonly refresh: () => Promise<void>;
 };
@@ -65,6 +66,7 @@ function useLxmfData(peer: Uint8Array | null): LxmfData {
   const [messages, setMessages] = useState<readonly LxmfMessage[]>([]);
   const [contacts, setContacts] = useState<readonly Contact[]>([]);
   const [pending, setPending] = useState(false);
+  const [messagesLoaded, setMessagesLoaded] = useState(false);
   const [failure, setFailure] = useState<string | Bindings.NativeStoragePreparationError | null>(
     null,
   );
@@ -74,9 +76,11 @@ function useLxmfData(peer: Uint8Array | null): LxmfData {
     development.snapshot?.runtime === Bindings.DevelopmentNodeRuntime.Running;
 
   const refresh = useCallback(async () => {
-    if (development.availability.type !== "available" || development.phase === "starting") {
+    if (development.availability.type !== "available") {
       return;
     }
+    // Saved data is storage-owned, even before accessory authorization permits
+    // a network generation. The public facade prepares that owner independently.
     const selectedPeer = peerKey === null ? null : parseDestinationHash(peerKey);
     if (peerKey !== null && selectedPeer === null) {
       setFailure("The selected conversation destination is invalid.");
@@ -97,7 +101,14 @@ function useLxmfData(peer: Uint8Array | null): LxmfData {
     } else {
       applyPeerResult(peerResult, setPeers, setFailure);
     }
-    applyMessageResult(messageResult, setMessages, setFailure);
+    applyMessageResult(
+      messageResult,
+      (messages) => {
+        setMessages(messages);
+        setMessagesLoaded(true);
+      },
+      setFailure,
+    );
     if (contactRuntime.runtime !== null) {
       try {
         applyContactResult(await contactRuntime.runtime.listContacts(), setContacts);
@@ -115,19 +126,16 @@ function useLxmfData(peer: Uint8Array | null): LxmfData {
     development.availability.type,
     development.listLxmfMessages,
     development.listLxmfPeers,
-    development.phase,
     nodeRunning,
     peerKey,
   ]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: lifecycle and snapshot changes refresh durable rows even when no network session is available.
   useEffect(() => {
-    if (development.phase === "starting" && development.snapshot?.revision === undefined) {
-      return;
-    }
     void refresh();
   }, [development.phase, development.snapshot?.revision, refresh]);
 
-  return { peers, messages, contacts, pending, failure, refresh };
+  return { peers, messages, contacts, pending, messagesLoaded, failure, refresh };
 }
 
 export function InboxScreen() {
@@ -168,18 +176,7 @@ export function InboxScreen() {
         <UnavailableCard platform={development.availability.platform} />
       ) : (
         <>
-          {nodeRunning ? null : (
-            <Card>
-              <Badge tone="warning">
-                {development.phase === "starting" ? "Getting ready" : "Messaging offline"}
-              </Badge>
-              <BodyText>
-                {development.phase === "starting"
-                  ? "Messaging will be available in a moment."
-                  : "Saved messages remain available. See Nodes > This device for diagnostic details."}
-              </BodyText>
-            </Card>
-          )}
+          {nodeRunning ? null : <MessagingOfflineCard />}
           <View style={styles.actions}>
             {nodeRunning ? (
               <NavigationLink href="/inbox/compose">New message</NavigationLink>
@@ -205,15 +202,22 @@ export function InboxScreen() {
             </Card>
           )}
           {data.failure === null ? null : <FailureCard detail={data.failure} />}
-          {conversations.length === 0 ? (
+          {!data.messagesLoaded && data.failure === null ? (
             <Card>
-              <Badge>No conversations</Badge>
-              <BodyText>
-                {nodeRunning
-                  ? "Share your messaging address or start a new message."
-                  : "No messages are saved on this device."}
-              </BodyText>
+              <BodyText muted>Loading saved messages…</BodyText>
             </Card>
+          ) : null}
+          {conversations.length === 0 ? (
+            data.messagesLoaded && data.failure === null && !data.pending ? (
+              <Card>
+                <Badge>No conversations</Badge>
+                <BodyText>
+                  {nodeRunning
+                    ? "Share your messaging address or start a new message."
+                    : "No messages are saved on this device."}
+                </BodyText>
+              </Card>
+            ) : null
           ) : (
             conversations.map((destination) => {
               const encoded = formatContactHash(destination);
@@ -253,7 +257,7 @@ export function InboxScreen() {
           )}
           {nodeRunning ? null : (
             <BodyText muted>
-              Start this device&apos;s node to find contacts or write a new message.
+              Open Nodes to check this device&apos;s connection before writing a new message.
             </BodyText>
           )}
         </>
@@ -303,18 +307,7 @@ export function ConversationScreen({ destination }: { readonly destination: Uint
       <Badge>Messages</Badge>
       <ScreenHeading>{peerLabel(destination, data.peers, data.contacts)}</ScreenHeading>
       <KeyValue label="Destination" value={encoded} />
-      {nodeRunning ? null : (
-        <Card>
-          <Badge tone="warning">
-            {development.phase === "starting" ? "Getting ready" : "Messaging offline"}
-          </Badge>
-          <BodyText>
-            {development.phase === "starting"
-              ? "Messaging will be available in a moment."
-              : "You can still read saved messages, retry failed messages, or cancel queued messages."}
-          </BodyText>
-        </Card>
-      )}
+      {nodeRunning ? null : <MessagingOfflineCard />}
       {peer?.requiredStampCost === undefined ? null : (
         <Card>
           <Badge tone="warning">Sending unavailable</Badge>
@@ -332,13 +325,22 @@ export function ConversationScreen({ destination }: { readonly destination: Uint
       {nodeRunning ? (
         <Composer destination={destination} onSettled={data.refresh} />
       ) : (
-        <BodyText muted>Start this device&apos;s node to compose a new message.</BodyText>
+        <BodyText muted>
+          Open Nodes to check this device&apos;s connection before writing a new message.
+        </BodyText>
       )}
       <Subheading>Messages</Subheading>
-      {data.messages.length === 0 ? (
+      {!data.messagesLoaded && data.failure === null ? (
         <Card>
-          <BodyText muted>No messages with this contact yet.</BodyText>
+          <BodyText muted>Loading saved messages…</BodyText>
         </Card>
+      ) : null}
+      {data.messages.length === 0 ? (
+        data.messagesLoaded && data.failure === null && !data.pending ? (
+          <Card>
+            <BodyText muted>No messages with this contact yet.</BodyText>
+          </Card>
+        ) : null
       ) : (
         data.messages.map((message) => (
           <MessageCard
@@ -390,13 +392,7 @@ export function ComposeScreen({
     return (
       <Screen>
         <ScreenHeading>Compose</ScreenHeading>
-        <Card>
-          <Badge>{development.phase === "starting" ? "Getting ready" : "Messaging offline"}</Badge>
-          <BodyText>
-            Start this device&apos;s node before writing a message. See Nodes &gt; This device for
-            diagnostic details.
-          </BodyText>
-        </Card>
+        <MessagingOfflineCard />
         <NavigationLink href="/inbox">Back to Inbox</NavigationLink>
       </Screen>
     );
@@ -675,9 +671,32 @@ function mailboxMutationLabel(
   }
 }
 
+function MessagingOfflineCard() {
+  const development = useDevelopmentRuntime();
+  const accessNeeded = development.accessorySetup?.phase === "setupRequired";
+  return (
+    <Card>
+      <Badge tone="warning">
+        {accessNeeded
+          ? "Bluetooth access needed"
+          : development.phase === "starting"
+            ? "Getting ready"
+            : "Messaging offline"}
+      </Badge>
+      <BodyText>
+        You can still read saved messages, retry failed messages, or cancel queued messages.
+      </BodyText>
+      {accessNeeded ? <NavigationLink href="/nodes">Check Bluetooth access</NavigationLink> : null}
+    </Card>
+  );
+}
+
 function LxmfHealthCard() {
   const development = useDevelopmentRuntime();
   const health = development.snapshot?.lxmf;
+  if (health === undefined && development.accessorySetup?.phase === "setupRequired") {
+    return null;
+  }
   if (health?.state === Bindings.LxmfHealthState.Ready) {
     return <Badge>Messaging ready</Badge>;
   }

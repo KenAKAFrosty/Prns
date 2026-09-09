@@ -18,6 +18,9 @@ import { destinationHash, identityHash, interfaceId } from "personal-rns/contrac
 import { useLocalSearchParams } from "expo-router";
 import { type EffectCallback, type ReactNode, useEffect } from "react";
 import { AppState, type AppStateStatus } from "react-native";
+import { ContactsScreen } from "@/features/contacts/contacts-screen";
+import { ConversationScreen, InboxScreen } from "@/features/inbox/inbox-screen.native";
+import { ContactRuntimeProvider } from "@/native/contact-runtime-context";
 import {
   DevelopmentRuntimeProvider,
   type DevelopmentRuntimeView,
@@ -1199,6 +1202,126 @@ describe("Foundation 1 Nodes runtime binding", () => {
         }),
       ),
     );
+  });
+  it("opens cold local Contacts and Inbox while accessory authorization keeps the network unacquired", async () => {
+    const stop = jest.fn();
+    let message: Bindings.LxmfMessage = {
+      localRecordId: 7n,
+      messageId: new Uint8Array(32).fill(0x77),
+      source: new Uint8Array(16).fill(0x11),
+      destination: observedDestination,
+      timestamp: 1700000000000n,
+      title: Bindings.LxmfText.Utf8.new({ value: "Saved offline message" }),
+      content: Bindings.LxmfText.Utf8.new({ value: "Preserve this exact saved record" }),
+      direction: Bindings.LxmfDirection.Outbound,
+      verification: Bindings.LxmfVerification.Verified,
+      deliveryState: Bindings.LxmfDeliveryState.Failed.new({
+        failedAttempts: 1n,
+        lastFailure: Bindings.LxmfDeliveryFailure.DeliveryTimedOut,
+      }),
+    };
+    const listContacts = jest.fn(async () =>
+      Bindings.ContactListOutcome.Listed.new({
+        contacts: [
+          {
+            destination: observedDestination,
+            identity: undefined,
+            alias: "Offline contact",
+            pinned: true,
+          },
+        ],
+      }),
+    );
+    const listLxmfMessages = jest.fn(async () =>
+      Bindings.LxmfMessageListOutcome.Listed.new({ messages: [message] }),
+    );
+    const retryLxmfMessage = jest.fn(async (localRecordId: bigint) => {
+      message = {
+        ...message,
+        deliveryState: Bindings.LxmfDeliveryState.Queued.new({ failedAttempts: 1n }),
+      };
+      return Bindings.RetryLxmfMessageOutcome.Accepted.new({ localRecordId });
+    });
+    const cancelLxmfMessage = jest.fn(async (localRecordId: bigint) => {
+      message = {
+        ...message,
+        deliveryState: Bindings.LxmfDeliveryState.Cancelled.new({ cancelledAt: 1700000000456n }),
+      };
+      return Bindings.CancelLxmfMessageOutcome.Cancelled.new({ localRecordId });
+    });
+    const listLxmfPeers = jest.fn(async () =>
+      Bindings.LxmfPeerListOutcome.Listed.new({ peers: [] }),
+    );
+    const base = fakeProvider(stop, {
+      listContacts,
+      listLxmfMessages,
+      retryLxmfMessage,
+      cancelLxmfMessage,
+      listLxmfPeers,
+    });
+    if (!("acquire" in base)) throw new Error("expected an available iOS provider");
+    const acquire = jest.fn(base.acquire);
+    const showPicker = jest.fn(async () => ({ type: "completed" as const }));
+    const provider = {
+      ...base,
+      acquire,
+      accessorySetup: {
+        ...readyAccessorySetup,
+        readStatus: async (): Promise<AccessorySetupStatus> => ({
+          phase: "setupRequired",
+          picker: "idle",
+          authorizedAccessoryCount: 0,
+          nativeStart: "notRequested",
+          restorationLaunchRequested: false,
+          revision: 1,
+          lastError: null,
+        }),
+        showPicker,
+      },
+    };
+    const publish = jest.fn<void, [DevelopmentRuntimeView]>();
+    const tree = (children: ReactNode) => (
+      <ContactRuntimeProvider provider={provider}>
+        <DevelopmentRuntimeProvider provider={provider}>
+          <RuntimeViewProbe publish={publish} />
+          {children}
+        </DevelopmentRuntimeProvider>
+      </ContactRuntimeProvider>
+    );
+    const view = render(
+      tree(
+        <>
+          <ContactsScreen />
+          <InboxScreen />
+        </>,
+      ),
+    );
+    await waitFor(() => expect(view.getAllByText("Offline contact").length).toBe(2));
+    expect(view.getByText("Open conversation")).toBeTruthy();
+    expect(view.queryByText("No conversations")).toBeNull();
+    expect(view.queryByText("Getting ready")).toBeNull();
+    expect(publish).toHaveBeenLastCalledWith(
+      expect.objectContaining({ phase: "starting", snapshot: null }),
+    );
+    view.rerender(tree(<ConversationScreen destination={observedDestination} />));
+    expect(await view.findByText("Saved offline message")).toBeTruthy();
+    fireEvent.press(view.getByText("Retry message"));
+    expect(await view.findByText("Queued after 1 failed attempt")).toBeTruthy();
+    fireEvent.press(view.getByText("Cancel queued message"));
+    expect(await view.findByText("Message cancelled.")).toBeTruthy();
+    expect(retryLxmfMessage).toHaveBeenCalledTimes(1);
+    expect(retryLxmfMessage).toHaveBeenCalledWith(7n);
+    expect(cancelLxmfMessage).toHaveBeenCalledTimes(1);
+    expect(cancelLxmfMessage).toHaveBeenCalledWith(7n);
+    expect(message.messageId).toEqual(new Uint8Array(32).fill(0x77));
+    expect(listContacts).toHaveBeenCalled();
+    expect(listLxmfMessages).toHaveBeenCalled();
+    expect(acquire).not.toHaveBeenCalled();
+    expect(showPicker).not.toHaveBeenCalled();
+    expect(listLxmfPeers).not.toHaveBeenCalled();
+    expect(view.queryByText("Send message")).toBeNull();
+    view.unmount();
+    expect(stop).not.toHaveBeenCalled();
   });
   it("keeps durable mailbox commands available after generation acquisition fails", async () => {
     const stop = jest.fn();
