@@ -1932,6 +1932,52 @@ mod tests {
     }
 
     #[test]
+    fn a_close_link_command_refreshes_the_controller_pairing_schedule() {
+        let mut engine = engine_with_active_link();
+        configure_controller(&mut engine);
+        let (begun, begin_delta) = execute(
+            &mut engine,
+            PrnsCommand::BeginRemoteControlControllerPairing(BeginRemoteControlControllerPairing {
+                context: context(),
+                invitation_code: invitation_code(),
+                pairing_expires_at: PAIRING_EXPIRES_AT,
+            }),
+            STARTED_AT,
+        );
+        assert!(matches!(
+            begun,
+            Settlement::BeginRemoteControlControllerPairing(Ok(_))
+        ));
+        assert_eq!(
+            begin_delta.remote_control_pairing,
+            WakeSchedule::At(PAIRING_EXPIRES_AT),
+        );
+        let interfaces = [routable_descriptor(lane())];
+        let mut cached = engine.wake_schedules(AttachedInterfaces::new(&interfaces));
+        // No request is dispatched: this tests pairing-state cleanup separately
+        // from the request-receipt schedule owned by the same Link.
+        let (closed, close_delta) = execute(
+            &mut engine,
+            PrnsCommand::CloseLink(crate::engine::CloseLink {
+                link_id: context().link_id(),
+            }),
+            OFFERED_AT,
+        );
+        assert_eq!(closed, Settlement::CloseLink(Ok(())));
+        assert_eq!(
+            engine.remote_control_controller_pairing.view(),
+            RemoteControlControllerPairingView::Idle,
+        );
+        assert!(engine.links.is_empty());
+        cached.merge(close_delta);
+        assert_eq!(cached.remote_control_pairing, WakeSchedule::Idle);
+        assert_eq!(
+            cached.remote_control_pairing,
+            engine.remote_control_pairing_wake(),
+        );
+    }
+
+    #[test]
     fn retiring_the_exchange_link_aborts_and_journals_controller_pairing() {
         let mut engine = EngineState::<TestStorageLayout>::default();
         let controller = configure_controller(&mut engine);
