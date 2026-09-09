@@ -83,6 +83,7 @@ export type DevelopmentRuntimeView = {
   ) => Promise<RuntimeCommandResult<RemoteControlPairingCommandOutcome>>;
   readonly describeTarget: (
     input: DescribeRemoteControlTargetInput,
+    signal?: AbortSignal,
   ) => Promise<RuntimeCommandResult<RemoteControlDescribeOutcome>>;
   readonly saveObservedDestination: (
     destination: DestinationHash,
@@ -141,6 +142,11 @@ export function DevelopmentRuntimeProvider({
   const acquisitionPending = useRef(true);
   const previousRelease = useRef(Promise.resolve());
   const session = useRef<DevelopmentRuntimeSession | null>(null);
+  const readRequests = useRef(new Set<AbortController>());
+  const cancelReads = useCallback(() => {
+    for (const request of readRequests.current) request.abort();
+    readRequests.current.clear();
+  }, []);
   const latestRevision = useRef<bigint | null>(null);
   const refreshActiveState = useRef(refreshActive);
   refreshActiveState.current = refreshActive;
@@ -218,6 +224,7 @@ export function DevelopmentRuntimeProvider({
     const owner = {};
     stopOwner.current = owner;
     stopRevision.current += 1;
+    cancelReads();
     setStoppingNode(true);
     setStopFailure(null);
     try {
@@ -244,7 +251,7 @@ export function DevelopmentRuntimeProvider({
         }
       }
     }
-  }, [androidRuntime.refresh, publishSnapshot, selectedProvider]);
+  }, [androidRuntime.refresh, cancelReads, publishSnapshot, selectedProvider]);
 
   useEffect(() => {
     setAccessorySetup(null);
@@ -356,6 +363,7 @@ export function DevelopmentRuntimeProvider({
       mounted = false;
       acquisitionPending.current = true;
       session.current = null;
+      cancelReads();
       previousRelease.current = Promise.all([
         previousRelease.current,
         Effect.runPromise(Scope.close(scope, Exit.void)),
@@ -363,6 +371,7 @@ export function DevelopmentRuntimeProvider({
     };
   }, [
     accessorySetupAcquisitionState,
+    cancelReads,
     publishSnapshot,
     refreshIntervalMillis,
     selectedProvider,
@@ -383,6 +392,7 @@ export function DevelopmentRuntimeProvider({
   const run = useCallback(
     async <Outcome,>(
       operation: (active: DevelopmentRuntimeSession) => Effect.Effect<Outcome, unknown>,
+      signal?: AbortSignal,
     ): Promise<RuntimeCommandResult<Outcome>> => {
       const active = session.current;
       const admittedStopRevision = stopRevision.current;
@@ -391,7 +401,10 @@ export function DevelopmentRuntimeProvider({
       }
       let result: RuntimeCommandResult<Outcome>;
       try {
-        result = { type: "outcome", outcome: await Effect.runPromise(operation(active)) };
+        result = {
+          type: "outcome",
+          outcome: await Effect.runPromise(operation(active), { signal }),
+        };
       } catch (failure) {
         result = commandFailure(failure);
       }
@@ -409,13 +422,35 @@ export function DevelopmentRuntimeProvider({
     [unavailableResult],
   );
 
+  // Reads belong to their caller and observer session. Admitted writes and
+  // retained announcements deliberately do not use this cancellation group.
+  const runRead = useCallback(
+    async <Outcome,>(
+      operation: (active: DevelopmentRuntimeSession) => Effect.Effect<Outcome, unknown>,
+      signal?: AbortSignal,
+    ): Promise<RuntimeCommandResult<Outcome>> => {
+      const request = new AbortController();
+      const abort = () => request.abort();
+      if (signal?.aborted) abort();
+      else signal?.addEventListener("abort", abort, { once: true });
+      readRequests.current.add(request);
+      try {
+        return await run(operation, request.signal);
+      } finally {
+        signal?.removeEventListener("abort", abort);
+        readRequests.current.delete(request);
+      }
+    },
+    [run],
+  );
+
   const refreshSnapshot = useCallback(async () => {
-    const result = await run((active) => active.runtime.readDevelopmentNodeSnapshot);
+    const result = await runRead((active) => active.runtime.readDevelopmentNodeSnapshot);
     if (result.type === "outcome") {
       publishSnapshot(result.outcome);
     }
     return result;
-  }, [publishSnapshot, run]);
+  }, [publishSnapshot, runRead]);
 
   const initiatePairing = useCallback(
     async (input: InitiateRemoteControlPairingInput) => {
@@ -460,8 +495,11 @@ export function DevelopmentRuntimeProvider({
   );
 
   const describeTarget = useCallback(
-    async (input: DescribeRemoteControlTargetInput) => {
-      const result = await run((active) => active.runtime.describeRemoteControlTarget(input));
+    async (input: DescribeRemoteControlTargetInput, signal?: AbortSignal) => {
+      const result = await runRead(
+        (active) => active.runtime.describeRemoteControlTarget(input),
+        signal,
+      );
       if (
         result.type === "outcome" &&
         result.outcome.tag === Bindings.RemoteControlDescribeOutcome_Tags.Described
@@ -470,7 +508,7 @@ export function DevelopmentRuntimeProvider({
       }
       return result;
     },
-    [publishSnapshot, run],
+    [publishSnapshot, runRead],
   );
 
   const announceTarget = useCallback(

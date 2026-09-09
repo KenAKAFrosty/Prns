@@ -16,7 +16,7 @@ import { act, fireEvent, render, waitFor } from "@testing-library/react-native";
 import { Effect } from "effect";
 import { destinationHash, identityHash, interfaceId } from "personal-rns/contract";
 import { useLocalSearchParams } from "expo-router";
-import { type ReactNode, useEffect } from "react";
+import { type EffectCallback, type ReactNode, useEffect } from "react";
 import { AppState, type AppStateStatus } from "react-native";
 import {
   DevelopmentRuntimeProvider,
@@ -29,10 +29,16 @@ import * as developmentRuntimeContext from "@/native/development-runtime-context
 import { ManagedNodeScreen } from "./managed-node-screen";
 import { LocalNodeScreen, NodesScreen } from "./nodes-screen";
 import { PairNodeScreen } from "./pair-node-screen";
+let mockRouteFocused = true;
 jest.mock("expo-router", () => ({
   Link: ({ children }: { readonly children: ReactNode }) => children,
   useLocalSearchParams: jest.fn(() => ({ nodeId: "44444444444444444444444444444444" })),
   useRouter: () => ({ replace: jest.fn() }),
+  useFocusEffect: (effect: EffectCallback) => {
+    jest
+      .requireActual<typeof import("react")>("react")
+      .useEffect(() => (mockRouteFocused ? effect() : undefined), [effect, mockRouteFocused]);
+  },
 }));
 const observedDestination = destinationHash(new Uint8Array(16).fill(0x33));
 const observedIdentity = identityHash(new Uint8Array(16).fill(0x44));
@@ -207,8 +213,8 @@ function fakeProvider(
       Effect.promise(() => runtime.approveRemoteControlPairing(input)),
     rejectRemoteControlPairing: (input) =>
       Effect.promise(() => runtime.rejectRemoteControlPairing(input)),
-    describeRemoteControlTarget: (input) =>
-      Effect.promise(() => runtime.describeRemoteControlTarget(input)),
+    describeRemoteControlTarget:
+      Bindings.makeEffectDevelopmentRuntime(runtime).describeRemoteControlTarget,
     announceRemoteControlTarget: (input) =>
       Effect.promise(() => runtime.announceRemoteControlTarget(input)),
     stopDevelopmentNode: Effect.promise(runtime.stopDevelopmentNode),
@@ -330,6 +336,7 @@ function stoppedSnapshot(revision = 3n): DevelopmentNodeSnapshot {
 }
 describe("Foundation 1 Nodes runtime binding", () => {
   beforeEach(() => {
+    mockRouteFocused = true;
     jest
       .mocked(useLocalSearchParams)
       .mockReturnValue({ nodeId: "44444444444444444444444444444444" });
@@ -1835,12 +1842,151 @@ describe("Foundation 1 Nodes runtime binding", () => {
     expect(
       view.queryAllByText(/E290|signed availability|upstream RemoteControl|bounded event lane/iu),
     ).toHaveLength(0);
-    expect(describeRemoteControlTarget).toHaveBeenCalledWith({
-      targetIdentityFingerprint: observedIdentity,
-    });
+    expect(describeRemoteControlTarget).toHaveBeenCalledWith(
+      { targetIdentityFingerprint: observedIdentity },
+      expect.any(AbortSignal),
+    );
     view.unmount();
     await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
   });
+  it("releases a pending Describe on blur without stopping the node, then admits a fresh check", async () => {
+    const stop = jest.fn();
+    const signals: AbortSignal[] = [];
+    let admitted = false;
+    const describeRemoteControlTarget = jest.fn<
+      ReturnType<DevelopmentRuntime["describeRemoteControlTarget"]>,
+      Parameters<DevelopmentRuntime["describeRemoteControlTarget"]>
+    >((_input, signal) => {
+      if (admitted) return Promise.resolve(Bindings.RemoteControlDescribeOutcome.Busy.new());
+      if (signal === undefined) throw new Error("Describe must carry caller cancellation");
+      admitted = true;
+      signals.push(signal);
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => {
+          admitted = false;
+          reject(new Error("caller cancelled"));
+        });
+      });
+    });
+    const provider = fakeProvider(
+      stop,
+      { describeRemoteControlTarget },
+      false,
+      Bindings.RemoteControlPairingState.Searching.new(),
+      [
+        {
+          targetIdentityFingerprint: observedIdentity,
+          destination: observedDestination,
+          controllerIdentityFingerprint: identityHash(new Uint8Array(16).fill(0x55)),
+          permittedRequests: [Bindings.RemoteControlRequestKind.Describe],
+        },
+      ],
+    );
+    const page = () => (
+      <DevelopmentRuntimeProvider provider={provider} refreshIntervalMillis={60000}>
+        <ManagedNodeScreen />
+      </DevelopmentRuntimeProvider>
+    );
+    const view = render(page());
+    fireEvent.press(await view.findByRole("button", { name: "Check node connection" }));
+    await waitFor(() => expect(signals).toHaveLength(1));
+    mockRouteFocused = false;
+    view.rerender(page());
+    await waitFor(() => expect(signals[0]?.aborted).toBe(true));
+    expect(admitted).toBe(false);
+    expect(stop).not.toHaveBeenCalled();
+    mockRouteFocused = true;
+    view.rerender(page());
+    fireEvent.press(view.getByRole("button", { name: "Check node connection" }));
+    await waitFor(() => expect(signals).toHaveLength(2));
+    expect(signals[1]?.aborted).toBe(false);
+    expect(view.queryByText("Could not check node")).toBeNull();
+    view.unmount();
+    await waitFor(() => expect(signals[1]?.aborted).toBe(true));
+  });
+
+  it.each(["release", "stop", "caller"] as const)(
+    "cancels a provider-owned Describe on %s without relying on screen cleanup",
+    async (reason) => {
+      const fixture = androidRestartFixture();
+      let signal: AbortSignal | undefined;
+      fixture.runtime.describeRemoteControlTarget = (_input, caller) => {
+        signal = caller;
+        return new Promise(() => {});
+      };
+      const publish = jest.fn<void, [DevelopmentRuntimeView]>();
+      const view = render(
+        <DevelopmentRuntimeProvider provider={fixture.provider} refreshIntervalMillis={60000}>
+          <RuntimeViewProbe publish={publish} />
+        </DevelopmentRuntimeProvider>,
+      );
+      await waitFor(() => expect(publish.mock.calls.at(-1)?.[0].phase).toBe("ready"));
+      const runtime = publish.mock.calls.at(-1)?.[0];
+      if (runtime === undefined) throw new Error("expected acquired runtime");
+      const caller = new AbortController();
+      const pending = runtime.describeTarget(
+        { targetIdentityFingerprint: observedIdentity },
+        caller.signal,
+      );
+      await waitFor(() => expect(signal).toBeDefined());
+      if (reason === "release") view.unmount();
+      else if (reason === "stop") await act(async () => runtime.stopNode());
+      else caller.abort();
+      await waitFor(() => expect(signal?.aborted).toBe(true));
+      await expect(pending).resolves.toMatchObject({ type: "operationFailure" });
+      if (reason !== "release") view.unmount();
+    },
+  );
+
+  it("unlocks the focused check button when Stop cancels a read but leaves the node running", async () => {
+    const fixture = androidRestartFixture();
+    fixture.runtime.stopDevelopmentNode.mockResolvedValueOnce(
+      Bindings.DevelopmentNodeStopOutcome.Failed.new({
+        stage: Bindings.DevelopmentNodeStopStage.Node,
+        detail: "stop did not finish",
+      }),
+    );
+    const signals: AbortSignal[] = [];
+    fixture.runtime.describeRemoteControlTarget = (_input, signal) => {
+      if (signal === undefined) throw new Error("expected caller signal");
+      signals.push(signal);
+      return new Promise(() => {});
+    };
+    const publish = jest.fn<void, [DevelopmentRuntimeView]>();
+    const view = render(
+      <DevelopmentRuntimeProvider provider={fixture.provider} refreshIntervalMillis={60000}>
+        <RuntimeViewProbe publish={publish} />
+        <ManagedNodeScreen />
+      </DevelopmentRuntimeProvider>,
+    );
+    await waitFor(() => expect(publish.mock.calls.at(-1)?.[0].phase).toBe("ready"));
+    await act(async () =>
+      fixture.emit(
+        snapshot(3n, false, Bindings.RemoteControlPairingState.Searching.new(), [
+          {
+            targetIdentityFingerprint: observedIdentity,
+            destination: observedDestination,
+            controllerIdentityFingerprint: observedIdentity,
+            permittedRequests: [Bindings.RemoteControlRequestKind.Describe],
+          },
+        ]),
+      ),
+    );
+    fireEvent.press(view.getByRole("button", { name: "Check node connection" }));
+    await waitFor(() => expect(signals).toHaveLength(1));
+    await act(async () => publish.mock.calls.at(-1)?.[0].stopNode());
+    await waitFor(() =>
+      expect(view.getByRole("button", { name: "Check node connection" })).toBeEnabled(),
+    );
+    expect(signals[0]?.aborted).toBe(true);
+    expect(publish.mock.calls.at(-1)?.[0].snapshot?.runtime).toBe(
+      Bindings.DevelopmentNodeRuntime.Running,
+    );
+    fireEvent.press(view.getByRole("button", { name: "Check node connection" }));
+    await waitFor(() => expect(signals).toHaveLength(2));
+    view.unmount();
+  });
+
   it("keeps a managed route truthful when Stop clears its current paired-node inventory", async () => {
     const fixture = androidRestartFixture();
     const target = {

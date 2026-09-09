@@ -4,8 +4,8 @@ import type {
   RemoteControlAnnounceOutcome,
   RemoteControlAnnounceStatus,
 } from "@prns-internal/expo";
-import { useLocalSearchParams } from "expo-router";
-import { useState } from "react";
+import { useFocusEffect, useLocalSearchParams } from "expo-router";
+import { useCallback, useRef, useState } from "react";
 
 import type { RuntimeCommandResult } from "@/native/development-runtime-context";
 import { useDevelopmentRuntime } from "@/native/development-runtime-context";
@@ -39,6 +39,19 @@ export function ManagedNodeScreen() {
     useState<RuntimeCommandResult<RemoteControlAnnounceOutcome> | null>(null);
   const [result, setResult] = useState<RuntimeCommandResult<RemoteControlDescribeOutcome> | null>(
     null,
+  );
+  const describeRequest = useRef<AbortController | null>(null);
+  useFocusEffect(
+    // biome-ignore lint/correctness/useExhaustiveDependencies: target and native lifetime changes invalidate the read even while this route stays focused.
+    useCallback(() => {
+      setPending(false);
+      return () => {
+        // Stack routes can stay mounted while another page is visible. Release
+        // this read on blur, target/generation change, and unmount alike.
+        describeRequest.current?.abort();
+        describeRequest.current = null;
+      };
+    }, [nodeId, runtime.phase, runtime.snapshot?.generationId, runtime.snapshot?.runtime]),
   );
 
   if (
@@ -164,13 +177,19 @@ export function ManagedNodeScreen() {
       targetAnnouncement.operationId === unknownSubmission.previousOperationId);
 
   const describe = async () => {
+    if (describeRequest.current !== null) return;
+    const request = new AbortController();
+    describeRequest.current = request;
     setResult(null);
     setPending(true);
-    const next = await runtime.describeTarget({
-      targetIdentityFingerprint: target.targetIdentityFingerprint,
-    });
-    setResult(next);
+    const next = await runtime.describeTarget(
+      { targetIdentityFingerprint: target.targetIdentityFingerprint },
+      request.signal,
+    );
+    if (describeRequest.current !== request) return;
+    describeRequest.current = null;
     setPending(false);
+    if (!request.signal.aborted) setResult(next);
   };
 
   const announce = async () => {

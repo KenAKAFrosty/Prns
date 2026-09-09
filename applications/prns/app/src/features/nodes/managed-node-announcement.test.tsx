@@ -7,7 +7,7 @@ import type {
 import type { RuntimeCommandResult } from "@/native/development-runtime-context";
 import { act, fireEvent, render, waitFor } from "@testing-library/react-native";
 import { destinationHash, identityHash } from "personal-rns/contract";
-import type { ReactNode } from "react";
+import type { EffectCallback, ReactNode } from "react";
 import { ManagedNodeScreen, announcementStatusMessage } from "./managed-node-screen";
 const target = {
   targetIdentityFingerprint: identityHash(new Uint8Array(16).fill(0x44)),
@@ -81,15 +81,22 @@ const mockRuntime = {
     }),
   ),
 };
+let mockRouteFocused = true;
 jest.mock("@/native/development-runtime-context", () => ({
   useDevelopmentRuntime: () => mockRuntime,
 }));
 jest.mock("expo-router", () => ({
   Link: ({ children }: { readonly children: ReactNode }) => children,
   useLocalSearchParams: () => ({ nodeId: "44444444444444444444444444444444" }),
+  useFocusEffect: (effect: EffectCallback) => {
+    jest
+      .requireActual<typeof import("react")>("react")
+      .useEffect(() => (mockRouteFocused ? effect() : undefined), [effect, mockRouteFocused]);
+  },
 }));
 beforeEach(() => {
   jest.clearAllMocks();
+  mockRouteFocused = true;
   mockRuntime.snapshot = mockSnapshot;
   mockDescribe.mockResolvedValue({
     type: "outcome",
@@ -104,6 +111,36 @@ beforeEach(() => {
     }),
   });
 });
+test("ignores a late old check after blur and refocus even if its caller ignores cancellation", async () => {
+  let finishOld: ((result: Awaited<ReturnType<typeof mockDescribe>>) => void) | undefined;
+  mockDescribe.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finishOld = resolve;
+      }),
+  );
+  const screen = render(<ManagedNodeScreen />);
+  fireEvent.press(screen.getByRole("button", { name: "Check node connection" }));
+  mockRouteFocused = false;
+  screen.rerender(<ManagedNodeScreen />);
+  mockRouteFocused = true;
+  screen.rerender(<ManagedNodeScreen />);
+  fireEvent.press(screen.getByRole("button", { name: "Check node connection" }));
+  await screen.findByText("Node reached");
+  await act(async () => {
+    finishOld?.({
+      type: "outcome",
+      outcome: Bindings.RemoteControlDescribeOutcome.Failed.new({
+        stage: Bindings.RemoteControlDescribeFailureStage.Timeout,
+        detail: "obsolete check",
+      }),
+    });
+  });
+  expect(screen.getByText("Node reached")).toBeTruthy();
+  expect(screen.queryByText("Could not check node")).toBeNull();
+  expect(mockDescribe).toHaveBeenCalledTimes(2);
+});
+
 test("offers address sharing only after a successful Describe authorizes it", async () => {
   const screen = render(<ManagedNodeScreen />);
   expect(screen.queryByRole("button", { name: "Share node address" })).toBeNull();
