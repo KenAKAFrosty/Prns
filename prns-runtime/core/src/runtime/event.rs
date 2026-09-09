@@ -51,6 +51,11 @@ pub enum Message<'a> {
     RemoteControlTargetPairingAuthorizationPersisted {
         attempt_id: RemoteControlPairingAttemptId,
     },
+    /// The target pairing attempt crossed its deadline after its authorization was persisted, so
+    /// that authorization is being rolled back instead of completing the pairing exchange.
+    RemoteControlTargetPairingExpiredDuringAuthorization {
+        attempt_id: RemoteControlPairingAttemptId,
+    },
     RemoteControlControllerPairingConfirmationRequired(RemoteControlControllerPairingConfirmation),
     RemoteControlControllerPairingPersistenceRequired(
         RemoteControlControllerPairingPersistenceView<'a>,
@@ -233,6 +238,11 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
                 PrnsEvent::Message(Message::RemoteControlTargetPairingAuthorizationPersisted {
                     attempt_id,
                 })
+            }
+            Journaled::RemoteControlTargetPairingExpiredDuringAuthorization { attempt_id } => {
+                PrnsEvent::Message(
+                    Message::RemoteControlTargetPairingExpiredDuringAuthorization { attempt_id },
+                )
             }
             Journaled::RemoteControlControllerPairingConfirmationRequired(pairing) => {
                 PrnsEvent::Message(Message::RemoteControlControllerPairingConfirmationRequired(
@@ -434,12 +444,53 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::identity::in_memory::InMemoryNodeIdentity;
+    use crate::identity::vault::IdentitySecretKey;
+    use crate::identity::{IdentityPublicKeys, IdentitySigner};
     use crate::remote_control::{
-        RemoteControlControllerPairingAborted, RemoteControlPairingContext,
-        RemoteControlPairingIdentity,
+        RemoteControlControllerIdentity, RemoteControlControllerPairingAborted,
+        RemoteControlPairingAttemptTimeout, RemoteControlPairingBegin, RemoteControlPairingContext,
+        RemoteControlPairingIdentity, RemoteControlPairingInvitationCode,
+        RemoteControlPairingPermissions, RemoteControlPairingPreparedOffer,
+        RemoteControlRequestKind, RemoteControlRequestSet,
     };
     use crate::routing::announce::{AnnounceObservation, AnnounceRateAccounting};
-    use crate::units::HopCount;
+    use crate::units::{DurationMillis, HopCount};
+
+    fn pairing_attempt_id() -> RemoteControlPairingAttemptId {
+        let target_signer = InMemoryNodeIdentity::from_secret_key_bytes(&IdentitySecretKey::new(
+            [0x52; crate::identity::IDENTITY_SECRET_KEY_LEN],
+        ));
+        let controller_signer = InMemoryNodeIdentity::from_secret_key_bytes(
+            &IdentitySecretKey::new([0x31; crate::identity::IDENTITY_SECRET_KEY_LEN]),
+        );
+        let controller = RemoteControlControllerIdentity::new(IdentityPublicKeys {
+            encryption: controller_signer.encryption_public_key(),
+            signing: controller_signer.signing_public_key(),
+        });
+        let context = RemoteControlPairingContext::new(
+            RemoteControlPairingIdentity::new(IdentityHash::new([0x81; 16])).endpoint(),
+            LinkId::new([0x82; 16]),
+        );
+        let begin = RemoteControlPairingBegin::new(
+            controller,
+            context.endpoint(),
+            RemoteControlPairingInvitationCode::from_value(0x1234_ABCD),
+        );
+        let permissions = RemoteControlPairingPermissions::try_from(RemoteControlRequestSet::only(
+            RemoteControlRequestKind::Describe,
+        ))
+        .unwrap();
+        let timeout = RemoteControlPairingAttemptTimeout::try_from(DurationMillis(30_000)).unwrap();
+        let prepared = RemoteControlPairingPreparedOffer::new(
+            &target_signer,
+            context,
+            &begin,
+            permissions,
+            timeout,
+        );
+        prepared.transcript().into()
+    }
 
     #[test]
     fn announce_event_preserves_application_data() {
@@ -492,6 +543,22 @@ mod tests {
                     context: observed,
                 },
             }) if observed == context
+        ));
+    }
+
+    #[test]
+    fn target_pairing_expiry_during_authorization_is_an_app_facing_message() {
+        let attempt_id = pairing_attempt_id();
+
+        let event = PrnsEvent::from(
+            Journaled::RemoteControlTargetPairingExpiredDuringAuthorization { attempt_id },
+        );
+
+        assert!(matches!(
+            event,
+            PrnsEvent::Message(Message::RemoteControlTargetPairingExpiredDuringAuthorization {
+                attempt_id: observed,
+            }) if observed == attempt_id
         ));
     }
 }
