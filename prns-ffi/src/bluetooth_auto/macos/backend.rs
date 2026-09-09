@@ -22,8 +22,8 @@ use prns_core::interfaces::bluetooth_auto::{
 use prns_core::interfaces::bluetooth_auto::{BleAddress, BleIdentity, Control, Psm};
 
 use super::central::{
-    cancel_system_connection, discover_prns_services, is_system_connected, CentralDelegate, CentralDialCandidate,
-    CentralPeerSession, DialCommand, DialCompletion, DialRejection,
+    cancel_system_connection, discover_prns_services, is_system_connected, CentralDelegate,
+    CentralDialCandidate, CentralPeerSession, DialCommand, DialCompletion, DialRejection,
     CENTRAL_CONTROL_INBOUND_CAPACITY,
 };
 use super::discovery::PeripheralLinkState;

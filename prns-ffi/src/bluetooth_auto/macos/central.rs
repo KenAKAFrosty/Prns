@@ -732,8 +732,8 @@ impl CentralPeerSession {
         }
     }
 
-    #[cfg(test)]
     pub(super) fn data_receiver_closed(&self) -> bool {
+        // The control receiver is handshake-only; the data receiver lives for the attached role.
         self.data_tx.is_closed()
     }
 
