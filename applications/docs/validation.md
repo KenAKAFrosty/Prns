@@ -201,6 +201,49 @@ generated contracts, the application gate, and bidirectional native/Python
 LXMF delivery with verified proofs. It does not build an Android APK or run
 that exchange on the phone.
 
+## September 8 upstream integration checkpoint
+
+`prns-app` integrates upstream `1d4d4ba86` at merge commit `f3a9e9863`, including
+the Tokio wake-ordering fixes. The merge preserves request-ingress diagnostics
+and both feature-gated forwarding representations. Existing shared history and
+published prerequisite branches were not rewritten.
+
+- Core tests pass in both default and movable-forwarding configurations:
+  1,896 passed and three ignored in each. Tokio passes 234 default and 247
+  all-feature tests, with strict Clippy in both configurations. The compression
+  subset passes 20 tests; core alloc-only cross-compilation and the runtime's
+  alloc/external-allocation movable-forwarding check pass.
+- The generated unsafe inventory was reconciled with existing application
+  prerequisites omitted from the older baseline, including 14 existing
+  CoreBluetooth blocks. No policy exception, scanner, dependency version, or
+  runtime code changed as part of that reconciliation; it is inventory
+  maintenance, not a new memory-safety proof. The ordinary audit check then
+  passed against the refreshed baseline.
+- The full application gate passes on the integrated source, including 126
+  native tests, the controlled TCP lifecycle test, 69 SDK tests, 168 UI tests,
+  Expo Doctor, and web export. The first attempt stopped at an unrelated local
+  CocoaPods executable failure; selecting the existing working installation
+  for the command resolved it without changing global tools or disabling checks.
+- A local qualification-only child, `87b3cfc88`, pins the combined runtime
+  `f3a9e9863` and passes the detached mobility gate, including exact dependency
+  resolution, unchanged contract/artifact hashes, source preservation, and
+  bidirectional native/Python LXMF delivery. The main branch's published
+  compatibility pin remains `ebed61ce3`; the new local qualification does not
+  claim remote availability of its candidate or a published pin update.
+- A newly built standalone Android APK was installed without clearing data.
+  Pairing remained usable, its first submitted authenticated node check returned
+  **Connected** in 208 ms, and the earlier battery-trial message remained with
+  its exact ID, content, verification, and received state. This is a foreground
+  post-update check, not renewed background or full device qualification.
+- The board was flashed with firmware based on `f3a9e9863` plus the archived
+  temporary watchdog/display diagnostics. Sparse verification passed and
+  settings were retained. Both core heartbeat sequences, feed decisions, and
+  completed refresh phases are visible, and the authenticated request reached
+  the board. The temporary source patch was then removed from the checkout;
+  the installed diagnostic image is explicitly not a clean-tree release image.
+  No watchdog timing or button policy was changed. The intermittent freeze
+  remains unresolved pending a captured reproduction.
+
 The full physical lifecycle matrix remains pending beyond the narrow checks
 above. Explicit service Stop/restart, denied/regranted permissions, Bluetooth
 radio changes, prolonged peer loss, OS process eviction, deep Doze or
