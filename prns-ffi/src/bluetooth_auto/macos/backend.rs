@@ -240,7 +240,8 @@ async fn wait_for_readiness(
 pub(super) enum DialAdmission {
     AttachCentralSession,
     /// CoreBluetooth restored this central-role connection for the application. Reattach the
-    /// delegate and session, then resume discovery without issuing another connection request.
+    /// delegate and inspect its profile. iOS replaces a native Prns connection before handing
+    /// it to the handshake owner; Columba keeps the existing restoration handoff.
     ResumeRestoredSession,
     /// CoreBluetooth restored a pending connection. Reattach the session and let the existing
     /// request complete through `didConnect` instead of issuing a duplicate request.
@@ -356,11 +357,15 @@ fn begin_dial(command: DialCommand, target_has_inbound_session: bool, restored_c
         delegate,
         peripheral,
         peer_id,
-        session,
+        mut session,
     } = command;
     // SAFETY: this exact retained peripheral is queried on its CoreBluetooth serial queue.
     let restored_state =
         restored_connection.then(|| PeripheralLinkState::from(unsafe { peripheral.state() }));
+    session.configure_restoration_recovery(
+        cfg!(target_os = "ios"),
+        restored_state == Some(PeripheralLinkState::Connected),
+    );
     // The system-wide query remains only a guard for an ordinary observation. Restored admission
     // uses the exact peripheral's state because Apple's restoration array also includes pending
     // connections and may coexist with connections owned by another app.
