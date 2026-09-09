@@ -18,19 +18,23 @@ generated API and native lifecycle boundary.
 - A responsive Expo shell and stable screen catalog. Web has an explicitly
   unavailable runtime; browser/Tauri ownership decisions exist, not providers.
 
-These are development capabilities. Physical observations made before the
-generated-binding migration remain tied to their recorded builds.
+These are development capabilities. The [follow-up checkpoint](../checkpoints/2026-09-09-follow-up.md)
+records completed cold Retry admission, iOS preparation-queue and connection-check
+lifetime fixes, plus the constrained firmware footprint correction. Physical
+observations remain tied to their recorded builds.
 
 ## Next: finish the current transition
 
-1. Complete bounded follow-up fixes and their regressions for existing workflows;
-   do not treat work in progress as a passing gate or a device result.
-2. Resolve the constrained Nordic firmware footprint regression and rerun the
-   affected resource matrix. Keep generic core fixes separate from app policy.
-3. Recheck the generated-binding app on physical iOS and Android: onboarding,
-   pairing, the first authenticated request, two-way messaging, Stop/Start,
-   reload/process retention, cancellation and radio recovery. Include pristine
-   import and cold offline actions, not only already-open storage.
+1. Diagnose the current iOS disconnected transport, first-check timeout and
+   unresolved chooser visibility, then complete the foreground journey. Detached,
+   Swift and bounded Android smoke passes do not establish iOS connectivity.
+2. Close the remaining generated-binding physical checks: fresh pairing,
+   pristine import, controlled read cancellation, repeated recovery and cold offline
+   actions. Retained-grant messaging and process retention have bounded Android
+   evidence; the current iOS framework has no successful authenticated check yet.
+3. Keep restoration, protected-data and first-delivery recovery as explicit iOS
+   work, not conclusions inferred from reaching Running. Preserve the firmware
+   size gate: the passing integrated T-Echo build still has just 616 bytes spare.
 
 Finish this bounded transition before expanding the product surface.
 

@@ -7,8 +7,8 @@ Browser and Tauri runtime providers are not implemented.
 
 ## What the evidence covers
 
-The generated-binding cutover and the earlier phone trials are different builds.
-Do not transfer physical Bluetooth acceptance from the old bridge to the new one.
+The generated-binding cutover, follow-up builds and earlier phone trials are
+different evidence. Do not transfer physical acceptance between their binaries.
 
 | Evidence | Recorded scope | Not established |
 | --- | --- | --- |
@@ -17,6 +17,9 @@ Do not transfer physical Bluetooth acceptance from the old bridge to the new one
 | Integrated Expo simulator/emulator checks | Identity/start/snapshot, offline contacts and process retention; Android React reload, service continuity, and isolated native lifecycle/import tests | Fresh physical pairing, radio recovery, or background delivery on this build |
 | Earlier physical iOS builds | Accessory authorization, pairing, authenticated checks, direct messaging, and bounded suspension/restoration observations | Reliable first-attempt recovery, complete restoration behavior, or qualification of the generated-binding build |
 | Earlier physical Android 10 builds | Pairing, direct messaging, Stop/Start, permission recovery, offline retry/cancel, retention, and twenty-two clean radio cycles | Qualification of the generated-binding build, newer Android versions, deep Doze, or power-loss durability |
+| Generated-binding Android follow-up, before footprint integration | Existing-grant checks, Stop/Start without resurrection, two-way Python LXMF messaging and cold-process retention | Fresh pairing, controlled radio recovery, held-request cancellation or qualification of the later rebuilt APK |
+| Current generated-binding Android APK | Cold retained-grant check, one real Settings Bluetooth cycle with successful first reconnect check, and retained-data spot-check | Fresh pairing, repeated messaging, full controller power-off, long idle or controlled cancellation |
+| Current generated-binding iOS framework | Build/install, ordinary launch and retained pairing; first check timed out with Bluetooth disconnected | Successful authenticated request, messaging or restoration; connection/chooser diagnosis remains open |
 
 The [generated-binding checkpoint](../checkpoints/2026-09-09-validation.md#generated-binding-cutover)
 records the harness and integrated test boundaries. The [clean Android checkpoint](../checkpoints/2026-09-09-validation.md#clean-combined-checkpoint--september-9)
@@ -24,9 +27,10 @@ records exact APK/firmware hashes, failed comparisons, and the later copy-only
 installation smoke. The [iOS observations](../checkpoints/2026-09-09-validation.md#historical-physical-observations)
 retain the first failed delivery and UI recovery problems as well as successes.
 
-The documentation consolidation does not requalify runtime or device behavior.
-Follow-up source fixes and firmware-size work remain pending until their
-specific results are recorded; a proposed fix is not validation evidence.
+The [follow-up checkpoint](../checkpoints/2026-09-09-follow-up.md) records the
+three completed source fixes, firmware measurements and bounded phone journeys.
+Its final detached/Swift gates and bounded Android radio smoke passed. The iOS
+first check failed; transport/chooser diagnosis remains open without a proven cause.
 
 ## Repeatable checks
 
@@ -46,15 +50,15 @@ availability unless its recorded run actually uses a remote source. Simulator,
 host tests, an APK build, and a physical journey answer different questions.
 Platform procedures are in the [iOS](ios.md) and [Android](android.md) guides.
 
-## Publication and repository blockers
+## Firmware and repository checks
 
-The last matched constrained-Nordic comparison failed `t-echo-s140-v7` with
-1,984 bytes of FLASH overflow. Upstream `1d4d4ba865` built with the same compiler
-and 472 bytes of headroom. This is a branch integration regression, not an
-Android runtime failure or a reason to change the board's memory layout.
-The [dated measurement and publication record](../checkpoints/2026-09-09-validation.md#constrained-nordic-firmware-failure-and-publication-exception)
-contains the exact comparison and gate boundaries. A correction is under
-investigation; the firmware matrix has not been declared passing.
+The constrained-Nordic integration regression is corrected without changing
+layouts or capacities. The integrated candidate passes all 14 configured
+resource profiles; T-Echo S140 v7 retains only 616 bytes of nominal FLASH
+headroom. The clean upstream port separately retains 1,216 bytes on that target.
+The [follow-up measurement](../checkpoints/2026-09-09-follow-up.md#firmware-footprint-correction)
+distinguishes those builds and preserves the earlier 1,984-byte overflow.
+This is not a new full repository publishing-gate result or device qualification.
 
 The recorded repository continuation passed all 24 host workspaces and the
 listed Clippy, allocation, dependency-policy and unsafe-inventory checks.
@@ -64,9 +68,9 @@ failures; these are different commands, neither silently waived.
 
 ## Qualification still required
 
-- Fresh generated-binding physical iOS and Android journeys: pairing, first
-  authenticated request, two-way messaging, Stop/Start, caller cancellation,
-  reload/process retention, and Bluetooth recovery.
+- Complete the exact-build physical journeys in the follow-up checkpoint.
+  Fresh generated-binding pairing, controlled caller cancellation and current
+  repeated radio/lifecycle recovery remain open; grant reuse is not new pairing.
 - Pristine interactive identity-import onboarding, separately from picker
   guards and isolated native import tests.
 - iOS suspension/restoration, authorized force-quit behavior and negative
