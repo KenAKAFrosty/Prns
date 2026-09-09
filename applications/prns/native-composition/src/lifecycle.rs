@@ -68,7 +68,7 @@ use crate::pairing::{
 use crate::snapshot::SnapshotStore;
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
-const COMMAND_TIMEOUT: Duration = Duration::from_secs(20);
+pub(crate) const COMMAND_TIMEOUT: Duration = Duration::from_secs(20);
 const PAIRING_APPROVAL_TIMEOUT: Duration = Duration::from_millis(
     personal_rns::remote_control::MAX_REMOTE_CONTROL_PAIRING_ATTEMPT_TIMEOUT.0 + 5_000,
 );
@@ -3063,6 +3063,7 @@ async fn run_actor_loop(
                     let _ = response.send(outcome);
                 }
                 Some(Command::Describe(command)) => {
+                    let deadline = command.deadline;
                     let stop = run_describe_command(
                         command,
                         snapshots,
@@ -3072,7 +3073,7 @@ async fn run_actor_loop(
                             if controls.pairing_in_progress() {
                                 RemoteControlDescribeOutcome::Busy
                             } else {
-                                crate::remote_control::describe(handle, snapshots, input).await
+                                crate::remote_control::describe(handle, snapshots, input, deadline).await
                             }
                         },
                     ).await;
@@ -3877,7 +3878,7 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn describe_held_future_releases_operation_and_admission_on_each_interruption() {
+    async fn describe_readiness_wait_releases_operation_and_admission_on_each_interruption() {
         for interruption in [
             DescribeInterruption::Deadline,
             DescribeInterruption::CallerLeft,
@@ -3888,6 +3889,8 @@ mod tests {
             let admitted = Arc::new(AtomicBool::new(true));
             let dropped = Arc::new(AtomicBool::new(false));
             let entered = Arc::new(tokio::sync::Notify::new());
+            let route_ready = Arc::new(AtomicBool::new(false));
+            let emitted = Arc::new(AtomicBool::new(false));
             let started = tokio::time::Instant::now();
             let (command, caller, response) = test_describe_command(started + COMMAND_TIMEOUT);
             let mut caller = Some(caller);
@@ -3896,6 +3899,8 @@ mod tests {
             let running_admitted = Arc::clone(&admitted);
             let running_dropped = Arc::clone(&dropped);
             let running_entered = Arc::clone(&entered);
+            let running_ready = Arc::clone(&route_ready);
+            let running_emitted = Arc::clone(&emitted);
             let actor = tokio::spawn(async move {
                 run_describe_command(
                     command,
@@ -3911,7 +3916,12 @@ mod tests {
                             });
                         });
                         running_entered.notify_one();
-                        std::future::pending().await
+                        crate::remote_control::tests::wait_for_route_with_probe(
+                            started + COMMAND_TIMEOUT,
+                            &running_ready,
+                            &running_emitted,
+                        )
+                        .await
                     },
                 )
                 .await
@@ -3926,8 +3936,19 @@ mod tests {
                     assert!(!actor.is_finished());
                     tokio::time::advance(Duration::from_millis(1)).await;
                 }
-                DescribeInterruption::CallerLeft => drop(caller.take()),
-                DescribeInterruption::Shutdown => shutdown.send(true).expect("request Stop"),
+                DescribeInterruption::CallerLeft | DescribeInterruption::Shutdown => {
+                    tokio::time::advance(Duration::from_secs(6)).await;
+                    tokio::task::yield_now().await;
+                    assert!(
+                        !actor.is_finished(),
+                        "readiness keeps the original deadline"
+                    );
+                    if matches!(interruption, DescribeInterruption::CallerLeft) {
+                        drop(caller.take());
+                    } else {
+                        shutdown.send(true).expect("request Stop");
+                    }
+                }
             }
             let stopping = actor.await.expect("Describe actor settles");
             assert_eq!(
@@ -3949,9 +3970,9 @@ mod tests {
                 snapshots.read().active_operation.is_none(),
                 "{interruption:?}"
             );
-            if !matches!(interruption, DescribeInterruption::Deadline) {
-                assert_eq!(tokio::time::Instant::now(), started);
-            }
+            route_ready.store(true, Ordering::Release);
+            tokio::time::advance(COMMAND_TIMEOUT).await;
+            assert!(!emitted.load(Ordering::Acquire), "{interruption:?}");
         }
     }
 
@@ -3999,6 +4020,8 @@ mod tests {
         let queued_for = Duration::from_secs(15);
         tokio::time::advance(queued_for).await;
         let entered = tokio::sync::Notify::new();
+        let route_ready = AtomicBool::new(false);
+        let emitted = AtomicBool::new(false);
         let (stopping, ()) = tokio::join!(
             run_describe_command(
                 command,
@@ -4007,7 +4030,12 @@ mod tests {
                 &mut shutdown_rx,
                 |_input| async {
                     entered.notify_one();
-                    std::future::pending().await
+                    crate::remote_control::tests::wait_for_route_with_probe(
+                        started + COMMAND_TIMEOUT,
+                        &route_ready,
+                        &emitted,
+                    )
+                    .await
                 }
             ),
             async {
@@ -4021,6 +4049,7 @@ mod tests {
         assert!(!stopping);
         assert_eq!(tokio::time::Instant::now(), started + COMMAND_TIMEOUT);
         assert!(!admitted.load(Ordering::Acquire));
+        assert!(!emitted.load(Ordering::Acquire));
         assert!(matches!(
             response
                 .try_recv()

@@ -51,6 +51,7 @@ pub async fn describe(
     handle: &PrnsNodeHandle,
     snapshots: &SnapshotStore,
     input: DescribeRemoteControlTargetInput,
+    deadline: tokio::time::Instant,
 ) -> RemoteControlDescribeOutcome {
     let Some(target_identity) = identity_hash(&input.target_identity_fingerprint) else {
         return failed(
@@ -80,6 +81,7 @@ pub async fn describe(
         handle,
         target_identity,
         resolved.endpoint().destination_hash(),
+        deadline,
     )
     .await
     {
@@ -131,13 +133,17 @@ pub async fn announce_self(
             };
         }
     };
-    let connected =
-        match connect_reachable_target(handle, identity, resolved.endpoint().destination_hash())
-            .await
-        {
-            Ok(connected) => connected,
-            Err(error) => return announce_reachable_connect_failure(error),
-        };
+    let connected = match connect_reachable_target(
+        handle,
+        identity,
+        resolved.endpoint().destination_hash(),
+        tokio::time::Instant::now() + ANNOUNCE_TRANSPORT_READINESS_WAIT,
+    )
+    .await
+    {
+        Ok(connected) => connected,
+        Err(error) => return announce_reachable_connect_failure(error),
+    };
     let _link = CloseTargetLink {
         handle,
         id: connected.connection().link_id(),
@@ -192,7 +198,7 @@ enum TargetReadiness {
     Waiting,
 }
 
-const TRANSPORT_READINESS_WAIT: Duration = Duration::from_secs(5);
+const ANNOUNCE_TRANSPORT_READINESS_WAIT: Duration = Duration::from_secs(5);
 const TRANSPORT_READINESS_POLL: Duration = Duration::from_millis(100);
 
 fn target_readiness(
@@ -246,6 +252,7 @@ async fn connect_reachable_target<'a>(
     handle: &'a PrnsNodeHandle,
     target: IdentityHash,
     destination: DestinationHash,
+    readiness_deadline: tokio::time::Instant,
 ) -> Result<
     RemoteControlTargetHandle<'a>,
     ReachableTargetConnectionError<ConnectRemoteControlTargetError>,
@@ -255,6 +262,7 @@ async fn connect_reachable_target<'a>(
     // request, not a retry of the application operation.
     connect_reachable_target_with(
         destination,
+        readiness_deadline,
         |destination| observe_target_readiness(handle, destination),
         |destination| async move {
             handle
@@ -279,6 +287,7 @@ async fn connect_reachable_target_with<
     ConnectFuture,
 >(
     destination: DestinationHash,
+    readiness_deadline: tokio::time::Instant,
     mut observe: Observe,
     request_path: RequestPath,
     connect: Connect,
@@ -291,10 +300,12 @@ where
     Connect: FnOnce() -> ConnectFuture,
     ConnectFuture: Future<Output = Result<Connection, ConnectionError>>,
 {
-    // This is a bounded condition wait, not a delay after granting permission.
-    // Describe's admission-time deadline/caller/Stop also owns and can drop this
-    // entire future. An announcement has this finite preflight bound too.
-    let ready = tokio::time::timeout(TRANSPORT_READINESS_WAIT, async {
+    // Describe reuses its admission-time deadline, including time spent queued;
+    // it must not fail at an earlier fixed cutoff while Bluetooth is recovering.
+    // Its actor still owns deadline/caller/Stop cancellation of this entire
+    // future. AnnounceSelf supplies its separate five-second preflight deadline.
+    // Ready routes continue immediately; this is a condition wait, not a delay.
+    let ready = tokio::time::timeout_at(readiness_deadline, async {
         loop {
             let ready = observe(destination).await;
             if ready != TargetReadiness::Waiting {
@@ -616,8 +627,109 @@ fn monotonic_millis() -> u64 {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    // Exercise the real readiness wait inside the actor's cancellation tests.
+    // This test-only adapter does not create a node or emit protocol traffic.
+    pub(crate) async fn wait_for_route_with_probe(
+        deadline: tokio::time::Instant,
+        ready: &std::sync::atomic::AtomicBool,
+        emitted: &std::sync::atomic::AtomicBool,
+    ) -> RemoteControlDescribeOutcome {
+        use std::sync::atomic::Ordering;
+
+        let _result = connect_reachable_target_with(
+            DestinationHash::new([0x65; 16]),
+            deadline,
+            |_| {
+                core::future::ready(if ready.load(Ordering::Acquire) {
+                    TargetReadiness::RouteReady
+                } else {
+                    TargetReadiness::Waiting
+                })
+            },
+            |_| {
+                emitted.store(true, Ordering::Release);
+                core::future::ready(Ok(()))
+            },
+            || {
+                emitted.store(true, Ordering::Release);
+                core::future::ready(Ok::<_, ()>(()))
+            },
+        )
+        .await;
+        RemoteControlDescribeOutcome::Busy
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn describe_readiness_can_recover_after_six_seconds_without_replaying() {
+        for needs_discovery in [false, true] {
+            let started = tokio::time::Instant::now();
+            let paths = core::cell::Cell::new(0);
+            let connections = core::cell::Cell::new(0);
+            let result = connect_reachable_target_with(
+                DestinationHash::new([0x66; 16]),
+                started + crate::lifecycle::COMMAND_TIMEOUT,
+                |_| {
+                    core::future::ready(if started.elapsed() < Duration::from_secs(6) {
+                        TargetReadiness::Waiting
+                    } else if needs_discovery && paths.get() == 0 {
+                        TargetReadiness::DiscoveryReady
+                    } else {
+                        TargetReadiness::RouteReady
+                    })
+                },
+                |_| {
+                    paths.set(paths.get() + 1);
+                    core::future::ready(Ok(()))
+                },
+                || {
+                    connections.set(connections.get() + 1);
+                    core::future::ready(Ok::<_, ()>(7))
+                },
+            )
+            .await;
+            assert_eq!(result, Ok(7));
+            assert_eq!(started.elapsed(), Duration::from_secs(6));
+            assert_eq!(
+                (paths.get(), connections.get()),
+                (u8::from(needs_discovery), 1)
+            );
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn describe_readiness_expiry_uses_the_original_deadline_including_queue_time() {
+        for queued_for in [Duration::ZERO, Duration::from_secs(15)] {
+            let started = tokio::time::Instant::now();
+            let deadline = started + crate::lifecycle::COMMAND_TIMEOUT;
+            tokio::time::advance(queued_for).await;
+            let emitted = core::cell::Cell::new(false);
+            let result = connect_reachable_target_with(
+                DestinationHash::new([0x67; 16]),
+                deadline,
+                |_| core::future::ready(TargetReadiness::Waiting),
+                |_| {
+                    emitted.set(true);
+                    core::future::ready(Ok(()))
+                },
+                || {
+                    emitted.set(true);
+                    core::future::ready(Ok::<_, ()>(()))
+                },
+            )
+            .await;
+            assert_eq!(
+                result,
+                Err(ReachableTargetConnectionError::Reachability(
+                    ReachabilityFailure::Route
+                ))
+            );
+            assert_eq!(tokio::time::Instant::now(), deadline);
+            assert!(!emitted.get());
+        }
+    }
 
     #[test]
     fn readiness_requires_the_actual_routes_live_transmitting_interface() {
@@ -682,6 +794,7 @@ mod tests {
         let connections = core::cell::Cell::new(0);
         let mut pending = Box::pin(connect_reachable_target_with(
             DestinationHash::new([0x61; 16]),
+            tokio::time::Instant::now() + ANNOUNCE_TRANSPORT_READINESS_WAIT,
             |_| core::future::ready(readiness.get()),
             |_| {
                 paths.set(paths.get() + 1);
@@ -710,6 +823,7 @@ mod tests {
         let connections = core::cell::Cell::new(0);
         let mut pending = Box::pin(connect_reachable_target_with(
             DestinationHash::new([0x62; 16]),
+            tokio::time::Instant::now() + ANNOUNCE_TRANSPORT_READINESS_WAIT,
             |_| core::future::ready(readiness.get()),
             |_| {
                 paths.set(paths.get() + 1);
@@ -727,17 +841,18 @@ mod tests {
         );
         drop(pending);
         readiness.set(TargetReadiness::RouteReady);
-        tokio::time::advance(TRANSPORT_READINESS_WAIT).await;
+        tokio::time::advance(ANNOUNCE_TRANSPORT_READINESS_WAIT).await;
         assert_eq!((paths.get(), connections.get()), (0, 0));
     }
 
     #[tokio::test(start_paused = true)]
-    async fn unavailable_transport_has_a_finite_preflight_without_network_emission() {
+    async fn announcement_unavailable_transport_keeps_its_five_second_preflight() {
         let paths = core::cell::Cell::new(0);
         let connections = core::cell::Cell::new(0);
         let started = tokio::time::Instant::now();
         let result = connect_reachable_target_with(
             DestinationHash::new([0x63; 16]),
+            started + ANNOUNCE_TRANSPORT_READINESS_WAIT,
             |_| core::future::ready(TargetReadiness::Waiting),
             |_| {
                 paths.set(paths.get() + 1);
@@ -755,7 +870,7 @@ mod tests {
                 ReachabilityFailure::Route
             ))
         );
-        assert_eq!(started.elapsed(), TRANSPORT_READINESS_WAIT);
+        assert_eq!(started.elapsed(), Duration::from_secs(5));
         assert_eq!((paths.get(), connections.get()), (0, 0));
     }
 
@@ -765,6 +880,7 @@ mod tests {
         let connections = core::cell::Cell::new(0);
         let result = connect_reachable_target_with(
             DestinationHash::new([0x64; 16]),
+            tokio::time::Instant::now() + ANNOUNCE_TRANSPORT_READINESS_WAIT,
             |_| core::future::ready(TargetReadiness::DiscoveryReady),
             |_| {
                 paths.set(paths.get() + 1);
@@ -973,14 +1089,16 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn cached_route_skips_discovery_before_connecting() {
         let destination = DestinationHash::new([0x42; 16]);
         let path_requests = core::cell::Cell::new(0_u8);
         let connections = core::cell::Cell::new(0_u8);
+        let started = tokio::time::Instant::now();
 
         let result = connect_reachable_target_with(
             destination,
+            tokio::time::Instant::now() + ANNOUNCE_TRANSPORT_READINESS_WAIT,
             |observed| {
                 assert_eq!(observed, destination);
                 core::future::ready(TargetReadiness::RouteReady)
@@ -1000,6 +1118,7 @@ mod tests {
         assert_eq!(result, Ok(7));
         assert_eq!(path_requests.get(), 0);
         assert_eq!(connections.get(), 1);
+        assert_eq!(tokio::time::Instant::now(), started);
     }
 
     #[tokio::test]
@@ -1010,6 +1129,7 @@ mod tests {
 
         let result = connect_reachable_target_with(
             destination,
+            tokio::time::Instant::now() + ANNOUNCE_TRANSPORT_READINESS_WAIT,
             |observed| {
                 assert_eq!(observed, destination);
                 core::future::ready(if phase.get() == 0 {
@@ -1044,6 +1164,7 @@ mod tests {
 
         let result = connect_reachable_target_with(
             destination,
+            tokio::time::Instant::now() + ANNOUNCE_TRANSPORT_READINESS_WAIT,
             |_| core::future::ready(TargetReadiness::DiscoveryReady),
             |observed| {
                 assert_eq!(observed, destination);
@@ -1079,6 +1200,7 @@ mod tests {
         let (settle, settled) = tokio::sync::oneshot::channel();
         let pending = connect_reachable_target_with(
             destination,
+            tokio::time::Instant::now() + ANNOUNCE_TRANSPORT_READINESS_WAIT,
             |_| core::future::ready(TargetReadiness::DiscoveryReady),
             move |observed| async move {
                 assert_eq!(observed, destination);
@@ -1489,6 +1611,7 @@ mod tests {
                     DescribeRemoteControlTargetInput {
                         target_identity_fingerprint: target_identity_hash.as_bytes().to_vec(),
                     },
+                    tokio::time::Instant::now() + crate::lifecycle::COMMAND_TIMEOUT,
                 )
                 .await;
                 let RemoteControlDescribeOutcome::Described {
