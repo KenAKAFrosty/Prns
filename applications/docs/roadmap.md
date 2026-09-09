@@ -30,7 +30,10 @@ observations remain tied to their recorded builds.
    foreground messaging, including a first check after one controlled process
    restart. A later developer-SIGTERM trial captured a restoration-requested
    native relaunch, an intervening disconnect/fresh reconnect and incoming-message
-   proof. Repeat recovery; these successes do not explain or fix the initial
+   proof. The [later USB investigation](../checkpoints/2026-09-09-ios-recovery-latency.md)
+   captured an acknowledged Hello without Welcome, ten-second local cleanup
+   and a successful fresh handshake. Finish and qualify the isolated restored-
+   session correction; it does not yet explain or fix the initial ordinary-start
    timeout.
 2. Close the remaining generated-binding physical checks: fresh pairing,
    pristine import, controlled read cancellation, repeated recovery and cold offline
@@ -38,7 +41,8 @@ observations remain tied to their recorded builds.
    both platforms, tied to their exact recorded builds rather than transferred
    across rebuilds. They are not fresh-pairing acceptance.
 3. Repeat the completed no-touch receipt/resume journey with a complete native
-   timeline and investigate its 32.024-second submission-to-proof delay. One
+   timeline and investigate its 32.024-second submission-to-proof delay, which
+   did not reproduce in the later active-traffic comparisons. One
    controlled off-screen message and first resumed Check (359 ms) passed; the
    earlier logged restoration trial remains separate because of possible user
    activity. Natural suspension, quiet idle, Metro-off, force-quit and
