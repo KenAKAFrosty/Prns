@@ -627,20 +627,30 @@ fn configure_assembled_node<'a, D, St, R, F, S>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::test_support::routable_descriptor;
+    use crate::engine::{
+        CommandId, EgressTarget, EngineReaction, IssuedCommand, Journaled,
+        OpenRemoteControlPairing, PrnsCommand, Settlement,
+    };
     use crate::identity::vault::IdentitySecretKey;
     use crate::identity::IdentityHash;
+    use crate::interfaces::{AttachedInterfaces, InterfaceId};
     use crate::remote_control::{
         RemoteControlControllerGrant, RemoteControlControllerGrants,
         RemoteControlControllerIdentity, RemoteControlControllerIdentitySecret,
         RemoteControlInitialControllerGrants, RemoteControlNodeIdentitySecrets,
-        RemoteControlRequestKind, RemoteControlRequestSet, RemoteControlStorageRequirements,
-        RemoteControlTargetAccess, RemoteControlTargetAccessTable, RemoteControlTargetIdentity,
+        RemoteControlPairingAttemptTimeout, RemoteControlPairingExpiresAfter,
+        RemoteControlPairingPermissions, RemoteControlPairingPublicAppDataBytes,
+        RemoteControlPairingView, RemoteControlRequestKind, RemoteControlRequestSet,
+        RemoteControlStorageRequirements, RemoteControlTargetAccess,
+        RemoteControlTargetAccessTable, RemoteControlTargetIdentity,
         RemoteControlTargetIdentitySecret, REMOTE_CONTROL_NODE_IDENTITY_COUNT,
     };
     use crate::routing::request_handlers::RequestPathHash;
     use crate::runtime::request_endpoints::{Decline, RequestContext, RequestEndpointPolicy};
     use crate::runtime::{ManuallyAttached, NoPersistence};
-    use crate::storage::TestFixedStorage;
+    use crate::storage::{StorageCapacity, StorageLayout, TestFixedStorage};
+    use crate::units::{DurationMillis, InstantMillis};
 
     type Storage = TestFixedStorage<4, 4, 128, 4, 4, 4, 2, 2, 2, 2, 2, 2>;
     type RemoteControlOnlyStorage = TestFixedStorage<
@@ -656,6 +666,7 @@ mod tests {
         2,
         2,
         2,
+        { RemoteControlStorageRequirements::AVAILABLE.request_handlers() },
     >;
 
     struct Routes;
@@ -970,7 +981,7 @@ mod tests {
     }
 
     #[test]
-    fn available_remote_control_fits_its_storage_requirements() {
+    fn available_remote_control_and_open_pairing_fit_their_storage_requirements() {
         let requirements = &RemoteControlStorageRequirements::AVAILABLE;
         let mut engine = EngineState::<RemoteControlOnlyStorage>::default();
         let configured = configure_remote_control_service(&mut engine, remote_control_service())
@@ -980,16 +991,64 @@ mod tests {
         assert!(configured.request_endpoint_id().is_some());
         assert_eq!(
             (
-                <RemoteControlOnlyStorage as crate::storage::StorageLayout>::LIMITS.held_identities,
-                <RemoteControlOnlyStorage as crate::storage::StorageLayout>::LIMITS
-                    .upstream_app_destinations,
+                <RemoteControlOnlyStorage as StorageLayout>::LIMITS.held_identities,
+                <RemoteControlOnlyStorage as StorageLayout>::LIMITS.upstream_app_destinations,
             ),
             (
-                crate::storage::StorageCapacity::Fixed(requirements.held_identities()),
-                crate::storage::StorageCapacity::Fixed(requirements.upstream_app_destinations()),
+                StorageCapacity::Fixed(requirements.held_identities()),
+                StorageCapacity::Fixed(requirements.upstream_app_destinations()),
             ),
         );
-        assert_eq!(requirements.request_handlers(), 1);
+        assert_eq!(requirements.request_handlers(), 2);
+
+        let interfaces = [routable_descriptor(InterfaceId::new([0x91; 8]))];
+        let mut pairing_result = None;
+        let _ = engine.ingest_command_into(
+            IssuedCommand {
+                id: CommandId(1),
+                command: PrnsCommand::OpenRemoteControlPairing(OpenRemoteControlPairing {
+                    target: EgressTarget::AllInterfaces,
+                    expires_after: RemoteControlPairingExpiresAfter::try_from(DurationMillis(
+                        60_000,
+                    ))
+                    .unwrap(),
+                    attempt_timeout: RemoteControlPairingAttemptTimeout::try_from(DurationMillis(
+                        30_000,
+                    ))
+                    .unwrap(),
+                    permissions: RemoteControlPairingPermissions::try_from(
+                        RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
+                    )
+                    .unwrap(),
+                    public_app_data: RemoteControlPairingPublicAppDataBytes::try_from(
+                        b"fixed storage".as_slice(),
+                    )
+                    .unwrap(),
+                }),
+            },
+            AttachedInterfaces::new(&interfaces),
+            InstantMillis(1_000),
+            &mut |bytes| bytes.fill(0xA1),
+            &mut |reaction| {
+                if let EngineReaction::Journaled(Journaled::CommandSettled {
+                    settlement: Settlement::OpenRemoteControlPairing(result),
+                    ..
+                }) = reaction
+                {
+                    pairing_result = Some(result);
+                }
+            },
+        );
+        let opened = pairing_result
+            .expect("open pairing command settles")
+            .expect("open pairing fits the advertised storage requirements");
+
+        assert_eq!(engine.held_identity_hashes().len(), 3);
+        assert_eq!(engine.upstream_app_destinations().count(), 3);
+        assert!(matches!(
+            engine.remote_control_pairing_view(),
+            RemoteControlPairingView::Open(session) if session.endpoint() == opened.endpoint
+        ));
     }
 
     #[test]
