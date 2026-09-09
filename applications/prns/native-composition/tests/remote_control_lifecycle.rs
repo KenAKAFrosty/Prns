@@ -786,37 +786,33 @@ async fn stop_controller() {
 }
 
 async fn app_snapshot() -> DevelopmentNodeSnapshot {
-    run_blocking(app::snapshot).await
+    app::snapshot().await
 }
 
 async fn app_initiate(
     input: InitiateRemoteControlPairingInput,
 ) -> RemoteControlPairingCommandOutcome {
-    run_blocking(move || app::initiate(input)).await
+    app::initiate(input).await
 }
 
 async fn app_approve(attempt_id: String) -> RemoteControlPairingCommandOutcome {
-    run_blocking(move || app::approve(RemoteControlPairingDecisionInput { attempt_id })).await
+    app::approve(RemoteControlPairingDecisionInput { attempt_id }).await
 }
 
 async fn app_reject(attempt_id: String) -> RemoteControlPairingCommandOutcome {
-    run_blocking(move || app::reject(RemoteControlPairingDecisionInput { attempt_id })).await
+    app::reject(RemoteControlPairingDecisionInput { attempt_id }).await
 }
 
 async fn app_describe(target_identity_fingerprint: Vec<u8>) -> RemoteControlDescribeOutcome {
-    run_blocking(move || {
-        app::describe(DescribeRemoteControlTargetInput {
-            target_identity_fingerprint,
-        })
+    app::describe(DescribeRemoteControlTargetInput {
+        target_identity_fingerprint,
     })
     .await
 }
 
 async fn app_announce(target_identity_fingerprint: Vec<u8>) -> RemoteControlAnnounceOutcome {
-    run_blocking(move || {
-        app::announce_self(AnnounceRemoteControlTargetInput {
-            target_identity_fingerprint,
-        })
+    app::announce_self(AnnounceRemoteControlTargetInput {
+        target_identity_fingerprint,
     })
     .await
 }

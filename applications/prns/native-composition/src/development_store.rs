@@ -41,20 +41,9 @@ impl DevelopmentStoreFailure {
 }
 
 enum StoreJob {
-    #[cfg(test)]
-    Directory {
-        request: DirectoryRequest,
-        response: SyncSender<StoreReply>,
-    },
-    #[cfg(feature = "uniffi-bindings")]
     DirectoryAsync {
         request: DirectoryRequest,
         response: oneshot::Sender<StoreReply>,
-    },
-    #[cfg(test)]
-    MailboxSync {
-        request: MailboxRequest,
-        response: SyncSender<MailboxStoreReply>,
     },
     MailboxAsync {
         request: MailboxRequest,
@@ -168,28 +157,6 @@ impl DevelopmentStoreOwner {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn admit(
-        &self,
-        request: DirectoryRequest,
-    ) -> Result<Receiver<StoreReply>, DevelopmentStoreFailure> {
-        let jobs = self.jobs()?;
-        let (response_tx, response_rx) = mpsc::sync_channel(1);
-        match jobs.try_send(StoreJob::Directory {
-            request,
-            response: response_tx,
-        }) {
-            Ok(()) => Ok(response_rx),
-            Err(TrySendError::Full(_)) => Err(DevelopmentStoreFailure::unavailable(
-                "the bounded development database lane is full",
-            )),
-            Err(TrySendError::Disconnected(_)) => Err(DevelopmentStoreFailure::unavailable(
-                "the development database owner has stopped",
-            )),
-        }
-    }
-
-    #[cfg(feature = "uniffi-bindings")]
     pub(crate) fn admit_directory_async(
         &self,
         request: DirectoryRequest,
@@ -205,7 +172,6 @@ impl DevelopmentStoreOwner {
         Ok(receiver)
     }
 
-    #[cfg(feature = "uniffi-bindings")]
     pub(crate) fn admit_mailbox_async(
         &self,
         request: MailboxRequest,
@@ -215,22 +181,6 @@ impl DevelopmentStoreOwner {
         jobs.try_send(StoreJob::MailboxAsync { request, response })
             .map_err(|_| MailboxFailure::Busy)?;
         Ok(receiver)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn admit_mailbox(
-        &self,
-        request: MailboxRequest,
-    ) -> Result<Receiver<MailboxStoreReply>, MailboxFailure> {
-        let jobs = self.jobs().map_err(map_development_failure_to_mailbox)?;
-        let (response, receiver) = mpsc::sync_channel(1);
-        match jobs.try_send(StoreJob::MailboxSync { request, response }) {
-            Ok(()) => Ok(receiver),
-            Err(TrySendError::Full(_)) => Err(MailboxFailure::Busy),
-            Err(TrySendError::Disconnected(_)) => Err(MailboxFailure::Unavailable(
-                "the development database owner has stopped".to_owned(),
-            )),
-        }
     }
 
     pub(crate) fn mailbox_submitter(&self) -> Arc<dyn MailboxSubmitter> {
@@ -298,19 +248,10 @@ impl Drop for DevelopmentStoreOwner {
 fn run_owner(database: &Database, jobs: &Receiver<StoreJob>) {
     while let Ok(job) = jobs.recv() {
         match job {
-            #[cfg(test)]
-            StoreJob::Directory { request, response } => {
-                let _ = response.send(directory::execute(database, request));
-            }
-            #[cfg(feature = "uniffi-bindings")]
             StoreJob::DirectoryAsync { request, response } => {
                 // Admission owns a mutation through commit even if its caller
                 // has dropped the receiving future.
                 let _ = response.send(directory::execute(database, request));
-            }
-            #[cfg(test)]
-            StoreJob::MailboxSync { request, response } => {
-                let _ = response.send(execute_mailbox_request(database, request));
             }
             StoreJob::MailboxAsync { request, response } => {
                 let _ = response.send(execute_mailbox_request(database, request));
@@ -503,7 +444,11 @@ mod tests {
     }
 
     fn call(owner: &DevelopmentStoreOwner, request: DirectoryRequest) -> StoreReply {
-        owner.admit(request).unwrap().recv().unwrap()
+        owner
+            .admit_directory_async(request)
+            .unwrap()
+            .blocking_recv()
+            .unwrap()
     }
 
     #[test]
@@ -565,9 +510,9 @@ mod tests {
 
         let reopened = DevelopmentStoreOwner::open(root.path(), &path).unwrap();
         let reply = reopened
-            .admit_mailbox(mailbox_list())
+            .admit_mailbox_async(mailbox_list())
             .unwrap()
-            .recv()
+            .blocking_recv()
             .unwrap()
             .unwrap();
         let MailboxReply::Listed { messages, .. } = reply else {
@@ -676,9 +621,9 @@ mod tests {
             DirectoryResponse::Mutation(ContactMutationOutcome::Saved { .. })
         ));
         let mailbox = owner
-            .admit_mailbox(mailbox_list())
+            .admit_mailbox_async(mailbox_list())
             .unwrap()
-            .recv()
+            .blocking_recv()
             .unwrap()
             .unwrap();
         assert!(matches!(
@@ -784,19 +729,19 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("application.redb");
         let owner = DevelopmentStoreOwner::open(root.path(), &path).unwrap();
-        let response = owner.admit(DirectoryRequest::CreateManual {
+        let response = owner.admit_directory_async(DirectoryRequest::CreateManual {
             destination: [7; 16],
             identity: Some([8; 16]),
             alias: Some(" Alice ".to_owned()),
         });
-        let mailbox = owner.admit_mailbox(mailbox_list());
+        let mailbox = owner.admit_mailbox_async(mailbox_list());
         owner.close().unwrap();
         assert!(matches!(
-            response.unwrap().recv().unwrap().unwrap(),
+            response.unwrap().blocking_recv().unwrap().unwrap(),
             DirectoryResponse::Mutation(ContactMutationOutcome::Saved { .. })
         ));
         assert!(matches!(
-            mailbox.unwrap().recv().unwrap().unwrap(),
+            mailbox.unwrap().blocking_recv().unwrap().unwrap(),
             MailboxReply::Listed { .. }
         ));
         std::fs::remove_file(path).unwrap();

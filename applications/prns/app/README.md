@@ -4,6 +4,9 @@ This package is the clean Expo consumer for the application-owned native
 aggregate and reusable application services under `applications/`. Base Prns
 packages do not depend on it.
 
+For dependency installation, package ownership, generation and verification,
+start with the [application workspace guide](../../README.md).
+
 ## Current development route overrides
 
 The 33 stable screen IDs from the product contract remain unchanged. The real
@@ -190,7 +193,8 @@ Scan events distinguish requests, queued work, state queries, decisions, and
 completed calls. An already-scanning decision records a framework state query,
 not fresh discovery progress. Sightings occur after admission, so these events
 do not prove that every raw discovery callback was observed. The classifier and Swift
-allowlist tests run in the ordinary native gate without enabling radio logging.
+allowlist tests run in the explicit macOS `native:ios:test` gate without enabling
+radio logging; portable checks also verify their source-level integration.
 
 A historical signed probe remains important negative evidence: after a clean
 AccessorySetupKit activation, constructing the former dual-role backend's

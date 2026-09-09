@@ -379,7 +379,12 @@ mod tests {
     use crate::development_store::DevelopmentStoreOwner;
 
     fn call(owner: &DevelopmentStoreOwner, request: DirectoryRequest) -> DirectoryResponse {
-        owner.admit(request).unwrap().recv().unwrap().unwrap()
+        owner
+            .admit_directory_async(request)
+            .unwrap()
+            .blocking_recv()
+            .unwrap()
+            .unwrap()
     }
 
     #[test]

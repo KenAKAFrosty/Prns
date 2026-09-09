@@ -31,7 +31,8 @@ python3 applications/tools/ubrn-vendor/vendor.py build --cache-dir /path/to/larg
 ```
 
 `--rust-toolchain` selects a rustup name; it must resolve to the recorded Rust
-version. Apple tools are selected through `xcrun`, ahead of environment-provided
+version, and its actual Rust binaries take precedence over system installations.
+Apple tools are selected through `xcrun`, ahead of environment-provided
 compilers. The helper remaps source paths, preserves Android's soname/alignment
 flags, builds all five slices, runs upstream's packaging/completeness checks,
 and records archive hashes and the patched source tree in `receipt.json`.
@@ -43,6 +44,23 @@ The native compiler output need not be byte-identical across unrelated build
 hosts. `npm ci` installs the exact reviewed archives; it never silently rebuilds
 them. A deliberate rebuild updates the receipt and archives together, followed
 by review of their source record and native tests. Cache contents are disposable.
+
+Receipt format 2 distinguishes the build recipe from the verifier:
+
+- `buildScriptSha256` identifies the exact helper that produced the archives.
+  `buildScriptRevision`, when present, locates that same helper in repository
+  history. A rebuild from an edited or detached helper records its hash without
+  inventing a matching Git revision.
+- `verificationScriptSha256` identifies the reviewed current helper used by
+  `check`. A helper-only correction can update this field while retaining the
+  actual historical build hash, source record, archive hashes and native evidence.
+  Missing or changed verifier hashes fail verification until reviewed.
+
+The current archives still come from the recipe recorded at `842271720`.
+The toolchain-selection cleanup updated only their verifier record; it did not
+rebuild the archives or claim new native qualification. Archive checking needs
+neither Git history nor a native compiler. It still verifies both archive bytes,
+patch/source hashes, embedded source provenance and required package contents.
 
 To update upstream or remove an accepted patch, update the source revision and
 ordered patch hashes, rebuild, review the package diff and receipt, update the

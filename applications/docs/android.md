@@ -51,9 +51,14 @@ start the node or use the in-app Stop control.
 
 ## Build
 
-Install the Android SDK/NDK, JDK 21, the repository Rust toolchain, and the Rust
-`aarch64-linux-android` target. Set `ANDROID_HOME` to the SDK directory and install
-the application JavaScript dependencies as described in the app README.
+Install the Android SDK, JDK 21, the repository Rust toolchain, and the Rust
+`aarch64-linux-android` target. Set `ANDROID_HOME` to the SDK directory. Install
+the NDK revision and `cargo-ndk` version recorded in
+[`vendor/ubrn/source-lock.json`](../vendor/ubrn/source-lock.json); the build helper
+rejects a different NDK. Follow the [workspace setup](../README.md#setup) to
+install the JavaScript dependencies and build the core contract. The
+[generation guide](../tools/generated-bindings/README.md) explains target
+selection and build caches.
 
 From `applications/`:
 
@@ -158,7 +163,11 @@ an unconditional delay. The clean checkpoint above includes this follow-up.
 The actor drops its Describe future if that deadline expires,
 the native caller leaves, or Stop is requested, and releases its active-operation
 and admission state. An expired queued command does not begin network work.
-This is not a new cancellation API for disposing of a JavaScript promise.
+Generated async bindings accept an `AbortSignal`, and the SDK forwards it,
+including Effect interruption. Aborting that caller releases Describe's
+app-owned future without stopping the native node. Merely discarding a Promise
+does not abort it. Caller cancellation also does not undo an accepted durable
+write or independently spawned native work.
 
 Once an authorized target connection has been returned, an app-owned guard
 queues link closure on normal completion or cancellation. Before that point,

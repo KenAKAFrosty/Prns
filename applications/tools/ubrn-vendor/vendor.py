@@ -84,12 +84,17 @@ def prepare(cache, lock):
 
 def build_environment(cache, lock, toolchain):
     expected = lock["toolchain"]
+    # Select real binaries as well as the rustup name. Setting RUSTUP_TOOLCHAIN
+    # alone does not affect a system Cargo/rustc ahead of the rustup shims.
+    rustc = Path(run("rustup", "which", "--toolchain", toolchain, "rustc", capture=True))
+    env = dict(os.environ, PATH=str(rustc.parent) + os.pathsep + os.environ["PATH"],
+               RUSTUP_TOOLCHAIN=toolchain)
     for command, version in ((["node", "--version"], "v" + expected["node"]),
                              (["npm", "--version"], expected["npm"]),
                              (["cargo", "ndk", "--version"], "cargo-ndk " + expected["cargoNdk"])):
-        if run(*command, capture=True) != version:
+        if run(*command, env=env, capture=True) != version:
             raise ValueError(f"requires {version}: {' '.join(command)}")
-    if not run("rustup", "run", toolchain, "rustc", "--version", capture=True).startswith("rustc " + expected["rust"] + " "):
+    if not run("rustc", "--version", env=env, capture=True).startswith("rustc " + expected["rust"] + " "):
         raise ValueError(f"requires Rust {expected['rust']}; select it with --rust-toolchain")
     xcode = run("xcodebuild", "-version", capture=True)
     if xcode != f"Xcode {expected['xcode']}\nBuild version {expected['xcodeBuild']}":
@@ -99,7 +104,6 @@ def build_environment(cache, lock, toolchain):
     if properties.get("Pkg.Revision") != expected["androidNdk"]:
         raise ValueError("ANDROID_NDK_HOME does not match source-lock.json")
     clang = run("xcrun", "--find", "clang", capture=True)
-    env = dict(os.environ)
     for key in ("SDKROOT", "CFLAGS", "CXXFLAGS", "CPPFLAGS", "RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS"):
         env.pop(key, None)
     env.update({
@@ -200,6 +204,24 @@ def inspect_package(path, name):
     return metadata
 
 
+def build_recipe_provenance():
+    recipe = {"buildScriptSha256": digest(Path(__file__))}
+    # A detached export or edited recipe may have no corresponding Git commit.
+    # Its exact hash is still provenance; never label it with an unrelated HEAD.
+    try:
+        revision = subprocess.check_output(
+            ["git", "-C", str(HERE), "rev-parse", "HEAD"], stderr=subprocess.DEVNULL,
+            text=True).strip()
+        committed = subprocess.check_output(
+            ["git", "-C", str(HERE), "show", f"{revision}:applications/tools/ubrn-vendor/vendor.py"],
+            stderr=subprocess.DEVNULL)
+        if hashlib.sha256(committed).hexdigest() == recipe["buildScriptSha256"]:
+            recipe["buildScriptRevision"] = revision
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        pass
+    return recipe
+
+
 def build(args):
     lock = inputs()
     cache = args.cache_dir.expanduser().resolve()
@@ -236,7 +258,8 @@ def build(args):
         inspect_package(artifact, name)
         packages.append({"name": name, "version": packed["version"], "file": "packages/" + packed["filename"],
                          "sha256": digest(artifact), "integrity": packed["integrity"]})
-    receipt = {"schemaVersion": 1, "sourceLockSha256": digest(LOCK), "buildScriptSha256": digest(Path(__file__)),
+    receipt = {"schemaVersion": 2, "sourceLockSha256": digest(LOCK), **build_recipe_provenance(),
+               "verificationScriptSha256": digest(Path(__file__)),
                "patchedSourceTree": tree, "nativeBuild": native, "packages": packages}
     RECEIPT.write_text(json.dumps(receipt, indent=2) + "\n")
     check()
@@ -245,8 +268,19 @@ def build(args):
 def check():
     lock = inputs()
     receipt = json.loads(RECEIPT.read_text())
-    if receipt["sourceLockSha256"] != digest(LOCK) or receipt["buildScriptSha256"] != digest(Path(__file__)):
-        raise ValueError("vendor inputs changed; rebuild and review the generated packages")
+    if receipt.get("schemaVersion") != 2:
+        raise ValueError("unsupported vendor receipt version")
+    # The build hash records what produced the archives. A reviewed verifier
+    # update may retain those exact bytes without claiming a new native build.
+    if re.fullmatch(r"[0-9a-f]{64}", receipt.get("buildScriptSha256", "")) is None:
+        raise ValueError("receipt must identify its historical build recipe")
+    revision = receipt.get("buildScriptRevision")
+    if revision is not None and re.fullmatch(r"[0-9a-f]{40}", revision) is None:
+        raise ValueError("historical build recipe revision must be a full Git commit")
+    if receipt.get("verificationScriptSha256") != digest(Path(__file__)):
+        raise ValueError("vendor verifier changed; review it and update verificationScriptSha256")
+    if receipt["sourceLockSha256"] != digest(LOCK):
+        raise ValueError("vendor source inputs changed; rebuild and review the generated packages")
     if {p["name"] for p in receipt["packages"]} != set(lock["packages"]):
         raise ValueError("receipt does not contain both runtime packages")
     for package in receipt["packages"]:

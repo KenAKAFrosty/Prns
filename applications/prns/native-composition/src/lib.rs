@@ -14,13 +14,18 @@ mod pairing;
 mod remote_control;
 mod snapshot;
 
+#[cfg(test)]
+mod test_support;
+
 #[cfg(feature = "host-test")]
 #[doc(hidden)]
 pub mod host_test {
-    pub use crate::lifecycle::{
-        announce_self, approve, create_generated_identity, describe, initiate, reject, snapshot,
-        start_configured, stop,
+    pub use crate::lifecycle::admission::{
+        announce_target as announce_self, approve_pairing as approve, describe_target as describe,
+        initiate_pairing as initiate, reject_pairing as reject,
     };
+    pub use crate::lifecycle::snapshot_async as snapshot;
+    pub use crate::lifecycle::{create_generated_identity, start_configured, stop};
 
     /// Exercise the application operation against a controlled public runtime.
     pub async fn describe_with_handle(

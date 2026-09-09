@@ -881,6 +881,11 @@ inputs = [
   "applications/prns/app/app",
   "applications/prns/app/src",
   "applications/prns/app/tools",
+  "applications/prns/native-composition/bindings",
+  "applications/sdk/expo/src",
+  "applications/tools/generated-bindings",
+  "applications/tools/ubrn-vendor",
+  "applications/vendor/ubrn",
 ]
 artifacts = "validation-artifacts/results/application-scaffold"
 
@@ -891,7 +896,7 @@ group = "application"
 tiers = ["pr"]
 platform = "any"
 toolchain = "stable"
-timeout_seconds = 900
+timeout_seconds = 2400
 command = ["npm", "--prefix", "applications", "run", "native:verify"]
 inputs = [
   "applications/Cargo.toml",
@@ -911,8 +916,30 @@ inputs = [
   "prns-js/src/contract.ts",
   "applications/prns/native-composition",
   "applications/sdk/expo",
+  "applications/tools/generated-bindings",
+  "applications/tools/ubrn-vendor",
+  "applications/vendor/ubrn",
 ]
 artifacts = "validation-artifacts/results/application-native-foundation"
+
+[[suite]]
+id = "application-ios-platform"
+domain = "platform"
+group = "application"
+tiers = ["pr"]
+platform = "macos"
+toolchain = "swift"
+timeout_seconds = 300
+command = ["npm", "--prefix", "applications", "run", "native:ios:test"]
+inputs = [
+  "applications/package.json",
+  "applications/sdk/expo/package.json",
+  "applications/sdk/expo/ios",
+  "applications/sdk/expo/scripts/test-ios-platform.mjs",
+  "applications/sdk/expo/scripts/PrnsProtectedDataRecoveryTests.swift",
+  "applications/sdk/expo/scripts/PrnsAppRestorationProbeTests.swift",
+]
+artifacts = "validation-artifacts/results/application-ios-platform"
 
 [[suite]]
 id = "application-lxmf-direct"

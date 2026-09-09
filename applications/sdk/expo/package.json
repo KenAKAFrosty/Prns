@@ -22,7 +22,9 @@
     "lint": "biome lint .",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
     "test": "jest --runInBand",
-    "verify": "npm run api:check && npm run ios:check && npm run format:check && npm run lint && npm run typecheck && npm run test"
+    "verify": "npm run api:check && npm run verify:code",
+    "ios:test": "node scripts/test-ios-platform.mjs",
+    "verify:code": "npm run ios:check && npm run format:check && npm run lint && npm run typecheck && npm run test"
   },
   "dependencies": {
     "@ubjs/core": "file:../../vendor/ubrn/packages/ubjs-core-0.31.0-5.tgz",

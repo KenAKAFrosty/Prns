@@ -4,6 +4,14 @@ This is an early development application, not a release-qualified client.
 Base Prns changes are maintained separately for upstream review; their temporary
 integration in this branch does not transfer application policy into Prns.
 
+The [generated-binding checkpoint](#generated-binding-cutover) describes the
+current runtime boundary and its mobile qualification limits. Draft
+[#197](https://github.com/KenAKAFrosty/Prns/pull/197) was updated on September 9,
+2026 to `84227172015f229b0836ec14add04658a34d99ff` with an explicitly approved,
+one-time publication exception. The constrained Nordic firmware failure remains
+unresolved; publication did not qualify that target or authorize a future bypass.
+Earlier observations below apply to their recorded builds.
+
 ## Repeatable automated checks
 
 Run from the repository root with the toolchains recorded in
@@ -12,13 +20,18 @@ Run from the repository root with the toolchains recorded in
 ```sh
 npm --prefix applications run verify
 npm --prefix applications run mobility:verify
+# On macOS, also exercise the Swift lifecycle and release-symbol checks:
+npm --prefix applications run native:ios:test
 python3 validation/hygiene/application-boundary.py
 python3 validation/hygiene/no-personal-paths.py HEAD
 ```
 
-The ordinary application gate checks the compatibility record, generated Host
-contract, native services, SDK, UI, route catalog, Expo configuration, and web
-export. The detached gate exports the application into an independent directory,
+The portable application gate checks the compatibility record, generated
+bindings and Host adapters, vendor provenance, native services, SDK, UI, route
+catalog, Expo configuration, and web export. The separate macOS gate compiles
+and executes the Swift lifecycle tests and checks that release diagnostics are
+absent; portable source checks are not a substitute for those tests. The
+detached gate exports the application into an independent directory,
 resolves its exact recorded Prns revision and JavaScript artifact, and exercises
 the native/SDK/UI and bidirectional native/Python LXMF checks there. This checks
 the extraction boundary; it does not qualify a phone, background delivery, or
@@ -651,7 +664,7 @@ The Android 10/API 29 implementation is ready for development handoff at the
 current iOS app's feature scope, with the qualification limits below. This is
 not a release or a fresh qualification of iOS background restoration.
 
-### Publication hold: constrained Nordic firmware
+### Constrained Nordic firmware failure and publication exception
 
 The normal push gate stopped on `t-echo-s140-v7`: its linked firmware exceeds
 the configured FLASH region by 1,984 bytes. A matched build of upstream
@@ -670,11 +683,13 @@ policies, and the unsafe dependency inventory. Browser smoke compiled its Rust
 module but could not complete because the local `wasm-bindgen 0.2.126` CLI was
 unavailable. These diagnostic continuations do not bypass the failed matrix.
 The full firmware matrix and publishing gate have not passed. The equivalent
-FLASH limitation was disclosed when the draft PR first opened; that earlier
-one-publication hook exception does not authorize another bypass. No flash
-layout, feature set, hook, or CI setting was changed to work around this result.
-Publication needs a separately reviewed footprint correction or an explicit
-exception for updating the draft. Logs: `final-push.log`,
+FLASH limitation was disclosed when the draft PR first opened. On September 9,
+2026 a separately approved one-time exception allowed the generated-binding
+cutover at `84227172015f229b0836ec14add04658a34d99ff` to update draft #197. Neither
+that exception nor the original publication exception authorizes a future
+bypass. No flash layout, feature set, hook, or CI setting was changed to work
+around the firmware result. A future update needs a separately reviewed
+footprint correction or its own explicit exception. Logs: `final-push.log`,
 `techo-upstream-baseline.log`, and `techo-source-footprint-review.md` in the
 evidence directory above.
 
@@ -730,11 +745,13 @@ accepted native durable write or independently spawned work.
 These checks do not requalify the earlier physical Bluetooth observations for
 the generated-binding build, nor qualify signed iOS distribution, Android
 release/R8 packaging, arbitrary callback interfaces or long-idle delivery. The
-constrained Nordic firmware publication hold above remains in force.
+constrained Nordic firmware failure above remains unresolved; the scoped draft
+publication exception does not establish a passing firmware matrix.
 
 ## Remaining work
 
-- Resolve the constrained Nordic firmware publication hold above.
+- Resolve the constrained Nordic firmware failure above before normal publication
+  or merging.
 - Pristine interactive import onboarding remains separate from the passed
   picker guards and isolated native import test.
 - Qualify newer Android permission/service behavior, including the Android 13+

@@ -2,6 +2,7 @@
   "name": "@prns-internal/native-bindings",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "description": "Generated bindings for the process-owned Prns application runtime",
   "license": "MIT OR Apache-2.0",
   "author": "Prns contributors",
@@ -35,6 +36,10 @@
     "./native": {
       "types": "./index.native.ts",
       "default": "./index.native.ts"
+    },
+    "./values": {
+      "types": "./typescript/api-values.generated.ts",
+      "default": "./typescript/api-values.generated.ts"
     },
     "./package.json": "./package.json"
   }

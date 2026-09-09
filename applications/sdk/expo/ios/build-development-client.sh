@@ -92,7 +92,6 @@ else
 fi
 
 echo "build-development-client.sh: generating typed bindings and the shared Rust framework"
-python3 "${APPLICATIONS_DIRECTORY}/tools/generated-bindings/generate.py" generate
 if [[ "${MODE}" == "device" ]]; then
   python3 "${APPLICATIONS_DIRECTORY}/tools/generated-bindings/generate.py" ios --targets aarch64-apple-ios
 else

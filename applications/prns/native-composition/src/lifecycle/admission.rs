@@ -1,4 +1,4 @@
-//! Runtime-neutral generated entry points. Only native bootstrap may do path I/O
+//! Handwritten runtime-neutral admission used by generated foreign entry points. Only native bootstrap may do path I/O
 //! or wait for lifecycle transitions. Async admission never waits for that lock.
 use super::*;
 use crate::contract::NativeStoragePreparationOutcome;
@@ -12,7 +12,7 @@ pub(crate) fn prepare_native_storage(storage_root: &Path) -> NativeStoragePrepar
     prepare_native_storage_with_supervisor(supervisor(), storage_root)
 }
 
-fn prepare_native_storage_with_supervisor(
+pub(super) fn prepare_native_storage_with_supervisor(
     supervisor: &Supervisor,
     storage_root: &Path,
 ) -> NativeStoragePreparationOutcome {
@@ -65,7 +65,7 @@ fn admit_running<T>(
     let (response, receiver) = oneshot::channel();
     worker
         .commands
-        .try_send(command(Reply::Async(response)))
+        .try_send(command(response))
         .map_err(|error| match error {
             mpsc::error::TrySendError::Full(_) => LxmfAdmissionFailure::Busy,
             mpsc::error::TrySendError::Closed(_) => LxmfAdmissionFailure::LocalNodeStopped,
@@ -104,7 +104,7 @@ async fn pairing(
             return Err(RemoteControlPairingCommandOutcome::Busy);
         }
         let (response, receiver) = oneshot::channel();
-        if let Err(error) = worker.commands.try_send(command(Reply::Async(response))) {
+        if let Err(error) = worker.commands.try_send(command(response)) {
             supervisor
                 .operation_admitted
                 .store(false, Ordering::Release);
@@ -128,7 +128,7 @@ async fn pairing(
     }
 }
 
-pub(crate) async fn initiate_pairing(
+pub async fn initiate_pairing(
     input: InitiateRemoteControlPairingInput,
 ) -> RemoteControlPairingCommandOutcome {
     pairing(COMMAND_TIMEOUT, |response| {
@@ -136,7 +136,7 @@ pub(crate) async fn initiate_pairing(
     })
     .await
 }
-pub(crate) async fn approve_pairing(
+pub async fn approve_pairing(
     input: RemoteControlPairingDecisionInput,
 ) -> RemoteControlPairingCommandOutcome {
     pairing(PAIRING_APPROVAL_TIMEOUT, |response| {
@@ -144,19 +144,19 @@ pub(crate) async fn approve_pairing(
     })
     .await
 }
-pub(crate) async fn reject_pairing(
+pub async fn reject_pairing(
     input: RemoteControlPairingDecisionInput,
 ) -> RemoteControlPairingCommandOutcome {
     pairing(COMMAND_TIMEOUT, |response| Command::Reject(input, response)).await
 }
 
-pub(crate) async fn describe_target(
+pub async fn describe_target(
     input: DescribeRemoteControlTargetInput,
 ) -> RemoteControlDescribeOutcome {
     describe_with_supervisor(supervisor(), input).await
 }
 
-async fn describe_with_supervisor(
+pub(super) async fn describe_with_supervisor(
     supervisor: &Supervisor,
     input: DescribeRemoteControlTargetInput,
 ) -> RemoteControlDescribeOutcome {
@@ -181,7 +181,7 @@ async fn describe_with_supervisor(
         let (response, receiver) = oneshot::channel();
         if let Err(error) = worker.commands.try_send(Command::Describe(DescribeCommand {
             input,
-            response: Reply::Async(response),
+            response,
             deadline,
             caller: cancelled,
         })) {
@@ -211,17 +211,23 @@ async fn describe_with_supervisor(
     outcome
 }
 
-pub(crate) async fn announce_target(
+pub async fn announce_target(
     input: AnnounceRemoteControlTargetInput,
 ) -> RemoteControlAnnounceOutcome {
-    let supervisor = supervisor();
+    announce_target_with_supervisor(supervisor(), input).await
+}
+
+pub(super) async fn announce_target_with_supervisor(
+    supervisor: &Supervisor,
+    input: AnnounceRemoteControlTargetInput,
+) -> RemoteControlAnnounceOutcome {
     let Ok(state) = try_state(supervisor) else {
         return RemoteControlAnnounceOutcome::Busy;
     };
     announce_self_admitted(supervisor, &state, input)
 }
 
-pub(crate) async fn list_lxmf_peers() -> LxmfPeerListOutcome {
+pub async fn list_lxmf_peers() -> LxmfPeerListOutcome {
     match admit_running(supervisor(), Command::ListLxmfPeers) {
         Ok(receiver) => bounded_reply(receiver, LXMF_QUERY_TIMEOUT)
             .await
@@ -231,7 +237,7 @@ pub(crate) async fn list_lxmf_peers() -> LxmfPeerListOutcome {
     }
 }
 
-pub(crate) async fn measure_lxmf_text(input: MeasureLxmfTextInput) -> MeasureLxmfTextOutcome {
+pub async fn measure_lxmf_text(input: MeasureLxmfTextInput) -> MeasureLxmfTextOutcome {
     match admit_running(supervisor(), |response| {
         Command::MeasureLxmfText(input, response)
     }) {
@@ -243,7 +249,7 @@ pub(crate) async fn measure_lxmf_text(input: MeasureLxmfTextInput) -> MeasureLxm
     }
 }
 
-pub(crate) async fn announce_lxmf() -> AnnounceLxmfOutcome {
+pub async fn announce_lxmf() -> AnnounceLxmfOutcome {
     match admit_running(supervisor(), Command::AnnounceLxmf) {
         Ok(receiver) => bounded_reply(receiver, LXMF_QUERY_TIMEOUT)
             .await
@@ -253,8 +259,15 @@ pub(crate) async fn announce_lxmf() -> AnnounceLxmfOutcome {
     }
 }
 
-pub(crate) async fn send_direct_text(input: SendDirectTextInput) -> SendDirectTextOutcome {
-    let receiver = match admit_running(supervisor(), |response| {
+pub async fn send_direct_text(input: SendDirectTextInput) -> SendDirectTextOutcome {
+    send_direct_text_with_supervisor(supervisor(), input).await
+}
+
+pub(super) async fn send_direct_text_with_supervisor(
+    supervisor: &Supervisor,
+    input: SendDirectTextInput,
+) -> SendDirectTextOutcome {
+    let receiver = match admit_running(supervisor, |response| {
         Command::SendDirectText(input, response)
     }) {
         Ok(receiver) => receiver,
@@ -325,9 +338,7 @@ async fn receive_mutation(receiver: oneshot::Receiver<StoreReply>) -> ContactMut
     }
 }
 
-pub(crate) async fn create_manual_contact(
-    input: CreateManualContactInput,
-) -> ContactMutationOutcome {
+pub async fn create_manual_contact(input: CreateManualContactInput) -> ContactMutationOutcome {
     mutation(
         supervisor(),
         DirectoryRequest::CreateManual {
@@ -338,7 +349,7 @@ pub(crate) async fn create_manual_contact(
     )
     .await
 }
-pub(crate) async fn set_contact_alias(input: SetContactAliasInput) -> ContactMutationOutcome {
+pub async fn set_contact_alias(input: SetContactAliasInput) -> ContactMutationOutcome {
     mutation(
         supervisor(),
         DirectoryRequest::SetAlias {
@@ -348,7 +359,7 @@ pub(crate) async fn set_contact_alias(input: SetContactAliasInput) -> ContactMut
     )
     .await
 }
-pub(crate) async fn set_contact_pinned(input: SetContactPinnedInput) -> ContactMutationOutcome {
+pub async fn set_contact_pinned(input: SetContactPinnedInput) -> ContactMutationOutcome {
     mutation(
         supervisor(),
         DirectoryRequest::SetPinned {
@@ -358,7 +369,7 @@ pub(crate) async fn set_contact_pinned(input: SetContactPinnedInput) -> ContactM
     )
     .await
 }
-pub(crate) async fn delete_contact(input: ContactDestinationInput) -> ContactMutationOutcome {
+pub async fn delete_contact(input: ContactDestinationInput) -> ContactMutationOutcome {
     mutation(
         supervisor(),
         DirectoryRequest::Delete {
@@ -367,7 +378,7 @@ pub(crate) async fn delete_contact(input: ContactDestinationInput) -> ContactMut
     )
     .await
 }
-pub(crate) async fn get_contact(input: ContactDestinationInput) -> ContactLookupOutcome {
+pub async fn get_contact(input: ContactDestinationInput) -> ContactLookupOutcome {
     let receiver = match admit_directory(
         supervisor(),
         DirectoryRequest::Get {
@@ -385,10 +396,10 @@ pub(crate) async fn get_contact(input: ContactDestinationInput) -> ContactLookup
         },
     }
 }
-pub(crate) async fn list_contacts() -> ContactListOutcome {
+pub async fn list_contacts() -> ContactListOutcome {
     list_contacts_with_supervisor(supervisor()).await
 }
-async fn list_contacts_with_supervisor(supervisor: &Supervisor) -> ContactListOutcome {
+pub(super) async fn list_contacts_with_supervisor(supervisor: &Supervisor) -> ContactListOutcome {
     let receiver = match admit_directory(supervisor, DirectoryRequest::List) {
         Ok(receiver) => receiver,
         Err(failure) => return list_store_failure(failure),
@@ -402,10 +413,14 @@ async fn list_contacts_with_supervisor(supervisor: &Supervisor) -> ContactListOu
     }
 }
 
-pub(crate) async fn save_observed_destination(
+pub async fn save_observed_destination(input: ContactDestinationInput) -> ContactMutationOutcome {
+    save_observed_destination_with_supervisor(supervisor(), input).await
+}
+
+pub(super) async fn save_observed_destination_with_supervisor(
+    supervisor: &Supervisor,
     input: ContactDestinationInput,
 ) -> ContactMutationOutcome {
-    let supervisor = supervisor();
     let admitted = (|| {
         let state = try_state(supervisor).map_err(|detail| {
             ContactMutationOutcome::DevelopmentUnavailable {
@@ -418,10 +433,7 @@ pub(crate) async fn save_observed_destination(
         let (response, receiver) = oneshot::channel();
         worker
             .commands
-            .try_send(Command::ObservedIdentity(
-                input.destination,
-                Reply::Async(response),
-            ))
+            .try_send(Command::ObservedIdentity(input.destination, response))
             .map_err(|_| ContactMutationOutcome::DevelopmentUnavailable {
                 detail: "The local observation lane is full or closed.".to_owned(),
             })?;
@@ -501,19 +513,26 @@ fn admit_mailbox<T>(
             let (response, receiver) = oneshot::channel();
             worker
                 .commands
-                .try_send(command(Reply::Async(response)))
+                .try_send(command(response))
                 .map_err(|_| MailboxFailure::Busy)?;
             Ok(MailboxResponse::Running(receiver))
         }
     }
 }
 
-pub(crate) async fn list_lxmf_messages(input: ListLxmfMessagesInput) -> LxmfMessageListOutcome {
+pub async fn list_lxmf_messages(input: ListLxmfMessagesInput) -> LxmfMessageListOutcome {
+    list_lxmf_messages_with_supervisor(supervisor(), input).await
+}
+
+pub(super) async fn list_lxmf_messages_with_supervisor(
+    supervisor: &Supervisor,
+    input: ListLxmfMessagesInput,
+) -> LxmfMessageListOutcome {
     let request = match crate::lxmf::mailbox_list_request(input) {
         Ok(request) => request,
         Err(outcome) => return outcome,
     };
-    match admit_mailbox(supervisor(), MailboxRequest::List(request), |response| {
+    match admit_mailbox(supervisor, MailboxRequest::List(request), |response| {
         Command::ListLxmfMessages(request, response)
     }) {
         Ok(MailboxResponse::Running(receiver)) => bounded_reply(receiver, LXMF_QUERY_TIMEOUT)
@@ -536,10 +555,17 @@ pub(crate) async fn list_lxmf_messages(input: ListLxmfMessagesInput) -> LxmfMess
     }
 }
 
-pub(crate) async fn retry_lxmf_message(input: RetryLxmfMessageInput) -> RetryLxmfMessageOutcome {
+pub async fn retry_lxmf_message(input: RetryLxmfMessageInput) -> RetryLxmfMessageOutcome {
+    retry_lxmf_message_with_supervisor(supervisor(), input).await
+}
+
+pub(super) async fn retry_lxmf_message_with_supervisor(
+    supervisor: &Supervisor,
+    input: RetryLxmfMessageInput,
+) -> RetryLxmfMessageOutcome {
     let id = input.local_record_id;
     match admit_mailbox(
-        supervisor(),
+        supervisor,
         MailboxRequest::Retry {
             local_record_id: id,
         },
@@ -566,11 +592,18 @@ pub(crate) async fn retry_lxmf_message(input: RetryLxmfMessageInput) -> RetryLxm
     }
 }
 
-pub(crate) async fn cancel_lxmf_message(input: CancelLxmfMessageInput) -> CancelLxmfMessageOutcome {
+pub async fn cancel_lxmf_message(input: CancelLxmfMessageInput) -> CancelLxmfMessageOutcome {
+    cancel_lxmf_message_with_supervisor(supervisor(), input).await
+}
+
+pub(super) async fn cancel_lxmf_message_with_supervisor(
+    supervisor: &Supervisor,
+    input: CancelLxmfMessageInput,
+) -> CancelLxmfMessageOutcome {
     let id = input.local_record_id;
     let cancelled_at_millis = wall_clock_millis();
     match admit_mailbox(
-        supervisor(),
+        supervisor,
         MailboxRequest::Cancel {
             local_record_id: id,
             cancelled_at_millis,
@@ -603,404 +636,4 @@ pub(crate) async fn cancel_lxmf_message(input: CancelLxmfMessageInput) -> Cancel
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::panic)]
-mod tests {
-    use super::*;
-    use std::future::Future;
-    use std::task::{Context, Poll, Wake, Waker};
-
-    struct Notify(std::thread::Thread);
-    impl Wake for Notify {
-        fn wake(self: Arc<Self>) {
-            self.0.unpark();
-        }
-        fn wake_by_ref(self: &Arc<Self>) {
-            self.0.unpark();
-        }
-    }
-    fn foreign_block_on<F: Future>(future: F) -> F::Output {
-        let waker = Waker::from(Arc::new(Notify(std::thread::current())));
-        let mut context = Context::from_waker(&waker);
-        let mut future = std::pin::pin!(future);
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            assert!(Instant::now() < deadline, "foreign executor deadline");
-            match future.as_mut().poll(&mut context) {
-                Poll::Ready(value) => return value,
-                Poll::Pending => {
-                    std::thread::park_timeout(deadline.saturating_duration_since(Instant::now()))
-                }
-            }
-        }
-    }
-    fn owner() -> Arc<Supervisor> {
-        Arc::new(Supervisor {
-            snapshots: Arc::new(SnapshotStore::new()),
-            operation_admitted: Arc::new(AtomicBool::new(false)),
-            state: Mutex::new(SupervisorState::default()),
-        })
-    }
-
-    #[test]
-    fn cold_offline_storage_is_native_bootstrapped_and_foreign_calls_create_no_owner() {
-        let directory = tempfile::tempdir().expect("temporary storage");
-        let root = directory.path().join("prns/development");
-        let owner = owner();
-        assert!(matches!(
-            foreign_block_on(list_contacts_with_supervisor(&owner)),
-            ContactListOutcome::DevelopmentUnavailable { .. }
-        ));
-        assert!(!root.exists());
-        assert!(owner.lock_state().application_owner.is_none());
-        let native_owner = Arc::clone(&owner);
-        let native_root = root.clone();
-        assert_eq!(
-            std::thread::spawn(move || prepare_native_storage_with_supervisor(
-                &native_owner,
-                &native_root
-            ))
-            .join()
-            .expect("native background queue"),
-            NativeStoragePreparationOutcome::Prepared
-        );
-        assert!(owner.lock_state().worker.is_none());
-        assert!(matches!(
-            foreign_block_on(mutation(
-                &owner,
-                DirectoryRequest::CreateManual {
-                    destination: [7; 16],
-                    identity: None,
-                    alias: Some("  Offline  ".to_owned()),
-                }
-            )),
-            ContactMutationOutcome::Saved { .. }
-        ));
-        let ContactListOutcome::Listed { contacts } =
-            foreign_block_on(list_contacts_with_supervisor(&owner))
-        else {
-            panic!("offline list");
-        };
-        assert_eq!(contacts.len(), 1);
-        assert_eq!(contacts[0].alias.as_deref(), Some("Offline"));
-        assert!(owner.lock_state().worker.is_none());
-        assert_eq!(
-            reset_with_supervisor(&owner, &root),
-            DevelopmentNodeStopOutcome::AlreadyStopped
-        );
-        assert!(!root.exists());
-        assert!(matches!(
-            foreign_block_on(list_contacts_with_supervisor(&owner)),
-            ContactListOutcome::DevelopmentUnavailable { .. }
-        ));
-        assert!(
-            !root.exists(),
-            "async calls must not silently reopen after reset"
-        );
-    }
-
-    #[test]
-    fn terminal_failed_generation_allows_offline_mailbox_without_foreign_join() {
-        let directory = tempfile::tempdir().expect("temporary storage");
-        let root = directory.path().join("prns/development");
-        let owner = owner();
-        assert_eq!(
-            prepare_native_storage_with_supervisor(&owner, &root),
-            NativeStoragePreparationOutcome::Prepared
-        );
-        let (commands, _queue) = mpsc::channel(COMMAND_LANE_CAPACITY);
-        let (shutdown, _) = watch::channel(false);
-        let (done, done_rx) = std_mpsc::sync_channel(1);
-        let join = std::thread::spawn(move || {
-            let _ = done.send(Ok(()));
-        });
-        let deadline = Instant::now() + Duration::from_secs(1);
-        while !join.is_finished() {
-            assert!(Instant::now() < deadline);
-            std::thread::yield_now();
-        }
-        owner.snapshots.fail(DevelopmentNodeFailure {
-            stage: DevelopmentNodeFailureStage::Runtime,
-            detail: "terminal generation".to_owned(),
-        });
-        owner.lock_state().worker = Some(super::super::tests::test_worker(
-            commands,
-            ShutdownSignal {
-                sender: shutdown,
-                requested: Arc::new(AtomicBool::new(false)),
-            },
-            done_rx,
-            Some(join),
-            root.canonicalize().expect("prepared root"),
-        ));
-        let request = prns_lxmf::mailbox::MailboxListRequest {
-            peer: None,
-            direction: None,
-            before: None,
-            limit: 25,
-        };
-        let Ok(MailboxResponse::Offline(response)) =
-            admit_mailbox(&owner, MailboxRequest::List(request), |response| {
-                Command::ListLxmfMessages(request, response)
-            })
-        else {
-            panic!("offline admission after terminal failure");
-        };
-        assert!(matches!(
-            foreign_block_on(bounded_reply(response, LXMF_QUERY_TIMEOUT)),
-            Ok(Ok(MailboxReply::Listed { .. }))
-        ));
-        assert!(owner
-            .lock_state()
-            .worker
-            .as_ref()
-            .expect("native cleanup retains handle")
-            .join
-            .is_some());
-        assert_eq!(
-            reset_with_supervisor(&owner, &root),
-            DevelopmentNodeStopOutcome::Stopped
-        );
-        assert!(owner.lock_state().worker.is_none());
-    }
-
-    #[test]
-    fn foreign_offline_timeout_needs_no_tokio_runtime() {
-        let (_response, receiver) = oneshot::channel::<()>();
-        let started = Instant::now();
-        assert!(foreign_block_on(bounded_reply(receiver, Duration::from_millis(15))).is_err());
-        assert!(started.elapsed() < Duration::from_secs(1));
-    }
-
-    #[test]
-    fn generated_admission_never_waits_for_a_native_transition() {
-        let owner = owner();
-        let _transition = owner.lock_state();
-        let started = Instant::now();
-        assert!(matches!(
-            foreign_block_on(list_contacts_with_supervisor(&owner)),
-            ContactListOutcome::DevelopmentUnavailable { .. }
-        ));
-        assert!(matches!(
-            foreign_block_on(describe_with_supervisor(
-                &owner,
-                DescribeRemoteControlTargetInput {
-                    target_identity_fingerprint: vec![1; 16]
-                }
-            )),
-            RemoteControlDescribeOutcome::Failed {
-                stage: RemoteControlDescribeFailureStage::Node,
-                ..
-            }
-        ));
-        assert!(started.elapsed() < Duration::from_millis(100));
-    }
-
-    #[test]
-    fn admitted_contact_write_commits_after_foreign_caller_drop_and_reset_drains_it() {
-        let directory = tempfile::tempdir().expect("temporary storage");
-        let root = directory.path().join("prns/development");
-        let owner = owner();
-        assert_eq!(
-            prepare_native_storage_with_supervisor(&owner, &root),
-            NativeStoragePreparationOutcome::Prepared
-        );
-        let (entered, entered_rx) = std_mpsc::sync_channel(1);
-        let (release, release_rx) = std_mpsc::sync_channel(1);
-        owner
-            .lock_state()
-            .application_owner
-            .as_ref()
-            .expect("prepared owner")
-            .admit_test_barrier(entered, release_rx)
-            .expect("hold database");
-        entered_rx
-            .recv_timeout(Duration::from_secs(1))
-            .expect("database is held");
-        let mut call = Box::pin(mutation(
-            &owner,
-            DirectoryRequest::CreateManual {
-                destination: [3; 16],
-                identity: Some([4; 16]),
-                alias: None,
-            },
-        ));
-        assert!(call
-            .as_mut()
-            .poll(&mut Context::from_waker(Waker::noop()))
-            .is_pending());
-        drop(call);
-        release.send(()).expect("resume owner");
-        let ContactListOutcome::Listed { contacts } =
-            foreign_block_on(list_contacts_with_supervisor(&owner))
-        else {
-            panic!("read committed mutation");
-        };
-        assert_eq!(contacts.len(), 1);
-        assert_eq!(contacts[0].destination, [3; 16]);
-        // The next admitted write remains behind another held job; reset must
-        // drain it even though the foreign observer has already gone away.
-        let (entered, entered_rx) = std_mpsc::sync_channel(1);
-        let (release, release_rx) = std_mpsc::sync_channel(1);
-        owner
-            .lock_state()
-            .application_owner
-            .as_ref()
-            .expect("prepared owner")
-            .admit_test_barrier(entered, release_rx)
-            .expect("hold database");
-        entered_rx
-            .recv_timeout(Duration::from_secs(1))
-            .expect("database is held");
-        let response = admit_directory(
-            &owner,
-            DirectoryRequest::SetAlias {
-                destination: [3; 16],
-                alias: Some("Retained".to_owned()),
-            },
-        )
-        .expect("admitted write");
-        drop(response);
-        let reset_owner = Arc::clone(&owner);
-        let reset_root = root.clone();
-        let reset = std::thread::spawn(move || reset_with_supervisor(&reset_owner, &reset_root));
-        // Synchronize on reset holding the supervisor rather than guessing a sleep.
-        let deadline = Instant::now() + Duration::from_secs(1);
-        while owner.state.try_lock().is_ok() {
-            assert!(Instant::now() < deadline);
-            std::thread::yield_now();
-        }
-        assert!(!reset.is_finished());
-        release.send(()).expect("resume database");
-        assert_eq!(
-            reset.join().expect("reset joins owner"),
-            DevelopmentNodeStopOutcome::AlreadyStopped
-        );
-        assert!(!root.exists());
-    }
-
-    #[test]
-    fn generated_describe_held_request_releases_on_native_stop_and_caller_drop() {
-        struct Dropped(Arc<AtomicBool>);
-        impl Drop for Dropped {
-            fn drop(&mut self) {
-                self.0.store(true, Ordering::Release);
-            }
-        }
-        for caller_leaves in [false, true] {
-            let owner = owner();
-            owner
-                .snapshots
-                .begin_generation(PrimaryIdentityState::Missing);
-            owner.snapshots.set_runtime(DevelopmentNodeRuntime::Running);
-            let (commands, mut queue) = mpsc::channel(COMMAND_LANE_CAPACITY);
-            let (shutdown, mut shutdown_rx) = watch::channel(false);
-            let (done, done_rx) = std_mpsc::sync_channel(1);
-            let (entered, entered_rx) = std_mpsc::sync_channel(1);
-            let dropped = Arc::new(AtomicBool::new(false));
-            let actor_drop = Arc::clone(&dropped);
-            let actor_owner = Arc::clone(&owner);
-            let join = std::thread::spawn(move || {
-                let runtime = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("existing node runtime");
-                runtime.block_on(async {
-                    let Some(Command::Describe(command)) = queue.recv().await else {
-                        panic!("admitted describe");
-                    };
-                    run_describe_command(
-                        command,
-                        &actor_owner.snapshots,
-                        &actor_owner.operation_admitted,
-                        &mut shutdown_rx,
-                        |_| async move {
-                            let _held = Dropped(actor_drop);
-                            entered.send(()).expect("held request entered");
-                            std::future::pending().await
-                        },
-                    )
-                    .await;
-                });
-                done.send(Ok(())).expect("worker completion");
-            });
-            owner.lock_state().worker = Some(super::super::tests::test_worker(
-                commands,
-                ShutdownSignal {
-                    sender: shutdown,
-                    requested: Arc::new(AtomicBool::new(false)),
-                },
-                done_rx,
-                Some(join),
-                PathBuf::from("/unused"),
-            ));
-            let mut query = Box::pin(describe_with_supervisor(
-                &owner,
-                DescribeRemoteControlTargetInput {
-                    target_identity_fingerprint: vec![9; 16],
-                },
-            ));
-            assert!(query
-                .as_mut()
-                .poll(&mut Context::from_waker(Waker::noop()))
-                .is_pending());
-            entered_rx
-                .recv_timeout(Duration::from_secs(1))
-                .expect("held network future");
-            if caller_leaves {
-                drop(query);
-                let deadline = Instant::now() + Duration::from_secs(1);
-                while !dropped.load(Ordering::Acquire) {
-                    assert!(Instant::now() < deadline);
-                    std::thread::yield_now();
-                }
-                let mut state = owner.lock_state();
-                assert!(matches!(
-                    stop_locked(&owner, &mut state),
-                    DevelopmentNodeStopOutcome::Stopped
-                        | DevelopmentNodeStopOutcome::AlreadyStopped
-                ));
-            } else {
-                let outcome = {
-                    let mut state = owner.lock_state();
-                    stop_locked(&owner, &mut state)
-                };
-                assert_eq!(outcome, DevelopmentNodeStopOutcome::Stopped);
-                assert!(matches!(
-                    foreign_block_on(query),
-                    RemoteControlDescribeOutcome::Failed {
-                        stage: RemoteControlDescribeFailureStage::Node,
-                        ..
-                    }
-                ));
-            }
-            assert!(dropped.load(Ordering::Acquire));
-            assert!(!owner.operation_admitted.load(Ordering::Acquire));
-        }
-    }
-
-    #[test]
-    fn typed_contact_input_cannot_bypass_shared_native_size_bound() {
-        let directory = tempfile::tempdir().expect("temporary storage");
-        let root = directory.path().join("prns/development");
-        let owner = owner();
-        assert_eq!(
-            prepare_native_storage_with_supervisor(&owner, &root),
-            NativeStoragePreparationOutcome::Prepared
-        );
-        assert!(matches!(
-            foreign_block_on(mutation(
-                &owner,
-                DirectoryRequest::CreateManual {
-                    destination: [1; 16],
-                    identity: None,
-                    alias: Some("x".repeat(crate::input::MAX_INPUT_BYTES + 1)),
-                }
-            )),
-            ContactMutationOutcome::DevelopmentUnavailable { .. }
-        ));
-        assert_eq!(
-            foreign_block_on(list_contacts_with_supervisor(&owner)),
-            ContactListOutcome::Listed { contacts: vec![] }
-        );
-    }
-}
+mod tests;

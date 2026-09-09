@@ -80,7 +80,6 @@ impl SnapshotStore {
 
     /// An asynchronous read from a retired generation must not mark its successor
     /// unavailable when its own actor or timeout completes later.
-    #[cfg(feature = "uniffi-bindings")]
     pub fn set_local_host_unavailable_for_generation(&self, generation: u64, detail: String) {
         let mut snapshot = self.lock();
         if snapshot.runtime != DevelopmentNodeRuntime::Running

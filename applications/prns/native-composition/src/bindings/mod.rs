@@ -56,7 +56,7 @@ pub fn binding_contract() -> BindingContract {
 /// only: this may perform blocking storage I/O and wait for native transitions.
 #[uniffi::export]
 pub fn native_prepare_storage(storage_root: String) -> NativeStoragePreparationOutcome {
-    crate::lifecycle::generated::prepare_native_storage(Path::new(&storage_root))
+    crate::lifecycle::admission::prepare_native_storage(Path::new(&storage_root))
 }
 
 /// Platform background/lifecycle queue only.
@@ -129,103 +129,103 @@ pub fn native_reset(storage_root: String) -> DevelopmentNodeStopOutcome {
 pub async fn initiate_pairing(
     input: InitiateRemoteControlPairingInput,
 ) -> RemoteControlPairingCommandOutcome {
-    crate::lifecycle::generated::initiate_pairing(input).await
+    crate::lifecycle::admission::initiate_pairing(input).await
 }
 
 #[uniffi::export]
 pub async fn approve_pairing(
     input: RemoteControlPairingDecisionInput,
 ) -> RemoteControlPairingCommandOutcome {
-    crate::lifecycle::generated::approve_pairing(input).await
+    crate::lifecycle::admission::approve_pairing(input).await
 }
 
 #[uniffi::export]
 pub async fn reject_pairing(
     input: RemoteControlPairingDecisionInput,
 ) -> RemoteControlPairingCommandOutcome {
-    crate::lifecycle::generated::reject_pairing(input).await
+    crate::lifecycle::admission::reject_pairing(input).await
 }
 
 #[uniffi::export]
 pub async fn describe_target(
     input: DescribeRemoteControlTargetInput,
 ) -> RemoteControlDescribeOutcome {
-    crate::lifecycle::generated::describe_target(input).await
+    crate::lifecycle::admission::describe_target(input).await
 }
 
 #[uniffi::export]
 pub async fn announce_target(
     input: AnnounceRemoteControlTargetInput,
 ) -> RemoteControlAnnounceOutcome {
-    crate::lifecycle::generated::announce_target(input).await
+    crate::lifecycle::admission::announce_target(input).await
 }
 
 #[uniffi::export]
 pub async fn save_observed_destination(input: ContactDestinationInput) -> ContactMutationOutcome {
-    crate::lifecycle::generated::save_observed_destination(input).await
+    crate::lifecycle::admission::save_observed_destination(input).await
 }
 
 #[uniffi::export]
 pub async fn create_manual_contact(input: CreateManualContactInput) -> ContactMutationOutcome {
-    crate::lifecycle::generated::create_manual_contact(input).await
+    crate::lifecycle::admission::create_manual_contact(input).await
 }
 
 #[uniffi::export]
 pub async fn set_contact_alias(input: SetContactAliasInput) -> ContactMutationOutcome {
-    crate::lifecycle::generated::set_contact_alias(input).await
+    crate::lifecycle::admission::set_contact_alias(input).await
 }
 
 #[uniffi::export]
 pub async fn set_contact_pinned(input: SetContactPinnedInput) -> ContactMutationOutcome {
-    crate::lifecycle::generated::set_contact_pinned(input).await
+    crate::lifecycle::admission::set_contact_pinned(input).await
 }
 
 #[uniffi::export]
 pub async fn delete_contact(input: ContactDestinationInput) -> ContactMutationOutcome {
-    crate::lifecycle::generated::delete_contact(input).await
+    crate::lifecycle::admission::delete_contact(input).await
 }
 
 #[uniffi::export]
 pub async fn get_contact(input: ContactDestinationInput) -> ContactLookupOutcome {
-    crate::lifecycle::generated::get_contact(input).await
+    crate::lifecycle::admission::get_contact(input).await
 }
 
 #[uniffi::export]
 pub async fn list_contacts() -> ContactListOutcome {
-    crate::lifecycle::generated::list_contacts().await
+    crate::lifecycle::admission::list_contacts().await
 }
 
 #[uniffi::export]
 pub async fn list_lxmf_peers() -> LxmfPeerListOutcome {
-    crate::lifecycle::generated::list_lxmf_peers().await
+    crate::lifecycle::admission::list_lxmf_peers().await
 }
 
 #[uniffi::export]
 pub async fn list_lxmf_messages(input: ListLxmfMessagesInput) -> LxmfMessageListOutcome {
-    crate::lifecycle::generated::list_lxmf_messages(input).await
+    crate::lifecycle::admission::list_lxmf_messages(input).await
 }
 
 #[uniffi::export]
 pub async fn retry_lxmf_message(input: RetryLxmfMessageInput) -> RetryLxmfMessageOutcome {
-    crate::lifecycle::generated::retry_lxmf_message(input).await
+    crate::lifecycle::admission::retry_lxmf_message(input).await
 }
 
 #[uniffi::export]
 pub async fn cancel_lxmf_message(input: CancelLxmfMessageInput) -> CancelLxmfMessageOutcome {
-    crate::lifecycle::generated::cancel_lxmf_message(input).await
+    crate::lifecycle::admission::cancel_lxmf_message(input).await
 }
 
 #[uniffi::export]
 pub async fn announce_lxmf() -> AnnounceLxmfOutcome {
-    crate::lifecycle::generated::announce_lxmf().await
+    crate::lifecycle::admission::announce_lxmf().await
 }
 
 #[uniffi::export]
 pub async fn measure_lxmf_text(input: MeasureLxmfTextInput) -> MeasureLxmfTextOutcome {
-    crate::lifecycle::generated::measure_lxmf_text(input).await
+    crate::lifecycle::admission::measure_lxmf_text(input).await
 }
 
 #[uniffi::export]
 pub async fn send_direct_text(input: SendDirectTextInput) -> SendDirectTextOutcome {
-    crate::lifecycle::generated::send_direct_text(input).await
+    crate::lifecycle::admission::send_direct_text(input).await
 }

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "sourceLockSha256": "bacd0ce3eb4c2a990882c833d0e5e9798341934ee27befc216b272607fb36f6c",
   "buildScriptSha256": "3bbd4e05568d99b056f8b6d8ed44263043cf42aabb9934990ebc19631ae838c1",
   "patchedSourceTree": "a7584470e18a8d8e8e7f204d7cfe5745a5040acd",
@@ -28,5 +28,7 @@
       "sha256": "ebd78b2ea764c6fbf175634dfbadaba16a31d3d60a855a744bf57e0b352b6974",
       "integrity": "sha512-wiXSVwCQgCXhtB4x1FHBrvSn4iCXqSChHbmLzzrQEGs26uUL+ZVZFHljlgRi9VqbGy4llkwidw/yPMTX2uORbg=="
     }
-  ]
+  ],
+  "buildScriptRevision": "84227172015f229b0836ec14add04658a34d99ff",
+  "verificationScriptSha256": "b52959d35570b737268a9222a8b87e22e6dcbae6027ad4102339a50402c3b3c2"
 }

@@ -683,12 +683,18 @@ jobs:
 
   application-native-foundation:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          fetch-depth: 0
           submodules: false
+      - name: Install native Bluetooth host dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          components: clippy, rustfmt
+          toolchain: stable
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           workspaces: applications -> target
@@ -709,6 +715,19 @@ jobs:
           npm --prefix applications ci --ignore-scripts --no-audit --no-fund
       - name: Verify native application foundation
         run: python3 validation/run.py run --suite application-native-foundation --expected-sha "$GITHUB_SHA"
+
+  application-ios-platform:
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.18.0"
+      - name: Verify native Swift lifecycle and diagnostic behavior
+        run: python3 validation/run.py run --suite application-ios-platform --expected-sha "$GITHUB_SHA"
 
   application-lxmf-direct:
     runs-on: ubuntu-24.04
@@ -736,6 +755,8 @@ jobs:
         with:
           fetch-depth: 0
           submodules: false
+      - name: Install native Bluetooth host dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           components: clippy, rustfmt
@@ -778,6 +799,7 @@ jobs:
       - deny
       - application-scaffold
       - application-native-foundation
+      - application-ios-platform
       - application-lxmf-direct
       - application-detached-mobility
     runs-on: ubuntu-24.04
@@ -803,6 +825,7 @@ jobs:
       DENY_RESULT: ${{ needs.deny.result }}
       APPLICATION_SCAFFOLD_RESULT: ${{ needs.application-scaffold.result }}
       APPLICATION_NATIVE_FOUNDATION_RESULT: ${{ needs.application-native-foundation.result }}
+      APPLICATION_IOS_PLATFORM_RESULT: ${{ needs.application-ios-platform.result }}
       APPLICATION_LXMF_DIRECT_RESULT: ${{ needs.application-lxmf-direct.result }}
       APPLICATION_DETACHED_MOBILITY_RESULT: ${{ needs.application-detached-mobility.result }}
     steps:
@@ -825,6 +848,7 @@ jobs:
             "$DENY_RESULT" \
             "$APPLICATION_SCAFFOLD_RESULT" \
             "$APPLICATION_NATIVE_FOUNDATION_RESULT" \
+            "$APPLICATION_IOS_PLATFORM_RESULT" \
             "$APPLICATION_LXMF_DIRECT_RESULT" \
             "$APPLICATION_DETACHED_MOBILITY_RESULT"; do
             test "$result" = "success"

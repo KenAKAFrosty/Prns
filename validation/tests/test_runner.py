@@ -584,6 +584,39 @@ expires = "2099-01-01"
         macos = runner.selected_suites(self.manifest, [], None, None, "macos")
         self.assertTrue(all(suite["platform"] == "macos" for suite in macos))
 
+    def test_application_swift_checks_are_an_explicit_macos_pr_gate(self) -> None:
+        identifiers = ["application-native-foundation", "application-ios-platform"]
+        with mock.patch.object(runner, "native_platform", return_value="linux"):
+            linux = runner.selected_suites(
+                self.manifest, identifiers, None, "pr", "current"
+            )
+        self.assertEqual(
+            [suite["id"] for suite in linux], ["application-native-foundation"]
+        )
+        with mock.patch.object(runner, "native_platform", return_value="macos"):
+            macos = runner.selected_suites(
+                self.manifest, identifiers, None, "pr", "current"
+            )
+        self.assertEqual({suite["id"] for suite in macos}, set(identifiers))
+        swift = next(suite for suite in macos if suite["id"] == "application-ios-platform")
+        self.assertEqual(swift["toolchain"], "swift")
+        self.assertEqual(
+            swift["command"],
+            ["npm", "--prefix", "applications", "run", "native:ios:test"],
+        )
+
+    def test_generated_runtime_inputs_belong_to_application_verification(self) -> None:
+        suites = runner.suite_map(self.manifest)
+        for identifier in ("application-scaffold", "application-native-foundation"):
+            with self.subTest(suite=identifier):
+                inputs = suites[identifier]["inputs"]
+                for source in (
+                    "applications/tools/generated-bindings",
+                    "applications/tools/ubrn-vendor",
+                    "applications/vendor/ubrn",
+                ):
+                    self.assertIn(source, inputs)
+
     def test_interop_case_suites_are_portable(self) -> None:
         suites = [
             suite
