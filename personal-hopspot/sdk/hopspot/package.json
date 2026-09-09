@@ -18,6 +18,9 @@
     "index.js",
     "index.cjs",
     "index.d.ts",
+    "contract.js",
+    "contract.cjs",
+    "contract.d.ts",
     "native.js",
     "native.cjs",
     "native.d.ts",
@@ -59,6 +62,11 @@
         "types": "./browser.d.ts",
         "import": "./browser.js"
       }
+    },
+    "./contract": {
+      "types": "./contract.d.ts",
+      "import": "./contract.js",
+      "require": "./contract.cjs"
     },
     "./native": {
       "types": "./native.d.ts",
