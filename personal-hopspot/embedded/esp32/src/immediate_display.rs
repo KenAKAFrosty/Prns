@@ -356,6 +356,9 @@ mod tests {
             shared_instance_config_export:
                 personal_hopspot_core::SharedInstanceConfigExport::Unavailable,
             gnss: personal_hopspot_core::GnssAvailability::Unavailable,
+            #[cfg(feature = "remote-control-pairing")]
+            remote_control_pairing:
+                personal_hopspot_core::RemoteControlPairingAvailability::Unavailable,
         })
     }
 

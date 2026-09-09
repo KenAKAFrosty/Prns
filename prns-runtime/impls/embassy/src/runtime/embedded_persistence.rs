@@ -266,7 +266,11 @@ pub(crate) enum RemoteControlAuthorizationSnapshotKind {
 pub(crate) enum StoreRemoteControlAuthorizationSnapshotOutcome {
     Stored,
     CompactionInProgress,
-    Failed(EmbeddedPersistenceFailure),
+    Failed {
+        failure: EmbeddedPersistenceFailure,
+        // The store owns retry policy; None means it cannot schedule a retry.
+        retry_at: Option<InstantMillis>,
+    },
 }
 
 struct EncodedDelta {
@@ -497,6 +501,7 @@ where
             | Journaled::RemoteControlTargetPairingControllerCommitted { .. }
             | Journaled::RemoteControlTargetPairingAuthorizationRequired { .. }
             | Journaled::RemoteControlTargetPairingAuthorizationPersisted { .. }
+            | Journaled::RemoteControlTargetPairingExpiredDuringAuthorization { .. }
             | Journaled::RemoteControlControllerPairingConfirmationRequired(_)
             | Journaled::RemoteControlControllerPairingPersistenceRequired(_)
             | Journaled::RemoteControlControllerPairingAuthorizationPersisted { .. }
@@ -779,9 +784,10 @@ where
         now: InstantMillis,
     ) -> StoreRemoteControlAuthorizationSnapshotOutcome {
         if self.retry_not_before.is_some_and(|retry| now.0 < retry.0) {
-            return StoreRemoteControlAuthorizationSnapshotOutcome::Failed(
-                EmbeddedPersistenceFailure::Flash,
-            );
+            return StoreRemoteControlAuthorizationSnapshotOutcome::Failed {
+                failure: EmbeddedPersistenceFailure::Flash,
+                retry_at: self.retry_not_before,
+            };
         }
         if self.compaction.is_some() {
             self.progress_compaction(engine, now).await;
@@ -796,9 +802,10 @@ where
             }
         };
         let Some(journal) = self.journal.as_mut() else {
-            return StoreRemoteControlAuthorizationSnapshotOutcome::Failed(
-                EmbeddedPersistenceFailure::Flash,
-            );
+            return StoreRemoteControlAuthorizationSnapshotOutcome::Failed {
+                failure: EmbeddedPersistenceFailure::Flash,
+                retry_at: None,
+            };
         };
         match journal.append(record_kind, snapshot).await {
             Ok(()) => {
@@ -816,23 +823,28 @@ where
                 self.require_snapshot(EmbeddedPersistenceTarget::CriticalState, now);
                 let allowed = self.next_compaction_not_before.unwrap_or(now);
                 if now.0 < allowed.0 {
-                    return StoreRemoteControlAuthorizationSnapshotOutcome::Failed(
-                        EmbeddedPersistenceFailure::Capacity,
-                    );
+                    return StoreRemoteControlAuthorizationSnapshotOutcome::Failed {
+                        failure: EmbeddedPersistenceFailure::Capacity,
+                        retry_at: Some(allowed),
+                    };
                 }
                 self.try_start_compaction(engine, now);
                 if self.compaction.is_some() {
                     StoreRemoteControlAuthorizationSnapshotOutcome::CompactionInProgress
                 } else {
-                    StoreRemoteControlAuthorizationSnapshotOutcome::Failed(
-                        EmbeddedPersistenceFailure::Capacity,
-                    )
+                    StoreRemoteControlAuthorizationSnapshotOutcome::Failed {
+                        failure: EmbeddedPersistenceFailure::Capacity,
+                        retry_at: self.retry_not_before,
+                    }
                 }
             }
             Err(error) => {
                 let failure = failure_from_journal(error);
                 self.note_write_failure(now, failure);
-                StoreRemoteControlAuthorizationSnapshotOutcome::Failed(failure)
+                StoreRemoteControlAuthorizationSnapshotOutcome::Failed {
+                    failure,
+                    retry_at: self.retry_not_before,
+                }
             }
         }
     }
@@ -1265,7 +1277,10 @@ impl<S: StorageLayout> ManifoldPersistence<S> for NoManifoldPersistence {
         _snapshot: &RemoteControlAuthorizationSnapshot,
         _now: InstantMillis,
     ) -> StoreRemoteControlAuthorizationSnapshotOutcome {
-        StoreRemoteControlAuthorizationSnapshotOutcome::Failed(EmbeddedPersistenceFailure::Flash)
+        StoreRemoteControlAuthorizationSnapshotOutcome::Failed {
+            failure: EmbeddedPersistenceFailure::Flash,
+            retry_at: None,
+        }
     }
 }
 
@@ -2496,6 +2511,177 @@ mod tests {
         assert_eq!(report.remote_control_target_accesses_restored_count, 1);
         assert_eq!(report.remote_control_target_accesses_refused_count, 1);
         assert_eq!(report.remote_control_target_accesses_dropped_count, 0);
+    }
+
+    #[test]
+    fn authorization_store_returns_the_flash_retry_policy_deadline() {
+        embassy_futures::block_on(async {
+            let (flash, fail_next_write) = TestFlash::controlled();
+            let mut policy =
+                EmbeddedPersistencePolicy::hopspot_default(EmbeddedCompactionPolicy::hopspot(0));
+            policy.retry_interval_millis = 1_234;
+            let mut persistence =
+                EmbeddedFlashPersistence::<_, FixedRouteSnapshotKeys<8>, _, 4>::new(
+                    flash,
+                    LAYOUT,
+                    policy,
+                    FixedRouteSnapshotKeys::new(),
+                    (|_| {}) as fn(EmbeddedPersistenceDiagnostic),
+                );
+            let mut engine = EngineState::<crate::storage::GrowableHeap>::default();
+            restore_without_remote_control(&mut persistence, &mut engine, InstantMillis(0)).await;
+            let snapshot = RemoteControlAuthorizationSnapshot::from_slice(&[0x80]).unwrap();
+            fail_next_write.set(true);
+            for now in [8, 9, 1_241] {
+                assert_eq!(
+                    persistence
+                        .store_remote_control_authorization_snapshot(
+                            &engine,
+                            RemoteControlAuthorizationSnapshotKind::TargetAccesses,
+                            &snapshot,
+                            InstantMillis(now),
+                        )
+                        .await,
+                    StoreRemoteControlAuthorizationSnapshotOutcome::Failed {
+                        failure: EmbeddedPersistenceFailure::Flash,
+                        retry_at: Some(InstantMillis(1_242)),
+                    },
+                );
+            }
+            assert_eq!(
+                persistence
+                    .store_remote_control_authorization_snapshot(
+                        &engine,
+                        RemoteControlAuthorizationSnapshotKind::TargetAccesses,
+                        &snapshot,
+                        InstantMillis(1_242),
+                    )
+                    .await,
+                StoreRemoteControlAuthorizationSnapshotOutcome::Stored,
+            );
+        });
+    }
+
+    #[test]
+    fn authorization_store_returns_the_compaction_cooldown_deadline() {
+        embassy_futures::block_on(async {
+            let mut persistence = ready();
+            let engine = EngineState::<crate::storage::GrowableHeap>::default();
+            let snapshot = RemoteControlAuthorizationSnapshot::from_slice(&[0; 512]).unwrap();
+            assert_eq!(
+                persistence
+                    .store_remote_control_authorization_snapshot(
+                        &engine,
+                        RemoteControlAuthorizationSnapshotKind::ControllerGrants,
+                        &snapshot,
+                        InstantMillis(8),
+                    )
+                    .await,
+                StoreRemoteControlAuthorizationSnapshotOutcome::Stored,
+            );
+            assert_eq!(
+                persistence
+                    .store_remote_control_authorization_snapshot(
+                        &engine,
+                        RemoteControlAuthorizationSnapshotKind::ControllerGrants,
+                        &snapshot,
+                        InstantMillis(9),
+                    )
+                    .await,
+                StoreRemoteControlAuthorizationSnapshotOutcome::Failed {
+                    failure: EmbeddedPersistenceFailure::Capacity,
+                    retry_at: Some(InstantMillis(HOPSPOT_MINIMUM_COMPACTION_INTERVAL_MILLIS)),
+                },
+            );
+            assert_eq!(
+                persistence
+                    .store_remote_control_authorization_snapshot(
+                        &engine,
+                        RemoteControlAuthorizationSnapshotKind::ControllerGrants,
+                        &snapshot,
+                        InstantMillis(HOPSPOT_MINIMUM_COMPACTION_INTERVAL_MILLIS),
+                    )
+                    .await,
+                StoreRemoteControlAuthorizationSnapshotOutcome::CompactionInProgress,
+            );
+            assert!(persistence.compaction.is_some());
+        });
+    }
+
+    #[test]
+    fn authorization_store_exposes_retry_after_a_failed_compaction_step() {
+        embassy_futures::block_on(async {
+            let (flash, fail_next_write) = TestFlash::controlled();
+            let mut persistence =
+                EmbeddedFlashPersistence::<_, FixedRouteSnapshotKeys<8>, _, 4>::new(
+                    flash,
+                    LAYOUT,
+                    EmbeddedPersistencePolicy::hopspot_default(EmbeddedCompactionPolicy::hopspot(
+                        0,
+                    )),
+                    FixedRouteSnapshotKeys::new(),
+                    (|_| {}) as fn(EmbeddedPersistenceDiagnostic),
+                );
+            let mut engine = EngineState::<crate::storage::GrowableHeap>::default();
+            restore_without_remote_control(&mut persistence, &mut engine, InstantMillis(0)).await;
+            persistence
+                .require_snapshot(EmbeddedPersistenceTarget::CriticalState, InstantMillis(8));
+            persistence.try_start_compaction(&engine, InstantMillis(8));
+            assert!(persistence.compaction.is_some());
+            fail_next_write.set(true);
+            let snapshot = RemoteControlAuthorizationSnapshot::new();
+            assert_eq!(
+                persistence
+                    .store_remote_control_authorization_snapshot(
+                        &engine,
+                        RemoteControlAuthorizationSnapshotKind::ControllerGrants,
+                        &snapshot,
+                        InstantMillis(8),
+                    )
+                    .await,
+                StoreRemoteControlAuthorizationSnapshotOutcome::CompactionInProgress,
+            );
+            assert!(persistence.compaction.is_none());
+            // progress_compaction records failure internally. One more store call
+            // exposes its retry deadline; the wrapper must then stop calling early.
+            assert_eq!(
+                persistence
+                    .store_remote_control_authorization_snapshot(
+                        &engine,
+                        RemoteControlAuthorizationSnapshotKind::ControllerGrants,
+                        &snapshot,
+                        InstantMillis(9),
+                    )
+                    .await,
+                StoreRemoteControlAuthorizationSnapshotOutcome::Failed {
+                    failure: EmbeddedPersistenceFailure::Flash,
+                    retry_at: Some(InstantMillis(8 + persistence.policy.retry_interval_millis)),
+                },
+            );
+        });
+    }
+
+    #[test]
+    fn unavailable_authorization_store_has_no_retry_schedule() {
+        embassy_futures::block_on(async {
+            let mut persistence = ready();
+            persistence.journal = None;
+            let engine = EngineState::<crate::storage::GrowableHeap>::default();
+            assert_eq!(
+                persistence
+                    .store_remote_control_authorization_snapshot(
+                        &engine,
+                        RemoteControlAuthorizationSnapshotKind::TargetAccesses,
+                        &RemoteControlAuthorizationSnapshot::new(),
+                        InstantMillis(8),
+                    )
+                    .await,
+                StoreRemoteControlAuthorizationSnapshotOutcome::Failed {
+                    failure: EmbeddedPersistenceFailure::Flash,
+                    retry_at: None,
+                },
+            );
+        });
     }
 
     #[test]

@@ -46,6 +46,7 @@ esp-now = ["esp-radio/esp-now", "esp-radio/coex", "esp-rtos/esp-radio", "persona
 lora = ["personal-rns/lora"]
 usb = ["personal-rns/usb"]
 tcp = ["wifi-auto", "personal-rns/tcp-dns", "embassy-net/dns"]
+remote-control-pairing = ["personal-hopspot-core/remote-control-pairing"]
 esp32s3fn8 = []
 jtag-logging = ["esp-println/jtag-serial"]
 silent-logging = ["esp-println/no-op"]

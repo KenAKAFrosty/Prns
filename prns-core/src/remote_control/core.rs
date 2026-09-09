@@ -14,10 +14,15 @@ pub struct RemoteControlStorageRequirements {
 }
 
 impl RemoteControlStorageRequirements {
+    /// Peak storage owned by an available service while a pairing window is open.
+    ///
+    /// The service keeps its controller and target identities, target and pairing-availability
+    /// destinations, and target request handler for its entire lifetime. Opening a pairing window
+    /// adds one provisional identity, destination, and request handler until the window closes.
     pub const AVAILABLE: Self = Self {
         held_identities: 3,
         upstream_app_destinations: 3,
-        request_handlers: 1,
+        request_handlers: 2,
     };
 
     #[must_use]

@@ -107,6 +107,8 @@ mod identity;
 mod memory;
 #[cfg(any(target_arch = "riscv32", target_arch = "xtensa"))]
 mod persistence;
+#[cfg(all(feature = "remote-control-pairing", any(test, target_arch = "xtensa")))]
+mod remote_control_composition;
 
 #[cfg(any(test, all(target_arch = "xtensa", not(feature = "esp32s3fn8"))))]
 mod station_recovery;
