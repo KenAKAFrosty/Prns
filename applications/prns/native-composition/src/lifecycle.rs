@@ -171,7 +171,6 @@ impl ShutdownSignal {
 enum Reply<T> {
     #[cfg(any(test, feature = "host-test"))]
     Sync(std_mpsc::SyncSender<T>),
-    #[cfg(feature = "uniffi-bindings")]
     Async(oneshot::Sender<T>),
 }
 
@@ -180,7 +179,6 @@ impl<T> Reply<T> {
         match self {
             #[cfg(any(test, feature = "host-test"))]
             Self::Sync(response) => response.send(value).map_err(|error| error.0),
-            #[cfg(feature = "uniffi-bindings")]
             Self::Async(response) => response.send(value),
         }
     }
