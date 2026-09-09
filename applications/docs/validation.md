@@ -20,7 +20,8 @@ different evidence. Do not transfer physical acceptance between their binaries.
 | Generated-binding Android follow-up, before footprint integration | Existing-grant checks, Stop/Start without resurrection, two-way Python LXMF messaging and cold-process retention | Fresh pairing, controlled radio recovery, held-request cancellation or qualification of the later rebuilt APK |
 | Current generated-binding Android APK | Cold retained-grant check, one real Settings Bluetooth cycle with successful first reconnect check, and retained-data spot-check | Fresh pairing, repeated messaging, full controller power-off, long idle or controlled cancellation |
 | Pre-diagnostic generated-binding iOS framework | Initial timeout, later foreground checks/two-way messaging and restart retention; logged SIGTERM restoration trial; separate controlled off-screen receipt, stored-message UI and first resumed Check in 359 ms | Initial-failure cause or fix, fresh pairing or full lifecycle qualification; no native timeline for the controlled repeat |
-| Current iOS diagnostic framework | USB-captured restored-handshake stall, local cleanup and fresh handshake; incoming proof in 474 ms, first resumed Check in 383 ms and four exact stored-message checks | A transport fix, original-startup-failure cause, fresh pairing, natural suspension, continuously locked or Metro-off qualification |
+| Pre-correction iOS diagnostic framework | USB-captured restored-handshake stall, local cleanup and fresh handshake; incoming proof in 474 ms, first resumed Check in 383 ms and four exact stored-message checks | A transport fix, original-startup-failure cause, fresh pairing, natural suspension, continuously locked or Metro-off qualification |
+| Corrected iOS restoration framework | Two captured one-shot recoveries without the old stall; SIGTERM reset-to-Welcome in 2.395 s, incoming proof in 485 ms, first resumed Check in 354 ms, stored-message verification and a separate full two-way exchange | Initial ordinary-start failure or 32-second-delay fix, fresh pairing, confirmed no-touch window, natural suspension, continuous lock or Metro-off qualification |
 
 The [generated-binding checkpoint](../checkpoints/2026-09-09-validation.md#generated-binding-cutover)
 records the harness and integrated test boundaries. The [clean Android checkpoint](../checkpoints/2026-09-09-validation.md#clean-combined-checkpoint--september-9)
@@ -43,10 +44,13 @@ Metro-off behavior remain unqualified. The checkpoint preserves the separate
 chronologies, missing logs, chooser question and successful scrolling retest.
 
 The [later recovery investigation](../checkpoints/2026-09-09-ios-recovery-latency.md)
-records a diagnostic-only rebuild and USB evidence that distinguishes a stalled
-restored handshake from a successful fresh one. The previous long LXMF delay did
-not reproduce. The isolated correction is still under development; the diagnostic
-build does not fix recovery behavior.
+records separate diagnostic and corrected builds. The diagnostic USB timeline
+distinguishes a stalled restored handshake from a successful fresh one. The
+isolated correction is now committed and integrated; two bounded physical
+restorations avoided that stall, followed by a successful resumed request and
+messaging. The previous long LXMF delay did not reproduce, but its cause and the
+initial ordinary-start failure remain unexplained. Do not transfer these results
+to broader background or exact-build pairing qualification.
 
 ## Repeatable checks
 

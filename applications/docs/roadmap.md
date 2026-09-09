@@ -32,9 +32,10 @@ observations remain tied to their recorded builds.
    native relaunch, an intervening disconnect/fresh reconnect and incoming-message
    proof. The [later USB investigation](../checkpoints/2026-09-09-ios-recovery-latency.md)
    captured an acknowledged Hello without Welcome, ten-second local cleanup
-   and a successful fresh handshake. Finish and qualify the isolated restored-
-   session correction; it does not yet explain or fix the initial ordinary-start
-   timeout.
+   and a successful fresh handshake. The isolated correction now passes two
+   bounded physical restorations without that stall, a first resumed Check and
+   messaging. Extend its lifecycle qualification; it does not yet explain or fix
+   the initial ordinary-start timeout.
 2. Close the remaining generated-binding physical checks: fresh pairing,
    pristine import, controlled read cancellation, repeated recovery and cold offline
    actions. Retained-grant checks and messaging now have bounded evidence on
@@ -43,9 +44,11 @@ observations remain tied to their recorded builds.
 3. Repeat the completed no-touch receipt/resume journey with a complete native
    timeline and investigate its 32.024-second submission-to-proof delay, which
    did not reproduce in the later active-traffic comparisons. One
-   controlled off-screen message and first resumed Check (359 ms) passed; the
-   earlier logged restoration trial remains separate because of possible user
-   activity. Natural suspension, quiet idle, Metro-off, force-quit and
+   controlled off-screen message and first resumed Check (359 ms) passed. The
+   corrected build adds a complete SIGTERM recovery timeline, incoming proof
+   (485 ms) and first resumed Check (354 ms), but no separately confirmed no-touch
+   window. The earlier trials remain separate. Natural suspension, quiet idle,
+   Metro-off, force-quit and
    protected-data cases remain explicit qualification work. Preserve the firmware
    size gate: the passing integrated T-Echo build still has just 616 bytes spare.
 
