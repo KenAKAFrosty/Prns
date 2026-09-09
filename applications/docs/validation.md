@@ -293,11 +293,11 @@ display refreshes with healthy heartbeat/feed samples and no recorded reset
 or stall. Captures were stopped explicitly after the tests. No new physical
 message exchange, battery-idle delivery, or button exercise is claimed here.
 
-The full physical lifecycle matrix remains pending beyond these narrow checks.
-First-attempt connection readiness needs follow-up;
-repeated transitions, prolonged peer loss, arbitrary OS process eviction, deep
-Doze or long-idle delivery, system Location off/on, and newer Android
-permission/service behavior remain unqualified. See [Android development](android.md)
+At this checkpoint, first-attempt readiness, repeated transitions, system
+Location off/on, prolonged peer loss, arbitrary OS process eviction, deep Doze,
+and newer Android permission/service behavior remained unqualified. Later
+bounded checks are recorded below; they do not complete the full physical
+lifecycle matrix. See [Android development](android.md)
 for the repeatable acceptance sequence and the temporary runtime-restart behavior
 when the Bluetooth listener changes.
 
@@ -348,22 +348,316 @@ This is a Link-establishment timeout, not a permission rejection or Describe
 exchange failure. Its timing supports a readiness race but does not prove
 which route or interface was selected. Public `route()` reports stored routing
 state, not current interface readiness; Android Bluetooth permission readiness
-also does not mean that a peer is connected. The next targeted capture should
-compare the selected route with `interface_timing_inventory()` immediately
-before connecting. No protocol retry or delay was added: a path request emits
-on the interfaces available at submission and does not automatically replay
-when a peer attaches. Its timeout must also fit the caller's bounded lifetime.
+also does not mean that a peer is connected. The follow-up therefore targeted
+the selected route and `interface_timing_inventory()` immediately before
+connecting. No protocol retry or delay was added at this diagnostic checkpoint:
+a path request emits on the interfaces available at submission and does not
+automatically replay when a peer attaches. Its timeout must also fit the caller's
+bounded lifetime.
 The temporary Rust/Kotlin probes were removed before the delivered build.
 The immediate post-Start failure above shows that follow-up must cover ordinary
 startup as well as permission recovery; the final build exposed only the generic
 Link-stage outcome, not the typed diagnostic captured on the earlier build.
 
+### In-app Stop and bounded connection readiness
+
+The follow-up changes add **Stop node** to Nodes and This device, using the
+same service-owned shutdown as the notification action. Stop does not depend on
+notification availability. The UI separately reports connection-notification
+permission/channel availability and offers an explicit permission request or
+Android settings action; neither is a prerequisite for starting the node or
+granting Bluetooth access. This is the running-node notification, not message
+alerts.
+
+RemoteControl preflight checks the actual route interface's online and
+transmit-capable status. This initial checkpoint used a five-second bounded wait
+for the current app transports; the later Describe-only follow-up below changes
+that cutoff. When necessary it requests the authorized destination's path once
+and rechecks interface readiness afterward. A retained route by itself is no
+longer sufficient to begin connecting, and the application does not
+automatically repeat the requested operation. These checks rely on the status
+published by the current Bluetooth/TCP transports, not a universal assumption
+about custom interfaces.
+
+Describe now carries one admission-time 20-second deadline across queueing and
+network work. Deadline expiry, native caller departure, or priority Stop drops
+the owned Describe future and releases active/admitted state. Five focused
+paused-time lifecycle tests passed, covering held-future cleanup for each of
+those interruptions, expired or abandoned queued commands, queue time deducted
+from the remaining network budget, Stop priority over a ready operation, and
+preservation of pairing and retained-announcement state. The native library
+suite passed 131 tests at that checkpoint, and strict host-test/Android-feature
+Clippy passed for the library and tests. These are host checks, not device
+qualification or a new JavaScript promise-cancellation contract.
+
+An app-owned connected-target guard queues link closure when its scope ends,
+including cancellation. Upstream establishment/identification may already have
+issued work before the app receives that handle; cancellation does not prove
+immediate engine cleanup at that earlier boundary. AnnounceSelf keeps its
+separate retained admission and unknown-outcome behavior.
+
+### Later standalone Android acceptance
+
+Subsequent standalone builds were checked on the same USB-powered Galaxy S9+
+without clearing app data. The clean app checkpoint through `86c399456` includes
+the readiness, request-lifetime, Stop/notification, and Android keyboard fixes;
+the board still used diagnostic firmware. Its gate passed 136 native unit tests,
+three real TCP tests, 70 SDK tests, 199 UI tests, Expo Doctor 21/21, strict native
+Clippy, and 31 Android JVM tests. ARM64 packaging, API 29 minimum, 16 KB alignment,
+and bundled JavaScript checks passed.
+
+- **Controls:** in-app Stop stopped the node; Home/resume left it stopped.
+  An earlier standalone build with the same controls also passed the global
+  notification-toggle check: with app notifications disabled in Android Settings,
+  the UI offered settings guidance while the node remained running, and in-app
+  Stop still worked. Restoring notifications removed that guidance. This was
+  an Android 10 check, not an Android 13 permission-dialog or individual
+  channel-blocking test, and it was not repeated on the later clean checkpoint.
+- **First checks:** three consecutive in-app Stop/Start trials returned their
+  first authenticated node checks in 146, 144, and 149 ms. Three Location
+  revoke/regrant cycles returned first checks in 143, 136, and 180 ms, without
+  manual retries; foreground and background grants were restored. System
+  Location off showed discovery guidance, and the first check after enabling
+  it succeeded. These passes do not include the later radio-toggle failures.
+- **Keyboard:** a bottom contact-name field and the compose Message field
+  remained visible above the keyboard while typing, moving the cursor, and
+  inserting/deleting text. Dismissing the keyboard retained the contact input.
+  This resolves the earlier hidden-field reproduction on this phone; no fresh
+  iOS or cross-device keyboard qualification is claimed.
+- **Messaging and sharing:** a fresh two-way direct LXMF exchange passed over
+  the app's Bluetooth connection through the board to the pinned Python peer.
+  Both sources were verified, the peer received its delivery proof, and the
+  app reported its reply delivered. One **Share node address** action was also
+  independently observed as a new live announcement for the exact node,
+  excluding path responses; the app's success survived route remount.
+- **Process retention:** an explicit force-stop/cold relaunch retained the
+  contact's name and pin, both new message directions and the earlier idle-trial
+  message, and the same controller/target pairing. This is app-process restart
+  evidence, not phone reboot, power-loss, or arbitrary OS-eviction qualification.
+
+Later interactive checks are recorded separately from that clean-build checkpoint:
+
+- **Import picker:** cancelling selection kept Confirm disabled; a malformed
+  file was rejected without changing the saved identity. A public 64-byte
+  fixture (63 ASCII `A` bytes followed by newline) then produced the exact hash
+  independently derived with pinned RNS. Confirm returned `alreadyExists` and
+  preserved the existing primary identity. Temporary fixture files were removed.
+  This checks picker/preview and overwrite protection, not a pristine app's
+  complete import-onboarding flow.
+- **Contacts:** a disposable contact was created, pinned and unpinned, with
+  each state retained after leaving and reopening its route. Delete removed
+  that contact while preserving the actual messaging-peer contact. The later
+  clean combined checkpoint below also confirms the deletion after a cold app
+  restart; the earlier process-retention pass alone did not cover this deletion.
+
+The connected-Describe cancellation regression also passes over real TCP after
+the isolated `codex/fix-local-link-close-schedules` correction. Both core
+regressions fail without that correction and pass with it; the core suite passed
+1,888 tests with three ignored. This closes the observed stale-schedule defect
+after a connected link is closed, not the earlier establishing-link boundary
+described above.
+
+A later Galaxy instrumentation run passed both actual-JNI tests, including the
+new valid-import test. Public deterministic credentials produced the expected
+identity hash; malformed inputs did not create an identity, preview did not
+store it, and a different valid credential could not replace it. The imported
+hash persisted through two distinct native generations. Both tests used separate
+disposable roots in the test APK's sandbox and left production app data alone.
+This verifies native import and stop/start persistence, not picker onboarding or
+OS process-death durability for a freshly imported identity.
+
+### Repeated Bluetooth recovery: diagnosis and correction
+
+In radio tests following the clean Stop/Start passes, disabling Bluetooth,
+stopping a pending check, and starting again reproduced a persistent
+GATT-connected state without an MTU callback.
+Further radio toggles and a fresh app process did not recover it; an intentional
+board reset restored callbacks. Board heartbeats continued during the stall, so
+this is not evidence of a whole-board freeze. Temporary raw-callback diagnostics
+showed valid owner/epoch/GATT guards and no raw MTU callbacks in eight attempts;
+they rule out application callback rejection in that capture, not whether the
+Android stack or board caused the stall.
+
+Two separate failures were then reproduced with MTU callbacks working: a changed
+listener PSM caused a second runtime restart that interrupted a pending check,
+and rapid scan restarts reached Android's scan-rate rejection. App commit
+`424848bbe` orders recovery before outbound command admission, avoids duplicate
+listener/scan creation, and rejects commands after an incomplete runtime drain.
+
+The next clean standalone build (APK hash prefix `b2c57a1d7f`, through that app
+commit) passed the full gate: 136 native unit tests, three real TCP tests, 70 SDK
+tests, 203 UI tests, Expo Doctor 21/21, and 42 Android JVM tests. Both actual-JNI
+Galaxy instrumentation tests also passed, with the import/isolation limits
+described above. These automated results do not establish physical recovery.
+
+The clean board image (hash prefix `11839b1a5e`) included the first isolated
+packet-release fix, `5caa97d7d`, which clears unread L2CAP packets at HCI
+disconnect. An eight-packet negative control fails without that fix; all 19
+library tests passed in each of three configurations with it. The physical
+checkpoints on September 8 were:
+
+- **Clean app and board:** seven immediate first checks after radio off/on
+  passed in 146, 149, 144, 143, 132, 192, and 189 ms, with one listener/scan per
+  recovery. The eighth cycle stalled at 23:10:52 EDT: GATT connected and Android
+  accepted the MTU request, but no callback arrived before the eight-second
+  deadline. Fresh links remained stalled. The first packet fix is therefore
+  insufficient to remove the physical failure.
+- **Same app, diagnostic board repeat:** after a board restart, six checks
+  passed in 126, 147, 129, 130, 181, and 186 ms. The seventh stalled at 23:19:44
+  EDT. The diagnostic image (hash prefix `3965cf513a`) still included only the
+  first packet fix. Its trace showed accepted connections/disconnections with
+  reference count 1 and 12 credits, but no MTU-processing or packet-pool-error
+  markers during the failure. That absence does not identify the fault's owner.
+
+A second commit on the same isolated packet branch, `e95c84a2f`, also releases
+queued packets and partial reassembly on terminal channel close and disconnect
+confirmation. Three negative-control failures demonstrate those retained-buffer
+paths while the original HCI cleanup still passes. Complete library suites pass
+23 tests with the eight-packet pool, 22 with optimized reassembly/channel metrics,
+and 23 with a one-entry receive queue. The tests retain the old channel handle,
+preserve the separate GAP connection, and check closed-reader wakeups. This
+second correction was not in either physical checkpoint above. It is now
+integrated as `e22d5f59b`, with the following separate device comparison.
+
+#### Integrated cleanup comparison — September 8 diagnostic run
+
+- **Terminal L2CAP cleanup:** diagnostic board image `8bd4d88c1c` completed ten
+  MTU recoveries, then stalled on the eleventh radio cycle at 23:45:34 EDT.
+  Discovery requests reached the board without an outgoing reply. These ten
+  recoveries comprise five immediate app-check passes, one early app-check
+  failure despite successful MTU negotiation, and four passes with a two-second
+  harness delay. The early failure is a separate timing limit: Bluetooth took
+  roughly six seconds to recover while the app's readiness wait ended at five.
+  The terminal L2CAP correction alone is insufficient to remove the stall.
+- **GATT client queue cleanup:** `61a3741bb` is integrated as `ae411b4197`.
+  It releases unconsumed client responses/indications at HCI disconnect. Two
+  regressions fail without it: queued packets remain allocated, and a replacement
+  connection can receive an old response. All 19 library tests pass with the
+  eight-packet pool, a one-entry receive queue, and optimized reassembly/metrics.
+- **Latest diagnostic image:** board `c03963e347` includes both L2CAP corrections
+  and the GATT cleanup; the phone remains on clean APK `b2c57a1d7f`. Twenty radio
+  cycles passed, with checks taking 137–247 ms. Every check was
+  submitted after a two-second harness delay, not immediately on radio enable.
+  All 425 recorded ATT routing markers showed seven free
+  packets after allocating the current RX packet: all eight were available
+  before that allocation. No pre-protocol GATT acceptance error was observed.
+
+The latest board trace also captures twelve opcode 29 (`0x1d`, Handle Value
+Indication) packets in the server-to-client direction before disconnect, first at
+23:49:12.351 EDT. Trouble routes it into `gatt_client`, which the accepted
+peripheral session does not consume. The new disconnect cleanup releases that
+queue; subsequent ingress retains full pre-RX capacity. This identifies a real
+input to the source-proven retention path. Its attribute/value was not captured,
+so the indication's purpose is unknown. Old-image accumulation remains inferred
+from the ownership regressions and observed stalls, not a captured pool census.
+
+A separate app-only follow-up, `2bd307e4d`, gives Describe readiness the remainder
+of its original admission-time 20-second deadline, including time already spent
+queued. It does not add another 20 seconds, delay a ready route, or replay the
+request. AnnounceSelf retains its five-second readiness wait and existing
+unknown-outcome policy; pairing is unchanged. Its 138 native unit tests, three
+real TCP integration tests, strict native Clippy, and independent review pass.
+Those diagnostic trials used the earlier APK, without this follow-up. The clean
+combined checkpoint below tests the new APK and firmware without probes;
+diagnostic passes do not retroactively qualify the earlier clean-build failures.
+
+#### Clean combined checkpoint — September 9
+
+The Galaxy S9+/Android 10 ran the standalone, bundled-JavaScript APK through
+`2bd307e4d` (SHA256
+`4b80f891829ec846516dfbf454cdbbdf49277736c89ab27fb893c90b02967599`).
+The board ran clean firmware SHA256
+`45272a5fc61faea658f8fe50f8e0357ee6e173c08f11a8ec8a8190a57873485b`,
+including both L2CAP corrections and the GATT client cleanup. All temporary
+firmware probes were removed; existing phone/board identity and pairing were kept.
+
+- **Gates:** 138 native unit tests, three real TCP tests, 70 SDK tests, 203 UI
+  tests, Expo Doctor 21/21, 42 Android JVM tests, strict native Clippy, app/SDK
+  typecheck and lint, contracts, web export, and standalone packaging passed.
+  Combined Trouble suites passed 25 tests with default/eight-packet settings,
+  24 with optimized reassembly/metrics, and 25 with a one-entry receive queue.
+  Both actual-JNI Galaxy tests passed again, with zero failures/errors and the
+  isolated-storage/import boundaries described above.
+- **Radio recovery:** twenty-two physical radio off/on cycles completed with
+  successful first checks (displayed durations 135–246 ms) and no repeated
+  missing-MTU stall. There was no added two-second harness delay and no check
+  was replayed. Some captures in batches d/e/f paused on a UI guard before the
+  new result could be proved;
+  later result captures and correlated traffic confirmed success. These are
+  twenty-two physical successes, not twenty-two automatic script exits of zero.
+- **Controls and retention:** Stop followed by Home/return left the node stopped;
+  explicit Start's first authenticated check completed in 146 ms. A cold app
+  restart showed the disposable contact still deleted and the actual peer still
+  pinned. This is app-process evidence, not phone reboot or power-loss coverage.
+- **Messaging and sharing:** a fresh direct exchange through the Bluetooth board
+  passed in both directions. The Python peer received proof for its message,
+  verified the phone's reply, and the app showed that reply delivered in 195 ms.
+  One Share node address action reported success in 200 ms and was followed by
+  an independently observed live announcement for the exact target, excluding
+  path responses. The clean board did not log a command marker: this is UI plus
+  timed network observation, not a captured firmware command trace.
+- **Offline retry/cancel:** two new messages were admitted with the peer absent
+  and became failed connection attempts. After Stop completed, retrying one
+  changed that same record to Queued without starting the Android service;
+  Cancel changed it to Cancelled. Leaving and reopening the route retained both
+  records and their states. After explicit Start and a fresh live messaging
+  announcement, a new peer observed neither message during a 60.003-second
+  window, including Home/background/return with the same app process and
+  foreground service. The cancelled record stayed cancelled and the other stayed
+  failed. With a second fresh peer, one explicit retry of the failed message
+  produced one verified application delivery callback for its original hash,
+  source, title, and content. The app displayed delivery in 140 ms on the same
+  card, preserving its original creation time; the cancelled message remained
+  cancelled. A further 30.030-second window counted one callback for the retried
+  message and none for the cancelled message. This tests manual retry, local
+  cancellation, and no automatic resend in bounded observation windows, not
+  exactly-once packet transmission or arbitrary process-death recovery.
+
+Evidence is in `/tmp/prns-android-parity-20260908.j4n9sj`:
+`final-deadline-verify.log`, `final-clean-native-instrumentation.log`,
+`final-clean-radio-a.log` through `final-clean-radio-f.log` and their result
+captures, `final-clean-stopped-after-home.txt`, `final-clean-start-check-result.txt`,
+`final-clean-contacts-cold.txt`, `final-clean-two-way-peer.log`,
+`final-clean-share-complete.txt`, `mailbox-no-resend-peer.log`,
+`mailbox-retry-peer.log`, the `mailbox-offline-{queued,cancelled,remount}.txt`
+captures, and `mailbox-retry-delivered.txt`. This closes the reproduced recovery
+blocker for this bounded clean-device run, not Android-wide or long-idle qualification.
+
+#### Final copy-only build and installation smoke
+
+Commit `ad1ca6007` corrects the pairing and node-control capability descriptions
+and adds two catalog tests; it does not change the runtime. Its standalone APK
+SHA256 is
+`5f8ef4964ccd96420801aba0ca64d5a3a02e89029b8c36a0bdd8573af821779b`.
+The build passed in 55 seconds, retaining the same clean board firmware. The
+full gate passed again: 138 native unit tests, three real TCP tests, 70 SDK tests,
+205 UI tests, Expo Doctor 21/21, and 42 Android JVM tests, plus typecheck, lint,
+contracts, and web export.
+
+Installing without clearing data and cold-launching the app produced a successful
+first authenticated check (195 ms). The cancelled and retried messages retained
+their original IDs, creation times, and Cancelled/Delivered states; the saved
+peer remained pinned and the deleted contact stayed absent. Evidence:
+`final-copy-verify.log`, `final-copy-android-build.log`,
+`final-copy-check-result.txt`, `final-copy-mailbox-loaded.txt`, and
+`final-copy-contacts.txt` in the same evidence directory. This is a post-copy
+installation/retention smoke check, not a rerun of the twenty-two radio cycles,
+two-way messaging, or offline retry/cancel; those remain tied to APK `4b80f89182`.
+The app was left running on This device with foreground/background Location
+permissions granted. The temporary phone test helper and owned capture files
+were removed, and the test peer/log captures were stopped; app data was not cleared.
+
+The Android 10/API 29 implementation is ready for development handoff at the
+current iOS app's feature scope, with the qualification limits below. This is
+not a release or a fresh qualification of iOS background restoration.
+
 ## Remaining work
 
-- Capture the selected route and actual interface readiness during failed early
-  requests after startup or Android permission restoration, then qualify its fix.
-- Make stale-route recovery and caller-timeout cancellation deterministic in
-  held-operation tests, then repeat the corresponding physical checks.
+- Pristine interactive import onboarding remains separate from the passed
+  picker guards and isolated native import test.
+- Qualify newer Android permission/service behavior, including the Android 13+
+  notification prompt and per-channel notification controls, on suitable hardware
+  or an emulator.
 - Qualify locked/offline-peer recovery, repeated suspension/restoration,
   authorized force-quit behavior and its negative control, Bluetooth changes,
   and cold-start/storage boundaries. Include UI recovery and first-attempt

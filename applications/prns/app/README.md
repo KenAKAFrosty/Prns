@@ -25,9 +25,11 @@ links, and deep-link tests together.
 Saved pairing is authorization, not a live route. Before a connection check or
 address-sharing operation opens its control Link, the native actor resolves
 the authorized target and checks the route's actual interface for online,
-transmit-capable status. It waits up to five seconds for a current app transport
-to become available. A ready route skips discovery; otherwise an available
-transmitting interface permits one path request through Prns's public API.
+transmit-capable status. Describe waits within the remainder of its original
+20-second admission deadline; address sharing keeps its five-second readiness
+wait. Readiness does not extend Describe's overall deadline. A ready route skips
+discovery; otherwise an available transmitting interface permits one path
+request through Prns's public API.
 That request awaits an accepted announcement for the exact destination, then
 the app checks the route's interface again before connecting. A stored route
 alone is insufficient, and failure does not submit a remote command. These
@@ -87,7 +89,10 @@ stop the node, and ordinary navigation or resume after Stop does not restart it.
 Select **Start node** explicitly to resume with the saved identity and data.
 
 See [Android development](../../docs/android.md) for setup, permission behavior,
-and the physical acceptance sequence. To build a standalone development APK
+and the physical acceptance sequence. The Android 10 development checkpoint
+covers the current iOS app's feature scope with the build-specific evidence and
+qualification limits in the [validation summary](../../docs/validation.md).
+To build a standalone development APK
 with bundled JavaScript and no Metro requirement:
 
 ```sh
