@@ -40,7 +40,11 @@ export function ManagedNodeScreen() {
     null,
   );
 
-  if (!routeParamsAreValid(entry, params) || typeof nodeId !== "string") {
+  if (
+    !routeParamsAreValid(entry, params) ||
+    typeof nodeId !== "string" ||
+    !/^[0-9a-fA-F]{32}$/u.test(nodeId)
+  ) {
     return <NotFoundScreen backPath="/nodes" />;
   }
 
@@ -76,6 +80,47 @@ export function ManagedNodeScreen() {
         <BodyText>
           This device&apos;s node could not start. Open its diagnostics for more details.
         </BodyText>
+        <NavigationLink href="/nodes">Back to Nodes</NavigationLink>
+      </Screen>
+    );
+  }
+
+  if (runtime.snapshot?.runtime !== "running") {
+    const nodeState = runtime.snapshot?.runtime;
+    const android = runtime.availability.platform === "android";
+    const guidance = {
+      stopped: {
+        title: "This device's node is stopped",
+        detail: android
+          ? "Return to Nodes and start this device's node to manage your paired nodes."
+          : "Return to Nodes to check this device's status.",
+      },
+      stopping: {
+        title: "This device's node is stopping",
+        detail: android
+          ? "Wait for it to stop, then return to Nodes to start it again."
+          : "Wait for it to stop, then return to Nodes to check this device's status.",
+      },
+      starting: {
+        title: "This device's node is starting",
+        detail: "Your paired node's details will appear when this device is ready.",
+      },
+      failed: {
+        title: "This device's node is unavailable",
+        detail: android
+          ? "Return to Nodes to check this device and try starting it again."
+          : "Return to Nodes to check this device's status.",
+      },
+      unavailable: {
+        title: "Node details unavailable",
+        detail: "Return to Nodes to check this device's status.",
+      },
+    }[nodeState ?? "unavailable"];
+    return (
+      <Screen>
+        <Badge tone="warning">{guidance.title}</Badge>
+        <ScreenHeading>Manage node</ScreenHeading>
+        <BodyText>{guidance.detail}</BodyText>
         <NavigationLink href="/nodes">Back to Nodes</NavigationLink>
       </Screen>
     );

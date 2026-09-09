@@ -147,8 +147,15 @@ test.each(["stopping", "stopped", "failed"] as const)(
     mockRuntime.snapshot = { ...mockSnapshot, runtime };
     screen.rerender(<ManagedNodeScreen />);
     expect(screen.queryByRole("button", { name: "Share node address" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Check node connection" })).toBeDisabled();
-    expect(screen.getByText("This device is offline")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Check node connection" })).toBeNull();
+    expect(screen.queryByText("Node reached")).toBeNull();
+    expect(
+      screen.getByText(`This device's node is ${runtime === "failed" ? "unavailable" : runtime}`),
+    ).toBeTruthy();
+    expect(screen.getByText("Back to Nodes")).toBeTruthy();
+    expect(screen.getByText(/return to Nodes to check this device's status\./iu)).toBeTruthy();
+    expect(screen.queryByText(/start it|start this device|starting it/iu)).toBeNull();
+    expect(mockAnnounce).not.toHaveBeenCalled();
   },
 );
 

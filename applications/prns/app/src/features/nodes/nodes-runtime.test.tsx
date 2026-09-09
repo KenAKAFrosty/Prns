@@ -15,6 +15,7 @@ import {
 import { act, fireEvent, render, waitFor } from "@testing-library/react-native";
 import { Effect } from "effect";
 import { destinationHash, identityHash, interfaceId } from "personal-rns/contract";
+import { useLocalSearchParams } from "expo-router";
 import { type ReactNode, useEffect } from "react";
 import { AppState, type AppStateStatus } from "react-native";
 
@@ -25,13 +26,15 @@ import {
   useDevelopmentRuntime,
 } from "@/native/development-runtime-context";
 import type { RuntimeProvider } from "@/native/runtime-provider.types";
+import * as developmentRuntimeContext from "@/native/development-runtime-context";
 import { ManagedNodeScreen } from "./managed-node-screen";
 import { LocalNodeScreen, NodesScreen } from "./nodes-screen";
 import { PairNodeScreen } from "./pair-node-screen";
 
 jest.mock("expo-router", () => ({
   Link: ({ children }: { readonly children: ReactNode }) => children,
-  useLocalSearchParams: () => ({ nodeId: "44444444444444444444444444444444" }),
+  useLocalSearchParams: jest.fn(() => ({ nodeId: "44444444444444444444444444444444" })),
+  useRouter: () => ({ replace: jest.fn() }),
 }));
 
 jest.mock("@prns-internal/expo", () => jest.requireActual("../../../../../sdk/expo/src/effects"));
@@ -309,6 +312,12 @@ function stoppedSnapshot(revision = 3n): DevelopmentNodeSnapshot {
 }
 
 describe("Foundation 1 Nodes runtime binding", () => {
+  beforeEach(() => {
+    jest
+      .mocked(useLocalSearchParams)
+      .mockReturnValue({ nodeId: "44444444444444444444444444444444" });
+  });
+
   it.each([NodesScreen, LocalNodeScreen])(
     "explicitly restarts a stopped Android node from %p",
     async (Screen) => {
@@ -1608,6 +1617,101 @@ describe("Foundation 1 Nodes runtime binding", () => {
     view.unmount();
     await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
   });
+
+  it("keeps a managed route truthful when Stop clears its current paired-node inventory", async () => {
+    const fixture = androidRestartFixture();
+    const target = {
+      targetIdentityFingerprint: observedIdentity,
+      destination: observedDestination,
+      controllerIdentityFingerprint: identityHash(new Uint8Array(16).fill(0x55)),
+      permittedRequests: ["describe" as const],
+    };
+    const view = render(
+      <DevelopmentRuntimeProvider provider={fixture.provider} refreshIntervalMillis={60_000}>
+        <ManagedNodeScreen />
+      </DevelopmentRuntimeProvider>,
+    );
+    await waitFor(() => expect(fixture.start).toHaveBeenCalledTimes(1));
+    await act(async () => fixture.emit(snapshot(3n, false, { type: "searching" }, [target])));
+    expect(view.getByRole("button", { name: "Check node connection" })).toBeTruthy();
+
+    await act(async () => fixture.emit({ ...stoppedSnapshot(4n), runtime: "stopping" }));
+    expect(view.getByText("This device's node is stopping")).toBeTruthy();
+    expect(view.getByText("Back to Nodes")).toBeTruthy();
+    expect(view.queryByText("Not found")).toBeNull();
+    expect(view.queryByRole("button", { name: "Check node connection" })).toBeNull();
+
+    await act(async () => fixture.emit(stoppedSnapshot(5n)));
+    expect(view.getByText("This device's node is stopped")).toBeTruthy();
+    expect(
+      view.getByText("Return to Nodes and start this device's node to manage your paired nodes."),
+    ).toBeTruthy();
+    expect(view.queryByText("Not found")).toBeNull();
+    expect(view.queryByText("This page is not available")).toBeNull();
+
+    await act(async () => fixture.emit(snapshot(6n, false, { type: "searching" }, [target])));
+    expect(view.getByRole("button", { name: "Check node connection" })).toBeTruthy();
+    expect(fixture.start).toHaveBeenCalledTimes(1);
+    view.unmount();
+  });
+
+  it.each(["malformed", "empty", "multiple", "missing"] as const)(
+    "keeps a %s managed route not found",
+    async (kind) => {
+      const fixture = androidRestartFixture();
+      if (kind === "malformed")
+        jest.mocked(useLocalSearchParams).mockReturnValue({ nodeId: "not-a-node-id" });
+      if (kind === "empty") jest.mocked(useLocalSearchParams).mockReturnValue({ nodeId: "" });
+      if (kind === "multiple")
+        jest
+          .mocked(useLocalSearchParams)
+          .mockReturnValue({ nodeId: ["44".repeat(16), "55".repeat(16)] });
+      const view = render(
+        <DevelopmentRuntimeProvider provider={fixture.provider} refreshIntervalMillis={60_000}>
+          <ManagedNodeScreen />
+        </DevelopmentRuntimeProvider>,
+      );
+      await waitFor(() => expect(fixture.start).toHaveBeenCalledTimes(1));
+      if (kind !== "missing") await act(async () => fixture.emit(stoppedSnapshot()));
+      await waitFor(() => expect(view.getByText("Not found")).toBeTruthy());
+      expect(view.queryByText("This device's node is stopped")).toBeNull();
+      expect(view.getByRole("button", { name: "Return to a safe screen" })).toBeTruthy();
+      view.unmount();
+    },
+  );
+
+  it.each([
+    [null, "Node details unavailable"],
+    ["starting", "This device's node is starting"],
+    ["failed", "This device's node is unavailable"],
+  ] as const)(
+    "does not infer a missing pairing when an acquired view has a %s snapshot",
+    async (state, guidance) => {
+      const fixture = androidRestartFixture();
+      const publish = jest.fn<void, [DevelopmentRuntimeView]>();
+      const providerView = render(
+        <DevelopmentRuntimeProvider provider={fixture.provider} refreshIntervalMillis={60_000}>
+          <RuntimeViewProbe publish={publish} />
+        </DevelopmentRuntimeProvider>,
+      );
+      await waitFor(() => expect(publish.mock.calls.at(-1)?.[0].phase).toBe("ready"));
+      const ready = publish.mock.calls.at(-1)?.[0];
+      if (ready === undefined) throw new Error("expected acquired view");
+      const runtimeView = jest
+        .spyOn(developmentRuntimeContext, "useDevelopmentRuntime")
+        .mockReturnValue({
+          ...ready,
+          snapshot: state === null ? null : { ...stoppedSnapshot(), runtime: state },
+        });
+      const view = render(<ManagedNodeScreen />);
+      expect(view.getByText(guidance)).toBeTruthy();
+      expect(view.getByText("Back to Nodes")).toBeTruthy();
+      expect(view.queryByText("Not found")).toBeNull();
+      view.unmount();
+      runtimeView.mockRestore();
+      providerView.unmount();
+    },
+  );
 
   it("saves a live authenticated observation from device diagnostics", async () => {
     const stop = jest.fn();
