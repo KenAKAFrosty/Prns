@@ -28,6 +28,9 @@ enum PrnsAppRestorationProbeTests {
     )
     emit(Array("logger_installed".utf8), sequence: 17)
     emit(Array("central_scan_already_scanning".utf8), sequence: 18)
+    emit(Array("gatt_control_hello_sent".utf8), sequence: 19)
+    emit(Array("gatt_control_welcome_received".utf8), sequence: 20)
+    emit(Array("central_closed_session_reaped".utf8), sequence: 21)
     emit(Array("central_scan_started".utf8), sequence: UInt64.max)
 
     // Invalid calls must never reach the console, including private/error payloads.
@@ -40,6 +43,8 @@ enum PrnsAppRestorationProbeTests {
     emit(Array("private-peer-payload".utf8), sequence: 103)
     emit(Array("logger_installed\nprivate-error".utf8), sequence: 104)
     emit([0xff, 0xfe], sequence: 105)
+    emit(Array("gatt_control_hello_sent private-peer-payload".utf8), sequence: 106)
+    emit(Array("gatt_control_timeout".utf8), sequence: 107)
   }
 
   private static func emit(_ bytes: [UInt8], sequence: UInt64) {

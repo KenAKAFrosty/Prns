@@ -42,6 +42,7 @@ enum PrnsIosDiagnostics {
 
   enum RestorationEvent: String {
     case centralCharacteristicDiscoveryFailed = "central_characteristic_discovery_failed"
+    case centralClosedSessionReaped = "central_closed_session_reaped"
     case centralColumbaSubscribed = "central_columba_subscribed"
     case centralConnectFailed = "central_connect_failed"
     case centralConnected = "central_connected"
@@ -79,6 +80,8 @@ enum PrnsIosDiagnostics {
     case centralSessionResumed = "central_session_resumed"
     case centralStateRestored = "central_state_restored"
     case centralSubscriptionFailed = "central_subscription_failed"
+    case gattControlHelloSent = "gatt_control_hello_sent"
+    case gattControlWelcomeReceived = "gatt_control_welcome_received"
     case loggerInstalled = "logger_installed"
     case loggerUnavailable = "logger_unavailable"
   }

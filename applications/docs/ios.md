@@ -95,7 +95,13 @@ Release builds do not enable it. It adds no polling or background keepalive.
 Scan events distinguish requests, queued work, state queries, decisions, and
 completed calls. An already-scanning decision records a framework state query,
 not fresh discovery progress. Sightings occur after admission, so these events
-do not prove that every raw discovery callback was observed. The classifier and Swift
+do not prove that every raw discovery callback was observed. Greeting events
+distinguish a completed Hello write from a received Welcome. In the app's
+central-only role, Hello means the acknowledged GATT write completed; neither
+event alone proves a validated, settled handshake. Closed-session reaping records
+the local cancellation path, not its cause or a measured handshake timeout.
+Only static event codes leave the probe; control fields are not exported.
+The classifier and Swift
 allowlist tests run in the explicit macOS `native:ios:test` gate without enabling
 radio logging; portable checks also verify their source-level integration.
 
@@ -108,9 +114,13 @@ idevicesyslog --udid <device-udid> --no-colors --exit --match PRNS_IOS_
 
 Add `--network` (`-n`) when using the paired network transport. Verify the
 connection and the new PID's launch plus `sequence=1` probe markers before
-treating the startup capture as complete. A lost transport requires a new
-capture. The current network trial captured a relaunch without a process filter;
-this does not prove that the earlier `--process` filter caused its missing logs.
+treating the startup capture as complete. Prefer USB for qualification and start
+a fresh capture for each trial. A connected header or a still-running logger
+does not prove continued reception: a network capture's internal reader was
+observed failing and exiting while its command remained alive. A lost reader
+requires a new capture, and the resulting gap cannot be treated as silence from
+the app. PID-independent captures have both captured and missed relaunches;
+the earlier process-filtered capture is not the only missing-timeline case.
 `devicectl --console` alone is insufficient: it connects standard streams only
 when launching a new process, and signals sent to it can reach the app. Logging
 and a Home-screen observation do not establish natural suspension or exclude

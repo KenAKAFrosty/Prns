@@ -56,7 +56,9 @@ mod enabled {
     fn is_bluetooth_target(target: &str) -> bool {
         matches!(
             target,
-            "prns_ffi::bluetooth_auto::macos::central" | "prns_ffi::bluetooth_auto::macos::backend"
+            "prns_ffi::bluetooth_auto::macos::central"
+                | "prns_ffi::bluetooth_auto::macos::backend"
+                | "prns_ffi::bluetooth_auto::macos::gatt_link"
         )
     }
 
@@ -121,6 +123,39 @@ mod enabled {
             }
             if message.starts_with("bluetooth: restored control buffer exceeded for ") {
                 return Some("central_control_buffer_overflow");
+            }
+            if message
+                .strip_prefix("bluetooth: reaping closed central session for ")
+                .is_some_and(is_peer_address_debug)
+            {
+                // This log precedes local cancellation; it does not identify why the
+                // data receiver closed or prove that a handshake timed out.
+                return Some("central_closed_session_reaped");
+            }
+        }
+        if target.ends_with("::gatt_link") {
+            let message = message.strip_prefix("bluetooth: ")?;
+            for (direction, greeting, code) in [
+                (" -> ", "Hello", "gatt_control_hello_sent"),
+                (" <- ", "Welcome", "gatt_control_welcome_received"),
+            ] {
+                let Some((peer, control)) = message.split_once(direction) else {
+                    continue;
+                };
+                if is_peer_address_debug(peer)
+                    && control.strip_prefix(greeting).is_some_and(|fields| {
+                        fields.starts_with(" { identity: BleIdentity([")
+                            && fields.contains("]), endpoint: ")
+                            && fields.contains(", capabilities: LinkCapabilities { ")
+                            && fields.contains(" }, peer_rssi: ")
+                            && fields.ends_with(" }")
+                    })
+                {
+                    // These existing log sites run after control_send/control_recv.
+                    // For this app's central-only role, Hello follows completion of
+                    // the acknowledged write, not completion of the peer handshake.
+                    return Some(code);
+                }
             }
         }
         if target.ends_with("::backend") {
@@ -223,6 +258,22 @@ mod enabled {
     }
 
     #[cfg(any(test, target_os = "ios"))]
+    fn is_peer_address_debug(value: &str) -> bool {
+        let Some(bytes) = value
+            .strip_prefix('[')
+            .and_then(|value| value.strip_suffix(']'))
+        else {
+            return false;
+        };
+        let mut octets = bytes.split(", ");
+        (0..6).all(|_| {
+            octets.next().is_some_and(|octet| {
+                octet.len() == 2 && octet.bytes().all(|byte| byte.is_ascii_hexdigit())
+            })
+        }) && octets.next().is_none()
+    }
+
+    #[cfg(any(test, target_os = "ios"))]
     fn next_sequence(counter: &AtomicU64) -> u64 {
         counter
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
@@ -260,6 +311,7 @@ mod enabled {
 
         const CENTRAL: &str = "prns_ffi::bluetooth_auto::macos::central";
         const BACKEND: &str = "prns_ffi::bluetooth_auto::macos::backend";
+        const GATT_LINK: &str = "prns_ffi::bluetooth_auto::macos::gatt_link";
         const DIAGNOSTIC_CASES: &[(&str, &str, &str)] = &[
             (
                 CENTRAL,
@@ -305,6 +357,21 @@ mod enabled {
                 CENTRAL,
                 "bluetooth: private-peer subscribed — Columba data path ready",
                 "central_columba_subscribed",
+            ),
+            (
+                CENTRAL,
+                "bluetooth: reaping closed central session for [01, 23, 45, 67, 89, ab]",
+                "central_closed_session_reaped",
+            ),
+            (
+                GATT_LINK,
+                "bluetooth: [01, 23, 45, 67, 89, ab] -> Hello { identity: BleIdentity([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]), endpoint: CoreBluetooth(Ios), capabilities: LinkCapabilities { l2cap: None, link_mtu: 512 }, peer_rssi: None }",
+                "gatt_control_hello_sent",
+            ),
+            (
+                GATT_LINK,
+                "bluetooth: [01, 23, 45, 67, 89, ab] <- Welcome { identity: BleIdentity([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]), endpoint: Esp32(Esp32), capabilities: LinkCapabilities { l2cap: Some(Psm(128)), link_mtu: 512 }, peer_rssi: Some(-47) }",
+                "gatt_control_welcome_received",
             ),
             (
                 BACKEND,
@@ -440,6 +507,81 @@ mod enabled {
                     "bluetooth: restored control buffer exceeded for [01, 23, 45, 67, 89, ab]",
                 ),
                 Some("central_control_buffer_overflow")
+            );
+        }
+
+        #[test]
+        fn greeting_debug_formats_are_reduced_without_retaining_their_fields() {
+            use prns_core::interfaces::bluetooth_auto::{
+                AppleHost, BleIdentity, Control, Endpoint, Esp32Host, LinkCapabilities, Psm,
+            };
+
+            for seed in [0, 0x5a, u8::MAX] {
+                let identity = BleIdentity::new([seed; 16]);
+                let capabilities = LinkCapabilities {
+                    l2cap: Psm::new(128),
+                    link_mtu: 512,
+                };
+                for (control, direction, code) in [
+                    (
+                        Control::Hello {
+                            identity,
+                            endpoint: Endpoint::CoreBluetooth(AppleHost::Ios),
+                            capabilities,
+                            peer_rssi: None,
+                        },
+                        "->",
+                        "gatt_control_hello_sent",
+                    ),
+                    (
+                        Control::Welcome {
+                            identity,
+                            endpoint: Endpoint::Esp32(Esp32Host::Esp32),
+                            capabilities,
+                            peer_rssi: Some(-47),
+                        },
+                        "<-",
+                        "gatt_control_welcome_received",
+                    ),
+                ] {
+                    let message = format!("bluetooth: {:02x?} {direction} {control:?}", [seed; 6]);
+                    assert_eq!(classify(GATT_LINK, &message), Some(code));
+                    for target in [CENTRAL, BACKEND, "other::bluetooth_auto::macos::gatt_link"] {
+                        assert_eq!(classify(target, &message), None);
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn arbitrary_control_payloads_and_other_directions_stay_silent() {
+            for message in [
+                "bluetooth: [01, 23, 45, 67, 89, ab] -> private-payload",
+                "bluetooth: [01, 23, 45, 67, 89, ab] -> Hello { private-payload }",
+                "bluetooth: [01, 23, 45, 67, 89, ab] <- Welcome { private-payload }",
+                "bluetooth: [01, 23, 45, 67, 89, ab] -> Close { reason: Incompatible }",
+                "bluetooth: notify failed — private-error",
+            ] {
+                assert_eq!(classify(GATT_LINK, message), None);
+            }
+            for &(target, message, _) in DIAGNOSTIC_CASES {
+                if target == GATT_LINK {
+                    let wrong_direction = if message.contains(" -> ") {
+                        message.replace(" -> ", " <- ")
+                    } else {
+                        message.replace(" <- ", " -> ")
+                    };
+                    assert_eq!(classify(GATT_LINK, &wrong_direction), None);
+                    let invalid_peer = message.replace("[01, 23, 45, 67, 89, ab]", "private-peer");
+                    assert_eq!(classify(GATT_LINK, &invalid_peer), None);
+                }
+            }
+            assert_eq!(
+                classify(
+                    CENTRAL,
+                    "bluetooth: reaping closed central session for private-payload"
+                ),
+                None
             );
         }
 

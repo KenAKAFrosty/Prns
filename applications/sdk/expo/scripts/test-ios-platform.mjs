@@ -79,13 +79,16 @@ try {
       "PRNS_IOS_LIFECYCLE prepare outcome=unknown stage=unknown",
       "PRNS_IOS_RESTORATION sequence=17 event=logger_installed",
       "PRNS_IOS_RESTORATION sequence=18 event=central_scan_already_scanning",
+      "PRNS_IOS_RESTORATION sequence=19 event=gatt_control_hello_sent",
+      "PRNS_IOS_RESTORATION sequence=20 event=gatt_control_welcome_received",
+      "PRNS_IOS_RESTORATION sequence=21 event=central_closed_session_reaped",
       "PRNS_IOS_RESTORATION sequence=18446744073709551615 event=central_scan_started",
     ],
     "each diagnostic channel must reach stderr once; invalid probe codes must stay silent",
   );
   assert.doesNotMatch(
     probeResult.stderr,
-    /private-peer|private-error|private-outcome|private-stage/,
+    /private-peer|private-error|private-outcome|private-stage|gatt_control_timeout/,
     "unknown native values and rejected restoration payloads must never become public",
   );
   const releaseProbeObject = resolve(recoveryTestDirectory, "probe-release.o");
