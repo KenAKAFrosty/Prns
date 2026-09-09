@@ -63,6 +63,8 @@ enum PrnsIosDiagnostics {
     case centralPendingConnectionResumed = "central_pending_connection_resumed"
     case centralRadioDisabled = "central_radio_disabled"
     case centralRadioEnabled = "central_radio_enabled"
+    case centralRestoredNativeReconnectRequested = "central_restored_native_reconnect_requested"
+    case centralRestoredNativeResetRequested = "central_restored_native_reset_requested"
     case centralScanAlreadyScanning = "central_scan_already_scanning"
     case centralScanAlreadyStopped = "central_scan_already_stopped"
     case centralScanDecisionRestart = "central_scan_decision_restart"

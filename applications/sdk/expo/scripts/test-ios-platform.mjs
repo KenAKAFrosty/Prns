@@ -82,6 +82,8 @@ try {
       "PRNS_IOS_RESTORATION sequence=19 event=gatt_control_hello_sent",
       "PRNS_IOS_RESTORATION sequence=20 event=gatt_control_welcome_received",
       "PRNS_IOS_RESTORATION sequence=21 event=central_closed_session_reaped",
+      "PRNS_IOS_RESTORATION sequence=22 event=central_restored_native_reset_requested",
+      "PRNS_IOS_RESTORATION sequence=23 event=central_restored_native_reconnect_requested",
       "PRNS_IOS_RESTORATION sequence=18446744073709551615 event=central_scan_started",
     ],
     "each diagnostic channel must reach stderr once; invalid probe codes must stay silent",

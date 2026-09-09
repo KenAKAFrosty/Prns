@@ -78,6 +78,12 @@ mod enabled {
                 "bluetooth: native control characteristic found, subscribing" => {
                     return Some("central_control_subscribing");
                 }
+                "bluetooth: replacing restored native connection before a fresh handshake" => {
+                    return Some("central_restored_native_reset_requested");
+                }
+                "bluetooth: reconnecting restored native peripheral after local disconnect" => {
+                    return Some("central_restored_native_reconnect_requested");
+                }
                 _ => {}
             }
             for (prefix, code) in [
@@ -313,6 +319,16 @@ mod enabled {
         const BACKEND: &str = "prns_ffi::bluetooth_auto::macos::backend";
         const GATT_LINK: &str = "prns_ffi::bluetooth_auto::macos::gatt_link";
         const DIAGNOSTIC_CASES: &[(&str, &str, &str)] = &[
+            (
+                CENTRAL,
+                "bluetooth: replacing restored native connection before a fresh handshake",
+                "central_restored_native_reset_requested",
+            ),
+            (
+                CENTRAL,
+                "bluetooth: reconnecting restored native peripheral after local disconnect",
+                "central_restored_native_reconnect_requested",
+            ),
             (
                 CENTRAL,
                 "bluetooth: dial connected over LE, discovering Prns service",

@@ -29,7 +29,9 @@ The new iPhone 14 Pro / iOS 26.6.1 Debug framework has SHA-256
 `8b31d51428bdfd7d73bead7f7aabf3c866b27d1e94728d8e61623539957be8ab`.
 Core remains the footprint-corrected `7c9dcb2ed`. Installation retained data;
 there was no board operation, fresh pairing or reset. Metro stayed available.
-Ordinary launch reached the retained node, but its native startup was not logged.
+Foreground activation after installation reached the retained node, but its
+native startup was not logged. No pre-activation process inventory was taken;
+the process may already have started before capture. Its launch source is unknown.
 
 ## Captured restored-handshake stall
 

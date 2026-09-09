@@ -101,6 +101,8 @@ central-only role, Hello means the acknowledged GATT write completed; neither
 event alone proves a validated, settled handshake. Closed-session reaping records
 the local cancellation path, not its cause or a measured handshake timeout.
 Only static event codes leave the probe; control fields are not exported.
+Reset/reconnect request markers identify the one-shot restored-native recovery
+path, not a guarantee that the physical connection has closed or reopened.
 The classifier and Swift
 allowlist tests run in the explicit macOS `native:ios:test` gate without enabling
 radio logging; portable checks also verify their source-level integration.
