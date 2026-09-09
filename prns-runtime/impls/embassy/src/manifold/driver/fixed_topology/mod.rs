@@ -210,7 +210,9 @@ async fn run_inner<S, H, M, P, A, Store, const NOTIFY: usize, const COMMANDS: us
                         });
                         retain_packet_phy(store, &mut packet, packet_phy);
                         let mut owed_work = InlineOwedWorkQueue::new();
-                        let report = engine.ingest_classified_into_report(
+                        let report = engine.ingest_classified_into_report_with_request_diagnostics::<
+                            { cfg!(feature = "log") }, _, _, _, _,
+                        >(
                             packet,
                             IngestIo {
                                 interfaces,
