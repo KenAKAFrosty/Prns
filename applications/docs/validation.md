@@ -678,6 +678,60 @@ exception for updating the draft. Logs: `final-push.log`,
 `techo-upstream-baseline.log`, and `techo-source-footprint-review.md` in the
 evidence directory above.
 
+## Generated-binding cutover
+
+The application API now generates TypeScript, Swift and Kotlin from UniFFI
+metadata in the app-owned Rust composition. The handwritten domain C ABI,
+Android string dispatcher, ts-rs contract registry and JSON hydration layer are
+removed. Native lifecycle calls and JSI use one shared `prns_app` image per
+platform. Expo retains storage and lifecycle admission, accessory setup,
+permissions and platform status events; its seven lifecycle methods carry
+generated binary values, with one additional outbound-preparation method.
+
+The generator and runtime are pinned to upstream jsi2 source
+`67af14f7a1b60758664cd3a4a50c235fa0b469c6`, with the four recorded patches in
+[`vendor/ubrn`](../vendor/ubrn/README.md). Upstream PR 460 remains a draft at this
+checkpoint. This is an explicit temporary runtime dependency, with source and
+artifact verification and a documented replacement procedure. It is not an
+upstream release qualification.
+
+Separate RN 0.86.3/Hermes iOS and Android harnesses each exercised four JavaScript
+runtimes, three full reloads and final native React-host destruction while one
+native Prns generation survived. Each platform freed all 48 abandoned exported
+futures; all 56 separately spawned workers completed. Each fresh runtime began
+with no pending generated futures or JS resolvers. Full typed snapshots,
+canonical HostSnapshot conversion and exact integers were exercised. Android ran
+on a 16 KB ARM64 emulator and executed its joined-JavaScript-queue cleanup path.
+
+Integration checks exercised the actual Expo SDK and generated JSI calls:
+
+- iOS simulator identity creation, offline contact create/read and retention
+  after app-process restart. The native lifecycle smoke separately covers two
+  starts, five typed snapshots, two stops and development reset.
+- Android emulator identity/start/snapshot, a full React reload preserving the
+  same process and service, explicit Stop, offline contact create/read and
+  identity/contact retention after process restart. Native instrumentation also
+  checks generated identity/import/lifecycle codecs, and both APKs package one
+  Rust image with 16 KB alignment.
+- Host tests cover foreign-executor attachment to native startup, cancellation,
+  exact integers, offline database admission and durable writes after caller
+  departure. The unchanged real TCP cancellation test exposed a stale detached
+  core pin: its old revision lacked the existing Link-close wake-schedule fix.
+  The recorded pin now includes that fix and matches the app's resolved core
+  dependencies. The test passes without weakening its assertions.
+
+This API polls snapshots and uses generated future-completion callbacks. It does
+not use application-defined UniFFI callback interfaces. Arbitrary retained JS
+callbacks remain outside the supported scope, and intentional per-runtime
+metadata retention has not been proven to use constant memory over unlimited
+reloads. Cancellation releases a caller's generated future; it does not undo an
+accepted native durable write or independently spawned work.
+
+These checks do not requalify the earlier physical Bluetooth observations for
+the generated-binding build, nor qualify signed iOS distribution, Android
+release/R8 packaging, arbitrary callback interfaces or long-idle delivery. The
+constrained Nordic firmware publication hold above remains in force.
+
 ## Remaining work
 
 - Resolve the constrained Nordic firmware publication hold above.

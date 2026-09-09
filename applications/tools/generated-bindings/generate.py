@@ -30,6 +30,11 @@ def environment():
     env.setdefault('CARGO_TARGET_DIR', str(APPLICATIONS / 'target'))
     env.setdefault('CARGO_BUILD_JOBS', '4')
     env.setdefault('RUSTUP_TOOLCHAIN', 'stable')
+    # RUSTUP_TOOLCHAIN only affects rustup shims. A system Cargo earlier on
+    # PATH would otherwise compile with a different Rust than the selected one.
+    rustc = run('rustup', 'which', '--toolchain', env['RUSTUP_TOOLCHAIN'], 'rustc',
+                env=env, capture=True).strip()
+    env['PATH'] = str(Path(rustc).parent) + os.pathsep + env['PATH']
     if sys.platform == 'darwin':
         clang = run('xcrun', '--find', 'clang', capture=True).strip()
         env.update(PATH=str(Path(clang).parent) + os.pathsep + env['PATH'], CC=clang,
