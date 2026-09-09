@@ -137,13 +137,6 @@ impl<'d, P: PacketPool> ChannelManager<'d, P> {
         let mut state = self.state.borrow_mut();
         for storage in state.channels.iter_mut() {
             if Some(conn) == storage.conn {
-                // A disconnected channel cannot deliver its queued packets. Release them now:
-                // a new connection needs pool capacity before this channel slot can be reused.
-                // Clear before closing so even a full queue admits the receiver wake sentinel.
-                storage.inbound.clear();
-                let _ = storage.inbound.close();
-                #[cfg(not(feature = "l2cap-sdu-reassembly-optimization"))]
-                storage.reassembly.clear();
                 #[cfg(feature = "channel-metrics")]
                 storage.metrics.reset();
                 storage.close();
@@ -951,7 +944,10 @@ impl<'a, 'd, P: PacketPool> DisconnectRequest<'a, 'd, P> {
     }
 
     pub fn confirm(self) {
-        self.state.borrow_mut().channels[self.index.0 as usize].state = ChannelState::Disconnected;
+        let mut state = self.state.borrow_mut();
+        let channel = &mut state.channels[self.index.0 as usize];
+        channel.close_received();
+        channel.state = ChannelState::Disconnected;
     }
 }
 
@@ -1117,7 +1113,18 @@ impl<P> ChannelStorage<P> {
         }
     }
 
+    fn close_received(&mut self) {
+        // A terminal channel cannot deliver queued or partial packets. Reclaim them before
+        // dropping its connection association, without waiting for HCI disconnect or slot reuse.
+        // Clear before closing so even a full queue admits the receiver wake sentinel.
+        self.inbound.clear();
+        let _ = self.inbound.close();
+        #[cfg(not(feature = "l2cap-sdu-reassembly-optimization"))]
+        self.reassembly.clear();
+    }
+
     fn close(&mut self) {
+        self.close_received();
         self.state = ChannelState::Disconnected;
         self.cid = 0;
         self.conn = None;
@@ -1254,7 +1261,7 @@ mod tests {
 
     use bt_hci::param::{AddrKind, BdAddr, LeConnRole, Status};
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
     use std::task::{Wake, Waker};
 
     use super::*;
@@ -1264,6 +1271,7 @@ mod tests {
 
     // Isolate this regression from the default pool used by other parallel tests.
     static PACKETS_IN_USE: AtomicUsize = AtomicUsize::new(0);
+    static PACKET_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     struct EightPacketPool;
     struct CountedPacket([u8; 27]);
@@ -1314,21 +1322,76 @@ mod tests {
 
     #[test]
     fn disconnected_releases_full_inbound_pool_before_channel_reuse() {
-        let mut resources: HostResources<EightPacketPool, 1, 1> = HostResources::new();
-        let ble = crate::new(MockController::new(), &mut resources).host;
+        assert_close_releases_full_pool(|channels, conn, _| channels.disconnected(conn).unwrap());
+    }
+
+    #[test]
+    fn disconnect_response_releases_pool_even_when_hci_cleanup_cannot_find_the_channel() {
+        assert_close_releases_full_pool(|channels, conn, index| {
+            channels.disconnect(index);
+            channels
+                .handle_disconnect_response(BASE_ID + u16::from(index.0))
+                .unwrap();
+            channels.with_mut(|state| {
+                assert_eq!(state.channels[index.0 as usize].conn, None);
+            });
+            // The response has cleared the handle, so HCI cleanup cannot reclaim this queue.
+            channels.disconnected(conn).unwrap();
+        });
+    }
+
+    #[test]
+    fn confirmed_disconnect_releases_pool_without_hci_disconnect_or_channel_drop() {
+        let mut connection_storage = [crate::connection_manager::ConnectionStorage::new()];
+        let connections = ConnectionManager::<EightPacketPool>::new(&mut connection_storage, 23);
+        connections
+            .connect(
+                ConnHandle::new(33),
+                AddrKind::PUBLIC,
+                BdAddr::new([0; 6]),
+                LeConnRole::Peripheral,
+                ConnParams::new(),
+            )
+            .unwrap();
+        let Poll::Ready(connection) = connections.poll_accept(LeConnRole::Peripheral, &[], None) else {
+            panic!("GAP connection must be accepted");
+        };
+        assert_close_releases_full_pool(|channels, conn, index| {
+            assert_eq!(connection.handle(), conn);
+            channels.disconnect(index);
+            let Poll::Ready(request) = channels.poll_disconnecting(None) else {
+                panic!("channel disconnect must be pending");
+            };
+            request.confirm();
+            channels.with_mut(|state| {
+                let storage = &state.channels[index.0 as usize];
+                assert_eq!(storage.state, ChannelState::Disconnected);
+                assert_eq!(storage.conn, Some(conn));
+                assert_eq!(storage.cid, BASE_ID + u16::from(index.0));
+            });
+        });
+        assert!(connection.is_connected(), "channel cleanup must not disconnect GAP");
+    }
+
+    fn assert_close_releases_full_pool(
+        close: impl FnOnce(&ChannelManager<'_, EightPacketPool>, ConnHandle, ChannelIndex),
+    ) {
+        let _pool = PACKET_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        // Stack-owned storage drops packets even when a negative-control assertion panics.
+        let mut storage = [ChannelStorage::new()];
+        let channels = ChannelManager::<EightPacketPool>::new(&mut storage);
         let conn = ConnHandle::new(33);
-        let index = ble
-            .channels
+        let index = channels
             .alloc(conn, |storage| storage.state = ChannelState::Connected)
             .unwrap();
-        ble.channels.inc_ref(index);
-        let channel = L2capChannel::new(index, &ble.channels);
+        channels.inc_ref(index);
+        let channel = L2capChannel::new(index, &channels);
         let queued = EightPacketPool::capacity().min(config::L2CAP_RX_QUEUE_SIZE);
         let other_packets: std::vec::Vec<_> = (queued..EightPacketPool::capacity())
             .map(|_| EightPacketPool::allocate().unwrap())
             .collect();
 
-        ble.channels.with_mut(|state| {
+        channels.with_mut(|state| {
             for _ in 0..queued {
                 let packet = EightPacketPool::allocate().unwrap();
                 state.channels[index.0 as usize]
@@ -1339,7 +1402,7 @@ mod tests {
         });
         assert!(EightPacketPool::allocate().is_none());
 
-        ble.channels.disconnected(conn).unwrap();
+        close(&channels, conn, index);
 
         // New ATT traffic needs a packet before a new L2CAP channel can be allocated.
         // The application may still hold the old channel handle during that interval.
@@ -1349,7 +1412,7 @@ mod tests {
         assert!(EightPacketPool::allocate().is_none());
         let waker = futures::task::noop_waker();
         let mut cx = Context::from_waker(&waker);
-        ble.channels.with_mut(|state| {
+        channels.with_mut(|state| {
             assert!(matches!(
                 state.channels[index.0 as usize].inbound.poll_receive(&mut cx),
                 Poll::Ready(None)
@@ -1363,6 +1426,56 @@ mod tests {
 
     #[test]
     fn disconnected_wakes_pending_receiver_with_channel_closed() {
+        assert_close_wakes_pending_receiver(|channels, conn, _| channels.disconnected(conn).unwrap());
+    }
+
+    #[test]
+    fn confirmed_disconnect_wakes_pending_receiver_with_channel_closed() {
+        assert_close_wakes_pending_receiver(|channels, _, index| {
+            channels.disconnect(index);
+            let Poll::Ready(request) = channels.poll_disconnecting(None) else {
+                panic!("channel disconnect must be pending");
+            };
+            request.confirm();
+        });
+    }
+
+    #[cfg(not(feature = "l2cap-sdu-reassembly-optimization"))]
+    #[test]
+    fn terminal_close_releases_partial_reassembly() {
+        let _pool = PACKET_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        for confirmed in [false, true] {
+            let mut storage = [ChannelStorage::new()];
+            let channels = ChannelManager::<EightPacketPool>::new(&mut storage);
+            let conn = ConnHandle::new(33);
+            let index = channels
+                .alloc(conn, |storage| {
+                    storage.state = ChannelState::Disconnecting;
+                    storage
+                        .reassembly
+                        .init(storage.cid, 2, EightPacketPool::allocate().unwrap())
+                        .unwrap();
+                })
+                .unwrap();
+            assert_eq!(PACKETS_IN_USE.load(Ordering::SeqCst), 1);
+            if confirmed {
+                let Poll::Ready(request) = channels.poll_disconnecting(None) else {
+                    panic!("channel disconnect must be pending");
+                };
+                request.confirm();
+            } else {
+                channels
+                    .handle_disconnect_response(BASE_ID + u16::from(index.0))
+                    .unwrap();
+            }
+            channels.with_mut(|state| assert!(!state.channels[index.0 as usize].reassembly.in_progress()));
+            assert_eq!(PACKETS_IN_USE.load(Ordering::SeqCst), 0);
+        }
+    }
+
+    fn assert_close_wakes_pending_receiver(
+        close: impl FnOnce(&ChannelManager<'_, DefaultPacketPool>, ConnHandle, ChannelIndex),
+    ) {
         use core::future::Future;
 
         let mut resources: HostResources<DefaultPacketPool, 1, 1> = HostResources::new();
@@ -1378,7 +1491,7 @@ mod tests {
         let mut receive = core::pin::pin!(ble.channels.receive_pdu(&ble.connections, index));
         assert!(receive.as_mut().poll(&mut cx).is_pending());
 
-        ble.channels.disconnected(conn).unwrap();
+        close(&ble.channels, conn, index);
 
         assert_eq!(wake_counter.0.load(Ordering::SeqCst), 1);
         assert!(matches!(
