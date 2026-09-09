@@ -26,12 +26,15 @@ use prns_core::interfaces::bluetooth_auto::{
 
 use super::backend::central_peripheral_capacity;
 use super::data_plane::{close_l2cap, l2cap_peer_id, wire_l2cap, DataPlane, PendingL2cap};
-use super::gatt_link::{gatt_inbound_channel, ControlPlane, GattInboundSender, GattLink};
+use super::gatt_link::{ControlPlane, GattInboundReceiver, GattLink, GATT_INBOUND_BUDGET_BYTES};
+use super::peripheral_write::{
+    admit_write_batch, respond_to_write_batch, InboundProfile, WriteError, WriteRequest,
+    WriteSession, WriteTarget,
+};
 use super::{
     advertisement_data, cbuuid_eq, columba_identity_uuid, columba_rx_uuid, columba_tx_uuid,
-    control_uuid, core_bluetooth_peer_id, data_uuid, service_uuid, try_bounded_ingress,
-    BoundedIngress, CoreBluetoothPeerId, ManagerSignalSender, SendPeripheralDelegate,
-    SendPeripheralManager,
+    control_uuid, core_bluetooth_peer_id, data_uuid, service_uuid, CoreBluetoothPeerId,
+    ManagerSignalSender, SendPeripheralDelegate, SendPeripheralManager,
 };
 
 #[derive(Clone, Copy)]
@@ -55,32 +58,44 @@ pub(super) const fn advertising_op(enabled: bool, is_advertising: bool) -> Adver
     }
 }
 
-enum InboundProfile {
-    Native,
-    Columba(BleIdentity),
-}
+type PeripheralPeerSession = WriteSession<Retained<CBCentral>>;
 
-impl InboundProfile {
-    fn protocol(&self) -> PeerProtocol {
-        match self {
-            Self::Native => PeerProtocol::Native,
-            Self::Columba(_) => PeerProtocol::Columba,
-        }
+fn write_request(request: &CBATTRequest) -> Result<WriteRequest<Retained<CBCentral>>, WriteError> {
+    // SAFETY: CoreBluetooth supplies this live request on the delegate's serial queue. The
+    // generated accessors return retained characteristic/central/value objects and a plain
+    // offset; the characteristic remains live throughout its immutable UUID query.
+    let (uuid, central, offset, value) = unsafe {
+        (
+            request.characteristic().UUID(),
+            request.central(),
+            request.offset(),
+            request.value(),
+        )
+    };
+    let target = if cbuuid_eq(&uuid, &control_uuid()) {
+        WriteTarget::Control
+    } else if cbuuid_eq(&uuid, &data_uuid()) {
+        WriteTarget::Data
+    } else if cbuuid_eq(&uuid, &columba_rx_uuid()) {
+        WriteTarget::ColumbaRx
+    } else {
+        WriteTarget::Unsupported
+    };
+    // No individual write can fit the existing per-peer byte budget above this size. Reject
+    // before copying external NSData; reservation checks still account for the whole batch.
+    if value
+        .as_ref()
+        .is_some_and(|value| value.len() > GATT_INBOUND_BUDGET_BYTES)
+    {
+        return Err(WriteError::InsufficientResources);
     }
-
-    fn peer_identity(&self) -> Option<BleIdentity> {
-        match self {
-            Self::Native => None,
-            Self::Columba(identity) => Some(*identity),
-        }
-    }
-}
-
-struct PeripheralPeerSession {
-    central: Retained<CBCentral>,
-    protocol: PeerProtocol,
-    control_tx: tokio_mpsc::Sender<Control>,
-    data_tx: GattInboundSender,
+    Ok(WriteRequest {
+        peer_id: core_bluetooth_peer_id(&central),
+        central,
+        target,
+        offset,
+        value: value.map(|value| value.to_vec().into_boxed_slice()),
+    })
 }
 
 pub(super) fn has_session_for_peer<V>(
@@ -468,129 +483,41 @@ define_class!(
             peripheral: &CBPeripheralManager,
             requests: &NSArray<CBATTRequest>,
         ) {
-            if !self.ivars().radio_enabled.load(Ordering::Acquire) {
-                for request in requests.iter() {
-                    // SAFETY: every request belongs to this live callback and is answered exactly
-                    // once before returning; disabled state cannot accept new session work.
-                    unsafe {
-                        peripheral.respondToRequest_withResult(
-                            &request,
-                            CBATTError::InsufficientResources,
-                        )
-                    };
-                }
-                return;
-            }
-            for request in requests.iter() {
-                // SAFETY: CoreBluetooth supplied this retained request for the duration of the
-                // delegate callback; its optional value has the binding-declared NSData type.
-                let Some(value) = (unsafe { request.value() }) else {
-                    // SAFETY: the request belongs to this live manager callback and may be answered
-                    // exactly once before the callback returns.
-                    unsafe {
-                        peripheral.respondToRequest_withResult(&request, CBATTError::Success)
-                    };
-                    continue;
-                };
-                // SAFETY: the request is live during this callback and retains its characteristic.
-                let characteristic = unsafe { request.characteristic() };
-                // SAFETY: the returned characteristic is live and its UUID is immutable.
-                let written_uuid = unsafe { characteristic.UUID() };
-                let bytes = value.to_vec();
-                // SAFETY: the live request retains the CBCentral that issued it.
-                let central = unsafe { request.central() };
-                let peer_id = core_bluetooth_peer_id(&central);
-                self.reap_closed_state_on_queue();
-                if cbuuid_eq(&written_uuid, &data_uuid()) {
-                    let enqueue_error = self
-                        .ivars()
-                        .sessions
-                        .borrow()
-                        .get(&peer_id)
-                        .filter(|session| session.protocol == PeerProtocol::Native)
-                        .and_then(|session| {
-                            session.data_tx.try_send(Box::from(bytes.as_slice())).err()
-                        });
-                    let result = if let Some(error) = enqueue_error {
-                        crate::diagnostic_log::warn!(
-                            "bluetooth: GATT write inbox failed for {:02x?}: {error:?}",
-                            peer_id.address().octets()
-                        );
-                        CBATTError::InsufficientResources
-                    } else {
-                        CBATTError::Success
-                    };
-                    // SAFETY: the request belongs to this live manager callback and is answered
-                    // exactly once on this branch.
-                    unsafe { peripheral.respondToRequest_withResult(&request, result) };
-                    continue;
-                }
-                if cbuuid_eq(&written_uuid, &columba_rx_uuid()) {
-                    let mut accepted = true;
-                    let known = self.ivars().sessions.borrow().contains_key(&peer_id);
-                    if !known && bytes.len() == 16 {
-                        let mut peer_identity = [0u8; 16];
-                        peer_identity.copy_from_slice(&bytes);
-                        accepted = self.open_inbound(
-                            &central,
-                            peer_id,
-                            InboundProfile::Columba(BleIdentity::new(peer_identity)),
-                        );
-                    } else if let Some(session) = self
-                        .ivars()
-                        .sessions
-                        .borrow()
-                        .get(&peer_id)
-                        .filter(|session| session.protocol == PeerProtocol::Columba)
-                    {
-                        if let Err(error) = session.data_tx.try_send(Box::from(bytes.as_slice())) {
-                            crate::diagnostic_log::warn!(
-                                "bluetooth: Columba GATT write inbox failed for {:02x?}: {error:?}",
-                                peer_id.address().octets()
-                            );
-                            accepted = false;
+            let first = requests.iter().next();
+            respond_to_write_batch(
+                first.as_deref(),
+                || {
+                    let enabled = self.ivars().radio_enabled.load(Ordering::Acquire);
+                    if enabled {
+                        self.reap_closed_state_on_queue();
+                    }
+                    admit_write_batch(
+                        enabled,
+                        requests.iter().map(|request| write_request(&request)),
+                        &mut self.ivars().sessions.borrow_mut(),
+                        self.ivars().session_capacity,
+                        &self.ivars().inbound,
+                        |request, profile, control_rx, data_rx| {
+                            self.prepare_inbound_link(request, profile, control_rx, data_rx)
+                        },
+                    )
+                },
+                |first, outcome| {
+                    let result = match outcome {
+                        Ok(()) => CBATTError::Success,
+                        Err(WriteError::InsufficientResources) => CBATTError::InsufficientResources,
+                        Err(WriteError::InvalidOffset) => CBATTError::InvalidOffset,
+                        Err(WriteError::InvalidValueLength) => {
+                            CBATTError::InvalidAttributeValueLength
                         }
-                    }
-                    let result = if accepted {
-                        CBATTError::Success
-                    } else {
-                        CBATTError::InsufficientResources
+                        Err(WriteError::WriteNotPermitted) => CBATTError::WriteNotPermitted,
                     };
-                    // SAFETY: the request belongs to this live manager callback and is answered
-                    // exactly once on this branch.
-                    unsafe { peripheral.respondToRequest_withResult(&request, result) };
-                    continue;
-                }
-                if let Some(control) = Control::decode(&bytes) {
-                    let mut accepted = true;
-                    if !self.ivars().sessions.borrow().contains_key(&peer_id) {
-                        accepted = self.open_inbound(&central, peer_id, InboundProfile::Native);
-                    }
-                    if let Some(session) = self
-                        .ivars()
-                        .sessions
-                        .borrow()
-                        .get(&peer_id)
-                        .filter(|session| session.protocol == PeerProtocol::Native)
-                    {
-                        accepted &= session.control_tx.try_send(control).is_ok();
-                    }
-                    if !accepted {
-                        // SAFETY: the request belongs to this live manager callback and is answered
-                        // exactly once on this branch.
-                        unsafe {
-                            peripheral.respondToRequest_withResult(
-                                &request,
-                                CBATTError::InsufficientResources,
-                            )
-                        };
-                        continue;
-                    }
-                }
-                // SAFETY: this is the sole response for this request on the fall-through branch,
-                // sent while both the request and manager remain live in their delegate callback.
-                unsafe { peripheral.respondToRequest_withResult(&request, CBATTError::Success) };
-            }
+                    // SAFETY: the manager and first request are retained for this callback on
+                    // the serial queue. Apple requires exactly one response for the whole batch,
+                    // addressed to its first request, after all-or-none admission.
+                    unsafe { peripheral.respondToRequest_withResult(first, result) };
+                },
+            );
         }
 
         #[unsafe(method(peripheralManager:central:didSubscribeToCharacteristic:))]
@@ -757,47 +684,20 @@ impl PeripheralDelegate {
         unsafe { msg_send![super(this), init] }
     }
 
-    fn open_inbound(
+    fn prepare_inbound_link(
         &self,
-        central: &CBCentral,
-        peer_id: CoreBluetoothPeerId,
+        request: &WriteRequest<Retained<CBCentral>>,
         profile: InboundProfile,
-    ) -> bool {
-        if !self.ivars().radio_enabled.load(Ordering::Acquire) {
-            return false;
-        }
-        self.reap_closed_state_on_queue();
-        let session_count = self.ivars().sessions.borrow().len();
-        if !can_open_inbound(session_count, self.ivars().session_capacity) {
-            crate::diagnostic_log::warn!(
-                "bluetooth: rejecting inbound control link from {:02x?} — peripheral-session capacity is full ({session_count}/{})",
-                peer_id.address().octets(),
-                self.ivars().session_capacity
-            );
-            return false;
-        }
-        let (control_tx, control_rx) = tokio_mpsc::channel::<Control>(8);
-        let (data_tx, data_rx) = gatt_inbound_channel();
+        control_rx: tokio_mpsc::Receiver<Control>,
+        data_rx: GattInboundReceiver,
+    ) -> GattLink {
+        let peer_id = request.peer_id;
         let protocol = profile.protocol();
         let peer_identity = profile.peer_identity();
         // SAFETY: this is an immutable property query on the live requesting central.
-        let gatt_mtu = unsafe { central.maximumUpdateValueLength() }
+        let gatt_mtu = unsafe { request.central.maximumUpdateValueLength() }
             .clamp(FRAGMENT_HEADER_LEN + 1, BLE_HW_MTU);
-        let address = peer_id.address();
-        crate::diagnostic_log::debug!(
-            "bluetooth: inbound central {:02x?} — {protocol:?} control link opened",
-            address.octets()
-        );
-        self.ivars().sessions.borrow_mut().insert(
-            peer_id,
-            PeripheralPeerSession {
-                central: central.retain(),
-                protocol,
-                control_tx,
-                data_tx,
-            },
-        );
-        let link = GattLink {
+        GattLink {
             peer_protocol: protocol,
             peer_identity,
             control: ControlPlane::Listener {
@@ -806,34 +706,10 @@ impl PeripheralDelegate {
                 gatt_mtu,
             },
             control_rx,
-            address,
+            address: peer_id.address(),
             data_inbound_rx: Some(data_rx),
             l2cap_pending: None,
-        };
-        let rejected = match try_bounded_ingress(&self.ivars().inbound, link) {
-            BoundedIngress::Accepted => return true,
-            BoundedIngress::Full(link) => {
-                crate::diagnostic_log::warn!(
-                    "bluetooth: rejecting inbound link from {:02x?} — inbound queue is full",
-                    link.address.octets()
-                );
-                link
-            }
-            BoundedIngress::Closed(link) => {
-                crate::diagnostic_log::debug!(
-                    "bluetooth: rejecting inbound link from {:02x?} — backend is closed",
-                    link.address.octets()
-                );
-                link
-            }
-        };
-        // The session's data sender observes receiver closure only after the rejected link is
-        // dropped. Remove the queue-confined session and any pending L2CAP state immediately
-        // afterward by exact CoreBluetooth peer ID so a synthetic-address collision cannot tear
-        // down an unrelated peer.
-        drop(rejected);
-        self.clear_peer_on_queue(peer_id);
-        false
+        }
     }
 
     pub(super) fn notify(
