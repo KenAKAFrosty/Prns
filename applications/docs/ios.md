@@ -2,9 +2,10 @@
 
 The iOS app uses the generated bindings and shared Rust image described in the
 [binding guide](../prns/native-composition/bindings/README.md). Start with
-[workspace setup](../README.md#setup). The physical observations below predate
-the generated-binding cutover; fresh physical qualification is still pending.
-See [current validation and limits](validation.md).
+[workspace setup](../README.md#setup). Historical observations and current-build
+trials have different scopes. The current framework has bounded foreground and
+restoration-requested relaunch evidence, not full lifecycle qualification; see
+[current validation and limits](validation.md).
 
 ## iOS native lifetime and Bluetooth restoration
 
@@ -64,10 +65,11 @@ AccessorySetupKit requires iOS 18, so the Expo configuration plugin, Xcode
 project, and native module all use iOS 18.0 as the minimum deployment target.
 Starting in iOS 26, prior AccessorySetupKit setup is also a platform eligibility
 gate for CoreBluetooth process restoration, including Apple's documented
-force-quit exception. The source now implements that setup gate, but the
-central-only path has not yet passed the physical background/restoration matrix
-on physical hardware. Do not infer a successful restoration relaunch from source,
-simulator, build, or foreground results.
+force-quit exception. The source implements that setup gate. The
+[current checkpoint](../checkpoints/2026-09-09-follow-up.md) records a bounded
+restoration-requested relaunch and its remaining UI, delivery and lifecycle
+limits. The full physical matrix remains open; source, simulator, build and
+ordinary foreground results do not establish it.
 
 During an iOS-granted Bluetooth background window, the process-owned Host and
 central interface can run without React. This is bounded, event-driven iOS
@@ -96,6 +98,23 @@ not fresh discovery progress. Sightings occur after admission, so these events
 do not prove that every raw discovery callback was observed. The classifier and Swift
 allowlist tests run in the explicit macOS `native:ios:test` gate without enabling
 radio logging; portable checks also verify their source-level integration.
+
+For startup capture on an already installed Debug build, start a PID-independent
+stream before the lifecycle action:
+
+```sh
+idevicesyslog --udid <device-udid> --no-colors --exit --match PRNS_IOS_
+```
+
+Add `--network` (`-n`) when using the paired network transport. Verify the
+connection and the new PID's launch plus `sequence=1` probe markers before
+treating the startup capture as complete. A lost transport requires a new
+capture. The current network trial captured a relaunch without a process filter;
+this does not prove that the earlier `--process` filter caused its missing logs.
+`devicectl --console` alone is insufficient: it connects standard streams only
+when launching a new process, and signals sent to it can reach the app. Logging
+and a Home-screen observation do not establish natural suspension or exclude
+observer effects.
 
 A historical signed probe remains important negative evidence: after a clean
 AccessorySetupKit activation, constructing the former dual-role backend's

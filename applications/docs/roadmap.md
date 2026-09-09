@@ -28,16 +28,20 @@ observations remain tied to their recorded builds.
 1. Diagnose the initial iOS nonconnection and recheck chooser visibility.
    The same framework later passed retained-grant checks and
    foreground messaging, including a first check after one controlled process
-   restart. Repeat recovery with complete logs; these successes do not explain
-   or fix the initial timeout.
+   restart. A later developer-SIGTERM trial captured a restoration-requested
+   native relaunch, an intervening disconnect/fresh reconnect and incoming-message
+   proof. Repeat recovery; these successes do not explain or fix the initial
+   timeout.
 2. Close the remaining generated-binding physical checks: fresh pairing,
    pristine import, controlled read cancellation, repeated recovery and cold offline
    actions. Retained-grant checks and messaging now have bounded evidence on
    both platforms, tied to their exact recorded builds rather than transferred
    across rebuilds. They are not fresh-pairing acceptance.
-3. Keep restoration, protected-data and first-delivery recovery as explicit iOS
-   work, not conclusions inferred from reaching Running. Preserve the firmware
-   size gate: the passing integrated T-Echo build still has just 616 bytes spare.
+3. Finish post-restoration UI/content/retention and first-Check verification,
+   then repeat delivery with a controlled foreground boundary. Keep natural
+   suspension, repeated restoration, force-quit and protected-data cases explicit;
+   the SIGTERM trial does not qualify them. Preserve the firmware size gate: the
+   passing integrated T-Echo build still has just 616 bytes spare.
 
 Finish this bounded transition before expanding the product surface.
 
