@@ -123,6 +123,10 @@ central-only path; phone results do not qualify it. No batching change was mixed
 into the inventory refresh. Resolve it separately before declaring the parent
 stack globally ready.
 
+The [subsequent write-batch correction](2026-09-09-corebluetooth-write-batches.md)
+records the separate source fix and its validation; the measurements above remain
+the original refresh snapshot.
+
 ### Constrained Nordic target
 
 Diagnostics alone now exceeds T-Echo S140 v7 FLASH by **1,344 bytes**. The combined

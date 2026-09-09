@@ -91,7 +91,11 @@ The [latest unpublished refresh](../checkpoints/2026-09-09-offline-and-upstream-
 fits T-Echo S140 v7 with 1,224 bytes remaining; its diagnostics-only parent fails
 by 1,344 bytes. It should therefore be proposed as one combined PR. The refreshed
 iOS copies pass focused FFI and canonical inventory checks, but broader CI and
-a separate peripheral write-batch issue remain. Original PR heads are unchanged.
+peripheral-role hardware qualification remain. The separate
+[write-batch source correction](../checkpoints/2026-09-09-corebluetooth-write-batches.md)
+is committed and integrated with a new core pin; native and generated-contract
+checks pass. No new phone binary was installed, so earlier physical results
+remain tied to their recorded builds. Original PR heads are unchanged.
 
 The recorded repository continuation passed all 24 host workspaces and the
 listed Clippy, allocation, dependency-policy and unsafe-inventory checks.

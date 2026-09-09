@@ -57,9 +57,10 @@ observations remain tied to their recorded builds.
 4. Finish upstream publication preparation. New unpublished iOS/Nordic copies
    are refreshed onto the checked trunk, with originals preserved. Propose Nordic
    diagnostics and footprint together because the diagnostics-only parent does
-   not fit T-Echo. Address the separate peripheral write-batch finding and broad
-   CI dependency before calling the iOS parent stack ready; restack published
-   descendants only through an approved, exact-ref update plan.
+   not fit T-Echo. The separate [peripheral write-batch correction](../checkpoints/2026-09-09-corebluetooth-write-batches.md)
+   is now committed and integrated; peripheral hardware qualification and the
+   broad CI dependency remain before calling the iOS parent stack ready. Restack
+   published descendants only through an approved, exact-ref update plan.
 
 Finish this bounded transition before expanding the product surface.
 
