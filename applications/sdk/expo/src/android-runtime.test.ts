@@ -1,5 +1,5 @@
 import { createAndroidRuntime, parseAndroidRuntimeStatus } from "./android-runtime";
-import { NativePayloadError } from "./hydrate";
+import { NativePayloadError } from "./native-payload";
 import type { AndroidRuntimeNativeModule } from "./native";
 
 const status = {

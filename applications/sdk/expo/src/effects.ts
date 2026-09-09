@@ -33,12 +33,15 @@ export class DevelopmentRuntimeOperationError extends Data.TaggedError(
 }> {}
 
 export class DevelopmentRuntimeStartError extends Data.TaggedError("DevelopmentRuntimeStartError")<{
-  readonly stage: Extract<DevelopmentNodeStartOutcome, { readonly type: "failed" }>["stage"];
+  readonly stage: Extract<
+    DevelopmentNodeStartOutcome,
+    { readonly tag: "Failed" }
+  >["inner"]["stage"];
   readonly detail: string;
 }> {}
 
 export class DevelopmentRuntimeStopError extends Data.TaggedError("DevelopmentRuntimeStopError")<{
-  readonly stage: Extract<DevelopmentNodeStopOutcome, { readonly type: "failed" }>["stage"];
+  readonly stage: Extract<DevelopmentNodeStopOutcome, { readonly tag: "Failed" }>["inner"]["stage"];
   readonly detail: string;
 }> {}
 
@@ -113,15 +116,17 @@ export function makeEffectDevelopmentRuntime(
       runtimeCall("start", () => runtime.startDevelopmentNode(input)),
     readDevelopmentNodeSnapshot: runtimeCall("snapshot", runtime.readDevelopmentNodeSnapshot),
     initiateRemoteControlPairing: (input) =>
-      runtimeCall("initiatePairing", () => runtime.initiateRemoteControlPairing(input)),
+      runtimeCall("initiatePairing", (signal) =>
+        runtime.initiateRemoteControlPairing(input, signal),
+      ),
     approveRemoteControlPairing: (input) =>
-      runtimeCall("approvePairing", () => runtime.approveRemoteControlPairing(input)),
+      runtimeCall("approvePairing", (signal) => runtime.approveRemoteControlPairing(input, signal)),
     rejectRemoteControlPairing: (input) =>
-      runtimeCall("rejectPairing", () => runtime.rejectRemoteControlPairing(input)),
+      runtimeCall("rejectPairing", (signal) => runtime.rejectRemoteControlPairing(input, signal)),
     describeRemoteControlTarget: (input) =>
-      runtimeCall("describeTarget", () => runtime.describeRemoteControlTarget(input)),
+      runtimeCall("describeTarget", (signal) => runtime.describeRemoteControlTarget(input, signal)),
     announceRemoteControlTarget: (input) =>
-      runtimeCall("announceTarget", () => runtime.announceRemoteControlTarget(input)),
+      runtimeCall("announceTarget", (signal) => runtime.announceRemoteControlTarget(input, signal)),
     stopDevelopmentNode: runtimeCall("stop", runtime.stopDevelopmentNode),
     resetDevelopmentData: runtimeCall("reset", runtime.resetDevelopmentData),
   };
@@ -147,17 +152,17 @@ export function scopedDevelopmentRuntime(
 
   const start = Effect.gen(function* () {
     const outcome = yield* effectRuntime.startDevelopmentNode({
-      developmentTcpTarget: options.developmentTcpTarget ?? null,
+      developmentTcpTarget: options.developmentTcpTarget,
     });
-    if (outcome.type === "failed") {
+    if (outcome.tag === "Failed") {
       return yield* Effect.fail(
         new DevelopmentRuntimeStartError({
-          stage: outcome.stage,
-          detail: outcome.detail,
+          stage: outcome.inner.stage,
+          detail: outcome.inner.detail,
         }),
       );
     }
-    return outcome.snapshot;
+    return outcome.inner.snapshot;
   });
   const acquire = processOwned
     ? start
@@ -189,7 +194,7 @@ export function scopedDevelopmentRuntime(
 
 function runtimeCall<Output>(
   operation: DevelopmentRuntimeOperationName,
-  run: () => Promise<Output>,
+  run: (signal: AbortSignal) => Promise<Output>,
 ): Effect.Effect<Output, DevelopmentRuntimeOperationError> {
   return Effect.tryPromise({
     try: run,
@@ -222,11 +227,11 @@ function releaseRuntime(
       onFailure: (failure) => Effect.sync(() => onFailure(failure)),
       onSuccess: (outcome) =>
         Effect.sync(() => {
-          if (outcome.type === "failed") {
+          if (outcome.tag === "Failed") {
             onFailure(
               new DevelopmentRuntimeStopError({
-                stage: outcome.stage,
-                detail: outcome.detail,
+                stage: outcome.inner.stage,
+                detail: outcome.inner.detail,
               }),
             );
           }

@@ -1,396 +1,225 @@
-import { HOST_CONTRACT_FINGERPRINT, NATIVE_CONTRACT_FINGERPRINT } from "./contract.generated";
-import type {
-  AnnounceRemoteControlTargetInput as WireAnnounceRemoteControlTargetInput,
-  RemoteControlAnnounceOutcome as WireRemoteControlAnnounceOutcome,
-  RemoteControlAnnounceOperation as WireRemoteControlAnnounceOperation,
-  RemoteControlAnnounceStatus as WireRemoteControlAnnounceStatus,
-  AnnounceLxmfOutcome as WireAnnounceLxmfOutcome,
-  CancelLxmfMessageInput as WireCancelLxmfMessageInput,
-  CancelLxmfMessageOutcome as WireCancelLxmfMessageOutcome,
-  Contact as WireContact,
-  ContactListOutcome as WireContactListOutcome,
-  ContactLookupOutcome as WireContactLookupOutcome,
-  ContactMutationOutcome as WireContactMutationOutcome,
-  ContactDestinationInput as WireContactDestinationInput,
-  CreateManualContactInput as WireCreateManualContactInput,
-  DescribeRemoteControlTargetInput as WireDescribeRemoteControlTargetInput,
-  DevelopmentNodeSnapshot as WireDevelopmentNodeSnapshot,
-  DevelopmentNodeStartInput as WireDevelopmentNodeStartInput,
-  DevelopmentNodeStartOutcome as WireDevelopmentNodeStartOutcome,
-  DevelopmentNodeStopOutcome as WireDevelopmentNodeStopOutcome,
-  IdentityCreationOutcome as WireIdentityCreationOutcome,
-  IdentityImportPreviewOutcome as WireIdentityImportPreviewOutcome,
-  InitiateRemoteControlPairingInput as WireInitiateRemoteControlPairingInput,
-  ListLxmfMessagesInput as WireListLxmfMessagesInput,
-  LxmfHealth as WireLxmfHealth,
-  LxmfDeliveryFailure as WireLxmfDeliveryFailure,
-  LxmfDeliveryState as WireLxmfDeliveryState,
-  LxmfDirection as WireLxmfDirection,
-  LxmfMessage as WireLxmfMessage,
-  LxmfMessageListOutcome as WireLxmfMessageListOutcome,
-  LxmfPeerListOutcome as WireLxmfPeerListOutcome,
-  LxmfPeerSummary as WireLxmfPeerSummary,
-  LxmfText as WireLxmfText,
-  LxmfVerification as WireLxmfVerification,
-  MeasureLxmfTextInput as WireMeasureLxmfTextInput,
-  MeasureLxmfTextOutcome as WireMeasureLxmfTextOutcome,
-  RemoteControlDescribeOutcome as WireRemoteControlDescribeOutcome,
-  RemoteControlPairingCommandOutcome as WireRemoteControlPairingCommandOutcome,
-  RemoteControlPairingDecisionInput as WireRemoteControlPairingDecisionInput,
-  RetryLxmfMessageInput as WireRetryLxmfMessageInput,
-  RetryLxmfMessageOutcome as WireRetryLxmfMessageOutcome,
-  SetContactAliasInput as WireSetContactAliasInput,
-  SetContactPinnedInput as WireSetContactPinnedInput,
-  SendDirectTextInput as WireSendDirectTextInput,
-  SendDirectTextOutcome as WireSendDirectTextOutcome,
-  PrimaryIdentityState as WirePrimaryIdentityState,
-} from "./contract.generated";
-import type { DestinationHash, IdentityHash } from "personal-rns/contract";
-import { hydrateGenerated, NativePayloadError, type Hydrated } from "./hydrate";
+import {
+  bindingModule,
+  HOST_CONTRACT_FINGERPRINT,
+  NATIVE_CONTRACT_FINGERPRINT,
+} from "@prns-internal/native-bindings";
+import type * as Bindings from "@prns-internal/native-bindings";
+import type { FfiConverter } from "@ubjs/core";
 import type { PrnsAppNativeModule } from "./native";
 
-type BridgeFailure = {
-  readonly type: "bridgeFailure";
-  readonly kind: "invalidInput" | "panic";
-  readonly detail: string;
-};
-
-export type DevelopmentNodeSnapshot = Hydrated<WireDevelopmentNodeSnapshot>;
-export type DevelopmentNodeStartInput = Hydrated<WireDevelopmentNodeStartInput>;
-export type DevelopmentNodeStartOutcome = Hydrated<WireDevelopmentNodeStartOutcome>;
-export type DevelopmentNodeStopOutcome = Hydrated<WireDevelopmentNodeStopOutcome>;
-export type RemoteControlPairingCommandOutcome = Hydrated<WireRemoteControlPairingCommandOutcome>;
-export type RemoteControlDescribeOutcome = Hydrated<WireRemoteControlDescribeOutcome>;
-export type AnnounceRemoteControlTargetInput = Hydrated<WireAnnounceRemoteControlTargetInput>;
-export type RemoteControlAnnounceOutcome = Hydrated<WireRemoteControlAnnounceOutcome>;
-export type RemoteControlAnnounceOperation = Hydrated<WireRemoteControlAnnounceOperation>;
-export type RemoteControlAnnounceStatus = Hydrated<WireRemoteControlAnnounceStatus>;
-export type InitiateRemoteControlPairingInput = Hydrated<WireInitiateRemoteControlPairingInput>;
-export type RemoteControlPairingDecisionInput = Hydrated<WireRemoteControlPairingDecisionInput>;
-export type DescribeRemoteControlTargetInput = Hydrated<WireDescribeRemoteControlTargetInput>;
-export type PrimaryIdentityState = Hydrated<WirePrimaryIdentityState>;
-export type IdentityImportPreviewOutcome = Hydrated<WireIdentityImportPreviewOutcome>;
-export type IdentityCreationOutcome = Hydrated<WireIdentityCreationOutcome>;
-export type Contact = Hydrated<WireContact>;
-export type ContactMutationOutcome = Hydrated<WireContactMutationOutcome>;
-export type ContactLookupOutcome = Hydrated<WireContactLookupOutcome>;
-export type ContactListOutcome = Hydrated<WireContactListOutcome>;
-export type LxmfHealth = Hydrated<WireLxmfHealth>;
-export type LxmfDeliveryFailure = Hydrated<WireLxmfDeliveryFailure>;
-export type LxmfDeliveryState = Hydrated<WireLxmfDeliveryState>;
-export type LxmfDirection = Hydrated<WireLxmfDirection>;
-export type LxmfMessage = Hydrated<WireLxmfMessage>;
-export type LxmfPeerSummary = Hydrated<WireLxmfPeerSummary>;
-export type LxmfText = Hydrated<WireLxmfText>;
-export type LxmfVerification = Hydrated<WireLxmfVerification>;
-export type ListLxmfMessagesInput = Hydrated<WireListLxmfMessagesInput>;
-export type LxmfMessageListOutcome = Hydrated<WireLxmfMessageListOutcome>;
-export type LxmfPeerListOutcome = Hydrated<WireLxmfPeerListOutcome>;
-export type AnnounceLxmfOutcome = Hydrated<WireAnnounceLxmfOutcome>;
-export type MeasureLxmfTextInput = Hydrated<WireMeasureLxmfTextInput>;
-export type MeasureLxmfTextOutcome = Hydrated<WireMeasureLxmfTextOutcome>;
-export type SendDirectTextInput = Hydrated<WireSendDirectTextInput>;
-export type SendDirectTextOutcome = Hydrated<WireSendDirectTextOutcome>;
-export type RetryLxmfMessageOutcome = Hydrated<WireRetryLxmfMessageOutcome>;
-export type CancelLxmfMessageOutcome = Hydrated<WireCancelLxmfMessageOutcome>;
-
-export type DevelopmentRuntime = {
-  readonly announceRemoteControlTarget: (
-    input: AnnounceRemoteControlTargetInput,
-  ) => Promise<RemoteControlAnnounceOutcome>;
-  readonly inspectDevelopmentIdentity: () => Promise<PrimaryIdentityState>;
-  readonly previewIdentityImport: (identity: Uint8Array) => Promise<IdentityImportPreviewOutcome>;
-  readonly createGeneratedIdentity: () => Promise<IdentityCreationOutcome>;
-  readonly createImportedIdentity: (identity: Uint8Array) => Promise<IdentityCreationOutcome>;
-  readonly startDevelopmentNode: (
-    input: DevelopmentNodeStartInput,
-  ) => Promise<DevelopmentNodeStartOutcome>;
-  readonly readDevelopmentNodeSnapshot: () => Promise<DevelopmentNodeSnapshot>;
-  readonly initiateRemoteControlPairing: (
-    input: InitiateRemoteControlPairingInput,
-  ) => Promise<RemoteControlPairingCommandOutcome>;
-  readonly approveRemoteControlPairing: (
-    input: RemoteControlPairingDecisionInput,
-  ) => Promise<RemoteControlPairingCommandOutcome>;
-  readonly rejectRemoteControlPairing: (
-    input: RemoteControlPairingDecisionInput,
-  ) => Promise<RemoteControlPairingCommandOutcome>;
-  readonly describeRemoteControlTarget: (
-    input: DescribeRemoteControlTargetInput,
-  ) => Promise<RemoteControlDescribeOutcome>;
-  readonly saveObservedDestination: (
-    destination: DestinationHash,
-  ) => Promise<ContactMutationOutcome>;
-  readonly createManualContact: (
-    destination: DestinationHash,
-    identity: IdentityHash | null,
-    alias: string | null,
-  ) => Promise<ContactMutationOutcome>;
-  readonly setContactAlias: (
-    destination: DestinationHash,
-    alias: string | null,
-  ) => Promise<ContactMutationOutcome>;
-  readonly setContactPinned: (
-    destination: DestinationHash,
-    pinned: boolean,
-  ) => Promise<ContactMutationOutcome>;
-  readonly deleteContact: (destination: DestinationHash) => Promise<ContactMutationOutcome>;
-  readonly getContact: (destination: DestinationHash) => Promise<ContactLookupOutcome>;
-  readonly listContacts: () => Promise<ContactListOutcome>;
-  readonly listLxmfPeers: () => Promise<LxmfPeerListOutcome>;
-  readonly listLxmfMessages: (input: ListLxmfMessagesInput) => Promise<LxmfMessageListOutcome>;
-  readonly retryLxmfMessage: (localRecordId: bigint) => Promise<RetryLxmfMessageOutcome>;
-  readonly cancelLxmfMessage: (localRecordId: bigint) => Promise<CancelLxmfMessageOutcome>;
-  readonly announceLxmf: () => Promise<AnnounceLxmfOutcome>;
-  readonly measureLxmfText: (input: MeasureLxmfTextInput) => Promise<MeasureLxmfTextOutcome>;
-  readonly sendDirectText: (input: SendDirectTextInput) => Promise<SendDirectTextOutcome>;
-  readonly stopDevelopmentNode: () => Promise<DevelopmentNodeStopOutcome>;
-  readonly resetDevelopmentData: () => Promise<DevelopmentNodeStopOutcome>;
-};
+export type * from "@prns-internal/native-bindings";
 
 export class NativeContractMismatchError extends Error {
-  readonly expected: string;
-  readonly actual: string;
-
-  constructor(expected: string, actual: string) {
+  constructor(
+    readonly expected: string,
+    readonly actual: string,
+  ) {
     super(`Native contract mismatch: expected ${expected}, received ${actual}`);
     this.name = "NativeContractMismatchError";
-    this.expected = expected;
-    this.actual = actual;
   }
 }
 
-export class NativeBridgeError extends Error {
-  readonly kind: BridgeFailure["kind"];
-
-  constructor(failure: BridgeFailure) {
-    super(`Native bridge ${failure.kind}: ${failure.detail}`);
-    this.name = "NativeBridgeError";
-    this.kind = failure.kind;
+/** Preparation errors retain the generated outcome for recovery decisions. */
+export class NativeStoragePreparationError extends Error {
+  constructor(readonly outcome: Bindings.NativeStoragePreparationOutcome) {
+    super(`Native storage preparation: ${outcome.tag}`);
+    this.name = "NativeStoragePreparationError";
   }
 }
 
-export function createDevelopmentRuntime(nativeModule: PrnsAppNativeModule): DevelopmentRuntime {
-  let handshake: Promise<void> | undefined;
+type BindingLoader = () => Promise<typeof Bindings>;
+const loadNativeBindings: BindingLoader = () => import("@prns-internal/native-bindings/native");
+const codecs = bindingModule.converters;
+const asyncOptions = (signal: AbortSignal | undefined) =>
+  signal === undefined ? undefined : { signal };
 
-  const verifyContract = (): Promise<void> => {
-    if (handshake === undefined) {
-      handshake = Promise.all([
-        nativeModule.contractFingerprint(),
-        nativeModule.hostContractFingerprint(),
-      ])
-        .then(([appActual, hostActual]) => {
-          if (appActual !== NATIVE_CONTRACT_FINGERPRINT) {
-            throw new NativeContractMismatchError(NATIVE_CONTRACT_FINGERPRINT, appActual);
+/**
+ * Domain names and platform admission around the generated functions. Values
+ * pass through unchanged; the native supervisor owns the process and storage.
+ */
+export function createDevelopmentRuntime(
+  getNativeModule: () => PrnsAppNativeModule,
+  loadBindings: BindingLoader = loadNativeBindings,
+) {
+  let verifiedBindings: Promise<typeof Bindings> | undefined;
+  let storagePreparation: Promise<void> | undefined;
+
+  const bindings = async (signal?: AbortSignal) => {
+    signal?.throwIfAborted();
+    // Require the platform capability before installing the native player.
+    getNativeModule();
+    if (verifiedBindings === undefined) {
+      verifiedBindings = loadBindings()
+        .then((api) => {
+          const contract = api.bindingContract();
+          for (const [expected, actual] of [
+            [NATIVE_CONTRACT_FINGERPRINT, contract.app],
+            [HOST_CONTRACT_FINGERPRINT, contract.host],
+          ] as const) {
+            if (expected !== actual) throw new NativeContractMismatchError(expected, actual);
           }
-          if (hostActual !== HOST_CONTRACT_FINGERPRINT) {
-            throw new NativeContractMismatchError(HOST_CONTRACT_FINGERPRINT, hostActual);
-          }
+          return api;
         })
-        .catch((error: unknown) => {
-          handshake = undefined;
-          throw error;
+        .catch((cause: unknown) => {
+          verifiedBindings = undefined;
+          throw cause;
         });
     }
-    return handshake;
+    const api = await verifiedBindings;
+    signal?.throwIfAborted();
+    return api;
   };
-
-  const read = async <Wire>(operation: () => Promise<string>): Promise<Hydrated<Wire>> => {
-    await verifyContract();
-    const result = parseBridgeJson<Wire>(await operation());
-    verifyEmbeddedContractFingerprints(result);
-    return hydrateGenerated(result);
+  const decode = async <T>(
+    operation: (native: PrnsAppNativeModule) => Promise<number[]>,
+    codec: FfiConverter<Uint8Array, T>,
+  ): Promise<T> => {
+    await bindings();
+    return codec.lift(Uint8Array.from(await operation(getNativeModule())));
+  };
+  const prepareStorage = async () => {
+    if (storagePreparation === undefined) {
+      storagePreparation = decode(
+        (native) => native.prepareStorage(),
+        codecs.FfiConverterTypeNativeStoragePreparationOutcome,
+      )
+        .then((outcome) => {
+          if (outcome.tag !== "Prepared") throw new NativeStoragePreparationError(outcome);
+        })
+        .catch((cause: unknown) => {
+          storagePreparation = undefined;
+          throw cause;
+        });
+    }
+    await storagePreparation;
+  };
+  const call = async <T>(
+    operation: (api: typeof Bindings) => Promise<T> | T,
+    signal?: AbortSignal,
+    preparation?: "storage" | "outbound",
+  ): Promise<T> => {
+    const api = await bindings(signal);
+    if (preparation === "storage") await prepareStorage();
+    if (preparation === "outbound") await getNativeModule().prepareOutbound();
+    signal?.throwIfAborted();
+    return operation(api);
   };
 
   return {
-    inspectDevelopmentIdentity: () => read(() => nativeModule.inspectIdentity()),
-    previewIdentityImport: (identity) =>
-      read(() => nativeModule.previewIdentityImport(Array.from(identity))),
-    createGeneratedIdentity: () => read(() => nativeModule.createGeneratedIdentity()),
-    createImportedIdentity: (identity) =>
-      read(() => nativeModule.createImportedIdentity(Array.from(identity))),
-    startDevelopmentNode: (input) =>
-      read(() =>
-        nativeModule.start(
-          JSON.stringify({
-            developmentTcpTarget: input.developmentTcpTarget,
-          } satisfies WireDevelopmentNodeStartInput),
-        ),
+    inspectDevelopmentIdentity: () =>
+      decode((native) => native.inspectIdentity(), codecs.FfiConverterTypePrimaryIdentityState),
+    previewIdentityImport: (identity: Uint8Array) =>
+      call((api) => api.previewIdentityImport(identity)),
+    createGeneratedIdentity: () =>
+      decode(
+        (native) => native.createGeneratedIdentity(),
+        codecs.FfiConverterTypeIdentityCreationOutcome,
       ),
-    readDevelopmentNodeSnapshot: () => read(() => nativeModule.snapshot()),
-    initiateRemoteControlPairing: (input) =>
-      read(() => nativeModule.initiatePairing(JSON.stringify(input))),
-    approveRemoteControlPairing: (input) =>
-      read(() => nativeModule.approvePairing(JSON.stringify(input))),
-    rejectRemoteControlPairing: (input) =>
-      read(() => nativeModule.rejectPairing(JSON.stringify(input))),
-    describeRemoteControlTarget: (input) =>
-      read(() =>
-        nativeModule.describeTarget(
-          JSON.stringify({
-            targetIdentityFingerprint: Array.from(input.targetIdentityFingerprint),
-          } satisfies WireDescribeRemoteControlTargetInput),
-        ),
+    createImportedIdentity: (identity: Uint8Array) =>
+      decode(
+        (native) => native.createImportedIdentity(Array.from(identity)),
+        codecs.FfiConverterTypeIdentityCreationOutcome,
       ),
-    announceRemoteControlTarget: (input) =>
-      read(() =>
-        nativeModule.announceTarget(
-          JSON.stringify({
-            targetIdentityFingerprint: Array.from(input.targetIdentityFingerprint),
-          } satisfies WireAnnounceRemoteControlTargetInput),
-        ),
+    startDevelopmentNode: async (input: Bindings.DevelopmentNodeStartInput) => {
+      await bindings();
+      const bytes = codecs.FfiConverterTypeDevelopmentNodeStartInput.lower(
+        input,
+        (size) => new Uint8Array(size),
+      );
+      return decode(
+        (native) => native.start(Array.from(bytes)),
+        codecs.FfiConverterTypeDevelopmentNodeStartOutcome,
+      );
+    },
+    readDevelopmentNodeSnapshot: (signal?: AbortSignal) =>
+      call((api) => api.readSnapshot(asyncOptions(signal)), signal),
+    initiateRemoteControlPairing: (
+      input: Bindings.InitiateRemoteControlPairingInput,
+      signal?: AbortSignal,
+    ) => call((api) => api.initiatePairing(input, asyncOptions(signal)), signal, "outbound"),
+    approveRemoteControlPairing: (
+      input: Bindings.RemoteControlPairingDecisionInput,
+      signal?: AbortSignal,
+    ) => call((api) => api.approvePairing(input, asyncOptions(signal)), signal),
+    rejectRemoteControlPairing: (
+      input: Bindings.RemoteControlPairingDecisionInput,
+      signal?: AbortSignal,
+    ) => call((api) => api.rejectPairing(input, asyncOptions(signal)), signal),
+    describeRemoteControlTarget: (
+      input: Bindings.DescribeRemoteControlTargetInput,
+      signal?: AbortSignal,
+    ) => call((api) => api.describeTarget(input, asyncOptions(signal)), signal, "outbound"),
+    announceRemoteControlTarget: (
+      input: Bindings.AnnounceRemoteControlTargetInput,
+      signal?: AbortSignal,
+    ) => call((api) => api.announceTarget(input, asyncOptions(signal)), signal, "outbound"),
+    saveObservedDestination: (destination: Uint8Array, signal?: AbortSignal) =>
+      call(
+        (api) => api.saveObservedDestination({ destination }, asyncOptions(signal)),
+        signal,
+        "storage",
       ),
-    saveObservedDestination: (destination) =>
-      read(() =>
-        nativeModule.saveObservedDestination(
-          JSON.stringify({
-            destination: Array.from(destination),
-          } satisfies WireContactDestinationInput),
-        ),
+    createManualContact: (
+      destination: Uint8Array,
+      identity?: Uint8Array,
+      alias?: string,
+      signal?: AbortSignal,
+    ) =>
+      call(
+        (api) => api.createManualContact({ destination, identity, alias }, asyncOptions(signal)),
+        signal,
+        "storage",
       ),
-    createManualContact: (destination, identity, alias) =>
-      read(() =>
-        nativeModule.createManualContact(
-          JSON.stringify({
-            destination: Array.from(destination),
-            identity: identity === null ? null : Array.from(identity),
-            alias,
-          } satisfies WireCreateManualContactInput),
-        ),
+    setContactAlias: (destination: Uint8Array, alias?: string, signal?: AbortSignal) =>
+      call(
+        (api) => api.setContactAlias({ destination, alias }, asyncOptions(signal)),
+        signal,
+        "storage",
       ),
-    setContactAlias: (destination, alias) =>
-      read(() =>
-        nativeModule.setContactAlias(
-          JSON.stringify({
-            destination: Array.from(destination),
-            alias,
-          } satisfies WireSetContactAliasInput),
-        ),
+    setContactPinned: (destination: Uint8Array, pinned: boolean, signal?: AbortSignal) =>
+      call(
+        (api) => api.setContactPinned({ destination, pinned }, asyncOptions(signal)),
+        signal,
+        "storage",
       ),
-    setContactPinned: (destination, pinned) =>
-      read(() =>
-        nativeModule.setContactPinned(
-          JSON.stringify({
-            destination: Array.from(destination),
-            pinned,
-          } satisfies WireSetContactPinnedInput),
-        ),
+    deleteContact: (destination: Uint8Array, signal?: AbortSignal) =>
+      call((api) => api.deleteContact({ destination }, asyncOptions(signal)), signal, "storage"),
+    getContact: (destination: Uint8Array, signal?: AbortSignal) =>
+      call((api) => api.getContact({ destination }, asyncOptions(signal)), signal, "storage"),
+    listContacts: (signal?: AbortSignal) =>
+      call((api) => api.listContacts(asyncOptions(signal)), signal, "storage"),
+    listLxmfPeers: (signal?: AbortSignal) =>
+      call((api) => api.listLxmfPeers(asyncOptions(signal)), signal),
+    listLxmfMessages: (input: Bindings.ListLxmfMessagesInput, signal?: AbortSignal) =>
+      call((api) => api.listLxmfMessages(input, asyncOptions(signal)), signal, "storage"),
+    retryLxmfMessage: (localRecordId: bigint, signal?: AbortSignal) =>
+      call(
+        (api) => api.retryLxmfMessage({ localRecordId }, asyncOptions(signal)),
+        signal,
+        "outbound",
       ),
-    deleteContact: (destination) =>
-      read(() =>
-        nativeModule.deleteContact(
-          JSON.stringify({
-            destination: Array.from(destination),
-          } satisfies WireContactDestinationInput),
-        ),
+    cancelLxmfMessage: (localRecordId: bigint, signal?: AbortSignal) =>
+      call(
+        (api) => api.cancelLxmfMessage({ localRecordId }, asyncOptions(signal)),
+        signal,
+        "storage",
       ),
-    getContact: (destination) =>
-      read(() =>
-        nativeModule.getContact(
-          JSON.stringify({
-            destination: Array.from(destination),
-          } satisfies WireContactDestinationInput),
-        ),
-      ),
-    listContacts: () => read(() => nativeModule.listContacts()),
-    listLxmfPeers: () => read(() => nativeModule.listLxmfPeers()),
-    listLxmfMessages: (input) =>
-      read(() =>
-        nativeModule.listLxmfMessages(
-          JSON.stringify({
-            peer: input.peer === null ? null : Array.from(input.peer),
-            before: input.before === null ? null : input.before.toString(),
-            limit: input.limit,
-          } satisfies WireListLxmfMessagesInput),
-        ),
-      ),
-    retryLxmfMessage: (localRecordId) =>
-      read(() =>
-        nativeModule.retryLxmfMessage(
-          JSON.stringify({
-            localRecordId: localRecordId.toString(),
-          } satisfies WireRetryLxmfMessageInput),
-        ),
-      ),
-    cancelLxmfMessage: (localRecordId) =>
-      read(() =>
-        nativeModule.cancelLxmfMessage(
-          JSON.stringify({
-            localRecordId: localRecordId.toString(),
-          } satisfies WireCancelLxmfMessageInput),
-        ),
-      ),
-    announceLxmf: () => read(() => nativeModule.announceLxmf()),
-    measureLxmfText: (input) =>
-      read(() =>
-        nativeModule.measureLxmfText(
-          JSON.stringify({
-            title: input.title,
-            content: input.content,
-          } satisfies WireMeasureLxmfTextInput),
-        ),
-      ),
-    sendDirectText: (input) =>
-      read(() =>
-        nativeModule.sendDirectText(
-          JSON.stringify({
-            destination: Array.from(input.destination),
-            title: input.title,
-            content: input.content,
-          } satisfies WireSendDirectTextInput),
-        ),
-      ),
-    stopDevelopmentNode: () => read(() => nativeModule.stop()),
-    resetDevelopmentData: () => read(() => nativeModule.reset()),
+    announceLxmf: (signal?: AbortSignal) =>
+      call((api) => api.announceLxmf(asyncOptions(signal)), signal, "outbound"),
+    measureLxmfText: (input: Bindings.MeasureLxmfTextInput, signal?: AbortSignal) =>
+      call((api) => api.measureLxmfText(input, asyncOptions(signal)), signal),
+    sendDirectText: (input: Bindings.SendDirectTextInput, signal?: AbortSignal) =>
+      call((api) => api.sendDirectText(input, asyncOptions(signal)), signal, "outbound"),
+    stopDevelopmentNode: () =>
+      decode((native) => native.stop(), codecs.FfiConverterTypeDevelopmentNodeStopOutcome),
+    resetDevelopmentData: async () => {
+      const outcome = await decode(
+        (native) => native.reset(),
+        codecs.FfiConverterTypeDevelopmentNodeStopOutcome,
+      );
+      storagePreparation = undefined;
+      return outcome;
+    },
   };
 }
 
-function parseBridgeJson<Wire>(json: string): Wire {
-  let parsed: Wire | BridgeFailure;
-  try {
-    parsed = JSON.parse(json) as Wire | BridgeFailure;
-  } catch (cause) {
-    throw new NativePayloadError("$", "native result is not valid JSON", { cause });
-  }
-  if (isBridgeFailure(parsed)) {
-    throw new NativeBridgeError(parsed);
-  }
-  return parsed;
-}
-
-function isBridgeFailure(value: unknown): value is BridgeFailure {
-  return (
-    value !== null &&
-    typeof value === "object" &&
-    "type" in value &&
-    value.type === "bridgeFailure" &&
-    "kind" in value &&
-    (value.kind === "invalidInput" || value.kind === "panic") &&
-    "detail" in value &&
-    typeof value.detail === "string"
-  );
-}
-
-function verifyEmbeddedContractFingerprints(value: unknown): void {
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      verifyEmbeddedContractFingerprints(item);
-    }
-    return;
-  }
-  if (value === null || typeof value !== "object") {
-    return;
-  }
-  for (const [key, nested] of Object.entries(value)) {
-    if (key === "contractFingerprint") {
-      if (nested !== NATIVE_CONTRACT_FINGERPRINT) {
-        throw new NativeContractMismatchError(
-          NATIVE_CONTRACT_FINGERPRINT,
-          typeof nested === "string" ? nested : String(nested),
-        );
-      }
-    } else {
-      verifyEmbeddedContractFingerprints(nested);
-    }
-  }
-}
+export type DevelopmentRuntime = ReturnType<typeof createDevelopmentRuntime>;

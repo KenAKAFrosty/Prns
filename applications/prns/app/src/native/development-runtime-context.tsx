@@ -1,3 +1,4 @@
+import * as Bindings from "@prns-internal/expo";
 import type {
   AnnounceRemoteControlTargetInput,
   RemoteControlAnnounceOutcome,
@@ -43,7 +44,11 @@ import { useAndroidRuntime, type AndroidRuntimeView } from "./use-android-runtim
 
 export type RuntimeCommandResult<Outcome> =
   | { readonly type: "outcome"; readonly outcome: Outcome }
-  | { readonly type: "operationFailure"; readonly detail: string };
+  | {
+      readonly type: "operationFailure";
+      readonly detail: string;
+      readonly storagePreparation?: import("@prns-internal/native-bindings").NativeStoragePreparationOutcome;
+    };
 
 export type DevelopmentRuntimeView = {
   readonly announceTarget: (
@@ -144,11 +149,13 @@ export function DevelopmentRuntimeProvider({
     selectedProvider.availability.platform === "android" &&
     !stoppingNode &&
     phase !== "starting" &&
-    snapshot?.runtime !== "starting" &&
-    snapshot?.runtime !== "stopping" &&
+    snapshot?.runtime !== Bindings.DevelopmentNodeRuntime.Starting &&
+    snapshot?.runtime !== Bindings.DevelopmentNodeRuntime.Stopping &&
     androidRuntime.status?.service !== "starting" &&
     androidRuntime.status?.service !== "stopping" &&
-    (phase === "failed" || snapshot?.runtime === "stopped" || snapshot?.runtime === "failed");
+    (phase === "failed" ||
+      snapshot?.runtime === Bindings.DevelopmentNodeRuntime.Stopped ||
+      snapshot?.runtime === Bindings.DevelopmentNodeRuntime.Failed);
   const startAllowed = useRef(canStartNode);
   startAllowed.current = canStartNode;
   const canStopNode =
@@ -156,7 +163,7 @@ export function DevelopmentRuntimeProvider({
     selectedProvider.availability.platform === "android" &&
     phase !== "starting" &&
     !stoppingNode &&
-    ((snapshot !== null && snapshot.runtime !== "stopped") ||
+    ((snapshot !== null && snapshot.runtime !== Bindings.DevelopmentNodeRuntime.Stopped) ||
       (androidRuntime.status !== null && androidRuntime.status.service !== "stopped"));
   const stopAllowed = useRef(canStopNode);
   stopAllowed.current = canStopNode;
@@ -218,7 +225,8 @@ export function DevelopmentRuntimeProvider({
       // notification action. It clears restart intent and drains platform work.
       const outcome = await selectedProvider.runtime.stopDevelopmentNode();
       if (stopOwner.current !== owner) return;
-      if (outcome.type === "failed") setStopFailure(outcome.detail);
+      if (outcome.tag === Bindings.DevelopmentNodeStopOutcome_Tags.Failed)
+        setStopFailure(outcome.inner.detail);
     } catch (failure) {
       if (stopOwner.current === owner) setStopFailure(formatFailure(failure));
     } finally {
@@ -385,7 +393,7 @@ export function DevelopmentRuntimeProvider({
       try {
         result = { type: "outcome", outcome: await Effect.runPromise(operation(active)) };
       } catch (failure) {
-        result = { type: "operationFailure", detail: formatFailure(failure) };
+        result = commandFailure(failure);
       }
       // A manual refresh or command can outlive its observer scope. Its result
       // must not republish an old generation after an explicit start or release.
@@ -412,8 +420,11 @@ export function DevelopmentRuntimeProvider({
   const initiatePairing = useCallback(
     async (input: InitiateRemoteControlPairingInput) => {
       const result = await run((active) => active.runtime.initiateRemoteControlPairing(input));
-      if (result.type === "outcome" && result.outcome.type === "accepted") {
-        publishSnapshot(result.outcome.snapshot);
+      if (
+        result.type === "outcome" &&
+        result.outcome.tag === Bindings.RemoteControlPairingCommandOutcome_Tags.Accepted
+      ) {
+        publishSnapshot(result.outcome.inner.snapshot);
       }
       return result;
     },
@@ -423,8 +434,11 @@ export function DevelopmentRuntimeProvider({
   const approvePairing = useCallback(
     async (input: RemoteControlPairingDecisionInput) => {
       const result = await run((active) => active.runtime.approveRemoteControlPairing(input));
-      if (result.type === "outcome" && result.outcome.type === "accepted") {
-        publishSnapshot(result.outcome.snapshot);
+      if (
+        result.type === "outcome" &&
+        result.outcome.tag === Bindings.RemoteControlPairingCommandOutcome_Tags.Accepted
+      ) {
+        publishSnapshot(result.outcome.inner.snapshot);
       }
       return result;
     },
@@ -434,8 +448,11 @@ export function DevelopmentRuntimeProvider({
   const rejectPairing = useCallback(
     async (input: RemoteControlPairingDecisionInput) => {
       const result = await run((active) => active.runtime.rejectRemoteControlPairing(input));
-      if (result.type === "outcome" && result.outcome.type === "accepted") {
-        publishSnapshot(result.outcome.snapshot);
+      if (
+        result.type === "outcome" &&
+        result.outcome.tag === Bindings.RemoteControlPairingCommandOutcome_Tags.Accepted
+      ) {
+        publishSnapshot(result.outcome.inner.snapshot);
       }
       return result;
     },
@@ -445,8 +462,11 @@ export function DevelopmentRuntimeProvider({
   const describeTarget = useCallback(
     async (input: DescribeRemoteControlTargetInput) => {
       const result = await run((active) => active.runtime.describeRemoteControlTarget(input));
-      if (result.type === "outcome" && result.outcome.type === "described") {
-        publishSnapshot(result.outcome.snapshot);
+      if (
+        result.type === "outcome" &&
+        result.outcome.tag === Bindings.RemoteControlDescribeOutcome_Tags.Described
+      ) {
+        publishSnapshot(result.outcome.inner.snapshot);
       }
       return result;
     },
@@ -456,8 +476,11 @@ export function DevelopmentRuntimeProvider({
   const announceTarget = useCallback(
     async (input: AnnounceRemoteControlTargetInput) => {
       const result = await run((active) => active.runtime.announceRemoteControlTarget(input));
-      if (result.type === "outcome" && result.outcome.type === "accepted") {
-        publishSnapshot(result.outcome.snapshot);
+      if (
+        result.type === "outcome" &&
+        result.outcome.tag === Bindings.RemoteControlAnnounceOutcome_Tags.Accepted
+      ) {
+        publishSnapshot(result.outcome.inner.snapshot);
       }
       return result;
     },
@@ -475,7 +498,7 @@ export function DevelopmentRuntimeProvider({
           outcome: await selectedProvider.runtime.saveObservedDestination(destination),
         };
       } catch (failure) {
-        return { type: "operationFailure", detail: formatFailure(failure) };
+        return commandFailure(failure);
       }
     },
     [selectedProvider, unavailableResult],
@@ -491,7 +514,7 @@ export function DevelopmentRuntimeProvider({
       try {
         return { type: "outcome", outcome: await operation(selectedProvider.runtime) };
       } catch (failure) {
-        return { type: "operationFailure", detail: formatFailure(failure) };
+        return commandFailure(failure);
       }
     },
     [selectedProvider, unavailableResult],
@@ -649,7 +672,24 @@ export function useDevelopmentRuntime(): DevelopmentRuntimeView {
   return value;
 }
 
+function commandFailure(
+  failure: unknown,
+): Extract<RuntimeCommandResult<never>, { type: "operationFailure" }> {
+  return {
+    type: "operationFailure",
+    detail: formatFailure(failure),
+    ...(failure instanceof Bindings.NativeStoragePreparationError
+      ? { storagePreparation: failure.outcome }
+      : {}),
+  };
+}
+
 function formatFailure(failure: DevelopmentRuntimeFailure | unknown): string {
+  if (failure instanceof Bindings.NativeStoragePreparationError) {
+    return failure.outcome.tag === "DevelopmentResetRequired"
+      ? "App data must be reset before it can be opened. Open Recovery in Settings."
+      : "Storage is temporarily unavailable. Your data has not changed. Try again.";
+  }
   if (
     failure !== null &&
     typeof failure === "object" &&

@@ -45,3 +45,21 @@ describe("platform development runtime providers", () => {
     );
   });
 });
+
+test("platform startup uses an absent generated option for an unset development target", () => {
+  const saved = process.env.EXPO_PUBLIC_PRNS_LXMF_TCP_TARGET;
+  delete process.env.EXPO_PUBLIC_PRNS_LXMF_TCP_TARGET;
+  try {
+    for (const provider of [iosRuntimeProvider, androidRuntimeProvider]) {
+      if (!("acquire" in provider)) throw new Error("native provider is unavailable");
+      provider.acquire({ onSnapshot: jest.fn(), onBackgroundFailure: jest.fn() });
+      expect(scopedDevelopmentRuntime).toHaveBeenLastCalledWith(
+        provider.runtime,
+        expect.objectContaining({ developmentTcpTarget: undefined }),
+      );
+    }
+  } finally {
+    if (saved === undefined) delete process.env.EXPO_PUBLIC_PRNS_LXMF_TCP_TARGET;
+    else process.env.EXPO_PUBLIC_PRNS_LXMF_TCP_TARGET = saved;
+  }
+});

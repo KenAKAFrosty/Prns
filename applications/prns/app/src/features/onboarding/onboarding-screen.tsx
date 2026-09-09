@@ -1,3 +1,4 @@
+import * as Bindings from "@prns-internal/expo";
 import type { IdentityCreationOutcome } from "@prns-internal/expo";
 import * as DocumentPicker from "expo-document-picker";
 import { File } from "expo-file-system";
@@ -114,7 +115,8 @@ function CreateIdentity() {
       {unavailable ? <PlatformUnavailable /> : null}
       <CreationResult outcome={outcome} failure={failure} />
       <CardStack>
-        {outcome?.type === "created" || outcome?.type === "alreadyExists" ? (
+        {outcome?.tag === Bindings.IdentityCreationOutcome_Tags.Created ||
+        outcome?.tag === Bindings.IdentityCreationOutcome_Tags.AlreadyExists ? (
           <Button onPress={() => router.replace("/nodes/local")}>Continue to this device</Button>
         ) : (
           <Button disabled={pending || unavailable} onPress={() => void create()}>
@@ -162,14 +164,14 @@ function ImportIdentity() {
       cachedCredential = new File(asset.uri);
       const bytes = await cachedCredential.bytes();
       const preview = await runtimeProvider.runtime.previewIdentityImport(bytes);
-      if (preview.type === "invalidLength") {
+      if (preview.tag === Bindings.IdentityImportPreviewOutcome_Tags.InvalidLength) {
         setIdentity(null);
         setPreviewHash(null);
         setFailure("The selected file is not a valid Reticulum identity.");
         return;
       }
       setIdentity(bytes);
-      setPreviewHash(preview.identityHash);
+      setPreviewHash(preview.inner.identityHash);
     } catch {
       setIdentity(null);
       setPreviewHash(null);
@@ -197,7 +199,7 @@ function ImportIdentity() {
     try {
       const result = await runtimeProvider.runtime.createImportedIdentity(identity);
       setOutcome(result);
-      if (result.type === "created") {
+      if (result.tag === Bindings.IdentityCreationOutcome_Tags.Created) {
         setIdentity(null);
       }
     } catch {
@@ -223,7 +225,8 @@ function ImportIdentity() {
       )}
       <CreationResult outcome={outcome} failure={failure} />
       <CardStack>
-        {outcome?.type === "created" || outcome?.type === "alreadyExists" ? (
+        {outcome?.tag === Bindings.IdentityCreationOutcome_Tags.Created ||
+        outcome?.tag === Bindings.IdentityCreationOutcome_Tags.AlreadyExists ? (
           <Button onPress={() => router.replace("/nodes/local")}>Continue to this device</Button>
         ) : (
           <>
@@ -265,36 +268,36 @@ function CreationResult({
   if (outcome === null) {
     return null;
   }
-  switch (outcome.type) {
-    case "created":
+  switch (outcome.tag) {
+    case Bindings.IdentityCreationOutcome_Tags.Created:
       return (
         <Card>
           <Badge>Identity stored</Badge>
-          <KeyValue label="Identity hash" value={formatBytes(outcome.identityHash)} />
+          <KeyValue label="Identity hash" value={formatBytes(outcome.inner.identityHash)} />
         </Card>
       );
-    case "alreadyExists":
+    case Bindings.IdentityCreationOutcome_Tags.AlreadyExists:
       return (
         <Card>
           <Badge>This app already has an identity</Badge>
           <BodyText>The existing identity will continue to be used.</BodyText>
         </Card>
       );
-    case "invalidLength":
+    case Bindings.IdentityCreationOutcome_Tags.InvalidLength:
       return (
         <Card>
           <Badge tone="warning">Invalid identity file</Badge>
           <BodyText>Select a valid Reticulum identity file.</BodyText>
         </Card>
       );
-    case "unavailable":
+    case Bindings.IdentityCreationOutcome_Tags.Unavailable:
       return (
         <Card>
           <Badge tone="warning">Identity storage unavailable</Badge>
           <BodyText>Identity storage is unavailable. Try again.</BodyText>
         </Card>
       );
-    case "developmentResetRequired":
+    case Bindings.IdentityCreationOutcome_Tags.DevelopmentResetRequired:
       return (
         <Card>
           <Badge tone="warning">App reset required</Badge>

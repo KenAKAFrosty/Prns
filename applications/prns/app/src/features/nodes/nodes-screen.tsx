@@ -1,3 +1,4 @@
+import * as Bindings from "@prns-internal/expo";
 import type { ContactMutationOutcome, DevelopmentNodeSnapshot } from "@prns-internal/expo";
 import type { Href } from "expo-router";
 import { useState } from "react";
@@ -94,7 +95,7 @@ export function NodesScreen() {
           </Card>
 
           <Subheading>Paired nodes</Subheading>
-          {runtime.snapshot.runtime !== "running" ? (
+          {runtime.snapshot.runtime !== Bindings.DevelopmentNodeRuntime.Running ? (
             <Card>
               <Badge>Paired nodes unavailable</Badge>
               <BodyText>
@@ -170,9 +171,10 @@ function NodeRecoveryCard({
   readonly showDiagnosticsLink?: boolean;
 }) {
   const runtime = useDevelopmentRuntime();
-  const stopped = runtime.snapshot?.runtime === "stopped";
+  const stopped = runtime.snapshot?.runtime === Bindings.DevelopmentNodeRuntime.Stopped;
   const failed =
-    (runtime.phase === "failed" || runtime.snapshot?.runtime === "failed") &&
+    (runtime.phase === "failed" ||
+      runtime.snapshot?.runtime === Bindings.DevelopmentNodeRuntime.Failed) &&
     runtime.accessorySetup?.phase !== "failed" &&
     runtime.accessorySetupFailure === null;
   if (!stopped && !failed) return null;
@@ -200,22 +202,25 @@ function LocalNodeCards({ snapshot }: { readonly snapshot: DevelopmentNodeSnapsh
     <>
       <Card>
         <Subheading>Identity and lifecycle</Subheading>
-        <Badge tone={snapshot.runtime === "failed" ? "warning" : "neutral"}>
+        <Badge
+          tone={snapshot.runtime === Bindings.DevelopmentNodeRuntime.Failed ? "warning" : "neutral"}
+        >
           {formatRuntime(snapshot.runtime)}
         </Badge>
         <PrimaryIdentity identity={snapshot.primaryIdentity} />
         <KeyValue
           label="Controller identity"
           value={
-            snapshot.controllerIdentityFingerprint === null
+            snapshot.controllerIdentityFingerprint === undefined
               ? "Not available"
               : formatBytes(snapshot.controllerIdentityFingerprint)
           }
         />
         <KeyValue label="Status revision" value={snapshot.revision.toString()} />
-        {snapshot.failure === null ? null : (
+        {snapshot.failure === undefined ? null : (
           <BodyText>
-            {snapshot.failure.stage}: {snapshot.failure.detail}
+            {Bindings.DevelopmentNodeFailureStage[snapshot.failure.stage]}:{" "}
+            {snapshot.failure.detail}
           </BodyText>
         )}
       </Card>
@@ -229,45 +234,54 @@ function PrimaryIdentity({
 }: {
   readonly identity: DevelopmentNodeSnapshot["primaryIdentity"];
 }) {
-  switch (identity.type) {
-    case "missing":
+  switch (identity.tag) {
+    case Bindings.PrimaryIdentityState_Tags.Missing:
       return <KeyValue label="Primary identity" value="Missing" />;
-    case "present":
-      return <KeyValue label="Primary identity" value={formatBytes(identity.identityHash)} />;
-    case "unavailable":
-      return <KeyValue label="Primary identity" value={`Unavailable — ${identity.detail}`} />;
-    case "developmentResetRequired":
-      return <KeyValue label="Primary identity" value={`Reset required — ${identity.reason}`} />;
+    case Bindings.PrimaryIdentityState_Tags.Present:
+      return <KeyValue label="Primary identity" value={formatBytes(identity.inner.identityHash)} />;
+    case Bindings.PrimaryIdentityState_Tags.Unavailable:
+      return <KeyValue label="Primary identity" value={`Unavailable — ${identity.inner.detail}`} />;
+    case Bindings.PrimaryIdentityState_Tags.DevelopmentResetRequired:
+      return (
+        <KeyValue label="Primary identity" value={`Reset required — ${identity.inner.reason}`} />
+      );
   }
 }
 
 function HostCards({ localHost }: { readonly localHost: DevelopmentNodeSnapshot["localHost"] }) {
-  if (localHost.type === "stopped") {
+  if (localHost.tag === Bindings.LocalHostState_Tags.Stopped) {
     return (
       <Card>
         <Subheading>Host</Subheading>
         <Badge>Stopped</Badge>
-        {localHost.lastStartFailure === null ? null : (
-          <BodyText>{localHost.lastStartFailure}</BodyText>
+        {localHost.inner.lastStartFailure === undefined ? null : (
+          <BodyText>{localHost.inner.lastStartFailure}</BodyText>
         )}
       </Card>
     );
   }
-  if (localHost.type === "unavailable" || localHost.type === "developmentResetRequired") {
+  if (
+    localHost.tag === Bindings.LocalHostState_Tags.Unavailable ||
+    localHost.tag === Bindings.LocalHostState_Tags.DevelopmentResetRequired
+  ) {
     return (
       <Card>
         <Subheading>Host</Subheading>
         <Badge tone="warning">
-          {localHost.type === "unavailable" ? "Inspection unavailable" : "Reset required"}
+          {localHost.tag === Bindings.LocalHostState_Tags.Unavailable
+            ? "Inspection unavailable"
+            : "Reset required"}
         </Badge>
         <BodyText>
-          {localHost.type === "unavailable" ? localHost.detail : localHost.reason}
+          {localHost.tag === Bindings.LocalHostState_Tags.Unavailable
+            ? localHost.inner.detail
+            : localHost.inner.reason}
         </BodyText>
       </Card>
     );
   }
 
-  const host = localHost.host;
+  const host = localHost.inner.host;
   return (
     <>
       <Card>
@@ -354,8 +368,8 @@ function HostCards({ localHost }: { readonly localHost: DevelopmentNodeSnapshot[
 
 type AuthenticatedAssociation = Extract<
   DevelopmentNodeSnapshot["localHost"],
-  { readonly type: "running" }
->["host"]["destinationIdentities"][number];
+  { readonly tag: "Running" }
+>["inner"]["host"]["destinationIdentities"][number];
 
 function ObservedIdentityCard({ association }: { readonly association: AuthenticatedAssociation }) {
   const runtime = useDevelopmentRuntime();
@@ -381,7 +395,9 @@ function ObservedIdentityCard({ association }: { readonly association: Authentic
   };
 
   const saved =
-    outcome?.type === "saved" || outcome?.type === "updated" || outcome?.type === "existing";
+    outcome?.tag === Bindings.ContactMutationOutcome_Tags.Saved ||
+    outcome?.tag === Bindings.ContactMutationOutcome_Tags.Updated ||
+    outcome?.tag === Bindings.ContactMutationOutcome_Tags.Existing;
 
   return (
     <Card>
@@ -398,30 +414,30 @@ function ObservedIdentityCard({ association }: { readonly association: Authentic
 }
 
 function observedSaveMessage(outcome: ContactMutationOutcome): string {
-  switch (outcome.type) {
-    case "saved":
+  switch (outcome.tag) {
+    case Bindings.ContactMutationOutcome_Tags.Saved:
       return "The verified destination was saved.";
-    case "updated":
+    case Bindings.ContactMutationOutcome_Tags.Updated:
       return "The verified identity was added to the saved contact.";
-    case "existing":
+    case Bindings.ContactMutationOutcome_Tags.Existing:
       return "This verified destination was already saved.";
-    case "identityConflict":
-      return `The saved identity ${formatBytes(outcome.existing)} differs from the observation ${formatBytes(outcome.attempted)}.`;
-    case "notObserved":
+    case Bindings.ContactMutationOutcome_Tags.IdentityConflict:
+      return `The saved identity ${formatBytes(outcome.inner.existing)} differs from the observation ${formatBytes(outcome.inner.attempted)}.`;
+    case Bindings.ContactMutationOutcome_Tags.NotObserved:
       return "This destination is no longer visible on the network.";
-    case "localNodeStopped":
+    case Bindings.ContactMutationOutcome_Tags.LocalNodeStopped:
       return "This device's node stopped before this address could be saved.";
-    case "developmentUnavailable":
-      return outcome.detail;
-    case "developmentResetRequired":
-      return `Development reset required: ${outcome.reason}`;
-    case "alreadyExists":
+    case Bindings.ContactMutationOutcome_Tags.DevelopmentUnavailable:
+      return outcome.inner.detail;
+    case Bindings.ContactMutationOutcome_Tags.DevelopmentResetRequired:
+      return `Development reset required: ${outcome.inner.reason}`;
+    case Bindings.ContactMutationOutcome_Tags.AlreadyExists:
       return "This destination is already saved.";
-    case "missingIdentity":
+    case Bindings.ContactMutationOutcome_Tags.MissingIdentity:
       return "The destination does not have an authenticated identity.";
-    case "deleted":
+    case Bindings.ContactMutationOutcome_Tags.Deleted:
       return "The contact was deleted.";
-    case "notFound":
+    case Bindings.ContactMutationOutcome_Tags.NotFound:
       return "The contact was not found.";
   }
 }

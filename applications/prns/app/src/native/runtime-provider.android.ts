@@ -8,7 +8,7 @@ export const runtimeProvider: RuntimeProvider = {
   acquire: (options) =>
     scopedDevelopmentRuntime(developmentRuntime, {
       ...options,
-      developmentTcpTarget: __DEV__ ? (process.env.EXPO_PUBLIC_PRNS_LXMF_TCP_TARGET ?? null) : null,
+      developmentTcpTarget: __DEV__ ? process.env.EXPO_PUBLIC_PRNS_LXMF_TCP_TARGET : undefined,
       nativeLifetime: "process",
     }),
 };

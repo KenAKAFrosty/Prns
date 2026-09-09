@@ -1,27 +1,28 @@
+import { DevelopmentNodeRuntime, RemoteControlRequestKind } from "@prns-internal/expo";
 export function formatBytes(bytes: Uint8Array): string {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-export function formatRequestKind(kind: "announceSelf" | "describe"): string {
+export function formatRequestKind(kind: RemoteControlRequestKind): string {
   switch (kind) {
-    case "announceSelf":
+    case RemoteControlRequestKind.AnnounceSelf:
       return "Share node address";
-    case "describe":
+    case RemoteControlRequestKind.Describe:
       return "View node information";
   }
 }
 
-export function formatRuntime(runtime: "failed" | "running" | "starting" | "stopped" | "stopping") {
+export function formatRuntime(runtime: DevelopmentNodeRuntime) {
   switch (runtime) {
-    case "failed":
+    case DevelopmentNodeRuntime.Failed:
       return "Failed";
-    case "running":
+    case DevelopmentNodeRuntime.Running:
       return "Running";
-    case "starting":
+    case DevelopmentNodeRuntime.Starting:
       return "Starting";
-    case "stopped":
+    case DevelopmentNodeRuntime.Stopped:
       return "Stopped";
-    case "stopping":
+    case DevelopmentNodeRuntime.Stopping:
       return "Stopping";
   }
 }

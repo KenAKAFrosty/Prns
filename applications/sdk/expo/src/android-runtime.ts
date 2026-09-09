@@ -1,4 +1,4 @@
-import { NativePayloadError } from "./hydrate";
+import { NativePayloadError } from "./native-payload";
 import type { AndroidRuntimeNativeModule } from "./native";
 
 export type AndroidRuntimeStatus = {

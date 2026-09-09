@@ -1,3 +1,4 @@
+import * as Bindings from "@prns-internal/expo";
 import type {
   Contact,
   ContactListOutcome,
@@ -10,6 +11,7 @@ import { useRouter } from "expo-router";
 import type { DestinationHash } from "personal-rns/contract";
 import { useCallback, useEffect, useState } from "react";
 
+import { StoragePreparationFailure } from "@/native/storage-preparation-failure";
 import { useContactRuntime } from "@/native/contact-runtime-context";
 import { NavigationLink } from "@/ui/navigation-link";
 import {
@@ -28,7 +30,9 @@ import { formatContactHash, parseDestinationHash, parseIdentityHash } from "./fo
 export function ContactsScreen() {
   const contactRuntime = useContactRuntime();
   const [outcome, setOutcome] = useState<ContactListOutcome | null>(null);
-  const [failure, setFailure] = useState<string | null>(null);
+  const [failure, setFailure] = useState<string | Bindings.NativeStoragePreparationError | null>(
+    null,
+  );
   const [pending, setPending] = useState(false);
 
   const load = useCallback(async () => {
@@ -39,8 +43,12 @@ export function ContactsScreen() {
     setFailure(null);
     try {
       setOutcome(await contactRuntime.runtime.listContacts());
-    } catch {
-      setFailure("Contacts could not be loaded. Try again.");
+    } catch (failure) {
+      setFailure(
+        failure instanceof Bindings.NativeStoragePreparationError
+          ? failure
+          : "Contacts could not be loaded. Try again.",
+      );
     } finally {
       setPending(false);
     }
@@ -66,7 +74,7 @@ export function ContactsScreen() {
             {pending ? "Loading contacts…" : "Refresh contacts"}
           </Button>
           {failure === null ? null : <FailureCard detail={failure} />}
-          <ContactListResult outcome={outcome} />
+          {failure === null ? <ContactListResult outcome={outcome} /> : null}
           <NavigationLink href="/contacts/add">Add contact</NavigationLink>
         </>
       )}
@@ -83,13 +91,13 @@ function ContactListResult({ outcome }: { readonly outcome: ContactListOutcome |
       </Card>
     );
   }
-  if (outcome.type === "developmentUnavailable") {
+  if (outcome.tag === Bindings.ContactListOutcome_Tags.DevelopmentUnavailable) {
     return <FailureCard detail="Contacts could not be loaded. Try again." />;
   }
-  if (outcome.type === "developmentResetRequired") {
+  if (outcome.tag === Bindings.ContactListOutcome_Tags.DevelopmentResetRequired) {
     return <ResetRequiredCard />;
   }
-  if (outcome.contacts.length === 0) {
+  if (outcome.inner.contacts.length === 0) {
     return (
       <Card>
         <Badge>No saved contacts</Badge>
@@ -99,7 +107,7 @@ function ContactListResult({ outcome }: { readonly outcome: ContactListOutcome |
   }
   return (
     <>
-      {outcome.contacts.map((contact) => {
+      {outcome.inner.contacts.map((contact) => {
         const destination = formatContactHash(contact.destination);
         const href: Href = {
           pathname: "/contacts/[destination]",
@@ -112,7 +120,9 @@ function ContactListResult({ outcome }: { readonly outcome: ContactListOutcome |
             <KeyValue label="Destination" value={destination} />
             <KeyValue
               label="Identity"
-              value={contact.identity === null ? "Not known" : formatContactHash(contact.identity)}
+              value={
+                contact.identity === undefined ? "Not known" : formatContactHash(contact.identity)
+              }
             />
             <NavigationLink href={href}>Open contact</NavigationLink>
           </Card>
@@ -130,7 +140,9 @@ export function ContactDetailScreen({ destination }: { readonly destination: Des
   const [contact, setContact] = useState<Contact | null>(null);
   const [alias, setAlias] = useState("");
   const [mutation, setMutation] = useState<ContactMutationOutcome | null>(null);
-  const [failure, setFailure] = useState<string | null>(null);
+  const [failure, setFailure] = useState<string | Bindings.NativeStoragePreparationError | null>(
+    null,
+  );
   const [pending, setPending] = useState(false);
 
   const load = useCallback(async () => {
@@ -142,14 +154,18 @@ export function ContactDetailScreen({ destination }: { readonly destination: Des
     try {
       const next = await contactRuntime.runtime.getContact(destination);
       setLookup(next);
-      if (next.type === "found") {
-        setContact(next.contact);
-        setAlias(next.contact.alias ?? "");
+      if (next.tag === Bindings.ContactLookupOutcome_Tags.Found) {
+        setContact(next.inner.contact);
+        setAlias(next.inner.contact.alias ?? "");
       } else {
         setContact(null);
       }
-    } catch {
-      setFailure("The contact could not be loaded. Try again.");
+    } catch (failure) {
+      setFailure(
+        failure instanceof Bindings.NativeStoragePreparationError
+          ? failure
+          : "The contact could not be loaded. Try again.",
+      );
     } finally {
       setPending(false);
     }
@@ -173,14 +189,22 @@ export function ContactDetailScreen({ destination }: { readonly destination: Des
     try {
       const next = await operation(activeRuntime);
       setMutation(next);
-      if (next.type === "saved" || next.type === "updated" || next.type === "existing") {
-        setContact(next.contact);
-        setAlias(next.contact.alias ?? "");
-      } else if (next.type === "deleted") {
+      if (
+        next.tag === Bindings.ContactMutationOutcome_Tags.Saved ||
+        next.tag === Bindings.ContactMutationOutcome_Tags.Updated ||
+        next.tag === Bindings.ContactMutationOutcome_Tags.Existing
+      ) {
+        setContact(next.inner.contact);
+        setAlias(next.inner.contact.alias ?? "");
+      } else if (next.tag === Bindings.ContactMutationOutcome_Tags.Deleted) {
         router.replace("/contacts");
       }
-    } catch {
-      setFailure("The contact could not be updated. Try again.");
+    } catch (failure) {
+      setFailure(
+        failure instanceof Bindings.NativeStoragePreparationError
+          ? failure
+          : "The contact could not be updated. Try again.",
+      );
     } finally {
       setPending(false);
     }
@@ -193,11 +217,11 @@ export function ContactDetailScreen({ destination }: { readonly destination: Des
       <KeyValue label="Destination" value={destinationText} />
       {contactRuntime.runtime === null ? (
         <NativeContactsUnavailable platform={contactRuntime.availability.platform} />
-      ) : lookup?.type === "developmentResetRequired" ? (
+      ) : lookup?.tag === Bindings.ContactLookupOutcome_Tags.DevelopmentResetRequired ? (
         <ResetRequiredCard />
-      ) : lookup?.type === "developmentUnavailable" ? (
+      ) : lookup?.tag === Bindings.ContactLookupOutcome_Tags.DevelopmentUnavailable ? (
         <FailureCard detail="The contact could not be loaded. Try again." />
-      ) : lookup?.type === "notFound" ? (
+      ) : lookup?.tag === Bindings.ContactLookupOutcome_Tags.NotFound ? (
         <Card>
           <Badge tone="warning">Not found</Badge>
           <BodyText>This destination is not saved in the local directory.</BodyText>
@@ -212,7 +236,9 @@ export function ContactDetailScreen({ destination }: { readonly destination: Des
             <Subheading>Association</Subheading>
             <KeyValue
               label="Identity"
-              value={contact.identity === null ? "Not known" : formatContactHash(contact.identity)}
+              value={
+                contact.identity === undefined ? "Not known" : formatContactHash(contact.identity)
+              }
             />
             <KeyValue label="Pinned" value={contact.pinned ? "Yes" : "No"} />
           </Card>
@@ -269,7 +295,9 @@ export function AddContactScreen() {
   const [identityText, setIdentityText] = useState("");
   const [alias, setAlias] = useState("");
   const [outcome, setOutcome] = useState<ContactMutationOutcome | null>(null);
-  const [failure, setFailure] = useState<string | null>(null);
+  const [failure, setFailure] = useState<string | Bindings.NativeStoragePreparationError | null>(
+    null,
+  );
   const [pending, setPending] = useState(false);
 
   const create = async () => {
@@ -290,17 +318,28 @@ export function AddContactScreen() {
     setPending(true);
     setFailure(null);
     try {
-      const next = await contactRuntime.runtime.createManualContact(destination, identity, alias);
+      const next = await contactRuntime.runtime.createManualContact(
+        destination,
+        identity ?? undefined,
+        alias || undefined,
+      );
       setOutcome(next);
-      if (next.type === "saved" || next.type === "alreadyExists") {
+      if (
+        next.tag === Bindings.ContactMutationOutcome_Tags.Saved ||
+        next.tag === Bindings.ContactMutationOutcome_Tags.AlreadyExists
+      ) {
         const href: Href = {
           pathname: "/contacts/[destination]",
-          params: { destination: formatContactHash(next.contact.destination) },
+          params: { destination: formatContactHash(next.inner.contact.destination) },
         };
         router.replace(href);
       }
-    } catch {
-      setFailure("The contact could not be saved. Try again.");
+    } catch (failure) {
+      setFailure(
+        failure instanceof Bindings.NativeStoragePreparationError
+          ? failure
+          : "The contact could not be saved. Try again.",
+      );
     } finally {
       setPending(false);
     }
@@ -361,36 +400,49 @@ function MutationResult({ outcome }: { readonly outcome: ContactMutationOutcome 
   if (outcome === null) {
     return null;
   }
-  if (outcome.type === "developmentUnavailable") {
+  if (outcome.tag === Bindings.ContactMutationOutcome_Tags.DevelopmentUnavailable) {
     return <FailureCard detail="The contact could not be updated. Try again." />;
   }
-  if (outcome.type === "developmentResetRequired") {
+  if (outcome.tag === Bindings.ContactMutationOutcome_Tags.DevelopmentResetRequired) {
     return <ResetRequiredCard />;
   }
   const messages: Record<
-    Exclude<ContactMutationOutcome["type"], "developmentUnavailable" | "developmentResetRequired">,
+    Exclude<
+      ContactMutationOutcome["tag"],
+      | Bindings.ContactMutationOutcome_Tags.DevelopmentUnavailable
+      | Bindings.ContactMutationOutcome_Tags.DevelopmentResetRequired
+    >,
     string
   > = {
-    saved: "Contact saved.",
-    updated: "Contact updated.",
-    deleted: "Contact deleted.",
-    existing: "This verified destination was already saved.",
-    alreadyExists: "This destination is already saved.",
-    notFound: "The contact no longer exists.",
-    localNodeStopped: "This device's node is not running.",
-    notObserved: "This destination is no longer visible on the network.",
-    identityConflict: "The saved identity differs from the verified network identity.",
-    missingIdentity: "Add or discover an identity before pinning this contact.",
+    [Bindings.ContactMutationOutcome_Tags.Saved]: "Contact saved.",
+    [Bindings.ContactMutationOutcome_Tags.Updated]: "Contact updated.",
+    [Bindings.ContactMutationOutcome_Tags.Deleted]: "Contact deleted.",
+    [Bindings.ContactMutationOutcome_Tags.Existing]: "This verified destination was already saved.",
+    [Bindings.ContactMutationOutcome_Tags.AlreadyExists]: "This destination is already saved.",
+    [Bindings.ContactMutationOutcome_Tags.NotFound]: "The contact no longer exists.",
+    [Bindings.ContactMutationOutcome_Tags.LocalNodeStopped]: "This device's node is not running.",
+    [Bindings.ContactMutationOutcome_Tags.NotObserved]:
+      "This destination is no longer visible on the network.",
+    [Bindings.ContactMutationOutcome_Tags.IdentityConflict]:
+      "The saved identity differs from the verified network identity.",
+    [Bindings.ContactMutationOutcome_Tags.MissingIdentity]:
+      "Add or discover an identity before pinning this contact.",
   };
   return (
     <Card>
-      <Badge tone={outcome.type === "identityConflict" ? "warning" : "neutral"}>
-        {messages[outcome.type]}
+      <Badge
+        tone={
+          outcome.tag === Bindings.ContactMutationOutcome_Tags.IdentityConflict
+            ? "warning"
+            : "neutral"
+        }
+      >
+        {messages[outcome.tag]}
       </Badge>
-      {outcome.type === "identityConflict" ? (
+      {outcome.tag === Bindings.ContactMutationOutcome_Tags.IdentityConflict ? (
         <>
-          <KeyValue label="Saved identity" value={formatContactHash(outcome.existing)} />
-          <KeyValue label="Observed identity" value={formatContactHash(outcome.attempted)} />
+          <KeyValue label="Saved identity" value={formatContactHash(outcome.inner.existing)} />
+          <KeyValue label="Observed identity" value={formatContactHash(outcome.inner.attempted)} />
         </>
       ) : null}
     </Card>
@@ -406,7 +458,14 @@ function NativeContactsUnavailable({ platform }: { readonly platform: string }) 
   );
 }
 
-function FailureCard({ detail }: { readonly detail: string }) {
+function FailureCard({
+  detail,
+}: {
+  readonly detail: string | Bindings.NativeStoragePreparationError;
+}) {
+  if (detail instanceof Bindings.NativeStoragePreparationError) {
+    return <StoragePreparationFailure outcome={detail.outcome} />;
+  }
   return (
     <Card>
       <Badge tone="warning">Contacts unavailable</Badge>

@@ -13,6 +13,9 @@ const localPersonalRnsSelection = "file:../../../prns-js";
 const expectedDependencies = {
   "@expo/metro-runtime": "~57.0.15",
   "@prns-internal/expo": "*",
+  "@prns-internal/native-bindings": "*",
+  "@ubjs/core": "file:../../vendor/ubrn/packages/ubjs-core-0.31.0-5.tgz",
+  "@ubjs/react-native": "file:../../vendor/ubrn/packages/ubjs-react-native-0.31.0-5.tgz",
   "@react-native-async-storage/async-storage": "2.2.0",
   expo: "~57.0.21",
   "expo-constants": "~57.0.17",

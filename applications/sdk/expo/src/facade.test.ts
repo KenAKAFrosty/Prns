@@ -1,234 +1,324 @@
-import { destinationHash, identityHash } from "personal-rns/contract";
+import * as Bindings from "@prns-internal/native-bindings";
+import type { FfiConverter } from "@ubjs/core";
 import {
-  HOST_CONTRACT_FINGERPRINT,
-  NATIVE_CONTRACT_FINGERPRINT,
-  NATIVE_CONTRACT_FIXTURES,
-} from "./contract.generated";
-import { createDevelopmentRuntime, NativeBridgeError, NativeContractMismatchError } from "./facade";
+  createDevelopmentRuntime,
+  NativeContractMismatchError,
+  NativeStoragePreparationError,
+} from "./facade";
 import type { PrnsAppNativeModule } from "./native";
 
-const snapshot = {
-  contractFingerprint: NATIVE_CONTRACT_FINGERPRINT,
-  revision: "0",
-  runtime: "stopped",
-  primaryIdentity: { type: "missing" },
-  localHost: { type: "stopped", lastStartFailure: null },
-  lxmf: { state: "stopped", inboundOverflowCount: "0" },
-  controllerIdentityFingerprint: null,
-  pairing: { type: "searching" },
+// Codecs use generated field layouts. This supplies only the player's string
+// primitives; domain calls are injected independently and never touch JSI.
+jest.mock("../../../prns/native-composition/bindings/typescript/prns_app-ffi", () => ({
+  __esModule: true,
+  default: () => ({
+    ubrn_uniffi_internal_fn_func_ffi__string_to_byte_length: (value: string) =>
+      new TextEncoder().encode(value).length,
+    ubrn_uniffi_internal_fn_func_ffi__read_string_from_buffer: (
+      buffer: { arrayBuffer: ArrayBuffer },
+      offset: number,
+      length: number,
+    ) => new TextDecoder().decode(new Uint8Array(buffer.arrayBuffer, offset, length)),
+  }),
+}));
+
+const codecs = Bindings.bindingModule.converters;
+function encode<T>(codec: FfiConverter<Uint8Array, T>, value: T): number[] {
+  return Array.from(codec.lower(value, (size) => new Uint8Array(size)));
+}
+const snapshot = (): Bindings.DevelopmentNodeSnapshot => ({
+  contractFingerprint: Bindings.NATIVE_CONTRACT_FINGERPRINT,
+  revision: 18_446_744_073_709_551_615n,
+  generationId: 9_007_199_254_740_993n,
+  runtime: Bindings.DevelopmentNodeRuntime.Stopped,
+  primaryIdentity: Bindings.PrimaryIdentityState.Missing.new(),
+  localHost: Bindings.LocalHostState.Stopped.new({ lastStartFailure: undefined }),
+  lxmf: { state: Bindings.LxmfHealthState.Stopped, inboundOverflowCount: 0n },
+  pairing: Bindings.RemoteControlPairingState.Searching.new(),
   pairingCandidates: [],
   pairedTargets: [],
-  lastAnnouncement: null,
-  generationId: "0",
-  activeOperation: null,
-  failure: null,
-};
-
-function fakeNative(overrides: Partial<PrnsAppNativeModule> = {}): PrnsAppNativeModule {
+});
+function nativeModule(overrides: Partial<PrnsAppNativeModule> = {}): PrnsAppNativeModule {
   return {
-    contractFingerprint: jest.fn(async () => NATIVE_CONTRACT_FINGERPRINT),
-    hostContractFingerprint: jest.fn(async () => HOST_CONTRACT_FINGERPRINT),
-    inspectIdentity: jest.fn(async () => JSON.stringify({ type: "missing" })),
-    previewIdentityImport: jest.fn(async () => JSON.stringify({ type: "invalidLength" })),
-    createGeneratedIdentity: jest.fn(async () => JSON.stringify({ type: "alreadyExists" })),
-    createImportedIdentity: jest.fn(async () => JSON.stringify({ type: "alreadyExists" })),
-    start: jest.fn(async () => JSON.stringify({ type: "started", snapshot })),
-    snapshot: jest.fn(async () => JSON.stringify(snapshot)),
-    initiatePairing: jest.fn(async () => JSON.stringify({ type: "busy" })),
-    approvePairing: jest.fn(async () => JSON.stringify({ type: "busy" })),
-    rejectPairing: jest.fn(async () => JSON.stringify({ type: "busy" })),
-    describeTarget: jest.fn(async () => JSON.stringify({ type: "busy" })),
-    announceTarget: jest.fn(async () => JSON.stringify({ type: "busy" })),
-    saveObservedDestination: jest.fn(async () => JSON.stringify({ type: "notObserved" })),
-    createManualContact: jest.fn(async () => JSON.stringify({ type: "notFound" })),
-    setContactAlias: jest.fn(async () => JSON.stringify({ type: "notFound" })),
-    setContactPinned: jest.fn(async () => JSON.stringify({ type: "notFound" })),
-    deleteContact: jest.fn(async () => JSON.stringify({ type: "notFound" })),
-    getContact: jest.fn(async () => JSON.stringify({ type: "notFound" })),
-    listContacts: jest.fn(async () => JSON.stringify({ type: "listed", contacts: [] })),
-    listLxmfPeers: jest.fn(async () => JSON.stringify({ type: "listed", peers: [] })),
-    listLxmfMessages: jest.fn(async () => JSON.stringify({ type: "listed", messages: [] })),
-    retryLxmfMessage: jest.fn(async () => JSON.stringify({ type: "notFound" })),
-    cancelLxmfMessage: jest.fn(async () => JSON.stringify({ type: "notFound" })),
-    announceLxmf: jest.fn(async () => JSON.stringify({ type: "announced" })),
-    measureLxmfText: jest.fn(async () =>
-      JSON.stringify({ type: "measured", wireBytes: 113, remainingBytes: 318 }),
+    prepareStorage: jest.fn(async () =>
+      encode(
+        codecs.FfiConverterTypeNativeStoragePreparationOutcome,
+        Bindings.NativeStoragePreparationOutcome.Prepared.new(),
+      ),
     ),
-    sendDirectText: jest.fn(async () => JSON.stringify({ type: "accepted", localRecordId: "1" })),
-    stop: jest.fn(async () => JSON.stringify({ type: "alreadyStopped" })),
-    reset: jest.fn(async () => JSON.stringify({ type: "alreadyStopped" })),
+    inspectIdentity: jest.fn(async () =>
+      encode(
+        codecs.FfiConverterTypePrimaryIdentityState,
+        Bindings.PrimaryIdentityState.Missing.new(),
+      ),
+    ),
+    createGeneratedIdentity: jest.fn(async () =>
+      encode(
+        codecs.FfiConverterTypeIdentityCreationOutcome,
+        Bindings.IdentityCreationOutcome.AlreadyExists.new(),
+      ),
+    ),
+    createImportedIdentity: jest.fn(async () =>
+      encode(
+        codecs.FfiConverterTypeIdentityCreationOutcome,
+        Bindings.IdentityCreationOutcome.AlreadyExists.new(),
+      ),
+    ),
+    start: jest.fn(async () =>
+      encode(
+        codecs.FfiConverterTypeDevelopmentNodeStartOutcome,
+        Bindings.DevelopmentNodeStartOutcome.Started.new({ snapshot: snapshot() }),
+      ),
+    ),
+    stop: jest.fn(async () =>
+      encode(
+        codecs.FfiConverterTypeDevelopmentNodeStopOutcome,
+        Bindings.DevelopmentNodeStopOutcome.Stopped.new(),
+      ),
+    ),
+    reset: jest.fn(async () =>
+      encode(
+        codecs.FfiConverterTypeDevelopmentNodeStopOutcome,
+        Bindings.DevelopmentNodeStopOutcome.Stopped.new(),
+      ),
+    ),
+    prepareOutbound: jest.fn(async () => undefined),
     ...overrides,
   };
 }
+function setup(overrides: Partial<typeof Bindings> = {}, native = nativeModule()) {
+  const api = {
+    ...Bindings,
+    bindingContract: jest.fn(() => ({
+      app: Bindings.NATIVE_CONTRACT_FINGERPRINT,
+      host: Bindings.HOST_CONTRACT_FINGERPRINT,
+    })),
+    readSnapshot: jest.fn(async () => snapshot()),
+    listContacts: jest.fn(async () => Bindings.ContactListOutcome.Listed.new({ contacts: [] })),
+    ...overrides,
+  };
+  const load = jest.fn(async () => api);
+  return { api, load, native, runtime: createDevelopmentRuntime(() => native, load) };
+}
 
-describe("development runtime facade", () => {
-  test("submits one announcement and hydrates its native operation identity", async () => {
-    const targetIdentityFingerprint = identityHash(new Uint8Array(16).fill(0x42));
-    const operation = {
-      operationId: "9007199254740993",
-      targetIdentityFingerprint: Array.from(targetIdentityFingerprint),
-      status: { type: "pending" },
-    };
-    const announceTarget = jest.fn(async () =>
-      JSON.stringify({
-        type: "accepted",
-        operation,
-        snapshot: { ...snapshot, lastAnnouncement: operation },
-      }),
+test("pure value imports and facade construction do not install a player", () => {
+  const { load } = setup();
+  expect(Bindings.PrimaryIdentityState.Missing.new().tag).toBe("Missing");
+  expect(load).not.toHaveBeenCalled();
+});
+
+test("an unavailable native capability rejects before loading the player", async () => {
+  const load = jest.fn(async () => Bindings);
+  const runtime = createDevelopmentRuntime(() => {
+    throw new Error("native unavailable");
+  }, load);
+  await expect(runtime.readDevelopmentNodeSnapshot()).rejects.toThrow("native unavailable");
+  expect(load).not.toHaveBeenCalled();
+});
+
+test("checks both semantic contracts once and uses generated startup codecs", async () => {
+  const { runtime, api, native, load } = setup();
+  const input = { developmentTcpTarget: "192.0.2.1:4242" };
+  const started = await runtime.startDevelopmentNode(input);
+  const current = await runtime.readDevelopmentNodeSnapshot();
+  expect(started).toEqual(
+    Bindings.DevelopmentNodeStartOutcome.Started.new({ snapshot: snapshot() }),
+  );
+  expect(current.revision).toBe(18_446_744_073_709_551_615n);
+  expect(native.start).toHaveBeenCalledWith(
+    encode(codecs.FfiConverterTypeDevelopmentNodeStartInput, input),
+  );
+  expect(api.bindingContract).toHaveBeenCalledTimes(1);
+  expect(load).toHaveBeenCalledTimes(1);
+});
+
+test.each(["app", "host"] as const)(
+  "refuses a stale %s contract and allows recovery",
+  async (field) => {
+    let stale = true;
+    const bindingContract = jest.fn(() => ({
+      app: Bindings.NATIVE_CONTRACT_FINGERPRINT,
+      host: Bindings.HOST_CONTRACT_FINGERPRINT,
+      ...(stale ? { [field]: "stale" } : {}),
+    }));
+    const { runtime, api } = setup({ bindingContract });
+    await expect(runtime.readDevelopmentNodeSnapshot()).rejects.toBeInstanceOf(
+      NativeContractMismatchError,
     );
-    const runtime = createDevelopmentRuntime(fakeNative({ announceTarget }));
-    const result = await runtime.announceRemoteControlTarget({ targetIdentityFingerprint });
-    expect(announceTarget).toHaveBeenCalledTimes(1);
-    expect(announceTarget).toHaveBeenCalledWith(
-      JSON.stringify({ targetIdentityFingerprint: Array.from(targetIdentityFingerprint) }),
-    );
-    expect(result.type).toBe("accepted");
-    if (result.type === "accepted") {
-      expect(result.operation.operationId).toBe(9_007_199_254_740_993n);
-      expect(result.operation.targetIdentityFingerprint).toEqual(targetIdentityFingerprint);
-      expect(result.snapshot.lastAnnouncement).toEqual(result.operation);
-    }
-  });
+    expect(api.readSnapshot).not.toHaveBeenCalled();
+    stale = false;
+    await expect(runtime.readDevelopmentNodeSnapshot()).resolves.toEqual(snapshot());
+  },
+);
 
-  test("retains all generated announcement settlements and never retries an interrupted submission", async () => {
-    for (const operation of NATIVE_CONTRACT_FIXTURES.announceOperations) {
-      const runtime = createDevelopmentRuntime(
-        fakeNative({
-          snapshot: jest.fn(async () =>
-            JSON.stringify({ ...snapshot, lastAnnouncement: operation }),
-          ),
-        }),
-      );
-      const next = await runtime.readDevelopmentNodeSnapshot();
-      expect(next.lastAnnouncement?.status.type).toBe(operation.status.type);
-      expect(next.lastAnnouncement?.operationId).toBe(18_446_744_073_709_551_615n);
-      if (next.lastAnnouncement?.status.type === "announced") {
-        expect(next.lastAnnouncement.status.rttMillis).toBe(18_446_744_073_709_551_615n);
-      }
-    }
-    const announceTarget = jest.fn(async () => {
-      throw new Error("bridge interrupted");
-    });
-    const runtime = createDevelopmentRuntime(fakeNative({ announceTarget }));
-    await expect(
-      runtime.announceRemoteControlTarget({
-        targetIdentityFingerprint: identityHash(new Uint8Array(16)),
-      }),
-    ).rejects.toThrow("bridge interrupted");
-    expect(announceTarget).toHaveBeenCalledTimes(1);
-  });
-  test("checks the native contract once and hydrates every snapshot result", async () => {
-    const native = fakeNative();
-    const runtime = createDevelopmentRuntime(native);
-
-    const started = await runtime.startDevelopmentNode({ developmentTcpTarget: null });
-    const current = await runtime.readDevelopmentNodeSnapshot();
-
-    expect(started.type).toBe("started");
-    if (started.type === "started") {
-      expect(started.snapshot.revision).toBe(0n);
-    }
-    expect(current.revision).toBe(0n);
-    expect(native.contractFingerprint).toHaveBeenCalledTimes(1);
-    expect(native.hostContractFingerprint).toHaveBeenCalledTimes(1);
-    expect(native.start).toHaveBeenCalledWith(JSON.stringify({ developmentTcpTarget: null }));
-  });
-
-  test("hydrates the generated multi-candidate catalog through the runtime facade", async () => {
-    const native = fakeNative({
-      snapshot: jest.fn(async () =>
-        JSON.stringify({
-          ...snapshot,
-          pairingCandidates: NATIVE_CONTRACT_FIXTURES.pairingCandidates,
-        }),
+test("identity bytes use the native lifecycle boundary and the generated bounded preview", async () => {
+  const identity = new Uint8Array(64).fill(0x42);
+  const identityHash = new Uint8Array(16).fill(0x43);
+  const previewIdentityImport = jest.fn(() =>
+    Bindings.IdentityImportPreviewOutcome.Valid.new({ identityHash }),
+  );
+  const native = nativeModule({
+    createImportedIdentity: jest.fn(async () =>
+      encode(
+        codecs.FfiConverterTypeIdentityCreationOutcome,
+        Bindings.IdentityCreationOutcome.Created.new({ identityHash }),
       ),
-    });
-
-    const current = await createDevelopmentRuntime(native).readDevelopmentNodeSnapshot();
-
-    expect(current.pairingCandidates).toEqual([
-      {
-        candidateId: "candidate-fixture",
-        displayName: "Fixture node",
-        observedAtMillis: 9_007_199_254_740_991n,
-        expiresAtMillis: 9_007_199_254_740_992n,
-        expiresInMillis: 1n,
-      },
-      {
-        candidateId: "unnamed-candidate-fixture",
-        displayName: null,
-        observedAtMillis: 17n,
-        expiresAtMillis: 99n,
-        expiresInMillis: 82n,
-      },
-    ]);
+    ),
   });
+  const { runtime } = setup({ previewIdentityImport }, native);
+  expect(await runtime.previewIdentityImport(identity)).toEqual(
+    Bindings.IdentityImportPreviewOutcome.Valid.new({ identityHash }),
+  );
+  expect(await runtime.createImportedIdentity(identity)).toEqual(
+    Bindings.IdentityCreationOutcome.Created.new({ identityHash }),
+  );
+  expect(previewIdentityImport).toHaveBeenCalledWith(identity);
+  expect(native.createImportedIdentity).toHaveBeenCalledWith(Array.from(identity));
+});
 
-  test("hydrates every canonical Host scalar from the Rust-generated running fixture", async () => {
-    const runningHost = NATIVE_CONTRACT_FIXTURES.localHostStates.find(
-      (state) => state.type === "running",
-    );
-    if (runningHost?.type !== "running") {
-      throw new Error("Rust contract fixtures did not include a running Host");
-    }
-    const native = fakeNative({
-      snapshot: jest.fn(async () =>
-        JSON.stringify({
-          ...snapshot,
-          revision: "18446744073709551615",
-          runtime: "running",
-          localHost: runningHost,
-        }),
-      ),
-    });
+test("prepares offline storage once, retries failed preparation, and prepares again after reset", async () => {
+  let available = false;
+  const prepareStorage = jest.fn(async () =>
+    encode(
+      codecs.FfiConverterTypeNativeStoragePreparationOutcome,
+      available
+        ? Bindings.NativeStoragePreparationOutcome.Prepared.new()
+        : Bindings.NativeStoragePreparationOutcome.DevelopmentResetRequired.new({
+            reason: "unsupported store",
+          }),
+    ),
+  );
+  const { runtime, api } = setup({}, nativeModule({ prepareStorage }));
+  await expect(runtime.listContacts()).rejects.toBeInstanceOf(NativeStoragePreparationError);
+  expect(api.listContacts).not.toHaveBeenCalled();
+  available = true;
+  await Promise.all([runtime.listContacts(), runtime.listContacts()]);
+  expect(prepareStorage).toHaveBeenCalledTimes(2);
+  await runtime.resetDevelopmentData();
+  await runtime.listContacts();
+  expect(prepareStorage).toHaveBeenCalledTimes(3);
+});
 
-    const current = await createDevelopmentRuntime(native).readDevelopmentNodeSnapshot();
+test("passes optional fields, bytes, exact integers, and results unchanged", async () => {
+  const destination = new Uint8Array(16).fill(0x44);
+  const accepted = Bindings.RetryLxmfMessageOutcome.Accepted.new({
+    localRecordId: 18_446_744_073_709_551_615n,
+  });
+  const retryLxmfMessage = jest.fn(async () => accepted);
+  const createManualContact = jest.fn(async () => Bindings.ContactMutationOutcome.NotFound.new());
+  const { runtime, native } = setup({ retryLxmfMessage, createManualContact });
+  await runtime.createManualContact(destination, undefined, undefined);
+  const result = await runtime.retryLxmfMessage(18_446_744_073_709_551_615n);
+  expect(createManualContact).toHaveBeenCalledWith(
+    { destination, identity: undefined, alias: undefined },
+    undefined,
+  );
+  expect(retryLxmfMessage).toHaveBeenCalledWith(
+    { localRecordId: 18_446_744_073_709_551_615n },
+    undefined,
+  );
+  expect(result).toBe(accepted);
+  expect(native.prepareOutbound).toHaveBeenCalledTimes(1);
+});
 
-    expect(current.revision).toBe(18_446_744_073_709_551_615n);
-    expect(current.localHost.type).toBe("running");
-    if (current.localHost.type !== "running") {
-      throw new Error("hydrated fixture did not retain its running Host variant");
-    }
-    const host = current.localHost.host;
-    expect(host.revision).toBe(18_446_744_073_709_551_615n);
-    expect(host.backend).toEqual({
+test("performs preflight for exactly the six outbound calls and never repeats a failed submission", async () => {
+  const failure = new Error("submission interrupted");
+  const submitted = jest.fn(async () => {
+    throw failure;
+  });
+  const { runtime, native } = setup({
+    initiatePairing: submitted,
+    describeTarget: submitted,
+    announceTarget: submitted,
+    retryLxmfMessage: submitted,
+    announceLxmf: submitted,
+    sendDirectText: submitted,
+  });
+  const targetIdentityFingerprint = new Uint8Array(16);
+  for (const run of [
+    () =>
+      runtime.initiateRemoteControlPairing({
+        candidateId: "candidate",
+        invitationCode: "1234ABCD",
+      }),
+    () => runtime.describeRemoteControlTarget({ targetIdentityFingerprint }),
+    () => runtime.announceRemoteControlTarget({ targetIdentityFingerprint }),
+    () => runtime.retryLxmfMessage(1n),
+    () => runtime.announceLxmf(),
+    () =>
+      runtime.sendDirectText({
+        destination: targetIdentityFingerprint,
+        title: "",
+        content: "hello",
+      }),
+  ])
+    await expect(run()).rejects.toBe(failure);
+  expect(submitted).toHaveBeenCalledTimes(6);
+  expect(native.prepareOutbound).toHaveBeenCalledTimes(6);
+});
+
+test("passes cancellation into generated futures and skips a cancelled preflight submission", async () => {
+  const controller = new AbortController();
+  const { runtime, api } = setup();
+  await runtime.readDevelopmentNodeSnapshot(controller.signal);
+  expect(api.readSnapshot).toHaveBeenCalledWith({ signal: controller.signal });
+  const announceTarget = jest.fn(async () => Bindings.RemoteControlAnnounceOutcome.Busy.new());
+  const native = nativeModule({ prepareOutbound: jest.fn(async () => controller.abort()) });
+  const outbound = setup({ announceTarget }, native).runtime;
+  await expect(
+    outbound.announceRemoteControlTarget(
+      { targetIdentityFingerprint: new Uint8Array(16) },
+      controller.signal,
+    ),
+  ).rejects.toBeDefined();
+  expect(announceTarget).not.toHaveBeenCalled();
+});
+
+test("generated snapshot codecs preserve canonical host brands, safe counters, and exact u64 values", () => {
+  const { destinationHash, identityHash, interfaceId } =
+    jest.requireActual<typeof import("personal-rns/contract")>("personal-rns/contract");
+  const maximum = 18_446_744_073_709_551_615n;
+  const host: import("personal-rns/contract").HostSnapshot = {
+    revision: maximum,
+    backend: {
       backend: "Native",
       capabilities: ["Bluetooth"],
       interfaceKinds: ["AutomaticBluetoothLe"],
-    });
-    expect(host.interfaces).toHaveLength(1);
-    expect(host.interfaces[0]).toMatchObject({
-      name: "Bluetooth Auto",
-      kind: "AutomaticBluetoothLe",
-      health: "Connected",
-      rxBytes: 18_446_744_073_709_551_615n,
-      txBytes: 9_007_199_254_740_992n,
-      rxBps: 7,
-      txBps: 8,
-      routeCount: 1,
-      linkCount: 2,
-      transportedLinkCount: 3,
-    });
-    expect(host.interfaces[0]?.interfaceId).toEqual(Uint8Array.from({ length: 8 }, () => 0x44));
-    expect(host.routes).toHaveLength(1);
-    expect(host.routes[0]).toMatchObject({
-      hops: 1,
-      learnedAtMillis: 11,
-      lastRouteActivityAtMillis: 12,
-      expiresAtMillis: 13,
-    });
-    expect(host.routes[0]?.destination).toEqual(Uint8Array.from({ length: 16 }, () => 0x55));
-    expect(host.routes[0]?.viaIdentity).toEqual(Uint8Array.from({ length: 16 }, () => 0x66));
-    expect(host.routes[0]?.interfaceId).toEqual(Uint8Array.from({ length: 8 }, () => 0x44));
-    expect(host.activeLinkCount).toBe(2);
-    expect(host.destinationIdentities).toHaveLength(1);
-    expect(host.destinationIdentities[0]?.destination).toEqual(
-      Uint8Array.from({ length: 16 }, () => 0x55),
-    );
-    expect(host.destinationIdentities[0]?.identity).toEqual(
-      Uint8Array.from({ length: 16 }, () => 0x77),
-    );
-    expect(host.runtime).toEqual({
+    },
+    interfaces: [
+      {
+        interfaceId: interfaceId(new Uint8Array(8).fill(1)),
+        name: "Bluetooth",
+        kind: "AutomaticBluetoothLe",
+        health: "Connected",
+        rxBytes: maximum,
+        txBytes: 9_007_199_254_740_992n,
+        rxBps: 7,
+        txBps: 8,
+        routeCount: 1,
+        linkCount: 2,
+        transportedLinkCount: 3,
+      },
+    ],
+    routes: [
+      {
+        destination: destinationHash(new Uint8Array(16).fill(2)),
+        viaIdentity: identityHash(new Uint8Array(16).fill(3)),
+        interfaceId: interfaceId(new Uint8Array(8).fill(1)),
+        hops: 1,
+        learnedAtMillis: 11,
+        lastRouteActivityAtMillis: 12,
+        expiresAtMillis: 13,
+      },
+    ],
+    activeLinkCount: 2,
+    destinationIdentities: [
+      {
+        destination: destinationHash(new Uint8Array(16).fill(2)),
+        identity: identityHash(new Uint8Array(16).fill(3)),
+      },
+    ],
+    runtime: {
       running: true,
       uptimeMillis: 14,
       interfaceCount: 1,
@@ -236,234 +326,20 @@ describe("development runtime facade", () => {
       routeCount: 1,
       linkCount: 2,
       transportedLinkCount: 3,
-      rxBytes: 18_446_744_073_709_551_615n,
+      rxBytes: maximum,
       txBytes: 9_007_199_254_740_992n,
       rxBps: 7,
       txBps: 8,
-    });
-    expect(host.persistence).toEqual({
-      persistent: true,
-      restored: true,
-      lastFlushCause: "Startup",
-    });
-  });
-
-  test("refuses a stale canonical Host contract before invoking an operation", async () => {
-    const native = fakeNative({
-      hostContractFingerprint: jest.fn(async () => "stale-host-contract"),
-    });
-    const runtime = createDevelopmentRuntime(native);
-
-    await expect(runtime.readDevelopmentNodeSnapshot()).rejects.toBeInstanceOf(
-      NativeContractMismatchError,
-    );
-    expect(native.snapshot).not.toHaveBeenCalled();
-  });
-
-  test("refuses a stale native library before invoking an operation", async () => {
-    const native = fakeNative({ contractFingerprint: jest.fn(async () => "stale-contract") });
-    const runtime = createDevelopmentRuntime(native);
-
-    await expect(
-      runtime.startDevelopmentNode({ developmentTcpTarget: null }),
-    ).rejects.toBeInstanceOf(NativeContractMismatchError);
-    expect(native.start).not.toHaveBeenCalled();
-  });
-
-  test("also rejects a stale fingerprint embedded in a returned snapshot", async () => {
-    const native = fakeNative({
-      snapshot: jest.fn(async () =>
-        JSON.stringify({ ...snapshot, contractFingerprint: "stale-snapshot" }),
-      ),
-    });
-
-    await expect(
-      createDevelopmentRuntime(native).readDevelopmentNodeSnapshot(),
-    ).rejects.toBeInstanceOf(NativeContractMismatchError);
-  });
-
-  test("turns private C ABI failure envelopes into bridge errors", async () => {
-    const native = fakeNative({
-      snapshot: jest.fn(async () =>
-        JSON.stringify({
-          type: "bridgeFailure",
-          kind: "invalidInput",
-          detail: "contract input is too large",
-        }),
-      ),
-    });
-
-    await expect(
-      createDevelopmentRuntime(native).readDevelopmentNodeSnapshot(),
-    ).rejects.toBeInstanceOf(NativeBridgeError);
-  });
-
-  test("serializes branded target identities back to honest JSON arrays", async () => {
-    const describeTarget = jest.fn(async () => JSON.stringify({ type: "busy" }));
-    const runtime = createDevelopmentRuntime(fakeNative({ describeTarget }));
-    const targetIdentityFingerprint = identityHash(Uint8Array.from({ length: 16 }, (_, i) => i));
-
-    await runtime.describeRemoteControlTarget({ targetIdentityFingerprint });
-
-    expect(describeTarget).toHaveBeenCalledWith(
-      JSON.stringify({ targetIdentityFingerprint: Array.from(targetIdentityFingerprint) }),
-    );
-  });
-
-  test("passes identity credentials as byte arrays and hydrates the derived hash", async () => {
-    const identity = Uint8Array.from({ length: 64 }, (_, index) => index);
-    const derived = Array(16).fill(0x42);
-    const previewIdentityImport = jest.fn(async () =>
-      JSON.stringify({ type: "valid", identityHash: derived }),
-    );
-    const createImportedIdentity = jest.fn(async () =>
-      JSON.stringify({ type: "created", identityHash: derived }),
-    );
-    const runtime = createDevelopmentRuntime(
-      fakeNative({ previewIdentityImport, createImportedIdentity }),
-    );
-
-    const preview = await runtime.previewIdentityImport(identity);
-    const created = await runtime.createImportedIdentity(identity);
-
-    expect(previewIdentityImport).toHaveBeenCalledWith(Array.from(identity));
-    expect(createImportedIdentity).toHaveBeenCalledWith(Array.from(identity));
-    expect(preview.type === "valid" ? preview.identityHash : null).toBeInstanceOf(Uint8Array);
-    expect(created.type === "created" ? created.identityHash : null).toBeInstanceOf(Uint8Array);
-  });
-
-  test("serializes every contact input explicitly and hydrates contact identities", async () => {
-    const destination = destinationHash(Uint8Array.from({ length: 16 }, (_, index) => index));
-    const identity = identityHash(Uint8Array.from({ length: 16 }, (_, index) => index + 16));
-    const createManualContact = jest.fn(async () =>
-      JSON.stringify({
-        type: "saved",
-        contact: {
-          destination: Array.from(destination),
-          identity: Array.from(identity),
-          alias: null,
-          pinned: false,
-        },
-      }),
-    );
-    const setContactAlias = jest.fn(async () => JSON.stringify({ type: "notFound" }));
-    const runtime = createDevelopmentRuntime(fakeNative({ createManualContact, setContactAlias }));
-
-    const created = await runtime.createManualContact(destination, identity, null);
-    await runtime.setContactAlias(destination, null);
-
-    expect(createManualContact).toHaveBeenCalledWith(
-      JSON.stringify({
-        destination: Array.from(destination),
-        identity: Array.from(identity),
-        alias: null,
-      }),
-    );
-    expect(setContactAlias).toHaveBeenCalledWith(
-      JSON.stringify({ destination: Array.from(destination), alias: null }),
-    );
-    expect(created.type === "saved" ? created.contact.destination : null).toBeInstanceOf(
-      Uint8Array,
-    );
-    expect(created.type === "saved" ? created.contact.identity : null).toBeInstanceOf(Uint8Array);
-  });
-
-  test("serializes LXMF inputs and hydrates message bytes and exact u64 values", async () => {
-    const peer = destinationHash(Uint8Array.from({ length: 16 }, (_, index) => index));
-    const listLxmfMessages = jest.fn(async () =>
-      JSON.stringify({
-        type: "listed",
-        messages: [
-          {
-            localRecordId: "18446744073709551615",
-            messageId: Array(32).fill(0x44),
-            source: Array.from(peer),
-            destination: Array.from(peer),
-            timestamp: "1700000000000",
-            title: { type: "utf8", value: "Hello" },
-            content: { type: "invalidUtf8", bytes: [0xff] },
-            direction: "inbound",
-            verification: "sourceUnknown",
-            deliveryState: {
-              type: "failed",
-              failedAttempts: "9007199254740992",
-              lastFailure: "deliveryTimedOut",
-            },
-          },
-        ],
-      }),
-    );
-    const sendDirectText = jest.fn(async () =>
-      JSON.stringify({ type: "accepted", localRecordId: "9" }),
-    );
-    const retryLxmfMessage = jest.fn(async () =>
-      JSON.stringify({ type: "accepted", localRecordId: "10" }),
-    );
-    const cancelLxmfMessage = jest.fn(async () =>
-      JSON.stringify({
-        type: "notCancellable",
-        current: {
-          type: "delivered",
-          deliveredAt: "18446744073709551615",
-          rtt: "23",
-        },
-      }),
-    );
-    const runtime = createDevelopmentRuntime(
-      fakeNative({
-        listLxmfMessages,
-        retryLxmfMessage,
-        cancelLxmfMessage,
-        sendDirectText,
-      }),
-    );
-
-    const listed = await runtime.listLxmfMessages({ peer, before: 9n, limit: 25 });
-    const retried = await runtime.retryLxmfMessage(10n);
-    const cancelled = await runtime.cancelLxmfMessage(11n);
-    const sent = await runtime.sendDirectText({
-      destination: peer,
-      title: "Hello",
-      content: "World",
-    });
-
-    expect(listLxmfMessages).toHaveBeenCalledWith(
-      JSON.stringify({ peer: Array.from(peer), before: "9", limit: 25 }),
-    );
-    expect(retryLxmfMessage).toHaveBeenCalledWith(JSON.stringify({ localRecordId: "10" }));
-    expect(cancelLxmfMessage).toHaveBeenCalledWith(JSON.stringify({ localRecordId: "11" }));
-    expect(sendDirectText).toHaveBeenCalledWith(
-      JSON.stringify({
-        destination: Array.from(peer),
-        title: "Hello",
-        content: "World",
-      }),
-    );
-    expect(sent).toEqual({ type: "accepted", localRecordId: 9n });
-    expect(retried).toEqual({ type: "accepted", localRecordId: 10n });
-    expect(cancelled).toEqual({
-      type: "notCancellable",
-      current: {
-        type: "delivered",
-        deliveredAt: 18_446_744_073_709_551_615n,
-        rtt: 23n,
-      },
-    });
-    expect(listed.type).toBe("listed");
-    if (listed.type !== "listed") {
-      throw new Error("LXMF fixture was not listed");
-    }
-    expect(listed.messages[0]?.localRecordId).toBe(18_446_744_073_709_551_615n);
-    expect(listed.messages[0]?.messageId).toEqual(Uint8Array.from({ length: 32 }, () => 0x44));
-    expect(listed.messages[0]?.source).toEqual(peer);
-    expect(listed.messages[0]?.content).toEqual({
-      type: "invalidUtf8",
-      bytes: Uint8Array.of(0xff),
-    });
-    expect(listed.messages[0]?.deliveryState).toEqual({
-      type: "failed",
-      failedAttempts: 9_007_199_254_740_992n,
-      lastFailure: "deliveryTimedOut",
-    });
-  });
+    },
+    persistence: { persistent: true, restored: true, lastFlushCause: "Startup" },
+  };
+  const source = { ...snapshot(), localHost: Bindings.LocalHostState.Running.new({ host }) };
+  const result = codecs.FfiConverterTypeDevelopmentNodeSnapshot.lift(
+    Uint8Array.from(encode(codecs.FfiConverterTypeDevelopmentNodeSnapshot, source)),
+  );
+  expect(result).toEqual(source);
+  if (result.localHost.tag !== "Running") throw new Error("missing canonical host");
+  expect(result.localHost.inner.host.runtime.uptimeMillis).toBe(14);
+  expect(result.localHost.inner.host.runtime.rxBytes).toBe(maximum);
+  expect(result.localHost.inner.host.interfaces[0]?.interfaceId).toBeInstanceOf(Uint8Array);
 });

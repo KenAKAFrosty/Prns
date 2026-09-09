@@ -1,4 +1,5 @@
 // route-kind: bootstrap
+import * as Bindings from "@prns-internal/expo";
 import { useRouter } from "expo-router";
 import { useEffect } from "react";
 import { ActivityIndicator, StyleSheet, View } from "react-native";
@@ -27,15 +28,15 @@ export default function BootstrapRoute() {
         if (!active) {
           return;
         }
-        switch (identity.type) {
-          case "present":
+        switch (identity.tag) {
+          case Bindings.PrimaryIdentityState_Tags.Present:
             router.replace("/nodes");
             break;
-          case "missing":
+          case Bindings.PrimaryIdentityState_Tags.Missing:
             router.replace("/onboarding/welcome");
             break;
-          case "unavailable":
-          case "developmentResetRequired":
+          case Bindings.PrimaryIdentityState_Tags.Unavailable:
+          case Bindings.PrimaryIdentityState_Tags.DevelopmentResetRequired:
             router.replace("/recovery");
             break;
         }

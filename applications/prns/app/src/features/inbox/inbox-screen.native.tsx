@@ -1,3 +1,5 @@
+import { StoragePreparationFailure } from "@/native/storage-preparation-failure";
+import * as Bindings from "@prns-internal/expo";
 import type {
   AnnounceLxmfOutcome,
   CancelLxmfMessageOutcome,
@@ -14,7 +16,6 @@ import type {
 } from "@prns-internal/expo";
 import type { Href } from "expo-router";
 import { useRouter } from "expo-router";
-import type { DestinationHash } from "personal-rns/contract";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { StyleSheet, View } from "react-native";
 
@@ -53,20 +54,24 @@ type LxmfData = {
   readonly messages: readonly LxmfMessage[];
   readonly contacts: readonly Contact[];
   readonly pending: boolean;
-  readonly failure: string | null;
+  readonly failure: string | Bindings.NativeStoragePreparationError | null;
   readonly refresh: () => Promise<void>;
 };
 
-function useLxmfData(peer: DestinationHash | null): LxmfData {
+function useLxmfData(peer: Uint8Array | null): LxmfData {
   const development = useDevelopmentRuntime();
   const contactRuntime = useContactRuntime();
   const [peers, setPeers] = useState<readonly LxmfPeerSummary[]>([]);
   const [messages, setMessages] = useState<readonly LxmfMessage[]>([]);
   const [contacts, setContacts] = useState<readonly Contact[]>([]);
   const [pending, setPending] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
+  const [failure, setFailure] = useState<string | Bindings.NativeStoragePreparationError | null>(
+    null,
+  );
   const peerKey = peer === null ? null : formatContactHash(peer);
-  const nodeRunning = development.phase === "ready" && development.snapshot?.runtime === "running";
+  const nodeRunning =
+    development.phase === "ready" &&
+    development.snapshot?.runtime === Bindings.DevelopmentNodeRuntime.Running;
 
   const refresh = useCallback(async () => {
     if (development.availability.type !== "available" || development.phase === "starting") {
@@ -81,7 +86,11 @@ function useLxmfData(peer: DestinationHash | null): LxmfData {
     setFailure(null);
     const [peerResult, messageResult] = await Promise.all([
       nodeRunning ? development.listLxmfPeers() : Promise.resolve(null),
-      development.listLxmfMessages({ peer: selectedPeer, before: null, limit: pageLimit }),
+      development.listLxmfMessages({
+        peer: selectedPeer ?? undefined,
+        before: undefined,
+        limit: pageLimit,
+      }),
     ]);
     if (peerResult === null) {
       setPeers([]);
@@ -92,8 +101,12 @@ function useLxmfData(peer: DestinationHash | null): LxmfData {
     if (contactRuntime.runtime !== null) {
       try {
         applyContactResult(await contactRuntime.runtime.listContacts(), setContacts);
-      } catch {
-        setFailure("Contacts could not be loaded.");
+      } catch (failure) {
+        setFailure(
+          failure instanceof Bindings.NativeStoragePreparationError
+            ? failure
+            : "Contacts could not be loaded.",
+        );
       }
     }
     setPending(false);
@@ -122,7 +135,9 @@ export function InboxScreen() {
   const data = useLxmfData(null);
   const [command, setCommand] = useState<string | null>(null);
   const [announcing, setAnnouncing] = useState(false);
-  const nodeRunning = development.phase === "ready" && development.snapshot?.runtime === "running";
+  const nodeRunning =
+    development.phase === "ready" &&
+    development.snapshot?.runtime === Bindings.DevelopmentNodeRuntime.Running;
 
   const announce = async () => {
     setAnnouncing(true);
@@ -247,14 +262,16 @@ export function InboxScreen() {
   );
 }
 
-export function ConversationScreen({ destination }: { readonly destination: DestinationHash }) {
+export function ConversationScreen({ destination }: { readonly destination: Uint8Array }) {
   const development = useDevelopmentRuntime();
   const data = useLxmfData(destination);
   const [mutationStatus, setMutationStatus] = useState<string | null>(null);
   const [activeMutationId, setActiveMutationId] = useState<bigint | null>(null);
   const encoded = formatContactHash(destination);
   const peer = data.peers.find((candidate) => formatContactHash(candidate.destination) === encoded);
-  const nodeRunning = development.phase === "ready" && development.snapshot?.runtime === "running";
+  const nodeRunning =
+    development.phase === "ready" &&
+    development.snapshot?.runtime === Bindings.DevelopmentNodeRuntime.Running;
 
   const mutate = async (kind: "retry" | "cancel", localRecordId: bigint): Promise<void> => {
     setActiveMutationId(localRecordId);
@@ -298,7 +315,7 @@ export function ConversationScreen({ destination }: { readonly destination: Dest
           </BodyText>
         </Card>
       )}
-      {peer?.requiredStampCost === null || peer?.requiredStampCost === undefined ? null : (
+      {peer?.requiredStampCost === undefined ? null : (
         <Card>
           <Badge tone="warning">Sending unavailable</Badge>
           <BodyText>
@@ -329,12 +346,13 @@ export function ConversationScreen({ destination }: { readonly destination: Dest
             message={message}
             pending={activeMutationId === message.localRecordId}
             onRetry={
-              message.deliveryState.type === "failed"
+              message.deliveryState.tag === Bindings.LxmfDeliveryState_Tags.Failed
                 ? () => mutate("retry", message.localRecordId)
                 : undefined
             }
             onCancel={
-              message.deliveryState.type === "queued" || message.deliveryState.type === "sending"
+              message.deliveryState.tag === Bindings.LxmfDeliveryState_Tags.Queued ||
+              message.deliveryState.tag === Bindings.LxmfDeliveryState_Tags.Sending
                 ? () => mutate("cancel", message.localRecordId)
                 : undefined
             }
@@ -355,7 +373,9 @@ export function ComposeScreen({
   const router = useRouter();
   const [destinationText, setDestinationText] = useState(initialDestination ?? "");
   const destination = parseDestinationHash(destinationText);
-  const nodeRunning = development.phase === "ready" && development.snapshot?.runtime === "running";
+  const nodeRunning =
+    development.phase === "ready" &&
+    development.snapshot?.runtime === Bindings.DevelopmentNodeRuntime.Running;
 
   if (development.availability.type !== "available") {
     return (
@@ -407,7 +427,10 @@ export function ComposeScreen({
           <Composer
             destination={destination}
             onSettled={async (result) => {
-              if (result.type !== "outcome" || result.outcome.type !== "accepted") {
+              if (
+                result.type !== "outcome" ||
+                result.outcome.tag !== Bindings.SendDirectTextOutcome_Tags.Accepted
+              ) {
                 return;
               }
               const href: Href = {
@@ -436,7 +459,7 @@ function Composer({
   destination,
   onSettled,
 }: {
-  readonly destination: DestinationHash;
+  readonly destination: Uint8Array;
   readonly onSettled: (result: RuntimeCommandResult<SendDirectTextOutcome>) => Promise<void>;
 }) {
   const development = useDevelopmentRuntime();
@@ -480,7 +503,7 @@ function Composer({
       setSendFailure("Try again.");
     } else {
       setSendOutcome(result.outcome);
-      if (result.outcome.type === "accepted") {
+      if (result.outcome.tag === Bindings.SendDirectTextOutcome_Tags.Accepted) {
         setTitle("");
         setContent("");
       }
@@ -509,7 +532,10 @@ function Composer({
       <Measurement outcome={measurement} failure={measureFailure} />
       <Button
         disabled={
-          sending || content.length === 0 || measurement === null || measurement.type !== "measured"
+          sending ||
+          content.length === 0 ||
+          measurement === null ||
+          measurement.tag !== Bindings.MeasureLxmfTextOutcome_Tags.Measured
         }
         onPress={() => void send()}
       >
@@ -534,12 +560,12 @@ function MessageCard({
 }) {
   const title = textPresentation(message.title);
   const content = textPresentation(message.content);
-  const unverified = message.verification !== "verified";
+  const unverified = message.verification !== Bindings.LxmfVerification.Verified;
 
   return (
     <Card>
       <Badge tone={unverified || !title.validUtf8 || !content.validUtf8 ? "warning" : "neutral"}>
-        {message.direction === "inbound" ? "Received" : "Sent"}
+        {message.direction === Bindings.LxmfDirection.Inbound ? "Received" : "Sent"}
       </Badge>
       <Subheading>{title.text.length === 0 ? "Untitled" : title.text}</Subheading>
       <BodyText>{content.text}</BodyText>
@@ -574,24 +600,24 @@ function Measurement({
   if (outcome === null) {
     return <BodyText muted>Checking message size…</BodyText>;
   }
-  switch (outcome.type) {
-    case "measured":
+  switch (outcome.tag) {
+    case Bindings.MeasureLxmfTextOutcome_Tags.Measured:
       return (
         <BodyText muted>
-          {outcome.wireBytes} bytes used · {outcome.remainingBytes} bytes available
+          {outcome.inner.wireBytes} bytes used · {outcome.inner.remainingBytes} bytes available
         </BodyText>
       );
-    case "needsResource":
+    case Bindings.MeasureLxmfTextOutcome_Tags.NeedsResource:
       return (
         <BodyText>
-          {outcome.wireBytes} bytes used. This message is too large for direct delivery.
+          {outcome.inner.wireBytes} bytes used. This message is too large for direct delivery.
         </BodyText>
       );
-    case "invalidMessage":
+    case Bindings.MeasureLxmfTextOutcome_Tags.InvalidMessage:
       return <BodyText>This message cannot be sent.</BodyText>;
-    case "localNodeStopped":
+    case Bindings.MeasureLxmfTextOutcome_Tags.LocalNodeStopped:
       return <BodyText>Start this device&apos;s node before sending.</BodyText>;
-    case "busy":
+    case Bindings.MeasureLxmfTextOutcome_Tags.Busy:
       return <BodyText>Another messaging action is in progress.</BodyText>;
   }
 }
@@ -600,22 +626,22 @@ function SendResult({ outcome }: { readonly outcome: SendDirectTextOutcome | nul
   if (outcome === null) {
     return null;
   }
-  switch (outcome.type) {
-    case "accepted":
+  switch (outcome.tag) {
+    case Bindings.SendDirectTextOutcome_Tags.Accepted:
       return <BodyText>Message queued.</BodyText>;
-    case "needsResource":
+    case Bindings.SendDirectTextOutcome_Tags.NeedsResource:
       return <BodyText>This message is too large for direct delivery.</BodyText>;
-    case "unsupportedRemoteStampRequirement":
+    case Bindings.SendDirectTextOutcome_Tags.UnsupportedRemoteStampRequirement:
       return (
         <BodyText>
           This contact requires a messaging feature that prns does not support yet.
         </BodyText>
       );
-    case "peerIdentityUnavailable":
+    case Bindings.SendDirectTextOutcome_Tags.PeerIdentityUnavailable:
       return <BodyText>This address is not ready to receive messages.</BodyText>;
-    case "developmentUnavailable":
+    case Bindings.SendDirectTextOutcome_Tags.DevelopmentUnavailable:
       return <BodyText>Sending is not available right now.</BodyText>;
-    case "developmentResetRequired":
+    case Bindings.SendDirectTextOutcome_Tags.DevelopmentResetRequired:
       return <BodyText>Reset app data before sending.</BodyText>;
   }
 }
@@ -624,24 +650,27 @@ function mailboxMutationLabel(
   kind: "retry" | "cancel",
   outcome: RetryLxmfMessageOutcome | CancelLxmfMessageOutcome,
 ): string {
-  switch (outcome.type) {
-    case "accepted":
+  switch (outcome.tag) {
+    case Bindings.RetryLxmfMessageOutcome_Tags.Accepted:
       return "Message queued to retry.";
-    case "cancelled":
+    case Bindings.CancelLxmfMessageOutcome_Tags.Cancelled:
       return "Message cancelled.";
-    case "notFound":
+    case Bindings.RetryLxmfMessageOutcome_Tags.NotFound:
+    case Bindings.CancelLxmfMessageOutcome_Tags.NotFound:
       return `The message no longer exists, so it could not be ${kind === "retry" ? "retried" : "cancelled"}.`;
-    case "notFailed":
+    case Bindings.RetryLxmfMessageOutcome_Tags.NotFailed:
       return "Only failed messages can be retried.";
-    case "alreadyDelivered":
+    case Bindings.CancelLxmfMessageOutcome_Tags.AlreadyDelivered:
       return "This message was delivered before it could be cancelled.";
-    case "alreadyCancelled":
+    case Bindings.CancelLxmfMessageOutcome_Tags.AlreadyCancelled:
       return "This message was already cancelled.";
-    case "notCancellable":
+    case Bindings.CancelLxmfMessageOutcome_Tags.NotCancellable:
       return "Only queued or sending messages can be cancelled.";
-    case "developmentUnavailable":
+    case Bindings.RetryLxmfMessageOutcome_Tags.DevelopmentUnavailable:
+    case Bindings.CancelLxmfMessageOutcome_Tags.DevelopmentUnavailable:
       return `Could not ${kind} this message. Try again.`;
-    case "developmentResetRequired":
+    case Bindings.RetryLxmfMessageOutcome_Tags.DevelopmentResetRequired:
+    case Bindings.CancelLxmfMessageOutcome_Tags.DevelopmentResetRequired:
       return "Reset app data before trying again.";
   }
 }
@@ -649,7 +678,7 @@ function mailboxMutationLabel(
 function LxmfHealthCard() {
   const development = useDevelopmentRuntime();
   const health = development.snapshot?.lxmf;
-  if (health?.state === "ready") {
+  if (health?.state === Bindings.LxmfHealthState.Ready) {
     return <Badge>Messaging ready</Badge>;
   }
   const state =
@@ -664,7 +693,7 @@ function LxmfHealthCard() {
     <Card>
       <Subheading>Messaging status</Subheading>
       <KeyValue label="State" value={state} />
-      {health?.state === "degraded" ? (
+      {health?.state === Bindings.LxmfHealthState.Degraded ? (
         <BodyText>Messages may be delayed until the connection recovers.</BodyText>
       ) : null}
     </Card>
@@ -673,11 +702,11 @@ function LxmfHealthCard() {
 
 function messagingStateLabel(state: NonNullable<DevelopmentNodeSnapshot["lxmf"]>["state"]): string {
   switch (state) {
-    case "ready":
+    case Bindings.LxmfHealthState.Ready:
       return "Ready";
-    case "degraded":
+    case Bindings.LxmfHealthState.Degraded:
       return "Limited";
-    case "stopped":
+    case Bindings.LxmfHealthState.Stopped:
       return "Offline";
   }
 }
@@ -685,8 +714,8 @@ function messagingStateLabel(state: NonNullable<DevelopmentNodeSnapshot["lxmf"]>
 function conversationDestinations(
   peers: readonly LxmfPeerSummary[],
   messages: readonly LxmfMessage[],
-): readonly DestinationHash[] {
-  const destinations = new Map<string, DestinationHash>();
+): readonly Uint8Array[] {
+  const destinations = new Map<string, Uint8Array>();
   for (const peer of peers) {
     destinations.set(formatContactHash(peer.destination), peer.destination);
   }
@@ -702,15 +731,15 @@ function conversationDestinations(
 function applyPeerResult(
   result: RuntimeCommandResult<LxmfPeerListOutcome>,
   publish: (peers: readonly LxmfPeerSummary[]) => void,
-  fail: (detail: string) => void,
+  fail: (detail: string | Bindings.NativeStoragePreparationError) => void,
 ): void {
   if (result.type === "operationFailure") {
     fail("Contacts could not be found right now.");
-  } else if (result.outcome.type === "listed") {
-    publish(result.outcome.peers);
+  } else if (result.outcome.tag === Bindings.LxmfPeerListOutcome_Tags.Listed) {
+    publish(result.outcome.inner.peers);
   } else {
     fail(
-      result.outcome.type === "busy"
+      result.outcome.tag === Bindings.LxmfPeerListOutcome_Tags.Busy
         ? "Another messaging action is in progress."
         : "Messaging is offline.",
     );
@@ -720,17 +749,21 @@ function applyPeerResult(
 function applyMessageResult(
   result: RuntimeCommandResult<LxmfMessageListOutcome>,
   publish: (messages: readonly LxmfMessage[]) => void,
-  fail: (detail: string) => void,
+  fail: (detail: string | Bindings.NativeStoragePreparationError) => void,
 ): void {
   if (result.type === "operationFailure") {
-    fail("Messages could not be loaded. Try again.");
-  } else if (result.outcome.type === "listed") {
-    publish(result.outcome.messages);
-  } else if (result.outcome.type === "invalidInput") {
+    fail(
+      result.storagePreparation === undefined
+        ? "Messages could not be loaded. Try again."
+        : new Bindings.NativeStoragePreparationError(result.storagePreparation),
+    );
+  } else if (result.outcome.tag === Bindings.LxmfMessageListOutcome_Tags.Listed) {
+    publish(result.outcome.inner.messages);
+  } else if (result.outcome.tag === Bindings.LxmfMessageListOutcome_Tags.InvalidInput) {
     fail("Messages could not be loaded for this destination.");
-  } else if (result.outcome.type === "developmentUnavailable") {
+  } else if (result.outcome.tag === Bindings.LxmfMessageListOutcome_Tags.DevelopmentUnavailable) {
     fail("Messages are not available right now.");
-  } else if (result.outcome.type === "developmentResetRequired") {
+  } else if (result.outcome.tag === Bindings.LxmfMessageListOutcome_Tags.DevelopmentResetRequired) {
     fail("Reset app data to use messaging again.");
   }
 }
@@ -739,20 +772,20 @@ function applyContactResult(
   outcome: ContactListOutcome,
   publish: (contacts: readonly Contact[]) => void,
 ): void {
-  if (outcome.type === "listed") {
-    publish(outcome.contacts);
+  if (outcome.tag === Bindings.ContactListOutcome_Tags.Listed) {
+    publish(outcome.inner.contacts);
   }
 }
 
 function announceOutcomeLabel(outcome: AnnounceLxmfOutcome): string {
-  switch (outcome.type) {
-    case "announced":
+  switch (outcome) {
+    case Bindings.AnnounceLxmfOutcome.Announced:
       return "Messaging address shared.";
-    case "localNodeStopped":
+    case Bindings.AnnounceLxmfOutcome.LocalNodeStopped:
       return "This device went offline before its address could be shared.";
-    case "busy":
+    case Bindings.AnnounceLxmfOutcome.Busy:
       return "Another messaging action is in progress.";
-    case "failed":
+    case Bindings.AnnounceLxmfOutcome.Failed:
       return "The messaging address could not be shared.";
   }
 }
@@ -766,7 +799,14 @@ function UnavailableCard({ platform }: { readonly platform: string }) {
   );
 }
 
-function FailureCard({ detail }: { readonly detail: string }) {
+function FailureCard({
+  detail,
+}: {
+  readonly detail: string | Bindings.NativeStoragePreparationError;
+}) {
+  if (detail instanceof Bindings.NativeStoragePreparationError) {
+    return <StoragePreparationFailure outcome={detail.outcome} />;
+  }
   return (
     <Card>
       <Badge tone="warning">Messaging unavailable</Badge>

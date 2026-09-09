@@ -1,3 +1,4 @@
+import * as Bindings from "@prns-internal/expo";
 import type {
   DevelopmentNodeSnapshot,
   RemoteControlPairingCommandOutcome,
@@ -49,10 +50,10 @@ export function PairNodeScreen({
   const previousCandidateSelectionKey = useRef(candidateSelectionKey);
 
   useEffect(() => {
-    if (pairing?.type !== "searching") {
+    if (pairing?.tag !== Bindings.RemoteControlPairingState_Tags.Searching) {
       setInvitationCode("");
     }
-  }, [pairing?.type]);
+  }, [pairing?.tag]);
 
   useEffect(() => {
     setCandidateId(selectedCandidateId);
@@ -65,7 +66,7 @@ export function PairNodeScreen({
   }, [candidates]);
 
   useEffect(() => {
-    if (!isTerminalPairingType(pairing?.type)) {
+    if (!isTerminalPairingType(pairing?.tag)) {
       return;
     }
     setCandidateId((current) => {
@@ -77,7 +78,7 @@ export function PairNodeScreen({
       }
       return candidates.length === 1 ? candidates[0]?.candidateId : undefined;
     });
-  }, [candidates, pairing?.type]);
+  }, [candidates, pairing?.tag]);
 
   useEffect(() => {
     if (previousCandidateSelectionKey.current === candidateSelectionKey) {
@@ -113,12 +114,12 @@ export function PairNodeScreen({
 
   const decide = async (
     decision: "approve" | "reject",
-    state: Extract<RemoteControlPairingState, { type: "confirmationRequired" }>,
+    state: Extract<RemoteControlPairingState, { tag: "ConfirmationRequired" }>,
   ) => {
     setPending(decision);
     setCommandFailure(null);
     const result = await (decision === "approve" ? runtime.approvePairing : runtime.rejectPairing)({
-      attemptId: state.attemptId,
+      attemptId: state.inner.attemptId,
     });
     setCommandFailure(pairingCommandFailure(result));
     setPending(null);
@@ -343,12 +344,12 @@ function PairingStateCard({
   readonly commandFailure: string | null;
   readonly invitationCode: string;
   readonly onApprove: (
-    pairing: Extract<RemoteControlPairingState, { type: "confirmationRequired" }>,
+    pairing: Extract<RemoteControlPairingState, { tag: "ConfirmationRequired" }>,
   ) => void;
   readonly onInitiate: (candidate: RemoteControlPairingCandidate) => void;
   readonly onInvitationCode: (value: string) => void;
   readonly onReject: (
-    pairing: Extract<RemoteControlPairingState, { type: "confirmationRequired" }>,
+    pairing: Extract<RemoteControlPairingState, { tag: "ConfirmationRequired" }>,
   ) => void;
   readonly onSelectCandidate: (candidateId: string) => void;
   readonly palette: ReturnType<typeof useAppPalette>;
@@ -372,8 +373,8 @@ function PairingStateCard({
       />
     );
 
-  switch (pairing.type) {
-    case "bluetoothUnavailable":
+  switch (pairing.tag) {
+    case Bindings.RemoteControlPairingState_Tags.BluetoothUnavailable:
       return (
         <Card>
           <Subheading>Bluetooth unavailable</Subheading>
@@ -382,7 +383,7 @@ function PairingStateCard({
           {feedback}
         </Card>
       );
-    case "searching":
+    case Bindings.RemoteControlPairingState_Tags.Searching:
       return (
         <CandidateSelectionCard
           candidates={candidates}
@@ -396,7 +397,7 @@ function PairingStateCard({
           selectedCandidateId={selectedCandidateId}
         />
       );
-    case "invitationSubmitted":
+    case Bindings.RemoteControlPairingState_Tags.InvitationSubmitted:
       return (
         <Card>
           <Subheading>Invitation sent</Subheading>
@@ -405,19 +406,19 @@ function PairingStateCard({
           {feedback}
         </Card>
       );
-    case "confirmationRequired":
+    case Bindings.RemoteControlPairingState_Tags.ConfirmationRequired:
       return (
         <Card>
           <Subheading>Confirmation required</Subheading>
           <Badge tone="warning">Compare both devices</Badge>
-          <KeyValue label="Confirmation code" value={pairing.confirmationCode} />
-          <KeyValue label="Node ID" value={formatBytes(pairing.targetIdentityFingerprint)} />
+          <KeyValue label="Confirmation code" value={pairing.inner.confirmationCode} />
+          <KeyValue label="Node ID" value={formatBytes(pairing.inner.targetIdentityFingerprint)} />
           <KeyValue
             label="Access requested"
             value={
-              pairing.permissions.length === 0
+              pairing.inner.permissions.length === 0
                 ? "None"
-                : pairing.permissions.map(formatRequestKind).join(", ")
+                : pairing.inner.permissions.map(formatRequestKind).join(", ")
             }
           />
           <BodyText>
@@ -439,7 +440,7 @@ function PairingStateCard({
           {feedback}
         </Card>
       );
-    case "awaitingTargetApproval":
+    case Bindings.RemoteControlPairingState_Tags.AwaitingTargetApproval:
       return (
         <Card>
           <Subheading>Waiting for the node</Subheading>
@@ -448,7 +449,7 @@ function PairingStateCard({
           {feedback}
         </Card>
       );
-    case "persisting":
+    case Bindings.RemoteControlPairingState_Tags.Persisting:
       return (
         <Card>
           <Subheading>Finishing pairing</Subheading>
@@ -457,7 +458,7 @@ function PairingStateCard({
           {feedback}
         </Card>
       );
-    case "paired":
+    case Bindings.RemoteControlPairingState_Tags.Paired:
       return (
         <>
           <Card>
@@ -469,7 +470,7 @@ function PairingStateCard({
           {remainingCandidateChooser}
         </>
       );
-    case "rejected":
+    case Bindings.RemoteControlPairingState_Tags.Rejected:
       return (
         <>
           <TerminalPairingCard
@@ -479,7 +480,7 @@ function PairingStateCard({
           {remainingCandidateChooser}
         </>
       );
-    case "expired":
+    case Bindings.RemoteControlPairingState_Tags.Expired:
       return (
         <>
           <TerminalPairingCard
@@ -489,18 +490,18 @@ function PairingStateCard({
           {remainingCandidateChooser}
         </>
       );
-    case "cancelled":
+    case Bindings.RemoteControlPairingState_Tags.Cancelled:
       return (
         <>
           <TerminalPairingCard detail="Pairing was cancelled." label="Cancelled" />
           {remainingCandidateChooser}
         </>
       );
-    case "failed":
+    case Bindings.RemoteControlPairingState_Tags.Failed:
       return (
         <>
           <TerminalPairingCard
-            detail={pairingFailureMessage(pairing.stage)}
+            detail={pairingFailureMessage(pairing.inner.stage)}
             label="Pairing failed"
           />
           {remainingCandidateChooser}
@@ -622,13 +623,13 @@ function shortCandidateId(candidateId: string): string {
   return candidateId.slice(0, 8).toUpperCase();
 }
 
-function isTerminalPairingType(type: RemoteControlPairingState["type"] | undefined): boolean {
+function isTerminalPairingType(type: RemoteControlPairingState["tag"] | undefined): boolean {
   return (
-    type === "paired" ||
-    type === "rejected" ||
-    type === "expired" ||
-    type === "cancelled" ||
-    type === "failed"
+    type === Bindings.RemoteControlPairingState_Tags.Paired ||
+    type === Bindings.RemoteControlPairingState_Tags.Rejected ||
+    type === Bindings.RemoteControlPairingState_Tags.Expired ||
+    type === Bindings.RemoteControlPairingState_Tags.Cancelled ||
+    type === Bindings.RemoteControlPairingState_Tags.Failed
   );
 }
 
@@ -666,43 +667,43 @@ function pairingCommandFailure(
   if (result.type === "operationFailure") {
     return "Pairing could not continue. Try again.";
   }
-  switch (result.outcome.type) {
-    case "accepted":
+  switch (result.outcome.tag) {
+    case Bindings.RemoteControlPairingCommandOutcome_Tags.Accepted:
       return null;
-    case "busy":
+    case Bindings.RemoteControlPairingCommandOutcome_Tags.Busy:
       return "Another node operation is in progress. Try again shortly.";
-    case "failed":
-      return pairingFailureMessage(result.outcome.stage);
+    case Bindings.RemoteControlPairingCommandOutcome_Tags.Failed:
+      return pairingFailureMessage(result.outcome.inner.stage);
   }
 }
 
 type PairingFailureStage = Extract<
   RemoteControlPairingCommandOutcome,
-  { readonly type: "failed" }
->["stage"];
+  { readonly tag: "Failed" }
+>["inner"]["stage"];
 
 function pairingFailureMessage(stage: PairingFailureStage): string {
   switch (stage) {
-    case "input":
+    case Bindings.RemoteControlPairingFailureStage.Input:
       return "Check the invitation and try again.";
-    case "candidate":
-    case "expired":
+    case Bindings.RemoteControlPairingFailureStage.Candidate:
+    case Bindings.RemoteControlPairingFailureStage.Expired:
       return "The node is no longer available. Reopen pairing on the node and try again.";
-    case "route":
+    case Bindings.RemoteControlPairingFailureStage.Route:
       return "No connection path to the node is available yet. Keep its pairing screen open and try again.";
-    case "link":
+    case Bindings.RemoteControlPairingFailureStage.Link:
       return "A secure connection to the node could not be opened. Make sure it is on and nearby, then try again.";
-    case "identification":
+    case Bindings.RemoteControlPairingFailureStage.Identification:
       return "The node could not verify this device. Reopen pairing on the node and try again.";
-    case "timeout":
+    case Bindings.RemoteControlPairingFailureStage.Timeout:
       return "The node did not respond in time. Reopen pairing and try again.";
-    case "request":
+    case Bindings.RemoteControlPairingFailureStage.Request:
       return "The node could not complete the pairing request. Keep both devices nearby and try again.";
-    case "confirmation":
+    case Bindings.RemoteControlPairingFailureStage.Confirmation:
       return "Confirmation could not be completed. Check both devices and try again.";
-    case "persistence":
+    case Bindings.RemoteControlPairingFailureStage.Persistence:
       return "Pairing could not be saved. Try again.";
-    case "node":
+    case Bindings.RemoteControlPairingFailureStage.Node:
       return "This device went offline during pairing. Wait a moment and try again.";
   }
 }

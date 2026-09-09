@@ -1,3 +1,4 @@
+import * as Bindings from "@prns-internal/expo";
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
@@ -32,7 +33,7 @@ export function SettingsScreen() {
     setResetFailure(null);
     try {
       const outcome = await runtimeProvider.runtime.resetDevelopmentData();
-      if (outcome.type === "failed") {
+      if (outcome.tag === Bindings.DevelopmentNodeStopOutcome_Tags.Failed) {
         setResetFailure("App data could not be reset. Try again.");
         return;
       }

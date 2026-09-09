@@ -1,36 +1,17 @@
 import { requireNativeModule } from "expo-modules-core";
 import type { EventSubscription } from "expo-modules-core";
 
+// Only platform-owned storage, identity and lifecycle admission cross Expo.
+// Payloads use the generated UniFFI codecs over owned byte arrays.
 export type PrnsAppNativeModule = {
-  readonly contractFingerprint: () => Promise<string>;
-  readonly hostContractFingerprint: () => Promise<string>;
-  readonly inspectIdentity: () => Promise<string>;
-  readonly previewIdentityImport: (identity: readonly number[]) => Promise<string>;
-  readonly createGeneratedIdentity: () => Promise<string>;
-  readonly createImportedIdentity: (identity: readonly number[]) => Promise<string>;
-  readonly start: (inputJson: string) => Promise<string>;
-  readonly snapshot: () => Promise<string>;
-  readonly initiatePairing: (inputJson: string) => Promise<string>;
-  readonly approvePairing: (inputJson: string) => Promise<string>;
-  readonly rejectPairing: (inputJson: string) => Promise<string>;
-  readonly describeTarget: (inputJson: string) => Promise<string>;
-  readonly announceTarget: (inputJson: string) => Promise<string>;
-  readonly saveObservedDestination: (inputJson: string) => Promise<string>;
-  readonly createManualContact: (inputJson: string) => Promise<string>;
-  readonly setContactAlias: (inputJson: string) => Promise<string>;
-  readonly setContactPinned: (inputJson: string) => Promise<string>;
-  readonly deleteContact: (inputJson: string) => Promise<string>;
-  readonly getContact: (inputJson: string) => Promise<string>;
-  readonly listContacts: () => Promise<string>;
-  readonly listLxmfPeers: () => Promise<string>;
-  readonly listLxmfMessages: (inputJson: string) => Promise<string>;
-  readonly retryLxmfMessage: (inputJson: string) => Promise<string>;
-  readonly cancelLxmfMessage: (inputJson: string) => Promise<string>;
-  readonly announceLxmf: () => Promise<string>;
-  readonly measureLxmfText: (inputJson: string) => Promise<string>;
-  readonly sendDirectText: (inputJson: string) => Promise<string>;
-  readonly stop: () => Promise<string>;
-  readonly reset: () => Promise<string>;
+  readonly prepareStorage: () => Promise<number[]>;
+  readonly inspectIdentity: () => Promise<number[]>;
+  readonly createGeneratedIdentity: () => Promise<number[]>;
+  readonly createImportedIdentity: (identity: number[]) => Promise<number[]>;
+  readonly start: (input: number[]) => Promise<number[]>;
+  readonly stop: () => Promise<number[]>;
+  readonly reset: () => Promise<number[]>;
+  readonly prepareOutbound: () => Promise<void>;
 };
 
 export type AppleAccessorySetupNativeModule = {
@@ -53,10 +34,32 @@ export type AndroidRuntimeNativeModule = {
   ) => EventSubscription;
 };
 
-// These wrappers describe separate platform capabilities. Only the selected
-// platform provider calls its capability; the shared runtime requires neither.
-export const nativeAccessorySetup = requireNativeModule<AppleAccessorySetupNativeModule>("PrnsApp");
-export const nativeAndroidRuntime = requireNativeModule<AndroidRuntimeNativeModule>("PrnsApp");
-const nativePrnsApp = requireNativeModule<PrnsAppNativeModule>("PrnsApp");
+// Resolving the SDK's values on web or in Expo Go must not load the player.
+export function getNativePrnsApp(): PrnsAppNativeModule {
+  return requireNativeModule<PrnsAppNativeModule>("PrnsApp");
+}
 
-export default nativePrnsApp;
+export const nativeAccessorySetup: AppleAccessorySetupNativeModule = {
+  accessorySetupStatus: () =>
+    requireNativeModule<AppleAccessorySetupNativeModule>("PrnsApp").accessorySetupStatus(),
+  showAccessorySetupPicker: () =>
+    requireNativeModule<AppleAccessorySetupNativeModule>("PrnsApp").showAccessorySetupPicker(),
+  addListener: (event, listener) =>
+    requireNativeModule<AppleAccessorySetupNativeModule>("PrnsApp").addListener(event, listener),
+};
+export const nativeAndroidRuntime: AndroidRuntimeNativeModule = {
+  androidRuntimeStatus: () =>
+    requireNativeModule<AndroidRuntimeNativeModule>("PrnsApp").androidRuntimeStatus(),
+  requestBluetoothPermissions: () =>
+    requireNativeModule<AndroidRuntimeNativeModule>("PrnsApp").requestBluetoothPermissions(),
+  requestBackgroundBluetoothPermission: () =>
+    requireNativeModule<AndroidRuntimeNativeModule>(
+      "PrnsApp",
+    ).requestBackgroundBluetoothPermission(),
+  requestConnectionNotificationPermission: () =>
+    requireNativeModule<AndroidRuntimeNativeModule>(
+      "PrnsApp",
+    ).requestConnectionNotificationPermission(),
+  addListener: (event, listener) =>
+    requireNativeModule<AndroidRuntimeNativeModule>("PrnsApp").addListener(event, listener),
+};

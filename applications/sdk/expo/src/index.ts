@@ -1,7 +1,7 @@
 import { createDevelopmentRuntime } from "./facade";
 import { createAccessorySetupRuntime } from "./accessory-setup";
 import { createAndroidRuntime } from "./android-runtime";
-import nativePrnsApp, { nativeAccessorySetup, nativeAndroidRuntime } from "./native";
+import { getNativePrnsApp, nativeAccessorySetup, nativeAndroidRuntime } from "./native";
 
 export {
   createAndroidRuntime,
@@ -10,7 +10,6 @@ export {
   type AndroidRuntimeStatus,
 } from "./android-runtime";
 
-export { HOST_CONTRACT_FINGERPRINT, NATIVE_CONTRACT_FINGERPRINT } from "./contract.generated";
 export {
   createAccessorySetupRuntime,
   parseAccessorySetupStatus,
@@ -19,49 +18,11 @@ export {
   type AccessorySetupStatus,
   type AccessorySetupSubscription,
 } from "./accessory-setup";
-export type * as WireContract from "./contract.generated";
 export {
-  NativeBridgeError,
   NativeContractMismatchError,
-  type AnnounceLxmfOutcome,
-  type AnnounceRemoteControlTargetInput,
-  type RemoteControlAnnounceOutcome,
-  type RemoteControlAnnounceOperation,
-  type RemoteControlAnnounceStatus,
-  type CancelLxmfMessageOutcome,
-  type Contact,
-  type ContactListOutcome,
-  type ContactLookupOutcome,
-  type ContactMutationOutcome,
-  type DescribeRemoteControlTargetInput,
-  type DevelopmentNodeSnapshot,
-  type DevelopmentNodeStartInput,
-  type DevelopmentNodeStartOutcome,
-  type DevelopmentNodeStopOutcome,
+  NativeStoragePreparationError,
+  createDevelopmentRuntime,
   type DevelopmentRuntime,
-  type IdentityCreationOutcome,
-  type IdentityImportPreviewOutcome,
-  type InitiateRemoteControlPairingInput,
-  type ListLxmfMessagesInput,
-  type LxmfHealth,
-  type LxmfDeliveryFailure,
-  type LxmfDeliveryState,
-  type LxmfDirection,
-  type LxmfMessage,
-  type LxmfMessageListOutcome,
-  type LxmfPeerListOutcome,
-  type LxmfPeerSummary,
-  type LxmfText,
-  type LxmfVerification,
-  type MeasureLxmfTextInput,
-  type MeasureLxmfTextOutcome,
-  type PrimaryIdentityState,
-  type RemoteControlDescribeOutcome,
-  type RemoteControlPairingCommandOutcome,
-  type RemoteControlPairingDecisionInput,
-  type RetryLxmfMessageOutcome,
-  type SendDirectTextInput,
-  type SendDirectTextOutcome,
 } from "./facade";
 export {
   DevelopmentRuntimeConfigurationError,
@@ -75,9 +36,9 @@ export {
   type DevelopmentRuntimeSession,
   type EffectDevelopmentRuntime,
 } from "./effects";
-export { NativePayloadError } from "./hydrate";
+export { NativePayloadError } from "./native-payload";
 
-export const developmentRuntime = createDevelopmentRuntime(nativePrnsApp);
+export const developmentRuntime = createDevelopmentRuntime(getNativePrnsApp);
 export const accessorySetupRuntime = createAccessorySetupRuntime(nativeAccessorySetup);
 export const androidRuntime = createAndroidRuntime(nativeAndroidRuntime);
 
@@ -109,3 +70,99 @@ export const {
   sendDirectText,
   stopDevelopmentNode,
 } = developmentRuntime;
+
+export {
+  AnnounceRemoteControlTargetInput,
+  BindingContract,
+  NativeStoragePreparationOutcome,
+  NativeStoragePreparationOutcome_Tags,
+  CancelLxmfMessageInput,
+  Contact,
+  ContactDestinationInput,
+  CreateManualContactInput,
+  DescribeRemoteControlTargetInput,
+  DevelopmentNodeFailureStage,
+  DevelopmentNodeFailure,
+  DevelopmentNodeOperationKind,
+  DevelopmentNodeOperation,
+  DevelopmentNodeRuntime,
+  PrimaryIdentityState_Tags,
+  PrimaryIdentityState,
+  LocalHostState_Tags,
+  LocalHostState,
+  LxmfHealthState,
+  LxmfHealth,
+  RemoteControlRequestKind,
+  RemoteControlPairingFailureStage,
+  RemoteControlPairingState_Tags,
+  RemoteControlPairingState,
+  RemoteControlPairingCandidate,
+  RemoteControlTargetSnapshot,
+  RemoteControlAnnounceFailureStage,
+  RemoteControlAnnounceUnknownReason,
+  RemoteControlAnnounceStatus_Tags,
+  RemoteControlAnnounceStatus,
+  RemoteControlAnnounceOperation,
+  DevelopmentNodeSnapshot,
+  DevelopmentNodeStartInput,
+  InitiateRemoteControlPairingInput,
+  ListLxmfMessagesInput,
+  LxmfText_Tags,
+  LxmfText,
+  LxmfDirection,
+  LxmfVerification,
+  LxmfDeliveryFailure,
+  LxmfDeliveryState_Tags,
+  LxmfDeliveryState,
+  LxmfMessage,
+  LxmfPeerSummary,
+  MeasureLxmfTextInput,
+  RemoteControlPairingDecisionInput,
+  RetryLxmfMessageInput,
+  SendDirectTextInput,
+  SetContactAliasInput,
+  SetContactPinnedInput,
+  AnnounceLxmfOutcome,
+  AppleBluetoothRestorationPreparationFailureStage,
+  AppleBluetoothRestorationPreparationOutcome_Tags,
+  AppleBluetoothRestorationPreparationOutcome,
+  CancelLxmfMessageOutcome_Tags,
+  CancelLxmfMessageOutcome,
+  ContactListOutcome_Tags,
+  ContactListOutcome,
+  ContactLookupOutcome_Tags,
+  ContactLookupOutcome,
+  ContactMutationOutcome_Tags,
+  ContactMutationOutcome,
+  DevelopmentNodeStartOutcome_Tags,
+  DevelopmentNodeStartOutcome,
+  DevelopmentNodeStopStage,
+  DevelopmentNodeStopOutcome_Tags,
+  DevelopmentNodeStopOutcome,
+  IdentityCreationOutcome_Tags,
+  IdentityCreationOutcome,
+  IdentityImportPreviewOutcome_Tags,
+  IdentityImportPreviewOutcome,
+  LxmfMessageListOutcome_Tags,
+  LxmfMessageListOutcome,
+  LxmfPeerListOutcome_Tags,
+  LxmfPeerListOutcome,
+  MeasureLxmfTextOutcome_Tags,
+  MeasureLxmfTextOutcome,
+  RemoteControlAnnounceOutcome_Tags,
+  RemoteControlAnnounceOutcome,
+  RemoteControlDescribeFailureStage,
+  RemoteControlDescribeOutcome_Tags,
+  RemoteControlDescribeOutcome,
+  RemoteControlPairingCommandOutcome_Tags,
+  RemoteControlPairingCommandOutcome,
+  RetryLxmfMessageOutcome_Tags,
+  RetryLxmfMessageOutcome,
+  SendDirectTextOutcome_Tags,
+  SendDirectTextOutcome,
+} from "@prns-internal/native-bindings";
+
+export {
+  HOST_CONTRACT_FINGERPRINT,
+  NATIVE_CONTRACT_FINGERPRINT,
+} from "@prns-internal/native-bindings";

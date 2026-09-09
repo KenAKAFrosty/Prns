@@ -1,3 +1,4 @@
+import * as Bindings from "@prns-internal/expo";
 import type {
   RemoteControlDescribeOutcome,
   RemoteControlAnnounceOutcome,
@@ -85,27 +86,27 @@ export function ManagedNodeScreen() {
     );
   }
 
-  if (runtime.snapshot?.runtime !== "running") {
+  if (runtime.snapshot?.runtime !== Bindings.DevelopmentNodeRuntime.Running) {
     const nodeState = runtime.snapshot?.runtime;
     const android = runtime.availability.platform === "android";
     const guidance = {
-      stopped: {
+      [Bindings.DevelopmentNodeRuntime.Stopped]: {
         title: "This device's node is stopped",
         detail: android
           ? "Return to Nodes and start this device's node to manage your paired nodes."
           : "Return to Nodes to check this device's status.",
       },
-      stopping: {
+      [Bindings.DevelopmentNodeRuntime.Stopping]: {
         title: "This device's node is stopping",
         detail: android
           ? "Wait for it to stop, then return to Nodes to start it again."
           : "Wait for it to stop, then return to Nodes to check this device's status.",
       },
-      starting: {
+      [Bindings.DevelopmentNodeRuntime.Starting]: {
         title: "This device's node is starting",
         detail: "Your paired node's details will appear when this device is ready.",
       },
-      failed: {
+      [Bindings.DevelopmentNodeRuntime.Failed]: {
         title: "This device's node is unavailable",
         detail: android
           ? "Return to Nodes to check this device and try starting it again."
@@ -133,27 +134,30 @@ export function ManagedNodeScreen() {
     return <NotFoundScreen backPath="/nodes" />;
   }
 
-  const nodeRunning = runtime.snapshot?.runtime === "running";
-  const allowsDescribe = target.permittedRequests.includes("describe");
+  const nodeRunning = runtime.snapshot?.runtime === Bindings.DevelopmentNodeRuntime.Running;
+  const allowsDescribe = target.permittedRequests.includes(
+    Bindings.RemoteControlRequestKind.Describe,
+  );
   const canDescribe = nodeRunning && allowsDescribe;
-  const describing = runtime.snapshot?.activeOperation?.kind === "describe";
+  const describing =
+    runtime.snapshot?.activeOperation?.kind === Bindings.DevelopmentNodeOperationKind.Describe;
   const announcement = runtime.snapshot?.lastAnnouncement;
   const targetAnnouncement =
-    announcement !== null &&
     announcement !== undefined &&
     formatBytes(announcement.targetIdentityFingerprint) === nodeId.toLowerCase()
       ? announcement
       : null;
-  const announcementPending = targetAnnouncement?.status.type === "pending";
+  const announcementPending =
+    targetAnnouncement?.status?.tag === Bindings.RemoteControlAnnounceStatus_Tags.Pending;
   const canAnnounce =
     nodeRunning &&
     result?.type === "outcome" &&
-    result.outcome.type === "described" &&
-    formatBytes(result.outcome.target.targetIdentityFingerprint) === nodeId.toLowerCase() &&
-    result.outcome.snapshot.generationId === runtime.snapshot?.generationId &&
-    target.permittedRequests.includes("announceSelf") &&
-    result.outcome.availableRequests.includes("announceSelf");
-  const operationBusy = runtime.snapshot?.activeOperation !== null;
+    result.outcome.tag === Bindings.RemoteControlDescribeOutcome_Tags.Described &&
+    formatBytes(result.outcome.inner.target.targetIdentityFingerprint) === nodeId.toLowerCase() &&
+    result.outcome.inner.snapshot.generationId === runtime.snapshot?.generationId &&
+    target.permittedRequests.includes(Bindings.RemoteControlRequestKind.AnnounceSelf) &&
+    result.outcome.inner.availableRequests.includes(Bindings.RemoteControlRequestKind.AnnounceSelf);
+  const operationBusy = runtime.snapshot?.activeOperation !== undefined;
   const admissionUncertain =
     unknownSubmission?.targetId === nodeId.toLowerCase() &&
     (targetAnnouncement === null ||
@@ -249,10 +253,10 @@ export function ManagedNodeScreen() {
             {admissionUncertain ? "Previous address sharing" : "Address sharing"}
           </Subheading>
           <BodyText>{announcementStatusMessage(targetAnnouncement.status)}</BodyText>
-          {targetAnnouncement.status.type === "announced" ? (
+          {targetAnnouncement.status.tag === Bindings.RemoteControlAnnounceStatus_Tags.Announced ? (
             <KeyValue
               label="Response time"
-              value={`${targetAnnouncement.status.rttMillis.toString()} ms`}
+              value={`${targetAnnouncement.status.inner.rttMillis.toString()} ms`}
             />
           ) : null}
         </Card>
@@ -262,10 +266,12 @@ export function ManagedNodeScreen() {
           The result could not be confirmed. The node may have shared its address. This request was
           not repeated.
         </BodyText>
-      ) : announceResult?.type === "outcome" && announceResult.outcome.type === "busy" ? (
+      ) : announceResult?.type === "outcome" &&
+        announceResult.outcome.tag === Bindings.RemoteControlAnnounceOutcome_Tags.Busy ? (
         <BodyText>Another operation is in progress. Address sharing has not started.</BodyText>
-      ) : announceResult?.type === "outcome" && announceResult.outcome.type === "failed" ? (
-        <BodyText>{announcementStatusMessage(announceResult.outcome)}</BodyText>
+      ) : announceResult?.type === "outcome" &&
+        announceResult.outcome.tag === Bindings.RemoteControlAnnounceOutcome_Tags.Failed ? (
+        <BodyText>{announcementFailureMessage(announceResult.outcome.inner.stage)}</BodyText>
       ) : null}
       <NavigationLink href="/nodes">Back to Nodes</NavigationLink>
     </Screen>
@@ -273,38 +279,21 @@ export function ManagedNodeScreen() {
 }
 
 export function announcementStatusMessage(status: RemoteControlAnnounceStatus): string {
-  switch (status.type) {
-    case "pending":
+  switch (status.tag) {
+    case Bindings.RemoteControlAnnounceStatus_Tags.Pending:
       return "Waiting for the node to confirm address sharing…";
-    case "announced":
+    case Bindings.RemoteControlAnnounceStatus_Tags.Announced:
       return "The node confirmed that it shared its address.";
-    case "unavailable":
+    case Bindings.RemoteControlAnnounceStatus_Tags.Unavailable:
       return "The node cannot share its address right now.";
-    case "rejected":
+    case Bindings.RemoteControlAnnounceStatus_Tags.Rejected:
       return "The node declined to share its address.";
-    case "writeFailed":
+    case Bindings.RemoteControlAnnounceStatus_Tags.WriteFailed:
       return "The node could not send its address announcement.";
-    case "outcomeUnknown":
+    case Bindings.RemoteControlAnnounceStatus_Tags.OutcomeUnknown:
       return "The result could not be confirmed. The node may have shared its address. This request was not repeated.";
-    case "failed":
-      switch (status.stage) {
-        case "busy":
-          return "Another operation is in progress. Address sharing has not started.";
-        case "input":
-        case "inventory":
-          return "This paired node is no longer available.";
-        case "route":
-        case "link":
-          return "The node could not be reached. Keep it on and nearby.";
-        case "identification":
-          return "The saved pairing could not be used with this node.";
-        case "permission":
-          return "This pairing does not allow the node to share its address.";
-        case "node":
-          return "This device went offline before address sharing could start.";
-        case "request":
-          return "Address sharing could not start.";
-      }
+    case Bindings.RemoteControlAnnounceStatus_Tags.Failed:
+      return announcementFailureMessage(status.inner.stage);
   }
 }
 
@@ -322,8 +311,8 @@ function DescribeResult({
       </Card>
     );
   }
-  switch (result.outcome.type) {
-    case "busy":
+  switch (result.outcome.tag) {
+    case Bindings.RemoteControlDescribeOutcome_Tags.Busy:
       return (
         <Card>
           <Subheading>Connection not started</Subheading>
@@ -331,36 +320,42 @@ function DescribeResult({
           <BodyText>Wait for the other operation to finish, then try again.</BodyText>
         </Card>
       );
-    case "failed":
+    case Bindings.RemoteControlDescribeOutcome_Tags.Failed:
       return (
         <Card>
           <Subheading>Connection failed</Subheading>
           <Badge tone="warning">Could not check node</Badge>
-          <BodyText>{describeFailureMessage(result.outcome.stage)}</BodyText>
+          <BodyText>{describeFailureMessage(result.outcome.inner.stage)}</BodyText>
         </Card>
       );
-    case "described":
+    case Bindings.RemoteControlDescribeOutcome_Tags.Described:
       return (
         <Card>
           <Subheading>Node reached</Subheading>
           <Badge>Connected</Badge>
-          <KeyValue label="Response time" value={`${result.outcome.rttMillis.toString()} ms`} />
+          <KeyValue
+            label="Response time"
+            value={`${result.outcome.inner.rttMillis.toString()} ms`}
+          />
           <KeyValue
             label="Available actions"
             value={
-              result.outcome.availableRequests.length === 0
+              result.outcome.inner.availableRequests.length === 0
                 ? "None"
-                : result.outcome.availableRequests.map(formatRequestKind).join(", ")
+                : result.outcome.inner.availableRequests.map(formatRequestKind).join(", ")
             }
           />
           <KeyValue
             label="Node ID"
-            value={formatBytes(result.outcome.target.targetIdentityFingerprint)}
+            value={formatBytes(result.outcome.inner.target.targetIdentityFingerprint)}
           />
-          <KeyValue label="Destination" value={formatBytes(result.outcome.target.destination)} />
+          <KeyValue
+            label="Destination"
+            value={formatBytes(result.outcome.inner.target.destination)}
+          />
           <KeyValue
             label="Controller"
-            value={formatBytes(result.outcome.target.controllerIdentityFingerprint)}
+            value={formatBytes(result.outcome.inner.target.controllerIdentityFingerprint)}
           />
         </Card>
       );
@@ -369,27 +364,48 @@ function DescribeResult({
 
 type DescribeFailureStage = Extract<
   RemoteControlDescribeOutcome,
-  { readonly type: "failed" }
->["stage"];
+  { readonly tag: "Failed" }
+>["inner"]["stage"];
 
 export function describeFailureMessage(stage: DescribeFailureStage): string {
   switch (stage) {
-    case "input":
-    case "inventory":
+    case Bindings.RemoteControlDescribeFailureStage.Input:
+    case Bindings.RemoteControlDescribeFailureStage.Inventory:
       return "This paired node is no longer available.";
-    case "route":
+    case Bindings.RemoteControlDescribeFailureStage.Route:
       return "This node is not reachable yet. Keep it on and nearby, then try again.";
-    case "link":
+    case Bindings.RemoteControlDescribeFailureStage.Link:
       return "The connection check could not complete. Try again.";
-    case "identification":
+    case Bindings.RemoteControlDescribeFailureStage.Identification:
       return "The saved pairing could not be used with this node. Check that it is still paired, then try again.";
-    case "request":
+    case Bindings.RemoteControlDescribeFailureStage.Request:
       return "The node could not complete the connection check. Try again.";
-    case "timeout":
+    case Bindings.RemoteControlDescribeFailureStage.Timeout:
       return "The node did not answer before the connection check timed out. Make sure it is on and nearby, then try again.";
-    case "permission":
+    case Bindings.RemoteControlDescribeFailureStage.Permission:
       return "This pairing does not allow the app to view node information.";
-    case "node":
+    case Bindings.RemoteControlDescribeFailureStage.Node:
       return "This device went offline before the check finished.";
+  }
+}
+
+function announcementFailureMessage(stage: Bindings.RemoteControlAnnounceFailureStage): string {
+  switch (stage) {
+    case Bindings.RemoteControlAnnounceFailureStage.Busy:
+      return "Another operation is in progress. Address sharing has not started.";
+    case Bindings.RemoteControlAnnounceFailureStage.Input:
+    case Bindings.RemoteControlAnnounceFailureStage.Inventory:
+      return "This paired node is no longer available.";
+    case Bindings.RemoteControlAnnounceFailureStage.Route:
+    case Bindings.RemoteControlAnnounceFailureStage.Link:
+      return "The node could not be reached. Keep it on and nearby.";
+    case Bindings.RemoteControlAnnounceFailureStage.Identification:
+      return "The saved pairing could not be used with this node.";
+    case Bindings.RemoteControlAnnounceFailureStage.Permission:
+      return "This pairing does not allow the node to share its address.";
+    case Bindings.RemoteControlAnnounceFailureStage.Node:
+      return "This device went offline before address sharing could start.";
+    case Bindings.RemoteControlAnnounceFailureStage.Request:
+      return "Address sharing could not start.";
   }
 }

@@ -1,3 +1,4 @@
+import * as Bindings from "@prns-internal/expo";
 import type {
   Contact,
   LxmfDeliveryFailure,
@@ -5,7 +6,6 @@ import type {
   LxmfPeerSummary,
   LxmfText,
 } from "@prns-internal/expo";
-import type { DestinationHash } from "personal-rns/contract";
 
 import { formatContactHash } from "@/features/contacts/format";
 
@@ -15,7 +15,7 @@ export function shortDestination(destination: Uint8Array): string {
 }
 
 export function peerLabel(
-  destination: DestinationHash,
+  destination: Uint8Array,
   peers: readonly LxmfPeerSummary[],
   contacts: readonly Contact[],
 ): string {
@@ -23,28 +23,30 @@ export function peerLabel(
   const alias = contacts.find(
     (contact) => formatContactHash(contact.destination) === encoded,
   )?.alias;
-  if (alias !== null && alias !== undefined && alias.trim().length > 0) {
+  if (alias !== undefined && alias.trim().length > 0) {
     return alias;
   }
   const announced = peers.find(
     (peer) => formatContactHash(peer.destination) === encoded,
   )?.displayName;
-  if (announced !== null && announced !== undefined && announced.trim().length > 0) {
+  if (announced !== undefined && announced.trim().length > 0) {
     return announced;
   }
   return shortDestination(destination);
 }
 
-export function messagePeer(message: LxmfMessage): DestinationHash {
-  return message.direction === "inbound" ? message.source : message.destination;
+export function messagePeer(message: LxmfMessage): Uint8Array {
+  return message.direction === Bindings.LxmfDirection.Inbound
+    ? message.source
+    : message.destination;
 }
 
 export function textPresentation(value: LxmfText): {
   readonly text: string;
   readonly validUtf8: boolean;
 } {
-  if (value.type === "utf8") {
-    return { text: value.value, validUtf8: true };
+  if (value.tag === Bindings.LxmfText_Tags.Utf8) {
+    return { text: value.inner.value, validUtf8: true };
   }
   return {
     text: "Unreadable text",
@@ -53,35 +55,35 @@ export function textPresentation(value: LxmfText): {
 }
 
 export function deliveryLabel(message: LxmfMessage): string {
-  switch (message.deliveryState.type) {
-    case "received":
+  switch (message.deliveryState.tag) {
+    case Bindings.LxmfDeliveryState_Tags.Received:
       return "Received";
-    case "queued":
-      return message.deliveryState.failedAttempts === 0n
+    case Bindings.LxmfDeliveryState_Tags.Queued:
+      return message.deliveryState.inner.failedAttempts === 0n
         ? "Queued"
-        : `Queued after ${attemptLabel(message.deliveryState.failedAttempts)}`;
-    case "sending":
-      return message.deliveryState.failedAttempts === 0n
+        : `Queued after ${attemptLabel(message.deliveryState.inner.failedAttempts)}`;
+    case Bindings.LxmfDeliveryState_Tags.Sending:
+      return message.deliveryState.inner.failedAttempts === 0n
         ? "Sending"
-        : `Sending after ${attemptLabel(message.deliveryState.failedAttempts)}`;
-    case "delivered":
-      return message.deliveryState.rtt === null
-        ? `Delivered at ${timestampLabel(message.deliveryState.deliveredAt)}`
-        : `Delivered in ${message.deliveryState.rtt.toString()} ms at ${timestampLabel(message.deliveryState.deliveredAt)}`;
-    case "failed":
-      return `Failed after ${attemptLabel(message.deliveryState.failedAttempts)} — ${failureLabel(message.deliveryState.lastFailure)}`;
-    case "cancelled":
-      return `Cancelled ${timestampLabel(message.deliveryState.cancelledAt)}`;
+        : `Sending after ${attemptLabel(message.deliveryState.inner.failedAttempts)}`;
+    case Bindings.LxmfDeliveryState_Tags.Delivered:
+      return message.deliveryState.inner.rtt === undefined
+        ? `Delivered at ${timestampLabel(message.deliveryState.inner.deliveredAt)}`
+        : `Delivered in ${message.deliveryState.inner.rtt.toString()} ms at ${timestampLabel(message.deliveryState.inner.deliveredAt)}`;
+    case Bindings.LxmfDeliveryState_Tags.Failed:
+      return `Failed after ${attemptLabel(message.deliveryState.inner.failedAttempts)} — ${failureLabel(message.deliveryState.inner.lastFailure)}`;
+    case Bindings.LxmfDeliveryState_Tags.Cancelled:
+      return `Cancelled ${timestampLabel(message.deliveryState.inner.cancelledAt)}`;
   }
 }
 
 export function verificationLabel(message: LxmfMessage): string {
   switch (message.verification) {
-    case "verified":
+    case Bindings.LxmfVerification.Verified:
       return "Verified source";
-    case "sourceUnknown":
+    case Bindings.LxmfVerification.SourceUnknown:
       return "Unverified — source identity unavailable";
-    case "invalidSignature":
+    case Bindings.LxmfVerification.InvalidSignature:
       return "Unverified — invalid signature";
   }
 }
@@ -102,13 +104,13 @@ function attemptLabel(failedAttempts: bigint): string {
 
 function failureLabel(failure: LxmfDeliveryFailure): string {
   switch (failure) {
-    case "noRoute":
+    case Bindings.LxmfDeliveryFailure.NoRoute:
       return "no route";
-    case "linkFailed":
+    case Bindings.LxmfDeliveryFailure.LinkFailed:
       return "connection failed";
-    case "deliveryTimedOut":
+    case Bindings.LxmfDeliveryFailure.DeliveryTimedOut:
       return "delivery timed out";
-    case "localNodeStopped":
+    case Bindings.LxmfDeliveryFailure.LocalNodeStopped:
       return "this device went offline";
   }
 }

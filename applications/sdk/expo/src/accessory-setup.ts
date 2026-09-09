@@ -1,4 +1,4 @@
-import { NativePayloadError } from "./hydrate";
+import { NativePayloadError } from "./native-payload";
 import type { AppleAccessorySetupNativeModule } from "./native";
 
 export type AccessorySetupStatus = {
