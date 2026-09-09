@@ -346,14 +346,21 @@ checksum = "abc"
             work = pathlib.Path(temporary)
             cache = work / "shared generator cache"
             inherited = {
-                "PATH": os.environ.get("PATH", ""),
+                "PATH": "/other/compiler/bin",
                 "PRNS_UBRN_CACHE": os.fspath(cache),
                 "PRNS_COMPATIBILITY_PRNS_ROOT": "/unreviewed/source",
                 "CARGO_TARGET_DIR": "/unreviewed/target",
                 "NPM_CONFIG_USERCONFIG": "/unreviewed/.npmrc",
                 "NODE_OPTIONS": "--require=/unreviewed/bootstrap.js",
             }
-            with mock.patch.dict(os.environ, inherited, clear=True):
+            selected_cargo = work / "rustup-selected/bin/cargo"
+            resolved = subprocess.CompletedProcess(
+                args=["rustup", "which"], returncode=0,
+                stdout=os.fspath(selected_cargo) + "\n",
+            )
+            with mock.patch.dict(os.environ, inherited, clear=True), mock.patch.object(
+                mobility, "run", return_value=resolved,
+            ) as invoked:
                 environment = mobility.controlled_environment(
                     work, work / "applications", mobility.load_compatibility(),
                 )
@@ -362,6 +369,14 @@ checksum = "abc"
             self.assertNotIn("NODE_OPTIONS", environment)
             self.assertEqual(environment["CARGO_TARGET_DIR"], os.fspath(work / "applications/target"))
             self.assertEqual(environment["NPM_CONFIG_USERCONFIG"], os.fspath(work / "npm-user.npmrc"))
+            self.assertEqual(
+                tuple(invoked.call_args.args[0]),
+                ("rustup", "which", "--toolchain", "stable", "cargo"),
+            )
+            self.assertEqual(
+                environment["PATH"].split(os.pathsep),
+                [os.fspath(selected_cargo.parent), "/other/compiler/bin"],
+            )
 
     def test_npm_scanner_rejects_local_override_outside_export(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

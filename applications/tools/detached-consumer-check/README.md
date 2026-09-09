@@ -34,7 +34,9 @@ different dependency version. With neither option, caches and builds stay in
 the temporary detached workspace.
 
 The runner requires the recorded Node and npm versions and the recorded minimum
-Python and Rust versions. CI provisions those tools explicitly and runs this
+Python and Rust versions. Nested gates use the selected rustup toolchain even
+when another system Rust installation is earlier on the invoking shell's path.
+CI provisions those tools explicitly and runs this
 suite as a release-critical lane.
 
 By default the wrapper uses the current checkout as a local `file:` Git URL.

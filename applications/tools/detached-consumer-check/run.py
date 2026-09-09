@@ -224,6 +224,19 @@ def controlled_environment(
     qualification = object_value(
         compatibility["qualification"], "compatibility.qualification"
     )
+    rust_toolchain = string_value(
+        qualification, "rustToolchain", "compatibility.qualification"
+    )
+    # RUSTUP_TOOLCHAIN affects rustup shims, not a system/Nix cargo earlier on
+    # PATH. Select the checked toolchain itself for every nested npm/Rust gate.
+    cargo = pathlib.Path(
+        run(
+            ("rustup", "which", "--toolchain", rust_toolchain, "cargo"),
+            cwd=work,
+            environment=environment,
+            capture=True,
+        ).stdout.strip()
+    )
     environment.update(
         {
             "CARGO_HOME": os.fspath(cargo_home),
@@ -235,9 +248,8 @@ def controlled_environment(
             "NPM_CONFIG_GLOBALCONFIG": os.fspath(npm_global_config),
             "NPM_CONFIG_USERCONFIG": os.fspath(npm_user_config),
             "RUST_MIN_STACK": str(16 * 1024 * 1024),
-            "RUSTUP_TOOLCHAIN": string_value(
-                qualification, "rustToolchain", "compatibility.qualification"
-            ),
+            "PATH": os.fspath(cargo.parent) + os.pathsep + environment.get("PATH", ""),
+            "RUSTUP_TOOLCHAIN": rust_toolchain,
             "UV_CACHE_DIR": os.fspath(uv_cache),
         }
     )
