@@ -13,13 +13,12 @@ mod core;
 mod impls;
 mod keys;
 
-pub(crate) use core::buckets_for_two_thirds_load;
+pub(crate) use core::{buckets_for_two_thirds_load, exceeds_two_thirds_load};
 pub use core::{IndexKey, IndexRow};
 pub use impls::LemireIndex;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "alloc")] {
-        pub(crate) use impls::HeapIndexEntry;
         pub use impls::HeapLemireIndex;
     }
 }

@@ -1,12 +1,13 @@
 use alloc::vec::Vec;
 
-use crate::lemire_index::{HeapIndexEntry, HeapLemireIndex};
 use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome};
+
+use super::heap_index::{HeapPacketHashIndex, HeapPacketHashIndexEntry};
 
 #[derive(Debug, Default)]
 struct Generation {
     hashes: Vec<PacketHash>,
-    index: HeapLemireIndex,
+    index: HeapPacketHashIndex,
 }
 
 impl Generation {
@@ -56,8 +57,8 @@ impl PacketHashHistory for HeapPacketHashHistory {
     fn remember(&mut self, hash: PacketHash) -> RememberPacketOutcome {
         let current_len = self.current.len();
         match self.current.index.entry(&hash, &self.current.hashes) {
-            HeapIndexEntry::Occupied => return RememberPacketOutcome::AlreadyKnown,
-            HeapIndexEntry::Vacant(vacancy) => {
+            HeapPacketHashIndexEntry::Occupied => return RememberPacketOutcome::AlreadyKnown,
+            HeapPacketHashIndexEntry::Vacant(vacancy) => {
                 if self.previous.contains(&hash) {
                     return RememberPacketOutcome::AlreadyKnown;
                 }
@@ -74,6 +75,9 @@ impl PacketHashHistory for HeapPacketHashHistory {
         RememberPacketOutcome::StoredAfterRotation
     }
 }
+
+const _: () =
+    assert!(HeapPacketHashHistory::RNS_GENERATION_CAPACITY <= HeapPacketHashIndex::MAX_ROWS);
 
 #[cfg(test)]
 mod tests {
