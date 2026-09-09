@@ -33,6 +33,25 @@ impl From<u64> for U64String {
     }
 }
 
+/// Storage initialization runs only on the native lifecycle/background queue.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+#[ts(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
+pub enum NativeStoragePreparationOutcome {
+    Prepared,
+    Unavailable { detail: String },
+    DevelopmentResetRequired { reason: String },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename_all = "camelCase")]

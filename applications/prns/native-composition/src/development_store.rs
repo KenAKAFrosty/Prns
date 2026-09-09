@@ -45,6 +45,11 @@ enum StoreJob {
         request: DirectoryRequest,
         response: SyncSender<StoreReply>,
     },
+    #[cfg(feature = "uniffi-bindings")]
+    DirectoryAsync {
+        request: DirectoryRequest,
+        response: oneshot::Sender<StoreReply>,
+    },
     MailboxSync {
         request: MailboxRequest,
         response: SyncSender<MailboxStoreReply>,
@@ -181,6 +186,34 @@ impl DevelopmentStoreOwner {
         }
     }
 
+    #[cfg(feature = "uniffi-bindings")]
+    pub(crate) fn admit_directory_async(
+        &self,
+        request: DirectoryRequest,
+    ) -> Result<oneshot::Receiver<StoreReply>, DevelopmentStoreFailure> {
+        let jobs = self.jobs()?;
+        let (response, receiver) = oneshot::channel();
+        jobs.try_send(StoreJob::DirectoryAsync { request, response })
+            .map_err(|_| {
+                DevelopmentStoreFailure::unavailable(
+                    "the development database lane is full or closed",
+                )
+            })?;
+        Ok(receiver)
+    }
+
+    #[cfg(feature = "uniffi-bindings")]
+    pub(crate) fn admit_mailbox_async(
+        &self,
+        request: MailboxRequest,
+    ) -> Result<oneshot::Receiver<MailboxStoreReply>, MailboxFailure> {
+        let jobs = self.jobs().map_err(map_development_failure_to_mailbox)?;
+        let (response, receiver) = oneshot::channel();
+        jobs.try_send(StoreJob::MailboxAsync { request, response })
+            .map_err(|_| MailboxFailure::Busy)?;
+        Ok(receiver)
+    }
+
     pub(crate) fn admit_mailbox(
         &self,
         request: MailboxRequest,
@@ -262,6 +295,12 @@ fn run_owner(database: &Database, jobs: &Receiver<StoreJob>) {
     while let Ok(job) = jobs.recv() {
         match job {
             StoreJob::Directory { request, response } => {
+                let _ = response.send(directory::execute(database, request));
+            }
+            #[cfg(feature = "uniffi-bindings")]
+            StoreJob::DirectoryAsync { request, response } => {
+                // Admission owns a mutation through commit even if its caller
+                // has dropped the receiving future.
                 let _ = response.send(directory::execute(database, request));
             }
             StoreJob::MailboxSync { request, response } => {

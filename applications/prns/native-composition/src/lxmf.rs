@@ -79,6 +79,9 @@ pub(crate) fn project_messages(messages: &[DurableLxmfMessage]) -> LxmfMessageLi
 }
 
 pub(crate) fn measure_text(input: &MeasureLxmfTextInput) -> MeasureLxmfTextOutcome {
+    if !crate::input::bounded_text(&[&input.title, &input.content]) {
+        return MeasureLxmfTextOutcome::InvalidMessage;
+    }
     let Some(payload_bytes) = encoded_basic_lxmf_payload_len(
         input.title.len(),
         input.content.len(),

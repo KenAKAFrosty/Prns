@@ -259,8 +259,123 @@ const DEFINITIONS = {
       ret: FfiType.Void,
       hasRustCallStatus: false,
     },
+    "uniffi_prns_app_fn_func_announce_lxmf": {
+      args: [],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_fn_func_announce_target": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_fn_func_approve_pairing": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_prns_app_fn_func_binding_contract": {
       args: [],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_prns_app_fn_func_cancel_lxmf_message": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_fn_func_create_manual_contact": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_fn_func_delete_contact": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_fn_func_describe_target": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_fn_func_get_contact": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_fn_func_initiate_pairing": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_fn_func_list_contacts": {
+      args: [],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_fn_func_list_lxmf_messages": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_fn_func_list_lxmf_peers": {
+      args: [],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_fn_func_measure_lxmf_text": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_fn_func_native_create_generated_identity": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_prns_app_fn_func_native_create_imported_identity": {
+      args: [FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_prns_app_fn_func_native_inspect_identity": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_prns_app_fn_func_native_prepare_apple_bluetooth_central_restoration": {
+      args: [FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_prns_app_fn_func_native_prepare_storage": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_prns_app_fn_func_native_reset": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_prns_app_fn_func_native_start": {
+      args: [FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_prns_app_fn_func_native_start_with_apple_bluetooth_central_restoration": {
+      args: [FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_prns_app_fn_func_native_stop": {
+      args: [],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_prns_app_fn_func_preview_identity_import": {
+      args: [FfiType.RustBuffer],
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
@@ -269,9 +384,54 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_prns_app_fn_func_reject_pairing": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_fn_func_retry_lxmf_message": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_fn_func_save_observed_destination": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_fn_func_send_direct_text": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_fn_func_set_contact_alias": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_fn_func_set_contact_pinned": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "ffi_prns_app_uniffi_contract_version": {
       args: [],
       ret: FfiType.UInt32,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_checksum_func_announce_lxmf": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_checksum_func_announce_target": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_checksum_func_approve_pairing": {
+      args: [],
+      ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
     "uniffi_prns_app_checksum_func_binding_contract": {
@@ -279,7 +439,137 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_prns_app_checksum_func_cancel_lxmf_message": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_checksum_func_create_manual_contact": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_checksum_func_delete_contact": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_checksum_func_describe_target": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_checksum_func_get_contact": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_checksum_func_initiate_pairing": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_checksum_func_list_contacts": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_checksum_func_list_lxmf_messages": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_checksum_func_list_lxmf_peers": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_checksum_func_measure_lxmf_text": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_checksum_func_native_create_generated_identity": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_checksum_func_native_create_imported_identity": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_checksum_func_native_inspect_identity": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_checksum_func_native_prepare_apple_bluetooth_central_restoration": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_checksum_func_native_prepare_storage": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_checksum_func_native_reset": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_checksum_func_native_start": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_checksum_func_native_start_with_apple_bluetooth_central_restoration": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_checksum_func_native_stop": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_checksum_func_preview_identity_import": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_prns_app_checksum_func_read_snapshot": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_checksum_func_reject_pairing": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_checksum_func_retry_lxmf_message": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_checksum_func_save_observed_destination": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_checksum_func_send_direct_text": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_checksum_func_set_contact_alias": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_checksum_func_set_contact_pinned": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -358,11 +648,69 @@ interface NativeModuleInterface {
     ffi_prns_app_rust_future_cancel_void(handle: bigint): void;
     ffi_prns_app_rust_future_complete_void(handle: bigint, uniffi_out_err: UniffiRustCallStatus): void;
     ffi_prns_app_rust_future_free_void(handle: bigint): void;
+    uniffi_prns_app_fn_func_announce_lxmf(): bigint;
+    uniffi_prns_app_fn_func_announce_target(input: Uint8Array): bigint;
+    uniffi_prns_app_fn_func_approve_pairing(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_binding_contract(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_prns_app_fn_func_cancel_lxmf_message(input: Uint8Array): bigint;
+    uniffi_prns_app_fn_func_create_manual_contact(input: Uint8Array): bigint;
+    uniffi_prns_app_fn_func_delete_contact(input: Uint8Array): bigint;
+    uniffi_prns_app_fn_func_describe_target(input: Uint8Array): bigint;
+    uniffi_prns_app_fn_func_get_contact(input: Uint8Array): bigint;
+    uniffi_prns_app_fn_func_initiate_pairing(input: Uint8Array): bigint;
+    uniffi_prns_app_fn_func_list_contacts(): bigint;
+    uniffi_prns_app_fn_func_list_lxmf_messages(input: Uint8Array): bigint;
+    uniffi_prns_app_fn_func_list_lxmf_peers(): bigint;
+    uniffi_prns_app_fn_func_measure_lxmf_text(input: Uint8Array): bigint;
+    uniffi_prns_app_fn_func_native_create_generated_identity(storageRoot: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_prns_app_fn_func_native_create_imported_identity(storageRoot: Uint8Array, identity: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_prns_app_fn_func_native_inspect_identity(storageRoot: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_prns_app_fn_func_native_prepare_apple_bluetooth_central_restoration(storageRoot: Uint8Array, centralIdentifier: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_prns_app_fn_func_native_prepare_storage(storageRoot: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_prns_app_fn_func_native_reset(storageRoot: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_prns_app_fn_func_native_start(storageRoot: Uint8Array, input: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_prns_app_fn_func_native_start_with_apple_bluetooth_central_restoration(storageRoot: Uint8Array, input: Uint8Array, centralIdentifier: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_prns_app_fn_func_native_stop(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_prns_app_fn_func_preview_identity_import(identity: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_prns_app_fn_func_read_snapshot(): bigint;
+    uniffi_prns_app_fn_func_reject_pairing(input: Uint8Array): bigint;
+    uniffi_prns_app_fn_func_retry_lxmf_message(input: Uint8Array): bigint;
+    uniffi_prns_app_fn_func_save_observed_destination(input: Uint8Array): bigint;
+    uniffi_prns_app_fn_func_send_direct_text(input: Uint8Array): bigint;
+    uniffi_prns_app_fn_func_set_contact_alias(input: Uint8Array): bigint;
+    uniffi_prns_app_fn_func_set_contact_pinned(input: Uint8Array): bigint;
     ffi_prns_app_uniffi_contract_version(): number;
+    uniffi_prns_app_checksum_func_announce_lxmf(): number;
+    uniffi_prns_app_checksum_func_announce_target(): number;
+    uniffi_prns_app_checksum_func_approve_pairing(): number;
     uniffi_prns_app_checksum_func_binding_contract(): number;
+    uniffi_prns_app_checksum_func_cancel_lxmf_message(): number;
+    uniffi_prns_app_checksum_func_create_manual_contact(): number;
+    uniffi_prns_app_checksum_func_delete_contact(): number;
+    uniffi_prns_app_checksum_func_describe_target(): number;
+    uniffi_prns_app_checksum_func_get_contact(): number;
+    uniffi_prns_app_checksum_func_initiate_pairing(): number;
+    uniffi_prns_app_checksum_func_list_contacts(): number;
+    uniffi_prns_app_checksum_func_list_lxmf_messages(): number;
+    uniffi_prns_app_checksum_func_list_lxmf_peers(): number;
+    uniffi_prns_app_checksum_func_measure_lxmf_text(): number;
+    uniffi_prns_app_checksum_func_native_create_generated_identity(): number;
+    uniffi_prns_app_checksum_func_native_create_imported_identity(): number;
+    uniffi_prns_app_checksum_func_native_inspect_identity(): number;
+    uniffi_prns_app_checksum_func_native_prepare_apple_bluetooth_central_restoration(): number;
+    uniffi_prns_app_checksum_func_native_prepare_storage(): number;
+    uniffi_prns_app_checksum_func_native_reset(): number;
+    uniffi_prns_app_checksum_func_native_start(): number;
+    uniffi_prns_app_checksum_func_native_start_with_apple_bluetooth_central_restoration(): number;
+    uniffi_prns_app_checksum_func_native_stop(): number;
+    uniffi_prns_app_checksum_func_preview_identity_import(): number;
     uniffi_prns_app_checksum_func_read_snapshot(): number;
+    uniffi_prns_app_checksum_func_reject_pairing(): number;
+    uniffi_prns_app_checksum_func_retry_lxmf_message(): number;
+    uniffi_prns_app_checksum_func_save_observed_destination(): number;
+    uniffi_prns_app_checksum_func_send_direct_text(): number;
+    uniffi_prns_app_checksum_func_set_contact_alias(): number;
+    uniffi_prns_app_checksum_func_set_contact_pinned(): number;
     // Codegen call sites use these via `nativeModule().rustbuffer_alloc(...)`
     // and `nativeModule().rustbuffer_free(...)`. The runtime's registered
     // module exposes them as method properties.

@@ -16,13 +16,14 @@ use crate::contract::{
 use crate::lifecycle;
 
 /// Maximum UTF-8 path length accepted by the application ABI.
-pub const PRNS_APP_MAX_PATH_BYTES: usize = 4 * 1024;
+pub const PRNS_APP_MAX_PATH_BYTES: usize = crate::input::MAX_PATH_BYTES;
 
 /// Maximum JSON command length accepted by the application ABI.
-pub const PRNS_APP_MAX_INPUT_BYTES: usize = 64 * 1024;
+pub const PRNS_APP_MAX_INPUT_BYTES: usize = crate::input::MAX_INPUT_BYTES;
 
 /// Maximum UTF-8 length accepted for one CoreBluetooth restoration identifier.
-pub const PRNS_APP_MAX_RESTORATION_IDENTIFIER_BYTES: usize = 1024;
+pub const PRNS_APP_MAX_RESTORATION_IDENTIFIER_BYTES: usize =
+    crate::input::MAX_RESTORATION_IDENTIFIER_BYTES;
 
 const CONTRACT_FINGERPRINT_C: [u8; CONTRACT_FINGERPRINT.len() + 1] = {
     let source = CONTRACT_FINGERPRINT.as_bytes();

@@ -1,3 +1,6 @@
+#[cfg(feature = "uniffi-bindings")]
+pub(crate) mod generated;
+
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -100,6 +103,11 @@ impl AppleBluetoothPreparation {
                 "central CoreBluetooth restoration identifier must not be empty".to_owned(),
             );
         }
+        if central.len() > crate::input::MAX_RESTORATION_IDENTIFIER_BYTES {
+            return Err(
+                "central CoreBluetooth restoration identifier exceeds 1024 bytes".to_owned(),
+            );
+        }
         Ok(())
     }
 }
@@ -176,49 +184,63 @@ impl ShutdownSignal {
     }
 }
 
+/// Transport-neutral response ownership. Async caller drop closes only its
+/// response; admitted mutations remain owned by the actor/database lane.
+enum Reply<T> {
+    Sync(std_mpsc::SyncSender<T>),
+    #[cfg(feature = "uniffi-bindings")]
+    Async(oneshot::Sender<T>),
+}
+
+impl<T> Reply<T> {
+    fn send(self, value: T) -> Result<(), T> {
+        match self {
+            Self::Sync(response) => response.send(value).map_err(|error| error.0),
+            #[cfg(feature = "uniffi-bindings")]
+            Self::Async(response) => response.send(value),
+        }
+    }
+}
+
+fn reply_channel<T>() -> (Reply<T>, std_mpsc::Receiver<T>) {
+    let (response, receiver) = std_mpsc::sync_channel(1);
+    (Reply::Sync(response), receiver)
+}
+
 enum Command {
     AnnounceSelf(RemoteControlAnnounceOperation),
-    Snapshot(std_mpsc::SyncSender<DevelopmentNodeSnapshot>),
+    Snapshot(Reply<DevelopmentNodeSnapshot>),
     #[cfg(feature = "uniffi-bindings")]
     SnapshotAsync(oneshot::Sender<DevelopmentNodeSnapshot>),
     Initiate(
         InitiateRemoteControlPairingInput,
-        std_mpsc::SyncSender<RemoteControlPairingCommandOutcome>,
+        Reply<RemoteControlPairingCommandOutcome>,
     ),
     Approve(
         RemoteControlPairingDecisionInput,
-        std_mpsc::SyncSender<RemoteControlPairingCommandOutcome>,
+        Reply<RemoteControlPairingCommandOutcome>,
     ),
     Reject(
         RemoteControlPairingDecisionInput,
-        std_mpsc::SyncSender<RemoteControlPairingCommandOutcome>,
+        Reply<RemoteControlPairingCommandOutcome>,
     ),
     Describe(DescribeCommand),
-    ObservedIdentity(
-        [u8; 16],
-        std_mpsc::SyncSender<Result<Option<[u8; 16]>, String>>,
-    ),
-    ListLxmfPeers(std_mpsc::SyncSender<LxmfPeerListOutcome>),
+    ObservedIdentity([u8; 16], Reply<Result<Option<[u8; 16]>, String>>),
+    ListLxmfPeers(Reply<LxmfPeerListOutcome>),
     ListLxmfMessages(
         prns_lxmf::mailbox::MailboxListRequest,
-        std_mpsc::SyncSender<LxmfMessageListOutcome>,
+        Reply<LxmfMessageListOutcome>,
     ),
-    RetryLxmfMessage(u64, std_mpsc::SyncSender<RetryLxmfMessageOutcome>),
-    CancelLxmfMessage(u64, u64, std_mpsc::SyncSender<CancelLxmfMessageOutcome>),
-    MeasureLxmfText(
-        MeasureLxmfTextInput,
-        std_mpsc::SyncSender<MeasureLxmfTextOutcome>,
-    ),
-    AnnounceLxmf(std_mpsc::SyncSender<AnnounceLxmfOutcome>),
-    SendDirectText(
-        SendDirectTextInput,
-        std_mpsc::SyncSender<SendDirectTextOutcome>,
-    ),
+    RetryLxmfMessage(u64, Reply<RetryLxmfMessageOutcome>),
+    CancelLxmfMessage(u64, u64, Reply<CancelLxmfMessageOutcome>),
+    MeasureLxmfText(MeasureLxmfTextInput, Reply<MeasureLxmfTextOutcome>),
+    AnnounceLxmf(Reply<AnnounceLxmfOutcome>),
+    SendDirectText(SendDirectTextInput, Reply<SendDirectTextOutcome>),
 }
 
 struct DescribeCommand {
     input: DescribeRemoteControlTargetInput,
-    response: std_mpsc::SyncSender<RemoteControlDescribeOutcome>,
+    response: Reply<RemoteControlDescribeOutcome>,
     deadline: tokio::time::Instant,
     caller: oneshot::Receiver<()>,
 }
@@ -448,6 +470,9 @@ fn validate_development_tcp_target(target: Option<&str>) -> Result<Option<String
     let Some(target) = target else {
         return Ok(None);
     };
+    if !crate::input::bounded_text(&[target]) {
+        return Err("developmentTcpTarget exceeds the native input size limit".to_owned());
+    }
     let address = target.parse::<SocketAddr>().map_err(|_| {
         "developmentTcpTarget must be an explicit IP address and port such as 192.0.2.1:4242"
             .to_owned()
@@ -494,6 +519,7 @@ pub(crate) fn prepare_apple_bluetooth_central_restoration(
     storage_root: &Path,
     central_identifier: String,
 ) -> AppleBluetoothRestorationPreparationOutcome {
+    crate::ios_restoration_probe::install();
     let preparation = AppleBluetoothPreparation::CentralOnlyRestoration {
         central: central_identifier,
     };
@@ -649,6 +675,7 @@ pub(crate) fn start_configured_with_apple_bluetooth_central_restoration(
     input: DevelopmentNodeStartInput,
     central_identifier: String,
 ) -> DevelopmentNodeStartOutcome {
+    crate::ios_restoration_probe::install();
     start_configured_with_supervisor(
         supervisor(),
         storage_root,
@@ -1013,7 +1040,7 @@ fn snapshot_with_supervisor(supervisor: &Supervisor) -> DevelopmentNodeSnapshot 
     let Some(worker) = state.worker.as_ref() else {
         return current;
     };
-    let (response_tx, response_rx) = std_mpsc::sync_channel(1);
+    let (response_tx, response_rx) = reply_channel();
     if worker
         .commands
         .try_send(Command::Snapshot(response_tx))
@@ -1141,7 +1168,7 @@ pub fn describe(input: DescribeRemoteControlTargetInput) -> RemoteControlDescrib
     {
         return RemoteControlDescribeOutcome::Busy;
     }
-    let (response_tx, response_rx) = std_mpsc::sync_channel(1);
+    let (response_tx, response_rx) = reply_channel();
     let (caller, cancelled) = oneshot::channel();
     // The queue and network work share the caller's one budget. A command that
     // waited in the lane must not receive another full timeout when it starts.
@@ -1187,14 +1214,22 @@ fn announce_self_with_supervisor(
     supervisor: &Supervisor,
     input: AnnounceRemoteControlTargetInput,
 ) -> RemoteControlAnnounceOutcome {
+    let mut state = supervisor.lock_state();
+    reap_completed_worker_locked(supervisor, &mut state);
+    announce_self_admitted(supervisor, &state, input)
+}
+
+fn announce_self_admitted(
+    supervisor: &Supervisor,
+    state: &SupervisorState,
+    input: AnnounceRemoteControlTargetInput,
+) -> RemoteControlAnnounceOutcome {
     static NEXT_OPERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     if input.target_identity_fingerprint.len() != 16 {
         return RemoteControlAnnounceOutcome::Failed {
             stage: RemoteControlAnnounceFailureStage::Input,
         };
     }
-    let mut state = supervisor.lock_state();
-    reap_completed_worker_locked(supervisor, &mut state);
     if supervisor.snapshots.read().runtime != DevelopmentNodeRuntime::Running
         || supervisor.snapshots.is_explicit_stop_in_progress()
     {
@@ -1346,12 +1381,12 @@ fn reap_completed_worker_locked(supervisor: &Supervisor, state: &mut SupervisorS
 }
 
 fn admit_lxmf<Output>(
-    command: impl FnOnce(std_mpsc::SyncSender<Output>) -> Command,
+    command: impl FnOnce(Reply<Output>) -> Command,
 ) -> Result<std_mpsc::Receiver<Output>, LxmfAdmissionFailure> {
     let Some(commands) = running_commands() else {
         return Err(LxmfAdmissionFailure::LocalNodeStopped);
     };
-    let (response_tx, response_rx) = std_mpsc::sync_channel(1);
+    let (response_tx, response_rx) = reply_channel();
     match commands.try_send(command(response_tx)) {
         Ok(()) => Ok(response_rx),
         Err(mpsc::error::TrySendError::Full(_)) => Err(LxmfAdmissionFailure::Busy),
@@ -1366,7 +1401,7 @@ const fn lxmf_send_has_capacity(active: usize) -> bool {
 async fn dispatch_lxmf_message_list(
     service: &prns_lxmf::mailbox::DurableDirectLxmfService,
     request: prns_lxmf::mailbox::MailboxListRequest,
-    response: std_mpsc::SyncSender<LxmfMessageListOutcome>,
+    response: Reply<LxmfMessageListOutcome>,
 ) {
     let outcome = match service.snapshot(request).await {
         Ok(snapshot) => crate::lxmf::project_messages(&snapshot.messages),
@@ -1379,9 +1414,15 @@ fn dispatch_lxmf_send(
     service: &prns_lxmf::mailbox::DurableDirectLxmfService,
     send_tasks: &mut JoinSet<()>,
     input: SendDirectTextInput,
-    response: std_mpsc::SyncSender<SendDirectTextOutcome>,
+    response: Reply<SendDirectTextOutcome>,
     timestamp: u64,
 ) {
+    if !crate::input::bounded_text(&[&input.title, &input.content]) {
+        let _ = response.send(SendDirectTextOutcome::DevelopmentUnavailable {
+            detail: "The text input exceeds the native size limit.".to_owned(),
+        });
+        return;
+    }
     if !lxmf_send_has_capacity(send_tasks.len()) {
         let _ = response.send(SendDirectTextOutcome::DevelopmentUnavailable {
             detail: "The bounded LXMF response lane is full.".to_owned(),
@@ -1490,7 +1531,7 @@ fn list_lxmf_messages_with_supervisor(
             };
         };
         drop(state);
-        let (response, receiver) = std_mpsc::sync_channel(1);
+        let (response, receiver) = reply_channel();
         match commands.try_send(Command::ListLxmfMessages(request, response)) {
             Ok(()) => receiver
                 .recv_timeout(LXMF_QUERY_TIMEOUT)
@@ -1581,7 +1622,7 @@ fn retry_lxmf_message_with_supervisor(
             };
         };
         drop(state);
-        let (response, receiver) = std_mpsc::sync_channel(1);
+        let (response, receiver) = reply_channel();
         match commands.try_send(Command::RetryLxmfMessage(local_record_id, response)) {
             Ok(()) => receiver.recv().unwrap_or_else(|_| {
                 RetryLxmfMessageOutcome::DevelopmentUnavailable {
@@ -1678,7 +1719,7 @@ fn cancel_lxmf_message_with_supervisor(
             };
         };
         drop(state);
-        let (response, receiver) = std_mpsc::sync_channel(1);
+        let (response, receiver) = reply_channel();
         match commands.try_send(Command::CancelLxmfMessage(
             local_record_id,
             cancelled_at_millis,
@@ -1842,7 +1883,7 @@ fn save_observed_destination_with_supervisor(
         };
     }
     let generation_commands = worker.commands.clone();
-    let (identity_tx, identity_rx) = std_mpsc::sync_channel(1);
+    let (identity_tx, identity_rx) = reply_channel();
     match generation_commands.try_send(Command::ObservedIdentity(input.destination, identity_tx)) {
         Ok(()) => {}
         Err(mpsc::error::TrySendError::Full(_)) => {
@@ -2350,7 +2391,7 @@ fn running_commands() -> Option<mpsc::Sender<Command>> {
 
 fn call_pairing(
     timeout: Duration,
-    command: impl FnOnce(std_mpsc::SyncSender<RemoteControlPairingCommandOutcome>) -> Command,
+    command: impl FnOnce(Reply<RemoteControlPairingCommandOutcome>) -> Command,
 ) -> RemoteControlPairingCommandOutcome {
     let Some(commands) = running_commands() else {
         return pairing_failed(
@@ -2365,7 +2406,7 @@ fn call_pairing(
     {
         return RemoteControlPairingCommandOutcome::Busy;
     }
-    let (response_tx, response_rx) = std_mpsc::sync_channel(1);
+    let (response_tx, response_rx) = reply_channel();
     match commands.try_send(command(response_tx)) {
         Ok(()) => {}
         Err(mpsc::error::TrySendError::Full(_)) => {
@@ -3452,6 +3493,12 @@ async fn initiate_pairing(
     now: personal_rns::units::InstantMillis,
     input: InitiateRemoteControlPairingInput,
 ) -> RemoteControlPairingCommandOutcome {
+    if !crate::input::bounded_text(&[&input.candidate_id, &input.invitation_code]) {
+        return pairing_failed(
+            RemoteControlPairingFailureStage::Input,
+            "The pairing input exceeds the native size limit.",
+        );
+    }
     let invitation_code = match parse_invitation_code(&input.invitation_code) {
         Some(code) => code,
         None => {
@@ -3681,6 +3728,12 @@ async fn approve_pairing(
     snapshots: &SnapshotStore,
     input: RemoteControlPairingDecisionInput,
 ) -> RemoteControlPairingCommandOutcome {
+    if !crate::input::bounded_text(&[&input.attempt_id]) {
+        return pairing_failed(
+            RemoteControlPairingFailureStage::Input,
+            "The pairing decision exceeds the native size limit.",
+        );
+    }
     let Some(confirmation) = controls.take_confirmation_for_decision(&input.attempt_id) else {
         return pairing_failed(
             RemoteControlPairingFailureStage::Confirmation,
@@ -3737,6 +3790,12 @@ async fn reject_pairing(
     snapshots: &SnapshotStore,
     input: RemoteControlPairingDecisionInput,
 ) -> RemoteControlPairingCommandOutcome {
+    if !crate::input::bounded_text(&[&input.attempt_id]) {
+        return pairing_failed(
+            RemoteControlPairingFailureStage::Input,
+            "The pairing decision exceeds the native size limit.",
+        );
+    }
     let Some(confirmation) = controls.take_confirmation_for_decision(&input.attempt_id) else {
         return pairing_failed(
             RemoteControlPairingFailureStage::Confirmation,
@@ -3936,7 +3995,7 @@ mod tests {
         oneshot::Sender<()>,
         std_mpsc::Receiver<RemoteControlDescribeOutcome>,
     ) {
-        let (response, receiver) = std_mpsc::sync_channel(1);
+        let (response, receiver) = reply_channel();
         let (caller, cancelled) = oneshot::channel();
         (
             DescribeCommand {
@@ -4321,7 +4380,7 @@ mod tests {
         ));
     }
 
-    fn test_worker(
+    pub(super) fn test_worker(
         commands: mpsc::Sender<Command>,
         shutdown: ShutdownSignal,
         done: std_mpsc::Receiver<WorkerResult>,
@@ -5176,7 +5235,7 @@ mod tests {
 
     #[test]
     fn admitted_send_waiter_requires_a_definitive_commit_outcome() {
-        let (response, receiver) = std_mpsc::sync_channel(1);
+        let (response, receiver) = reply_channel();
         let waiter = std::thread::spawn(move || wait_for_admitted_lxmf_send(receiver));
         std::thread::sleep(Duration::from_millis(25));
         assert!(!waiter.is_finished());
@@ -5593,7 +5652,7 @@ mod tests {
             .expect("the test owns a Tokio runtime");
         let peer_destination = learn_pending_peer(&service).await;
 
-        let (send_response, send_result) = std_mpsc::sync_channel(1);
+        let (send_response, send_result) = reply_channel();
         let mut send_tasks = JoinSet::new();
         dispatch_lxmf_send(
             &service,
@@ -5621,7 +5680,7 @@ mod tests {
             .expect("the tracked response wrapper exists")
             .is_ok());
 
-        let (list_response, list_result) = std_mpsc::sync_channel(1);
+        let (list_response, list_result) = reply_channel();
         dispatch_lxmf_message_list(
             &service,
             prns_lxmf::mailbox::MailboxListRequest {
@@ -5697,7 +5756,7 @@ mod tests {
             .await
             .expect("the test owns a Tokio runtime");
         let peer_destination = learn_pending_peer(&service).await;
-        let (send_response, send_result) = std_mpsc::sync_channel(1);
+        let (send_response, send_result) = reply_channel();
         let mut send_tasks = JoinSet::new();
         dispatch_lxmf_send(
             &service,
@@ -5770,6 +5829,82 @@ mod tests {
             prns_lxmf::mailbox::DurableLxmfDeliveryState::Queued { .. }
         ));
         owner.close().expect("the owner closes after the service");
+    }
+
+    #[cfg(feature = "uniffi-bindings")]
+    #[tokio::test]
+    async fn generated_send_caller_drop_preserves_the_owned_durable_insert() {
+        let local_identity = prns_lxmf::direct::LocalLxmfIdentity::from_secret_bytes(
+            &[0x31; personal_rns::identity::IDENTITY_SECRET_KEY_LEN],
+        )
+        .expect("local identity");
+        let root = tempfile::tempdir().expect("isolated application storage");
+        let owner = DevelopmentStoreOwner::open(root.path(), &root.path().join("application.redb"))
+            .expect("database owner");
+        let blocked = Arc::new(BlockingInsertSubmitter::new(owner.mailbox_submitter()));
+        let network = Arc::new(PendingProofNetwork::default());
+        let (pending, _) = prns_lxmf::mailbox::DurableDirectLxmfService::prepare(local_identity);
+        let service = pending
+            .start(
+                Arc::clone(&network) as Arc<dyn prns_lxmf::direct::DirectNetwork>,
+                Arc::clone(&blocked) as Arc<dyn prns_lxmf::mailbox::MailboxSubmitter>,
+                Arc::new(prns_lxmf::mailbox::SystemMailboxClock),
+            )
+            .await
+            .expect("existing service runtime");
+        let destination = learn_pending_peer(&service).await;
+        let (response, receiver) = oneshot::channel();
+        let mut responses = JoinSet::new();
+        dispatch_lxmf_send(
+            &service,
+            &mut responses,
+            SendDirectTextInput {
+                destination,
+                title: "Caller left".to_owned(),
+                content: "Commit once".to_owned(),
+            },
+            Reply::Async(response),
+            1_700_000_000_500,
+        );
+        tokio::time::timeout(Duration::from_secs(1), blocked.insert_entered.notified())
+            .await
+            .expect("insert admitted");
+        drop(receiver);
+        let mut stopping = Box::pin(stop_lxmf_service_and_drain(&service, &mut responses));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), &mut stopping)
+                .await
+                .is_err()
+        );
+        blocked.release_insert.notify_one();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), &mut stopping)
+                .await
+                .expect("durable drain"),
+            Ok(())
+        );
+        drop(stopping);
+        assert!(responses.is_empty());
+        assert_eq!(network.send_count.load(Ordering::Acquire), 0);
+        let prns_lxmf::mailbox::MailboxReply::Listed { messages, .. } = owner
+            .admit_mailbox(prns_lxmf::mailbox::MailboxRequest::List(
+                prns_lxmf::mailbox::MailboxListRequest {
+                    peer: None,
+                    direction: None,
+                    before: None,
+                    limit: 25,
+                },
+            ))
+            .expect("query admission")
+            .recv()
+            .expect("query response")
+            .expect("query result")
+        else {
+            panic!("mailbox query");
+        };
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].local_record_id, 1);
+        owner.close().expect("stop closes the single owner");
     }
 
     #[tokio::test]
@@ -6850,12 +6985,12 @@ mod tests {
             });
             let _ = done_tx.send(Ok(()));
         });
-        let (first_response, first_result) = std_mpsc::sync_channel(1);
+        let (first_response, first_result) = reply_channel();
         assert!(commands.try_send(Command::Snapshot(first_response)).is_ok());
         inspection_started_rx
             .recv_timeout(Duration::from_secs(1))
             .expect("snapshot inspection started");
-        let (queued_response, queued_result) = std_mpsc::sync_channel(1);
+        let (queued_response, queued_result) = reply_channel();
         assert!(commands
             .try_send(Command::Snapshot(queued_response))
             .is_ok());

@@ -54,6 +54,9 @@ pub fn reset_storage(root: &Path) -> Result<(), String> {
 }
 
 fn validate_private_root(root: &Path) -> Result<(), String> {
+    if root.as_os_str().len() > crate::input::MAX_PATH_BYTES {
+        return Err("the native storage directory exceeds the path size limit".to_owned());
+    }
     if !root.is_absolute() {
         return Err("the native storage directory must be absolute".to_owned());
     }

@@ -8,14 +8,15 @@ and primary identity can be compared directly with the generated snapshot.
 
 `U64String` now stores a `u64`. Its legacy JSON/ts-rs contract still uses canonical
 decimal strings; UniFFI exposes the same value as `bigint` / `UInt64` / `ULong`.
-The C/JSON bridge is retained only to compare the pilot with the existing native
-startup path. Regenerate the old SDK contract after changing `contract.rs`.
+The C/JSON bridge remains temporarily while platform/SDK consumers migrate.
+`export_contract --fingerprints` emits the semantic app/Host identifiers as JSON
+without generating a second TypeScript model.
 
 ## Canonical HostSnapshot
 
-Run `python3 tools/repo/generate-app-uniffi-host.py` from the repository root.
-The generator reads the HostSnapshot dependency closure from the canonical
-`prns-host/schema/host-contract-v1.json` and emits:
+Run `python3 applications/tools/generated-bindings/host_contract.py` from the repository root.
+The generator locates the app's locked `prns-host` dependency using Cargo metadata
+and reads its canonical `../schema/host-contract-v1.json` HostSnapshot closure and emits:
 
 - `src/bindings/host_generated.rs`: transport records and conversions over the
   actual `prns_host` records, validated fixed bytes and canonical enum names.
@@ -59,8 +60,7 @@ node bindings/normalize-generated.mjs
 ```
 
 The generated `prns_app.ts` and `prns_app-ffi.ts` must stay adjacent to
-`host-adapter.generated.ts`. Their public functions are `readSnapshot({signal})`
-and `bindingContract()`. Module initialization and its UniFFI checksums follow
+`host-adapter.generated.ts`. Their async functions accept `{signal}` for caller cancellation. Module initialization and its UniFFI checksums follow
 jsi2's generated entry point. The app/Host fingerprints retain their separate
 semantic compatibility role.
 
@@ -82,7 +82,7 @@ Swift module name is `PrnsAppBindings`; Kotlin package is
 ## Validation
 
 ```sh
-python3 tools/repo/generate-app-uniffi-host.py --check
+python3 applications/tools/generated-bindings/host_contract.py --check
 cargo test --locked --manifest-path applications/Cargo.toml -p prns-app-native \
   --features uniffi-bindings,host-test --lib --test generated_snapshot
 cargo clippy --locked --manifest-path applications/Cargo.toml -p prns-app-native \
@@ -99,3 +99,45 @@ They do not substitute for actual iOS/Android reload and lifecycle integration.
 The existing platform admission remains required: iOS accessory/protected-data
 startup, Android foreground-service/Bluetooth ownership, and Android outbound
 preflight. Snapshot reads do not drive radio recovery.
+
+
+## Native bootstrap and remaining API
+
+Native lifecycle owners call synchronous `native*` functions only from their
+existing background/lifecycle queues. These may perform blocking I/O or wait for
+Start/Stop. They must not be called directly on Hermes:
+
+- `nativePrepareStorage(storageRoot)` initializes the existing supervisor-owned
+  database and returns `NativeStoragePreparationOutcome`: `Prepared`,
+  `Unavailable { detail }`, or `DevelopmentResetRequired { reason }`.
+- `nativeInspectIdentity`, `nativeCreateGeneratedIdentity`, and
+  `nativeCreateImportedIdentity` use that platform's protected storage path.
+- `nativeStart`, `nativeStartWithAppleBluetoothCentralRestoration`,
+  `nativePrepareAppleBluetoothCentralRestoration`, `nativeStop`, and `nativeReset`
+  preserve the existing process-owned supervisor and platform admission order.
+
+`previewIdentityImport` is a bounded synchronous parse requiring exactly64 bytes.
+The nineteen domain operations use async exports: pairing initiate/approve/reject,
+Describe/AnnounceSelf, seven contact operations, and seven LXMF operations.
+All storage operations use the owner established by native bootstrap; JavaScript
+cannot supply paths or silently open/reopen the database. Reset requires another
+native bootstrap before offline database access. Start already establishes the
+same owner as part of its existing composition.
+
+Async admission uses `try_lock`, bounded existing lanes, and oneshot responses.
+No asynchronous entry performs path resolution, database opening, synchronous
+reply waiting, or completed-worker joining. A process-wide `futures-timer` timer
+driver preserves query deadlines when no Tokio node runtime exists; it does not
+execute commands or own a node. Describe caller drop retires its network future
+and admission. Accepted contact/mailbox mutations and sends remain owned and
+stop-drained after caller cancellation; no synthetic write timeout invites a
+second insert while the first may still commit.
+
+UniFFI uses explicit optional-value tags: generated `undefined` is the semantic
+`None`, replacing the old JSON-only distinction between a missing field and
+`null`. Fixed16/32-byte inputs validate in custom lifts; u64 values stay exact.
+Contact normalization, pin/identity rules, mailbox pagination, pairing input and
+text semantics remain shared Rust checks. Native input/path/restoration size
+bounds are shared with the legacy ABI. Swift/Kotlin/JS generated codecs may carry
+native lifecycle outcomes through the small Expo admission wrappers without
+handwritten field mappings or a JSON compatibility model.

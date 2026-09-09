@@ -60,6 +60,11 @@ where
 }
 
 pub(crate) fn execute(database: &Database, request: DirectoryRequest) -> StoreReply {
+    if let DirectoryRequest::CreateManual { alias, .. } | DirectoryRequest::SetAlias { alias, .. } = &request {
+        if !crate::input::bounded_text(&[alias.as_deref().unwrap_or_default()]) {
+            return Err(DevelopmentStoreFailure::unavailable("the contact alias exceeds the native input size limit"));
+        }
+    }
     match request {
         DirectoryRequest::SaveObserved {
             destination,

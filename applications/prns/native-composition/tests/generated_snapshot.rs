@@ -5,8 +5,10 @@ use std::sync::Arc;
 use std::task::{Context, Poll, Wake, Waker};
 
 use prns_app::contract::{
-    DevelopmentNodeRuntime, DevelopmentNodeStartInput, DevelopmentNodeStartOutcome,
-    DevelopmentNodeStopOutcome, IdentityCreationOutcome, LocalHostState,
+    ContactListOutcome, ContactMutationOutcome, CreateManualContactInput, DevelopmentNodeRuntime,
+    DevelopmentNodeStartInput, DevelopmentNodeStartOutcome, DevelopmentNodeStopOutcome,
+    IdentityCreationOutcome, ListLxmfMessagesInput, LocalHostState, LxmfMessageListOutcome,
+    NativeStoragePreparationOutcome,
 };
 
 /// Poll like a foreign executor, with no Tokio runtime entered on this thread.
@@ -42,12 +44,37 @@ fn foreign_block_on<F: std::future::Future>(future: F) -> F::Output {
 fn foreign_snapshot_attaches_to_native_started_process_owner() {
     let directory = tempfile::tempdir().expect("isolated storage");
     let storage = directory.path().join("prns").join("development");
+    let storage_path = storage.to_str().expect("native storage path").to_owned();
+    assert_eq!(
+        prns_app::bindings::native_prepare_storage(storage_path.clone()),
+        NativeStoragePreparationOutcome::Prepared
+    );
     assert!(matches!(
-        prns_app::host_test::create_generated_identity(&storage),
+        foreign_block_on(prns_app::bindings::create_manual_contact(
+            CreateManualContactInput {
+                destination: [5; 16],
+                identity: None,
+                alias: Some("Before startup".to_owned()),
+            }
+        )),
+        ContactMutationOutcome::Saved { .. }
+    ));
+    assert!(matches!(
+        foreign_block_on(prns_app::bindings::list_lxmf_messages(
+            ListLxmfMessagesInput {
+                peer: None,
+                before: None,
+                limit: 25,
+            }
+        )),
+        LxmfMessageListOutcome::Listed { .. }
+    ));
+    assert!(matches!(
+        prns_app::bindings::native_create_generated_identity(storage_path.clone()),
         IdentityCreationOutcome::Created { .. }
     ));
-    let started = match prns_app::host_test::start_configured(
-        &storage,
+    let started = match prns_app::bindings::native_start(
+        storage_path.clone(),
         DevelopmentNodeStartInput {
             development_tcp_target: None,
         },
@@ -65,10 +92,22 @@ fn foreign_snapshot_attaches_to_native_started_process_owner() {
     ));
     assert!(from_foreign.revision.0 >= started.revision.0);
     assert!(matches!(
-        prns_app::host_test::stop(),
+        prns_app::bindings::native_stop(),
         DevelopmentNodeStopOutcome::Stopped
     ));
     let stopped = foreign_block_on(prns_app::bindings::read_snapshot());
     assert_eq!(stopped.runtime, DevelopmentNodeRuntime::Stopped);
     assert_eq!(stopped.generation_id, started.generation_id);
+    let ContactListOutcome::Listed { contacts } =
+        foreign_block_on(prns_app::bindings::list_contacts())
+    else {
+        panic!("offline contact list after node stop");
+    };
+    assert_eq!(contacts.len(), 1);
+    assert_eq!(contacts[0].destination, [5; 16]);
+    assert_eq!(
+        prns_app::bindings::native_reset(storage_path),
+        DevelopmentNodeStopOutcome::AlreadyStopped
+    );
+    assert!(!storage.exists());
 }
