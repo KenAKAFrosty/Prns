@@ -6,9 +6,12 @@ mod gatt_link;
 mod gatt_write;
 mod l2cap_lifecycle;
 mod peripheral;
+mod peripheral_write;
 
 #[cfg(test)]
 mod peripheral_tests;
+#[cfg(test)]
+mod peripheral_write_tests;
 #[cfg(test)]
 mod radio_lifecycle_tests;
 #[cfg(test)]
@@ -28,7 +31,7 @@ use objc2_core_bluetooth::{
     CBPeripheralManager, CBUUID,
 };
 use objc2_foundation::{NSArray, NSData, NSDictionary, NSNumber, NSString};
-use tokio::sync::{mpsc as tokio_mpsc, watch};
+use tokio::sync::watch;
 
 use prns_core::interfaces::bluetooth_auto::{
     BleAddress, BleUuid, BLE_SERVICE_UUID, COLUMBA_IDENTITY_UUID, COLUMBA_RX_UUID, COLUMBA_TX_UUID,
@@ -387,21 +390,6 @@ fn manager_signal_channel() -> (ManagerSignalSender, watch::Receiver<ManagerSign
 struct Sighting {
     address: BleAddress,
     rssi: Option<i8>,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum BoundedIngress<T> {
-    Accepted,
-    Full(T),
-    Closed(T),
-}
-
-fn try_bounded_ingress<T>(sender: &tokio_mpsc::Sender<T>, value: T) -> BoundedIngress<T> {
-    match sender.try_send(value) {
-        Ok(()) => BoundedIngress::Accepted,
-        Err(tokio_mpsc::error::TrySendError::Full(value)) => BoundedIngress::Full(value),
-        Err(tokio_mpsc::error::TrySendError::Closed(value)) => BoundedIngress::Closed(value),
-    }
 }
 
 #[derive(Debug)]
