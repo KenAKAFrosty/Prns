@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
+import io
 import json
 import os
 import pathlib
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 from unittest import mock
@@ -256,6 +259,7 @@ checksum = "abc"
             (personal_rns / "package.json").write_text(
                 '{"name":"personal-rns","version":"0.0.0"}\n', encoding="utf-8"
             )
+            runtime_selection = "file:../../vendor/ubrn/packages/ubjs-core.tgz"
             for relative in (pathlib.Path("prns/app"), pathlib.Path("sdk/expo")):
                 package = applications / relative
                 package.mkdir(parents=True)
@@ -264,11 +268,22 @@ checksum = "abc"
                     json.dumps(
                         {
                             "name": str(relative),
-                            "dependencies": {"personal-rns": selection},
+                            "dependencies": {
+                                "personal-rns": selection,
+                                "@ubjs/core": runtime_selection,
+                            },
                         }
                     ),
                     encoding="utf-8",
                 )
+            bindings = applications / "prns/native-composition/bindings/package.json"
+            bindings.parent.mkdir(parents=True)
+            binding_manifest = json.dumps({
+                "name": "@prns-internal/native-bindings",
+                "peerDependencies": {"personal-rns": "*"},
+                "dependencies": {"@ubjs/core": "0.31.0-5"},
+            })
+            bindings.write_text(binding_manifest, encoding="utf-8")
             artifact = applications / "vendor" / "personal-rns.tgz"
             artifact.parent.mkdir()
             artifact.write_bytes(b"fixture")
@@ -281,7 +296,72 @@ checksum = "abc"
             )
 
             self.assertEqual(selection, "file:../../vendor/personal-rns.tgz")
+            self.assertEqual(bindings.read_text(encoding="utf-8"), binding_manifest)
+            for relative in ("prns/app", "sdk/expo"):
+                package = json.loads((applications / relative / "package.json").read_text())
+                self.assertEqual(package["dependencies"]["@ubjs/core"], runtime_selection)
             mobility.reject_external_npm_paths(applications)
+
+    def test_personal_rns_pack_preserves_committed_runtime_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = pathlib.Path(temporary)
+            applications = repository / "applications"
+            runtime = applications / "vendor/ubrn/packages/ubjs-core.tgz"
+            runtime.parent.mkdir(parents=True)
+            runtime.write_bytes(b"pinned runtime archive")
+            artifact = applications / "vendor/personal-rns.tgz"
+            metadata = {
+                "name": "personal-rns", "version": "0.0.0",
+                "exports": {"./contract": "./contract.js"},
+            }
+            with tarfile.open(artifact, "w:gz") as archive:
+                for name, data in {
+                    "package/package.json": json.dumps(metadata).encode(),
+                    "package/contract.js": b"export {};",
+                }.items():
+                    member = tarfile.TarInfo(name)
+                    member.size = len(data)
+                    archive.addfile(member, io.BytesIO(data))
+            compatibility = self.npm_compatibility()
+            javascript = compatibility["prns"]["javascriptContract"]
+            javascript.update({
+                "version": "0.0.0", "subpath": "./contract",
+                "requiredFiles": ["package/package.json", "package/contract.js"],
+                "artifactSha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+            })
+            packed = subprocess.CompletedProcess(
+                args=["npm", "pack"], returncode=0,
+                stdout=json.dumps([{"filename": artifact.name}]),
+            )
+            with mock.patch.object(mobility, "run", return_value=packed):
+                result, digest, _ = mobility.build_javascript_artifact(
+                    repository, applications, compatibility, {},
+                )
+            self.assertEqual(result, artifact)
+            self.assertEqual(digest, javascript["artifactSha256"])
+            self.assertEqual(runtime.read_bytes(), b"pinned runtime archive")
+
+    def test_environment_retains_only_explicit_generator_cache_override(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            work = pathlib.Path(temporary)
+            cache = work / "shared generator cache"
+            inherited = {
+                "PATH": os.environ.get("PATH", ""),
+                "PRNS_UBRN_CACHE": os.fspath(cache),
+                "PRNS_COMPATIBILITY_PRNS_ROOT": "/unreviewed/source",
+                "CARGO_TARGET_DIR": "/unreviewed/target",
+                "NPM_CONFIG_USERCONFIG": "/unreviewed/.npmrc",
+                "NODE_OPTIONS": "--require=/unreviewed/bootstrap.js",
+            }
+            with mock.patch.dict(os.environ, inherited, clear=True):
+                environment = mobility.controlled_environment(
+                    work, work / "applications", mobility.load_compatibility(),
+                )
+            self.assertEqual(environment["PRNS_UBRN_CACHE"], os.fspath(cache.resolve()))
+            self.assertNotIn("PRNS_COMPATIBILITY_PRNS_ROOT", environment)
+            self.assertNotIn("NODE_OPTIONS", environment)
+            self.assertEqual(environment["CARGO_TARGET_DIR"], os.fspath(work / "applications/target"))
+            self.assertEqual(environment["NPM_CONFIG_USERCONFIG"], os.fspath(work / "npm-user.npmrc"))
 
     def test_npm_scanner_rejects_local_override_outside_export(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

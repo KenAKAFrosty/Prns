@@ -203,6 +203,9 @@ def controlled_environment(
     compatibility: dict[str, Any],
 ) -> dict[str, str]:
     environment = os.environ.copy()
+    # This selects a disposable compiler cache, never an alternative binding
+    # source: the app-local vendor recipe verifies its pinned tree on reuse.
+    ubrn_cache = environment.get("PRNS_UBRN_CACHE")
     forbidden_prefixes = ("CARGO_", "NPM_CONFIG_", "PRNS_", "RUST", "UV_")
     forbidden_names = {"LXMF_VENV", "NODE_OPTIONS", "PYTHONHOME", "PYTHONPATH"}
     for key in list(environment):
@@ -238,6 +241,10 @@ def controlled_environment(
             "UV_CACHE_DIR": os.fspath(uv_cache),
         }
     )
+    if ubrn_cache:
+        environment["PRNS_UBRN_CACHE"] = os.fspath(
+            pathlib.Path(ubrn_cache).expanduser().resolve()
+        )
     return environment
 
 
@@ -926,7 +933,7 @@ def build_javascript_artifact(
     )
     run(("npm", "run", "build:code"), cwd=source, environment=environment)
     vendor = applications_root / "vendor"
-    vendor.mkdir()
+    vendor.mkdir(exist_ok=True)
     packed = run(
         ("npm", "pack", "--json", "--pack-destination", vendor),
         cwd=source,
@@ -1483,6 +1490,12 @@ def qualify(
             cwd=applications_root,
             environment=environment,
         )
+        # The exported archives and recipe must agree before npm installs them.
+        run(
+            (sys.executable, applications_root / "tools/ubrn-vendor/vendor.py", "check"),
+            cwd=applications_root,
+            environment=environment,
+        )
         artifact, artifact_digest, artifact_integrity = build_javascript_artifact(
             prns_root, applications_root, compatibility, environment
         )
@@ -1546,17 +1559,9 @@ def qualify(
             applications_root, artifact, artifact_digest, artifact_integrity
         )
 
-        generated = applications_root / "sdk" / "expo" / "src" / "contract.generated.ts"
-        expected_generated = generated.read_bytes()
-        run(
-            ("npm", "run", "api:generate"),
-            cwd=applications_root,
-            environment=environment,
-        )
-        if generated.read_bytes() != expected_generated:
-            raise fail(
-                "detached contract generation differs from the tracked application artifact"
-            )
+        # verify includes api:check: the app-local pinned generator checks all
+        # TypeScript, Swift, Kotlin and canonical Host outputs without rewriting
+        # them. A separate generation step would conceal stale tracked bindings.
         run(("npm", "run", "verify"), cwd=applications_root, environment=environment)
         run(
             ("npm", "run", "lxmf:verify"),
