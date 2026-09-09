@@ -59,6 +59,10 @@ export type DevelopmentRuntimeView = {
   readonly backgroundFailure: string | null;
   readonly canStartNode: boolean;
   readonly startNode: () => void;
+  readonly canStopNode: boolean;
+  readonly stoppingNode: boolean;
+  readonly stopFailure: string | null;
+  readonly stopNode: () => Promise<void>;
   readonly showAccessorySetupPicker: () => Promise<
     RuntimeCommandResult<AccessorySetupPickerOutcome>
   >;
@@ -124,6 +128,11 @@ export function DevelopmentRuntimeProvider({
   const [accessorySetup, setAccessorySetup] = useState<AccessorySetupStatus | null>(null);
   const [accessorySetupFailure, setAccessorySetupFailure] = useState<string | null>(null);
   const [startRequest, setStartRequest] = useState(0);
+  const [stoppingNode, setStoppingNode] = useState(false);
+  const [stopFailure, setStopFailure] = useState<string | null>(null);
+  const stopOwner = useRef<object | null>(null);
+  const stopProvider = useRef<RuntimeProvider | null>(null);
+  const stopRevision = useRef(0);
   const acquisitionPending = useRef(true);
   const previousRelease = useRef(Promise.resolve());
   const session = useRef<DevelopmentRuntimeSession | null>(null);
@@ -133,6 +142,7 @@ export function DevelopmentRuntimeProvider({
   const canStartNode =
     selectedProvider.availability.type === "available" &&
     selectedProvider.availability.platform === "android" &&
+    !stoppingNode &&
     phase !== "starting" &&
     snapshot?.runtime !== "starting" &&
     snapshot?.runtime !== "stopping" &&
@@ -141,12 +151,22 @@ export function DevelopmentRuntimeProvider({
     (phase === "failed" || snapshot?.runtime === "stopped" || snapshot?.runtime === "failed");
   const startAllowed = useRef(canStartNode);
   startAllowed.current = canStartNode;
+  const canStopNode =
+    selectedProvider.availability.type === "available" &&
+    selectedProvider.availability.platform === "android" &&
+    phase !== "starting" &&
+    !stoppingNode &&
+    ((snapshot !== null && snapshot.runtime !== "stopped") ||
+      (androidRuntime.status !== null && androidRuntime.status.service !== "stopped"));
+  const stopAllowed = useRef(canStopNode);
+  stopAllowed.current = canStopNode;
 
   const startNode = useCallback(() => {
-    if (!startAllowed.current || acquisitionPending.current) return;
+    if (!startAllowed.current || acquisitionPending.current || stopOwner.current !== null) return;
     // Admit synchronously, before React renders the pending state, so two presses
     // cannot create two runtime subscriptions or start requests.
     acquisitionPending.current = true;
+    setStopFailure(null);
     setPhase("starting");
     setStartRequest((request) => request + 1);
   }, []);
@@ -167,6 +187,56 @@ export function DevelopmentRuntimeProvider({
     latestRevision.current = next.revision;
     setSnapshot(next);
   }, []);
+
+  useEffect(() => {
+    stopProvider.current = selectedProvider;
+    stopOwner.current = null;
+    setStoppingNode(false);
+    setStopFailure(null);
+    return () => {
+      stopProvider.current = null;
+      stopOwner.current = null;
+    };
+  }, [selectedProvider]);
+
+  const stopNode = useCallback(async () => {
+    if (
+      !stopAllowed.current ||
+      stopProvider.current !== selectedProvider ||
+      acquisitionPending.current ||
+      stopOwner.current !== null ||
+      !("runtime" in selectedProvider)
+    )
+      return;
+    const owner = {};
+    stopOwner.current = owner;
+    stopRevision.current += 1;
+    setStoppingNode(true);
+    setStopFailure(null);
+    try {
+      // Android's Expo stop delegates to the service owner, just like the
+      // notification action. It clears restart intent and drains platform work.
+      const outcome = await selectedProvider.runtime.stopDevelopmentNode();
+      if (stopOwner.current !== owner) return;
+      if (outcome.type === "failed") setStopFailure(outcome.detail);
+    } catch (failure) {
+      if (stopOwner.current === owner) setStopFailure(formatFailure(failure));
+    } finally {
+      if (stopOwner.current === owner) {
+        try {
+          const next = await selectedProvider.runtime.readDevelopmentNodeSnapshot();
+          if (stopOwner.current === owner) publishSnapshot(next);
+        } catch (failure) {
+          if (stopOwner.current === owner) setBackgroundFailure(formatFailure(failure));
+        }
+        await androidRuntime.refresh();
+        if (stopOwner.current === owner) {
+          stopOwner.current = null;
+          setStoppingNode(false);
+        }
+      }
+    }
+  }, [androidRuntime.refresh, publishSnapshot, selectedProvider]);
 
   useEffect(() => {
     setAccessorySetup(null);
@@ -307,7 +377,8 @@ export function DevelopmentRuntimeProvider({
       operation: (active: DevelopmentRuntimeSession) => Effect.Effect<Outcome, unknown>,
     ): Promise<RuntimeCommandResult<Outcome>> => {
       const active = session.current;
-      if (active === null || acquisitionPending.current) {
+      const admittedStopRevision = stopRevision.current;
+      if (active === null || acquisitionPending.current || stopOwner.current !== null) {
         return unavailableResult();
       }
       let result: RuntimeCommandResult<Outcome>;
@@ -318,7 +389,9 @@ export function DevelopmentRuntimeProvider({
       }
       // A manual refresh or command can outlive its observer scope. Its result
       // must not republish an old generation after an explicit start or release.
-      return session.current === active && !acquisitionPending.current
+      return session.current === active &&
+        !acquisitionPending.current &&
+        admittedStopRevision === stopRevision.current
         ? result
         : {
             type: "operationFailure",
@@ -498,6 +571,10 @@ export function DevelopmentRuntimeProvider({
       backgroundFailure,
       canStartNode,
       startNode,
+      canStopNode,
+      stoppingNode,
+      stopFailure,
+      stopNode,
       showAccessorySetupPicker,
       refreshSnapshot,
       initiatePairing,
@@ -523,6 +600,10 @@ export function DevelopmentRuntimeProvider({
       backgroundFailure,
       canStartNode,
       startNode,
+      canStopNode,
+      stoppingNode,
+      stopFailure,
+      stopNode,
       describeTarget,
       announceTarget,
       initiatePairing,

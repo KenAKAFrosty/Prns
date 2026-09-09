@@ -35,7 +35,7 @@ class PrnsAppModule : Module() {
       PrnsAndroidRuntime.status(context)
     }
     AsyncFunction("requestBluetoothPermissions") { promise: Promise ->
-      requestPermissions(PrnsAndroidRuntime.bluetoothPermissions(), promise, trackBluetooth = true)
+      requestPermissions(PrnsAndroidRuntime.bluetoothPermissions(), promise, trackedPermission = "bluetooth")
     }
     AsyncFunction("requestBackgroundBluetoothPermission") { promise: Promise ->
       when {
@@ -43,12 +43,20 @@ class PrnsAppModule : Module() {
         !PrnsAndroidRuntime.hasBluetoothPermission(context) ->
           promise.reject("ERR_PRNS_PERMISSION", "Allow Bluetooth discovery before enabling background discovery", null)
         Build.VERSION.SDK_INT == 29 ->
-          requestPermissions(arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION), promise, trackBluetooth = false)
+          requestPermissions(arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION), promise)
         else -> {
           // Android 11 requires the user to grant 'Allow all the time' in Settings.
           context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
           promise.resolve(PrnsAndroidRuntime.status(context))
         }
+      }
+    }
+
+    AsyncFunction("requestConnectionNotificationPermission") { promise: Promise ->
+      if (Build.VERSION.SDK_INT < 33 || context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+        promise.resolve(PrnsAndroidRuntime.status(context))
+      } else {
+        requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), promise, trackedPermission = "notification")
       }
     }
 
@@ -81,7 +89,7 @@ class PrnsAppModule : Module() {
     }
   }
 
-  private fun requestPermissions(permissions: Array<String>, promise: Promise, trackBluetooth: Boolean) {
+  private fun requestPermissions(permissions: Array<String>, promise: Promise, trackedPermission: String? = null) {
     val manager = appContext.permissions
     val activity = appContext.currentActivity
     if (manager == null || activity == null) {
@@ -92,10 +100,10 @@ class PrnsAppModule : Module() {
     activity.runOnUiThread {
       try {
         manager.askForPermissions(PermissionsResponseListener { responses ->
-          if (trackBluetooth) {
+          if (trackedPermission != null) {
             val blocked = responses.values.any { it.status != PermissionsStatus.GRANTED && !it.canAskAgain }
             application.getSharedPreferences("prns-platform", Context.MODE_PRIVATE).edit()
-              .putBoolean("bluetoothAsked", true).putBoolean("bluetoothBlocked", blocked).apply()
+              .putBoolean("${trackedPermission}Asked", true).putBoolean("${trackedPermission}Blocked", blocked).apply()
           }
           PrnsAndroidRuntime.refresh(application)
           promise.resolve(PrnsAndroidRuntime.status(application))

@@ -17,6 +17,7 @@ import {
 } from "@/ui/primitives";
 import { formatBytes, formatRequestKind, formatRuntime } from "./format";
 import { AndroidBluetoothCard } from "./android-bluetooth-card";
+import { AndroidNodeControls } from "./android-node-controls";
 
 export function NodesScreen() {
   const runtime = useDevelopmentRuntime();
@@ -77,6 +78,7 @@ export function NodesScreen() {
       ) : null}
 
       <NodeRecoveryCard showDiagnosticsLink />
+      <AndroidNodeControls />
 
       {runtime.snapshot === null ? null : (
         <>
@@ -148,6 +150,7 @@ export function LocalNodeScreen() {
       <Badge>Node diagnostics</Badge>
       <ScreenHeading>This device</ScreenHeading>
       <NodeRecoveryCard />
+      <AndroidNodeControls />
       {runtime.snapshot === null ? (
         <Card>
           <Badge tone={runtime.phase === "failed" ? "warning" : "neutral"}>{runtime.phase}</Badge>

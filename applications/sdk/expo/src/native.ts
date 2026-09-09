@@ -46,6 +46,7 @@ export type AndroidRuntimeNativeModule = {
   readonly androidRuntimeStatus: () => Promise<string>;
   readonly requestBluetoothPermissions: () => Promise<string>;
   readonly requestBackgroundBluetoothPermission: () => Promise<string>;
+  readonly requestConnectionNotificationPermission: () => Promise<string>;
   readonly addListener: (
     eventName: "onAndroidRuntimeStatus",
     listener: (event: { readonly status: string }) => void,

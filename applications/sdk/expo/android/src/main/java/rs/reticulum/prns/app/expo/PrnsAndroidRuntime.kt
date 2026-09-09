@@ -1,6 +1,7 @@
 package rs.reticulum.prns.app.expo
 
 import android.Manifest
+import android.app.NotificationManager
 import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.content.pm.PackageManager
@@ -43,6 +44,21 @@ internal object PrnsAndroidRuntime {
     runCatching { context.getSystemService(BluetoothManager::class.java)?.adapter?.isEnabled == true }.getOrDefault(false) &&
     (Build.VERSION.SDK_INT >= 31 || context.getSystemService(LocationManager::class.java).isLocationEnabled)
 
+  fun connectionNotificationStatus(context: Context): String {
+    val preferences = context.getSharedPreferences("prns-platform", Context.MODE_PRIVATE)
+    val manager = context.getSystemService(NotificationManager::class.java)
+    val channel = manager.getNotificationChannel(PrnsRuntimeService.CHANNEL)
+    val groupEnabled = channel?.group?.let { manager.getNotificationChannelGroup(it)?.isBlocked != true } ?: true
+    return PrnsNotificationState.status(
+      permissionRequired = Build.VERSION.SDK_INT >= 33,
+      permissionGranted = Build.VERSION.SDK_INT < 33 || context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED,
+      asked = preferences.getBoolean("notificationAsked", false),
+      blocked = preferences.getBoolean("notificationBlocked", false),
+      appEnabled = manager.areNotificationsEnabled(),
+      channelEnabled = channel?.importance != NotificationManager.IMPORTANCE_NONE && groupEnabled,
+    )
+  }
+
   @Synchronized
   fun status(context: Context): String {
     val preferences = context.getSharedPreferences("prns-platform", Context.MODE_PRIVATE)
@@ -66,6 +82,7 @@ internal object PrnsAndroidRuntime {
       .put("bluetoothRadio", radio)
       .put("locationServices", if (Build.VERSION.SDK_INT >= 31) "notRequired" else if (context.getSystemService(LocationManager::class.java).isLocationEnabled) "on" else "off")
       .put("backgroundDiscovery", if (Build.VERSION.SDK_INT >= 31) "notRequired" else if (context.checkSelfPermission(Manifest.permission.ACCESS_BACKGROUND_LOCATION) == PackageManager.PERMISSION_GRANTED) "granted" else "notGranted")
+      .put("connectionNotification", connectionNotificationStatus(context))
       .put("service", phase)
       .put("lastError", lastError ?: JSONObject.NULL)
       .toString()

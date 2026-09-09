@@ -6,6 +6,7 @@ const status = {
   revision: 1,
   bluetoothPermission: "denied",
   backgroundDiscovery: "notGranted",
+  connectionNotification: "enabled",
   bluetoothRadio: "off",
   locationServices: "off",
   service: "running",
@@ -17,6 +18,7 @@ function fixture(overrides: Partial<AndroidRuntimeNativeModule> = {}): AndroidRu
     androidRuntimeStatus: jest.fn(async () => JSON.stringify(status)),
     requestBluetoothPermissions: jest.fn(async () => JSON.stringify(status)),
     requestBackgroundBluetoothPermission: jest.fn(async () => JSON.stringify(status)),
+    requestConnectionNotificationPermission: jest.fn(async () => JSON.stringify(status)),
     addListener: jest.fn(() => ({ remove: jest.fn() })),
     ...overrides,
   };
@@ -29,11 +31,15 @@ describe("Android runtime capability", () => {
     await expect(runtime.readStatus()).resolves.toEqual(status);
     expect(native.requestBluetoothPermissions).not.toHaveBeenCalled();
     expect(native.requestBackgroundBluetoothPermission).not.toHaveBeenCalled();
+    expect(native.requestConnectionNotificationPermission).not.toHaveBeenCalled();
     await runtime.requestBluetoothPermissions();
     expect(native.requestBluetoothPermissions).toHaveBeenCalledTimes(1);
     expect(native.requestBackgroundBluetoothPermission).not.toHaveBeenCalled();
     await runtime.requestBackgroundBluetoothPermission();
     expect(native.requestBackgroundBluetoothPermission).toHaveBeenCalledTimes(1);
+    expect(native.requestConnectionNotificationPermission).not.toHaveBeenCalled();
+    await runtime.requestConnectionNotificationPermission();
+    expect(native.requestConnectionNotificationPermission).toHaveBeenCalledTimes(1);
   });
 
   test("subscribes to Android events only and ignores malformed events", () => {
@@ -61,6 +67,7 @@ describe("Android runtime capability", () => {
     { revision: Number.MAX_SAFE_INTEGER + 1 },
     { bluetoothPermission: "authorized" },
     { backgroundDiscovery: "unknown" },
+    { connectionNotification: "granted" },
     { bluetoothRadio: "ready" },
     { locationServices: "unknown" },
     { service: "ready" },

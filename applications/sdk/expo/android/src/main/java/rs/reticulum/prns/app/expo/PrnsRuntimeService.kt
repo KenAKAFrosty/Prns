@@ -277,7 +277,7 @@ class PrnsRuntimeService : Service() {
   }
 
   companion object {
-    private const val CHANNEL = "prns-connections"
+    internal const val CHANNEL = "prns-connections"
     private const val NOTIFICATION_ID = 3101
     private const val PREFERENCES = "prns-service"
     private const val ACTION_STOP = "rs.reticulum.prns.app.STOP"

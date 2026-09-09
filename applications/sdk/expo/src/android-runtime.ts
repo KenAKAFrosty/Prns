@@ -5,6 +5,7 @@ export type AndroidRuntimeStatus = {
   readonly revision: number;
   readonly bluetoothPermission: "notRequested" | "granted" | "denied" | "blocked";
   readonly backgroundDiscovery: "notRequired" | "granted" | "notGranted";
+  readonly connectionNotification: "enabled" | "notRequested" | "denied" | "blocked";
   readonly bluetoothRadio: "unknown" | "unsupported" | "off" | "on";
   readonly locationServices: "notRequired" | "on" | "off";
   readonly service: "stopped" | "starting" | "running" | "stopping" | "failed";
@@ -15,6 +16,7 @@ export type AndroidRuntime = {
   readonly readStatus: () => Promise<AndroidRuntimeStatus>;
   readonly requestBluetoothPermissions: () => Promise<AndroidRuntimeStatus>;
   readonly requestBackgroundBluetoothPermission: () => Promise<AndroidRuntimeStatus>;
+  readonly requestConnectionNotificationPermission: () => Promise<AndroidRuntimeStatus>;
   readonly addStatusListener: (listener: (status: AndroidRuntimeStatus) => void) => {
     readonly remove: () => void;
   };
@@ -27,6 +29,8 @@ export function createAndroidRuntime(nativeModule: AndroidRuntimeNativeModule): 
       parseAndroidRuntimeStatus(await nativeModule.requestBluetoothPermissions()),
     requestBackgroundBluetoothPermission: async () =>
       parseAndroidRuntimeStatus(await nativeModule.requestBackgroundBluetoothPermission()),
+    requestConnectionNotificationPermission: async () =>
+      parseAndroidRuntimeStatus(await nativeModule.requestConnectionNotificationPermission()),
     addStatusListener: (listener) =>
       nativeModule.addListener("onAndroidRuntimeStatus", (event) => {
         try {
@@ -56,6 +60,8 @@ export function parseAndroidRuntimeStatus(json: string): AndroidRuntimeStatus {
     !oneOf(value.bluetoothPermission, ["notRequested", "granted", "denied", "blocked"]) ||
     !("backgroundDiscovery" in value) ||
     !oneOf(value.backgroundDiscovery, ["notRequired", "granted", "notGranted"]) ||
+    !("connectionNotification" in value) ||
+    !oneOf(value.connectionNotification, ["enabled", "notRequested", "denied", "blocked"]) ||
     !("bluetoothRadio" in value) ||
     !oneOf(value.bluetoothRadio, ["unknown", "unsupported", "off", "on"]) ||
     !("locationServices" in value) ||
@@ -71,6 +77,7 @@ export function parseAndroidRuntimeStatus(json: string): AndroidRuntimeStatus {
     revision: value.revision,
     bluetoothPermission: value.bluetoothPermission,
     backgroundDiscovery: value.backgroundDiscovery,
+    connectionNotification: value.connectionNotification,
     bluetoothRadio: value.bluetoothRadio,
     locationServices: value.locationServices,
     service: value.service,

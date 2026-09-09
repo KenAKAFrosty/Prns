@@ -8,6 +8,7 @@ export type AndroidRuntimeView = {
   readonly refresh: () => Promise<void>;
   readonly requestBluetoothPermissions: () => Promise<void>;
   readonly requestBackgroundBluetoothPermission: () => Promise<void>;
+  readonly requestConnectionNotificationPermission: () => Promise<void>;
 };
 
 export function useAndroidRuntime(runtime: AndroidRuntime | undefined): AndroidRuntimeView {
@@ -43,6 +44,10 @@ export function useAndroidRuntime(runtime: AndroidRuntime | undefined): AndroidR
     () => invoke((owner) => owner.requestBackgroundBluetoothPermission()),
     [invoke],
   );
+  const requestConnectionNotificationPermission = useCallback(
+    () => invoke((owner) => owner.requestConnectionNotificationPermission()),
+    [invoke],
+  );
 
   useEffect(() => {
     setStatus(null);
@@ -59,9 +64,7 @@ export function useAndroidRuntime(runtime: AndroidRuntime | undefined): AndroidR
         setFailure(null);
       },
       fail: (error: unknown) => {
-        setFailure(
-          error instanceof Error ? error.message : "Bluetooth status could not be checked.",
-        );
+        setFailure(error instanceof Error ? error.message : "Device status could not be checked.");
       },
     };
     active.current = owner;
@@ -84,7 +87,15 @@ export function useAndroidRuntime(runtime: AndroidRuntime | undefined): AndroidR
       refresh,
       requestBluetoothPermissions,
       requestBackgroundBluetoothPermission,
+      requestConnectionNotificationPermission,
     }),
-    [status, failure, refresh, requestBluetoothPermissions, requestBackgroundBluetoothPermission],
+    [
+      status,
+      failure,
+      refresh,
+      requestBluetoothPermissions,
+      requestBackgroundBluetoothPermission,
+      requestConnectionNotificationPermission,
+    ],
   );
 }
