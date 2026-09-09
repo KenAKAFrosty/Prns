@@ -69,4 +69,16 @@ describe("screen catalog", () => {
       "See what works in this preview and what is coming later.",
     );
   });
+
+  it.each([
+    [
+      "inbox.index",
+      "Messaging is available on iOS and Android. Background delivery is not guaranteed.",
+    ],
+    ["contacts.index", "Contacts are available on iOS and Android."],
+    ["nodes.index", "Node management is available on iOS and Android."],
+    ["nodes.local", "Detailed node status is available on iOS and Android."],
+  ] as const)("describes the supported mobile platforms for %s", (id, limitation) => {
+    expect(screenById(id).limitation).toBe(limitation);
+  });
 });

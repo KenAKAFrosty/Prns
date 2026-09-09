@@ -24,17 +24,32 @@ links, and deep-link tests together.
 
 Saved pairing is authorization, not a live route. Before a connection check or
 address-sharing operation opens its control Link, the native actor resolves
-the authorized target, checks the current route, and requests a missing path
-through Prns's public API. That request awaits an accepted announcement for the
-exact destination; it is not merely a local send acknowledgement. Existing
-routes skip discovery, and discovery failure does not submit a remote command.
+the authorized target and checks the route's actual interface for online,
+transmit-capable status. It waits up to five seconds for a current app transport
+to become available. A ready route skips discovery; otherwise an available
+transmitting interface permits one path request through Prns's public API.
+That request awaits an accepted announcement for the exact destination, then
+the app checks the route's interface again before connecting. A stored route
+alone is insufficient, and failure does not submit a remote command. These
+checks use the status published by the app's Bluetooth/TCP transports, not a
+general readiness guarantee for custom interfaces.
 
-Prns owns the bitrate-aware discovery timeout and interface selection. The
-existing 20-second synchronous connection-check bridge wait is separate: on a
-slow network it can expire while the admitted native operation is still busy.
-It does not cancel that operation or admit a duplicate. Address sharing retains
-its asynchronous operation ID and result instead. Slow-interface timing and
-snapshot refresh during a pending connection check remain qualification limits.
+Prns owns the bitrate-aware discovery timeout and interface selection. Describe
+has one 20-second deadline starting at admission, including queueing, readiness,
+discovery, connection, and response time. Deadline expiry, native caller
+departure, or priority Stop drops the app-owned Describe future and releases
+its active-operation and admission state. An expired queued command never
+starts network work. This is not a JavaScript promise-cancellation API.
+
+Once a target connection has been returned, an app-owned guard queues Link
+closure on completion or cancellation. Earlier establishment/identification
+may already have issued upstream work: dropping its waiter does not guarantee
+immediate engine cancellation before that handle exists. Neither path discovery
+nor the remote operation is automatically replayed. Address sharing retains its
+asynchronous operation ID and unknown-outcome handling instead of adopting
+Describe's caller-cancellation semantics. See the
+[validation summary](../../docs/validation.md) for current recovery evidence
+and limits.
 
 ## Sharing a paired node's address
 
@@ -65,8 +80,11 @@ reliable background recovery; see the [validation summary](../../docs/validation
 
 The Android app supports Android 10 (API 29) and newer. A foreground service
 owns the same Rust runtime used by iOS, with Android Bluetooth and permission
-handling. Its ongoing notification provides an explicit Stop action; closing a
-screen does not stop the node.
+handling. **Stop node** on Nodes or This device and the running-node
+notification's **Stop** action use the same service-owned shutdown. In-app Stop
+remains available when notifications are disabled. Closing a screen does not
+stop the node, and ordinary navigation or resume after Stop does not restart it.
+Select **Start node** explicitly to resume with the saved identity and data.
 
 See [Android development](../../docs/android.md) for setup, permission behavior,
 and the physical acceptance sequence. To build a standalone development APK
