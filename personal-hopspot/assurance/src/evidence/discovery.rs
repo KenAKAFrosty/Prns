@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use personal_hopspot_resources::report::{ComparisonError, Document};
 use thiserror::Error;
 
-use crate::contract::{ProofContractError, ProofFragment};
+use crate::contract::{EvidenceArtifact, ProofContractError, ProofFragment};
 
 const PROOF_SUFFIX: &str = ".assurance.json";
 
@@ -37,6 +37,24 @@ pub enum DiscoveryError {
         #[source]
         source: ProofContractError,
     },
+    #[error("could not inspect assurance artifact {artifact} referenced by {proof}: {source}")]
+    InspectArtifact {
+        proof: PathBuf,
+        artifact: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("assurance artifact is not a regular file: {artifact} referenced by {proof}")]
+    InvalidArtifact { proof: PathBuf, artifact: PathBuf },
+    #[error("assurance artifact size differs for {artifact} referenced by {proof}: expected {expected}, found {actual}")]
+    ArtifactSize {
+        proof: PathBuf,
+        artifact: PathBuf,
+        expected: u64,
+        actual: u64,
+    },
+    #[error("assurance artifact fingerprint differs for {artifact} referenced by {proof}")]
+    ArtifactFingerprint { proof: PathBuf, artifact: PathBuf },
 }
 
 pub struct ResourceDocument {
@@ -89,9 +107,49 @@ pub fn discover_proofs(root: &Path) -> Result<Vec<ProofDocument>, DiscoveryError
                     path: path.clone(),
                     source,
                 })?;
+            validate_artifacts(&path, &fragment.artifacts)?;
             Ok(ProofDocument { path, fragment })
         })
         .collect()
+}
+
+fn validate_artifacts(proof: &Path, artifacts: &[EvidenceArtifact]) -> Result<(), DiscoveryError> {
+    let parent = proof.parent().unwrap_or(Path::new("."));
+    for declared in artifacts {
+        let artifact = parent.join(declared.path.as_str());
+        let metadata =
+            fs::symlink_metadata(&artifact).map_err(|source| DiscoveryError::InspectArtifact {
+                proof: proof.to_path_buf(),
+                artifact: artifact.clone(),
+                source,
+            })?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err(DiscoveryError::InvalidArtifact {
+                proof: proof.to_path_buf(),
+                artifact,
+            });
+        }
+        if metadata.len() != declared.bytes {
+            return Err(DiscoveryError::ArtifactSize {
+                proof: proof.to_path_buf(),
+                artifact,
+                expected: declared.bytes,
+                actual: metadata.len(),
+            });
+        }
+        let bytes = fs::read(&artifact).map_err(|source| DiscoveryError::InspectArtifact {
+            proof: proof.to_path_buf(),
+            artifact: artifact.clone(),
+            source,
+        })?;
+        if prns_flash_manifest::sha256_hex(&bytes) != declared.fingerprint.as_str() {
+            return Err(DiscoveryError::ArtifactFingerprint {
+                proof: proof.to_path_buf(),
+                artifact,
+            });
+        }
+    }
+    Ok(())
 }
 
 fn require_directory(path: &Path) -> Result<(), DiscoveryError> {
@@ -202,6 +260,35 @@ mod tests {
 
     use super::{discover_proofs, DiscoveryError};
 
+    fn proof(log_fingerprint: &str) -> serde_json::Value {
+        serde_json::json!({
+            "schema_version": 1,
+            "subject": { "kind": "component", "id": "sx126x" },
+            "scenario": "sx126x-state-machine",
+            "proof": "miri",
+            "runner": "miri-stacked",
+            "source": {
+                "custody": { "kind": "clean-commit", "commit": "a".repeat(40) },
+                "scenario_fingerprint": "b".repeat(64)
+            },
+            "tools": [{ "kind": "miri", "version": "miri 1" }],
+            "verdict": {
+                "kind": "passed",
+                "evidence": {
+                    "kind": "miri",
+                    "coverage": "stacked",
+                    "completed_tests": 1
+                }
+            },
+            "artifacts": [{
+                "kind": "log",
+                "path": "miri.log",
+                "bytes": 4,
+                "fingerprint": log_fingerprint
+            }]
+        })
+    }
+
     #[test]
     fn malformed_proof_evidence_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
         let directory = tempdir()?;
@@ -218,6 +305,24 @@ mod tests {
         let directory = tempdir()?;
         fs::write(directory.path().join("result.json"), b"{}")?;
         assert!(discover_proofs(directory.path())?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn proof_discovery_verifies_artifact_custody() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempdir()?;
+        let log = b"Miri";
+        fs::write(directory.path().join("miri.log"), log)?;
+        fs::write(
+            directory.path().join("valid.assurance.json"),
+            serde_json::to_vec(&proof(&prns_flash_manifest::sha256_hex(log)))?,
+        )?;
+        assert_eq!(discover_proofs(directory.path())?.len(), 1);
+        fs::write(directory.path().join("miri.log"), b"mori")?;
+        assert!(matches!(
+            discover_proofs(directory.path()),
+            Err(DiscoveryError::ArtifactFingerprint { .. })
+        ));
         Ok(())
     }
 }

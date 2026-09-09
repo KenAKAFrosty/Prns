@@ -442,6 +442,41 @@ expires = "yesterday"
         del result["finished_at"]
         self.assertTrue(any("missing fields" in error for error in runner.evidence_errors(result)))
 
+    def test_suite_receives_its_owned_artifact_paths(self) -> None:
+        script = (
+            "import json, os, pathlib; "
+            "directory = pathlib.Path(os.environ['PRNS_VALIDATION_ARTIFACT_DIR']); "
+            "directory.joinpath('child-environment.json').write_text(json.dumps({"
+            "'root': os.environ['PRNS_VALIDATION_ARTIFACT_ROOT'], "
+            "'directory': str(directory)}))"
+        )
+        suite = {
+            "id": "runner-artifact-environment-self-test",
+            "domain": "hygiene",
+            "tiers": ["pr"],
+            "platform": "any",
+            "toolchain": "python",
+            "timeout_seconds": 10,
+            "command": [sys.executable, "-c", script],
+            "inputs": ["validation/run.py"],
+            "artifacts": "validation-artifacts/results/runner-artifact-environment-self-test",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with mock.patch.dict(os.environ, {"PRNS_VALIDATION_ARTIFACTS": directory}):
+                self.assertTrue(runner.run_suite(self.manifest, suite, None, 1))
+            child = json.loads(
+                (
+                    root
+                    / "results/runner-artifact-environment-self-test/child-environment.json"
+                ).read_text(encoding="utf-8")
+            )
+        self.assertEqual(child["root"], str(root))
+        self.assertEqual(
+            child["directory"],
+            str(root / "results/runner-artifact-environment-self-test"),
+        )
+
     def test_ci_matrix_is_deterministic(self) -> None:
         first = json.dumps(
             {"include": runner.selected_suites(self.manifest, [], "kani", "release")},

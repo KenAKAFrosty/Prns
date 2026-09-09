@@ -10,9 +10,9 @@ use super::discovery::{ProofDocument, ResourceDocument};
 use crate::capabilities;
 use crate::contract::{
     ArchitectureId, AssuranceMatrix, Capability, CapabilityResult, EvidenceFingerprint, Failure,
-    FailureKind, IdentifierError, MatrixStatus, ProofFragment, ProofKind, ResourceEvidence,
-    Subject, SupportLevel, TargetEvidence, TargetId, UnavailableReason, ValueError, Verdict,
-    ASSURANCE_MATRIX_SCHEMA_VERSION,
+    FailureKind, IdentifierError, MatrixStatus, MiriCoverage, ProofEvidence, ProofFragment,
+    ProofKind, ResourceEvidence, Subject, SupportLevel, TargetEvidence, TargetId,
+    UnavailableReason, ValueError, Verdict, ASSURANCE_MATRIX_SCHEMA_VERSION,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -20,6 +20,12 @@ struct CapabilityKey {
     subject: Subject,
     scenario: crate::contract::ScenarioId,
     proof: ProofKind,
+}
+
+enum ProofPrecedence {
+    Existing,
+    Incoming,
+    Incompatible,
 }
 
 impl From<&Capability> for CapabilityKey {
@@ -187,12 +193,20 @@ pub fn assemble(
                 entry.insert(proof);
             }
             Entry::Occupied(entry) => {
-                return Err(AggregateError::DuplicateProof {
-                    subject: key.subject,
-                    scenario: key.scenario,
-                    first: entry.get().path.clone(),
-                    second: proof.path,
-                });
+                match proof_precedence(&entry.get().fragment, &proof.fragment) {
+                    ProofPrecedence::Existing => {}
+                    ProofPrecedence::Incoming => {
+                        *entry.into_mut() = proof;
+                    }
+                    ProofPrecedence::Incompatible => {
+                        return Err(AggregateError::DuplicateProof {
+                            subject: key.subject,
+                            scenario: key.scenario,
+                            first: entry.get().path.clone(),
+                            second: proof.path,
+                        });
+                    }
+                }
             }
         }
     }
@@ -242,6 +256,35 @@ pub fn assemble(
         targets,
         capabilities: results,
     })
+}
+
+fn proof_precedence(existing: &ProofFragment, incoming: &ProofFragment) -> ProofPrecedence {
+    if existing.source != incoming.source || existing.tools != incoming.tools {
+        return ProofPrecedence::Incompatible;
+    }
+    let (
+        Verdict::Passed {
+            evidence: ProofEvidence::Miri {
+                coverage: existing, ..
+            },
+        },
+        Verdict::Passed {
+            evidence: ProofEvidence::Miri {
+                coverage: incoming, ..
+            },
+        },
+    ) = (&existing.verdict, &incoming.verdict)
+    else {
+        return ProofPrecedence::Incompatible;
+    };
+    match (existing, incoming) {
+        (MiriCoverage::Stacked, MiriCoverage::StackedAndTree) => ProofPrecedence::Incoming,
+        (MiriCoverage::StackedAndTree, MiriCoverage::Stacked) => ProofPrecedence::Existing,
+        (MiriCoverage::Stacked, MiriCoverage::Stacked)
+        | (MiriCoverage::StackedAndTree, MiriCoverage::StackedAndTree) => {
+            ProofPrecedence::Incompatible
+        }
+    }
 }
 
 fn validate_identity(
@@ -327,11 +370,12 @@ mod tests {
 
     use personal_hopspot_resources::report::Document;
 
-    use super::{assemble, AggregateError};
+    use super::{assemble, proof_precedence, AggregateError, ProofPrecedence};
     use crate::contract::{
-        EvidenceFingerprint, MatrixStatus, PlatformId, PlatformMilestone, ProofEvidence,
-        ProofFragment, ProofKind, RunnerId, ScenarioId, SourceCommit, SourceCustody,
-        SourceIdentity, Subject, ToolIdentity, ToolKind, Verdict, PROOF_FRAGMENT_SCHEMA_VERSION,
+        ComponentId, EvidenceFingerprint, MatrixStatus, MiriCoverage, PlatformId,
+        PlatformMilestone, ProofEvidence, ProofFragment, ProofKind, RunnerId, ScenarioId,
+        SourceCommit, SourceCustody, SourceIdentity, Subject, ToolIdentity, ToolKind, Verdict,
+        PROOF_FRAGMENT_SCHEMA_VERSION,
     };
     use crate::evidence::discovery::{ProofDocument, ResourceDocument};
 
@@ -372,6 +416,36 @@ mod tests {
         })
     }
 
+    fn miri_proof(coverage: MiriCoverage) -> Result<ProofFragment, Box<dyn std::error::Error>> {
+        Ok(ProofFragment {
+            schema_version: PROOF_FRAGMENT_SCHEMA_VERSION,
+            subject: Subject::Component(ComponentId::parse("sx126x")?),
+            scenario: ScenarioId::parse("sx126x-state-machine")?,
+            proof: ProofKind::Miri,
+            runner: RunnerId::parse(match coverage {
+                MiriCoverage::Stacked => "miri-stacked",
+                MiriCoverage::StackedAndTree => "miri-stacked-tree",
+            })?,
+            source: SourceIdentity {
+                custody: SourceCustody::CleanCommit {
+                    commit: SourceCommit::parse("a".repeat(40))?,
+                },
+                scenario_fingerprint: EvidenceFingerprint::parse("b".repeat(64))?,
+            },
+            tools: vec![ToolIdentity {
+                kind: ToolKind::Miri,
+                version: "miri 1".to_string(),
+            }],
+            verdict: Verdict::Passed {
+                evidence: ProofEvidence::Miri {
+                    coverage,
+                    completed_tests: 16,
+                },
+            },
+            artifacts: Vec::new(),
+        })
+    }
+
     #[test]
     fn absent_evidence_is_preserved_as_required_failure() -> Result<(), AggregateError> {
         let matrix = assemble(Vec::new(), Vec::new())?;
@@ -379,7 +453,7 @@ mod tests {
         assert_eq!(
             matrix.status,
             MatrixStatus::Failed {
-                required_failures: 19,
+                required_failures: 20,
             }
         );
         Ok(())
@@ -422,6 +496,26 @@ mod tests {
         assert!(matches!(
             assemble(Vec::new(), vec![first, second]),
             Err(AggregateError::DuplicateProof { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn full_miri_proof_supersedes_matching_stacked_only_evidence(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let quick = miri_proof(MiriCoverage::Stacked)?;
+        let full = miri_proof(MiriCoverage::StackedAndTree)?;
+        assert!(matches!(
+            proof_precedence(&quick, &full),
+            ProofPrecedence::Incoming
+        ));
+        assert!(matches!(
+            proof_precedence(&full, &quick),
+            ProofPrecedence::Existing
+        ));
+        assert!(matches!(
+            proof_precedence(&quick, &quick),
+            ProofPrecedence::Incompatible
         ));
         Ok(())
     }

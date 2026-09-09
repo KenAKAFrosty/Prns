@@ -629,6 +629,44 @@ inputs = ["validation/hardening/miri.sh"]
 artifacts = "validation-artifacts/results/miri-quick"
 
 [[suite]]
+id = "embedded-miri-quick"
+domain = "hardening"
+group = "embedded-miri"
+tiers = ["pr"]
+platform = "any"
+toolchain = "nightly"
+timeout_seconds = 3600
+command = ["__RUNNER_PYTHON__", "validation/hardening/embedded_miri.py", "quick"]
+inputs = [
+    "validation/hardening/embedded_miri.py",
+    "validation/hardening/embedded-miri.toml",
+    "personal-hopspot/assurance",
+    "prns-interfaces/impls/embassy/src/radios",
+    "prns-runtime/impls/embassy/src/runtime/embedded_persistence.rs",
+    "prns-core/src/persistence",
+]
+artifacts = "validation-artifacts/results/embedded-miri-quick"
+
+[[suite]]
+id = "embedded-miri-full"
+domain = "hardening"
+group = "embedded-miri"
+tiers = ["release", "scheduled"]
+platform = "any"
+toolchain = "nightly"
+timeout_seconds = 7200
+command = ["__RUNNER_PYTHON__", "validation/hardening/embedded_miri.py", "full"]
+inputs = [
+    "validation/hardening/embedded_miri.py",
+    "validation/hardening/embedded-miri.toml",
+    "personal-hopspot/assurance",
+    "prns-interfaces/impls/embassy/src/radios",
+    "prns-runtime/impls/embassy/src/runtime/embedded_persistence.rs",
+    "prns-core/src/persistence",
+]
+artifacts = "validation-artifacts/results/embedded-miri-full"
+
+[[suite]]
 id = "sanitizer-address"
 domain = "hardening"
 group = "sanitizer"

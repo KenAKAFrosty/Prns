@@ -276,7 +276,7 @@ mod tests {
         assert!(matches!(
             validate(&matrix),
             Err(MatrixValidationError::IncorrectStatus {
-                required_failures: 19,
+                required_failures: 20,
             })
         ));
         Ok(())

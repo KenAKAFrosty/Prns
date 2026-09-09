@@ -932,6 +932,8 @@ def run_suite(manifest: dict, suite: dict, expected_sha: str | None, fuzz_second
     sys.stdout.flush()
     environment = os.environ.copy()
     environment["PRNS_VALIDATION_SUITE"] = suite["id"]
+    environment["PRNS_VALIDATION_ARTIFACT_ROOT"] = str(artifact_root)
+    environment["PRNS_VALIDATION_ARTIFACT_DIR"] = str(artifact)
     if suite["domain"] == "mutation":
         mutation_output = artifact_root / "mutation" / suite["id"]
         mutation_output.parent.mkdir(parents=True, exist_ok=True)

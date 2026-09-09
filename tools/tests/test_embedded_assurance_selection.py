@@ -58,6 +58,23 @@ class EmbeddedAssuranceSelectionTests(unittest.TestCase):
         self.assertFalse(selected.required(selection.Lane.PILOTS))
 
         selected = selection.selection_for_paths(
+            {
+                "validation/hardening/embedded-miri.toml",
+                "validation/hardening/embedded_miri.py",
+            }
+        )
+        self.assertEqual(
+            selected.miri,
+            (
+                "validation/hardening/embedded-miri.toml",
+                "validation/hardening/embedded_miri.py",
+            ),
+        )
+        self.assertFalse(selected.required(selection.Lane.RESOURCES))
+        self.assertFalse(selected.required(selection.Lane.ISA))
+        self.assertFalse(selected.required(selection.Lane.PILOTS))
+
+        selected = selection.selection_for_paths(
             {"personal-hopspot/builder/src/architecture/thumbv7em.rs"}
         )
         self.assertTrue(selected.required(selection.Lane.RESOURCES))

@@ -40,7 +40,13 @@ RESOURCE_FILES = COMMON_FILES | frozenset(
         "validation/platforms/no-std-esp-build.sh",
     }
 )
-MIRI_FILES = COMMON_FILES | frozenset({"validation/hardening/miri.sh"})
+MIRI_FILES = COMMON_FILES | frozenset(
+    {
+        "validation/hardening/embedded-miri.toml",
+        "validation/hardening/embedded_miri.py",
+        "validation/hardening/miri.sh",
+    }
+)
 ISA_FILES = COMMON_FILES | frozenset(
     {
         "tools/release/install-release-esp-toolchain.sh",

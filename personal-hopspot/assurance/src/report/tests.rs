@@ -50,7 +50,7 @@ fn comparison_calls_out_fingerprint_changes() -> Result<(), Box<dyn std::error::
         },
     };
     before.status = MatrixStatus::Failed {
-        required_failures: 18,
+        required_failures: 19,
     };
     let mut after = before.clone();
     if let Verdict::Passed { evidence } = &mut after.targets[0].resource {

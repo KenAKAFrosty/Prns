@@ -659,6 +659,38 @@ fn operations_before_initialization_are_rejected() {
 }
 
 #[test]
+fn dropping_a_pending_receive_preserves_the_latched_frame() {
+    let state = Rc::new(RefCell::new(MockState::new()));
+    let mut radio = Lr1110::new(
+        MockSpi {
+            state: state.clone(),
+        },
+        MockBusy {
+            state: state.clone(),
+        },
+        Dio1NeverHigh,
+        MockOutput,
+        MockDelay,
+        board(),
+    );
+    block_on(radio.initialize(profile_with_power(22))).expect("initialize");
+    block_on(radio.arm_rx()).expect("arm receive");
+    state.borrow_mut().irq_statuses.push_back(irq::RX_DONE);
+
+    let mut buffer = [0; MAX_LORA_PAYLOAD];
+    {
+        let mut receive = Box::pin(radio.read_event(&mut buffer));
+        let waker = Waker::noop();
+        let mut context = Context::from_waker(waker);
+        assert!(receive.as_mut().poll(&mut context).is_pending());
+    }
+
+    let event = block_on(radio.poll_event(&mut buffer)).expect("poll latched event");
+    assert!(matches!(event, Some(RadioEvent::Frame(frame)) if frame.len == 16));
+    assert_eq!(&buffer[..16], b"PRNS-LR1110-SMOK");
+}
+
+#[test]
 fn wrong_radio_kind_is_reported() {
     let (mut radio, state) = mock_radio();
     state.borrow_mut().device_kind = 0x02;

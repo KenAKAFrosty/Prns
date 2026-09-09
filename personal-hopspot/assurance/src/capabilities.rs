@@ -18,6 +18,12 @@ pub fn canonical() -> Result<Vec<Capability>, IdentifierError> {
             support: SupportLevel::Required,
         },
         Capability {
+            subject: Subject::Component(ComponentId::parse("embedded-persistence")?),
+            scenario: ScenarioId::parse("flash-journal-state-machine")?,
+            proof: ProofKind::Miri,
+            support: SupportLevel::Required,
+        },
+        Capability {
             subject: Subject::Architecture(ArchitectureId::parse("thumbv7em")?),
             scenario: ScenarioId::parse("shared-state-machines")?,
             proof: ProofKind::TargetIsa,
