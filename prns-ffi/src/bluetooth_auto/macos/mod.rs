@@ -12,6 +12,8 @@ mod peripheral_tests;
 #[cfg(test)]
 mod radio_lifecycle_tests;
 #[cfg(test)]
+mod restoration_recovery_tests;
+#[cfg(test)]
 mod tests;
 
 #[cfg(any(test, target_os = "ios"))]

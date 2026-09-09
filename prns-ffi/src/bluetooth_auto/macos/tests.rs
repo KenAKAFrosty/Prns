@@ -718,7 +718,7 @@ fn active_control_inbox_reports_full_and_closed_instead_of_dropping_input() {
     let (control_tx, control_rx) = mpsc::channel(CENTRAL_CONTROL_INBOUND_CAPACITY);
     let (completion_tx, _completion_rx) = oneshot::channel();
     let (data_tx, _data_rx) = gatt_inbound_channel();
-    let session = CentralPeerSession::new(
+    let mut session = CentralPeerSession::new(
         prns_core::interfaces::bluetooth_auto::BleAddress::new([1; 6]),
         control_tx,
         completion_tx,
