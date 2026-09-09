@@ -97,6 +97,13 @@ is committed and integrated with a new core pin; native and generated-contract
 checks pass. No new phone binary was installed, so earlier physical results
 remain tied to their recorded builds. Original PR heads are unchanged.
 
+The [publication continuation](../checkpoints/2026-09-09-publication-preparation.md)
+adds a real Mac manager/radio smoke and refreshed #199/#208/#209 candidates.
+Focused tests, iOS checks and an isolated Bluetooth-plus-USB compilation/lint
+comparison pass. The radio smoke receives no writes. Physical batching and the
+separate integration-test/notices CI failures remain open; no shared PR head,
+phone binary or board firmware changed.
+
 The recorded repository continuation passed all 24 host workspaces and the
 listed Clippy, allocation, dependency-policy and unsafe-inventory checks.
 Its browser package smoke built Rust but could not finish without the local
