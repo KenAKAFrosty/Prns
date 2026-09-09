@@ -36,56 +36,6 @@ class PrnsBluetoothRecoveryTest {
   }
 
   @Test
-  fun radioOnRestartsBeforeOneListenerAndAdmitsCheckOnlyAfterwards() {
-    val lifecycle = QueueExecutor()
-    val calls = QueueExecutor()
-    val events = mutableListOf<String>()
-    val generation = PrnsBluetoothGeneration()
-    val oldListener = generation.beginListener()
-    assertFalse(generation.publish(oldListener, 131))
-    val radio = PrnsBluetoothRadioCycle()
-    assertTrue(radio.observeAvailable(true))
-    assertFalse(radio.observeAvailable(false))
-    assertFalse(radio.observeAvailable(true)) // No temporary listener or scan.
-    var currentListener: Long? = null
-    var checks = 0
-    val refresh = {
-      if (currentListener == null) {
-        if (generation.restartBeforeReplacement(engineRunning = true)) {
-          events.add("stop native")
-          generation.retireListener()
-          generation.nativeStopped()
-        }
-        currentListener = generation.beginListener()
-        events.add("start listener")
-        events.add("start native")
-        lifecycle.execute {
-          // The delayed publication from this fresh owner must be a no-op.
-          assertFalse(generation.publish(currentListener!!, 133))
-          events.add("published")
-        }
-      }
-      true
-    }
-    lifecycle.execute { refresh() } // Radio-on broadcast while the app is backgrounded.
-    prnsDispatchNativeCall("describeTarget", lifecycle, calls, refresh, {
-      checks++
-      events.add("check")
-    }, { throw AssertionError(it) })
-
-    lifecycle.next()
-    assertTrue(calls.queued.isEmpty())
-    lifecycle.next() // Command preflight sees the already-created owner.
-    calls.next() // Exercise Check before the delayed PSM callback, as on Galaxy.
-    lifecycle.next()
-    assertFalse(generation.publish(oldListener, 131)) // Stale callback cannot restart.
-    refresh() // Foreground resume is unchanged, not another generation.
-
-    assertEquals(listOf("stop native", "start listener", "start native", "check", "published"), events)
-    assertEquals(1, checks)
-  }
-
-  @Test
   fun failedDrainDoesNotForgetTheOldNativePsm() {
     val generation = PrnsBluetoothGeneration()
     val oldListener = generation.beginListener()
@@ -106,59 +56,6 @@ class PrnsBluetoothRecoveryTest {
   }
 
   @Test
-  fun lifecyclePreflightRunsBeforeCallAndDoesNotHoldUpStop() {
-    val lifecycle = QueueExecutor()
-    val calls = QueueExecutor()
-    val events = mutableListOf<String>()
-    prnsDispatchNativeCall("describeTarget", lifecycle, calls,
-      { events.add("refresh") },
-      { events.add("call") },
-      { throw AssertionError(it) },
-    )
-    lifecycle.execute { events.add("stop") }
-
-    assertTrue(calls.queued.isEmpty())
-    lifecycle.next()
-    lifecycle.next() // Stop is not waiting for the native command worker.
-    calls.next()
-    assertEquals(listOf("refresh", "stop", "call"), events)
-  }
-
-  @Test
-  fun failedPreflightDoesNotAdmitOrReplayTheCommand() {
-    val lifecycle = QueueExecutor()
-    val calls = QueueExecutor()
-    var failures = 0
-    prnsDispatchNativeCall("describeTarget", lifecycle, calls,
-      { throw IllegalStateException("drain failed") },
-      { throw AssertionError("command should not be admitted") },
-      { failures++ },
-    )
-    lifecycle.next()
-    assertEquals(1, failures)
-    assertTrue(calls.queued.isEmpty())
-    assertTrue(lifecycle.queued.isEmpty())
-  }
-
-  @Test
-  fun failedNativeCallIsReportedOnceWithoutReplay() {
-    val lifecycle = QueueExecutor()
-    val calls = QueueExecutor()
-    var attempts = 0
-    var failures = 0
-    prnsDispatchNativeCall("describeTarget", lifecycle, calls, { true }, {
-      attempts++
-      throw IllegalStateException("request failed")
-    }, { failures++ })
-    lifecycle.next()
-    calls.next()
-    assertEquals(1, attempts)
-    assertEquals(1, failures)
-    assertTrue(calls.queued.isEmpty())
-    assertTrue(lifecycle.queued.isEmpty())
-  }
-
-  @Test
   fun replacementDrainsEvenBeforeTheFirstPsmCallbackArrives() {
     val generation = PrnsBluetoothGeneration()
     val oldListener = generation.beginListener()
@@ -172,39 +69,64 @@ class PrnsBluetoothRecoveryTest {
   }
 
   @Test
-  fun localReadsAndInFlightOperationActionsNeverTriggerRecovery() {
+  fun recoveryCompletesBeforeAdmissionAndDoesNotHoldUpStop() {
     val lifecycle = QueueExecutor()
     val calls = QueueExecutor()
-    val operations = listOf(
-      "snapshot", "inspectIdentity", "listContacts", "listLxmfPeers", "listLxmfMessages",
-      "approvePairing", "rejectPairing", "cancelLxmfMessage", "createManualContact",
+    val events = mutableListOf<String>()
+    prnsPrepareOutbound(lifecycle,
+      { events.add("refresh"); true },
+      { calls.execute { events.add("generated call") } },
+      { throw AssertionError(it) },
     )
-    val called = mutableListOf<String>()
-    for (operation in operations) {
-      prnsDispatchNativeCall(operation, lifecycle, calls,
-        { throw AssertionError("$operation must not recover the radio") },
-        { called.add(operation) },
-        { throw AssertionError(it) },
-      )
-    }
-    assertTrue(lifecycle.queued.isEmpty())
-    while (calls.queued.isNotEmpty()) calls.next()
-    assertEquals(operations, called)
+    lifecycle.execute { events.add("stop") }
+    assertTrue(calls.queued.isEmpty())
+    lifecycle.next()
+    lifecycle.next()
+    calls.next()
+    assertEquals(listOf("refresh", "stop", "generated call"), events)
   }
 
   @Test
-  fun retainedOwnerAfterUnsuccessfulRecoveryCannotAdmitACommand() {
+  fun incompleteRecoveryRejectsOnceWithoutAdmittingOrRetrying() {
+    for (throws in listOf(false, true)) {
+      val lifecycle = QueueExecutor()
+      var failures = 0
+      prnsPrepareOutbound(lifecycle,
+        { if (throws) throw IllegalStateException("drain failed"); false },
+        { throw AssertionError("must not admit while owner is retained") },
+        { failures++ },
+      )
+      lifecycle.next()
+      assertEquals(1, failures)
+      assertTrue(lifecycle.queued.isEmpty())
+    }
+  }
+
+  @Test
+  fun freshPublicationCannotRestartARecoveredGenerationBeforeAdmission() {
     val lifecycle = QueueExecutor()
-    val calls = QueueExecutor()
-    var failures = 0
-    prnsDispatchNativeCall("describeTarget", lifecycle, calls,
-      { false }, // Service reports an incomplete drain without throwing.
-      { throw AssertionError("must not enter the retained native owner") },
-      { failures++ },
-    )
+    val generation = PrnsBluetoothGeneration()
+    val old = generation.beginListener()
+    generation.publish(old, 131)
+    val events = mutableListOf<String>()
+    var replacement = 0L
+    prnsPrepareOutbound(lifecycle, {
+      assertTrue(generation.restartBeforeReplacement(engineRunning = true))
+      events.add("stop native")
+      generation.retireListener()
+      generation.nativeStopped()
+      replacement = generation.beginListener()
+      events.add("start listener")
+      events.add("start native")
+      lifecycle.execute {
+        assertFalse(generation.publish(replacement, 133))
+        events.add("published")
+      }
+      true
+    }, { events.add("admitted") }, { throw AssertionError(it) })
     lifecycle.next()
-    assertEquals(1, failures)
-    assertTrue(calls.queued.isEmpty())
-    assertTrue(lifecycle.queued.isEmpty())
+    lifecycle.next()
+    assertFalse(generation.publish(old, 131))
+    assertEquals(listOf("stop native", "start listener", "start native", "admitted", "published"), events)
   }
 }

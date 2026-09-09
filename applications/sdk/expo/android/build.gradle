@@ -8,6 +8,11 @@ version = '0.0.0'
 
 android {
   namespace 'rs.reticulum.prns.app.expo'
+  // Match RN's NdkConfiguratorUtils for the standalone library test APK:
+  // AGP includes these from both ReactAndroid JNI and JSI's prefab linkage.
+  packagingOptions.jniLibs.pickFirsts += [
+    '**/libfbjni.so', '**/libreactnative.so', '**/libjsi.so', '**/libc++_shared.so',
+  ]
   defaultConfig {
     minSdkVersion 29
     versionCode 1
@@ -16,24 +21,13 @@ android {
     testApplicationId 'rs.reticulum.prns.app.expo.test'
     consumerProguardFiles 'consumer-rules.pro'
   }
-  sourceSets.main.jniLibs.srcDirs = [layout.buildDirectory.dir('rustJniLibs')]
 }
-
-// Cargo owns its incremental dependency graph, including the pinned Prns source.
-// Running it on each native build avoids stale libraries after upstream changes.
-def rustBuild = tasks.register('buildPrnsRust', Exec) {
-  workingDir projectDir
-  commandLine 'bash', file('build-rust.sh').absolutePath
-  environment 'PRNS_ANDROID_ABIS', providers.gradleProperty('reactNativeArchitectures').getOrElse('arm64-v8a')
-  environment 'PRNS_ANDROID_JNI_OUTPUT', layout.buildDirectory.dir('rustJniLibs').get().asFile.absolutePath
-  doFirst {
-    environment 'ANDROID_NDK_HOME', android.ndkDirectory.absolutePath
-  }
-}
-
-tasks.named('preBuild').configure { dependsOn rustBuild }
 
 dependencies {
+  // Both generated Kotlin/JNA and JSI load the one app-owned Rust image.
+  implementation project(':prns-internal_native-bindings')
+  implementation 'net.java.dev.jna:jna:5.18.1@aar'
+  implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2'
   testImplementation 'junit:junit:4.13.2'
   testImplementation 'org.mockito:mockito-core:5.14.2'
   androidTestImplementation 'androidx.test:runner:1.7.0'

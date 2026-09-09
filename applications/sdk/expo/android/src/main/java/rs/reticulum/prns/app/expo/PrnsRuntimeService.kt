@@ -16,7 +16,8 @@ import android.os.Build
 import android.os.IBinder
 import expo.modules.kotlin.Promise
 import java.util.concurrent.ConcurrentHashMap
-import org.json.JSONObject
+import android.util.Base64
+import rs.reticulum.prns.app.bindings.*
 
 /** A foreground service owns native lifetime; destroying a React screen does not. */
 class PrnsRuntimeService : Service() {
@@ -75,7 +76,7 @@ class PrnsRuntimeService : Service() {
       return START_NOT_STICKY
     }
     val preferences = getSharedPreferences(PREFERENCES, MODE_PRIVATE)
-    val input = intent?.getStringExtra(EXTRA_INPUT) ?: preferences.getString("startInput", null)
+    val input = intent?.getByteArrayExtra(EXTRA_INPUT) ?: savedStartInput(preferences)
     if (input == null) {
       PrnsAndroidRuntime.admission.completeStart(requestId)
       stopSelf()
@@ -94,17 +95,19 @@ class PrnsRuntimeService : Service() {
           bridgePrepared = true
         }
         refreshBluetooth()
-        val outcome = PrnsAndroidRuntime.consume(PrnsNative.nativeCall("start", PrnsAndroidRuntime.storagePath(this), input.toByteArray(Charsets.UTF_8)))
-        val type = JSONObject(outcome).optString("type")
-        if (type == "started" || type == "alreadyRunning") {
-          engineRunning = true
-          preferences.edit().putString("startInput", input).apply()
-          PrnsAndroidRuntime.update(this, "running")
-        } else {
-          cleanupFailedStart()
-          PrnsAndroidRuntime.update(this, "failed", JSONObject(outcome).optString("detail", "Could not start the node"))
+        val outcome = nativeStart(PrnsAndroidRuntime.storagePath(this), PrnsCodec.decode(input, FfiConverterTypeDevelopmentNodeStartInput))
+        when (outcome) {
+          is DevelopmentNodeStartOutcome.Started, is DevelopmentNodeStartOutcome.AlreadyRunning -> {
+            engineRunning = true
+            preferences.edit().putString(EXTRA_INPUT, Base64.encodeToString(input, Base64.NO_WRAP)).apply()
+            PrnsAndroidRuntime.update(this, "running")
+          }
+          is DevelopmentNodeStartOutcome.Failed -> {
+            cleanupFailedStart()
+            PrnsAndroidRuntime.update(this, "failed", outcome.detail)
+          }
         }
-        if (PrnsAndroidRuntime.admission.completeStart(requestId)) requests.remove(requestId)?.resolve(outcome)
+        if (PrnsAndroidRuntime.admission.completeStart(requestId)) requests.remove(requestId)?.resolve(PrnsCodec.encode(outcome, FfiConverterTypeDevelopmentNodeStartOutcome))
       } catch (error: Exception) {
         val cleanupFailure = runCatching { cleanupFailedStart() }.exceptionOrNull()
         PrnsAndroidRuntime.update(this, "failed", cleanupFailure?.let { "Startup failed; shutdown is incomplete: ${it.message}" } ?: error.message)
@@ -171,14 +174,14 @@ class PrnsRuntimeService : Service() {
     // The public disable/enable API has no completion acknowledgement, so it
     // cannot safely replace this ordered drain with an immediate enable toggle.
     // Keep the service/identity, but do not pretend unrelated TCP is uninterrupted.
-    val input = getSharedPreferences(PREFERENCES, MODE_PRIVATE).getString("startInput", null) ?: return false
+    val input = savedStartInput(getSharedPreferences(PREFERENCES, MODE_PRIVATE)) ?: return false
     return try {
       PrnsAndroidRuntime.update(this, "stopping", "Reconnecting after Bluetooth changed")
       // Retire callbacks already queued by the old listener before draining it.
       bluetoothGeneration.retireListener()
       check(bluetooth?.stop() ?: true) { "Bluetooth workers are still stopping" }
       bluetooth = null
-      check(isStopped(PrnsNative.nativeCall("stop", null, null))) { "Native node is still stopping" }
+      check(isStopped(nativeStop())) { "Native node is still stopping" }
       check(PrnsNative.nativeReleaseBluetooth()) { "Previous Bluetooth session is still stopping" }
       bridgePrepared = false
       engineRunning = false
@@ -187,8 +190,8 @@ class PrnsRuntimeService : Service() {
       check(PrnsNative.nativePrepareBluetooth()) { "Could not prepare Bluetooth" }
       bridgePrepared = true
       check(refreshBluetooth()) { "Bluetooth workers are still stopping" }
-      val outcome = PrnsAndroidRuntime.consume(PrnsNative.nativeCall("start", PrnsAndroidRuntime.storagePath(this), input.toByteArray(Charsets.UTF_8)))
-      check(JSONObject(outcome).optString("type") in setOf("started", "alreadyRunning")) { "Could not restart the node after Bluetooth changed" }
+      val outcome = nativeStart(PrnsAndroidRuntime.storagePath(this), PrnsCodec.decode(input, FfiConverterTypeDevelopmentNodeStartInput))
+      check(outcome is DevelopmentNodeStartOutcome.Started || outcome is DevelopmentNodeStartOutcome.AlreadyRunning) { "Could not restart the node after Bluetooth changed" }
       engineRunning = true
       PrnsAndroidRuntime.update(this, "running")
       true
@@ -201,11 +204,11 @@ class PrnsRuntimeService : Service() {
 
   private fun cleanupFailedStart() {
     PrnsAndroidRuntime.admission.retireOwner(this)
-    getSharedPreferences(PREFERENCES, MODE_PRIVATE).edit().remove("startInput").apply()
+    getSharedPreferences(PREFERENCES, MODE_PRIVATE).edit().remove(EXTRA_INPUT).apply()
     val drained = bluetooth?.stop() ?: true
     if (drained) {
       bluetooth = null
-      val outcome = PrnsNative.nativeCall("stop", null, null)
+      val outcome = nativeStop()
       if (isStopped(outcome) && PrnsNative.nativeReleaseBluetooth()) {
         bridgePrepared = false
         engineRunning = false
@@ -217,15 +220,15 @@ class PrnsRuntimeService : Service() {
     }
   }
 
-  private fun stopNative(reset: Boolean): String {
+  private fun stopNative(reset: Boolean): DevelopmentNodeStopOutcome {
     PrnsAndroidRuntime.admission.retireOwner(this)
-    getSharedPreferences(PREFERENCES, MODE_PRIVATE).edit().remove("startInput").apply()
+    getSharedPreferences(PREFERENCES, MODE_PRIVATE).edit().remove(EXTRA_INPUT).apply()
     PrnsAndroidRuntime.update(this, "stopping")
     check(bluetooth?.stop() ?: true) { "Bluetooth workers are still stopping; try Stop again" }
     bluetooth = null
-    val outcome = PrnsAndroidRuntime.consume(PrnsNative.nativeCall(if (reset) "reset" else "stop", PrnsAndroidRuntime.storagePath(this), null))
+    val outcome = if (reset) nativeReset(PrnsAndroidRuntime.storagePath(this)) else nativeStop()
     // Reset is gated by Rust's complete stop; never release a live generation.
-    val stopped = isStopped(PrnsNative.nativeCall("stop", null, null))
+    val stopped = isStopped(nativeStop())
     if (stopped && PrnsNative.nativeReleaseBluetooth()) {
       bridgePrepared = false
       engineRunning = false
@@ -298,13 +301,21 @@ class PrnsRuntimeService : Service() {
     private const val NOTIFICATION_ID = 3101
     private const val PREFERENCES = "prns-service"
     private const val ACTION_STOP = "rs.reticulum.prns.app.STOP"
-    private const val EXTRA_INPUT = "startInput"
+    private const val EXTRA_INPUT = "startInputUniFFI"
     private const val EXTRA_REQUEST = "request"
     private val requests = ConcurrentHashMap<Long, Promise>()
 
-    private fun isStopped(json: String): Boolean = JSONObject(json).optString("type") in setOf("stopped", "alreadyStopped")
+    private fun isStopped(outcome: DevelopmentNodeStopOutcome): Boolean = when (outcome) {
+      is DevelopmentNodeStopOutcome.Stopped, is DevelopmentNodeStopOutcome.AlreadyStopped -> true
+      is DevelopmentNodeStopOutcome.Failed -> false
+    }
 
-    internal fun startRuntime(context: Context, input: String, promise: Promise) {
+    private fun savedStartInput(preferences: android.content.SharedPreferences): ByteArray? =
+      preferences.getString(EXTRA_INPUT, null)?.let { runCatching { Base64.decode(it, Base64.NO_WRAP) }.getOrNull() }
+
+    internal fun startRuntime(context: Context, input: ByteArray, promise: Promise) {
+      // Reject malformed codec input before reserving a service/start ticket.
+      PrnsCodec.decode(input, FfiConverterTypeDevelopmentNodeStartInput)
       val id = PrnsAndroidRuntime.admission.enqueueStart()
       requests[id] = promise
       try {
@@ -325,14 +336,14 @@ class PrnsRuntimeService : Service() {
         try {
           val service = PrnsAndroidRuntime.service
           val outcome = if (service != null) service.stopNative(reset) else {
-            val result = PrnsAndroidRuntime.consume(PrnsNative.nativeCall(if (reset) "reset" else "stop", PrnsAndroidRuntime.storagePath(context), null))
-            if (isStopped(PrnsNative.nativeCall("stop", null, null))) {
+            val result = if (reset) nativeReset(PrnsAndroidRuntime.storagePath(context)) else nativeStop()
+            if (isStopped(nativeStop())) {
               PrnsNative.nativeReleaseBluetooth()
               PrnsAndroidRuntime.update(context, "stopped")
             }
             result
           }
-          promise?.resolve(outcome)
+          promise?.resolve(PrnsCodec.encode(outcome, FfiConverterTypeDevelopmentNodeStopOutcome))
         } catch (error: Exception) {
           PrnsAndroidRuntime.update(context, "stopping", error.message)
           promise?.reject("ERR_PRNS_STOP", error.message, error)

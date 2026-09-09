@@ -17,7 +17,6 @@ import org.json.JSONObject
 /** Process-owned platform state only. Protocol and durable state remain in Rust. */
 internal object PrnsAndroidRuntime {
   val lifecycle = Executors.newSingleThreadExecutor { runnable -> Thread(runnable, "prns-lifecycle") }
-  private val calls = Executors.newFixedThreadPool(4) { runnable -> Thread(runnable, "prns-command") }
   private val listeners = CopyOnWriteArraySet<(String) -> Unit>()
   private val revision = AtomicLong(0)
   val admission = PrnsRuntimeAdmission<PrnsRuntimeService>()
@@ -112,23 +111,19 @@ internal object PrnsAndroidRuntime {
     refresh(context)
   }
 
-  fun call(context: Context, operation: String, input: ByteArray?, promise: Promise) {
-    prnsDispatchNativeCall(
-      operation,
-      lifecycle,
-      calls,
-      refresh = { service?.refreshBluetooth() ?: true },
-      call = { promise.resolve(consume(PrnsNative.nativeCall(operation, storagePath(context), input))) },
-      failed = { error -> promise.reject("ERR_PRNS_NATIVE", error.message, error) },
-    )
+  fun <T> platformCall(promise: Promise, converter: rs.reticulum.prns.app.bindings.FfiConverter<T, *>, action: () -> T) {
+    lifecycle.execute {
+      try { promise.resolve(PrnsCodec.encode(action(), converter)) }
+      catch (error: Exception) { promise.reject("ERR_PRNS_NATIVE", error.message, error) }
+    }
   }
 
-  // A malformed ABI request is not a generated domain result.
-  fun consume(json: String): String {
-    val result = JSONObject(json)
-    if (result.optString("type") == "bridgeFailure") {
-      throw IllegalStateException(result.optString("detail", "Native bridge rejected the request"))
-    }
-    return json
+  fun prepareOutbound(promise: Promise) {
+    prnsPrepareOutbound(
+      lifecycle,
+      refresh = { service?.refreshBluetooth() ?: true },
+      prepared = { promise.resolve(null) },
+      failed = { error -> promise.reject("ERR_PRNS_RECOVERY", error.message, error) },
+    )
   }
 }

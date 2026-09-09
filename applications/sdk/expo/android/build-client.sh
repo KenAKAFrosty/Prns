@@ -13,6 +13,8 @@ esac
 [[ -n "${ANDROID_HOME:-}" ]] || { echo 'Set ANDROID_HOME to your Android SDK directory.' >&2; exit 1; }
 [[ -x "${APPLICATIONS_DIRECTORY}/node_modules/.bin/expo" ]] || { echo 'Run npm ci in applications first.' >&2; exit 1; }
 
+bash "${SCRIPT_DIRECTORY}/build-rust.sh"
+
 # Regenerate only Android, preserving the independently generated iOS project.
 (
   cd "${APP_DIRECTORY}"

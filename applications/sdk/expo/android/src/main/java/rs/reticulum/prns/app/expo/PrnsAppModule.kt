@@ -11,6 +11,7 @@ import expo.modules.interfaces.permissions.PermissionsStatus
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import rs.reticulum.prns.app.bindings.*
 
 class PrnsAppModule : Module() {
   private val context: Context get() = requireNotNull(appContext.reactContext) { "React context is unavailable" }.applicationContext
@@ -28,8 +29,6 @@ class PrnsAppModule : Module() {
     OnActivityEntersBackground { PrnsAndroidRuntime.setAppForeground(context, false) }
     OnActivityDestroys { PrnsAndroidRuntime.setAppForeground(context, false) }
 
-    AsyncFunction("contractFingerprint") { PrnsNative.nativeContractFingerprint() }
-    AsyncFunction("hostContractFingerprint") { PrnsNative.nativeHostContractFingerprint() }
     AsyncFunction("androidRuntimeStatus") {
       PrnsAndroidRuntime.refresh(context)
       PrnsAndroidRuntime.status(context)
@@ -60,33 +59,29 @@ class PrnsAppModule : Module() {
       }
     }
 
-    AsyncFunction("start") { input: String, promise: Promise ->
-      require(input.toByteArray(Charsets.UTF_8).size <= 65_536) { "Start input is too large" }
-      PrnsRuntimeService.startRuntime(context, input, promise)
+    AsyncFunction("prepareStorage") { promise: Promise ->
+      val path = PrnsAndroidRuntime.storagePath(context)
+      PrnsAndroidRuntime.platformCall(promise, FfiConverterTypeNativeStoragePreparationOutcome) { nativePrepareStorage(path) }
+    }
+    AsyncFunction("inspectIdentity") { promise: Promise ->
+      val path = PrnsAndroidRuntime.storagePath(context)
+      PrnsAndroidRuntime.platformCall(promise, FfiConverterTypePrimaryIdentityState) { nativeInspectIdentity(path) }
+    }
+    AsyncFunction("createGeneratedIdentity") { promise: Promise ->
+      val path = PrnsAndroidRuntime.storagePath(context)
+      PrnsAndroidRuntime.platformCall(promise, FfiConverterTypeIdentityCreationOutcome) { nativeCreateGeneratedIdentity(path) }
+    }
+    AsyncFunction("createImportedIdentity") { input: List<Int>, promise: Promise ->
+      val identity = PrnsCodec.bytes(input)
+      val path = PrnsAndroidRuntime.storagePath(context)
+      PrnsAndroidRuntime.platformCall(promise, FfiConverterTypeIdentityCreationOutcome) { nativeCreateImportedIdentity(path, identity) }
+    }
+    AsyncFunction("start") { input: List<Int>, promise: Promise ->
+      PrnsRuntimeService.startRuntime(context, PrnsCodec.bytes(input), promise)
     }
     AsyncFunction("stop") { promise: Promise -> PrnsRuntimeService.stopRuntime(context, false, promise) }
     AsyncFunction("reset") { promise: Promise -> PrnsRuntimeService.stopRuntime(context, true, promise) }
-
-    for (operation in listOf("inspectIdentity", "createGeneratedIdentity", "snapshot", "listContacts", "listLxmfPeers", "announceLxmf")) {
-      AsyncFunction(operation) { promise: Promise -> PrnsAndroidRuntime.call(context, operation, null, promise) }
-    }
-    for (operation in listOf("previewIdentityImport", "createImportedIdentity")) {
-      AsyncFunction(operation) { input: List<Int>, promise: Promise ->
-        require(input.size <= 65_536 && input.all { it in 0..255 }) { "Identity input must contain bytes" }
-        PrnsAndroidRuntime.call(context, operation, ByteArray(input.size) { input[it].toByte() }, promise)
-      }
-    }
-    for (operation in listOf(
-      "initiatePairing", "approvePairing", "rejectPairing", "describeTarget", "announceTarget",
-      "saveObservedDestination", "createManualContact", "setContactAlias", "setContactPinned", "deleteContact", "getContact",
-      "listLxmfMessages", "retryLxmfMessage", "cancelLxmfMessage", "measureLxmfText", "sendDirectText",
-    )) {
-      AsyncFunction(operation) { input: String, promise: Promise ->
-        val bytes = input.toByteArray(Charsets.UTF_8)
-        require(bytes.size <= 65_536) { "Native input is too large" }
-        PrnsAndroidRuntime.call(context, operation, bytes, promise)
-      }
-    }
+    AsyncFunction("prepareOutbound") { promise: Promise -> PrnsAndroidRuntime.prepareOutbound(promise) }
   }
 
   private fun requestPermissions(permissions: Array<String>, promise: Promise, trackedPermission: String? = null) {
