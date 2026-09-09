@@ -1331,16 +1331,8 @@ const FfiConverterTypeBindingContract = (() => {
     return new FFIConverter();
 })();
 
-/**
- * Typealias from the type name used in the UDL file to the builtin type.  This
- * is needed because the UDL type name is used in function/method signatures.
- */
-export type U64String = bigint;
-// FfiConverter for U64String, a type alias for bigint.
-const FfiConverterTypeU64String = FfiConverterUInt64;
-
 export type CancelLxmfMessageInput = {
-    localRecordId: U64String
+    localRecordId: bigint
 }
 
 /**
@@ -1364,14 +1356,14 @@ const FfiConverterTypeCancelLxmfMessageInput = (() => {
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         readFromCursor(c: Cursor): TypeName {
             return {
-                localRecordId: FfiConverterTypeU64String.readFromCursor(c)
+                localRecordId: FfiConverterUInt64.readFromCursor(c)
             };
         }
         writeIntoCursor(value: TypeName, c: Cursor): void {
-            FfiConverterTypeU64String.writeIntoCursor(value.localRecordId, c);
+            FfiConverterUInt64.writeIntoCursor(value.localRecordId, c);
         }
         allocationSize(value: TypeName): number {
-            return FfiConverterTypeU64String.allocationSize(value.localRecordId);
+            return FfiConverterUInt64.allocationSize(value.localRecordId);
 
         }
     };
@@ -1801,7 +1793,7 @@ const FfiConverterTypeDevelopmentNodeOperationKind = (() => {
 
 export type DevelopmentNodeOperation = {
     kind: DevelopmentNodeOperationKind,
-    startedAtMillis: U64String
+    startedAtMillis: bigint
 }
 
 /**
@@ -1826,16 +1818,16 @@ const FfiConverterTypeDevelopmentNodeOperation = (() => {
         readFromCursor(c: Cursor): TypeName {
             return {
                 kind: FfiConverterTypeDevelopmentNodeOperationKind.readFromCursor(c),
-                startedAtMillis: FfiConverterTypeU64String.readFromCursor(c)
+                startedAtMillis: FfiConverterUInt64.readFromCursor(c)
             };
         }
         writeIntoCursor(value: TypeName, c: Cursor): void {
             FfiConverterTypeDevelopmentNodeOperationKind.writeIntoCursor(value.kind, c);
-            FfiConverterTypeU64String.writeIntoCursor(value.startedAtMillis, c);
+            FfiConverterUInt64.writeIntoCursor(value.startedAtMillis, c);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterTypeDevelopmentNodeOperationKind.allocationSize(value.kind) +
-             FfiConverterTypeU64String.allocationSize(value.startedAtMillis);
+             FfiConverterUInt64.allocationSize(value.startedAtMillis);
 
         }
     };
@@ -2884,7 +2876,7 @@ const FfiConverterTypeLxmfHealthState = (() => {
 
 export type LxmfHealth = {
     state: LxmfHealthState,
-    inboundOverflowCount: U64String
+    inboundOverflowCount: bigint
 }
 
 /**
@@ -2909,16 +2901,16 @@ const FfiConverterTypeLxmfHealth = (() => {
         readFromCursor(c: Cursor): TypeName {
             return {
                 state: FfiConverterTypeLxmfHealthState.readFromCursor(c),
-                inboundOverflowCount: FfiConverterTypeU64String.readFromCursor(c)
+                inboundOverflowCount: FfiConverterUInt64.readFromCursor(c)
             };
         }
         writeIntoCursor(value: TypeName, c: Cursor): void {
             FfiConverterTypeLxmfHealthState.writeIntoCursor(value.state, c);
-            FfiConverterTypeU64String.writeIntoCursor(value.inboundOverflowCount, c);
+            FfiConverterUInt64.writeIntoCursor(value.inboundOverflowCount, c);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterTypeLxmfHealthState.allocationSize(value.state) +
-             FfiConverterTypeU64String.allocationSize(value.inboundOverflowCount);
+             FfiConverterUInt64.allocationSize(value.inboundOverflowCount);
 
         }
     };
@@ -3533,9 +3525,9 @@ const FfiConverterTypeRemoteControlPairingState = (() => {
 export type RemoteControlPairingCandidate = {
     candidateId: string,
     displayName?: string | undefined,
-    observedAtMillis: U64String,
-    expiresAtMillis: U64String,
-    expiresInMillis: U64String
+    observedAtMillis: bigint,
+    expiresAtMillis: bigint,
+    expiresInMillis: bigint
 }
 
 /**
@@ -3561,24 +3553,24 @@ const FfiConverterTypeRemoteControlPairingCandidate = (() => {
             return {
                 candidateId: FfiConverterString.readFromCursor(c),
                 displayName: FfiConverterOptionalString.readFromCursor(c),
-                observedAtMillis: FfiConverterTypeU64String.readFromCursor(c),
-                expiresAtMillis: FfiConverterTypeU64String.readFromCursor(c),
-                expiresInMillis: FfiConverterTypeU64String.readFromCursor(c)
+                observedAtMillis: FfiConverterUInt64.readFromCursor(c),
+                expiresAtMillis: FfiConverterUInt64.readFromCursor(c),
+                expiresInMillis: FfiConverterUInt64.readFromCursor(c)
             };
         }
         writeIntoCursor(value: TypeName, c: Cursor): void {
             FfiConverterString.writeIntoCursor(value.candidateId, c);
             FfiConverterOptionalString.writeIntoCursor(value.displayName, c);
-            FfiConverterTypeU64String.writeIntoCursor(value.observedAtMillis, c);
-            FfiConverterTypeU64String.writeIntoCursor(value.expiresAtMillis, c);
-            FfiConverterTypeU64String.writeIntoCursor(value.expiresInMillis, c);
+            FfiConverterUInt64.writeIntoCursor(value.observedAtMillis, c);
+            FfiConverterUInt64.writeIntoCursor(value.expiresAtMillis, c);
+            FfiConverterUInt64.writeIntoCursor(value.expiresInMillis, c);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.candidateId) +
              FfiConverterOptionalString.allocationSize(value.displayName) +
-             FfiConverterTypeU64String.allocationSize(value.observedAtMillis) +
-             FfiConverterTypeU64String.allocationSize(value.expiresAtMillis) +
-             FfiConverterTypeU64String.allocationSize(value.expiresInMillis);
+             FfiConverterUInt64.allocationSize(value.observedAtMillis) +
+             FfiConverterUInt64.allocationSize(value.expiresAtMillis) +
+             FfiConverterUInt64.allocationSize(value.expiresInMillis);
 
         }
     };
@@ -3762,7 +3754,7 @@ export const RemoteControlAnnounceStatus = (() => {
     type Announced__interface = {
         tag: RemoteControlAnnounceStatus_Tags.Announced;
         inner:
-Readonly<{rttMillis: U64String}>
+Readonly<{rttMillis: bigint}>
     };
     class Announced_ extends UniffiEnum implements Announced__interface {
         /**
@@ -3772,15 +3764,15 @@ Readonly<{rttMillis: U64String}>
         readonly [uniffiTypeNameSymbol] = "RemoteControlAnnounceStatus";
         readonly tag = RemoteControlAnnounceStatus_Tags.Announced;
         readonly inner:
-Readonly<{rttMillis: U64String}>;
+Readonly<{rttMillis: bigint}>;
         constructor(
-inner: {rttMillis: U64String }) {
+inner: {rttMillis: bigint }) {
             super("RemoteControlAnnounceStatus", "Announced");
 
             this.inner = Object.freeze(inner);
         }
         static new(
-inner: {rttMillis: U64String }): Announced_ {
+inner: {rttMillis: bigint }): Announced_ {
             return new Announced_(inner);
         }
 
@@ -3951,7 +3943,7 @@ const FfiConverterTypeRemoteControlAnnounceStatus = (() => {
         readFromCursor(c: Cursor): TypeName {
             switch (c.readI32()) {
                 case 1: return new RemoteControlAnnounceStatus.Pending();
-                case 2: return new RemoteControlAnnounceStatus.Announced({rttMillis: FfiConverterTypeU64String.readFromCursor(c) });
+                case 2: return new RemoteControlAnnounceStatus.Announced({rttMillis: FfiConverterUInt64.readFromCursor(c) });
                 case 3: return new RemoteControlAnnounceStatus.Unavailable();
                 case 4: return new RemoteControlAnnounceStatus.Rejected();
                 case 5: return new RemoteControlAnnounceStatus.WriteFailed();
@@ -3969,7 +3961,7 @@ const FfiConverterTypeRemoteControlAnnounceStatus = (() => {
                 case RemoteControlAnnounceStatus_Tags.Announced: {
                     c.writeI32(2);
                     const inner = value.inner;
-                    FfiConverterTypeU64String.writeIntoCursor(inner.rttMillis, c);
+                    FfiConverterUInt64.writeIntoCursor(inner.rttMillis, c);
                     return;
                 }
                 case RemoteControlAnnounceStatus_Tags.Unavailable: {
@@ -4009,7 +4001,7 @@ const FfiConverterTypeRemoteControlAnnounceStatus = (() => {
                 case RemoteControlAnnounceStatus_Tags.Announced: {
                     const inner = value.inner;
                     let size = 4;
-                    size += FfiConverterTypeU64String.allocationSize(inner.rttMillis);
+                    size += FfiConverterUInt64.allocationSize(inner.rttMillis);
                     return size;
                 }
                 case RemoteControlAnnounceStatus_Tags.Unavailable: {
@@ -4044,7 +4036,7 @@ const FfiConverterTypeRemoteControlAnnounceStatus = (() => {
  * One process-local result, retained independently of a React subscription.
  */
 export type RemoteControlAnnounceOperation = {
-    operationId: U64String,
+    operationId: bigint,
     targetIdentityFingerprint: Uint8Array,
     status: RemoteControlAnnounceStatus
 }
@@ -4070,18 +4062,18 @@ const FfiConverterTypeRemoteControlAnnounceOperation = (() => {
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         readFromCursor(c: Cursor): TypeName {
             return {
-                operationId: FfiConverterTypeU64String.readFromCursor(c),
+                operationId: FfiConverterUInt64.readFromCursor(c),
                 targetIdentityFingerprint: FfiConverterUint8Array.readFromCursor(c),
                 status: FfiConverterTypeRemoteControlAnnounceStatus.readFromCursor(c)
             };
         }
         writeIntoCursor(value: TypeName, c: Cursor): void {
-            FfiConverterTypeU64String.writeIntoCursor(value.operationId, c);
+            FfiConverterUInt64.writeIntoCursor(value.operationId, c);
             FfiConverterUint8Array.writeIntoCursor(value.targetIdentityFingerprint, c);
             FfiConverterTypeRemoteControlAnnounceStatus.writeIntoCursor(value.status, c);
         }
         allocationSize(value: TypeName): number {
-            return FfiConverterTypeU64String.allocationSize(value.operationId) +
+            return FfiConverterUInt64.allocationSize(value.operationId) +
              FfiConverterUint8Array.allocationSize(value.targetIdentityFingerprint) +
              FfiConverterTypeRemoteControlAnnounceStatus.allocationSize(value.status);
 
@@ -4092,8 +4084,8 @@ const FfiConverterTypeRemoteControlAnnounceOperation = (() => {
 
 export type DevelopmentNodeSnapshot = {
     contractFingerprint: string,
-    revision: U64String,
-    generationId: U64String,
+    revision: bigint,
+    generationId: bigint,
     runtime: DevelopmentNodeRuntime,
     primaryIdentity: PrimaryIdentityState,
     localHost: LocalHostState,
@@ -4129,8 +4121,8 @@ const FfiConverterTypeDevelopmentNodeSnapshot = (() => {
         readFromCursor(c: Cursor): TypeName {
             return {
                 contractFingerprint: FfiConverterString.readFromCursor(c),
-                revision: FfiConverterTypeU64String.readFromCursor(c),
-                generationId: FfiConverterTypeU64String.readFromCursor(c),
+                revision: FfiConverterUInt64.readFromCursor(c),
+                generationId: FfiConverterUInt64.readFromCursor(c),
                 runtime: FfiConverterTypeDevelopmentNodeRuntime.readFromCursor(c),
                 primaryIdentity: FfiConverterTypePrimaryIdentityState.readFromCursor(c),
                 localHost: FfiConverterTypeLocalHostState.readFromCursor(c),
@@ -4146,8 +4138,8 @@ const FfiConverterTypeDevelopmentNodeSnapshot = (() => {
         }
         writeIntoCursor(value: TypeName, c: Cursor): void {
             FfiConverterString.writeIntoCursor(value.contractFingerprint, c);
-            FfiConverterTypeU64String.writeIntoCursor(value.revision, c);
-            FfiConverterTypeU64String.writeIntoCursor(value.generationId, c);
+            FfiConverterUInt64.writeIntoCursor(value.revision, c);
+            FfiConverterUInt64.writeIntoCursor(value.generationId, c);
             FfiConverterTypeDevelopmentNodeRuntime.writeIntoCursor(value.runtime, c);
             FfiConverterTypePrimaryIdentityState.writeIntoCursor(value.primaryIdentity, c);
             FfiConverterTypeLocalHostState.writeIntoCursor(value.localHost, c);
@@ -4162,8 +4154,8 @@ const FfiConverterTypeDevelopmentNodeSnapshot = (() => {
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.contractFingerprint) +
-             FfiConverterTypeU64String.allocationSize(value.revision) +
-             FfiConverterTypeU64String.allocationSize(value.generationId) +
+             FfiConverterUInt64.allocationSize(value.revision) +
+             FfiConverterUInt64.allocationSize(value.generationId) +
              FfiConverterTypeDevelopmentNodeRuntime.allocationSize(value.runtime) +
              FfiConverterTypePrimaryIdentityState.allocationSize(value.primaryIdentity) +
              FfiConverterTypeLocalHostState.allocationSize(value.localHost) +
@@ -4265,7 +4257,7 @@ const FfiConverterTypeInitiateRemoteControlPairingInput = (() => {
 
 export type ListLxmfMessagesInput = {
     peer?: Bytes16 | undefined,
-    before?: U64String | undefined,
+    before?: bigint | undefined,
     limit: number
 }
 
@@ -4291,18 +4283,18 @@ const FfiConverterTypeListLxmfMessagesInput = (() => {
         readFromCursor(c: Cursor): TypeName {
             return {
                 peer: FfiConverterOptionalTypeBytes16.readFromCursor(c),
-                before: FfiConverterOptionalTypeU64String.readFromCursor(c),
+                before: FfiConverterOptionalUInt64.readFromCursor(c),
                 limit: FfiConverterUInt16.readFromCursor(c)
             };
         }
         writeIntoCursor(value: TypeName, c: Cursor): void {
             FfiConverterOptionalTypeBytes16.writeIntoCursor(value.peer, c);
-            FfiConverterOptionalTypeU64String.writeIntoCursor(value.before, c);
+            FfiConverterOptionalUInt64.writeIntoCursor(value.before, c);
             FfiConverterUInt16.writeIntoCursor(value.limit, c);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterOptionalTypeBytes16.allocationSize(value.peer) +
-             FfiConverterOptionalTypeU64String.allocationSize(value.before) +
+             FfiConverterOptionalUInt64.allocationSize(value.before) +
              FfiConverterUInt16.allocationSize(value.limit);
 
         }
@@ -4586,7 +4578,7 @@ export const LxmfDeliveryState = (() => {
     type Queued__interface = {
         tag: LxmfDeliveryState_Tags.Queued;
         inner:
-Readonly<{failedAttempts: U64String}>
+Readonly<{failedAttempts: bigint}>
     };
     class Queued_ extends UniffiEnum implements Queued__interface {
         /**
@@ -4596,15 +4588,15 @@ Readonly<{failedAttempts: U64String}>
         readonly [uniffiTypeNameSymbol] = "LxmfDeliveryState";
         readonly tag = LxmfDeliveryState_Tags.Queued;
         readonly inner:
-Readonly<{failedAttempts: U64String}>;
+Readonly<{failedAttempts: bigint}>;
         constructor(
-inner: {failedAttempts: U64String }) {
+inner: {failedAttempts: bigint }) {
             super("LxmfDeliveryState", "Queued");
 
             this.inner = Object.freeze(inner);
         }
         static new(
-inner: {failedAttempts: U64String }): Queued_ {
+inner: {failedAttempts: bigint }): Queued_ {
             return new Queued_(inner);
         }
 
@@ -4617,7 +4609,7 @@ inner: {failedAttempts: U64String }): Queued_ {
     type Sending__interface = {
         tag: LxmfDeliveryState_Tags.Sending;
         inner:
-Readonly<{failedAttempts: U64String}>
+Readonly<{failedAttempts: bigint}>
     };
     class Sending_ extends UniffiEnum implements Sending__interface {
         /**
@@ -4627,15 +4619,15 @@ Readonly<{failedAttempts: U64String}>
         readonly [uniffiTypeNameSymbol] = "LxmfDeliveryState";
         readonly tag = LxmfDeliveryState_Tags.Sending;
         readonly inner:
-Readonly<{failedAttempts: U64String}>;
+Readonly<{failedAttempts: bigint}>;
         constructor(
-inner: {failedAttempts: U64String }) {
+inner: {failedAttempts: bigint }) {
             super("LxmfDeliveryState", "Sending");
 
             this.inner = Object.freeze(inner);
         }
         static new(
-inner: {failedAttempts: U64String }): Sending_ {
+inner: {failedAttempts: bigint }): Sending_ {
             return new Sending_(inner);
         }
 
@@ -4648,7 +4640,7 @@ inner: {failedAttempts: U64String }): Sending_ {
     type Delivered__interface = {
         tag: LxmfDeliveryState_Tags.Delivered;
         inner:
-Readonly<{deliveredAt: U64String; rtt?: U64String | undefined}>
+Readonly<{deliveredAt: bigint; rtt?: bigint | undefined}>
     };
     class Delivered_ extends UniffiEnum implements Delivered__interface {
         /**
@@ -4658,15 +4650,15 @@ Readonly<{deliveredAt: U64String; rtt?: U64String | undefined}>
         readonly [uniffiTypeNameSymbol] = "LxmfDeliveryState";
         readonly tag = LxmfDeliveryState_Tags.Delivered;
         readonly inner:
-Readonly<{deliveredAt: U64String; rtt?: U64String | undefined}>;
+Readonly<{deliveredAt: bigint; rtt?: bigint | undefined}>;
         constructor(
-inner: {deliveredAt: U64String; rtt?: U64String | undefined }) {
+inner: {deliveredAt: bigint; rtt?: bigint | undefined }) {
             super("LxmfDeliveryState", "Delivered");
 
             this.inner = Object.freeze(inner);
         }
         static new(
-inner: {deliveredAt: U64String; rtt?: U64String | undefined }): Delivered_ {
+inner: {deliveredAt: bigint; rtt?: bigint | undefined }): Delivered_ {
             return new Delivered_(inner);
         }
 
@@ -4679,7 +4671,7 @@ inner: {deliveredAt: U64String; rtt?: U64String | undefined }): Delivered_ {
     type Failed__interface = {
         tag: LxmfDeliveryState_Tags.Failed;
         inner:
-Readonly<{failedAttempts: U64String; lastFailure: LxmfDeliveryFailure}>
+Readonly<{failedAttempts: bigint; lastFailure: LxmfDeliveryFailure}>
     };
     class Failed_ extends UniffiEnum implements Failed__interface {
         /**
@@ -4689,15 +4681,15 @@ Readonly<{failedAttempts: U64String; lastFailure: LxmfDeliveryFailure}>
         readonly [uniffiTypeNameSymbol] = "LxmfDeliveryState";
         readonly tag = LxmfDeliveryState_Tags.Failed;
         readonly inner:
-Readonly<{failedAttempts: U64String; lastFailure: LxmfDeliveryFailure}>;
+Readonly<{failedAttempts: bigint; lastFailure: LxmfDeliveryFailure}>;
         constructor(
-inner: {failedAttempts: U64String; lastFailure: LxmfDeliveryFailure }) {
+inner: {failedAttempts: bigint; lastFailure: LxmfDeliveryFailure }) {
             super("LxmfDeliveryState", "Failed");
 
             this.inner = Object.freeze(inner);
         }
         static new(
-inner: {failedAttempts: U64String; lastFailure: LxmfDeliveryFailure }): Failed_ {
+inner: {failedAttempts: bigint; lastFailure: LxmfDeliveryFailure }): Failed_ {
             return new Failed_(inner);
         }
 
@@ -4710,7 +4702,7 @@ inner: {failedAttempts: U64String; lastFailure: LxmfDeliveryFailure }): Failed_ 
     type Cancelled__interface = {
         tag: LxmfDeliveryState_Tags.Cancelled;
         inner:
-Readonly<{cancelledAt: U64String}>
+Readonly<{cancelledAt: bigint}>
     };
     class Cancelled_ extends UniffiEnum implements Cancelled__interface {
         /**
@@ -4720,15 +4712,15 @@ Readonly<{cancelledAt: U64String}>
         readonly [uniffiTypeNameSymbol] = "LxmfDeliveryState";
         readonly tag = LxmfDeliveryState_Tags.Cancelled;
         readonly inner:
-Readonly<{cancelledAt: U64String}>;
+Readonly<{cancelledAt: bigint}>;
         constructor(
-inner: {cancelledAt: U64String }) {
+inner: {cancelledAt: bigint }) {
             super("LxmfDeliveryState", "Cancelled");
 
             this.inner = Object.freeze(inner);
         }
         static new(
-inner: {cancelledAt: U64String }): Cancelled_ {
+inner: {cancelledAt: bigint }): Cancelled_ {
             return new Cancelled_(inner);
         }
 
@@ -4764,11 +4756,11 @@ const FfiConverterTypeLxmfDeliveryState = (() => {
         readFromCursor(c: Cursor): TypeName {
             switch (c.readI32()) {
                 case 1: return new LxmfDeliveryState.Received();
-                case 2: return new LxmfDeliveryState.Queued({failedAttempts: FfiConverterTypeU64String.readFromCursor(c) });
-                case 3: return new LxmfDeliveryState.Sending({failedAttempts: FfiConverterTypeU64String.readFromCursor(c) });
-                case 4: return new LxmfDeliveryState.Delivered({deliveredAt: FfiConverterTypeU64String.readFromCursor(c), rtt: FfiConverterOptionalTypeU64String.readFromCursor(c) });
-                case 5: return new LxmfDeliveryState.Failed({failedAttempts: FfiConverterTypeU64String.readFromCursor(c), lastFailure: FfiConverterTypeLxmfDeliveryFailure.readFromCursor(c) });
-                case 6: return new LxmfDeliveryState.Cancelled({cancelledAt: FfiConverterTypeU64String.readFromCursor(c) });
+                case 2: return new LxmfDeliveryState.Queued({failedAttempts: FfiConverterUInt64.readFromCursor(c) });
+                case 3: return new LxmfDeliveryState.Sending({failedAttempts: FfiConverterUInt64.readFromCursor(c) });
+                case 4: return new LxmfDeliveryState.Delivered({deliveredAt: FfiConverterUInt64.readFromCursor(c), rtt: FfiConverterOptionalUInt64.readFromCursor(c) });
+                case 5: return new LxmfDeliveryState.Failed({failedAttempts: FfiConverterUInt64.readFromCursor(c), lastFailure: FfiConverterTypeLxmfDeliveryFailure.readFromCursor(c) });
+                case 6: return new LxmfDeliveryState.Cancelled({cancelledAt: FfiConverterUInt64.readFromCursor(c) });
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -4781,33 +4773,33 @@ const FfiConverterTypeLxmfDeliveryState = (() => {
                 case LxmfDeliveryState_Tags.Queued: {
                     c.writeI32(2);
                     const inner = value.inner;
-                    FfiConverterTypeU64String.writeIntoCursor(inner.failedAttempts, c);
+                    FfiConverterUInt64.writeIntoCursor(inner.failedAttempts, c);
                     return;
                 }
                 case LxmfDeliveryState_Tags.Sending: {
                     c.writeI32(3);
                     const inner = value.inner;
-                    FfiConverterTypeU64String.writeIntoCursor(inner.failedAttempts, c);
+                    FfiConverterUInt64.writeIntoCursor(inner.failedAttempts, c);
                     return;
                 }
                 case LxmfDeliveryState_Tags.Delivered: {
                     c.writeI32(4);
                     const inner = value.inner;
-                    FfiConverterTypeU64String.writeIntoCursor(inner.deliveredAt, c);
-                    FfiConverterOptionalTypeU64String.writeIntoCursor(inner.rtt, c);
+                    FfiConverterUInt64.writeIntoCursor(inner.deliveredAt, c);
+                    FfiConverterOptionalUInt64.writeIntoCursor(inner.rtt, c);
                     return;
                 }
                 case LxmfDeliveryState_Tags.Failed: {
                     c.writeI32(5);
                     const inner = value.inner;
-                    FfiConverterTypeU64String.writeIntoCursor(inner.failedAttempts, c);
+                    FfiConverterUInt64.writeIntoCursor(inner.failedAttempts, c);
                     FfiConverterTypeLxmfDeliveryFailure.writeIntoCursor(inner.lastFailure, c);
                     return;
                 }
                 case LxmfDeliveryState_Tags.Cancelled: {
                     c.writeI32(6);
                     const inner = value.inner;
-                    FfiConverterTypeU64String.writeIntoCursor(inner.cancelledAt, c);
+                    FfiConverterUInt64.writeIntoCursor(inner.cancelledAt, c);
                     return;
                 }
                 default:
@@ -4823,33 +4815,33 @@ const FfiConverterTypeLxmfDeliveryState = (() => {
                 case LxmfDeliveryState_Tags.Queued: {
                     const inner = value.inner;
                     let size = 4;
-                    size += FfiConverterTypeU64String.allocationSize(inner.failedAttempts);
+                    size += FfiConverterUInt64.allocationSize(inner.failedAttempts);
                     return size;
                 }
                 case LxmfDeliveryState_Tags.Sending: {
                     const inner = value.inner;
                     let size = 4;
-                    size += FfiConverterTypeU64String.allocationSize(inner.failedAttempts);
+                    size += FfiConverterUInt64.allocationSize(inner.failedAttempts);
                     return size;
                 }
                 case LxmfDeliveryState_Tags.Delivered: {
                     const inner = value.inner;
                     let size = 4;
-                    size += FfiConverterTypeU64String.allocationSize(inner.deliveredAt);
-                    size += FfiConverterOptionalTypeU64String.allocationSize(inner.rtt);
+                    size += FfiConverterUInt64.allocationSize(inner.deliveredAt);
+                    size += FfiConverterOptionalUInt64.allocationSize(inner.rtt);
                     return size;
                 }
                 case LxmfDeliveryState_Tags.Failed: {
                     const inner = value.inner;
                     let size = 4;
-                    size += FfiConverterTypeU64String.allocationSize(inner.failedAttempts);
+                    size += FfiConverterUInt64.allocationSize(inner.failedAttempts);
                     size += FfiConverterTypeLxmfDeliveryFailure.allocationSize(inner.lastFailure);
                     return size;
                 }
                 case LxmfDeliveryState_Tags.Cancelled: {
                     const inner = value.inner;
                     let size = 4;
-                    size += FfiConverterTypeU64String.allocationSize(inner.cancelledAt);
+                    size += FfiConverterUInt64.allocationSize(inner.cancelledAt);
                     return size;
                 }
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
@@ -4860,11 +4852,11 @@ const FfiConverterTypeLxmfDeliveryState = (() => {
 })();
 
 export type LxmfMessage = {
-    localRecordId: U64String,
+    localRecordId: bigint,
     messageId: Bytes32,
     source: Bytes16,
     destination: Bytes16,
-    timestamp: U64String,
+    timestamp: bigint,
     title: LxmfText,
     content: LxmfText,
     direction: LxmfDirection,
@@ -4893,11 +4885,11 @@ const FfiConverterTypeLxmfMessage = (() => {
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         readFromCursor(c: Cursor): TypeName {
             return {
-                localRecordId: FfiConverterTypeU64String.readFromCursor(c),
+                localRecordId: FfiConverterUInt64.readFromCursor(c),
                 messageId: FfiConverterTypeBytes32.readFromCursor(c),
                 source: FfiConverterTypeBytes16.readFromCursor(c),
                 destination: FfiConverterTypeBytes16.readFromCursor(c),
-                timestamp: FfiConverterTypeU64String.readFromCursor(c),
+                timestamp: FfiConverterUInt64.readFromCursor(c),
                 title: FfiConverterTypeLxmfText.readFromCursor(c),
                 content: FfiConverterTypeLxmfText.readFromCursor(c),
                 direction: FfiConverterTypeLxmfDirection.readFromCursor(c),
@@ -4906,11 +4898,11 @@ const FfiConverterTypeLxmfMessage = (() => {
             };
         }
         writeIntoCursor(value: TypeName, c: Cursor): void {
-            FfiConverterTypeU64String.writeIntoCursor(value.localRecordId, c);
+            FfiConverterUInt64.writeIntoCursor(value.localRecordId, c);
             FfiConverterTypeBytes32.writeIntoCursor(value.messageId, c);
             FfiConverterTypeBytes16.writeIntoCursor(value.source, c);
             FfiConverterTypeBytes16.writeIntoCursor(value.destination, c);
-            FfiConverterTypeU64String.writeIntoCursor(value.timestamp, c);
+            FfiConverterUInt64.writeIntoCursor(value.timestamp, c);
             FfiConverterTypeLxmfText.writeIntoCursor(value.title, c);
             FfiConverterTypeLxmfText.writeIntoCursor(value.content, c);
             FfiConverterTypeLxmfDirection.writeIntoCursor(value.direction, c);
@@ -4918,11 +4910,11 @@ const FfiConverterTypeLxmfMessage = (() => {
             FfiConverterTypeLxmfDeliveryState.writeIntoCursor(value.deliveryState, c);
         }
         allocationSize(value: TypeName): number {
-            return FfiConverterTypeU64String.allocationSize(value.localRecordId) +
+            return FfiConverterUInt64.allocationSize(value.localRecordId) +
              FfiConverterTypeBytes32.allocationSize(value.messageId) +
              FfiConverterTypeBytes16.allocationSize(value.source) +
              FfiConverterTypeBytes16.allocationSize(value.destination) +
-             FfiConverterTypeU64String.allocationSize(value.timestamp) +
+             FfiConverterUInt64.allocationSize(value.timestamp) +
              FfiConverterTypeLxmfText.allocationSize(value.title) +
              FfiConverterTypeLxmfText.allocationSize(value.content) +
              FfiConverterTypeLxmfDirection.allocationSize(value.direction) +
@@ -4937,8 +4929,8 @@ const FfiConverterTypeLxmfMessage = (() => {
 export type LxmfPeerSummary = {
     destination: Bytes16,
     displayName?: string | undefined,
-    requiredStampCost?: U64String | undefined,
-    lastObservedAgeMillis: U64String
+    requiredStampCost?: bigint | undefined,
+    lastObservedAgeMillis: bigint
 }
 
 /**
@@ -4964,21 +4956,21 @@ const FfiConverterTypeLxmfPeerSummary = (() => {
             return {
                 destination: FfiConverterTypeBytes16.readFromCursor(c),
                 displayName: FfiConverterOptionalString.readFromCursor(c),
-                requiredStampCost: FfiConverterOptionalTypeU64String.readFromCursor(c),
-                lastObservedAgeMillis: FfiConverterTypeU64String.readFromCursor(c)
+                requiredStampCost: FfiConverterOptionalUInt64.readFromCursor(c),
+                lastObservedAgeMillis: FfiConverterUInt64.readFromCursor(c)
             };
         }
         writeIntoCursor(value: TypeName, c: Cursor): void {
             FfiConverterTypeBytes16.writeIntoCursor(value.destination, c);
             FfiConverterOptionalString.writeIntoCursor(value.displayName, c);
-            FfiConverterOptionalTypeU64String.writeIntoCursor(value.requiredStampCost, c);
-            FfiConverterTypeU64String.writeIntoCursor(value.lastObservedAgeMillis, c);
+            FfiConverterOptionalUInt64.writeIntoCursor(value.requiredStampCost, c);
+            FfiConverterUInt64.writeIntoCursor(value.lastObservedAgeMillis, c);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterTypeBytes16.allocationSize(value.destination) +
              FfiConverterOptionalString.allocationSize(value.displayName) +
-             FfiConverterOptionalTypeU64String.allocationSize(value.requiredStampCost) +
-             FfiConverterTypeU64String.allocationSize(value.lastObservedAgeMillis);
+             FfiConverterOptionalUInt64.allocationSize(value.requiredStampCost) +
+             FfiConverterUInt64.allocationSize(value.lastObservedAgeMillis);
 
         }
     };
@@ -5068,7 +5060,7 @@ const FfiConverterTypeRemoteControlPairingDecisionInput = (() => {
 })();
 
 export type RetryLxmfMessageInput = {
-    localRecordId: U64String
+    localRecordId: bigint
 }
 
 /**
@@ -5092,14 +5084,14 @@ const FfiConverterTypeRetryLxmfMessageInput = (() => {
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         readFromCursor(c: Cursor): TypeName {
             return {
-                localRecordId: FfiConverterTypeU64String.readFromCursor(c)
+                localRecordId: FfiConverterUInt64.readFromCursor(c)
             };
         }
         writeIntoCursor(value: TypeName, c: Cursor): void {
-            FfiConverterTypeU64String.writeIntoCursor(value.localRecordId, c);
+            FfiConverterUInt64.writeIntoCursor(value.localRecordId, c);
         }
         allocationSize(value: TypeName): number {
-            return FfiConverterTypeU64String.allocationSize(value.localRecordId);
+            return FfiConverterUInt64.allocationSize(value.localRecordId);
 
         }
     };
@@ -5517,7 +5509,7 @@ export const CancelLxmfMessageOutcome = (() => {
     type Cancelled__interface = {
         tag: CancelLxmfMessageOutcome_Tags.Cancelled;
         inner:
-Readonly<{localRecordId: U64String}>
+Readonly<{localRecordId: bigint}>
     };
     class Cancelled_ extends UniffiEnum implements Cancelled__interface {
         /**
@@ -5527,15 +5519,15 @@ Readonly<{localRecordId: U64String}>
         readonly [uniffiTypeNameSymbol] = "CancelLxmfMessageOutcome";
         readonly tag = CancelLxmfMessageOutcome_Tags.Cancelled;
         readonly inner:
-Readonly<{localRecordId: U64String}>;
+Readonly<{localRecordId: bigint}>;
         constructor(
-inner: {localRecordId: U64String }) {
+inner: {localRecordId: bigint }) {
             super("CancelLxmfMessageOutcome", "Cancelled");
 
             this.inner = Object.freeze(inner);
         }
         static new(
-inner: {localRecordId: U64String }): Cancelled_ {
+inner: {localRecordId: bigint }): Cancelled_ {
             return new Cancelled_(inner);
         }
 
@@ -5736,7 +5728,7 @@ const FfiConverterTypeCancelLxmfMessageOutcome = (() => {
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         readFromCursor(c: Cursor): TypeName {
             switch (c.readI32()) {
-                case 1: return new CancelLxmfMessageOutcome.Cancelled({localRecordId: FfiConverterTypeU64String.readFromCursor(c) });
+                case 1: return new CancelLxmfMessageOutcome.Cancelled({localRecordId: FfiConverterUInt64.readFromCursor(c) });
                 case 2: return new CancelLxmfMessageOutcome.NotFound();
                 case 3: return new CancelLxmfMessageOutcome.AlreadyDelivered();
                 case 4: return new CancelLxmfMessageOutcome.AlreadyCancelled();
@@ -5751,7 +5743,7 @@ const FfiConverterTypeCancelLxmfMessageOutcome = (() => {
                 case CancelLxmfMessageOutcome_Tags.Cancelled: {
                     c.writeI32(1);
                     const inner = value.inner;
-                    FfiConverterTypeU64String.writeIntoCursor(inner.localRecordId, c);
+                    FfiConverterUInt64.writeIntoCursor(inner.localRecordId, c);
                     return;
                 }
                 case CancelLxmfMessageOutcome_Tags.NotFound: {
@@ -5794,7 +5786,7 @@ const FfiConverterTypeCancelLxmfMessageOutcome = (() => {
                 case CancelLxmfMessageOutcome_Tags.Cancelled: {
                     const inner = value.inner;
                     let size = 4;
-                    size += FfiConverterTypeU64String.allocationSize(inner.localRecordId);
+                    size += FfiConverterUInt64.allocationSize(inner.localRecordId);
                     return size;
                 }
                 case CancelLxmfMessageOutcome_Tags.NotFound: {
@@ -8565,7 +8557,7 @@ export const RemoteControlDescribeOutcome = (() => {
     type Described__interface = {
         tag: RemoteControlDescribeOutcome_Tags.Described;
         inner:
-Readonly<{target: RemoteControlTargetSnapshot; availableRequests: Array<RemoteControlRequestKind>; rttMillis: U64String; snapshot: SnapshotBox}>
+Readonly<{target: RemoteControlTargetSnapshot; availableRequests: Array<RemoteControlRequestKind>; rttMillis: bigint; snapshot: SnapshotBox}>
     };
     class Described_ extends UniffiEnum implements Described__interface {
         /**
@@ -8575,15 +8567,15 @@ Readonly<{target: RemoteControlTargetSnapshot; availableRequests: Array<RemoteCo
         readonly [uniffiTypeNameSymbol] = "RemoteControlDescribeOutcome";
         readonly tag = RemoteControlDescribeOutcome_Tags.Described;
         readonly inner:
-Readonly<{target: RemoteControlTargetSnapshot; availableRequests: Array<RemoteControlRequestKind>; rttMillis: U64String; snapshot: SnapshotBox}>;
+Readonly<{target: RemoteControlTargetSnapshot; availableRequests: Array<RemoteControlRequestKind>; rttMillis: bigint; snapshot: SnapshotBox}>;
         constructor(
-inner: {target: RemoteControlTargetSnapshot; availableRequests: Array<RemoteControlRequestKind>; rttMillis: U64String; snapshot: SnapshotBox }) {
+inner: {target: RemoteControlTargetSnapshot; availableRequests: Array<RemoteControlRequestKind>; rttMillis: bigint; snapshot: SnapshotBox }) {
             super("RemoteControlDescribeOutcome", "Described");
 
             this.inner = Object.freeze(inner);
         }
         static new(
-inner: {target: RemoteControlTargetSnapshot; availableRequests: Array<RemoteControlRequestKind>; rttMillis: U64String; snapshot: SnapshotBox }): Described_ {
+inner: {target: RemoteControlTargetSnapshot; availableRequests: Array<RemoteControlRequestKind>; rttMillis: bigint; snapshot: SnapshotBox }): Described_ {
             return new Described_(inner);
         }
 
@@ -8670,7 +8662,7 @@ const FfiConverterTypeRemoteControlDescribeOutcome = (() => {
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         readFromCursor(c: Cursor): TypeName {
             switch (c.readI32()) {
-                case 1: return new RemoteControlDescribeOutcome.Described({target: FfiConverterTypeRemoteControlTargetSnapshot.readFromCursor(c), availableRequests: FfiConverterSequenceTypeRemoteControlRequestKind.readFromCursor(c), rttMillis: FfiConverterTypeU64String.readFromCursor(c), snapshot: FfiConverterTypeSnapshotBox.readFromCursor(c) });
+                case 1: return new RemoteControlDescribeOutcome.Described({target: FfiConverterTypeRemoteControlTargetSnapshot.readFromCursor(c), availableRequests: FfiConverterSequenceTypeRemoteControlRequestKind.readFromCursor(c), rttMillis: FfiConverterUInt64.readFromCursor(c), snapshot: FfiConverterTypeSnapshotBox.readFromCursor(c) });
                 case 2: return new RemoteControlDescribeOutcome.Busy();
                 case 3: return new RemoteControlDescribeOutcome.Failed({stage: FfiConverterTypeRemoteControlDescribeFailureStage.readFromCursor(c), detail: FfiConverterString.readFromCursor(c) });
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
@@ -8683,7 +8675,7 @@ const FfiConverterTypeRemoteControlDescribeOutcome = (() => {
                     const inner = value.inner;
                     FfiConverterTypeRemoteControlTargetSnapshot.writeIntoCursor(inner.target, c);
                     FfiConverterSequenceTypeRemoteControlRequestKind.writeIntoCursor(inner.availableRequests, c);
-                    FfiConverterTypeU64String.writeIntoCursor(inner.rttMillis, c);
+                    FfiConverterUInt64.writeIntoCursor(inner.rttMillis, c);
                     FfiConverterTypeSnapshotBox.writeIntoCursor(inner.snapshot, c);
                     return;
                 }
@@ -8710,7 +8702,7 @@ const FfiConverterTypeRemoteControlDescribeOutcome = (() => {
                     let size = 4;
                     size += FfiConverterTypeRemoteControlTargetSnapshot.allocationSize(inner.target);
                     size += FfiConverterSequenceTypeRemoteControlRequestKind.allocationSize(inner.availableRequests);
-                    size += FfiConverterTypeU64String.allocationSize(inner.rttMillis);
+                    size += FfiConverterUInt64.allocationSize(inner.rttMillis);
                     size += FfiConverterTypeSnapshotBox.allocationSize(inner.snapshot);
                     return size;
                 }
@@ -8917,7 +8909,7 @@ export const RetryLxmfMessageOutcome = (() => {
     type Accepted__interface = {
         tag: RetryLxmfMessageOutcome_Tags.Accepted;
         inner:
-Readonly<{localRecordId: U64String}>
+Readonly<{localRecordId: bigint}>
     };
     class Accepted_ extends UniffiEnum implements Accepted__interface {
         /**
@@ -8927,15 +8919,15 @@ Readonly<{localRecordId: U64String}>
         readonly [uniffiTypeNameSymbol] = "RetryLxmfMessageOutcome";
         readonly tag = RetryLxmfMessageOutcome_Tags.Accepted;
         readonly inner:
-Readonly<{localRecordId: U64String}>;
+Readonly<{localRecordId: bigint}>;
         constructor(
-inner: {localRecordId: U64String }) {
+inner: {localRecordId: bigint }) {
             super("RetryLxmfMessageOutcome", "Accepted");
 
             this.inner = Object.freeze(inner);
         }
         static new(
-inner: {localRecordId: U64String }): Accepted_ {
+inner: {localRecordId: bigint }): Accepted_ {
             return new Accepted_(inner);
         }
 
@@ -9086,7 +9078,7 @@ const FfiConverterTypeRetryLxmfMessageOutcome = (() => {
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         readFromCursor(c: Cursor): TypeName {
             switch (c.readI32()) {
-                case 1: return new RetryLxmfMessageOutcome.Accepted({localRecordId: FfiConverterTypeU64String.readFromCursor(c) });
+                case 1: return new RetryLxmfMessageOutcome.Accepted({localRecordId: FfiConverterUInt64.readFromCursor(c) });
                 case 2: return new RetryLxmfMessageOutcome.NotFound();
                 case 3: return new RetryLxmfMessageOutcome.NotFailed({current: FfiConverterTypeLxmfDeliveryState.readFromCursor(c) });
                 case 4: return new RetryLxmfMessageOutcome.DevelopmentUnavailable({detail: FfiConverterString.readFromCursor(c) });
@@ -9099,7 +9091,7 @@ const FfiConverterTypeRetryLxmfMessageOutcome = (() => {
                 case RetryLxmfMessageOutcome_Tags.Accepted: {
                     c.writeI32(1);
                     const inner = value.inner;
-                    FfiConverterTypeU64String.writeIntoCursor(inner.localRecordId, c);
+                    FfiConverterUInt64.writeIntoCursor(inner.localRecordId, c);
                     return;
                 }
                 case RetryLxmfMessageOutcome_Tags.NotFound: {
@@ -9134,7 +9126,7 @@ const FfiConverterTypeRetryLxmfMessageOutcome = (() => {
                 case RetryLxmfMessageOutcome_Tags.Accepted: {
                     const inner = value.inner;
                     let size = 4;
-                    size += FfiConverterTypeU64String.allocationSize(inner.localRecordId);
+                    size += FfiConverterUInt64.allocationSize(inner.localRecordId);
                     return size;
                 }
                 case RetryLxmfMessageOutcome_Tags.NotFound: {
@@ -9180,7 +9172,7 @@ export const SendDirectTextOutcome = (() => {
     type Accepted__interface = {
         tag: SendDirectTextOutcome_Tags.Accepted;
         inner:
-Readonly<{localRecordId: U64String}>
+Readonly<{localRecordId: bigint}>
     };
     class Accepted_ extends UniffiEnum implements Accepted__interface {
         /**
@@ -9190,15 +9182,15 @@ Readonly<{localRecordId: U64String}>
         readonly [uniffiTypeNameSymbol] = "SendDirectTextOutcome";
         readonly tag = SendDirectTextOutcome_Tags.Accepted;
         readonly inner:
-Readonly<{localRecordId: U64String}>;
+Readonly<{localRecordId: bigint}>;
         constructor(
-inner: {localRecordId: U64String }) {
+inner: {localRecordId: bigint }) {
             super("SendDirectTextOutcome", "Accepted");
 
             this.inner = Object.freeze(inner);
         }
         static new(
-inner: {localRecordId: U64String }): Accepted_ {
+inner: {localRecordId: bigint }): Accepted_ {
             return new Accepted_(inner);
         }
 
@@ -9242,7 +9234,7 @@ inner: {wireBytes: number }): NeedsResource_ {
     type UnsupportedRemoteStampRequirement__interface = {
         tag: SendDirectTextOutcome_Tags.UnsupportedRemoteStampRequirement;
         inner:
-Readonly<{requiredStampCost: U64String}>
+Readonly<{requiredStampCost: bigint}>
     };
     class UnsupportedRemoteStampRequirement_ extends UniffiEnum implements UnsupportedRemoteStampRequirement__interface {
         /**
@@ -9252,15 +9244,15 @@ Readonly<{requiredStampCost: U64String}>
         readonly [uniffiTypeNameSymbol] = "SendDirectTextOutcome";
         readonly tag = SendDirectTextOutcome_Tags.UnsupportedRemoteStampRequirement;
         readonly inner:
-Readonly<{requiredStampCost: U64String}>;
+Readonly<{requiredStampCost: bigint}>;
         constructor(
-inner: {requiredStampCost: U64String }) {
+inner: {requiredStampCost: bigint }) {
             super("SendDirectTextOutcome", "UnsupportedRemoteStampRequirement");
 
             this.inner = Object.freeze(inner);
         }
         static new(
-inner: {requiredStampCost: U64String }): UnsupportedRemoteStampRequirement_ {
+inner: {requiredStampCost: bigint }): UnsupportedRemoteStampRequirement_ {
             return new UnsupportedRemoteStampRequirement_(inner);
         }
 
@@ -9381,9 +9373,9 @@ const FfiConverterTypeSendDirectTextOutcome = (() => {
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         readFromCursor(c: Cursor): TypeName {
             switch (c.readI32()) {
-                case 1: return new SendDirectTextOutcome.Accepted({localRecordId: FfiConverterTypeU64String.readFromCursor(c) });
+                case 1: return new SendDirectTextOutcome.Accepted({localRecordId: FfiConverterUInt64.readFromCursor(c) });
                 case 2: return new SendDirectTextOutcome.NeedsResource({wireBytes: FfiConverterUInt32.readFromCursor(c) });
-                case 3: return new SendDirectTextOutcome.UnsupportedRemoteStampRequirement({requiredStampCost: FfiConverterTypeU64String.readFromCursor(c) });
+                case 3: return new SendDirectTextOutcome.UnsupportedRemoteStampRequirement({requiredStampCost: FfiConverterUInt64.readFromCursor(c) });
                 case 4: return new SendDirectTextOutcome.PeerIdentityUnavailable();
                 case 5: return new SendDirectTextOutcome.DevelopmentUnavailable({detail: FfiConverterString.readFromCursor(c) });
                 case 6: return new SendDirectTextOutcome.DevelopmentResetRequired({reason: FfiConverterString.readFromCursor(c) });
@@ -9395,7 +9387,7 @@ const FfiConverterTypeSendDirectTextOutcome = (() => {
                 case SendDirectTextOutcome_Tags.Accepted: {
                     c.writeI32(1);
                     const inner = value.inner;
-                    FfiConverterTypeU64String.writeIntoCursor(inner.localRecordId, c);
+                    FfiConverterUInt64.writeIntoCursor(inner.localRecordId, c);
                     return;
                 }
                 case SendDirectTextOutcome_Tags.NeedsResource: {
@@ -9407,7 +9399,7 @@ const FfiConverterTypeSendDirectTextOutcome = (() => {
                 case SendDirectTextOutcome_Tags.UnsupportedRemoteStampRequirement: {
                     c.writeI32(3);
                     const inner = value.inner;
-                    FfiConverterTypeU64String.writeIntoCursor(inner.requiredStampCost, c);
+                    FfiConverterUInt64.writeIntoCursor(inner.requiredStampCost, c);
                     return;
                 }
                 case SendDirectTextOutcome_Tags.PeerIdentityUnavailable: {
@@ -9436,7 +9428,7 @@ const FfiConverterTypeSendDirectTextOutcome = (() => {
                 case SendDirectTextOutcome_Tags.Accepted: {
                     const inner = value.inner;
                     let size = 4;
-                    size += FfiConverterTypeU64String.allocationSize(inner.localRecordId);
+                    size += FfiConverterUInt64.allocationSize(inner.localRecordId);
                     return size;
                 }
                 case SendDirectTextOutcome_Tags.NeedsResource: {
@@ -9448,7 +9440,7 @@ const FfiConverterTypeSendDirectTextOutcome = (() => {
                 case SendDirectTextOutcome_Tags.UnsupportedRemoteStampRequirement: {
                     const inner = value.inner;
                     let size = 4;
-                    size += FfiConverterTypeU64String.allocationSize(inner.requiredStampCost);
+                    size += FfiConverterUInt64.allocationSize(inner.requiredStampCost);
                     return size;
                 }
                 case SendDirectTextOutcome_Tags.PeerIdentityUnavailable: {
@@ -9527,8 +9519,8 @@ const FfiConverterOptionalTypeDevelopmentNodeOperation = new FfiConverterOptiona
 // FfiConverter for DevelopmentNodeFailure | undefined
 const FfiConverterOptionalTypeDevelopmentNodeFailure = new FfiConverterOptional(FfiConverterTypeDevelopmentNodeFailure);
 
-// FfiConverter for U64String | undefined
-const FfiConverterOptionalTypeU64String = new FfiConverterOptional(FfiConverterTypeU64String);
+// FfiConverter for bigint | undefined
+const FfiConverterOptionalUInt64 = new FfiConverterOptional(FfiConverterUInt64);
 
 // FfiConverter for Array<Contact>
 const FfiConverterSequenceTypeContact = new FfiConverterArray(FfiConverterTypeContact);
@@ -9741,6 +9733,5 @@ export default Object.freeze({
     FfiConverterTypeSetContactAliasInput,
     FfiConverterTypeSetContactPinnedInput,
     FfiConverterTypeSnapshotBox,
-    FfiConverterTypeU64String,
   }
 });

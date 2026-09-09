@@ -136,20 +136,17 @@ final class PrnsAppLifecycleCoordinator: NSObject {
           stage: summary.stage
         )
       )
-      switch summary.type {
-      case "prepared", "alreadyPrepared":
+      switch outcome {
+      case .prepared, .alreadyPrepared:
         startNativeRuntime(application: application)
-      case "alreadyRunning":
+      case .alreadyRunning:
         protectedDataRecovery.finishAttempt()
         return
-      case "failed":
+      case .failed:
         recoverAfterProtectedDataFailure(
           .native(stage: summary.stage),
           application: application
         )
-      default:
-        protectedDataRecovery.finishAttempt()
-        return
       }
     } catch {
       Self.log(.prepareBridgeFailed)
@@ -158,16 +155,9 @@ final class PrnsAppLifecycleCoordinator: NSObject {
   }
 
   private func startNativeRuntime(application: UIApplication) {
-    let inputJSON: String
-    do {
-      inputJSON = try PrnsAppModule.configuredStartInputJSON()
-    } catch {
-      protectedDataRecovery.finishAttempt()
-      Self.log(.configurationFailed)
-      return
-    }
+    let input = PrnsAppModule.configuredStartInput()
 
-    PrnsAppModule.startAuthorized(inputJSON) { result in
+    PrnsAppModule.startAuthorized(input) { result in
       switch result {
       case .success(let outcome):
         let summary = Self.outcomeSummary(outcome)
@@ -178,7 +168,7 @@ final class PrnsAppLifecycleCoordinator: NSObject {
             stage: summary.stage
           )
         )
-        if summary.type == "failed" {
+        if case .failed = outcome {
           self.recoverAfterProtectedDataFailure(
             .native(stage: summary.stage),
             application: application
@@ -218,16 +208,25 @@ final class PrnsAppLifecycleCoordinator: NSObject {
     waitForProtectedData(application: application)
   }
 
-  nonisolated private static func outcomeSummary(_ json: String) -> (type: String, stage: String?) {
-    guard
-      let data = json.data(using: .utf8),
-      let decoded = try? JSONSerialization.jsonObject(with: data),
-      let object = decoded as? [String: Any],
-      let type = object["type"] as? String
-    else {
-      return ("invalid", nil)
+  nonisolated private static func outcomeSummary(
+    _ outcome: AppleBluetoothRestorationPreparationOutcome
+  ) -> (type: String, stage: String?) {
+    switch outcome {
+    case .prepared: return ("prepared", nil)
+    case .alreadyPrepared: return ("alreadyPrepared", nil)
+    case .alreadyRunning: return ("alreadyRunning", nil)
+    case .failed(let stage, _): return ("failed", String(describing: stage))
     }
-    return (type, object["stage"] as? String)
+  }
+
+  nonisolated private static func outcomeSummary(
+    _ outcome: DevelopmentNodeStartOutcome
+  ) -> (type: String, stage: String?) {
+    switch outcome {
+    case .started: return ("started", nil)
+    case .alreadyRunning: return ("alreadyRunning", nil)
+    case .failed(let stage, _): return ("failed", String(describing: stage))
+    }
   }
 
   nonisolated private static func log(_ event: PrnsIosDiagnostics.LifecycleEvent) {

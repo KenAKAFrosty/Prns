@@ -38,7 +38,10 @@
     "react-native": "0.86.3",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "~4.26.0",
-    "react-native-web": "~0.21.0"
+    "react-native-web": "~0.21.0",
+    "@prns-internal/native-bindings": "*",
+    "@ubjs/core": "file:../../vendor/ubrn/packages/ubjs-core-0.31.0-5.tgz",
+    "@ubjs/react-native": "file:../../vendor/ubrn/packages/ubjs-react-native-0.31.0-5.tgz"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.11",

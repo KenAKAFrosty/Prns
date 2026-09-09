@@ -15,7 +15,7 @@
   },
   "sideEffects": false,
   "scripts": {
-    "api:check": "node scripts/generate-contract.mjs --check",
+    "api:check": "python3 ../../tools/generated-bindings/generate.py generate --check",
     "ios:check": "node scripts/check-ios-bridge.mjs",
     "format:check": "biome format .",
     "format": "biome format . --write",
@@ -25,8 +25,10 @@
     "verify": "npm run api:check && npm run ios:check && npm run format:check && npm run lint && npm run typecheck && npm run test"
   },
   "dependencies": {
+    "@ubjs/core": "file:../../vendor/ubrn/packages/ubjs-core-0.31.0-5.tgz",
     "effect": "4.0.0-rc.112",
-    "personal-rns": "file:../../../prns-js"
+    "personal-rns": "file:../../../prns-js",
+    "@prns-internal/native-bindings": "*"
   },
   "peerDependencies": {
     "expo": "*"

@@ -44,17 +44,20 @@ const iosDeploymentPlugin = readFileSync(
   resolve(packageRoot, "../../prns/app/tools/with-ios-18.ts"),
   "utf8",
 );
-const rustBuild = readFileSync(resolve(packageRoot, "ios/build-rust.sh"), "utf8");
+const bindingsBuild = readFileSync(
+  resolve(packageRoot, "../../tools/generated-bindings/generate.py"),
+  "utf8",
+);
+const bindingsPod = readFileSync(
+  resolve(packageRoot, "../../prns/native-composition/bindings/NativeBindings.podspec"),
+  "utf8",
+);
 const nativeCargo = readFileSync(
   resolve(packageRoot, "../../prns/native-composition/Cargo.toml"),
   "utf8",
 );
-const nativeFfi = readFileSync(
-  resolve(packageRoot, "../../prns/native-composition/src/ffi.rs"),
-  "utf8",
-);
-const nativeHeader = readFileSync(
-  resolve(packageRoot, "../../prns/native-composition/include/prns_app.h"),
+const nativeBindings = readFileSync(
+  resolve(packageRoot, "../../prns/native-composition/src/bindings/mod.rs"),
   "utf8",
 );
 const nativeLifecycle = readFileSync(
@@ -77,180 +80,9 @@ const configCheck = readFileSync(
   "utf8",
 );
 
-function normalizedCode(source) {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
-    .replace(/\/\/[^\n]*/g, " ")
-    .replace(/\s+/g, " ")
-    .replace(/\(\s+/g, "(")
-    .replace(/\s+\)/g, ")")
-    .trim();
-}
-
 function assertOne(source, pattern, message) {
   const flags = pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`;
   assert.equal([...source.matchAll(new RegExp(pattern.source, flags))].length, 1, message);
-}
-
-function quotedLiteralEnd(source, index) {
-  let hashCount = 0;
-  let quoteIndex = index;
-  if (source[index] === "r" || (source[index] === "b" && source[index + 1] === "r")) {
-    quoteIndex = index + (source[index] === "b" ? 2 : 1);
-    while (source[quoteIndex + hashCount] === "#") hashCount += 1;
-    quoteIndex += hashCount;
-  } else if (source[index] === "#") {
-    while (source[index + hashCount] === "#") hashCount += 1;
-    quoteIndex = index + hashCount;
-  }
-  if (hashCount > 0 || quoteIndex !== index) {
-    if (source[quoteIndex] !== '"') return null;
-    const quote = source.startsWith('"""', quoteIndex) ? '"""' : '"';
-    const closing = `${quote}${"#".repeat(hashCount)}`;
-    const closingIndex = source.indexOf(closing, quoteIndex + quote.length);
-    assert.notEqual(closingIndex, -1, "raw string literal must be terminated");
-    return closingIndex + closing.length;
-  }
-  if (source.startsWith('"""', index)) {
-    const closingIndex = source.indexOf('"""', index + 3);
-    assert.notEqual(closingIndex, -1, "multiline string literal must be terminated");
-    return closingIndex + 3;
-  }
-  if (source[index] === '"') {
-    for (let cursor = index + 1; cursor < source.length; cursor += 1) {
-      if (source[cursor] === "\\") cursor += 1;
-      else if (source[cursor] === '"') return cursor + 1;
-    }
-    assert.fail("string literal must be terminated");
-  }
-  if (source[index] === "'") {
-    let cursor = index + 1;
-    if (source[cursor] === "\\") cursor += 2;
-    else cursor += 1;
-    return source[cursor] === "'" ? cursor + 1 : null;
-  }
-  return null;
-}
-
-function scopedBody(source, declaration, owner) {
-  const flags = declaration.flags.includes("g") ? declaration.flags : `${declaration.flags}g`;
-  const matches = [...source.matchAll(new RegExp(declaration.source, flags))];
-  assert.equal(matches.length, 1, `${owner} must have exactly one declaration`);
-  const opening = source.indexOf("{", (matches[0].index ?? 0) + matches[0][0].length);
-  assert.notEqual(opening, -1, `${owner} must have a body`);
-  let depth = 0;
-  for (let index = opening; index < source.length; index += 1) {
-    const literalEnd = quotedLiteralEnd(source, index);
-    if (literalEnd !== null) {
-      index = literalEnd - 1;
-      continue;
-    }
-    if (source[index] === "{") depth += 1;
-    if (source[index] !== "}") continue;
-    depth -= 1;
-    if (depth === 0) return source.slice(opening + 1, index);
-  }
-  assert.fail(`${owner} body must have balanced braces`);
-}
-
-const braceStringFixture = normalizedCode(`
-  func target() {
-    let normal = "{"
-    let character = '}'
-    let swiftRaw = #"{"#
-    let rustRaw = r#"}"#
-    let multiline = """{"""
-    crossedLengths()
-  }
-  func laterHelper() { canonicalLookingCall() }
-`);
-const braceStringBody = scopedBody(braceStringFixture, /func target\(\)/, "brace-string fixture");
-assert.match(braceStringBody, /crossedLengths\(\)/);
-assert.doesNotMatch(braceStringBody, /canonicalLookingCall/);
-
-function assertCentralRestorationAbi(headerSource, rustSource, swiftSource) {
-  const header = normalizedCode(headerSource);
-  const rust = normalizedCode(rustSource);
-  const swiftCode = normalizedCode(swiftSource);
-  const prepare = "prns_app_prepare_apple_bluetooth_central_restoration";
-  const start = "prns_app_start_with_apple_bluetooth_central_restoration";
-  assertOne(
-    header,
-    /PrnsAppBytes prns_app_prepare_apple_bluetooth_central_restoration\(const uint8_t \*path_ptr, size_t path_len, const uint8_t \*central_identifier_ptr, size_t central_identifier_len\);/,
-    "C prepare ABI must have exactly two pointer/size_t pairs",
-  );
-  assertOne(
-    header,
-    /PrnsAppBytes prns_app_start_with_apple_bluetooth_central_restoration\(const uint8_t \*path_ptr, size_t path_len, const uint8_t \*input_ptr, size_t input_len, const uint8_t \*central_identifier_ptr, size_t central_identifier_len\);/,
-    "C start ABI must have exactly three pointer/size_t pairs",
-  );
-  assertOne(
-    rust,
-    /#\[no_mangle\] pub unsafe extern "C" fn prns_app_prepare_apple_bluetooth_central_restoration\(path_ptr: \*const u8, path_len: usize, central_identifier_ptr: \*const u8, central_identifier_len: usize,?\) -> PrnsAppBytes \{/,
-    "Rust prepare ABI must match the C pointer/length order and types",
-  );
-  assertOne(
-    rust,
-    /#\[no_mangle\] pub unsafe extern "C" fn prns_app_start_with_apple_bluetooth_central_restoration\(path_ptr: \*const u8, path_len: usize, input_ptr: \*const u8, input_len: usize, central_identifier_ptr: \*const u8, central_identifier_len: usize,?\) -> PrnsAppBytes \{/,
-    "Rust start ABI must match the C pointer/length order and types",
-  );
-  const rustPrepareBody = scopedBody(
-    rust,
-    /pub unsafe extern "C" fn prns_app_prepare_apple_bluetooth_central_restoration\(/,
-    "Rust prepare wrapper",
-  );
-  assert.match(
-    rustPrepareBody,
-    /invoke_path_string\(path_ptr, path_len, central_identifier_ptr, central_identifier_len, lifecycle::prepare_apple_bluetooth_central_restoration,?\)/,
-    "Rust prepare wrapper must forward both pointer/length pairs in ABI order",
-  );
-  const rustStartBody = scopedBody(
-    rust,
-    /pub unsafe extern "C" fn prns_app_start_with_apple_bluetooth_central_restoration\(/,
-    "Rust restoring start wrapper",
-  );
-  assert.match(
-    rustStartBody,
-    /invoke_path_json_string::<DevelopmentNodeStartInput, _, _>\(path_ptr, path_len, input_ptr, input_len, central_identifier_ptr, central_identifier_len, lifecycle::start_configured_with_apple_bluetooth_central_restoration,?\)/,
-    "Rust restoring start wrapper must forward all pointer/length pairs in ABI order",
-  );
-  assertOne(
-    swiftCode,
-    /private static func withUtf8Bytes<Result>\(_ value: String, operation: \(UnsafePointer<UInt8>\?, Int\) throws -> Result\) rethrows -> Result \{/,
-    "Swift UTF-8 binder must provide the imported C pointer/size_t types",
-  );
-  const swiftPrepareBody = scopedBody(
-    swiftCode,
-    /static func prepareBluetoothCentralRestoration\(\) throws -> String/,
-    "Swift prepare wrapper",
-  );
-  assert.match(
-    swiftPrepareBody,
-    /withUtf8Bytes\(storageURL\.path\) \{ pathPointer, pathCount in.*?withUtf8Bytes\(identifier\) \{ centralPointer, centralCount in.*?prns_app_prepare_apple_bluetooth_central_restoration\(pathPointer, pathCount, centralPointer, centralCount\)/,
-    "Swift prepare must pass both typed pairs in C ABI order",
-  );
-  const swiftStartBody = scopedBody(
-    swiftCode,
-    /static func startWithCentralRestoration\(_ inputJSON: String\) throws -> String/,
-    "Swift restoring start wrapper",
-  );
-  assert.match(
-    swiftStartBody,
-    /withUtf8Bytes\(storageURL\.path\) \{ pathPointer, pathCount in.*?withUtf8Bytes\(inputJSON\) \{ inputPointer, inputCount in.*?withUtf8Bytes\(identifier\) \{ centralPointer, centralCount in.*?prns_app_start_with_apple_bluetooth_central_restoration\(pathPointer, pathCount, inputPointer, inputCount, centralPointer, centralCount\)/,
-    "Swift start must pass all three typed pairs in C ABI order",
-  );
-  const swiftSmokeBody = scopedBody(
-    swiftCode,
-    /private static func restoringSmokeStart\(_ pathPointer: UnsafePointer<UInt8>\?, _ pathCount: Int, _ inputPointer: UnsafePointer<UInt8>\?, _ inputCount: Int\) -> PrnsAppBytes/,
-    "Swift restoration smoke wrapper",
-  );
-  assert.match(
-    swiftSmokeBody,
-    /withUtf8Bytes\(central\) \{ centralPointer, centralCount in prns_app_start_with_apple_bluetooth_central_restoration\(pathPointer, pathCount, inputPointer, inputCount, centralPointer, centralCount\)/,
-    "Swift smoke start must pass the same imported types and ABI order",
-  );
-  assert.equal(swiftCode.match(new RegExp(`\\b${prepare}\\(`, "g"))?.length, 1);
-  assert.equal(swiftCode.match(new RegExp(`\\b${start}\\(`, "g"))?.length, 2);
 }
 
 function captureOne(source, pattern, owner) {
@@ -259,7 +91,6 @@ function captureOne(source, pattern, owner) {
   return matches[0][1];
 }
 
-assertCentralRestorationAbi(nativeHeader, nativeFfi, swift);
 const bluetoothServiceUuid = compatibility.prns?.bluetoothAuto?.serviceUuid;
 assert.equal(
   typeof bluetoothServiceUuid,
@@ -295,8 +126,8 @@ assert.match(
 );
 assert.equal(
   swift.match(/\.runOnQueue\(Self\.nativeQueue\)/g)?.length,
-  29,
-  "every Expo bridge function must use the native operation queue",
+  7,
+  "the seven storage/identity/lifecycle transports must use the native operation queue",
 );
 assert.doesNotMatch(
   swift,
@@ -311,7 +142,7 @@ assert.match(
 );
 assert.match(
   `${accessoryCoordinator}\n${coordinator}`,
-  /claimIfAuthorized\(nativeStartAuthorized\)[\s\S]*?restorationReady\(\)[\s\S]*?requireAuthorized\(\)[\s\S]*?prepareBluetoothCentralRestoration\(\)[\s\S]*?case "prepared", "alreadyPrepared":[\s\S]*?startNativeRuntime/,
+  /claimIfAuthorized\(nativeStartAuthorized\)[\s\S]*?restorationReady\(\)[\s\S]*?requireAuthorized\(\)[\s\S]*?prepareBluetoothCentralRestoration\(\)[\s\S]*?case \.prepared, \.alreadyPrepared:[\s\S]*?startNativeRuntime/,
   "restoration must wait for ASK activation plus an authorized Bluetooth accessory",
 );
 const iosPreparedBluetooth =
@@ -382,7 +213,7 @@ assert.match(
 );
 assert.match(
   swift,
-  /static func prepareBluetoothCentralRestoration\(\)[\s\S]*?prns_app_prepare_apple_bluetooth_central_restoration/,
+  /static func prepareBluetoothCentralRestoration\(\)[\s\S]*?nativePrepareAppleBluetoothCentralRestoration/,
   "the restoration hook must call the central-only preparation ABI",
 );
 assert.match(swift, /FileProtectionType\.completeUntilFirstUserAuthentication/);
@@ -435,7 +266,7 @@ assert.match(
 );
 assert.match(
   swift,
-  /AsyncFunction\("stop"\)[\s\S]*?beginNativeStop\(\)[\s\S]*?prns_app_stop\(\)[\s\S]*?finishNativeStop\(outcome\)/,
+  /AsyncFunction\("stop"\)[\s\S]*?beginNativeStop\(\)[\s\S]*?nativeStop\(\)[\s\S]*?finishNativeStop\(outcome\)/,
   "an explicit stop must invalidate the cached native start generation",
 );
 assert.match(
@@ -450,16 +281,16 @@ assert.match(
 );
 assert.match(
   swift,
-  /AsyncFunction\("reset"\)[\s\S]*?beginNativeStop\(\)[\s\S]*?prns_app_reset[\s\S]*?finishNativeStop\(outcome\)/,
+  /AsyncFunction\("reset"\)[\s\S]*?beginNativeStop\(\)[\s\S]*?nativeReset[\s\S]*?finishNativeStop\(outcome\)/,
   "reset must invalidate the cached generation before a later onboarding start",
 );
 assert.match(
   accessoryCoordinator,
-  /case "alreadyStopped", "stopped":[\s\S]*?nativeStartPhase = \.notRequested[\s\S]*?default:[\s\S]*?nativeStartPhase = \.stopping/,
+  /case \.alreadyStopped, \.stopped:[\s\S]*?nativeStartPhase = \.notRequested[\s\S]*?default:[\s\S]*?nativeStartPhase = \.stopping/,
   "only a definitive stopped outcome may reopen native start admission",
 );
 assert.match(accessoryCoordinator, /statusRevision &\+= 1[\s\S]*?statusJSON\(\)/);
-assert.match(swift, /"developmentTcpTarget": NSNull\(\)/);
+assert.match(swift, /DevelopmentNodeStartInput\(developmentTcpTarget: nil\)/);
 assert.doesNotMatch(
   `${coordinator}\n${subscriber}`,
   /applicationDidEnterBackground|applicationWillResignActive|prns_app_stop/,
@@ -529,83 +360,41 @@ assert.match(
   "the private restoration logger must remain an explicit app feature",
 );
 assert.match(
-  rustBuild,
-  /if \[\[ "\$\{CONFIGURATION:-\}" == "Debug" \]\]; then[\s\S]*?ios-restoration-probe/,
-  "only Debug Xcode builds may enable restoration observability",
+  bindingsBuild,
+  /args.command == 'ios' and not args.release[\s\S]*?ios-restoration-probe/,
+  "only Debug framework builds enable native restoration diagnostics",
 );
-assert.equal(
-  nativeFfi.match(/crate::ios_restoration_probe::install\(\);/g)?.length,
-  2,
-  "both restoration-aware entry points must install the logger idempotently",
-);
-for (const abiName of [
-  "prns_app_prepare_apple_bluetooth_central_restoration",
-  "prns_app_start_with_apple_bluetooth_central_restoration",
-]) {
-  assert.match(
-    nativeFfi,
-    new RegExp(
-      `fn ${abiName}\\([\\s\\S]*?crate::ios_restoration_probe::install\\(\\);[\\s\\S]*?invoke_`,
-    ),
-    `${abiName} must install restoration logging before constructing a manager`,
-  );
-}
-
-for (const abiName of [
-  "prns_app_contract_fingerprint",
-  "prns_app_host_contract_fingerprint",
-  "prns_app_inspect_identity",
-  "prns_app_preview_identity_import",
-  "prns_app_create_generated_identity",
-  "prns_app_create_imported_identity",
-  "prns_app_prepare_apple_bluetooth_central_restoration",
-  "prns_app_start_with_apple_bluetooth_central_restoration",
-  "prns_app_snapshot",
-  "prns_app_initiate_pairing",
-  "prns_app_approve_pairing",
-  "prns_app_reject_pairing",
-  "prns_app_describe_target",
-  "prns_app_announce_target",
-  "prns_app_save_observed_destination",
-  "prns_app_create_manual_contact",
-  "prns_app_set_contact_alias",
-  "prns_app_set_contact_pinned",
-  "prns_app_delete_contact",
-  "prns_app_get_contact",
-  "prns_app_list_contacts",
-  "prns_app_list_lxmf_peers",
-  "prns_app_list_lxmf_messages",
-  "prns_app_retry_lxmf_message",
-  "prns_app_cancel_lxmf_message",
-  "prns_app_announce_lxmf",
-  "prns_app_measure_lxmf_text",
-  "prns_app_send_direct_text",
-  "prns_app_stop",
-  "prns_app_reset",
-  "prns_app_bytes_free",
-]) {
-  assert.match(swift, new RegExp(`\\b${abiName}\\b`), `Swift bridge must call ${abiName}`);
-}
-
-for (const [method, abiName] of [
-  ["listLxmfMessages", "prns_app_list_lxmf_messages"],
-  ["retryLxmfMessage", "prns_app_retry_lxmf_message"],
-  ["cancelLxmfMessage", "prns_app_cancel_lxmf_message"],
-]) {
-  assert.match(
-    swift,
-    new RegExp(
-      `AsyncFunction\\("${method}"\\)[\\s\\S]*?invokePathJSON\\(inputJSON, operation: ${abiName}\\)`,
-    ),
-    `${method} must pass the application path with its JSON input`,
-  );
-}
-
+assert.equal(nativeLifecycle.match(/crate::ios_restoration_probe::install\(\);/g)?.length, 2);
 assert.match(
-  podspec,
-  /"\$\{PODS_ROOT\}\/\.\.\/\.\.\/\.\.\/native-composition\/include"/,
-  "the generated app target must be able to import the public C bridge header",
+  subscriber,
+  /PrnsAppRestorationProbe\.install\(\)[\s\S]*?PrnsAppLifecycleCoordinator\.shared\.launch/,
 );
+assert.match(nativeRestorationProbe, /prns_app_ios_install_restoration_probe[\s\S]*?EMITTER\.set/);
+assert.doesNotMatch(nativeRestorationProbe, /fn prns_app_ios_restoration_probe_emit/);
+assert.match(
+  swift,
+  /nativeStartWithAppleBluetoothCentralRestoration\([\s\S]*?storageRoot:[\s\S]*?input:[\s\S]*?centralIdentifier:/,
+);
+assert.match(
+  swift,
+  /nativePrepareAppleBluetoothCentralRestoration\([\s\S]*?storageRoot:[\s\S]*?centralIdentifier:/,
+);
+assert.match(
+  swift,
+  /FfiConverterTypeDevelopmentNodeStartInput\.read[\s\S]*?buffer.offset == buffer.data.endIndex/,
+);
+assert.match(swift, /FfiConverterTypeDevelopmentNodeStartOutcome\.write/);
+assert.match(swift, /FfiConverterTypeDevelopmentNodeStopOutcome\.write/);
+assert.doesNotMatch(
+  swift,
+  /prns_app_(?:start|stop|snapshot|bytes_free)|invokePathJSON|inputJSON|JSONSerialization/,
+);
+assert.match(nativeBindings, /#\[uniffi::export\][\s\S]*?pub async fn read_snapshot/);
+assert.match(podspec, /s\.dependency 'NativeBindings'/);
+assert.match(podspec, /generated\/PrnsAppBindingsFFI\.h/);
+assert.doesNotMatch(podspec, /-lprns_app|libprns_app\.a|s\.script_phase/);
+assert.match(bindingsPod, /s\.vendored_frameworks = "ios\/prns_app\.xcframework"/);
+assert.match(bindingsPod, /s\.dependency "UbjsReactNative"/);
 assert.match(podspec, /'UIKit'/, "the lifecycle subscriber must link UIKit explicitly");
 assert.match(podspec, /'AccessorySetupKit'/, "the native module must link ASK explicitly");
 assert.match(podspec, /:ios => '18\.0'/, "the ASK native module must require iOS 18.0");
@@ -613,11 +402,6 @@ assert.match(
   iosDeploymentPlugin,
   /withPodfileProperties[\s\S]*?\["ios\.deploymentTarget"\] = deploymentTarget/,
   "CNG must raise the CocoaPods platform before native-module autolinking",
-);
-assert.match(
-  podspec,
-  /"\$\{PODS_CONFIGURATION_BUILD_DIR\}"/,
-  "the app target and Rust build phase must share one archive directory",
 );
 assert.match(
   swift,
@@ -853,5 +637,5 @@ try {
 }
 
 console.log(
-  "ios:check: native bridge, lifecycle, linkage, and iOS development-client contracts are exact",
+  "ios:check: generated native transport, lifecycle, linkage, and iOS development-client checks passed",
 );

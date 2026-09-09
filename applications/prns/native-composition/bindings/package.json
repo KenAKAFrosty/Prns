@@ -1,0 +1,41 @@
+{
+  "name": "@prns-internal/native-bindings",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Generated bindings for the process-owned Prns application runtime",
+  "license": "MIT OR Apache-2.0",
+  "author": "Prns contributors",
+  "homepage": "https://reticulum.rs",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/KenAKAFrosty/Prns.git"
+  },
+  "main": "index.ts",
+  "types": "index.ts",
+  "files": [
+    "index.ts",
+    "index.native.ts",
+    "typescript",
+    "ios",
+    "android",
+    "*.podspec"
+  ],
+  "peerDependencies": {
+    "@ubjs/react-native": "0.31.0-5",
+    "personal-rns": "*"
+  },
+  "dependencies": {
+    "@ubjs/core": "0.31.0-5"
+  },
+  "exports": {
+    ".": {
+      "types": "./index.ts",
+      "default": "./index.ts"
+    },
+    "./native": {
+      "types": "./index.native.ts",
+      "default": "./index.native.ts"
+    },
+    "./package.json": "./package.json"
+  }
+}

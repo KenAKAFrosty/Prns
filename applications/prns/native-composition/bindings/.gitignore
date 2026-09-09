@@ -1,0 +1,4 @@
+/ios/*.xcframework/
+/android/src/main/jniLibs/
+/*.tgz
+/.ubrn-build-*.yaml

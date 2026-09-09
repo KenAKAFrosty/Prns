@@ -91,6 +91,14 @@ else
     fail "CocoaPods is required, but no usable pod executable was found"
 fi
 
+echo "build-development-client.sh: generating typed bindings and the shared Rust framework"
+python3 "${APPLICATIONS_DIRECTORY}/tools/generated-bindings/generate.py" generate
+if [[ "${MODE}" == "device" ]]; then
+  python3 "${APPLICATIONS_DIRECTORY}/tools/generated-bindings/generate.py" ios --targets aarch64-apple-ios
+else
+  python3 "${APPLICATIONS_DIRECTORY}/tools/generated-bindings/generate.py" ios --sim-only --targets aarch64-apple-ios-sim
+fi
+
 echo "build-development-client.sh: generating a clean development iOS project"
 (
   cd "${APP_DIRECTORY}"
@@ -134,7 +142,7 @@ fi
 echo "build-development-client.sh: installing CocoaPods dependencies"
 (
   cd "${IOS_DIRECTORY}"
-  env -u LIBRARY_PATH "${POD_EXECUTABLE}" install
+  env -u LIBRARY_PATH SDKROOT="$(xcrun --sdk macosx --show-sdk-path)" "${POD_EXECUTABLE}" install
 )
 [[ -d "${WORKSPACE}" ]] || fail "CocoaPods did not generate ${WORKSPACE}"
 grep -Fq "PrnsApp" "${IOS_DIRECTORY}/Podfile.lock" || fail "PrnsApp was not autolinked"

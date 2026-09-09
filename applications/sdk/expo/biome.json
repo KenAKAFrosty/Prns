@@ -6,7 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!!node_modules", "!!ios", "!!coverage", "!!src/contract.generated.ts"]
+    "includes": ["**", "!!node_modules", "!!ios", "!!coverage"]
   },
   "formatter": {
     "enabled": true,

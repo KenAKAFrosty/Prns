@@ -44,7 +44,7 @@ enum PrnsAppRestorationProbeTests {
 
   private static func emit(_ bytes: [UInt8], sequence: UInt64) {
     bytes.withUnsafeBufferPointer { buffer in
-      prnsAppIosRestorationProbeEmit(sequence, buffer.baseAddress, UInt(buffer.count))
+      prnsAppIosRestorationProbeEmit(sequence, buffer.baseAddress, buffer.count)
     }
   }
 }

@@ -3,7 +3,7 @@ mod enabled {
     #[cfg(any(test, target_os = "ios"))]
     use std::sync::atomic::{AtomicU64, Ordering};
     #[cfg(all(feature = "ios-restoration-probe", target_os = "ios"))]
-    use std::sync::Once;
+    use std::sync::{Once, OnceLock};
 
     #[cfg(all(feature = "ios-restoration-probe", target_os = "ios"))]
     use log::{Level, LevelFilter, Log, Metadata, Record};
@@ -232,18 +232,26 @@ mod enabled {
     }
 
     #[cfg(all(feature = "ios-restoration-probe", target_os = "ios"))]
-    fn emit(sequence: u64, code: &'static str) {
-        // SAFETY: `code` is one of the private static ASCII event codes above, and Swift copies
-        // the bounded bytes during this call. The symbol is compiled into Debug iOS app builds
-        // whenever this Rust feature is enabled.
-        unsafe {
-            prns_app_ios_restoration_probe_emit(sequence, code.as_ptr(), code.len());
-        }
+    type NativeEmitter = extern "C" fn(u64, *const u8, usize);
+    #[cfg(all(feature = "ios-restoration-probe", target_os = "ios"))]
+    static EMITTER: OnceLock<NativeEmitter> = OnceLock::new();
+
+    /// Debug-only platform diagnostics. The app supplies a process-lifetime
+    /// function before native startup, so the shared library has no reverse
+    /// link-time dependency on a symbol in the Swift executable.
+    #[cfg(all(feature = "ios-restoration-probe", target_os = "ios"))]
+    #[no_mangle]
+    pub extern "C" fn prns_app_ios_install_restoration_probe(emitter: NativeEmitter) {
+        let _ = EMITTER.set(emitter);
     }
 
     #[cfg(all(feature = "ios-restoration-probe", target_os = "ios"))]
-    unsafe extern "C" {
-        fn prns_app_ios_restoration_probe_emit(sequence: u64, code_ptr: *const u8, code_len: usize);
+    fn emit(sequence: u64, code: &'static str) {
+        if let Some(emitter) = EMITTER.get() {
+            // The classified ASCII code stays valid throughout this call;
+            // Swift copies it synchronously and never retains the pointer.
+            emitter(sequence, code.as_ptr(), code.len());
+        }
     }
 
     #[cfg(test)]

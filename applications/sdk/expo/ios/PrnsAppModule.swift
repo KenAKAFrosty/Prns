@@ -37,48 +37,24 @@ public final class PrnsAppModule: Module {
       )
     }
 
-    AsyncFunction("contractFingerprint") { () throws -> String in
-      try Self.contractFingerprint()
+    AsyncFunction("prepareStorage") { () throws -> [UInt8] in
+      let path = try Self.developmentStorageURL(create: true).path
+      return Self.encode(nativePrepareStorage(storageRoot: path), FfiConverterTypeNativeStoragePreparationOutcome.write)
     }.runOnQueue(Self.nativeQueue)
 
-    AsyncFunction("hostContractFingerprint") { () throws -> String in
-      try Self.hostContractFingerprint()
+    AsyncFunction("inspectIdentity") { () throws -> [UInt8] in
+      let path = try Self.developmentStorageURL(create: true).path
+      return Self.encode(nativeInspectIdentity(storageRoot: path), FfiConverterTypePrimaryIdentityState.write)
     }.runOnQueue(Self.nativeQueue)
 
-    AsyncFunction("inspectIdentity") { () throws -> String in
-      let storageURL = try Self.developmentStorageURL(create: true)
-      return try Self.withUtf8Bytes(storageURL.path) { pointer, count in
-        try Self.consume(prns_app_inspect_identity(pointer, count))
-      }
+    AsyncFunction("createGeneratedIdentity") { () throws -> [UInt8] in
+      let path = try Self.developmentStorageURL(create: true).path
+      return Self.encode(nativeCreateGeneratedIdentity(storageRoot: path), FfiConverterTypeIdentityCreationOutcome.write)
     }.runOnQueue(Self.nativeQueue)
 
-    AsyncFunction("previewIdentityImport") { (identity: [UInt8]) throws -> String in
-      try Self.withBytes(identity) { pointer, count in
-        try Self.consume(prns_app_preview_identity_import(pointer, count))
-      }
-    }.runOnQueue(Self.nativeQueue)
-
-    AsyncFunction("createGeneratedIdentity") { () throws -> String in
-      let storageURL = try Self.developmentStorageURL(create: true)
-      return try Self.withUtf8Bytes(storageURL.path) { pointer, count in
-        try Self.consume(prns_app_create_generated_identity(pointer, count))
-      }
-    }.runOnQueue(Self.nativeQueue)
-
-    AsyncFunction("createImportedIdentity") { (identity: [UInt8]) throws -> String in
-      let storageURL = try Self.developmentStorageURL(create: true)
-      return try Self.withUtf8Bytes(storageURL.path) { pathPointer, pathCount in
-        try Self.withBytes(identity) { identityPointer, identityCount in
-          try Self.consume(
-            prns_app_create_imported_identity(
-              pathPointer,
-              pathCount,
-              identityPointer,
-              identityCount
-            )
-          )
-        }
-      }
+    AsyncFunction("createImportedIdentity") { (identity: [UInt8]) throws -> [UInt8] in
+      let path = try Self.developmentStorageURL(create: true).path
+      return Self.encode(nativeCreateImportedIdentity(storageRoot: path, identity: Data(identity)), FfiConverterTypeIdentityCreationOutcome.write)
     }.runOnQueue(Self.nativeQueue)
 
     AsyncFunction("accessorySetupStatus") { (promise: Promise) in
@@ -95,153 +71,65 @@ public final class PrnsAppModule: Module {
       }
     }
 
-    AsyncFunction("start") { (inputJSON: String, promise: Promise) in
-      Self.startWhenAccessoryAuthorized(inputJSON, promise: promise)
-    }.runOnQueue(Self.nativeQueue)
-
-    AsyncFunction("snapshot") { () throws -> String in
-      try Self.consume(prns_app_snapshot())
-    }.runOnQueue(Self.nativeQueue)
-
-    AsyncFunction("initiatePairing") { (inputJSON: String) throws -> String in
-      try Self.invokeJSON(inputJSON, operation: prns_app_initiate_pairing)
-    }.runOnQueue(Self.nativeQueue)
-
-    AsyncFunction("approvePairing") { (inputJSON: String) throws -> String in
-      try Self.invokeJSON(inputJSON, operation: prns_app_approve_pairing)
-    }.runOnQueue(Self.nativeQueue)
-
-    AsyncFunction("rejectPairing") { (inputJSON: String) throws -> String in
-      try Self.invokeJSON(inputJSON, operation: prns_app_reject_pairing)
-    }.runOnQueue(Self.nativeQueue)
-
-    AsyncFunction("describeTarget") { (inputJSON: String) throws -> String in
-      try Self.invokeJSON(inputJSON, operation: prns_app_describe_target)
-    }.runOnQueue(Self.nativeQueue)
-
-    AsyncFunction("announceTarget") { (inputJSON: String) throws -> String in
-      try Self.invokeJSON(inputJSON, operation: prns_app_announce_target)
-    }.runOnQueue(Self.nativeQueue)
-
-    AsyncFunction("saveObservedDestination") { (inputJSON: String) throws -> String in
-      try Self.invokePathJSON(inputJSON, operation: prns_app_save_observed_destination)
-    }.runOnQueue(Self.nativeQueue)
-
-    AsyncFunction("createManualContact") { (inputJSON: String) throws -> String in
-      try Self.invokePathJSON(inputJSON, operation: prns_app_create_manual_contact)
-    }.runOnQueue(Self.nativeQueue)
-
-    AsyncFunction("setContactAlias") { (inputJSON: String) throws -> String in
-      try Self.invokePathJSON(inputJSON, operation: prns_app_set_contact_alias)
-    }.runOnQueue(Self.nativeQueue)
-
-    AsyncFunction("setContactPinned") { (inputJSON: String) throws -> String in
-      try Self.invokePathJSON(inputJSON, operation: prns_app_set_contact_pinned)
-    }.runOnQueue(Self.nativeQueue)
-
-    AsyncFunction("deleteContact") { (inputJSON: String) throws -> String in
-      try Self.invokePathJSON(inputJSON, operation: prns_app_delete_contact)
-    }.runOnQueue(Self.nativeQueue)
-
-    AsyncFunction("getContact") { (inputJSON: String) throws -> String in
-      try Self.invokePathJSON(inputJSON, operation: prns_app_get_contact)
-    }.runOnQueue(Self.nativeQueue)
-
-    AsyncFunction("listContacts") { () throws -> String in
-      let storageURL = try Self.developmentStorageURL(create: true)
-      return try Self.withUtf8Bytes(storageURL.path) { pointer, count in
-        try Self.consume(prns_app_list_contacts(pointer, count))
+    AsyncFunction("start") { (inputBytes: [UInt8], promise: Promise) in
+      do {
+        let input = try Self.decodeStartInput(inputBytes)
+        DispatchQueue.main.async {
+          Self.startAuthorized(input) { result in
+            switch result {
+            case .success(let outcome):
+              promise.resolve(Self.encode(outcome, FfiConverterTypeDevelopmentNodeStartOutcome.write))
+            case .failure(let error):
+              promise.reject(error)
+            }
+          }
+        }
+      } catch {
+        promise.reject(error)
       }
     }.runOnQueue(Self.nativeQueue)
 
-    AsyncFunction("listLxmfPeers") { () throws -> String in
-      try Self.consume(prns_app_list_lxmf_peers())
-    }.runOnQueue(Self.nativeQueue)
-
-    AsyncFunction("listLxmfMessages") { (inputJSON: String) throws -> String in
-      try Self.invokePathJSON(inputJSON, operation: prns_app_list_lxmf_messages)
-    }.runOnQueue(Self.nativeQueue)
-
-    AsyncFunction("retryLxmfMessage") { (inputJSON: String) throws -> String in
-      try Self.invokePathJSON(inputJSON, operation: prns_app_retry_lxmf_message)
-    }.runOnQueue(Self.nativeQueue)
-
-    AsyncFunction("cancelLxmfMessage") { (inputJSON: String) throws -> String in
-      try Self.invokePathJSON(inputJSON, operation: prns_app_cancel_lxmf_message)
-    }.runOnQueue(Self.nativeQueue)
-
-    AsyncFunction("announceLxmf") { () throws -> String in
-      try Self.consume(prns_app_announce_lxmf())
-    }.runOnQueue(Self.nativeQueue)
-
-    AsyncFunction("measureLxmfText") { (inputJSON: String) throws -> String in
-      try Self.invokeJSON(inputJSON, operation: prns_app_measure_lxmf_text)
-    }.runOnQueue(Self.nativeQueue)
-
-    AsyncFunction("sendDirectText") { (inputJSON: String) throws -> String in
-      try Self.invokeJSON(inputJSON, operation: prns_app_send_direct_text)
-    }.runOnQueue(Self.nativeQueue)
-
-    AsyncFunction("stop") { () throws -> String in
+    AsyncFunction("stop") { () -> [UInt8] in
       Self.beginNativeStop()
-      let outcome = try Self.consume(prns_app_stop())
+      let outcome = nativeStop()
       Self.finishNativeStop(outcome)
-      return outcome
+      return Self.encode(outcome, FfiConverterTypeDevelopmentNodeStopOutcome.write)
     }.runOnQueue(Self.nativeQueue)
 
-    AsyncFunction("reset") { () throws -> String in
+    AsyncFunction("reset") { () throws -> [UInt8] in
       let storageURL = try Self.developmentStorageURL(create: false)
       Self.beginNativeStop()
-      let outcome = try Self.withUtf8Bytes(storageURL.path) { pointer, count in
-        try Self.consume(prns_app_reset(pointer, count))
-      }
+      let outcome = nativeReset(storageRoot: storageURL.path)
       Self.invalidatePreparedStorage(at: storageURL)
       Self.finishNativeStop(outcome)
-      return outcome
+      return Self.encode(outcome, FfiConverterTypeDevelopmentNodeStopOutcome.write)
     }.runOnQueue(Self.nativeQueue)
+
+    // Android refreshes its foreground Bluetooth owner here. Apple's owner is
+    // already admitted by native startup and accessory authorization.
+    AsyncFunction("prepareOutbound") { () in }
 
     #if targetEnvironment(simulator)
     OnCreate {
-      guard ProcessInfo.processInfo.environment["PRNS_IOS_NATIVE_SMOKE"] == "1" else {
-        return
-      }
+      guard ProcessInfo.processInfo.environment["PRNS_IOS_NATIVE_SMOKE"] == "1" else { return }
       Self.nativeQueue.async(flags: .barrier) {
-        do {
-          try Self.runSimulatorLifecycleSmoke()
-        } catch {
-          Self.writeSimulatorSmokeMarker("PRNS_IOS_NATIVE_SMOKE_FAILED detail=\(error)")
-        }
+        do { try Self.runSimulatorLifecycleSmoke() }
+        catch { Self.writeSimulatorSmokeMarker("PRNS_IOS_NATIVE_SMOKE_FAILED detail=\(error)") }
       }
     }
     #endif
-
   }
 
   @objc
   private func handleAccessorySetupStatus(_ notification: Notification) {
-    guard let status = notification.userInfo?["status"] as? String else {
-      return
-    }
+    guard let status = notification.userInfo?["status"] as? String else { return }
     sendEvent("onAccessorySetupStatus", ["status": status])
-  }
-
-  private static func startWhenAccessoryAuthorized(_ inputJSON: String, promise: Promise) {
-    DispatchQueue.main.async {
-      startAuthorized(inputJSON) { result in
-        switch result {
-        case .success(let outcome):
-          promise.resolve(outcome)
-        case .failure(let error):
-          promise.reject(error)
-        }
-      }
-    }
   }
 
   @MainActor
   static func startAuthorized(
-    _ inputJSON: String,
-    completion: @escaping (Result<String, Error>) -> Void
+    _ input: DevelopmentNodeStartInput,
+    completion: @escaping (Result<DevelopmentNodeStartOutcome, Error>) -> Void
   ) {
     let startGeneration: UInt64
     do {
@@ -264,10 +152,10 @@ public final class PrnsAppModule: Module {
             startGeneration: startGeneration
           )
         }
-        let outcome = try startWithCentralRestoration(inputJSON)
+        let outcome = try startWithCentralRestoration(input)
         DispatchQueue.main.async {
           PrnsAccessorySetupCoordinator.shared.nativeStartDidFinish(
-            outcomeJSON: outcome,
+            outcome: outcome,
             startGeneration: startGeneration
           )
         }
@@ -282,67 +170,45 @@ public final class PrnsAppModule: Module {
     }
   }
 
-  static func configuredStartInputJSON() throws -> String {
-    let data = try JSONSerialization.data(
-      withJSONObject: ["developmentTcpTarget": NSNull()],
-      options: [.sortedKeys]
+  static func configuredStartInput() -> DevelopmentNodeStartInput {
+    DevelopmentNodeStartInput(developmentTcpTarget: nil)
+  }
+
+  static func startWithCentralRestoration(
+    _ input: DevelopmentNodeStartInput
+  ) throws -> DevelopmentNodeStartOutcome {
+    nativeStartWithAppleBluetoothCentralRestoration(
+      storageRoot: try developmentStorageURL(create: true).path,
+      input: input,
+      centralIdentifier: try restorationIdentifier()
     )
-    guard let json = String(data: data, encoding: .utf8) else {
-      throw PrnsAppException("Unable to encode the native restoration start input.")
-    }
-    return json
   }
 
-  static func startWithCentralRestoration(_ inputJSON: String) throws -> String {
-    let storageURL = try developmentStorageURL(create: true)
-    let identifier = try restorationIdentifier()
-    return try withUtf8Bytes(storageURL.path) { pathPointer, pathCount in
-      try withUtf8Bytes(inputJSON) { inputPointer, inputCount in
-        try withUtf8Bytes(identifier) { centralPointer, centralCount in
-          try consume(
-            prns_app_start_with_apple_bluetooth_central_restoration(
-              pathPointer,
-              pathCount,
-              inputPointer,
-              inputCount,
-              centralPointer,
-              centralCount
-            )
-          )
-        }
-      }
-    }
+  static func prepareBluetoothCentralRestoration() throws -> AppleBluetoothRestorationPreparationOutcome {
+    nativePrepareAppleBluetoothCentralRestoration(
+      storageRoot: try restorationStorageURL().path,
+      centralIdentifier: try restorationIdentifier()
+    )
   }
 
-  static func prepareBluetoothCentralRestoration() throws -> String {
-    let storageURL = try restorationStorageURL()
-    let identifier = try restorationIdentifier()
-    return try withUtf8Bytes(storageURL.path) { pathPointer, pathCount in
-      try withUtf8Bytes(identifier) { centralPointer, centralCount in
-        try consume(
-          prns_app_prepare_apple_bluetooth_central_restoration(
-            pathPointer,
-            pathCount,
-            centralPointer,
-            centralCount
-          )
-        )
-      }
-    }
+  // UniFFI owns the encoding; Expo only transports the owned bytes for calls
+  // which need platform admission or filesystem work on the native queue.
+  private static func encode<T>(
+    _ value: T,
+    _ write: (T, inout [UInt8]) -> Void
+  ) -> [UInt8] {
+    var bytes: [UInt8] = []
+    write(value, &bytes)
+    return bytes
   }
 
-  private static func contractFingerprint() throws -> String {
-    guard let pointer = prns_app_contract_fingerprint() else {
-      throw PrnsAppException("Native contract fingerprint pointer is null.")
+  private static func decodeStartInput(_ bytes: [UInt8]) throws -> DevelopmentNodeStartInput {
+    var buffer = (data: Data(bytes), offset: Data.Index(0))
+    let input = try FfiConverterTypeDevelopmentNodeStartInput.read(from: &buffer)
+    guard buffer.offset == buffer.data.endIndex else {
+      throw PrnsAppException("Unexpected bytes after the native start input.")
     }
-    return String(cString: pointer)
-  }
-
-  private static func hostContractFingerprint() throws -> String {
-    guard let pointer = prns_app_host_contract_fingerprint() else {
-      throw PrnsAppException("Native Host contract fingerprint pointer is null.")
-    }
-    return String(cString: pointer)
+    return input
   }
 
   static func restorationIdentifier() throws -> String {
@@ -486,233 +352,76 @@ public final class PrnsAppModule: Module {
     }
   }
 
-  private static func finishNativeStop(_ outcomeJSON: String) {
+  private static func finishNativeStop(_ outcome: DevelopmentNodeStopOutcome) {
     DispatchQueue.main.sync {
-      PrnsAccessorySetupCoordinator.shared.nativeStopDidFinish(outcomeJSON: outcomeJSON)
+      PrnsAccessorySetupCoordinator.shared.nativeStopDidFinish(outcome: outcome)
     }
-  }
-
-  private static func invokeJSON(
-    _ inputJSON: String,
-    operation: (UnsafePointer<UInt8>?, Int) -> PrnsAppBytes
-  ) throws -> String {
-    try withUtf8Bytes(inputJSON) { pointer, count in
-      try consume(operation(pointer, count))
-    }
-  }
-
-  private static func invokePathJSON(
-    _ inputJSON: String,
-    operation: (
-      UnsafePointer<UInt8>?,
-      Int,
-      UnsafePointer<UInt8>?,
-      Int
-    ) -> PrnsAppBytes
-  ) throws -> String {
-    let storageURL = try developmentStorageURL(create: true)
-    return try withUtf8Bytes(storageURL.path) { pathPointer, pathCount in
-      try withUtf8Bytes(inputJSON) { inputPointer, inputCount in
-        try consume(operation(pathPointer, pathCount, inputPointer, inputCount))
-      }
-    }
-  }
-
-  private static func withUtf8Bytes<Result>(
-    _ value: String,
-    operation: (UnsafePointer<UInt8>?, Int) throws -> Result
-  ) rethrows -> Result {
-    let bytes = Array(value.utf8)
-    return try bytes.withUnsafeBytes { rawBuffer in
-      try operation(rawBuffer.bindMemory(to: UInt8.self).baseAddress, rawBuffer.count)
-    }
-  }
-
-  private static func withBytes<Result>(
-    _ bytes: [UInt8],
-    operation: (UnsafePointer<UInt8>?, Int) throws -> Result
-  ) rethrows -> Result {
-    try bytes.withUnsafeBytes { rawBuffer in
-      try operation(rawBuffer.bindMemory(to: UInt8.self).baseAddress, rawBuffer.count)
-    }
-  }
-
-  private static func consume(_ bytes: PrnsAppBytes) throws -> String {
-    defer {
-      prns_app_bytes_free(bytes)
-    }
-    guard bytes.len == 0 || bytes.ptr != nil else {
-      throw PrnsAppException("Native result has a null pointer with a nonzero length.")
-    }
-    let data: Data
-    if let pointer = bytes.ptr {
-      data = Data(bytes: pointer, count: bytes.len)
-    } else {
-      data = Data()
-    }
-    guard let json = String(data: data, encoding: .utf8) else {
-      throw PrnsAppException("Native result is not valid UTF-8.")
-    }
-    return json
   }
 
   #if targetEnvironment(simulator)
+  private final class SimulatorSnapshotWaiter: @unchecked Sendable {
+    let ready = DispatchSemaphore(value: 0)
+    var snapshot: DevelopmentNodeSnapshot?
+  }
+
+  private static func simulatorSnapshot() throws -> DevelopmentNodeSnapshot {
+    let waiter = SimulatorSnapshotWaiter()
+    Task {
+      waiter.snapshot = await readSnapshot()
+      waiter.ready.signal()
+    }
+    guard waiter.ready.wait(timeout: .now() + 5) == .success,
+      let snapshot = waiter.snapshot
+    else { throw PrnsAppException("Generated snapshot exceeded the simulator smoke bound.") }
+    return snapshot
+  }
+
   private static func runSimulatorLifecycleSmoke() throws {
     let fileManager = FileManager.default
-    let temporaryRoot = fileManager.temporaryDirectory
-      .appendingPathComponent("prns-native-smoke-\(UUID().uuidString)", isDirectory: true)
-    let storageURL = temporaryRoot
-      .appendingPathComponent("prns", isDirectory: true)
-      .appendingPathComponent("development", isDirectory: true)
+    let temporaryRoot = fileManager.temporaryDirectory.appendingPathComponent("prns-native-smoke-\(UUID().uuidString)", isDirectory: true)
+    let storageURL = temporaryRoot.appendingPathComponent("prns/development", isDirectory: true)
     try fileManager.createDirectory(at: storageURL, withIntermediateDirectories: true)
-    defer {
-      try? fileManager.removeItem(at: temporaryRoot)
-    }
-
-    let contract = try contractFingerprint()
-    let hostContract = try hostContractFingerprint()
-    guard !contract.isEmpty, !hostContract.isEmpty else {
+    defer { try? fileManager.removeItem(at: temporaryRoot) }
+    let path = storageURL.path
+    let contract = bindingContract()
+    guard !contract.app.isEmpty, !contract.host.isEmpty else {
       throw PrnsAppException("Native contract fingerprints must not be empty.")
     }
-    let identity = try withUtf8Bytes(storageURL.path) { pointer, count in
-      try consume(prns_app_create_generated_identity(pointer, count))
+    let identity = nativeCreateGeneratedIdentity(storageRoot: path)
+    guard case .created = identity else { throw PrnsAppException("Identity creation failed.") }
+    for _ in 1...2 {
+      let started = nativeStartWithAppleBluetoothCentralRestoration(
+          storageRoot: path, input: configuredStartInput(),
+          centralIdentifier: "rs.reticulum.prns.smoke.bluetooth-auto.central.v1"
+        )
+      guard case .started(let owner) = started else { throw PrnsAppException("Native start failed.") }
+      let first = try simulatorSnapshot()
+      let second = try simulatorSnapshot()
+      guard first.runtime == .running, second.runtime == .running,
+        first.generationId == owner.generationId, first.primaryIdentity == owner.primaryIdentity
+      else { throw PrnsAppException("Generated snapshot does not share the native owner.") }
+      let stopped = nativeStop()
+      guard case .stopped = stopped else { throw PrnsAppException("Native stop failed.") }
     }
-    try requireTag(identity, operation: "identity", expected: "created")
-
-    let startInput = #"{"developmentTcpTarget":null}"#
-    for generation in 1 ... 2 {
-      let started = try invokePathJSON(
-        startInput,
-        storageURL: storageURL,
-        operation: restoringSmokeStart
-      )
-      try requireTag(started, operation: "start \(generation)", expected: "started")
-
-      let snapshotStartedAt = Date()
-      let firstSnapshot = try consume(prns_app_snapshot())
-      let secondSnapshot = try consume(prns_app_snapshot())
-      guard Date().timeIntervalSince(snapshotStartedAt) < 5 else {
-        throw PrnsAppException("Native snapshot reads exceeded the simulator smoke bound.")
-      }
-      try requireField(
-        firstSnapshot,
-        operation: "snapshot \(generation).1",
-        key: "runtime",
-        expected: "running"
-      )
-      try requireField(
-        secondSnapshot,
-        operation: "snapshot \(generation).2",
-        key: "runtime",
-        expected: "running"
-      )
-
-      let stopped = try consume(prns_app_stop())
-      try requireTag(stopped, operation: "stop \(generation)", expected: "stopped")
-    }
-
-    let bluetoothIdentity = storageURL
-      .appendingPathComponent("identities", isDirectory: true)
-      .appendingPathComponent("bluetooth-auto.identity")
+    let bluetoothIdentity = storageURL.appendingPathComponent("identities/bluetooth-auto.identity")
     try Data(repeating: 0, count: 40).write(to: bluetoothIdentity)
-    let failedStart = try invokePathJSON(
-      startInput,
-      storageURL: storageURL,
-      operation: restoringSmokeStart
-    )
-    try requireTag(failedStart, operation: "malformed identity start", expected: "failed")
-    try requireField(
-      failedStart,
-      operation: "malformed identity start",
-      key: "stage",
-      expected: "identity"
-    )
-
-    let failedSnapshot = try consume(prns_app_snapshot())
-    try requireField(
-      failedSnapshot,
-      operation: "failed startup snapshot",
-      key: "runtime",
-      expected: "failed"
-    )
-    let reset = try withUtf8Bytes(storageURL.path) { pointer, count in
-      try consume(prns_app_reset(pointer, count))
-    }
-    try requireTag(reset, operation: "failed startup reset", expected: "alreadyStopped")
-    guard !fileManager.fileExists(atPath: storageURL.path) else {
-      throw PrnsAppException("Simulator smoke storage survived reset.")
-    }
-
-    writeSimulatorSmokeMarker(
-      "PRNS_IOS_NATIVE_SMOKE_OK contract=\(contract) starts=2 snapshots=5 stops=2 cleanup=reset"
-    )
-  }
-
-  private static func invokePathJSON(
-    _ inputJSON: String,
-    storageURL: URL,
-    operation: (
-      UnsafePointer<UInt8>?,
-      Int,
-      UnsafePointer<UInt8>?,
-      Int
-    ) -> PrnsAppBytes
-  ) throws -> String {
-    try withUtf8Bytes(storageURL.path) { pathPointer, pathCount in
-      try withUtf8Bytes(inputJSON) { inputPointer, inputCount in
-        try consume(operation(pathPointer, pathCount, inputPointer, inputCount))
-      }
-    }
-  }
-
-  private static func restoringSmokeStart(
-    _ pathPointer: UnsafePointer<UInt8>?,
-    _ pathCount: Int,
-    _ inputPointer: UnsafePointer<UInt8>?,
-    _ inputCount: Int
-  ) -> PrnsAppBytes {
-    let central = "rs.reticulum.prns.smoke.bluetooth-auto.central.v1"
-    return withUtf8Bytes(central) { centralPointer, centralCount in
-      prns_app_start_with_apple_bluetooth_central_restoration(
-        pathPointer,
-        pathCount,
-        inputPointer,
-        inputCount,
-        centralPointer,
-        centralCount
+    let failedStart = nativeStartWithAppleBluetoothCentralRestoration(
+        storageRoot: path, input: configuredStartInput(),
+        centralIdentifier: "rs.reticulum.prns.smoke.bluetooth-auto.central.v1"
       )
+    guard case .failed(stage: .identity, detail: _) = failedStart else {
+      throw PrnsAppException("Malformed identity did not fail native start.")
     }
-  }
-
-  private static func requireTag(
-    _ json: String,
-    operation: String,
-    expected: String
-  ) throws {
-    try requireField(json, operation: operation, key: "type", expected: expected)
-  }
-
-  private static func requireField(
-    _ json: String,
-    operation: String,
-    key: String,
-    expected: String
-  ) throws {
-    guard
-      let data = json.data(using: .utf8),
-      let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-      object[key] as? String == expected
-    else {
-      throw PrnsAppException("\(operation) did not return \(key)=\(expected).")
+    guard try simulatorSnapshot().runtime == .failed else { throw PrnsAppException("Failed startup snapshot is not failed.") }
+    let reset = nativeReset(storageRoot: path)
+    guard case .alreadyStopped = reset, !fileManager.fileExists(atPath: path) else {
+      throw PrnsAppException("Failed-start reset did not remove storage.")
     }
+    writeSimulatorSmokeMarker("PRNS_IOS_NATIVE_SMOKE_OK contract=\(contract.app) starts=2 snapshots=5 stops=2 cleanup=reset")
   }
 
   private static func writeSimulatorSmokeMarker(_ marker: String) {
-    guard let data = "\(marker)\n".data(using: .utf8) else {
-      return
-    }
-    FileHandle.standardError.write(data)
+    FileHandle.standardError.write(Data("\(marker)\n".utf8))
   }
   #endif
-
 }

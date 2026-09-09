@@ -1,11 +1,19 @@
 #if DEBUG
 import Foundation
 
+enum PrnsAppRestorationProbe {
+  static func install() {
+    #if os(iOS)
+    prns_app_ios_install_restoration_probe(prnsAppIosRestorationProbeEmit)
+    #endif
+  }
+}
+
 @_cdecl("prns_app_ios_restoration_probe_emit")
 func prnsAppIosRestorationProbeEmit(
   _ sequence: UInt64,
   _ codePointer: UnsafePointer<UInt8>?,
-  _ codeLength: UInt
+  _ codeLength: Int
 ) {
   guard codeLength > 0, codeLength <= 64, let codePointer else {
     return

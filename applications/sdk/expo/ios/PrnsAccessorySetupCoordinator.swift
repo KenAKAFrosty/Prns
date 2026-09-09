@@ -35,9 +35,9 @@ final class PrnsAccessorySetupCoordinator {
   private var authorizedAccessoryCount = 0
   private var lastError: (code: String, detail: String)?
   private var nativeStartPhase = NativeStartPhase.notRequested
-  private var nativeStartCompletions: [(Result<String, Error>) -> Void] = []
+  private var nativeStartCompletions: [(Result<DevelopmentNodeStartOutcome, Error>) -> Void] = []
   private var nativeStartGeneration: UInt64 = 0
-  private var completedStartOutcome: String?
+  private var completedStartOutcome: DevelopmentNodeStartOutcome?
   private var phase = Phase.activating
   private var pickerDismissalPending = false
   private var pickerPhase = PickerPhase.idle
@@ -151,7 +151,7 @@ final class PrnsAccessorySetupCoordinator {
   }
 
   func requestNativeStart(
-    _ completion: @escaping (Result<String, Error>) -> Void
+    _ completion: @escaping (Result<DevelopmentNodeStartOutcome, Error>) -> Void
   ) throws -> UInt64? {
     try requireAuthorized()
     switch nativeStartPhase {
@@ -189,20 +189,20 @@ final class PrnsAccessorySetupCoordinator {
     try requireAuthorized()
   }
 
-  func nativeStartDidFinish(outcomeJSON: String, startGeneration: UInt64) {
+  func nativeStartDidFinish(outcome: DevelopmentNodeStartOutcome, startGeneration: UInt64) {
     guard
       nativeStartGeneration == startGeneration,
       nativeStartPhase == .starting
     else {
       return
     }
-    let cachedOutcome = Self.alreadyRunningOutcome(outcomeJSON)
+    let cachedOutcome = Self.alreadyRunningOutcome(outcome)
     nativeStartPhase = cachedOutcome == nil ? .failed : .running
     completedStartOutcome = cachedOutcome
     let completions = nativeStartCompletions
     nativeStartCompletions.removeAll(keepingCapacity: false)
     for completion in completions {
-      completion(.success(outcomeJSON))
+      completion(.success(outcome))
     }
     publish()
   }
@@ -238,9 +238,9 @@ final class PrnsAccessorySetupCoordinator {
     publish()
   }
 
-  func nativeStopDidFinish(outcomeJSON: String) {
-    switch Self.outcomeType(outcomeJSON) {
-    case "alreadyStopped", "stopped":
+  func nativeStopDidFinish(outcome: DevelopmentNodeStopOutcome) {
+    switch outcome {
+    case .alreadyStopped, .stopped:
       nativeStartPhase = .notRequested
     default:
       // A failed or malformed stop leaves the Rust supervisor in a potentially
@@ -413,32 +413,14 @@ final class PrnsAccessorySetupCoordinator {
     return json
   }
 
-  private static func outcomeType(_ json: String) -> String? {
-    guard
-      let data = json.data(using: .utf8),
-      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-    else {
+  private static func alreadyRunningOutcome(
+    _ outcome: DevelopmentNodeStartOutcome
+  ) -> DevelopmentNodeStartOutcome? {
+    switch outcome {
+    case .started(let snapshot), .alreadyRunning(let snapshot):
+      return .alreadyRunning(snapshot: snapshot)
+    case .failed:
       return nil
     }
-    return object["type"] as? String
-  }
-
-  private static func alreadyRunningOutcome(_ json: String) -> String? {
-    guard
-      let data = json.data(using: .utf8),
-      var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-      let type = object["type"] as? String,
-      type == "started" || type == "alreadyRunning",
-      object["snapshot"] != nil
-    else {
-      return nil
-    }
-    object["type"] = "alreadyRunning"
-    guard
-      let encoded = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
-    else {
-      return nil
-    }
-    return String(data: encoded, encoding: .utf8)
   }
 }

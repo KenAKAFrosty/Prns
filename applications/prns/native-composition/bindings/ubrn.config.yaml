@@ -1,0 +1,16 @@
+rust:
+  directory: ..
+  manifestPath: Cargo.toml
+bindings:
+  ts: typescript
+jsi2:
+  ts: typescript
+  androidTargets: [arm64-v8a, x86_64]
+  minIosVersion: "18.0"
+  bundleIdPrefix: rs.reticulum.prns
+ios:
+  targets: [aarch64-apple-ios, aarch64-apple-ios-sim]
+  cargoExtras: [--locked, --features, "apple,uniffi-bindings"]
+android:
+  apiLevel: 29
+  cargoExtras: [--locked, --features, "android,uniffi-bindings"]
