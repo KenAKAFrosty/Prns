@@ -33,10 +33,7 @@ use super::peripheral::{
     L2capDeliveryAdmission,
 };
 use super::MacosBleError;
-use super::{
-    manager_signal_channel, try_bounded_ingress, BoundedIngress, CoreBluetoothPeerId,
-    MacosBleBackend, Sighting,
-};
+use super::{manager_signal_channel, CoreBluetoothPeerId, MacosBleBackend, Sighting};
 use super::{CoreBluetoothRestorationIdentifiers, CoreBluetoothRestorationIdentifiersError};
 
 fn peer_id(value: u16) -> CoreBluetoothPeerId {
@@ -236,30 +233,21 @@ fn bounded_ingress_separates_inbound_and_sighting_pressure() {
         rssi: Some(-62),
     };
 
+    inbound_tx.try_reserve().unwrap().send(1_u8);
+    assert_eq!(sighting_tx.try_send(sighting), Ok(()));
+    assert!(matches!(
+        inbound_tx.try_reserve(),
+        Err(mpsc::error::TrySendError::Full(()))
+    ));
     assert_eq!(
-        try_bounded_ingress(&inbound_tx, 1_u8),
-        BoundedIngress::Accepted
-    );
-    assert_eq!(
-        try_bounded_ingress(&sighting_tx, sighting),
-        BoundedIngress::Accepted
-    );
-    assert_eq!(
-        try_bounded_ingress(&inbound_tx, 2_u8),
-        BoundedIngress::Full(2)
-    );
-    assert_eq!(
-        try_bounded_ingress(
-            &sighting_tx,
-            Sighting {
-                address,
-                rssi: Some(-50),
-            }
-        ),
-        BoundedIngress::Full(Sighting {
+        sighting_tx.try_send(Sighting {
             address,
             rssi: Some(-50),
-        })
+        }),
+        Err(mpsc::error::TrySendError::Full(Sighting {
+            address,
+            rssi: Some(-50),
+        }))
     );
     manager_signals.central_powered();
     manager_signals.gatt_service_published();
@@ -514,16 +502,6 @@ fn pending_l2cap_bounds_waiters_per_peer() {
     assert_eq!(pending.waiter_len(), 4);
     assert!(overflow_rx.blocking_recv().is_err());
     drop(receivers);
-}
-
-#[test]
-fn bounded_ingress_returns_rejected_payload_when_receiver_is_closed() {
-    let (sender, receiver) = mpsc::channel(1);
-    drop(receiver);
-    assert_eq!(
-        try_bounded_ingress(&sender, 7_u8),
-        BoundedIngress::Closed(7)
-    );
 }
 
 #[test]
