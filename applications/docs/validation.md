@@ -280,7 +280,8 @@ and neither device was reflashed for these checks.
   through that action restored discovery but left background access denied.
   The first immediately submitted node check failed; a later manual retry
   succeeded in 133 ms. This is recovery with a failed first attempt, not a
-  first-attempt pass. The exact connection failure remains undiagnosed.
+  first-attempt pass. The diagnostic follow-up below identifies the failing
+  protocol stage without establishing its route-selection cause.
 - Background discovery was restored through its separate permission prompt.
   Final OS grants matched the starting state, Bluetooth was enabled, and a
   final authenticated check succeeded in 195 ms. The earlier battery-trial
@@ -293,17 +294,74 @@ or stall. Captures were stopped explicitly after the tests. No new physical
 message exchange, battery-idle delivery, or button exercise is claimed here.
 
 The full physical lifecycle matrix remains pending beyond these narrow checks.
-In-app restart usability and first-attempt permission recovery need follow-up;
+First-attempt connection readiness needs follow-up;
 repeated transitions, prolonged peer loss, arbitrary OS process eviction, deep
 Doze or long-idle delivery, system Location off/on, and newer Android
 permission/service behavior remain unqualified. See [Android development](android.md)
 for the repeatable acceptance sequence and the temporary runtime-restart behavior
 when the Bluetooth listener changes.
 
+### Explicit in-app restart
+
+The follow-up standalone build adds **Start node** on Nodes and This device,
+with serialized observer cleanup, duplicate-press prevention, and rejection of
+late results from a replaced session. Stopped inventory is now shown as
+unavailable rather than empty. Service status changes and ordinary resume do
+not start a stopped node. The full app gate passed: native tests 126 plus one
+controlled TCP lifecycle test, SDK tests 69, UI tests 184, and Expo Doctor 21/21,
+along with contract, bridge, type, lint, format, configuration, and web checks.
+The standalone build and 27 Android JVM tests also passed.
+
+On the USB-powered Galaxy S9+, notification Stop removed the service while
+preserving the app process. Nodes and This device offered **Start node**;
+navigation and Home/resume left the service stopped. Pressing Start on This
+device restored the service and native Host in that same process. The primary
+and controller identities were unchanged, the saved pairing returned, and the
+first submitted authenticated check succeeded in 145 ms. The earlier battery
+trial message retained its exact ID, content, **Verified source**, and
+**Received** state. No new message exchange or idle delivery was attempted.
+
+The first physical pass also exposed a paired-node detail page showing **Not
+found** when Stop cleared the current inventory. A further correction preserves
+that route with local-node status and **Back to Nodes** guidance, while genuinely
+missing pairings are still rejected with a running inventory. Android guidance
+offers Start; iOS guidance does not promise an unavailable control. The final
+standalone build passed a repeated notification Stop → Back to Nodes → Start
+sequence in the same app process, retaining identity, pairing, and the saved
+message. However, an immediately submitted connection check failed while
+Bluetooth was reconnecting; a later explicit retry succeeded in 139 ms. This
+qualifies the restart UI, not first-attempt network readiness. Permissions were
+restored, the temporary UI helper was removed, and the app was left running.
+
+### Permission recovery diagnosis
+
+A subsequent temporary diagnostic APK reproduced the failed first check after
+Settings Location Deny, app-driven foreground regrant, and immediate Describe.
+At 20:59:49.575 on September 8 the request began while the service was running
+and Android allowed Bluetooth. The peer connected at 20:59:51.360 and completed
+its GATT subscriptions at 20:59:52.299. The request failed after 12.005 seconds
+with `EstablishLink(Failed(Timeout))`. A later explicit retry succeeded in
+488 ms. The saved pairing remained intact, and the separate background grant
+was restored afterward.
+
+This is a Link-establishment timeout, not a permission rejection or Describe
+exchange failure. Its timing supports a readiness race but does not prove
+which route or interface was selected. Public `route()` reports stored routing
+state, not current interface readiness; Android Bluetooth permission readiness
+also does not mean that a peer is connected. The next targeted capture should
+compare the selected route with `interface_timing_inventory()` immediately
+before connecting. No protocol retry or delay was added: a path request emits
+on the interfaces available at submission and does not automatically replay
+when a peer attaches. Its timeout must also fit the caller's bounded lifetime.
+The temporary Rust/Kotlin probes were removed before the delivered build.
+The immediate post-Start failure above shows that follow-up must cover ordinary
+startup as well as permission recovery; the final build exposed only the generic
+Link-stage outcome, not the typed diagnostic captured on the earlier build.
+
 ## Remaining work
 
-- Add an explicit restart control and accurate stopped-state inventory copy;
-  diagnose the failed first request after Android permission restoration.
+- Capture the selected route and actual interface readiness during failed early
+  requests after startup or Android permission restoration, then qualify its fix.
 - Make stale-route recovery and caller-timeout cancellation deterministic in
   held-operation tests, then repeat the corresponding physical checks.
 - Qualify locked/offline-peer recovery, repeated suspension/restoration,
