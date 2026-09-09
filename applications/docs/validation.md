@@ -19,7 +19,7 @@ different evidence. Do not transfer physical acceptance between their binaries.
 | Earlier physical Android 10 builds | Pairing, direct messaging, Stop/Start, permission recovery, offline retry/cancel, retention, and twenty-two clean radio cycles | Qualification of the generated-binding build, newer Android versions, deep Doze, or power-loss durability |
 | Generated-binding Android follow-up, before footprint integration | Existing-grant checks, Stop/Start without resurrection, two-way Python LXMF messaging and cold-process retention | Fresh pairing, controlled radio recovery, held-request cancellation or qualification of the later rebuilt APK |
 | Current generated-binding Android APK | Cold retained-grant check, one real Settings Bluetooth cycle with successful first reconnect check, and retained-data spot-check | Fresh pairing, repeated messaging, full controller power-off, long idle or controlled cancellation |
-| Current generated-binding iOS framework | Build/install, ordinary launch and retained pairing; first check timed out with Bluetooth disconnected | Successful authenticated request, messaging or restoration; connection/chooser diagnosis remains open |
+| Current generated-binding iOS framework | Initial disconnected timeout; same-framework retained-grant check and two-way Python LXMF messaging after user restart; first check and message retention after one controlled process restart | Cause or fix of the initial failure, reliable repeated recovery, fresh pairing or OS restoration; successful restart has no captured transport timeline |
 
 The [generated-binding checkpoint](../checkpoints/2026-09-09-validation.md#generated-binding-cutover)
 records the harness and integrated test boundaries. The [clean Android checkpoint](../checkpoints/2026-09-09-validation.md#clean-combined-checkpoint--september-9)
@@ -30,7 +30,10 @@ retain the first failed delivery and UI recovery problems as well as successes.
 The [follow-up checkpoint](../checkpoints/2026-09-09-follow-up.md) records the
 three completed source fixes, firmware measurements and bounded phone journeys.
 Its final detached/Swift gates and bounded Android radio smoke passed. The iOS
-first check failed; transport/chooser diagnosis remains open without a proven cause.
+framework later passed foreground checks and two-way messaging, but its initial
+disconnected timeout remains unexplained. The checkpoint preserves that failure,
+the incomplete restart logging and the remaining chooser-visibility question,
+alongside the later successful Mirroring focus-and-scroll retest.
 
 ## Repeatable checks
 

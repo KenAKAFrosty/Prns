@@ -25,13 +25,16 @@ observations remain tied to their recorded builds.
 
 ## Next: finish the current transition
 
-1. Diagnose the current iOS disconnected transport, first-check timeout and
-   unresolved chooser visibility, then complete the foreground journey. Detached,
-   Swift and bounded Android smoke passes do not establish iOS connectivity.
+1. Diagnose the initial iOS nonconnection and recheck chooser visibility.
+   The same framework later passed retained-grant checks and
+   foreground messaging, including a first check after one controlled process
+   restart. Repeat recovery with complete logs; these successes do not explain
+   or fix the initial timeout.
 2. Close the remaining generated-binding physical checks: fresh pairing,
    pristine import, controlled read cancellation, repeated recovery and cold offline
-   actions. Retained-grant messaging and process retention have bounded Android
-   evidence; the current iOS framework has no successful authenticated check yet.
+   actions. Retained-grant checks and messaging now have bounded evidence on
+   both platforms, tied to their exact recorded builds rather than transferred
+   across rebuilds. They are not fresh-pairing acceptance.
 3. Keep restoration, protected-data and first-delivery recovery as explicit iOS
    work, not conclusions inferred from reaching Running. Preserve the firmware
    size gate: the passing integrated T-Echo build still has just 616 bytes spare.
