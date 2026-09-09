@@ -15,6 +15,13 @@ ongoing notification and an explicit Stop action. Android may still terminate
 the process. A sticky service restart reopens the stored identity and the last
 successful start configuration; a user Stop clears that restart intent.
 
+The current preview exposes Stop in the ongoing notification but has no in-app
+Start control yet. After Stop, returning to the existing app screen leaves the
+node stopped; force-stopping it in Android Settings and reopening it starts it
+again. The stopped
+Nodes screen currently also shows an incorrect **No paired nodes** empty state.
+Saved pairing is retained and returns on startup. Both UI gaps remain open.
+
 Identity, grants, contacts, and messages remain Rust-owned under the application's
 private `noBackupFilesDir/prns/development` directory. These are disposable
 development records, not a secure-storage or migration guarantee.

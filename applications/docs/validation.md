@@ -251,16 +251,59 @@ published prerequisite branches were not rewritten.
   log window. This is a successful user-reported check, not proof that the
   intermittent freeze is fixed.
 
-The full physical lifecycle matrix remains pending beyond the narrow checks
-above. Explicit service Stop/restart, denied/regranted permissions, Bluetooth
-radio changes, prolonged peer loss, OS process eviction, deep Doze or
-long-idle background delivery, and newer Android
+## Android lifecycle follow-up
+
+The same standalone Android build and installed diagnostic board image were
+used for one foreground, USB-powered lifecycle sequence. No app data was cleared
+and neither device was reflashed for these checks.
+
+- **Explicit Stop:** the notification action removed the foreground service
+  and stopped the native Host without ending the app process. Navigation and
+  ordinary background/resume did not restart it. A force-stop/cold relaunch
+  restored the saved pairing; its first authenticated node check succeeded in
+  184 ms. This exposed a recovery UI gap: there is no in-app Start control, and
+  the stopped snapshot's unavailable inventory is misleadingly shown as
+  **No paired nodes**. A cold relaunch is a development workaround, not the
+  intended user-facing restart flow.
+- **Bluetooth off/on:** Android Settings disabled Bluetooth, the app showed
+  **Needs attention**, and a node check failed while it was disabled. The
+  foreground service and app process remained alive. After enabling Bluetooth,
+  the first submitted check succeeded in 244 ms without a manual app restart.
+  Replacement listener PSMs were published during recovery; the implementation
+  explicitly restarts its native generation when the PSM changes. This does
+  not qualify uninterrupted TCP connections.
+- **Location permission revoke/regrant:** denying Location in Android Settings
+  revoked foreground and background discovery access. Android explicitly
+  killed the process for permission revocation and restarted its sticky service.
+  The app reopened with Bluetooth unavailable and an explicit **Allow Bluetooth**
+  action, without an unsolicited permission prompt. Granting foreground access
+  through that action restored discovery but left background access denied.
+  The first immediately submitted node check failed; a later manual retry
+  succeeded in 133 ms. This is recovery with a failed first attempt, not a
+  first-attempt pass. The exact connection failure remains undiagnosed.
+- Background discovery was restored through its separate permission prompt.
+  Final OS grants matched the starting state, Bluetooth was enabled, and a
+  final authenticated check succeeded in 195 ms. The earlier battery-trial
+  message retained its exact ID, content, **Verified source**, and **Received**
+  state. The temporary UI helper was removed afterward.
+
+The board capture recorded successful request ingress and ten successful
+display refreshes with healthy heartbeat/feed samples and no recorded reset
+or stall. Captures were stopped explicitly after the tests. No new physical
+message exchange, battery-idle delivery, or button exercise is claimed here.
+
+The full physical lifecycle matrix remains pending beyond these narrow checks.
+In-app restart usability and first-attempt permission recovery need follow-up;
+repeated transitions, prolonged peer loss, arbitrary OS process eviction, deep
+Doze or long-idle delivery, system Location off/on, and newer Android
 permission/service behavior remain unqualified. See [Android development](android.md)
 for the repeatable acceptance sequence and the temporary runtime-restart behavior
 when the Bluetooth listener changes.
 
 ## Remaining work
 
+- Add an explicit restart control and accurate stopped-state inventory copy;
+  diagnose the failed first request after Android permission restoration.
 - Make stale-route recovery and caller-timeout cancellation deterministic in
   held-operation tests, then repeat the corresponding physical checks.
 - Qualify locked/offline-peer recovery, repeated suspension/restoration,
