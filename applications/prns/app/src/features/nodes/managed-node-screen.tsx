@@ -335,7 +335,7 @@ export function describeFailureMessage(stage: DescribeFailureStage): string {
     case "route":
       return "This node is not reachable yet. Keep it on and nearby, then try again.";
     case "link":
-      return "A secure connection to this node could not be opened. Try again.";
+      return "The connection check could not complete. Try again.";
     case "identification":
       return "The saved pairing could not be used with this node. Check that it is still paired, then try again.";
     case "request":

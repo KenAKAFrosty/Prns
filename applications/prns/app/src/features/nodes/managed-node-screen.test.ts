@@ -12,7 +12,7 @@ describe("managed-node failure guidance", () => {
     input: "This paired node is no longer available.",
     inventory: "This paired node is no longer available.",
     route: "This node is not reachable yet. Keep it on and nearby, then try again.",
-    link: "A secure connection to this node could not be opened. Try again.",
+    link: "The connection check could not complete. Try again.",
     identification:
       "The saved pairing could not be used with this node. Check that it is still paired, then try again.",
     permission: "This pairing does not allow the app to view node information.",

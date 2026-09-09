@@ -15,12 +15,11 @@ ongoing notification and an explicit Stop action. Android may still terminate
 the process. A sticky service restart reopens the stored identity and the last
 successful start configuration; a user Stop clears that restart intent.
 
-The current preview exposes Stop in the ongoing notification but has no in-app
-Start control yet. After Stop, returning to the existing app screen leaves the
-node stopped; force-stopping it in Android Settings and reopening it starts it
-again. The stopped
-Nodes screen currently also shows an incorrect **No paired nodes** empty state.
-Saved pairing is retained and returns on startup. Both UI gaps remain open.
+After notification Stop, ordinary navigation or returning to the app leaves the
+node stopped. **Start node** on Nodes or This device explicitly starts it again
+through the existing runtime owner. The stopped inventory says **Paired nodes
+unavailable**, rather than implying that saved pairings were deleted. Pairings
+return when startup completes; no force-stop or app relaunch is required.
 
 Identity, grants, contacts, and messages remain Rust-owned under the application's
 private `noBackupFilesDir/prns/development` directory. These are disposable
@@ -87,7 +86,9 @@ not a claim of seamless radio-toggle recovery.
 3. Bluetooth discovery, invitation/code approval, authenticated remote request,
    and message delivery with the intended board.
 4. UI recreation, screen locking, denied/regranted permissions, Bluetooth toggles,
-   peer loss/recovery, explicit Stop, and process restart. Record failures as well
+   peer loss/recovery, notification Stop followed by in-app Start, and process
+   restart. Verify that ordinary navigation/resume after Stop does not start the
+   service, and that Start retains pairing and mailbox data. Record failures as well
    as successful retries. Repeat with bundled JavaScript and Metro stopped.
 
 Passing compilation or emulator tests does not qualify physical Bluetooth or

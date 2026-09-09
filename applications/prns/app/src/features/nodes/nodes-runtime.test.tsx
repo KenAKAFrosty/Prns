@@ -4,13 +4,19 @@ import type {
   AndroidRuntimeStatus,
   DevelopmentNodeSnapshot,
   DevelopmentRuntime,
+  DevelopmentRuntimeScopeOptions,
   DevelopmentRuntimeStartError,
   EffectDevelopmentRuntime,
+} from "@prns-internal/expo";
+import {
+  DevelopmentRuntimeStartError as StartError,
+  scopedDevelopmentRuntime,
 } from "@prns-internal/expo";
 import { act, fireEvent, render, waitFor } from "@testing-library/react-native";
 import { Effect } from "effect";
 import { destinationHash, identityHash, interfaceId } from "personal-rns/contract";
 import { type ReactNode, useEffect } from "react";
+import { AppState, type AppStateStatus } from "react-native";
 
 import {
   DevelopmentRuntimeProvider,
@@ -27,6 +33,8 @@ jest.mock("expo-router", () => ({
   Link: ({ children }: { readonly children: ReactNode }) => children,
   useLocalSearchParams: () => ({ nodeId: "44444444444444444444444444444444" }),
 }));
+
+jest.mock("@prns-internal/expo", () => jest.requireActual("../../../../../sdk/expo/src/effects"));
 
 const observedDestination = destinationHash(new Uint8Array(16).fill(0x33));
 const observedIdentity = identityHash(new Uint8Array(16).fill(0x44));
@@ -223,7 +231,315 @@ function RuntimeViewProbe({
   return null;
 }
 
+function androidRestartFixture() {
+  const stop = jest.fn();
+  const base = fakeProvider(stop);
+  if (!("runtime" in base)) throw new Error("expected native fixture");
+  let currentSnapshot = snapshot(2n);
+  let status: AndroidRuntimeStatus = {
+    revision: 1,
+    bluetoothPermission: "granted",
+    backgroundDiscovery: "granted",
+    bluetoothRadio: "on",
+    locationServices: "on",
+    service: "running",
+    lastError: null,
+  };
+  let receiveStatus: ((next: AndroidRuntimeStatus) => void) | undefined;
+  const observers: DevelopmentRuntimeScopeOptions[] = [];
+  const release = jest.fn<Effect.Effect<void>, []>(() => Effect.void);
+  const start = jest.fn<
+    ReturnType<DevelopmentRuntime["startDevelopmentNode"]>,
+    Parameters<DevelopmentRuntime["startDevelopmentNode"]>
+  >(async () => ({ type: "started", snapshot: snapshot(4n) }));
+  start.mockResolvedValueOnce({ type: "started", snapshot: currentSnapshot });
+  const runtime = {
+    ...base.runtime,
+    startDevelopmentNode: start,
+    readDevelopmentNodeSnapshot: jest.fn(async () => currentSnapshot),
+  };
+  const provider: RuntimeProvider = {
+    availability: { type: "available", platform: "android" },
+    runtime,
+    androidRuntime: {
+      readStatus: async () => status,
+      requestBluetoothPermissions: async () => status,
+      requestBackgroundBluetoothPermission: async () => status,
+      addStatusListener: (listener) => {
+        receiveStatus = listener;
+        return { remove: jest.fn() };
+      },
+    },
+    acquire: (options) =>
+      Effect.gen(function* () {
+        observers.push(options);
+        yield* Effect.addFinalizer(() => release());
+        return yield* scopedDevelopmentRuntime(runtime, {
+          ...options,
+          nativeLifetime: "process",
+          developmentTcpTarget: "127.0.0.1:4242",
+        });
+      }),
+  };
+  return {
+    provider,
+    runtime,
+    start,
+    stop,
+    release,
+    observers,
+    emit: (next: DevelopmentNodeSnapshot) => {
+      currentSnapshot = next;
+      observers.at(-1)?.onSnapshot(next);
+    },
+    status: (service: AndroidRuntimeStatus["service"]) => {
+      status = { ...status, revision: status.revision + 1, service };
+      receiveStatus?.(status);
+    },
+  };
+}
+
+function stoppedSnapshot(revision = 3n): DevelopmentNodeSnapshot {
+  return {
+    ...snapshot(revision),
+    runtime: "stopped",
+    localHost: { type: "stopped", lastStartFailure: null },
+    pairing: { type: "bluetoothUnavailable" },
+  };
+}
+
 describe("Foundation 1 Nodes runtime binding", () => {
+  it.each([NodesScreen, LocalNodeScreen])(
+    "explicitly restarts a stopped Android node from %p",
+    async (Screen) => {
+      const fixture = androidRestartFixture();
+      const publish = jest.fn<void, [DevelopmentRuntimeView]>();
+      const view = render(
+        <DevelopmentRuntimeProvider provider={fixture.provider} refreshIntervalMillis={60_000}>
+          <Screen />
+          <RuntimeViewProbe publish={publish} />
+        </DevelopmentRuntimeProvider>,
+      );
+      await waitFor(() => expect(fixture.start).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        fixture.emit(stoppedSnapshot());
+        fixture.status("stopped");
+      });
+      expect(view.getByText("This device's node is stopped")).toBeTruthy();
+      expect(view.queryByText("No paired nodes")).toBeNull();
+      const stoppedView = publish.mock.calls.at(-1)?.[0];
+      await act(async () => {
+        fireEvent.press(view.getByRole("button", { name: "Start node" }));
+        stoppedView?.startNode();
+        stoppedView?.startNode();
+      });
+      await waitFor(() => expect(publish.mock.calls.at(-1)?.[0].snapshot?.runtime).toBe("running"));
+      expect(fixture.start).toHaveBeenCalledTimes(2);
+      expect(fixture.start).toHaveBeenNthCalledWith(2, { developmentTcpTarget: "127.0.0.1:4242" });
+      expect(fixture.release).toHaveBeenCalledTimes(1);
+      expect(fixture.stop).not.toHaveBeenCalled();
+      expect(view.queryByRole("button", { name: "Start node" })).toBeNull();
+      view.unmount();
+      await waitFor(() => expect(fixture.release).toHaveBeenCalledTimes(2));
+      expect(fixture.stop).not.toHaveBeenCalled();
+      stoppedView?.startNode();
+      expect(fixture.start).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("does not restart a stopped node on resume, route refresh, or Android service events", async () => {
+    const fixture = androidRestartFixture();
+    let resume: ((next: AppStateStatus) => void) | undefined;
+    const subscription = jest.spyOn(AppState, "addEventListener");
+    const originalSubscribe = subscription.getMockImplementation();
+    subscription.mockImplementation((_event, callback) => {
+      resume = callback;
+      return { remove: jest.fn() };
+    });
+    const view = render(
+      <DevelopmentRuntimeProvider provider={fixture.provider} refreshActive={false}>
+        <NodesScreen />
+      </DevelopmentRuntimeProvider>,
+    );
+    await waitFor(() => expect(view.getByText("No paired nodes")).toBeTruthy());
+    await act(async () => {
+      fixture.emit(stoppedSnapshot());
+      fixture.status("stopped");
+      resume?.("background");
+      resume?.("active");
+    });
+    view.rerender(
+      <DevelopmentRuntimeProvider provider={fixture.provider} refreshActive>
+        <NodesScreen />
+      </DevelopmentRuntimeProvider>,
+    );
+    await act(async () => fixture.status("stopping"));
+    expect(view.queryByRole("button", { name: "Start node" })).toBeNull();
+    await act(async () => fixture.status("stopped"));
+    expect(view.getByRole("button", { name: "Start node" })).toBeTruthy();
+    expect(view.getByText("Paired nodes unavailable")).toBeTruthy();
+    expect(view.queryByText("No paired nodes")).toBeNull();
+    expect(fixture.start).toHaveBeenCalledTimes(1);
+    view.unmount();
+    if (originalSubscribe !== undefined) subscription.mockImplementation(originalSubscribe);
+  });
+
+  it("waits for every previous scope across intervening rerenders and ignores late observations", async () => {
+    const fixture = androidRestartFixture();
+    let releaseScope: (() => void) | undefined;
+    const publish = jest.fn<void, [DevelopmentRuntimeView]>();
+    const view = render(
+      <DevelopmentRuntimeProvider provider={fixture.provider} refreshIntervalMillis={60_000}>
+        <NodesScreen />
+        <RuntimeViewProbe publish={publish} />
+      </DevelopmentRuntimeProvider>,
+    );
+    await waitFor(() => expect(view.getByText("No paired nodes")).toBeTruthy());
+    await act(async () => fixture.emit(stoppedSnapshot(90n)));
+    fixture.release.mockImplementationOnce(() =>
+      Effect.promise(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseScope = resolve;
+          }),
+      ),
+    );
+    fireEvent.press(view.getByRole("button", { name: "Start node" }));
+    await waitFor(() => expect(fixture.release).toHaveBeenCalledTimes(1));
+    expect(fixture.start).toHaveBeenCalledTimes(1);
+    expect(view.getByText("Getting ready")).toBeTruthy();
+    for (const interval of [1_000, 2_000]) {
+      view.rerender(
+        <DevelopmentRuntimeProvider provider={fixture.provider} refreshIntervalMillis={interval}>
+          <NodesScreen />
+          <RuntimeViewProbe publish={publish} />
+        </DevelopmentRuntimeProvider>,
+      );
+    }
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(fixture.start).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      fixture.observers[0]?.onSnapshot(stoppedSnapshot(99n));
+      fixture.observers[0]?.onBackgroundFailure(
+        new StartError({ stage: "node", detail: "stale observer" }),
+      );
+      releaseScope?.();
+    });
+    await waitFor(() => expect(publish.mock.calls.at(-1)?.[0].snapshot?.revision).toBe(4n));
+    expect(publish.mock.calls.at(-1)?.[0].backgroundFailure).toBeNull();
+    expect(fixture.start).toHaveBeenCalledTimes(2);
+    expect(fixture.observers.at(-1)?.refreshIntervalMillis).toBe(2_000);
+    view.unmount();
+  });
+
+  it("shows an explicit retry after start failure without retrying automatically", async () => {
+    const fixture = androidRestartFixture();
+    fixture.start.mockResolvedValueOnce({
+      type: "failed",
+      stage: "bluetooth",
+      detail: "test startup failure",
+    });
+    const publish = jest.fn<void, [DevelopmentRuntimeView]>();
+    const view = render(
+      <DevelopmentRuntimeProvider provider={fixture.provider}>
+        <NodesScreen />
+        <RuntimeViewProbe publish={publish} />
+      </DevelopmentRuntimeProvider>,
+    );
+    await waitFor(() => expect(view.getByText("No paired nodes")).toBeTruthy());
+    await act(async () => fixture.emit(stoppedSnapshot()));
+    fireEvent.press(view.getByRole("button", { name: "Start node" }));
+    await waitFor(() => expect(view.getByText("This device's node failed to start")).toBeTruthy());
+    expect(publish.mock.calls.at(-1)?.[0].lifecycleFailure).toBe("test startup failure");
+    expect(view.queryByText("test startup failure")).toBeNull();
+    expect(view.getByRole("button", { name: "Start node" })).toBeTruthy();
+    expect(fixture.start).toHaveBeenCalledTimes(2);
+    fireEvent.press(view.getByRole("button", { name: "Start node" }));
+    await waitFor(() => expect(view.getByText("No paired nodes")).toBeTruthy());
+    expect(fixture.start).toHaveBeenCalledTimes(3);
+    expect(publish.mock.calls.at(-1)?.[0].lifecycleFailure).toBeNull();
+    expect(fixture.stop).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it.each(["outcome", "failure"] as const)(
+    "fences a manual snapshot's late %s after an explicit restart",
+    async (completion) => {
+      const fixture = androidRestartFixture();
+      let finishRead: ((next: DevelopmentNodeSnapshot) => void) | undefined;
+      let failRead: ((failure: Error) => void) | undefined;
+      fixture.runtime.readDevelopmentNodeSnapshot.mockImplementationOnce(
+        () =>
+          new Promise((resolve, reject) => {
+            finishRead = resolve;
+            failRead = reject;
+          }),
+      );
+      const publish = jest.fn<void, [DevelopmentRuntimeView]>();
+      const view = render(
+        <DevelopmentRuntimeProvider provider={fixture.provider} refreshIntervalMillis={60_000}>
+          <NodesScreen />
+          <RuntimeViewProbe publish={publish} />
+        </DevelopmentRuntimeProvider>,
+      );
+      await waitFor(() => expect(view.getByText("No paired nodes")).toBeTruthy());
+      const read = publish.mock.calls.at(-1)?.[0].refreshSnapshot();
+      await waitFor(() =>
+        expect(fixture.runtime.readDevelopmentNodeSnapshot).toHaveBeenCalledTimes(1),
+      );
+      await act(async () => fixture.emit(stoppedSnapshot()));
+      fireEvent.press(view.getByRole("button", { name: "Start node" }));
+      await waitFor(() => expect(publish.mock.calls.at(-1)?.[0].snapshot?.revision).toBe(4n));
+      await act(async () => {
+        if (completion === "outcome") finishRead?.(stoppedSnapshot(99n));
+        else failRead?.(new Error("old snapshot failed"));
+        expect(await read).toEqual({
+          type: "operationFailure",
+          detail: "This device's node changed while the request was running. Try again.",
+        });
+      });
+      expect(publish.mock.calls.at(-1)?.[0].snapshot?.revision).toBe(4n);
+      expect(publish.mock.calls.at(-1)?.[0].snapshot?.runtime).toBe("running");
+      expect(publish.mock.calls.at(-1)?.[0].lifecycleFailure).toBeNull();
+      expect(publish.mock.calls.at(-1)?.[0].backgroundFailure).toBeNull();
+      expect(fixture.start).toHaveBeenCalledTimes(2);
+      view.unmount();
+    },
+  );
+
+  it("releases a pending restart on unmount without publishing its late completion or stopping the process", async () => {
+    const fixture = androidRestartFixture();
+    let finishStart:
+      | ((outcome: Awaited<ReturnType<DevelopmentRuntime["startDevelopmentNode"]>>) => void)
+      | undefined;
+    fixture.start.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishStart = resolve;
+        }),
+    );
+    const publish = jest.fn<void, [DevelopmentRuntimeView]>();
+    const view = render(
+      <DevelopmentRuntimeProvider provider={fixture.provider} refreshIntervalMillis={60_000}>
+        <NodesScreen />
+        <RuntimeViewProbe publish={publish} />
+      </DevelopmentRuntimeProvider>,
+    );
+    await waitFor(() => expect(view.getByText("No paired nodes")).toBeTruthy());
+    await act(async () => fixture.emit(stoppedSnapshot()));
+    fireEvent.press(view.getByRole("button", { name: "Start node" }));
+    await waitFor(() => expect(fixture.start).toHaveBeenCalledTimes(2));
+    view.unmount();
+    await waitFor(() => expect(fixture.release).toHaveBeenCalledTimes(2));
+    const publishedBeforeCompletion = publish.mock.calls.length;
+    await act(async () => finishStart?.({ type: "started", snapshot: snapshot(9n) }));
+    expect(publish).toHaveBeenCalledTimes(publishedBeforeCompletion);
+    expect(fixture.stop).not.toHaveBeenCalled();
+    expect(fixture.runtime.readDevelopmentNodeSnapshot).not.toHaveBeenCalled();
+  });
+
   it.each([
     [{ bluetoothPermission: "blocked" as const }, "Open app settings"],
     [{ bluetoothRadio: "unsupported" as const }, "Bluetooth is not available on this device."],
@@ -1281,9 +1597,7 @@ describe("Foundation 1 Nodes runtime binding", () => {
     fireEvent.press(view.getByRole("button", { name: "Check node connection" }));
 
     await waitFor(() => expect(view.getByText("Could not check node")).toBeTruthy());
-    expect(
-      view.getByText("A secure connection to this node could not be opened. Try again."),
-    ).toBeTruthy();
+    expect(view.getByText("The connection check could not complete. Try again.")).toBeTruthy();
     expect(
       view.queryAllByText(/E290|signed availability|upstream RemoteControl|bounded event lane/iu),
     ).toHaveLength(0);

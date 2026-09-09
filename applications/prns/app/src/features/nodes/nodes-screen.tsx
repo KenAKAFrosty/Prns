@@ -76,18 +76,7 @@ export function NodesScreen() {
         </Card>
       ) : null}
 
-      {runtime.phase === "failed" &&
-      runtime.accessorySetup?.phase !== "failed" &&
-      runtime.accessorySetupFailure === null ? (
-        <Card>
-          <Subheading>This device&apos;s node failed to start</Subheading>
-          <Badge tone="warning">Startup failed</Badge>
-          <BodyText>
-            This device&apos;s node could not start. Open its diagnostics for more details.
-          </BodyText>
-          <NavigationLink href="/nodes/local">View diagnostics</NavigationLink>
-        </Card>
-      ) : null}
+      <NodeRecoveryCard showDiagnosticsLink />
 
       {runtime.snapshot === null ? null : (
         <>
@@ -103,7 +92,14 @@ export function NodesScreen() {
           </Card>
 
           <Subheading>Paired nodes</Subheading>
-          {runtime.snapshot.pairedTargets.length === 0 ? (
+          {runtime.snapshot.runtime !== "running" ? (
+            <Card>
+              <Badge>Paired nodes unavailable</Badge>
+              <BodyText>
+                Your paired nodes will appear when this device&apos;s node is running.
+              </BodyText>
+            </Card>
+          ) : runtime.snapshot.pairedTargets.length === 0 ? (
             <Card>
               <Badge>No paired nodes</Badge>
               <BodyText>Pair a node to manage it from this device.</BodyText>
@@ -151,6 +147,7 @@ export function LocalNodeScreen() {
     <Screen>
       <Badge>Node diagnostics</Badge>
       <ScreenHeading>This device</ScreenHeading>
+      <NodeRecoveryCard />
       {runtime.snapshot === null ? (
         <Card>
           <Badge tone={runtime.phase === "failed" ? "warning" : "neutral"}>{runtime.phase}</Badge>
@@ -161,6 +158,37 @@ export function LocalNodeScreen() {
       )}
       <NavigationLink href="/nodes">Back to Nodes</NavigationLink>
     </Screen>
+  );
+}
+
+function NodeRecoveryCard({
+  showDiagnosticsLink = false,
+}: {
+  readonly showDiagnosticsLink?: boolean;
+}) {
+  const runtime = useDevelopmentRuntime();
+  const stopped = runtime.snapshot?.runtime === "stopped";
+  const failed =
+    (runtime.phase === "failed" || runtime.snapshot?.runtime === "failed") &&
+    runtime.accessorySetup?.phase !== "failed" &&
+    runtime.accessorySetupFailure === null;
+  if (!stopped && !failed) return null;
+  return (
+    <Card>
+      <Subheading>
+        {stopped ? "This device's node is stopped" : "This device's node failed to start"}
+      </Subheading>
+      <Badge tone={stopped ? "neutral" : "warning"}>{stopped ? "Stopped" : "Startup failed"}</Badge>
+      <BodyText>
+        {stopped
+          ? "Start it to reconnect and manage your paired nodes."
+          : "This device's node could not start. Open its diagnostics for more details."}
+      </BodyText>
+      {runtime.canStartNode ? <Button onPress={runtime.startNode}>Start node</Button> : null}
+      {showDiagnosticsLink ? (
+        <NavigationLink href="/nodes/local">View diagnostics</NavigationLink>
+      ) : null}
+    </Card>
   );
 }
 

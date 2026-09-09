@@ -57,6 +57,8 @@ export type DevelopmentRuntimeView = {
   readonly snapshot: DevelopmentNodeSnapshot | null;
   readonly lifecycleFailure: string | null;
   readonly backgroundFailure: string | null;
+  readonly canStartNode: boolean;
+  readonly startNode: () => void;
   readonly showAccessorySetupPicker: () => Promise<
     RuntimeCommandResult<AccessorySetupPickerOutcome>
   >;
@@ -121,10 +123,33 @@ export function DevelopmentRuntimeProvider({
   const [backgroundFailure, setBackgroundFailure] = useState<string | null>(null);
   const [accessorySetup, setAccessorySetup] = useState<AccessorySetupStatus | null>(null);
   const [accessorySetupFailure, setAccessorySetupFailure] = useState<string | null>(null);
+  const [startRequest, setStartRequest] = useState(0);
+  const acquisitionPending = useRef(true);
+  const previousRelease = useRef(Promise.resolve());
   const session = useRef<DevelopmentRuntimeSession | null>(null);
   const latestRevision = useRef<bigint | null>(null);
   const refreshActiveState = useRef(refreshActive);
   refreshActiveState.current = refreshActive;
+  const canStartNode =
+    selectedProvider.availability.type === "available" &&
+    selectedProvider.availability.platform === "android" &&
+    phase !== "starting" &&
+    snapshot?.runtime !== "starting" &&
+    snapshot?.runtime !== "stopping" &&
+    androidRuntime.status?.service !== "starting" &&
+    androidRuntime.status?.service !== "stopping" &&
+    (phase === "failed" || snapshot?.runtime === "stopped" || snapshot?.runtime === "failed");
+  const startAllowed = useRef(canStartNode);
+  startAllowed.current = canStartNode;
+
+  const startNode = useCallback(() => {
+    if (!startAllowed.current || acquisitionPending.current) return;
+    // Admit synchronously, before React renders the pending state, so two presses
+    // cannot create two runtime subscriptions or start requests.
+    acquisitionPending.current = true;
+    setPhase("starting");
+    setStartRequest((request) => request + 1);
+  }, []);
   const accessorySetupAcquisitionState = availableProviderRequiresAccessorySetup(selectedProvider)
     ? accessorySetupFailure !== null || accessorySetup?.phase === "failed"
       ? "failed"
@@ -179,7 +204,9 @@ export function DevelopmentRuntimeProvider({
     };
   }, [selectedProvider]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: startRequest explicitly requests a fresh scope after the previous observer scope is closed.
   useEffect(() => {
+    acquisitionPending.current = true;
     session.current = null;
     latestRevision.current = null;
     setSnapshot(null);
@@ -223,30 +250,46 @@ export function DevelopmentRuntimeProvider({
       })
       .pipe(Scope.provide(scope));
 
-    void Effect.runPromise(acquisition).then(
-      (acquired) => {
-        if (!mounted) {
-          return;
-        }
-        session.current = acquired;
-        publishSnapshot(acquired.initialSnapshot);
-        setPhase("ready");
-      },
-      (failure: unknown) => {
-        if (!mounted) {
-          return;
-        }
-        setLifecycleFailure(formatFailure(failure));
-        setPhase("failed");
-      },
-    );
+    // Reuse the provider's start options and process-owned lifetime. Closing the
+    // old scope only releases its observers; a service event never starts a node.
+    void previousRelease.current
+      .then(async () => (mounted ? Effect.runPromise(acquisition) : null))
+      .then(
+        (acquired) => {
+          if (!mounted || acquired === null) {
+            return;
+          }
+          acquisitionPending.current = false;
+          session.current = acquired;
+          publishSnapshot(acquired.initialSnapshot);
+          setPhase("ready");
+        },
+        (failure: unknown) => {
+          if (!mounted) {
+            return;
+          }
+          acquisitionPending.current = false;
+          setLifecycleFailure(formatFailure(failure));
+          setPhase("failed");
+        },
+      );
 
     return () => {
       mounted = false;
+      acquisitionPending.current = true;
       session.current = null;
-      void Effect.runPromise(Scope.close(scope, Exit.void));
+      previousRelease.current = Promise.all([
+        previousRelease.current,
+        Effect.runPromise(Scope.close(scope, Exit.void)),
+      ]).then(() => undefined);
     };
-  }, [accessorySetupAcquisitionState, publishSnapshot, refreshIntervalMillis, selectedProvider]);
+  }, [
+    accessorySetupAcquisitionState,
+    publishSnapshot,
+    refreshIntervalMillis,
+    selectedProvider,
+    startRequest,
+  ]);
 
   const unavailableResult = useCallback(
     <Outcome,>(): RuntimeCommandResult<Outcome> => ({
@@ -264,14 +307,23 @@ export function DevelopmentRuntimeProvider({
       operation: (active: DevelopmentRuntimeSession) => Effect.Effect<Outcome, unknown>,
     ): Promise<RuntimeCommandResult<Outcome>> => {
       const active = session.current;
-      if (active === null) {
+      if (active === null || acquisitionPending.current) {
         return unavailableResult();
       }
+      let result: RuntimeCommandResult<Outcome>;
       try {
-        return { type: "outcome", outcome: await Effect.runPromise(operation(active)) };
+        result = { type: "outcome", outcome: await Effect.runPromise(operation(active)) };
       } catch (failure) {
-        return { type: "operationFailure", detail: formatFailure(failure) };
+        result = { type: "operationFailure", detail: formatFailure(failure) };
       }
+      // A manual refresh or command can outlive its observer scope. Its result
+      // must not republish an old generation after an explicit start or release.
+      return session.current === active && !acquisitionPending.current
+        ? result
+        : {
+            type: "operationFailure",
+            detail: "This device's node changed while the request was running. Try again.",
+          };
     },
     [unavailableResult],
   );
@@ -444,6 +496,8 @@ export function DevelopmentRuntimeProvider({
       snapshot,
       lifecycleFailure,
       backgroundFailure,
+      canStartNode,
+      startNode,
       showAccessorySetupPicker,
       refreshSnapshot,
       initiatePairing,
@@ -467,6 +521,8 @@ export function DevelopmentRuntimeProvider({
       androidRuntime,
       androidCapability,
       backgroundFailure,
+      canStartNode,
+      startNode,
       describeTarget,
       announceTarget,
       initiatePairing,
