@@ -69,6 +69,7 @@ async fn a_commanded_announce_fans_to_every_interface_and_settles() {
         | Journaled::RemoteControlControllerPairingConfirmationRequired(_)
         | Journaled::RemoteControlControllerPairingPersistenceRequired(_)
         | Journaled::RemoteControlControllerPairingAuthorizationPersisted { .. }
+        | Journaled::RemoteControlControllerPairingAuthorizationPersistenceFailed { .. }
         | Journaled::RemoteControlControllerPairingExpired { .. }
         | Journaled::RemoteControlControllerPairingLinkClosed { .. }
         | Journaled::RemoteControlTargetPairingExpired { .. }

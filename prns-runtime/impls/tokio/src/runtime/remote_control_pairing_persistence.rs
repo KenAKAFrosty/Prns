@@ -146,6 +146,7 @@ impl RemoteControlPairingPersistenceSender {
             | Journaled::RemoteControlTargetPairingAuthorizationPersisted { .. }
             | Journaled::RemoteControlControllerPairingConfirmationRequired(_)
             | Journaled::RemoteControlControllerPairingAuthorizationPersisted { .. }
+            | Journaled::RemoteControlControllerPairingAuthorizationPersistenceFailed { .. }
             | Journaled::RemoteControlControllerPairingExpired { .. }
             | Journaled::RemoteControlControllerPairingLinkClosed { .. }
             | Journaled::RemoteControlTargetPairingExpired { .. }
