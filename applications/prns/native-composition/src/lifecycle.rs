@@ -38,25 +38,7 @@ use prns_interfaces_tokio::bluetooth_auto::PreparedAutoBle;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinSet;
 
-use crate::contract::{
-    AnnounceLxmfOutcome, AnnounceRemoteControlTargetInput,
-    AppleBluetoothRestorationPreparationFailureStage, AppleBluetoothRestorationPreparationOutcome,
-    CancelLxmfMessageInput, CancelLxmfMessageOutcome, ContactDestinationInput, ContactListOutcome,
-    ContactLookupOutcome, ContactMutationOutcome, CreateManualContactInput,
-    DescribeRemoteControlTargetInput, DevelopmentNodeFailure, DevelopmentNodeFailureStage,
-    DevelopmentNodeOperation, DevelopmentNodeOperationKind, DevelopmentNodeRuntime,
-    DevelopmentNodeSnapshot, DevelopmentNodeStartInput, DevelopmentNodeStartOutcome,
-    DevelopmentNodeStopOutcome, DevelopmentNodeStopStage, IdentityCreationOutcome,
-    IdentityImportPreviewOutcome, InitiateRemoteControlPairingInput, ListLxmfMessagesInput,
-    LocalHostState, LxmfMessageListOutcome, LxmfPeerListOutcome, MeasureLxmfTextInput,
-    MeasureLxmfTextOutcome, PrimaryIdentityState, RemoteControlAnnounceFailureStage,
-    RemoteControlAnnounceOperation, RemoteControlAnnounceOutcome, RemoteControlAnnounceStatus,
-    RemoteControlDescribeFailureStage, RemoteControlDescribeOutcome,
-    RemoteControlPairingCommandOutcome, RemoteControlPairingDecisionInput,
-    RemoteControlPairingFailureStage, RemoteControlPairingState, RetryLxmfMessageInput,
-    RetryLxmfMessageOutcome, SendDirectTextInput, SendDirectTextOutcome, SetContactAliasInput,
-    SetContactPinnedInput, U64String,
-};
+use crate::contract::*;
 use crate::development_store::{
     DevelopmentStoreFailure, DevelopmentStoreOwner, MailboxStoreReply, StoreReply,
 };
@@ -187,6 +169,7 @@ impl ShutdownSignal {
 /// Transport-neutral response ownership. Async caller drop closes only its
 /// response; admitted mutations remain owned by the actor/database lane.
 enum Reply<T> {
+    #[cfg(any(test, feature = "host-test"))]
     Sync(std_mpsc::SyncSender<T>),
     #[cfg(feature = "uniffi-bindings")]
     Async(oneshot::Sender<T>),
@@ -195,6 +178,7 @@ enum Reply<T> {
 impl<T> Reply<T> {
     fn send(self, value: T) -> Result<(), T> {
         match self {
+            #[cfg(any(test, feature = "host-test"))]
             Self::Sync(response) => response.send(value).map_err(|error| error.0),
             #[cfg(feature = "uniffi-bindings")]
             Self::Async(response) => response.send(value),
@@ -202,6 +186,7 @@ impl<T> Reply<T> {
     }
 }
 
+#[cfg(any(test, feature = "host-test"))]
 fn reply_channel<T>() -> (Reply<T>, std_mpsc::Receiver<T>) {
     let (response, receiver) = std_mpsc::sync_channel(1);
     (Reply::Sync(response), receiver)
@@ -209,6 +194,7 @@ fn reply_channel<T>() -> (Reply<T>, std_mpsc::Receiver<T>) {
 
 enum Command {
     AnnounceSelf(RemoteControlAnnounceOperation),
+    #[cfg(any(test, feature = "host-test"))]
     Snapshot(Reply<DevelopmentNodeSnapshot>),
     #[cfg(feature = "uniffi-bindings")]
     SnapshotAsync(oneshot::Sender<DevelopmentNodeSnapshot>),
@@ -1017,10 +1003,12 @@ fn start_configured_with_supervisor(
 }
 
 #[must_use]
+#[cfg(any(test, feature = "host-test"))]
 pub fn snapshot() -> DevelopmentNodeSnapshot {
     snapshot_with_supervisor(supervisor())
 }
 
+#[cfg(any(test, feature = "host-test"))]
 fn snapshot_with_supervisor(supervisor: &Supervisor) -> DevelopmentNodeSnapshot {
     let mut state = supervisor.lock_state();
     reap_completed_worker_locked(supervisor, &mut state);
@@ -1138,22 +1126,26 @@ impl<T> Drop for CancelOnDrop<T> {
     }
 }
 
+#[cfg(any(test, feature = "host-test"))]
 pub fn initiate(input: InitiateRemoteControlPairingInput) -> RemoteControlPairingCommandOutcome {
     call_pairing(COMMAND_TIMEOUT, |response| {
         Command::Initiate(input, response)
     })
 }
 
+#[cfg(any(test, feature = "host-test"))]
 pub fn approve(input: RemoteControlPairingDecisionInput) -> RemoteControlPairingCommandOutcome {
     call_pairing(PAIRING_APPROVAL_TIMEOUT, |response| {
         Command::Approve(input, response)
     })
 }
 
+#[cfg(any(test, feature = "host-test"))]
 pub fn reject(input: RemoteControlPairingDecisionInput) -> RemoteControlPairingCommandOutcome {
     call_pairing(COMMAND_TIMEOUT, |response| Command::Reject(input, response))
 }
 
+#[cfg(any(test, feature = "host-test"))]
 pub fn describe(input: DescribeRemoteControlTargetInput) -> RemoteControlDescribeOutcome {
     let Some(commands) = running_commands() else {
         return RemoteControlDescribeOutcome::Failed {
@@ -1206,10 +1198,12 @@ pub fn describe(input: DescribeRemoteControlTargetInput) -> RemoteControlDescrib
 }
 
 /// Admit once without tying remote settlement to the lifetime of the bridge call.
+#[cfg(any(test, feature = "host-test"))]
 pub fn announce_self(input: AnnounceRemoteControlTargetInput) -> RemoteControlAnnounceOutcome {
     announce_self_with_supervisor(supervisor(), input)
 }
 
+#[cfg(any(test, feature = "host-test"))]
 fn announce_self_with_supervisor(
     supervisor: &Supervisor,
     input: AnnounceRemoteControlTargetInput,
@@ -1273,7 +1267,7 @@ fn announce_self_admitted(
         return RemoteControlAnnounceOutcome::Busy;
     };
     let operation = RemoteControlAnnounceOperation {
-        operation_id: U64String::from(id),
+        operation_id: id,
         target_identity_fingerprint: input.target_identity_fingerprint,
         status: RemoteControlAnnounceStatus::Pending,
     };
@@ -1285,7 +1279,7 @@ fn announce_self_admitted(
         snapshot.last_announcement = Some(operation.clone());
         snapshot.active_operation = Some(DevelopmentNodeOperation {
             kind: DevelopmentNodeOperationKind::AnnounceSelf,
-            started_at_millis: U64String::from(wall_clock_millis()),
+            started_at_millis: wall_clock_millis(),
         });
         published = true;
     });
@@ -1380,6 +1374,7 @@ fn reap_completed_worker_locked(supervisor: &Supervisor, state: &mut SupervisorS
     }
 }
 
+#[cfg(test)]
 fn admit_lxmf<Output>(
     command: impl FnOnce(Reply<Output>) -> Command,
 ) -> Result<std_mpsc::Receiver<Output>, LxmfAdmissionFailure> {
@@ -1444,6 +1439,7 @@ fn dispatch_lxmf_send(
 }
 
 #[must_use]
+#[cfg(test)]
 pub fn list_lxmf_peers() -> LxmfPeerListOutcome {
     let response = match admit_lxmf(Command::ListLxmfPeers) {
         Ok(response) => response,
@@ -1460,6 +1456,7 @@ pub fn list_lxmf_peers() -> LxmfPeerListOutcome {
 }
 
 #[must_use]
+#[cfg(test)]
 pub fn list_lxmf_messages(
     storage_root: &Path,
     input: ListLxmfMessagesInput,
@@ -1467,6 +1464,7 @@ pub fn list_lxmf_messages(
     list_lxmf_messages_with_supervisor(supervisor(), storage_root, input)
 }
 
+#[cfg(test)]
 fn list_lxmf_messages_with_supervisor(
     supervisor: &Supervisor,
     storage_root: &Path,
@@ -1552,20 +1550,13 @@ fn list_lxmf_messages_with_supervisor(
     }
 }
 
-#[must_use]
-pub fn retry_lxmf_message(
-    storage_root: &Path,
-    input: RetryLxmfMessageInput,
-) -> RetryLxmfMessageOutcome {
-    retry_lxmf_message_with_supervisor(supervisor(), storage_root, input)
-}
-
+#[cfg(test)]
 fn retry_lxmf_message_with_supervisor(
     supervisor: &Supervisor,
     storage_root: &Path,
     input: RetryLxmfMessageInput,
 ) -> RetryLxmfMessageOutcome {
-    let local_record_id = input.local_record_id.0;
+    let local_record_id = input.local_record_id;
     let paths = match prepare_storage(storage_root) {
         Ok(paths) => paths,
         Err(detail) => return RetryLxmfMessageOutcome::DevelopmentUnavailable { detail },
@@ -1645,20 +1636,13 @@ fn retry_lxmf_message_with_supervisor(
     }
 }
 
-#[must_use]
-pub fn cancel_lxmf_message(
-    storage_root: &Path,
-    input: CancelLxmfMessageInput,
-) -> CancelLxmfMessageOutcome {
-    cancel_lxmf_message_with_supervisor(supervisor(), storage_root, input)
-}
-
+#[cfg(test)]
 fn cancel_lxmf_message_with_supervisor(
     supervisor: &Supervisor,
     storage_root: &Path,
     input: CancelLxmfMessageInput,
 ) -> CancelLxmfMessageOutcome {
-    let local_record_id = input.local_record_id.0;
+    let local_record_id = input.local_record_id;
     let cancelled_at_millis = wall_clock_millis();
     let paths = match prepare_storage(storage_root) {
         Ok(paths) => paths,
@@ -1788,6 +1772,7 @@ fn project_offline_cancel_transition(
 }
 
 #[must_use]
+#[cfg(test)]
 pub fn measure_lxmf_text(input: MeasureLxmfTextInput) -> MeasureLxmfTextOutcome {
     let response = match admit_lxmf(|response| Command::MeasureLxmfText(input, response)) {
         Ok(response) => response,
@@ -1804,22 +1789,7 @@ pub fn measure_lxmf_text(input: MeasureLxmfTextInput) -> MeasureLxmfTextOutcome 
 }
 
 #[must_use]
-pub fn announce_lxmf() -> AnnounceLxmfOutcome {
-    let response = match admit_lxmf(Command::AnnounceLxmf) {
-        Ok(response) => response,
-        Err(LxmfAdmissionFailure::LocalNodeStopped) => {
-            return AnnounceLxmfOutcome::LocalNodeStopped
-        }
-        Err(LxmfAdmissionFailure::Busy) => return AnnounceLxmfOutcome::Busy,
-    };
-    match response.recv_timeout(LXMF_QUERY_TIMEOUT) {
-        Ok(outcome) => outcome,
-        Err(std_mpsc::RecvTimeoutError::Timeout) => AnnounceLxmfOutcome::Failed,
-        Err(std_mpsc::RecvTimeoutError::Disconnected) => AnnounceLxmfOutcome::LocalNodeStopped,
-    }
-}
-
-#[must_use]
+#[cfg(test)]
 pub fn send_direct_text(input: SendDirectTextInput) -> SendDirectTextOutcome {
     let response = match admit_lxmf(|response| Command::SendDirectText(input, response)) {
         Ok(response) => response,
@@ -1841,6 +1811,7 @@ pub fn send_direct_text(input: SendDirectTextInput) -> SendDirectTextOutcome {
     wait_for_admitted_lxmf_send(response)
 }
 
+#[cfg(test)]
 fn wait_for_admitted_lxmf_send(
     response: std_mpsc::Receiver<SendDirectTextOutcome>,
 ) -> SendDirectTextOutcome {
@@ -1853,6 +1824,7 @@ fn wait_for_admitted_lxmf_send(
     }
 }
 
+#[cfg(test)]
 pub fn save_observed_destination(
     storage_root: &Path,
     input: ContactDestinationInput,
@@ -1860,6 +1832,7 @@ pub fn save_observed_destination(
     save_observed_destination_with_supervisor(supervisor(), storage_root, input)
 }
 
+#[cfg(test)]
 fn save_observed_destination_with_supervisor(
     supervisor: &Supervisor,
     storage_root: &Path,
@@ -1938,6 +1911,7 @@ fn save_observed_destination_with_supervisor(
     receive_mutation(response)
 }
 
+#[cfg(test)]
 pub fn create_manual_contact(
     storage_root: &Path,
     input: CreateManualContactInput,
@@ -1952,66 +1926,7 @@ pub fn create_manual_contact(
     )
 }
 
-pub fn set_contact_alias(
-    storage_root: &Path,
-    input: SetContactAliasInput,
-) -> ContactMutationOutcome {
-    call_contact_mutation(
-        storage_root,
-        DirectoryRequest::SetAlias {
-            destination: input.destination,
-            alias: input.alias,
-        },
-    )
-}
-
-pub fn set_contact_pinned(
-    storage_root: &Path,
-    input: SetContactPinnedInput,
-) -> ContactMutationOutcome {
-    call_contact_mutation(
-        storage_root,
-        DirectoryRequest::SetPinned {
-            destination: input.destination,
-            pinned: input.pinned,
-        },
-    )
-}
-
-pub fn delete_contact(
-    storage_root: &Path,
-    input: ContactDestinationInput,
-) -> ContactMutationOutcome {
-    call_contact_mutation(
-        storage_root,
-        DirectoryRequest::Delete {
-            destination: input.destination,
-        },
-    )
-}
-
-pub fn get_contact(storage_root: &Path, input: ContactDestinationInput) -> ContactLookupOutcome {
-    let response = match admit_directory(
-        storage_root,
-        DirectoryRequest::Get {
-            destination: input.destination,
-        },
-    ) {
-        Ok(response) => response,
-        Err(failure) => return lookup_store_failure(failure),
-    };
-    match response.recv_timeout(DIRECTORY_TIMEOUT) {
-        Ok(Ok(DirectoryResponse::Lookup(outcome))) => outcome,
-        Ok(Ok(_)) => ContactLookupOutcome::DevelopmentUnavailable {
-            detail: "The development database returned an unexpected contact result.".to_owned(),
-        },
-        Ok(Err(failure)) => lookup_store_failure(failure),
-        Err(_) => ContactLookupOutcome::DevelopmentUnavailable {
-            detail: "The development contact lookup exceeded its bounded wait.".to_owned(),
-        },
-    }
-}
-
+#[cfg(test)]
 pub fn list_contacts(storage_root: &Path) -> ContactListOutcome {
     let response = match admit_directory(storage_root, DirectoryRequest::List) {
         Ok(response) => response,
@@ -2029,6 +1944,7 @@ pub fn list_contacts(storage_root: &Path) -> ContactListOutcome {
     }
 }
 
+#[cfg(test)]
 fn call_contact_mutation(storage_root: &Path, request: DirectoryRequest) -> ContactMutationOutcome {
     let response = match admit_directory(storage_root, request) {
         Ok(response) => response,
@@ -2037,6 +1953,7 @@ fn call_contact_mutation(storage_root: &Path, request: DirectoryRequest) -> Cont
     receive_mutation(response)
 }
 
+#[cfg(test)]
 fn receive_mutation(response: std_mpsc::Receiver<StoreReply>) -> ContactMutationOutcome {
     match response.recv_timeout(DIRECTORY_TIMEOUT) {
         Ok(Ok(DirectoryResponse::Mutation(outcome))) => outcome,
@@ -2050,6 +1967,7 @@ fn receive_mutation(response: std_mpsc::Receiver<StoreReply>) -> ContactMutation
     }
 }
 
+#[cfg(test)]
 fn admit_directory(
     storage_root: &Path,
     request: DirectoryRequest,
@@ -2061,6 +1979,7 @@ fn admit_directory(
     admit_directory_locked(&mut state, &paths, request)
 }
 
+#[cfg(test)]
 fn admit_directory_locked(
     state: &mut SupervisorState,
     paths: &NodeStoragePaths,
@@ -2114,6 +2033,7 @@ fn ensure_application_owner_locked<'a>(
     })
 }
 
+#[cfg(test)]
 fn admit_mailbox_locked(
     state: &mut SupervisorState,
     paths: &NodeStoragePaths,
@@ -2188,13 +2108,11 @@ fn stop_locked(supervisor: &Supervisor, state: &mut SupervisorState) -> Developm
         }
     }
 
-    let stop_started_at_millis = U64String::from(wall_clock_millis());
+    let stop_started_at_millis = wall_clock_millis();
     let terminal_snapshot = supervisor.snapshots.read();
     let preserve_terminal_failure = terminal_snapshot.runtime == DevelopmentNodeRuntime::Failed;
     let prior_terminal_failure = terminal_snapshot.failure;
-    supervisor
-        .snapshots
-        .begin_stop(stop_started_at_millis.clone());
+    supervisor.snapshots.begin_stop(stop_started_at_millis);
     request_worker_shutdown(worker);
 
     let result = worker.done.recv_timeout(STOP_TIMEOUT);
@@ -2379,6 +2297,7 @@ impl Supervisor {
     }
 }
 
+#[cfg(any(test, feature = "host-test"))]
 fn running_commands() -> Option<mpsc::Sender<Command>> {
     let supervisor = supervisor();
     let mut state = supervisor.lock_state();
@@ -2389,6 +2308,7 @@ fn running_commands() -> Option<mpsc::Sender<Command>> {
     state.worker.as_ref().map(|worker| worker.commands.clone())
 }
 
+#[cfg(any(test, feature = "host-test"))]
 fn call_pairing(
     timeout: Duration,
     command: impl FnOnce(Reply<RemoteControlPairingCommandOutcome>) -> Command,
@@ -3151,6 +3071,7 @@ async fn run_actor_loop(
                 }
             }
             command = commands.recv() => match command {
+                #[cfg(any(test, feature = "host-test"))]
                 Some(Command::Snapshot(response)) => {
                     refresh_host_snapshot(
                         handle,
@@ -3533,7 +3454,7 @@ async fn initiate_pairing(
     snapshots.update(|snapshot| {
         snapshot.active_operation = Some(DevelopmentNodeOperation {
             kind: DevelopmentNodeOperationKind::Pairing,
-            started_at_millis: U64String::from(wall_clock_millis()),
+            started_at_millis: wall_clock_millis(),
         });
         snapshot.pairing = RemoteControlPairingState::InvitationSubmitted {
             candidate_id: input.candidate_id,
@@ -4057,7 +3978,7 @@ mod tests {
                         running_snapshots.update(|snapshot| {
                             snapshot.active_operation = Some(DevelopmentNodeOperation {
                                 kind: DevelopmentNodeOperationKind::Describe,
-                                started_at_millis: U64String::from(0),
+                                started_at_millis: 0,
                             });
                         });
                         running_entered.notify_one();
@@ -4215,10 +4136,10 @@ mod tests {
         snapshots.update(|snapshot| {
             snapshot.active_operation = Some(DevelopmentNodeOperation {
                 kind: DevelopmentNodeOperationKind::Pairing,
-                started_at_millis: U64String::from(0),
+                started_at_millis: 0,
             });
             snapshot.last_announcement = Some(RemoteControlAnnounceOperation {
-                operation_id: U64String::from(1),
+                operation_id: 1,
                 target_identity_fingerprint: vec![1; 16],
                 status: RemoteControlAnnounceStatus::Pending,
             });
@@ -4253,13 +4174,13 @@ mod tests {
             snapshots.update(|snapshot| {
                 snapshot.lxmf.state = crate::contract::LxmfHealthState::Ready;
                 snapshot.last_announcement = Some(RemoteControlAnnounceOperation {
-                    operation_id: U64String::from(1),
+                    operation_id: 1,
                     target_identity_fingerprint: vec![1; 16],
                     status: RemoteControlAnnounceStatus::Pending,
                 });
                 snapshot.active_operation = Some(DevelopmentNodeOperation {
                     kind: DevelopmentNodeOperationKind::AnnounceSelf,
-                    started_at_millis: U64String::from(0),
+                    started_at_millis: 0,
                 });
             });
             let admitted = AtomicBool::new(true);
@@ -4337,7 +4258,7 @@ mod tests {
         ));
         // Model a consumed command that never settles before priority shutdown.
         let mut state = supervisor.lock_state();
-        supervisor.snapshots.begin_stop(U64String::from(2));
+        supervisor.snapshots.begin_stop(2);
         let blocked = Arc::clone(&supervisor);
         let (started_tx, started_rx) = std_mpsc::channel();
         let submit = std::thread::spawn(move || {
@@ -4617,7 +4538,7 @@ mod tests {
             snapshot.pairing = pairing;
             snapshot.active_operation = Some(DevelopmentNodeOperation {
                 kind: DevelopmentNodeOperationKind::Pairing,
-                started_at_millis: U64String::from(7),
+                started_at_millis: 7,
             });
         });
     }
@@ -4742,7 +4663,7 @@ mod tests {
         assert!(matches!(
             messages[0].delivery_state,
             crate::contract::LxmfDeliveryState::Failed {
-                failed_attempts: U64String(ref value),
+                failed_attempts: ref value,
                 last_failure: crate::contract::LxmfDeliveryFailure::DeliveryTimedOut,
             } if *value == 1
         ));
@@ -4751,13 +4672,9 @@ mod tests {
             retry_lxmf_message_with_supervisor(
                 supervisor,
                 storage,
-                RetryLxmfMessageInput {
-                    local_record_id: U64String::from(1),
-                },
+                RetryLxmfMessageInput { local_record_id: 1 },
             ),
-            RetryLxmfMessageOutcome::Accepted {
-                local_record_id: U64String::from(1),
-            }
+            RetryLxmfMessageOutcome::Accepted { local_record_id: 1 }
         );
         let LxmfMessageListOutcome::Listed { messages } =
             list_lxmf_messages_with_supervisor(supervisor, storage, list_input.clone())
@@ -4766,22 +4683,16 @@ mod tests {
         };
         assert_eq!(
             messages[0].delivery_state,
-            crate::contract::LxmfDeliveryState::Queued {
-                failed_attempts: U64String::from(1),
-            }
+            crate::contract::LxmfDeliveryState::Queued { failed_attempts: 1 }
         );
 
         assert_eq!(
             cancel_lxmf_message_with_supervisor(
                 supervisor,
                 storage,
-                CancelLxmfMessageInput {
-                    local_record_id: U64String::from(1),
-                },
+                CancelLxmfMessageInput { local_record_id: 1 },
             ),
-            CancelLxmfMessageOutcome::Cancelled {
-                local_record_id: U64String::from(1),
-            }
+            CancelLxmfMessageOutcome::Cancelled { local_record_id: 1 }
         );
         let LxmfMessageListOutcome::Listed { messages } =
             list_lxmf_messages_with_supervisor(supervisor, storage, list_input)
@@ -5241,15 +5152,11 @@ mod tests {
         assert!(!waiter.is_finished());
 
         response
-            .send(SendDirectTextOutcome::Accepted {
-                local_record_id: U64String::from(7),
-            })
+            .send(SendDirectTextOutcome::Accepted { local_record_id: 7 })
             .expect("publish definitive commit outcome");
         assert_eq!(
             waiter.join().expect("waiter joins"),
-            SendDirectTextOutcome::Accepted {
-                local_record_id: U64String::from(7),
-            }
+            SendDirectTextOutcome::Accepted { local_record_id: 7 }
         );
     }
 
@@ -5336,9 +5243,7 @@ mod tests {
             retry_lxmf_message_with_supervisor(
                 &retry_supervisor,
                 &retry_storage,
-                RetryLxmfMessageInput {
-                    local_record_id: U64String::from(1),
-                },
+                RetryLxmfMessageInput { local_record_id: 1 },
             )
         });
         std::thread::sleep(LXMF_QUERY_TIMEOUT + Duration::from_millis(25));
@@ -5346,9 +5251,7 @@ mod tests {
         retry_release_tx.send(()).expect("release retry");
         assert_eq!(
             retry.join().expect("retry waiter joins"),
-            RetryLxmfMessageOutcome::Accepted {
-                local_record_id: U64String::from(1),
-            }
+            RetryLxmfMessageOutcome::Accepted { local_record_id: 1 }
         );
 
         let (cancel_entered_tx, cancel_entered_rx) = std_mpsc::sync_channel(1);
@@ -5369,9 +5272,7 @@ mod tests {
             cancel_lxmf_message_with_supervisor(
                 &cancel_supervisor,
                 &cancel_storage,
-                CancelLxmfMessageInput {
-                    local_record_id: U64String::from(1),
-                },
+                CancelLxmfMessageInput { local_record_id: 1 },
             )
         });
         std::thread::sleep(LXMF_QUERY_TIMEOUT + Duration::from_millis(25));
@@ -5379,9 +5280,7 @@ mod tests {
         cancel_release_tx.send(()).expect("release cancel");
         assert_eq!(
             cancel.join().expect("cancel waiter joins"),
-            CancelLxmfMessageOutcome::Cancelled {
-                local_record_id: U64String::from(1),
-            }
+            CancelLxmfMessageOutcome::Cancelled { local_record_id: 1 }
         );
 
         let LxmfMessageListOutcome::Listed { messages } = list_lxmf_messages_with_supervisor(
@@ -5458,13 +5357,9 @@ mod tests {
             retry_lxmf_message_with_supervisor(
                 &supervisor,
                 &storage,
-                RetryLxmfMessageInput {
-                    local_record_id: U64String::from(1),
-                },
+                RetryLxmfMessageInput { local_record_id: 1 },
             ),
-            RetryLxmfMessageOutcome::Accepted {
-                local_record_id: U64String::from(1),
-            }
+            RetryLxmfMessageOutcome::Accepted { local_record_id: 1 }
         );
         assert!(supervisor.lock_state().worker.is_none());
         assert_eq!(supervisor.snapshots.read(), failure_snapshot);
@@ -5474,13 +5369,9 @@ mod tests {
             cancel_lxmf_message_with_supervisor(
                 &supervisor,
                 &storage,
-                CancelLxmfMessageInput {
-                    local_record_id: U64String::from(1),
-                },
+                CancelLxmfMessageInput { local_record_id: 1 },
             ),
-            CancelLxmfMessageOutcome::Cancelled {
-                local_record_id: U64String::from(1),
-            }
+            CancelLxmfMessageOutcome::Cancelled { local_record_id: 1 }
         );
         assert!(supervisor.lock_state().worker.is_none());
         assert_eq!(supervisor.snapshots.read(), failure_snapshot);
@@ -5701,9 +5592,7 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(
             messages[0].delivery_state,
-            crate::contract::LxmfDeliveryState::Sending {
-                failed_attempts: U64String::from(0)
-            }
+            crate::contract::LxmfDeliveryState::Sending { failed_attempts: 0 }
         );
         assert_eq!(messages[0].local_record_id, local_record_id);
 
@@ -5801,9 +5690,7 @@ mod tests {
             send_result
                 .recv_timeout(Duration::from_secs(1))
                 .expect("the committed insert reports its definitive outcome"),
-            SendDirectTextOutcome::Accepted {
-                local_record_id: U64String::from(1),
-            }
+            SendDirectTextOutcome::Accepted { local_record_id: 1 }
         );
         assert_eq!(network.send_count.load(Ordering::Acquire), 0);
 
@@ -6054,7 +5941,7 @@ mod tests {
         snapshots.set_local_host(running_host_state());
         snapshots.refresh_lxmf(crate::contract::LxmfHealth {
             state: crate::contract::LxmfHealthState::Ready,
-            inbound_overflow_count: U64String::from(7),
+            inbound_overflow_count: 7,
         });
 
         assert_eq!(
@@ -6064,7 +5951,7 @@ mod tests {
         let busy = snapshots.read();
         assert_eq!(busy.runtime, DevelopmentNodeRuntime::Running);
         assert_eq!(busy.lxmf.state, crate::contract::LxmfHealthState::Degraded);
-        assert_eq!(busy.lxmf.inbound_overflow_count, U64String::from(7));
+        assert_eq!(busy.lxmf.inbound_overflow_count, 7);
         assert_eq!(busy.failure, None);
 
         assert_eq!(
@@ -6086,7 +5973,7 @@ mod tests {
             recovered.lxmf.state,
             crate::contract::LxmfHealthState::Ready
         );
-        assert_eq!(recovered.lxmf.inbound_overflow_count, U64String::from(0));
+        assert_eq!(recovered.lxmf.inbound_overflow_count, 0);
         assert_eq!(recovered.failure, None);
 
         service.stop().await.expect("the service stops promptly");
@@ -6123,7 +6010,7 @@ mod tests {
         snapshots.set_local_host(running_host_state());
         snapshots.refresh_lxmf(crate::contract::LxmfHealth {
             state: crate::contract::LxmfHealthState::Ready,
-            inbound_overflow_count: U64String::from(7),
+            inbound_overflow_count: 7,
         });
         let mut refresh = service.subscribe();
         let mut retry_timer = tokio::time::interval(LXMF_HEALTH_RETRY_DELAY);
@@ -6356,7 +6243,7 @@ mod tests {
         snapshots.set_runtime(DevelopmentNodeRuntime::Running);
         let local_host = running_host_state();
         snapshots.set_local_host(local_host.clone());
-        snapshots.begin_stop(U64String::from(42));
+        snapshots.begin_stop(42);
         let admitted = AtomicBool::new(true);
 
         settle_worker_result(
@@ -6383,7 +6270,7 @@ mod tests {
             snapshot.active_operation,
             Some(DevelopmentNodeOperation {
                 kind: DevelopmentNodeOperationKind::Shutdown,
-                started_at_millis: U64String::from(42),
+                started_at_millis: 42,
             })
         );
     }
@@ -6510,7 +6397,7 @@ mod tests {
         tokio::task::yield_now().await;
         supervisor
             .snapshots
-            .update(|snapshot| snapshot.revision = U64String(42));
+            .update(|snapshot| snapshot.revision = 42);
         let expected = supervisor.snapshots.read();
         response.send(expected.clone()).expect("live query");
         assert_eq!(query.await.expect("query completion"), expected);
@@ -7162,7 +7049,7 @@ mod tests {
                 stage: DevelopmentNodeFailureStage::Runtime,
                 detail: detail.clone(),
             },
-            U64String::from(42),
+            42,
         );
 
         let (commands, _command_rx) = mpsc::channel(1);

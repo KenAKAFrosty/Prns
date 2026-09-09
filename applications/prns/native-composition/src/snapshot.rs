@@ -5,7 +5,7 @@ use crate::contract::{
     DevelopmentNodeFailure, DevelopmentNodeOperation, DevelopmentNodeOperationKind,
     DevelopmentNodeRuntime, DevelopmentNodeSnapshot, LocalHostState, LxmfHealth, LxmfHealthState,
     PrimaryIdentityState, RemoteControlAnnounceOperation, RemoteControlAnnounceStatus,
-    RemoteControlAnnounceUnknownReason, U64String,
+    RemoteControlAnnounceUnknownReason,
 };
 
 pub struct SnapshotStore {
@@ -35,9 +35,9 @@ impl SnapshotStore {
 
     pub fn update(&self, update: impl FnOnce(&mut DevelopmentNodeSnapshot)) {
         let mut snapshot = self.lock();
-        let next = snapshot.revision.0.saturating_add(1);
+        let next = snapshot.revision.saturating_add(1);
         update(&mut snapshot);
-        snapshot.revision = U64String::from(next);
+        snapshot.revision = next;
     }
 
     pub fn set_runtime(&self, runtime: DevelopmentNodeRuntime) {
@@ -49,9 +49,9 @@ impl SnapshotStore {
         if snapshot.primary_identity == primary_identity {
             return;
         }
-        let next = snapshot.revision.0.saturating_add(1);
+        let next = snapshot.revision.saturating_add(1);
         snapshot.primary_identity = primary_identity;
-        snapshot.revision = U64String::from(next);
+        snapshot.revision = next;
     }
 
     pub fn set_local_host(&self, local_host: LocalHostState) {
@@ -59,9 +59,9 @@ impl SnapshotStore {
         if snapshot.local_host == local_host {
             return;
         }
-        let next = snapshot.revision.0.saturating_add(1);
+        let next = snapshot.revision.saturating_add(1);
         snapshot.local_host = local_host;
-        snapshot.revision = U64String::from(next);
+        snapshot.revision = next;
     }
 
     pub fn set_local_host_unavailable_if_running(&self, detail: String) {
@@ -73,15 +73,15 @@ impl SnapshotStore {
         if snapshot.local_host == local_host {
             return;
         }
-        let next = snapshot.revision.0.saturating_add(1);
+        let next = snapshot.revision.saturating_add(1);
         snapshot.local_host = local_host;
-        snapshot.revision = U64String::from(next);
+        snapshot.revision = next;
     }
 
     /// An asynchronous read from a retired generation must not mark its successor
     /// unavailable when its own actor or timeout completes later.
     #[cfg(feature = "uniffi-bindings")]
-    pub fn set_local_host_unavailable_for_generation(&self, generation: U64String, detail: String) {
+    pub fn set_local_host_unavailable_for_generation(&self, generation: u64, detail: String) {
         let mut snapshot = self.lock();
         if snapshot.runtime != DevelopmentNodeRuntime::Running
             || snapshot.generation_id != generation
@@ -89,7 +89,7 @@ impl SnapshotStore {
             return;
         }
         snapshot.local_host = LocalHostState::Unavailable { detail };
-        snapshot.revision = U64String(snapshot.revision.0.saturating_add(1));
+        snapshot.revision = snapshot.revision.saturating_add(1);
     }
 
     /// Publish an LXMF refresh hint through the aggregate's existing revision.
@@ -106,9 +106,9 @@ impl SnapshotStore {
         if snapshot.lxmf.state == LxmfHealthState::Degraded {
             return;
         }
-        let next = snapshot.revision.0.saturating_add(1);
+        let next = snapshot.revision.saturating_add(1);
         snapshot.lxmf.state = LxmfHealthState::Degraded;
-        snapshot.revision = U64String::from(next);
+        snapshot.revision = next;
     }
 
     pub fn fail(&self, failure: DevelopmentNodeFailure) {
@@ -150,7 +150,7 @@ impl SnapshotStore {
         });
     }
 
-    pub fn begin_stop(&self, started_at_millis: U64String) {
+    pub fn begin_stop(&self, started_at_millis: u64) {
         self.explicit_stop_in_progress
             .store(true, Ordering::Release);
         self.update(|snapshot| {
@@ -162,7 +162,7 @@ impl SnapshotStore {
         });
     }
 
-    pub fn incomplete_stop(&self, failure: DevelopmentNodeFailure, started_at_millis: U64String) {
+    pub fn incomplete_stop(&self, failure: DevelopmentNodeFailure, started_at_millis: u64) {
         self.explicit_stop_in_progress
             .store(true, Ordering::Release);
         self.update(|snapshot| {
@@ -184,7 +184,7 @@ impl SnapshotStore {
             .store(false, Ordering::Release);
         self.update(|snapshot| {
             let mut next = DevelopmentNodeSnapshot::stopped();
-            next.generation_id = U64String::from(snapshot.revision.0.saturating_add(1));
+            next.generation_id = snapshot.revision.saturating_add(1);
             next.last_announcement = snapshot.last_announcement.clone();
             interrupt_announcement(&mut next.last_announcement);
             next.runtime = DevelopmentNodeRuntime::Starting;
@@ -198,7 +198,7 @@ impl SnapshotStore {
             .store(false, Ordering::Release);
         self.update(|snapshot| {
             let primary_identity = snapshot.primary_identity.clone();
-            let generation_id = snapshot.generation_id.clone();
+            let generation_id = snapshot.generation_id;
             let mut last_announcement = snapshot.last_announcement.clone();
             interrupt_announcement(&mut last_announcement);
             *snapshot = DevelopmentNodeSnapshot::stopped();
@@ -267,7 +267,7 @@ mod tests {
         let store = SnapshotStore::new();
         store.update(|snapshot| {
             snapshot.last_announcement = Some(RemoteControlAnnounceOperation {
-                operation_id: U64String::from(7),
+                operation_id: 7,
                 target_identity_fingerprint: vec![1; 16],
                 status: RemoteControlAnnounceStatus::Pending,
             })
@@ -292,7 +292,7 @@ mod tests {
         store.set_runtime(DevelopmentNodeRuntime::Starting);
         store.set_runtime(DevelopmentNodeRuntime::Running);
         let snapshot = store.read();
-        assert_eq!(snapshot.revision, U64String::from(2));
+        assert_eq!(snapshot.revision, 2);
         assert_eq!(snapshot.runtime, DevelopmentNodeRuntime::Running);
     }
 
@@ -309,7 +309,7 @@ mod tests {
             detail: "shutdown remains incomplete".to_owned(),
         };
 
-        store.incomplete_stop(failure.clone(), U64String::from(42));
+        store.incomplete_stop(failure.clone(), 42);
 
         let snapshot = store.read();
         assert_eq!(snapshot.runtime, DevelopmentNodeRuntime::Stopping);
@@ -319,7 +319,7 @@ mod tests {
             snapshot.active_operation,
             Some(DevelopmentNodeOperation {
                 kind: DevelopmentNodeOperationKind::Shutdown,
-                started_at_millis: U64String::from(42),
+                started_at_millis: 42,
             })
         );
     }
@@ -332,7 +332,7 @@ mod tests {
         };
         store.set_runtime(DevelopmentNodeRuntime::Running);
         store.set_local_host(local_host.clone());
-        store.begin_stop(U64String::from(42));
+        store.begin_stop(42);
         store.update(|snapshot| snapshot.active_operation = None);
         let failure = DevelopmentNodeFailure {
             stage: crate::contract::DevelopmentNodeFailureStage::Runtime,

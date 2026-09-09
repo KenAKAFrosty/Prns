@@ -90,7 +90,7 @@ fn foreign_snapshot_attaches_to_native_started_process_owner() {
         from_foreign.local_host,
         LocalHostState::Running { .. }
     ));
-    assert!(from_foreign.revision.0 >= started.revision.0);
+    assert!(from_foreign.revision >= started.revision);
     assert!(matches!(
         prns_app::bindings::native_stop(),
         DevelopmentNodeStopOutcome::Stopped

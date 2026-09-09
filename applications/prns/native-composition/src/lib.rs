@@ -5,7 +5,6 @@ mod android;
 pub mod contract;
 mod development_store;
 mod directory;
-pub mod ffi;
 mod input;
 mod ios_restoration_probe;
 mod lifecycle;

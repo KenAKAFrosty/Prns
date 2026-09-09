@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 
 use crate::contract::{
     DevelopmentNodeFailure, DevelopmentNodeFailureStage, RemoteControlPairingCandidate,
-    RemoteControlPairingState, RemoteControlRequestKind, U64String,
+    RemoteControlPairingState, RemoteControlRequestKind,
 };
 use crate::snapshot::SnapshotStore;
 
@@ -398,9 +398,9 @@ impl PairingControls {
             .map(|candidate| RemoteControlPairingCandidate {
                 candidate_id: candidate.candidate_id.clone(),
                 display_name: candidate.display_name.clone(),
-                observed_at_millis: U64String::from(candidate.observed_at.0),
-                expires_at_millis: U64String::from(candidate.expires_at.0),
-                expires_in_millis: U64String::from(candidate.expires_at.0.saturating_sub(now.0)),
+                observed_at_millis: candidate.observed_at.0,
+                expires_at_millis: candidate.expires_at.0,
+                expires_in_millis: candidate.expires_at.0.saturating_sub(now.0),
             })
             .collect()
     }
@@ -780,7 +780,7 @@ mod tests {
             };
             snapshot.active_operation = Some(crate::contract::DevelopmentNodeOperation {
                 kind: crate::contract::DevelopmentNodeOperationKind::Pairing,
-                started_at_millis: U64String::from(7),
+                started_at_millis: 7,
             });
         });
 
@@ -842,7 +842,7 @@ mod tests {
         let projected = snapshots.read().pairing_candidates;
         assert_eq!(projected.len(), 2);
         assert_eq!(projected[0].display_name.as_deref(), Some("Second"));
-        assert_eq!(projected[0].expires_in_millis, U64String::from(8));
+        assert_eq!(projected[0].expires_in_millis, 8);
         assert_eq!(projected[1].display_name.as_deref(), Some("First"));
 
         expire_candidates(&mut controls, &snapshots, InstantMillis(5));
@@ -853,10 +853,7 @@ mod tests {
             retained.pairing,
             RemoteControlPairingState::Searching
         ));
-        assert_eq!(
-            retained.pairing_candidates[0].expires_in_millis,
-            U64String::from(5)
-        );
+        assert_eq!(retained.pairing_candidates[0].expires_in_millis, 5);
 
         expire_candidates(&mut controls, &snapshots, InstantMillis(10));
         assert!(controls.candidates.is_empty());
@@ -875,15 +872,15 @@ mod tests {
         apply_candidate(&mut controls, &snapshots, 0x42, 9, 200, b"Stale", 10);
         let stale_ignored = snapshots.read().pairing_candidates;
         assert_eq!(stale_ignored[0].display_name.as_deref(), Some("Original"));
-        assert_eq!(stale_ignored[0].observed_at_millis, U64String::from(10));
-        assert_eq!(stale_ignored[0].expires_at_millis, U64String::from(100));
+        assert_eq!(stale_ignored[0].observed_at_millis, 10);
+        assert_eq!(stale_ignored[0].expires_at_millis, 100);
 
         apply_candidate(&mut controls, &snapshots, 0x42, 11, 120, b" Refreshed ", 11);
         let refreshed = snapshots.read().pairing_candidates;
         assert_eq!(refreshed.len(), 1);
         assert_eq!(refreshed[0].display_name.as_deref(), Some("Refreshed"));
-        assert_eq!(refreshed[0].observed_at_millis, U64String::from(11));
-        assert_eq!(refreshed[0].expires_at_millis, U64String::from(120));
+        assert_eq!(refreshed[0].observed_at_millis, 11);
+        assert_eq!(refreshed[0].expires_at_millis, 120);
     }
 
     #[test]

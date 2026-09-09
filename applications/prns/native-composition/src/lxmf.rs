@@ -12,7 +12,7 @@ use crate::contract::{
     CancelLxmfMessageOutcome, ListLxmfMessagesInput, LxmfDeliveryFailure, LxmfDeliveryState,
     LxmfDirection, LxmfHealth, LxmfHealthState, LxmfMessage, LxmfMessageListOutcome,
     LxmfPeerListOutcome, LxmfPeerSummary, LxmfText, LxmfVerification, MeasureLxmfTextInput,
-    MeasureLxmfTextOutcome, RetryLxmfMessageOutcome, SendDirectTextOutcome, U64String,
+    MeasureLxmfTextOutcome, RetryLxmfMessageOutcome, SendDirectTextOutcome,
 };
 
 const MAX_MESSAGE_PAGE_SIZE: u16 = 100;
@@ -32,7 +32,7 @@ pub(crate) fn project_health(snapshot: &DurableLxmfSnapshot) -> Result<LxmfHealt
             | (prns_lxmf::LxmfHealthState::Ready, true) => LxmfHealthState::Degraded,
             (prns_lxmf::LxmfHealthState::Ready, false) => LxmfHealthState::Ready,
         },
-        inbound_overflow_count: U64String::from(snapshot.health.inbound_overflow_count),
+        inbound_overflow_count: snapshot.health.inbound_overflow_count,
     })
 }
 
@@ -46,10 +46,8 @@ pub(crate) fn project_peers(
         .map(|peer| LxmfPeerSummary {
             destination: peer.destination,
             display_name: peer.display_name.clone(),
-            required_stamp_cost: peer.required_stamp_cost.map(U64String::from),
-            last_observed_age_millis: U64String::from(
-                now_millis.saturating_sub(peer.observed_at_millis),
-            ),
+            required_stamp_cost: peer.required_stamp_cost,
+            last_observed_age_millis: now_millis.saturating_sub(peer.observed_at_millis),
         })
         .collect();
     LxmfPeerListOutcome::Listed { peers }
@@ -63,7 +61,7 @@ pub(crate) fn mailbox_list_request(
             detail: format!("limit must be an integer from 1 through {MAX_MESSAGE_PAGE_SIZE}"),
         });
     }
-    let before = input.before.map(|value| value.0);
+    let before = input.before;
     Ok(MailboxListRequest {
         peer: input.peer,
         direction: None::<MailboxDirectionFilter>,
@@ -110,9 +108,7 @@ pub(crate) fn measure_text(input: &MeasureLxmfTextInput) -> MeasureLxmfTextOutco
 pub(crate) fn project_send_outcome(outcome: DurableSendDirectTextOutcome) -> SendDirectTextOutcome {
     match outcome {
         DurableSendDirectTextOutcome::Accepted { local_record_id } => {
-            SendDirectTextOutcome::Accepted {
-                local_record_id: U64String::from(local_record_id),
-            }
+            SendDirectTextOutcome::Accepted { local_record_id }
         }
         DurableSendDirectTextOutcome::NeedsResource { wire_bytes } => {
             match u32::try_from(wire_bytes) {
@@ -125,7 +121,7 @@ pub(crate) fn project_send_outcome(outcome: DurableSendDirectTextOutcome) -> Sen
         DurableSendDirectTextOutcome::UnsupportedRemoteStampRequirement {
             required_stamp_cost,
         } => SendDirectTextOutcome::UnsupportedRemoteStampRequirement {
-            required_stamp_cost: U64String::from(required_stamp_cost),
+            required_stamp_cost,
         },
         DurableSendDirectTextOutcome::PeerIdentityUnavailable => {
             SendDirectTextOutcome::PeerIdentityUnavailable
@@ -155,9 +151,9 @@ pub(crate) fn project_send_outcome(outcome: DurableSendDirectTextOutcome) -> Sen
 
 pub(crate) fn project_retry_outcome(outcome: ServiceRetryOutcome) -> RetryLxmfMessageOutcome {
     match outcome {
-        ServiceRetryOutcome::Accepted { local_record_id } => RetryLxmfMessageOutcome::Accepted {
-            local_record_id: U64String::from(local_record_id),
-        },
+        ServiceRetryOutcome::Accepted { local_record_id } => {
+            RetryLxmfMessageOutcome::Accepted { local_record_id }
+        }
         ServiceRetryOutcome::NotFound => RetryLxmfMessageOutcome::NotFound,
         ServiceRetryOutcome::NotFailed { current } => RetryLxmfMessageOutcome::NotFailed {
             current: project_delivery_state(current),
@@ -180,9 +176,7 @@ pub(crate) fn project_retry_outcome(outcome: ServiceRetryOutcome) -> RetryLxmfMe
 pub(crate) fn project_cancel_outcome(outcome: ServiceCancelOutcome) -> CancelLxmfMessageOutcome {
     match outcome {
         ServiceCancelOutcome::Cancelled { local_record_id } => {
-            CancelLxmfMessageOutcome::Cancelled {
-                local_record_id: U64String::from(local_record_id),
-            }
+            CancelLxmfMessageOutcome::Cancelled { local_record_id }
         }
         ServiceCancelOutcome::NotFound => CancelLxmfMessageOutcome::NotFound,
         ServiceCancelOutcome::AlreadyDelivered => CancelLxmfMessageOutcome::AlreadyDelivered,
@@ -253,11 +247,11 @@ pub(crate) fn cancel_failure(failure: MailboxFailure) -> CancelLxmfMessageOutcom
 
 fn project_message(message: &DurableLxmfMessage) -> LxmfMessage {
     LxmfMessage {
-        local_record_id: U64String::from(message.local_record_id),
+        local_record_id: message.local_record_id,
         message_id: message.message_id,
         source: message.source,
         destination: message.destination,
-        timestamp: U64String::from(message.timestamp_unix_ms),
+        timestamp: message.timestamp_unix_ms,
         title: project_text(&message.title),
         content: project_text(&message.content),
         direction: match message.direction {
@@ -276,30 +270,30 @@ fn project_message(message: &DurableLxmfMessage) -> LxmfMessage {
 fn project_delivery_state(state: DurableLxmfDeliveryState) -> LxmfDeliveryState {
     match state {
         DurableLxmfDeliveryState::Received => LxmfDeliveryState::Received,
-        DurableLxmfDeliveryState::Queued { failed_attempts } => LxmfDeliveryState::Queued {
-            failed_attempts: U64String::from(failed_attempts),
-        },
-        DurableLxmfDeliveryState::Sending { failed_attempts } => LxmfDeliveryState::Sending {
-            failed_attempts: U64String::from(failed_attempts),
-        },
+        DurableLxmfDeliveryState::Queued { failed_attempts } => {
+            LxmfDeliveryState::Queued { failed_attempts }
+        }
+        DurableLxmfDeliveryState::Sending { failed_attempts } => {
+            LxmfDeliveryState::Sending { failed_attempts }
+        }
         DurableLxmfDeliveryState::Delivered {
             delivered_at_millis,
             rtt_millis,
         } => LxmfDeliveryState::Delivered {
-            delivered_at: U64String::from(delivered_at_millis),
-            rtt: rtt_millis.map(U64String::from),
+            delivered_at: delivered_at_millis,
+            rtt: rtt_millis,
         },
         DurableLxmfDeliveryState::Failed {
             failed_attempts,
             last_failure,
         } => LxmfDeliveryState::Failed {
-            failed_attempts: U64String::from(failed_attempts),
+            failed_attempts,
             last_failure: project_failure(last_failure),
         },
         DurableLxmfDeliveryState::Cancelled {
             cancelled_at_millis,
         } => LxmfDeliveryState::Cancelled {
-            cancelled_at: U64String::from(cancelled_at_millis),
+            cancelled_at: cancelled_at_millis,
         },
     }
 }
@@ -326,16 +320,6 @@ fn project_text(bytes: &[u8]) -> LxmfText {
             bytes: bytes.to_vec(),
         },
     }
-}
-
-pub(crate) fn parse_canonical_u64(value: &str) -> Option<u64> {
-    if value.is_empty()
-        || (value.len() > 1 && value.starts_with('0'))
-        || !value.bytes().all(|byte| byte.is_ascii_digit())
-    {
-        return None;
-    }
-    value.parse().ok()
 }
 
 #[cfg(test)]
@@ -379,7 +363,7 @@ mod tests {
                 project_health(&snapshot),
                 Ok(LxmfHealth {
                     state: LxmfHealthState::Degraded,
-                    inbound_overflow_count: U64String::from(3),
+                    inbound_overflow_count: 3,
                 })
             );
         }
@@ -390,7 +374,7 @@ mod tests {
             )),
             Ok(LxmfHealth {
                 state: LxmfHealthState::Ready,
-                inbound_overflow_count: U64String::from(3),
+                inbound_overflow_count: 3,
             })
         );
         assert_eq!(
@@ -400,7 +384,7 @@ mod tests {
             )),
             Ok(LxmfHealth {
                 state: LxmfHealthState::Stopped,
-                inbound_overflow_count: U64String::from(3),
+                inbound_overflow_count: 3,
             })
         );
         assert_eq!(
@@ -447,14 +431,5 @@ mod tests {
                 bytes: vec![0xff, 0xfe],
             }
         );
-    }
-
-    #[test]
-    fn pagination_cursor_is_canonical_u64() {
-        assert_eq!(parse_canonical_u64("0"), Some(0));
-        assert_eq!(parse_canonical_u64("18446744073709551615"), Some(u64::MAX));
-        for invalid in ["", "00", "+1", "-1", "1.0", "18446744073709551616"] {
-            assert_eq!(parse_canonical_u64(invalid), None);
-        }
     }
 }

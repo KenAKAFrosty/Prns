@@ -1,16 +1,16 @@
 # Generated-binding pilot
 
-Enable `uniffi-bindings` on the existing `prns-app-native` crate. It adds no node
+`uniffi-bindings` is the default feature of the existing `prns-app-native` crate. It adds no node
 constructor or runtime: `read_snapshot()` submits to the existing supervisor and
 returns the existing full `DevelopmentNodeSnapshot`. `binding_contract()` returns
 both app and canonical Host contract identifiers. Native startup's generation ID
 and primary identity can be compared directly with the generated snapshot.
 
-`U64String` now stores a `u64`. Its legacy JSON/ts-rs contract still uses canonical
-decimal strings; UniFFI exposes the same value as `bigint` / `UInt64` / `ULong`.
-The C/JSON bridge remains temporarily while platform/SDK consumers migrate.
-`export_contract --fingerprints` emits the semantic app/Host identifiers as JSON
-without generating a second TypeScript model.
+Application counters and identifiers use Rust `u64`, generated as exact
+`bigint` / `UInt64` / `ULong`. There is no decimal-string wrapper, handwritten
+domain C ABI, generic Android domain dispatcher, or parallel ts-rs/JSON model.
+The fingerprint-only `export_contract` binary emits semantic app/Host identifiers
+as JSON; it accepts the existing `--fingerprints` invocation.
 
 ## Canonical HostSnapshot
 
@@ -138,6 +138,6 @@ UniFFI uses explicit optional-value tags: generated `undefined` is the semantic
 `null`. Fixed16/32-byte inputs validate in custom lifts; u64 values stay exact.
 Contact normalization, pin/identity rules, mailbox pagination, pairing input and
 text semantics remain shared Rust checks. Native input/path/restoration size
-bounds are shared with the legacy ABI. Swift/Kotlin/JS generated codecs may carry
+bounds remain shared Rust semantic checks. Swift/Kotlin/JS generated codecs may carry
 native lifecycle outcomes through the small Expo admission wrappers without
 handwritten field mappings or a JSON compatibility model.

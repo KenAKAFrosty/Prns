@@ -537,7 +537,7 @@ pub(crate) async fn list_lxmf_messages(input: ListLxmfMessagesInput) -> LxmfMess
 }
 
 pub(crate) async fn retry_lxmf_message(input: RetryLxmfMessageInput) -> RetryLxmfMessageOutcome {
-    let id = input.local_record_id.0;
+    let id = input.local_record_id;
     match admit_mailbox(
         supervisor(),
         MailboxRequest::Retry {
@@ -567,7 +567,7 @@ pub(crate) async fn retry_lxmf_message(input: RetryLxmfMessageInput) -> RetryLxm
 }
 
 pub(crate) async fn cancel_lxmf_message(input: CancelLxmfMessageInput) -> CancelLxmfMessageOutcome {
-    let id = input.local_record_id.0;
+    let id = input.local_record_id;
     let cancelled_at_millis = wall_clock_millis();
     match admit_mailbox(
         supervisor(),

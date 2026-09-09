@@ -41,6 +41,7 @@ impl DevelopmentStoreFailure {
 }
 
 enum StoreJob {
+    #[cfg(test)]
     Directory {
         request: DirectoryRequest,
         response: SyncSender<StoreReply>,
@@ -50,6 +51,7 @@ enum StoreJob {
         request: DirectoryRequest,
         response: oneshot::Sender<StoreReply>,
     },
+    #[cfg(test)]
     MailboxSync {
         request: MailboxRequest,
         response: SyncSender<MailboxStoreReply>,
@@ -166,6 +168,7 @@ impl DevelopmentStoreOwner {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn admit(
         &self,
         request: DirectoryRequest,
@@ -214,6 +217,7 @@ impl DevelopmentStoreOwner {
         Ok(receiver)
     }
 
+    #[cfg(test)]
     pub(crate) fn admit_mailbox(
         &self,
         request: MailboxRequest,
@@ -294,6 +298,7 @@ impl Drop for DevelopmentStoreOwner {
 fn run_owner(database: &Database, jobs: &Receiver<StoreJob>) {
     while let Ok(job) = jobs.recv() {
         match job {
+            #[cfg(test)]
             StoreJob::Directory { request, response } => {
                 let _ = response.send(directory::execute(database, request));
             }
@@ -303,6 +308,7 @@ fn run_owner(database: &Database, jobs: &Receiver<StoreJob>) {
                 // has dropped the receiving future.
                 let _ = response.send(directory::execute(database, request));
             }
+            #[cfg(test)]
             StoreJob::MailboxSync { request, response } => {
                 let _ = response.send(execute_mailbox_request(database, request));
             }

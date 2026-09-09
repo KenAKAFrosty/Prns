@@ -17,10 +17,6 @@ uniffi::custom_type!(SnapshotBox, DevelopmentNodeSnapshot, {
 type Bytes16 = [u8; 16];
 type Bytes32 = [u8; 32];
 
-uniffi::custom_type!(U64String, u64, {
-    lower: |value| value.0,
-    try_lift: |value| Ok(U64String(value)),
-});
 uniffi::custom_type!(Bytes16, Vec<u8>, {
     remote,
     lower: |value| value.to_vec(),

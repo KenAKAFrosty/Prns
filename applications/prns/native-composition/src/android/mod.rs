@@ -5,8 +5,8 @@
 //! node supervisor lock. The service must quiesce old Kotlin callbacks before
 //! stopping Rust and must not replace an adapter whose shutdown is incomplete.
 
-mod app_jni;
 mod bluetooth_jni;
+mod lifecycle_jni;
 
 use std::sync::{Arc, Mutex, OnceLock};
 

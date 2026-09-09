@@ -22,7 +22,7 @@ use crate::contract::{
     RemoteControlAnnounceFailureStage as AnnounceStage,
     RemoteControlAnnounceStatus as AnnounceStatus,
     RemoteControlAnnounceUnknownReason as UnknownReason, RemoteControlDescribeFailureStage,
-    RemoteControlDescribeOutcome, RemoteControlTargetSnapshot, U64String,
+    RemoteControlDescribeOutcome, RemoteControlTargetSnapshot,
 };
 use crate::pairing::request_kinds;
 use crate::snapshot::SnapshotStore;
@@ -61,7 +61,7 @@ pub async fn describe(
     snapshots.update(|snapshot| {
         snapshot.active_operation = Some(DevelopmentNodeOperation {
             kind: DevelopmentNodeOperationKind::Describe,
-            started_at_millis: U64String::from(monotonic_millis()),
+            started_at_millis: monotonic_millis(),
         });
     });
 
@@ -101,7 +101,7 @@ pub async fn describe(
             RemoteControlDescribeOutcome::Described {
                 target,
                 available_requests,
-                rtt_millis: U64String::from(rtt.millis()),
+                rtt_millis: rtt.millis(),
                 snapshot: Box::new(snapshots.read()),
             }
         }
@@ -152,7 +152,7 @@ pub async fn announce_self(
         {
             match connected.announce_self().await {
                 Ok(rtt) => AnnounceStatus::Announced {
-                    rtt_millis: U64String::from(rtt.millis()),
+                    rtt_millis: rtt.millis(),
                 },
                 Err(error) => announce_exchange_failure(error),
             }
@@ -440,7 +440,7 @@ fn announce_exchange_failure(error: RemoteControlTargetOperationError) -> Announ
 
 pub fn complete_announcement(
     snapshots: &SnapshotStore,
-    operation_id: &U64String,
+    operation_id: &u64,
     status: AnnounceStatus,
 ) {
     snapshots.update(|snapshot| {
@@ -831,22 +831,16 @@ mod tests {
         let snapshots = SnapshotStore::new();
         snapshots.update(|snapshot| {
             snapshot.last_announcement = Some(crate::contract::RemoteControlAnnounceOperation {
-                operation_id: U64String::from(2),
+                operation_id: 2,
                 target_identity_fingerprint: vec![1; 16],
                 status: AnnounceStatus::Pending,
             });
             snapshot.active_operation = Some(DevelopmentNodeOperation {
                 kind: DevelopmentNodeOperationKind::AnnounceSelf,
-                started_at_millis: U64String::from(0),
+                started_at_millis: 0,
             });
         });
-        complete_announcement(
-            &snapshots,
-            &U64String::from(1),
-            AnnounceStatus::Announced {
-                rtt_millis: U64String::from(3),
-            },
-        );
+        complete_announcement(&snapshots, &1, AnnounceStatus::Announced { rtt_millis: 3 });
         assert_eq!(
             snapshots
                 .read()
@@ -855,13 +849,7 @@ mod tests {
             Some(AnnounceStatus::Pending)
         );
         assert!(snapshots.read().active_operation.is_some());
-        complete_announcement(
-            &snapshots,
-            &U64String::from(2),
-            AnnounceStatus::Announced {
-                rtt_millis: U64String::from(4),
-            },
-        );
+        complete_announcement(&snapshots, &2, AnnounceStatus::Announced { rtt_millis: 4 });
         assert!(snapshots.read().active_operation.is_none());
     }
 
@@ -1072,7 +1060,7 @@ mod tests {
         snapshots.update(|snapshot| {
             snapshot.active_operation = Some(DevelopmentNodeOperation {
                 kind: DevelopmentNodeOperationKind::Describe,
-                started_at_millis: U64String::from(1),
+                started_at_millis: 1,
             });
         });
         let connections = core::cell::Cell::new(0_u8);
@@ -1144,7 +1132,7 @@ mod tests {
         snapshots.update(|snapshot| {
             snapshot.active_operation = Some(DevelopmentNodeOperation {
                 kind: DevelopmentNodeOperationKind::Describe,
-                started_at_millis: U64String::from(1),
+                started_at_millis: 1,
             });
         });
 
