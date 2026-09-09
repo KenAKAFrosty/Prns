@@ -1,0 +1,29 @@
+diff --git a/runtimes/jsi/scripts/assemble-prebuilt.sh b/runtimes/jsi/scripts/assemble-prebuilt.sh
+--- a/runtimes/jsi/scripts/assemble-prebuilt.sh
++++ b/runtimes/jsi/scripts/assemble-prebuilt.sh
+@@ -10,7 +10,8 @@
+ OUT="$HERE/prebuilt"
+ NAME=UniffiRuntimeJsi
+ MIN_IOS_VERSION=15.1
+-VERSION=$(node -p 'require(process.argv[1]).version' "$HERE/package.json")
++# Apple requires a numeric release version, even for an npm prerelease.
++VERSION=$(node -p 'require(process.argv[1]).version.split(/[-+]/)[0]' "$HERE/package.json")
+ 
+ abi_for() {
+   case "$1" in
+diff --git a/runtimes/jsi/tests/prebuilt.test.mjs b/runtimes/jsi/tests/prebuilt.test.mjs
+--- a/runtimes/jsi/tests/prebuilt.test.mjs
++++ b/runtimes/jsi/tests/prebuilt.test.mjs
+@@ -53,6 +53,12 @@
+         installName.includes("@rpath/UniffiRuntimeJsi.framework/UniffiRuntimeJsi"),
+         `install name is not @rpath-relative:\n${installName}`,
+       );
++      const version = execFileSync("plutil", [
++        "-extract", "CFBundleShortVersionString", "raw", "-o", "-",
++        join(dirname(path), "Info.plist"),
++      ], { encoding: "utf8" }).trim();
++      assert.match(version, /^\d+\.\d+\.\d+$/,
++        `framework release version must be numeric, got: ${version}`);
+       const kind = execFileSync("file", [path], { encoding: "utf8" });
+       assert.ok(
+         kind.includes("dynamically linked shared library"),
