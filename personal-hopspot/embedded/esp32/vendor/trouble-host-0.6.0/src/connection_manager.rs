@@ -376,6 +376,8 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                     .try_send(ConnectionEvent::Disconnected { reason });
                 #[cfg(feature = "gatt")]
                 storage.gatt.clear();
+                #[cfg(feature = "gatt")]
+                storage.gatt_client.clear();
                 #[cfg(feature = "connection-metrics")]
                 storage.metrics.reset();
                 #[cfg(feature = "security")]
@@ -1593,5 +1595,132 @@ pub(crate) mod tests {
         handle.disconnect();
 
         assert!(!mgr.is_handle_connected(ConnHandle::new(3)));
+    }
+}
+
+#[cfg(all(test, feature = "gatt"))]
+mod gatt_client_retention_tests {
+    extern crate std;
+
+    use super::*;
+    use core::future::Future;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
+
+    use crate::{att, Packet};
+
+    // Keep pool accounting independent of parallel tests using DefaultPacketPool.
+    static PACKETS_IN_USE: AtomicUsize = AtomicUsize::new(0);
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    struct EightPacketPool;
+    struct CountedPacket([u8; 27]);
+
+    impl PacketPool for EightPacketPool {
+        type Packet = CountedPacket;
+        const MTU: usize = 27;
+
+        fn capacity() -> usize {
+            8
+        }
+
+        fn allocate() -> Option<CountedPacket> {
+            PACKETS_IN_USE
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |count| {
+                    (count < Self::capacity()).then_some(count + 1)
+                })
+                .ok()
+                .map(|_| CountedPacket([0; 27]))
+        }
+    }
+
+    impl Packet for CountedPacket {}
+    impl AsRef<[u8]> for CountedPacket {
+        fn as_ref(&self) -> &[u8] {
+            &self.0
+        }
+    }
+    impl AsMut<[u8]> for CountedPacket {
+        fn as_mut(&mut self) -> &mut [u8] {
+            &mut self.0
+        }
+    }
+    impl Drop for CountedPacket {
+        fn drop(&mut self) {
+            PACKETS_IN_USE.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    fn queued_mtu_response() -> Pdu<CountedPacket> {
+        let mut packet = EightPacketPool::allocate().unwrap();
+        packet.as_mut()[..3].copy_from_slice(&[att::ATT_EXCHANGE_MTU_RSP, 23, 0]);
+        Pdu::new(packet, 3)
+    }
+
+    fn connect<'d>(
+        manager: &'d ConnectionManager<'d, EightPacketPool>,
+        handle: ConnHandle,
+    ) -> Connection<'d, EightPacketPool> {
+        manager
+            .connect(
+                handle,
+                AddrKind::RANDOM,
+                BdAddr::new(tests::ADDR_1),
+                LeConnRole::Peripheral,
+                ConnParams::new(),
+            )
+            .unwrap();
+        let Poll::Ready(connection) = manager.poll_accept(LeConnRole::Peripheral, &[], None) else {
+            panic!("expected accepted connection");
+        };
+        connection
+    }
+
+    #[test]
+    fn disconnect_releases_unconsumed_gatt_client_packets() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+        assert_eq!(PACKETS_IN_USE.load(Ordering::SeqCst), 0);
+        let mut storage = [ConnectionStorage::new()];
+        let manager = ConnectionManager::<EightPacketPool>::new(&mut storage, 23);
+        let handle = ConnHandle::new(1);
+        let connection = connect(&manager, handle);
+
+        let queued = EightPacketPool::capacity().min(config::L2CAP_RX_QUEUE_SIZE);
+        for _ in 0..queued {
+            manager
+                .post_gatt_client(handle, queued_mtu_response())
+                .unwrap();
+        }
+        assert_eq!(PACKETS_IN_USE.load(Ordering::SeqCst), queued);
+
+        manager.disconnected(handle, Status::UNSPECIFIED).unwrap();
+        // The queue belongs to the permanent connection slot; dropping a client
+        // or connection handle does not drop it. Reclaim before any row reuse.
+        assert_eq!(PACKETS_IN_USE.load(Ordering::SeqCst), 0);
+        assert!(matches!(
+            embassy_futures::block_on(connection.next_gatt_client()),
+            Err(Error::Disconnected)
+        ));
+    }
+
+    #[test]
+    fn reused_connection_cannot_receive_previous_gatt_response() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+        assert_eq!(PACKETS_IN_USE.load(Ordering::SeqCst), 0);
+        let mut storage = [ConnectionStorage::new()];
+        let manager = ConnectionManager::<EightPacketPool>::new(&mut storage, 23);
+        let handle = ConnHandle::new(1);
+        let previous = connect(&manager, handle);
+        manager
+            .post_gatt_client(handle, queued_mtu_response())
+            .unwrap();
+        manager.disconnected(handle, Status::UNSPECIFIED).unwrap();
+        drop(previous);
+
+        let replacement = connect(&manager, handle);
+        let mut next = core::pin::pin!(replacement.next_gatt_client());
+        let waker = futures::task::noop_waker();
+        let mut cx = Context::from_waker(&waker);
+        assert!(next.as_mut().poll(&mut cx).is_pending());
     }
 }
