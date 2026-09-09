@@ -60,10 +60,12 @@ observations remain tied to their recorded builds.
    not fit T-Echo. The separate [peripheral write-batch correction](../checkpoints/2026-09-09-corebluetooth-write-batches.md)
    is now committed and integrated. The [publication continuation](../checkpoints/2026-09-09-publication-preparation.md)
    refreshes #199 and the iOS descendants and verifies that the USB fixture fix
-   removes the broader compilation blocker. Full-CI limits and physical write
-   batching remain open; the Mac radio-only smoke does not qualify incoming
-   writes. Replace published heads only through the prepared, approved exact-ref
-   update plan.
+   removes the broader compilation blocker. Separate [CI corrections](../checkpoints/2026-09-09-ci-corrections.md)
+   now fix the reproduced split-resource failure and generated-notice drift,
+   with passing local Linux and app-integration checks. Full remote CI and physical
+   write batching remain open; the Mac radio-only smoke does not qualify incoming
+   writes. Publish the independent fixes and replace shared heads only through
+   an approved exact-ref update plan.
 
 Finish this bounded transition before expanding the product surface.
 

@@ -100,9 +100,13 @@ remain tied to their recorded builds. Original PR heads are unchanged.
 The [publication continuation](../checkpoints/2026-09-09-publication-preparation.md)
 adds a real Mac manager/radio smoke and refreshed #199/#208/#209 candidates.
 Focused tests, iOS checks and an isolated Bluetooth-plus-USB compilation/lint
-comparison pass. The radio smoke receives no writes. Physical batching and the
-separate integration-test/notices CI failures remain open; no shared PR head,
-phone binary or board firmware changed.
+comparison pass. The radio smoke receives no writes. The subsequent
+[CI corrections](../checkpoints/2026-09-09-ci-corrections.md) fix the reproduced
+split-resource failure and notices drift on separate branches. Linux validation
+passes 1,887 core tests, 25 integration tests and 50 repeated split responses;
+the integrated native and iOS checks pass with core pin `451e669da`. Physical
+batching and a full remote CI rerun remain open. No shared PR head, phone binary
+or board firmware changed.
 
 The recorded repository continuation passed all 24 host workspaces and the
 listed Clippy, allocation, dependency-policy and unsafe-inventory checks.

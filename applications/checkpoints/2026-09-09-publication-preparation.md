@@ -135,3 +135,7 @@ approval as permission for this shared-history update.
 Next: address the separately recorded full-CI limits, obtain approval for the
 exact protected update plan, and perform controlled peripheral batching when the
 Android test device returns. No push or PR creation/edit occurred in this pass.
+
+Subsequent work: [the separate CI corrections](2026-09-09-ci-corrections.md)
+reproduce and fix the Linux split-resource failure and generated-notice drift.
+Their local checks pass; the original publication candidates remain unchanged.
