@@ -3,6 +3,17 @@
 This workspace owns the Prns app, its native composition and reusable application
 services. It consumes public core APIs; the core does not depend on this tree.
 
+## Start here
+
+- [App behavior and routes](prns/app/README.md)
+- [iOS development](docs/ios.md) and [Android development](docs/android.md)
+- [Current validation and limits](docs/validation.md)
+- [Implementation roadmap](docs/roadmap.md)
+
+This guide owns setup and workspace commands. The binding and platform guides
+own their narrower boundaries; dated checkpoints preserve historical evidence,
+not current setup instructions. The original scratch plans are design history.
+
 ## Ownership
 
 | Path | Responsibility |

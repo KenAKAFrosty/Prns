@@ -1,15 +1,22 @@
 # Browser and Tauri architecture checkpoint
 
-This is a bounded architecture decision, not a browser or desktop provider. It
+This is a dated architecture decision, not current platform status or a browser
+or desktop provider. It
 retains no provider package, storage adapter, Tauri shell, or disposable spike
 code, and this re-review adds no provider or runtime implementation.
+
+The source observations below belong to the recorded baseline. Android has
+since gained a native provider and generated bindings; web and Tauri still have
+no application runtime provider. See the [current roadmap](../../docs/roadmap.md)
+and [validation limits](../../docs/validation.md). Re-audit the proposed upstream
+seam before implementation.
 
 ## Audited baseline
 
 - Original Prns baseline: `68ee3156d268152d77f5e5a2ece3578ba6473d4e`.
 - Prior re-review baseline: `5126c94fc21e0c5fb20f2478a1621c7ef5cce1a9`
   (`Derive default interface gravity from bitrate`).
-- Current re-review baseline:
+- Latest baseline covered by this checkpoint:
   `81e1eeb00080c44ef55b440f44d7bac13e3ee044` (`upstream/trunk`, `Gate
   resource offload by runtime capability`).
 - Between the prior and current re-review baselines, the browser runtime folded
@@ -143,15 +150,15 @@ does not expose them. Authentication, a bounded app contract, permissions, and
 an explicit remote-control projection must be designed together before remote
 owner inventory or mutation becomes available.
 
-## Static provider selection
+## Static provider selection at the audited baseline
 
 Application code keeps importing the single stable
 `@/native/runtime-provider` specifier.
 
 - Metro selects `runtime-provider.ios.ts` for iOS; that file alone imports the
   Expo native owner.
-- Metro selects `runtime-provider.android.ts` for Android; it is currently a
-  typed unavailable provider.
+- Metro selected `runtime-provider.android.ts` for Android; it was a typed
+  unavailable provider at this baseline. It now selects the native Android owner.
 - Web selects `runtime-provider.web.ts`; the ordinary TypeScript fallback also
   explicitly re-exports this web provider. The audited web export contained the
   web unavailable case and no `PrnsApp` native-module reference.
@@ -163,7 +170,7 @@ Application code keeps importing the single stable
 These static entries prevent one bundle from selecting two owners. The Tauri
 entry and alias remain deferred until the desktop slice exists.
 
-## Current re-review evidence
+## Recorded re-review evidence
 
 - `npm --prefix prns-js test` passed 111 tests against the current integration
   source, including the unified browser-work boundary, Resource continuations,
@@ -177,4 +184,5 @@ entry and alias remain deferred until the desktop slice exists.
 
 Browser storage, multi-tab ownership, a browser provider, Tauri packaging,
 command permissions, window/tray/sleep journeys, signing, updater behavior,
-Android, and platform qualification remain deferred.
+and broader platform qualification remain deferred. Android implementation
+proceeded later and is not a remaining item from this checkpoint.

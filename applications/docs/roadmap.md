@@ -1,0 +1,78 @@
+# Current application roadmap
+
+This is the working backlog, not a release schedule or a claim that every shell
+route works. Check [validation and limits](validation.md) before making platform
+or reliability claims. Setup belongs in the [workspace guide](../README.md);
+the [binding guide](../prns/native-composition/bindings/README.md) owns the current
+generated API and native lifecycle boundary.
+
+## Implemented foundation
+
+- One application-owned Rust node and storage owner, consumed by iOS and Android
+  through generated bindings with native platform admission.
+- Identity creation and one-time import, local node/route inspection, contacts,
+  RemoteControl pairing, authenticated checks and node-address sharing.
+- Small direct LXMF messages, a resettable persistent mailbox, manual retry and
+  local cancellation. Resources, opportunistic delivery and propagation are not
+  part of this messaging implementation.
+- A responsive Expo shell and stable screen catalog. Web has an explicitly
+  unavailable runtime; browser/Tauri ownership decisions exist, not providers.
+
+These are development capabilities. Physical observations made before the
+generated-binding migration remain tied to their recorded builds.
+
+## Next: finish the current transition
+
+1. Complete bounded follow-up fixes and their regressions for existing workflows;
+   do not treat work in progress as a passing gate or a device result.
+2. Resolve the constrained Nordic firmware footprint regression and rerun the
+   affected resource matrix. Keep generic core fixes separate from app policy.
+3. Recheck the generated-binding app on physical iOS and Android: onboarding,
+   pairing, the first authenticated request, two-way messaging, Stop/Start,
+   reload/process retention, cancellation and radio recovery. Include pristine
+   import and cold offline actions, not only already-open storage.
+
+Finish this bounded transition before expanding the product surface.
+
+## Following product slices
+
+| Slice | Outcome and boundary |
+| --- | --- |
+| Direct LXMF Resources | Send/receive messages above the Link-packet limit using the existing wire and mailbox ownership; prove Python interoperability, bounds and cancellation. This is the next messaging increment, not propagation. |
+| Complete everyday controls | Message detail, pairing forget/revocation and further node operations, plus local interface/identity management where public APIs exist. Add missing generic seams upstream; do not duplicate protocol authority in the app. |
+| Notifications | Explicit privacy/settings and platform posting policy, with lifecycle evidence for each supported behavior. A running-node notification is not a message alert or a delivery guarantee. |
+| Later LXMF modes | Identified-Link reuse, ratchets/opportunistic delivery, stamps/tickets and propagation as separate protocol/state slices with reference tests. |
+| NomadNet client | A bounded client-only request/cache model and non-executing Micron rendering, with a reference corpus and malformed-content limits. Hosting and dynamic actions remain separate. |
+| Location and inspection | Explicit per-send consent and typed location provenance; richer activity, routes, interfaces and diagnostics. Location permission alone must not sample or transmit. |
+
+Choose one slice at a time. Define its observable outcome, public Prns inputs,
+owned modules, generated changes and focused acceptance before implementation.
+
+## Deferred platform and distribution work
+
+Browser needs a reusable public DedicatedWorker orchestration seam; desktop
+needs a direct Tauri composition with process and shared-instance ownership.
+The [dated architecture checkpoint](../checkpoints/browser-tauri/README.md)
+records those decisions and must be re-audited against upstream before either
+provider is built. Do not create a second protocol engine or copy its scheduler.
+
+Newer Android service/permission behavior, iOS restoration, release/R8/signing,
+accessibility/localization, secret custody, retained-data upgrades and broader
+transport coverage remain explicit qualification work. Identity export,
+recovery, concurrent identity use and multi-device mailbox synchronization are
+separate security/protocol projects; onboarding import does not provide them.
+
+## Development rules worth preserving
+
+- Keep dependencies one-way: `applications/` consumes public Prns; core does not
+  import application services or product policy.
+- Rust owns protocol behavior, identity, durable state and command lifetime.
+  TypeScript owns presentation and platform-facing orchestration; generated
+  bindings are outputs, not another domain model.
+- Current development data is disposable. Persistence supports real workflows,
+  but is not a secure-storage, backup or cross-version migration guarantee.
+- Preserve the [screen IDs](../prns/app/src/navigation/catalog.ts), update route
+  parameters and deep-link tests together, and distinguish real capability from
+  placeholder UI. Avoid board-specific and implementation-detail user copy.
+- Refactor for demonstrated reuse. Do not add a service registry, storage
+  abstraction or platform package solely to anticipate a later feature.
