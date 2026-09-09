@@ -39,6 +39,14 @@ only after an explicit user action while the app is in the foreground. That
 system authorization is a separate step from the later secure Reticulum pairing
 flow; the UI does not expose raw accessory or Bluetooth identifiers.
 
+Waiting for accessory authorization does not block local storage. Inbox and
+Contacts remain readable, and saved-message Retry/Cancel can update the mailbox
+without admitting native networking. Inbox shows one access-needed action and
+does not claim that storage is empty before reading it successfully. A bounded
+[cold offline journey](../checkpoints/2026-09-09-offline-and-upstream-refresh.md)
+verified those actions, restart retention and subsequent access recovery on the
+unchanged native framework.
+
 The app's Apple Bluetooth Auto interface is central-only. Its tracked iOS
 configuration declares one stable, variant-specific central restoration
 identifier and only the `bluetooth-central` background mode. It does not create

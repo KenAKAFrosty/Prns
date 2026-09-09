@@ -22,6 +22,7 @@ different evidence. Do not transfer physical acceptance between their binaries.
 | Pre-diagnostic generated-binding iOS framework | Initial timeout, later foreground checks/two-way messaging and restart retention; logged SIGTERM restoration trial; separate controlled off-screen receipt, stored-message UI and first resumed Check in 359 ms | Initial-failure cause or fix, fresh pairing or full lifecycle qualification; no native timeline for the controlled repeat |
 | Pre-correction iOS diagnostic framework | USB-captured restored-handshake stall, local cleanup and fresh handshake; incoming proof in 474 ms, first resumed Check in 383 ms and four exact stored-message checks | A transport fix, original-startup-failure cause, fresh pairing, natural suspension, continuously locked or Metro-off qualification |
 | Corrected iOS restoration framework | Two captured one-shot recoveries without the old stall; SIGTERM reset-to-Welcome in 2.395 s, incoming proof in 485 ms, first resumed Check in 354 ms, stored-message verification and a separate full two-way exchange | Initial ordinary-start failure or 32-second-delay fix, fresh pairing, confirmed no-touch window, natural suspension, continuous lock or Metro-off qualification |
+| Corrected iOS framework with offline Inbox UI fix | Cold denied-access saved messages/contacts, Failed → Retry → Queued → Cancelled, same-record retention after process restart; restored access, first Check in 378 ms, incoming delivery and bounded no-resend | Retry as first SDK call, power-loss durability, Android acceptance of this UI revision, fresh pairing or broader lifecycle qualification |
 
 The [generated-binding checkpoint](../checkpoints/2026-09-09-validation.md#generated-binding-cutover)
 records the harness and integrated test boundaries. The [clean Android checkpoint](../checkpoints/2026-09-09-validation.md#clean-combined-checkpoint--september-9)
@@ -52,6 +53,12 @@ messaging. The previous long LXMF delay did not reproduce, but its cause and the
 initial ordinary-start failure remain unexplained. Do not transfer these results
 to broader background or exact-build pairing qualification.
 
+The [offline continuation](../checkpoints/2026-09-09-offline-and-upstream-refresh.md)
+fixes Inbox hiding saved messages while Bluetooth admission waits. The React-only
+change passed full app checks and one physical iOS cold offline Retry/Cancel
+journey without changing the native binary or bypassing authorization. The same
+cancelled record survived a restart and a bounded return of the messaging peer.
+
 ## Repeatable checks
 
 Use the [workspace setup and checks](../README.md#generate-build-and-check) with
@@ -75,10 +82,16 @@ Platform procedures are in the [iOS](ios.md) and [Android](android.md) guides.
 The constrained-Nordic integration regression is corrected without changing
 layouts or capacities. The integrated candidate passes all 14 configured
 resource profiles; T-Echo S140 v7 retains only 616 bytes of nominal FLASH
-headroom. The clean upstream port separately retains 1,216 bytes on that target.
+headroom. The earlier clean upstream port separately retained 1,216 bytes.
 The [follow-up measurement](../checkpoints/2026-09-09-follow-up.md#firmware-footprint-correction)
 distinguishes those builds and preserves the earlier 1,984-byte overflow.
 This is not a new full repository publishing-gate result or device qualification.
+
+The [latest unpublished refresh](../checkpoints/2026-09-09-offline-and-upstream-refresh.md#unpublished-upstream-refresh)
+fits T-Echo S140 v7 with 1,224 bytes remaining; its diagnostics-only parent fails
+by 1,344 bytes. It should therefore be proposed as one combined PR. The refreshed
+iOS copies pass focused FFI and canonical inventory checks, but broader CI and
+a separate peripheral write-batch issue remain. Original PR heads are unchanged.
 
 The recorded repository continuation passed all 24 host workspaces and the
 listed Clippy, allocation, dependency-policy and unsafe-inventory checks.

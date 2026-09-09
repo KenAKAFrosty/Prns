@@ -37,8 +37,11 @@ observations remain tied to their recorded builds.
    messaging. Extend its lifecycle qualification; it does not yet explain or fix
    the initial ordinary-start timeout.
 2. Close the remaining generated-binding physical checks: fresh pairing,
-   pristine import, controlled read cancellation, repeated recovery and cold offline
-   actions. Retained-grant checks and messaging now have bounded evidence on
+   pristine import, controlled read cancellation and repeated recovery. The
+   [offline continuation](../checkpoints/2026-09-09-offline-and-upstream-refresh.md)
+   now covers cold iOS saved messages/contacts, Retry/Cancel, restart retention
+   and a bounded return of the peer. Android still needs current-build offline
+   action acceptance. Retained-grant checks and messaging have bounded evidence on
    both platforms, tied to their exact recorded builds rather than transferred
    across rebuilds. They are not fresh-pairing acceptance.
 3. Repeat the completed no-touch receipt/resume journey with a complete native
@@ -51,6 +54,12 @@ observations remain tied to their recorded builds.
    Metro-off, force-quit and
    protected-data cases remain explicit qualification work. Preserve the firmware
    size gate: the passing integrated T-Echo build still has just 616 bytes spare.
+4. Finish upstream publication preparation. New unpublished iOS/Nordic copies
+   are refreshed onto the checked trunk, with originals preserved. Propose Nordic
+   diagnostics and footprint together because the diagnostics-only parent does
+   not fit T-Echo. Address the separate peripheral write-batch finding and broad
+   CI dependency before calling the iOS parent stack ready; restack published
+   descendants only through an approved, exact-ref update plan.
 
 Finish this bounded transition before expanding the product surface.
 
