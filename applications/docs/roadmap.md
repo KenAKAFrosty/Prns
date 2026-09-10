@@ -53,8 +53,8 @@ observations remain tied to their recorded builds.
    window. The earlier trials remain separate. Natural suspension, quiet idle,
    Metro-off, force-quit and
    protected-data cases remain explicit qualification work. Preserve the firmware
-   size gate: the last measured integrated T-Echo build had just 616 bytes spare;
-   remeasure when rebuilding the app's updated core source.
+   size gate: the [latest app qualification](../checkpoints/2026-09-10-app-publication.md)
+   leaves just 624 bytes on T-Echo S140 v7. Remeasure after firmware-relevant changes.
 4. Finish upstream landing and remaining contributions. Independent CI fixes
    [#213](https://github.com/KenAKAFrosty/Prns/pull/213) and
    [#214](https://github.com/KenAKAFrosty/Prns/pull/214) are open. The five reviewed
@@ -65,7 +65,9 @@ observations remain tied to their recorded builds.
    upstream advances. Native recovery, the [peripheral write-batch correction](../checkpoints/2026-09-09-corebluetooth-write-batches.md)
    and combined Nordic diagnostics/footprint remain unpublished. Keep the Nordic
    changes together because diagnostics alone do not fit T-Echo. Physical write
-   batching is still unqualified, and the app remote remains unchanged.
+   batching is still unqualified. App qualification and its draft-update scope
+   are recorded in the [September 10 checkpoint](../checkpoints/2026-09-10-app-publication.md);
+   use PR #197 for current publication and remote CI status.
 
 Finish this bounded transition before expanding the product surface.
 

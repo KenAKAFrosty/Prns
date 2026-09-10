@@ -79,14 +79,19 @@ Platform procedures are in the [iOS](ios.md) and [Android](android.md) guides.
 
 ## Firmware and repository checks
 
+The [September 10 app qualification](../checkpoints/2026-09-10-app-publication.md)
+records fresh full-app, detached-consumer and iOS platform checks for core
+`451e669da`, and the current repository/firmware results. Earlier checkpoints
+below remain measurements of their own source and builds, not current PR state.
+
 The [September 10 test fixes](../checkpoints/2026-09-10-app-ci-fixes.md) address
 the app's Windows-only unused import and a release fixture whose source archive
 outgrew the firmware region. Both are test-only changes; their checks and the
 remaining full-publishing boundary are recorded separately from firmware results.
 
-The constrained-Nordic integration regression is corrected without changing
-layouts or capacities. The integrated candidate passes all 14 configured
-resource profiles; T-Echo S140 v7 retains only 616 bytes of nominal FLASH
+The constrained-Nordic integration regression was corrected without changing
+layouts or capacities. The earlier integrated candidate passed all 14 configured
+resource profiles; T-Echo S140 v7 retained only 616 bytes of nominal FLASH
 headroom. The earlier clean upstream port separately retained 1,216 bytes.
 The [follow-up measurement](../checkpoints/2026-09-09-follow-up.md#firmware-footprint-correction)
 distinguishes those builds and preserves the earlier 1,984-byte overflow.
