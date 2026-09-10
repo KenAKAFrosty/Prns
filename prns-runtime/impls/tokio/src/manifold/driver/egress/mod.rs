@@ -1,5 +1,7 @@
 #[cfg(feature = "runtime-metrics")]
 use crate::engine::AnnounceOrigin;
+use prns_core::lemire_index::IndexRow;
+
 use crate::engine::{EngineReaction, FanTarget, InstantMillis, Journaled, NoOwedWork};
 use crate::interfaces::InterfaceIfac;
 use crate::interfaces::{ConnectionView, InterfaceDescriptor, InterfaceId, InterfaceKind};
@@ -19,13 +21,60 @@ use crate::runtime::{
 };
 use crate::wire::{WireContext, WirePacketHeader};
 
+use super::indexed_rows::IndexedRows;
 use super::TokioGrantProducer;
 use pending::{EgressOrigin, PendingEgressQueue};
 
 mod pending;
 
+struct IndexedIfac {
+    id: InterfaceId,
+    value: InterfaceIfac,
+}
+
+impl IndexRow for IndexedIfac {
+    type Key = InterfaceId;
+
+    fn index_key(&self) -> &Self::Key {
+        &self.id
+    }
+}
+
+#[derive(Default)]
+pub(super) struct InterfaceIfacs {
+    rows: IndexedRows<IndexedIfac>,
+}
+
+impl InterfaceIfacs {
+    pub(super) fn push(&mut self, value: InterfaceIfac) -> bool {
+        self.rows.push(IndexedIfac {
+            id: value.id,
+            value,
+        })
+    }
+
+    pub(super) fn remove(&mut self, id: InterfaceId) {
+        self.rows.remove(&id);
+    }
+
+    fn get(&self, id: InterfaceId) -> Option<&InterfaceIfac> {
+        self.rows.get(&id).map(|row| &row.value)
+    }
+}
+
+impl From<std::vec::Vec<InterfaceIfac>> for InterfaceIfacs {
+    fn from(ifacs: std::vec::Vec<InterfaceIfac>) -> Self {
+        let mut indexed = Self::default();
+        for ifac in ifacs {
+            let inserted = indexed.push(ifac);
+            debug_assert!(inserted, "IFAC rows require unique live interface ids");
+        }
+        indexed
+    }
+}
+
 pub struct Egress {
-    lanes: std::vec::Vec<EgressLane>,
+    lanes: IndexedRows<EgressLane>,
     pending_frames: usize,
 
     #[cfg(feature = "runtime-metrics")]
@@ -34,12 +83,14 @@ pub struct Egress {
 
 const TOKIO_ANNOUNCE_PACER_DEPTH: usize = 256;
 const TOKIO_ANNOUNCE_RETRY_POLICY: PacerRetryPolicy = PacerRetryPolicy::new(50, 1_000);
+const TOKIO_EGRESS_PENDING_DEPTH: usize = 256;
 
 struct EgressLane {
     id: InterfaceId,
     producer: TokioGrantProducer,
     connection: Option<ConnectionView>,
     pending: PendingEgressQueue,
+    was_available: bool,
 
     #[cfg(feature = "runtime-metrics")]
     logical_interface: InterfaceId,
@@ -53,17 +104,28 @@ impl EgressLane {
     }
 }
 
+impl IndexRow for EgressLane {
+    type Key = InterfaceId;
+
+    fn index_key(&self) -> &Self::Key {
+        &self.id
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum EgressEnqueueOutcome {
     Enqueued,
     Deferred,
+    Unavailable,
+    DroppedFull,
     LaneMissing,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EgressTryEnqueueOutcome {
     Enqueued,
-    LaneFull,
+    Unavailable,
+    LaneFull(usize),
     LaneMissing,
 }
 
@@ -90,6 +152,7 @@ impl Egress {
                 producer,
                 connection: None,
                 pending: PendingEgressQueue::new(),
+                was_available: true,
                 #[cfg(feature = "runtime-metrics")]
                 logical_interface: id,
             })
@@ -105,7 +168,7 @@ impl Egress {
         };
 
         Self {
-            lanes,
+            lanes: lanes.into(),
             pending_frames: 0,
             #[cfg(feature = "runtime-metrics")]
             metrics,
@@ -139,7 +202,8 @@ impl Egress {
     ) -> EgressEnqueueOutcome {
         let outcome = match self.try_enqueue_as(target, bytes, queue) {
             EgressTryEnqueueOutcome::Enqueued => EgressEnqueueOutcome::Enqueued,
-            EgressTryEnqueueOutcome::LaneFull => self.defer(target, bytes, queue, origin),
+            EgressTryEnqueueOutcome::Unavailable => EgressEnqueueOutcome::Unavailable,
+            EgressTryEnqueueOutcome::LaneFull(index) => self.defer(index, bytes, queue, origin),
             EgressTryEnqueueOutcome::LaneMissing => EgressEnqueueOutcome::LaneMissing,
         };
         self.record_generic_enqueue_outcome(outcome);
@@ -157,48 +221,50 @@ impl Egress {
         queue: EgressQueue,
     ) -> EgressTryEnqueueOutcome {
         let has_pending = self.pending_frames > 0;
-        for lane in &mut self.lanes {
-            if lane.id != target {
-                continue;
-            }
-
-            if has_pending && !lane.pending.is_empty() {
-                return EgressTryEnqueueOutcome::LaneFull;
-            }
-
-            match lane.producer.try_grant() {
-                None => return EgressTryEnqueueOutcome::LaneFull,
-                Some(slot) => {
-                    slot.fill(bytes);
-                    match queue {
-                        EgressQueue::Expedited => lane.producer.commit_expedited(),
-                        EgressQueue::Bulk => lane.producer.commit(),
-                    }
-
-                    #[cfg(feature = "runtime-metrics")]
-                    {
-                        self.metrics.enqueued_frames =
-                            self.metrics.enqueued_frames.saturating_add(1);
-                    }
-
-                    return EgressTryEnqueueOutcome::Enqueued;
-                }
-            }
+        let Some(index) = self.lanes.index_of(&target) else {
+            return EgressTryEnqueueOutcome::LaneMissing;
+        };
+        if !self.reconcile_lane(index) {
+            return EgressTryEnqueueOutcome::Unavailable;
         }
-        EgressTryEnqueueOutcome::LaneMissing
+
+        let lane = self.lanes.row_mut(index);
+        if has_pending && !lane.pending.is_empty() {
+            return EgressTryEnqueueOutcome::LaneFull(index);
+        }
+
+        let Some(slot) = lane.producer.try_grant() else {
+            return EgressTryEnqueueOutcome::LaneFull(index);
+        };
+        slot.fill(bytes);
+        match queue {
+            EgressQueue::Expedited => lane.producer.commit_expedited(),
+            EgressQueue::Bulk => lane.producer.commit(),
+        }
+
+        #[cfg(feature = "runtime-metrics")]
+        {
+            self.metrics.enqueued_frames = self.metrics.enqueued_frames.saturating_add(1);
+        }
+
+        EgressTryEnqueueOutcome::Enqueued
     }
 
     #[cold]
     fn defer(
         &mut self,
-        target: InterfaceId,
+        index: usize,
         bytes: &[u8],
         queue: EgressQueue,
         origin: EgressOrigin,
     ) -> EgressEnqueueOutcome {
-        let Some(lane) = self.lanes.iter_mut().find(|lane| lane.id == target) else {
-            return EgressEnqueueOutcome::LaneMissing;
-        };
+        if !self.reconcile_lane(index) {
+            return EgressEnqueueOutcome::Unavailable;
+        }
+        let lane = self.lanes.row_mut(index);
+        if lane.pending.len() >= TOKIO_EGRESS_PENDING_DEPTH {
+            return EgressEnqueueOutcome::DroppedFull;
+        }
         lane.pending.push(queue, bytes.to_vec(), origin);
         self.pending_frames += 1;
         lane.producer.arm_release_wake();
@@ -214,6 +280,9 @@ impl Egress {
     }
 
     pub(super) fn flush_pending(&mut self, budget: usize) -> usize {
+        for index in 0..self.lanes.len() {
+            self.reconcile_lane(index);
+        }
         if self.pending_frames == 0 {
             return 0;
         }
@@ -223,7 +292,7 @@ impl Egress {
     #[cold]
     fn flush_pending_frames(&mut self, budget: usize) -> usize {
         let mut flushed = 0usize;
-        'lanes: for lane in &mut self.lanes {
+        'lanes: for lane in self.lanes.iter_mut() {
             let producer = &mut lane.producer;
             let pending_frames = &mut lane.pending;
             loop {
@@ -257,6 +326,8 @@ impl Egress {
                 #[cfg(feature = "runtime-metrics")]
                 {
                     self.metrics.enqueued_frames = self.metrics.enqueued_frames.saturating_add(1);
+                    self.metrics.flushed_pending_frames =
+                        self.metrics.flushed_pending_frames.saturating_add(1);
                 }
             }
         }
@@ -281,6 +352,39 @@ impl Egress {
             .any(|lane| lane.pending.blocks_source(source))
     }
 
+    /// Reconcile one lane's connection epoch with its queued work. Pending frames are owned by
+    /// the manifold and can be retired immediately. Committed ring frames are consumer-owned, so
+    /// an online-to-offline transition marks them for reclamation before the next session accepts
+    /// fresh traffic.
+    fn reconcile_lane(&mut self, index: usize) -> bool {
+        let lane = self.lanes.row_mut(index);
+        let available = lane.is_available();
+        if !available {
+            if lane.was_available {
+                lane.producer.request_consumer_discard();
+            }
+            lane.was_available = false;
+        }
+
+        let recovering = lane.producer.consumer_discard_pending();
+        if !available || recovering {
+            let dropped = lane.pending.clear();
+            self.pending_frames = self.pending_frames.saturating_sub(dropped);
+            lane.producer.disarm_release_wake();
+            #[cfg(feature = "runtime-metrics")]
+            {
+                self.metrics.unavailable_pending_drops = self
+                    .metrics
+                    .unavailable_pending_drops
+                    .saturating_add(u64::try_from(dropped).unwrap_or(u64::MAX));
+            }
+            return false;
+        }
+
+        lane.was_available = true;
+        true
+    }
+
     #[cfg(feature = "runtime-metrics")]
     fn pending_len_u32(&self) -> u32 {
         u32::try_from(self.pending_frames).unwrap_or(u32::MAX)
@@ -291,6 +395,13 @@ impl Egress {
         match outcome {
             EgressEnqueueOutcome::Enqueued => {}
             EgressEnqueueOutcome::Deferred => {}
+            EgressEnqueueOutcome::Unavailable => {
+                self.metrics.unavailable_frame_skips =
+                    self.metrics.unavailable_frame_skips.saturating_add(1);
+            }
+            EgressEnqueueOutcome::DroppedFull => {
+                self.metrics.full_lane_drops = self.metrics.full_lane_drops.saturating_add(1);
+            }
             EgressEnqueueOutcome::LaneMissing => {
                 self.metrics.missing_lane_drops = self.metrics.missing_lane_drops.saturating_add(1);
             }
@@ -315,11 +426,10 @@ impl Egress {
     }
 
     fn skip_unavailable(&mut self, target: InterfaceId) -> bool {
-        let unavailable = self
-            .lanes
-            .iter()
-            .find(|lane| lane.id == target)
-            .is_some_and(|lane| !lane.is_available());
+        let unavailable = match self.lanes.index_of(&target) {
+            Some(index) => !self.reconcile_lane(index),
+            None => false,
+        };
 
         #[cfg(feature = "runtime-metrics")]
         if unavailable {
@@ -340,8 +450,7 @@ impl Egress {
     ) {
         let logical_interface = self
             .lanes
-            .iter()
-            .find(|lane| lane.id == target)
+            .get(&target)
             .map_or(target, |lane| lane.logical_interface);
         self.metrics
             .announces
@@ -357,8 +466,7 @@ impl Egress {
     ) {
         let logical_interface = self
             .lanes
-            .iter()
-            .find(|lane| lane.id == target)
+            .get(&target)
             .map_or(target, |lane| lane.logical_interface);
         self.metrics
             .announces
@@ -393,48 +501,48 @@ impl Egress {
         origin: EgressOrigin,
     ) {
         let has_pending = self.pending_frames > 0;
-        let mut lane_found = false;
-        for lane in &mut self.lanes {
-            if lane.id != target {
-                continue;
-            }
-            lane_found = true;
-            if !has_pending || lane.pending.is_empty() {
-                if let Some(slot) = lane.producer.try_grant() {
-                    let hint = size_hint.clamp(1, MAX_WIRE_FRAME_LEN);
-                    if slot.bytes.len() < hint {
-                        slot.bytes.resize(hint, 0);
-                    }
-                    if let Some(len) = fill(&mut slot.bytes[..hint]) {
-                        slot.len = len.min(hint);
-                        match egress_queue(slot.frame()) {
-                            EgressQueue::Expedited => lane.producer.commit_expedited(),
-                            EgressQueue::Bulk => lane.producer.commit(),
-                        }
-                        #[cfg(feature = "runtime-metrics")]
-                        {
-                            self.metrics.enqueued_frames =
-                                self.metrics.enqueued_frames.saturating_add(1);
-                        }
-                    }
-                    return;
-                }
-            }
-            break;
-        }
-        if !lane_found {
+        let Some(index) = self.lanes.index_of(&target) else {
             let _fill_result = fill(discard);
             #[cfg(feature = "runtime-metrics")]
             if _fill_result.is_some() {
                 self.metrics.missing_lane_drops = self.metrics.missing_lane_drops.saturating_add(1);
             }
             return;
+        };
+        if !self.reconcile_lane(index) {
+            if fill(discard).is_some() {
+                self.record_generic_enqueue_outcome(EgressEnqueueOutcome::Unavailable);
+            }
+            return;
+        }
+
+        let lane = self.lanes.row_mut(index);
+        if !has_pending || lane.pending.is_empty() {
+            if let Some(slot) = lane.producer.try_grant() {
+                let hint = size_hint.clamp(1, MAX_WIRE_FRAME_LEN);
+                if slot.bytes.len() < hint {
+                    slot.bytes.resize(hint, 0);
+                }
+                if let Some(len) = fill(&mut slot.bytes[..hint]) {
+                    slot.len = len.min(hint);
+                    match egress_queue(slot.frame()) {
+                        EgressQueue::Expedited => lane.producer.commit_expedited(),
+                        EgressQueue::Bulk => lane.producer.commit(),
+                    }
+                    #[cfg(feature = "runtime-metrics")]
+                    {
+                        self.metrics.enqueued_frames =
+                            self.metrics.enqueued_frames.saturating_add(1);
+                    }
+                }
+                return;
+            }
         }
         let fill_result = fill(discard);
         if let Some(len) = fill_result {
             let len = len.min(discard.len());
             let queue = egress_queue(&discard[..len]);
-            let outcome = self.defer(target, &discard[..len], queue, origin);
+            let outcome = self.defer(index, &discard[..len], queue, origin);
             self.record_generic_enqueue_outcome(outcome);
         }
     }
@@ -449,36 +557,42 @@ impl Egress {
         #[cfg(not(feature = "runtime-metrics"))]
         let _ = logical_interface;
 
-        self.lanes.push(EgressLane {
+        let was_available = connection
+            .as_ref()
+            .is_none_or(|view| view.connection().is_online());
+        let inserted = self.lanes.push(EgressLane {
             id,
             producer,
             connection,
             pending: PendingEgressQueue::new(),
+            was_available,
             #[cfg(feature = "runtime-metrics")]
             logical_interface,
         });
+        debug_assert!(inserted, "egress lanes require unique live interface ids");
 
         #[cfg(feature = "runtime-metrics")]
-        self.metrics.announces.register_interface(logical_interface);
+        if inserted {
+            self.metrics.announces.register_interface(logical_interface);
+        }
     }
 
     pub(super) fn remove_lane(&mut self, id: InterfaceId) {
-        let Some(index) = self.lanes.iter().position(|lane| lane.id == id) else {
+        let Some(removed) = self.lanes.remove(&id) else {
             return;
         };
-        let removed = self.lanes.remove(index);
-        self.pending_frames -= removed.pending.len();
+        self.pending_frames = self.pending_frames.saturating_sub(removed.pending.len());
     }
 
     #[cfg(feature = "runtime-metrics")]
     pub(super) fn metrics_snapshot(
         &self,
-        pacers: &[InterfacePacer],
+        pacers: &InterfacePacers,
         now: InstantMillis,
     ) -> EgressMetricsSnapshot {
         let mut snapshot = self.metrics.clone();
         snapshot.announces.reset_pacer_gauges();
-        for entry in pacers {
+        for entry in pacers.iter() {
             let oldest_deferred_age_ms = entry
                 .pacer
                 .oldest_deferred_at()
@@ -521,6 +635,16 @@ pub(super) struct InterfacePacer {
     pub(super) logical_interface: InterfaceId,
     pub(super) pacer: TokioAnnouncePacer,
 }
+
+impl IndexRow for InterfacePacer {
+    type Key = InterfaceId;
+
+    fn index_key(&self) -> &Self::Key {
+        &self.id
+    }
+}
+
+pub(super) type InterfacePacers = IndexedRows<InterfacePacer>;
 
 impl InterfacePacer {
     pub(super) fn from_descriptor(
@@ -568,8 +692,8 @@ impl WireScratch {
 pub(super) fn route_reaction<A>(
     reaction: EngineReaction<'_>,
     egress: &mut Egress,
-    ifacs: &[InterfaceIfac],
-    pacers: &mut [InterfacePacer],
+    ifacs: &InterfaceIfacs,
+    pacers: &mut InterfacePacers,
     scratch: &mut WireScratch,
     now: InstantMillis,
     app: &mut A,
@@ -592,8 +716,8 @@ pub(super) fn route_reaction<A>(
 pub(super) fn route_ingress_reaction<A>(
     reaction: EngineReaction<'_>,
     egress: &mut Egress,
-    ifacs: &[InterfaceIfac],
-    pacers: &mut [InterfacePacer],
+    ifacs: &InterfaceIfacs,
+    pacers: &mut InterfacePacers,
     scratch: &mut WireScratch,
     now: InstantMillis,
     app: &mut A,
@@ -618,8 +742,8 @@ pub(super) fn route_ingress_reaction<A>(
 pub(super) fn route_ingress_reaction_with_work<A, Work, W>(
     reaction: EngineReaction<'_, Work>,
     egress: &mut Egress,
-    ifacs: &[InterfaceIfac],
-    pacers: &mut [InterfacePacer],
+    ifacs: &InterfaceIfacs,
+    pacers: &mut InterfacePacers,
     scratch: &mut WireScratch,
     now: InstantMillis,
     app: &mut A,
@@ -648,8 +772,8 @@ pub(super) fn route_ingress_reaction_with_work<A, Work, W>(
 pub(super) fn route_reaction_with_work<A, Work, W>(
     reaction: EngineReaction<'_, Work>,
     egress: &mut Egress,
-    ifacs: &[InterfaceIfac],
-    pacers: &mut [InterfacePacer],
+    ifacs: &InterfaceIfacs,
+    pacers: &mut InterfacePacers,
     scratch: &mut WireScratch,
     now: InstantMillis,
     app: &mut A,
@@ -675,8 +799,8 @@ pub(super) fn route_reaction_with_work<A, Work, W>(
 fn route_reaction_with_origin<A, Work, W>(
     reaction: EngineReaction<'_, Work>,
     egress: &mut Egress,
-    ifacs: &[InterfaceIfac],
-    pacers: &mut [InterfacePacer],
+    ifacs: &InterfaceIfacs,
+    pacers: &mut InterfacePacers,
     scratch: &mut WireScratch,
     now: InstantMillis,
     app: &mut A,
@@ -699,8 +823,8 @@ fn route_reaction_with_origin<A, Work, W>(
 
 struct TokioDirectiveEgress<'a> {
     egress: &'a mut Egress,
-    ifacs: &'a [InterfaceIfac],
-    pacers: &'a mut [InterfacePacer],
+    ifacs: &'a InterfaceIfacs,
+    pacers: &'a mut InterfacePacers,
     scratch: &'a mut WireScratch,
     now: InstantMillis,
     origin: EgressOrigin,
@@ -833,7 +957,7 @@ impl DirectiveEgress for TokioDirectiveEgress<'_> {
 
 fn emit_for_wire(
     egress: &mut Egress,
-    ifacs: &[InterfaceIfac],
+    ifacs: &InterfaceIfacs,
     target: InterfaceId,
     size_hint: usize,
     fill: &mut dyn FnMut(&mut [u8]) -> Option<usize>,
@@ -863,17 +987,14 @@ fn emit_for_wire(
     }
 }
 
-pub(super) fn ifac_for(ifacs: &[InterfaceIfac], id: InterfaceId) -> Option<&InterfaceIfac> {
-    if ifacs.is_empty() {
-        return None;
-    }
-    ifacs.iter().find(|entry| entry.id == id)
+pub(super) fn ifac_for(ifacs: &InterfaceIfacs, id: InterfaceId) -> Option<&InterfaceIfac> {
+    ifacs.get(id)
 }
 
 /// The one egress choke: a target with an access code never sees clean bytes on its wire, and a frame the mask refuses (oversize) is dropped rather than leaked open.
 fn enqueue_for_wire(
     egress: &mut Egress,
-    ifacs: &[InterfaceIfac],
+    ifacs: &InterfaceIfacs,
     target: InterfaceId,
     bytes: &[u8],
     masked: &mut [u8],
@@ -905,7 +1026,7 @@ fn enqueue_for_wire(
 #[cfg(feature = "runtime-metrics")]
 pub(super) fn enqueue_announce_for_wire(
     egress: &mut Egress,
-    ifacs: &[InterfaceIfac],
+    ifacs: &InterfaceIfacs,
     target: InterfaceId,
     bytes: &[u8],
     masked: &mut [u8],
@@ -935,7 +1056,17 @@ pub(super) fn enqueue_announce_for_wire(
             egress.record_announce(target, wire_bytes, origin, AnnounceEgressOutcome::Enqueued);
             PacerDelivery::Admitted
         }
-        EgressTryEnqueueOutcome::LaneFull => PacerDelivery::Backpressured,
+        EgressTryEnqueueOutcome::Unavailable => {
+            egress.record_generic_enqueue_outcome(EgressEnqueueOutcome::Unavailable);
+            egress.record_announce(
+                target,
+                wire_bytes,
+                origin,
+                AnnounceEgressOutcome::InterfaceUnavailable,
+            );
+            PacerDelivery::Discarded
+        }
+        EgressTryEnqueueOutcome::LaneFull(_) => PacerDelivery::Backpressured,
         EgressTryEnqueueOutcome::LaneMissing => {
             egress.record_generic_enqueue_outcome(EgressEnqueueOutcome::LaneMissing);
             egress.record_announce(
@@ -952,7 +1083,7 @@ pub(super) fn enqueue_announce_for_wire(
 #[cfg(not(feature = "runtime-metrics"))]
 fn enqueue_announce_for_wire(
     egress: &mut Egress,
-    ifacs: &[InterfaceIfac],
+    ifacs: &InterfaceIfacs,
     target: InterfaceId,
     bytes: &[u8],
     masked: &mut [u8],
@@ -968,7 +1099,8 @@ fn enqueue_announce_for_wire(
     };
     match outcome {
         EgressTryEnqueueOutcome::Enqueued => PacerDelivery::Admitted,
-        EgressTryEnqueueOutcome::LaneFull => PacerDelivery::Backpressured,
+        EgressTryEnqueueOutcome::Unavailable => PacerDelivery::Discarded,
+        EgressTryEnqueueOutcome::LaneFull(_) => PacerDelivery::Backpressured,
         EgressTryEnqueueOutcome::LaneMissing => PacerDelivery::Discarded,
     }
 }
@@ -976,7 +1108,7 @@ fn enqueue_announce_for_wire(
 #[cfg(feature = "runtime-metrics")]
 fn enqueue_pacerless_announce_for_wire(
     egress: &mut Egress,
-    ifacs: &[InterfaceIfac],
+    ifacs: &InterfaceIfacs,
     target: InterfaceId,
     bytes: &[u8],
     masked: &mut [u8],
@@ -993,7 +1125,7 @@ fn enqueue_pacerless_announce_for_wire(
 #[cfg(not(feature = "runtime-metrics"))]
 fn enqueue_pacerless_announce_for_wire(
     egress: &mut Egress,
-    ifacs: &[InterfaceIfac],
+    ifacs: &InterfaceIfacs,
     target: InterfaceId,
     bytes: &[u8],
     masked: &mut [u8],
@@ -1058,12 +1190,12 @@ fn record_shed_entry(
 
 #[cfg(feature = "runtime-metrics")]
 pub(super) fn offer_to_pacer(
-    pacers: &mut [InterfacePacer],
+    pacers: &mut InterfacePacers,
     target: InterfaceId,
     announce: PacedAnnounce<'_>,
     now: InstantMillis,
     egress: &mut Egress,
-    ifacs: &[InterfaceIfac],
+    ifacs: &InterfaceIfacs,
 ) {
     if egress.skip_unavailable(target) {
         egress.record_announce(
@@ -1075,7 +1207,7 @@ pub(super) fn offer_to_pacer(
         return;
     }
     let mut events = std::vec::Vec::new();
-    let offer = match pacers.iter_mut().find(|entry| entry.id == target) {
+    let offer = match pacers.get_mut(&target) {
         Some(entry) => entry.pacer.offer_tagged_observed(
             announce.bytes,
             announce.hops,
@@ -1113,17 +1245,17 @@ pub(super) fn offer_to_pacer(
 
 #[cfg(not(feature = "runtime-metrics"))]
 pub(super) fn offer_to_pacer(
-    pacers: &mut [InterfacePacer],
+    pacers: &mut InterfacePacers,
     target: InterfaceId,
     announce: PacedAnnounce<'_>,
     now: InstantMillis,
     egress: &mut Egress,
-    ifacs: &[InterfaceIfac],
+    ifacs: &InterfaceIfacs,
 ) {
     if egress.skip_unavailable(target) {
         return;
     }
-    match pacers.iter_mut().find(|entry| entry.id == target) {
+    match pacers.get_mut(&target) {
         Some(entry) => {
             entry
                 .pacer
@@ -1141,10 +1273,10 @@ pub(super) fn offer_to_pacer(
 
 #[cfg(feature = "runtime-metrics")]
 pub(super) fn flush_due_pacers(
-    pacers: &mut [InterfacePacer],
+    pacers: &mut InterfacePacers,
     now: InstantMillis,
     egress: &mut Egress,
-    ifacs: &[InterfaceIfac],
+    ifacs: &InterfaceIfacs,
 ) {
     for entry in pacers.iter_mut() {
         let target = entry.id;
@@ -1172,10 +1304,10 @@ pub(super) fn flush_due_pacers(
 
 #[cfg(not(feature = "runtime-metrics"))]
 pub(super) fn flush_due_pacers(
-    pacers: &mut [InterfacePacer],
+    pacers: &mut InterfacePacers,
     now: InstantMillis,
     egress: &mut Egress,
-    ifacs: &[InterfaceIfac],
+    ifacs: &InterfaceIfacs,
 ) {
     for entry in pacers.iter_mut() {
         let target = entry.id;
@@ -1189,14 +1321,14 @@ pub(super) fn flush_due_pacers(
     }
 }
 
-pub(super) fn soonest_pacer_release(pacers: &[InterfacePacer]) -> Option<InstantMillis> {
+pub(super) fn soonest_pacer_release(pacers: &InterfacePacers) -> Option<InstantMillis> {
     pacers
         .iter()
         .filter_map(|entry| entry.pacer.next_release())
         .min_by_key(|deadline| deadline.0)
 }
 
-pub(super) fn clear_announce_queues(pacers: &mut [InterfacePacer]) -> usize {
+pub(super) fn clear_announce_queues(pacers: &mut InterfacePacers) -> usize {
     pacers.iter_mut().fold(0, |dropped, entry| {
         dropped.saturating_add(entry.pacer.clear_queue())
     })

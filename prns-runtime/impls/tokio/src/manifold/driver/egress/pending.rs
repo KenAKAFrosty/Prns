@@ -68,10 +68,18 @@ impl PendingEgressQueue {
         Some((EgressQueue::Expedited, pending.bytes))
     }
 
+    pub(super) fn clear(&mut self) -> usize {
+        let cleared = self.len();
+        self.expedited.clear();
+        self.bulk.clear();
+        self.expedited_streak = 0;
+        cleared
+    }
+
     pub(super) fn blocks_source(&self, source: InterfaceId) -> bool {
-        self.expedited.iter().chain(&self.bulk).any(|pending| {
-            matches!(pending.origin, EgressOrigin::Internal)
-                || pending.origin == EgressOrigin::Ingress(source)
-        })
+        self.expedited
+            .iter()
+            .chain(&self.bulk)
+            .any(|pending| pending.origin == EgressOrigin::Ingress(source))
     }
 }

@@ -16,7 +16,12 @@ impl MetricsReporter {
         self.record_health(health);
         self.record_interfaces(interfaces, &snapshot);
         self.record_engine(&snapshot);
-        self.record_egress(interfaces, &snapshot);
+        let pending_stalled_seconds = self.egress_pending_stall.observe(
+            snapshot.egress.pending_frames,
+            snapshot.egress.flushed_pending_frames,
+            std::time::Instant::now(),
+        );
+        self.record_egress(interfaces, &snapshot, pending_stalled_seconds);
         self.record_crypto(&snapshot);
         self.record_reliability(&snapshot);
         self.previous = Some(snapshot);
@@ -474,6 +479,7 @@ impl MetricsReporter {
         &self,
         interfaces: &[InterfaceInventoryEntry],
         snapshot: &RuntimeMetricsSnapshot,
+        pending_stalled_seconds: u64,
     ) {
         let previous = self.previous.as_ref().map(|previous| &previous.egress);
         for (outcome, current, prior) in [
@@ -481,6 +487,21 @@ impl MetricsReporter {
                 "enqueued",
                 snapshot.egress.enqueued_frames,
                 previous.map(|metrics| metrics.enqueued_frames),
+            ),
+            (
+                "deferred",
+                snapshot.egress.backpressured_frames,
+                previous.map(|metrics| metrics.backpressured_frames),
+            ),
+            (
+                "pending_flushed",
+                snapshot.egress.flushed_pending_frames,
+                previous.map(|metrics| metrics.flushed_pending_frames),
+            ),
+            (
+                "pending_discarded_unavailable",
+                snapshot.egress.unavailable_pending_drops,
+                previous.map(|metrics| metrics.unavailable_pending_drops),
             ),
             (
                 "interface_unavailable",
@@ -510,6 +531,15 @@ impl MetricsReporter {
                 &[KeyValue::new("outcome", outcome)],
             );
         }
+        self.instruments
+            .egress_pending_frames
+            .record(u64::from(snapshot.egress.pending_frames), &[]);
+        self.instruments
+            .egress_maximum_pending_frames
+            .record(u64::from(snapshot.egress.maximum_pending_frames), &[]);
+        self.instruments
+            .egress_pending_stalled_seconds
+            .record(pending_stalled_seconds, &[]);
         for (origin, outcome, current) in snapshot.egress.announces.outcomes.iter() {
             let prior = previous.map(|metrics| metrics.announces.outcomes.get(origin, outcome));
             add_delta(
@@ -607,6 +637,9 @@ impl MetricsReporter {
             self.instruments
                 .egress_lane_occupancy
                 .record(u64::from(lane.occupancy), &attributes);
+            self.instruments
+                .egress_lane_pending
+                .record(u64::from(lane.pending), &attributes);
         }
     }
 

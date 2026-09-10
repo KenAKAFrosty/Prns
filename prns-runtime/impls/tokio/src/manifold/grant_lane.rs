@@ -16,6 +16,7 @@ pub fn tokio_grant_lane(slot_cap: usize, depth: usize) -> (TokioGrantProducer, T
     let free_ready = Arc::new(Notify::new());
     let producer_parked = Arc::new(AtomicBool::new(false));
     let consumer_parked = Arc::new(AtomicBool::new(false));
+    let discard_requested = Arc::new(AtomicBool::new(false));
     (
         TokioGrantProducer {
             slot_cap,
@@ -29,6 +30,7 @@ pub fn tokio_grant_lane(slot_cap: usize, depth: usize) -> (TokioGrantProducer, T
             free_ready: free_ready.clone(),
             producer_parked: producer_parked.clone(),
             consumer_parked: consumer_parked.clone(),
+            discard_requested: discard_requested.clone(),
         },
         TokioGrantConsumer {
             expedited: expedited_slots,
@@ -39,6 +41,7 @@ pub fn tokio_grant_lane(slot_cap: usize, depth: usize) -> (TokioGrantProducer, T
             free_ready,
             producer_parked,
             consumer_parked,
+            discard_requested,
             expedited_streak: 0,
             release_notify: None,
         },
@@ -127,6 +130,7 @@ pub struct TokioGrantProducer {
     free_ready: Arc<Notify>,
     producer_parked: Arc<AtomicBool>,
     consumer_parked: Arc<AtomicBool>,
+    discard_requested: Arc<AtomicBool>,
 }
 
 impl TokioGrantProducer {
@@ -206,6 +210,20 @@ impl TokioGrantProducer {
     pub(super) fn disarm_release_wake(&self) {
         self.producer_parked.store(false, Ordering::Release);
     }
+
+    /// Invalidate every frame already committed to this lane. The consumer owns the filled
+    /// rings, so it performs the actual reclamation the next time it is polled. Until then the
+    /// producer treats the lane as recovering and must not mix fresh frames with stale ones.
+    pub(super) fn request_consumer_discard(&self) {
+        self.discard_requested.store(true, Ordering::Release);
+        if self.consumer_parked.swap(false, Ordering::AcqRel) {
+            self.filled_ready.notify_one();
+        }
+    }
+
+    pub(super) fn consumer_discard_pending(&self) -> bool {
+        self.discard_requested.load(Ordering::Acquire)
+    }
 }
 
 pub struct TokioGrantConsumer {
@@ -217,6 +235,7 @@ pub struct TokioGrantConsumer {
     free_ready: Arc<Notify>,
     producer_parked: Arc<AtomicBool>,
     consumer_parked: Arc<AtomicBool>,
+    discard_requested: Arc<AtomicBool>,
     expedited_streak: usize,
     release_notify: Option<ManifoldWakeSender>,
 }
@@ -234,6 +253,7 @@ impl TokioGrantConsumer {
     }
 
     pub fn try_peek(&mut self) -> Option<&mut HeapFrameSlot> {
+        self.discard_committed_if_requested();
         if self.peeked.is_none() {
             self.peeked = self.pop_next();
         }
@@ -242,6 +262,7 @@ impl TokioGrantConsumer {
 
     pub async fn peek(&mut self) -> &mut HeapFrameSlot {
         loop {
+            self.discard_committed_if_requested();
             if let Some(slot) = self.peeked.take() {
                 return self.peeked.insert(slot);
             }
@@ -277,6 +298,28 @@ impl TokioGrantConsumer {
         let slot = self.expedited.pop().ok()?;
         self.expedited_streak = EXPEDITED_BURST;
         Some(slot)
+    }
+
+    fn discard_committed_if_requested(&mut self) {
+        if !self.discard_requested.load(Ordering::Acquire) {
+            return;
+        }
+
+        if let Some(slot) = self.peeked.take() {
+            let _ = self.recycled.push(slot);
+        }
+        while let Some(slot) = self.pop_next() {
+            let _ = self.recycled.push(slot);
+        }
+        self.expedited_streak = 0;
+        self.discard_requested.store(false, Ordering::Release);
+
+        // Wake both kinds of producer waiters after the reset becomes visible. A manifold wake
+        // is durable; Notify's permit gives standalone asynchronous producers the same guarantee.
+        match &self.release_notify {
+            Some(notify) => notify.signal(),
+            None => self.free_ready.notify_one(),
+        }
     }
 
     pub fn release(&mut self) {

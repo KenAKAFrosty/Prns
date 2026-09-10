@@ -23,6 +23,7 @@ mod egress;
 mod host;
 mod host_protocol;
 mod inbound_dispatch;
+mod indexed_rows;
 mod interface_seam;
 mod interface_status;
 mod interface_topology;
