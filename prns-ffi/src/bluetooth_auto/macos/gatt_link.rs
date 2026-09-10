@@ -21,7 +21,7 @@ use super::{
 };
 
 const GATT_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
-const GATT_INBOUND_BUDGET_BYTES: usize = 128 * 1024;
+pub(super) const GATT_INBOUND_BUDGET_BYTES: usize = 128 * 1024;
 
 #[derive(Clone)]
 pub(super) struct GattInboundSender {
@@ -127,7 +127,7 @@ pub(super) enum ControlPlane {
         data_characteristic: Option<GattWriteTarget>,
         central_delegate: SendCentralDelegate,
         queue: DispatchRetained<DispatchQueue>,
-        peripheral_manager: SendPeripheralDelegate,
+        peripheral_manager: Option<SendPeripheralDelegate>,
     },
 }
 
@@ -138,6 +138,23 @@ impl ControlPlane {
             Self::Listener { .. } => FailurePolicy::EndInboundLink,
         }
     }
+}
+
+fn arm_central_l2cap(
+    peripheral_manager: Option<&SendPeripheralDelegate>,
+    peer_id: CoreBluetoothPeerId,
+    completion: oneshot::Sender<DataPlane>,
+) -> bool {
+    let Some(peripheral_manager) = peripheral_manager else {
+        crate::diagnostic_log::warn!(
+            "bluetooth: ignoring L2CAP accept without a local peripheral role; staying on the GATT floor"
+        );
+        return false;
+    };
+    peripheral_manager
+        .0
+        .arm_pending_channel(peer_id, completion);
+    true
 }
 
 enum GattWriter {
@@ -365,7 +382,11 @@ impl BleLink for GattLink {
                         peer_id,
                         peripheral_manager,
                         ..
-                    } => peripheral_manager.0.arm_pending_channel(*peer_id, tx),
+                    } => {
+                        if !arm_central_l2cap(peripheral_manager.as_ref(), *peer_id, tx) {
+                            return Ok(());
+                        }
+                    }
                     ControlPlane::Listener {
                         peer_id, delegate, ..
                     } => delegate.0.arm_pending_channel(*peer_id, tx),
@@ -538,6 +559,13 @@ impl BleSink for GattSink {
 #[cfg(test)]
 mod source_lifecycle_tests {
     use super::*;
+
+    #[test]
+    fn central_only_link_rejects_a_local_l2cap_accept_plan() {
+        let (tx, rx) = oneshot::channel();
+        assert!(!arm_central_l2cap(None, CoreBluetoothPeerId([0; 16]), tx));
+        assert!(rx.blocking_recv().is_err());
+    }
 
     #[tokio::test]
     async fn inbound_l2cap_end_closes_source_while_gatt_floor_is_still_open() {
