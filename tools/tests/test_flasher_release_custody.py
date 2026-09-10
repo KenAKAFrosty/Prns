@@ -32,7 +32,7 @@ from flasher_manifest import (
     validate_nrf_serial_dfu_recovery_artifact,
     validate_uf2_artifact,
 )
-from source_snapshot import package_source_snapshot
+from source_snapshot import REQUIRED_SOURCE_FILES, package_source_snapshot
 
 
 VERSION = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
@@ -142,8 +142,16 @@ exit 0
 
 
 class CandidateFixture:
-    def __init__(self, root: Path) -> None:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        source_repository: Path = ROOT,
+        source_commit: str = SOURCE_COMMIT,
+    ) -> None:
         self.root = root
+        self.source_repository = source_repository
+        self.source_commit = source_commit
         root.mkdir(parents=True)
         self.key = root.parent / "minisign.pub"
         self.repository_version = root.parent / "VERSION"
@@ -179,8 +187,8 @@ class CandidateFixture:
         browser_wasm.parent.mkdir(parents=True)
         browser_wasm.write_bytes(b"fixture source-enabled wasm")
         package_source_snapshot(
-            repository=ROOT,
-            commit=SOURCE_COMMIT,
+            repository=source_repository,
+            commit=source_commit,
             version=VERSION,
             output=root / "website" / "source.zip",
             metadata=root / "metadata" / "source.json",
@@ -195,7 +203,7 @@ class CandidateFixture:
             + b" "
             + source_metadata["sha256"].encode()
             + b" "
-            + SOURCE_COMMIT[:12].encode()
+            + source_commit[:12].encode()
             + b" /file/source.zip /file/source.zip.sha256"
         )
         (root / "LICENSE-APACHE").write_text("fixture Apache license\n", encoding="utf-8")
@@ -317,7 +325,7 @@ class CandidateFixture:
             {
                 "schema": 1,
                 "version": VERSION,
-                "commit": SOURCE_COMMIT,
+                "commit": source_commit,
                 "targets": [
                     {
                         "schema": 1,
@@ -336,7 +344,7 @@ class CandidateFixture:
             "release": {
                 "version": VERSION,
                 "channel": "stable",
-                "commit": SOURCE_COMMIT,
+                "commit": source_commit,
             },
             "signing": {"key_id": KEY_ID},
             "targets": targets,
@@ -361,7 +369,7 @@ class CandidateFixture:
             root / "metadata" / "build.json",
             {
                 "schema": 2,
-                "source_commit": SOURCE_COMMIT,
+                "source_commit": source_commit,
                 "source_date_epoch": SOURCE_DATE_EPOCH,
                 "built_at_utc": datetime.fromtimestamp(
                     SOURCE_DATE_EPOCH, timezone.utc
@@ -535,7 +543,7 @@ class CandidateFixture:
             root / "metadata" / "reproducibility.json",
             {
                 "schema": 1,
-                "release": {"version": VERSION, "source_commit": SOURCE_COMMIT},
+                "release": {"version": VERSION, "source_commit": source_commit},
                 "result": "matched",
                 "builds": [
                     {"name": "primary", "archive_sha256": "1" * 64},
@@ -588,7 +596,9 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
             "validate-unsigned-flasher-candidate.py",
             self.fixture.root,
             "--expected-commit",
-            SOURCE_COMMIT,
+            self.fixture.source_commit,
+            "--source-repository",
+            self.fixture.source_repository,
             "--repository-version",
             self.fixture.repository_version,
             "--pinned-key",
@@ -806,6 +816,39 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
             )
 
     def test_embedded_firmware_cannot_carry_the_hosted_source_archive(self) -> None:
+        # The real repository archive can outgrow a firmware partition. Use a
+        # small, commit-bound source tree so this tests source rejection rather
+        # than failing earlier at the independent firmware-size boundary.
+        repository = self.workspace / "source-repository"
+        repository.mkdir()
+        for relative in REQUIRED_SOURCE_FILES:
+            path = repository / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                f"{VERSION}\n" if relative == "VERSION" else f"fixture {relative}\n",
+                encoding="utf-8",
+            )
+        for arguments in (
+            ("init", "--quiet"),
+            ("add", "."),
+            (
+                "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "Fixture source",
+            ),
+        ):
+            subprocess.run(("git", *arguments), cwd=repository, check=True, capture_output=True)
+        commit = subprocess.run(
+            ("git", "rev-parse", "HEAD"), cwd=repository, check=True,
+            text=True, capture_output=True,
+        ).stdout.strip()
+        self.fixture = CandidateFixture(
+            self.workspace / "bounded-candidate",
+            source_repository=repository,
+            source_commit=commit,
+        )
+        result = self.validate_unsigned()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
         target = next(
             target
             for target in self.fixture.manifest["targets"]
@@ -816,7 +859,9 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         )
         application_path = self.fixture.root / application["path"]
         source_archive = (self.fixture.root / "website" / "source.zip").read_bytes()
-        application_path.write_bytes(application_path.read_bytes() + source_archive)
+        payload = application_path.read_bytes() + source_archive
+        validate_esp_artifact(target["board_slug"], application, payload)
+        application_path.write_bytes(payload)
         application["size"] = application_path.stat().st_size
         application["sha256"] = sha256(application_path)
         hosted = self.fixture.root / "website" / "releases" / VERSION / application["path"]
