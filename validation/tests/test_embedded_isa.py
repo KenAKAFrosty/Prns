@@ -25,7 +25,7 @@ from validation.hardening.embedded_isa.transcript import concise, parse, require
 
 
 class EmbeddedIsaTests(unittest.TestCase):
-    def test_inventory_defines_the_arm_runner_and_shared_kernel(self) -> None:
+    def test_inventory_defines_the_architecture_runners_and_shared_kernel(self) -> None:
         inventory = load_inventory()
 
         self.assertEqual(inventory.kernel.scenario, "shared-state-machines")
@@ -33,12 +33,15 @@ class EmbeddedIsaTests(unittest.TestCase):
         self.assertEqual(inventory.rust_toolchain, "1.96.0")
         self.assertEqual(
             [architecture.identifier for architecture in inventory.architectures],
-            ["thumbv7em"],
+            ["thumbv7em", "riscv32imac"],
         )
         arm = inventory.architecture_for_suite("embedded-isa-thumbv7em")
         self.assertEqual(arm.rust_target, "thumbv7em-none-eabihf")
         self.assertEqual(arm.emulator.version, "11.1.1")
         self.assertEqual(len(arm.emulator.source_sha256), 64)
+        riscv = inventory.architecture_for_suite("embedded-isa-riscv32imac")
+        self.assertEqual(riscv.rust_target, "riscv32imac-unknown-none-elf")
+        self.assertEqual(riscv.emulator.version, "11.1.1")
         manifest = tomllib.loads(
             (ROOT / "validation" / "manifest.toml").read_text(encoding="utf-8")
         )
@@ -74,6 +77,33 @@ class EmbeddedIsaTests(unittest.TestCase):
         )
         with self.assertRaises(ArchitectureAdapterError):
             command_for("unknown-architecture", Path("qemu"), Path("kernel"))
+
+    def test_riscv_adapter_uses_the_virt_rv32imac_machine(self) -> None:
+        command = command_for("riscv32imac", Path("qemu"), Path("kernel"))
+
+        self.assertEqual(
+            command,
+            (
+                "qemu",
+                "-machine",
+                "virt",
+                "-cpu",
+                "sifive-e31",
+                "-m",
+                "128M",
+                "-bios",
+                "none",
+                "-nographic",
+                "-monitor",
+                "none",
+                "-serial",
+                "none",
+                "-semihosting-config",
+                "enable=on,target=native",
+                "-kernel",
+                "kernel",
+            ),
+        )
 
     def test_transcript_is_length_and_digest_checked(self) -> None:
         events = b"\x01\x00\x03arm"

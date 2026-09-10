@@ -653,6 +653,29 @@ inputs = [
 artifacts = "validation-artifacts/results/embedded-isa-thumbv7em"
 
 [[suite]]
+id = "embedded-isa-riscv32imac"
+domain = "hardening"
+group = "embedded-isa"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 1800
+command = ["__RUNNER_PYTHON__", "-m", "validation.hardening.embedded_isa.run"]
+inputs = [
+    ".cargo/config.toml",
+    "Cargo.lock",
+    "Cargo.toml",
+    "personal-hopspot/assurance",
+    "personal-hopspot/assurance-kernel",
+    "prns-core/src/interfaces/lora",
+    "prns-core/src/interfaces/subghz/regions/us915/mod.rs",
+    "prns-interfaces/impls/embassy/src/radios",
+    "validation/hardening/embedded-isa.toml",
+    "validation/hardening/embedded_isa",
+]
+artifacts = "validation-artifacts/results/embedded-isa-riscv32imac"
+
+[[suite]]
 id = "embedded-miri-quick"
 domain = "hardening"
 group = "embedded-miri"

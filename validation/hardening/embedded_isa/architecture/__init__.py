@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-from validation.hardening.embedded_isa.architecture import thumbv7em
+from validation.hardening.embedded_isa.architecture import riscv32imac, thumbv7em
 
 
 class ArchitectureAdapterError(RuntimeError):
@@ -13,6 +13,7 @@ class ArchitectureAdapterError(RuntimeError):
 Adapter = Callable[[Path, Path], tuple[str, ...]]
 
 ADAPTERS: dict[str, Adapter] = {
+    "riscv32imac": riscv32imac.command,
     "thumbv7em": thumbv7em.command,
 }
 

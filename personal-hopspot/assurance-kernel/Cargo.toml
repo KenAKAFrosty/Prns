@@ -16,6 +16,10 @@ thumbv7em = [
     "dep:cortex-m-semihosting",
     "dep:panic-halt",
 ]
+riscv32imac = [
+    "dep:riscv-rt",
+    "dep:semihosting",
+]
 
 [dependencies]
 embassy-futures = { version = "0.1", default-features = false }
@@ -26,6 +30,8 @@ prns-interfaces-embassy = { path = "../../prns-interfaces/impls/embassy", defaul
 cortex-m-rt = { version = "0.7", optional = true }
 cortex-m-semihosting = { version = "0.5", optional = true }
 panic-halt = { version = "1", optional = true }
+riscv-rt = { version = "0.16", features = ["memory", "single-hart"], optional = true }
+semihosting = { version = "0.1", features = ["panic-handler", "stdio"], optional = true }
 
 [[bin]]
 name = "assurance-host"
@@ -36,6 +42,11 @@ required-features = ["host"]
 name = "assurance-thumbv7em"
 path = "src/bin/thumbv7em.rs"
 required-features = ["thumbv7em"]
+
+[[bin]]
+name = "assurance-riscv32imac"
+path = "src/bin/riscv32imac.rs"
+required-features = ["riscv32imac"]
 
 [lints]
 workspace = true
