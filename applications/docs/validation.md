@@ -79,6 +79,11 @@ Platform procedures are in the [iOS](ios.md) and [Android](android.md) guides.
 
 ## Firmware and repository checks
 
+The [September 10 test fixes](../checkpoints/2026-09-10-app-ci-fixes.md) address
+the app's Windows-only unused import and a release fixture whose source archive
+outgrew the firmware region. Both are test-only changes; their checks and the
+remaining full-publishing boundary are recorded separately from firmware results.
+
 The constrained-Nordic integration regression is corrected without changing
 layouts or capacities. The integrated candidate passes all 14 configured
 resource profiles; T-Echo S140 v7 retains only 616 bytes of nominal FLASH
