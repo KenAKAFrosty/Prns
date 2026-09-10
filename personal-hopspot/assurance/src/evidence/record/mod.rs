@@ -8,10 +8,10 @@ use thiserror::Error;
 
 use crate::capabilities;
 use crate::contract::{
-    ComponentId, EvidenceArtifact, EvidenceFingerprint, EvidencePath, IdentifierError,
-    MiriCoverage, ProofArtifactKind, ProofContractError, ProofEvidence, ProofFragment, ProofKind,
-    RunnerId, ScenarioId, Subject, SupportLevel, ToolIdentity, ToolKind, ValueError, Verdict,
-    PROOF_FRAGMENT_SCHEMA_VERSION,
+    ArchitectureId, ComponentId, EvidenceArtifact, EvidenceFingerprint, EvidencePath,
+    IdentifierError, MiriCoverage, ProofArtifactKind, ProofContractError, ProofEvidence,
+    ProofFragment, ProofKind, RunnerId, ScenarioId, Subject, SupportLevel, ToolIdentity, ToolKind,
+    ValueError, Verdict, PROOF_FRAGMENT_SCHEMA_VERSION,
 };
 
 pub(crate) struct MiriRecordRequest {
@@ -27,20 +27,41 @@ pub(crate) struct MiriRecordRequest {
     pub output: PathBuf,
 }
 
+pub(crate) struct TargetIsaRecordRequest {
+    pub architecture: ArchitectureId,
+    pub scenario: ScenarioId,
+    pub runner: RunnerId,
+    pub completed_scenarios: u32,
+    pub cargo_version: String,
+    pub rustc_version: String,
+    pub qemu_version: String,
+    pub qemu_executable: PathBuf,
+    pub sources: Vec<PathBuf>,
+    pub transcript: PathBuf,
+    pub executable: PathBuf,
+    pub logs: Vec<PathBuf>,
+    pub output: PathBuf,
+}
+
 #[derive(Debug, Error)]
 pub(crate) enum RecordError {
     #[error("Miri proof completed no tests")]
     NoCompletedTests,
-    #[error("Miri proof needs at least one source")]
+    #[error("target-ISA proof completed no scenarios")]
+    NoCompletedScenarios,
+    #[error("proof needs at least one source")]
     MissingSources,
-    #[error("Miri proof needs at least one log artifact")]
+    #[error("proof needs at least one log artifact")]
     MissingLogs,
     #[error("tool identity is empty for {0:?}")]
     EmptyToolIdentity(ToolKind),
-    #[error("Miri proof is not a required or pilot capability for component {component} scenario {scenario}")]
+    #[error(
+        "{proof:?} proof is not a required or pilot capability for {subject} scenario {scenario}"
+    )]
     Capability {
-        component: ComponentId,
+        subject: Subject,
         scenario: ScenarioId,
+        proof: ProofKind,
     },
     #[error("proof output must end in .assurance.json: {0}")]
     OutputSuffix(PathBuf),
@@ -48,15 +69,21 @@ pub(crate) enum RecordError {
     ArtifactRoot(PathBuf),
     #[error("log artifact is not a regular file: {0}")]
     LogFile(PathBuf),
-    #[error("log artifact {log} is outside artifact root {root}")]
-    LogOutsideRoot { log: PathBuf, root: PathBuf },
+    #[error("transcript artifact is not a regular file: {0}")]
+    TranscriptFile(PathBuf),
+    #[error("executable artifact is not a regular file: {0}")]
+    ExecutableFile(PathBuf),
+    #[error("QEMU executable is not a regular file: {0}")]
+    QemuExecutable(PathBuf),
+    #[error("evidence artifact {artifact} is outside artifact root {root}")]
+    ArtifactOutsideRoot { artifact: PathBuf, root: PathBuf },
     #[error("could not inspect {path}: {source}")]
     Inspect {
         path: PathBuf,
         #[source]
         source: io::Error,
     },
-    #[error("could not write Miri proof {path}: {source}")]
+    #[error("could not write proof {path}: {source}")]
     Write {
         path: PathBuf,
         #[source]
@@ -70,7 +97,7 @@ pub(crate) enum RecordError {
     Contract(#[from] ProofContractError),
     #[error(transparent)]
     Source(#[from] source::SourceError),
-    #[error("could not serialize Miri proof: {0}")]
+    #[error("could not serialize proof: {0}")]
     Serialize(#[from] serde_json::Error),
 }
 
@@ -80,14 +107,15 @@ pub(crate) fn record_miri(
 ) -> Result<(), RecordError> {
     validate_request(&request)?;
     let subject = Subject::Component(request.component.clone());
-    validate_capability(&request.component, &request.scenario)?;
+    validate_capability(&subject, &request.scenario, ProofKind::Miri)?;
     let source = source::identify(repository_root, &request.sources)?;
     let output_parent = request.output.parent().unwrap_or(Path::new("."));
     fs::create_dir_all(output_parent).map_err(|source| RecordError::Write {
         path: output_parent.to_path_buf(),
         source,
     })?;
-    let artifacts = artifacts(output_parent, &request.logs)?;
+    let output_parent = artifact_root(output_parent)?;
+    let artifacts = artifacts(&output_parent, &request.logs)?;
     let fragment = ProofFragment {
         schema_version: PROOF_FRAGMENT_SCHEMA_VERSION,
         subject,
@@ -113,13 +141,72 @@ pub(crate) fn record_miri(
         },
         artifacts,
     };
-    fragment.validate()?;
-    let mut encoded = serde_json::to_vec_pretty(&fragment)?;
-    encoded.push(b'\n');
-    fs::write(&request.output, encoded).map_err(|source| RecordError::Write {
-        path: request.output,
+    write_fragment(fragment, request.output)
+}
+
+pub(crate) fn record_target_isa(
+    repository_root: &Path,
+    request: TargetIsaRecordRequest,
+) -> Result<(), RecordError> {
+    validate_target_isa_request(&request)?;
+    let subject = Subject::Architecture(request.architecture.clone());
+    validate_capability(&subject, &request.scenario, ProofKind::TargetIsa)?;
+    let source = source::identify(repository_root, &request.sources)?;
+    let output_parent = request.output.parent().unwrap_or(Path::new("."));
+    fs::create_dir_all(output_parent).map_err(|source| RecordError::Write {
+        path: output_parent.to_path_buf(),
         source,
-    })
+    })?;
+    let output_parent = artifact_root(output_parent)?;
+    let transcript = artifact(
+        &output_parent,
+        &request.transcript,
+        ProofArtifactKind::Transcript,
+    )?;
+    let transcript_fingerprint = transcript.fingerprint.clone();
+    let executable = artifact(
+        &output_parent,
+        &request.executable,
+        ProofArtifactKind::Executable,
+    )?;
+    let mut evidence_artifacts = vec![transcript, executable];
+    evidence_artifacts.extend(artifacts(&output_parent, &request.logs)?);
+    let qemu_fingerprint = executable_fingerprint(&request.qemu_executable)?;
+    let fragment = ProofFragment {
+        schema_version: PROOF_FRAGMENT_SCHEMA_VERSION,
+        subject,
+        scenario: request.scenario,
+        proof: ProofKind::TargetIsa,
+        runner: request.runner,
+        source,
+        tools: vec![
+            ToolIdentity {
+                kind: ToolKind::Cargo,
+                version: request.cargo_version,
+            },
+            ToolIdentity {
+                kind: ToolKind::Rustc,
+                version: request.rustc_version,
+            },
+            ToolIdentity {
+                kind: ToolKind::Qemu,
+                version: format!(
+                    "{}; executable-sha256={}",
+                    request.qemu_version,
+                    qemu_fingerprint.as_str()
+                ),
+            },
+        ],
+        verdict: Verdict::Passed {
+            evidence: ProofEvidence::TargetIsa {
+                architecture: request.architecture,
+                completed_scenarios: request.completed_scenarios,
+                transcript_fingerprint,
+            },
+        },
+        artifacts: evidence_artifacts,
+    };
+    write_fragment(fragment, request.output)
 }
 
 fn validate_request(request: &MiriRecordRequest) -> Result<(), RecordError> {
@@ -140,18 +227,47 @@ fn validate_request(request: &MiriRecordRequest) -> Result<(), RecordError> {
             return Err(RecordError::EmptyToolIdentity(kind));
         }
     }
-    let output = request.output.to_string_lossy();
-    if !output.ends_with(".assurance.json") {
-        return Err(RecordError::OutputSuffix(request.output.clone()));
+    validate_output(&request.output)
+}
+
+fn validate_target_isa_request(request: &TargetIsaRecordRequest) -> Result<(), RecordError> {
+    if request.completed_scenarios == 0 {
+        return Err(RecordError::NoCompletedScenarios);
+    }
+    if request.sources.is_empty() {
+        return Err(RecordError::MissingSources);
+    }
+    if request.logs.is_empty() {
+        return Err(RecordError::MissingLogs);
+    }
+    for (kind, version) in [
+        (ToolKind::Cargo, request.cargo_version.as_str()),
+        (ToolKind::Rustc, request.rustc_version.as_str()),
+        (ToolKind::Qemu, request.qemu_version.as_str()),
+    ] {
+        if version.trim().is_empty() {
+            return Err(RecordError::EmptyToolIdentity(kind));
+        }
+    }
+    validate_output(&request.output)
+}
+
+fn validate_output(output: &Path) -> Result<(), RecordError> {
+    if !output.to_string_lossy().ends_with(".assurance.json") {
+        return Err(RecordError::OutputSuffix(output.to_path_buf()));
     }
     Ok(())
 }
 
-fn validate_capability(component: &ComponentId, scenario: &ScenarioId) -> Result<(), RecordError> {
+fn validate_capability(
+    subject: &Subject,
+    scenario: &ScenarioId,
+    proof: ProofKind,
+) -> Result<(), RecordError> {
     let supported = capabilities::canonical()?.into_iter().any(|capability| {
-        capability.subject == Subject::Component(component.clone())
+        capability.subject == *subject
             && capability.scenario == *scenario
-            && capability.proof == ProofKind::Miri
+            && capability.proof == proof
             && matches!(
                 capability.support,
                 SupportLevel::Required | SupportLevel::Pilot
@@ -161,49 +277,87 @@ fn validate_capability(component: &ComponentId, scenario: &ScenarioId) -> Result
         Ok(())
     } else {
         Err(RecordError::Capability {
-            component: component.clone(),
+            subject: subject.clone(),
             scenario: scenario.clone(),
+            proof,
         })
     }
 }
 
 fn artifacts(root: &Path, logs: &[PathBuf]) -> Result<Vec<EvidenceArtifact>, RecordError> {
+    logs.iter()
+        .map(|log| artifact(root, log, ProofArtifactKind::Log))
+        .collect::<Result<Vec<_>, _>>()
+}
+
+fn artifact_root(root: &Path) -> Result<PathBuf, RecordError> {
     let root = fs::canonicalize(root).map_err(|_| RecordError::ArtifactRoot(root.to_path_buf()))?;
     if !root.is_dir() {
         return Err(RecordError::ArtifactRoot(root));
     }
-    logs.iter()
-        .map(|log| artifact(&root, log))
-        .collect::<Result<Vec<_>, _>>()
+    Ok(root)
 }
 
-fn artifact(root: &Path, log: &Path) -> Result<EvidenceArtifact, RecordError> {
-    let metadata = fs::symlink_metadata(log).map_err(|source| RecordError::Inspect {
-        path: log.to_path_buf(),
+fn artifact(
+    root: &Path,
+    path: &Path,
+    kind: ProofArtifactKind,
+) -> Result<EvidenceArtifact, RecordError> {
+    let metadata = fs::symlink_metadata(path).map_err(|source| RecordError::Inspect {
+        path: path.to_path_buf(),
         source,
     })?;
     if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() == 0 {
-        return Err(RecordError::LogFile(log.to_path_buf()));
+        return Err(match kind {
+            ProofArtifactKind::Executable => RecordError::ExecutableFile(path.to_path_buf()),
+            ProofArtifactKind::Log => RecordError::LogFile(path.to_path_buf()),
+            ProofArtifactKind::Transcript => RecordError::TranscriptFile(path.to_path_buf()),
+        });
     }
-    let log = fs::canonicalize(log).map_err(|source| RecordError::Inspect {
-        path: log.to_path_buf(),
+    let path = fs::canonicalize(path).map_err(|source| RecordError::Inspect {
+        path: path.to_path_buf(),
         source,
     })?;
-    let relative = log
+    let relative = path
         .strip_prefix(root)
-        .map_err(|_| RecordError::LogOutsideRoot {
-            log: log.clone(),
+        .map_err(|_| RecordError::ArtifactOutsideRoot {
+            artifact: path.clone(),
             root: root.to_path_buf(),
         })?;
-    let bytes = fs::read(&log).map_err(|source| RecordError::Inspect {
-        path: log.clone(),
+    let bytes = fs::read(&path).map_err(|source| RecordError::Inspect {
+        path: path.clone(),
         source,
     })?;
     Ok(EvidenceArtifact {
-        kind: ProofArtifactKind::Log,
+        kind,
         path: EvidencePath::parse(portable_path(relative))?,
         bytes: bytes.len() as u64,
         fingerprint: EvidenceFingerprint::parse(prns_flash_manifest::sha256_hex(&bytes))?,
+    })
+}
+
+fn executable_fingerprint(path: &Path) -> Result<EvidenceFingerprint, RecordError> {
+    let path = fs::canonicalize(path).map_err(|source| RecordError::Inspect {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    if !path.is_file() {
+        return Err(RecordError::QemuExecutable(path));
+    }
+    let bytes = fs::read(&path).map_err(|source| RecordError::Inspect {
+        path: path.clone(),
+        source,
+    })?;
+    EvidenceFingerprint::parse(prns_flash_manifest::sha256_hex(&bytes)).map_err(RecordError::from)
+}
+
+fn write_fragment(fragment: ProofFragment, output: PathBuf) -> Result<(), RecordError> {
+    fragment.validate()?;
+    let mut encoded = serde_json::to_vec_pretty(&fragment)?;
+    encoded.push(b'\n');
+    fs::write(&output, encoded).map_err(|source| RecordError::Write {
+        path: output,
+        source,
     })
 }
 

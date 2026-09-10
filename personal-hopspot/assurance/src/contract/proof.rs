@@ -172,6 +172,7 @@ pub enum Verdict<T> {
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ProofArtifactKind {
+    Executable,
     Log,
     Transcript,
 }
@@ -224,6 +225,16 @@ pub enum ProofContractError {
     EmptyArtifact,
     #[error("proof fragment repeats artifact {0}")]
     DuplicateArtifact(EvidencePath),
+    #[error("executable proof fragment has no transcript artifact")]
+    MissingTranscriptArtifact,
+    #[error("executable proof fragment has multiple transcript artifacts")]
+    DuplicateTranscriptArtifact,
+    #[error("executable proof transcript fingerprint does not match its artifact")]
+    TranscriptFingerprintMismatch,
+    #[error("executable proof fragment has no executable artifact")]
+    MissingExecutableArtifact,
+    #[error("executable proof fragment has multiple executable artifacts")]
+    DuplicateExecutableArtifact,
 }
 
 impl ProofFragment {
@@ -236,7 +247,8 @@ impl ProofFragment {
         }
         validate_tools(&self.tools)?;
         validate_verdict(self.proof, &self.subject, &self.verdict)?;
-        validate_artifacts(&self.artifacts)
+        validate_artifacts(&self.artifacts)?;
+        validate_transcript_artifact(&self.verdict, &self.artifacts)
     }
 }
 
@@ -331,13 +343,56 @@ fn validate_artifacts(artifacts: &[EvidenceArtifact]) -> Result<(), ProofContrac
     Ok(())
 }
 
+fn validate_transcript_artifact(
+    verdict: &Verdict<ProofEvidence>,
+    artifacts: &[EvidenceArtifact],
+) -> Result<(), ProofContractError> {
+    let evidence = match verdict {
+        Verdict::Passed { evidence } | Verdict::Partial { evidence, .. } => evidence,
+        Verdict::Failed { .. } | Verdict::Unavailable { .. } => return Ok(()),
+    };
+    let fingerprint = match evidence {
+        ProofEvidence::TargetIsa {
+            transcript_fingerprint,
+            ..
+        }
+        | ProofEvidence::PlatformEmulation {
+            transcript_fingerprint,
+            ..
+        } => transcript_fingerprint,
+        ProofEvidence::Miri { .. } => return Ok(()),
+    };
+    let mut transcripts = artifacts
+        .iter()
+        .filter(|artifact| artifact.kind == ProofArtifactKind::Transcript);
+    let Some(transcript) = transcripts.next() else {
+        return Err(ProofContractError::MissingTranscriptArtifact);
+    };
+    if transcripts.next().is_some() {
+        return Err(ProofContractError::DuplicateTranscriptArtifact);
+    }
+    if transcript.fingerprint != *fingerprint {
+        return Err(ProofContractError::TranscriptFingerprintMismatch);
+    }
+    let mut executables = artifacts
+        .iter()
+        .filter(|artifact| artifact.kind == ProofArtifactKind::Executable);
+    if executables.next().is_none() {
+        return Err(ProofContractError::MissingExecutableArtifact);
+    }
+    if executables.next().is_some() {
+        return Err(ProofContractError::DuplicateExecutableArtifact);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        ArchitectureId, ComponentId, EvidenceFingerprint, EvidenceGap, MiriCoverage,
-        ProofContractError, ProofEvidence, ProofFragment, ProofKind, RunnerId, ScenarioId,
-        SourceCommit, SourceCustody, SourceIdentity, Subject, ToolIdentity, ToolKind, Verdict,
-        PROOF_FRAGMENT_SCHEMA_VERSION,
+        ArchitectureId, ComponentId, EvidenceArtifact, EvidenceFingerprint, EvidenceGap,
+        EvidencePath, MiriCoverage, ProofArtifactKind, ProofContractError, ProofEvidence,
+        ProofFragment, ProofKind, RunnerId, ScenarioId, SourceCommit, SourceCustody,
+        SourceIdentity, Subject, ToolIdentity, ToolKind, Verdict, PROOF_FRAGMENT_SCHEMA_VERSION,
     };
 
     fn fingerprint(byte: char) -> Result<EvidenceFingerprint, crate::contract::ValueError> {
@@ -433,6 +488,69 @@ mod tests {
         assert_eq!(
             fragment.validate(),
             Err(ProofContractError::DuplicateTool(ToolKind::Miri))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn executable_evidence_is_bound_to_one_transcript_artifact(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut fragment = fragment()?;
+        fragment.subject = Subject::Architecture(ArchitectureId::parse("thumbv7em")?);
+        fragment.proof = ProofKind::TargetIsa;
+        fragment.verdict = Verdict::Passed {
+            evidence: ProofEvidence::TargetIsa {
+                architecture: ArchitectureId::parse("thumbv7em")?,
+                completed_scenarios: 2,
+                transcript_fingerprint: fingerprint('c')?,
+            },
+        };
+        assert_eq!(
+            fragment.validate(),
+            Err(ProofContractError::MissingTranscriptArtifact)
+        );
+        fragment.artifacts.push(EvidenceArtifact {
+            kind: ProofArtifactKind::Transcript,
+            path: EvidencePath::parse("transcript.bin")?,
+            bytes: 32,
+            fingerprint: fingerprint('d')?,
+        });
+        assert_eq!(
+            fragment.validate(),
+            Err(ProofContractError::TranscriptFingerprintMismatch)
+        );
+        fragment.artifacts[0].fingerprint = fingerprint('c')?;
+        assert_eq!(
+            fragment.validate(),
+            Err(ProofContractError::MissingExecutableArtifact)
+        );
+        fragment.artifacts.push(EvidenceArtifact {
+            kind: ProofArtifactKind::Executable,
+            path: EvidencePath::parse("kernel.elf")?,
+            bytes: 32,
+            fingerprint: fingerprint('e')?,
+        });
+        fragment.validate()?;
+        fragment.artifacts.push(EvidenceArtifact {
+            kind: ProofArtifactKind::Transcript,
+            path: EvidencePath::parse("second-transcript.bin")?,
+            bytes: 32,
+            fingerprint: fingerprint('c')?,
+        });
+        assert_eq!(
+            fragment.validate(),
+            Err(ProofContractError::DuplicateTranscriptArtifact)
+        );
+        fragment.artifacts.pop();
+        fragment.artifacts.push(EvidenceArtifact {
+            kind: ProofArtifactKind::Executable,
+            path: EvidencePath::parse("second-kernel.elf")?,
+            bytes: 32,
+            fingerprint: fingerprint('f')?,
+        });
+        assert_eq!(
+            fragment.validate(),
+            Err(ProofContractError::DuplicateExecutableArtifact)
         );
         Ok(())
     }

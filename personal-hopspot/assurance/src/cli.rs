@@ -7,9 +7,11 @@ use thiserror::Error;
 
 use crate::baseline::{self, BaselineError};
 use crate::contract::{
-    ComponentId, IdentifierError, MatrixStatus, MiriCoverage, RunnerId, ScenarioId,
+    ArchitectureId, ComponentId, IdentifierError, MatrixStatus, MiriCoverage, RunnerId, ScenarioId,
 };
-use crate::evidence::{record_miri, MiriRecordRequest, RecordError};
+use crate::evidence::{
+    record_miri, record_target_isa, MiriRecordRequest, RecordError, TargetIsaRecordRequest,
+};
 use crate::report::{self, ComparisonError, SummaryError};
 
 #[derive(Parser)]
@@ -22,7 +24,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum AssuranceCommand {
     Compare(CompareArguments),
-    Record(RecordArguments),
+    Record(Box<RecordArguments>),
     RefreshBaseline(RefreshBaselineArguments),
     Summarize(SummarizeArguments),
 }
@@ -35,7 +37,38 @@ struct RecordArguments {
 
 #[derive(Subcommand)]
 enum RecordCommand {
+    Isa(TargetIsaRecordArguments),
     Miri(MiriRecordArguments),
+}
+
+#[derive(Args)]
+struct TargetIsaRecordArguments {
+    #[arg(long)]
+    architecture: String,
+    #[arg(long)]
+    scenario: String,
+    #[arg(long)]
+    runner: String,
+    #[arg(long)]
+    completed_scenarios: u32,
+    #[arg(long)]
+    cargo_version: String,
+    #[arg(long)]
+    rustc_version: String,
+    #[arg(long)]
+    qemu_version: String,
+    #[arg(long)]
+    qemu_executable: PathBuf,
+    #[arg(long)]
+    source: Vec<PathBuf>,
+    #[arg(long)]
+    transcript: PathBuf,
+    #[arg(long)]
+    executable: PathBuf,
+    #[arg(long)]
+    log: Vec<PathBuf>,
+    #[arg(long)]
+    output: PathBuf,
 }
 
 #[derive(Args)]
@@ -144,6 +177,28 @@ fn run(cli: Cli) -> Result<(), AssuranceError> {
             print!("{}", report::compare(&arguments.before, &arguments.after)?);
         }
         AssuranceCommand::Record(arguments) => match arguments.command {
+            RecordCommand::Isa(arguments) => {
+                let output = arguments.output.clone();
+                record_target_isa(
+                    &root,
+                    TargetIsaRecordRequest {
+                        architecture: ArchitectureId::parse(arguments.architecture)?,
+                        scenario: ScenarioId::parse(arguments.scenario)?,
+                        runner: RunnerId::parse(arguments.runner)?,
+                        completed_scenarios: arguments.completed_scenarios,
+                        cargo_version: arguments.cargo_version,
+                        rustc_version: arguments.rustc_version,
+                        qemu_version: arguments.qemu_version,
+                        qemu_executable: arguments.qemu_executable,
+                        sources: arguments.source,
+                        transcript: arguments.transcript,
+                        executable: arguments.executable,
+                        logs: arguments.log,
+                        output: arguments.output,
+                    },
+                )?;
+                println!("EMBEDDED_ISA_PROOF: {}", output.display());
+            }
             RecordCommand::Miri(arguments) => {
                 let output = arguments.output.clone();
                 record_miri(

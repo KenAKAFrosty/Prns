@@ -65,6 +65,7 @@ cargo_manifests = [
     "docs/command/Cargo.toml",
     "docs/website/Cargo.toml",
     "personal-hopspot/assurance/Cargo.toml",
+    "personal-hopspot/assurance-kernel/Cargo.toml",
     "personal-hopspot/builder/Cargo.toml",
     "personal-hopspot/core/Cargo.toml",
     "personal-hopspot/desktop/Cargo.toml",
@@ -627,6 +628,29 @@ timeout_seconds = 3600
 command = ["bash", "validation/hardening/miri.sh", "--quick"]
 inputs = ["validation/hardening/miri.sh"]
 artifacts = "validation-artifacts/results/miri-quick"
+
+[[suite]]
+id = "embedded-isa-thumbv7em"
+domain = "hardening"
+group = "embedded-isa"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 1800
+command = ["__RUNNER_PYTHON__", "-m", "validation.hardening.embedded_isa.run"]
+inputs = [
+    ".cargo/config.toml",
+    "Cargo.lock",
+    "Cargo.toml",
+    "personal-hopspot/assurance",
+    "personal-hopspot/assurance-kernel",
+    "prns-core/src/interfaces/lora",
+    "prns-core/src/interfaces/subghz/regions/us915/mod.rs",
+    "prns-interfaces/impls/embassy/src/radios",
+    "validation/hardening/embedded-isa.toml",
+    "validation/hardening/embedded_isa",
+]
+artifacts = "validation-artifacts/results/embedded-isa-thumbv7em"
 
 [[suite]]
 id = "embedded-miri-quick"

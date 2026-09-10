@@ -1,0 +1,36 @@
+schema = 1
+
+[kernel]
+manifest = "personal-hopspot/assurance-kernel/Cargo.toml"
+package = "personal-hopspot-assurance-kernel"
+host_feature = "host"
+host_binary = "assurance-host"
+scenario = "shared-state-machines"
+completed_scenarios = 2
+sources = [
+    ".cargo/config.toml",
+    "Cargo.lock",
+    "Cargo.toml",
+    "personal-hopspot/assurance-kernel",
+    "prns-core/src/interfaces/lora",
+    "prns-core/src/interfaces/subghz/regions/us915/mod.rs",
+    "prns-interfaces/impls/embassy/src/radios/lr1110",
+    "prns-interfaces/impls/embassy/src/radios/radio.rs",
+    "prns-interfaces/impls/embassy/src/radios/sx126x.rs",
+]
+
+[toolchain]
+rust = "1.96.0"
+
+[[architecture]]
+id = "thumbv7em"
+suite = "embedded-isa-thumbv7em"
+rust_target = "thumbv7em-none-eabihf"
+feature = "thumbv7em"
+binary = "assurance-thumbv7em"
+runner = "qemu-mps2-an386"
+emulator = "qemu-system-arm"
+emulator_version = "11.1.1"
+emulator_source_url = "https://download.qemu.org/qemu-11.1.1.tar.xz"
+emulator_source_sha256 = "079ffbff8a7111bbc89022107cbabf3bbfd614d5fc9d7cc675991196aca12482"
+timeout_seconds = 30

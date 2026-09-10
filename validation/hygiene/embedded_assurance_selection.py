@@ -52,9 +52,16 @@ ISA_FILES = COMMON_FILES | frozenset(
         "tools/release/install-release-esp-toolchain.sh",
         "tools/release/release-esp-toolchain-identity.sh",
         "tools/release/verify-release-esp-toolchain.sh",
+        "validation/hardening/embedded-isa.toml",
     }
 )
-PILOT_FILES = ISA_FILES
+PILOT_FILES = COMMON_FILES | frozenset(
+    {
+        "tools/release/install-release-esp-toolchain.sh",
+        "tools/release/release-esp-toolchain-identity.sh",
+        "tools/release/verify-release-esp-toolchain.sh",
+    }
+)
 RESOURCE_TREES = (
     "personal-hopspot/builder/",
     "personal-hopspot/core/",
@@ -81,6 +88,7 @@ MIRI_TREES = (
 )
 ISA_TREES = (
     "personal-hopspot/assurance/",
+    "personal-hopspot/assurance-kernel/",
     "personal-hopspot/builder/",
     "personal-hopspot/core/",
     "personal-hopspot/embedded/",
@@ -90,6 +98,7 @@ ISA_TREES = (
     "prns-interfaces/impls/embassy/",
     "prns-runtime/core/",
     "prns-runtime/impls/embassy/",
+    "validation/hardening/embedded_isa/",
 )
 PILOT_TREES = (
     "personal-hopspot/assurance/",
