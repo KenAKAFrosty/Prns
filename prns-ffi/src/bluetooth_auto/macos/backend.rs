@@ -27,7 +27,10 @@ use super::central::{
 use super::gatt_link::{gatt_inbound_channel, ControlPlane, GattLink};
 use super::peripheral::PeripheralDelegate;
 #[cfg(target_os = "ios")]
-use super::{central_manager_options, peripheral_manager_options};
+use super::{
+    central_manager_options, legacy_restoration_identifiers, peripheral_manager_options,
+    CoreBluetoothRestorationIdentifiers,
+};
 use super::{
     start_scan, Event, MacosBleError, PeripheralTable, RestoredPeripherals, SendCentralDelegate,
     SendCentralManager, SendPeripheral, SendPeripheralDelegate,
@@ -255,8 +258,8 @@ impl Drop for NativeThread {
     }
 }
 
-/// Restoration-aware CoreBluetooth managers whose delegates and serial queue already exist, while
-/// radio authorization, service publication, and L2CAP readiness remain asynchronous.
+/// Prepared CoreBluetooth managers whose delegates and serial queue already exist, while radio
+/// authorization, service publication, and L2CAP readiness remain asynchronous.
 pub struct PreparedMacosBleBackend {
     native_thread: NativeThread,
     events: tokio_mpsc::UnboundedReceiver<Event>,
@@ -266,13 +269,76 @@ pub struct PreparedMacosBleBackend {
     handles: Handles,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ManagerPreparation {
+    #[cfg(target_os = "ios")]
+    RestorationAware(CoreBluetoothRestorationIdentifiers),
+    #[cfg(not(target_os = "ios"))]
+    PlatformDefault,
+    WithoutRestoration,
+}
+
+impl ManagerPreparation {
+    #[cfg(target_os = "ios")]
+    fn restoration_identifiers(&self) -> Option<&CoreBluetoothRestorationIdentifiers> {
+        match self {
+            Self::RestorationAware(identifiers) => Some(identifiers),
+            Self::WithoutRestoration => None,
+        }
+    }
+}
+
 impl MacosBleBackend {
     #[cfg(target_os = "ios")]
     pub const MAX_PEERS: usize = 7;
     #[cfg(target_os = "macos")]
     pub const MAX_PEERS: usize = 8;
 
+    /// Creates CoreBluetooth managers with the existing iOS restoration identifiers.
+    ///
+    /// Applications using this path are responsible for the matching background modes and
+    /// restoration lifecycle. Use [`Self::prepare_without_restoration`] when the owner
+    /// intentionally has no CoreBluetooth state-restoration contract.
     pub async fn prepare(identity: BleIdentity) -> Result<PreparedMacosBleBackend, MacosBleError> {
+        #[cfg(target_os = "ios")]
+        let manager_preparation =
+            ManagerPreparation::RestorationAware(legacy_restoration_identifiers());
+        #[cfg(not(target_os = "ios"))]
+        let manager_preparation = ManagerPreparation::PlatformDefault;
+        Self::prepare_with(identity, manager_preparation).await
+    }
+
+    /// Creates CoreBluetooth managers with stable restoration identifiers supplied by the
+    /// application that owns their lifecycle.
+    ///
+    /// The containing application must declare both matching CoreBluetooth background modes and
+    /// recreate the managers with these exact identifiers during an iOS restoration launch.
+    #[cfg(target_os = "ios")]
+    pub async fn prepare_with_restoration(
+        identity: BleIdentity,
+        identifiers: CoreBluetoothRestorationIdentifiers,
+    ) -> Result<PreparedMacosBleBackend, MacosBleError> {
+        Self::prepare_with(identity, ManagerPreparation::RestorationAware(identifiers)).await
+    }
+
+    /// Creates CoreBluetooth managers without opting into iOS state restoration.
+    ///
+    /// Central and peripheral operation remain available while the application is running, but
+    /// CoreBluetooth will not preserve or restore these managers after process termination.
+    pub async fn prepare_without_restoration(
+        identity: BleIdentity,
+    ) -> Result<PreparedMacosBleBackend, MacosBleError> {
+        Self::prepare_with(identity, ManagerPreparation::WithoutRestoration).await
+    }
+
+    async fn prepare_with(
+        identity: BleIdentity,
+        manager_preparation: ManagerPreparation,
+    ) -> Result<PreparedMacosBleBackend, MacosBleError> {
+        #[cfg(target_os = "ios")]
+        let restoration_identifiers = manager_preparation.restoration_identifiers().cloned();
+        #[cfg(not(target_os = "ios"))]
+        let _ = manager_preparation;
         let (events_tx, events_rx) = tokio_mpsc::unbounded_channel::<Event>();
         let (keepalive, shutdown_rx) = sync_mpsc::channel::<()>();
         let (handles_tx, handles_rx) = oneshot::channel::<Handles>();
@@ -297,7 +363,9 @@ impl MacosBleBackend {
                 );
                 let central_proto = ProtocolObject::from_ref(&*central_delegate);
                 #[cfg(target_os = "ios")]
-                let central_options = Some(central_manager_options());
+                let central_options = restoration_identifiers
+                    .as_ref()
+                    .map(|identifiers| central_manager_options(identifiers.central()));
                 #[cfg(not(target_os = "ios"))]
                 let central_options: Option<
                     Retained<NSDictionary<NSString, AnyObject>>,
@@ -317,7 +385,9 @@ impl MacosBleBackend {
                     PeripheralDelegate::new(events_tx, queue.clone(), identity);
                 let peripheral_proto = ProtocolObject::from_ref(&*peripheral_delegate);
                 #[cfg(target_os = "ios")]
-                let peripheral_options = Some(peripheral_manager_options());
+                let peripheral_options = restoration_identifiers
+                    .as_ref()
+                    .map(|identifiers| peripheral_manager_options(identifiers.peripheral()));
                 #[cfg(not(target_os = "ios"))]
                 let peripheral_options: Option<
                     Retained<NSDictionary<NSString, AnyObject>>,
@@ -666,6 +736,15 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
 mod native_thread_tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn preparation_without_restoration_is_distinct_from_the_platform_default() {
+        assert_ne!(
+            ManagerPreparation::WithoutRestoration,
+            ManagerPreparation::PlatformDefault
+        );
+    }
 
     #[test]
     fn dropping_owner_stops_and_joins_native_thread() {
