@@ -1,5 +1,5 @@
 use super::*;
-use prns_host::{DestinationName, InterfaceHealth, PrnsLimits, SingleDestinationConfig};
+use prns_host::{DestinationName, PrnsLimits, SingleDestinationConfig};
 use std::fs;
 use std::sync::atomic::AtomicUsize;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -431,6 +431,8 @@ fn attach_supplied_wire(
 
 #[cfg(unix)]
 fn wait_until_connected(host: &NativeHost, interface: InterfaceId) -> Result<(), String> {
+    use prns_host::InterfaceHealth;
+
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
         let snapshot = host
