@@ -1,0 +1,144 @@
+diff --git a/crates/ubrn_bindgen/src/bindings/gen_typescript/api_module/builders.rs b/crates/ubrn_bindgen/src/bindings/gen_typescript/api_module/builders.rs
+index bd3cd96..46a1a71 100644
+--- a/crates/ubrn_bindgen/src/bindings/gen_typescript/api_module/builders.rs
++++ b/crates/ubrn_bindgen/src/bindings/gen_typescript/api_module/builders.rs
+@@ -237,15 +237,11 @@ fn render_variant_discr(config: &Config, discr: &general::LiteralNode) -> String
+ pub(super) fn build_field(config: &Config, field: &general::Field) -> TsField {
+     let name = field.name.to_lower_camel_case();
+     let is_optional = matches!(&field.ty.ty, general::Type::Optional { .. });
+-    let ts_type = if is_optional {
+-        // Unwrap Optional<T> to just T; the `?:` in the type declaration handles optionality.
+-        match &field.ty.ty {
+-            general::Type::Optional { inner_type } => type_label_for(config, inner_type),
+-            _ => unreachable!(),
+-        }
+-    } else {
+-        type_label_for(config, &field.ty.ty)
+-    };
++    // Keep `undefined` in the type even when a named field also has `?`:
++    // converters produce explicit undefined values for None, and callers may
++    // pass those values with exactOptionalPropertyTypes enabled. Tuple fields
++    // also need the union, since their declarations have no optional key.
++    let ts_type = type_label_for(config, &field.ty.ty);
+     let ffi_converter = ffi_converter_name_for(config, &field.ty);
+     let default_value = field
+         .default
+diff --git a/crates/ubrn_bindgen/src/bindings/gen_typescript/templates/CallBodyMacros.ts b/crates/ubrn_bindgen/src/bindings/gen_typescript/templates/CallBodyMacros.ts
+index 427cb2a..2ed6ce4 100644
+--- a/crates/ubrn_bindgen/src/bindings/gen_typescript/templates/CallBodyMacros.ts
++++ b/crates/ubrn_bindgen/src/bindings/gen_typescript/templates/CallBodyMacros.ts
+@@ -232,7 +232,7 @@ console.debug(`-- {{ ffi_name }}`);
+     try {
+         return {# space #}{%- call to_ffi_async_call(callable, obj_factory) %};
+     } catch (__error: any) {
+-        if (uniffiIsDebug && __error instanceof Error) {
++        if (uniffiIsDebug && __error instanceof Error && __stack !== undefined) {
+             __error.stack = __stack;
+         }
+         throw __error;
+diff --git a/fixtures/defaults/tests/bindings/test_defaults.ts b/fixtures/defaults/tests/bindings/test_defaults.ts
+index 54469bf..0dd5c92 100644
+--- a/fixtures/defaults/tests/bindings/test_defaults.ts
++++ b/fixtures/defaults/tests/bindings/test_defaults.ts
+@@ -97,6 +97,13 @@ test("record field defaults: roundtrip", (t) => {
+   t.assertEqual("go", out.required);
+ });
+ 
++test("optional record fields accept omitted keys and undefined", (t) => {
++  const omitted: Settings = { required: "go", retries: 3 };
++  const explicit: Settings = { ...omitted, label: undefined };
++  t.assertEqual(echoSettings(omitted), echoSettings(explicit));
++  t.assertEqual(echoSettings(explicit).label, undefined);
++});
++
+ test("enum variant named field default: i32", (t: Asserts) => {
+   const v = TestCase.One.new({});
+   t.assertEqual(100, v.inner.numValue);
+diff --git a/fixtures/enum-types/src/lib.rs b/fixtures/enum-types/src/lib.rs
+index 3c8b6f6..c692ac3 100644
+--- a/fixtures/enum-types/src/lib.rs
++++ b/fixtures/enum-types/src/lib.rs
+@@ -122,6 +122,7 @@ pub(crate) enum OptionalFields {
+         maybe_string: Option<String>,
+         maybe_record: Option<AnimalRecord>,
+     },
++    Tuple(Option<String>, Option<AnimalRecord>),
+     Empty,
+ }
+ 
+diff --git a/fixtures/enum-types/tests/bindings/test_enum_types.ts b/fixtures/enum-types/tests/bindings/test_enum_types.ts
+index 99b007f..8b5688b 100644
+--- a/fixtures/enum-types/tests/bindings/test_enum_types.ts
++++ b/fixtures/enum-types/tests/bindings/test_enum_types.ts
+@@ -218,6 +218,29 @@ test("Variant with Option fields accepts omitted keys and undefined", (t) => {
+   }
+ });
+ 
++test("Tuple variant preserves optional field types", (t) => {
++  const absent = OptionalFields.Tuple.new(undefined, undefined);
++  const absentRoundTripped = identityOptionalFields(absent);
++  if (OptionalFields.Tuple.instanceOf(absentRoundTripped)) {
++    t.assertEqual(absentRoundTripped.inner[0], undefined);
++    t.assertEqual(absentRoundTripped.inner[1], undefined);
++  } else {
++    t.fail("expected Tuple");
++  }
++
++  const present = new OptionalFields.Tuple(
++    "value",
++    AnimalRecord.create({ value: 7 }),
++  );
++  const presentRoundTripped = identityOptionalFields(present);
++  if (OptionalFields.Tuple.instanceOf(presentRoundTripped)) {
++    t.assertEqual(presentRoundTripped.inner[0], "value");
++    t.assertEqual(presentRoundTripped.inner[1]?.value, 7);
++  } else {
++    t.fail("expected Tuple");
++  }
++});
++
+ // This tests the generated Typescript and serves as an example of how to
+ // to use enums with values.
+ //
+diff --git a/typescript/testing/asserts.ts b/typescript/testing/asserts.ts
+index 6c8deb8..b585458 100644
+--- a/typescript/testing/asserts.ts
++++ b/typescript/testing/asserts.ts
+@@ -9,7 +9,7 @@ import "./polyfills";
+ export class AssertError extends Error {
+   constructor(message: string, error?: Error) {
+     super(`${message}${error ? `: ${error.message}` : ""}`);
+-    if (error) {
++    if (error?.stack !== undefined) {
+       this.stack = this.stack
+         ? [this.stack, "Caused by:", error.stack].join("\n")
+         : error.stack;
+diff --git a/typescript/tests/playground/records.ts b/typescript/tests/playground/records.ts
+index f4c425d..c2e3040 100644
+--- a/typescript/tests/playground/records.ts
++++ b/typescript/tests/playground/records.ts
+@@ -9,9 +9,9 @@ import { uniffiCreateRecord } from "../../src/records";
+ export type MyRecord = {
+   string: string;
+   number: number;
+-  optionalString?: string;
++  optionalString?: string | undefined;
+   bool: boolean;
+-  optionalBool?: boolean;
++  optionalBool?: boolean | undefined;
+ };
+ 
+ export const MyRecord = (() => {
+diff --git a/typescript/tsconfig.template.json b/typescript/tsconfig.template.json
+index c1c15df..2fedd89 100644
+--- a/typescript/tsconfig.template.json
++++ b/typescript/tsconfig.template.json
+@@ -98,7 +98,7 @@
+     // "alwaysStrict": true,                             /* Ensure 'use strict' is always emitted. */
+     // "noUnusedLocals": true,                           /* Enable error reporting when local variables aren't read. */
+     // "noUnusedParameters": true,                       /* Raise an error when a function parameter isn't read. */
+-    // "exactOptionalPropertyTypes": true,               /* Interpret optional property types as written, rather than adding 'undefined'. */
++    "exactOptionalPropertyTypes": true,                  /* Interpret optional property types as written, rather than adding 'undefined'. */
+     // "noImplicitReturns": true,                        /* Enable error reporting for codepaths that do not explicitly return in a function. */
+     // "noFallthroughCasesInSwitch": true,               /* Enable error reporting for fallthrough cases in switch statements. */
+     // "noUncheckedIndexedAccess": true,                 /* Add 'undefined' to a type when accessed using an index. */

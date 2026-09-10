@@ -3,6 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 python3 validation/run.py verify
+python3 validation/hygiene/application-boundary.py
 ./tools/prns verify
 
 while IFS=$'\t' read -r manifest packages; do

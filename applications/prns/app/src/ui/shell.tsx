@@ -1,0 +1,207 @@
+import { Link, Slot, usePathname } from "expo-router";
+import { type PropsWithChildren, useState } from "react";
+import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+
+import { navigationEntries, type ScreenCatalogEntry } from "@/navigation/catalog";
+import { useScaffoldState } from "@/state/scaffold-state-context";
+import { Badge } from "./primitives";
+import { layoutModeForWidth, radius, space, useAppPalette } from "./theme";
+
+export function ShellLayout() {
+  const { width } = useWindowDimensions();
+  const layout = layoutModeForWidth(width);
+  const { state } = useScaffoldState();
+  const entries = navigationEntries(
+    layout === "compact" ? "phone" : "wide",
+    state.showUnavailableFeatures,
+  );
+  const pathname = usePathname();
+  const active = entries
+    .filter((entry) => pathname === entry.path || pathname.startsWith(`${entry.path}/`))
+    .sort((left, right) => right.path.length - left.path.length)[0];
+
+  return (
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: useAppPalette().background }]}>
+      <ShellHeader />
+      <View style={styles.shellBody}>
+        {layout === "compact" ? null : <NavigationRail active={active} entries={entries} />}
+        <View role="main" style={styles.content}>
+          <Slot />
+        </View>
+      </View>
+      {layout === "compact" ? <BottomNavigation active={active} entries={entries} /> : null}
+    </SafeAreaView>
+  );
+}
+
+function ShellHeader() {
+  const palette = useAppPalette();
+  return (
+    <View
+      style={[styles.header, { backgroundColor: palette.surface, borderColor: palette.border }]}
+      role="banner"
+    >
+      <Text accessibilityRole="header" style={[styles.brand, { color: palette.text }]}>
+        prns
+      </Text>
+      <Badge>Development preview</Badge>
+    </View>
+  );
+}
+
+function NavigationRail({
+  active,
+  entries,
+}: {
+  readonly active: ScreenCatalogEntry | undefined;
+  readonly entries: readonly ScreenCatalogEntry[];
+}) {
+  const palette = useAppPalette();
+  return (
+    <View
+      accessibilityLabel="Primary navigation"
+      role="navigation"
+      style={[styles.rail, { backgroundColor: palette.surface, borderColor: palette.border }]}
+    >
+      <ScrollView contentContainerStyle={styles.railContent} keyboardShouldPersistTaps="handled">
+        {entries.map((entry) => (
+          <ShellNavigationItem active={active?.id === entry.id} entry={entry} key={entry.id} />
+        ))}
+      </ScrollView>
+    </View>
+  );
+}
+
+function BottomNavigation({
+  active,
+  entries,
+}: {
+  readonly active: ScreenCatalogEntry | undefined;
+  readonly entries: readonly ScreenCatalogEntry[];
+}) {
+  const palette = useAppPalette();
+  return (
+    <View
+      accessibilityLabel="Primary navigation"
+      role="navigation"
+      style={[
+        styles.bottomNavigation,
+        { backgroundColor: palette.surface, borderColor: palette.border },
+      ]}
+    >
+      {entries.map((entry) => (
+        <ShellNavigationItem
+          active={active?.id === entry.id}
+          compact
+          entry={entry}
+          key={entry.id}
+        />
+      ))}
+    </View>
+  );
+}
+
+function ShellNavigationItem({
+  active,
+  compact = false,
+  entry,
+}: {
+  readonly active: boolean;
+  readonly compact?: boolean;
+  readonly entry: ScreenCatalogEntry;
+}) {
+  const palette = useAppPalette();
+  const [focused, setFocused] = useState(false);
+  const [pressed, setPressed] = useState(false);
+  return (
+    <Link href={entry.path} asChild>
+      <Pressable
+        accessibilityLabel={active ? `${entry.label}, current page` : entry.label}
+        aria-current={active ? "page" : undefined}
+        onBlur={() => {
+          setFocused(false);
+          setPressed(false);
+        }}
+        onFocus={() => setFocused(true)}
+        onPressIn={() => setPressed(true)}
+        onPressOut={() => setPressed(false)}
+        role="link"
+        style={compact ? styles.compactNavigationPressable : styles.navigationPressable}
+      >
+        <View
+          style={[
+            styles.navigationItem,
+            compact ? styles.compactNavigationItem : null,
+            {
+              backgroundColor: pressed
+                ? palette.surfaceRaised
+                : active
+                  ? palette.selected
+                  : "transparent",
+              borderColor: focused ? palette.focus : "transparent",
+            },
+          ]}
+        >
+          <Text
+            style={[
+              styles.navigationLabel,
+              compact ? styles.compactNavigationLabel : null,
+              { color: active ? palette.selectedText : palette.text },
+            ]}
+          >
+            {entry.label}
+          </Text>
+        </View>
+      </Pressable>
+    </Link>
+  );
+}
+
+export function ShellSurface({ children }: PropsWithChildren) {
+  return <View style={styles.content}>{children}</View>;
+}
+
+const styles = StyleSheet.create({
+  safeArea: { flex: 1 },
+  header: {
+    alignItems: "center",
+    borderBottomWidth: 1,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: space.md,
+    justifyContent: "space-between",
+    minHeight: 58,
+    paddingHorizontal: space.md,
+    paddingVertical: space.sm,
+  },
+  brand: { fontSize: 24, fontWeight: "800", letterSpacing: -0.5, lineHeight: 30 },
+  shellBody: { flex: 1, flexDirection: "row", minHeight: 0 },
+  content: { flex: 1, minHeight: 0, minWidth: 0 },
+  rail: {
+    borderRightWidth: 1,
+    minHeight: 0,
+    width: 224,
+  },
+  railContent: { gap: space.xs, padding: space.sm },
+  bottomNavigation: {
+    borderTopWidth: 1,
+    flexDirection: "row",
+    minHeight: 66,
+    paddingHorizontal: space.xs,
+    paddingVertical: space.xs,
+  },
+  navigationPressable: { borderRadius: radius.sm, minHeight: 48, width: "100%" },
+  compactNavigationPressable: { borderRadius: radius.sm, flex: 1, minHeight: 48, minWidth: 0 },
+  navigationItem: {
+    borderRadius: radius.sm,
+    borderWidth: 2,
+    justifyContent: "center",
+    minHeight: 48,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  compactNavigationItem: { alignItems: "center", flex: 1, minWidth: 0, paddingHorizontal: 4 },
+  navigationLabel: { fontSize: 15, fontWeight: "600", lineHeight: 20 },
+  compactNavigationLabel: { fontSize: 12, lineHeight: 16, textAlign: "center" },
+});

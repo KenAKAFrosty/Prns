@@ -656,6 +656,126 @@ jobs:
             audits/unsafe-snapshot.json
             personal-hopspot/mobile/android/dependencies/release-runtime.tsv
 
+  application-scaffold:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.18.0"
+          cache: npm
+          cache-dependency-path: |
+            applications/package-lock.json
+            prns-js/package-lock.json
+      - name: Build the provider-neutral Prns contract and install the exact application toolchain
+        run: |
+          npm install --global npm@11.16.0
+          test "$(node --version)" = "v24.18.0"
+          test "$(npm --version)" = "11.16.0"
+          npm --prefix prns-js ci --ignore-scripts --no-audit --no-fund
+          npm --prefix prns-js run build:code
+          npm --prefix applications ci --ignore-scripts --no-audit --no-fund
+      - name: Verify application scaffold
+        run: python3 validation/run.py run --suite application-scaffold --expected-sha "$GITHUB_SHA"
+
+  application-native-foundation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          submodules: false
+      - name: Install native Bluetooth host dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          components: clippy, rustfmt
+          toolchain: stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          workspaces: applications -> target
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.18.0"
+          cache: npm
+          cache-dependency-path: |
+            applications/package-lock.json
+            prns-js/package-lock.json
+      - name: Build the provider-neutral Prns contract and install the exact application toolchain
+        run: |
+          npm install --global npm@11.16.0
+          test "$(node --version)" = "v24.18.0"
+          test "$(npm --version)" = "11.16.0"
+          npm --prefix prns-js ci --ignore-scripts --no-audit --no-fund
+          npm --prefix prns-js run build:code
+          npm --prefix applications ci --ignore-scripts --no-audit --no-fund
+      - name: Verify native application foundation
+        run: python3 validation/run.py run --suite application-native-foundation --expected-sha "$GITHUB_SHA"
+
+  application-ios-platform:
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.18.0"
+      - name: Verify native Swift lifecycle and diagnostic behavior
+        run: python3 validation/run.py run --suite application-ios-platform --expected-sha "$GITHUB_SHA"
+
+  application-lxmf-direct:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          components: clippy, rustfmt
+          targets: thumbv7em-none-eabihf
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          workspaces: applications -> target
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+      - name: Verify bounded wire, current Python authority, and live direct exchange
+        run: python3 validation/run.py run --suite application-lxmf-direct --expected-sha "$GITHUB_SHA"
+
+  application-detached-mobility:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          submodules: false
+      - name: Install native Bluetooth host dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          components: clippy, rustfmt
+          targets: thumbv7em-none-eabihf
+          toolchain: stable
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.18.0"
+          cache: npm
+          cache-dependency-path: prns-js/package-lock.json
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+      - name: Install the recorded npm toolchain
+        run: |
+          npm install --global npm@11.16.0
+          test "$(node --version)" = "v24.18.0"
+          test "$(npm --version)" = "11.16.0"
+      - name: Verify the tracked application as a detached consumer
+        run: python3 validation/run.py run --suite application-detached-mobility --expected-sha "$GITHUB_SHA"
+
   release-critical:
     name: Release critical
     if: always()
@@ -677,6 +797,11 @@ jobs:
       - windows-desktop
       - local-interop
       - deny
+      - application-scaffold
+      - application-native-foundation
+      - application-ios-platform
+      - application-lxmf-direct
+      - application-detached-mobility
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
@@ -698,6 +823,11 @@ jobs:
       WINDOWS_RESULT: ${{ needs.windows-desktop.result }}
       INTEROP_RESULT: ${{ needs.local-interop.result }}
       DENY_RESULT: ${{ needs.deny.result }}
+      APPLICATION_SCAFFOLD_RESULT: ${{ needs.application-scaffold.result }}
+      APPLICATION_NATIVE_FOUNDATION_RESULT: ${{ needs.application-native-foundation.result }}
+      APPLICATION_IOS_PLATFORM_RESULT: ${{ needs.application-ios-platform.result }}
+      APPLICATION_LXMF_DIRECT_RESULT: ${{ needs.application-lxmf-direct.result }}
+      APPLICATION_DETACHED_MOBILITY_RESULT: ${{ needs.application-detached-mobility.result }}
     steps:
       - name: Require every release-critical lane
         run: |
@@ -715,7 +845,12 @@ jobs:
             "$APPLE_RESULT" \
             "$WINDOWS_RESULT" \
             "$INTEROP_RESULT" \
-            "$DENY_RESULT"; do
+            "$DENY_RESULT" \
+            "$APPLICATION_SCAFFOLD_RESULT" \
+            "$APPLICATION_NATIVE_FOUNDATION_RESULT" \
+            "$APPLICATION_IOS_PLATFORM_RESULT" \
+            "$APPLICATION_LXMF_DIRECT_RESULT" \
+            "$APPLICATION_DETACHED_MOBILITY_RESULT"; do
             test "$result" = "success"
           done
           if [ "$EMBEDDED_REQUIRED" = "true" ]; then

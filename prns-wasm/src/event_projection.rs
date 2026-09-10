@@ -98,6 +98,12 @@ pub(crate) fn capture_journaled(journaled: Journaled<'_>) -> CapturedJournal {
                 format!("{attempt_id:?}"),
             )
         }
+        Journaled::RemoteControlTargetPairingExpiredDuringAuthorization { attempt_id } => {
+            remote_control_diagnostic(
+                "RemoteControlTargetPairingExpiredDuringAuthorization",
+                format!("{attempt_id:?}"),
+            )
+        }
         Journaled::RemoteControlControllerPairingConfirmationRequired(attempt) => {
             remote_control_diagnostic(
                 "RemoteControlControllerPairingConfirmationRequired",
@@ -113,6 +119,12 @@ pub(crate) fn capture_journaled(journaled: Journaled<'_>) -> CapturedJournal {
         Journaled::RemoteControlControllerPairingAuthorizationPersisted { attempt_id } => {
             remote_control_diagnostic(
                 "RemoteControlControllerPairingAuthorizationPersisted",
+                format!("{attempt_id:?}"),
+            )
+        }
+        Journaled::RemoteControlControllerPairingAuthorizationPersistenceFailed { attempt_id } => {
+            remote_control_diagnostic(
+                "RemoteControlControllerPairingAuthorizationPersistenceFailed",
                 format!("{attempt_id:?}"),
             )
         }

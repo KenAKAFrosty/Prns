@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "types": ["node"],
+    "allowImportingTsExtensions": true
+  },
+  "include": ["tools/**/*.ts", "src/navigation/catalog.ts"],
+  "exclude": []
+}

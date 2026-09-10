@@ -1,0 +1,35 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'rs.reticulum.prns.app'
+version = '0.0.0'
+
+android {
+  namespace 'rs.reticulum.prns.app.expo'
+  // Match RN's NdkConfiguratorUtils for the standalone library test APK:
+  // AGP includes these from both ReactAndroid JNI and JSI's prefab linkage.
+  packagingOptions.jniLibs.pickFirsts += [
+    '**/libfbjni.so', '**/libreactnative.so', '**/libjsi.so', '**/libc++_shared.so',
+  ]
+  defaultConfig {
+    minSdkVersion 29
+    versionCode 1
+    versionName '0.0.0'
+    testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+    testApplicationId 'rs.reticulum.prns.app.expo.test'
+    consumerProguardFiles 'consumer-rules.pro'
+  }
+}
+
+dependencies {
+  // Both generated Kotlin/JNA and JSI load the one app-owned Rust image.
+  implementation project(':prns-internal_native-bindings')
+  implementation 'net.java.dev.jna:jna:5.18.1@aar'
+  implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2'
+  testImplementation 'junit:junit:4.13.2'
+  testImplementation 'org.mockito:mockito-core:5.14.2'
+  androidTestImplementation 'androidx.test:runner:1.7.0'
+  androidTestImplementation 'androidx.test.ext:junit:1.3.0'
+}

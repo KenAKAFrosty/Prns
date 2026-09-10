@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 2,
+  "qualification": {
+    "node": "24.18.0",
+    "npm": "11.16.0",
+    "pythonMinimum": "3.11.0",
+    "rustMinimum": "1.90.0",
+    "rustToolchain": "stable",
+    "rustComponents": ["clippy", "rustfmt"],
+    "rustTargets": ["thumbv7em-none-eabihf"]
+  },
+  "prns": {
+    "repository": "https://github.com/KenAKAFrosty/Prns.git",
+    "revision": "451e669da33ec885f3c03cdb2ba26f8ba984caba",
+    "hostContract": {
+      "id": "prns-host/v1",
+      "schemaPath": "prns-host/schema/host-contract-v1.json",
+      "fingerprint": "prns-host/v1/a18c51fd8314bb35",
+      "schemaSha256": "0c75208632abbb4fb47e324ecf08cbfebb0e9df1dd9b9b89306268f621d955de"
+    },
+    "bluetoothAuto": {
+      "serviceUuid": "37145B00-442D-4A94-917F-8F42C5DA28E3"
+    },
+    "rustPackages": {
+      "direct": [
+        "personal-rns",
+        "prns-core",
+        "prns-ffi",
+        "prns-host",
+        "prns-host-snapshot",
+        "prns-interfaces-tokio"
+      ],
+      "source": [
+        { "name": "personal-rns", "path": "personal-rns", "version": "0.3.7" },
+        { "name": "prns-core", "path": "prns-core", "version": "0.3.7" },
+        { "name": "prns-ffi", "path": "prns-ffi", "version": "0.3.7" },
+        { "name": "prns-host", "path": "prns-host/core", "version": "0.3.7" },
+        { "name": "prns-host-snapshot", "path": "prns-host/impls/snapshot", "version": "0.3.7" },
+        { "name": "prns-interfaces-embassy", "path": "prns-interfaces/impls/embassy", "version": "0.3.7" },
+        { "name": "prns-interfaces-tokio", "path": "prns-interfaces/impls/tokio", "version": "0.3.7" },
+        { "name": "prns-macros", "path": "prns-macros", "version": "0.3.7" },
+        { "name": "prns-runtime", "path": "prns-runtime/core", "version": "0.3.7" },
+        { "name": "prns-runtime-embassy", "path": "prns-runtime/impls/embassy", "version": "0.3.7" },
+        { "name": "prns-runtime-tokio", "path": "prns-runtime/impls/tokio", "version": "0.3.7" }
+      ]
+    },
+    "javascriptContract": {
+      "package": "personal-rns",
+      "sourcePath": "prns-js",
+      "version": "0.3.7",
+      "subpath": "./contract",
+      "artifactSha256": "0b292b27e05d5c3f4e6f0d0861c1ef159059c62116ac983105f055eee5a71296",
+      "consumers": [
+        "prns/app/package.json",
+        "sdk/expo/package.json"
+      ],
+      "requiredFiles": [
+        "package/package.json",
+        "package/dist/contract.js",
+        "package/dist/contract.d.ts",
+        "package/dist-cjs/contract.js"
+      ]
+    }
+  }
+}

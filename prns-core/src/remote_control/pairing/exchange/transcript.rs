@@ -136,6 +136,15 @@ impl RemoteControlPairingTranscriptDigest {
 pub struct RemoteControlPairingAttemptId(RemoteControlPairingTranscriptDigest);
 
 impl RemoteControlPairingAttemptId {
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn from_test_transcript_digest_bytes(
+        bytes: [u8; PAIRING_TRANSCRIPT_DIGEST_ENCODED_LEN],
+    ) -> Self {
+        Self(RemoteControlPairingTranscriptDigest(bytes))
+    }
+
     #[must_use]
     pub const fn transcript(self) -> RemoteControlPairingTranscriptDigest {
         self.0

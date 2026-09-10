@@ -1,0 +1,8 @@
+# Python authority for the LXMF direct-link corpus. The two protocol projects
+# are commit-pinned so a tag or package-index move cannot change the oracle.
+cffi==2.0.0
+cryptography==49.0.0
+lxmf @ git+https://github.com/markqvist/LXMF.git@795fdaa2b0777c13033787d933d1afc94a2377cb
+pycparser==2.23
+pyserial==3.5
+rns @ git+https://github.com/markqvist/Reticulum.git@ea98db4f53dcf0defc0e71a16e60d28b1229c4e6

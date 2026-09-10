@@ -2,14 +2,47 @@ use super::*;
 use personal_hopspot_core::display::{
     DisplayBlankReason, DisplayDuration, DisplayVisibility, MonotonicMillis, PresentationUrgency,
 };
+#[cfg(feature = "remote-control-pairing")]
+use personal_rns::engine::{OpenRemoteControlPairing, RemoteControlTargetPairingApproval};
 use personal_rns::remote_control::{
     RemoteControlInitialControllerGrants, RemoteControlSelfAnnouncement, RemoteControlService,
 };
+#[cfg(feature = "remote-control-pairing")]
+use personal_rns::remote_control::{
+    RemoteControlPairingAttemptTimeout, RemoteControlPairingExpiresAfter,
+    RemoteControlPairingPermissions, RemoteControlPairingPublicAppDataBytes,
+};
+
+#[cfg(feature = "remote-control-pairing")]
+const REMOTE_CONTROL_PAIRING_WINDOW_MILLIS: u64 = 120_000;
+#[cfg(feature = "remote-control-pairing")]
+const REMOTE_CONTROL_PAIRING_ATTEMPT_MILLIS: u64 = 60_000;
+
+enum RenderLoopEvent {
+    Button(screen::InputEvent),
+    Tick,
+    InterfacesChanged,
+    #[cfg(feature = "remote-control-pairing")]
+    RemoteControlChanged,
+}
 
 use crate::memory::EspFirmwareMemory;
 
 fn display_now() -> MonotonicMillis {
     MonotonicMillis::new(embassy_time::Instant::now().as_millis())
+}
+
+fn issue_node_page_announce(
+    handle: &Handle,
+    destination: personal_rns::wire::DestinationHash,
+) -> bool {
+    handle
+        .issue(PrnsCommand::AnnounceNow(AnnounceNow {
+            destination,
+            target: AnnounceTarget::AllInterfaces,
+            app_data: AnnounceAppData::Registered,
+        }))
+        .is_some()
 }
 
 const NOTICE_DURATION: DisplayDuration = match DisplayDuration::from_millis(NOTICE_MS) {
@@ -214,11 +247,25 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let destination_secret = node_identity.into_destination_secret();
     let (remote_control_identity_secrets, _remote_control_identity_origins) =
         remote_control_bootstrap.into_parts();
+    #[cfg(feature = "remote-control-pairing")]
+    let stable_target_destination = remote_control_identity_secrets
+        .identities()
+        .target()
+        .endpoint()
+        .destination_hash();
     let remote_control = RemoteControlService::new(
         remote_control_identity_secrets,
         RemoteControlInitialControllerGrants::Nobody,
         RemoteControlSelfAnnouncement::Destination(destination_hashes.node_page),
     );
+    #[cfg(feature = "remote-control-pairing")]
+    let remote_control_pairing_permissions =
+        RemoteControlPairingPermissions::try_from(remote_control.available_requests())
+            .expect("RemoteControl exposes at least one supported request");
+    #[cfg(feature = "remote-control-pairing")]
+    let remote_control_pairing_public_app_data =
+        RemoteControlPairingPublicAppDataBytes::try_from(B::NODE_ANNOUNCE_APP_DATA)
+            .expect("the board's product name fits pairing public app data");
     let destinations = personal_hopspot_core::HopspotDestinationSet::new(
         destination_secret,
         B::ANNOUNCE_APP_DATA,
@@ -263,7 +310,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         request_endpoints: screen::node_pages::NodePageRoutes,
         interfaces: personal_rns::runtime::ManuallyAttached,
         persistence: crate::persistence::s3(shared_flash, &memory),
-        on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
+        on_event: firmware_on_event as for<'a> fn(PrnsEvent<'a>, &()),
     };
 
     #[cfg(feature = "lora")]
@@ -357,6 +404,8 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         handle,
     );
     let entropy = runtime_entropy();
+    #[cfg(feature = "remote-control-pairing")]
+    set_remote_control_clock(timebase.now());
     let host = EmbassyHost::new_with_timebase(timebase, entropy);
 
     let core1_stack = mk_static!(CpuStack<CORE1_STACK_BYTES>, CpuStack::new());
@@ -413,6 +462,14 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         });
 
     spawner.spawn(button_task(button).expect("button task fits"));
+    #[cfg(feature = "remote-control-pairing")]
+    if B::REMOTE_CONTROL_PAIRING {
+        spawner.spawn(
+            stable_target_announcer_task(handle, node_page_destination, stable_target_destination)
+                .expect("stable target announcer task fits"),
+        );
+        spawner.spawn(pairing_close_task(handle).expect("pairing close task fits"));
+    }
 
     let wifi_status = wifi.as_ref().map(|(interface, _)| interface.status());
     let wifi_id = wifi_status.as_ref().map(|status| {
@@ -450,6 +507,12 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             access_point,
             shared_instance_config_export: screen::SharedInstanceConfigExport::Unavailable,
             gnss: B::Gnss::AVAILABILITY,
+            #[cfg(feature = "remote-control-pairing")]
+            remote_control_pairing: if B::REMOTE_CONTROL_PAIRING {
+                screen::RemoteControlPairingAvailability::Available
+            } else {
+                screen::RemoteControlPairingAvailability::Unavailable
+            },
         });
         let startup_notice = identity_startup_notice.or(subg_startup_notice);
         let mut pending_startup_notice = identity_startup_notice
@@ -514,6 +577,15 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             let subg_card_configuration = Some(working_subg_configuration);
             #[cfg(not(feature = "lora"))]
             let subg_card_configuration = None;
+            #[cfg(feature = "remote-control-pairing")]
+            publish_transmit_egress_ready(
+                B::REMOTE_CONTROL_PAIRING
+                    && snapshots
+                        .iter()
+                        .any(|snapshot| snapshot.connection.is_online()),
+            );
+            #[cfg(feature = "remote-control-pairing")]
+            ui_state.sync_remote_control(current_remote_control_state(), remote_control_now());
             let tcp_card_config = wifi_config.tcp_client.as_ref();
             let mut cards = build_cards(
                 &snapshots,
@@ -631,23 +703,48 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 settle_after_draw = false;
             }
 
-            match select3(
+            #[cfg(feature = "remote-control-pairing")]
+            let loop_event = match select4(
+                BUTTON_EVENTS.receive(),
+                render_tick.next(),
+                INTERFACE_STORE.changed(),
+                REMOTE_CONTROL_UI_WAKE.wait(),
+            )
+            .await
+            {
+                Either4::First(event) => RenderLoopEvent::Button(event),
+                Either4::Second(()) => RenderLoopEvent::Tick,
+                Either4::Third(()) => RenderLoopEvent::InterfacesChanged,
+                Either4::Fourth(()) => RenderLoopEvent::RemoteControlChanged,
+            };
+            #[cfg(not(feature = "remote-control-pairing"))]
+            let loop_event = match select3(
                 BUTTON_EVENTS.receive(),
                 render_tick.next(),
                 INTERFACE_STORE.changed(),
             )
             .await
             {
-                Either3::Third(()) => {
+                Either3::First(event) => RenderLoopEvent::Button(event),
+                Either3::Second(()) => RenderLoopEvent::Tick,
+                Either3::Third(()) => RenderLoopEvent::InterfacesChanged,
+            };
+
+            match loop_event {
+                #[cfg(feature = "remote-control-pairing")]
+                RenderLoopEvent::RemoteControlChanged => {
+                    presentation_urgency = PresentationUrgency::Immediate;
+                }
+                RenderLoopEvent::InterfacesChanged => {
                     settle_after_draw = true;
                     presentation_urgency = PresentationUrgency::Telemetry;
                 }
-                Either3::Second(()) => {
+                RenderLoopEvent::Tick => {
                     ticks_to_battery_sample = ticks_to_battery_sample.saturating_sub(1);
                     ticks_to_battery_display = ticks_to_battery_display.saturating_sub(1);
                     presentation_urgency = PresentationUrgency::Telemetry;
                 }
-                Either3::First(first_event) => {
+                RenderLoopEvent::Button(first_event) => {
                     let mut next_event = Some(first_event);
                     for index in 0..BUTTON_EVENT_CAPACITY {
                         let Some(event) = next_event.take() else {
@@ -800,17 +897,180 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                         screen::UiNotice::Announcing,
                                         NOTICE_DURATION,
                                     );
-                                    let node_queued =
-                                        handle.issue(PrnsCommand::AnnounceNow(AnnounceNow {
-                                            destination: node_page_destination,
-                                            target: AnnounceTarget::AllInterfaces,
-                                            app_data: AnnounceAppData::Registered,
-                                        }));
+                                    #[cfg(feature = "remote-control-pairing")]
+                                    {
+                                        if B::REMOTE_CONTROL_PAIRING {
+                                            request_manual_announcements();
+                                        } else {
+                                            let node_queued = issue_node_page_announce(
+                                                &handle,
+                                                node_page_destination,
+                                            );
+                                            log::info!(
+                                                "announce-ui destination=node queued={node_queued}"
+                                            );
+                                        }
+                                    }
+                                    #[cfg(not(feature = "remote-control-pairing"))]
+                                    {
+                                        let node_queued = issue_node_page_announce(
+                                            &handle,
+                                            node_page_destination,
+                                        );
+                                        log::info!(
+                                            "announce-ui destination=node queued={node_queued}"
+                                        );
+                                    }
                                     boot_stage(BootPhase::AnnounceNodeIssueReturned);
-                                    log::info!(
-                                        "announce-ui destination=node queued={}",
-                                        node_queued.is_some()
+                                    #[cfg(feature = "remote-control-pairing")]
+                                    if B::REMOTE_CONTROL_PAIRING {
+                                        log::info!(
+                                            "announce-ui destination=node+remote queued=true"
+                                        );
+                                    }
+                                }
+                                #[cfg(feature = "remote-control-pairing")]
+                                screen::UiAction::OpenRemoteControlPairing => {
+                                    let _ = update_remote_control_state(
+                                        screen::RemoteControlTargetPairingState::begin_opening,
                                     );
+                                    let open = OpenRemoteControlPairing {
+                                        target: AnnounceTarget::AllInterfaces,
+                                        expires_after: RemoteControlPairingExpiresAfter::try_from(
+                                            personal_rns::units::DurationMillis(
+                                                REMOTE_CONTROL_PAIRING_WINDOW_MILLIS,
+                                            ),
+                                        )
+                                        .expect("the pairing window is valid"),
+                                        attempt_timeout:
+                                            RemoteControlPairingAttemptTimeout::try_from(
+                                                personal_rns::units::DurationMillis(
+                                                    REMOTE_CONTROL_PAIRING_ATTEMPT_MILLIS,
+                                                ),
+                                            )
+                                            .expect("the pairing attempt timeout is valid"),
+                                        permissions: remote_control_pairing_permissions.clone(),
+                                        public_app_data:
+                                            remote_control_pairing_public_app_data.clone(),
+                                    };
+                                    match handle.open_remote_control_pairing(open).await {
+                                        Ok(opened) => {
+                                            log::info!(
+                                                "remote-control pairing opened endpoint={:?} expires_at={}",
+                                                opened.endpoint.destination_hash(),
+                                                opened.expires_at.0
+                                            );
+                                            let invitation_code = opened.invitation_code.value();
+                                            let expires_at = opened.expires_at;
+                                            let _ = update_remote_control_state(|state| {
+                                                state.opened(invitation_code, expires_at)
+                                            });
+                                        }
+                                        Err(error) => {
+                                            log::error!(
+                                                "remote-control pairing open failed: {error:?}"
+                                            );
+                                            let _ = update_remote_control_state(|state| {
+                                                state.operation_failed(
+                                                    None,
+                                                    screen::RemoteControlTargetPairingFailure::Open,
+                                                )
+                                            });
+                                        }
+                                    }
+                                }
+                                #[cfg(feature = "remote-control-pairing")]
+                                screen::UiAction::CloseRemoteControlPairing => {
+                                    match handle.close_remote_control_pairing().await {
+                                        Ok(outcome) => {
+                                            log::info!(
+                                                "remote-control pairing close settled: {outcome:?}"
+                                            );
+                                            let _ = update_remote_control_state(
+                                                screen::RemoteControlTargetPairingState::cancelled,
+                                            );
+                                        }
+                                        Err(error) => {
+                                            log::error!(
+                                                "remote-control pairing close failed: {error:?}"
+                                            );
+                                            let _ = update_remote_control_state(|state| {
+                                                state.operation_failed(
+                                                    state.attempt_id(),
+                                                    screen::RemoteControlTargetPairingFailure::Close,
+                                                )
+                                            });
+                                        }
+                                    }
+                                }
+                                #[cfg(feature = "remote-control-pairing")]
+                                screen::UiAction::ApproveRemoteControlTargetPairing(attempt_id) => {
+                                    match handle
+                                        .approve_remote_control_target_pairing(
+                                            personal_rns::engine::ApproveRemoteControlTargetPairing {
+                                                attempt_id,
+                                            },
+                                        )
+                                        .await
+                                    {
+                                        Ok(RemoteControlTargetPairingApproval::AwaitingControllerCommit {
+                                            attempt_id,
+                                        }) => {
+                                            let _ = update_remote_control_state(|state| {
+                                                state.awaiting_controller_commit(attempt_id)
+                                            });
+                                        }
+                                        Ok(RemoteControlTargetPairingApproval::AuthorizationOwed {
+                                            attempt_id,
+                                            ..
+                                        }) => {
+                                            let _ = update_remote_control_state(|state| {
+                                                state.authorizing(attempt_id)
+                                            });
+                                        }
+                                        Err(error) => {
+                                            log::error!(
+                                                "remote-control target approval failed: {error:?}"
+                                            );
+                                            let _ = update_remote_control_state(|state| {
+                                                state.operation_failed(
+                                                    Some(attempt_id),
+                                                    screen::RemoteControlTargetPairingFailure::Approval,
+                                                )
+                                            });
+                                        }
+                                    }
+                                }
+                                #[cfg(feature = "remote-control-pairing")]
+                                screen::UiAction::RejectRemoteControlTargetPairing(attempt_id) => {
+                                    match handle
+                                        .reject_remote_control_target_pairing(
+                                            personal_rns::engine::RejectRemoteControlTargetPairing {
+                                                attempt_id,
+                                            },
+                                        )
+                                        .await
+                                    {
+                                        Ok(rejection) => {
+                                            log::info!(
+                                                "remote-control target pairing rejected: {rejection:?}"
+                                            );
+                                            let _ = update_remote_control_state(|state| {
+                                                state.rejected(attempt_id)
+                                            });
+                                        }
+                                        Err(error) => {
+                                            log::error!(
+                                                "remote-control target rejection failed: {error:?}"
+                                            );
+                                            let _ = update_remote_control_state(|state| {
+                                                state.operation_failed(
+                                                    Some(attempt_id),
+                                                    screen::RemoteControlTargetPairingFailure::Rejection,
+                                                )
+                                            });
+                                        }
+                                    }
                                 }
                                 screen::UiAction::ToggleSelectedInterface => {
                                     if let Some(card) = ui_state.selected_card(content.cards) {
@@ -1090,6 +1350,77 @@ async fn gnss_task(run: core::pin::Pin<&'static mut dyn core::future::Future<Out
     run.await
 }
 
+#[cfg(feature = "remote-control-pairing")]
+#[embassy_executor::task]
+async fn stable_target_announcer_task(
+    handle: Handle,
+    node_page_destination: personal_rns::wire::DestinationHash,
+    stable_target_destination: personal_rns::wire::DestinationHash,
+) -> ! {
+    loop {
+        let now = Instant::now().as_millis();
+        if let Some(action) = poll_stable_target_announcement(now) {
+            let (destination, kind) = match action {
+                screen::StableTargetAnnouncementAction::AutomaticStableTarget { .. } => {
+                    (stable_target_destination, "automatic-stable")
+                }
+                screen::StableTargetAnnouncementAction::ManualNodePage => {
+                    (node_page_destination, "manual-node")
+                }
+                screen::StableTargetAnnouncementAction::ManualStableTarget => {
+                    (stable_target_destination, "manual-stable")
+                }
+            };
+            let result = handle
+                .announce_now(AnnounceNow {
+                    destination,
+                    target: AnnounceTarget::AllInterfaces,
+                    app_data: AnnounceAppData::Registered,
+                })
+                .await;
+            match &result {
+                Ok(()) => log::info!(
+                    "announce settled kind={kind} destination={destination:?} outcome=sent"
+                ),
+                Err(error) => log::error!(
+                    "announce settled kind={kind} destination={destination:?} outcome=failed error={error:?}"
+                ),
+            }
+            let settled = settle_stable_target_announcement(action, result.is_ok());
+            debug_assert!(settled, "the serialized announce action remains in flight");
+            continue;
+        }
+
+        if let Some(deadline) = next_stable_target_announcement_deadline_millis() {
+            let deadline = Instant::try_from_millis(deadline).unwrap_or(Instant::MAX);
+            match select(STABLE_TARGET_ANNOUNCER_WAKE.wait(), Timer::at(deadline)).await {
+                Either::First(()) | Either::Second(()) => {}
+            }
+        } else {
+            STABLE_TARGET_ANNOUNCER_WAKE.wait().await;
+        }
+    }
+}
+
+#[cfg(feature = "remote-control-pairing")]
+#[embassy_executor::task]
+async fn pairing_close_task(handle: Handle) -> ! {
+    loop {
+        PAIRING_CLOSE_WAKE.wait().await;
+        if !PAIRING_CLOSE_REQUESTED.swap(false, Ordering::AcqRel) {
+            continue;
+        }
+        match handle.close_remote_control_pairing().await {
+            Ok(outcome) => {
+                log::warn!("remote-control pairing failed closed: {outcome:?}");
+            }
+            Err(error) => {
+                log::error!("remote-control pairing fail-close command failed: {error:?}");
+            }
+        }
+    }
+}
+
 #[embassy_executor::task]
 async fn manifold_task(run: core::pin::Pin<&'static mut dyn core::future::Future<Output = ()>>) {
     run.await
@@ -1100,7 +1431,17 @@ async fn manifold_run(
     persistence: &'static mut crate::persistence::S3Persistence,
 ) {
     boot_stage(BootPhase::PersistenceRestoreBegin);
+    #[cfg(feature = "remote-control-pairing")]
+    let report = node.restore_embedded_persistence(persistence).await;
+    #[cfg(not(feature = "remote-control-pairing"))]
     let _ = node.restore_embedded_persistence(persistence).await;
+    #[cfg(feature = "remote-control-pairing")]
+    {
+        set_remote_control_clock(report.logical_start);
+        observe_restored_remote_control_grants(
+            report.remote_control_controller_grants_restored_count,
+        );
+    }
     boot_stage(BootPhase::PersistenceRestoreComplete);
     node.run_manifold_with_persistence_and_interface_store(&INTERFACE_STORE, persistence)
         .await

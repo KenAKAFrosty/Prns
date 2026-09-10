@@ -35,6 +35,7 @@ version = "1.5.0"
 [registry]
 cargo_lock_workspaces = [
     ".",
+    "applications",
     "benchmarks",
     "docs/website",
     "personal-hopspot/desktop",
@@ -47,6 +48,7 @@ cargo_lock_workspaces = [
     "prns-host/abi/c",
     "prns-host/impls/cooperative",
     "prns-host/impls/native",
+    "prns-host/impls/snapshot",
     "prns-host/impls/tokio",
     "prns-interfaces/impls/embassy",
     "prns-interfaces/impls/tokio",
@@ -61,6 +63,10 @@ cargo_lock_workspaces = [
 ]
 cargo_manifests = [
     "Cargo.toml",
+    "applications/Cargo.toml",
+    "applications/prns/native-composition/Cargo.toml",
+    "applications/services/lxmf/Cargo.toml",
+    "applications/services/lxmf-wire/Cargo.toml",
     "benchmarks/Cargo.toml",
     "docs/command/Cargo.toml",
     "docs/website/Cargo.toml",
@@ -103,6 +109,7 @@ cargo_manifests = [
     "prns-host/core/Cargo.toml",
     "prns-host/impls/cooperative/Cargo.toml",
     "prns-host/impls/native/Cargo.toml",
+    "prns-host/impls/snapshot/Cargo.toml",
     "prns-host/impls/tokio/Cargo.toml",
     "prns-interfaces/impls/embassy/Cargo.toml",
     "prns-interfaces/impls/tokio/Cargo.toml",
@@ -125,6 +132,7 @@ cargo_manifests = [
 ]
 format_manifests = [
     "Cargo.toml",
+    "applications/Cargo.toml",
     "benchmarks/Cargo.toml",
     "docs/website/Cargo.toml",
     "personal-hopspot/desktop/Cargo.toml",
@@ -136,6 +144,7 @@ format_manifests = [
     "prns-ffi/Cargo.toml",
     "prns-host/abi/c/Cargo.toml",
     "prns-host/impls/native/Cargo.toml",
+    "prns-host/impls/snapshot/Cargo.toml",
     "prns-interfaces/impls/embassy/Cargo.toml",
     "prns-interfaces/impls/tokio/Cargo.toml",
     "prns-napi/Cargo.toml",
@@ -439,6 +448,23 @@ timeout_seconds = 300
 command = ["__RUNNER_PYTHON__", "validation/hygiene/no-personal-paths.py"]
 inputs = ["validation/hygiene/no-personal-paths.py", ".githooks/pre-push"]
 artifacts = "validation-artifacts/results/personal-path-hygiene"
+
+[[suite]]
+id = "application-dependency-boundary"
+domain = "hygiene"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "python"
+timeout_seconds = 120
+command = ["__RUNNER_PYTHON__", "validation/hygiene/application-boundary.py"]
+inputs = [
+  "Cargo.toml",
+  "applications/Cargo.toml",
+  "applications/package.json",
+  "validation/hygiene/application-boundary.py",
+  "validation/tests/test_application_boundary.py",
+]
+artifacts = "validation-artifacts/results/application-dependency-boundary"
 
 [[suite]]
 id = "runtime-ownership"
@@ -829,6 +855,155 @@ inputs = [
 artifacts = "validation-artifacts/results/wifi-direct-hwsim"
 
 [[suite]]
+id = "application-scaffold"
+domain = "platform"
+group = "application"
+tiers = ["pr"]
+platform = "any"
+toolchain = "node"
+timeout_seconds = 900
+command = ["npm", "--prefix", "applications/prns/app", "run", "verify"]
+inputs = [
+  "applications/package.json",
+  "applications/package-lock.json",
+  "prns-js/package.json",
+  "prns-js/package-lock.json",
+  "prns-js/src/contract.generated.ts",
+  "prns-js/src/contract.ts",
+  "applications/prns/app/.gitignore",
+  "applications/prns/app/app.config.ts",
+  "applications/prns/app/biome.json",
+  "applications/prns/app/jest.config.cjs",
+  "applications/prns/app/package.json",
+  "applications/prns/app/tsconfig.json",
+  "applications/prns/app/tsconfig.test.json",
+  "applications/prns/app/tsconfig.tools.json",
+  "applications/prns/app/app",
+  "applications/prns/app/src",
+  "applications/prns/app/tools",
+  "applications/prns/native-composition/bindings",
+  "applications/sdk/expo/src",
+  "applications/tools/generated-bindings",
+  "applications/tools/ubrn-vendor",
+  "applications/vendor/ubrn",
+]
+artifacts = "validation-artifacts/results/application-scaffold"
+
+[[suite]]
+id = "application-native-foundation"
+domain = "platform"
+group = "application"
+tiers = ["pr"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 2400
+command = ["npm", "--prefix", "applications", "run", "native:verify"]
+inputs = [
+  "applications/Cargo.toml",
+  "applications/Cargo.lock",
+  "applications/package.json",
+  "applications/package-lock.json",
+  "applications/ci/check_compatibility.py",
+  "applications/release/compatibility.json",
+  "personal-rns",
+  "prns-core",
+  "prns-host/core",
+  "prns-host/impls/snapshot",
+  "prns-host/schema/host-contract-v1.json",
+  "prns-js/package.json",
+  "prns-js/package-lock.json",
+  "prns-js/src/contract.generated.ts",
+  "prns-js/src/contract.ts",
+  "applications/prns/native-composition",
+  "applications/sdk/expo",
+  "applications/tools/generated-bindings",
+  "applications/tools/ubrn-vendor",
+  "applications/vendor/ubrn",
+]
+artifacts = "validation-artifacts/results/application-native-foundation"
+
+[[suite]]
+id = "application-ios-platform"
+domain = "platform"
+group = "application"
+tiers = ["pr"]
+platform = "macos"
+toolchain = "swift"
+timeout_seconds = 300
+command = ["npm", "--prefix", "applications", "run", "native:ios:test"]
+inputs = [
+  "applications/package.json",
+  "applications/sdk/expo/package.json",
+  "applications/sdk/expo/ios",
+  "applications/sdk/expo/scripts/test-ios-platform.mjs",
+  "applications/sdk/expo/scripts/PrnsProtectedDataRecoveryTests.swift",
+  "applications/sdk/expo/scripts/PrnsAppRestorationProbeTests.swift",
+]
+artifacts = "validation-artifacts/results/application-ios-platform"
+
+[[suite]]
+id = "application-lxmf-direct"
+domain = "platform"
+group = "application"
+tiers = ["pr", "release", "scheduled"]
+platform = "linux"
+toolchain = "stable"
+timeout_seconds = 1800
+command = ["./tools/prns", "build", "lxmf", "verify"]
+inputs = [
+  "tools/prns",
+  "tools/tasks.toml",
+  "tools/build/verify-lxmf-application.sh",
+  "applications/ci/verify_lxmf.sh",
+  "applications/Cargo.toml",
+  "applications/Cargo.lock",
+  "applications/services/lxmf-wire/Cargo.toml",
+  "applications/services/lxmf-wire/PROVENANCE.md",
+  "applications/services/lxmf-wire/src",
+  "applications/services/lxmf-wire/tests",
+  "applications/services/lxmf-wire/interop",
+  "applications/services/lxmf/Cargo.toml",
+  "applications/services/lxmf/src",
+  "applications/services/lxmf/tests",
+  "applications/services/lxmf/examples",
+  "applications/services/lxmf/interop",
+  "personal-rns/Cargo.toml",
+  "personal-rns/src",
+  "prns-core/Cargo.toml",
+  "prns-core/src",
+  "prns-interfaces/impls/tokio/Cargo.toml",
+  "prns-interfaces/impls/tokio/src",
+  "prns-runtime/core/Cargo.toml",
+  "prns-runtime/core/src",
+  "prns-runtime/impls/tokio/Cargo.toml",
+  "prns-runtime/impls/tokio/src",
+]
+artifacts = "validation-artifacts/results/application-lxmf-direct"
+
+[[suite]]
+id = "application-detached-mobility"
+domain = "platform"
+group = "application"
+tiers = ["pr", "release", "scheduled"]
+platform = "linux"
+toolchain = "stable"
+timeout_seconds = 3600
+command = ["npm", "--prefix", "applications", "run", "mobility:verify"]
+inputs = [
+  "applications",
+  "personal-rns",
+  "prns-core",
+  "prns-host/core",
+  "prns-host/impls/snapshot",
+  "prns-host/schema/host-contract-v1.json",
+  "prns-interfaces/impls/tokio",
+  "prns-js",
+  "prns-runtime/core",
+  "prns-runtime/impls/tokio",
+]
+artifacts = "validation-artifacts/results/application-detached-mobility"
+
+[[suite]]
 id = "javascript-contract"
 domain = "platform"
 group = "wasm"
@@ -858,6 +1033,9 @@ inputs = [
   "personal-hopspot/sdk/hopspot/index.js",
   "personal-hopspot/sdk/hopspot/index.cjs",
   "personal-hopspot/sdk/hopspot/index.d.ts",
+  "personal-hopspot/sdk/hopspot/contract.js",
+  "personal-hopspot/sdk/hopspot/contract.cjs",
+  "personal-hopspot/sdk/hopspot/contract.d.ts",
   "personal-hopspot/sdk/hopspot/native.js",
   "personal-hopspot/sdk/hopspot/native.cjs",
   "personal-hopspot/sdk/hopspot/native.d.ts",
@@ -1865,6 +2043,12 @@ tiers = ["release", "scheduled"]
 
 [[kani]]
 name = "target_attempt_deadlines_are_strictly_future_and_pairing_bounded"
+source = "prns-core/src/remote_control/pairing/target_pairing/kani_proofs.rs"
+group = "remote-control"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "unexpired_pairing_windows_always_admit_a_bounded_attempt_timeout"
 source = "prns-core/src/remote_control/pairing/target_pairing/kani_proofs.rs"
 group = "remote-control"
 tiers = ["release", "scheduled"]

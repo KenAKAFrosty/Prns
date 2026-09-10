@@ -1,0 +1,696 @@
+#[cfg(any(feature = "ios-restoration-probe", test))]
+mod enabled {
+    #[cfg(any(test, target_os = "ios"))]
+    use std::sync::atomic::{AtomicU64, Ordering};
+    #[cfg(all(feature = "ios-restoration-probe", target_os = "ios"))]
+    use std::sync::{Once, OnceLock};
+
+    #[cfg(all(feature = "ios-restoration-probe", target_os = "ios"))]
+    use log::{Level, LevelFilter, Log, Metadata, Record};
+
+    #[cfg(all(feature = "ios-restoration-probe", target_os = "ios"))]
+    static INSTALL: Once = Once::new();
+    #[cfg(all(feature = "ios-restoration-probe", target_os = "ios"))]
+    static LOGGER: RestorationLogger = RestorationLogger;
+    #[cfg(all(feature = "ios-restoration-probe", target_os = "ios"))]
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    #[cfg(all(feature = "ios-restoration-probe", target_os = "ios"))]
+    struct RestorationLogger;
+
+    #[cfg(all(feature = "ios-restoration-probe", target_os = "ios"))]
+    impl Log for RestorationLogger {
+        fn enabled(&self, metadata: &Metadata<'_>) -> bool {
+            metadata.level() <= Level::Debug && is_bluetooth_target(metadata.target())
+        }
+
+        fn log(&self, record: &Record<'_>) {
+            if !self.enabled(record.metadata()) {
+                return;
+            }
+            let message = record.args().to_string();
+            if let Some(code) = classify(record.target(), &message) {
+                emit(next_sequence(&SEQUENCE), code);
+            }
+        }
+
+        fn flush(&self) {}
+    }
+
+    #[cfg(all(feature = "ios-restoration-probe", target_os = "ios"))]
+    pub(super) fn install() {
+        INSTALL.call_once(|| {
+            if log::set_logger(&LOGGER).is_ok() {
+                log::set_max_level(LevelFilter::Debug);
+                emit(next_sequence(&SEQUENCE), "logger_installed");
+            } else {
+                emit(next_sequence(&SEQUENCE), "logger_unavailable");
+            }
+        });
+    }
+
+    #[cfg(all(feature = "ios-restoration-probe", not(target_os = "ios")))]
+    pub(super) fn install() {}
+
+    #[cfg(any(test, target_os = "ios"))]
+    fn is_bluetooth_target(target: &str) -> bool {
+        matches!(
+            target,
+            "prns_ffi::bluetooth_auto::macos::central"
+                | "prns_ffi::bluetooth_auto::macos::backend"
+                | "prns_ffi::bluetooth_auto::macos::gatt_link"
+        )
+    }
+
+    #[cfg(any(test, target_os = "ios"))]
+    fn classify(target: &str, message: &str) -> Option<&'static str> {
+        // Mirror existing log sites without exporting their peer IDs, RSSI, or error payloads.
+        // A scan-start code records the request; a sighting is emitted only after admission,
+        // so absent sightings do not prove that CoreBluetooth delivered no callbacks.
+        if !is_bluetooth_target(target) {
+            return None;
+        }
+        if target.ends_with("::central") {
+            match message {
+                "bluetooth: dial connected over LE, discovering Prns service" => {
+                    return Some("central_connected");
+                }
+                "bluetooth: native control characteristic found, subscribing" => {
+                    return Some("central_control_subscribing");
+                }
+                "bluetooth: replacing restored native connection before a fresh handshake" => {
+                    return Some("central_restored_native_reset_requested");
+                }
+                "bluetooth: reconnecting restored native peripheral after local disconnect" => {
+                    return Some("central_restored_native_reconnect_requested");
+                }
+                _ => {}
+            }
+            for (prefix, code) in [
+                ("bluetooth: dial connect FAILED: ", "central_connect_failed"),
+                (
+                    "bluetooth: service discovery FAILED: ",
+                    "central_service_discovery_failed",
+                ),
+                (
+                    "bluetooth: characteristic discovery FAILED: ",
+                    "central_characteristic_discovery_failed",
+                ),
+                (
+                    "bluetooth: subscribe FAILED: ",
+                    "central_subscription_failed",
+                ),
+                (
+                    "bluetooth: central-role peripheral disconnected: ",
+                    "central_disconnected",
+                ),
+            ] {
+                if message.starts_with(prefix) {
+                    return Some(code);
+                }
+            }
+            if message.starts_with("bluetooth: ")
+                && message.ends_with(" subscribed — native control ready")
+            {
+                return Some("central_control_subscribed");
+            }
+            if message.starts_with("bluetooth: ")
+                && message.ends_with(" subscribed — Columba data path ready")
+            {
+                return Some("central_columba_subscribed");
+            }
+            if message.starts_with("bluetooth: restored peripheral ")
+                && message.ends_with(" from a background relaunch — re-adopting")
+            {
+                return Some("central_state_restored");
+            }
+            if message.starts_with("bluetooth: restored GATT notification buffer exceeded for ") {
+                return Some("central_data_buffer_overflow");
+            }
+            if message.starts_with("bluetooth: restored control buffer exceeded for ") {
+                return Some("central_control_buffer_overflow");
+            }
+            if message
+                .strip_prefix("bluetooth: reaping closed central session for ")
+                .is_some_and(is_peer_address_debug)
+            {
+                // This log precedes local cancellation; it does not identify why the
+                // data receiver closed or prove that a handshake timed out.
+                return Some("central_closed_session_reaped");
+            }
+        }
+        if target.ends_with("::gatt_link") {
+            let message = message.strip_prefix("bluetooth: ")?;
+            for (direction, greeting, code) in [
+                (" -> ", "Hello", "gatt_control_hello_sent"),
+                (" <- ", "Welcome", "gatt_control_welcome_received"),
+            ] {
+                let Some((peer, control)) = message.split_once(direction) else {
+                    continue;
+                };
+                if is_peer_address_debug(peer)
+                    && control.strip_prefix(greeting).is_some_and(|fields| {
+                        fields.starts_with(" { identity: BleIdentity([")
+                            && fields.contains("]), endpoint: ")
+                            && fields.contains(", capabilities: LinkCapabilities { ")
+                            && fields.contains(" }, peer_rssi: ")
+                            && fields.ends_with(" }")
+                    })
+                {
+                    // These existing log sites run after control_send/control_recv.
+                    // For this app's central-only role, Hello follows completion of
+                    // the acknowledged write, not completion of the peer handshake.
+                    return Some(code);
+                }
+            }
+        }
+        if target.ends_with("::backend") {
+            match message {
+                "bluetooth: central-only CoreBluetooth manager powered; no local peripheral capability" =>
+                {
+                    return Some("central_manager_ready");
+                }
+                "bluetooth: timed out waiting for central power — is Bluetooth on and permission granted?" =>
+                {
+                    return Some("central_manager_timeout");
+                }
+                "bluetooth: CoreBluetooth logical radio resources up" => {
+                    return Some("central_radio_enabled");
+                }
+                "bluetooth: CoreBluetooth logical radio resources down" => {
+                    return Some("central_radio_disabled");
+                }
+                "bluetooth: scanning requested on" => return Some("central_scan_requested_on"),
+                "bluetooth: scanning requested off" => return Some("central_scan_requested_off"),
+                "bluetooth: scan job started" => return Some("central_scan_job_started"),
+                "bluetooth: scan job skipped radio disabled" => {
+                    return Some("central_scan_job_radio_disabled");
+                }
+                "bluetooth: querying scan state" => return Some("central_scan_state_query"),
+                "bluetooth: scan decision start" => return Some("central_scan_decision_start"),
+                "bluetooth: scan decision restart" => return Some("central_scan_decision_restart"),
+                "bluetooth: scan decision stop" => return Some("central_scan_decision_stop"),
+                "bluetooth: scan decision already scanning" => {
+                    return Some("central_scan_already_scanning");
+                }
+                "bluetooth: scan decision already stopped" => {
+                    return Some("central_scan_already_stopped");
+                }
+                "bluetooth: scanning for Prns peers" => return Some("central_scan_started"),
+                "bluetooth: restarted Prns scan so late-arriving peers can be sighted" => {
+                    return Some("central_scan_restarted");
+                }
+                "bluetooth: scanning stopped — at connection capacity" => {
+                    return Some("central_scan_stopped");
+                }
+                _ => {}
+            }
+            if message.starts_with("bluetooth: sighted Prns peer ") {
+                return Some("central_peer_sighted");
+            }
+            for (prefix, suffix, code) in [
+                (
+                    "bluetooth: dialing ",
+                    " over LE (central role)",
+                    "central_dial_started",
+                ),
+                (
+                    "bluetooth: yielding dial to ",
+                    " — peer is already connected system-wide outside this manager's restored state",
+                    "central_dial_system_connection_yielded",
+                ),
+                (
+                    "bluetooth: yielding dial to ",
+                    " — this peer already owns an inbound peripheral session",
+                    "central_dial_inbound_session_yielded",
+                ),
+                (
+                    "bluetooth: dial to ",
+                    " — peripheral not yet sighted",
+                    "central_dial_missing_peripheral",
+                ),
+                (
+                    "bluetooth: dial to ",
+                    " did not reach control-ready",
+                    "central_dial_failed",
+                ),
+                (
+                    "bluetooth: dial to ",
+                    " closed before reaching control-ready",
+                    "central_dial_failed",
+                ),
+                (
+                    "bluetooth: dial to ",
+                    " timed out before reaching control-ready",
+                    "central_dial_timeout",
+                ),
+                (
+                    "bluetooth: resumed restored connection to ",
+                    ", discovering Prns service",
+                    "central_session_resumed",
+                ),
+                (
+                    "bluetooth: resumed pending connection to ",
+                    ", awaiting CoreBluetooth completion",
+                    "central_pending_connection_resumed",
+                ),
+            ] {
+                if message.starts_with(prefix) && message.ends_with(suffix) {
+                    return Some(code);
+                }
+            }
+        }
+        None
+    }
+
+    #[cfg(any(test, target_os = "ios"))]
+    fn is_peer_address_debug(value: &str) -> bool {
+        let Some(bytes) = value
+            .strip_prefix('[')
+            .and_then(|value| value.strip_suffix(']'))
+        else {
+            return false;
+        };
+        let mut octets = bytes.split(", ");
+        (0..6).all(|_| {
+            octets.next().is_some_and(|octet| {
+                octet.len() == 2 && octet.bytes().all(|byte| byte.is_ascii_hexdigit())
+            })
+        }) && octets.next().is_none()
+    }
+
+    #[cfg(any(test, target_os = "ios"))]
+    fn next_sequence(counter: &AtomicU64) -> u64 {
+        counter
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+                Some(value.saturating_add(1))
+            })
+            .map_or_else(|value| value, |previous| previous.saturating_add(1))
+    }
+
+    #[cfg(all(feature = "ios-restoration-probe", target_os = "ios"))]
+    type NativeEmitter = extern "C" fn(u64, *const u8, usize);
+    #[cfg(all(feature = "ios-restoration-probe", target_os = "ios"))]
+    static EMITTER: OnceLock<NativeEmitter> = OnceLock::new();
+
+    /// Debug-only platform diagnostics. The app supplies a process-lifetime
+    /// function before native startup, so the shared library has no reverse
+    /// link-time dependency on a symbol in the Swift executable.
+    #[cfg(all(feature = "ios-restoration-probe", target_os = "ios"))]
+    #[no_mangle]
+    pub extern "C" fn prns_app_ios_install_restoration_probe(emitter: NativeEmitter) {
+        let _ = EMITTER.set(emitter);
+    }
+
+    #[cfg(all(feature = "ios-restoration-probe", target_os = "ios"))]
+    fn emit(sequence: u64, code: &'static str) {
+        if let Some(emitter) = EMITTER.get() {
+            // The classified ASCII code stays valid throughout this call;
+            // Swift copies it synchronously and never retains the pointer.
+            emitter(sequence, code.as_ptr(), code.len());
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        const CENTRAL: &str = "prns_ffi::bluetooth_auto::macos::central";
+        const BACKEND: &str = "prns_ffi::bluetooth_auto::macos::backend";
+        const GATT_LINK: &str = "prns_ffi::bluetooth_auto::macos::gatt_link";
+        const DIAGNOSTIC_CASES: &[(&str, &str, &str)] = &[
+            (
+                CENTRAL,
+                "bluetooth: replacing restored native connection before a fresh handshake",
+                "central_restored_native_reset_requested",
+            ),
+            (
+                CENTRAL,
+                "bluetooth: reconnecting restored native peripheral after local disconnect",
+                "central_restored_native_reconnect_requested",
+            ),
+            (
+                CENTRAL,
+                "bluetooth: dial connected over LE, discovering Prns service",
+                "central_connected",
+            ),
+            (
+                CENTRAL,
+                "bluetooth: native control characteristic found, subscribing",
+                "central_control_subscribing",
+            ),
+            (
+                CENTRAL,
+                "bluetooth: dial connect FAILED: private-error",
+                "central_connect_failed",
+            ),
+            (
+                CENTRAL,
+                "bluetooth: service discovery FAILED: private-error",
+                "central_service_discovery_failed",
+            ),
+            (
+                CENTRAL,
+                "bluetooth: characteristic discovery FAILED: private-error",
+                "central_characteristic_discovery_failed",
+            ),
+            (
+                CENTRAL,
+                "bluetooth: subscribe FAILED: private-error",
+                "central_subscription_failed",
+            ),
+            (
+                CENTRAL,
+                "bluetooth: central-role peripheral disconnected: private-error",
+                "central_disconnected",
+            ),
+            (
+                CENTRAL,
+                "bluetooth: private-peer subscribed — native control ready",
+                "central_control_subscribed",
+            ),
+            (
+                CENTRAL,
+                "bluetooth: private-peer subscribed — Columba data path ready",
+                "central_columba_subscribed",
+            ),
+            (
+                CENTRAL,
+                "bluetooth: reaping closed central session for [01, 23, 45, 67, 89, ab]",
+                "central_closed_session_reaped",
+            ),
+            (
+                GATT_LINK,
+                "bluetooth: [01, 23, 45, 67, 89, ab] -> Hello { identity: BleIdentity([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]), endpoint: CoreBluetooth(Ios), capabilities: LinkCapabilities { l2cap: None, link_mtu: 512 }, peer_rssi: None }",
+                "gatt_control_hello_sent",
+            ),
+            (
+                GATT_LINK,
+                "bluetooth: [01, 23, 45, 67, 89, ab] <- Welcome { identity: BleIdentity([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]), endpoint: Esp32(Esp32), capabilities: LinkCapabilities { l2cap: Some(Psm(128)), link_mtu: 512 }, peer_rssi: Some(-47) }",
+                "gatt_control_welcome_received",
+            ),
+            (
+                BACKEND,
+                "bluetooth: central-only CoreBluetooth manager powered; no local peripheral capability",
+                "central_manager_ready",
+            ),
+            (
+                BACKEND,
+                "bluetooth: timed out waiting for central power — is Bluetooth on and permission granted?",
+                "central_manager_timeout",
+            ),
+            (
+                BACKEND,
+                "bluetooth: CoreBluetooth logical radio resources up",
+                "central_radio_enabled",
+            ),
+            (
+                BACKEND,
+                "bluetooth: CoreBluetooth logical radio resources down",
+                "central_radio_disabled",
+            ),
+            (BACKEND, "bluetooth: scanning requested on", "central_scan_requested_on"),
+            (BACKEND, "bluetooth: scanning requested off", "central_scan_requested_off"),
+            (BACKEND, "bluetooth: scan job started", "central_scan_job_started"),
+            (BACKEND, "bluetooth: scan job skipped radio disabled", "central_scan_job_radio_disabled"),
+            (BACKEND, "bluetooth: querying scan state", "central_scan_state_query"),
+            (BACKEND, "bluetooth: scan decision start", "central_scan_decision_start"),
+            (BACKEND, "bluetooth: scan decision restart", "central_scan_decision_restart"),
+            (BACKEND, "bluetooth: scan decision stop", "central_scan_decision_stop"),
+            (BACKEND, "bluetooth: scan decision already scanning", "central_scan_already_scanning"),
+            (BACKEND, "bluetooth: scan decision already stopped", "central_scan_already_stopped"),
+            (
+                BACKEND,
+                "bluetooth: scanning for Prns peers",
+                "central_scan_started",
+            ),
+            (
+                BACKEND,
+                "bluetooth: restarted Prns scan so late-arriving peers can be sighted",
+                "central_scan_restarted",
+            ),
+            (
+                BACKEND,
+                "bluetooth: scanning stopped — at connection capacity",
+                "central_scan_stopped",
+            ),
+            (
+                BACKEND,
+                "bluetooth: sighted Prns peer private-peer rssi=Some(-47)",
+                "central_peer_sighted",
+            ),
+            (
+                BACKEND,
+                "bluetooth: dialing private-peer over LE (central role)",
+                "central_dial_started",
+            ),
+            (
+                BACKEND,
+                "bluetooth: yielding dial to private-peer — peer is already connected system-wide outside this manager's restored state",
+                "central_dial_system_connection_yielded",
+            ),
+            (
+                BACKEND,
+                "bluetooth: yielding dial to private-peer — this peer already owns an inbound peripheral session",
+                "central_dial_inbound_session_yielded",
+            ),
+            (
+                BACKEND,
+                "bluetooth: dial to private-peer — peripheral not yet sighted",
+                "central_dial_missing_peripheral",
+            ),
+            (
+                BACKEND,
+                "bluetooth: dial to private-peer did not reach control-ready",
+                "central_dial_failed",
+            ),
+            (
+                BACKEND,
+                "bluetooth: dial to private-peer closed before reaching control-ready",
+                "central_dial_failed",
+            ),
+            (
+                BACKEND,
+                "bluetooth: dial to private-peer timed out before reaching control-ready",
+                "central_dial_timeout",
+            ),
+            (
+                BACKEND,
+                "bluetooth: resumed pending connection to private-peer, awaiting CoreBluetooth completion",
+                "central_pending_connection_resumed",
+            ),
+        ];
+
+        #[test]
+        fn ordinary_bluetooth_messages_become_payload_free_codes() {
+            for &(target, message, code) in DIAGNOSTIC_CASES {
+                assert_eq!(classify(target, message), Some(code), "{message}");
+                let other_payload = message
+                    .replace("private-peer", "another-private-peer")
+                    .replace("private-error", "another-private-error");
+                assert_eq!(classify(target, &other_payload), Some(code));
+                let other_target = if target == CENTRAL { BACKEND } else { CENTRAL };
+                assert_eq!(classify(other_target, message), None);
+            }
+        }
+
+        #[test]
+        fn restoration_messages_become_payload_free_codes() {
+            assert_eq!(
+                classify(
+                    CENTRAL,
+                    "bluetooth: restored peripheral [01, 23, 45, 67, 89, ab] from a background relaunch — re-adopting",
+                ),
+                Some("central_state_restored")
+            );
+            assert_eq!(
+                classify(
+                    BACKEND,
+                    "bluetooth: resumed restored connection to [01, 23, 45, 67, 89, ab], discovering Prns service",
+                ),
+                Some("central_session_resumed")
+            );
+            assert_eq!(
+                classify(
+                    CENTRAL,
+                    "bluetooth: restored GATT notification buffer exceeded for [01, 23, 45, 67, 89, ab]",
+                ),
+                Some("central_data_buffer_overflow")
+            );
+            assert_eq!(
+                classify(
+                    CENTRAL,
+                    "bluetooth: restored control buffer exceeded for [01, 23, 45, 67, 89, ab]",
+                ),
+                Some("central_control_buffer_overflow")
+            );
+        }
+
+        #[test]
+        fn greeting_debug_formats_are_reduced_without_retaining_their_fields() {
+            use prns_core::interfaces::bluetooth_auto::{
+                AppleHost, BleIdentity, Control, Endpoint, Esp32Host, LinkCapabilities, Psm,
+            };
+
+            for seed in [0, 0x5a, u8::MAX] {
+                let identity = BleIdentity::new([seed; 16]);
+                let capabilities = LinkCapabilities {
+                    l2cap: Psm::new(128),
+                    link_mtu: 512,
+                };
+                for (control, direction, code) in [
+                    (
+                        Control::Hello {
+                            identity,
+                            endpoint: Endpoint::CoreBluetooth(AppleHost::Ios),
+                            capabilities,
+                            peer_rssi: None,
+                        },
+                        "->",
+                        "gatt_control_hello_sent",
+                    ),
+                    (
+                        Control::Welcome {
+                            identity,
+                            endpoint: Endpoint::Esp32(Esp32Host::Esp32),
+                            capabilities,
+                            peer_rssi: Some(-47),
+                        },
+                        "<-",
+                        "gatt_control_welcome_received",
+                    ),
+                ] {
+                    let message = format!("bluetooth: {:02x?} {direction} {control:?}", [seed; 6]);
+                    assert_eq!(classify(GATT_LINK, &message), Some(code));
+                    for target in [CENTRAL, BACKEND, "other::bluetooth_auto::macos::gatt_link"] {
+                        assert_eq!(classify(target, &message), None);
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn arbitrary_control_payloads_and_other_directions_stay_silent() {
+            for message in [
+                "bluetooth: [01, 23, 45, 67, 89, ab] -> private-payload",
+                "bluetooth: [01, 23, 45, 67, 89, ab] -> Hello { private-payload }",
+                "bluetooth: [01, 23, 45, 67, 89, ab] <- Welcome { private-payload }",
+                "bluetooth: [01, 23, 45, 67, 89, ab] -> Close { reason: Incompatible }",
+                "bluetooth: notify failed — private-error",
+            ] {
+                assert_eq!(classify(GATT_LINK, message), None);
+            }
+            for &(target, message, _) in DIAGNOSTIC_CASES {
+                if target == GATT_LINK {
+                    let wrong_direction = if message.contains(" -> ") {
+                        message.replace(" -> ", " <- ")
+                    } else {
+                        message.replace(" <- ", " -> ")
+                    };
+                    assert_eq!(classify(GATT_LINK, &wrong_direction), None);
+                    let invalid_peer = message.replace("[01, 23, 45, 67, 89, ab]", "private-peer");
+                    assert_eq!(classify(GATT_LINK, &invalid_peer), None);
+                }
+            }
+            assert_eq!(
+                classify(
+                    CENTRAL,
+                    "bluetooth: reaping closed central session for private-payload"
+                ),
+                None
+            );
+        }
+
+        #[test]
+        fn unrelated_targets_and_messages_are_rejected() {
+            assert_eq!(
+                classify(
+                    "other::bluetooth_auto::macos::central",
+                    "bluetooth: restored peripheral secret from a background relaunch — re-adopting",
+                ),
+                None
+            );
+            assert_eq!(
+                classify(CENTRAL, "bluetooth: scanning for Prns peers"),
+                None
+            );
+        }
+
+        #[test]
+        fn event_codes_are_bounded_ascii_and_do_not_retain_peer_data() {
+            let codes = [
+                "central_state_restored",
+                "central_data_buffer_overflow",
+                "central_control_buffer_overflow",
+                "central_session_resumed",
+                "logger_installed",
+                "logger_unavailable",
+            ];
+            for code in codes
+                .into_iter()
+                .chain(DIAGNOSTIC_CASES.iter().map(|(_, _, code)| *code))
+            {
+                assert!(code.len() <= 64);
+                assert!(code
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte == b'_'));
+                assert!(!code.contains("0123456789"));
+                assert!(!code.contains("private"));
+            }
+        }
+
+        #[test]
+        fn swift_allowlist_accepts_exactly_the_tested_event_codes() {
+            let swift = include_str!("../../../sdk/expo/ios/PrnsAppRestorationProbe.swift");
+            let diagnostics = include_str!("../../../sdk/expo/ios/PrnsIosDiagnostics.swift");
+            let allowlist = diagnostics
+                .split_once("enum RestorationEvent: String {")
+                .expect("Swift must retain the typed event allowlist")
+                .1
+                .split_once('}')
+                .expect("Swift event allowlist must close")
+                .0;
+            let actual = allowlist
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(|line| {
+                    line.strip_prefix("case ")
+                        .and_then(|case| case.split_once(" = \""))
+                        .and_then(|(_, raw_value)| raw_value.strip_suffix('"'))
+                        .expect("each restoration case must declare an explicit string code")
+                })
+                .collect::<std::collections::BTreeSet<_>>();
+            let expected = [
+                "central_state_restored",
+                "central_data_buffer_overflow",
+                "central_control_buffer_overflow",
+                "central_session_resumed",
+                "logger_installed",
+                "logger_unavailable",
+            ]
+            .into_iter()
+            .chain(DIAGNOSTIC_CASES.iter().map(|(_, _, code)| *code))
+            .collect::<std::collections::BTreeSet<_>>();
+            assert_eq!(actual, expected);
+            assert!(swift.contains("PrnsIosDiagnostics.RestorationEvent(rawValue: code)"));
+            assert!(swift.starts_with("#if DEBUG\n"));
+            assert!(swift.trim_end().ends_with("#endif"));
+        }
+
+        #[test]
+        fn sequence_is_monotonic_and_saturates() {
+            let counter = AtomicU64::new(0);
+            assert_eq!(next_sequence(&counter), 1);
+            assert_eq!(next_sequence(&counter), 2);
+            counter.store(u64::MAX, Ordering::Relaxed);
+            assert_eq!(next_sequence(&counter), u64::MAX);
+            assert_eq!(next_sequence(&counter), u64::MAX);
+        }
+    }
+}
+
+pub(crate) fn install() {
+    #[cfg(feature = "ios-restoration-probe")]
+    enabled::install();
+}

@@ -11,10 +11,11 @@ description = "Shared Personal Hopspot application state, canonical display face
 build = "build.rs"
 
 [features]
-default = ["display"]
+default = ["display", "remote-control-pairing"]
 display = ["dep:embedded-graphics"]
 embedded = ["personal-rns/embassy-host"]
 host = ["personal-rns/tokio-host"]
+remote-control-pairing = []
 source-archive = ["personal-rns/large-static-responses"]
 
 [dependencies]

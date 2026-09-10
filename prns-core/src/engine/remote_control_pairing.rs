@@ -74,9 +74,11 @@ pub(crate) struct RemoteControlPairingRequestIngress<'a> {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum RemoteControlPairingRequestIngressOutcome {
+pub(crate) enum RemoteControlPairingRequestIngressOutcome<
+    Outcome = RemoteControlPairingRequestOutcome,
+> {
     ForwardToApplication,
-    Pairing(RemoteControlPairingRequestOutcome),
+    Pairing(Outcome),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -141,6 +143,99 @@ pub(crate) enum RemoteControlPairingRequestOutcome {
     InvariantViolation(RemoteControlPairingBridgeInvariantViolation),
 }
 
+/// Payload-free result of handling a request at the currently open pairing endpoint.
+///
+/// This is local observability, not a response to the peer. In particular, rejected
+/// invitations remain silent on the wire. Identities, invitation proofs, attempt IDs,
+/// confirmation codes and grants are deliberately absent from this projection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteControlPairingRequestDiagnostic {
+    Unidentified,
+    MalformedEnvelope,
+    MalformedMessage,
+    BeginExpired,
+    BeginCompletionRetentionExpired,
+    BeginBusy,
+    BeginWindowElapsed,
+    BeginDeadlineOverflow,
+    BeginExceedsPairingWindow,
+    BeginIdentityMismatch,
+    BeginInvalidInvitationProof,
+    OfferDispatched,
+    OfferDispatchFailed(RemoteControlPairingDispatchDiagnostic),
+    CommitAwaitingTargetApproval,
+    CommitAuthorizationOwed,
+    CommitCompletionDispatched,
+    CommitCompletionDispatchFailed(RemoteControlPairingDispatchDiagnostic),
+    CommitCompletionRetentionExpired,
+    CommitExpired,
+    CommitRejected,
+    InvariantViolation,
+}
+
+/// Local response-dispatch failure without retained exchange or interface identifiers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteControlPairingDispatchDiagnostic {
+    Encode,
+    Pack,
+    Capacity,
+    LinkVanished,
+    PayloadTooLong,
+    BufferTooShort,
+    EgressUnavailable,
+}
+
+impl RemoteControlPairingRequestOutcome {
+    pub(crate) fn diagnostic(&self) -> RemoteControlPairingRequestDiagnostic {
+        use RemoteControlPairingRequestDiagnostic as Diagnostic;
+        match self {
+            Self::Unidentified => Diagnostic::Unidentified,
+            Self::MalformedEnvelope(_) => Diagnostic::MalformedEnvelope,
+            Self::MalformedMessage(_) => Diagnostic::MalformedMessage,
+            Self::BeginExpired { .. } => Diagnostic::BeginExpired,
+            Self::BeginCompletionRetentionExpired { .. } => {
+                Diagnostic::BeginCompletionRetentionExpired
+            }
+            Self::BeginBusy { .. } => Diagnostic::BeginBusy,
+            Self::BeginUnavailable { reason } => match reason {
+                RemoteControlTargetPairingAttemptWindowError::PairingWindowElapsed { .. } => {
+                    Diagnostic::BeginWindowElapsed
+                }
+                RemoteControlTargetPairingAttemptWindowError::DeadlineOverflow { .. } => {
+                    Diagnostic::BeginDeadlineOverflow
+                }
+                RemoteControlTargetPairingAttemptWindowError::ExceedsPairingWindow { .. } => {
+                    Diagnostic::BeginExceedsPairingWindow
+                }
+            },
+            Self::BeginRejected { reason, .. } => match reason {
+                RemoteControlTargetPairingBeginRejection::ControllerIdentityMismatch { .. } => {
+                    Diagnostic::BeginIdentityMismatch
+                }
+                RemoteControlTargetPairingBeginRejection::InvalidInvitationProof => {
+                    Diagnostic::BeginInvalidInvitationProof
+                }
+            },
+            Self::OfferDispatched { .. } => Diagnostic::OfferDispatched,
+            Self::OfferDispatchFailed { failure, .. } => {
+                Diagnostic::OfferDispatchFailed(failure.diagnostic())
+            }
+            Self::CommitAwaitingTargetApproval { .. } => Diagnostic::CommitAwaitingTargetApproval,
+            Self::CommitAuthorizationOwed { .. } => Diagnostic::CommitAuthorizationOwed,
+            Self::CommitCompletionDispatched { .. } => Diagnostic::CommitCompletionDispatched,
+            Self::CommitCompletionDispatchFailed { failure, .. } => {
+                Diagnostic::CommitCompletionDispatchFailed(failure.diagnostic())
+            }
+            Self::CommitCompletionRetentionExpired { .. } => {
+                Diagnostic::CommitCompletionRetentionExpired
+            }
+            Self::CommitExpired { .. } => Diagnostic::CommitExpired,
+            Self::CommitRejected { .. } => Diagnostic::CommitRejected,
+            Self::InvariantViolation(_) => Diagnostic::InvariantViolation,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RemoteControlPairingResponseDispatchFailure {
     Encode(RemoteControlPairingMessageWriteError),
@@ -148,6 +243,21 @@ pub enum RemoteControlPairingResponseDispatchFailure {
     Capacity { required: usize, maximum: usize },
     Write(LinkRequestWriteError),
     EgressUnavailable { interface: InterfaceId },
+}
+
+impl RemoteControlPairingResponseDispatchFailure {
+    fn diagnostic(&self) -> RemoteControlPairingDispatchDiagnostic {
+        use RemoteControlPairingDispatchDiagnostic as Diagnostic;
+        match self {
+            Self::Encode(_) => Diagnostic::Encode,
+            Self::Pack(_) => Diagnostic::Pack,
+            Self::Capacity { .. } => Diagnostic::Capacity,
+            Self::Write(LinkRequestWriteError::LinkVanished) => Diagnostic::LinkVanished,
+            Self::Write(LinkRequestWriteError::PayloadTooLong) => Diagnostic::PayloadTooLong,
+            Self::Write(LinkRequestWriteError::BufferTooShort) => Diagnostic::BufferTooShort,
+            Self::EgressUnavailable { .. } => Diagnostic::EgressUnavailable,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -222,7 +332,7 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
         match self.remote_control_pairing.view() {
             RemoteControlPairingView::Unavailable => {}
             RemoteControlPairingView::Closed | RemoteControlPairingView::Open(_) => {
-                return Err(ConfigureRemoteControlPairingError::AlreadyConfigured)
+                return Err(ConfigureRemoteControlPairingError::AlreadyConfigured);
             }
         }
         if !self.held_identities.contains(&target_identity) {
@@ -250,6 +360,7 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
         self.remote_control_controller_pairing.view()
     }
 
+    #[cfg(test)]
     pub(crate) fn ingest_remote_control_pairing_request<F, Work>(
         &mut self,
         ingress: RemoteControlPairingRequestIngress<'_>,
@@ -261,6 +372,54 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
     where
         F: FnMut(&mut [u8]),
     {
+        self.ingest_remote_control_pairing_request_with_outcome(
+            ingress,
+            interfaces,
+            now,
+            fill_random,
+            sink,
+            core::convert::identity,
+        )
+    }
+
+    pub(crate) fn ingest_remote_control_pairing_request_report<const DIAGNOSTICS: bool, F, Work>(
+        &mut self,
+        ingress: RemoteControlPairingRequestIngress<'_>,
+        interfaces: AttachedInterfaces<'_>,
+        now: InstantMillis,
+        fill_random: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
+    ) -> RemoteControlPairingRequestIngressOutcome<Option<RemoteControlPairingRequestDiagnostic>>
+    where
+        F: FnMut(&mut [u8]),
+    {
+        self.ingest_remote_control_pairing_request_with_outcome(
+            ingress,
+            interfaces,
+            now,
+            fill_random,
+            sink,
+            |outcome| DIAGNOSTICS.then(|| outcome.diagnostic()),
+        )
+    }
+
+    // Project before returning across this outlined boundary: materializing the
+    // rich outcome in packet dispatch measurably grows constrained firmware.
+    #[inline(never)]
+    fn ingest_remote_control_pairing_request_with_outcome<F, Work, Outcome>(
+        &mut self,
+        ingress: RemoteControlPairingRequestIngress<'_>,
+        interfaces: AttachedInterfaces<'_>,
+        now: InstantMillis,
+        fill_random: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
+        project: impl Fn(RemoteControlPairingRequestOutcome) -> Outcome,
+    ) -> RemoteControlPairingRequestIngressOutcome<Outcome>
+    where
+        F: FnMut(&mut [u8]),
+    {
+        let pairing =
+            |outcome| RemoteControlPairingRequestIngressOutcome::Pairing(project(outcome));
         let open_session = match self.remote_control_pairing.open_session() {
             Some(open_session)
                 if open_session.session().endpoint().destination_hash() == ingress.destination =>
@@ -268,31 +427,25 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
                 open_session
             }
             Some(_) | None => {
-                return RemoteControlPairingRequestIngressOutcome::ForwardToApplication
+                return RemoteControlPairingRequestIngressOutcome::ForwardToApplication;
             }
         };
         if ingress.path_hash != RequestPathHash::of(REMOTE_CONTROL_PAIRING_REQUEST_ENDPOINT_ID) {
             return RemoteControlPairingRequestIngressOutcome::ForwardToApplication;
         }
         let Some(identified_controller) = ingress.requester else {
-            return RemoteControlPairingRequestIngressOutcome::Pairing(
-                RemoteControlPairingRequestOutcome::Unidentified,
-            );
+            return pairing(RemoteControlPairingRequestOutcome::Unidentified);
         };
         let data = match parse_packed_binary(ingress.data) {
             Ok(data) => data,
             Err(error) => {
-                return RemoteControlPairingRequestIngressOutcome::Pairing(
-                    RemoteControlPairingRequestOutcome::MalformedEnvelope(error),
-                )
+                return pairing(RemoteControlPairingRequestOutcome::MalformedEnvelope(error));
             }
         };
         let request = match RemoteControlPairingRequest::parse(data) {
             Ok(request) => request,
             Err(error) => {
-                return RemoteControlPairingRequestIngressOutcome::Pairing(
-                    RemoteControlPairingRequestOutcome::MalformedMessage(error),
-                )
+                return pairing(RemoteControlPairingRequestOutcome::MalformedMessage(error));
             }
         };
         let begin = match request {
@@ -308,7 +461,7 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
                     ),
                     now,
                 );
-                return RemoteControlPairingRequestIngressOutcome::Pairing(match transition {
+                return pairing(match transition {
                     CommitRemoteControlTargetPairingOutcome::AwaitingTargetApproval {
                         attempt_id,
                     } => {
@@ -403,13 +556,11 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
         };
         let target_identity = open_session.target_identity();
         let Some(target_signer) = self.held_identities.get(&target_identity) else {
-            return RemoteControlPairingRequestIngressOutcome::Pairing(
-                RemoteControlPairingRequestOutcome::InvariantViolation(
-                    RemoteControlPairingBridgeInvariantViolation::TargetSignerUnavailable {
-                        target_identity,
-                    },
-                ),
-            );
+            return pairing(RemoteControlPairingRequestOutcome::InvariantViolation(
+                RemoteControlPairingBridgeInvariantViolation::TargetSignerUnavailable {
+                    target_identity,
+                },
+            ));
         };
         let session = open_session.session();
         let responder =
@@ -431,17 +582,15 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
                         aborted: expired,
                     },
                 ));
-                return RemoteControlPairingRequestIngressOutcome::Pairing(
-                    RemoteControlPairingRequestOutcome::BeginExpired {
-                        retired_link: self.retire_remote_control_pairing_exchange_link(
-                            expired.context(),
-                            interfaces,
-                            fill_random,
-                            sink,
-                        ),
-                        expired,
-                    },
-                );
+                return pairing(RemoteControlPairingRequestOutcome::BeginExpired {
+                    retired_link: self.retire_remote_control_pairing_exchange_link(
+                        expired.context(),
+                        interfaces,
+                        fill_random,
+                        sink,
+                    ),
+                    expired,
+                });
             }
             BeginRemoteControlTargetPairingOutcome::CompletionRetentionExpired { expired } => {
                 sink(EngineReaction::Journaled(
@@ -449,7 +598,7 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
                         attempt_id: expired.attempt_id(),
                     },
                 ));
-                return RemoteControlPairingRequestIngressOutcome::Pairing(
+                return pairing(
                     RemoteControlPairingRequestOutcome::BeginCompletionRetentionExpired {
                         attempt_id: expired.attempt_id(),
                         retired_link: self.retire_remote_control_pairing_exchange_link(
@@ -462,19 +611,16 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
                 );
             }
             BeginRemoteControlTargetPairingOutcome::Busy { active } => {
-                return RemoteControlPairingRequestIngressOutcome::Pairing(
-                    RemoteControlPairingRequestOutcome::BeginBusy { active },
-                )
+                return pairing(RemoteControlPairingRequestOutcome::BeginBusy { active });
             }
             BeginRemoteControlTargetPairingOutcome::PairingUnavailable { reason } => {
-                return RemoteControlPairingRequestIngressOutcome::Pairing(
-                    RemoteControlPairingRequestOutcome::BeginUnavailable { reason },
-                )
+                return pairing(RemoteControlPairingRequestOutcome::BeginUnavailable { reason });
             }
             BeginRemoteControlTargetPairingOutcome::Rejected { rejected, reason } => {
-                return RemoteControlPairingRequestIngressOutcome::Pairing(
-                    RemoteControlPairingRequestOutcome::BeginRejected { rejected, reason },
-                )
+                return pairing(RemoteControlPairingRequestOutcome::BeginRejected {
+                    rejected,
+                    reason,
+                });
             }
         };
         if let Err(failure) = self.dispatch_remote_control_pairing_response(
@@ -493,7 +639,7 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
                 FailRemoteControlTargetPairingOfferDispatchOutcome::Aborted {
                     attempt_id: aborted,
                     context,
-                } if aborted == attempt_id => RemoteControlPairingRequestIngressOutcome::Pairing(
+                } if aborted == attempt_id => pairing(
                     RemoteControlPairingRequestOutcome::OfferDispatchFailed {
                         attempt_id,
                         retired_link: self.retire_remote_control_pairing_exchange_link(
@@ -508,7 +654,7 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
                 reducer @ (FailRemoteControlTargetPairingOfferDispatchOutcome::Aborted { .. }
                 | FailRemoteControlTargetPairingOfferDispatchOutcome::AttemptMismatch { .. }
                 | FailRemoteControlTargetPairingOfferDispatchOutcome::NoOfferPrepared) => {
-                    RemoteControlPairingRequestIngressOutcome::Pairing(
+                    pairing(
                         RemoteControlPairingRequestOutcome::InvariantViolation(
                             RemoteControlPairingBridgeInvariantViolation::OfferDispatchRollbackFailed {
                                 attempt_id,
@@ -530,29 +676,23 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
                         attempt,
                     ),
                 ));
-                RemoteControlPairingRequestIngressOutcome::Pairing(
-                    RemoteControlPairingRequestOutcome::OfferDispatched { attempt_id },
-                )
+                pairing(RemoteControlPairingRequestOutcome::OfferDispatched { attempt_id })
             }
             DispatchRemoteControlTargetPairingOfferOutcome::AttemptMismatch {
                 dispatched,
                 active,
-            } => RemoteControlPairingRequestIngressOutcome::Pairing(
-                RemoteControlPairingRequestOutcome::InvariantViolation(
-                    RemoteControlPairingBridgeInvariantViolation::OfferDispatchAttemptMismatch {
-                        dispatched,
-                        active,
-                    },
-                ),
-            ),
+            } => pairing(RemoteControlPairingRequestOutcome::InvariantViolation(
+                RemoteControlPairingBridgeInvariantViolation::OfferDispatchAttemptMismatch {
+                    dispatched,
+                    active,
+                },
+            )),
             DispatchRemoteControlTargetPairingOfferOutcome::NoOfferPrepared => {
-                RemoteControlPairingRequestIngressOutcome::Pairing(
-                    RemoteControlPairingRequestOutcome::InvariantViolation(
-                        RemoteControlPairingBridgeInvariantViolation::NoOfferPreparedAfterDispatch {
-                            attempt_id,
-                        },
-                    ),
-                )
+                pairing(RemoteControlPairingRequestOutcome::InvariantViolation(
+                    RemoteControlPairingBridgeInvariantViolation::NoOfferPreparedAfterDispatch {
+                        attempt_id,
+                    },
+                ))
             }
         }
     }
@@ -817,10 +957,10 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
     {
         let (endpoint, identity) = match self.remote_control_pairing.view() {
             RemoteControlPairingView::Unavailable => {
-                return Err(CloseRemoteControlPairingFailure::Unavailable)
+                return Err(CloseRemoteControlPairingFailure::Unavailable);
             }
             RemoteControlPairingView::Closed => {
-                return Ok(CloseRemoteControlPairingOutcome::AlreadyClosed)
+                return Ok(CloseRemoteControlPairingOutcome::AlreadyClosed);
             }
             RemoteControlPairingView::Open(session) => {
                 (session.endpoint(), session.identity().identity_hash())
@@ -836,7 +976,7 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
                 return Err(CloseRemoteControlPairingFailure::RetirementIncomplete {
                     first_remaining_link,
                     retired_links,
-                })
+                });
             }
             RetireDestinationOutcome::NotRegistered => {
                 let _closed = self.remote_control_pairing.close();
@@ -995,7 +1135,7 @@ mod tests {
         PrnsCommand, RejectRemoteControlTargetPairing, RejectRemoteControlTargetPairingFailure,
         RemoteControlTargetPairingApproval, RemoteControlTargetPairingAuthorizationPersistence,
         RemoteControlTargetPairingFinalization, RemoteControlTargetPairingRejection,
-        SettleRemoteControlTargetPairingAuthorization,
+        RequestIngressDiagnostic, SettleRemoteControlTargetPairingAuthorization,
         SettleRemoteControlTargetPairingAuthorizationFailure, Settlement, WakeReason,
     };
     use crate::identity::{IdentityPublicKeys, IdentitySigner};
@@ -1011,6 +1151,7 @@ mod tests {
         RemoteControlTargetPairingView,
     };
     use crate::routing::dedup::PacketHash;
+    use crate::routing::ingress::IgnoreReason;
     use crate::routing::links::data::write_link_packet;
     use crate::routing::links::request::{
         parse_response_plaintext, write_request_plaintext, RequestId,
@@ -1020,6 +1161,117 @@ mod tests {
     use crate::storage::TestFixedStorage;
     use crate::units::{DurationMillis, RttMillis};
     use crate::wire::{DestinationType, PacketType, WireContext, WirePacketHeader};
+
+    #[test]
+    fn pairing_ingress_diagnostics_debug_omits_exchange_fields() {
+        for byte in [0x37, 0xA9] {
+            let rejected = RemoteControlTargetPairingResponder::new(
+                LinkId::new([byte; 16]),
+                RequestId([byte; 16]),
+            );
+            let cases = [
+                (
+                    RemoteControlPairingRequestOutcome::BeginRejected {
+                        rejected,
+                        reason:
+                            RemoteControlTargetPairingBeginRejection::ControllerIdentityMismatch {
+                                claimed: IdentityHash::new([byte; 16]),
+                                identified: IdentityHash::new([byte.wrapping_add(1); 16]),
+                            },
+                    },
+                    "Pairing(BeginIdentityMismatch)",
+                ),
+                (
+                    RemoteControlPairingRequestOutcome::BeginRejected {
+                        rejected,
+                        reason: RemoteControlTargetPairingBeginRejection::InvalidInvitationProof,
+                    },
+                    "Pairing(BeginInvalidInvitationProof)",
+                ),
+                (
+                    RemoteControlPairingRequestOutcome::MalformedEnvelope(
+                        PackedBinaryParseError::LengthOutOfRange {
+                            declared: u32::from(byte),
+                        },
+                    ),
+                    "Pairing(MalformedEnvelope)",
+                ),
+                (
+                    RemoteControlPairingRequestOutcome::MalformedMessage(
+                        RemoteControlPairingMessageParseError::UnsupportedVersion { found: byte },
+                    ),
+                    "Pairing(MalformedMessage)",
+                ),
+                (
+                    RemoteControlPairingRequestOutcome::InvariantViolation(
+                        RemoteControlPairingBridgeInvariantViolation::TargetSignerUnavailable {
+                            target_identity: IdentityHash::new([byte; 16]),
+                        },
+                    ),
+                    "Pairing(InvariantViolation)",
+                ),
+            ];
+            for (outcome, expected) in cases {
+                assert_eq!(
+                    std::format!(
+                        "{:?}",
+                        RequestIngressDiagnostic::Pairing(outcome.diagnostic())
+                    ),
+                    expected,
+                );
+            }
+            for (failure, expected) in [
+                (
+                    RemoteControlPairingResponseDispatchFailure::Encode(
+                        RemoteControlPairingMessageWriteError::BufferTooShort {
+                            required: usize::from(byte),
+                            actual: 0,
+                        },
+                    ),
+                    "Encode",
+                ),
+                (
+                    RemoteControlPairingResponseDispatchFailure::Pack(
+                        PackBinaryError::BufferTooShort,
+                    ),
+                    "Pack",
+                ),
+                (
+                    RemoteControlPairingResponseDispatchFailure::Capacity {
+                        required: usize::from(byte),
+                        maximum: 0,
+                    },
+                    "Capacity",
+                ),
+                (
+                    RemoteControlPairingResponseDispatchFailure::Write(
+                        LinkRequestWriteError::LinkVanished,
+                    ),
+                    "LinkVanished",
+                ),
+                (
+                    RemoteControlPairingResponseDispatchFailure::Write(
+                        LinkRequestWriteError::PayloadTooLong,
+                    ),
+                    "PayloadTooLong",
+                ),
+                (
+                    RemoteControlPairingResponseDispatchFailure::Write(
+                        LinkRequestWriteError::BufferTooShort,
+                    ),
+                    "BufferTooShort",
+                ),
+                (
+                    RemoteControlPairingResponseDispatchFailure::EgressUnavailable {
+                        interface: InterfaceId::new([byte; 8]),
+                    },
+                    "EgressUnavailable",
+                ),
+            ] {
+                assert_eq!(std::format!("{:?}", failure.diagnostic()), expected);
+            }
+        }
+    }
 
     fn open(target: EgressTarget) -> OpenRemoteControlPairing {
         OpenRemoteControlPairing {
@@ -1095,6 +1347,19 @@ mod tests {
         LinkKey,
         RemoteControlControllerIdentity,
     ) {
+        open_pairing_link_with_identity(Some(identified_controller))
+    }
+
+    fn open_pairing_link_with_identity(
+        identified_controller: Option<crate::identity::IdentityHash>,
+    ) -> (
+        crate::engine::EngineState<TestStorageLayout>,
+        [InterfaceDescriptor; 1],
+        RemoteControlPairingEndpoint,
+        LinkId,
+        LinkKey,
+        RemoteControlControllerIdentity,
+    ) {
         let interface = InterfaceId::new([0xD1; 8]);
         let interfaces = [routable_descriptor(interface)];
         let mut engine = crate::engine::EngineState::<TestStorageLayout>::default();
@@ -1144,9 +1409,11 @@ mod tests {
                 InstantMillis(1_600),
             )
             .unwrap();
-        engine
-            .links
-            .note_identified(&link_id, identified_controller);
+        if let Some(identified_controller) = identified_controller {
+            engine
+                .links
+                .note_identified(&link_id, identified_controller);
+        }
         (
             engine,
             interfaces,
@@ -1169,11 +1436,15 @@ mod tests {
 
     fn pairing_payload_frame(encoded: &[u8], link_id: &LinkId, key: &LinkKey) -> std::vec::Vec<u8> {
         let packed = packed_pairing_payload(encoded);
+        pairing_envelope_frame(&packed, link_id, key)
+    }
+
+    fn pairing_envelope_frame(packed: &[u8], link_id: &LinkId, key: &LinkKey) -> std::vec::Vec<u8> {
         let mut plaintext = [0u8; 256];
         let plaintext_len = write_request_plaintext(
             InstantMillis(1_900),
             &RequestPathHash::of(REMOTE_CONTROL_PAIRING_REQUEST_ENDPOINT_ID),
-            &packed,
+            packed,
             &mut plaintext,
         )
         .unwrap();
@@ -1619,8 +1890,311 @@ mod tests {
         );
     }
 
+    fn ingest_test_request<const DIAGNOSTICS: bool>(
+        engine: &mut crate::engine::EngineState<TestStorageLayout>,
+        packet: InboundPacket<'_>,
+        io: IngestIo<
+            '_,
+            impl FnMut(&mut [u8]),
+            impl FnMut(&crate::routing::proof::ProofRequest) -> bool,
+            impl FnMut(&crate::routing::links::resources::ResourceOffer) -> bool,
+            impl FnMut(EngineReaction<'_, crate::engine::OwedWork<'_>>),
+        >,
+    ) -> crate::engine::IngestPacketReport {
+        if DIAGNOSTICS {
+            engine.ingest_packet_into_report(packet, io)
+        } else {
+            engine.ingest_classified_into_report_with_request_diagnostics::<false, _, _, _, _>(
+                crate::routing::ingress::ClassifiedInboundPacket::classify(packet),
+                io,
+            )
+        }
+    }
+
+    #[test]
+    fn no_request_diagnostics_preserves_protocol_violation_reporting() {
+        fn run<const DIAGNOSTICS: bool>() -> crate::engine::IngestPacketReport {
+            let controller = controller_identity();
+            let (mut engine, interfaces, _, link_id, peer_key, _) =
+                open_pairing_link(controller.identity_hash());
+            let mut frame = [0u8; BROADCAST_MTU];
+            let wire_len = write_link_packet(
+                &link_id,
+                &peer_key,
+                BROADCAST_MTU,
+                WireContext::Request,
+                &[0xFF],
+                &[0xD6; 16],
+                &mut frame,
+            )
+            .unwrap();
+            let report = ingest_test_request::<DIAGNOSTICS>(
+                &mut engine,
+                InboundPacket {
+                    arrived_at: InstantMillis(2_000),
+                    source_interface: interfaces[0].id,
+                    bytes: &mut frame[..wire_len],
+                },
+                IngestIo {
+                    interfaces: AttachedInterfaces::new(&interfaces),
+                    now: InstantMillis(2_000),
+                    fill_random: &mut |_| panic!("malformed request must stay silent"),
+                    should_prove: &mut |_| false,
+                    should_accept_resource: &mut |_| false,
+                    sink: &mut |_| panic!("malformed request must emit no work"),
+                },
+            );
+            assert_eq!(
+                engine.remote_control_target_pairing.view(),
+                RemoteControlTargetPairingView::Idle
+            );
+            assert!(engine.links.phase_for(&link_id).is_some());
+            report
+        }
+        let reported = run::<true>();
+        let quiet = run::<false>();
+        assert_eq!(
+            reported.request,
+            Some(RequestIngressDiagnostic::Ignored(IgnoreReason::Malformed))
+        );
+        assert_eq!(quiet.request, None);
+        assert_eq!(
+            reported.protocol_violation,
+            Some(crate::engine::ProtocolViolationKind::Malformed)
+        );
+        assert_eq!(quiet.protocol_violation, reported.protocol_violation);
+        assert_eq!(quiet.wake_schedules, reported.wake_schedules);
+    }
+
+    #[test]
+    fn no_request_diagnostics_preserves_application_request_delivery() {
+        fn run<const DIAGNOSTICS: bool>() -> crate::engine::IngestPacketReport {
+            let controller = controller_identity();
+            let (mut engine, interfaces, endpoint, link_id, peer_key, _) =
+                open_pairing_link(controller.identity_hash());
+            let path = RequestPathHash::of("ordinary-test-request");
+            engine
+                .register_request_handler_hash(
+                    &endpoint.destination_hash(),
+                    path,
+                    RequestPolicy::RequireIdentified,
+                )
+                .unwrap();
+            let mut plaintext = [0u8; 128];
+            let plaintext_len = write_request_plaintext(
+                InstantMillis(1_900),
+                &path,
+                b"ordinary body",
+                &mut plaintext,
+            )
+            .unwrap();
+            let mut frame = [0u8; BROADCAST_MTU];
+            let wire_len = write_link_packet(
+                &link_id,
+                &peer_key,
+                BROADCAST_MTU,
+                WireContext::Request,
+                &plaintext[..plaintext_len],
+                &[0xD6; 16],
+                &mut frame,
+            )
+            .unwrap();
+            let mut delivered = 0usize;
+            let report = ingest_test_request::<DIAGNOSTICS>(
+                &mut engine,
+                InboundPacket {
+                    arrived_at: InstantMillis(2_000),
+                    source_interface: interfaces[0].id,
+                    bytes: &mut frame[..wire_len],
+                },
+                IngestIo {
+                    interfaces: AttachedInterfaces::new(&interfaces),
+                    now: InstantMillis(2_000),
+                    fill_random: &mut |_| panic!("application delivery must not issue response"),
+                    should_prove: &mut |_| false,
+                    should_accept_resource: &mut |_| false,
+                    sink: &mut |reaction| match reaction {
+                        EngineReaction::Journaled(Journaled::RequestReceived {
+                            destination,
+                            link_id: received_link,
+                            requester,
+                            path_hash,
+                            data,
+                            ..
+                        }) => {
+                            assert_eq!(destination, endpoint.destination_hash());
+                            assert_eq!(received_link, link_id);
+                            assert_eq!(requester, Some(controller.identity_hash()));
+                            assert_eq!(path_hash, path);
+                            assert_eq!(data, b"ordinary body");
+                            delivered += 1;
+                        }
+                        _ => panic!("application request must only emit its journal event"),
+                    },
+                },
+            );
+            assert_eq!(delivered, 1);
+            assert_eq!(
+                engine.remote_control_target_pairing.view(),
+                RemoteControlTargetPairingView::Idle
+            );
+            report
+        }
+        let reported = run::<true>();
+        let quiet = run::<false>();
+        assert_eq!(
+            reported.request,
+            Some(RequestIngressDiagnostic::ForwardedToApplication)
+        );
+        assert_eq!(quiet.request, None);
+        assert_eq!(quiet.protocol_violation, reported.protocol_violation);
+        assert_eq!(quiet.wake_schedules, reported.wake_schedules);
+    }
+
+    #[test]
+    fn wire_pairing_request_without_identify_reports_permission_denied_silently() {
+        denied_request_preserves_admission::<true>();
+    }
+
+    #[test]
+    fn no_request_diagnostics_preserves_permission_denied_admission() {
+        denied_request_preserves_admission::<false>();
+    }
+
+    fn denied_request_preserves_admission<const DIAGNOSTICS: bool>() {
+        let (mut engine, interfaces, endpoint, link_id, peer_key, controller) =
+            open_pairing_link_with_identity(None);
+        let mut request_frame = pairing_request_frame(
+            RemoteControlPairingRequest::Begin(invited_begin(controller, endpoint)),
+            &link_id,
+            &peer_key,
+        );
+        let mut reactions = 0usize;
+        let report = ingest_test_request::<DIAGNOSTICS>(
+            &mut engine,
+            InboundPacket {
+                arrived_at: InstantMillis(2_000),
+                source_interface: interfaces[0].id,
+                bytes: &mut request_frame,
+            },
+            IngestIo {
+                interfaces: AttachedInterfaces::new(&interfaces),
+                now: InstantMillis(2_000),
+                fill_random: &mut |_| panic!("a denied request does not prepare a response"),
+                should_prove: &mut |_| false,
+                should_accept_resource: &mut |_| false,
+                sink: &mut |_| reactions += 1,
+            },
+        );
+
+        // This is rejected by request-handler admission before pairing dispatch can
+        // produce its direct-ingress Unidentified result.
+        assert_eq!(
+            report.request,
+            DIAGNOSTICS.then_some(RequestIngressDiagnostic::Ignored(
+                IgnoreReason::PermissionDenied
+            )),
+        );
+        assert_eq!(report.protocol_violation, None);
+        assert_eq!(reactions, 0);
+        assert_eq!(
+            engine.remote_control_target_pairing.view(),
+            RemoteControlTargetPairingView::Idle,
+        );
+        assert!(matches!(
+            engine.remote_control_pairing_view(),
+            RemoteControlPairingView::Open(session) if session.endpoint() == endpoint
+        ));
+        assert!(matches!(
+            engine.links.phase_for(&link_id),
+            Some(crate::routing::links::table::LinkPhase::Active {
+                remote_identity: None,
+                last_inbound: InstantMillis(1_600),
+                ..
+            })
+        ));
+        assert_eq!(
+            engine.remote_control_pairing_wake(),
+            crate::engine::WakeSchedule::At(InstantMillis(61_000)),
+        );
+    }
+
+    #[test]
+    fn wire_pairing_report_distinguishes_malformed_envelope_and_message_silently() {
+        malformed_request_preserves_silence::<true>();
+    }
+
+    #[test]
+    fn no_request_diagnostics_preserves_malformed_request_silence() {
+        malformed_request_preserves_silence::<false>();
+    }
+
+    fn malformed_request_preserves_silence<const DIAGNOSTICS: bool>() {
+        let cases = [
+            (
+                std::vec![0xFF],
+                RemoteControlPairingRequestDiagnostic::MalformedEnvelope,
+            ),
+            (
+                packed_pairing_payload(&[0xFF]),
+                RemoteControlPairingRequestDiagnostic::MalformedMessage,
+            ),
+        ];
+        for (packed, expected) in cases {
+            let controller = controller_identity();
+            let (mut engine, interfaces, endpoint, link_id, peer_key, _) =
+                open_pairing_link(controller.identity_hash());
+            let mut frame = pairing_envelope_frame(&packed, &link_id, &peer_key);
+            let mut reactions = 0usize;
+            let report = ingest_test_request::<DIAGNOSTICS>(
+                &mut engine,
+                InboundPacket {
+                    arrived_at: InstantMillis(2_000),
+                    source_interface: interfaces[0].id,
+                    bytes: &mut frame,
+                },
+                IngestIo {
+                    interfaces: AttachedInterfaces::new(&interfaces),
+                    now: InstantMillis(2_000),
+                    fill_random: &mut |_| panic!("a malformed request does not prepare a response"),
+                    should_prove: &mut |_| false,
+                    should_accept_resource: &mut |_| false,
+                    sink: &mut |_| reactions += 1,
+                },
+            );
+            assert_eq!(
+                report.request,
+                DIAGNOSTICS.then_some(RequestIngressDiagnostic::Pairing(expected))
+            );
+            assert_eq!(report.protocol_violation, None);
+            assert_eq!(reactions, 0);
+            assert_eq!(
+                engine.remote_control_target_pairing.view(),
+                RemoteControlTargetPairingView::Idle,
+            );
+            assert!(matches!(
+                engine.remote_control_pairing_view(),
+                RemoteControlPairingView::Open(session) if session.endpoint() == endpoint
+            ));
+            assert!(engine.links.phase_for(&link_id).is_some());
+            assert_eq!(
+                engine.remote_control_pairing_wake(),
+                crate::engine::WakeSchedule::At(InstantMillis(61_000)),
+            );
+        }
+    }
+
     #[test]
     fn authenticated_begin_returns_one_real_offer_and_one_confirmation_event() {
+        authenticated_begin_preserves_offer_and_confirmation::<true>();
+    }
+
+    #[test]
+    fn no_request_diagnostics_preserves_offer_confirmation_and_expiry() {
+        authenticated_begin_preserves_offer_and_confirmation::<false>();
+    }
+
+    fn authenticated_begin_preserves_offer_and_confirmation<const DIAGNOSTICS: bool>() {
         let expected_controller = controller_identity();
         let (mut engine, interfaces, endpoint, link_id, peer_key, controller) =
             open_pairing_link(expected_controller.identity_hash());
@@ -1635,7 +2209,8 @@ mod tests {
         let mut confirmation = None;
         let mut ordinary_requests = 0usize;
 
-        let schedules = engine.ingest_packet_into(
+        let report = ingest_test_request::<DIAGNOSTICS>(
+            &mut engine,
             InboundPacket {
                 arrived_at: InstantMillis(2_000),
                 source_interface: interfaces[0].id,
@@ -1671,6 +2246,14 @@ mod tests {
             },
         );
 
+        assert_eq!(
+            report.request,
+            DIAGNOSTICS.then_some(RequestIngressDiagnostic::Pairing(
+                RemoteControlPairingRequestDiagnostic::OfferDispatched,
+            )),
+        );
+        assert_eq!(report.protocol_violation, None);
+        let schedules = report.wake_schedules;
         let [response_frame] = response_frames.as_slice() else {
             panic!("one pairing response")
         };
@@ -2496,8 +3079,17 @@ mod tests {
 
     #[test]
     fn commit_after_target_approval_owes_the_exact_authorization() {
+        approved_commit_preserves_authorization_and_completion::<true>();
+    }
+
+    #[test]
+    fn no_request_diagnostics_preserves_authorization_and_completion() {
+        approved_commit_preserves_authorization_and_completion::<false>();
+    }
+
+    fn approved_commit_preserves_authorization_and_completion<const DIAGNOSTICS: bool>() {
         let controller = controller_identity();
-        let (mut engine, interfaces, endpoint, link_id, _, _) =
+        let (mut engine, interfaces, endpoint, link_id, peer_key, _) =
             open_pairing_link(controller.identity_hash());
         let attempt_id = dispatch_pairing_offer(
             &mut engine,
@@ -2508,6 +3100,7 @@ mod tests {
             RequestId([0xD1; 16]),
         );
         let commit = pairing_commit(&engine, endpoint, link_id, controller);
+        let transcript = pairing_transcript(&engine, endpoint, link_id, controller);
         let permissions = match engine.remote_control_pairing_view() {
             RemoteControlPairingView::Open(session) => session.permissions().clone(),
             RemoteControlPairingView::Unavailable | RemoteControlPairingView::Closed => {
@@ -2542,48 +3135,115 @@ mod tests {
                 RemoteControlTargetPairingApproval::AwaitingControllerCommit { attempt_id },
             ))),
         );
-        let request_id = RequestId([0xD3; 16]);
-        let packed_commit = packed_pairing_request(RemoteControlPairingRequest::Commit(commit));
+        let mut request_frame = pairing_request_frame(
+            RemoteControlPairingRequest::Commit(commit),
+            &link_id,
+            &peer_key,
+        );
+        let request_id = RequestId::of_packet(&PacketHash::of_wire_packet(&request_frame).unwrap());
         let mut authorization_required = None;
-        let outcome = engine.ingest_remote_control_pairing_request(
-            RemoteControlPairingRequestIngress {
-                destination: endpoint.destination_hash(),
-                link_id,
-                request_id,
-                requester: Some(controller.identity_hash()),
-                path_hash: RequestPathHash::of(REMOTE_CONTROL_PAIRING_REQUEST_ENDPOINT_ID),
-                data: &packed_commit,
+        let report = ingest_test_request::<DIAGNOSTICS>(
+            &mut engine,
+            InboundPacket {
+                arrived_at: InstantMillis(2_200),
+                source_interface: interfaces[0].id,
+                bytes: &mut request_frame,
             },
-            AttachedInterfaces::new(&interfaces),
-            InstantMillis(2_200),
-            &mut |_| panic!("accepted Commit needs no entropy before completion"),
-            &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| {
-                if let EngineReaction::Journaled(
-                    Journaled::RemoteControlTargetPairingAuthorizationRequired {
-                        attempt_id: observed,
-                        grant,
-                    },
-                ) = reaction
-                {
-                    authorization_required = Some((observed, grant));
-                }
+            IngestIo {
+                interfaces: AttachedInterfaces::new(&interfaces),
+                now: InstantMillis(2_200),
+                fill_random: &mut |_| panic!("accepted Commit needs no entropy before completion"),
+                should_prove: &mut |_| false,
+                should_accept_resource: &mut |_| false,
+                sink: &mut |reaction| match reaction {
+                    EngineReaction::Journaled(
+                        Journaled::RemoteControlTargetPairingAuthorizationRequired {
+                            attempt_id: observed,
+                            grant,
+                        },
+                    ) => {
+                        assert_eq!(authorization_required.replace((observed, grant)), None);
+                    }
+                    _ => panic!("Commit only owes authorization before persistence"),
+                },
             },
         );
         assert_eq!(
-            outcome,
-            RemoteControlPairingRequestIngressOutcome::Pairing(
-                RemoteControlPairingRequestOutcome::CommitAuthorizationOwed {
-                    attempt_id,
-                    grant: expected_grant,
-                },
-            ),
+            report.request,
+            DIAGNOSTICS.then_some(RequestIngressDiagnostic::Pairing(
+                RemoteControlPairingRequestDiagnostic::CommitAuthorizationOwed,
+            )),
         );
+        assert_eq!(report.protocol_violation, None);
         assert_eq!(authorization_required, Some((attempt_id, expected_grant)),);
         assert!(matches!(
             engine.remote_control_target_pairing.view(),
             RemoteControlTargetPairingView::Authorizing(attempt)
                 if attempt.attempt_id() == attempt_id
         ));
+        let mut responses = std::vec::Vec::new();
+        let mut persisted = None;
+        let mut settlement = None;
+        let wake = engine.ingest_command_into(
+            IssuedCommand {
+                id: CommandId(0xD4),
+                command: PrnsCommand::SettleRemoteControlTargetPairingAuthorization(
+                    SettleRemoteControlTargetPairingAuthorization {
+                        attempt_id,
+                        persistence: RemoteControlTargetPairingAuthorizationPersistence::Persisted,
+                    },
+                ),
+            },
+            AttachedInterfaces::new(&interfaces),
+            InstantMillis(2_300),
+            &mut |bytes| bytes.fill(0xD5),
+            &mut |reaction| match reaction {
+                EngineReaction::Directive(Directive::Send { target, bytes }) => {
+                    assert_eq!(target, interfaces[0].id);
+                    responses.push(bytes.to_vec());
+                }
+                EngineReaction::Journaled(
+                    Journaled::RemoteControlTargetPairingAuthorizationPersisted { attempt_id },
+                ) => assert_eq!(persisted.replace(attempt_id), None),
+                EngineReaction::Journaled(Journaled::CommandSettled {
+                    settlement: observed,
+                    ..
+                }) => assert_eq!(settlement.replace(observed), None),
+                _ => panic!("only completion, persistence and settlement are emitted"),
+            },
+        );
+        assert_eq!(persisted, Some(attempt_id));
+        assert_eq!(
+            settlement,
+            Some(Settlement::SettleRemoteControlTargetPairingAuthorization(
+                Ok(RemoteControlTargetPairingFinalization::CompletionDispatched { attempt_id },)
+            )),
+        );
+        let [response] = responses.as_slice() else {
+            panic!("one completion response")
+        };
+        let (header, sealed) = WirePacketHeader::parse(response).unwrap();
+        assert_eq!(header.context, WireContext::Response);
+        assert_eq!(header.address, link_id.to_address());
+        let mut plaintext = [0u8; BROADCAST_MTU];
+        let plaintext_len = peer_key.open(sealed, &mut plaintext).unwrap();
+        let (responded_to, packed) = parse_response_plaintext(&plaintext[..plaintext_len]).unwrap();
+        assert_eq!(responded_to, request_id);
+        let RemoteControlPairingResponse::Completed(completed) =
+            RemoteControlPairingResponse::parse(parse_packed_binary(packed).unwrap()).unwrap()
+        else {
+            panic!("completed response")
+        };
+        assert_eq!(completed.verify(&transcript), Ok(()));
+        assert!(matches!(
+            engine.remote_control_target_pairing.view(),
+            RemoteControlTargetPairingView::Completing(attempt)
+                if attempt.attempt_id() == attempt_id
+        ));
+        assert_eq!(
+            wake.remote_control_pairing,
+            crate::engine::WakeSchedule::At(InstantMillis(32_000)),
+        );
     }
 
     #[test]
@@ -2844,6 +3504,7 @@ mod tests {
         let mut directives = 0usize;
         let mut settlement = None;
         let mut closed = None;
+        let mut expired_during_authorization = None;
         engine.ingest_command_into(
             IssuedCommand {
                 id: CommandId(0xB3),
@@ -2866,6 +3527,9 @@ mod tests {
                 EngineReaction::Journaled(Journaled::LinkClosed { link_id, reason }) => {
                     closed = Some((link_id, reason));
                 }
+                EngineReaction::Journaled(
+                    Journaled::RemoteControlTargetPairingExpiredDuringAuthorization { attempt_id },
+                ) => expired_during_authorization = Some(attempt_id),
                 EngineReaction::Journaled(_) => {}
             },
         );
@@ -2886,6 +3550,7 @@ mod tests {
             closed,
             Some((link_id, crate::engine::LinkClosedReason::LocallyClosed)),
         );
+        assert_eq!(expired_during_authorization, Some(attempt_id));
         assert!(engine.links.phase_for(&link_id).is_none());
         assert_eq!(
             engine.remote_control_target_pairing.view(),
@@ -3389,6 +4054,82 @@ mod tests {
             engine.remote_control_pairing_view(),
             RemoteControlPairingView::Open(_)
         ));
+    }
+
+    #[test]
+    fn wire_pairing_report_preserves_undeliverable_offer_cleanup() {
+        undeliverable_offer_preserves_cleanup::<true>();
+    }
+
+    #[test]
+    fn no_request_diagnostics_preserves_undeliverable_offer_cleanup() {
+        undeliverable_offer_preserves_cleanup::<false>();
+    }
+
+    fn undeliverable_offer_preserves_cleanup<const DIAGNOSTICS: bool>() {
+        let controller = controller_identity();
+        let (mut engine, mut interfaces, endpoint, link_id, peer_key, _) =
+            open_pairing_link(controller.identity_hash());
+        interfaces[0].capabilities.egress = EgressCapability::Disabled;
+        let mut request_frame = pairing_request_frame(
+            RemoteControlPairingRequest::Begin(invited_begin(controller, endpoint)),
+            &link_id,
+            &peer_key,
+        );
+        let mut closed = std::vec::Vec::new();
+        let mut other_reactions = 0usize;
+        let report = ingest_test_request::<DIAGNOSTICS>(
+            &mut engine,
+            InboundPacket {
+                arrived_at: InstantMillis(2_000),
+                source_interface: interfaces[0].id,
+                bytes: &mut request_frame,
+            },
+            IngestIo {
+                interfaces: AttachedInterfaces::new(&interfaces),
+                now: InstantMillis(2_000),
+                fill_random: &mut |bytes| bytes.fill(0xF0),
+                should_prove: &mut |_| false,
+                should_accept_resource: &mut |_| false,
+                sink: &mut |reaction| match reaction {
+                    EngineReaction::Journaled(Journaled::LinkClosed { link_id, reason }) => {
+                        closed.push((link_id, reason));
+                    }
+                    EngineReaction::Directive(_) | EngineReaction::Journaled(_) => {
+                        other_reactions += 1;
+                    }
+                },
+            },
+        );
+
+        assert_eq!(
+            report.request,
+            DIAGNOSTICS.then_some(RequestIngressDiagnostic::Pairing(
+                RemoteControlPairingRequestDiagnostic::OfferDispatchFailed(
+                    RemoteControlPairingDispatchDiagnostic::EgressUnavailable,
+                ),
+            )),
+        );
+        assert_eq!(report.protocol_violation, None);
+        assert_eq!(
+            closed,
+            [(link_id, crate::engine::LinkClosedReason::LocallyClosed)],
+        );
+        // In particular, there is no response, confirmation, or ordinary application request.
+        assert_eq!(other_reactions, 0);
+        assert!(engine.links.phase_for(&link_id).is_none());
+        assert_eq!(
+            engine.remote_control_target_pairing.view(),
+            RemoteControlTargetPairingView::Idle,
+        );
+        assert!(matches!(
+            engine.remote_control_pairing_view(),
+            RemoteControlPairingView::Open(session) if session.endpoint() == endpoint
+        ));
+        assert_eq!(
+            report.wake_schedules.remote_control_pairing,
+            crate::engine::WakeSchedule::At(InstantMillis(61_000)),
+        );
     }
 
     #[test]

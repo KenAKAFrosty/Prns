@@ -1,0 +1,67 @@
+{
+  "name": "@prns/app",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "main": "expo-router/entry",
+  "scripts": {
+    "start": "expo start",
+    "start:web": "expo start --web",
+    "versions:check": "node tools/versions-check.ts",
+    "format:check": "biome format .",
+    "format": "biome format . --write",
+    "lint": "biome lint .",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit && tsc -p tsconfig.tools.json --noEmit",
+    "routes:check": "node tools/routes-check.ts",
+    "config:check": "node tools/config-check.ts",
+    "expo:check": "expo install --check",
+    "doctor": "expo-doctor",
+    "test": "jest --runInBand",
+    "export:web": "node tools/export-web.ts",
+    "verify": "npm run versions:check && npm run format:check && npm run lint && npm run typecheck && npm run routes:check && npm run config:check && npm run expo:check && npm run doctor && npm run test && npm run export:web"
+  },
+  "dependencies": {
+    "@expo/metro-runtime": "~57.0.15",
+    "@prns-internal/expo": "*",
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "effect": "4.0.0-rc.112",
+    "expo": "~57.0.21",
+    "expo-constants": "~57.0.17",
+    "expo-document-picker": "~57.0.1",
+    "expo-file-system": "~57.0.6",
+    "expo-linking": "~57.0.9",
+    "expo-router": "~57.0.20",
+    "expo-status-bar": "~57.0.1",
+    "personal-rns": "file:../../../prns-js",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native": "0.86.3",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-screens": "~4.26.0",
+    "react-native-web": "~0.21.0",
+    "@prns-internal/native-bindings": "*",
+    "@ubjs/core": "file:../../vendor/ubrn/packages/ubjs-core-0.31.0-5.tgz",
+    "@ubjs/react-native": "file:../../vendor/ubrn/packages/ubjs-react-native-0.31.0-5.tgz"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.11",
+    "@react-native/jest-preset": "0.86.3",
+    "@testing-library/react-native": "13.3.3",
+    "@types/jest": "29.5.14",
+    "@types/node": "24.13.3",
+    "@types/react": "~19.2.2",
+    "@types/react-test-renderer": "19.1.0",
+    "expo-doctor": "1.20.4",
+    "jest": "29.7.0",
+    "jest-expo": "57.0.5",
+    "react-test-renderer": "19.2.3",
+    "typescript": "7.0.2"
+  },
+  "expo": {
+    "install": {
+      "exclude": [
+        "typescript"
+      ]
+    }
+  }
+}
