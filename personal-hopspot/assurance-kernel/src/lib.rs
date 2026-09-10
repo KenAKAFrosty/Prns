@@ -1,6 +1,7 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
+mod future_sizes;
 mod lr1110;
 mod sx126x;
 mod test_support;
@@ -9,14 +10,12 @@ mod transcript;
 use core::cell::RefCell;
 use core::fmt;
 
+use embassy_futures::block_on;
 use prns_core::crypto::sha256;
 
+pub use future_sizes::{FutureSizeScenario, SCENARIOS as FUTURE_SIZE_SCENARIOS};
 use transcript::HexBytes;
 pub use transcript::Transcript;
-
-type Scenario = fn(&RefCell<Transcript>) -> Result<(), ScenarioError>;
-
-const SCENARIOS: [Scenario; 2] = [sx126x::run, lr1110::run];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScenarioError {
@@ -73,14 +72,13 @@ impl fmt::Display for Evidence {
 
 pub fn run() -> Result<Evidence, ScenarioError> {
     let transcript = RefCell::new(Transcript::new());
-    for scenario in SCENARIOS {
-        scenario(&transcript)?;
-    }
+    block_on(sx126x::run(&transcript))?;
+    block_on(lr1110::run(&transcript))?;
     let transcript = transcript.into_inner();
     if transcript.overflowed() {
         return Err(ScenarioError::TranscriptFull);
     }
-    Ok(Evidence::new(transcript, SCENARIOS.len()))
+    Ok(Evidence::new(transcript, FUTURE_SIZE_SCENARIOS.len()))
 }
 
 #[cfg(test)]

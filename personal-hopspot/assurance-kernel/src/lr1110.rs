@@ -2,7 +2,6 @@ use core::cell::{Cell, RefCell};
 use core::future::Future;
 use core::task::{Context, Poll, Waker};
 
-use embassy_futures::block_on;
 use embedded_hal::spi::{ErrorType as SpiErrorType, Operation};
 use embedded_hal_async::spi::SpiDevice;
 use prns_core::interfaces::subghz::regions::us915::US915_AUTO_LORA_PROFILE;
@@ -234,7 +233,7 @@ fn board() -> BoardConfig {
     }
 }
 
-pub fn run(transcript: &RefCell<Transcript>) -> Result<(), ScenarioError> {
+pub async fn run(transcript: &RefCell<Transcript>) -> Result<(), ScenarioError> {
     let trace = Trace::new(transcript);
     trace
         .record(EventKind::Scenario, b"lr1110")
@@ -253,17 +252,23 @@ pub fn run(transcript: &RefCell<Transcript>) -> Result<(), ScenarioError> {
         board(),
     );
 
-    block_on(radio.initialize(US915_AUTO_LORA_PROFILE)).map_err(ScenarioError::Lr1110)?;
+    radio
+        .initialize(US915_AUTO_LORA_PROFILE)
+        .await
+        .map_err(ScenarioError::Lr1110)?;
     trace
         .record(EventKind::Result, &[1])
         .map_err(|_| ScenarioError::TranscriptFull)?;
-    block_on(radio.transmit(b"lr1110-target")).map_err(ScenarioError::Lr1110)?;
+    radio
+        .transmit(b"lr1110-target")
+        .await
+        .map_err(ScenarioError::Lr1110)?;
     trace
         .record(EventKind::Result, &[2])
         .map_err(|_| ScenarioError::TranscriptFull)?;
 
     high_ready.set(false);
-    let timeout = match block_on(radio.transmit(b"lr1110-timeout")) {
+    let timeout = match radio.transmit(b"lr1110-timeout").await {
         Err(error @ Error::Timeout) => error,
         _ => return Err(ScenarioError::UnexpectedResult),
     };
@@ -274,7 +279,7 @@ pub fn run(transcript: &RefCell<Transcript>) -> Result<(), ScenarioError> {
         .record(EventKind::Recovery, &[1])
         .map_err(|_| ScenarioError::TranscriptFull)?;
 
-    block_on(radio.arm_rx()).map_err(ScenarioError::Lr1110)?;
+    radio.arm_rx().await.map_err(ScenarioError::Lr1110)?;
     let mut buffer = [0; 255];
     {
         let mut receive = core::pin::pin!(radio.read_event(&mut buffer));
@@ -288,7 +293,10 @@ pub fn run(transcript: &RefCell<Transcript>) -> Result<(), ScenarioError> {
         .record(EventKind::Poll, &[0])
         .map_err(|_| ScenarioError::TranscriptFull)?;
 
-    let event = block_on(radio.poll_event(&mut buffer)).map_err(ScenarioError::Lr1110)?;
+    let event = radio
+        .poll_event(&mut buffer)
+        .await
+        .map_err(ScenarioError::Lr1110)?;
     let Some(RadioEvent::Frame(frame)) = event else {
         return Err(ScenarioError::UnexpectedResult);
     };

@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::Path;
 
+use personal_hopspot_assurance_kernel::FUTURE_SIZE_SCENARIOS;
+
 use super::super::model::{
     ArtifactIdentity, AsyncMemoryIdentity, AttributionCategoryIdentity, BuildStatus, Evidence,
     ExecutableArchitectureIdentity, ExecutableIdentity, FirmwareFlashUsage,
@@ -442,14 +444,13 @@ fn validate_async_memory(
         .try_fold(0_u64, |total, pool| total.checked_add(pool.bytes));
     let futures_valid = match &async_memory.scenario_futures {
         ScenarioFutureSizesIdentity::Measured { futures } => {
-            !futures.is_empty()
-                && futures.iter().enumerate().all(|(index, future)| {
-                    !future.scenario.is_empty()
-                        && future.bytes != 0
-                        && !futures[..index]
-                            .iter()
-                            .any(|prior| prior.scenario == future.scenario)
-                })
+            futures.len() == FUTURE_SIZE_SCENARIOS.len()
+                && futures
+                    .iter()
+                    .zip(FUTURE_SIZE_SCENARIOS.iter())
+                    .all(|(future, scenario)| {
+                        future.scenario == scenario.identifier() && future.bytes != 0
+                    })
         }
         ScenarioFutureSizesIdentity::Unavailable { .. } => true,
     };

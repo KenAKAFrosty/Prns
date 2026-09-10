@@ -22,6 +22,7 @@ class EmbeddedAssuranceSelectionTests(unittest.TestCase):
     def test_dependency_closure_covers_every_resource_input_family(self) -> None:
         paths = {
             "personal-hopspot/embedded/nrf52840/src/lib.rs",
+            "personal-hopspot/assurance-kernel/src/lib.rs",
             "personal-hopspot/memory/src/profiles/nrf52840.rs",
             "prns-flash-manifest/src/catalog.rs",
             "personal-hopspot/builder/src/toolchain.rs",
@@ -89,7 +90,10 @@ class EmbeddedAssuranceSelectionTests(unittest.TestCase):
                 "validation/hardening/embedded_isa/architecture/thumbv7em.py",
             ),
         )
-        self.assertFalse(selected.required(selection.Lane.RESOURCES))
+        self.assertEqual(
+            selected.resources,
+            ("personal-hopspot/assurance-kernel/src/lib.rs",),
+        )
         self.assertFalse(selected.required(selection.Lane.MIRI))
         self.assertFalse(selected.required(selection.Lane.PILOTS))
 

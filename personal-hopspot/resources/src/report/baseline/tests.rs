@@ -123,6 +123,40 @@ fn refresh_rejects_stale_source_custody() -> Result<(), Box<dyn std::error::Erro
 }
 
 #[test]
+fn refresh_rejects_missing_scenario_future_evidence() -> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempfile::tempdir()?;
+    let catalog = prns_flash_manifest::board_catalog()?;
+    let matrix = Matrix::from_catalog(&catalog)?;
+    let output = temporary.path().join("output");
+    let context = context(temporary.path(), &output, LtoMode::Configured)?;
+    let reports = write_reports(temporary.path(), &matrix, &context)?;
+    let path = &reports[0];
+    let mut value: serde_json::Value = serde_json::from_slice(&std::fs::read(path)?)?;
+    value["analysis"]["async_memory"]["value"]["scenario_futures"] = serde_json::json!({
+        "kind": "unavailable",
+        "reason": "semantic-harness-not-produced"
+    });
+    std::fs::write(path, serde_json::to_vec(&value)?)?;
+
+    assert!(matches!(
+        refresh_baseline(
+            temporary.path(),
+            &matrix,
+            &context,
+            &reports,
+            &source_custody()?,
+        ),
+        Err(BaselineError::CanonicalReport(
+            CanonicalReportError::StaleTarget {
+                dimension: "scenario-future evidence",
+                ..
+            }
+        ))
+    ));
+    Ok(())
+}
+
+#[test]
 fn load_rejects_unknown_baseline_and_report_schemas() -> Result<(), Box<dyn std::error::Error>> {
     let temporary = tempfile::tempdir()?;
     let path = temporary.path().join("baseline.json");

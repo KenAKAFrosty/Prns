@@ -7,7 +7,9 @@ use serde_json::{json, Value};
 use super::build::{build_identity, firmware_flash_usage, ReportError};
 use super::compare::{self, ComparisonError, CompatibilityDimension};
 use super::contract;
-use super::model::{BuildStatus, Evidence, ResourceReport, SCHEMA_VERSION};
+use super::model::{
+    BuildStatus, Evidence, ResourceReport, ScenarioFutureSizesIdentity, SCHEMA_VERSION,
+};
 use crate::matrix::RecipeIdentity;
 
 #[test]
@@ -217,6 +219,20 @@ fn malformed_async_memory_evidence_is_rejected() -> Result<(), Box<dyn std::erro
                 "futures": [{"scenario": "duplicate", "bytes": 1}, {"scenario": "duplicate", "bytes": 2}]
             });
         },
+        |value: &mut Value| {
+            value["analysis"]["async_memory"]["value"]["scenario_futures"]["futures"] =
+                json!([{"scenario": "sx126x", "bytes": 828}]);
+        },
+        |value: &mut Value| {
+            value["analysis"]["async_memory"]["value"]["scenario_futures"]["futures"][1]
+                ["scenario"] = json!("unknown");
+        },
+        |value: &mut Value| {
+            value["analysis"]["async_memory"]["value"]["scenario_futures"]["futures"]
+                .as_array_mut()
+                .expect("scenario futures must be an array")
+                .reverse();
+        },
     ] {
         let mut value = report_value();
         mutation(&mut value);
@@ -326,6 +342,11 @@ fn compatible_reports_call_out_lto_and_resource_deltas() -> Result<(), Box<dyn s
     };
     async_memory.task_pool_bytes = 24;
     async_memory.task_pools[0].bytes = 24;
+    let ScenarioFutureSizesIdentity::Measured { futures } = &mut async_memory.scenario_futures
+    else {
+        return Err("fixture has no measured scenario futures".into());
+    };
+    futures[0].bytes = 800;
     compare::validate_report(Path::new("before.json"), &before)?;
     compare::validate_report(Path::new("after.json"), &after)?;
     let comparison = compare::compare_reports(&before, &after)?;
@@ -357,9 +378,8 @@ fn compatible_reports_call_out_lto_and_resource_deltas() -> Result<(), Box<dyn s
     assert!(rendered.contains("stack known-path headroom 69600 -> 69608 (+8)"));
     assert!(rendered.contains("async task-pool total 32 -> 24 (-8)"));
     assert!(rendered.contains("async task-pool \"example::run\" 32 -> 24 (-8)"));
-    assert!(rendered.contains(
-        "async scenario-futures unavailable semantic-harness-not-produced -> semantic-harness-not-produced"
-    ));
+    assert!(rendered.contains("async scenario-future \"sx126x\" 828 -> 800 (-28)"));
+    assert!(rendered.contains("async scenario-future \"lr1110\" 928 -> 928 (0)"));
     Ok(())
 }
 
@@ -974,8 +994,11 @@ fn async_memory_value() -> Value {
                 "section": ".bss"
             }],
             "scenario_futures": {
-                "kind": "unavailable",
-                "reason": "semantic-harness-not-produced"
+                "kind": "measured",
+                "futures": [
+                    {"scenario": "sx126x", "bytes": 828},
+                    {"scenario": "lr1110", "bytes": 928}
+                ]
             }
         }
     })

@@ -65,6 +65,7 @@ PILOT_FILES = COMMON_FILES | frozenset(
     }
 )
 RESOURCE_TREES = (
+    "personal-hopspot/assurance-kernel/",
     "personal-hopspot/builder/",
     "personal-hopspot/core/",
     "personal-hopspot/embedded/",

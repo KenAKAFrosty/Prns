@@ -3036,6 +3036,7 @@ dependencies = [
  "clap",
  "gimli",
  "object",
+ "personal-hopspot-assurance-kernel",
  "personal-hopspot-builder",
  "personal-hopspot-memory",
  "prns-flash-manifest",

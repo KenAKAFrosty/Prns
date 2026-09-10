@@ -16,7 +16,9 @@ use crate::matrix::Matrix;
 use super::build::{architecture_identity, build_identity, target_identity};
 use super::compare::{load_report, ComparisonError};
 use super::contract;
-use super::model::{BuildStatus, ResourceReport, SCHEMA_VERSION};
+use super::model::{
+    BuildStatus, Evidence, ResourceReport, ScenarioFutureSizesIdentity, SCHEMA_VERSION,
+};
 
 pub(super) const BASELINE_SCHEMA_VERSION: u32 = 1;
 const BASELINE_PATH: &str = "personal-hopspot/resources/baseline/canonical.json";
@@ -228,6 +230,18 @@ pub(super) fn validate_target(
     )?;
     if let SourceExpectation::Current(expected) = source {
         require_current(report.source == *expected, target.id(), "source custody")?;
+        require_current(
+            matches!(
+                &report.analysis.async_memory,
+                Evidence::Complete(async_memory)
+                    if matches!(
+                        async_memory.scenario_futures,
+                        ScenarioFutureSizesIdentity::Measured { .. }
+                    )
+            ),
+            target.id(),
+            "scenario-future evidence",
+        )?;
     }
     Ok(())
 }

@@ -13,6 +13,7 @@ use thiserror::Error;
 use crate::contracts::{self, ContractOutcome, ContractsMode};
 use crate::matrix::{self, Matrix, MatrixError, Target, TargetPlatform};
 use crate::report;
+use crate::semantic_futures::{MeasurementCache, MeasurementError};
 
 #[derive(Parser)]
 #[command(name = "personal-hopspot-resources")]
@@ -159,6 +160,8 @@ enum ResourceError {
     Summary(#[from] report::SummaryError),
     #[error(transparent)]
     Source(#[from] SourceCaptureError),
+    #[error(transparent)]
+    FutureSize(#[from] MeasurementError),
     #[error("source changed while producing {scope}")]
     SourceChanged { scope: SourceScope },
 }
@@ -275,19 +278,26 @@ fn build_reports(root: &Path, arguments: &ReportArguments) -> Result<(), Resourc
     let intent = BuildIntent::ResourceReport { lto };
     let context =
         BuildContext::new(root, &output_root, BuildVersion::Repository)?.with_intent(intent);
+    let mut future_sizes = MeasurementCache::default();
     if arguments.all {
         let platform = arguments.platform.map(TargetPlatform::from);
         for target in matrix
             .iter()
             .filter(|target| platform.is_none_or(|platform| target.platform() == platform))
         {
-            build_report(target, &context, arguments.overflow_policy())?;
+            build_report(
+                target,
+                &context,
+                arguments.overflow_policy(),
+                &mut future_sizes,
+            )?;
         }
     } else if let Some(target) = &arguments.target {
         build_report(
             matrix.target(target)?,
             &context,
             arguments.overflow_policy(),
+            &mut future_sizes,
         )?;
     }
     Ok(())
@@ -302,9 +312,10 @@ fn refresh_baseline(root: &Path) -> Result<(), ResourceError> {
             lto: LtoMode::Configured,
         },
     );
+    let mut future_sizes = MeasurementCache::default();
     let reports = matrix
         .iter()
-        .map(|target| build_report(target, &context, OverflowPolicy::Reject))
+        .map(|target| build_report(target, &context, OverflowPolicy::Reject, &mut future_sizes))
         .collect::<Result<Vec<_>, _>>()?;
     let source = capture_source_custody(root)?;
     let outcome = report::refresh_baseline(root, &matrix, &context, &reports, &source)?;
@@ -320,6 +331,7 @@ fn build_report(
     target: &Target<'_>,
     context: &BuildContext<'_>,
     overflow_policy: OverflowPolicy,
+    future_sizes: &mut MeasurementCache,
 ) -> Result<PathBuf, ResourceError> {
     let before = capture_source_custody(context.repository())?;
     let result = target.build(context);
@@ -330,7 +342,10 @@ fn build_report(
         });
     }
     let report = match (overflow_policy, result) {
-        (_, Ok(evidence)) => write_success_report(target, context, &evidence, &before),
+        (_, Ok(evidence)) => {
+            let future_sizes = future_sizes.for_target(target, context, &evidence)?;
+            write_success_report(target, context, &evidence, future_sizes, &before)
+        }
         (
             OverflowPolicy::Report,
             Err(MatrixError::Build {
@@ -369,6 +384,7 @@ fn write_success_report(
     target: &Target<'_>,
     context: &BuildContext<'_>,
     evidence: &matrix::BuildEvidence,
+    future_sizes: &crate::semantic_futures::Measurements,
     source: &SourceCustody,
 ) -> Result<PathBuf, ResourceError> {
     let adapter = target.adapter();
@@ -391,7 +407,7 @@ fn write_success_report(
     if let Some(linker_map) = evidence.linker_map() {
         println!("linker-map {}", linker_map.display());
     }
-    let report = report::write(target, context, evidence, source)?;
+    let report = report::write(target, context, evidence, future_sizes, source)?;
     println!("report {}", report.display());
     Ok(report)
 }

@@ -13,6 +13,7 @@ use crate::analysis::{
     self, AnalysisError, ExecutableError, RamAnalysisError, RamCapacity, SectionKind,
 };
 use crate::matrix::{BuildEvidence, RecipeIdentity, Target};
+use crate::semantic_futures::Measurements;
 
 use super::contract;
 use super::fingerprint::{fingerprint, Fingerprint};
@@ -76,9 +77,10 @@ pub(crate) fn write(
     target: &Target<'_>,
     context: &BuildContext<'_>,
     evidence: &BuildEvidence,
+    future_sizes: &Measurements,
     source: &SourceCustody,
 ) -> Result<PathBuf, ReportError> {
-    let report = build(target, context, evidence, source)?;
+    let report = build(target, context, evidence, future_sizes, source)?;
     publish_report(context, target, &report)
 }
 
@@ -152,6 +154,7 @@ fn build(
     target: &Target<'_>,
     context: &BuildContext<'_>,
     evidence: &BuildEvidence,
+    future_sizes: &Measurements,
     source: &SourceCustody,
 ) -> Result<ResourceReport, ReportError> {
     let recipe = target.recipe_identity();
@@ -261,7 +264,10 @@ fn build(
                 adapter.rust_target(),
                 executable,
             )?),
-            async_memory: Evidence::Complete(super::async_memory::identity(async_memory)),
+            async_memory: Evidence::Complete(super::async_memory::identity(
+                async_memory,
+                future_sizes,
+            )),
         },
     })
 }
