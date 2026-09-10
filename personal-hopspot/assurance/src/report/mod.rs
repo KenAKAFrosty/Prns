@@ -6,7 +6,7 @@ mod tests;
 use std::path::{Path, PathBuf};
 
 use personal_hopspot_builder::artifact::publish;
-use personal_hopspot_builder::BuildError;
+use personal_hopspot_builder::{BuildError, SourceCustody};
 use thiserror::Error;
 
 use crate::contract::MatrixStatus;
@@ -70,11 +70,14 @@ pub fn summarize(
     resources: &Path,
     proofs: &Path,
     output: &Path,
+    source: &SourceCustody,
 ) -> Result<SummaryOutcome, SummaryError> {
     let resources = evidence::discover_resources(resources)?;
     let proofs = evidence::discover_proofs(proofs)?;
+    evidence::validate_documents_current(&resources, &proofs, source)?;
     let matrix = evidence::assemble(resources, proofs)?;
     evidence::validate_matrix(&matrix)?;
+    evidence::validate_current(&matrix, source)?;
     let mut json = serde_json::to_vec_pretty(&matrix)?;
     json.push(b'\n');
     let markdown = render::matrix(&matrix);

@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use personal_hopspot_builder::{capture_source_custody, SourceCaptureError};
 use thiserror::Error;
 
 use crate::baseline::{self, BaselineError};
@@ -150,6 +151,10 @@ enum AssuranceError {
     Record(#[from] RecordError),
     #[error(transparent)]
     Summary(#[from] SummaryError),
+    #[error(transparent)]
+    Source(#[from] SourceCaptureError),
+    #[error("source changed while composing embedded assurance evidence")]
+    SourceChanged,
     #[error("embedded assurance matrix contains {required_failures} required failures")]
     RequiredEvidence { required_failures: usize },
 }
@@ -220,7 +225,8 @@ fn run(cli: Cli) -> Result<(), AssuranceError> {
             }
         },
         AssuranceCommand::RefreshBaseline(arguments) => {
-            let outcome = baseline::refresh(&arguments.matrix, &baseline::path(&root))?;
+            let source = capture_source_custody(&root)?;
+            let outcome = baseline::refresh(&arguments.matrix, &baseline::path(&root), &source)?;
             println!(
                 "EMBEDDED_ASSURANCE_BASELINE: targets={} capabilities={} path={}",
                 outcome.targets(),
@@ -229,8 +235,16 @@ fn run(cli: Cli) -> Result<(), AssuranceError> {
             );
         }
         AssuranceCommand::Summarize(arguments) => {
-            let outcome =
-                report::summarize(&arguments.resources, &arguments.proofs, &arguments.output)?;
+            let source = capture_source_custody(&root)?;
+            let outcome = report::summarize(
+                &arguments.resources,
+                &arguments.proofs,
+                &arguments.output,
+                &source,
+            )?;
+            if capture_source_custody(&root)? != source {
+                return Err(AssuranceError::SourceChanged);
+            }
             println!(
                 "EMBEDDED_ASSURANCE_MATRIX: targets={} capabilities={} json={} markdown={}",
                 outcome.targets(),

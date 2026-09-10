@@ -3,7 +3,10 @@ use std::fs;
 use tempfile::tempdir;
 
 use super::{compare, ComparisonError};
-use crate::contract::{EvidenceFingerprint, MatrixStatus, ResourceEvidence, Verdict};
+use crate::contract::{
+    EvidenceFingerprint, Failure, FailureKind, MatrixStatus, ResourceEvidence, SourceCommit,
+    SourceCustody, Verdict,
+};
 use crate::evidence::assemble;
 
 fn write_matrix(
@@ -43,6 +46,9 @@ fn comparison_calls_out_fingerprint_changes() -> Result<(), Box<dyn std::error::
     let mut before = assemble(Vec::new(), Vec::new())?;
     before.targets[0].resource = Verdict::Passed {
         evidence: ResourceEvidence {
+            source: SourceCustody::CleanCommit {
+                commit: SourceCommit::parse("a".repeat(40))?,
+            },
             report_fingerprint: fingerprint('a')?,
             build_fingerprint: fingerprint('b')?,
             toolchain_fingerprint: fingerprint('c')?,
@@ -60,5 +66,25 @@ fn comparison_calls_out_fingerprint_changes() -> Result<(), Box<dyn std::error::
     write_matrix(&after_path, &after)?;
     let comparison = compare(&before_path, &after_path)?;
     assert!(comparison.contains("| different | exact | exact | exact |"));
+    Ok(())
+}
+
+#[test]
+fn matrix_report_exposes_failure_counts_and_typed_details() -> Result<(), Box<dyn std::error::Error>>
+{
+    let mut matrix = assemble(Vec::new(), Vec::new())?;
+    matrix.targets[0].resource = Verdict::Failed {
+        failure: Failure {
+            kind: FailureKind::StructuralViolation,
+            diagnostic: "bad | entry\npoint".to_string(),
+        },
+    };
+
+    let markdown = super::render::matrix(&matrix);
+
+    assert!(markdown.contains("failed (20 required failures)"));
+    assert!(markdown.contains("structural-violation: bad \\| entry point"));
+    assert!(markdown.contains("evidence-not-produced"));
+    assert!(markdown.contains("contract: emulator-does-not-model-platform"));
     Ok(())
 }

@@ -7,7 +7,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use personal_hopspot_builder::artifact::publish;
-use personal_hopspot_builder::{BuildContext, BuildError, BuildIntent, LtoMode};
+use personal_hopspot_builder::{BuildContext, BuildError, BuildIntent, LtoMode, SourceCustody};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -91,6 +91,11 @@ pub(crate) struct BaselineOutcome {
     targets: usize,
 }
 
+pub(super) enum SourceExpectation<'a> {
+    Historical,
+    Current(&'a SourceCustody),
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct CanonicalBaseline {
@@ -136,6 +141,7 @@ pub(crate) fn refresh_baseline(
     matrix: &Matrix<'_>,
     context: &BuildContext<'_>,
     report_paths: &[PathBuf],
+    source: &SourceCustody,
 ) -> Result<BaselineOutcome, BaselineError> {
     if !matches!(
         context.intent(),
@@ -167,7 +173,7 @@ pub(crate) fn refresh_baseline(
             .ok_or_else(|| BaselineError::MissingTarget {
                 target: target.id().to_string(),
             })?;
-        validate_target(target, context, &report)?;
+        validate_target(target, context, &report, SourceExpectation::Current(source))?;
         targets.push(report);
     }
     if let Some((target, _)) = reports.into_iter().next() {
@@ -193,6 +199,7 @@ pub(super) fn validate_target(
     target: &crate::matrix::Target<'_>,
     context: &BuildContext<'_>,
     report: &ResourceReport,
+    source: SourceExpectation<'_>,
 ) -> Result<(), CanonicalReportError> {
     if !matches!(report.status, BuildStatus::Success) {
         return Err(CanonicalReportError::UnsuccessfulTarget {
@@ -218,7 +225,11 @@ pub(super) fn validate_target(
         report.memory_contract == contract::identity(target.profile())?,
         target.id(),
         "memory contract",
-    )
+    )?;
+    if let SourceExpectation::Current(expected) = source {
+        require_current(report.source == *expected, target.id(), "source custody")?;
+    }
+    Ok(())
 }
 
 fn require_current(

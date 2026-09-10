@@ -1,13 +1,15 @@
+use personal_hopspot_builder::SourceCustody;
 use serde::{Deserialize, Serialize};
 
 use super::fingerprint::Fingerprint;
 
-pub(super) const SCHEMA_VERSION: u32 = 7;
+pub(super) const SCHEMA_VERSION: u32 = 8;
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct ResourceReport {
     pub schema_version: u32,
+    pub source: SourceCustody,
     pub target: TargetIdentity,
     pub architecture: ArchitectureIdentity,
     pub build: BuildIdentity,

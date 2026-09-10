@@ -479,12 +479,19 @@ def validate() -> list[str]:
         'ESP_RUSTC_RELEASE="1.95.0-nightly"',
         'ESP_RUSTC_COMMIT_HASH="95e5bda868c960c607597bc03ed9e8f0ad26226d"',
         'ESP_RUSTC_COMMIT_DATE="2026-04-15"',
+        'ESP_OBJDUMP_BANNER="GNU objdump (crosstool-NG esp-15.2.0_20250920) 2.45"',
     ):
         if identity_gate not in esp_identity:
             errors.append(f"ESP toolchain identity is missing exact gate {identity_gate!r}")
     if "verify-release-esp-toolchain.sh" not in esp_installer:
         errors.append("ESP toolchain installer does not reuse the exact identity proof")
-    for field in ("banner", "release", "commit_hash", "commit_date"):
+    for field in (
+        "banner",
+        "release",
+        "commit_hash",
+        "commit_date",
+        "ESP_OBJDUMP_BANNER",
+    ):
         if field not in esp_verifier:
             errors.append(f"ESP toolchain verifier does not check {field}")
     if "RUSTUP_TOOLCHAIN: 1.90.0" not in ci or "toolchain: 1.90.0" not in ci:

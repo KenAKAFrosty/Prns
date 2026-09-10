@@ -57,6 +57,7 @@ class EspIdentity:
     rustc_banner: str
     crosstool_version: str
     gcc_banner: str
+    objdump_banner: str
 
 
 @dataclass(frozen=True)

@@ -1,12 +1,11 @@
 use std::path::{Path, PathBuf};
 
 use personal_hopspot_builder::artifact::publish;
-use personal_hopspot_builder::BuildError;
+use personal_hopspot_builder::{BuildError, SourceCustody};
 use thiserror::Error;
 
 use crate::contract::{
-    CapabilityResult, MatrixStatus, MiriCoverage, ProofEvidence, SourceCommit, SourceCustody,
-    Verdict,
+    CapabilityResult, MatrixStatus, MiriCoverage, ProofEvidence, SourceCommit, Verdict,
 };
 use crate::evidence::{load_canonical_matrix, MatrixValidationError};
 
@@ -57,12 +56,17 @@ pub fn path(repository: &Path) -> PathBuf {
     repository.join(BASELINE_PATH)
 }
 
-pub fn refresh(matrix_path: &Path, destination: &Path) -> Result<BaselineOutcome, BaselineError> {
+pub fn refresh(
+    matrix_path: &Path,
+    destination: &Path,
+    source: &SourceCustody,
+) -> Result<BaselineOutcome, BaselineError> {
     let matrix = load_canonical_matrix(matrix_path)?;
     if !matches!(matrix.status, MatrixStatus::Passed) {
         return Err(BaselineError::RequiredEvidenceFailed);
     }
     validate_proof_custody(&matrix.capabilities)?;
+    crate::evidence::validate_current(&matrix, source)?;
     let mut bytes = serde_json::to_vec_pretty(&matrix)?;
     bytes.push(b'\n');
     publish(destination, &bytes)?;
@@ -115,20 +119,20 @@ mod tests {
         Capability, CapabilityResult, ComponentId, EvidenceFingerprint, MiriCoverage,
         ProofEvidence, ProofFragment, ProofKind, RunnerId, ScenarioId, SourceCommit, SourceCustody,
         SourceIdentity, Subject, SupportLevel, ToolIdentity, ToolKind, Verdict,
-        PROOF_FRAGMENT_SCHEMA_VERSION,
+        WorkingTreeFingerprint, PROOF_FRAGMENT_SCHEMA_VERSION,
     };
     use crate::evidence::assemble;
 
     fn observed_miri(
         component: &str,
         commit: char,
-        custody: fn(SourceCommit, EvidenceFingerprint) -> SourceCustody,
+        custody: fn(SourceCommit, WorkingTreeFingerprint) -> SourceCustody,
         coverage: MiriCoverage,
     ) -> Result<CapabilityResult, Box<dyn std::error::Error>> {
         let subject = Subject::Component(ComponentId::parse(component)?);
         let scenario = ScenarioId::parse(format!("{component}-state-machine"))?;
         let source_commit = SourceCommit::parse(commit.to_string().repeat(40))?;
-        let diff_fingerprint = EvidenceFingerprint::parse("d".repeat(64))?;
+        let diff_fingerprint = WorkingTreeFingerprint::parse("d".repeat(64))?;
         Ok(CapabilityResult::Observed {
             capability: Capability {
                 subject: subject.clone(),
@@ -161,11 +165,14 @@ mod tests {
         })
     }
 
-    fn clean(commit: SourceCommit, _: EvidenceFingerprint) -> SourceCustody {
+    fn clean(commit: SourceCommit, _: WorkingTreeFingerprint) -> SourceCustody {
         SourceCustody::CleanCommit { commit }
     }
 
-    fn working_tree(commit: SourceCommit, diff_fingerprint: EvidenceFingerprint) -> SourceCustody {
+    fn working_tree(
+        commit: SourceCommit,
+        diff_fingerprint: WorkingTreeFingerprint,
+    ) -> SourceCustody {
         SourceCustody::WorkingTree {
             head: commit,
             diff_fingerprint,
@@ -182,11 +189,15 @@ mod tests {
             serde_json::to_vec_pretty(&assemble(Vec::new(), Vec::new())?)?,
         )?;
         assert!(matches!(
-            refresh(&matrix_path, &baseline_path),
+            refresh(&matrix_path, &baseline_path, &current_source()?),
             Err(BaselineError::RequiredEvidenceFailed)
         ));
         assert!(!baseline_path.exists());
         Ok(())
+    }
+
+    fn current_source() -> Result<SourceCustody, personal_hopspot_builder::SourceCaptureError> {
+        SourceCommit::parse("a".repeat(40)).map(|commit| SourceCustody::CleanCommit { commit })
     }
 
     #[test]

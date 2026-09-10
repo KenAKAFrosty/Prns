@@ -9,7 +9,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use personal_hopspot_builder::artifact::publish;
-use personal_hopspot_builder::{BuildContext, BuildError};
+use personal_hopspot_builder::{BuildContext, BuildError, SourceCustody};
 use thiserror::Error;
 
 use crate::matrix::Matrix;
@@ -139,6 +139,7 @@ pub(crate) fn summarize(
     reports_root: &Path,
     baseline_path: &Path,
     output: &Path,
+    current_source: &SourceCustody,
 ) -> Result<SummaryOutcome, SummaryError> {
     let baseline = baseline::load(baseline_path)?;
     let mut baseline_reports = BTreeMap::new();
@@ -187,10 +188,20 @@ pub(crate) fn summarize(
                     set: EvidenceSet::Current,
                     target: target.id().to_string(),
                 })?;
-        baseline::validate_target(target, context, &baseline_report)?;
+        baseline::validate_target(
+            target,
+            context,
+            &baseline_report,
+            baseline::SourceExpectation::Historical,
+        )?;
         validate_linker_map(&current.path, &current.report)?;
         validate_evidence_artifacts(&current.path, &current.report)?;
-        baseline::validate_target(target, context, &current.report)?;
+        baseline::validate_target(
+            target,
+            context,
+            &current.report,
+            baseline::SourceExpectation::Current(current_source),
+        )?;
         compare::require_matrix_compatible(&baseline_report, &current.report)?;
         targets.push(target_summary(
             target.id(),

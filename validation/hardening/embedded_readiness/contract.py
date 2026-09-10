@@ -42,6 +42,7 @@ def load_esp_identity(path: Path = ESP_IDENTITY_PATH) -> EspIdentity:
         "ESP_RUSTC_BANNER",
         "ESP_CROSSTOOL_VERSION",
         "ESP_GCC_BANNER",
+        "ESP_OBJDUMP_BANNER",
     )
     missing = tuple(name for name in required if name not in values)
     if missing:
@@ -52,6 +53,7 @@ def load_esp_identity(path: Path = ESP_IDENTITY_PATH) -> EspIdentity:
         rustc_banner=values["ESP_RUSTC_BANNER"],
         crosstool_version=values["ESP_CROSSTOOL_VERSION"],
         gcc_banner=values["ESP_GCC_BANNER"],
+        objdump_banner=values["ESP_OBJDUMP_BANNER"],
     )
 
 
@@ -88,7 +90,7 @@ def load_esp_environment(home: Path) -> EspEnvironment:
     export_path = home / "export-esp.sh"
     if export_path.is_file():
         values = assignments(export_path.read_text(encoding="utf-8"))
-        for value in values.get("PATH", "").split(os.pathsep):
+        for value in values.get("PATH", "").split(":"):
             if value and value not in {"$PATH", "${PATH}"}:
                 paths.append(expand_home(value, home))
         if value := values.get("LIBCLANG_PATH"):

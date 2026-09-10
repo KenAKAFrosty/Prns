@@ -10,12 +10,13 @@ use super::{
 use crate::analysis::executable::{
     ExecutableError, ExecutableSection, StartupAnchor, StartupAnchorRole, StartupStructure,
 };
+use personal_hopspot_memory::ProcessorArchitecture;
 
 const VECTOR_SECTION: &str = ".vector_table";
 const ENTRY_SYMBOL: &str = "__stext";
 
 pub(super) static ADAPTER: AssuranceAdapter = AssuranceAdapter {
-    id: "thumbv7em",
+    id: ProcessorArchitecture::ThumbV7em.id(),
     object_architecture: object::Architecture::Arm,
     normalize_code_address: normalize,
     validate_allocated_sections: validate,

@@ -8,7 +8,6 @@ use thiserror::Error;
 pub enum ValueKind {
     EvidenceFingerprint,
     EvidencePath,
-    SourceCommit,
 }
 
 impl fmt::Display for ValueKind {
@@ -16,7 +15,6 @@ impl fmt::Display for ValueKind {
         formatter.write_str(match self {
             Self::EvidenceFingerprint => "evidence fingerprint",
             Self::EvidencePath => "evidence path",
-            Self::SourceCommit => "source commit",
         })
     }
 }
@@ -83,13 +81,6 @@ fn fingerprint(value: &str) -> bool {
             .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }
 
-fn commit(value: &str) -> bool {
-    value.len() == 40
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-}
-
 fn path(value: &str) -> bool {
     !value.is_empty()
         && !value.starts_with('/')
@@ -108,18 +99,15 @@ value!(
     fingerprint
 );
 value!(EvidencePath, ValueKind::EvidencePath, path);
-value!(SourceCommit, ValueKind::SourceCommit, commit);
 
 #[cfg(test)]
 mod tests {
-    use super::{EvidenceFingerprint, EvidencePath, SourceCommit};
+    use super::{EvidenceFingerprint, EvidencePath};
 
     #[test]
     fn serialized_values_validate_at_the_boundary() {
         assert!(EvidenceFingerprint::parse("a".repeat(64)).is_ok());
         assert!(EvidenceFingerprint::parse("A".repeat(64)).is_err());
-        assert!(SourceCommit::parse("b".repeat(40)).is_ok());
-        assert!(SourceCommit::parse("short").is_err());
         assert!(EvidencePath::parse("results/runner/transcript.log").is_ok());
         assert!(EvidencePath::parse("../transcript.log").is_err());
     }

@@ -1,9 +1,13 @@
 {
   "schema_version": 1,
-  "report_schema_version": 7,
+  "report_schema_version": 8,
   "targets": [
     {
-      "schema_version": 7,
+      "schema_version": 8,
+      "source": {
+        "kind": "clean-commit",
+        "commit": "cca5f2c292a40577058d3384be4294087376a394"
+      },
       "target": {
         "id": "heltec-v4",
         "display_name": "Heltec LoRa 32 V4 (S3R2)",
@@ -1585,7 +1589,11 @@
       }
     },
     {
-      "schema_version": 7,
+      "schema_version": 8,
+      "source": {
+        "kind": "clean-commit",
+        "commit": "cca5f2c292a40577058d3384be4294087376a394"
+      },
       "target": {
         "id": "heltec-v4-r8",
         "display_name": "Heltec LoRa 32 V4 (S3R8)",
@@ -3159,7 +3167,11 @@
       }
     },
     {
-      "schema_version": 7,
+      "schema_version": 8,
+      "source": {
+        "kind": "clean-commit",
+        "commit": "cca5f2c292a40577058d3384be4294087376a394"
+      },
       "target": {
         "id": "heltec-e290",
         "display_name": "Heltec Vision Master E290-HF",
@@ -4733,7 +4745,11 @@
       }
     },
     {
-      "schema_version": 7,
+      "schema_version": 8,
+      "source": {
+        "kind": "clean-commit",
+        "commit": "cca5f2c292a40577058d3384be4294087376a394"
+      },
       "target": {
         "id": "heltec-wireless-stick-lite-v3",
         "display_name": "Heltec Wireless Stick Lite V3",
@@ -6010,7 +6026,11 @@
       }
     },
     {
-      "schema_version": 7,
+      "schema_version": 8,
+      "source": {
+        "kind": "clean-commit",
+        "commit": "cca5f2c292a40577058d3384be4294087376a394"
+      },
       "target": {
         "id": "t-beam-supreme",
         "display_name": "LilyGO T-Beam Supreme",
@@ -7592,7 +7612,11 @@
       }
     },
     {
-      "schema_version": 7,
+      "schema_version": 8,
+      "source": {
+        "kind": "clean-commit",
+        "commit": "cca5f2c292a40577058d3384be4294087376a394"
+      },
       "target": {
         "id": "xiao-esp32-c6",
         "display_name": "Seeed XIAO ESP32-C6",
@@ -8729,7 +8753,11 @@
       }
     },
     {
-      "schema_version": 7,
+      "schema_version": 8,
+      "source": {
+        "kind": "clean-commit",
+        "commit": "cca5f2c292a40577058d3384be4294087376a394"
+      },
       "target": {
         "id": "t-echo-s140-v6",
         "display_name": "LilyGO T-Echo S140 6.1.1",
@@ -9751,7 +9779,11 @@
       }
     },
     {
-      "schema_version": 7,
+      "schema_version": 8,
+      "source": {
+        "kind": "clean-commit",
+        "commit": "cca5f2c292a40577058d3384be4294087376a394"
+      },
       "target": {
         "id": "t-echo-s140-v7",
         "display_name": "LilyGO T-Echo S140 7.3.0",
@@ -10773,7 +10805,11 @@
       }
     },
     {
-      "schema_version": 7,
+      "schema_version": 8,
+      "source": {
+        "kind": "clean-commit",
+        "commit": "cca5f2c292a40577058d3384be4294087376a394"
+      },
       "target": {
         "id": "t114",
         "display_name": "Heltec Mesh Node T114 S140 6.1.1",
@@ -11838,7 +11874,11 @@
       }
     },
     {
-      "schema_version": 7,
+      "schema_version": 8,
+      "source": {
+        "kind": "clean-commit",
+        "commit": "cca5f2c292a40577058d3384be4294087376a394"
+      },
       "target": {
         "id": "mesh-pocket-5000",
         "display_name": "Heltec MeshPocket 5000 mAh S140 6.1.1",
@@ -12859,7 +12899,11 @@
       }
     },
     {
-      "schema_version": 7,
+      "schema_version": 8,
+      "source": {
+        "kind": "clean-commit",
+        "commit": "cca5f2c292a40577058d3384be4294087376a394"
+      },
       "target": {
         "id": "mesh-pocket-10000",
         "display_name": "Heltec MeshPocket 10000 mAh S140 6.1.1",
@@ -13880,7 +13924,11 @@
       }
     },
     {
-      "schema_version": 7,
+      "schema_version": 8,
+      "source": {
+        "kind": "clean-commit",
+        "commit": "cca5f2c292a40577058d3384be4294087376a394"
+      },
       "target": {
         "id": "t096",
         "display_name": "Heltec Mesh Node T096 S140 6.1.1",
@@ -14926,7 +14974,11 @@
       }
     },
     {
-      "schema_version": 7,
+      "schema_version": 8,
+      "source": {
+        "kind": "clean-commit",
+        "commit": "cca5f2c292a40577058d3384be4294087376a394"
+      },
       "target": {
         "id": "t1000-e",
         "display_name": "Seeed SenseCAP T1000-E",
@@ -15921,7 +15973,11 @@
       }
     },
     {
-      "schema_version": 7,
+      "schema_version": 8,
+      "source": {
+        "kind": "clean-commit",
+        "commit": "cca5f2c292a40577058d3384be4294087376a394"
+      },
       "target": {
         "id": "mesh-tower-v2",
         "display_name": "Heltec MeshTower V2",

@@ -6,11 +6,12 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
+from validation.hardening.embedded_architectures import ARCHITECTURES
+
 
 ROOT = Path(__file__).resolve().parents[3]
 INVENTORY_PATH = ROOT / "validation" / "hardening" / "embedded-isa.toml"
 IDENTIFIER = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?")
-RUST_TARGET = re.compile(r"[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?")
 SHA256 = re.compile(r"[0-9a-f]{64}")
 SEMVER = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 
@@ -123,17 +124,21 @@ def parse_architecture(value: object) -> Architecture:
         source_url=https_url(entry.get("emulator_source_url")),
         source_sha256=sha256(entry.get("emulator_source_sha256")),
     )
-    rust_target = entry.get("rust_target")
-    if not isinstance(rust_target, str) or RUST_TARGET.fullmatch(rust_target) is None:
-        raise InventoryError(f"invalid embedded ISA Rust target {rust_target!r}")
+    architecture = identifier(entry.get("id"), "architecture")
+    try:
+        rust_target = ARCHITECTURES[architecture]
+    except KeyError as error:
+        raise InventoryError(
+            f"unknown embedded ISA architecture {architecture!r}"
+        ) from error
     return Architecture(
-        identifier=identifier(entry.get("id"), "architecture"),
+        identifier=architecture,
         suite=identifier(entry.get("suite"), "suite"),
         rust_target=rust_target,
         compiler=compiler(entry.get("compiler")),
         feature=identifier(entry.get("feature"), "architecture feature"),
         binary=identifier(entry.get("binary"), "architecture binary"),
-        runner=identifier(entry.get("runner"), "runner"),
+        runner=f"qemu-{architecture}",
         emulator=emulator,
         timeout_seconds=positive_integer(entry.get("timeout_seconds"), "timeout"),
     )

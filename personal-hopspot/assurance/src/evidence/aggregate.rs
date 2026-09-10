@@ -88,6 +88,8 @@ pub enum AggregateError {
     UnexpectedProof { path: std::path::PathBuf },
     #[error("assurance proof at {path} targets a capability declared unsupported")]
     ProofForUnsupportedCapability { path: std::path::PathBuf },
+    #[error(transparent)]
+    Runner(#[from] capabilities::RunnerContractError),
 }
 
 pub fn assemble(
@@ -137,6 +139,7 @@ pub fn assemble(
                 match resource.document.build_outcome() {
                     BuildOutcome::Success => Verdict::Passed {
                         evidence: ResourceEvidence {
+                            source: resource.document.source_custody().clone(),
                             report_fingerprint: parse_fingerprint(
                                 resource.document.fingerprint().as_str(),
                             )?,
@@ -217,6 +220,7 @@ pub fn assemble(
         let proof = proof_by_capability.remove(&key);
         match (&capability.support, proof) {
             (SupportLevel::Required | SupportLevel::Pilot, Some(proof)) => {
+                capabilities::validate_runner(&capability, &proof.fragment)?;
                 results.push(CapabilityResult::Observed {
                     capability,
                     proof: Box::new(proof.fragment),
@@ -332,17 +336,12 @@ fn parse_fingerprint(value: &str) -> Result<EvidenceFingerprint, ValueError> {
 }
 
 fn architecture_id(rust_target: &str) -> Result<ArchitectureId, AggregateError> {
-    let architecture = match rust_target {
-        value if value == ProcessorArchitecture::ThumbV7em.rust_target() => "thumbv7em",
-        value if value == ProcessorArchitecture::RiscV32Imac.rust_target() => "riscv32imac",
-        value if value == ProcessorArchitecture::XtensaEsp32S3.rust_target() => "xtensa-esp32s3",
-        _ => {
-            return Err(AggregateError::UnsupportedArchitecture {
-                rust_target: rust_target.to_string(),
-            });
+    let architecture = ProcessorArchitecture::from_rust_target(rust_target).ok_or_else(|| {
+        AggregateError::UnsupportedArchitecture {
+            rust_target: rust_target.to_string(),
         }
-    };
-    ArchitectureId::parse(architecture).map_err(AggregateError::from)
+    })?;
+    ArchitectureId::parse(architecture.id()).map_err(AggregateError::from)
 }
 
 fn required_failures(targets: &[TargetEvidence], results: &[CapabilityResult]) -> usize {
@@ -372,10 +371,10 @@ mod tests {
 
     use super::{assemble, proof_precedence, AggregateError, ProofPrecedence};
     use crate::contract::{
-        ComponentId, EvidenceFingerprint, MatrixStatus, MiriCoverage, PlatformId,
-        PlatformMilestone, ProofEvidence, ProofFragment, ProofKind, RunnerId, ScenarioId,
-        SourceCommit, SourceCustody, SourceIdentity, Subject, ToolIdentity, ToolKind, Verdict,
-        PROOF_FRAGMENT_SCHEMA_VERSION,
+        ArchitectureId, ComponentId, EvidenceArtifact, EvidenceFingerprint, EvidencePath,
+        MatrixStatus, MiriCoverage, PlatformId, PlatformMilestone, ProofArtifactKind,
+        ProofEvidence, ProofFragment, ProofKind, RunnerId, ScenarioId, SourceCommit, SourceCustody,
+        SourceIdentity, Subject, ToolIdentity, ToolKind, Verdict, PROOF_FRAGMENT_SCHEMA_VERSION,
     };
     use crate::evidence::discovery::{ProofDocument, ResourceDocument};
 
@@ -446,6 +445,61 @@ mod tests {
         })
     }
 
+    fn target_isa_proof(runner: &str) -> Result<ProofDocument, Box<dyn std::error::Error>> {
+        let architecture = ArchitectureId::parse("thumbv7em")?;
+        let transcript_fingerprint = EvidenceFingerprint::parse("c".repeat(64))?;
+        Ok(ProofDocument {
+            path: PathBuf::from("thumbv7em.assurance.json"),
+            fragment: ProofFragment {
+                schema_version: PROOF_FRAGMENT_SCHEMA_VERSION,
+                subject: Subject::Architecture(architecture.clone()),
+                scenario: ScenarioId::parse("shared-state-machines")?,
+                proof: ProofKind::TargetIsa,
+                runner: RunnerId::parse(runner)?,
+                source: SourceIdentity {
+                    custody: SourceCustody::CleanCommit {
+                        commit: SourceCommit::parse("a".repeat(40))?,
+                    },
+                    scenario_fingerprint: EvidenceFingerprint::parse("b".repeat(64))?,
+                },
+                tools: [ToolKind::Cargo, ToolKind::Rustc, ToolKind::Qemu]
+                    .into_iter()
+                    .map(|kind| ToolIdentity {
+                        kind,
+                        version: "tool 1".to_string(),
+                    })
+                    .collect(),
+                verdict: Verdict::Passed {
+                    evidence: ProofEvidence::TargetIsa {
+                        architecture,
+                        completed_scenarios: 2,
+                        transcript_fingerprint: transcript_fingerprint.clone(),
+                    },
+                },
+                artifacts: vec![
+                    EvidenceArtifact {
+                        kind: ProofArtifactKind::Transcript,
+                        path: EvidencePath::parse("transcript.bin")?,
+                        bytes: 1,
+                        fingerprint: transcript_fingerprint,
+                    },
+                    EvidenceArtifact {
+                        kind: ProofArtifactKind::Executable,
+                        path: EvidencePath::parse("kernel.elf")?,
+                        bytes: 1,
+                        fingerprint: EvidenceFingerprint::parse("d".repeat(64))?,
+                    },
+                    EvidenceArtifact {
+                        kind: ProofArtifactKind::Log,
+                        path: EvidencePath::parse("qemu.log")?,
+                        bytes: 1,
+                        fingerprint: EvidenceFingerprint::parse("e".repeat(64))?,
+                    },
+                ],
+            },
+        })
+    }
+
     #[test]
     fn absent_evidence_is_preserved_as_required_failure() -> Result<(), AggregateError> {
         let matrix = assemble(Vec::new(), Vec::new())?;
@@ -496,6 +550,19 @@ mod tests {
         assert!(matches!(
             assemble(Vec::new(), vec![first, second]),
             Err(AggregateError::DuplicateProof { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn canonical_architecture_runner_is_enforced_during_aggregation(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let proof = target_isa_proof("arbitrary-qemu")?;
+        proof.fragment.validate()?;
+
+        assert!(matches!(
+            assemble(Vec::new(), vec![proof]),
+            Err(AggregateError::Runner(_))
         ));
         Ok(())
     }

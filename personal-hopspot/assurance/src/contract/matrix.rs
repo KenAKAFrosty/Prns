@@ -1,3 +1,4 @@
+use personal_hopspot_builder::SourceCustody;
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -5,7 +6,7 @@ use super::{
     Verdict,
 };
 
-pub const ASSURANCE_MATRIX_SCHEMA_VERSION: u32 = 1;
+pub const ASSURANCE_MATRIX_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
@@ -17,6 +18,7 @@ pub enum MatrixStatus {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResourceEvidence {
+    pub source: SourceCustody,
     pub report_fingerprint: EvidenceFingerprint,
     pub build_fingerprint: EvidenceFingerprint,
     pub toolchain_fingerprint: EvidenceFingerprint,

@@ -38,6 +38,7 @@ RESOURCE_FILES = COMMON_FILES | frozenset(
         "validation/platforms/embedded.sh",
         "validation/platforms/esp32-firmware-check.sh",
         "validation/platforms/no-std-esp-build.sh",
+        "validation/hardening/embedded_architectures.py",
     }
 )
 MIRI_FILES = COMMON_FILES | frozenset(
@@ -53,6 +54,7 @@ ISA_FILES = COMMON_FILES | frozenset(
         "tools/release/release-esp-toolchain-identity.sh",
         "tools/release/verify-release-esp-toolchain.sh",
         "validation/hardening/embedded-isa.toml",
+        "validation/hardening/embedded_architectures.py",
     }
 )
 PILOT_FILES = COMMON_FILES | frozenset(

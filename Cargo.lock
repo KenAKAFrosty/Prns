@@ -3005,6 +3005,9 @@ dependencies = [
  "personal-hopspot-memory",
  "prns-flash-manifest",
  "prns-nrf-dfu",
+ "serde",
+ "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
 ]
 

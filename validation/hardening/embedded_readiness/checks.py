@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from validation.hardening.embedded_isa.contract import Architecture, Compiler
 from validation.hardening.embedded_readiness.model import (
     CheckState,
@@ -174,7 +176,7 @@ def inspect_esp(probe: SystemProbe, contract: ReadinessContract) -> ReadinessChe
     else:
         output = probe.run((str(espup), "--version"))
         expected = f"espup {identity.espup_version}"
-        if first_line(output) != expected:
+        if output.returncode != 0 or first_line(output) != expected:
             mismatches.append(f"espup={first_line(output)!r}")
     rustc = probe.run(("rustup", "run", "esp", "rustc", "-vV"))
     if rustc.returncode != 0:
@@ -186,15 +188,21 @@ def inspect_esp(probe: SystemProbe, contract: ReadinessContract) -> ReadinessChe
         gaps.append("xtensa GCC")
     else:
         output = probe.run((str(gcc), "--version"))
-        if first_line(output) != identity.gcc_banner:
+        if output.returncode != 0 or first_line(output) != identity.gcc_banner:
             mismatches.append(f"gcc={first_line(output)!r}")
     objdump = probe.find(
         "xtensa-esp32s3-elf-objdump", contract.esp_environment.search_paths
     )
     if objdump is None:
         gaps.append("xtensa objdump")
+    else:
+        output = probe.run((str(objdump), "--version"))
+        if output.returncode != 0 or first_line(output) != identity.objdump_banner:
+            mismatches.append(f"objdump={first_line(output)!r}")
+    if gcc is not None and objdump is not None and gcc.parent != objdump.parent:
+        mismatches.append("gcc and objdump come from different toolchain directories")
     libclang = contract.esp_environment.libclang_path
-    if libclang is None or not libclang.is_dir():
+    if not contains_libclang(libclang):
         gaps.append("LIBCLANG_PATH")
     if mismatches or gaps:
         detail = list(mismatches)
@@ -214,6 +222,22 @@ def inspect_esp(probe: SystemProbe, contract: ReadinessContract) -> ReadinessChe
         f"espup {identity.espup_version}; ESP Rust {identity.rust_toolchain_version}; "
         f"crosstool-NG {identity.crosstool_version}",
     )
+
+
+def contains_libclang(path: Path | None) -> bool:
+    if path is None or not path.is_dir():
+        return False
+    try:
+        return any(
+            entry.is_file()
+            and (
+                entry.name in {"libclang.dylib", "libclang.dll", "libclang.so"}
+                or entry.name.startswith("libclang.so.")
+            )
+            for entry in path.iterdir()
+        )
+    except OSError:
+        return False
 
 
 def inspect_emulator(

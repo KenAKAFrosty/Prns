@@ -262,7 +262,7 @@ mod tests {
 
     fn proof(log_fingerprint: &str) -> serde_json::Value {
         serde_json::json!({
-            "schema_version": 1,
+            "schema_version": crate::contract::PROOF_FRAGMENT_SCHEMA_VERSION,
             "subject": { "kind": "component", "id": "sx126x" },
             "scenario": "sx126x-state-machine",
             "proof": "miri",
@@ -271,7 +271,10 @@ mod tests {
                 "custody": { "kind": "clean-commit", "commit": "a".repeat(40) },
                 "scenario_fingerprint": "b".repeat(64)
             },
-            "tools": [{ "kind": "miri", "version": "miri 1" }],
+            "tools": [
+                { "kind": "rustc", "version": "rustc 1" },
+                { "kind": "miri", "version": "miri 1" }
+            ],
             "verdict": {
                 "kind": "passed",
                 "evidence": {

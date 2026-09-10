@@ -96,6 +96,8 @@ pub(crate) enum RecordError {
     #[error(transparent)]
     Contract(#[from] ProofContractError),
     #[error(transparent)]
+    Runner(#[from] capabilities::RunnerContractError),
+    #[error(transparent)]
     Source(#[from] source::SourceError),
     #[error("could not serialize proof: {0}")]
     Serialize(#[from] serde_json::Error),
@@ -107,7 +109,7 @@ pub(crate) fn record_miri(
 ) -> Result<(), RecordError> {
     validate_request(&request)?;
     let subject = Subject::Component(request.component.clone());
-    validate_capability(&subject, &request.scenario, ProofKind::Miri)?;
+    let capability = validate_capability(&subject, &request.scenario, ProofKind::Miri)?;
     let source = source::identify(repository_root, &request.sources)?;
     let output_parent = request.output.parent().unwrap_or(Path::new("."));
     fs::create_dir_all(output_parent).map_err(|source| RecordError::Write {
@@ -141,6 +143,7 @@ pub(crate) fn record_miri(
         },
         artifacts,
     };
+    capabilities::validate_runner(&capability, &fragment)?;
     write_fragment(fragment, request.output)
 }
 
@@ -150,7 +153,7 @@ pub(crate) fn record_target_isa(
 ) -> Result<(), RecordError> {
     validate_target_isa_request(&request)?;
     let subject = Subject::Architecture(request.architecture.clone());
-    validate_capability(&subject, &request.scenario, ProofKind::TargetIsa)?;
+    let capability = validate_capability(&subject, &request.scenario, ProofKind::TargetIsa)?;
     let source = source::identify(repository_root, &request.sources)?;
     let output_parent = request.output.parent().unwrap_or(Path::new("."));
     fs::create_dir_all(output_parent).map_err(|source| RecordError::Write {
@@ -206,6 +209,7 @@ pub(crate) fn record_target_isa(
         },
         artifacts: evidence_artifacts,
     };
+    capabilities::validate_runner(&capability, &fragment)?;
     write_fragment(fragment, request.output)
 }
 
@@ -263,8 +267,8 @@ fn validate_capability(
     subject: &Subject,
     scenario: &ScenarioId,
     proof: ProofKind,
-) -> Result<(), RecordError> {
-    let supported = capabilities::canonical()?.into_iter().any(|capability| {
+) -> Result<crate::contract::Capability, RecordError> {
+    let supported = capabilities::canonical()?.into_iter().find(|capability| {
         capability.subject == *subject
             && capability.scenario == *scenario
             && capability.proof == proof
@@ -273,15 +277,11 @@ fn validate_capability(
                 SupportLevel::Required | SupportLevel::Pilot
             )
     });
-    if supported {
-        Ok(())
-    } else {
-        Err(RecordError::Capability {
-            subject: subject.clone(),
-            scenario: scenario.clone(),
-            proof,
-        })
-    }
+    supported.ok_or_else(|| RecordError::Capability {
+        subject: subject.clone(),
+        scenario: scenario.clone(),
+        proof,
+    })
 }
 
 fn artifacts(root: &Path, logs: &[PathBuf]) -> Result<Vec<EvidenceArtifact>, RecordError> {

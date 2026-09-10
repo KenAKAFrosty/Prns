@@ -9,6 +9,7 @@ use super::{
 use crate::analysis::executable::{
     ExecutableError, ExecutableSection, StartupAnchor, StartupAnchorRole, StartupStructure,
 };
+use personal_hopspot_memory::ProcessorArchitecture;
 
 const ENTRY_SYMBOL: &str = "_start";
 const TRAP_SECTION: &str = ".trap";
@@ -18,7 +19,7 @@ const WINDOWS: [AddressRange; 2] = [
 ];
 
 pub(super) static ADAPTER: AssuranceAdapter = AssuranceAdapter {
-    id: "riscv32imac",
+    id: ProcessorArchitecture::RiscV32Imac.id(),
     object_architecture: object::Architecture::Riscv32,
     normalize_code_address: normalize,
     validate_allocated_sections: validate,

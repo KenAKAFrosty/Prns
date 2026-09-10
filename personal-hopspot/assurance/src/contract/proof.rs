@@ -1,15 +1,16 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
+pub use personal_hopspot_builder::SourceCustody;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use super::{
     ArchitectureId, ComponentId, EvidenceFingerprint, EvidencePath, PlatformId, RunnerId,
-    ScenarioId, SourceCommit, TargetId,
+    ScenarioId, TargetId,
 };
 
-pub const PROOF_FRAGMENT_SCHEMA_VERSION: u32 = 1;
+pub const PROOF_FRAGMENT_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "id", rename_all = "kebab-case")]
@@ -37,18 +38,6 @@ pub enum ProofKind {
     Miri,
     PlatformEmulation,
     TargetIsa,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
-pub enum SourceCustody {
-    CleanCommit {
-        commit: SourceCommit,
-    },
-    WorkingTree {
-        head: SourceCommit,
-        diff_fingerprint: EvidenceFingerprint,
-    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -210,6 +199,17 @@ pub enum ProofContractError {
     EmptyToolVersion(ToolKind),
     #[error("proof fragment repeats tool identity {0:?}")]
     DuplicateTool(ToolKind),
+    #[error("{proof:?} proof fragment is missing required tool identity {tool:?}")]
+    MissingRequiredTool { proof: ProofKind, tool: ToolKind },
+    #[error("{proof:?} proof fragment contains unexpected tool identity {tool:?}")]
+    UnexpectedTool { proof: ProofKind, tool: ToolKind },
+    #[error("platform-emulation proof fragment must identify exactly one emulator")]
+    PlatformEmulatorIdentity,
+    #[error("proof fragment uses runner {actual:?}, expected {expected:?}")]
+    RunnerMismatch {
+        actual: RunnerId,
+        expected: &'static str,
+    },
     #[error("proof fragment has an empty failure diagnostic")]
     EmptyFailureDiagnostic,
     #[error("partial proof fragment has no evidence gaps")]
@@ -225,6 +225,13 @@ pub enum ProofContractError {
     EmptyArtifact,
     #[error("proof fragment repeats artifact {0}")]
     DuplicateArtifact(EvidencePath),
+    #[error("proof fragment has no log artifact")]
+    MissingLogArtifact,
+    #[error("{proof:?} proof fragment contains unexpected artifact kind {artifact:?}")]
+    UnexpectedArtifact {
+        proof: ProofKind,
+        artifact: ProofArtifactKind,
+    },
     #[error("executable proof fragment has no transcript artifact")]
     MissingTranscriptArtifact,
     #[error("executable proof fragment has multiple transcript artifacts")]
@@ -245,14 +252,49 @@ impl ProofFragment {
                 expected: PROOF_FRAGMENT_SCHEMA_VERSION,
             });
         }
-        validate_tools(&self.tools)?;
         validate_verdict(self.proof, &self.subject, &self.verdict)?;
+        validate_runner(&self.runner, &self.verdict)?;
+        validate_tools(self.proof, &self.verdict, &self.tools)?;
         validate_artifacts(&self.artifacts)?;
-        validate_transcript_artifact(&self.verdict, &self.artifacts)
+        validate_proof_artifacts(self.proof, &self.verdict, &self.artifacts)
     }
 }
 
-fn validate_tools(tools: &[ToolIdentity]) -> Result<(), ProofContractError> {
+fn validate_runner(
+    runner: &RunnerId,
+    verdict: &Verdict<ProofEvidence>,
+) -> Result<(), ProofContractError> {
+    let evidence = match verdict {
+        Verdict::Passed { evidence } | Verdict::Partial { evidence, .. } => evidence,
+        Verdict::Failed { .. } | Verdict::Unavailable { .. } => return Ok(()),
+    };
+    let expected = match evidence {
+        ProofEvidence::Miri {
+            coverage: MiriCoverage::Stacked,
+            ..
+        } => Some("miri-stacked"),
+        ProofEvidence::Miri {
+            coverage: MiriCoverage::StackedAndTree,
+            ..
+        } => Some("miri-stacked-tree"),
+        ProofEvidence::PlatformEmulation { .. } | ProofEvidence::TargetIsa { .. } => None,
+    };
+    if let Some(expected) = expected {
+        if runner.as_str() != expected {
+            return Err(ProofContractError::RunnerMismatch {
+                actual: runner.clone(),
+                expected,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_tools(
+    proof: ProofKind,
+    verdict: &Verdict<ProofEvidence>,
+    tools: &[ToolIdentity],
+) -> Result<(), ProofContractError> {
     if tools.is_empty() {
         return Err(ProofContractError::MissingTools);
     }
@@ -265,7 +307,50 @@ fn validate_tools(tools: &[ToolIdentity]) -> Result<(), ProofContractError> {
             return Err(ProofContractError::DuplicateTool(tool.kind));
         }
     }
+    let allowed = allowed_tools(proof);
+    if let Some(tool) = kinds.iter().find(|tool| !allowed.contains(tool)) {
+        return Err(ProofContractError::UnexpectedTool { proof, tool: *tool });
+    }
+    if matches!(verdict, Verdict::Unavailable { .. }) {
+        return Ok(());
+    }
+    for tool in required_tools(proof) {
+        if !kinds.contains(tool) {
+            return Err(ProofContractError::MissingRequiredTool { proof, tool: *tool });
+        }
+    }
+    if matches!(proof, ProofKind::PlatformEmulation) {
+        let emulators = [ToolKind::Qemu, ToolKind::Renode]
+            .into_iter()
+            .filter(|tool| kinds.contains(tool))
+            .count();
+        if emulators != 1 {
+            return Err(ProofContractError::PlatformEmulatorIdentity);
+        }
+    }
     Ok(())
+}
+
+const fn allowed_tools(proof: ProofKind) -> &'static [ToolKind] {
+    match proof {
+        ProofKind::Miri => &[ToolKind::Rustc, ToolKind::Miri],
+        ProofKind::TargetIsa => &[ToolKind::Cargo, ToolKind::Rustc, ToolKind::Qemu],
+        ProofKind::PlatformEmulation => &[
+            ToolKind::Cargo,
+            ToolKind::Rustc,
+            ToolKind::Linker,
+            ToolKind::Qemu,
+            ToolKind::Renode,
+        ],
+    }
+}
+
+const fn required_tools(proof: ProofKind) -> &'static [ToolKind] {
+    match proof {
+        ProofKind::Miri => &[ToolKind::Rustc, ToolKind::Miri],
+        ProofKind::TargetIsa => &[ToolKind::Cargo, ToolKind::Rustc, ToolKind::Qemu],
+        ProofKind::PlatformEmulation => &[ToolKind::Cargo, ToolKind::Rustc],
+    }
 }
 
 fn validate_verdict(
@@ -343,13 +428,15 @@ fn validate_artifacts(artifacts: &[EvidenceArtifact]) -> Result<(), ProofContrac
     Ok(())
 }
 
-fn validate_transcript_artifact(
+fn validate_proof_artifacts(
+    proof: ProofKind,
     verdict: &Verdict<ProofEvidence>,
     artifacts: &[EvidenceArtifact],
 ) -> Result<(), ProofContractError> {
     let evidence = match verdict {
         Verdict::Passed { evidence } | Verdict::Partial { evidence, .. } => evidence,
-        Verdict::Failed { .. } | Verdict::Unavailable { .. } => return Ok(()),
+        Verdict::Failed { .. } => return require_log(artifacts),
+        Verdict::Unavailable { .. } => return Ok(()),
     };
     let fingerprint = match evidence {
         ProofEvidence::TargetIsa {
@@ -360,8 +447,20 @@ fn validate_transcript_artifact(
             transcript_fingerprint,
             ..
         } => transcript_fingerprint,
-        ProofEvidence::Miri { .. } => return Ok(()),
+        ProofEvidence::Miri { .. } => {
+            if let Some(artifact) = artifacts
+                .iter()
+                .find(|artifact| artifact.kind != ProofArtifactKind::Log)
+            {
+                return Err(ProofContractError::UnexpectedArtifact {
+                    proof,
+                    artifact: artifact.kind,
+                });
+            }
+            return require_log(artifacts);
+        }
     };
+    require_log(artifacts)?;
     let mut transcripts = artifacts
         .iter()
         .filter(|artifact| artifact.kind == ProofArtifactKind::Transcript);
@@ -386,14 +485,26 @@ fn validate_transcript_artifact(
     Ok(())
 }
 
+fn require_log(artifacts: &[EvidenceArtifact]) -> Result<(), ProofContractError> {
+    if artifacts
+        .iter()
+        .any(|artifact| artifact.kind == ProofArtifactKind::Log)
+    {
+        Ok(())
+    } else {
+        Err(ProofContractError::MissingLogArtifact)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         ArchitectureId, ComponentId, EvidenceArtifact, EvidenceFingerprint, EvidenceGap,
-        EvidencePath, MiriCoverage, ProofArtifactKind, ProofContractError, ProofEvidence,
-        ProofFragment, ProofKind, RunnerId, ScenarioId, SourceCommit, SourceCustody,
+        EvidencePath, Failure, FailureKind, MiriCoverage, ProofArtifactKind, ProofContractError,
+        ProofEvidence, ProofFragment, ProofKind, RunnerId, ScenarioId, SourceCustody,
         SourceIdentity, Subject, ToolIdentity, ToolKind, Verdict, PROOF_FRAGMENT_SCHEMA_VERSION,
     };
+    use personal_hopspot_builder::RepositoryCommit;
 
     fn fingerprint(byte: char) -> Result<EvidenceFingerprint, crate::contract::ValueError> {
         EvidenceFingerprint::parse(byte.to_string().repeat(64))
@@ -408,21 +519,32 @@ mod tests {
             runner: RunnerId::parse("miri-stacked")?,
             source: SourceIdentity {
                 custody: SourceCustody::CleanCommit {
-                    commit: SourceCommit::parse("a".repeat(40))?,
+                    commit: RepositoryCommit::parse("a".repeat(40))?,
                 },
                 scenario_fingerprint: fingerprint('b')?,
             },
-            tools: vec![ToolIdentity {
-                kind: ToolKind::Miri,
-                version: "miri 1".to_string(),
-            }],
+            tools: vec![
+                ToolIdentity {
+                    kind: ToolKind::Rustc,
+                    version: "rustc 1".to_string(),
+                },
+                ToolIdentity {
+                    kind: ToolKind::Miri,
+                    version: "miri 1".to_string(),
+                },
+            ],
             verdict: Verdict::Passed {
                 evidence: ProofEvidence::Miri {
                     coverage: MiriCoverage::Stacked,
                     completed_tests: 4,
                 },
             },
-            artifacts: Vec::new(),
+            artifacts: vec![EvidenceArtifact {
+                kind: ProofArtifactKind::Log,
+                path: EvidencePath::parse("miri.log")?,
+                bytes: 4,
+                fingerprint: fingerprint('c')?,
+            }],
         })
     }
 
@@ -449,6 +571,7 @@ mod tests {
         if let Verdict::Partial { gaps, .. } = &mut fragment.verdict {
             gaps.push(EvidenceGap::MissingMetadata);
         }
+        fragment.runner = RunnerId::parse("miri-stacked-tree")?;
         fragment.validate()?;
         Ok(())
     }
@@ -493,11 +616,130 @@ mod tests {
     }
 
     #[test]
+    fn proof_kinds_require_their_exact_toolchain() -> Result<(), Box<dyn std::error::Error>> {
+        let mut fragment = fragment()?;
+        fragment.tools.retain(|tool| tool.kind != ToolKind::Rustc);
+        assert_eq!(
+            fragment.validate(),
+            Err(ProofContractError::MissingRequiredTool {
+                proof: ProofKind::Miri,
+                tool: ToolKind::Rustc,
+            })
+        );
+        fragment.tools.push(ToolIdentity {
+            kind: ToolKind::Rustc,
+            version: "rustc 1".to_string(),
+        });
+        fragment.tools.push(ToolIdentity {
+            kind: ToolKind::Qemu,
+            version: "qemu 1".to_string(),
+        });
+        assert_eq!(
+            fragment.validate(),
+            Err(ProofContractError::UnexpectedTool {
+                proof: ProofKind::Miri,
+                tool: ToolKind::Qemu,
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn successful_proofs_require_logs() -> Result<(), Box<dyn std::error::Error>> {
+        let mut fragment = fragment()?;
+        fragment.artifacts.clear();
+        assert_eq!(
+            fragment.validate(),
+            Err(ProofContractError::MissingLogArtifact)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn failed_proofs_retain_toolchain_and_log_evidence() -> Result<(), Box<dyn std::error::Error>> {
+        let mut fragment = fragment()?;
+        fragment.verdict = Verdict::Failed {
+            failure: Failure {
+                kind: FailureKind::ToolFailure,
+                diagnostic: "Miri failed".to_string(),
+            },
+        };
+        fragment.artifacts.clear();
+        assert_eq!(
+            fragment.validate(),
+            Err(ProofContractError::MissingLogArtifact)
+        );
+        fragment.tools.retain(|tool| tool.kind != ToolKind::Rustc);
+        assert_eq!(
+            fragment.validate(),
+            Err(ProofContractError::MissingRequiredTool {
+                proof: ProofKind::Miri,
+                tool: ToolKind::Rustc,
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn target_isa_proofs_require_qemu_identity() -> Result<(), Box<dyn std::error::Error>> {
+        let mut fragment = fragment()?;
+        fragment.subject = Subject::Architecture(ArchitectureId::parse("thumbv7em")?);
+        fragment.proof = ProofKind::TargetIsa;
+        fragment.tools = vec![
+            ToolIdentity {
+                kind: ToolKind::Cargo,
+                version: "cargo 1".to_string(),
+            },
+            ToolIdentity {
+                kind: ToolKind::Rustc,
+                version: "rustc 1".to_string(),
+            },
+        ];
+        fragment.verdict = Verdict::Passed {
+            evidence: ProofEvidence::TargetIsa {
+                architecture: ArchitectureId::parse("thumbv7em")?,
+                completed_scenarios: 2,
+                transcript_fingerprint: fingerprint('c')?,
+            },
+        };
+
+        assert_eq!(
+            fragment.validate(),
+            Err(ProofContractError::MissingRequiredTool {
+                proof: ProofKind::TargetIsa,
+                tool: ToolKind::Qemu,
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
     fn executable_evidence_is_bound_to_one_transcript_artifact(
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut fragment = fragment()?;
         fragment.subject = Subject::Architecture(ArchitectureId::parse("thumbv7em")?);
         fragment.proof = ProofKind::TargetIsa;
+        fragment.tools = vec![
+            ToolIdentity {
+                kind: ToolKind::Cargo,
+                version: "cargo 1".to_string(),
+            },
+            ToolIdentity {
+                kind: ToolKind::Rustc,
+                version: "rustc 1".to_string(),
+            },
+            ToolIdentity {
+                kind: ToolKind::Qemu,
+                version: "qemu 1".to_string(),
+            },
+        ];
+        fragment.artifacts.clear();
+        fragment.artifacts.push(EvidenceArtifact {
+            kind: ProofArtifactKind::Log,
+            path: EvidencePath::parse("qemu.log")?,
+            bytes: 32,
+            fingerprint: fingerprint('a')?,
+        });
         fragment.verdict = Verdict::Passed {
             evidence: ProofEvidence::TargetIsa {
                 architecture: ArchitectureId::parse("thumbv7em")?,
@@ -519,7 +761,7 @@ mod tests {
             fragment.validate(),
             Err(ProofContractError::TranscriptFingerprintMismatch)
         );
-        fragment.artifacts[0].fingerprint = fingerprint('c')?;
+        fragment.artifacts[1].fingerprint = fingerprint('c')?;
         assert_eq!(
             fragment.validate(),
             Err(ProofContractError::MissingExecutableArtifact)

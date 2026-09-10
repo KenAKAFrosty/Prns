@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use personal_hopspot_builder::SourceCustody;
 use prns_flash_manifest::{sha256_hex, Sha256Digest};
 
 use super::compare::{load_report, ComparisonError};
@@ -39,6 +40,11 @@ impl Document {
     #[must_use]
     pub const fn schema_version(&self) -> u32 {
         self.report.schema_version
+    }
+
+    #[must_use]
+    pub const fn source_custody(&self) -> &SourceCustody {
+        &self.report.source
     }
 
     #[must_use]
@@ -107,7 +113,7 @@ mod tests {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("experiments/lto/t-echo-s140-v6-fat.json");
         let document = Document::load(&path)?;
-        assert_eq!(document.schema_version(), 7);
+        assert_eq!(document.schema_version(), 8);
         assert_eq!(document.target_id(), "t-echo-s140-v6");
         assert_eq!(document.memory_profile(), "t-echo-s140-v6");
         assert_eq!(document.rust_target(), "thumbv7em-none-eabihf");

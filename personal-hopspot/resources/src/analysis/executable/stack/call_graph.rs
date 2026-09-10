@@ -21,6 +21,35 @@ struct FunctionNode<'a> {
     frame_bytes: u64,
 }
 
+#[derive(Clone, Copy)]
+enum FunctionLookup {
+    SortedDisjoint,
+    OverlappingOrUnordered,
+}
+
+impl FunctionLookup {
+    fn new(nodes: &[FunctionNode<'_>]) -> Self {
+        if nodes.windows(2).all(|pair| {
+            pair[0].boundary.range.start() <= pair[1].boundary.range.start()
+                && pair[0].boundary.range.end() <= pair[1].boundary.range.start()
+        }) {
+            Self::SortedDisjoint
+        } else {
+            Self::OverlappingOrUnordered
+        }
+    }
+
+    fn find(self, nodes: &[FunctionNode<'_>], address: u64) -> Option<usize> {
+        match self {
+            Self::SortedDisjoint => nodes
+                .partition_point(|node| node.boundary.range.start() <= address)
+                .checked_sub(1)
+                .filter(|index| address < nodes[*index].boundary.range.end()),
+            Self::OverlappingOrUnordered => node_containing_linear(nodes, address),
+        }
+    }
+}
+
 pub(super) fn analyze(
     adapter: &AssuranceAdapter,
     startup: &StartupStructure,
@@ -29,6 +58,7 @@ pub(super) fn analyze(
     instructions: &[DecodedInstruction],
 ) -> Result<CallGraphAnalysis, StackMetadataError> {
     let nodes = function_nodes(adapter, functions, frames);
+    let lookup = FunctionLookup::new(&nodes);
     let mut gaps = BTreeMap::new();
     let mut edges = Vec::new();
     let mut adjacency = vec![Vec::new(); nodes.len()];
@@ -37,7 +67,7 @@ pub(super) fn analyze(
         if target == CallTarget::NotCall {
             continue;
         }
-        let Some(source) = node_containing(&nodes, instruction.address) else {
+        let Some(source) = lookup.find(&nodes, instruction.address) else {
             increment(&mut gaps, StackAnalysisGapKind::CallSiteOutsideFunction);
             continue;
         };
@@ -53,8 +83,7 @@ pub(super) fn analyze(
             }
             CallTarget::NotCall => continue,
         };
-        let Some(destination) = node_containing(&nodes, adapter.normalize_code_address(address))
-        else {
+        let Some(destination) = lookup.find(&nodes, adapter.normalize_code_address(address)) else {
             increment(&mut gaps, StackAnalysisGapKind::DirectCallOutsideFunctions);
             continue;
         };
@@ -81,10 +110,10 @@ pub(super) fn analyze(
             && left.callee_address == right.callee_address
     });
 
-    let roots = roots(adapter, startup, &nodes, &mut gaps);
+    let roots = roots(adapter, startup, &nodes, lookup, &mut gaps);
     let root_nodes = roots
         .iter()
-        .filter_map(|root| node_containing(&nodes, root.address))
+        .filter_map(|root| lookup.find(&nodes, root.address))
         .collect::<BTreeSet<_>>();
     let mut states = vec![VisitState::Unvisited; nodes.len()];
     let mut memo = vec![None; nodes.len()];
@@ -140,6 +169,7 @@ fn roots(
     adapter: &AssuranceAdapter,
     startup: &StartupStructure,
     nodes: &[FunctionNode<'_>],
+    lookup: FunctionLookup,
     gaps: &mut BTreeMap<StackAnalysisGapKind, u64>,
 ) -> Vec<StackRoot> {
     let mut roots = Vec::new();
@@ -154,7 +184,7 @@ fn roots(
             }
         };
         let address = adapter.normalize_code_address(anchor.address);
-        let Some(index) = node_containing(nodes, address) else {
+        let Some(index) = lookup.find(nodes, address) else {
             increment(gaps, StackAnalysisGapKind::RootOutsideFunctions);
             continue;
         };
@@ -240,7 +270,7 @@ fn longest_from(
     Ok(path)
 }
 
-fn node_containing(nodes: &[FunctionNode<'_>], address: u64) -> Option<usize> {
+fn node_containing_linear(nodes: &[FunctionNode<'_>], address: u64) -> Option<usize> {
     nodes.iter().position(|node| {
         node.boundary.range.start() <= address && address < node.boundary.range.end()
     })
@@ -331,6 +361,47 @@ mod tests {
             ),
             Err(StackMetadataError::CallPathOverflow)
         );
+    }
+
+    #[test]
+    fn sorted_disjoint_functions_use_exact_boundary_lookup() {
+        let boundaries = [
+            boundary("first", 0x1000, 0x1010),
+            boundary("second", 0x1010, 0x1020),
+        ];
+        let nodes = boundaries
+            .iter()
+            .map(|boundary| FunctionNode {
+                boundary,
+                frame_bytes: 0,
+            })
+            .collect::<Vec<_>>();
+        let lookup = FunctionLookup::new(&nodes);
+
+        assert_eq!(lookup.find(&nodes, 0x0fff), None);
+        assert_eq!(lookup.find(&nodes, 0x1000), Some(0));
+        assert_eq!(lookup.find(&nodes, 0x100f), Some(0));
+        assert_eq!(lookup.find(&nodes, 0x1010), Some(1));
+        assert_eq!(lookup.find(&nodes, 0x1020), None);
+    }
+
+    #[test]
+    fn overlapping_functions_preserve_first_match_semantics() {
+        let boundaries = [
+            boundary("outer", 0x1000, 0x1030),
+            boundary("inner", 0x1010, 0x1020),
+        ];
+        let nodes = boundaries
+            .iter()
+            .map(|boundary| FunctionNode {
+                boundary,
+                frame_bytes: 0,
+            })
+            .collect::<Vec<_>>();
+        let lookup = FunctionLookup::new(&nodes);
+
+        assert!(matches!(lookup, FunctionLookup::OverlappingOrUnordered));
+        assert_eq!(lookup.find(&nodes, 0x1015), Some(0));
     }
 
     fn boundary(name: &str, start: u64, end: u64) -> FunctionBoundary {

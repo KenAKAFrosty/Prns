@@ -2,7 +2,9 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use personal_hopspot_builder::artifact::publish;
-use personal_hopspot_builder::{BuildContext, BuildError, LinkOverflowEvidence, ToolchainEvidence};
+use personal_hopspot_builder::{
+    BuildContext, BuildError, LinkOverflowEvidence, SourceCustody, ToolchainEvidence,
+};
 use personal_hopspot_memory::MemoryProfile;
 use serde::Serialize;
 use thiserror::Error;
@@ -74,8 +76,9 @@ pub(crate) fn write(
     target: &Target<'_>,
     context: &BuildContext<'_>,
     evidence: &BuildEvidence,
+    source: &SourceCustody,
 ) -> Result<PathBuf, ReportError> {
-    let report = build(target, context, evidence)?;
+    let report = build(target, context, evidence, source)?;
     publish_report(context, target, &report)
 }
 
@@ -83,6 +86,7 @@ pub(crate) fn write_overflow(
     target: &Target<'_>,
     context: &BuildContext<'_>,
     evidence: &LinkOverflowEvidence,
+    source: &SourceCustody,
 ) -> Result<PathBuf, ReportError> {
     if evidence.target() != target.id() {
         return Err(ReportError::MismatchedOverflowTarget {
@@ -99,6 +103,7 @@ pub(crate) fn write_overflow(
     )?;
     let report = ResourceReport {
         schema_version: SCHEMA_VERSION,
+        source: source.clone(),
         target: target_identity(target),
         architecture: architecture_identity(target),
         build: build_identity(context, target.recipe_identity())?,
@@ -147,6 +152,7 @@ fn build(
     target: &Target<'_>,
     context: &BuildContext<'_>,
     evidence: &BuildEvidence,
+    source: &SourceCustody,
 ) -> Result<ResourceReport, ReportError> {
     let recipe = target.recipe_identity();
     let adapter = target.adapter();
@@ -215,6 +221,7 @@ fn build(
 
     Ok(ResourceReport {
         schema_version: SCHEMA_VERSION,
+        source: source.clone(),
         target: target_identity(target),
         architecture: architecture_identity(target),
         build: build_identity(context, recipe)?,

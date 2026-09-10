@@ -648,6 +648,7 @@ inputs = [
     "prns-core/src/interfaces/subghz/regions/us915/mod.rs",
     "prns-interfaces/impls/embassy/src/radios",
     "validation/hardening/embedded-isa.toml",
+    "validation/hardening/embedded_architectures.py",
     "validation/hardening/embedded_isa",
 ]
 artifacts = "validation-artifacts/results/embedded-isa-thumbv7em"
@@ -671,6 +672,7 @@ inputs = [
     "prns-core/src/interfaces/subghz/regions/us915/mod.rs",
     "prns-interfaces/impls/embassy/src/radios",
     "validation/hardening/embedded-isa.toml",
+    "validation/hardening/embedded_architectures.py",
     "validation/hardening/embedded_isa",
 ]
 artifacts = "validation-artifacts/results/embedded-isa-riscv32imac"

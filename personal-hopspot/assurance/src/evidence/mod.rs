@@ -8,7 +8,8 @@ pub use discovery::{discover_proofs, discover_resources, DiscoveryError};
 pub(crate) use record::{
     record_miri, record_target_isa, MiriRecordRequest, RecordError, TargetIsaRecordRequest,
 };
+pub(crate) use validation::validate_documents_current;
 pub use validation::{
-    load_canonical_matrix, load_matrix, validate_canonical as validate_matrix,
+    load_canonical_matrix, load_matrix, validate_canonical as validate_matrix, validate_current,
     MatrixValidationError,
 };

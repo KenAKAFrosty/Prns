@@ -3,6 +3,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use personal_hopspot_builder::SourceCustody;
 use personal_hopspot_resources::report::SCHEMA_VERSION as RESOURCE_SCHEMA_VERSION;
 use thiserror::Error;
 
@@ -11,6 +12,7 @@ use crate::contract::{
     UnavailableReason, Verdict, ASSURANCE_MATRIX_SCHEMA_VERSION,
 };
 
+use super::discovery::{ProofDocument, ResourceDocument};
 use super::{assemble, AggregateError};
 
 #[derive(Debug, Error)]
@@ -48,6 +50,8 @@ pub enum MatrixValidationError {
         #[source]
         source: ProofContractError,
     },
+    #[error(transparent)]
+    InvalidRunner(#[from] crate::capabilities::RunnerContractError),
     #[error("unsupported or inapplicable capability contains observed evidence")]
     EvidenceForExcludedCapability,
     #[error("excluded capability has an incorrect unavailable reason")]
@@ -60,6 +64,10 @@ pub enum MatrixValidationError {
     IncompatibleTargetContract,
     #[error("assurance matrix capability contract does not match the canonical registry")]
     IncompatibleCapabilityContract,
+    #[error("resource evidence for {target:?} is stale for the current source custody")]
+    StaleResource { target: String },
+    #[error("proof evidence for {subject:?} is stale for the current source custody")]
+    StaleProof { subject: crate::contract::Subject },
 }
 
 pub fn load_matrix(path: &Path) -> Result<AssuranceMatrix, MatrixValidationError> {
@@ -86,6 +94,53 @@ pub fn load_canonical_matrix(path: &Path) -> Result<AssuranceMatrix, MatrixValid
 pub fn validate_canonical(matrix: &AssuranceMatrix) -> Result<(), MatrixValidationError> {
     validate(matrix)?;
     validate_canonical_contract(matrix)
+}
+
+pub fn validate_current(
+    matrix: &AssuranceMatrix,
+    source: &SourceCustody,
+) -> Result<(), MatrixValidationError> {
+    for target in &matrix.targets {
+        if let Verdict::Passed { evidence } = &target.resource {
+            if evidence.source != *source {
+                return Err(MatrixValidationError::StaleResource {
+                    target: target.id.to_string(),
+                });
+            }
+        }
+    }
+    for result in &matrix.capabilities {
+        if let CapabilityResult::Observed { proof, .. } = result {
+            if proof.source.custody != *source {
+                return Err(MatrixValidationError::StaleProof {
+                    subject: proof.subject.clone(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_documents_current(
+    resources: &[ResourceDocument],
+    proofs: &[ProofDocument],
+    source: &SourceCustody,
+) -> Result<(), MatrixValidationError> {
+    for resource in resources {
+        if resource.document.source_custody() != source {
+            return Err(MatrixValidationError::StaleResource {
+                target: resource.document.target_id().to_string(),
+            });
+        }
+    }
+    for proof in proofs {
+        if proof.fragment.source.custody != *source {
+            return Err(MatrixValidationError::StaleProof {
+                subject: proof.fragment.subject.clone(),
+            });
+        }
+    }
+    Ok(())
 }
 
 pub fn validate(matrix: &AssuranceMatrix) -> Result<(), MatrixValidationError> {
@@ -215,7 +270,9 @@ fn validate_capability(result: &CapabilityResult) -> Result<(), MatrixValidation
                 .map_err(|source| MatrixValidationError::InvalidProof {
                     subject: proof.subject.clone(),
                     source,
-                })
+                })?;
+            crate::capabilities::validate_runner(capability, proof)?;
+            Ok(())
         }
         CapabilityResult::Unavailable { reason, .. } => {
             let excluded = matches!(
@@ -254,9 +311,20 @@ fn count_required_failures(matrix: &AssuranceMatrix) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{validate, validate_canonical, MatrixValidationError};
-    use crate::contract::MatrixStatus;
+    use std::path::PathBuf;
+
+    use personal_hopspot_resources::report::Document;
+
+    use super::{
+        validate, validate_canonical, validate_current, validate_documents_current,
+        MatrixValidationError,
+    };
+    use crate::contract::{
+        CapabilityResult, EvidenceFingerprint, MatrixStatus, ProofFragment, RunnerId, SourceCommit,
+        SourceCustody, SourceIdentity, UnavailableReason, Verdict, PROOF_FRAGMENT_SCHEMA_VERSION,
+    };
     use crate::evidence::assemble;
+    use crate::evidence::discovery::ResourceDocument;
 
     #[test]
     fn duplicate_target_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
@@ -316,6 +384,10 @@ mod tests {
         value["targets"][0]["resource"] = serde_json::json!({
             "kind": "passed",
             "evidence": {
+                "source": {
+                    "kind": "clean-commit",
+                    "commit": "a".repeat(40)
+                },
                 "report_fingerprint": "invalid",
                 "build_fingerprint": "a".repeat(64),
                 "toolchain_fingerprint": "b".repeat(64),
@@ -324,5 +396,81 @@ mod tests {
         });
         assert!(serde_json::from_value::<crate::contract::AssuranceMatrix>(value).is_err());
         Ok(())
+    }
+
+    #[test]
+    fn current_validation_rejects_stale_resource_and_proof_custody(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let current = custody('a')?;
+        let stale = custody('b')?;
+        let mut matrix = assemble(Vec::new(), Vec::new())?;
+        matrix.targets[0].resource = Verdict::Passed {
+            evidence: crate::contract::ResourceEvidence {
+                source: stale.clone(),
+                report_fingerprint: fingerprint('c')?,
+                build_fingerprint: fingerprint('d')?,
+                toolchain_fingerprint: fingerprint('e')?,
+                memory_contract_fingerprint: fingerprint('f')?,
+            },
+        };
+        assert!(matches!(
+            validate_current(&matrix, &current),
+            Err(MatrixValidationError::StaleResource { .. })
+        ));
+
+        matrix.targets[0].resource = Verdict::Unavailable {
+            reason: UnavailableReason::EvidenceNotProduced,
+        };
+        let capability = matrix.capabilities[0].capability().clone();
+        matrix.capabilities[0] = CapabilityResult::Observed {
+            proof: Box::new(ProofFragment {
+                schema_version: PROOF_FRAGMENT_SCHEMA_VERSION,
+                subject: capability.subject.clone(),
+                scenario: capability.scenario.clone(),
+                proof: capability.proof,
+                runner: RunnerId::parse("miri-stacked")?,
+                source: SourceIdentity {
+                    custody: stale,
+                    scenario_fingerprint: fingerprint('a')?,
+                },
+                tools: Vec::new(),
+                verdict: Verdict::Unavailable {
+                    reason: UnavailableReason::EvidenceNotProduced,
+                },
+                artifacts: Vec::new(),
+            }),
+            capability,
+        };
+        assert!(matches!(
+            validate_current(&matrix, &current),
+            Err(MatrixValidationError::StaleProof { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn stale_overflow_documents_are_rejected_before_aggregation(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../resources/experiments/lto/t-echo-s140-v6-thin.json");
+        let resources = vec![ResourceDocument {
+            document: Document::load(&path)?,
+            path,
+        }];
+
+        assert!(matches!(
+            validate_documents_current(&resources, &[], &custody('a')?),
+            Err(MatrixValidationError::StaleResource { .. })
+        ));
+        Ok(())
+    }
+
+    fn custody(byte: char) -> Result<SourceCustody, personal_hopspot_builder::SourceCaptureError> {
+        SourceCommit::parse(byte.to_string().repeat(40))
+            .map(|commit| SourceCustody::CleanCommit { commit })
+    }
+
+    fn fingerprint(byte: char) -> Result<EvidenceFingerprint, crate::contract::ValueError> {
+        EvidenceFingerprint::parse(byte.to_string().repeat(64))
     }
 }

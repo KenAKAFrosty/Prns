@@ -14,7 +14,12 @@ espflash = { version = "=4.5.0", default-features = false }
 personal-hopspot-memory = { path = "../memory" }
 prns-flash-manifest = { path = "../../prns-flash-manifest" }
 prns-nrf-dfu = { path = "../../prns-nrf-dfu" }
+serde = { version = "1.0", features = ["derive"] }
 thiserror = "2.0"
+
+[dev-dependencies]
+serde_json = "1.0"
+tempfile = "3.23"
 
 [lints]
 workspace = true

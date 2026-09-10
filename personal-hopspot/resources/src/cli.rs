@@ -1,10 +1,12 @@
+use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use personal_hopspot_builder::{
-    default_artifact_root, BuildContext, BuildError, BuildIntent, BuildVersion, LtoMode,
+    capture_source_custody, default_artifact_root, BuildContext, BuildError, BuildIntent,
+    BuildVersion, LtoMode, SourceCaptureError, SourceCustody,
 };
 use thiserror::Error;
 
@@ -155,6 +157,25 @@ enum ResourceError {
     Comparison(#[from] report::ComparisonError),
     #[error(transparent)]
     Summary(#[from] report::SummaryError),
+    #[error(transparent)]
+    Source(#[from] SourceCaptureError),
+    #[error("source changed while producing {scope}")]
+    SourceChanged { scope: SourceScope },
+}
+
+#[derive(Debug)]
+enum SourceScope {
+    MatrixSummary,
+    Target(String),
+}
+
+impl fmt::Display for SourceScope {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MatrixSummary => formatter.write_str("the resource matrix summary"),
+            Self::Target(target) => write!(formatter, "resource evidence for {target:?}"),
+        }
+    }
 }
 
 pub fn entrypoint() -> ExitCode {
@@ -223,13 +244,20 @@ fn summarize_reports(root: &Path, arguments: SummarizeArguments) -> Result<(), R
     let baseline = arguments
         .baseline
         .unwrap_or_else(|| report::baseline_path(root));
+    let source = capture_source_custody(root)?;
     let outcome = report::summarize(
         &matrix,
         &context,
         &arguments.reports,
         &baseline,
         &arguments.output,
+        &source,
     )?;
+    if capture_source_custody(root)? != source {
+        return Err(ResourceError::SourceChanged {
+            scope: SourceScope::MatrixSummary,
+        });
+    }
     println!(
         "EMBEDDED_RESOURCE_MATRIX: targets={} json={} markdown={}",
         outcome.targets(),
@@ -278,7 +306,8 @@ fn refresh_baseline(root: &Path) -> Result<(), ResourceError> {
         .iter()
         .map(|target| build_report(target, &context, OverflowPolicy::Reject))
         .collect::<Result<Vec<_>, _>>()?;
-    let outcome = report::refresh_baseline(root, &matrix, &context, &reports)?;
+    let source = capture_source_custody(root)?;
+    let outcome = report::refresh_baseline(root, &matrix, &context, &reports, &source)?;
     println!(
         "EMBEDDED_RESOURCE_BASELINE: targets={} path={}",
         outcome.targets(),
@@ -292,8 +321,16 @@ fn build_report(
     context: &BuildContext<'_>,
     overflow_policy: OverflowPolicy,
 ) -> Result<PathBuf, ResourceError> {
-    match (overflow_policy, target.build(context)) {
-        (_, Ok(evidence)) => write_success_report(target, context, &evidence),
+    let before = capture_source_custody(context.repository())?;
+    let result = target.build(context);
+    let after = capture_source_custody(context.repository())?;
+    if before != after {
+        return Err(ResourceError::SourceChanged {
+            scope: SourceScope::Target(target.id().to_string()),
+        });
+    }
+    let report = match (overflow_policy, result) {
+        (_, Ok(evidence)) => write_success_report(target, context, &evidence, &before),
         (
             OverflowPolicy::Report,
             Err(MatrixError::Build {
@@ -314,18 +351,25 @@ fn build_report(
                     overflow.bytes()
                 );
             }
-            let report = report::write_overflow(target, context, &evidence)?;
+            let report = report::write_overflow(target, context, &evidence, &before)?;
             println!("report {}", report.display());
             Ok(report)
         }
         (_, Err(error)) => Err(error.into()),
+    }?;
+    if capture_source_custody(context.repository())? != before {
+        return Err(ResourceError::SourceChanged {
+            scope: SourceScope::Target(target.id().to_string()),
+        });
     }
+    Ok(report)
 }
 
 fn write_success_report(
     target: &Target<'_>,
     context: &BuildContext<'_>,
     evidence: &matrix::BuildEvidence,
+    source: &SourceCustody,
 ) -> Result<PathBuf, ResourceError> {
     let adapter = target.adapter();
     println!(
@@ -347,7 +391,7 @@ fn write_success_report(
     if let Some(linker_map) = evidence.linker_map() {
         println!("linker-map {}", linker_map.display());
     }
-    let report = report::write(target, context, evidence)?;
+    let report = report::write(target, context, evidence, source)?;
     println!("report {}", report.display());
     Ok(report)
 }

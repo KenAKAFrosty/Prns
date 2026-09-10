@@ -3,17 +3,13 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
-use std::process::{Command, Output};
 
 use serde::Serialize;
 use thiserror::Error;
 
-use crate::contract::{
-    EvidenceFingerprint, SourceCommit, SourceCustody, SourceIdentity, ValueError,
-};
+use crate::contract::{EvidenceFingerprint, SourceIdentity, ValueError};
 
 const SCENARIO_FINGERPRINT_SCHEMA: u32 = 1;
-const WORKING_TREE_FINGERPRINT_SCHEMA: u32 = 1;
 
 #[derive(Debug, Error)]
 pub(crate) enum SourceError {
@@ -27,17 +23,16 @@ pub(crate) enum SourceError {
     UnsupportedKind(PathBuf),
     #[error("scenario source is repeated: {0}")]
     Duplicate(PathBuf),
+    #[error("source changed while the proof identity was being recorded")]
+    Changed,
     #[error("could not inspect scenario source {path}: {source}")]
     Inspect {
         path: PathBuf,
         #[source]
         source: io::Error,
     },
-    #[error("git {operation} failed: {diagnostic}")]
-    Git {
-        operation: &'static str,
-        diagnostic: String,
-    },
+    #[error(transparent)]
+    Custody(#[from] personal_hopspot_builder::SourceCaptureError),
     #[error("could not serialize source identity: {0}")]
     Serialize(#[from] serde_json::Error),
     #[error(transparent)]
@@ -56,13 +51,6 @@ struct FileIdentity<'a> {
     fingerprint: &'a str,
 }
 
-#[derive(Serialize)]
-struct WorkingTreeDocument<'a> {
-    schema_version: u32,
-    diff_fingerprint: &'a str,
-    untracked: Vec<FileIdentity<'a>>,
-}
-
 pub(super) fn identify(
     repository_root: &Path,
     requested_sources: &[PathBuf],
@@ -72,23 +60,12 @@ pub(super) fn identify(
             path: repository_root.to_path_buf(),
             source,
         })?;
+    let custody = personal_hopspot_builder::capture_source_custody(&repository_root)?;
     let files = collect_sources(&repository_root, requested_sources)?;
     let scenario_fingerprint = fingerprint_files(&files)?;
-    let head = git(&repository_root, "resolve HEAD", &["rev-parse", "HEAD"])?;
-    let commit = SourceCommit::parse(String::from_utf8_lossy(&head.stdout).trim().to_string())?;
-    let status = git(
-        &repository_root,
-        "inspect worktree",
-        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
-    )?;
-    let custody = if status.stdout.is_empty() {
-        SourceCustody::CleanCommit { commit }
-    } else {
-        SourceCustody::WorkingTree {
-            head: commit,
-            diff_fingerprint: working_tree_fingerprint(&repository_root)?,
-        }
-    };
+    if personal_hopspot_builder::capture_source_custody(&repository_root)? != custody {
+        return Err(SourceError::Changed);
+    }
     Ok(SourceIdentity {
         custody,
         scenario_fingerprint,
@@ -185,67 +162,6 @@ fn fingerprint_files(files: &BTreeMap<String, String>) -> Result<EvidenceFingerp
     };
     let encoded = serde_json::to_vec(&document)?;
     EvidenceFingerprint::parse(prns_flash_manifest::sha256_hex(&encoded)).map_err(SourceError::from)
-}
-
-fn working_tree_fingerprint(repository_root: &Path) -> Result<EvidenceFingerprint, SourceError> {
-    let diff = git(
-        repository_root,
-        "read tracked changes",
-        &["diff", "--binary", "HEAD"],
-    )?;
-    let diff_fingerprint = prns_flash_manifest::sha256_hex(&diff.stdout);
-    let untracked = git(
-        repository_root,
-        "list untracked files",
-        &["ls-files", "--others", "--exclude-standard", "-z"],
-    )?;
-    let mut untracked_files = Vec::new();
-    for encoded in untracked.stdout.split(|byte| *byte == 0) {
-        if encoded.is_empty() {
-            continue;
-        }
-        let relative = String::from_utf8_lossy(encoded).into_owned();
-        let path = repository_root.join(&relative);
-        let bytes = fs::read(&path).map_err(|source| SourceError::Inspect {
-            path: path.clone(),
-            source,
-        })?;
-        untracked_files.push((relative, prns_flash_manifest::sha256_hex(&bytes)));
-    }
-    untracked_files.sort();
-    let document = WorkingTreeDocument {
-        schema_version: WORKING_TREE_FINGERPRINT_SCHEMA,
-        diff_fingerprint: &diff_fingerprint,
-        untracked: untracked_files
-            .iter()
-            .map(|(path, fingerprint)| FileIdentity { path, fingerprint })
-            .collect(),
-    };
-    let encoded = serde_json::to_vec(&document)?;
-    EvidenceFingerprint::parse(prns_flash_manifest::sha256_hex(&encoded)).map_err(SourceError::from)
-}
-
-fn git(
-    repository_root: &Path,
-    operation: &'static str,
-    arguments: &[&str],
-) -> Result<Output, SourceError> {
-    let output = Command::new("git")
-        .args(arguments)
-        .current_dir(repository_root)
-        .output()
-        .map_err(|error| SourceError::Git {
-            operation,
-            diagnostic: error.to_string(),
-        })?;
-    if output.status.success() {
-        Ok(output)
-    } else {
-        Err(SourceError::Git {
-            operation,
-            diagnostic: String::from_utf8_lossy(&output.stderr).trim().to_string(),
-        })
-    }
 }
 
 fn portable_path(path: &Path) -> String {

@@ -236,6 +236,16 @@ class EmbeddedIsaTests(unittest.TestCase):
             with self.assertRaises(InventoryError):
                 load_inventory(inventory)
 
+    def test_unknown_architecture_id_is_rejected(self) -> None:
+        contents = INVENTORY_PATH.read_text(encoding="utf-8")
+        malformed = contents.replace('id = "thumbv7em"', 'id = "unknown"', 1)
+        with tempfile.TemporaryDirectory() as directory:
+            inventory = Path(directory) / "embedded-isa.toml"
+            inventory.write_text(malformed, encoding="utf-8")
+
+            with self.assertRaises(InventoryError):
+                load_inventory(inventory)
+
 
 if __name__ == "__main__":
     unittest.main()

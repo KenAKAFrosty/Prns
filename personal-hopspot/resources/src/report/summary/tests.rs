@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 
-use personal_hopspot_builder::{BuildContext, BuildError, BuildIntent, BuildVersion, LtoMode};
+use personal_hopspot_builder::{
+    BuildContext, BuildError, BuildIntent, BuildVersion, LtoMode, RepositoryCommit, SourceCustody,
+};
 use serde_json::{json, Value};
 
 use super::model::{ByteDelta, MatrixSummary, ToolchainRelation};
@@ -45,7 +47,8 @@ fn summary_merges_catalog_order_and_reports_numeric_deltas(
     std::fs::write(&cargo_metadata, b"not a resource report")?;
 
     let output = temporary.path().join("summary");
-    let outcome = summarize(&matrix, &context, &reports, &baseline, &output)?;
+    let source = source_custody()?;
+    let outcome = summarize(&matrix, &context, &reports, &baseline, &output, &source)?;
     let summary: MatrixSummary = serde_json::from_slice(&std::fs::read(outcome.json())?)?;
     assert_eq!(outcome.targets(), 14);
     assert_eq!(summary.schema_version, model::SCHEMA_VERSION);
@@ -106,7 +109,7 @@ fn summary_rejects_duplicate_and_missing_fragment_targets_before_writing(
     std::fs::copy(&paths[0], &duplicate)?;
     let output = temporary.path().join("summary");
     assert!(matches!(
-        summarize(&matrix, &context, &reports, &baseline, &output),
+        summarize(&matrix, &context, &reports, &baseline, &output, &source_custody()?),
         Err(SummaryError::DuplicateTarget {
             set: EvidenceSet::Current,
             target,
@@ -125,7 +128,7 @@ fn summary_rejects_duplicate_and_missing_fragment_targets_before_writing(
         .join("linker.map");
     std::fs::remove_file(&linker_map)?;
     assert!(matches!(
-        summarize(&matrix, &context, &reports, &baseline, &output),
+        summarize(&matrix, &context, &reports, &baseline, &output, &source_custody()?),
         Err(SummaryError::LinkerMapMetadata { path, .. }) if path == linker_map
     ));
     assert!(!output.exists());
@@ -140,7 +143,7 @@ fn summary_rejects_duplicate_and_missing_fragment_targets_before_writing(
         .join("stack-evidence.json");
     std::fs::remove_file(&stack_evidence)?;
     assert!(matches!(
-        summarize(&matrix, &context, &reports, &baseline, &output),
+        summarize(&matrix, &context, &reports, &baseline, &output, &source_custody()?),
         Err(SummaryError::EvidenceArtifactMetadata { path, .. }) if path == stack_evidence
     ));
     assert!(!output.exists());
@@ -149,7 +152,7 @@ fn summary_rejects_duplicate_and_missing_fragment_targets_before_writing(
     let missing = paths.last().ok_or("matrix produced no reports")?;
     std::fs::remove_file(missing)?;
     assert!(matches!(
-        summarize(&matrix, &context, &reports, &baseline, &output),
+        summarize(&matrix, &context, &reports, &baseline, &output, &source_custody()?),
         Err(SummaryError::MissingTarget {
             set: EvidenceSet::Current,
             target,
@@ -175,7 +178,7 @@ fn summary_rejects_stale_build_identity_before_writing() -> Result<(), Box<dyn s
     })?;
     let output = temporary.path().join("summary");
     assert!(matches!(
-        summarize(&matrix, &context, &reports, &baseline, &output),
+        summarize(&matrix, &context, &reports, &baseline, &output, &source_custody()?),
         Err(SummaryError::CanonicalReport(CanonicalReportError::StaleTarget {
             target,
             dimension: "build recipe",
@@ -200,9 +203,15 @@ fn prepare_baseline(
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let reports = root.join("baseline-reports");
     let paths = write_reports(&reports, matrix, context, |_, _| {})?;
-    Ok(baseline::refresh_baseline(root, matrix, context, &paths)?
-        .path()
-        .to_path_buf())
+    Ok(
+        baseline::refresh_baseline(root, matrix, context, &paths, &source_custody()?)?
+            .path()
+            .to_path_buf(),
+    )
+}
+
+fn source_custody() -> Result<SourceCustody, personal_hopspot_builder::SourceCaptureError> {
+    RepositoryCommit::parse("c".repeat(40)).map(|commit| SourceCustody::CleanCommit { commit })
 }
 
 fn write_reports(

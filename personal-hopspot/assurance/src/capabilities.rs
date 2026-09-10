@@ -1,7 +1,19 @@
 use crate::contract::{
     ArchitectureId, Capability, CapabilityReason, ComponentId, IdentifierError, PlatformId,
-    ProofKind, ScenarioId, Subject, SupportLevel,
+    ProofFragment, ProofKind, RunnerId, ScenarioId, Subject, SupportLevel,
 };
+use personal_hopspot_memory::ProcessorArchitecture;
+use thiserror::Error;
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum RunnerContractError {
+    #[error("proof for {subject:?} uses runner {actual:?}, expected {expected:?}")]
+    Mismatch {
+        subject: Subject,
+        actual: RunnerId,
+        expected: String,
+    },
+}
 
 pub fn canonical() -> Result<Vec<Capability>, IdentifierError> {
     Ok(vec![
@@ -24,19 +36,25 @@ pub fn canonical() -> Result<Vec<Capability>, IdentifierError> {
             support: SupportLevel::Required,
         },
         Capability {
-            subject: Subject::Architecture(ArchitectureId::parse("thumbv7em")?),
+            subject: Subject::Architecture(ArchitectureId::parse(
+                ProcessorArchitecture::ThumbV7em.id(),
+            )?),
             scenario: ScenarioId::parse("shared-state-machines")?,
             proof: ProofKind::TargetIsa,
             support: SupportLevel::Required,
         },
         Capability {
-            subject: Subject::Architecture(ArchitectureId::parse("riscv32imac")?),
+            subject: Subject::Architecture(ArchitectureId::parse(
+                ProcessorArchitecture::RiscV32Imac.id(),
+            )?),
             scenario: ScenarioId::parse("shared-state-machines")?,
             proof: ProofKind::TargetIsa,
             support: SupportLevel::Required,
         },
         Capability {
-            subject: Subject::Architecture(ArchitectureId::parse("xtensa-esp32s3")?),
+            subject: Subject::Architecture(ArchitectureId::parse(
+                ProcessorArchitecture::XtensaEsp32S3.id(),
+            )?),
             scenario: ScenarioId::parse("shared-state-machines")?,
             proof: ProofKind::TargetIsa,
             support: SupportLevel::Required,
@@ -60,4 +78,40 @@ pub fn canonical() -> Result<Vec<Capability>, IdentifierError> {
             support: SupportLevel::Unsupported(CapabilityReason::EmulatorDoesNotModelPlatform),
         },
     ])
+}
+
+pub fn validate_runner(
+    capability: &Capability,
+    proof: &ProofFragment,
+) -> Result<(), RunnerContractError> {
+    if matches!(capability.proof, ProofKind::Miri) {
+        if matches!(proof.runner.as_str(), "miri-stacked" | "miri-stacked-tree") {
+            return Ok(());
+        }
+        return Err(RunnerContractError::Mismatch {
+            subject: capability.subject.clone(),
+            actual: proof.runner.clone(),
+            expected: "miri-stacked or miri-stacked-tree".to_string(),
+        });
+    }
+    let expected = match &capability.subject {
+        Subject::Architecture(architecture) => Some(format!("qemu-{architecture}")),
+        Subject::Platform(platform) if platform.as_str() == "nrf52840" => {
+            Some("renode-nrf52840".to_string())
+        }
+        Subject::Platform(platform) if platform.as_str() == "esp32s3" => {
+            Some("qemu-esp32s3-startup".to_string())
+        }
+        Subject::Component(_) | Subject::Platform(_) | Subject::Target(_) => None,
+    };
+    if let Some(expected) = expected {
+        if proof.runner.as_str() != expected {
+            return Err(RunnerContractError::Mismatch {
+                subject: capability.subject.clone(),
+                actual: proof.runner.clone(),
+                expected,
+            });
+        }
+    }
+    Ok(())
 }

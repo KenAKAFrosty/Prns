@@ -17,6 +17,7 @@ sources = [
     "prns-interfaces/impls/embassy/src/radios/lr1110",
     "prns-interfaces/impls/embassy/src/radios/radio.rs",
     "prns-interfaces/impls/embassy/src/radios/sx126x.rs",
+    "validation/hardening/embedded_architectures.py",
 ]
 
 [toolchain]
@@ -25,11 +26,9 @@ rust = "1.96.0"
 [[architecture]]
 id = "thumbv7em"
 suite = "embedded-isa-thumbv7em"
-rust_target = "thumbv7em-none-eabihf"
 compiler = "upstream"
 feature = "thumbv7em"
 binary = "assurance-thumbv7em"
-runner = "qemu-mps2-an386"
 emulator = "qemu-system-arm"
 emulator_version = "11.1.1"
 emulator_source_url = "https://download.qemu.org/qemu-11.1.1.tar.xz"
@@ -39,11 +38,9 @@ timeout_seconds = 30
 [[architecture]]
 id = "riscv32imac"
 suite = "embedded-isa-riscv32imac"
-rust_target = "riscv32imac-unknown-none-elf"
 compiler = "upstream"
 feature = "riscv32imac"
 binary = "assurance-riscv32imac"
-runner = "qemu-virt-rv32"
 emulator = "qemu-system-riscv32"
 emulator_version = "11.1.1"
 emulator_source_url = "https://download.qemu.org/qemu-11.1.1.tar.xz"

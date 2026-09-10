@@ -676,6 +676,10 @@ pub(super) fn report_value() -> Value {
     let toolchain_fingerprint = "6e58e90c146639570099ad73f47e6e4a617f4e082daf70fb83c6719d3bc18129";
     let mut value = json!({
         "schema_version": SCHEMA_VERSION,
+        "source": {
+            "kind": "clean-commit",
+            "commit": "cccccccccccccccccccccccccccccccccccccccc"
+        },
         "target": {
             "id": "t114",
             "display_name": "LILYGO T114",

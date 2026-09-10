@@ -49,6 +49,7 @@ class EmbeddedReadinessTests(unittest.TestCase):
         root = Path(self.temporary.name)
         libclang = root / "libclang"
         libclang.mkdir()
+        (libclang / "libclang.dylib").write_bytes(b"library")
         inventory = load_inventory()
         self.contract = ReadinessContract(
             isa_toolchain=inventory.rust_toolchain,
@@ -139,6 +140,9 @@ class EmbeddedReadinessTests(unittest.TestCase):
             ),
             (str(self.paths["xtensa-esp32s3-elf-gcc"]), "--version"): CommandOutput(
                 0, f"{identity.gcc_banner}\n", ""
+            ),
+            (str(self.paths["xtensa-esp32s3-elf-objdump"]), "--version"): CommandOutput(
+                0, f"{identity.objdump_banner}\n", ""
             ),
             (str(self.paths["qemu-system-arm"]), "--version"): CommandOutput(
                 0, "QEMU emulator version 11.1.1\n", ""
@@ -268,6 +272,45 @@ class EmbeddedReadinessTests(unittest.TestCase):
             if check.subject in {"target-ISA Rust", "resource Rust"}
         }
         self.assertTrue(all(check.passed() for check in upstream.values()))
+
+    def test_empty_libclang_directory_is_not_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            contract = replace(
+                self.contract,
+                esp_environment=replace(
+                    self.contract.esp_environment,
+                    libclang_path=Path(directory),
+                ),
+            )
+
+            checks = inspect(contract, FakeProbe(self.paths, self.outputs))
+            esp = next(
+                check for check in checks if check.subject == "ESP resource toolchain"
+            )
+
+            self.assertEqual(esp.state, CheckState.MISSING)
+            self.assertIn("LIBCLANG_PATH", esp.detail)
+
+    def test_objdump_identity_and_toolchain_directory_are_enforced(self) -> None:
+        paths = dict(self.paths)
+        paths["xtensa-esp32s3-elf-objdump"] = (
+            self.paths["xtensa-esp32s3-elf-objdump"].parent
+            / "different"
+            / "xtensa-esp32s3-elf-objdump"
+        )
+        outputs = dict(self.outputs)
+        outputs[(str(paths["xtensa-esp32s3-elf-objdump"]), "--version")] = (
+            CommandOutput(0, "GNU objdump (wrong) 2.45\n", "")
+        )
+
+        checks = inspect(self.contract, FakeProbe(paths, outputs))
+        esp = next(
+            check for check in checks if check.subject == "ESP resource toolchain"
+        )
+
+        self.assertEqual(esp.state, CheckState.MISMATCH)
+        self.assertIn("objdump=", esp.detail)
+        self.assertIn("different toolchain directories", esp.detail)
 
     def test_esp_identity_requires_every_canonical_field(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

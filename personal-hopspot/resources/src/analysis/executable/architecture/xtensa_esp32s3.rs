@@ -9,6 +9,7 @@ use super::{
 use crate::analysis::executable::{
     ExecutableError, ExecutableSection, StartupAnchor, StartupAnchorRole, StartupStructure,
 };
+use personal_hopspot_memory::ProcessorArchitecture;
 
 const ENTRY_SYMBOL: &str = "Reset";
 const VECTOR_SECTION: &str = ".vectors";
@@ -22,7 +23,7 @@ const WINDOWS: [AddressRange; 6] = [
 ];
 
 pub(super) static ADAPTER: AssuranceAdapter = AssuranceAdapter {
-    id: "xtensa-esp32s3",
+    id: ProcessorArchitecture::XtensaEsp32S3.id(),
     object_architecture: object::Architecture::Xtensa,
     normalize_code_address: normalize,
     validate_allocated_sections: validate,

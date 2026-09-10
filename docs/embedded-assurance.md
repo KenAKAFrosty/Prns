@@ -48,4 +48,4 @@ After resource and proof artifacts exist, combine them without rebuilding firmwa
 
 Resource reports and linker evidence live below `target/flash-artifacts/resources`. Miri and ISA proof fragments, transcripts, target ELFs, and emulator logs live below `validation-artifacts/results`. The combined JSON and Markdown matrix is written to the requested output directory.
 
-These checks establish memory contracts, executable structure, measured stack and future evidence, Rust memory-model behavior for exercised components, and matching component behavior as target instructions. They do not prove RF behavior, physical peripherals, timing, power, SoftDevice behavior, or whole-board operation.
+These checks establish memory contracts, executable structure, measured stack evidence, production task-pool allocation, Rust memory-model behavior for exercised components, and matching component behavior as target instructions. Named future sizes remain explicitly unavailable until the semantic harness produces them. The checks do not prove RF behavior, physical peripherals, timing, power, SoftDevice behavior, or whole-board operation.
