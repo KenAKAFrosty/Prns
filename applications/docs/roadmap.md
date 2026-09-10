@@ -62,10 +62,14 @@ observations remain tied to their recorded builds.
    refreshes #199 and the iOS descendants and verifies that the USB fixture fix
    removes the broader compilation blocker. Separate [CI corrections](../checkpoints/2026-09-09-ci-corrections.md)
    now fix the reproduced split-resource failure and generated-notice drift,
-   with passing local Linux and app-integration checks. Full remote CI and physical
-   write batching remain open; the Mac radio-only smoke does not qualify incoming
-   writes. Publish the independent fixes and replace shared heads only through
-   an approved exact-ref update plan.
+   with passing local Linux and app-integration checks. They are now published as
+   [#213](https://github.com/KenAKAFrosty/Prns/pull/213) and
+   [#214](https://github.com/KenAKAFrosty/Prns/pull/214), after the normal publishing
+   checks passed; see the [publication record](../checkpoints/2026-09-09-ci-publication.md).
+   Full remote CI and physical write batching remain open; the Mac radio-only
+   smoke does not qualify incoming writes. After the fixes land, refresh the
+   dependent candidates and their exact-ref update plan before replacing any
+   shared heads. The existing PR heads and app remote remain unchanged.
 
 Finish this bounded transition before expanding the product surface.
 

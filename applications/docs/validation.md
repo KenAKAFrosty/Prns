@@ -105,10 +105,21 @@ comparison pass. The radio smoke receives no writes. The subsequent
 split-resource failure and notices drift on separate branches. Linux validation
 passes 1,887 core tests, 25 integration tests and 50 repeated split responses;
 the integrated native and iOS checks pass with core pin `451e669da`. Physical
-batching and a full remote CI rerun remain open. No shared PR head, phone binary
-or board firmware changed.
+batching and a full remote CI result remain open. No existing shared PR head,
+phone binary or board firmware changed.
 
-The recorded repository continuation passed all 24 host workspaces and the
+The later [publication record](../checkpoints/2026-09-09-ci-publication.md)
+opens independent PRs #213 and #214 after the normal publishing hook passed.
+The isolated resource branch passed 22 host workspaces and all 41 selected
+parity gates, including all 14 configured firmware profiles, browser smoke,
+JVM compilation, Swift smoke and dependency/inventory checks. Its T-Echo S140 v7
+build retains 472 FLASH bytes; this does not replace the app or Nordic-candidate
+measurements above. The notices branch also passed its separate canonical check.
+GitHub checks started afterward; #213's macOS Bluetooth job failed on the existing
+USB fixture mismatch addressed by #199. Other remote results were still pending
+at that readback. Passing the local hook is not a full remote-matrix pass.
+
+The earlier app repository continuation passed all 24 host workspaces and the
 listed Clippy, allocation, dependency-policy and unsafe-inventory checks.
 Its browser package smoke built Rust but could not finish without the local
 `wasm-bindgen 0.2.126` executable. A separate casework smoke had matcher-contract

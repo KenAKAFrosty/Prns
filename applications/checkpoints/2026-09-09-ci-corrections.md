@@ -1,5 +1,9 @@
 # Separate CI corrections — September 9, 2026
 
+This records the pre-publication checkpoint. The later
+[publication record](2026-09-09-ci-publication.md) supersedes its unpublished
+status and adds the normal publishing-gate and firmware-matrix results.
+
 Continuation of [publication preparation](2026-09-09-publication-preparation.md).
 The Linux request failure and generated-notice drift now have separate local
 corrections. Neither belongs in the USB fixture or Bluetooth contributions.
