@@ -105,8 +105,8 @@ comparison pass. The radio smoke receives no writes. The subsequent
 split-resource failure and notices drift on separate branches. Linux validation
 passes 1,887 core tests, 25 integration tests and 50 repeated split responses;
 the integrated native and iOS checks pass with core pin `451e669da`. Physical
-batching and a full remote CI result remain open. No existing shared PR head,
-phone binary or board firmware changed.
+batching and a full remote CI result remain open. At that checkpoint, no existing
+shared PR head, phone binary or board firmware changed.
 
 The later [publication record](../checkpoints/2026-09-09-ci-publication.md)
 opens independent PRs #213 and #214 after the normal publishing hook passed.
@@ -118,6 +118,20 @@ measurements above. The notices branch also passed its separate canonical check.
 GitHub checks started afterward; #213's macOS Bluetooth job failed on the existing
 USB fixture mismatch addressed by #199. Other remote results were still pending
 at that readback. Passing the local hook is not a full remote-matrix pass.
+
+The subsequent [five-PR refresh](../checkpoints/2026-09-09-pr-refresh.md) publishes
+the prepared #199/#202/#207/#208/#209 heads, with backup refs and exact leases.
+Fresh, source-verified publishing hooks passed from #209 (41 selected gates)
+and #199 (14), each with 22 host workspaces and all 14 firmware profiles.
+T-Echo S140 v7 retained 472 and 480 FLASH bytes respectively. Fresh focused FFI
+and USB tests passed; the app remote and installed devices were unchanged.
+The new GitHub runs were still incomplete at the post-publication readback.
+
+Keep compiled Cargo targets separate for each worktree. A reused target accepted
+older source timestamps and ran another checkout's test binary; its firmware
+tool also retained that checkout's compile-time root. That attempt was stopped,
+discarded as evidence and rerun in unseeded targets. Verify source ownership,
+not just a successful exit code, before attaching results to a branch.
 
 The earlier app repository continuation passed all 24 host workspaces and the
 listed Clippy, allocation, dependency-policy and unsafe-inventory checks.

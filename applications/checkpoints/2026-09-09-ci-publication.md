@@ -1,5 +1,9 @@
 # Independent CI corrections published — September 9, 2026
 
+The later [five-PR refresh](2026-09-09-pr-refresh.md) records the separately
+approved USB/iOS head updates. The untouched-head statements below describe this
+earlier publication checkpoint.
+
 Continuation of the [correction and integration record](2026-09-09-ci-corrections.md).
 The two independent contributions are now published. Upstream trunk was checked
 again before opening them and remained at

@@ -53,23 +53,19 @@ observations remain tied to their recorded builds.
    window. The earlier trials remain separate. Natural suspension, quiet idle,
    Metro-off, force-quit and
    protected-data cases remain explicit qualification work. Preserve the firmware
-   size gate: the passing integrated T-Echo build still has just 616 bytes spare.
-4. Finish upstream publication preparation. New unpublished iOS/Nordic copies
-   are refreshed onto the checked trunk, with originals preserved. Propose Nordic
-   diagnostics and footprint together because the diagnostics-only parent does
-   not fit T-Echo. The separate [peripheral write-batch correction](../checkpoints/2026-09-09-corebluetooth-write-batches.md)
-   is now committed and integrated. The [publication continuation](../checkpoints/2026-09-09-publication-preparation.md)
-   refreshes #199 and the iOS descendants and verifies that the USB fixture fix
-   removes the broader compilation blocker. Separate [CI corrections](../checkpoints/2026-09-09-ci-corrections.md)
-   now fix the reproduced split-resource failure and generated-notice drift,
-   with passing local Linux and app-integration checks. They are now published as
+   size gate: the last measured integrated T-Echo build had just 616 bytes spare;
+   remeasure when rebuilding the app's updated core source.
+4. Finish upstream landing and remaining contributions. Independent CI fixes
    [#213](https://github.com/KenAKAFrosty/Prns/pull/213) and
-   [#214](https://github.com/KenAKAFrosty/Prns/pull/214), after the normal publishing
-   checks passed; see the [publication record](../checkpoints/2026-09-09-ci-publication.md).
-   Full remote CI and physical write batching remain open; the Mac radio-only
-   smoke does not qualify incoming writes. After the fixes land, refresh the
-   dependent candidates and their exact-ref update plan before replacing any
-   shared heads. The existing PR heads and app remote remain unchanged.
+   [#214](https://github.com/KenAKAFrosty/Prns/pull/214) are open. The five reviewed
+   USB/iOS PRs are now [refreshed and published](../checkpoints/2026-09-09-pr-refresh.md),
+   with verified backups, fresh passing local gates and revised descriptions.
+   Complete remote CI remains open; the separate fixes must land before treating
+   the whole stack as green. Recheck refs and prepare new protected updates as
+   upstream advances. Native recovery, the [peripheral write-batch correction](../checkpoints/2026-09-09-corebluetooth-write-batches.md)
+   and combined Nordic diagnostics/footprint remain unpublished. Keep the Nordic
+   changes together because diagnostics alone do not fit T-Echo. Physical write
+   batching is still unqualified, and the app remote remains unchanged.
 
 Finish this bounded transition before expanding the product surface.
 
