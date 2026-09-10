@@ -117,6 +117,10 @@ The repository has two deliberate control planes:
   proofs, interoperability checks, and release-readiness evidence. Use
   `--platform current` for portable plus current-host suites.
 
+Firmware resource, Miri, and target-ISA contributors should begin with
+`./tools/prns doctor embedded-assurance` and the
+[embedded assurance guide](docs/embedded-assurance.md).
+
 Implementation files below `tools/` are internal. CI and documentation invoke
 named `./tools/prns` tasks so paths can be reorganized without creating another
 public script surface. Enable the repository Git hook once per clone with

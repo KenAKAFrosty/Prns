@@ -44,6 +44,14 @@ platform_requires = { linux = ["cc"], macos = ["cc"], windows = ["cl"] }
 minimum_versions = { python = "3.11", rustc = "1.90" }
 setup = { cargo = "Install Rust through rustup: https://rustup.rs/", cc = "Install Xcode Command Line Tools on macOS or a C compiler through your Linux package manager.", cl = "Install the Visual Studio Build Tools C++ workload.", python = "Install Python 3.11 or newer with your operating system's package manager.", rustc = "Install or update Rust through rustup: https://rustup.rs/", uv = "Install uv using the instructions at https://docs.astral.sh/uv/getting-started/installation/." }
 
+[[doctor_profile]]
+id = "embedded-assurance"
+summary = "Check the exact toolchains, targets, emulators, and analysis tools used by hardware-less embedded assurance."
+requires = ["bash", "cargo", "git", "python", "rustc", "rustup"]
+minimum_versions = { python = "3.11", rustc = "1.90" }
+setup = { cargo = "Install Rust through rustup: https://rustup.rs/", git = "Install Git with your operating system's package manager.", python = "Install Python 3.11 or newer with your operating system's package manager.", rustc = "Install or update Rust through rustup: https://rustup.rs/", rustup = "Install Rust through rustup: https://rustup.rs/" }
+probe = ["python", "-m", "validation.hardening.embedded_readiness.run"]
+
 [[task]]
 id = "build.android"
 summary = "Cross-compile the Personal RNS core for Android device and emulator targets."

@@ -69,6 +69,12 @@ The doctor step is read-only. The final command flashes and opens a serial monit
 
 ## Verify embedded changes
 
+Run the [embedded assurance readiness check](embedded-assurance.md) before resource, Miri, or target-ISA work:
+
+```console
+./tools/prns doctor embedded-assurance
+```
+
 Use the cheapest relevant rung first:
 
 ```console

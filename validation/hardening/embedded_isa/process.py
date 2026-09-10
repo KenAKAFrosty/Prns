@@ -63,15 +63,23 @@ def require_success(observation: ProcessObservation, name: str) -> None:
         raise EmbeddedIsaError(f"{name} exited with status {observation.returncode}")
 
 
-def tool_version(command: tuple[str, ...], expected_prefix: str) -> str:
+def tool_version(
+    command: tuple[str, ...], expected_prefix: str, doctor: str | None = None
+) -> str:
     observation = execute(command, 30)
-    require_success(observation, command[0])
+    try:
+        require_success(observation, command[0])
+    except EmbeddedIsaError as error:
+        suffix = f"; run {doctor}" if doctor is not None else ""
+        raise EmbeddedIsaError(f"{error}{suffix}") from error
     output = observation.output().decode("utf-8", errors="replace").strip()
     if not output:
         raise EmbeddedIsaError(f"{command[0]} returned an empty identity")
     version = output.splitlines()[0]
     if not version.startswith(expected_prefix):
+        suffix = f"; run {doctor}" if doctor is not None else ""
         raise EmbeddedIsaError(
-            f"unexpected {command[0]} identity {version!r}; expected {expected_prefix!r}"
+            f"unexpected {command[0]} identity {version!r}; "
+            f"expected {expected_prefix!r}{suffix}"
         )
     return version

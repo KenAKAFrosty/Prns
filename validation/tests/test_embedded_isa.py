@@ -14,13 +14,17 @@ from validation.hardening.embedded_isa.architecture import (
 )
 from validation.hardening.embedded_isa.artifacts import clear, directory as artifact_directory
 from validation.hardening.embedded_isa.contract import (
+    Compiler,
     INVENTORY_PATH,
     ROOT,
     InventoryError,
     load_inventory,
 )
 from validation.hardening.embedded_isa.error import EmbeddedIsaError
-from validation.hardening.embedded_isa.run import require_emulator_identity
+from validation.hardening.embedded_isa.run import (
+    emulator_executable,
+    require_emulator_identity,
+)
 from validation.hardening.embedded_isa.transcript import concise, parse, require_match
 
 
@@ -37,10 +41,12 @@ class EmbeddedIsaTests(unittest.TestCase):
         )
         arm = inventory.architecture_for_suite("embedded-isa-thumbv7em")
         self.assertEqual(arm.rust_target, "thumbv7em-none-eabihf")
+        self.assertEqual(arm.compiler, Compiler.UPSTREAM)
         self.assertEqual(arm.emulator.version, "11.1.1")
         self.assertEqual(len(arm.emulator.source_sha256), 64)
         riscv = inventory.architecture_for_suite("embedded-isa-riscv32imac")
         self.assertEqual(riscv.rust_target, "riscv32imac-unknown-none-elf")
+        self.assertEqual(riscv.compiler, Compiler.UPSTREAM)
         self.assertEqual(riscv.emulator.version, "11.1.1")
         manifest = tomllib.loads(
             (ROOT / "validation" / "manifest.toml").read_text(encoding="utf-8")
@@ -161,6 +167,16 @@ class EmbeddedIsaTests(unittest.TestCase):
         with self.assertRaises(EmbeddedIsaError):
             require_emulator_identity(architecture, "QEMU emulator version 11.1.2")
 
+    def test_missing_emulator_points_to_the_readiness_doctor(self) -> None:
+        architecture = load_inventory().architectures[0]
+        with mock.patch(
+            "validation.hardening.embedded_isa.run.shutil.which", return_value=None
+        ):
+            with self.assertRaisesRegex(
+                EmbeddedIsaError, "doctor embedded-assurance"
+            ):
+                emulator_executable(architecture)
+
     def test_artifact_directory_is_validated_before_creation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             temporary = Path(directory)
@@ -200,6 +216,18 @@ class EmbeddedIsaTests(unittest.TestCase):
         malformed = contents.replace(
             "079ffbff8a7111bbc89022107cbabf3bbfd614d5fc9d7cc675991196aca12482",
             "not-a-checksum",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            inventory = Path(directory) / "embedded-isa.toml"
+            inventory.write_text(malformed, encoding="utf-8")
+
+            with self.assertRaises(InventoryError):
+                load_inventory(inventory)
+
+    def test_unknown_architecture_compiler_is_rejected(self) -> None:
+        contents = INVENTORY_PATH.read_text(encoding="utf-8")
+        malformed = contents.replace(
+            'compiler = "upstream"', 'compiler = "unknown"', 1
         )
         with tempfile.TemporaryDirectory() as directory:
             inventory = Path(directory) / "embedded-isa.toml"

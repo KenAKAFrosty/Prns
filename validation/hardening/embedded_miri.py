@@ -152,33 +152,51 @@ def nightly_toolchain() -> str:
 
 
 def prepare_miri(toolchain: str) -> None:
-    available = subprocess.run(
-        ("rustup", "run", toolchain, "rustc", "--version"),
-        cwd=ROOT,
-        capture_output=True,
-    )
-    if available.returncode != 0:
-        subprocess.run(
-            ("rustup", "toolchain", "install", toolchain, "--profile", "minimal"),
+    try:
+        available = subprocess.run(
+            ("rustup", "run", toolchain, "rustc", "--version"),
+            cwd=ROOT,
+            capture_output=True,
+        )
+        if available.returncode != 0:
+            subprocess.run(
+                ("rustup", "toolchain", "install", toolchain, "--profile", "minimal"),
+                cwd=ROOT,
+                check=True,
+            )
+        installed = subprocess.run(
+            ("rustup", "component", "list", "--toolchain", toolchain, "--installed"),
             cwd=ROOT,
             check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+        has_miri = any(line == "miri" or line.startswith("miri-") for line in installed)
+        has_rust_src = any(
+            line == "rust-src" or line.startswith("rust-src-") for line in installed
         )
-    installed = subprocess.run(
-        ("rustup", "component", "list", "--toolchain", toolchain, "--installed"),
-        cwd=ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.splitlines()
-    has_miri = any(line == "miri" or line.startswith("miri-") for line in installed)
-    has_rust_src = any(line == "rust-src" or line.startswith("rust-src-") for line in installed)
-    if not has_miri or not has_rust_src:
+        if not has_miri or not has_rust_src:
+            subprocess.run(
+                (
+                    "rustup",
+                    "component",
+                    "add",
+                    "--toolchain",
+                    toolchain,
+                    "miri",
+                    "rust-src",
+                ),
+                cwd=ROOT,
+                check=True,
+            )
         subprocess.run(
-            ("rustup", "component", "add", "--toolchain", toolchain, "miri", "rust-src"),
-            cwd=ROOT,
-            check=True,
+            ("cargo", f"+{toolchain}", "miri", "setup"), cwd=ROOT, check=True
         )
-    subprocess.run(("cargo", f"+{toolchain}", "miri", "setup"), cwd=ROOT, check=True)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise EmbeddedMiriError(
+            "could not prepare the pinned Miri toolchain; run "
+            "./tools/prns doctor embedded-assurance"
+        ) from error
 
 
 def command_for(

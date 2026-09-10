@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import tomllib
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 
 
@@ -16,6 +17,11 @@ SEMVER = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 
 class InventoryError(RuntimeError):
     pass
+
+
+class Compiler(Enum):
+    UPSTREAM = "upstream"
+    ESP = "esp"
 
 
 @dataclass(frozen=True)
@@ -42,6 +48,7 @@ class Architecture:
     identifier: str
     suite: str
     rust_target: str
+    compiler: Compiler
     feature: str
     binary: str
     runner: str
@@ -123,12 +130,20 @@ def parse_architecture(value: object) -> Architecture:
         identifier=identifier(entry.get("id"), "architecture"),
         suite=identifier(entry.get("suite"), "suite"),
         rust_target=rust_target,
+        compiler=compiler(entry.get("compiler")),
         feature=identifier(entry.get("feature"), "architecture feature"),
         binary=identifier(entry.get("binary"), "architecture binary"),
         runner=identifier(entry.get("runner"), "runner"),
         emulator=emulator,
         timeout_seconds=positive_integer(entry.get("timeout_seconds"), "timeout"),
     )
+
+
+def compiler(value: object) -> Compiler:
+    try:
+        return Compiler(value)
+    except (TypeError, ValueError) as error:
+        raise InventoryError(f"invalid embedded ISA compiler {value!r}") from error
 
 
 def table(value: object, name: str) -> dict:

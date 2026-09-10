@@ -113,6 +113,17 @@ sources = ["prns-interfaces/impls/embassy/src/radios/sx126x.rs"]
             with self.assertRaises(embedded_miri.EmbeddedMiriError):
                 embedded_miri.load_inventory(inventory)
 
+    def test_failed_miri_preparation_points_to_the_readiness_doctor(self) -> None:
+        with mock.patch.object(
+            embedded_miri.subprocess,
+            "run",
+            side_effect=OSError("rustup missing"),
+        ):
+            with self.assertRaisesRegex(
+                embedded_miri.EmbeddedMiriError, "doctor embedded-assurance"
+            ):
+                embedded_miri.prepare_miri("nightly-test")
+
 
 if __name__ == "__main__":
     unittest.main()

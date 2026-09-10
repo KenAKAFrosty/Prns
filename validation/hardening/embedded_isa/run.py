@@ -22,11 +22,14 @@ from validation.hardening.embedded_isa.error import EmbeddedIsaError
 from validation.hardening.embedded_isa.process import execute, require_success, tool_version
 
 
+DOCTOR = "./tools/prns doctor embedded-assurance"
+
+
 def require_emulator_identity(architecture: Architecture, actual: str) -> None:
     expected = f"QEMU emulator version {architecture.emulator.version}"
     if actual != expected:
         raise EmbeddedIsaError(
-            f"emulator identity is {actual!r}, expected {expected!r}"
+            f"emulator identity is {actual!r}, expected {expected!r}; run {DOCTOR}"
         )
 
 
@@ -34,7 +37,8 @@ def emulator_executable(architecture: Architecture) -> Path:
     discovered = shutil.which(architecture.emulator.executable)
     if discovered is None:
         raise EmbeddedIsaError(
-            f"required emulator {architecture.emulator.executable} is unavailable"
+            f"required emulator {architecture.emulator.executable} is unavailable; "
+            f"run {DOCTOR}"
         )
     executable = Path(discovered).resolve(strict=True)
     if not executable.is_file():
@@ -93,10 +97,14 @@ def run(suite: str) -> None:
     artifacts.clear(architecture, artifact_directory)
     emulator = emulator_executable(architecture)
     cargo_version = tool_version(
-        ("cargo", f"+{inventory.rust_toolchain}", "--version"), "cargo "
+        ("cargo", f"+{inventory.rust_toolchain}", "--version"),
+        "cargo ",
+        DOCTOR,
     )
     rustc_version = tool_version(
-        ("rustc", f"+{inventory.rust_toolchain}", "--version"), "rustc "
+        ("rustc", f"+{inventory.rust_toolchain}", "--version"),
+        "rustc ",
+        DOCTOR,
     )
     qemu_version = tool_version((str(emulator), "--version"), "QEMU emulator version ")
     require_emulator_identity(architecture, qemu_version)
