@@ -513,7 +513,7 @@ fn render_footer(
         if let Some(destination) = report.probe_responder.value() {
             let _ = writeln!(
                 output,
-                " Probe responder at <{}> active",
+                " Probe destination <{}> (rnstransport.probe)",
                 hex(destination.as_bytes())
             );
         }

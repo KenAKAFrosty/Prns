@@ -10,6 +10,7 @@ use crate::nnpages::NnPagesCatalog;
 pub struct TransportStatusIdentity {
     pub transport: IdentityHash,
     pub network: Option<IdentityHash>,
+    pub probe_responder: Option<personal_rns::wire::DestinationHash>,
 }
 
 #[derive(Clone)]
@@ -48,6 +49,7 @@ impl DaemonRequestState {
             transport_identity: identity.transport,
             network_identity: identity.network,
             uptime: self.started.elapsed(),
+            probe_responder: identity.probe_responder,
         })
     }
 }
