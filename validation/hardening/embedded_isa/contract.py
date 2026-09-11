@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TypeAlias
 
 from validation.hardening.embedded_architectures import ARCHITECTURES
+from validation.hardening.embedded_host import HostPlatform
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -27,14 +28,6 @@ class InventoryError(RuntimeError):
 class Compiler(Enum):
     UPSTREAM = "upstream"
     ESP = "esp"
-
-
-class HostPlatform(Enum):
-    LINUX_AMD64 = "linux-amd64"
-    LINUX_ARM64 = "linux-arm64"
-    MACOS_AMD64 = "macos-amd64"
-    MACOS_ARM64 = "macos-arm64"
-    WINDOWS_AMD64 = "windows-amd64"
 
 
 @dataclass(frozen=True)

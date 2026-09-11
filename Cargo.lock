@@ -2991,6 +2991,7 @@ dependencies = [
  "embedded-hal 1.0.0",
  "embedded-hal-async",
  "panic-halt",
+ "personal-hopspot-memory",
  "prns-core",
  "prns-interfaces-embassy",
  "riscv-rt",

@@ -63,6 +63,10 @@ PILOT_FILES = COMMON_FILES | frozenset(
         "tools/release/install-release-esp-toolchain.sh",
         "tools/release/release-esp-toolchain-identity.sh",
         "tools/release/verify-release-esp-toolchain.sh",
+        "validation/hardening/embedded-platform.toml",
+        "validation/hardening/embedded_architectures.py",
+        "validation/hardening/embedded_execution.py",
+        "validation/hardening/embedded_host.py",
     }
 )
 RESOURCE_TREES = (
@@ -106,6 +110,7 @@ ISA_TREES = (
 )
 PILOT_TREES = (
     "personal-hopspot/assurance/",
+    "personal-hopspot/assurance-kernel/",
     "personal-hopspot/builder/",
     "personal-hopspot/embedded/",
     "personal-hopspot/memory/",
@@ -114,6 +119,7 @@ PILOT_TREES = (
     "prns-interfaces/impls/embassy/",
     "prns-runtime/core/",
     "prns-runtime/impls/embassy/",
+    "validation/hardening/embedded_platform/",
 )
 
 

@@ -16,6 +16,10 @@ thumbv7em = [
     "dep:cortex-m-semihosting",
     "dep:panic-halt",
 ]
+platform-nrf52840 = [
+    "dep:cortex-m-rt",
+    "dep:panic-halt",
+]
 riscv32imac = [
     "dep:riscv-rt",
     "dep:semihosting",
@@ -33,6 +37,9 @@ cortex-m-semihosting = { version = "0.5", optional = true }
 panic-halt = { version = "1", optional = true }
 riscv-rt = { version = "0.16", features = ["memory", "single-hart"], optional = true }
 semihosting = { version = "0.1", features = ["panic-handler", "stdio"], optional = true }
+
+[build-dependencies]
+personal-hopspot-memory = { path = "../memory" }
 
 [[bin]]
 name = "assurance-host"
@@ -53,6 +60,11 @@ required-features = ["riscv32imac"]
 name = "assurance-xtensa-esp32s3"
 path = "src/bin/xtensa_esp32s3.rs"
 required-features = ["xtensa-esp32s3"]
+
+[[bin]]
+name = "assurance-platform-nrf52840"
+path = "src/bin/platform/nrf52840.rs"
+required-features = ["platform-nrf52840"]
 
 [lints]
 workspace = true

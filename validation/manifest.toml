@@ -704,6 +704,30 @@ inputs = [
 artifacts = "validation-artifacts/results/embedded-isa-xtensa-esp32s3"
 
 [[suite]]
+id = "embedded-platform-nrf52840"
+domain = "hardening"
+group = "embedded-platform"
+tiers = ["release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 1800
+command = ["__RUNNER_PYTHON__", "-m", "validation.hardening.embedded_platform.run"]
+inputs = [
+    ".cargo/config.toml",
+    "Cargo.lock",
+    "Cargo.toml",
+    "personal-hopspot/assurance",
+    "personal-hopspot/assurance-kernel",
+    "personal-hopspot/memory",
+    "validation/hardening/embedded-platform.toml",
+    "validation/hardening/embedded_architectures.py",
+    "validation/hardening/embedded_execution.py",
+    "validation/hardening/embedded_host.py",
+    "validation/hardening/embedded_platform",
+]
+artifacts = "validation-artifacts/results/embedded-platform-nrf52840"
+
+[[suite]]
 id = "embedded-miri-quick"
 domain = "hardening"
 group = "embedded-miri"

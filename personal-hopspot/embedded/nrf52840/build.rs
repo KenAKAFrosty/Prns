@@ -1,9 +1,9 @@
 use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use personal_hopspot_memory::{
-    MemoryProfile, NrfMemoryXLayout, MESH_POCKET_10000, MESH_POCKET_5000, MESH_TOWER_V2,
+    MemoryProfile, MESH_POCKET_10000, MESH_POCKET_5000, MESH_TOWER_V2,
     NRF52840_MEMORY_X_BINDING, T096, T1000_E, T114, T_ECHO_S140_V6, T_ECHO_S140_V7,
 };
 
@@ -70,7 +70,7 @@ fn main() {
     let memory = NRF52840_MEMORY_X_BINDING
         .resolve(profile)
         .unwrap_or_else(|error| panic!("{error}"));
-    write_nrf52840_memory(&out, memory);
+    fs::write(out.join("memory.x"), memory.to_string()).unwrap();
     println!("cargo:rustc-link-search={}", out.display());
     println!("cargo:rustc-link-arg=-Tlink.x");
     println!("cargo:rerun-if-changed=build.rs");
@@ -85,18 +85,6 @@ fn mesh_pocket_profile() -> &'static MemoryProfile {
         (false, true) => &MESH_POCKET_10000,
         _ => panic!("MeshPocket requires exactly one battery-capacity feature"),
     }
-}
-
-fn write_nrf52840_memory(out: &Path, layout: NrfMemoryXLayout) {
-    let application_flash_origin = layout.application_flash.start();
-    let application_flash_bytes = layout.application_flash.byte_len();
-    let application_ram_origin = layout.application_ram.start();
-    let application_ram_bytes = layout.application_ram.byte_len();
-    let minimum_runtime_stack_bytes = layout.minimum_runtime_stack_bytes;
-    let memory = format!(
-        "APPLICATION_FLASH_ORIGIN = {application_flash_origin:#010X};\nAPPLICATION_FLASH_BYTES = {application_flash_bytes:#X};\nAPPLICATION_RAM_ORIGIN = {application_ram_origin:#010X};\nAPPLICATION_RAM_BYTES = {application_ram_bytes:#X};\n\nMEMORY\n{{\n  FLASH : ORIGIN = APPLICATION_FLASH_ORIGIN, LENGTH = APPLICATION_FLASH_BYTES\n  RAM   : ORIGIN = APPLICATION_RAM_ORIGIN, LENGTH = APPLICATION_RAM_BYTES\n}}\n\nASSERT(\n  ORIGIN(RAM) + LENGTH(RAM) - _stack_end >= {minimum_runtime_stack_bytes},\n  \"nRF52840 static memory leaves too little runtime stack\"\n)\n"
-    );
-    fs::write(out.join("memory.x"), memory).unwrap();
 }
 
 fn selected_board() -> Board {

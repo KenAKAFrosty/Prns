@@ -6,9 +6,9 @@ Embedded assurance combines production firmware resource evidence with executabl
 ./tools/prns doctor embedded-assurance
 ```
 
-The doctor checks the current requirements from the assurance inventories: upstream and ESP Rust toolchains, compilation targets, LLVM tools, the pinned Miri nightly, QEMU runners, Xtensa compiler tools, and libclang. It installs nothing. When something is missing or has the wrong version, it prints the exact Rust and ESP setup commands or the pinned emulator source identity.
+The doctor checks the current requirements from the assurance inventories: upstream and ESP Rust toolchains, compilation targets, LLVM tools, the pinned Miri nightly, QEMU runners, Renode and its nRF52840 model, Xtensa compiler tools, and libclang. It installs nothing. When something is missing or has the wrong version, it prints the exact setup commands or the pinned emulator package, checksum, and source revision. `PRNS_RENODE` may point to a Renode executable outside `PATH`; set `PRNS_RENODE_ROOT` only when its bundled platform models are not discoverable beside that executable.
 
-The authoritative versions and targets remain in `validation/hardening/embedded-isa.toml`, `validation/manifest.toml`, and `tools/release/release-esp-toolchain-identity.sh`. The doctor consumes those files rather than maintaining another compatibility table.
+The authoritative versions and targets remain in `validation/hardening/embedded-isa.toml`, `validation/hardening/embedded-platform.toml`, `validation/manifest.toml`, and `tools/release/release-esp-toolchain-identity.sh`. The doctor consumes those files rather than maintaining another compatibility table.
 
 ## Run the quick evidence
 
@@ -20,9 +20,12 @@ python3 validation/run.py run --suite embedded-miri-quick
 python3 validation/run.py run --suite embedded-isa-thumbv7em
 python3 validation/run.py run --suite embedded-isa-riscv32imac
 python3 validation/run.py run --suite embedded-isa-xtensa-esp32s3
+python3 validation/run.py run --suite embedded-platform-nrf52840
 ```
 
 Use `python` instead of `python3` on Windows. The Miri runner can provision its pinned nightly and components on first use; the doctor tells you whether that download has already happened. ISA runners require the exact QEMU identity declared by their architecture adapter. The Xtensa lane also uses the pinned ESP Rust and crosstool-NG toolchains; its Espressif QEMU package is selected and checksum-pinned for the contributor's host platform.
+
+The nRF52840 pilot builds a small integration image with the production `t-echo-s140-v6` flash/RAM profile and startup conventions. Renode must load its pinned nRF52840 model, derive the vector table, initial stack pointer, and reset entry from that ELF, and reach the named application-entry milestone. This is an advisory platform-integration pilot. It does not load or prove the SoftDevice, board peripherals, radio, display, USB, Bluetooth, timing, power, or physical behavior.
 
 Run the full Miri borrow-model matrix before release-sensitive changes:
 
@@ -47,6 +50,6 @@ After resource and proof artifacts exist, combine them without rebuilding firmwa
   --output validation-artifacts/assurance
 ```
 
-Resource reports and linker evidence live below `target/flash-artifacts/resources`. Miri and ISA proof fragments, transcripts, target ELFs, and emulator logs live below `validation-artifacts/results`. The combined JSON and Markdown matrix is written to the requested output directory.
+Resource reports and linker evidence live below `target/flash-artifacts/resources`. Miri, ISA, and platform-pilot proof fragments, transcripts, target ELFs, and emulator logs live below `validation-artifacts/results`. The combined JSON and Markdown matrix is written to the requested output directory.
 
 These checks establish memory contracts, executable structure, measured stack evidence, production task-pool allocation, target-ABI sizes for named semantic-scenario futures, Rust memory-model behavior for exercised components, and matching component behavior as target instructions. The checks do not prove RF behavior, physical peripherals, timing, power, SoftDevice behavior, or whole-board operation.

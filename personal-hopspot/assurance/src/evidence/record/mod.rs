@@ -9,9 +9,9 @@ use thiserror::Error;
 use crate::capabilities;
 use crate::contract::{
     ArchitectureId, ComponentId, EvidenceArtifact, EvidenceFingerprint, EvidencePath,
-    IdentifierError, MiriCoverage, ProofArtifactKind, ProofContractError, ProofEvidence,
-    ProofFragment, ProofKind, RunnerId, ScenarioId, Subject, SupportLevel, ToolIdentity, ToolKind,
-    ValueError, Verdict, PROOF_FRAGMENT_SCHEMA_VERSION,
+    IdentifierError, MiriCoverage, PlatformId, PlatformMilestone, ProofArtifactKind,
+    ProofContractError, ProofEvidence, ProofFragment, ProofKind, RunnerId, ScenarioId, Subject,
+    SupportLevel, ToolIdentity, ToolKind, ValueError, Verdict, PROOF_FRAGMENT_SCHEMA_VERSION,
 };
 
 pub(crate) struct MiriRecordRequest {
@@ -36,6 +36,24 @@ pub(crate) struct TargetIsaRecordRequest {
     pub rustc_version: String,
     pub qemu_version: String,
     pub qemu_executable: PathBuf,
+    pub sources: Vec<PathBuf>,
+    pub transcript: PathBuf,
+    pub executable: PathBuf,
+    pub logs: Vec<PathBuf>,
+    pub output: PathBuf,
+}
+
+pub(crate) struct PlatformRecordRequest {
+    pub platform: PlatformId,
+    pub scenario: ScenarioId,
+    pub runner: RunnerId,
+    pub milestone: PlatformMilestone,
+    pub cargo_version: String,
+    pub rustc_version: String,
+    pub linker_version: String,
+    pub emulator: ToolKind,
+    pub emulator_version: String,
+    pub emulator_executable: PathBuf,
     pub sources: Vec<PathBuf>,
     pub transcript: PathBuf,
     pub executable: PathBuf,
@@ -75,6 +93,10 @@ pub(crate) enum RecordError {
     ExecutableFile(PathBuf),
     #[error("QEMU executable is not a regular file: {0}")]
     QemuExecutable(PathBuf),
+    #[error("platform emulator must be QEMU or Renode, found {0:?}")]
+    PlatformEmulator(ToolKind),
+    #[error("platform emulator executable is not a regular file: {0}")]
+    PlatformEmulatorExecutable(PathBuf),
     #[error("evidence artifact {artifact} is outside artifact root {root}")]
     ArtifactOutsideRoot { artifact: PathBuf, root: PathBuf },
     #[error("could not inspect {path}: {source}")]
@@ -174,7 +196,8 @@ pub(crate) fn record_target_isa(
     )?;
     let mut evidence_artifacts = vec![transcript, executable];
     evidence_artifacts.extend(artifacts(&output_parent, &request.logs)?);
-    let qemu_fingerprint = executable_fingerprint(&request.qemu_executable)?;
+    let qemu_fingerprint =
+        executable_fingerprint(&request.qemu_executable, RecordError::QemuExecutable)?;
     let fragment = ProofFragment {
         schema_version: PROOF_FRAGMENT_SCHEMA_VERSION,
         subject,
@@ -204,6 +227,80 @@ pub(crate) fn record_target_isa(
             evidence: ProofEvidence::TargetIsa {
                 architecture: request.architecture,
                 completed_scenarios: request.completed_scenarios,
+                transcript_fingerprint,
+            },
+        },
+        artifacts: evidence_artifacts,
+    };
+    capabilities::validate_runner(&capability, &fragment)?;
+    write_fragment(fragment, request.output)
+}
+
+pub(crate) fn record_platform_emulation(
+    repository_root: &Path,
+    request: PlatformRecordRequest,
+) -> Result<(), RecordError> {
+    validate_platform_request(&request)?;
+    let subject = Subject::Platform(request.platform.clone());
+    let capability =
+        validate_capability(&subject, &request.scenario, ProofKind::PlatformEmulation)?;
+    let source = source::identify(repository_root, &request.sources)?;
+    let output_parent = request.output.parent().unwrap_or(Path::new("."));
+    fs::create_dir_all(output_parent).map_err(|source| RecordError::Write {
+        path: output_parent.to_path_buf(),
+        source,
+    })?;
+    let output_parent = artifact_root(output_parent)?;
+    let transcript = artifact(
+        &output_parent,
+        &request.transcript,
+        ProofArtifactKind::Transcript,
+    )?;
+    let transcript_fingerprint = transcript.fingerprint.clone();
+    let executable = artifact(
+        &output_parent,
+        &request.executable,
+        ProofArtifactKind::Executable,
+    )?;
+    let mut evidence_artifacts = vec![transcript, executable];
+    evidence_artifacts.extend(artifacts(&output_parent, &request.logs)?);
+    let emulator_fingerprint = executable_fingerprint(
+        &request.emulator_executable,
+        RecordError::PlatformEmulatorExecutable,
+    )?;
+    let fragment = ProofFragment {
+        schema_version: PROOF_FRAGMENT_SCHEMA_VERSION,
+        subject,
+        scenario: request.scenario,
+        proof: ProofKind::PlatformEmulation,
+        runner: request.runner,
+        source,
+        tools: vec![
+            ToolIdentity {
+                kind: ToolKind::Cargo,
+                version: request.cargo_version,
+            },
+            ToolIdentity {
+                kind: ToolKind::Rustc,
+                version: request.rustc_version,
+            },
+            ToolIdentity {
+                kind: ToolKind::Linker,
+                version: request.linker_version,
+            },
+            ToolIdentity {
+                kind: request.emulator,
+                version: format!(
+                    "{}; executable-sha256={}",
+                    request.emulator_version,
+                    emulator_fingerprint.as_str()
+                ),
+            },
+        ],
+        verdict: Verdict::Passed {
+            evidence: ProofEvidence::PlatformEmulation {
+                platform: request.platform,
+                milestone: request.milestone,
                 transcript_fingerprint,
             },
         },
@@ -248,6 +345,29 @@ fn validate_target_isa_request(request: &TargetIsaRecordRequest) -> Result<(), R
         (ToolKind::Cargo, request.cargo_version.as_str()),
         (ToolKind::Rustc, request.rustc_version.as_str()),
         (ToolKind::Qemu, request.qemu_version.as_str()),
+    ] {
+        if version.trim().is_empty() {
+            return Err(RecordError::EmptyToolIdentity(kind));
+        }
+    }
+    validate_output(&request.output)
+}
+
+fn validate_platform_request(request: &PlatformRecordRequest) -> Result<(), RecordError> {
+    if request.sources.is_empty() {
+        return Err(RecordError::MissingSources);
+    }
+    if request.logs.is_empty() {
+        return Err(RecordError::MissingLogs);
+    }
+    if !matches!(request.emulator, ToolKind::Qemu | ToolKind::Renode) {
+        return Err(RecordError::PlatformEmulator(request.emulator));
+    }
+    for (kind, version) in [
+        (ToolKind::Cargo, request.cargo_version.as_str()),
+        (ToolKind::Rustc, request.rustc_version.as_str()),
+        (ToolKind::Linker, request.linker_version.as_str()),
+        (request.emulator, request.emulator_version.as_str()),
     ] {
         if version.trim().is_empty() {
             return Err(RecordError::EmptyToolIdentity(kind));
@@ -336,13 +456,16 @@ fn artifact(
     })
 }
 
-fn executable_fingerprint(path: &Path) -> Result<EvidenceFingerprint, RecordError> {
+fn executable_fingerprint(
+    path: &Path,
+    invalid: impl FnOnce(PathBuf) -> RecordError,
+) -> Result<EvidenceFingerprint, RecordError> {
     let path = fs::canonicalize(path).map_err(|source| RecordError::Inspect {
         path: path.to_path_buf(),
         source,
     })?;
     if !path.is_file() {
-        return Err(RecordError::QemuExecutable(path));
+        return Err(invalid(path));
     }
     let bytes = fs::read(&path).map_err(|source| RecordError::Inspect {
         path: path.clone(),

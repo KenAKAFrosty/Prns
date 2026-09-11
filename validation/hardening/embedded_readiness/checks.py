@@ -5,9 +5,15 @@ from pathlib import Path
 from validation.hardening.embedded_isa.contract import (
     Architecture,
     Compiler,
-    HostPlatform,
     HostedPackages,
     SourceArchive,
+)
+from validation.hardening.embedded_host import HostPlatform
+from validation.hardening.embedded_platform.contract import Platform
+from validation.hardening.embedded_platform.discovery import (
+    RENODE_EXECUTABLE_ENV,
+    RENODE_ROOT_ENV,
+    description_candidates,
 )
 from validation.hardening.embedded_readiness.model import (
     CheckState,
@@ -56,6 +62,9 @@ def inspect(contract: ReadinessContract, probe: SystemProbe) -> tuple[ReadinessC
             else (),
         )
         for architecture in contract.architectures
+    )
+    checks.extend(
+        inspect_platform_emulator(probe, platform) for platform in contract.platforms
     )
     return tuple(checks)
 
@@ -329,6 +338,82 @@ def emulator_prerequisites(host: HostPlatform) -> tuple[str, ...]:
             )
         case HostPlatform.WINDOWS_AMD64:
             return ()
+
+
+def inspect_platform_emulator(
+    probe: SystemProbe, platform: Platform
+) -> ReadinessCheck:
+    setup = platform_emulator_setup(probe, platform)
+    override = probe.environment(RENODE_EXECUTABLE_ENV)
+    executable = probe.find(override or platform.emulator.executable)
+    subject = f"{platform.identifier} platform emulator"
+    if executable is None:
+        return ReadinessCheck(
+            ReadinessLane.PILOT,
+            subject,
+            CheckState.MISSING,
+            f"{platform.emulator.executable} was not found",
+            setup,
+        )
+    output = probe.run((str(executable), "--version"))
+    found = output.lines()
+    if output.returncode != 0 or found != platform.emulator.identity:
+        return ReadinessCheck(
+            ReadinessLane.PILOT,
+            subject,
+            CheckState.MISMATCH,
+            f"found {found!r}; expected {platform.emulator.identity!r}",
+            setup,
+        )
+    configured_root = probe.environment(RENODE_ROOT_ENV)
+    inspected = []
+    for root in description_candidates(executable, configured_root):
+        candidate = root / platform.platform_description
+        fingerprint = probe.fingerprint(candidate)
+        if fingerprint is None:
+            continue
+        if fingerprint == platform.platform_description_sha256:
+            return ReadinessCheck(
+                ReadinessLane.PILOT,
+                subject,
+                CheckState.READY,
+                f"{executable}; {'; '.join(found)}; model={candidate}",
+            )
+        inspected.append(f"{candidate}={fingerprint}")
+    detail = (
+        "platform model checksum mismatch: " + ", ".join(inspected)
+        if inspected
+        else f"cannot locate {platform.platform_description}"
+    )
+    return ReadinessCheck(
+        ReadinessLane.PILOT,
+        subject,
+        CheckState.MISMATCH if inspected else CheckState.MISSING,
+        detail,
+        setup,
+    )
+
+
+def platform_emulator_setup(
+    probe: SystemProbe, platform: Platform
+) -> tuple[str, ...]:
+    host = probe.host_platform()
+    package = platform.emulator.package_for_host(host) if host is not None else None
+    if package is None:
+        acquisition = (
+            f"clone {platform.emulator.source_repository}",
+            f"check out revision {platform.emulator.source_revision}",
+            f"build the exact {platform.emulator.executable} identity",
+        )
+    else:
+        acquisition = (
+            f"install {'; '.join(platform.emulator.identity)} from {package.source_url}",
+            f"verify package SHA-256 {package.source_sha256}",
+        )
+    return acquisition + (
+        f"expose {platform.emulator.executable} on PATH or set {RENODE_EXECUTABLE_ENV}",
+        f"set {RENODE_ROOT_ENV} if the bundled platform model is not beside the executable",
+    )
 
 
 def first_line(output: CommandOutput) -> str:

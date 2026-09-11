@@ -20,6 +20,32 @@ pub struct NrfMemoryXLayout {
     pub minimum_runtime_stack_bytes: u64,
 }
 
+impl fmt::Display for NrfMemoryXLayout {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let application_flash_origin = self.application_flash.start();
+        let application_flash_bytes = self.application_flash.byte_len();
+        let application_ram_origin = self.application_ram.start();
+        let application_ram_bytes = self.application_ram.byte_len();
+        let minimum_runtime_stack_bytes = self.minimum_runtime_stack_bytes;
+        write!(
+            formatter,
+            "APPLICATION_FLASH_ORIGIN = {application_flash_origin:#010X};\n\
+APPLICATION_FLASH_BYTES = {application_flash_bytes:#X};\n\
+APPLICATION_RAM_ORIGIN = {application_ram_origin:#010X};\n\
+APPLICATION_RAM_BYTES = {application_ram_bytes:#X};\n\n\
+MEMORY\n\
+{{\n\
+  FLASH : ORIGIN = APPLICATION_FLASH_ORIGIN, LENGTH = APPLICATION_FLASH_BYTES\n\
+  RAM   : ORIGIN = APPLICATION_RAM_ORIGIN, LENGTH = APPLICATION_RAM_BYTES\n\
+}}\n\n\
+ASSERT(\n\
+  ORIGIN(RAM) + LENGTH(RAM) - _stack_end >= {minimum_runtime_stack_bytes},\n\
+  \"nRF52840 static memory leaves too little runtime stack\"\n\
+)\n"
+        )
+    }
+}
+
 impl NrfMemoryXBinding {
     #[must_use]
     pub fn supports(&self, profile: MemoryProfileId) -> bool {

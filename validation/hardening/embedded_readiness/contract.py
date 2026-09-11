@@ -7,6 +7,9 @@ from pathlib import Path
 
 from validation.hardening import embedded_miri
 from validation.hardening.embedded_isa.contract import load_inventory as load_isa_inventory
+from validation.hardening.embedded_platform.contract import (
+    load_inventory as load_platform_inventory,
+)
 from validation.hardening.embedded_readiness.error import ReadinessError
 from validation.hardening.embedded_readiness.model import (
     EspEnvironment,
@@ -22,11 +25,17 @@ ASSIGNMENT = re.compile(r"[A-Z][A-Z0-9_]*")
 
 def load_contract(home: Path | None = None) -> ReadinessContract:
     isa = load_isa_inventory()
+    platform = load_platform_inventory()
+    if platform.rust_toolchain != isa.rust_toolchain:
+        raise ReadinessError(
+            "embedded ISA and platform inventories require different Rust toolchains"
+        )
     scenarios = embedded_miri.load_inventory()
     resolved_home = home if home is not None else home_directory()
     return ReadinessContract(
         isa_toolchain=isa.rust_toolchain,
         architectures=isa.architectures,
+        platforms=platform.platforms,
         miri_toolchain=embedded_miri.nightly_toolchain(),
         miri_scenarios=len(scenarios),
         esp_identity=load_esp_identity(),

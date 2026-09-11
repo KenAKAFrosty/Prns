@@ -8,10 +8,12 @@ use thiserror::Error;
 
 use crate::baseline::{self, BaselineError};
 use crate::contract::{
-    ArchitectureId, ComponentId, IdentifierError, MatrixStatus, MiriCoverage, RunnerId, ScenarioId,
+    ArchitectureId, ComponentId, IdentifierError, MatrixStatus, MiriCoverage, PlatformId,
+    PlatformMilestone, RunnerId, ScenarioId, ToolKind,
 };
 use crate::evidence::{
-    record_miri, record_target_isa, MiriRecordRequest, RecordError, TargetIsaRecordRequest,
+    record_miri, record_platform_emulation, record_target_isa, MiriRecordRequest,
+    PlatformRecordRequest, RecordError, TargetIsaRecordRequest,
 };
 use crate::report::{self, ComparisonError, SummaryError};
 
@@ -40,6 +42,7 @@ struct RecordArguments {
 enum RecordCommand {
     Isa(TargetIsaRecordArguments),
     Miri(MiriRecordArguments),
+    Platform(PlatformRecordArguments),
 }
 
 #[derive(Args)]
@@ -96,6 +99,40 @@ struct MiriRecordArguments {
     output: PathBuf,
 }
 
+#[derive(Args)]
+struct PlatformRecordArguments {
+    #[arg(long)]
+    platform: String,
+    #[arg(long)]
+    scenario: String,
+    #[arg(long)]
+    runner: String,
+    #[arg(long)]
+    milestone: PlatformMilestoneArgument,
+    #[arg(long)]
+    cargo_version: String,
+    #[arg(long)]
+    rustc_version: String,
+    #[arg(long)]
+    linker_version: String,
+    #[arg(long)]
+    emulator: PlatformEmulatorArgument,
+    #[arg(long)]
+    emulator_version: String,
+    #[arg(long)]
+    emulator_executable: PathBuf,
+    #[arg(long)]
+    source: Vec<PathBuf>,
+    #[arg(long)]
+    transcript: PathBuf,
+    #[arg(long)]
+    executable: PathBuf,
+    #[arg(long)]
+    log: Vec<PathBuf>,
+    #[arg(long)]
+    output: PathBuf,
+}
+
 #[derive(Clone, Copy, ValueEnum)]
 enum MiriCoverageArgument {
     Stacked,
@@ -107,6 +144,36 @@ impl From<MiriCoverageArgument> for MiriCoverage {
         match value {
             MiriCoverageArgument::Stacked => Self::Stacked,
             MiriCoverageArgument::StackedAndTree => Self::StackedAndTree,
+        }
+    }
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum PlatformMilestoneArgument {
+    ApplicationEntry,
+    RuntimeInitialized,
+}
+
+impl From<PlatformMilestoneArgument> for PlatformMilestone {
+    fn from(value: PlatformMilestoneArgument) -> Self {
+        match value {
+            PlatformMilestoneArgument::ApplicationEntry => Self::ApplicationEntry,
+            PlatformMilestoneArgument::RuntimeInitialized => Self::RuntimeInitialized,
+        }
+    }
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum PlatformEmulatorArgument {
+    Qemu,
+    Renode,
+}
+
+impl From<PlatformEmulatorArgument> for ToolKind {
+    fn from(value: PlatformEmulatorArgument) -> Self {
+        match value {
+            PlatformEmulatorArgument::Qemu => Self::Qemu,
+            PlatformEmulatorArgument::Renode => Self::Renode,
         }
     }
 }
@@ -222,6 +289,30 @@ fn run(cli: Cli) -> Result<(), AssuranceError> {
                     },
                 )?;
                 println!("EMBEDDED_MIRI_PROOF: {}", output.display());
+            }
+            RecordCommand::Platform(arguments) => {
+                let output = arguments.output.clone();
+                record_platform_emulation(
+                    &root,
+                    PlatformRecordRequest {
+                        platform: PlatformId::parse(arguments.platform)?,
+                        scenario: ScenarioId::parse(arguments.scenario)?,
+                        runner: RunnerId::parse(arguments.runner)?,
+                        milestone: arguments.milestone.into(),
+                        cargo_version: arguments.cargo_version,
+                        rustc_version: arguments.rustc_version,
+                        linker_version: arguments.linker_version,
+                        emulator: arguments.emulator.into(),
+                        emulator_version: arguments.emulator_version,
+                        emulator_executable: arguments.emulator_executable,
+                        sources: arguments.source,
+                        transcript: arguments.transcript,
+                        executable: arguments.executable,
+                        logs: arguments.log,
+                        output: arguments.output,
+                    },
+                )?;
+                println!("EMBEDDED_PLATFORM_PROOF: {}", output.display());
             }
         },
         AssuranceCommand::RefreshBaseline(arguments) => {

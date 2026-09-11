@@ -4,6 +4,9 @@ import sys
 
 from validation.hardening import embedded_miri
 from validation.hardening.embedded_isa.contract import InventoryError
+from validation.hardening.embedded_platform.contract import (
+    InventoryError as PlatformInventoryError,
+)
 from validation.hardening.embedded_readiness.checks import inspect
 from validation.hardening.embedded_readiness.contract import load_contract
 from validation.hardening.embedded_readiness.error import ReadinessError
@@ -33,7 +36,13 @@ def render(checks: tuple[ReadinessCheck, ...]) -> ReadinessStatus:
 def main() -> int:
     try:
         status = render(inspect(load_contract(), SystemProbe()))
-    except (OSError, InventoryError, ReadinessError, embedded_miri.EmbeddedMiriError) as error:
+    except (
+        OSError,
+        InventoryError,
+        PlatformInventoryError,
+        ReadinessError,
+        embedded_miri.EmbeddedMiriError,
+    ) as error:
         print(f"EMBEDDED_ASSURANCE_READINESS_ERROR: {error}", file=sys.stderr)
         return 1
     if status is ReadinessStatus.READY:

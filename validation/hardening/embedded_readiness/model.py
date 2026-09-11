@@ -5,6 +5,7 @@ from enum import Enum
 from pathlib import Path
 
 from validation.hardening.embedded_isa.contract import Architecture
+from validation.hardening.embedded_platform.contract import Platform
 
 
 class CheckState(Enum):
@@ -17,6 +18,7 @@ class ReadinessLane(Enum):
     RESOURCES = "resources"
     MIRI = "miri"
     ISA = "isa"
+    PILOT = "pilot"
 
 
 class ReadinessStatus(Enum):
@@ -70,6 +72,7 @@ class EspEnvironment:
 class ReadinessContract:
     isa_toolchain: str
     architectures: tuple[Architecture, ...]
+    platforms: tuple[Platform, ...]
     miri_toolchain: str
     miri_scenarios: int
     esp_identity: EspIdentity

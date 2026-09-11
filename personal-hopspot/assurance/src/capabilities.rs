@@ -1,6 +1,6 @@
 use crate::contract::{
     ArchitectureId, Capability, CapabilityReason, ComponentId, IdentifierError, PlatformId,
-    ProofFragment, ProofKind, RunnerId, ScenarioId, Subject, SupportLevel,
+    ProofFragment, ProofKind, RunnerId, ScenarioId, Subject, SupportLevel, ToolKind,
 };
 use personal_hopspot_memory::ProcessorArchitecture;
 use thiserror::Error;
@@ -12,6 +12,12 @@ pub enum RunnerContractError {
         subject: Subject,
         actual: RunnerId,
         expected: String,
+    },
+    #[error("proof for {subject:?} uses emulator {actual:?}, expected {expected:?}")]
+    EmulatorMismatch {
+        subject: Subject,
+        actual: ToolKind,
+        expected: ToolKind,
     },
 }
 
@@ -111,6 +117,30 @@ pub fn validate_runner(
                 actual: proof.runner.clone(),
                 expected,
             });
+        }
+    }
+    let expected_emulator = match &capability.subject {
+        Subject::Platform(platform) if platform.as_str() == "nrf52840" => Some(ToolKind::Renode),
+        Subject::Platform(platform) if platform.as_str() == "esp32s3" => Some(ToolKind::Qemu),
+        Subject::Architecture(_)
+        | Subject::Component(_)
+        | Subject::Platform(_)
+        | Subject::Target(_) => None,
+    };
+    if let Some(expected) = expected_emulator {
+        if let Some(actual) = proof
+            .tools
+            .iter()
+            .map(|tool| tool.kind)
+            .find(|kind| matches!(kind, ToolKind::Qemu | ToolKind::Renode))
+        {
+            if actual != expected {
+                return Err(RunnerContractError::EmulatorMismatch {
+                    subject: capability.subject.clone(),
+                    actual,
+                    expected,
+                });
+            }
         }
     }
     Ok(())

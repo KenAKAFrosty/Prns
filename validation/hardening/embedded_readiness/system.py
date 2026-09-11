@@ -7,12 +7,16 @@ import subprocess
 import sys
 from pathlib import Path
 
-from validation.hardening.embedded_isa.contract import HostPlatform
+from validation.hardening.embedded_host import HostPlatform
+from validation.hardening.embedded_platform.discovery import file_sha256
 from validation.hardening.embedded_readiness.contract import ROOT
 from validation.hardening.embedded_readiness.model import CommandOutput
 
 
 class SystemProbe:
+    def environment(self, name: str) -> str | None:
+        return os.environ.get(name)
+
     def host_platform(self) -> HostPlatform | None:
         machine = platform.machine().lower()
         if sys.platform == "darwin":
@@ -52,3 +56,9 @@ class SystemProbe:
         except OSError as error:
             return CommandOutput(127, "", str(error))
         return CommandOutput(result.returncode, result.stdout, result.stderr)
+
+    def fingerprint(self, path: Path) -> str | None:
+        try:
+            return file_sha256(path.resolve(strict=True))
+        except OSError:
+            return None

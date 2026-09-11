@@ -1,56 +1,20 @@
 from __future__ import annotations
 
-import subprocess
 import sys
-from dataclasses import dataclass
-from enum import Enum
 
+from validation.hardening.embedded_execution import (
+    ExitReason,
+    ProcessObservation,
+    execute as execute_process,
+)
 from validation.hardening.embedded_isa.contract import ROOT
 from validation.hardening.embedded_isa.error import EmbeddedIsaError
 from validation.hardening.embedded_isa.transcript import concise
 
 
-class ExitReason(Enum):
-    EXITED = "exited"
-    TIMED_OUT = "timed-out"
-
-
-@dataclass(frozen=True)
-class ProcessObservation:
-    command: tuple[str, ...]
-    reason: ExitReason
-    returncode: int | None
-    stdout: bytes
-    stderr: bytes
-
-    def output(self) -> bytes:
-        return self.stdout + self.stderr
-
-
 def execute(command: tuple[str, ...], timeout_seconds: int) -> ProcessObservation:
     print(f"[embedded-isa] {' '.join(command)}", flush=True)
-    try:
-        result = subprocess.run(
-            command,
-            cwd=ROOT,
-            capture_output=True,
-            timeout=timeout_seconds,
-        )
-        observation = ProcessObservation(
-            command=command,
-            reason=ExitReason.EXITED,
-            returncode=result.returncode,
-            stdout=result.stdout,
-            stderr=result.stderr,
-        )
-    except subprocess.TimeoutExpired as error:
-        observation = ProcessObservation(
-            command=command,
-            reason=ExitReason.TIMED_OUT,
-            returncode=None,
-            stdout=error.stdout or b"",
-            stderr=error.stderr or b"",
-        )
+    observation = execute_process(command, ROOT, timeout_seconds)
     sys.stdout.buffer.write(concise(observation.output()))
     sys.stdout.flush()
     return observation

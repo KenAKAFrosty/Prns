@@ -17,13 +17,13 @@ from validation.hardening.embedded_isa.architecture import (
 from validation.hardening.embedded_isa.artifacts import clear, directory as artifact_directory
 from validation.hardening.embedded_isa.contract import (
     Compiler,
-    HostPlatform,
     HostedPackages,
     INVENTORY_PATH,
     ROOT,
     InventoryError,
     load_inventory,
 )
+from validation.hardening.embedded_host import HostPlatform
 from validation.hardening.embedded_isa.error import EmbeddedIsaError
 from validation.hardening.embedded_isa.run import (
     emulator_executable,

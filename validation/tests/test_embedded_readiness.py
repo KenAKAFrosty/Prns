@@ -10,8 +10,11 @@ from unittest.mock import patch
 
 from validation.hardening.embedded_isa.contract import (
     Compiler,
-    HostPlatform,
     load_inventory,
+)
+from validation.hardening.embedded_host import HostPlatform
+from validation.hardening.embedded_platform.contract import (
+    load_inventory as load_platform_inventory,
 )
 from validation.hardening.embedded_readiness import (
     CheckState,
@@ -35,9 +38,16 @@ class FakeProbe:
         self,
         paths: dict[str, Path],
         outputs: dict[tuple[str, ...], CommandOutput],
+        fingerprints: dict[Path, str] | None = None,
+        environment: dict[str, str] | None = None,
     ) -> None:
         self.paths = paths
         self.outputs = outputs
+        self.fingerprints = fingerprints or {}
+        self.environment_values = environment or {}
+
+    def environment(self, name: str) -> str | None:
+        return self.environment_values.get(name)
 
     def find(self, command: str, search_paths: tuple[Path, ...] = ()) -> Path | None:
         return self.paths.get(command)
@@ -47,6 +57,9 @@ class FakeProbe:
 
     def run(self, command: tuple[str, ...]) -> CommandOutput:
         return self.outputs.get(command, CommandOutput(127, "", "missing command"))
+
+    def fingerprint(self, path: Path) -> str | None:
+        return self.fingerprints.get(path)
 
 
 class EmbeddedReadinessTests(unittest.TestCase):
@@ -58,9 +71,11 @@ class EmbeddedReadinessTests(unittest.TestCase):
         libclang.mkdir()
         (libclang / "libclang.dylib").write_bytes(b"library")
         inventory = load_inventory()
+        platform_inventory = load_platform_inventory()
         self.contract = ReadinessContract(
             isa_toolchain=inventory.rust_toolchain,
             architectures=inventory.architectures,
+            platforms=platform_inventory.platforms,
             miri_toolchain="nightly-2025-11-21",
             miri_scenarios=3,
             esp_identity=load_esp_identity(),
@@ -73,6 +88,14 @@ class EmbeddedReadinessTests(unittest.TestCase):
             "qemu-system-arm": root / "qemu-system-arm",
             "qemu-system-riscv32": root / "qemu-system-riscv32",
             "qemu-system-xtensa": root / "qemu-system-xtensa",
+            "renode": root / "Renode" / "renode",
+        }
+        platform = self.contract.platforms[0]
+        self.platform_description = (
+            self.paths["renode"].parent / platform.platform_description
+        )
+        self.fingerprints = {
+            self.platform_description: platform.platform_description_sha256
         }
         targets = "\n".join(
             architecture.rust_target for architecture in inventory.architectures
@@ -163,12 +186,18 @@ class EmbeddedReadinessTests(unittest.TestCase):
                 "QEMU emulator version 9.2.2 (esp_develop_9.2.2_20260417)\n",
                 "",
             ),
+            (str(self.paths["renode"]), "--version"): CommandOutput(
+                0, "\n".join(platform.emulator.identity) + "\n", ""
+            ),
         }
 
     def test_ready_environment_satisfies_every_derived_requirement(self) -> None:
-        checks = inspect(self.contract, FakeProbe(self.paths, self.outputs))
+        checks = inspect(
+            self.contract,
+            FakeProbe(self.paths, self.outputs, self.fingerprints),
+        )
 
-        self.assertEqual(len(checks), 7)
+        self.assertEqual(len(checks), 8)
         self.assertTrue(all(check.state is CheckState.READY for check in checks))
         self.assertEqual(
             {check.subject for check in checks},
@@ -180,14 +209,55 @@ class EmbeddedReadinessTests(unittest.TestCase):
                 "thumbv7em emulator",
                 "riscv32imac emulator",
                 "xtensa-esp32s3 emulator",
+                "nrf52840 platform emulator",
             },
+        )
+
+    def test_platform_pilot_checks_exact_emulator_and_model_identities(self) -> None:
+        checks = inspect(
+            self.contract,
+            FakeProbe(self.paths, self.outputs, self.fingerprints),
+        )
+
+        pilot = next(check for check in checks if check.lane is ReadinessLane.PILOT)
+
+        self.assertEqual(pilot.state, CheckState.READY)
+        self.assertIn(str(self.platform_description), pilot.detail)
+
+    def test_platform_pilot_rejects_a_modified_model(self) -> None:
+        fingerprints = {self.platform_description: "0" * 64}
+
+        checks = inspect(
+            self.contract,
+            FakeProbe(self.paths, self.outputs, fingerprints),
+        )
+        pilot = next(check for check in checks if check.lane is ReadinessLane.PILOT)
+
+        self.assertEqual(pilot.state, CheckState.MISMATCH)
+        self.assertIn("model checksum mismatch", pilot.detail)
+
+    def test_platform_pilot_setup_uses_the_host_package(self) -> None:
+        paths = dict(self.paths)
+        del paths["renode"]
+
+        checks = inspect(self.contract, FakeProbe(paths, self.outputs))
+        pilot = next(check for check in checks if check.lane is ReadinessLane.PILOT)
+
+        self.assertEqual(pilot.state, CheckState.MISSING)
+        guidance = "\n".join(pilot.setup)
+        self.assertIn("renode-1.17.0.osx-arm64-portable.dmg", guidance)
+        self.assertIn(
+            "63b1fb691207f503cea937e4ec8fad3e068a517d0abac3c24c0206c62f6c4d12",
+            guidance,
         )
 
     def test_esp_emulator_setup_selects_the_current_host_package(self) -> None:
         paths = dict(self.paths)
         del paths["qemu-system-xtensa"]
 
-        checks = inspect(self.contract, FakeProbe(paths, self.outputs))
+        checks = inspect(
+            self.contract, FakeProbe(paths, self.outputs, self.fingerprints)
+        )
         xtensa = next(
             check for check in checks if check.subject == "xtensa-esp32s3 emulator"
         )
@@ -230,7 +300,7 @@ class EmbeddedReadinessTests(unittest.TestCase):
         paths = dict(self.paths)
         del paths["qemu-system-riscv32"]
 
-        checks = inspect(self.contract, FakeProbe(paths, outputs))
+        checks = inspect(self.contract, FakeProbe(paths, outputs, self.fingerprints))
         rust = next(check for check in checks if check.subject == "target-ISA Rust")
         emulator = next(
             check for check in checks if check.subject == "riscv32imac emulator"
@@ -254,7 +324,9 @@ class EmbeddedReadinessTests(unittest.TestCase):
             0, "QEMU emulator version 11.1.2\n", ""
         )
 
-        checks = inspect(self.contract, FakeProbe(self.paths, outputs))
+        checks = inspect(
+            self.contract, FakeProbe(self.paths, outputs, self.fingerprints)
+        )
         arm = next(check for check in checks if check.subject == "thumbv7em emulator")
 
         self.assertEqual(arm.state, CheckState.MISMATCH)
@@ -268,7 +340,7 @@ class EmbeddedReadinessTests(unittest.TestCase):
             CommandOutput(0, "xtensa-esp32s3-elf-gcc (wrong)\n", "")
         )
 
-        checks = inspect(self.contract, FakeProbe(paths, outputs))
+        checks = inspect(self.contract, FakeProbe(paths, outputs, self.fingerprints))
         esp = next(
             check for check in checks if check.subject == "ESP resource toolchain"
         )
@@ -296,7 +368,7 @@ class EmbeddedReadinessTests(unittest.TestCase):
                 )
             ] = CommandOutput(0, "thumbv7em-none-eabihf\n", "")
 
-        checks = inspect(contract, FakeProbe(self.paths, outputs))
+        checks = inspect(contract, FakeProbe(self.paths, outputs, self.fingerprints))
 
         upstream = {
             check.subject: check
@@ -315,7 +387,9 @@ class EmbeddedReadinessTests(unittest.TestCase):
                 ),
             )
 
-            checks = inspect(contract, FakeProbe(self.paths, self.outputs))
+            checks = inspect(
+                contract, FakeProbe(self.paths, self.outputs, self.fingerprints)
+            )
             esp = next(
                 check for check in checks if check.subject == "ESP resource toolchain"
             )
@@ -335,7 +409,7 @@ class EmbeddedReadinessTests(unittest.TestCase):
             CommandOutput(0, "GNU objdump (wrong) 2.45\n", "")
         )
 
-        checks = inspect(self.contract, FakeProbe(paths, outputs))
+        checks = inspect(self.contract, FakeProbe(paths, outputs, self.fingerprints))
         esp = next(
             check for check in checks if check.subject == "ESP resource toolchain"
         )

@@ -1,0 +1,58 @@
+schema = 1
+
+[toolchain]
+rust = "1.96.0"
+
+[[platform]]
+id = "nrf52840"
+suite = "embedded-platform-nrf52840"
+architecture = "thumbv7em"
+rust_target = "thumbv7em-none-eabihf"
+memory_profile = "t-echo-s140-v6"
+feature = "platform-nrf52840"
+binary = "assurance-platform-nrf52840"
+runner = "renode-nrf52840"
+scenario = "platform-startup"
+milestone = "application-entry"
+milestone_symbol = "prns_platform_application_entry"
+emulator_kind = "renode"
+emulator = "renode"
+emulator_identity = [
+    "Renode v1.17.0",
+    "build: 1.17.0+20260906gitf1dd1b4af",
+    "build type: Release",
+    "runtime: .NET 8.0.21",
+]
+emulator_source_repository = "https://github.com/renode/renode.git"
+emulator_source_revision = "ab721d88e135a1bcb8ed2ecc5a38f51cbe61fdd2"
+platform_description = "platforms/cpus/nrf52840.repl"
+platform_description_sha256 = "84395ea2faf6d61efe23b95d626cfd9246ab8ae6edba248909f39df66e58fe1e"
+timeout_seconds = 30
+sources = [
+    ".cargo/config.toml",
+    "Cargo.lock",
+    "Cargo.toml",
+    "personal-hopspot/assurance-kernel",
+    "personal-hopspot/memory",
+    "validation/hardening/embedded_architectures.py",
+]
+
+[[platform.emulator_package]]
+host = "linux-amd64"
+source_url = "https://github.com/renode/renode/releases/download/v1.17.0/renode-1.17.0.linux-portable.tar.gz"
+source_sha256 = "4ba7c68b59e2447f188ef4b4b112fcccd2802582c460beedceb63b84e5605a5f"
+
+[[platform.emulator_package]]
+host = "linux-arm64"
+source_url = "https://github.com/renode/renode/releases/download/v1.17.0/renode-1.17.0.linux-arm64-portable.tar.gz"
+source_sha256 = "e9051578411441bfb47b77de0381cfba3badce03663367fab561472fd7807f1f"
+
+[[platform.emulator_package]]
+host = "macos-arm64"
+source_url = "https://github.com/renode/renode/releases/download/v1.17.0/renode-1.17.0.osx-arm64-portable.dmg"
+source_sha256 = "63b1fb691207f503cea937e4ec8fad3e068a517d0abac3c24c0206c62f6c4d12"
+
+[[platform.emulator_package]]
+host = "windows-amd64"
+source_url = "https://github.com/renode/renode/releases/download/v1.17.0/renode-1.17.0.windows-portable.zip"
+source_sha256 = "18bcf145422039e8702c3e5f9864c7787561bfd5deb7a3ee6e168ecf19e2b9db"

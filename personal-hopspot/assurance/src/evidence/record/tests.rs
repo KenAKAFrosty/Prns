@@ -4,7 +4,7 @@ use tempfile::tempdir;
 
 use super::{artifact, artifact_root, validate_capability, RecordError};
 use crate::contract::{
-    ArchitectureId, ComponentId, ProofArtifactKind, ProofKind, ScenarioId, Subject,
+    ArchitectureId, ComponentId, PlatformId, ProofArtifactKind, ProofKind, ScenarioId, Subject,
 };
 
 #[test]
@@ -44,6 +44,16 @@ fn recorder_accepts_only_declared_target_isa_capabilities() -> Result<(), Box<dy
         ),
         Err(RecordError::Capability { .. })
     ));
+    Ok(())
+}
+
+#[test]
+fn recorder_accepts_declared_platform_pilots() -> Result<(), Box<dyn std::error::Error>> {
+    validate_capability(
+        &Subject::Platform(PlatformId::parse("nrf52840")?),
+        &ScenarioId::parse("platform-startup")?,
+        ProofKind::PlatformEmulation,
+    )?;
     Ok(())
 }
 
