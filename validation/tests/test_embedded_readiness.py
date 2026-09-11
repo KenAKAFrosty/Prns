@@ -8,7 +8,11 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
-from validation.hardening.embedded_isa.contract import Compiler, load_inventory
+from validation.hardening.embedded_isa.contract import (
+    Compiler,
+    HostPlatform,
+    load_inventory,
+)
 from validation.hardening.embedded_readiness import (
     CheckState,
     CommandOutput,
@@ -38,6 +42,9 @@ class FakeProbe:
     def find(self, command: str, search_paths: tuple[Path, ...] = ()) -> Path | None:
         return self.paths.get(command)
 
+    def host_platform(self) -> HostPlatform:
+        return HostPlatform.MACOS_ARM64
+
     def run(self, command: tuple[str, ...]) -> CommandOutput:
         return self.outputs.get(command, CommandOutput(127, "", "missing command"))
 
@@ -65,6 +72,7 @@ class EmbeddedReadinessTests(unittest.TestCase):
             "xtensa-esp32s3-elf-objdump": root / "xtensa-esp32s3-elf-objdump",
             "qemu-system-arm": root / "qemu-system-arm",
             "qemu-system-riscv32": root / "qemu-system-riscv32",
+            "qemu-system-xtensa": root / "qemu-system-xtensa",
         }
         targets = "\n".join(
             architecture.rust_target for architecture in inventory.architectures
@@ -150,12 +158,17 @@ class EmbeddedReadinessTests(unittest.TestCase):
             (str(self.paths["qemu-system-riscv32"]), "--version"): CommandOutput(
                 0, "QEMU emulator version 11.1.1\n", ""
             ),
+            (str(self.paths["qemu-system-xtensa"]), "--version"): CommandOutput(
+                0,
+                "QEMU emulator version 9.2.2 (esp_develop_9.2.2_20260417)\n",
+                "",
+            ),
         }
 
     def test_ready_environment_satisfies_every_derived_requirement(self) -> None:
         checks = inspect(self.contract, FakeProbe(self.paths, self.outputs))
 
-        self.assertEqual(len(checks), 6)
+        self.assertEqual(len(checks), 7)
         self.assertTrue(all(check.state is CheckState.READY for check in checks))
         self.assertEqual(
             {check.subject for check in checks},
@@ -166,8 +179,27 @@ class EmbeddedReadinessTests(unittest.TestCase):
                 "ESP resource toolchain",
                 "thumbv7em emulator",
                 "riscv32imac emulator",
+                "xtensa-esp32s3 emulator",
             },
         )
+
+    def test_esp_emulator_setup_selects_the_current_host_package(self) -> None:
+        paths = dict(self.paths)
+        del paths["qemu-system-xtensa"]
+
+        checks = inspect(self.contract, FakeProbe(paths, self.outputs))
+        xtensa = next(
+            check for check in checks if check.subject == "xtensa-esp32s3 emulator"
+        )
+
+        self.assertEqual(xtensa.state, CheckState.MISSING)
+        guidance = "\n".join(xtensa.setup)
+        self.assertIn("aarch64-apple-darwin.tar.xz", guidance)
+        self.assertIn(
+            "bb8c15810565d3df1665dc34962430885e11bc95575b228fb44698146be1e9d6",
+            guidance,
+        )
+        self.assertIn("brew install libgcrypt glib pixman sdl2 libslirp", guidance)
 
     def test_aggregate_status_preserves_any_failed_check(self) -> None:
         ready = ReadinessCheck(

@@ -24,6 +24,7 @@ def record(
     cargo_version: str,
     rustc_version: str,
     qemu_version: str,
+    extra_sources: tuple[Path, ...] = (),
 ) -> None:
     output = transcript.parent / f"{architecture.identifier}.assurance.json"
     command = [
@@ -58,6 +59,11 @@ def record(
         "--output",
         str(output),
     ]
-    for source in (INVENTORY_PATH, IMPLEMENTATION_PATH, *kernel.sources):
+    for source in (
+        INVENTORY_PATH,
+        IMPLEMENTATION_PATH,
+        *kernel.sources,
+        *extra_sources,
+    ):
         command.extend(("--source", str(source)))
     subprocess.run(command, cwd=ROOT, check=True)

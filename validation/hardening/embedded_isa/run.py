@@ -20,21 +20,27 @@ from validation.hardening.embedded_isa.contract import (
 )
 from validation.hardening.embedded_isa.error import EmbeddedIsaError
 from validation.hardening.embedded_isa.process import execute, require_success, tool_version
+from validation.hardening.embedded_isa.toolchain import resolve as resolve_target_toolchain
 
 
 DOCTOR = "./tools/prns doctor embedded-assurance"
 
 
 def require_emulator_identity(architecture: Architecture, actual: str) -> None:
-    expected = f"QEMU emulator version {architecture.emulator.version}"
+    expected = architecture.emulator.identity.banner
     if actual != expected:
         raise EmbeddedIsaError(
             f"emulator identity is {actual!r}, expected {expected!r}; run {DOCTOR}"
         )
 
 
-def emulator_executable(architecture: Architecture) -> Path:
-    discovered = shutil.which(architecture.emulator.executable)
+def emulator_executable(
+    architecture: Architecture, search_paths: tuple[Path, ...] = ()
+) -> Path:
+    path = os.pathsep.join(str(entry) for entry in search_paths) or None
+    discovered = shutil.which(architecture.emulator.executable, path=path)
+    if discovered is None and path is not None:
+        discovered = shutil.which(architecture.emulator.executable)
     if discovered is None:
         raise EmbeddedIsaError(
             f"required emulator {architecture.emulator.executable} is unavailable; "
@@ -95,17 +101,23 @@ def run(suite: str) -> None:
     architecture = inventory.architecture_for_suite(suite)
     artifact_directory = artifacts.directory()
     artifacts.clear(architecture, artifact_directory)
-    emulator = emulator_executable(architecture)
-    cargo_version = tool_version(
+    host_cargo_version = tool_version(
         ("cargo", f"+{inventory.rust_toolchain}", "--version"),
         "cargo ",
         DOCTOR,
     )
-    rustc_version = tool_version(
+    host_rustc_version = tool_version(
         ("rustc", f"+{inventory.rust_toolchain}", "--version"),
         "rustc ",
         DOCTOR,
     )
+    target_toolchain = resolve_target_toolchain(
+        architecture,
+        inventory.rust_toolchain,
+        host_cargo_version,
+        host_rustc_version,
+    )
+    emulator = emulator_executable(architecture, target_toolchain.search_paths)
     qemu_version = tool_version((str(emulator), "--version"), "QEMU emulator version ")
     require_emulator_identity(architecture, qemu_version)
 
@@ -129,12 +141,13 @@ def run(suite: str) -> None:
         build = execute(
             cargo_command(
                 inventory.kernel,
-                inventory.rust_toolchain,
+                target_toolchain.channel,
                 "build",
                 architecture.feature,
                 architecture.binary,
             )
-            + ("--target", architecture.rust_target),
+            + ("--target", architecture.rust_target)
+            + target_toolchain.cargo_arguments,
             900,
         )
         observations.append(build)
@@ -158,8 +171,11 @@ def run(suite: str) -> None:
             artifacts.render_log(
                 architecture,
                 tuple(observations),
-                cargo_version,
-                rustc_version,
+                host_cargo_version,
+                host_rustc_version,
+                target_toolchain.cargo_version,
+                target_toolchain.rustc_version,
+                target_toolchain.linker_identity,
                 qemu_version,
             )
         )
@@ -173,9 +189,10 @@ def run(suite: str) -> None:
         target,
         transcript_path,
         log,
-        cargo_version,
-        rustc_version,
+        target_toolchain.cargo_version,
+        target_toolchain.rustc_version,
         qemu_version,
+        target_toolchain.proof_sources,
     )
     print(
         f"EMBEDDED_ISA_OK architecture={architecture.identifier} "

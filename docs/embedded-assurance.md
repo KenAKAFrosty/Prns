@@ -19,9 +19,10 @@ Check generated memory contracts first, then run the affected executable proofs:
 python3 validation/run.py run --suite embedded-miri-quick
 python3 validation/run.py run --suite embedded-isa-thumbv7em
 python3 validation/run.py run --suite embedded-isa-riscv32imac
+python3 validation/run.py run --suite embedded-isa-xtensa-esp32s3
 ```
 
-Use `python` instead of `python3` on Windows. The Miri runner can provision its pinned nightly and components on first use; the doctor tells you whether that download has already happened. ISA runners require the exact QEMU version declared by their architecture adapter.
+Use `python` instead of `python3` on Windows. The Miri runner can provision its pinned nightly and components on first use; the doctor tells you whether that download has already happened. ISA runners require the exact QEMU identity declared by their architecture adapter. The Xtensa lane also uses the pinned ESP Rust and crosstool-NG toolchains; its Espressif QEMU package is selected and checksum-pinned for the contributor's host platform.
 
 Run the full Miri borrow-model matrix before release-sensitive changes:
 

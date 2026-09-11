@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from validation.hardening.embedded_isa.contract import Architecture, Compiler
+from validation.hardening.embedded_isa.contract import (
+    Architecture,
+    Compiler,
+    HostPlatform,
+    HostedPackages,
+    SourceArchive,
+)
 from validation.hardening.embedded_readiness.model import (
     CheckState,
     CommandOutput,
@@ -42,7 +48,13 @@ def inspect(contract: ReadinessContract, probe: SystemProbe) -> tuple[ReadinessC
         inspect_esp(probe, contract),
     ]
     checks.extend(
-        inspect_emulator(probe, architecture)
+        inspect_emulator(
+            probe,
+            architecture,
+            contract.esp_environment.search_paths
+            if architecture.compiler is Compiler.ESP
+            else (),
+        )
         for architecture in contract.architectures
     )
     return tuple(checks)
@@ -241,15 +253,12 @@ def contains_libclang(path: Path | None) -> bool:
 
 
 def inspect_emulator(
-    probe: SystemProbe, architecture: Architecture
+    probe: SystemProbe,
+    architecture: Architecture,
+    search_paths: tuple[Path, ...] = (),
 ) -> ReadinessCheck:
-    setup = (
-        f"install QEMU {architecture.emulator.version} from "
-        f"{architecture.emulator.source_url}",
-        f"verify source SHA-256 {architecture.emulator.source_sha256}",
-        f"expose {architecture.emulator.executable} on PATH",
-    )
-    executable = probe.find(architecture.emulator.executable)
+    setup = emulator_setup(probe, architecture)
+    executable = probe.find(architecture.emulator.executable, search_paths)
     if executable is None:
         return ReadinessCheck(
             ReadinessLane.ISA,
@@ -259,7 +268,7 @@ def inspect_emulator(
             setup,
         )
     output = probe.run((str(executable), "--version"))
-    expected = f"QEMU emulator version {architecture.emulator.version}"
+    expected = architecture.emulator.identity.banner
     found = first_line(output)
     if output.returncode != 0 or found != expected:
         return ReadinessCheck(
@@ -275,6 +284,51 @@ def inspect_emulator(
         CheckState.READY,
         f"{executable}; {expected}",
     )
+
+
+def emulator_setup(
+    probe: SystemProbe, architecture: Architecture
+) -> tuple[str, ...]:
+    acquisition = architecture.emulator.acquisition
+    prerequisites: tuple[str, ...] = ()
+    match acquisition:
+        case SourceArchive(source_url=url, source_sha256=checksum):
+            install = f"install {architecture.emulator.identity.banner} from {url}"
+            verify = f"verify source SHA-256 {checksum}"
+        case HostedPackages(packages=_):
+            host = probe.host_platform()
+            if host is None:
+                install = (
+                    f"build {architecture.emulator.identity.banner}; "
+                    "no pinned binary package exists for this host"
+                )
+                verify = "verify the resulting QEMU identity exactly"
+            else:
+                package = acquisition.for_host(host)
+                prerequisites = emulator_prerequisites(host)
+                install = (
+                    f"install {architecture.emulator.identity.banner} "
+                    f"from {package.source_url}"
+                )
+                verify = f"verify package SHA-256 {package.source_sha256}"
+    return prerequisites + (
+        install,
+        verify,
+        f"expose {architecture.emulator.executable} on PATH",
+    )
+
+
+def emulator_prerequisites(host: HostPlatform) -> tuple[str, ...]:
+    match host:
+        case HostPlatform.MACOS_AMD64 | HostPlatform.MACOS_ARM64:
+            return ("brew install libgcrypt glib pixman sdl2 libslirp",)
+        case HostPlatform.LINUX_AMD64 | HostPlatform.LINUX_ARM64:
+            return (
+                "install libgcrypt, GLib, pixman, SDL2, and libslirp "
+                "with the system package manager",
+            )
+        case HostPlatform.WINDOWS_AMD64:
+            return ()
 
 
 def first_line(output: CommandOutput) -> str:

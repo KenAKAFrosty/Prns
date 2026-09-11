@@ -6,15 +6,19 @@ import tempfile
 import tomllib
 import unittest
 from pathlib import Path
+from typing import cast
 from unittest import mock
 
 from validation.hardening.embedded_isa.architecture import (
     ArchitectureAdapterError,
     command_for,
+    target_build_for,
 )
 from validation.hardening.embedded_isa.artifacts import clear, directory as artifact_directory
 from validation.hardening.embedded_isa.contract import (
     Compiler,
+    HostPlatform,
+    HostedPackages,
     INVENTORY_PATH,
     ROOT,
     InventoryError,
@@ -37,17 +41,32 @@ class EmbeddedIsaTests(unittest.TestCase):
         self.assertEqual(inventory.rust_toolchain, "1.96.0")
         self.assertEqual(
             [architecture.identifier for architecture in inventory.architectures],
-            ["thumbv7em", "riscv32imac"],
+            ["thumbv7em", "riscv32imac", "xtensa-esp32s3"],
         )
         arm = inventory.architecture_for_suite("embedded-isa-thumbv7em")
         self.assertEqual(arm.rust_target, "thumbv7em-none-eabihf")
         self.assertEqual(arm.compiler, Compiler.UPSTREAM)
-        self.assertEqual(arm.emulator.version, "11.1.1")
-        self.assertEqual(len(arm.emulator.source_sha256), 64)
+        self.assertEqual(arm.emulator.identity.version, "11.1.1")
         riscv = inventory.architecture_for_suite("embedded-isa-riscv32imac")
         self.assertEqual(riscv.rust_target, "riscv32imac-unknown-none-elf")
         self.assertEqual(riscv.compiler, Compiler.UPSTREAM)
-        self.assertEqual(riscv.emulator.version, "11.1.1")
+        self.assertEqual(riscv.emulator.identity.version, "11.1.1")
+        xtensa = inventory.architecture_for_suite("embedded-isa-xtensa-esp32s3")
+        self.assertEqual(xtensa.rust_target, "xtensa-esp32s3-none-elf")
+        self.assertEqual(xtensa.compiler, Compiler.ESP)
+        self.assertEqual(
+            xtensa.emulator.identity.banner,
+            "QEMU emulator version 9.2.2 (esp_develop_9.2.2_20260417)",
+        )
+        self.assertIsInstance(xtensa.emulator.acquisition, HostedPackages)
+        packages = cast(HostedPackages, xtensa.emulator.acquisition)
+        self.assertEqual(
+            {package.host for package in packages.packages},
+            set(HostPlatform),
+        )
+        self.assertTrue(
+            all(len(package.source_sha256) == 64 for package in packages.packages)
+        )
         manifest = tomllib.loads(
             (ROOT / "validation" / "manifest.toml").read_text(encoding="utf-8")
         )
@@ -111,6 +130,41 @@ class EmbeddedIsaTests(unittest.TestCase):
             ),
         )
 
+    def test_xtensa_adapter_uses_the_esp32s3_cpu_and_semihosting(self) -> None:
+        command = command_for("xtensa-esp32s3", Path("qemu"), Path("kernel"))
+
+        self.assertEqual(
+            command,
+            (
+                "qemu",
+                "-machine",
+                "esp32s3",
+                "-cpu",
+                "esp32s3",
+                "-nographic",
+                "-monitor",
+                "none",
+                "-serial",
+                "none",
+                "-semihosting-config",
+                "enable=on,target=native",
+                "-kernel",
+                "kernel",
+            ),
+        )
+
+        build = target_build_for("xtensa-esp32s3")
+        self.assertEqual(build.linker, "xtensa-esp32s3-elf-gcc")
+        arguments = build.cargo_arguments(
+            Path(r"C:\ESP Tools\xtensa-gcc.exe"),
+            "xtensa-esp32s3-none-elf",
+        )
+        self.assertIn("-Zbuild-std=core,alloc", arguments)
+        self.assertIn(
+            r'target.xtensa-esp32s3-none-elf.linker="C:\\ESP Tools\\xtensa-gcc.exe"',
+            arguments,
+        )
+
     def test_transcript_is_length_and_digest_checked(self) -> None:
         events = b"\x01\x00\x03arm"
         digest = hashlib.sha256(events).hexdigest()
@@ -166,6 +220,14 @@ class EmbeddedIsaTests(unittest.TestCase):
         require_emulator_identity(architecture, "QEMU emulator version 11.1.1")
         with self.assertRaises(EmbeddedIsaError):
             require_emulator_identity(architecture, "QEMU emulator version 11.1.2")
+
+        xtensa = load_inventory().architectures[2]
+        require_emulator_identity(
+            xtensa,
+            "QEMU emulator version 9.2.2 (esp_develop_9.2.2_20260417)",
+        )
+        with self.assertRaises(EmbeddedIsaError):
+            require_emulator_identity(xtensa, "QEMU emulator version 9.2.2")
 
     def test_missing_emulator_points_to_the_readiness_doctor(self) -> None:
         architecture = load_inventory().architectures[0]
@@ -239,6 +301,37 @@ class EmbeddedIsaTests(unittest.TestCase):
     def test_unknown_architecture_id_is_rejected(self) -> None:
         contents = INVENTORY_PATH.read_text(encoding="utf-8")
         malformed = contents.replace('id = "thumbv7em"', 'id = "unknown"', 1)
+        with tempfile.TemporaryDirectory() as directory:
+            inventory = Path(directory) / "embedded-isa.toml"
+            inventory.write_text(malformed, encoding="utf-8")
+
+            with self.assertRaises(InventoryError):
+                load_inventory(inventory)
+
+    def test_duplicate_emulator_package_host_is_rejected(self) -> None:
+        contents = INVENTORY_PATH.read_text(encoding="utf-8")
+        malformed = contents.replace(
+            'host = "linux-arm64"', 'host = "linux-amd64"', 1
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            inventory = Path(directory) / "embedded-isa.toml"
+            inventory.write_text(malformed, encoding="utf-8")
+
+            with self.assertRaises(InventoryError):
+                load_inventory(inventory)
+
+    def test_emulator_package_set_must_cover_every_supported_host(self) -> None:
+        contents = INVENTORY_PATH.read_text(encoding="utf-8")
+        package = (
+            '\n[[architecture.emulator_package]]\n'
+            'host = "windows-amd64"\n'
+            'source_url = "https://github.com/espressif/qemu/releases/download/'
+            'esp-develop-9.2.2-20260417/qemu-xtensa-softmmu-'
+            'esp_develop_9.2.2_20260417-x86_64-w64-mingw32.tar.xz"\n'
+            'source_sha256 = '
+            '"3c483d77f5350a568df1faf4d8dbc82c95d6bc2b826d0d4be910485e0a68ca2a"\n'
+        )
+        malformed = contents.replace(package, "", 1)
         with tempfile.TemporaryDirectory() as directory:
             inventory = Path(directory) / "embedded-isa.toml"
             inventory.write_text(malformed, encoding="utf-8")

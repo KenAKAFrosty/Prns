@@ -1,15 +1,34 @@
 from __future__ import annotations
 
 import os
+import platform
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
+from validation.hardening.embedded_isa.contract import HostPlatform
 from validation.hardening.embedded_readiness.contract import ROOT
 from validation.hardening.embedded_readiness.model import CommandOutput
 
 
 class SystemProbe:
+    def host_platform(self) -> HostPlatform | None:
+        machine = platform.machine().lower()
+        if sys.platform == "darwin":
+            if machine in {"arm64", "aarch64"}:
+                return HostPlatform.MACOS_ARM64
+            if machine in {"amd64", "x86_64"}:
+                return HostPlatform.MACOS_AMD64
+        if sys.platform.startswith("linux"):
+            if machine in {"arm64", "aarch64"}:
+                return HostPlatform.LINUX_ARM64
+            if machine in {"amd64", "x86_64"}:
+                return HostPlatform.LINUX_AMD64
+        if sys.platform == "win32" and machine in {"amd64", "x86_64"}:
+            return HostPlatform.WINDOWS_AMD64
+        return None
+
     def find(self, command: str, search_paths: tuple[Path, ...] = ()) -> Path | None:
         path = None
         if search_paths:

@@ -678,6 +678,32 @@ inputs = [
 artifacts = "validation-artifacts/results/embedded-isa-riscv32imac"
 
 [[suite]]
+id = "embedded-isa-xtensa-esp32s3"
+domain = "hardening"
+group = "embedded-isa"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "esp"
+timeout_seconds = 1800
+command = ["__RUNNER_PYTHON__", "-m", "validation.hardening.embedded_isa.run"]
+inputs = [
+    ".cargo/config.toml",
+    "Cargo.lock",
+    "Cargo.toml",
+    "personal-hopspot/assurance",
+    "personal-hopspot/assurance-kernel",
+    "prns-core/src/interfaces/lora",
+    "prns-core/src/interfaces/subghz/regions/us915/mod.rs",
+    "prns-interfaces/impls/embassy/src/radios",
+    "tools/release/release-esp-toolchain-identity.sh",
+    "validation/hardening/embedded-isa.toml",
+    "validation/hardening/embedded_architectures.py",
+    "validation/hardening/embedded_isa",
+    "validation/hardening/embedded_readiness/contract.py",
+]
+artifacts = "validation-artifacts/results/embedded-isa-xtensa-esp32s3"
+
+[[suite]]
 id = "embedded-miri-quick"
 domain = "hardening"
 group = "embedded-miri"

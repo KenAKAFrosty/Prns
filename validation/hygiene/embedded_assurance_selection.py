@@ -55,6 +55,7 @@ ISA_FILES = COMMON_FILES | frozenset(
         "tools/release/verify-release-esp-toolchain.sh",
         "validation/hardening/embedded-isa.toml",
         "validation/hardening/embedded_architectures.py",
+        "validation/hardening/embedded_readiness/contract.py",
     }
 )
 PILOT_FILES = COMMON_FILES | frozenset(

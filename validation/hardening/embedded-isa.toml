@@ -1,4 +1,4 @@
-schema = 1
+schema = 2
 
 [kernel]
 manifest = "personal-hopspot/assurance-kernel/Cargo.toml"
@@ -30,7 +30,7 @@ compiler = "upstream"
 feature = "thumbv7em"
 binary = "assurance-thumbv7em"
 emulator = "qemu-system-arm"
-emulator_version = "11.1.1"
+emulator_identity = "QEMU emulator version 11.1.1"
 emulator_source_url = "https://download.qemu.org/qemu-11.1.1.tar.xz"
 emulator_source_sha256 = "079ffbff8a7111bbc89022107cbabf3bbfd614d5fc9d7cc675991196aca12482"
 timeout_seconds = 30
@@ -42,7 +42,42 @@ compiler = "upstream"
 feature = "riscv32imac"
 binary = "assurance-riscv32imac"
 emulator = "qemu-system-riscv32"
-emulator_version = "11.1.1"
+emulator_identity = "QEMU emulator version 11.1.1"
 emulator_source_url = "https://download.qemu.org/qemu-11.1.1.tar.xz"
 emulator_source_sha256 = "079ffbff8a7111bbc89022107cbabf3bbfd614d5fc9d7cc675991196aca12482"
 timeout_seconds = 30
+
+[[architecture]]
+id = "xtensa-esp32s3"
+suite = "embedded-isa-xtensa-esp32s3"
+compiler = "esp"
+feature = "xtensa-esp32s3"
+binary = "assurance-xtensa-esp32s3"
+emulator = "qemu-system-xtensa"
+emulator_identity = "QEMU emulator version 9.2.2 (esp_develop_9.2.2_20260417)"
+timeout_seconds = 30
+
+[[architecture.emulator_package]]
+host = "linux-amd64"
+source_url = "https://github.com/espressif/qemu/releases/download/esp-develop-9.2.2-20260417/qemu-xtensa-softmmu-esp_develop_9.2.2_20260417-x86_64-linux-gnu.tar.xz"
+source_sha256 = "0eecb2a34a5586c0e59110f77b9343b7b336e82fdb0e1a30e1dc1bab8a547e35"
+
+[[architecture.emulator_package]]
+host = "linux-arm64"
+source_url = "https://github.com/espressif/qemu/releases/download/esp-develop-9.2.2-20260417/qemu-xtensa-softmmu-esp_develop_9.2.2_20260417-aarch64-linux-gnu.tar.xz"
+source_sha256 = "00de5985094c14e47d1b38464a006b8ed64fd0fa7a289c56da24f3a329f65339"
+
+[[architecture.emulator_package]]
+host = "macos-amd64"
+source_url = "https://github.com/espressif/qemu/releases/download/esp-develop-9.2.2-20260417/qemu-xtensa-softmmu-esp_develop_9.2.2_20260417-x86_64-apple-darwin.tar.xz"
+source_sha256 = "ae8170fe46bcdfa54a7c0d7afcdb7a066711991be680f72ff7bbc6c4ae3ad88f"
+
+[[architecture.emulator_package]]
+host = "macos-arm64"
+source_url = "https://github.com/espressif/qemu/releases/download/esp-develop-9.2.2-20260417/qemu-xtensa-softmmu-esp_develop_9.2.2_20260417-aarch64-apple-darwin.tar.xz"
+source_sha256 = "bb8c15810565d3df1665dc34962430885e11bc95575b228fb44698146be1e9d6"
+
+[[architecture.emulator_package]]
+host = "windows-amd64"
+source_url = "https://github.com/espressif/qemu/releases/download/esp-develop-9.2.2-20260417/qemu-xtensa-softmmu-esp_develop_9.2.2_20260417-x86_64-w64-mingw32.tar.xz"
+source_sha256 = "3c483d77f5350a568df1faf4d8dbc82c95d6bc2b826d0d4be910485e0a68ca2a"

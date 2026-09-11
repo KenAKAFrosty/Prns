@@ -20,6 +20,7 @@ riscv32imac = [
     "dep:riscv-rt",
     "dep:semihosting",
 ]
+xtensa-esp32s3 = []
 
 [dependencies]
 embassy-futures = { version = "0.1", default-features = false }
@@ -47,6 +48,11 @@ required-features = ["thumbv7em"]
 name = "assurance-riscv32imac"
 path = "src/bin/riscv32imac.rs"
 required-features = ["riscv32imac"]
+
+[[bin]]
+name = "assurance-xtensa-esp32s3"
+path = "src/bin/xtensa_esp32s3.rs"
+required-features = ["xtensa-esp32s3"]
 
 [lints]
 workspace = true

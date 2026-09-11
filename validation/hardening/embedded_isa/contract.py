@@ -5,6 +5,7 @@ import tomllib
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from typing import TypeAlias
 
 from validation.hardening.embedded_architectures import ARCHITECTURES
 
@@ -14,6 +15,9 @@ INVENTORY_PATH = ROOT / "validation" / "hardening" / "embedded-isa.toml"
 IDENTIFIER = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?")
 SHA256 = re.compile(r"[0-9a-f]{64}")
 SEMVER = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
+QEMU_IDENTITY = re.compile(
+    r"QEMU emulator version (?P<version>[0-9]+\.[0-9]+\.[0-9]+)(?: \([^\r\n)]+\))?"
+)
 
 
 class InventoryError(RuntimeError):
@@ -23,6 +27,14 @@ class InventoryError(RuntimeError):
 class Compiler(Enum):
     UPSTREAM = "upstream"
     ESP = "esp"
+
+
+class HostPlatform(Enum):
+    LINUX_AMD64 = "linux-amd64"
+    LINUX_ARM64 = "linux-arm64"
+    MACOS_AMD64 = "macos-amd64"
+    MACOS_ARM64 = "macos-arm64"
+    WINDOWS_AMD64 = "windows-amd64"
 
 
 @dataclass(frozen=True)
@@ -37,11 +49,40 @@ class Kernel:
 
 
 @dataclass(frozen=True)
-class Emulator:
-    executable: str
+class QemuIdentity:
+    banner: str
     version: str
+
+
+@dataclass(frozen=True)
+class SourceArchive:
     source_url: str
     source_sha256: str
+
+
+@dataclass(frozen=True)
+class EmulatorPackage:
+    host: HostPlatform
+    source_url: str
+    source_sha256: str
+
+
+@dataclass(frozen=True)
+class HostedPackages:
+    packages: tuple[EmulatorPackage, ...]
+
+    def for_host(self, host: HostPlatform) -> EmulatorPackage:
+        return next(package for package in self.packages if package.host is host)
+
+
+EmulatorAcquisition: TypeAlias = SourceArchive | HostedPackages
+
+
+@dataclass(frozen=True)
+class Emulator:
+    executable: str
+    identity: QemuIdentity
+    acquisition: EmulatorAcquisition
 
 
 @dataclass(frozen=True)
@@ -81,8 +122,8 @@ def load_inventory(path: Path = INVENTORY_PATH) -> Inventory:
         document = tomllib.loads(path.read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError) as error:
         raise InventoryError(f"cannot load {relative(path)}: {error}") from error
-    if document.get("schema") != 1:
-        raise InventoryError("embedded ISA inventory schema must be 1")
+    if document.get("schema") != 2:
+        raise InventoryError("embedded ISA inventory schema must be 2")
     kernel = parse_kernel(document.get("kernel"))
     toolchain = table(document.get("toolchain"), "toolchain")
     rust_toolchain = exact_version(toolchain.get("rust"), "Rust toolchain")
@@ -120,9 +161,8 @@ def parse_architecture(value: object) -> Architecture:
     entry = table(value, "architecture")
     emulator = Emulator(
         executable=identifier(entry.get("emulator"), "emulator executable"),
-        version=exact_version(entry.get("emulator_version"), "emulator version"),
-        source_url=https_url(entry.get("emulator_source_url")),
-        source_sha256=sha256(entry.get("emulator_source_sha256")),
+        identity=qemu_identity(entry.get("emulator_identity")),
+        acquisition=emulator_acquisition(entry),
     )
     architecture = identifier(entry.get("id"), "architecture")
     try:
@@ -167,6 +207,58 @@ def exact_version(value: object, name: str) -> str:
     if not isinstance(value, str) or SEMVER.fullmatch(value) is None:
         raise InventoryError(f"embedded ISA {name} is not exact-pinned")
     return value
+
+
+def qemu_identity(value: object) -> QemuIdentity:
+    if not isinstance(value, str):
+        raise InventoryError("embedded ISA emulator identity must be a string")
+    matched = QEMU_IDENTITY.fullmatch(value)
+    if matched is None:
+        raise InventoryError("embedded ISA emulator identity must be an exact QEMU banner")
+    return QemuIdentity(banner=value, version=matched.group("version"))
+
+
+def emulator_acquisition(entry: dict) -> EmulatorAcquisition:
+    source_url = entry.get("emulator_source_url")
+    source_sha256 = entry.get("emulator_source_sha256")
+    packages = entry.get("emulator_package")
+    has_source = source_url is not None or source_sha256 is not None
+    has_packages = packages is not None
+    if has_source == has_packages:
+        raise InventoryError(
+            "embedded ISA emulator needs exactly one source archive or package set"
+        )
+    if has_source:
+        return SourceArchive(
+            source_url=https_url(source_url),
+            source_sha256=sha256(source_sha256),
+        )
+    if not isinstance(packages, list) or not packages:
+        raise InventoryError("embedded ISA emulator package set is empty")
+    parsed = tuple(emulator_package(package) for package in packages)
+    hosts = tuple(package.host for package in parsed)
+    if len(hosts) != len(set(hosts)):
+        raise InventoryError("embedded ISA emulator package set repeats a host")
+    missing_hosts = set(HostPlatform).difference(hosts)
+    if missing_hosts:
+        missing = ", ".join(sorted(host.value for host in missing_hosts))
+        raise InventoryError(f"embedded ISA emulator package set is missing {missing}")
+    return HostedPackages(parsed)
+
+
+def emulator_package(value: object) -> EmulatorPackage:
+    entry = table(value, "emulator package")
+    try:
+        host = HostPlatform(entry.get("host"))
+    except (TypeError, ValueError) as error:
+        raise InventoryError(
+            f"invalid embedded ISA emulator package host {entry.get('host')!r}"
+        ) from error
+    return EmulatorPackage(
+        host=host,
+        source_url=https_url(entry.get("source_url")),
+        source_sha256=sha256(entry.get("source_sha256")),
+    )
 
 
 def sha256(value: object) -> str:

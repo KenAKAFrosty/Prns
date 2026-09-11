@@ -3,7 +3,12 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from validation.hardening.embedded_isa.contract import ROOT, Architecture
+from validation.hardening.embedded_isa.contract import (
+    ROOT,
+    Architecture,
+    HostedPackages,
+    SourceArchive,
+)
 from validation.hardening.embedded_isa.error import EmbeddedIsaError
 from validation.hardening.embedded_isa.process import ProcessObservation
 
@@ -35,19 +40,36 @@ def clear(architecture: Architecture, artifact_directory: Path) -> None:
 def render_log(
     architecture: Architecture,
     observations: tuple[ProcessObservation, ...],
-    cargo_version: str,
-    rustc_version: str,
+    host_cargo_version: str,
+    host_rustc_version: str,
+    target_cargo_version: str,
+    target_rustc_version: str,
+    linker_identity: str,
     qemu_version: str,
 ) -> bytes:
     lines = [
         f"architecture={architecture.identifier}",
         f"runner={architecture.runner}",
-        f"cargo={cargo_version}",
-        f"rustc={rustc_version}",
+        f"host-cargo={host_cargo_version}",
+        f"host-rustc={host_rustc_version}",
+        f"target-cargo={target_cargo_version}",
+        f"target-rustc={target_rustc_version}",
+        f"target-linker={linker_identity}",
         f"qemu={qemu_version}",
-        f"emulator-source={architecture.emulator.source_url}",
-        f"emulator-source-sha256={architecture.emulator.source_sha256}",
     ]
+    match architecture.emulator.acquisition:
+        case SourceArchive(source_url=url, source_sha256=checksum):
+            lines.extend(
+                (f"emulator-source={url}", f"emulator-source-sha256={checksum}")
+            )
+        case HostedPackages(packages=packages):
+            for package in packages:
+                lines.extend(
+                    (
+                        f"emulator-package-{package.host.value}={package.source_url}",
+                        f"emulator-package-{package.host.value}-sha256={package.source_sha256}",
+                    )
+                )
     body = bytearray(("\n".join(lines) + "\n").encode())
     for observation in observations:
         body.extend(f"\ncommand={' '.join(observation.command)}\n".encode())
