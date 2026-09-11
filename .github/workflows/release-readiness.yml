@@ -47,8 +47,36 @@ jobs:
           python3 validation/run.py verify
           echo "matrix=$(python3 validation/run.py matrix --tier release)" >> "$GITHUB_OUTPUT"
 
-  qualify:
+  embedded-emulators:
     needs: inventory
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Install emulator build and runtime dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential libgcrypt20 libglib2.0-dev libpixman-1-dev libsdl2-2.0-0 libslirp0 ninja-build pkg-config python3-setuptools python3-venv xz-utils
+      - name: Prepare the complete contract-pinned emulator set
+        run: |
+          python3 validation/run.py prepare-embedded-assurance \
+            --root "${RUNNER_TEMP}/prns-embedded-assurance" \
+            --suite embedded-isa-thumbv7em \
+            --suite embedded-isa-riscv32imac \
+            --suite embedded-isa-xtensa-esp32s3 \
+            --suite embedded-platform-nrf52840
+          tar -cJf "${RUNNER_TEMP}/prns-embedded-assurance.tar.xz" \
+            -C "${RUNNER_TEMP}/prns-embedded-assurance" builds packages
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-embedded-emulators-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 30
+          path: ${{ runner.temp }}/prns-embedded-assurance.tar.xz
+
+  qualify:
+    needs: [inventory, embedded-emulators]
     name: ${{ matrix.id }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 260
@@ -84,7 +112,7 @@ jobs:
           nightly="$(python3 validation/run.py toolchain nightly)"
           rustup toolchain install "$nightly" --profile minimal
       - name: Prepare embedded targets
-        if: matrix.group == 'embedded' || matrix.group == 'esp'
+        if: matrix.group == 'embedded' || matrix.group == 'esp' || matrix.group == 'embedded-isa' || matrix.group == 'embedded-platform'
         run: rustup target add --toolchain 1.96.0 riscv32imac-unknown-none-elf thumbv7em-none-eabihf
       - name: Prepare Linux native development packages
         if: runner.os == 'Linux' && matrix.platform != 'android-device'
@@ -92,6 +120,9 @@ jobs:
           packages=(libdbus-1-dev pkg-config)
           if [[ "${{ matrix.group }}" == linux-host ]]; then
             packages+=(libsdl2-dev)
+          fi
+          if [[ "${{ matrix.group }}" == embedded-isa || "${{ matrix.group }}" == embedded-platform ]]; then
+            packages+=(libgcrypt20 libglib2.0-0 libpixman-1-0 libsdl2-2.0-0 libslirp0)
           fi
           sudo apt-get update
           sudo apt-get install -y "${packages[@]}"
@@ -130,10 +161,29 @@ jobs:
         if: matrix.group == 'web' || matrix.group == 'esp'
         run: cargo binstall --locked --no-confirm --force dioxus-cli@0.7.5
       - name: Prepare exact ESP release toolchain
-        if: matrix.group == 'esp'
+        if: matrix.group == 'esp' || matrix.toolchain == 'esp'
         run: |
           ./tools/prns release toolchain esp install -- "${RUNNER_TEMP}/prns-esp-tools"
           rustup override set --path personal-hopspot/embedded/nrf52840 1.96.0
+      - name: Download exact embedded assurance emulators
+        if: matrix.group == 'embedded-isa' || matrix.group == 'embedded-platform'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: release-embedded-emulators-${{ github.run_id }}
+          path: ${{ runner.temp }}
+      - name: Restore exact embedded assurance emulators
+        if: matrix.group == 'embedded-isa' || matrix.group == 'embedded-platform'
+        run: |
+          mkdir -p "${RUNNER_TEMP}/prns-embedded-assurance"
+          tar -xJf "${RUNNER_TEMP}/prns-embedded-assurance.tar.xz" \
+            -C "${RUNNER_TEMP}/prns-embedded-assurance"
+      - name: Activate exact embedded assurance emulator
+        if: matrix.group == 'embedded-isa' || matrix.group == 'embedded-platform'
+        run: |
+          python3 validation/run.py prepare-embedded-assurance \
+            --root "${RUNNER_TEMP}/prns-embedded-assurance" \
+            --suite "${{ matrix.id }}"
+          echo "${RUNNER_TEMP}/prns-embedded-assurance/bin" >> "$GITHUB_PATH"
       - name: Prepare pinned stock RNS
         if: matrix.domain == 'oracles' || matrix.domain == 'interop'
         run: python3 validation/run.py prepare-oracles
@@ -162,10 +212,64 @@ jobs:
           if-no-files-found: error
           retention-days: 30
           path: validation-artifacts/**
+      - name: Upload embedded resource evidence
+        if: always() && (matrix.id == 'embedded-builds' || matrix.id == 'esp32-firmware-check')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-embedded-resources-${{ matrix.id }}-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            target/flash-artifacts/resources/configured/reports/*.json
+            target/flash-artifacts/resources/configured/work/*/linker.map
+            target/flash-artifacts/resources/configured/work/*/function-boundaries.json
+            target/flash-artifacts/resources/configured/work/*/stack-evidence.json
+
+  embedded-assurance:
+    if: always()
+    needs: [inventory, qualify]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.96.0
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: release-embedded-assurance
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: release-embedded-resources-*-${{ github.run_id }}
+          path: target/flash-artifacts/assurance/resources
+          merge-multiple: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: release-readiness-embedded-*-${{ github.run_id }}
+          path: target/flash-artifacts/assurance/proofs
+          merge-multiple: true
+      - name: Compose complete release embedded assurance
+        run: |
+          ./tools/prns build embedded assurance summarize \
+            --resources target/flash-artifacts/assurance/resources \
+            --proofs target/flash-artifacts/assurance/proofs \
+            --output target/flash-artifacts/assurance/matrix
+      - name: Publish embedded assurance matrix to the job summary
+        run: cat target/flash-artifacts/assurance/matrix/matrix.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-embedded-assurance-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 30
+          path: target/flash-artifacts/assurance/matrix/*
 
   aggregate:
     if: always()
-    needs: [inventory, qualify]
+    needs: [inventory, qualify, embedded-assurance]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:

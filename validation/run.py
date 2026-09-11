@@ -16,6 +16,7 @@ import signal
 import subprocess
 import sys
 import time
+from enum import Enum
 from pathlib import Path
 
 try:
@@ -64,6 +65,24 @@ MUTATION_TIME_PATTERN = re.compile(
 
 class ValidationError(RuntimeError):
     pass
+
+
+class SuiteEnforcement(Enum):
+    REQUIRED = "required"
+    ADVISORY = "advisory"
+
+
+VALID_ENFORCEMENT = {enforcement.value for enforcement in SuiteEnforcement}
+
+
+def suite_enforcement(suite: dict) -> SuiteEnforcement:
+    value = suite.get("enforcement", SuiteEnforcement.REQUIRED.value)
+    try:
+        return SuiteEnforcement(value)
+    except (TypeError, ValueError) as error:
+        raise ValidationError(
+            f"suite {suite.get('id', '<unknown>')} has invalid enforcement {value!r}"
+        ) from error
 
 
 def load_toml(path: Path) -> dict:
@@ -430,6 +449,9 @@ def validate_manifest(manifest: dict, check_tools: bool = False) -> list[str]:
             errors.append(f"{location} has invalid platform {suite.get('platform')!r}")
         if suite.get("toolchain") not in VALID_TOOLCHAINS:
             errors.append(f"{location} has invalid toolchain {suite.get('toolchain')!r}")
+        enforcement = suite.get("enforcement", "required")
+        if not isinstance(enforcement, str) or enforcement not in VALID_ENFORCEMENT:
+            errors.append(f"{location} has invalid enforcement {enforcement!r}")
         command = suite.get("command")
         if not isinstance(command, list) or not command or not all(
             isinstance(part, str) and part for part in command
@@ -677,7 +699,7 @@ def verification_report(manifest: dict, check_tools: bool) -> list[str]:
         "[verify] Suite policy: "
         f"{len(suites)} total suites ({tiers['pr']} pull-request, {tiers['release']} release, "
         f"{tiers['scheduled']} scheduled); IDs, tiers, platforms, toolchains, commands, "
-        "timeouts, and artifact paths are valid.",
+        "enforcement, timeouts, and artifact paths are valid.",
         "[verify] Declared inputs: "
         f"{len(inputs)} unique files/directories exist; {len(commands)} required command "
         "entrypoints are available.",
@@ -1012,6 +1034,9 @@ def run_suite(manifest: dict, suite: dict, expected_sha: str | None, fuzz_second
     sys.stdout.buffer.write(stdout)
     sys.stderr.buffer.write(stderr)
     print(f"VALIDATION_SUITE {suite['id']} {result['status']} {result['duration_seconds']}s")
+    if not passed and suite_enforcement(suite) is SuiteEnforcement.ADVISORY:
+        print(f"VALIDATION_ADVISORY {suite['id']} retained failed evidence")
+        return True
     return passed
 
 
@@ -1469,7 +1494,13 @@ def aggregate_mutation_results(
     return output, errors
 
 
-def aggregate(manifest: dict, expected_sha: str, tier: str, domain: str | None) -> Path:
+def aggregate(
+    manifest: dict,
+    expected_sha: str,
+    tier: str,
+    domain: str | None,
+    identifiers: list[str] | None = None,
+) -> Path:
     validate_expected_sha(expected_sha)
     registry_errors = validate_manifest(manifest)
     if registry_errors:
@@ -1481,7 +1512,7 @@ def aggregate(manifest: dict, expected_sha: str, tier: str, domain: str | None) 
     artifact_root = Path(os.environ.get("PRNS_VALIDATION_ARTIFACTS", ROOT / "validation-artifacts"))
     if not artifact_root.is_absolute():
         artifact_root = ROOT / artifact_root
-    required = selected_suites(manifest, [], domain, tier)
+    required = selected_suites(manifest, identifiers or [], domain, tier)
     scope = f"domain={domain}" if domain else "all registered domains"
     print(
         f"[aggregate] Requiring {len(required)} {tier}-tier suites from {scope} "
@@ -1499,7 +1530,10 @@ def aggregate(manifest: dict, expected_sha: str, tier: str, domain: str | None) 
         errors.extend(f"{suite['id']}: {error}" for error in evidence_errors(result))
         if result.get("suite") != suite["id"] or result.get("domain") != suite["domain"]:
             errors.append(f"{suite['id']} evidence identity does not match the registry")
-        if result.get("status") != "passed":
+        if (
+            result.get("status") != "passed"
+            and suite_enforcement(suite) is SuiteEnforcement.REQUIRED
+        ):
             errors.append(f"{suite['id']} did not pass")
         if result.get("commit") != expected_sha:
             errors.append(f"{suite['id']} is bound to {result.get('commit')}, expected {expected_sha}")
@@ -1578,6 +1612,7 @@ def build_parser() -> argparse.ArgumentParser:
     list_command.add_argument("--tier", choices=sorted(VALID_TIERS))
     list_command.add_argument("--platform", choices=["current", *sorted(VALID_PLATFORMS)])
     matrix = subcommands.add_parser("matrix")
+    matrix.add_argument("--suite", action="append", default=[])
     matrix.add_argument("--domain")
     matrix.add_argument("--tier", choices=sorted(VALID_TIERS))
     matrix.add_argument("--platform", choices=["current", *sorted(VALID_PLATFORMS)])
@@ -1591,6 +1626,9 @@ def build_parser() -> argparse.ArgumentParser:
     toolchain = subcommands.add_parser("toolchain")
     toolchain.add_argument("name", choices=["nightly"])
     subcommands.add_parser("prepare-oracles")
+    embedded = subcommands.add_parser("prepare-embedded-assurance")
+    embedded.add_argument("--root", type=Path, required=True)
+    embedded.add_argument("--suite", action="append", required=True)
     mutation = subcommands.add_parser("mutation-check")
     mutation.add_argument("--results", type=Path, required=True)
     mutation_shard = subcommands.add_parser("mutation-shard-check")
@@ -1599,6 +1637,7 @@ def build_parser() -> argparse.ArgumentParser:
     aggregate_command.add_argument("--expected-sha", required=True)
     aggregate_command.add_argument("--tier", choices=sorted(VALID_TIERS), default="release")
     aggregate_command.add_argument("--domain")
+    aggregate_command.add_argument("--suite", action="append", default=[])
     cleanup_command = subcommands.add_parser("cleanup")
     cleanup_command.add_argument("--apply", action="store_true")
     return parser
@@ -1617,7 +1656,11 @@ def main() -> int:
             print("VALIDATION_REGISTRY_OK")
         elif arguments.command in {"list", "matrix"}:
             suites = selected_suites(
-                manifest, [], arguments.domain, arguments.tier, arguments.platform
+                manifest,
+                arguments.suite if arguments.command == "matrix" else [],
+                arguments.domain,
+                arguments.tier,
+                arguments.platform,
             )
             if arguments.command == "matrix":
                 runners = set()
@@ -1645,7 +1688,9 @@ def main() -> int:
                     + "; columns include the exact registered command.",
                     file=sys.stderr,
                 )
-                print("id\tdomain\ttiers\tplatform\ttimeout_seconds\tcommand")
+                print(
+                    "id\tdomain\ttiers\tplatform\tenforcement\ttimeout_seconds\tcommand"
+                )
                 for suite in suites:
                     print(
                         "\t".join(
@@ -1654,6 +1699,7 @@ def main() -> int:
                                 suite["domain"],
                                 ",".join(suite["tiers"]),
                                 suite["platform"],
+                                suite_enforcement(suite).value,
                                 str(suite["timeout_seconds"]),
                                 " ".join(suite["command"]),
                             ]
@@ -1688,6 +1734,19 @@ def main() -> int:
             print(named_toolchain(manifest, arguments.name))
         elif arguments.command == "prepare-oracles":
             prepare_oracles(manifest)
+        elif arguments.command == "prepare-embedded-assurance":
+            from validation.hardening.embedded_readiness.prepare import (
+                PreparationError,
+                prepare,
+            )
+
+            try:
+                outcome = prepare(arguments.root, tuple(arguments.suite))
+            except PreparationError as error:
+                raise ValidationError(str(error)) from error
+            print(f"EMBEDDED_ASSURANCE_TOOLS_READY root={outcome.root}")
+            for executable in outcome.executables:
+                print(f"EMBEDDED_ASSURANCE_EXECUTABLE {executable}")
         elif arguments.command == "mutation-shard-check":
             payload = json.loads(arguments.results.read_text(encoding="utf-8"))
             errors = mutation_results_errors(payload, manifest["tools"]["cargo_mutants"])
@@ -1710,8 +1769,19 @@ def main() -> int:
                 "the sets match exactly and every acceptance is reviewed and unexpired."
             )
         elif arguments.command == "aggregate":
-            output = aggregate(manifest, arguments.expected_sha, arguments.tier, arguments.domain)
-            suites = selected_suites(manifest, [], arguments.domain, arguments.tier)
+            output = aggregate(
+                manifest,
+                arguments.expected_sha,
+                arguments.tier,
+                arguments.domain,
+                arguments.suite,
+            )
+            suites = selected_suites(
+                manifest,
+                arguments.suite,
+                arguments.domain,
+                arguments.tier,
+            )
             print(
                 f"VALIDATION_RELEASE_READY suites={len(suites)} commit={arguments.expected_sha}"
             )

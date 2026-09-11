@@ -31,6 +31,7 @@ jobs:
       oracles: ${{ steps.matrix.outputs.oracles }}
       interop: ${{ steps.matrix.outputs.interop }}
       hardening: ${{ steps.matrix.outputs.hardening }}
+      embedded_resources: ${{ steps.matrix.outputs.embedded_resources }}
       tier: ${{ steps.matrix.outputs.tier }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -45,6 +46,73 @@ jobs:
           echo "oracles=$(python3 validation/run.py matrix --domain oracles --tier "$VALIDATION_TIER")" >> "$GITHUB_OUTPUT"
           echo "interop=$(python3 validation/run.py matrix --domain interop --tier "$VALIDATION_TIER")" >> "$GITHUB_OUTPUT"
           echo "hardening=$(python3 validation/run.py matrix --domain hardening --tier "$VALIDATION_TIER")" >> "$GITHUB_OUTPUT"
+          echo "embedded_resources=$(python3 validation/run.py matrix --suite embedded-builds --suite esp32-firmware-check --tier "$VALIDATION_TIER")" >> "$GITHUB_OUTPUT"
+
+  embedded-emulators:
+    needs: inventory
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install emulator build and runtime dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential libgcrypt20 libglib2.0-dev libpixman-1-dev libsdl2-2.0-0 libslirp0 ninja-build pkg-config python3-setuptools python3-venv xz-utils
+      - name: Prepare the complete contract-pinned emulator set
+        run: |
+          python3 validation/run.py prepare-embedded-assurance \
+            --root "${RUNNER_TEMP}/prns-embedded-assurance" \
+            --suite embedded-isa-thumbv7em \
+            --suite embedded-isa-riscv32imac \
+            --suite embedded-isa-xtensa-esp32s3 \
+            --suite embedded-platform-nrf52840
+          tar -cJf "${RUNNER_TEMP}/prns-embedded-assurance.tar.xz" \
+            -C "${RUNNER_TEMP}/prns-embedded-assurance" builds packages
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: deep-assurance-runners-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 7
+          path: ${{ runner.temp }}/prns-embedded-assurance.tar.xz
+
+  embedded-resources:
+    needs: inventory
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix: ${{ fromJSON(needs.inventory.outputs.embedded_resources) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.96.0
+          components: llvm-tools-preview
+          targets: riscv32imac-unknown-none-elf,thumbv7em-none-eabihf
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: deep-resources-${{ matrix.id }}
+      - name: Install exact ESP compiler and tools
+        if: matrix.toolchain == 'esp'
+        run: ./tools/prns release toolchain esp install -- "${RUNNER_TEMP}/prns-esp-tools"
+      - run: python3 validation/run.py run --suite "${{ matrix.id }}" --expected-sha "$GITHUB_SHA"
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: deep-resource-${{ matrix.id }}-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            target/flash-artifacts/resources/configured/reports/*.json
+            target/flash-artifacts/resources/configured/work/*/linker.map
+            target/flash-artifacts/resources/configured/work/*/function-boundaries.json
+            target/flash-artifacts/resources/configured/work/*/stack-evidence.json
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: deep-${{ matrix.id }}-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 7
+          path: validation-artifacts/results
 
   kani:
     needs: inventory
@@ -145,9 +213,9 @@ jobs:
           retention-days: 7
 
   hardening:
-    needs: inventory
+    needs: [inventory, embedded-emulators]
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       max-parallel: 16
@@ -163,18 +231,100 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           shared-key: deep-${{ matrix.id }}
+      - name: Install embedded compiler targets
+        if: matrix.group == 'embedded-isa' || matrix.group == 'embedded-platform'
+        run: |
+          rustup toolchain install 1.96.0 --profile minimal
+          rustup target add --toolchain 1.96.0 riscv32imac-unknown-none-elf thumbv7em-none-eabihf
+      - name: Install embedded emulator runtime dependencies
+        if: matrix.group == 'embedded-isa' || matrix.group == 'embedded-platform'
+        run: sudo apt-get update && sudo apt-get install -y libgcrypt20 libglib2.0-0 libpixman-1-0 libsdl2-2.0-0 libslirp0
+      - name: Install exact ESP compiler and tools
+        if: matrix.toolchain == 'esp'
+        run: ./tools/prns release toolchain esp install -- "${RUNNER_TEMP}/prns-esp-tools"
+      - name: Restore exact embedded assurance emulators
+        if: matrix.group == 'embedded-isa' || matrix.group == 'embedded-platform'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: deep-assurance-runners-${{ github.run_id }}
+          path: ${{ runner.temp }}
+      - name: Extract exact embedded assurance emulators
+        if: matrix.group == 'embedded-isa' || matrix.group == 'embedded-platform'
+        run: |
+          mkdir -p "${RUNNER_TEMP}/prns-embedded-assurance"
+          tar -xJf "${RUNNER_TEMP}/prns-embedded-assurance.tar.xz" \
+            -C "${RUNNER_TEMP}/prns-embedded-assurance"
+      - name: Activate exact embedded assurance emulator
+        if: matrix.group == 'embedded-isa' || matrix.group == 'embedded-platform'
+        run: |
+          python3 validation/run.py prepare-embedded-assurance \
+            --root "${RUNNER_TEMP}/prns-embedded-assurance" \
+            --suite "${{ matrix.id }}"
+          echo "${RUNNER_TEMP}/prns-embedded-assurance/bin" >> "$GITHUB_PATH"
       - run: python3 validation/run.py run --suite "${{ matrix.id }}" --expected-sha "$GITHUB_SHA"
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: deep-${{ matrix.id }}-${{ github.run_id }}
-          path: validation-artifacts/results/${{ matrix.id }}/**
+          path: validation-artifacts/results
           retention-days: 7
+
+  embedded-assurance:
+    if: always()
+    needs: [inventory, embedded-resources, hardening]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.96.0
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: deep-embedded-assurance
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: deep-resource-*-${{ github.run_id }}
+          path: target/flash-artifacts/assurance/resources
+          merge-multiple: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: deep-embedded-*-${{ github.run_id }}
+          path: validation-artifacts/results
+          merge-multiple: true
+      - name: Require every embedded proof attempt
+        env:
+          VALIDATION_TIER: ${{ needs.inventory.outputs.tier }}
+        run: |
+          python3 validation/run.py aggregate \
+            --tier "$VALIDATION_TIER" \
+            --domain hardening \
+            --suite embedded-isa-thumbv7em \
+            --suite embedded-isa-riscv32imac \
+            --suite embedded-isa-xtensa-esp32s3 \
+            --suite embedded-miri-full \
+            --suite embedded-platform-nrf52840 \
+            --suite embedded-platform-esp32s3 \
+            --expected-sha "$GITHUB_SHA"
+      - name: Compose complete scheduled embedded assurance
+        run: |
+          ./tools/prns build embedded assurance summarize \
+            --resources target/flash-artifacts/assurance/resources \
+            --proofs validation-artifacts/results \
+            --output target/flash-artifacts/assurance/matrix
+      - name: Publish embedded assurance matrix to the job summary
+        run: cat target/flash-artifacts/assurance/matrix/matrix.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: deep-embedded-assurance-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 7
+          path: target/flash-artifacts/assurance/matrix/*
 
   deep-validation:
     name: Deep validation
     if: always()
-    needs: [kani, fuzz, oracles, interop, hardening]
+    needs: [kani, fuzz, oracles, interop, hardening, embedded-resources, embedded-assurance]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     env:
@@ -183,8 +333,10 @@ jobs:
       ORACLES_RESULT: ${{ needs.oracles.result }}
       INTEROP_RESULT: ${{ needs.interop.result }}
       HARDENING_RESULT: ${{ needs.hardening.result }}
+      EMBEDDED_RESOURCES_RESULT: ${{ needs.embedded-resources.result }}
+      EMBEDDED_ASSURANCE_RESULT: ${{ needs.embedded-assurance.result }}
     steps:
       - run: |
-          for result in "$KANI_RESULT" "$FUZZ_RESULT" "$ORACLES_RESULT" "$INTEROP_RESULT" "$HARDENING_RESULT"; do
+          for result in "$KANI_RESULT" "$FUZZ_RESULT" "$ORACLES_RESULT" "$INTEROP_RESULT" "$HARDENING_RESULT" "$EMBEDDED_RESOURCES_RESULT" "$EMBEDDED_ASSURANCE_RESULT"; do
             test "$result" = success
           done

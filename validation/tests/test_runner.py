@@ -169,9 +169,19 @@ class RegistryTests(unittest.TestCase):
         manifest = copy.deepcopy(self.manifest)
         manifest["suite"][0]["tiers"] = ["eventually"]
         manifest["suite"][0]["platform"] = "templeos"
+        manifest["suite"][0]["enforcement"] = "hopeful"
         errors = runner.validate_manifest(manifest)
         self.assertTrue(any("tiers must contain" in error for error in errors))
         self.assertTrue(any("invalid platform" in error for error in errors))
+        self.assertTrue(any("invalid enforcement" in error for error in errors))
+
+    def test_non_string_enforcement_is_rejected(self) -> None:
+        manifest = copy.deepcopy(self.manifest)
+        manifest["suite"][0]["enforcement"] = []
+        errors = runner.validate_manifest(manifest)
+        self.assertTrue(any("invalid enforcement" in error for error in errors))
+        with self.assertRaisesRegex(runner.ValidationError, "invalid enforcement"):
+            runner.suite_enforcement(manifest["suite"][0])
 
     def test_missing_input_is_rejected(self) -> None:
         manifest = copy.deepcopy(self.manifest)
@@ -441,6 +451,92 @@ expires = "yesterday"
         self.assertEqual(runner.evidence_errors(result), [])
         del result["finished_at"]
         self.assertTrue(any("missing fields" in error for error in runner.evidence_errors(result)))
+
+    def test_advisory_failure_is_retained_without_failing_the_lane(self) -> None:
+        suite = {
+            "id": "advisory-self-test",
+            "domain": "hardening",
+            "group": "pilot",
+            "tiers": ["release"],
+            "platform": "any",
+            "toolchain": "python",
+            "enforcement": "advisory",
+            "timeout_seconds": 10,
+            "command": [sys.executable, "-c", "raise SystemExit(7)"],
+            "inputs": ["validation/run.py"],
+            "artifacts": "validation-artifacts/results/advisory-self-test",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            with mock.patch.dict(
+                os.environ, {"PRNS_VALIDATION_ARTIFACTS": directory}
+            ):
+                self.assertTrue(runner.run_suite(self.manifest, suite, None, 1))
+            result = json.loads(
+                (
+                    Path(directory)
+                    / "results/advisory-self-test/result.json"
+                ).read_text(encoding="utf-8")
+            )
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["exit_code"], 7)
+
+    def test_release_aggregate_accepts_observed_advisory_failure(self) -> None:
+        suite = {
+            "id": "advisory-self-test",
+            "domain": "hardening",
+            "group": "pilot",
+            "tiers": ["release"],
+            "platform": "any",
+            "toolchain": "python",
+            "enforcement": "advisory",
+            "timeout_seconds": 10,
+            "command": [sys.executable, "-c", "raise SystemExit(7)"],
+            "inputs": ["validation/run.py"],
+            "artifacts": "validation-artifacts/results/advisory-self-test",
+        }
+        evidence = {
+            "schema": 1,
+            "suite": suite["id"],
+            "domain": suite["domain"],
+            "commit": EXACT_SHA,
+            "platform": "linux",
+            "required_platform": "any",
+            "worktree_clean": True,
+            "command": suite["command"],
+            "tool_versions": {"python": "Python 3.14.0"},
+            "started_at": "2026-07-26T00:00:00+00:00",
+            "finished_at": "2026-07-26T00:00:01+00:00",
+            "duration_seconds": 1,
+            "status": "failed",
+            "exit_code": 7,
+            "timed_out": False,
+            "spawn_error": None,
+        }
+        manifest = {"suite": [suite]}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            result = root / "results/advisory-self-test/result.json"
+            result.parent.mkdir(parents=True)
+            result.write_text(json.dumps(evidence), encoding="utf-8")
+            with (
+                mock.patch.object(runner, "validate_manifest", return_value=[]),
+                mock.patch.object(runner, "git_head", return_value=EXACT_SHA),
+                mock.patch.object(
+                    runner, "tracked_worktree_is_clean", return_value=True
+                ),
+                mock.patch.dict(
+                    os.environ, {"PRNS_VALIDATION_ARTIFACTS": str(root)}
+                ),
+            ):
+                output = runner.aggregate(
+                    manifest, EXACT_SHA, "release", "hardening"
+                )
+            aggregate = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(
+            aggregate["results"]["advisory-self-test"]["status"],
+            "failed",
+        )
 
     def test_suite_receives_its_owned_artifact_paths(self) -> None:
         script = (

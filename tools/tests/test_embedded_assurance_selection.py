@@ -171,6 +171,18 @@ class EmbeddedAssuranceSelectionTests(unittest.TestCase):
         )
         self.assertFalse(selected.required(selection.Lane.MIRI))
 
+        selected = selection.selection_for_paths(
+            {"validation/hardening/embedded_readiness/prepare.py"}
+        )
+        self.assertFalse(selected.required(selection.Lane.RESOURCES))
+        self.assertFalse(selected.required(selection.Lane.MIRI))
+        self.assertTrue(selected.required(selection.Lane.ISA))
+        self.assertTrue(selected.required(selection.Lane.PILOTS))
+
+        selected = selection.selection_for_paths({"validation/run.py"})
+        for lane in selection.Lane:
+            self.assertTrue(selected.required(lane))
+
     def test_unrelated_surfaces_do_not_select_resource_linking(self) -> None:
         self.assertEqual(
             selection.selection_for_paths(

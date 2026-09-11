@@ -10,6 +10,17 @@ The doctor checks the current requirements from the assurance inventories: upstr
 
 The authoritative versions and targets remain in `validation/hardening/embedded-isa.toml`, `validation/hardening/embedded-platform.toml`, `validation/manifest.toml`, and `tools/release/release-esp-toolchain-identity.sh`. The doctor consumes those files rather than maintaining another compatibility table.
 
+CI stages emulator builds and packages into an explicit disposable root through the validation control plane. The same path is available when reproducing a runner locally:
+
+```console
+python3 validation/run.py prepare-embedded-assurance \
+  --root target/embedded-assurance-tools \
+  --suite embedded-isa-thumbv7em
+export PATH="$PWD/target/embedded-assurance-tools/bin:$PATH"
+```
+
+The preparation command derives its download, checksum, build, identity, and model requirements from the same inventories checked by the doctor. It refuses unknown suites, unsafe archive paths, checksum mismatches, unexpected tool identities, and broad installation roots. A host package format that cannot be prepared automatically remains an explicit doctor-guided setup rather than silently falling back to a different emulator.
+
 ## Run the quick evidence
 
 Check generated memory contracts first, then run the affected executable proofs:

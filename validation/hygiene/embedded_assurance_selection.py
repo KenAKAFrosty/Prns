@@ -23,6 +23,7 @@ COMMON_FILES = frozenset(
         "tools/prns",
         "tools/tasks.toml",
         "tools/build/embedded-assurance.sh",
+        "validation/run.py",
         "validation/hygiene/embedded_assurance_selection.py",
         "validation/manifest.toml",
     }
@@ -57,6 +58,7 @@ ISA_FILES = COMMON_FILES | frozenset(
         "validation/hardening/embedded-isa.toml",
         "validation/hardening/embedded_architectures.py",
         "validation/hardening/embedded_readiness/contract.py",
+        "validation/hardening/embedded_readiness/prepare.py",
     }
 )
 PILOT_FILES = COMMON_FILES | frozenset(
@@ -72,6 +74,7 @@ PILOT_FILES = COMMON_FILES | frozenset(
         "validation/hardening/embedded_host.py",
         "validation/hardening/embedded_isa/emulator.py",
         "validation/hardening/embedded_isa/toolchain.py",
+        "validation/hardening/embedded_readiness/prepare.py",
     }
 )
 RESOURCE_TREES = (

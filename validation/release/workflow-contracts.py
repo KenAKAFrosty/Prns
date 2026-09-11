@@ -397,7 +397,9 @@ def validate() -> list[str]:
         )
     embedded_target_step = re.search(
         r"name: Prepare embedded targets\n"
-        r"        if: matrix\.group == 'embedded' \|\| matrix\.group == 'esp'\n"
+        r"        if: matrix\.group == 'embedded' \|\| matrix\.group == 'esp' "
+        r"\|\| matrix\.group == 'embedded-isa' \|\| "
+        r"matrix\.group == 'embedded-platform'\n"
         r"        run: rustup target add --toolchain 1\.96\.0 "
         r"riscv32imac-unknown-none-elf "
         r"thumbv7em-none-eabihf",
@@ -407,6 +409,22 @@ def validate() -> list[str]:
         errors.append(
             "release-readiness.yml does not provision embedded Rust targets for ESP suites"
         )
+    for assurance_gate in (
+        "embedded-emulators:",
+        "prepare-embedded-assurance",
+        "release-embedded-emulators-${{ github.run_id }}",
+        "matrix.group == 'embedded-isa' || matrix.group == 'embedded-platform'",
+        "matrix.group == 'esp' || matrix.toolchain == 'esp'",
+        "release-embedded-resources-${{ matrix.id }}-${{ github.run_id }}",
+        "release-readiness-embedded-*-${{ github.run_id }}",
+        "release-embedded-assurance-${{ github.sha }}",
+        "needs: [inventory, qualify, embedded-assurance]",
+    ):
+        if assurance_gate not in readiness:
+            errors.append(
+                "release-readiness.yml is missing embedded assurance gate "
+                f"{assurance_gate!r}"
+            )
     for mutation_fragment in (
         "matrix.domain == 'mutation'",
         "cargo-mutants",
@@ -505,11 +523,19 @@ def validate() -> list[str]:
         "embedded-resources-esp",
         "embedded-resources-matrix",
         "resources summarize",
+        "embedded-assurance-miri",
+        "embedded-assurance-isa",
+        "embedded-assurance-matrix",
+        "prepare-embedded-assurance",
+        "assurance summarize",
         "GITHUB_STEP_SUMMARY",
         "EMBEDDED_SELECTION_RESULT: ${{ needs.embedded-resource-selection.result }}",
         "EMBEDDED_REQUIRED: ${{ needs.embedded-resource-selection.outputs.required }}",
         "ESP32_RESULT: ${{ needs.esp32-firmware.result }}",
         "EMBEDDED_SUMMARY_RESULT: ${{ needs.embedded-resource-summary.result }}",
+        "EMBEDDED_MIRI_RESULT: ${{ needs.embedded-miri.result }}",
+        "EMBEDDED_ISA_RESULT: ${{ needs.embedded-isa.result }}",
+        "EMBEDDED_ASSURANCE_RESULT: ${{ needs.embedded-assurance-summary.result }}",
     ):
         if product_matrix_gate not in ci:
             errors.append(
@@ -556,11 +582,65 @@ def validate() -> list[str]:
     ):
         if summary_gate not in summary_job:
             errors.append(f"embedded resource summary is missing gate {summary_gate!r}")
+    miri_job = ci_jobs.get("embedded-miri", "")
+    for miri_gate in (
+        "needs.embedded-resource-selection.outputs.miri_required == 'true'",
+        "validation/run.py toolchain nightly",
+        "run --suite embedded-miri-quick",
+        "name: embedded-assurance-miri",
+    ):
+        if miri_gate not in miri_job:
+            errors.append(f"embedded Miri CI is missing gate {miri_gate!r}")
+    isa_job = ci_jobs.get("embedded-isa", "")
+    for isa_gate in (
+        "needs.embedded-resource-selection.outputs.isa_required == 'true'",
+        "prepare-embedded-assurance",
+        "--suite embedded-isa-thumbv7em",
+        "--suite embedded-isa-riscv32imac",
+        "--suite embedded-isa-xtensa-esp32s3",
+        "name: embedded-assurance-isa",
+    ):
+        if isa_gate not in isa_job:
+            errors.append(f"embedded ISA CI is missing gate {isa_gate!r}")
+    assurance_summary = ci_jobs.get("embedded-assurance-summary", "")
+    for dependency in (
+        "embedded-resource-selection",
+        "no-std-embedded",
+        "esp32-firmware",
+        "embedded-miri",
+        "embedded-isa",
+    ):
+        if f"- {dependency}" not in assurance_summary:
+            errors.append(f"embedded assurance summary does not depend on {dependency}")
+    for assurance_gate in (
+        "outputs.resources_required == 'true'",
+        "outputs.miri_required == 'true'",
+        "outputs.isa_required == 'true'",
+        "--resources target/flash-artifacts/assurance/resources",
+        "--proofs target/flash-artifacts/assurance/proofs",
+        'matrix/matrix.md >> "$GITHUB_STEP_SUMMARY"',
+        "name: embedded-assurance-matrix",
+        "if-no-files-found: error",
+    ):
+        if assurance_gate not in assurance_summary:
+            errors.append(
+                f"embedded assurance summary is missing gate {assurance_gate!r}"
+            )
+    for resource_job_name in ("no-std-embedded", "esp32-firmware"):
+        resource_job = ci_jobs.get(resource_job_name, "")
+        for evidence in ("function-boundaries.json", "stack-evidence.json"):
+            if evidence not in resource_job:
+                errors.append(
+                    f"ci.yml {resource_job_name} does not upload {evidence}"
+                )
     release_critical = ci_jobs.get("release-critical", "")
     for result_name, successful_result in (
         ("nRF", 'test "$EMBEDDED_RESULT" = "success"'),
         ("ESP", 'test "$ESP32_RESULT" = "success"'),
         ("summary", 'test "$EMBEDDED_SUMMARY_RESULT" = "success"'),
+        ("Miri", 'test "$EMBEDDED_MIRI_RESULT" = "success"'),
+        ("ISA", 'test "$EMBEDDED_ISA_RESULT" = "success"'),
+        ("assurance", 'test "$EMBEDDED_ASSURANCE_RESULT" = "success"'),
     ):
         if successful_result not in release_critical:
             errors.append(f"release-critical does not require a successful {result_name} result")
@@ -568,6 +648,9 @@ def validate() -> list[str]:
         ("nRF", 'test "$EMBEDDED_RESULT" = "skipped"'),
         ("ESP", 'test "$ESP32_RESULT" = "skipped"'),
         ("summary", 'test "$EMBEDDED_SUMMARY_RESULT" = "skipped"'),
+        ("Miri", 'test "$EMBEDDED_MIRI_RESULT" = "skipped"'),
+        ("ISA", 'test "$EMBEDDED_ISA_RESULT" = "skipped"'),
+        ("assurance", 'test "$EMBEDDED_ASSURANCE_RESULT" = "skipped"'),
     ):
         if skipped_result not in release_critical:
             errors.append(
@@ -604,6 +687,18 @@ def validate() -> list[str]:
         'cron: "17 9 1 * *"',
         "group: ${{ github.workflow }}",
         "cancel-in-progress: false",
+        "embedded_resources: ${{ steps.matrix.outputs.embedded_resources }}",
+        "--suite embedded-builds --suite esp32-firmware-check",
+        "embedded-emulators:",
+        "prepare-embedded-assurance",
+        "deep-assurance-runners-${{ github.run_id }}",
+        "embedded-resources:",
+        "deep-resource-${{ matrix.id }}-${{ github.run_id }}",
+        "embedded-assurance:",
+        "Require every embedded proof attempt",
+        "--suite embedded-platform-esp32s3",
+        "deep-embedded-assurance-${{ github.sha }}",
+        "EMBEDDED_ASSURANCE_RESULT: ${{ needs.embedded-assurance.result }}",
     ):
         if resource_gate not in deep:
             errors.append(f"deep-validation.yml is missing resource gate {resource_gate!r}")
@@ -617,6 +712,23 @@ def validate() -> list[str]:
                 "deep-validation.yml must leave mutation analysis to mutation-audit.yml: "
                 f"{mutation_fragment!r}"
             )
+
+    manifest_document = (ROOT / "validation" / "manifest.toml").read_text(
+        encoding="utf-8"
+    )
+    for pilot in ("embedded-platform-nrf52840", "embedded-platform-esp32s3"):
+        pilot_block = re.search(
+            rf'(?ms)^\[\[suite\]\]\nid = "{re.escape(pilot)}"\n(.*?)(?=^\[\[suite\]\]|\Z)',
+            manifest_document,
+        )
+        if pilot_block is None or 'enforcement = "advisory"' not in pilot_block.group(1):
+            errors.append(f"{pilot} is not explicitly advisory")
+    esp_resources = re.search(
+        r'(?ms)^\[\[suite\]\]\nid = "esp32-firmware-check"\n(.*?)(?=^\[\[suite\]\]|\Z)',
+        manifest_document,
+    )
+    if esp_resources is None or 'tiers = ["pr", "release", "scheduled"]' not in esp_resources.group(1):
+        errors.append("ESP resource evidence does not run in every assurance tier")
 
     mutation_audit = (
         ROOT / ".github" / "workflows" / "mutation-audit.yml"

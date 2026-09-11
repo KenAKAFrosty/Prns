@@ -369,6 +369,7 @@ jobs:
             target/flash-artifacts/resources/configured/reports/*.json
             target/flash-artifacts/resources/configured/work/*/linker.map
             target/flash-artifacts/resources/configured/work/*/function-boundaries.json
+            target/flash-artifacts/resources/configured/work/*/stack-evidence.json
 
   esp32-firmware:
     needs: embedded-resource-selection
@@ -403,6 +404,85 @@ jobs:
             target/flash-artifacts/resources/configured/reports/*.json
             target/flash-artifacts/resources/configured/work/*/linker.map
             target/flash-artifacts/resources/configured/work/*/function-boundaries.json
+            target/flash-artifacts/resources/configured/work/*/stack-evidence.json
+
+  embedded-miri:
+    needs: embedded-resource-selection
+    if: needs.embedded-resource-selection.outputs.miri_required == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          submodules: false
+      - id: toolchain
+        run: echo "nightly=$(python3 validation/run.py toolchain nightly)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: ${{ steps.toolchain.outputs.nightly }}
+          components: miri,rust-src
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: embedded-miri-quick
+      - name: execute affected embedded Rust under Miri
+        run: python3 validation/run.py run --suite embedded-miri-quick --expected-sha "$GITHUB_SHA"
+      - name: upload embedded Miri evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: embedded-assurance-miri
+          retention-days: 7
+          if-no-files-found: warn
+          path: validation-artifacts/results/embedded-miri-quick/**
+
+  embedded-isa:
+    needs: embedded-resource-selection
+    if: needs.embedded-resource-selection.outputs.isa_required == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          submodules: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.96.0
+          targets: riscv32imac-unknown-none-elf,thumbv7em-none-eabihf
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: embedded-target-isa
+      - name: install emulator build and runtime dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential libgcrypt20 libglib2.0-dev libpixman-1-dev libsdl2-2.0-0 libslirp0 ninja-build pkg-config python3-setuptools python3-venv xz-utils
+      - name: install checksum-pinned ESP compiler and tools
+        run: ./tools/prns release toolchain esp install -- "${RUNNER_TEMP}/prns-esp-tools"
+      - name: prepare contract-pinned target-ISA emulators
+        run: |
+          python3 validation/run.py prepare-embedded-assurance \
+            --root "${RUNNER_TEMP}/prns-embedded-assurance" \
+            --suite embedded-isa-thumbv7em \
+            --suite embedded-isa-riscv32imac \
+            --suite embedded-isa-xtensa-esp32s3
+          echo "${RUNNER_TEMP}/prns-embedded-assurance/bin" >> "$GITHUB_PATH"
+      - name: execute shared scenarios on every production instruction architecture
+        run: |
+          python3 validation/run.py run \
+            --suite embedded-isa-thumbv7em \
+            --suite embedded-isa-riscv32imac \
+            --suite embedded-isa-xtensa-esp32s3 \
+            --expected-sha "$GITHUB_SHA"
+      - name: upload target-ISA evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: embedded-assurance-isa
+          retention-days: 7
+          if-no-files-found: warn
+          path: |
+            validation-artifacts/results/embedded-isa-thumbv7em/**
+            validation-artifacts/results/embedded-isa-riscv32imac/**
+            validation-artifacts/results/embedded-isa-xtensa-esp32s3/**
 
   embedded-resource-summary:
     needs:
@@ -449,6 +529,67 @@ jobs:
             target/flash-artifacts/resources/matrix/*
             target/flash-artifacts/resources/fragments/**/reports/*.json
             target/flash-artifacts/resources/fragments/**/work/*/linker.map
+            target/flash-artifacts/resources/fragments/**/work/*/function-boundaries.json
+            target/flash-artifacts/resources/fragments/**/work/*/stack-evidence.json
+
+  embedded-assurance-summary:
+    needs:
+      - embedded-resource-selection
+      - no-std-embedded
+      - esp32-firmware
+      - embedded-miri
+      - embedded-isa
+    if: >-
+      always() &&
+      needs.embedded-resource-selection.result == 'success' &&
+      needs.embedded-resource-selection.outputs.resources_required == 'true' &&
+      needs.embedded-resource-selection.outputs.miri_required == 'true' &&
+      needs.embedded-resource-selection.outputs.isa_required == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          submodules: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.96.0
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: embedded-assurance-summary
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: embedded-resources-nrf52840
+          path: target/flash-artifacts/assurance/resources/nrf52840
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: embedded-resources-esp
+          path: target/flash-artifacts/assurance/resources/esp
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: embedded-assurance-miri
+          path: target/flash-artifacts/assurance/proofs/embedded-miri-quick
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: embedded-assurance-isa
+          path: target/flash-artifacts/assurance/proofs/embedded-isa
+      - name: compose the complete affected embedded assurance matrix
+        run: |
+          ./tools/prns build embedded assurance summarize \
+            --resources target/flash-artifacts/assurance/resources \
+            --proofs target/flash-artifacts/assurance/proofs \
+            --output target/flash-artifacts/assurance/matrix
+      - name: publish embedded assurance matrix to the job summary
+        run: cat target/flash-artifacts/assurance/matrix/matrix.md >> "$GITHUB_STEP_SUMMARY"
+      - name: upload combined embedded assurance evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: embedded-assurance-matrix
+          retention-days: 7
+          if-no-files-found: error
+          path: target/flash-artifacts/assurance/matrix/*
 
   android-service:
     # Android is now more than a foreground Activity shell: the Hopspot app packages a foreground
@@ -679,6 +820,9 @@ jobs:
       - no-std-embedded
       - esp32-firmware
       - embedded-resource-summary
+      - embedded-miri
+      - embedded-isa
+      - embedded-assurance-summary
       - android-service
       - macos-ble
       - windows-desktop
@@ -697,9 +841,15 @@ jobs:
       MSRV_RESULT: ${{ needs.msrv.result }}
       EMBEDDED_SELECTION_RESULT: ${{ needs.embedded-resource-selection.result }}
       EMBEDDED_REQUIRED: ${{ needs.embedded-resource-selection.outputs.required }}
+      EMBEDDED_MIRI_REQUIRED: ${{ needs.embedded-resource-selection.outputs.miri_required }}
+      EMBEDDED_ISA_REQUIRED: ${{ needs.embedded-resource-selection.outputs.isa_required }}
+      EMBEDDED_ASSURANCE_REQUIRED: ${{ needs.embedded-resource-selection.outputs.resources_required == 'true' && needs.embedded-resource-selection.outputs.miri_required == 'true' && needs.embedded-resource-selection.outputs.isa_required == 'true' }}
       EMBEDDED_RESULT: ${{ needs.no-std-embedded.result }}
       ESP32_RESULT: ${{ needs.esp32-firmware.result }}
       EMBEDDED_SUMMARY_RESULT: ${{ needs.embedded-resource-summary.result }}
+      EMBEDDED_MIRI_RESULT: ${{ needs.embedded-miri.result }}
+      EMBEDDED_ISA_RESULT: ${{ needs.embedded-isa.result }}
+      EMBEDDED_ASSURANCE_RESULT: ${{ needs.embedded-assurance-summary.result }}
       ANDROID_RESULT: ${{ needs.android-service.result }}
       APPLE_RESULT: ${{ needs.macos-ble.result }}
       WINDOWS_RESULT: ${{ needs.windows-desktop.result }}
@@ -734,4 +884,22 @@ jobs:
             test "$EMBEDDED_RESULT" = "skipped"
             test "$ESP32_RESULT" = "skipped"
             test "$EMBEDDED_SUMMARY_RESULT" = "skipped"
+          fi
+          if [ "$EMBEDDED_MIRI_REQUIRED" = "true" ]; then
+            test "$EMBEDDED_MIRI_RESULT" = "success"
+          else
+            test "$EMBEDDED_MIRI_REQUIRED" = "false"
+            test "$EMBEDDED_MIRI_RESULT" = "skipped"
+          fi
+          if [ "$EMBEDDED_ISA_REQUIRED" = "true" ]; then
+            test "$EMBEDDED_ISA_RESULT" = "success"
+          else
+            test "$EMBEDDED_ISA_REQUIRED" = "false"
+            test "$EMBEDDED_ISA_RESULT" = "skipped"
+          fi
+          if [ "$EMBEDDED_ASSURANCE_REQUIRED" = "true" ]; then
+            test "$EMBEDDED_ASSURANCE_RESULT" = "success"
+          else
+            test "$EMBEDDED_ASSURANCE_REQUIRED" = "false"
+            test "$EMBEDDED_ASSURANCE_RESULT" = "skipped"
           fi
