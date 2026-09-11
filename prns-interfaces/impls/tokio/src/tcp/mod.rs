@@ -17,4 +17,4 @@ pub use server::{TcpServer, TcpServerConnection, TcpServerStatus};
 #[cfg(feature = "i2p")]
 pub(crate) use connection::tune_i2p;
 #[cfg(feature = "tcp")]
-pub(crate) use connection::{connect, tune_for_tunnel};
+pub(crate) use connection::{connect, tune_for_tunnel, write_progress_timeout};

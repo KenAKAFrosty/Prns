@@ -23,7 +23,7 @@ use crate::wire::{WireContext, WirePacketHeader};
 
 use super::indexed_rows::IndexedRows;
 use super::TokioGrantProducer;
-use pending::{EgressOrigin, PendingEgressQueue};
+use pending::PendingEgressQueue;
 
 mod pending;
 
@@ -76,6 +76,7 @@ impl From<std::vec::Vec<InterfaceIfac>> for InterfaceIfacs {
 pub struct Egress {
     lanes: IndexedRows<EgressLane>,
     pending_frames: usize,
+    pending_cursor: usize,
 
     #[cfg(feature = "runtime-metrics")]
     metrics: EgressMetricsSnapshot,
@@ -170,40 +171,26 @@ impl Egress {
         Self {
             lanes: lanes.into(),
             pending_frames: 0,
+            pending_cursor: 0,
             #[cfg(feature = "runtime-metrics")]
             metrics,
         }
     }
 
     pub(super) fn enqueue(&mut self, target: InterfaceId, bytes: &[u8]) -> EgressEnqueueOutcome {
-        self.enqueue_with_origin(target, bytes, egress_queue(bytes), EgressOrigin::Internal)
+        self.enqueue_as(target, bytes, egress_queue(bytes))
     }
 
-    fn enqueue_from_ingress(
-        &mut self,
-        source: InterfaceId,
-        target: InterfaceId,
-        bytes: &[u8],
-    ) -> EgressEnqueueOutcome {
-        self.enqueue_with_origin(
-            target,
-            bytes,
-            egress_queue(bytes),
-            EgressOrigin::Ingress(source),
-        )
-    }
-
-    fn enqueue_with_origin(
+    fn enqueue_as(
         &mut self,
         target: InterfaceId,
         bytes: &[u8],
         queue: EgressQueue,
-        origin: EgressOrigin,
     ) -> EgressEnqueueOutcome {
         let outcome = match self.try_enqueue_as(target, bytes, queue) {
             EgressTryEnqueueOutcome::Enqueued => EgressEnqueueOutcome::Enqueued,
             EgressTryEnqueueOutcome::Unavailable => EgressEnqueueOutcome::Unavailable,
-            EgressTryEnqueueOutcome::LaneFull(index) => self.defer(index, bytes, queue, origin),
+            EgressTryEnqueueOutcome::LaneFull(index) => self.defer(index, bytes, queue),
             EgressTryEnqueueOutcome::LaneMissing => EgressEnqueueOutcome::LaneMissing,
         };
         self.record_generic_enqueue_outcome(outcome);
@@ -220,7 +207,6 @@ impl Egress {
         bytes: &[u8],
         queue: EgressQueue,
     ) -> EgressTryEnqueueOutcome {
-        let has_pending = self.pending_frames > 0;
         let Some(index) = self.lanes.index_of(&target) else {
             return EgressTryEnqueueOutcome::LaneMissing;
         };
@@ -229,7 +215,7 @@ impl Egress {
         }
 
         let lane = self.lanes.row_mut(index);
-        if has_pending && !lane.pending.is_empty() {
+        if !lane.pending.is_empty() {
             return EgressTryEnqueueOutcome::LaneFull(index);
         }
 
@@ -251,13 +237,7 @@ impl Egress {
     }
 
     #[cold]
-    fn defer(
-        &mut self,
-        index: usize,
-        bytes: &[u8],
-        queue: EgressQueue,
-        origin: EgressOrigin,
-    ) -> EgressEnqueueOutcome {
+    fn defer(&mut self, index: usize, bytes: &[u8], queue: EgressQueue) -> EgressEnqueueOutcome {
         if !self.reconcile_lane(index) {
             return EgressEnqueueOutcome::Unavailable;
         }
@@ -265,7 +245,7 @@ impl Egress {
         if lane.pending.len() >= TOKIO_EGRESS_PENDING_DEPTH {
             return EgressEnqueueOutcome::DroppedFull;
         }
-        lane.pending.push(queue, bytes.to_vec(), origin);
+        lane.pending.push(queue, bytes.to_vec());
         self.pending_frames += 1;
         lane.producer.arm_release_wake();
         #[cfg(feature = "runtime-metrics")]
@@ -291,65 +271,60 @@ impl Egress {
 
     #[cold]
     fn flush_pending_frames(&mut self, budget: usize) -> usize {
+        let lane_count = self.lanes.len();
+        if lane_count == 0 || budget == 0 {
+            return 0;
+        }
+
         let mut flushed = 0usize;
-        'lanes: for lane in self.lanes.iter_mut() {
+        let mut visits_without_progress = 0usize;
+        while flushed < budget && visits_without_progress < lane_count {
+            let index = self.pending_cursor % lane_count;
+            self.pending_cursor = (index + 1) % lane_count;
+            let lane = self.lanes.row_mut(index);
             let producer = &mut lane.producer;
             let pending_frames = &mut lane.pending;
-            loop {
-                if flushed == budget {
-                    if !pending_frames.is_empty() {
-                        producer.arm_release_wake();
-                    }
-                    break 'lanes;
-                }
-                if pending_frames.is_empty() {
-                    producer.disarm_release_wake();
-                    break;
-                }
-                if producer.try_grant().is_none() {
-                    producer.arm_release_wake();
-                }
-                let Some(slot) = producer.try_grant() else {
-                    break;
-                };
-                let Some((queue, bytes)) = pending_frames.pop() else {
-                    producer.disarm_release_wake();
-                    break;
-                };
-                self.pending_frames -= 1;
-                slot.fill(&bytes);
-                match queue {
-                    EgressQueue::Expedited => producer.commit_expedited(),
-                    EgressQueue::Bulk => producer.commit(),
-                }
-                flushed = flushed.saturating_add(1);
-                #[cfg(feature = "runtime-metrics")]
-                {
-                    self.metrics.enqueued_frames = self.metrics.enqueued_frames.saturating_add(1);
-                    self.metrics.flushed_pending_frames =
-                        self.metrics.flushed_pending_frames.saturating_add(1);
-                }
+            if pending_frames.is_empty() {
+                producer.disarm_release_wake();
+                visits_without_progress += 1;
+                continue;
+            }
+            let Some(slot) = producer.try_grant() else {
+                producer.arm_release_wake();
+                visits_without_progress += 1;
+                continue;
+            };
+            let Some((queue, bytes)) = pending_frames.pop() else {
+                producer.disarm_release_wake();
+                visits_without_progress += 1;
+                continue;
+            };
+            self.pending_frames -= 1;
+            slot.fill(&bytes);
+            match queue {
+                EgressQueue::Expedited => producer.commit_expedited(),
+                EgressQueue::Bulk => producer.commit(),
+            }
+            if pending_frames.is_empty() {
+                producer.disarm_release_wake();
+            } else {
+                producer.arm_release_wake();
+            }
+            flushed = flushed.saturating_add(1);
+            visits_without_progress = 0;
+            #[cfg(feature = "runtime-metrics")]
+            {
+                self.metrics.enqueued_frames = self.metrics.enqueued_frames.saturating_add(1);
+                self.metrics.flushed_pending_frames =
+                    self.metrics.flushed_pending_frames.saturating_add(1);
             }
         }
         flushed
     }
 
+    #[cfg(test)]
     pub(super) fn has_pending(&self) -> bool {
         self.pending_frames > 0
-    }
-
-    pub(super) fn blocks_source(&self, source: InterfaceId) -> bool {
-        if self.pending_frames == 0 {
-            return false;
-        }
-        self.pending_blocks_source(source)
-    }
-
-    #[cold]
-    fn pending_blocks_source(&self, source: InterfaceId) -> bool {
-        self.lanes
-            .iter()
-            .any(|lane| lane.pending.blocks_source(source))
     }
 
     /// Reconcile one lane's connection epoch with its queued work. Pending frames are owned by
@@ -498,9 +473,7 @@ impl Egress {
         size_hint: usize,
         fill: &mut dyn FnMut(&mut [u8]) -> Option<usize>,
         discard: &mut [u8],
-        origin: EgressOrigin,
     ) {
-        let has_pending = self.pending_frames > 0;
         let Some(index) = self.lanes.index_of(&target) else {
             let _fill_result = fill(discard);
             #[cfg(feature = "runtime-metrics")]
@@ -517,7 +490,7 @@ impl Egress {
         }
 
         let lane = self.lanes.row_mut(index);
-        if !has_pending || lane.pending.is_empty() {
+        if lane.pending.is_empty() {
             if let Some(slot) = lane.producer.try_grant() {
                 let hint = size_hint.clamp(1, MAX_WIRE_FRAME_LEN);
                 if slot.bytes.len() < hint {
@@ -542,7 +515,7 @@ impl Egress {
         if let Some(len) = fill_result {
             let len = len.min(discard.len());
             let queue = egress_queue(&discard[..len]);
-            let outcome = self.defer(index, &discard[..len], queue, origin);
+            let outcome = self.defer(index, &discard[..len], queue);
             self.record_generic_enqueue_outcome(outcome);
         }
     }
@@ -582,6 +555,11 @@ impl Egress {
             return;
         };
         self.pending_frames = self.pending_frames.saturating_sub(removed.pending.len());
+        self.pending_cursor = if self.lanes.is_empty() {
+            0
+        } else {
+            self.pending_cursor % self.lanes.len()
+        };
     }
 
     #[cfg(feature = "runtime-metrics")]
@@ -712,60 +690,6 @@ pub(super) fn route_reaction<A>(
     );
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(super) fn route_ingress_reaction<A>(
-    reaction: EngineReaction<'_>,
-    egress: &mut Egress,
-    ifacs: &InterfaceIfacs,
-    pacers: &mut InterfacePacers,
-    scratch: &mut WireScratch,
-    now: InstantMillis,
-    app: &mut A,
-    source: InterfaceId,
-) where
-    A: FnMut(Journaled<'_>),
-{
-    route_ingress_reaction_with_work(
-        reaction,
-        egress,
-        ifacs,
-        pacers,
-        scratch,
-        now,
-        app,
-        &mut |work: NoOwedWork| match work {},
-        source,
-    );
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn route_ingress_reaction_with_work<A, Work, W>(
-    reaction: EngineReaction<'_, Work>,
-    egress: &mut Egress,
-    ifacs: &InterfaceIfacs,
-    pacers: &mut InterfacePacers,
-    scratch: &mut WireScratch,
-    now: InstantMillis,
-    app: &mut A,
-    fulfill: &mut W,
-    source: InterfaceId,
-) where
-    A: FnMut(Journaled<'_>),
-    W: FnMut(Work),
-{
-    route_reaction_with_origin(
-        reaction,
-        egress,
-        ifacs,
-        pacers,
-        scratch,
-        now,
-        app,
-        fulfill,
-        EgressOrigin::Ingress(source),
-    );
-}
-
 // This is the common bow-tie seam. Its borrowed arguments make all routing
 // destinations visible without allocating or manufacturing a state owner.
 #[allow(clippy::too_many_arguments)]
@@ -782,41 +706,12 @@ pub(super) fn route_reaction_with_work<A, Work, W>(
     A: FnMut(Journaled<'_>),
     W: FnMut(Work),
 {
-    route_reaction_with_origin(
-        reaction,
-        egress,
-        ifacs,
-        pacers,
-        scratch,
-        now,
-        app,
-        fulfill,
-        EgressOrigin::Internal,
-    );
-}
-
-#[allow(clippy::too_many_arguments)]
-fn route_reaction_with_origin<A, Work, W>(
-    reaction: EngineReaction<'_, Work>,
-    egress: &mut Egress,
-    ifacs: &InterfaceIfacs,
-    pacers: &mut InterfacePacers,
-    scratch: &mut WireScratch,
-    now: InstantMillis,
-    app: &mut A,
-    fulfill: &mut W,
-    origin: EgressOrigin,
-) where
-    A: FnMut(Journaled<'_>),
-    W: FnMut(Work),
-{
     let mut directive_egress = TokioDirectiveEgress {
         egress,
         ifacs,
         pacers,
         scratch,
         now,
-        origin,
     };
     route_engine_reaction(reaction, &mut directive_egress, app, fulfill);
 }
@@ -827,7 +722,6 @@ struct TokioDirectiveEgress<'a> {
     pacers: &'a mut InterfacePacers,
     scratch: &'a mut WireScratch,
     now: InstantMillis,
-    origin: EgressOrigin,
 }
 
 impl DirectiveEgress for TokioDirectiveEgress<'_> {
@@ -838,7 +732,6 @@ impl DirectiveEgress for TokioDirectiveEgress<'_> {
             target,
             bytes,
             &mut self.scratch.masked,
-            self.origin,
         );
     }
 
@@ -874,7 +767,6 @@ impl DirectiveEgress for TokioDirectiveEgress<'_> {
                 target,
                 bytes,
                 &mut self.scratch.masked,
-                self.origin,
             );
         }
     }
@@ -919,7 +811,6 @@ impl DirectiveEgress for TokioDirectiveEgress<'_> {
             size_hint,
             fill,
             self.scratch,
-            self.origin,
         );
     }
 
@@ -962,7 +853,6 @@ fn emit_for_wire(
     size_hint: usize,
     fill: &mut dyn FnMut(&mut [u8]) -> Option<usize>,
     scratch: &mut WireScratch,
-    origin: EgressOrigin,
 ) {
     match ifac_for(ifacs, target) {
         Some(entry) => {
@@ -972,18 +862,13 @@ fn emit_for_wire(
                     .context
                     .try_mask_outbound(&scratch.emit[..len], &mut scratch.masked)
                 {
-                    egress.enqueue_with_origin(
-                        target,
-                        &scratch.masked[..masked_len],
-                        queue,
-                        origin,
-                    );
+                    egress.enqueue_as(target, &scratch.masked[..masked_len], queue);
                 } else {
                     egress.record_ifac_rejection();
                 }
             }
         }
-        None => egress.emit(target, size_hint, fill, &mut scratch.emit, origin),
+        None => egress.emit(target, size_hint, fill, &mut scratch.emit),
     }
 }
 
@@ -998,28 +883,17 @@ fn enqueue_for_wire(
     target: InterfaceId,
     bytes: &[u8],
     masked: &mut [u8],
-    origin: EgressOrigin,
 ) {
     match ifac_for(ifacs, target) {
         Some(entry) => match entry.context.try_mask_outbound(bytes, masked) {
             Ok(masked_len) => {
-                egress.enqueue_with_origin(
-                    target,
-                    &masked[..masked_len],
-                    egress_queue(bytes),
-                    origin,
-                );
+                egress.enqueue_as(target, &masked[..masked_len], egress_queue(bytes));
             }
             Err(_) => egress.record_ifac_rejection(),
         },
-        None => match origin {
-            EgressOrigin::Ingress(source) => {
-                egress.enqueue_from_ingress(source, target, bytes);
-            }
-            EgressOrigin::Internal => {
-                egress.enqueue(target, bytes);
-            }
-        },
+        None => {
+            egress.enqueue(target, bytes);
+        }
     }
 }
 

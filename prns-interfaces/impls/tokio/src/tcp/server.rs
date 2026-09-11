@@ -8,7 +8,7 @@ use tokio::net::TcpListener;
 
 use crate::byte_stream::framing;
 use crate::reconnect::ReconnectPolicy;
-use crate::tcp::{tune_for_tunnel, TcpTunnelMode};
+use crate::tcp::{tune_for_tunnel, write_progress_timeout, TcpTunnelMode};
 use prns_core::interfaces::tcp::{self, TcpWireFraming};
 use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{
@@ -27,6 +27,7 @@ pub struct TcpServerConnection<S> {
     stream: Option<S>,
     policy: EffectiveInterfacePolicy,
     framing: TcpWireFraming,
+    tunnel: TcpTunnelMode,
     status: TokioInterfaceStatus,
 }
 
@@ -48,6 +49,22 @@ impl<S> TcpServerConnection<S> {
         policy: EffectiveInterfacePolicy,
         framing: TcpWireFraming,
     ) -> Self {
+        Self::with_policy_tunnel_and_framing(
+            channel_tag,
+            stream,
+            policy,
+            TcpTunnelMode::Direct,
+            framing,
+        )
+    }
+
+    fn with_policy_tunnel_and_framing(
+        channel_tag: Vec<u8>,
+        stream: S,
+        policy: EffectiveInterfacePolicy,
+        tunnel: TcpTunnelMode,
+        framing: TcpWireFraming,
+    ) -> Self {
         let id = InterfaceId::from_channel_tag(InterfaceKind::TcpServerPeer, &channel_tag);
         Self {
             id,
@@ -55,6 +72,7 @@ impl<S> TcpServerConnection<S> {
             stream: Some(stream),
             policy,
             framing,
+            tunnel,
             status: TokioInterfaceStatus::new_accounted(id, ConnectionState::Connected),
         }
     }
@@ -96,6 +114,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for TcpServerConnection<S> {
             bitrate: self.policy.bitrate,
             started,
         };
+        let write_progress_timeout = write_progress_timeout(self.tunnel);
         match self.framing {
             TcpWireFraming::Hdlc => {
                 let mut buffers = framing::FramedBuffers::<
@@ -103,13 +122,19 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for TcpServerConnection<S> {
                     { tcp::READ_BUF_LEN },
                     { tcp::FRAMED_LEN },
                 >::new();
-                framing::serve::<
+                framing::serve_with_write_progress_timeout::<
                     framing::HdlcFraming,
                     { tcp::READ_BUF_LEN },
                     { tcp::FRAMED_LEN },
                     _,
                     _,
-                >(stream, &mut buffers, &mut seam, &mut meters)
+                >(
+                    stream,
+                    &mut buffers,
+                    &mut seam,
+                    &mut meters,
+                    write_progress_timeout,
+                )
                 .await;
             }
             TcpWireFraming::Kiss => {
@@ -118,13 +143,19 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for TcpServerConnection<S> {
                     { tcp::READ_BUF_LEN },
                     { tcp::KISS_FRAMED_LEN },
                 >::new();
-                framing::serve::<
+                framing::serve_with_write_progress_timeout::<
                     framing::KissFraming,
                     { tcp::READ_BUF_LEN },
                     { tcp::KISS_FRAMED_LEN },
                     _,
                     _,
-                >(stream, &mut buffers, &mut seam, &mut meters)
+                >(
+                    stream,
+                    &mut buffers,
+                    &mut seam,
+                    &mut meters,
+                    write_progress_timeout,
+                )
                 .await;
             }
         }
@@ -222,10 +253,11 @@ impl InterfaceSupervisor for TcpServer {
                 Ok((stream, peer)) => {
                     schedule = policy.schedule();
                     tune_for_tunnel(&stream, self.tunnel);
-                    let connection = TcpServerConnection::with_policy_and_framing(
+                    let connection = TcpServerConnection::with_policy_tunnel_and_framing(
                         peer.to_string().into_bytes(),
                         stream,
                         self.policy,
+                        self.tunnel,
                         self.framing,
                     );
                     self.status.admit(connection.status());

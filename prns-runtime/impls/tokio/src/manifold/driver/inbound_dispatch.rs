@@ -19,8 +19,8 @@ use crate::wire::{WireContext, WirePacketHeader};
 
 use super::crypto_pool::{run_link_sign_job, CryptoPool, LinkSignCompleted, LinkSignJob};
 use super::egress::{
-    ifac_for, route_ingress_reaction, route_ingress_reaction_with_work, Egress, InterfaceIfacs,
-    InterfacePacers, WireScratch,
+    ifac_for, route_reaction, route_reaction_with_work, Egress, InterfaceIfacs, InterfacePacers,
+    WireScratch,
 };
 use super::interface_topology::InterfaceTopology;
 use super::journal_delivery::JournalDispatch;
@@ -86,7 +86,7 @@ fn route_ingress_reaction_with_owed_work<J>(
 ) where
     J: for<'a> FnMut(Journaled<'a>),
 {
-    route_ingress_reaction_with_work(
+    route_reaction_with_work(
         reaction,
         egress,
         ifacs,
@@ -134,7 +134,6 @@ fn route_ingress_reaction_with_owed_work<J>(
                 owed_work.push(OwedWork::ResourceDecompression(owed), crypto_pool);
             }
         },
-        source,
     );
 }
 
@@ -240,9 +239,6 @@ impl InboundDispatch {
         'lanes: for &source in ready_lanes.iter() {
             if processed_frames == max_frames_total {
                 break;
-            }
-            if topology.egress.blocks_source(source) {
-                continue;
             }
             if !link_identity_barriers.is_empty()
                 && link_identity_barriers
@@ -460,9 +456,6 @@ impl InboundDispatch {
                 {
                     break;
                 }
-                if topology.egress.blocks_source(source) {
-                    break;
-                }
             }
             {
                 let inline_signs = crypto_pool.map_or(usize::MAX, |_| 0);
@@ -479,7 +472,7 @@ impl InboundDispatch {
                     match run_link_sign_job(job) {
                         LinkSignCompleted::ChannelAck(completed) => {
                             engine.resume_channel_ack_sign(completed, now, &mut |reaction| {
-                                route_ingress_reaction(
+                                route_reaction(
                                     reaction,
                                     &mut topology.egress,
                                     &topology.ifacs,
@@ -487,13 +480,12 @@ impl InboundDispatch {
                                     wire_scratch,
                                     now,
                                     &mut |journaled| journal.route(journaled),
-                                    source,
                                 );
                             });
                         }
                         LinkSignCompleted::Receipt(completed) => {
                             engine.resume_link_receipt_sign(completed, now, &mut |reaction| {
-                                route_ingress_reaction(
+                                route_reaction(
                                     reaction,
                                     &mut topology.egress,
                                     &topology.ifacs,
@@ -501,14 +493,13 @@ impl InboundDispatch {
                                     wire_scratch,
                                     now,
                                     &mut |journaled| journal.route(journaled),
-                                    source,
                                 );
                             });
                         }
                         LinkSignCompleted::Identify(completed) => {
                             let changed =
                                 engine.resume_identify_sign(completed, now, &mut |reaction| {
-                                    route_ingress_reaction(
+                                    route_reaction(
                                         reaction,
                                         &mut topology.egress,
                                         &topology.ifacs,
@@ -516,7 +507,6 @@ impl InboundDispatch {
                                         wire_scratch,
                                         now,
                                         &mut |journaled| journal.route(journaled),
-                                        source,
                                     );
                                 });
                             merge_wake_schedules_delta(

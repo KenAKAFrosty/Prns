@@ -1,19 +1,11 @@
 use std::collections::VecDeque;
 
-use crate::interfaces::InterfaceId;
 use crate::manifold::grant_lane::EXPEDITED_BURST;
 
 use super::EgressQueue;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum EgressOrigin {
-    Ingress(InterfaceId),
-    Internal,
-}
-
 struct PendingEgress {
     bytes: std::vec::Vec<u8>,
-    origin: EgressOrigin,
 }
 
 pub(super) struct PendingEgressQueue {
@@ -39,13 +31,8 @@ impl PendingEgressQueue {
         self.expedited.len().saturating_add(self.bulk.len())
     }
 
-    pub(super) fn push(
-        &mut self,
-        queue: EgressQueue,
-        bytes: std::vec::Vec<u8>,
-        origin: EgressOrigin,
-    ) {
-        let pending = PendingEgress { bytes, origin };
+    pub(super) fn push(&mut self, queue: EgressQueue, bytes: std::vec::Vec<u8>) {
+        let pending = PendingEgress { bytes };
         match queue {
             EgressQueue::Expedited => self.expedited.push_back(pending),
             EgressQueue::Bulk => self.bulk.push_back(pending),
@@ -74,12 +61,5 @@ impl PendingEgressQueue {
         self.bulk.clear();
         self.expedited_streak = 0;
         cleared
-    }
-
-    pub(super) fn blocks_source(&self, source: InterfaceId) -> bool {
-        self.expedited
-            .iter()
-            .chain(&self.bulk)
-            .any(|pending| pending.origin == EgressOrigin::Ingress(source))
     }
 }
