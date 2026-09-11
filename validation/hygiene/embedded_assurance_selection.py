@@ -30,6 +30,7 @@ COMMON_FILES = frozenset(
 RESOURCE_FILES = COMMON_FILES | frozenset(
     {
         ".cargo/config.toml",
+        "release/flash/boards.json",
         "VERSION",
         "tools/build/embedded-resources.sh",
         "tools/release/install-release-esp-toolchain.sh",
@@ -63,10 +64,14 @@ PILOT_FILES = COMMON_FILES | frozenset(
         "tools/release/install-release-esp-toolchain.sh",
         "tools/release/release-esp-toolchain-identity.sh",
         "tools/release/verify-release-esp-toolchain.sh",
+        "release/flash/boards.json",
+        "validation/hardening/embedded-isa.toml",
         "validation/hardening/embedded-platform.toml",
         "validation/hardening/embedded_architectures.py",
         "validation/hardening/embedded_execution.py",
         "validation/hardening/embedded_host.py",
+        "validation/hardening/embedded_isa/emulator.py",
+        "validation/hardening/embedded_isa/toolchain.py",
     }
 )
 RESOURCE_TREES = (
@@ -116,6 +121,7 @@ PILOT_TREES = (
     "personal-hopspot/memory/",
     "personal-rns/",
     "prns-core/",
+    "prns-flash-manifest/",
     "prns-interfaces/impls/embassy/",
     "prns-runtime/core/",
     "prns-runtime/impls/embassy/",

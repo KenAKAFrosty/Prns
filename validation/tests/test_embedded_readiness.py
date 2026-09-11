@@ -14,6 +14,7 @@ from validation.hardening.embedded_isa.contract import (
 )
 from validation.hardening.embedded_host import HostPlatform
 from validation.hardening.embedded_platform.contract import (
+    RenodeExecution,
     load_inventory as load_platform_inventory,
 )
 from validation.hardening.embedded_readiness import (
@@ -90,12 +91,17 @@ class EmbeddedReadinessTests(unittest.TestCase):
             "qemu-system-xtensa": root / "qemu-system-xtensa",
             "renode": root / "Renode" / "renode",
         }
-        platform = self.contract.platforms[0]
+        platform = next(
+            platform
+            for platform in self.contract.platforms
+            if isinstance(platform.execution, RenodeExecution)
+        )
+        execution = platform.execution
         self.platform_description = (
-            self.paths["renode"].parent / platform.platform_description
+            self.paths["renode"].parent / execution.platform_description
         )
         self.fingerprints = {
-            self.platform_description: platform.platform_description_sha256
+            self.platform_description: execution.platform_description_sha256
         }
         targets = "\n".join(
             architecture.rust_target for architecture in inventory.architectures
@@ -187,7 +193,7 @@ class EmbeddedReadinessTests(unittest.TestCase):
                 "",
             ),
             (str(self.paths["renode"]), "--version"): CommandOutput(
-                0, "\n".join(platform.emulator.identity) + "\n", ""
+                0, "\n".join(execution.emulator.identity) + "\n", ""
             ),
         }
 

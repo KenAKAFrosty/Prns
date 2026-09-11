@@ -10,19 +10,26 @@ from pathlib import Path
 from unittest import mock
 
 from validation.hardening.embedded_host import HostPlatform
-from validation.hardening.embedded_platform import artifacts
+from validation.hardening.embedded_platform import artifacts, milestone
+from validation.hardening.embedded_platform.build import cargo_command, image_command
 from validation.hardening.embedded_platform.contract import (
+    ArchitectureQemuExecution,
     INVENTORY_PATH,
     ROOT,
     EmulatorKind,
     InventoryError,
     Milestone,
+    RenodeExecution,
     load_inventory,
 )
 from validation.hardening.embedded_platform.discovery import description_candidates
 from validation.hardening.embedded_platform.error import EmbeddedPlatformError
-from validation.hardening.embedded_platform.platform import command_for, nrf52840
-from validation.hardening.embedded_platform.run import cargo_command, platform_description
+from validation.hardening.embedded_platform.emulator import platform_description
+from validation.hardening.embedded_platform.platform import (
+    nrf52840,
+    qemu_command,
+    renode_command,
+)
 
 
 class EmbeddedPlatformTests(unittest.TestCase):
@@ -30,17 +37,20 @@ class EmbeddedPlatformTests(unittest.TestCase):
         inventory = load_inventory()
 
         self.assertEqual(inventory.rust_toolchain, "1.96.0")
-        self.assertEqual(len(inventory.platforms), 1)
+        self.assertEqual(len(inventory.platforms), 2)
         platform = inventory.platform_for_suite("embedded-platform-nrf52840")
         self.assertEqual(platform.identifier, "nrf52840")
         self.assertEqual(platform.architecture, "thumbv7em")
         self.assertEqual(platform.rust_target, "thumbv7em-none-eabihf")
         self.assertEqual(platform.memory_profile, "t-echo-s140-v6")
         self.assertEqual(platform.milestone, Milestone.APPLICATION_ENTRY)
-        self.assertEqual(platform.emulator.kind, EmulatorKind.RENODE)
-        self.assertEqual(platform.emulator.identity[0], "Renode v1.17.0")
+        self.assertEqual(platform.emulator_kind, EmulatorKind.RENODE)
+        self.assertIsInstance(platform.execution, RenodeExecution)
+        execution = platform.execution
+        assert isinstance(execution, RenodeExecution)
+        self.assertEqual(execution.emulator.identity[0], "Renode v1.17.0")
         self.assertEqual(
-            {package.host for package in platform.emulator.packages},
+            {package.host for package in execution.emulator.packages},
             {
                 HostPlatform.LINUX_AMD64,
                 HostPlatform.LINUX_ARM64,
@@ -48,7 +58,9 @@ class EmbeddedPlatformTests(unittest.TestCase):
                 HostPlatform.WINDOWS_AMD64,
             },
         )
-        self.assertIsNone(platform.emulator.package_for_host(HostPlatform.MACOS_AMD64))
+        self.assertIsNone(
+            execution.emulator.package_for_host(HostPlatform.MACOS_AMD64)
+        )
         manifest = tomllib.loads(
             (ROOT / "validation" / "manifest.toml").read_text(encoding="utf-8")
         )
@@ -57,14 +69,15 @@ class EmbeddedPlatformTests(unittest.TestCase):
 
     def test_inventory_rejects_architecture_target_mismatch(self) -> None:
         contents = INVENTORY_PATH.read_text(encoding="utf-8").replace(
-            'rust_target = "thumbv7em-none-eabihf"',
-            'rust_target = "riscv32imac-unknown-none-elf"',
+            'architecture = "thumbv7em"',
+            'architecture = "unknown"',
+            1,
         )
 
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "inventory.toml"
             path.write_text(contents, encoding="utf-8")
-            with self.assertRaisesRegex(InventoryError, "requires Rust target"):
+            with self.assertRaisesRegex(InventoryError, "unknown.*architecture"):
                 load_inventory(path)
 
     def test_inventory_rejects_duplicate_host_packages(self) -> None:
@@ -78,6 +91,18 @@ class EmbeddedPlatformTests(unittest.TestCase):
             with self.assertRaisesRegex(InventoryError, "repeats a host"):
                 load_inventory(path)
 
+    def test_execution_variants_reject_fields_from_other_runners(self) -> None:
+        contents = INVENTORY_PATH.read_text(encoding="utf-8").replace(
+            'kind = "architecture-qemu"',
+            'kind = "architecture-qemu"\nmilestone_symbol = "stale_hook"',
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "inventory.toml"
+            path.write_text(contents, encoding="utf-8")
+            with self.assertRaisesRegex(InventoryError, "unknown fields"):
+                load_inventory(path)
+
     def test_renode_adapter_uses_the_pinned_model_and_production_elf(self) -> None:
         platform = load_inventory().platforms[0]
         with tempfile.TemporaryDirectory(prefix="platform pilot ") as directory:
@@ -89,7 +114,7 @@ class EmbeddedPlatformTests(unittest.TestCase):
             executable.write_bytes(b"elf")
             description.write_text("cpu: CPU.CortexM @ sysbus", encoding="utf-8")
 
-            command = command_for(
+            command = renode_command(
                 platform,
                 Path("renode"),
                 executable,
@@ -101,20 +126,22 @@ class EmbeddedPlatformTests(unittest.TestCase):
             self.assertEqual(command[0], "renode")
             source = script.read_text(encoding="utf-8")
             self.assertIn("sysbus LoadELF $bin", source)
-            self.assertIn(platform.milestone_symbol, source)
+            execution = platform.execution
+            assert isinstance(execution, RenodeExecution)
+            self.assertIn(execution.milestone_symbol, source)
             self.assertIn("platform=nrf52840", source)
             self.assertIn("profile=t-echo-s140-v6", source)
             self.assertIn("platform\\ pilot", source)
 
     def test_milestone_parser_requires_exactly_one_expected_record(self) -> None:
         platform = load_inventory().platforms[0]
-        event = nrf52840.milestone_event(platform)
+        event = milestone.event(platform)
 
-        self.assertEqual(nrf52840.parse_milestone(b"prefix " + event, platform), event)
+        self.assertEqual(milestone.parse(b"prefix " + event, platform), event)
         with self.assertRaises(EmbeddedPlatformError):
-            nrf52840.parse_milestone(b"", platform)
+            milestone.parse(b"", platform)
         with self.assertRaises(EmbeddedPlatformError):
-            nrf52840.parse_milestone(event + event, platform)
+            milestone.parse(event + event, platform)
 
     def test_offline_model_removes_only_the_remote_svd_decoration(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -132,22 +159,24 @@ class EmbeddedPlatformTests(unittest.TestCase):
 
     def test_platform_model_must_match_the_inventory_checksum(self) -> None:
         platform = load_inventory().platforms[0]
+        execution = platform.execution
+        assert isinstance(execution, RenodeExecution)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             executable = root / "bin" / "renode"
-            description = executable.parent / platform.platform_description
+            description = executable.parent / execution.platform_description
             description.parent.mkdir(parents=True)
             executable.write_bytes(b"runner")
             description.write_bytes(b"model")
             expected = hashlib.sha256(b"model").hexdigest()
-            matching = replace(platform, platform_description_sha256=expected)
+            matching = replace(execution, platform_description_sha256=expected)
 
             path, fingerprint = platform_description(matching, executable)
 
             self.assertEqual(path, description.resolve())
             self.assertEqual(fingerprint, expected)
             with self.assertRaisesRegex(EmbeddedPlatformError, "checksum mismatch"):
-                platform_description(platform, executable)
+                platform_description(execution, executable)
 
     def test_description_candidates_preserve_priority_without_duplicates(self) -> None:
         executable = Path("/opt/renode/bin/renode")
@@ -166,6 +195,41 @@ class EmbeddedPlatformTests(unittest.TestCase):
         self.assertIn("--locked", command)
         self.assertIn("platform-nrf52840", command)
         self.assertIn("thumbv7em-none-eabihf", command)
+
+    def test_esp32s3_pilot_inherits_its_architecture_emulator(self) -> None:
+        platform = load_inventory().platform_for_suite("embedded-platform-esp32s3")
+
+        self.assertEqual(platform.architecture, "xtensa-esp32s3")
+        self.assertEqual(platform.rust_target, "xtensa-esp32s3-none-elf")
+        self.assertEqual(platform.memory_profile, "heltec-wireless-stick-lite-v3")
+        self.assertEqual(platform.milestone, Milestone.RUNTIME_INITIALIZED)
+        self.assertEqual(platform.emulator_kind, EmulatorKind.QEMU)
+        self.assertIsInstance(platform.execution, ArchitectureQemuExecution)
+        self.assertEqual(platform.build.features, ())
+
+    def test_esp32s3_adapter_boots_a_packaged_flash_image(self) -> None:
+        platform = load_inventory().platform_for_suite("embedded-platform-esp32s3")
+        command = qemu_command(platform, Path("qemu-system-xtensa"), Path("flash.bin"))
+
+        self.assertIn("esp32s3", command)
+        self.assertIn("file=flash.bin,if=mtd,format=raw", command)
+        self.assertNotIn("-kernel", command)
+        self.assertIn("enable=on,target=native", command)
+
+    def test_esp32s3_image_uses_the_shared_builder_packager(self) -> None:
+        platform = load_inventory().platform_for_suite("embedded-platform-esp32s3")
+        command = image_command(
+            platform,
+            "1.96.0",
+            Path("firmware.elf"),
+            Path("flash.bin"),
+        )
+
+        self.assertIn("personal-hopspot-builder", command)
+        self.assertIn("personal-hopspot-esp-image", command)
+        self.assertIn("heltec-wireless-stick-lite-v3", command)
+        self.assertNotIn("8388608", command)
+        self.assertNotIn("partitions-hopspot-8mb.csv", " ".join(command))
 
     def test_artifact_directory_is_validated_before_creation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

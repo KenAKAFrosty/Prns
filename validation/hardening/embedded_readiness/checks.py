@@ -9,7 +9,7 @@ from validation.hardening.embedded_isa.contract import (
     SourceArchive,
 )
 from validation.hardening.embedded_host import HostPlatform
-from validation.hardening.embedded_platform.contract import Platform
+from validation.hardening.embedded_platform.contract import Platform, RenodeExecution
 from validation.hardening.embedded_platform.discovery import (
     RENODE_EXECUTABLE_ENV,
     RENODE_ROOT_ENV,
@@ -64,7 +64,9 @@ def inspect(contract: ReadinessContract, probe: SystemProbe) -> tuple[ReadinessC
         for architecture in contract.architectures
     )
     checks.extend(
-        inspect_platform_emulator(probe, platform) for platform in contract.platforms
+        inspect_platform_emulator(probe, platform)
+        for platform in contract.platforms
+        if isinstance(platform.execution, RenodeExecution)
     )
     return tuple(checks)
 
@@ -343,36 +345,39 @@ def emulator_prerequisites(host: HostPlatform) -> tuple[str, ...]:
 def inspect_platform_emulator(
     probe: SystemProbe, platform: Platform
 ) -> ReadinessCheck:
+    execution = platform.execution
+    if not isinstance(execution, RenodeExecution):
+        raise TypeError("platform does not use a dedicated Renode emulator")
     setup = platform_emulator_setup(probe, platform)
     override = probe.environment(RENODE_EXECUTABLE_ENV)
-    executable = probe.find(override or platform.emulator.executable)
+    executable = probe.find(override or execution.emulator.executable)
     subject = f"{platform.identifier} platform emulator"
     if executable is None:
         return ReadinessCheck(
             ReadinessLane.PILOT,
             subject,
             CheckState.MISSING,
-            f"{platform.emulator.executable} was not found",
+            f"{execution.emulator.executable} was not found",
             setup,
         )
     output = probe.run((str(executable), "--version"))
     found = output.lines()
-    if output.returncode != 0 or found != platform.emulator.identity:
+    if output.returncode != 0 or found != execution.emulator.identity:
         return ReadinessCheck(
             ReadinessLane.PILOT,
             subject,
             CheckState.MISMATCH,
-            f"found {found!r}; expected {platform.emulator.identity!r}",
+            f"found {found!r}; expected {execution.emulator.identity!r}",
             setup,
         )
     configured_root = probe.environment(RENODE_ROOT_ENV)
     inspected = []
     for root in description_candidates(executable, configured_root):
-        candidate = root / platform.platform_description
+        candidate = root / execution.platform_description
         fingerprint = probe.fingerprint(candidate)
         if fingerprint is None:
             continue
-        if fingerprint == platform.platform_description_sha256:
+        if fingerprint == execution.platform_description_sha256:
             return ReadinessCheck(
                 ReadinessLane.PILOT,
                 subject,
@@ -383,7 +388,7 @@ def inspect_platform_emulator(
     detail = (
         "platform model checksum mismatch: " + ", ".join(inspected)
         if inspected
-        else f"cannot locate {platform.platform_description}"
+        else f"cannot locate {execution.platform_description}"
     )
     return ReadinessCheck(
         ReadinessLane.PILOT,
@@ -397,21 +402,24 @@ def inspect_platform_emulator(
 def platform_emulator_setup(
     probe: SystemProbe, platform: Platform
 ) -> tuple[str, ...]:
+    execution = platform.execution
+    if not isinstance(execution, RenodeExecution):
+        raise TypeError("platform does not use a dedicated Renode emulator")
     host = probe.host_platform()
-    package = platform.emulator.package_for_host(host) if host is not None else None
+    package = execution.emulator.package_for_host(host) if host is not None else None
     if package is None:
         acquisition = (
-            f"clone {platform.emulator.source_repository}",
-            f"check out revision {platform.emulator.source_revision}",
-            f"build the exact {platform.emulator.executable} identity",
+            f"clone {execution.emulator.source_repository}",
+            f"check out revision {execution.emulator.source_revision}",
+            f"build the exact {execution.emulator.executable} identity",
         )
     else:
         acquisition = (
-            f"install {'; '.join(platform.emulator.identity)} from {package.source_url}",
+            f"install {'; '.join(execution.emulator.identity)} from {package.source_url}",
             f"verify package SHA-256 {package.source_sha256}",
         )
     return acquisition + (
-        f"expose {platform.emulator.executable} on PATH or set {RENODE_EXECUTABLE_ENV}",
+        f"expose {execution.emulator.executable} on PATH or set {RENODE_EXECUTABLE_ENV}",
         f"set {RENODE_ROOT_ENV} if the bundled platform model is not beside the executable",
     )
 

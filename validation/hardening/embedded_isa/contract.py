@@ -97,6 +97,19 @@ class Inventory:
     rust_toolchain: str
     architectures: tuple[Architecture, ...]
 
+    def architecture_named(self, identifier: str) -> Architecture:
+        matches = tuple(
+            architecture
+            for architecture in self.architectures
+            if architecture.identifier == identifier
+        )
+        if len(matches) != 1:
+            raise InventoryError(
+                f"embedded ISA identifier {identifier!r} resolves "
+                f"{len(matches)} architectures"
+            )
+        return matches[0]
+
     def architecture_for_suite(self, suite: str) -> Architecture:
         matches = tuple(
             architecture

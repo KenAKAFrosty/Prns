@@ -97,25 +97,38 @@ class EmbeddedAssuranceSelectionTests(unittest.TestCase):
         self.assertFalse(selected.required(selection.Lane.MIRI))
         self.assertEqual(
             selected.pilots,
-            ("personal-hopspot/assurance-kernel/src/lib.rs",),
+            (
+                "personal-hopspot/assurance-kernel/src/lib.rs",
+                "validation/hardening/embedded-isa.toml",
+            ),
         )
 
         selected = selection.selection_for_paths(
             {
+                "validation/hardening/embedded-isa.toml",
                 "validation/hardening/embedded-platform.toml",
+                "validation/hardening/embedded_isa/emulator.py",
                 "validation/hardening/embedded_platform/platform/nrf52840.py",
             }
         )
         self.assertEqual(
             selected.pilots,
             (
+                "validation/hardening/embedded-isa.toml",
                 "validation/hardening/embedded-platform.toml",
+                "validation/hardening/embedded_isa/emulator.py",
                 "validation/hardening/embedded_platform/platform/nrf52840.py",
             ),
         )
         self.assertFalse(selected.required(selection.Lane.RESOURCES))
         self.assertFalse(selected.required(selection.Lane.MIRI))
-        self.assertFalse(selected.required(selection.Lane.ISA))
+        self.assertEqual(
+            selected.isa,
+            (
+                "validation/hardening/embedded-isa.toml",
+                "validation/hardening/embedded_isa/emulator.py",
+            ),
+        )
 
         selected = selection.selection_for_paths(
             {"personal-hopspot/builder/src/architecture/thumbv7em.rs"}
@@ -124,6 +137,23 @@ class EmbeddedAssuranceSelectionTests(unittest.TestCase):
         self.assertFalse(selected.required(selection.Lane.MIRI))
         self.assertTrue(selected.required(selection.Lane.ISA))
         self.assertTrue(selected.required(selection.Lane.PILOTS))
+
+        selected = selection.selection_for_paths(
+            {
+                "prns-flash-manifest/src/catalog/mod.rs",
+                "release/flash/boards.json",
+            }
+        )
+        self.assertEqual(
+            selected.resources,
+            (
+                "prns-flash-manifest/src/catalog/mod.rs",
+                "release/flash/boards.json",
+            ),
+        )
+        self.assertEqual(selected.pilots, selected.resources)
+        self.assertFalse(selected.required(selection.Lane.MIRI))
+        self.assertFalse(selected.required(selection.Lane.ISA))
 
         selected = selection.selection_for_paths(
             {

@@ -1,4 +1,5 @@
 use std::fs;
+use std::path::Path;
 
 use espflash::flasher::{FlashData, FlashFrequency, FlashMode, FlashSettings, FlashSize};
 use espflash::image_format::{idf::IdfBootloaderFormat, ImageFormat};
@@ -118,31 +119,14 @@ pub fn build(
         .chip
         .parse::<Chip>()
         .map_err(|error| BuildError::Build(format!("invalid chip {:?}: {error}", recipe.chip)))?;
-    let flash_size = flash_size(board.flash_size)?;
-    let flash_data = FlashData::new(
-        FlashSettings::new(
-            Some(FlashMode::Dio),
-            Some(flash_size),
-            Some(FlashFrequency::_40Mhz),
-        ),
-        0,
-        None,
-        chip,
-        XtalFrequency::_40Mhz,
-    );
-    let image = IdfBootloaderFormat::new(
-        &elf_bytes,
-        &flash_data,
-        Some(&partition_table),
-        None,
-        Some(PARTITION_TABLE_OFFSET),
-        Some("factory"),
-    )
-    .map_err(|error| BuildError::Build(format!("could not construct sparse ESP image: {error}")))?;
+    let flash_size_bytes = board.flash_size.ok_or_else(|| {
+        BuildError::Build("ESP catalog target does not declare its flash size".into())
+    })?;
+    let segments = sparse_segments(&elf_bytes, &partition_table, chip, flash_size_bytes)?;
     let mut parts = Vec::new();
-    for segment in ImageFormat::from(image).flash_segments() {
+    for segment in segments {
         let (kind, filename) = part_identity(segment.addr, application_offset)?;
-        let bytes = segment.data.into_owned();
+        let bytes = segment.bytes;
         let descriptor = FlashPart {
             kind,
             path: context.release_part_path(&board.slug, filename),
@@ -168,13 +152,104 @@ pub fn build(
     })
 }
 
-fn flash_size(bytes: Option<u32>) -> Result<FlashSize, BuildError> {
+pub struct MergedImageRequest<'a> {
+    pub elf: &'a [u8],
+    pub partition_table: &'a Path,
+    pub chip: &'a str,
+    pub flash_size_bytes: u32,
+}
+
+pub fn merged_flash_image(request: MergedImageRequest<'_>) -> Result<Vec<u8>, BuildError> {
+    let chip = request
+        .chip
+        .parse::<Chip>()
+        .map_err(|error| BuildError::Build(format!("invalid chip {:?}: {error}", request.chip)))?;
+    let segments = sparse_segments(
+        request.elf,
+        request.partition_table,
+        chip,
+        request.flash_size_bytes,
+    )?;
+    merge_segments(request.flash_size_bytes, segments)
+}
+
+#[derive(Debug)]
+struct SparseSegment {
+    addr: u32,
+    bytes: Vec<u8>,
+}
+
+fn sparse_segments(
+    elf: &[u8],
+    partition_table: &Path,
+    chip: Chip,
+    flash_size_bytes: u32,
+) -> Result<Vec<SparseSegment>, BuildError> {
+    let flash_data = FlashData::new(
+        FlashSettings::new(
+            Some(FlashMode::Dio),
+            Some(flash_size(flash_size_bytes)?),
+            Some(FlashFrequency::_40Mhz),
+        ),
+        0,
+        None,
+        chip,
+        XtalFrequency::_40Mhz,
+    );
+    let image = IdfBootloaderFormat::new(
+        elf,
+        &flash_data,
+        Some(partition_table),
+        None,
+        Some(PARTITION_TABLE_OFFSET),
+        Some("factory"),
+    )
+    .map_err(|error| BuildError::Build(format!("could not construct sparse ESP image: {error}")))?;
+    Ok(ImageFormat::from(image)
+        .flash_segments()
+        .into_iter()
+        .map(|segment| SparseSegment {
+            addr: segment.addr,
+            bytes: segment.data.into_owned(),
+        })
+        .collect())
+}
+
+fn merge_segments(
+    flash_size_bytes: u32,
+    mut segments: Vec<SparseSegment>,
+) -> Result<Vec<u8>, BuildError> {
+    segments.sort_by_key(|segment| segment.addr);
+    let mut previous_end = 0usize;
+    let mut image = vec![0xff; flash_size_bytes as usize];
+    for segment in segments {
+        let start = segment.addr as usize;
+        let end = start
+            .checked_add(segment.bytes.len())
+            .ok_or_else(|| BuildError::Artifact("ESP flash segment address overflow".into()))?;
+        if start < previous_end {
+            return Err(BuildError::Artifact(format!(
+                "ESP flash segment at 0x{start:x} overlaps its predecessor"
+            )));
+        }
+        let destination = image.get_mut(start..end).ok_or_else(|| {
+            BuildError::Artifact(format!(
+                "ESP flash segment 0x{start:x}..0x{end:x} exceeds {flash_size_bytes} bytes"
+            ))
+        })?;
+        destination.copy_from_slice(&segment.bytes);
+        previous_end = end;
+    }
+    Ok(image)
+}
+
+fn flash_size(bytes: u32) -> Result<FlashSize, BuildError> {
     match bytes {
-        Some(4_194_304) => Ok(FlashSize::_4Mb),
-        Some(8_388_608) => Ok(FlashSize::_8Mb),
-        Some(16_777_216) => Ok(FlashSize::_16Mb),
+        4_194_304 => Ok(FlashSize::_4Mb),
+        8_388_608 => Ok(FlashSize::_8Mb),
+        16_777_216 => Ok(FlashSize::_16Mb),
         other => Err(BuildError::Build(format!(
-            "unsupported catalog flash size {other:?}"
+            "unsupported ESP flash size {other}"
         ))),
     }
 }
@@ -221,11 +296,52 @@ mod tests {
 
     #[test]
     fn catalog_flash_sizes_map_to_supported_image_sizes() -> Result<(), BuildError> {
-        assert_eq!(flash_size(Some(4_194_304))?, FlashSize::_4Mb);
-        assert_eq!(flash_size(Some(8_388_608))?, FlashSize::_8Mb);
-        assert_eq!(flash_size(Some(16_777_216))?, FlashSize::_16Mb);
-        assert!(flash_size(None).is_err());
-        assert!(flash_size(Some(2_097_152)).is_err());
+        assert_eq!(flash_size(4_194_304)?, FlashSize::_4Mb);
+        assert_eq!(flash_size(8_388_608)?, FlashSize::_8Mb);
+        assert_eq!(flash_size(16_777_216)?, FlashSize::_16Mb);
+        assert!(flash_size(2_097_152).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn sparse_segments_merge_with_erased_gaps() -> Result<(), BuildError> {
+        let image = merge_segments(
+            8,
+            vec![
+                SparseSegment {
+                    addr: 4,
+                    bytes: vec![3, 4],
+                },
+                SparseSegment {
+                    addr: 1,
+                    bytes: vec![1, 2],
+                },
+            ],
+        )?;
+
+        assert_eq!(image, vec![0xff, 1, 2, 0xff, 3, 4, 0xff, 0xff]);
+        assert!(merge_segments(
+            4,
+            vec![SparseSegment {
+                addr: 3,
+                bytes: vec![1, 2],
+            }],
+        )
+        .is_err());
+        assert!(merge_segments(
+            4,
+            vec![
+                SparseSegment {
+                    addr: 1,
+                    bytes: vec![1, 2],
+                },
+                SparseSegment {
+                    addr: 2,
+                    bytes: vec![3],
+                },
+            ],
+        )
+        .is_err());
         Ok(())
     }
 }

@@ -1,0 +1,24 @@
+[package]
+name = "personal-hopspot-esp32-platform-assurance"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "ESP32-S3 platform integration image for Personal Hopspot assurance."
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "deny"
+
+[dependencies]
+embassy-executor = { version = "0.10", default-features = false }
+esp-bootloader-esp-idf = { version = "0.5", features = ["esp32s3"] }
+esp-hal = { version = "1.1", features = ["esp32s3", "unstable"] }
+esp-rtos = { version = "0.3.0", features = ["esp32s3", "embassy"] }
+personal-hopspot-memory = { path = "../../../memory" }
+
+[[bin]]
+name = "assurance-platform-esp32s3"
+path = "src/main.rs"

@@ -2507,6 +2507,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "personal-hopspot-esp32-platform-assurance"
+version = "0.1.0"
+dependencies = [
+ "embassy-executor",
+ "esp-bootloader-esp-idf",
+ "esp-hal",
+ "esp-rtos",
+ "personal-hopspot-memory",
+]
+
+[[package]]
 name = "personal-hopspot-memory"
 version = "0.1.0"
 

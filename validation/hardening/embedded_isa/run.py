@@ -19,37 +19,15 @@ from validation.hardening.embedded_isa.contract import (
     load_inventory,
 )
 from validation.hardening.embedded_isa.error import EmbeddedIsaError
+from validation.hardening.embedded_isa.emulator import (
+    executable as emulator_executable,
+    require_identity as require_emulator_identity,
+)
 from validation.hardening.embedded_isa.process import execute, require_success, tool_version
 from validation.hardening.embedded_isa.toolchain import resolve as resolve_target_toolchain
 
 
 DOCTOR = "./tools/prns doctor embedded-assurance"
-
-
-def require_emulator_identity(architecture: Architecture, actual: str) -> None:
-    expected = architecture.emulator.identity.banner
-    if actual != expected:
-        raise EmbeddedIsaError(
-            f"emulator identity is {actual!r}, expected {expected!r}; run {DOCTOR}"
-        )
-
-
-def emulator_executable(
-    architecture: Architecture, search_paths: tuple[Path, ...] = ()
-) -> Path:
-    path = os.pathsep.join(str(entry) for entry in search_paths) or None
-    discovered = shutil.which(architecture.emulator.executable, path=path)
-    if discovered is None and path is not None:
-        discovered = shutil.which(architecture.emulator.executable)
-    if discovered is None:
-        raise EmbeddedIsaError(
-            f"required emulator {architecture.emulator.executable} is unavailable; "
-            f"run {DOCTOR}"
-        )
-    executable = Path(discovered).resolve(strict=True)
-    if not executable.is_file():
-        raise EmbeddedIsaError(f"emulator is not a regular file: {executable}")
-    return executable
 
 
 def target_directory() -> Path:

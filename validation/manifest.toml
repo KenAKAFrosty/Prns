@@ -70,6 +70,7 @@ cargo_manifests = [
     "personal-hopspot/core/Cargo.toml",
     "personal-hopspot/desktop/Cargo.toml",
     "personal-hopspot/embedded/esp32/Cargo.toml",
+    "personal-hopspot/embedded/esp32/platform-assurance/Cargo.toml",
     "personal-hopspot/embedded/esp32/boards/heltec-e290/Cargo.toml",
     "personal-hopspot/embedded/esp32/boards/heltec-v4/Cargo.toml",
     "personal-hopspot/embedded/esp32/boards/heltec-v4-r8/Cargo.toml",
@@ -726,6 +727,40 @@ inputs = [
     "validation/hardening/embedded_platform",
 ]
 artifacts = "validation-artifacts/results/embedded-platform-nrf52840"
+
+[[suite]]
+id = "embedded-platform-esp32s3"
+domain = "hardening"
+group = "embedded-platform"
+tiers = ["release", "scheduled"]
+platform = "any"
+toolchain = "esp"
+timeout_seconds = 1800
+command = ["__RUNNER_PYTHON__", "-m", "validation.hardening.embedded_platform.run"]
+inputs = [
+    "Cargo.lock",
+    "Cargo.toml",
+    "personal-hopspot/assurance",
+    "personal-hopspot/builder",
+    "personal-hopspot/embedded/esp32/.cargo/config.toml",
+    "personal-hopspot/embedded/esp32/Cargo.lock",
+    "personal-hopspot/embedded/esp32/Cargo.toml",
+    "personal-hopspot/embedded/esp32/platform-assurance",
+    "personal-hopspot/memory",
+    "prns-flash-manifest",
+    "release/flash/boards.json",
+    "tools/release/release-esp-toolchain-identity.sh",
+    "validation/hardening/embedded-platform.toml",
+    "validation/hardening/embedded-isa.toml",
+    "validation/hardening/embedded_architectures.py",
+    "validation/hardening/embedded_execution.py",
+    "validation/hardening/embedded_host.py",
+    "validation/hardening/embedded_isa/emulator.py",
+    "validation/hardening/embedded_isa/toolchain.py",
+    "validation/hardening/embedded_platform",
+    "validation/hardening/embedded_readiness/contract.py",
+]
+artifacts = "validation-artifacts/results/embedded-platform-esp32s3"
 
 [[suite]]
 id = "embedded-miri-quick"

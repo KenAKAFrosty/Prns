@@ -14,6 +14,7 @@ members = [
     "boards/heltec-wireless-stick-lite-v3",
     "boards/t-beam-supreme",
     "boards/xiao-esp32-c6",
+    "platform-assurance",
 ]
 resolver = "2"
 

@@ -24,6 +24,7 @@ class TargetToolchain:
     linker_identity: str
     cargo_arguments: tuple[str, ...]
     search_paths: tuple[Path, ...]
+    environment: tuple[tuple[str, str], ...]
     proof_sources: tuple[Path, ...]
 
 
@@ -42,6 +43,7 @@ def resolve(
                 linker_identity=f"rust-lld bundled with {upstream_rustc_version}",
                 cargo_arguments=(),
                 search_paths=(),
+                environment=(),
                 proof_sources=(),
             )
         case Compiler.ESP:
@@ -78,11 +80,19 @@ def esp(architecture: Architecture) -> TargetToolchain:
         linker_identity=linker_version,
         cargo_arguments=build.cargo_arguments(linker, architecture.rust_target),
         search_paths=environment.search_paths,
+        environment=esp_environment(environment),
         proof_sources=(
             readiness_contract.ESP_IDENTITY_PATH,
             Path(readiness_contract.__file__).resolve(strict=True),
         ),
     )
+
+
+def esp_environment(environment: readiness_contract.EspEnvironment) -> tuple[tuple[str, str], ...]:
+    values = [("PATH", os.pathsep.join(str(path) for path in environment.search_paths))]
+    if environment.libclang_path is not None:
+        values.append(("LIBCLANG_PATH", str(environment.libclang_path)))
+    return tuple(values)
 
 
 def executable(command: str, search_paths: tuple[Path, ...]) -> Path:

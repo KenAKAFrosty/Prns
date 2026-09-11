@@ -4,6 +4,7 @@ import subprocess
 from pathlib import Path
 
 from validation.hardening.embedded_platform.contract import (
+    EmulatorKind,
     INVENTORY_PATH,
     ROOT,
     Platform,
@@ -23,6 +24,8 @@ def record(
     rustc_version: str,
     linker_identity: str,
     emulator_identity: str,
+    emulator_kind: EmulatorKind,
+    proof_sources: tuple[Path, ...] = (),
 ) -> None:
     output = transcript.parent / f"{platform.identifier}.assurance.json"
     command = [
@@ -47,7 +50,7 @@ def record(
         "--linker-version",
         linker_identity,
         "--emulator",
-        platform.emulator.kind.value,
+        emulator_kind.value,
         "--emulator-version",
         emulator_identity,
         "--emulator-executable",
@@ -61,6 +64,11 @@ def record(
         "--output",
         str(output),
     ]
-    for source in (INVENTORY_PATH, IMPLEMENTATION_PATH, *platform.sources):
+    for source in (
+        INVENTORY_PATH,
+        IMPLEMENTATION_PATH,
+        *platform.sources,
+        *proof_sources,
+    ):
         command.extend(("--source", str(source)))
     subprocess.run(command, cwd=ROOT, check=True)

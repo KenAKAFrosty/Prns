@@ -1,11 +1,20 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 from validation.hardening.embedded_execution import ProcessObservation
-from validation.hardening.embedded_platform.contract import ROOT, Platform
+from validation.hardening.embedded_platform.contract import EmulatorKind, ROOT, Platform
 from validation.hardening.embedded_platform.error import EmbeddedPlatformError
+
+
+@dataclass(frozen=True)
+class EmulatorEvidence:
+    kind: EmulatorKind
+    identity: str
+    executable_sha256: str
+    details: tuple[str, ...]
 
 
 def directory() -> Path:
@@ -32,6 +41,7 @@ def clear(platform: Platform, artifact_directory: Path) -> None:
         ".assurance.json",
         ".config",
         ".elf",
+        ".flash.bin",
         ".log",
         ".repl",
         ".resc",
@@ -48,12 +58,7 @@ def render_log(
     cargo_version: str,
     rustc_version: str,
     linker_identity: str,
-    emulator_identity: str,
-    emulator_executable_sha256: str,
-    platform_description: Path,
-    platform_description_sha256: str,
-    effective_platform_description: Path,
-    effective_platform_description_sha256: str,
+    emulator: EmulatorEvidence,
 ) -> bytes:
     lines = [
         f"platform={platform.identifier}",
@@ -65,23 +70,11 @@ def render_log(
         f"cargo={cargo_version}",
         f"rustc={rustc_version}",
         f"linker={linker_identity}",
-        f"emulator={emulator_identity}",
-        f"emulator-executable-sha256={emulator_executable_sha256}",
-        f"emulator-source={platform.emulator.source_repository}",
-        f"emulator-source-revision={platform.emulator.source_revision}",
-        f"platform-description={platform_description}",
-        f"platform-description-sha256={platform_description_sha256}",
-        f"effective-platform-description={effective_platform_description}",
-        "effective-platform-description-sha256="
-        f"{effective_platform_description_sha256}",
+        f"emulator-kind={emulator.kind.value}",
+        f"emulator={emulator.identity}",
+        f"emulator-executable-sha256={emulator.executable_sha256}",
+        *emulator.details,
     ]
-    for package in platform.emulator.packages:
-        lines.extend(
-            (
-                f"emulator-package-{package.host.value}={package.source_url}",
-                f"emulator-package-{package.host.value}-sha256={package.source_sha256}",
-            )
-        )
     body = bytearray(("\n".join(lines) + "\n").encode())
     for observation in observations:
         body.extend(f"\ncommand={' '.join(observation.command)}\n".encode())
