@@ -31,5 +31,4 @@ pub use profiles::{
 #[cfg(feature = "linker-addresses")]
 pub use profiles::{
     linker_address_profile, LinkerAddressProfile, LinkerAddressSpace, LinkerAddressValidationError,
-    ALL_LINKER_ADDRESS_PROFILES,
 };

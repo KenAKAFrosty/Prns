@@ -9,6 +9,9 @@ use crate::{
     ReservationId, ReservationPoolId, RuntimeReservation,
 };
 
+#[cfg(feature = "linker-addresses")]
+pub(super) mod linker;
+
 const IRAM: AddressSpaceId = AddressSpaceId("instruction-ram");
 const DRAM: AddressSpaceId = AddressSpaceId("data-ram");
 const RECLAIMED_RAM: AddressSpaceId = AddressSpaceId("reclaimed-ram");

@@ -1,7 +1,7 @@
 use super::*;
 use std::vec::Vec;
 
-use crate::profiles::ALL_MEMORY_PROFILES;
+use crate::profiles::{ALL_MEMORY_PROFILES, FLASH, RAM, T1000_E};
 use crate::{
     AddressSpace, AddressSpaceKind, BackingStoreId, FirmwarePlacement, ProcessorArchitecture,
     TransportCompatibility, TransportEnvelope,
@@ -9,10 +9,9 @@ use crate::{
 
 #[test]
 fn every_memory_profile_has_one_valid_linker_profile() {
-    assert_eq!(ALL_LINKER_ADDRESS_PROFILES.len(), ALL_MEMORY_PROFILES.len());
+    assert_eq!(linker_address_profiles().count(), ALL_MEMORY_PROFILES.len());
     for memory in ALL_MEMORY_PROFILES {
-        let matching_count = ALL_LINKER_ADDRESS_PROFILES
-            .iter()
+        let matching_count = linker_address_profiles()
             .filter(|profile| profile.memory_profile == memory.id)
             .count();
         assert_eq!(matching_count, 1, "{}", memory.id.as_str());
@@ -81,7 +80,7 @@ fn overlapping_ranges_require_an_explicit_backing_alias() {
     ];
     let aliased = fixture_memory(&ALIASED_MEMORY_SPACES);
     let conflicting = fixture_memory(&CONFLICTING_MEMORY_SPACES);
-    let linker = profile(aliased.id, &LINKER_SPACES);
+    let linker = LinkerAddressProfile::new(aliased.id, &LINKER_SPACES);
     assert_eq!(linker.validate(&aliased), Ok(()));
     assert_eq!(
         linker.validate(&conflicting),
@@ -116,31 +115,31 @@ fn malformed_linker_profiles_report_typed_causes() {
     let memory = fixture_memory(&MEMORY_SPACES);
 
     assert_eq!(
-        profile(memory.id, &MISSING).validate(&memory),
+        LinkerAddressProfile::new(memory.id, &MISSING).validate(&memory),
         Err(LinkerAddressValidationError::MissingAddressSpace {
             address_space: FIRST,
         })
     );
     assert_eq!(
-        profile(memory.id, &UNKNOWN_SPACE).validate(&memory),
+        LinkerAddressProfile::new(memory.id, &UNKNOWN_SPACE).validate(&memory),
         Err(LinkerAddressValidationError::UnknownAddressSpace {
             address_space: UNKNOWN,
         })
     );
     assert_eq!(
-        profile(memory.id, &DUPLICATE).validate(&memory),
+        LinkerAddressProfile::new(memory.id, &DUPLICATE).validate(&memory),
         Err(LinkerAddressValidationError::DuplicateAddressSpace {
             address_space: FIRST,
         })
     );
     assert_eq!(
-        profile(memory.id, &OVERLAPPING).validate(&memory),
+        LinkerAddressProfile::new(memory.id, &OVERLAPPING).validate(&memory),
         Err(LinkerAddressValidationError::OverlappingRanges {
             address_space: FIRST,
         })
     );
     assert_eq!(
-        profile(MemoryProfileId("other"), &OTHER_PROFILE).validate(&memory),
+        LinkerAddressProfile::new(MemoryProfileId("other"), &OTHER_PROFILE).validate(&memory),
         Err(LinkerAddressValidationError::ProfileMismatch {
             expected: memory.id,
             actual: MemoryProfileId("other"),
