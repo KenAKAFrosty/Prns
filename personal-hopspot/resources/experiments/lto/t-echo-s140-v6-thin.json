@@ -2,7 +2,7 @@
   "schema_version": 8,
   "source": {
     "kind": "clean-commit",
-    "commit": "cca5f2c292a40577058d3384be4294087376a394"
+    "commit": "ddc9f20bab25e48cd8107a61cdf1a87c39ad08c1"
   },
   "target": {
     "id": "t-echo-s140-v6",

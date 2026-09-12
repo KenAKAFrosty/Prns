@@ -2,7 +2,7 @@
   "schema_version": 8,
   "source": {
     "kind": "clean-commit",
-    "commit": "cca5f2c292a40577058d3384be4294087376a394"
+    "commit": "ddc9f20bab25e48cd8107a61cdf1a87c39ad08c1"
   },
   "target": {
     "id": "mesh-tower-v2",
@@ -208,7 +208,7 @@
     "value": []
   },
   "analysis": {
-    "linker_map_bytes": 11540679,
+    "linker_map_bytes": 11540570,
     "allocated_sections": {
       "kind": "complete",
       "value": [
@@ -1111,8 +1111,17 @@
           }
         ],
         "scenario_futures": {
-          "kind": "unavailable",
-          "reason": "semantic-harness-not-produced"
+          "kind": "measured",
+          "futures": [
+            {
+              "scenario": "sx126x",
+              "bytes": 828
+            },
+            {
+              "scenario": "lr1110",
+              "bytes": 928
+            }
+          ]
         }
       }
     }

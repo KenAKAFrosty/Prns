@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use personal_hopspot_builder::{BuildContext, BuildIntent, BuildVersion, LtoMode};
+use personal_hopspot_builder::{BuildContext, BuildIntent, BuildVersion, LtoMode, SourceCustody};
 use personal_hopspot_memory::T114;
 use serde_json::{json, Value};
 
@@ -8,7 +8,8 @@ use super::build::{build_identity, firmware_flash_usage, ReportError};
 use super::compare::{self, ComparisonError, CompatibilityDimension};
 use super::contract;
 use super::model::{
-    BuildStatus, Evidence, ResourceReport, ScenarioFutureSizesIdentity, SCHEMA_VERSION,
+    BuildStatus, Evidence, ResourceReport, ScenarioFutureSizesIdentity, StackLimitIdentity,
+    SCHEMA_VERSION,
 };
 use crate::matrix::RecipeIdentity;
 
@@ -453,6 +454,7 @@ fn preserved_lto_experiment_captures_overflow_and_control() -> Result<(), Box<dy
     assert_eq!(fat.target.id, "t-echo-s140-v6");
     assert_eq!(fat.build.lto, "fat");
     assert!(matches!(fat.status, BuildStatus::Success));
+    assert!(matches!(fat.source, SourceCustody::CleanCommit { .. }));
     let fat_flash = fat
         .firmware_flash
         .complete()
@@ -475,6 +477,8 @@ fn preserved_lto_experiment_captures_overflow_and_control() -> Result<(), Box<dy
         thin.analysis.flash_attribution,
         Evidence::Partial(_)
     ));
+    assert!(matches!(thin.analysis.executable, Evidence::Unavailable));
+    assert!(matches!(thin.analysis.async_memory, Evidence::Unavailable));
 
     assert_eq!(control.target.id, "mesh-tower-v2");
     assert_eq!(control.build.lto, "thin");
@@ -489,6 +493,43 @@ fn preserved_lto_experiment_captures_overflow_and_control() -> Result<(), Box<dy
     );
     assert_eq!(fat.toolchain, thin.toolchain);
     assert_eq!(fat.toolchain, control.toolchain);
+    assert_eq!(fat.source, thin.source);
+    assert_eq!(fat.source, control.source);
+
+    let fat_executable = fat
+        .analysis
+        .executable
+        .complete()
+        .ok_or("fat T-Echo report has no executable evidence")?;
+    let fat_stack = match &fat_executable.stack {
+        Evidence::Partial(stack) => stack,
+        Evidence::Complete(_) | Evidence::Unavailable => {
+            return Err("fat T-Echo stack evidence must remain explicitly partial".into());
+        }
+    };
+    assert_eq!(fat_stack.largest_known_path.bytes, 45_344);
+    assert!(matches!(
+        fat_stack.limit,
+        StackLimitIdentity::Declared {
+            bytes: 69_632,
+            headroom_bytes: 24_288,
+            ..
+        }
+    ));
+
+    for report in [&fat, &control] {
+        let async_memory = report
+            .analysis
+            .async_memory
+            .complete()
+            .ok_or("successful LTO experiment report has no async-memory evidence")?;
+        assert!(matches!(
+            &async_memory.scenario_futures,
+            ScenarioFutureSizesIdentity::Measured { futures }
+                if futures.iter().map(|future| (future.scenario.as_str(), future.bytes)).collect::<Vec<_>>()
+                    == [("sx126x", 828), ("lr1110", 928)]
+        ));
+    }
 
     let rendered = compare::render_comparison(
         &compare::compare_reports(&fat, &thin)?,
