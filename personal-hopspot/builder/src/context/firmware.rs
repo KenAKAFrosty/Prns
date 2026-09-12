@@ -1,3 +1,4 @@
+use std::ffi::{OsStr, OsString};
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -38,6 +39,9 @@ impl BuildContext<'_> {
         adapter: &Adapter,
         command: &mut Command,
     ) -> Result<FirmwareBuildCapture, BuildError> {
+        if self.intent.is_resource_report() {
+            validate_resource_environment(std::env::vars_os().map(|(name, _)| name))?;
+        }
         if let Some(lto) = self.intent.lto().cargo_value() {
             command.env("CARGO_PROFILE_RELEASE_LTO", lto);
         }
@@ -201,5 +205,109 @@ impl BuildContext<'_> {
             ))
         })?;
         Ok(capture.published)
+    }
+}
+
+fn validate_resource_environment(
+    names: impl IntoIterator<Item = OsString>,
+) -> Result<(), BuildError> {
+    if let Some(variable) = names
+        .into_iter()
+        .filter(|name| semantic_override(name))
+        .min()
+    {
+        Err(BuildError::SemanticEnvironmentOverride { variable })
+    } else {
+        Ok(())
+    }
+}
+
+fn semantic_override(name: &OsStr) -> bool {
+    let name = name.to_string_lossy();
+    name.starts_with("CARGO_PROFILE_")
+        || matches!(
+            name.as_ref(),
+            "CARGO_ENCODED_RUSTFLAGS"
+                | "CARGO_BUILD_RUSTFLAGS"
+                | "CARGO_BUILD_RUSTC"
+                | "CARGO_BUILD_RUSTC_WRAPPER"
+                | "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER"
+                | "CARGO_CONFIG"
+                | "CARGO_INCREMENTAL"
+                | "PRNS_BUILD_COMMIT"
+                | "PRNS_BUILD_COMMIT_SHORT"
+                | "PRNS_BUILD_SOURCE_DIGEST"
+                | "PRNS_FLASH_VERSION"
+                | "PRNS_SOURCE_ARCHIVE"
+                | "PRNS_SOURCE_COMMIT"
+                | "PRNS_SOURCE_SHA256"
+                | "PRNS_SOURCE_SIZE"
+                | "PRNS_SOURCE_VERSION"
+                | "RUSTC"
+                | "RUSTC_WRAPPER"
+                | "RUSTC_WORKSPACE_WRAPPER"
+        )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resource_environment_rejects_semantic_overrides() {
+        for variable in [
+            "CARGO_PROFILE_RELEASE_LTO",
+            "CARGO_PROFILE_RELEASE_PACKAGE_EXAMPLE_OPT_LEVEL",
+            "CARGO_ENCODED_RUSTFLAGS",
+            "CARGO_BUILD_RUSTFLAGS",
+            "CARGO_BUILD_RUSTC",
+            "CARGO_BUILD_RUSTC_WRAPPER",
+            "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER",
+            "CARGO_CONFIG",
+            "CARGO_INCREMENTAL",
+            "PRNS_BUILD_COMMIT",
+            "PRNS_BUILD_COMMIT_SHORT",
+            "PRNS_BUILD_SOURCE_DIGEST",
+            "PRNS_FLASH_VERSION",
+            "PRNS_SOURCE_ARCHIVE",
+            "PRNS_SOURCE_COMMIT",
+            "PRNS_SOURCE_SHA256",
+            "PRNS_SOURCE_SIZE",
+            "PRNS_SOURCE_VERSION",
+            "RUSTC",
+            "RUSTC_WRAPPER",
+            "RUSTC_WORKSPACE_WRAPPER",
+        ] {
+            assert!(matches!(
+                validate_resource_environment([OsString::from(variable)]),
+                Err(BuildError::SemanticEnvironmentOverride { variable: actual })
+                    if actual == OsStr::new(variable)
+            ));
+        }
+    }
+
+    #[test]
+    fn adapter_owned_and_nonsemantic_environment_is_allowed() -> Result<(), BuildError> {
+        validate_resource_environment(
+            [
+                "RUSTFLAGS",
+                "CARGO_TARGET_THUMBV7EM_NONE_EABIHF_RUSTFLAGS",
+                "CARGO_TARGET_THUMBV7EM_NONE_EABIHF_LINKER",
+                "CARGO_HOME",
+                "PATH",
+            ]
+            .map(OsString::from),
+        )
+    }
+
+    #[test]
+    fn multiple_overrides_report_the_lexically_first_variable() {
+        assert!(matches!(
+            validate_resource_environment(
+                ["RUSTC", "CARGO_INCREMENTAL", "PRNS_BUILD_COMMIT"].map(OsString::from)
+            ),
+            Err(BuildError::SemanticEnvironmentOverride { variable })
+                if variable == OsStr::new("CARGO_INCREMENTAL")
+        ));
     }
 }

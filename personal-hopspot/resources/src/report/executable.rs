@@ -15,11 +15,12 @@ use super::model::{
     ByteOrderIdentity, DisassemblerFlavorIdentity, DisassemblyIdentity, Evidence,
     EvidenceArtifactIdentity, ExecutableArchitectureIdentity, ExecutableIdentity,
     ExecutableSectionIdentity, FunctionAnalysisIdentity, FunctionBoundaryIdentity,
-    FunctionNormalizationIdentity, KnownCallPathFrameIdentity, KnownCallPathIdentity,
-    LoadPermissionIdentity, LoadSegmentIdentity, StackAnalysisGapIdentity,
-    StackAnalysisGapKindIdentity, StackAnalysisIdentity, StackFrameIdentity,
-    StackFrameSourceIdentity, StackLimitIdentity, StackRootIdentity, StackRootRoleIdentity,
-    StartupAnchorIdentity, StartupAnchorRoleIdentity, StartupStructureIdentity,
+    FunctionNormalizationIdentity, LoadPermissionIdentity, LoadSegmentIdentity,
+    ModeledCallChainFrameIdentity, ModeledChainAssessmentIdentity, ModeledDirectCallChainIdentity,
+    StackAnalysisGapIdentity, StackAnalysisGapKindIdentity, StackAnalysisIdentity,
+    StackFrameIdentity, StackFrameSourceIdentity, StackReservationIdentity, StackRootIdentity,
+    StackRootRoleIdentity, StartupAnchorIdentity, StartupAnchorRoleIdentity,
+    StartupStructureIdentity,
 };
 
 const FUNCTION_BOUNDARY_SCHEMA_VERSION: u32 = 1;
@@ -168,18 +169,28 @@ fn stack_analysis_identity(
             call_site: edge.call_site,
         })
         .collect::<Vec<_>>();
-    let largest_known_path = known_call_path_identity(analysis.largest_known_path);
-    let limit = match analysis.limit {
-        analysis::executable::StackLimitAnalysis::Declared {
+    let largest_modeled_direct_call_chain =
+        modeled_direct_call_chain_identity(analysis.largest_modeled_direct_call_chain);
+    let reservation = match analysis.reservation {
+        analysis::executable::StackReservationAnalysis::Declared {
             reservation,
             bytes,
-            headroom_bytes,
-        } => StackLimitIdentity::Declared {
+            assessment,
+        } => StackReservationIdentity::Declared {
             reservation,
             bytes,
-            headroom_bytes,
+            assessment: match assessment {
+                analysis::executable::ModeledChainAssessment::WithinReservation {
+                    remaining_bytes,
+                } => ModeledChainAssessmentIdentity::WithinReservation { remaining_bytes },
+                analysis::executable::ModeledChainAssessment::OverReservation { excess_bytes } => {
+                    ModeledChainAssessmentIdentity::OverReservation { excess_bytes }
+                }
+            },
         },
-        analysis::executable::StackLimitAnalysis::Undeclared => StackLimitIdentity::Undeclared,
+        analysis::executable::StackReservationAnalysis::Undeclared => {
+            StackReservationIdentity::Undeclared
+        }
     };
     let gaps = analysis
         .gaps
@@ -199,8 +210,8 @@ fn stack_analysis_identity(
         frames: &frames,
         roots: &roots,
         direct_calls: &direct_calls,
-        largest_known_path: &largest_known_path,
-        limit: &limit,
+        largest_modeled_direct_call_chain: &largest_modeled_direct_call_chain,
+        reservation: &reservation,
         gaps: &gaps,
     };
     let mut bytes = serde_json::to_vec_pretty(&artifact)?;
@@ -226,8 +237,8 @@ fn stack_analysis_identity(
                     evidence: "direct call count",
                 }
             })?,
-            largest_known_path,
-            limit,
+            largest_modeled_direct_call_chain,
+            reservation,
             gaps,
             artifact: EvidenceArtifactIdentity {
                 path: relative_path.to_string_lossy().into_owned(),
@@ -266,13 +277,15 @@ fn stack_root_identity(root: analysis::executable::StackRoot) -> StackRootIdenti
     }
 }
 
-fn known_call_path_identity(path: analysis::executable::KnownCallPath) -> KnownCallPathIdentity {
-    KnownCallPathIdentity {
+fn modeled_direct_call_chain_identity(
+    path: analysis::executable::ModeledDirectCallChain,
+) -> ModeledDirectCallChainIdentity {
+    ModeledDirectCallChainIdentity {
         bytes: path.bytes,
         frames: path
             .frames
             .into_iter()
-            .map(|frame| KnownCallPathFrameIdentity {
+            .map(|frame| ModeledCallChainFrameIdentity {
                 name: frame.name,
                 address: frame.address,
                 frame_bytes: frame.frame_bytes,
@@ -324,8 +337,8 @@ const fn stack_gap_identity(
         analysis::executable::StackAnalysisGapKind::InterruptNestingUnmodeled => {
             StackAnalysisGapKindIdentity::InterruptNestingUnmodeled
         }
-        analysis::executable::StackAnalysisGapKind::StackLimitUndeclared => {
-            StackAnalysisGapKindIdentity::StackLimitUndeclared
+        analysis::executable::StackAnalysisGapKind::StackReservationUndeclared => {
+            StackAnalysisGapKindIdentity::StackReservationUndeclared
         }
     }
 }
@@ -345,8 +358,8 @@ struct StackEvidenceArtifact<'a> {
     frames: &'a [StackFrameIdentity],
     roots: &'a [StackRootIdentity],
     direct_calls: &'a [CallEdgeArtifactIdentity],
-    largest_known_path: &'a KnownCallPathIdentity,
-    limit: &'a StackLimitIdentity,
+    largest_modeled_direct_call_chain: &'a ModeledDirectCallChainIdentity,
+    reservation: &'a StackReservationIdentity,
     gaps: &'a [StackAnalysisGapIdentity],
 }
 

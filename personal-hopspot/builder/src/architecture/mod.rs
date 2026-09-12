@@ -238,7 +238,9 @@ impl Adapter {
     }
 
     fn configure_rustflags(&self, command: &mut Command, intent: BuildIntent) {
-        command.env_remove(cargo_rustflags_environment(self.rust_target()));
+        command
+            .env_remove(cargo_rustflags_environment(self.rust_target()))
+            .env_remove("RUSTC_BOOTSTRAP");
         if intent.is_resource_report()
             && self.stack_frame_evidence == StackFrameEvidence::LlvmStackSizes
         {

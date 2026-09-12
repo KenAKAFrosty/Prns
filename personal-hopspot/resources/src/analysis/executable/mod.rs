@@ -16,8 +16,8 @@ use thiserror::Error;
 
 pub(crate) use functions::{display_symbol, FunctionAnalysis, FunctionBoundary};
 pub(crate) use stack::{
-    KnownCallPath, StackAnalysis, StackAnalysisGapKind, StackFrame, StackLimitAnalysis, StackRoot,
-    StackRootRole,
+    ModeledChainAssessment, ModeledDirectCallChain, StackAnalysis, StackAnalysisGapKind,
+    StackFrame, StackReservationAnalysis, StackRoot, StackRootRole,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -129,6 +129,13 @@ pub(crate) enum ExecutableError {
         path: PathBuf,
         actual: object::Architecture,
         expected: &'static str,
+    },
+    #[error("memory profile {profile:?} has no linker-address contract")]
+    MissingLinkerAddressProfile { profile: &'static str },
+    #[error("memory profile {profile:?} has an invalid linker-address contract: {reason:?}")]
+    InvalidLinkerAddressProfile {
+        profile: &'static str,
+        reason: personal_hopspot_memory::LinkerAddressValidationError,
     },
     #[error("could not read section name at index {index} in {path}: {source}")]
     SectionName {
@@ -282,7 +289,7 @@ pub(crate) fn analyze(
         });
     }
     validate_firmware_ownership(profile, firmware_image_bytes)?;
-    adapter.validate_allocated_sections(path, profile, &object, &bytes)?;
+    architecture::validate_profile_placement(path, profile, &object, &bytes)?;
 
     let executable_sections = executable_sections(path, &object)?;
     let entry_point = object.entry();

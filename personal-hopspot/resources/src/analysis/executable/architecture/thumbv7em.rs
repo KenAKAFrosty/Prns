@@ -4,8 +4,8 @@ use object::{Object, ObjectSection};
 use personal_hopspot_memory::{AddressSpaceGeometry, AddressSpaceKind, MemoryProfile};
 
 use super::{
-    direct_operand, entry_section, parse_instruction, require_symbol, validate_fixed_placement,
-    validate_flash_loads, AssuranceAdapter, CallTarget, DecodedInstruction, StackLimit,
+    direct_operand, entry_section, parse_instruction, require_symbol, AssuranceAdapter, CallTarget,
+    DecodedInstruction, StackReservation,
 };
 use crate::analysis::executable::{
     ExecutableError, ExecutableSection, StartupAnchor, StartupAnchorRole, StartupStructure,
@@ -19,26 +19,15 @@ pub(super) static ADAPTER: AssuranceAdapter = AssuranceAdapter {
     id: ProcessorArchitecture::ThumbV7em.id(),
     object_architecture: object::Architecture::Arm,
     normalize_code_address: normalize,
-    validate_allocated_sections: validate,
     startup,
     decoded_instruction,
     call_target,
-    stack_limit: StackLimit::RuntimeReservation("minimum-runtime-stack"),
+    stack_reservation: StackReservation::RuntimeReservation("minimum-runtime-stack"),
     dwarf_cfa_registers: &[],
 };
 
 fn normalize(address: u64) -> u64 {
     address & !1
-}
-
-fn validate(
-    path: &Path,
-    profile: &MemoryProfile,
-    object: &object::File<'_>,
-    bytes: &[u8],
-) -> Result<(), ExecutableError> {
-    validate_fixed_placement(path, profile, object)?;
-    validate_flash_loads(path, profile, object, bytes)
 }
 
 fn startup(

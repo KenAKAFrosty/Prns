@@ -1,8 +1,9 @@
 {
-  "schema_version": 8,
+  "schema_version": 9,
   "source": {
-    "kind": "clean-commit",
-    "commit": "ddc9f20bab25e48cd8107a61cdf1a87c39ad08c1"
+    "kind": "working-tree",
+    "head": "5cb30c612397b906c70e13e8801ac3b32ff6c375",
+    "diff_fingerprint": "0fe73f9aa92e71ad88d32663901f9c5eca18e28f5a5bf2d74f5aead00dfb7404"
   },
   "target": {
     "id": "t-echo-s140-v6",
@@ -23,17 +24,44 @@
     ]
   },
   "build": {
-    "fingerprint": "a618501b1c29d714845a7c66a041622edc9985336283f2234ab711d37db25a64",
+    "fingerprint": "e17210b8afb2b2286765a434ecddebd6460d045342626668a92516b222cddc6e",
     "firmware_version": "0.3.7",
     "cargo_profile": "release",
     "recipe_kind": "uf2",
+    "manifest": "personal-hopspot/embedded/nrf52840/Cargo.toml",
     "package": "t-echo",
     "binary": "t-echo",
     "features": [
       "board-t-echo",
       "softdevice-s140-v6"
     ],
-    "lto": "fat"
+    "requested": {
+      "lto": "fat"
+    },
+    "effective_release": {
+      "opt_level": "size-min",
+      "debug": "full",
+      "split_debuginfo": "toolchain-default",
+      "strip": "none",
+      "debug_assertions": false,
+      "overflow_checks": false,
+      "lto": "fat",
+      "panic": "unwind",
+      "incremental": false,
+      "codegen_units": 1,
+      "rpath": false
+    },
+    "package_overrides": [],
+    "build_override": {
+      "opt_level": "zero",
+      "debug": "none",
+      "split_debuginfo": "toolchain-default",
+      "strip": "none",
+      "debug_assertions": false,
+      "overflow_checks": false,
+      "incremental": false,
+      "codegen_units": 256
+    }
   },
   "toolchain": {
     "fingerprint": "75a6259eaebb5273ab6bf620ea36e19f31bda7caff1a56a239816a600f70e5f2",
@@ -43,7 +71,7 @@
     "linker_version": "LLD 22.1.8 (https://github.com/rust-lang/llvm-project.git 52ed14fcd56afc30f9cccd8ca8ce237c2eef7e04) (compatible with GNU linkers)"
   },
   "memory_contract": {
-    "fingerprint": "6d8526c08fb6a427de086e728895a07f756256407a675a176ad8151577f53a1b",
+    "fingerprint": "7d726b15f5339a3c519d79fe5d9258727bbbbf2d59d9de545fc56872dd1ef966",
     "address_spaces": [
       {
         "id": "internal-flash",
@@ -53,6 +81,12 @@
           "start": 0,
           "end": 1048576
         },
+        "linker_ranges": [
+          {
+            "start": 155648,
+            "end": 782336
+          }
+        ],
         "backing_store": "internal-flash",
         "backing_offset": 0
       },
@@ -64,6 +98,12 @@
           "start": 536920064,
           "end": 537133056
         },
+        "linker_ranges": [
+          {
+            "start": 536920064,
+            "end": 537133056
+          }
+        ],
         "backing_store": "internal-sram",
         "backing_offset": 49152
       }
@@ -915,7 +955,7 @@
               }
             ],
             "direct_call_count": 14465,
-            "largest_known_path": {
+            "largest_modeled_direct_call_chain": {
               "bytes": 45344,
               "frames": [
                 {
@@ -940,11 +980,14 @@
                 }
               ]
             },
-            "limit": {
+            "reservation": {
               "kind": "declared",
               "reservation": "minimum-runtime-stack",
               "bytes": 69632,
-              "headroom_bytes": 24288
+              "assessment": {
+                "kind": "within-reservation",
+                "remaining_bytes": 24288
+              }
             },
             "gaps": [
               {
@@ -978,8 +1021,8 @@
             ],
             "artifact": {
               "path": "work/t-echo-s140-v6/stack-evidence.json",
-              "bytes": 6401351,
-              "fingerprint": "452c13113f7b5f9a61a9ce356c08cec60a2de4d089bd592d4327c729d3abe492"
+              "bytes": 6401437,
+              "fingerprint": "ee154511893bd09eb7021a78446a756ce4a54d35c5d71f6384b645db3b15b7e3"
             }
           }
         }

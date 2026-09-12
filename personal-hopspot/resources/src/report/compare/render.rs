@@ -4,9 +4,10 @@ use super::model::{
     ArtifactComparison, AsyncMemoryComparison, AttributionCandidateBaseline,
     AttributionCandidateComparison, AttributionCategoryComparison, AttributionComparison,
     ByteComparison, CountComparison, EvidenceComparison, ExecutableComparison, FlashComparison,
-    NamedSizeComparison, OverflowComparison, OverflowState, RamComparison, RamHeadroomComparison,
-    ResourceComparison, ScenarioFutureComparison, SectionComparison, SettingDifference,
-    StackEvidenceComparison, StackLimitComparison, StatusComparison,
+    ModeledChainAssessmentComparison, NamedSizeComparison, OverflowComparison, OverflowState,
+    RamComparison, RamHeadroomComparison, ResourceComparison, ScenarioFutureComparison,
+    SectionComparison, SettingDifference, StackEvidenceComparison, StackReservationComparison,
+    StatusComparison,
 };
 
 pub(super) fn render(comparison: &ResourceComparison, before: &Path, after: &Path) -> String {
@@ -19,8 +20,11 @@ pub(super) fn render(comparison: &ResourceComparison, before: &Path, after: &Pat
     ));
     for setting in &comparison.settings {
         match setting {
-            SettingDifference::Lto { before, after } => {
-                output.push_str(&format!("setting lto {before} -> {after}\n"));
+            SettingDifference::RequestedLto { before, after } => {
+                output.push_str(&format!("setting requested-lto {before} -> {after}\n"));
+            }
+            SettingDifference::EffectiveLto { before, after } => {
+                output.push_str(&format!("setting effective-lto {before} -> {after}\n"));
             }
         }
     }
@@ -84,21 +88,35 @@ fn stack(output: &mut String, comparison: &StackEvidenceComparison) {
     output.push_str(&format!("stack frame-source {}\n", value.frame_source));
     metric(output, "stack frame-source evidence", value.source_bytes);
     count_metric(output, "stack frames", value.frames);
-    metric(output, "stack known-path lower-bound", value.known_path);
+    metric(
+        output,
+        "stack largest-modeled-direct-call-chain",
+        value.modeled_chain,
+    );
     for function in &value.changed_largest_frames {
         output.push_str(&format!("stack ranked-frame changed {function:?}\n"));
     }
-    match &value.limit {
-        StackLimitComparison::Declared {
+    match &value.reservation {
+        StackReservationComparison::Declared {
             reservation,
             bytes,
-            headroom,
+            assessment,
         } => {
-            output.push_str(&format!("stack limit {reservation:?} {bytes}\n"));
-            metric(output, "stack known-path headroom", *headroom);
+            output.push_str(&format!("stack reservation {reservation:?} {bytes}\n"));
+            match assessment {
+                ModeledChainAssessmentComparison::WithinReservation { remaining } => {
+                    metric(output, "stack modeled-chain advisory remaining", *remaining)
+                }
+                ModeledChainAssessmentComparison::OverReservation { excess } => {
+                    metric(output, "stack modeled-chain advisory excess", *excess)
+                }
+                ModeledChainAssessmentComparison::Changed => {
+                    output.push_str("stack modeled-chain advisory changed\n");
+                }
+            }
         }
-        StackLimitComparison::Undeclared => output.push_str("stack limit undeclared\n"),
-        StackLimitComparison::Changed => output.push_str("stack limit changed\n"),
+        StackReservationComparison::Undeclared => output.push_str("stack reservation undeclared\n"),
+        StackReservationComparison::Changed => output.push_str("stack reservation changed\n"),
     }
     for gap in &value.gaps {
         count_metric(output, &format!("stack gap {}", gap.name), gap.count);

@@ -17,7 +17,8 @@ pub(in crate::report) struct ResourceComparison {
 
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum SettingDifference {
-    Lto { before: String, after: String },
+    RequestedLto { before: String, after: String },
+    EffectiveLto { before: String, after: String },
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -128,20 +129,27 @@ pub(super) struct StackComparison {
     pub(super) frame_source: ChangeState,
     pub(super) source_bytes: ByteComparison,
     pub(super) frames: CountComparison,
-    pub(super) known_path: ByteComparison,
+    pub(super) modeled_chain: ByteComparison,
     pub(super) changed_largest_frames: Vec<String>,
-    pub(super) limit: StackLimitComparison,
+    pub(super) reservation: StackReservationComparison,
     pub(super) gaps: Vec<NamedCountComparison>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub(super) enum StackLimitComparison {
+pub(super) enum StackReservationComparison {
     Declared {
         reservation: String,
         bytes: u64,
-        headroom: ByteComparison,
+        assessment: ModeledChainAssessmentComparison,
     },
     Undeclared,
+    Changed,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum ModeledChainAssessmentComparison {
+    WithinReservation { remaining: ByteComparison },
+    OverReservation { excess: ByteComparison },
     Changed,
 }
 

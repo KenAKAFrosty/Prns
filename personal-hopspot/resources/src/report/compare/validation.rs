@@ -2,14 +2,16 @@ use std::fs;
 use std::path::Path;
 
 use personal_hopspot_assurance_kernel::FUTURE_SIZE_SCENARIOS;
+use serde::Deserialize;
 
 use super::super::model::{
-    ArtifactIdentity, AsyncMemoryIdentity, AttributionCategoryIdentity, BuildStatus, Evidence,
-    ExecutableArchitectureIdentity, ExecutableIdentity, FirmwareFlashUsage,
-    FlashAttributionIdentity, FunctionBoundaryIdentity, FunctionNormalizationIdentity,
-    LoadPermissionIdentity, MemoryOverflowIdentity, RamBackingUsage, RamCapacityIdentity,
+    ArtifactIdentity, AsyncMemoryIdentity, AttributionCategoryIdentity, BuildStatus,
+    CargoLtoIdentity, Evidence, ExecutableArchitectureIdentity, ExecutableIdentity,
+    FirmwareFlashUsage, FlashAttributionIdentity, FunctionBoundaryIdentity,
+    FunctionNormalizationIdentity, LoadPermissionIdentity, MemoryOverflowIdentity,
+    ModeledChainAssessmentIdentity, RamBackingUsage, RamCapacityIdentity, RequestedLtoIdentity,
     ResourceReport, ScenarioFutureSizesIdentity, SectionKindIdentity, SectionUsage,
-    StackAnalysisGapKindIdentity, StackFrameSourceIdentity, StackLimitIdentity,
+    StackAnalysisGapKindIdentity, StackFrameSourceIdentity, StackReservationIdentity,
     StartupAnchorRoleIdentity, TaskPoolAccountingIdentity, SCHEMA_VERSION,
 };
 use super::{ComparisonError, SECTION_KINDS};
@@ -19,6 +21,19 @@ pub(super) fn load(path: &Path) -> Result<ResourceReport, ComparisonError> {
         path: path.to_path_buf(),
         source,
     })?;
+    let schema = serde_json::from_slice::<ReportSchema>(&bytes).map_err(|source| {
+        ComparisonError::Parse {
+            path: path.to_path_buf(),
+            source,
+        }
+    })?;
+    if schema.schema_version != SCHEMA_VERSION {
+        return Err(ComparisonError::UnsupportedSchema {
+            path: path.to_path_buf(),
+            actual: schema.schema_version,
+            supported: SCHEMA_VERSION,
+        });
+    }
     let report = serde_json::from_slice::<ResourceReport>(&bytes).map_err(|source| {
         ComparisonError::Parse {
             path: path.to_path_buf(),
@@ -29,6 +44,11 @@ pub(super) fn load(path: &Path) -> Result<ResourceReport, ComparisonError> {
     Ok(report)
 }
 
+#[derive(Deserialize)]
+struct ReportSchema {
+    schema_version: u32,
+}
+
 pub(super) fn validate_report(path: &Path, report: &ResourceReport) -> Result<(), ComparisonError> {
     if report.schema_version != SCHEMA_VERSION {
         return Err(ComparisonError::UnsupportedSchema {
@@ -37,7 +57,9 @@ pub(super) fn validate_report(path: &Path, report: &ResourceReport) -> Result<()
             supported: SCHEMA_VERSION,
         });
     }
+    validate_build(path, report)?;
     validate_toolchain(path, report)?;
+    validate_memory_contract(path, report)?;
     validate_linker_map(path, report)?;
     match &report.status {
         BuildStatus::Success => validate_success(path, report),
@@ -45,6 +67,61 @@ pub(super) fn validate_report(path: &Path, report: &ResourceReport) -> Result<()
             validate_overflows(path, regions)?;
             validate_available(path, report)
         }
+    }
+}
+
+fn validate_build(path: &Path, report: &ResourceReport) -> Result<(), ComparisonError> {
+    let build = &report.build;
+    let settings_valid = build.effective_release.codegen_units != 0
+        && build.build_override.codegen_units != 0
+        && build.package_overrides.iter().all(|override_| {
+            !override_.package.is_empty() && override_.settings.codegen_units != 0
+        })
+        && build
+            .package_overrides
+            .windows(2)
+            .all(|pair| pair[0].package < pair[1].package);
+    let request_valid = match build.requested.lto {
+        RequestedLtoIdentity::Configured => true,
+        RequestedLtoIdentity::Fat => build.effective_release.lto == CargoLtoIdentity::Fat,
+        RequestedLtoIdentity::Thin => build.effective_release.lto == CargoLtoIdentity::Thin,
+    };
+    let identity_valid = !build.firmware_version.is_empty()
+        && build.cargo_profile == "release"
+        && !build.recipe_kind.is_empty()
+        && !build.manifest.is_empty()
+        && !build.package.is_empty()
+        && !build.binary.is_empty()
+        && build.features.iter().all(|feature| !feature.is_empty())
+        && build
+            .features
+            .iter()
+            .enumerate()
+            .all(|(index, feature)| !build.features[..index].contains(feature));
+    let fingerprint_valid = super::super::build::build_fingerprint(build)
+        .is_ok_and(|fingerprint| fingerprint == build.fingerprint);
+    if settings_valid && request_valid && identity_valid && fingerprint_valid {
+        Ok(())
+    } else {
+        Err(ComparisonError::InvalidBuildIdentity {
+            path: path.to_path_buf(),
+        })
+    }
+}
+
+fn validate_memory_contract(path: &Path, report: &ResourceReport) -> Result<(), ComparisonError> {
+    let contract = &report.memory_contract;
+    let valid = super::super::contract::memory_contract_fingerprint(
+        &report.target.memory_profile,
+        contract,
+    )
+    .is_ok_and(|fingerprint| fingerprint == contract.fingerprint);
+    if valid {
+        Ok(())
+    } else {
+        Err(ComparisonError::InvalidMemoryContractIdentity {
+            path: path.to_path_buf(),
+        })
     }
 }
 
@@ -351,41 +428,61 @@ fn validate_stack(
         "stack roots are invalid",
     )?;
     let path_bytes = stack
-        .largest_known_path
+        .largest_modeled_direct_call_chain
         .frames
         .iter()
         .try_fold(0_u64, |total, frame| total.checked_add(frame.frame_bytes));
     executable_valid(
         path,
-        !stack.largest_known_path.frames.is_empty()
-            && path_bytes == Some(stack.largest_known_path.bytes)
-            && stack.largest_known_path.frames.iter().all(|frame| {
-                !frame.name.is_empty() && executable_address(executable, frame.address)
-            }),
-        "known stack path accounting is invalid",
+        !stack.largest_modeled_direct_call_chain.frames.is_empty()
+            && path_bytes == Some(stack.largest_modeled_direct_call_chain.bytes)
+            && stack
+                .largest_modeled_direct_call_chain
+                .frames
+                .iter()
+                .all(|frame| {
+                    !frame.name.is_empty() && executable_address(executable, frame.address)
+                }),
+        "modeled direct-call chain accounting is invalid",
     )?;
     let undeclared_gap = stack
         .gaps
         .iter()
-        .any(|gap| gap.kind == StackAnalysisGapKindIdentity::StackLimitUndeclared);
-    let limit_valid = match &stack.limit {
-        StackLimitIdentity::Declared {
+        .any(|gap| gap.kind == StackAnalysisGapKindIdentity::StackReservationUndeclared);
+    let reservation_valid = match &stack.reservation {
+        StackReservationIdentity::Declared {
             reservation,
             bytes,
-            headroom_bytes,
+            assessment,
         } => {
             !reservation.is_empty()
                 && !undeclared_gap
-                && stack.largest_known_path.bytes.checked_add(*headroom_bytes) == Some(*bytes)
+                && match assessment {
+                    ModeledChainAssessmentIdentity::WithinReservation { remaining_bytes } => {
+                        stack
+                            .largest_modeled_direct_call_chain
+                            .bytes
+                            .checked_add(*remaining_bytes)
+                            == Some(*bytes)
+                    }
+                    ModeledChainAssessmentIdentity::OverReservation { excess_bytes } => {
+                        bytes.checked_add(*excess_bytes)
+                            == Some(stack.largest_modeled_direct_call_chain.bytes)
+                    }
+                }
                 && report
                     .memory_contract
                     .runtime_reservations
                     .iter()
                     .any(|candidate| candidate.id == *reservation && candidate.bytes == *bytes)
         }
-        StackLimitIdentity::Undeclared => undeclared_gap,
+        StackReservationIdentity::Undeclared => undeclared_gap,
     };
-    executable_valid(path, limit_valid, "stack limit accounting is invalid")?;
+    executable_valid(
+        path,
+        reservation_valid,
+        "stack reservation assessment is invalid",
+    )?;
     executable_valid(
         path,
         stack.artifact.path == format!("work/{}/stack-evidence.json", report.target.id)

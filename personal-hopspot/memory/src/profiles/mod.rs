@@ -130,3 +130,11 @@ pub fn memory_profile_named(id: &str) -> Option<&'static MemoryProfile> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(feature = "linker-addresses")]
+mod linker;
+#[cfg(feature = "linker-addresses")]
+pub use linker::{
+    linker_address_profile, LinkerAddressProfile, LinkerAddressSpace, LinkerAddressValidationError,
+    ALL_LINKER_ADDRESS_PROFILES,
+};

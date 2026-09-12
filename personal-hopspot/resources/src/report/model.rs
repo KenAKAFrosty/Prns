@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use super::fingerprint::Fingerprint;
 
-pub(super) const SCHEMA_VERSION: u32 = 8;
+pub(super) const SCHEMA_VERSION: u32 = 9;
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -46,10 +46,138 @@ pub(super) struct BuildIdentity {
     pub firmware_version: String,
     pub cargo_profile: String,
     pub recipe_kind: String,
+    pub manifest: String,
     pub package: String,
     pub binary: String,
     pub features: Vec<String>,
-    pub lto: String,
+    pub requested: RequestedBuildSettingsIdentity,
+    pub effective_release: ReleaseSettingsIdentity,
+    pub package_overrides: Vec<PackageReleaseOverrideIdentity>,
+    pub build_override: PackageReleaseSettingsIdentity,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RequestedBuildSettingsIdentity {
+    pub lto: RequestedLtoIdentity,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum RequestedLtoIdentity {
+    Configured,
+    Fat,
+    Thin,
+}
+
+impl RequestedLtoIdentity {
+    pub(super) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Configured => "configured",
+            Self::Fat => "fat",
+            Self::Thin => "thin",
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ReleaseSettingsIdentity {
+    pub opt_level: OptimizationLevelIdentity,
+    pub debug: DebugInfoIdentity,
+    pub split_debuginfo: SplitDebuginfoIdentity,
+    pub strip: StripIdentity,
+    pub debug_assertions: bool,
+    pub overflow_checks: bool,
+    pub lto: CargoLtoIdentity,
+    pub panic: PanicStrategyIdentity,
+    pub incremental: bool,
+    pub codegen_units: u32,
+    pub rpath: bool,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct PackageReleaseOverrideIdentity {
+    pub package: String,
+    pub settings: PackageReleaseSettingsIdentity,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct PackageReleaseSettingsIdentity {
+    pub opt_level: OptimizationLevelIdentity,
+    pub debug: DebugInfoIdentity,
+    pub split_debuginfo: SplitDebuginfoIdentity,
+    pub strip: StripIdentity,
+    pub debug_assertions: bool,
+    pub overflow_checks: bool,
+    pub incremental: bool,
+    pub codegen_units: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum OptimizationLevelIdentity {
+    Zero,
+    One,
+    Two,
+    Three,
+    Size,
+    SizeMin,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum DebugInfoIdentity {
+    None,
+    Limited,
+    Full,
+    LineTablesOnly,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum SplitDebuginfoIdentity {
+    ToolchainDefault,
+    Off,
+    Packed,
+    Unpacked,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum StripIdentity {
+    None,
+    Debuginfo,
+    Symbols,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum CargoLtoIdentity {
+    False,
+    Fat,
+    Thin,
+    Off,
+}
+
+impl CargoLtoIdentity {
+    pub(super) const fn as_str(self) -> &'static str {
+        match self {
+            Self::False => "false",
+            Self::Fat => "fat",
+            Self::Thin => "thin",
+            Self::Off => "off",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum PanicStrategyIdentity {
+    Unwind,
+    Abort,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -79,8 +207,16 @@ pub(super) struct AddressSpaceIdentity {
     pub id: String,
     pub kind: String,
     pub geometry: AddressSpaceGeometryIdentity,
+    pub linker_ranges: Vec<AddressRangeIdentity>,
     pub backing_store: String,
     pub backing_offset: u64,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct AddressRangeIdentity {
+    pub start: u64,
+    pub end: u64,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -242,8 +378,8 @@ pub(super) struct StackAnalysisIdentity {
     pub largest_frames: Vec<StackFrameIdentity>,
     pub roots: Vec<StackRootIdentity>,
     pub direct_call_count: u64,
-    pub largest_known_path: KnownCallPathIdentity,
-    pub limit: StackLimitIdentity,
+    pub largest_modeled_direct_call_chain: ModeledDirectCallChainIdentity,
+    pub reservation: StackReservationIdentity,
     pub gaps: Vec<StackAnalysisGapIdentity>,
     pub artifact: EvidenceArtifactIdentity,
 }
@@ -282,14 +418,14 @@ pub(super) enum StackRootRoleIdentity {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct KnownCallPathIdentity {
+pub(super) struct ModeledDirectCallChainIdentity {
     pub bytes: u64,
-    pub frames: Vec<KnownCallPathFrameIdentity>,
+    pub frames: Vec<ModeledCallChainFrameIdentity>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct KnownCallPathFrameIdentity {
+pub(super) struct ModeledCallChainFrameIdentity {
     pub name: String,
     pub address: u64,
     pub frame_bytes: u64,
@@ -297,13 +433,20 @@ pub(super) struct KnownCallPathFrameIdentity {
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
-pub(super) enum StackLimitIdentity {
+pub(super) enum StackReservationIdentity {
     Declared {
         reservation: String,
         bytes: u64,
-        headroom_bytes: u64,
+        assessment: ModeledChainAssessmentIdentity,
     },
     Undeclared,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub(super) enum ModeledChainAssessmentIdentity {
+    WithinReservation { remaining_bytes: u64 },
+    OverReservation { excess_bytes: u64 },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -329,7 +472,7 @@ pub(super) enum StackAnalysisGapKindIdentity {
     InterruptRootsUnresolved,
     DynamicAllocationNotProvenAbsent,
     InterruptNestingUnmodeled,
-    StackLimitUndeclared,
+    StackReservationUndeclared,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]

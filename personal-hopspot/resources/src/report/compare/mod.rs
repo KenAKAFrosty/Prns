@@ -13,19 +13,19 @@ use super::model::{
     ArtifactIdentity, AsyncMemoryIdentity, AttributionCategoryIdentity, AttributionEntryIdentity,
     BuildIdentity, BuildStatus, Evidence, ExecutableIdentity, FirmwareFlashUsage,
     FlashAttributionIdentity, FutureSizeUnavailableReasonIdentity, MemoryOverflowIdentity,
-    RamBackingUsage, RamCapacityIdentity, ResourceReport, ScenarioFutureSizesIdentity,
-    SectionKindIdentity, SectionUsage, StackAnalysisGapKindIdentity, StackAnalysisIdentity,
-    StackLimitIdentity,
+    ModeledChainAssessmentIdentity, RamBackingUsage, RamCapacityIdentity, ResourceReport,
+    ScenarioFutureSizesIdentity, SectionKindIdentity, SectionUsage, StackAnalysisGapKindIdentity,
+    StackAnalysisIdentity, StackReservationIdentity,
 };
 use model::{
     ArtifactComparison, AsyncMemoryComparison, AttributionCandidateBaseline,
     AttributionCandidateComparison, AttributionCategoriesComparison, AttributionCategoryComparison,
     AttributionComparison, AttributionCoverageComparison, ByteComparison, ChangeState,
     CountComparison, EvidenceAvailability, EvidenceComparison, ExecutableComparison,
-    FlashComparison, NamedCountComparison, NamedSizeComparison, OverflowComparison, OverflowState,
-    RamComparison, RamHeadroomComparison, ResourceComparison, ScenarioFutureComparison,
-    SectionComparison, SettingDifference, StackComparison, StackEvidenceComparison,
-    StackLimitComparison, StatusComparison, StatusKind,
+    FlashComparison, ModeledChainAssessmentComparison, NamedCountComparison, NamedSizeComparison,
+    OverflowComparison, OverflowState, RamComparison, RamHeadroomComparison, ResourceComparison,
+    ScenarioFutureComparison, SectionComparison, SettingDifference, StackComparison,
+    StackEvidenceComparison, StackReservationComparison, StatusComparison, StatusKind,
 };
 
 const SECTION_KINDS: [(SectionKindIdentity, &str); 5] = [
@@ -97,6 +97,10 @@ pub enum ComparisonError {
     MissingLinkerMapEvidence { path: PathBuf },
     #[error("resource report {path} has an invalid toolchain identity")]
     InvalidToolchainIdentity { path: PathBuf },
+    #[error("resource report {path} has an invalid build identity")]
+    InvalidBuildIdentity { path: PathBuf },
+    #[error("resource report {path} has an invalid memory-contract identity")]
+    InvalidMemoryContractIdentity { path: PathBuf },
     #[error("resource report {path} has an invalid report fingerprint")]
     InvalidReportFingerprint { path: PathBuf },
     #[error("resource report {path} has no allocated-section evidence")]
@@ -205,14 +209,19 @@ fn compare_reports_with(
         before.memory_contract == after.memory_contract,
         CompatibilityDimension::MemoryContract,
     )?;
-    let settings = if before.build.lto == after.build.lto {
-        Vec::new()
-    } else {
-        vec![SettingDifference::Lto {
-            before: before.build.lto.clone(),
-            after: after.build.lto.clone(),
-        }]
-    };
+    let mut settings = Vec::new();
+    if before.build.requested.lto != after.build.requested.lto {
+        settings.push(SettingDifference::RequestedLto {
+            before: before.build.requested.lto.as_str().to_string(),
+            after: after.build.requested.lto.as_str().to_string(),
+        });
+    }
+    if before.build.effective_release.lto != after.build.effective_release.lto {
+        settings.push(SettingDifference::EffectiveLto {
+            before: before.build.effective_release.lto.as_str().to_string(),
+            after: after.build.effective_release.lto.as_str().to_string(),
+        });
+    }
     Ok(ResourceComparison {
         target: before.target.id.clone(),
         settings,
@@ -297,9 +306,9 @@ fn compare_stack(before: &StackAnalysisIdentity, after: &StackAnalysisIdentity) 
         frame_source: change_state(before.frame_source == after.frame_source),
         source_bytes: ByteComparison::new(before.source_bytes, after.source_bytes),
         frames: CountComparison::new(before.frame_count, after.frame_count),
-        known_path: ByteComparison::new(
-            before.largest_known_path.bytes,
-            after.largest_known_path.bytes,
+        modeled_chain: ByteComparison::new(
+            before.largest_modeled_direct_call_chain.bytes,
+            after.largest_modeled_direct_call_chain.bytes,
         ),
         changed_largest_frames: frame_names
             .into_iter()
@@ -315,29 +324,29 @@ fn compare_stack(before: &StackAnalysisIdentity, after: &StackAnalysisIdentity) 
             })
             .map(str::to_string)
             .collect(),
-        limit: match (&before.limit, &after.limit) {
+        reservation: match (&before.reservation, &after.reservation) {
             (
-                StackLimitIdentity::Declared {
+                StackReservationIdentity::Declared {
                     reservation,
                     bytes,
-                    headroom_bytes: before,
+                    assessment: before,
                 },
-                StackLimitIdentity::Declared {
+                StackReservationIdentity::Declared {
                     reservation: after_reservation,
                     bytes: after_bytes,
-                    headroom_bytes: after,
+                    assessment: after,
                 },
             ) if reservation == after_reservation && bytes == after_bytes => {
-                StackLimitComparison::Declared {
+                StackReservationComparison::Declared {
                     reservation: reservation.clone(),
                     bytes: *bytes,
-                    headroom: ByteComparison::new(*before, *after),
+                    assessment: compare_modeled_chain_assessment(before, after),
                 }
             }
-            (StackLimitIdentity::Undeclared, StackLimitIdentity::Undeclared) => {
-                StackLimitComparison::Undeclared
+            (StackReservationIdentity::Undeclared, StackReservationIdentity::Undeclared) => {
+                StackReservationComparison::Undeclared
             }
-            _ => StackLimitComparison::Changed,
+            _ => StackReservationComparison::Changed,
         },
         gaps: gap_names
             .into_iter()
@@ -349,6 +358,35 @@ fn compare_stack(before: &StackAnalysisIdentity, after: &StackAnalysisIdentity) 
                 ),
             })
             .collect(),
+    }
+}
+
+fn compare_modeled_chain_assessment(
+    before: &ModeledChainAssessmentIdentity,
+    after: &ModeledChainAssessmentIdentity,
+) -> ModeledChainAssessmentComparison {
+    match (before, after) {
+        (
+            ModeledChainAssessmentIdentity::WithinReservation {
+                remaining_bytes: before,
+            },
+            ModeledChainAssessmentIdentity::WithinReservation {
+                remaining_bytes: after,
+            },
+        ) => ModeledChainAssessmentComparison::WithinReservation {
+            remaining: ByteComparison::new(*before, *after),
+        },
+        (
+            ModeledChainAssessmentIdentity::OverReservation {
+                excess_bytes: before,
+            },
+            ModeledChainAssessmentIdentity::OverReservation {
+                excess_bytes: after,
+            },
+        ) => ModeledChainAssessmentComparison::OverReservation {
+            excess: ByteComparison::new(*before, *after),
+        },
+        _ => ModeledChainAssessmentComparison::Changed,
     }
 }
 
@@ -381,7 +419,7 @@ const fn stack_gap_name(kind: StackAnalysisGapKindIdentity) -> &'static str {
             "dynamic-allocation-not-proven-absent"
         }
         StackAnalysisGapKindIdentity::InterruptNestingUnmodeled => "interrupt-nesting-unmodeled",
-        StackAnalysisGapKindIdentity::StackLimitUndeclared => "stack-limit-undeclared",
+        StackAnalysisGapKindIdentity::StackReservationUndeclared => "stack-reservation-undeclared",
     }
 }
 
@@ -724,7 +762,9 @@ fn compare_flash(
 }
 
 fn compatible_build(before: &BuildIdentity, after: &BuildIdentity) -> bool {
-    let fingerprints_match_difference = if before.lto == after.lto {
+    let lto_matches = before.requested.lto == after.requested.lto
+        && before.effective_release.lto == after.effective_release.lto;
+    let fingerprints_match_difference = if lto_matches {
         before.fingerprint == after.fingerprint
     } else {
         before.fingerprint != after.fingerprint
@@ -733,9 +773,29 @@ fn compatible_build(before: &BuildIdentity, after: &BuildIdentity) -> bool {
         && before.firmware_version == after.firmware_version
         && before.cargo_profile == after.cargo_profile
         && before.recipe_kind == after.recipe_kind
+        && before.manifest == after.manifest
         && before.package == after.package
         && before.binary == after.binary
         && before.features == after.features
+        && compatible_release_except_lto(&before.effective_release, &after.effective_release)
+        && before.package_overrides == after.package_overrides
+        && before.build_override == after.build_override
+}
+
+fn compatible_release_except_lto(
+    before: &super::model::ReleaseSettingsIdentity,
+    after: &super::model::ReleaseSettingsIdentity,
+) -> bool {
+    before.opt_level == after.opt_level
+        && before.debug == after.debug
+        && before.split_debuginfo == after.split_debuginfo
+        && before.strip == after.strip
+        && before.debug_assertions == after.debug_assertions
+        && before.overflow_checks == after.overflow_checks
+        && before.panic == after.panic
+        && before.incremental == after.incremental
+        && before.codegen_units == after.codegen_units
+        && before.rpath == after.rpath
 }
 
 fn compare_artifacts(

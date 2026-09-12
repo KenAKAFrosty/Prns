@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
-    CallEdge, KnownCallPath, KnownCallPathFrame, StackAnalysisGapKind, StackFrame,
+    CallEdge, ModeledCallChainFrame, ModeledDirectCallChain, StackAnalysisGapKind, StackFrame,
     StackMetadataError, StackRoot, StackRootRole,
 };
 use crate::analysis::executable::architecture::{AssuranceAdapter, CallTarget, DecodedInstruction};
@@ -12,7 +12,7 @@ use crate::analysis::executable::{
 pub(super) struct CallGraphAnalysis {
     pub(super) roots: Vec<StackRoot>,
     pub(super) edges: Vec<CallEdge>,
-    pub(super) largest_path: KnownCallPath,
+    pub(super) largest_chain: ModeledDirectCallChain,
     pub(super) gaps: BTreeMap<StackAnalysisGapKind, u64>,
 }
 
@@ -117,21 +117,21 @@ pub(super) fn analyze(
         .collect::<BTreeSet<_>>();
     let mut states = vec![VisitState::Unvisited; nodes.len()];
     let mut memo = vec![None; nodes.len()];
-    let mut largest_path = KnownCallPath {
+    let mut largest_chain = ModeledDirectCallChain {
         bytes: 0,
         frames: Vec::new(),
     };
     for root in root_nodes {
         let candidate = longest_from(root, &nodes, &adjacency, &mut states, &mut memo, &mut gaps)?;
-        if candidate.bytes > largest_path.bytes {
-            largest_path = candidate;
+        if candidate.bytes > largest_chain.bytes {
+            largest_chain = candidate;
         }
     }
 
     Ok(CallGraphAnalysis {
         roots,
         edges,
-        largest_path,
+        largest_chain,
         gaps,
     })
 }
@@ -226,12 +226,12 @@ fn longest_from(
     nodes: &[FunctionNode<'_>],
     adjacency: &[Vec<usize>],
     states: &mut [VisitState],
-    memo: &mut [Option<KnownCallPath>],
+    memo: &mut [Option<ModeledDirectCallChain>],
     gaps: &mut BTreeMap<StackAnalysisGapKind, u64>,
-) -> Result<KnownCallPath, StackMetadataError> {
+) -> Result<ModeledDirectCallChain, StackMetadataError> {
     if states[node] == VisitState::Visiting {
         increment(gaps, StackAnalysisGapKind::RecursiveCallCycle);
-        return Ok(KnownCallPath {
+        return Ok(ModeledDirectCallChain {
             bytes: 0,
             frames: Vec::new(),
         });
@@ -240,7 +240,7 @@ fn longest_from(
         return Ok(path.clone());
     }
     states[node] = VisitState::Visiting;
-    let mut child_path = KnownCallPath {
+    let mut child_path = ModeledDirectCallChain {
         bytes: 0,
         frames: Vec::new(),
     };
@@ -253,17 +253,17 @@ fn longest_from(
     states[node] = VisitState::Complete;
     let current = &nodes[node];
     let mut frames = Vec::with_capacity(child_path.frames.len() + 1);
-    frames.push(KnownCallPathFrame {
+    frames.push(ModeledCallChainFrame {
         name: current.boundary.name.clone(),
         address: current.boundary.range.start(),
         frame_bytes: current.frame_bytes,
     });
     frames.extend(child_path.frames);
-    let path = KnownCallPath {
+    let path = ModeledDirectCallChain {
         bytes: current
             .frame_bytes
             .checked_add(child_path.bytes)
-            .ok_or(StackMetadataError::CallPathOverflow)?,
+            .ok_or(StackMetadataError::ModeledChainOverflow)?,
         frames,
     };
     memo[node] = Some(path.clone());
@@ -319,7 +319,7 @@ mod tests {
             &mut memo,
             &mut gaps,
         )
-        .expect("known path");
+        .expect("modeled chain");
 
         assert_eq!(path.bytes, 32);
         assert_eq!(
@@ -332,7 +332,7 @@ mod tests {
     }
 
     #[test]
-    fn call_path_byte_overflow_is_rejected() {
+    fn modeled_chain_byte_overflow_is_rejected() {
         let boundaries = [
             boundary("root", 0x1000, 0x1010),
             boundary("child", 0x1010, 0x1020),
@@ -359,7 +359,7 @@ mod tests {
                 &mut memo,
                 &mut BTreeMap::new(),
             ),
-            Err(StackMetadataError::CallPathOverflow)
+            Err(StackMetadataError::ModeledChainOverflow)
         );
     }
 

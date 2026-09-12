@@ -8,7 +8,7 @@ use personal_hopspot_builder::architecture::StackFrameEvidence;
 use personal_hopspot_memory::MemoryProfile;
 use thiserror::Error;
 
-use super::architecture::{AssuranceAdapter, DecodedInstruction, StackLimit};
+use super::architecture::{AssuranceAdapter, DecodedInstruction, StackReservation};
 use super::{FunctionAnalysis, LoadSegment, StartupStructure};
 
 const LARGEST_FRAME_LIMIT: usize = 20;
@@ -22,8 +22,8 @@ pub(crate) struct StackAnalysis {
     pub(crate) functions_without_frames: u64,
     pub(crate) roots: Vec<StackRoot>,
     pub(crate) direct_calls: Vec<CallEdge>,
-    pub(crate) largest_known_path: KnownCallPath,
-    pub(crate) limit: StackLimitAnalysis,
+    pub(crate) largest_modeled_direct_call_chain: ModeledDirectCallChain,
+    pub(crate) reservation: StackReservationAnalysis,
     pub(crate) gaps: Vec<StackAnalysisGap>,
 }
 
@@ -35,13 +35,13 @@ pub(crate) struct StackFrame {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct KnownCallPath {
+pub(crate) struct ModeledDirectCallChain {
     pub(crate) bytes: u64,
-    pub(crate) frames: Vec<KnownCallPathFrame>,
+    pub(crate) frames: Vec<ModeledCallChainFrame>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct KnownCallPathFrame {
+pub(crate) struct ModeledCallChainFrame {
     pub(crate) name: String,
     pub(crate) address: u64,
     pub(crate) frame_bytes: u64,
@@ -71,13 +71,19 @@ pub(crate) enum StackRootRole {
 }
 
 #[derive(Debug)]
-pub(crate) enum StackLimitAnalysis {
+pub(crate) enum StackReservationAnalysis {
     Declared {
         reservation: String,
         bytes: u64,
-        headroom_bytes: u64,
+        assessment: ModeledChainAssessment,
     },
     Undeclared,
+}
+
+#[derive(Debug)]
+pub(crate) enum ModeledChainAssessment {
+    WithinReservation { remaining_bytes: u64 },
+    OverReservation { excess_bytes: u64 },
 }
 
 #[derive(Debug)]
@@ -101,7 +107,7 @@ pub(crate) enum StackAnalysisGapKind {
     InterruptRootsUnresolved,
     DynamicAllocationNotProvenAbsent,
     InterruptNestingUnmodeled,
-    StackLimitUndeclared,
+    StackReservationUndeclared,
 }
 
 pub(super) struct StackAnalysisInput<'a, 'data> {
@@ -178,8 +184,8 @@ pub(super) fn analyze(
         1,
     );
 
-    let limit = match input.adapter.stack_limit() {
-        StackLimit::RuntimeReservation(id) => {
+    let reservation = match input.adapter.stack_reservation() {
+        StackReservation::RuntimeReservation(id) => {
             let reservation = input
                 .profile
                 .runtime_reservations
@@ -189,23 +195,28 @@ pub(super) fn analyze(
                     profile: input.profile.id.0.to_string(),
                     reservation: id,
                 })?;
-            let headroom_bytes = reservation
-                .bytes
-                .checked_sub(graph.largest_path.bytes)
-                .ok_or(StackMetadataError::KnownPathOverflow {
-                    reservation: id,
-                    available: reservation.bytes,
-                    required: graph.largest_path.bytes,
-                })?;
-            StackLimitAnalysis::Declared {
+            let assessment = if graph.largest_chain.bytes <= reservation.bytes {
+                ModeledChainAssessment::WithinReservation {
+                    remaining_bytes: reservation.bytes - graph.largest_chain.bytes,
+                }
+            } else {
+                ModeledChainAssessment::OverReservation {
+                    excess_bytes: graph.largest_chain.bytes - reservation.bytes,
+                }
+            };
+            StackReservationAnalysis::Declared {
                 reservation: id.to_string(),
                 bytes: reservation.bytes,
-                headroom_bytes,
+                assessment,
             }
         }
-        StackLimit::Undeclared => {
-            add_gap(&mut gaps, StackAnalysisGapKind::StackLimitUndeclared, 1);
-            StackLimitAnalysis::Undeclared
+        StackReservation::Undeclared => {
+            add_gap(
+                &mut gaps,
+                StackAnalysisGapKind::StackReservationUndeclared,
+                1,
+            );
+            StackReservationAnalysis::Undeclared
         }
     };
     let mut largest_frames = frames.frames.clone();
@@ -219,8 +230,8 @@ pub(super) fn analyze(
         functions_without_frames: frames.missing_functions,
         roots: graph.roots,
         direct_calls: graph.edges,
-        largest_known_path: graph.largest_path,
-        limit,
+        largest_modeled_direct_call_chain: graph.largest_chain,
+        reservation,
         gaps: gaps
             .into_iter()
             .map(|(kind, occurrences)| StackAnalysisGap { kind, occurrences })
@@ -284,19 +295,11 @@ pub(crate) enum StackMetadataError {
     Dwarf(#[from] gimli::Error),
     #[error("{evidence} count cannot be represented")]
     CountOverflow { evidence: &'static str },
-    #[error("known call-path frame total overflowed")]
-    CallPathOverflow,
+    #[error("modeled direct-call chain frame total overflowed")]
+    ModeledChainOverflow,
     #[error("memory profile {profile:?} has no stack reservation {reservation:?}")]
     MissingReservation {
         profile: String,
         reservation: &'static str,
-    },
-    #[error(
-        "known call-path lower bound {required} exceeds stack reservation {reservation:?} ({available} bytes)"
-    )]
-    KnownPathOverflow {
-        reservation: &'static str,
-        available: u64,
-        required: u64,
     },
 }

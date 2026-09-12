@@ -1,12 +1,13 @@
 {
   "schema_version": 1,
-  "report_schema_version": 8,
+  "report_schema_version": 9,
   "targets": [
     {
-      "schema_version": 8,
+      "schema_version": 9,
       "source": {
-        "kind": "clean-commit",
-        "commit": "cca5f2c292a40577058d3384be4294087376a394"
+        "kind": "working-tree",
+        "head": "5cb30c612397b906c70e13e8801ac3b32ff6c375",
+        "diff_fingerprint": "73cf8697ac494b5a333e09a6af7e6fbeebe2fdf368a3808ff740372577e90ff1"
       },
       "target": {
         "id": "heltec-v4",
@@ -25,14 +26,55 @@
         ]
       },
       "build": {
-        "fingerprint": "849b5e8998db4b936c55c73fdc36d58e26424d8756c65dc8f3f4c4854d55ebe7",
+        "fingerprint": "fb29d4aed932ec1b3e69e34d8bcf57f252ffebe898746a0147d581e1435924d3",
         "firmware_version": "0.3.7",
         "cargo_profile": "release",
         "recipe_kind": "esp-sparse-image",
+        "manifest": "personal-hopspot/embedded/esp32/Cargo.toml",
         "package": "hopspot-heltec-v4",
         "binary": "hopspot-heltec-v4",
         "features": [],
-        "lto": "configured"
+        "requested": {
+          "lto": "configured"
+        },
+        "effective_release": {
+          "opt_level": "size",
+          "debug": "full",
+          "split_debuginfo": "toolchain-default",
+          "strip": "none",
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "lto": "fat",
+          "panic": "unwind",
+          "incremental": false,
+          "codegen_units": 1,
+          "rpath": false
+        },
+        "package_overrides": [
+          {
+            "package": "esp-radio",
+            "settings": {
+              "opt_level": "three",
+              "debug": "full",
+              "split_debuginfo": "toolchain-default",
+              "strip": "none",
+              "debug_assertions": false,
+              "overflow_checks": false,
+              "incremental": false,
+              "codegen_units": 1
+            }
+          }
+        ],
+        "build_override": {
+          "opt_level": "zero",
+          "debug": "none",
+          "split_debuginfo": "toolchain-default",
+          "strip": "none",
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "incremental": false,
+          "codegen_units": 256
+        }
       },
       "toolchain": {
         "fingerprint": "83ed0de60fca12fba07a7148839a28baa3839d982f2f3640d0f5f9c6e7ee0f98",
@@ -42,7 +84,7 @@
         "linker_version": "xtensa-esp-elf-gcc (crosstool-NG esp-15.2.0_20250920) 15.2.0\nCopyright (C) 2025 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE."
       },
       "memory_contract": {
-        "fingerprint": "ead021271e1d7d12c7714beef084286e2f7d3c6831acc829d5ed471c879f4352",
+        "fingerprint": "6bdf05a832be66d106f992cbbff9ee81aa2908f43aa1cd916a2d7d5036dc8050",
         "address_spaces": [
           {
             "id": "internal-flash",
@@ -52,6 +94,16 @@
               "start": 0,
               "end": 16777216
             },
+            "linker_ranges": [
+              {
+                "start": 1006632960,
+                "end": 1040187392
+              },
+              {
+                "start": 1107296256,
+                "end": 1140850688
+              }
+            ],
             "backing_store": "internal-flash",
             "backing_offset": 0
           },
@@ -61,6 +113,12 @@
             "geometry": {
               "kind": "linker-defined"
             },
+            "linker_ranges": [
+              {
+                "start": 1077346304,
+                "end": 1077936128
+              }
+            ],
             "backing_store": "internal-sram",
             "backing_offset": 0
           },
@@ -70,6 +128,12 @@
             "geometry": {
               "kind": "linker-defined"
             },
+            "linker_ranges": [
+              {
+                "start": 1069547520,
+                "end": 1073741824
+              }
+            ],
             "backing_store": "internal-sram",
             "backing_offset": 0
           },
@@ -80,6 +144,7 @@
               "kind": "fixed-capacity",
               "bytes": 73728
             },
+            "linker_ranges": [],
             "backing_store": "reclaimed-sram",
             "backing_offset": 0
           },
@@ -91,6 +156,7 @@
               "start": 1070530560,
               "end": 1070563328
             },
+            "linker_ranges": [],
             "backing_store": "dcache-sram",
             "backing_offset": 0
           },
@@ -102,6 +168,12 @@
               "start": 1611653120,
               "end": 1611661312
             },
+            "linker_ranges": [
+              {
+                "start": 1611653120,
+                "end": 1611661312
+              }
+            ],
             "backing_store": "fast-retention-sram",
             "backing_offset": 0
           },
@@ -113,6 +185,12 @@
               "start": 1342177280,
               "end": 1342185472
             },
+            "linker_ranges": [
+              {
+                "start": 1342177280,
+                "end": 1342185472
+              }
+            ],
             "backing_store": "slow-retention-sram",
             "backing_offset": 0
           },
@@ -122,6 +200,7 @@
             "geometry": {
               "kind": "runtime-detected"
             },
+            "linker_ranges": [],
             "backing_store": "external-psram",
             "backing_offset": 0
           }
@@ -416,7 +495,7 @@
           {
             "path": "firmware/hopspot/heltec-v4/0.3.7/application.bin",
             "bytes": 2198912,
-            "fingerprint": "fc22085e0c77af5c4fba5b93b152ff082c98fbb27ce7c524d7fcff308e2b89cb"
+            "fingerprint": "024441488ff9781c8f50c1bf26bb7acc6b149ab74d819c53076e5c35ef4a067f"
           }
         ]
       },
@@ -1367,7 +1446,7 @@
                   }
                 ],
                 "direct_call_count": 5191,
-                "largest_known_path": {
+                "largest_modeled_direct_call_chain": {
                   "bytes": 7728,
                   "frames": [
                     {
@@ -1377,7 +1456,7 @@
                     }
                   ]
                 },
-                "limit": {
+                "reservation": {
                   "kind": "undeclared"
                 },
                 "gaps": [
@@ -1422,14 +1501,14 @@
                     "occurrences": 1
                   },
                   {
-                    "kind": "stack-limit-undeclared",
+                    "kind": "stack-reservation-undeclared",
                     "occurrences": 1
                   }
                 ],
                 "artifact": {
                   "path": "work/heltec-v4/stack-evidence.json",
-                  "bytes": 1569786,
-                  "fingerprint": "e5f88a742a7bf69266980a9907a40323dd7fb10231bfc676be987b2091f9ffb9"
+                  "bytes": 1569813,
+                  "fingerprint": "ebbf37f7ffa23116cc2de7cd8929164e29ec05204cae54110929fe0d02e5bb62"
                 }
               }
             }
@@ -1581,18 +1660,28 @@
               }
             ],
             "scenario_futures": {
-              "kind": "unavailable",
-              "reason": "semantic-harness-not-produced"
+              "kind": "measured",
+              "futures": [
+                {
+                  "scenario": "sx126x",
+                  "bytes": 828
+                },
+                {
+                  "scenario": "lr1110",
+                  "bytes": 928
+                }
+              ]
             }
           }
         }
       }
     },
     {
-      "schema_version": 8,
+      "schema_version": 9,
       "source": {
-        "kind": "clean-commit",
-        "commit": "cca5f2c292a40577058d3384be4294087376a394"
+        "kind": "working-tree",
+        "head": "5cb30c612397b906c70e13e8801ac3b32ff6c375",
+        "diff_fingerprint": "73cf8697ac494b5a333e09a6af7e6fbeebe2fdf368a3808ff740372577e90ff1"
       },
       "target": {
         "id": "heltec-v4-r8",
@@ -1611,14 +1700,55 @@
         ]
       },
       "build": {
-        "fingerprint": "6f7fb39beb63a0563ac134aab1f8d29d9bdd3311a419fc2227a5226b3c120c92",
+        "fingerprint": "ba2f94fb2ac21174b5b1ab62e95ab8f14ea426e8b8dd923c8505fdeaec644ce4",
         "firmware_version": "0.3.7",
         "cargo_profile": "release",
         "recipe_kind": "esp-sparse-image",
+        "manifest": "personal-hopspot/embedded/esp32/Cargo.toml",
         "package": "hopspot-heltec-v4-r8",
         "binary": "hopspot-heltec-v4-r8",
         "features": [],
-        "lto": "configured"
+        "requested": {
+          "lto": "configured"
+        },
+        "effective_release": {
+          "opt_level": "size",
+          "debug": "full",
+          "split_debuginfo": "toolchain-default",
+          "strip": "none",
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "lto": "fat",
+          "panic": "unwind",
+          "incremental": false,
+          "codegen_units": 1,
+          "rpath": false
+        },
+        "package_overrides": [
+          {
+            "package": "esp-radio",
+            "settings": {
+              "opt_level": "three",
+              "debug": "full",
+              "split_debuginfo": "toolchain-default",
+              "strip": "none",
+              "debug_assertions": false,
+              "overflow_checks": false,
+              "incremental": false,
+              "codegen_units": 1
+            }
+          }
+        ],
+        "build_override": {
+          "opt_level": "zero",
+          "debug": "none",
+          "split_debuginfo": "toolchain-default",
+          "strip": "none",
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "incremental": false,
+          "codegen_units": 256
+        }
       },
       "toolchain": {
         "fingerprint": "83ed0de60fca12fba07a7148839a28baa3839d982f2f3640d0f5f9c6e7ee0f98",
@@ -1628,7 +1758,7 @@
         "linker_version": "xtensa-esp-elf-gcc (crosstool-NG esp-15.2.0_20250920) 15.2.0\nCopyright (C) 2025 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE."
       },
       "memory_contract": {
-        "fingerprint": "944667d889e4e92a6114c5b785b03cc36df41d601ca0908c2db313726b3403ac",
+        "fingerprint": "edde6c941960211bbae24c72d078be01f78296665cf59be930b62a0504a0a0ae",
         "address_spaces": [
           {
             "id": "internal-flash",
@@ -1638,6 +1768,16 @@
               "start": 0,
               "end": 16777216
             },
+            "linker_ranges": [
+              {
+                "start": 1006632960,
+                "end": 1040187392
+              },
+              {
+                "start": 1107296256,
+                "end": 1140850688
+              }
+            ],
             "backing_store": "internal-flash",
             "backing_offset": 0
           },
@@ -1647,6 +1787,12 @@
             "geometry": {
               "kind": "linker-defined"
             },
+            "linker_ranges": [
+              {
+                "start": 1077346304,
+                "end": 1077936128
+              }
+            ],
             "backing_store": "internal-sram",
             "backing_offset": 0
           },
@@ -1656,6 +1802,12 @@
             "geometry": {
               "kind": "linker-defined"
             },
+            "linker_ranges": [
+              {
+                "start": 1069547520,
+                "end": 1073741824
+              }
+            ],
             "backing_store": "internal-sram",
             "backing_offset": 0
           },
@@ -1666,6 +1818,7 @@
               "kind": "fixed-capacity",
               "bytes": 73728
             },
+            "linker_ranges": [],
             "backing_store": "reclaimed-sram",
             "backing_offset": 0
           },
@@ -1677,6 +1830,7 @@
               "start": 1070530560,
               "end": 1070563328
             },
+            "linker_ranges": [],
             "backing_store": "dcache-sram",
             "backing_offset": 0
           },
@@ -1688,6 +1842,12 @@
               "start": 1611653120,
               "end": 1611661312
             },
+            "linker_ranges": [
+              {
+                "start": 1611653120,
+                "end": 1611661312
+              }
+            ],
             "backing_store": "fast-retention-sram",
             "backing_offset": 0
           },
@@ -1699,6 +1859,12 @@
               "start": 1342177280,
               "end": 1342185472
             },
+            "linker_ranges": [
+              {
+                "start": 1342177280,
+                "end": 1342185472
+              }
+            ],
             "backing_store": "slow-retention-sram",
             "backing_offset": 0
           },
@@ -1709,6 +1875,7 @@
               "kind": "fixed-capacity",
               "bytes": 8388608
             },
+            "linker_ranges": [],
             "backing_store": "external-psram",
             "backing_offset": 0
           }
@@ -2005,7 +2172,7 @@
           {
             "path": "firmware/hopspot/heltec-v4-r8/0.3.7/application.bin",
             "bytes": 2187488,
-            "fingerprint": "8e3728d623c9e07801d4be89162caefb700805db28c94e0b027ccfecf8d946c2"
+            "fingerprint": "36466815a6c17f30a72e7796d5ddbfb995271c36d02b3691c97ce6511736301e"
           }
         ]
       },
@@ -2951,7 +3118,7 @@
                   }
                 ],
                 "direct_call_count": 5190,
-                "largest_known_path": {
+                "largest_modeled_direct_call_chain": {
                   "bytes": 7728,
                   "frames": [
                     {
@@ -2961,7 +3128,7 @@
                     }
                   ]
                 },
-                "limit": {
+                "reservation": {
                   "kind": "undeclared"
                 },
                 "gaps": [
@@ -3006,14 +3173,14 @@
                     "occurrences": 1
                   },
                   {
-                    "kind": "stack-limit-undeclared",
+                    "kind": "stack-reservation-undeclared",
                     "occurrences": 1
                   }
                 ],
                 "artifact": {
                   "path": "work/heltec-v4-r8/stack-evidence.json",
-                  "bytes": 1563427,
-                  "fingerprint": "edac865a07590d7ad15df00ada7f2e2da8e0741ec0dff8a03bfa58797695e802"
+                  "bytes": 1563454,
+                  "fingerprint": "71a068b42406a2fb48e8e540da110c73786b6ed53443cc96c4cbcba65ee7d547"
                 }
               }
             }
@@ -3159,18 +3326,28 @@
               }
             ],
             "scenario_futures": {
-              "kind": "unavailable",
-              "reason": "semantic-harness-not-produced"
+              "kind": "measured",
+              "futures": [
+                {
+                  "scenario": "sx126x",
+                  "bytes": 828
+                },
+                {
+                  "scenario": "lr1110",
+                  "bytes": 928
+                }
+              ]
             }
           }
         }
       }
     },
     {
-      "schema_version": 8,
+      "schema_version": 9,
       "source": {
-        "kind": "clean-commit",
-        "commit": "cca5f2c292a40577058d3384be4294087376a394"
+        "kind": "working-tree",
+        "head": "5cb30c612397b906c70e13e8801ac3b32ff6c375",
+        "diff_fingerprint": "73cf8697ac494b5a333e09a6af7e6fbeebe2fdf368a3808ff740372577e90ff1"
       },
       "target": {
         "id": "heltec-e290",
@@ -3189,14 +3366,55 @@
         ]
       },
       "build": {
-        "fingerprint": "74974331037e98c09722f1a652d7c9868983eccc5b564c1382a3ed424c860fc2",
+        "fingerprint": "7bd0cff88105969798f43c7d0c3fb9344017a29985a5eff44df63a0c3238798f",
         "firmware_version": "0.3.7",
         "cargo_profile": "release",
         "recipe_kind": "esp-sparse-image",
+        "manifest": "personal-hopspot/embedded/esp32/Cargo.toml",
         "package": "hopspot-heltec-e290",
         "binary": "hopspot-heltec-e290",
         "features": [],
-        "lto": "configured"
+        "requested": {
+          "lto": "configured"
+        },
+        "effective_release": {
+          "opt_level": "size",
+          "debug": "full",
+          "split_debuginfo": "toolchain-default",
+          "strip": "none",
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "lto": "fat",
+          "panic": "unwind",
+          "incremental": false,
+          "codegen_units": 1,
+          "rpath": false
+        },
+        "package_overrides": [
+          {
+            "package": "esp-radio",
+            "settings": {
+              "opt_level": "three",
+              "debug": "full",
+              "split_debuginfo": "toolchain-default",
+              "strip": "none",
+              "debug_assertions": false,
+              "overflow_checks": false,
+              "incremental": false,
+              "codegen_units": 1
+            }
+          }
+        ],
+        "build_override": {
+          "opt_level": "zero",
+          "debug": "none",
+          "split_debuginfo": "toolchain-default",
+          "strip": "none",
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "incremental": false,
+          "codegen_units": 256
+        }
       },
       "toolchain": {
         "fingerprint": "83ed0de60fca12fba07a7148839a28baa3839d982f2f3640d0f5f9c6e7ee0f98",
@@ -3206,7 +3424,7 @@
         "linker_version": "xtensa-esp-elf-gcc (crosstool-NG esp-15.2.0_20250920) 15.2.0\nCopyright (C) 2025 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE."
       },
       "memory_contract": {
-        "fingerprint": "0f62ba7085b12297931bba2be34586a5f013477899d33a97ac0deafd13c8e84d",
+        "fingerprint": "02a248cfb04405e1b2ffd22d46eee20e11cd4daf1b2ec5e5edd9618e177fe83f",
         "address_spaces": [
           {
             "id": "internal-flash",
@@ -3216,6 +3434,16 @@
               "start": 0,
               "end": 16777216
             },
+            "linker_ranges": [
+              {
+                "start": 1006632960,
+                "end": 1040187392
+              },
+              {
+                "start": 1107296256,
+                "end": 1140850688
+              }
+            ],
             "backing_store": "internal-flash",
             "backing_offset": 0
           },
@@ -3225,6 +3453,12 @@
             "geometry": {
               "kind": "linker-defined"
             },
+            "linker_ranges": [
+              {
+                "start": 1077346304,
+                "end": 1077936128
+              }
+            ],
             "backing_store": "internal-sram",
             "backing_offset": 0
           },
@@ -3234,6 +3468,12 @@
             "geometry": {
               "kind": "linker-defined"
             },
+            "linker_ranges": [
+              {
+                "start": 1069547520,
+                "end": 1073741824
+              }
+            ],
             "backing_store": "internal-sram",
             "backing_offset": 0
           },
@@ -3244,6 +3484,7 @@
               "kind": "fixed-capacity",
               "bytes": 73728
             },
+            "linker_ranges": [],
             "backing_store": "reclaimed-sram",
             "backing_offset": 0
           },
@@ -3255,6 +3496,7 @@
               "start": 1070530560,
               "end": 1070563328
             },
+            "linker_ranges": [],
             "backing_store": "dcache-sram",
             "backing_offset": 0
           },
@@ -3266,6 +3508,12 @@
               "start": 1611653120,
               "end": 1611661312
             },
+            "linker_ranges": [
+              {
+                "start": 1611653120,
+                "end": 1611661312
+              }
+            ],
             "backing_store": "fast-retention-sram",
             "backing_offset": 0
           },
@@ -3277,6 +3525,12 @@
               "start": 1342177280,
               "end": 1342185472
             },
+            "linker_ranges": [
+              {
+                "start": 1342177280,
+                "end": 1342185472
+              }
+            ],
             "backing_store": "slow-retention-sram",
             "backing_offset": 0
           },
@@ -3287,6 +3541,7 @@
               "kind": "fixed-capacity",
               "bytes": 8388608
             },
+            "linker_ranges": [],
             "backing_store": "external-psram",
             "backing_offset": 0
           }
@@ -3583,7 +3838,7 @@
           {
             "path": "firmware/hopspot/heltec-e290/0.3.7/application.bin",
             "bytes": 2174032,
-            "fingerprint": "c8968c9add16f46e10a8e127dce95484567804c3c1d38e0b39f65979a412a025"
+            "fingerprint": "79fb55ba624a4d0a376851acf021026e8b60bc193b42c1cec49e4b716156d157"
           }
         ]
       },
@@ -4529,7 +4784,7 @@
                   }
                 ],
                 "direct_call_count": 5191,
-                "largest_known_path": {
+                "largest_modeled_direct_call_chain": {
                   "bytes": 7728,
                   "frames": [
                     {
@@ -4539,7 +4794,7 @@
                     }
                   ]
                 },
-                "limit": {
+                "reservation": {
                   "kind": "undeclared"
                 },
                 "gaps": [
@@ -4584,14 +4839,14 @@
                     "occurrences": 1
                   },
                   {
-                    "kind": "stack-limit-undeclared",
+                    "kind": "stack-reservation-undeclared",
                     "occurrences": 1
                   }
                 ],
                 "artifact": {
                   "path": "work/heltec-e290/stack-evidence.json",
-                  "bytes": 1560439,
-                  "fingerprint": "01d697ff6f8714c949c9eb174ed3ceecbd4ea339abbca708cdc0a93f0518b1ca"
+                  "bytes": 1560466,
+                  "fingerprint": "12602866943746d9e04996981614c27bc9534941d894b6f9ad50a2f147ab9a75"
                 }
               }
             }
@@ -4737,18 +4992,28 @@
               }
             ],
             "scenario_futures": {
-              "kind": "unavailable",
-              "reason": "semantic-harness-not-produced"
+              "kind": "measured",
+              "futures": [
+                {
+                  "scenario": "sx126x",
+                  "bytes": 828
+                },
+                {
+                  "scenario": "lr1110",
+                  "bytes": 928
+                }
+              ]
             }
           }
         }
       }
     },
     {
-      "schema_version": 8,
+      "schema_version": 9,
       "source": {
-        "kind": "clean-commit",
-        "commit": "cca5f2c292a40577058d3384be4294087376a394"
+        "kind": "working-tree",
+        "head": "5cb30c612397b906c70e13e8801ac3b32ff6c375",
+        "diff_fingerprint": "73cf8697ac494b5a333e09a6af7e6fbeebe2fdf368a3808ff740372577e90ff1"
       },
       "target": {
         "id": "heltec-wireless-stick-lite-v3",
@@ -4767,14 +5032,55 @@
         ]
       },
       "build": {
-        "fingerprint": "ebd5e684caabfb7ab766e03ebb9f6aa3f7bfe7fe43f61f1b5e551757c20f0ee1",
+        "fingerprint": "f6a20de2e63999f7be51e6a3eb8d5a3102b39e2adc9634b92ccbf3ab7daacfee",
         "firmware_version": "0.3.7",
         "cargo_profile": "release",
         "recipe_kind": "esp-sparse-image",
+        "manifest": "personal-hopspot/embedded/esp32/Cargo.toml",
         "package": "hopspot-heltec-wireless-stick-lite-v3",
         "binary": "hopspot-heltec-wireless-stick-lite-v3",
         "features": [],
-        "lto": "configured"
+        "requested": {
+          "lto": "configured"
+        },
+        "effective_release": {
+          "opt_level": "size",
+          "debug": "full",
+          "split_debuginfo": "toolchain-default",
+          "strip": "none",
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "lto": "fat",
+          "panic": "unwind",
+          "incremental": false,
+          "codegen_units": 1,
+          "rpath": false
+        },
+        "package_overrides": [
+          {
+            "package": "esp-radio",
+            "settings": {
+              "opt_level": "three",
+              "debug": "full",
+              "split_debuginfo": "toolchain-default",
+              "strip": "none",
+              "debug_assertions": false,
+              "overflow_checks": false,
+              "incremental": false,
+              "codegen_units": 1
+            }
+          }
+        ],
+        "build_override": {
+          "opt_level": "zero",
+          "debug": "none",
+          "split_debuginfo": "toolchain-default",
+          "strip": "none",
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "incremental": false,
+          "codegen_units": 256
+        }
       },
       "toolchain": {
         "fingerprint": "83ed0de60fca12fba07a7148839a28baa3839d982f2f3640d0f5f9c6e7ee0f98",
@@ -4784,7 +5090,7 @@
         "linker_version": "xtensa-esp-elf-gcc (crosstool-NG esp-15.2.0_20250920) 15.2.0\nCopyright (C) 2025 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE."
       },
       "memory_contract": {
-        "fingerprint": "211a160c83a813ffb342b52b998d2bd042a4029d24aef40e4b2a05f4fbcd3f8f",
+        "fingerprint": "668f69da930b8ff21ac8c831e00627b0e41fb95e15a3a0988486a4b4dd7a291a",
         "address_spaces": [
           {
             "id": "internal-flash",
@@ -4794,6 +5100,16 @@
               "start": 0,
               "end": 8388608
             },
+            "linker_ranges": [
+              {
+                "start": 1006632960,
+                "end": 1040187392
+              },
+              {
+                "start": 1107296256,
+                "end": 1140850688
+              }
+            ],
             "backing_store": "internal-flash",
             "backing_offset": 0
           },
@@ -4803,6 +5119,12 @@
             "geometry": {
               "kind": "linker-defined"
             },
+            "linker_ranges": [
+              {
+                "start": 1077346304,
+                "end": 1077936128
+              }
+            ],
             "backing_store": "internal-sram",
             "backing_offset": 0
           },
@@ -4812,6 +5134,12 @@
             "geometry": {
               "kind": "linker-defined"
             },
+            "linker_ranges": [
+              {
+                "start": 1069547520,
+                "end": 1073741824
+              }
+            ],
             "backing_store": "internal-sram",
             "backing_offset": 0
           },
@@ -4822,6 +5150,7 @@
               "kind": "fixed-capacity",
               "bytes": 73728
             },
+            "linker_ranges": [],
             "backing_store": "reclaimed-sram",
             "backing_offset": 0
           },
@@ -4833,6 +5162,7 @@
               "start": 1070530560,
               "end": 1070563328
             },
+            "linker_ranges": [],
             "backing_store": "dcache-sram",
             "backing_offset": 0
           },
@@ -4844,6 +5174,12 @@
               "start": 1611653120,
               "end": 1611661312
             },
+            "linker_ranges": [
+              {
+                "start": 1611653120,
+                "end": 1611661312
+              }
+            ],
             "backing_store": "fast-retention-sram",
             "backing_offset": 0
           },
@@ -4855,6 +5191,12 @@
               "start": 1342177280,
               "end": 1342185472
             },
+            "linker_ranges": [
+              {
+                "start": 1342177280,
+                "end": 1342185472
+              }
+            ],
             "backing_store": "slow-retention-sram",
             "backing_offset": 0
           }
@@ -5106,7 +5448,7 @@
           {
             "path": "firmware/hopspot/heltec-wireless-stick-lite-v3/0.3.7/application.bin",
             "bytes": 1290992,
-            "fingerprint": "b5a0755c88b5e624336283e2a3e4a768f002ff54284d30e0345d5567839e86fc"
+            "fingerprint": "71592d029f6dcd5044872b0fee7caf7b3ce4d9780596918019346047f143b244"
           }
         ]
       },
@@ -5912,7 +6254,7 @@
                   }
                 ],
                 "direct_call_count": 459,
-                "largest_known_path": {
+                "largest_modeled_direct_call_chain": {
                   "bytes": 31024,
                   "frames": [
                     {
@@ -5922,7 +6264,7 @@
                     }
                   ]
                 },
-                "limit": {
+                "reservation": {
                   "kind": "undeclared"
                 },
                 "gaps": [
@@ -5967,14 +6309,14 @@
                     "occurrences": 1
                   },
                   {
-                    "kind": "stack-limit-undeclared",
+                    "kind": "stack-reservation-undeclared",
                     "occurrences": 1
                   }
                 ],
                 "artifact": {
                   "path": "work/heltec-wireless-stick-lite-v3/stack-evidence.json",
-                  "bytes": 416047,
-                  "fingerprint": "0d14dd0cb27b18f0014dae2cd89d90c936fa270dad41457c7a3114f56479a011"
+                  "bytes": 416074,
+                  "fingerprint": "a9e487f3ff0b46891ad2f6307d0df803f066f042cbb88251c47da09ea871e86c"
                 }
               }
             }
@@ -6018,18 +6360,28 @@
               }
             ],
             "scenario_futures": {
-              "kind": "unavailable",
-              "reason": "semantic-harness-not-produced"
+              "kind": "measured",
+              "futures": [
+                {
+                  "scenario": "sx126x",
+                  "bytes": 828
+                },
+                {
+                  "scenario": "lr1110",
+                  "bytes": 928
+                }
+              ]
             }
           }
         }
       }
     },
     {
-      "schema_version": 8,
+      "schema_version": 9,
       "source": {
-        "kind": "clean-commit",
-        "commit": "cca5f2c292a40577058d3384be4294087376a394"
+        "kind": "working-tree",
+        "head": "5cb30c612397b906c70e13e8801ac3b32ff6c375",
+        "diff_fingerprint": "73cf8697ac494b5a333e09a6af7e6fbeebe2fdf368a3808ff740372577e90ff1"
       },
       "target": {
         "id": "t-beam-supreme",
@@ -6048,14 +6400,55 @@
         ]
       },
       "build": {
-        "fingerprint": "3831091707b15695a3ce1f65bbba2174e8fae0cc87f4c7160544b87869945106",
+        "fingerprint": "53ea7c013994772884fed0e050c2a450ac4ac8d8032f38ba65173e33c1c5198f",
         "firmware_version": "0.3.7",
         "cargo_profile": "release",
         "recipe_kind": "esp-sparse-image",
+        "manifest": "personal-hopspot/embedded/esp32/Cargo.toml",
         "package": "hopspot-t-beam-supreme",
         "binary": "hopspot-t-beam-supreme",
         "features": [],
-        "lto": "configured"
+        "requested": {
+          "lto": "configured"
+        },
+        "effective_release": {
+          "opt_level": "size",
+          "debug": "full",
+          "split_debuginfo": "toolchain-default",
+          "strip": "none",
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "lto": "fat",
+          "panic": "unwind",
+          "incremental": false,
+          "codegen_units": 1,
+          "rpath": false
+        },
+        "package_overrides": [
+          {
+            "package": "esp-radio",
+            "settings": {
+              "opt_level": "three",
+              "debug": "full",
+              "split_debuginfo": "toolchain-default",
+              "strip": "none",
+              "debug_assertions": false,
+              "overflow_checks": false,
+              "incremental": false,
+              "codegen_units": 1
+            }
+          }
+        ],
+        "build_override": {
+          "opt_level": "zero",
+          "debug": "none",
+          "split_debuginfo": "toolchain-default",
+          "strip": "none",
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "incremental": false,
+          "codegen_units": 256
+        }
       },
       "toolchain": {
         "fingerprint": "83ed0de60fca12fba07a7148839a28baa3839d982f2f3640d0f5f9c6e7ee0f98",
@@ -6065,7 +6458,7 @@
         "linker_version": "xtensa-esp-elf-gcc (crosstool-NG esp-15.2.0_20250920) 15.2.0\nCopyright (C) 2025 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE."
       },
       "memory_contract": {
-        "fingerprint": "799b04046abcdbf319341724fff50480314effdf0ec85c08fbae8aeefd9e26cd",
+        "fingerprint": "e74a361f8799e2b23315fd80fd3f5d7b7750c529519e0a736f55b08378d0b429",
         "address_spaces": [
           {
             "id": "internal-flash",
@@ -6075,6 +6468,16 @@
               "start": 0,
               "end": 8388608
             },
+            "linker_ranges": [
+              {
+                "start": 1006632960,
+                "end": 1040187392
+              },
+              {
+                "start": 1107296256,
+                "end": 1140850688
+              }
+            ],
             "backing_store": "internal-flash",
             "backing_offset": 0
           },
@@ -6084,6 +6487,12 @@
             "geometry": {
               "kind": "linker-defined"
             },
+            "linker_ranges": [
+              {
+                "start": 1077346304,
+                "end": 1077936128
+              }
+            ],
             "backing_store": "internal-sram",
             "backing_offset": 0
           },
@@ -6093,6 +6502,12 @@
             "geometry": {
               "kind": "linker-defined"
             },
+            "linker_ranges": [
+              {
+                "start": 1069547520,
+                "end": 1073741824
+              }
+            ],
             "backing_store": "internal-sram",
             "backing_offset": 0
           },
@@ -6103,6 +6518,7 @@
               "kind": "fixed-capacity",
               "bytes": 73728
             },
+            "linker_ranges": [],
             "backing_store": "reclaimed-sram",
             "backing_offset": 0
           },
@@ -6114,6 +6530,7 @@
               "start": 1070530560,
               "end": 1070563328
             },
+            "linker_ranges": [],
             "backing_store": "dcache-sram",
             "backing_offset": 0
           },
@@ -6125,6 +6542,12 @@
               "start": 1611653120,
               "end": 1611661312
             },
+            "linker_ranges": [
+              {
+                "start": 1611653120,
+                "end": 1611661312
+              }
+            ],
             "backing_store": "fast-retention-sram",
             "backing_offset": 0
           },
@@ -6136,6 +6559,12 @@
               "start": 1342177280,
               "end": 1342185472
             },
+            "linker_ranges": [
+              {
+                "start": 1342177280,
+                "end": 1342185472
+              }
+            ],
             "backing_store": "slow-retention-sram",
             "backing_offset": 0
           },
@@ -6145,6 +6574,7 @@
             "geometry": {
               "kind": "runtime-detected"
             },
+            "linker_ranges": [],
             "backing_store": "external-psram",
             "backing_offset": 0
           }
@@ -6439,7 +6869,7 @@
           {
             "path": "firmware/hopspot/t-beam-supreme/0.3.7/application.bin",
             "bytes": 2193568,
-            "fingerprint": "414f30dbedd7eae812d7cbc0525ede423782c8c073575e3b1d929986b5532f13"
+            "fingerprint": "2fbdb384d082797839cc297aec94da6e7e0d0abd0e66c873bc17fb11e4abdd70"
           }
         ]
       },
@@ -7390,7 +7820,7 @@
                   }
                 ],
                 "direct_call_count": 5191,
-                "largest_known_path": {
+                "largest_modeled_direct_call_chain": {
                   "bytes": 7728,
                   "frames": [
                     {
@@ -7400,7 +7830,7 @@
                     }
                   ]
                 },
-                "limit": {
+                "reservation": {
                   "kind": "undeclared"
                 },
                 "gaps": [
@@ -7445,14 +7875,14 @@
                     "occurrences": 1
                   },
                   {
-                    "kind": "stack-limit-undeclared",
+                    "kind": "stack-reservation-undeclared",
                     "occurrences": 1
                   }
                 ],
                 "artifact": {
                   "path": "work/t-beam-supreme/stack-evidence.json",
-                  "bytes": 1568959,
-                  "fingerprint": "25399bc49993732400d8abb35f940a8312bb2804748a4262cd941910efc37981"
+                  "bytes": 1568986,
+                  "fingerprint": "ee5af179590657121931f156d7dc5cb4e2560393ea40842770b9ca7c25b89f94"
                 }
               }
             }
@@ -7604,18 +8034,28 @@
               }
             ],
             "scenario_futures": {
-              "kind": "unavailable",
-              "reason": "semantic-harness-not-produced"
+              "kind": "measured",
+              "futures": [
+                {
+                  "scenario": "sx126x",
+                  "bytes": 828
+                },
+                {
+                  "scenario": "lr1110",
+                  "bytes": 928
+                }
+              ]
             }
           }
         }
       }
     },
     {
-      "schema_version": 8,
+      "schema_version": 9,
       "source": {
-        "kind": "clean-commit",
-        "commit": "cca5f2c292a40577058d3384be4294087376a394"
+        "kind": "working-tree",
+        "head": "5cb30c612397b906c70e13e8801ac3b32ff6c375",
+        "diff_fingerprint": "73cf8697ac494b5a333e09a6af7e6fbeebe2fdf368a3808ff740372577e90ff1"
       },
       "target": {
         "id": "xiao-esp32-c6",
@@ -7632,14 +8072,55 @@
         ]
       },
       "build": {
-        "fingerprint": "5a07ab84baf54d615050cfb3a75f0e187c88789c51d6326880d913fd513b516b",
+        "fingerprint": "97797d01b7ffd38511b3132bc5eb8996c54d6364fa3f5dc4a6423fb7f93a15f4",
         "firmware_version": "0.3.7",
         "cargo_profile": "release",
         "recipe_kind": "esp-sparse-image",
+        "manifest": "personal-hopspot/embedded/esp32/Cargo.toml",
         "package": "hopspot-xiao-esp32-c6",
         "binary": "hopspot-xiao-esp32-c6",
         "features": [],
-        "lto": "configured"
+        "requested": {
+          "lto": "configured"
+        },
+        "effective_release": {
+          "opt_level": "size",
+          "debug": "full",
+          "split_debuginfo": "toolchain-default",
+          "strip": "none",
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "lto": "fat",
+          "panic": "unwind",
+          "incremental": false,
+          "codegen_units": 1,
+          "rpath": false
+        },
+        "package_overrides": [
+          {
+            "package": "esp-radio",
+            "settings": {
+              "opt_level": "three",
+              "debug": "full",
+              "split_debuginfo": "toolchain-default",
+              "strip": "none",
+              "debug_assertions": false,
+              "overflow_checks": false,
+              "incremental": false,
+              "codegen_units": 1
+            }
+          }
+        ],
+        "build_override": {
+          "opt_level": "zero",
+          "debug": "none",
+          "split_debuginfo": "toolchain-default",
+          "strip": "none",
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "incremental": false,
+          "codegen_units": 256
+        }
       },
       "toolchain": {
         "fingerprint": "05df86ce3c2a86bd89a98f1c4228c28cd12ba41314a6c80bbb51cb14de8b73fc",
@@ -7649,7 +8130,7 @@
         "linker_version": "LLD 21.1.3 (https://github.com/espressif/llvm-project e4569c12a2b74dfd5f1657910f1dbcdf774e9413) (compatible with GNU linkers)"
       },
       "memory_contract": {
-        "fingerprint": "8ae94be49ca6d2bc5ab1a37f63bf06d3670612135e686044d4d484d86cd85eba",
+        "fingerprint": "772284c4db5165552c28eef25d051364dbde697a6e83a821738e19895f6e65b7",
         "address_spaces": [
           {
             "id": "internal-flash",
@@ -7659,6 +8140,12 @@
               "start": 0,
               "end": 4194304
             },
+            "linker_ranges": [
+              {
+                "start": 1107296256,
+                "end": 1111490560
+              }
+            ],
             "backing_store": "internal-flash",
             "backing_offset": 0
           },
@@ -7668,6 +8155,12 @@
             "geometry": {
               "kind": "linker-defined"
             },
+            "linker_ranges": [
+              {
+                "start": 1082130432,
+                "end": 1083179008
+              }
+            ],
             "backing_store": "internal-sram",
             "backing_offset": 0
           },
@@ -7677,6 +8170,12 @@
             "geometry": {
               "kind": "linker-defined"
             },
+            "linker_ranges": [
+              {
+                "start": 1082130432,
+                "end": 1083179008
+              }
+            ],
             "backing_store": "internal-sram",
             "backing_offset": 0
           }
@@ -7854,7 +8353,7 @@
           {
             "path": "firmware/hopspot/xiao-esp32-c6/0.3.7/application.bin",
             "bytes": 1714896,
-            "fingerprint": "9ec3f2c536738dec7d0b8fe4804e48d0eb9c23920ac77566a411e7cb5aa51337"
+            "fingerprint": "be7d6a6e1a34b5a8c0c6b9e2cc3c4ceb9c664e048f778aa826c55513364e5881"
           }
         ]
       },
@@ -8624,7 +9123,7 @@
                   }
                 ],
                 "direct_call_count": 10260,
-                "largest_known_path": {
+                "largest_modeled_direct_call_chain": {
                   "bytes": 43408,
                   "frames": [
                     {
@@ -8649,7 +9148,7 @@
                     }
                   ]
                 },
-                "limit": {
+                "reservation": {
                   "kind": "undeclared"
                 },
                 "gaps": [
@@ -8694,14 +9193,14 @@
                     "occurrences": 1
                   },
                   {
-                    "kind": "stack-limit-undeclared",
+                    "kind": "stack-reservation-undeclared",
                     "occurrences": 1
                   }
                 ],
                 "artifact": {
                   "path": "work/xiao-esp32-c6/stack-evidence.json",
-                  "bytes": 3112227,
-                  "fingerprint": "326fc0c699f089fbfec1befdd9dd3b41bf017618e4fd36684eba044ca922dc47"
+                  "bytes": 3112254,
+                  "fingerprint": "096ebbc4b0577cdd512005f61e2499fe94462f8ed65cec36457e3c30fd39c8f1"
                 }
               }
             }
@@ -8745,18 +9244,28 @@
               }
             ],
             "scenario_futures": {
-              "kind": "unavailable",
-              "reason": "semantic-harness-not-produced"
+              "kind": "measured",
+              "futures": [
+                {
+                  "scenario": "sx126x",
+                  "bytes": 828
+                },
+                {
+                  "scenario": "lr1110",
+                  "bytes": 928
+                }
+              ]
             }
           }
         }
       }
     },
     {
-      "schema_version": 8,
+      "schema_version": 9,
       "source": {
-        "kind": "clean-commit",
-        "commit": "cca5f2c292a40577058d3384be4294087376a394"
+        "kind": "working-tree",
+        "head": "5cb30c612397b906c70e13e8801ac3b32ff6c375",
+        "diff_fingerprint": "73cf8697ac494b5a333e09a6af7e6fbeebe2fdf368a3808ff740372577e90ff1"
       },
       "target": {
         "id": "t-echo-s140-v6",
@@ -8777,17 +9286,44 @@
         ]
       },
       "build": {
-        "fingerprint": "e0510d81fba592508b8d86c79bcb1a7812783942f50fb80e63f958cb257a79dc",
+        "fingerprint": "9cfbdbdef5697e571ce627dfa04d4b0879e19a61709a81cc74035039ba79bb70",
         "firmware_version": "0.3.7",
         "cargo_profile": "release",
         "recipe_kind": "uf2",
+        "manifest": "personal-hopspot/embedded/nrf52840/Cargo.toml",
         "package": "t-echo",
         "binary": "t-echo",
         "features": [
           "board-t-echo",
           "softdevice-s140-v6"
         ],
-        "lto": "configured"
+        "requested": {
+          "lto": "configured"
+        },
+        "effective_release": {
+          "opt_level": "size-min",
+          "debug": "full",
+          "split_debuginfo": "toolchain-default",
+          "strip": "none",
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "lto": "fat",
+          "panic": "unwind",
+          "incremental": false,
+          "codegen_units": 1,
+          "rpath": false
+        },
+        "package_overrides": [],
+        "build_override": {
+          "opt_level": "zero",
+          "debug": "none",
+          "split_debuginfo": "toolchain-default",
+          "strip": "none",
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "incremental": false,
+          "codegen_units": 256
+        }
       },
       "toolchain": {
         "fingerprint": "75a6259eaebb5273ab6bf620ea36e19f31bda7caff1a56a239816a600f70e5f2",
@@ -8797,7 +9333,7 @@
         "linker_version": "LLD 22.1.8 (https://github.com/rust-lang/llvm-project.git 52ed14fcd56afc30f9cccd8ca8ce237c2eef7e04) (compatible with GNU linkers)"
       },
       "memory_contract": {
-        "fingerprint": "6d8526c08fb6a427de086e728895a07f756256407a675a176ad8151577f53a1b",
+        "fingerprint": "7d726b15f5339a3c519d79fe5d9258727bbbbf2d59d9de545fc56872dd1ef966",
         "address_spaces": [
           {
             "id": "internal-flash",
@@ -8807,6 +9343,12 @@
               "start": 0,
               "end": 1048576
             },
+            "linker_ranges": [
+              {
+                "start": 155648,
+                "end": 782336
+              }
+            ],
             "backing_store": "internal-flash",
             "backing_offset": 0
           },
@@ -8818,6 +9360,12 @@
               "start": 536920064,
               "end": 537133056
             },
+            "linker_ranges": [
+              {
+                "start": 536920064,
+                "end": 537133056
+              }
+            ],
             "backing_store": "internal-sram",
             "backing_offset": 49152
           }
@@ -9669,7 +10217,7 @@
                   }
                 ],
                 "direct_call_count": 14465,
-                "largest_known_path": {
+                "largest_modeled_direct_call_chain": {
                   "bytes": 45344,
                   "frames": [
                     {
@@ -9694,11 +10242,14 @@
                     }
                   ]
                 },
-                "limit": {
+                "reservation": {
                   "kind": "declared",
                   "reservation": "minimum-runtime-stack",
                   "bytes": 69632,
-                  "headroom_bytes": 24288
+                  "assessment": {
+                    "kind": "within-reservation",
+                    "remaining_bytes": 24288
+                  }
                 },
                 "gaps": [
                   {
@@ -9732,8 +10283,8 @@
                 ],
                 "artifact": {
                   "path": "work/t-echo-s140-v6/stack-evidence.json",
-                  "bytes": 6401351,
-                  "fingerprint": "452c13113f7b5f9a61a9ce356c08cec60a2de4d089bd592d4327c729d3abe492"
+                  "bytes": 6401437,
+                  "fingerprint": "ee154511893bd09eb7021a78446a756ce4a54d35c5d71f6384b645db3b15b7e3"
                 }
               }
             }
@@ -9771,18 +10322,28 @@
               }
             ],
             "scenario_futures": {
-              "kind": "unavailable",
-              "reason": "semantic-harness-not-produced"
+              "kind": "measured",
+              "futures": [
+                {
+                  "scenario": "sx126x",
+                  "bytes": 828
+                },
+                {
+                  "scenario": "lr1110",
+                  "bytes": 928
+                }
+              ]
             }
           }
         }
       }
     },
     {
-      "schema_version": 8,
+      "schema_version": 9,
       "source": {
-        "kind": "clean-commit",
-        "commit": "cca5f2c292a40577058d3384be4294087376a394"
+        "kind": "working-tree",
+        "head": "5cb30c612397b906c70e13e8801ac3b32ff6c375",
+        "diff_fingerprint": "73cf8697ac494b5a333e09a6af7e6fbeebe2fdf368a3808ff740372577e90ff1"
       },
       "target": {
         "id": "t-echo-s140-v7",
@@ -9803,17 +10364,44 @@
         ]
       },
       "build": {
-        "fingerprint": "ab4d38c8e25a6bfb0cb314be22fc95f01d8d95c4b161dc43b67544ab9fe6691e",
+        "fingerprint": "a664c84f8ae355a06014302cdeee84948079f5afa250ae6b65482722c270cdf2",
         "firmware_version": "0.3.7",
         "cargo_profile": "release",
         "recipe_kind": "uf2",
+        "manifest": "personal-hopspot/embedded/nrf52840/Cargo.toml",
         "package": "t-echo",
         "binary": "t-echo",
         "features": [
           "board-t-echo",
           "softdevice-s140-v7"
         ],
-        "lto": "configured"
+        "requested": {
+          "lto": "configured"
+        },
+        "effective_release": {
+          "opt_level": "size-min",
+          "debug": "full",
+          "split_debuginfo": "toolchain-default",
+          "strip": "none",
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "lto": "fat",
+          "panic": "unwind",
+          "incremental": false,
+          "codegen_units": 1,
+          "rpath": false
+        },
+        "package_overrides": [],
+        "build_override": {
+          "opt_level": "zero",
+          "debug": "none",
+          "split_debuginfo": "toolchain-default",
+          "strip": "none",
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "incremental": false,
+          "codegen_units": 256
+        }
       },
       "toolchain": {
         "fingerprint": "75a6259eaebb5273ab6bf620ea36e19f31bda7caff1a56a239816a600f70e5f2",
@@ -9823,7 +10411,7 @@
         "linker_version": "LLD 22.1.8 (https://github.com/rust-lang/llvm-project.git 52ed14fcd56afc30f9cccd8ca8ce237c2eef7e04) (compatible with GNU linkers)"
       },
       "memory_contract": {
-        "fingerprint": "58a2efef56a01794da6a7a8ac4612ffca0b9f10a0126324d83af411e94c169c1",
+        "fingerprint": "5031137380b84665145c00f57a0d1884a34c9d141b1716c08c846cc06f5764ae",
         "address_spaces": [
           {
             "id": "internal-flash",
@@ -9833,6 +10421,12 @@
               "start": 0,
               "end": 1048576
             },
+            "linker_ranges": [
+              {
+                "start": 159744,
+                "end": 782336
+              }
+            ],
             "backing_store": "internal-flash",
             "backing_offset": 0
           },
@@ -9844,6 +10438,12 @@
               "start": 536920064,
               "end": 537133056
             },
+            "linker_ranges": [
+              {
+                "start": 536920064,
+                "end": 537133056
+              }
+            ],
             "backing_store": "internal-sram",
             "backing_offset": 49152
           }
@@ -10695,7 +11295,7 @@
                   }
                 ],
                 "direct_call_count": 14462,
-                "largest_known_path": {
+                "largest_modeled_direct_call_chain": {
                   "bytes": 45344,
                   "frames": [
                     {
@@ -10720,11 +11320,14 @@
                     }
                   ]
                 },
-                "limit": {
+                "reservation": {
                   "kind": "declared",
                   "reservation": "minimum-runtime-stack",
                   "bytes": 69632,
-                  "headroom_bytes": 24288
+                  "assessment": {
+                    "kind": "within-reservation",
+                    "remaining_bytes": 24288
+                  }
                 },
                 "gaps": [
                   {
@@ -10758,8 +11361,8 @@
                 ],
                 "artifact": {
                   "path": "work/t-echo-s140-v7/stack-evidence.json",
-                  "bytes": 6400408,
-                  "fingerprint": "42b614dda88c00de61092f5625f1623f78a26e4ea4737428d14ac0a909ca9b35"
+                  "bytes": 6400494,
+                  "fingerprint": "aa8a09699530370a91916e7a627088ec655f192492c2a2d71cfd5323f0a1ffb7"
                 }
               }
             }
@@ -10797,18 +11400,28 @@
               }
             ],
             "scenario_futures": {
-              "kind": "unavailable",
-              "reason": "semantic-harness-not-produced"
+              "kind": "measured",
+              "futures": [
+                {
+                  "scenario": "sx126x",
+                  "bytes": 828
+                },
+                {
+                  "scenario": "lr1110",
+                  "bytes": 928
+                }
+              ]
             }
           }
         }
       }
     },
     {
-      "schema_version": 8,
+      "schema_version": 9,
       "source": {
-        "kind": "clean-commit",
-        "commit": "cca5f2c292a40577058d3384be4294087376a394"
+        "kind": "working-tree",
+        "head": "5cb30c612397b906c70e13e8801ac3b32ff6c375",
+        "diff_fingerprint": "73cf8697ac494b5a333e09a6af7e6fbeebe2fdf368a3808ff740372577e90ff1"
       },
       "target": {
         "id": "t114",
@@ -10829,16 +11442,43 @@
         ]
       },
       "build": {
-        "fingerprint": "61abe9d1b12ad809829dedda1c0b834b289a344320ec9ca7ef163186744a0bf4",
+        "fingerprint": "4f8b0fcbfadf94f620af6e02e693198ea8a0b8aebe550b50c3ee772084f45e8e",
         "firmware_version": "0.3.7",
         "cargo_profile": "release",
         "recipe_kind": "uf2",
+        "manifest": "personal-hopspot/embedded/nrf52840/Cargo.toml",
         "package": "t-echo",
         "binary": "heltec-t114",
         "features": [
           "board-t114"
         ],
-        "lto": "configured"
+        "requested": {
+          "lto": "configured"
+        },
+        "effective_release": {
+          "opt_level": "size-min",
+          "debug": "full",
+          "split_debuginfo": "toolchain-default",
+          "strip": "none",
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "lto": "fat",
+          "panic": "unwind",
+          "incremental": false,
+          "codegen_units": 1,
+          "rpath": false
+        },
+        "package_overrides": [],
+        "build_override": {
+          "opt_level": "zero",
+          "debug": "none",
+          "split_debuginfo": "toolchain-default",
+          "strip": "none",
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "incremental": false,
+          "codegen_units": 256
+        }
       },
       "toolchain": {
         "fingerprint": "75a6259eaebb5273ab6bf620ea36e19f31bda7caff1a56a239816a600f70e5f2",
@@ -10848,7 +11488,7 @@
         "linker_version": "LLD 22.1.8 (https://github.com/rust-lang/llvm-project.git 52ed14fcd56afc30f9cccd8ca8ce237c2eef7e04) (compatible with GNU linkers)"
       },
       "memory_contract": {
-        "fingerprint": "20fb2d911f99d5e4ebae38b7161418f9bcd174bdcd9b760d505af2d99136429f",
+        "fingerprint": "84fd98e0890d45d58fda9c9016a3a9f29a6597290522b917fd53c307350e6e74",
         "address_spaces": [
           {
             "id": "internal-flash",
@@ -10858,6 +11498,12 @@
               "start": 0,
               "end": 1048576
             },
+            "linker_ranges": [
+              {
+                "start": 155648,
+                "end": 921600
+              }
+            ],
             "backing_store": "internal-flash",
             "backing_offset": 0
           },
@@ -10869,6 +11515,12 @@
               "start": 536920064,
               "end": 537133056
             },
+            "linker_ranges": [
+              {
+                "start": 536920064,
+                "end": 537133056
+              }
+            ],
             "backing_store": "internal-sram",
             "backing_offset": 49152
           }
@@ -11720,7 +12372,7 @@
                   }
                 ],
                 "direct_call_count": 14397,
-                "largest_known_path": {
+                "largest_modeled_direct_call_chain": {
                   "bytes": 53920,
                   "frames": [
                     {
@@ -11785,11 +12437,14 @@
                     }
                   ]
                 },
-                "limit": {
+                "reservation": {
                   "kind": "declared",
                   "reservation": "minimum-runtime-stack",
                   "bytes": 69632,
-                  "headroom_bytes": 15712
+                  "assessment": {
+                    "kind": "within-reservation",
+                    "remaining_bytes": 15712
+                  }
                 },
                 "gaps": [
                   {
@@ -11827,8 +12482,8 @@
                 ],
                 "artifact": {
                   "path": "work/t114/stack-evidence.json",
-                  "bytes": 6378264,
-                  "fingerprint": "b76181f91719466f1b618ae51995b122233b5210935fff72d56db2e02fbe32a7"
+                  "bytes": 6378350,
+                  "fingerprint": "cc625e4c14cbb77250e6ff58287b41e72a6a7002e393433e2c7f12e9d92334a7"
                 }
               }
             }
@@ -11866,18 +12521,28 @@
               }
             ],
             "scenario_futures": {
-              "kind": "unavailable",
-              "reason": "semantic-harness-not-produced"
+              "kind": "measured",
+              "futures": [
+                {
+                  "scenario": "sx126x",
+                  "bytes": 828
+                },
+                {
+                  "scenario": "lr1110",
+                  "bytes": 928
+                }
+              ]
             }
           }
         }
       }
     },
     {
-      "schema_version": 8,
+      "schema_version": 9,
       "source": {
-        "kind": "clean-commit",
-        "commit": "cca5f2c292a40577058d3384be4294087376a394"
+        "kind": "working-tree",
+        "head": "5cb30c612397b906c70e13e8801ac3b32ff6c375",
+        "diff_fingerprint": "73cf8697ac494b5a333e09a6af7e6fbeebe2fdf368a3808ff740372577e90ff1"
       },
       "target": {
         "id": "mesh-pocket-5000",
@@ -11898,16 +12563,43 @@
         ]
       },
       "build": {
-        "fingerprint": "62c166e6a15f19d28f071d2cbfcc37eb6569d29d6bc4decbef560a2cddf7aa3d",
+        "fingerprint": "76cd90b4ec9c132c0516a7400e19232f86475afd4a8db222cd675cd8320d132d",
         "firmware_version": "0.3.7",
         "cargo_profile": "release",
         "recipe_kind": "uf2",
+        "manifest": "personal-hopspot/embedded/nrf52840/Cargo.toml",
         "package": "t-echo",
         "binary": "heltec-mesh-pocket",
         "features": [
           "board-mesh-pocket,mesh-pocket-battery-5000"
         ],
-        "lto": "configured"
+        "requested": {
+          "lto": "configured"
+        },
+        "effective_release": {
+          "opt_level": "size-min",
+          "debug": "full",
+          "split_debuginfo": "toolchain-default",
+          "strip": "none",
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "lto": "fat",
+          "panic": "unwind",
+          "incremental": false,
+          "codegen_units": 1,
+          "rpath": false
+        },
+        "package_overrides": [],
+        "build_override": {
+          "opt_level": "zero",
+          "debug": "none",
+          "split_debuginfo": "toolchain-default",
+          "strip": "none",
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "incremental": false,
+          "codegen_units": 256
+        }
       },
       "toolchain": {
         "fingerprint": "75a6259eaebb5273ab6bf620ea36e19f31bda7caff1a56a239816a600f70e5f2",
@@ -11917,7 +12609,7 @@
         "linker_version": "LLD 22.1.8 (https://github.com/rust-lang/llvm-project.git 52ed14fcd56afc30f9cccd8ca8ce237c2eef7e04) (compatible with GNU linkers)"
       },
       "memory_contract": {
-        "fingerprint": "e3e52139ffdf9c5b60942eeb666caf7e10175a49d17a4d0b0032de2adfeb2be7",
+        "fingerprint": "67d46a84dbb0457acb7ab7eec2d788be69bad1c0321b532ea89eac04503e29b0",
         "address_spaces": [
           {
             "id": "internal-flash",
@@ -11927,6 +12619,12 @@
               "start": 0,
               "end": 1048576
             },
+            "linker_ranges": [
+              {
+                "start": 155648,
+                "end": 921600
+              }
+            ],
             "backing_store": "internal-flash",
             "backing_offset": 0
           },
@@ -11938,6 +12636,12 @@
               "start": 536920064,
               "end": 537133056
             },
+            "linker_ranges": [
+              {
+                "start": 536920064,
+                "end": 537133056
+              }
+            ],
             "backing_store": "internal-sram",
             "backing_offset": 49152
           }
@@ -12789,7 +13493,7 @@
                   }
                 ],
                 "direct_call_count": 14435,
-                "largest_known_path": {
+                "largest_modeled_direct_call_chain": {
                   "bytes": 45328,
                   "frames": [
                     {
@@ -12814,11 +13518,14 @@
                     }
                   ]
                 },
-                "limit": {
+                "reservation": {
                   "kind": "declared",
                   "reservation": "minimum-runtime-stack",
                   "bytes": 69632,
-                  "headroom_bytes": 24304
+                  "assessment": {
+                    "kind": "within-reservation",
+                    "remaining_bytes": 24304
+                  }
                 },
                 "gaps": [
                   {
@@ -12852,8 +13559,8 @@
                 ],
                 "artifact": {
                   "path": "work/mesh-pocket-5000/stack-evidence.json",
-                  "bytes": 6401607,
-                  "fingerprint": "87c1657d5de2527ab9862750c59186e74d40115ef456555c991bbcc136fa3db3"
+                  "bytes": 6401693,
+                  "fingerprint": "7fc74e73a76d04e9096fd465981cb73bfe31fea5a6a43445ef36d19dd16653f3"
                 }
               }
             }
@@ -12891,18 +13598,28 @@
               }
             ],
             "scenario_futures": {
-              "kind": "unavailable",
-              "reason": "semantic-harness-not-produced"
+              "kind": "measured",
+              "futures": [
+                {
+                  "scenario": "sx126x",
+                  "bytes": 828
+                },
+                {
+                  "scenario": "lr1110",
+                  "bytes": 928
+                }
+              ]
             }
           }
         }
       }
     },
     {
-      "schema_version": 8,
+      "schema_version": 9,
       "source": {
-        "kind": "clean-commit",
-        "commit": "cca5f2c292a40577058d3384be4294087376a394"
+        "kind": "working-tree",
+        "head": "5cb30c612397b906c70e13e8801ac3b32ff6c375",
+        "diff_fingerprint": "73cf8697ac494b5a333e09a6af7e6fbeebe2fdf368a3808ff740372577e90ff1"
       },
       "target": {
         "id": "mesh-pocket-10000",
@@ -12923,16 +13640,43 @@
         ]
       },
       "build": {
-        "fingerprint": "8e481aabcfe277a84f12cd012f8df5b6d331fddfa780093687f966847a25a257",
+        "fingerprint": "02ef74edd9930ff1a226f8a08e12c5e5ea96aacb0ea382853f0e348019eef17b",
         "firmware_version": "0.3.7",
         "cargo_profile": "release",
         "recipe_kind": "uf2",
+        "manifest": "personal-hopspot/embedded/nrf52840/Cargo.toml",
         "package": "t-echo",
         "binary": "heltec-mesh-pocket",
         "features": [
           "board-mesh-pocket,mesh-pocket-battery-10000"
         ],
-        "lto": "configured"
+        "requested": {
+          "lto": "configured"
+        },
+        "effective_release": {
+          "opt_level": "size-min",
+          "debug": "full",
+          "split_debuginfo": "toolchain-default",
+          "strip": "none",
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "lto": "fat",
+          "panic": "unwind",
+          "incremental": false,
+          "codegen_units": 1,
+          "rpath": false
+        },
+        "package_overrides": [],
+        "build_override": {
+          "opt_level": "zero",
+          "debug": "none",
+          "split_debuginfo": "toolchain-default",
+          "strip": "none",
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "incremental": false,
+          "codegen_units": 256
+        }
       },
       "toolchain": {
         "fingerprint": "75a6259eaebb5273ab6bf620ea36e19f31bda7caff1a56a239816a600f70e5f2",
@@ -12942,7 +13686,7 @@
         "linker_version": "LLD 22.1.8 (https://github.com/rust-lang/llvm-project.git 52ed14fcd56afc30f9cccd8ca8ce237c2eef7e04) (compatible with GNU linkers)"
       },
       "memory_contract": {
-        "fingerprint": "5b6f32f593b6e12f2f14366ca9c86c51c4618bd79414236cc00129aef229eeb0",
+        "fingerprint": "61ca3603b893f24cfe8089db6fdb476fb2247a08731089bcc27c8c243a78335d",
         "address_spaces": [
           {
             "id": "internal-flash",
@@ -12952,6 +13696,12 @@
               "start": 0,
               "end": 1048576
             },
+            "linker_ranges": [
+              {
+                "start": 155648,
+                "end": 921600
+              }
+            ],
             "backing_store": "internal-flash",
             "backing_offset": 0
           },
@@ -12963,6 +13713,12 @@
               "start": 536920064,
               "end": 537133056
             },
+            "linker_ranges": [
+              {
+                "start": 536920064,
+                "end": 537133056
+              }
+            ],
             "backing_store": "internal-sram",
             "backing_offset": 49152
           }
@@ -13814,7 +14570,7 @@
                   }
                 ],
                 "direct_call_count": 14435,
-                "largest_known_path": {
+                "largest_modeled_direct_call_chain": {
                   "bytes": 45328,
                   "frames": [
                     {
@@ -13839,11 +14595,14 @@
                     }
                   ]
                 },
-                "limit": {
+                "reservation": {
                   "kind": "declared",
                   "reservation": "minimum-runtime-stack",
                   "bytes": 69632,
-                  "headroom_bytes": 24304
+                  "assessment": {
+                    "kind": "within-reservation",
+                    "remaining_bytes": 24304
+                  }
                 },
                 "gaps": [
                   {
@@ -13877,8 +14636,8 @@
                 ],
                 "artifact": {
                   "path": "work/mesh-pocket-10000/stack-evidence.json",
-                  "bytes": 6401594,
-                  "fingerprint": "72f09f1fc85f7363e5250a1b78053bcd83567230dac4371797dd3a3b30bb4020"
+                  "bytes": 6401680,
+                  "fingerprint": "ec2ee0df1f1009b550285e5d7c305bfe48230016989c6549d21d73fc0803548b"
                 }
               }
             }
@@ -13916,18 +14675,28 @@
               }
             ],
             "scenario_futures": {
-              "kind": "unavailable",
-              "reason": "semantic-harness-not-produced"
+              "kind": "measured",
+              "futures": [
+                {
+                  "scenario": "sx126x",
+                  "bytes": 828
+                },
+                {
+                  "scenario": "lr1110",
+                  "bytes": 928
+                }
+              ]
             }
           }
         }
       }
     },
     {
-      "schema_version": 8,
+      "schema_version": 9,
       "source": {
-        "kind": "clean-commit",
-        "commit": "cca5f2c292a40577058d3384be4294087376a394"
+        "kind": "working-tree",
+        "head": "5cb30c612397b906c70e13e8801ac3b32ff6c375",
+        "diff_fingerprint": "73cf8697ac494b5a333e09a6af7e6fbeebe2fdf368a3808ff740372577e90ff1"
       },
       "target": {
         "id": "t096",
@@ -13948,17 +14717,44 @@
         ]
       },
       "build": {
-        "fingerprint": "ed3cba6701643fc6409700759caab83e7b30da9353ac4051d8d36549f00370fb",
+        "fingerprint": "f793b36e19e64f0ae305163a1b589135ca48b95ef823608233c398569e733fd5",
         "firmware_version": "0.3.7",
         "cargo_profile": "release",
         "recipe_kind": "uf2",
+        "manifest": "personal-hopspot/embedded/nrf52840/Cargo.toml",
         "package": "t-echo",
         "binary": "t096",
         "features": [
           "board-t096",
           "softdevice-s140-v6"
         ],
-        "lto": "configured"
+        "requested": {
+          "lto": "configured"
+        },
+        "effective_release": {
+          "opt_level": "size-min",
+          "debug": "full",
+          "split_debuginfo": "toolchain-default",
+          "strip": "none",
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "lto": "fat",
+          "panic": "unwind",
+          "incremental": false,
+          "codegen_units": 1,
+          "rpath": false
+        },
+        "package_overrides": [],
+        "build_override": {
+          "opt_level": "zero",
+          "debug": "none",
+          "split_debuginfo": "toolchain-default",
+          "strip": "none",
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "incremental": false,
+          "codegen_units": 256
+        }
       },
       "toolchain": {
         "fingerprint": "75a6259eaebb5273ab6bf620ea36e19f31bda7caff1a56a239816a600f70e5f2",
@@ -13968,7 +14764,7 @@
         "linker_version": "LLD 22.1.8 (https://github.com/rust-lang/llvm-project.git 52ed14fcd56afc30f9cccd8ca8ce237c2eef7e04) (compatible with GNU linkers)"
       },
       "memory_contract": {
-        "fingerprint": "2e2737ff06f5253a1eaa5fef4317493170e2bb613099714fd39df4cd177cd469",
+        "fingerprint": "4202531688f76435d00b5616607a680308941b8e5de9b81d4e7240a5fbe278f0",
         "address_spaces": [
           {
             "id": "internal-flash",
@@ -13978,6 +14774,12 @@
               "start": 0,
               "end": 1048576
             },
+            "linker_ranges": [
+              {
+                "start": 155648,
+                "end": 921600
+              }
+            ],
             "backing_store": "internal-flash",
             "backing_offset": 0
           },
@@ -13989,6 +14791,12 @@
               "start": 536920064,
               "end": 537133056
             },
+            "linker_ranges": [
+              {
+                "start": 536920064,
+                "end": 537133056
+              }
+            ],
             "backing_store": "internal-sram",
             "backing_offset": 49152
           }
@@ -14860,7 +15668,7 @@
                   }
                 ],
                 "direct_call_count": 14521,
-                "largest_known_path": {
+                "largest_modeled_direct_call_chain": {
                   "bytes": 50032,
                   "frames": [
                     {
@@ -14885,11 +15693,14 @@
                     }
                   ]
                 },
-                "limit": {
+                "reservation": {
                   "kind": "declared",
                   "reservation": "minimum-runtime-stack",
                   "bytes": 69632,
-                  "headroom_bytes": 19600
+                  "assessment": {
+                    "kind": "within-reservation",
+                    "remaining_bytes": 19600
+                  }
                 },
                 "gaps": [
                   {
@@ -14927,8 +15738,8 @@
                 ],
                 "artifact": {
                   "path": "work/t096/stack-evidence.json",
-                  "bytes": 6403709,
-                  "fingerprint": "17344f657ef9b4890feea81f4e1bd81cf087c89a53844a9af77d258ba4b8523d"
+                  "bytes": 6403795,
+                  "fingerprint": "a1572863e5958022f94ad7244bd9e3485936c44c6ea6863331f0df489ea3457b"
                 }
               }
             }
@@ -14966,18 +15777,28 @@
               }
             ],
             "scenario_futures": {
-              "kind": "unavailable",
-              "reason": "semantic-harness-not-produced"
+              "kind": "measured",
+              "futures": [
+                {
+                  "scenario": "sx126x",
+                  "bytes": 828
+                },
+                {
+                  "scenario": "lr1110",
+                  "bytes": 928
+                }
+              ]
             }
           }
         }
       }
     },
     {
-      "schema_version": 8,
+      "schema_version": 9,
       "source": {
-        "kind": "clean-commit",
-        "commit": "cca5f2c292a40577058d3384be4294087376a394"
+        "kind": "working-tree",
+        "head": "5cb30c612397b906c70e13e8801ac3b32ff6c375",
+        "diff_fingerprint": "73cf8697ac494b5a333e09a6af7e6fbeebe2fdf368a3808ff740372577e90ff1"
       },
       "target": {
         "id": "t1000-e",
@@ -14998,16 +15819,43 @@
         ]
       },
       "build": {
-        "fingerprint": "dbe068c17815188b9d5c304a57bde19b07d99d7eafc61bed58f3448c82d99308",
+        "fingerprint": "b1e5f1ea9dce9a026b2a99a1508c46f6989e755a91b84a344ab96cf96c0dcba9",
         "firmware_version": "0.3.7",
         "cargo_profile": "release",
         "recipe_kind": "nrf-serial-dfu",
+        "manifest": "personal-hopspot/embedded/nrf52840/Cargo.toml",
         "package": "t-echo",
         "binary": "t1000e",
         "features": [
           "board-t1000e"
         ],
-        "lto": "configured"
+        "requested": {
+          "lto": "configured"
+        },
+        "effective_release": {
+          "opt_level": "size-min",
+          "debug": "full",
+          "split_debuginfo": "toolchain-default",
+          "strip": "none",
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "lto": "fat",
+          "panic": "unwind",
+          "incremental": false,
+          "codegen_units": 1,
+          "rpath": false
+        },
+        "package_overrides": [],
+        "build_override": {
+          "opt_level": "zero",
+          "debug": "none",
+          "split_debuginfo": "toolchain-default",
+          "strip": "none",
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "incremental": false,
+          "codegen_units": 256
+        }
       },
       "toolchain": {
         "fingerprint": "75a6259eaebb5273ab6bf620ea36e19f31bda7caff1a56a239816a600f70e5f2",
@@ -15017,7 +15865,7 @@
         "linker_version": "LLD 22.1.8 (https://github.com/rust-lang/llvm-project.git 52ed14fcd56afc30f9cccd8ca8ce237c2eef7e04) (compatible with GNU linkers)"
       },
       "memory_contract": {
-        "fingerprint": "9e3d7fe9cfa944a5fa8da9fff994839a88ad258d3b571745524edd0ef1317ee0",
+        "fingerprint": "82bc66481701d83730861051b82f79f5e2e9863d9c6170467875bddd6af967a7",
         "address_spaces": [
           {
             "id": "internal-flash",
@@ -15027,6 +15875,12 @@
               "start": 0,
               "end": 1048576
             },
+            "linker_ranges": [
+              {
+                "start": 159744,
+                "end": 954368
+              }
+            ],
             "backing_store": "internal-flash",
             "backing_offset": 0
           },
@@ -15038,6 +15892,12 @@
               "start": 536936448,
               "end": 537133056
             },
+            "linker_ranges": [
+              {
+                "start": 536936448,
+                "end": 537133056
+              }
+            ],
             "backing_store": "internal-sram",
             "backing_offset": 65536
           }
@@ -15879,7 +16739,7 @@
                   }
                 ],
                 "direct_call_count": 11542,
-                "largest_known_path": {
+                "largest_modeled_direct_call_chain": {
                   "bytes": 46008,
                   "frames": [
                     {
@@ -15904,11 +16764,14 @@
                     }
                   ]
                 },
-                "limit": {
+                "reservation": {
                   "kind": "declared",
                   "reservation": "minimum-runtime-stack",
                   "bytes": 69632,
-                  "headroom_bytes": 23624
+                  "assessment": {
+                    "kind": "within-reservation",
+                    "remaining_bytes": 23624
+                  }
                 },
                 "gaps": [
                   {
@@ -15938,8 +16801,8 @@
                 ],
                 "artifact": {
                   "path": "work/t1000-e/stack-evidence.json",
-                  "bytes": 5140991,
-                  "fingerprint": "bb64343f89da9d6a1b194d821f56ead4952d697e7fc7eb7f5fa6b676b33944bc"
+                  "bytes": 5141077,
+                  "fingerprint": "7dee32d6c0fbc6744e3fca81caa265c351f81e1e275f0e68d967b75ee7a13279"
                 }
               }
             }
@@ -15965,18 +16828,28 @@
               }
             ],
             "scenario_futures": {
-              "kind": "unavailable",
-              "reason": "semantic-harness-not-produced"
+              "kind": "measured",
+              "futures": [
+                {
+                  "scenario": "sx126x",
+                  "bytes": 828
+                },
+                {
+                  "scenario": "lr1110",
+                  "bytes": 928
+                }
+              ]
             }
           }
         }
       }
     },
     {
-      "schema_version": 8,
+      "schema_version": 9,
       "source": {
-        "kind": "clean-commit",
-        "commit": "cca5f2c292a40577058d3384be4294087376a394"
+        "kind": "working-tree",
+        "head": "5cb30c612397b906c70e13e8801ac3b32ff6c375",
+        "diff_fingerprint": "73cf8697ac494b5a333e09a6af7e6fbeebe2fdf368a3808ff740372577e90ff1"
       },
       "target": {
         "id": "mesh-tower-v2",
@@ -15997,17 +16870,44 @@
         ]
       },
       "build": {
-        "fingerprint": "d2360243c67965bf477e31d613d88da88d3fed5cf13ef3223d636b068f6f50d3",
+        "fingerprint": "3df73efb9efac751cad5030d8a68d3b4232445135dd1615628bd5b9b22956684",
         "firmware_version": "0.3.7",
         "cargo_profile": "release",
         "recipe_kind": "build-only",
+        "manifest": "personal-hopspot/embedded/nrf52840/Cargo.toml",
         "package": "t-echo",
         "binary": "heltec-mesh-tower-v2",
         "features": [
           "board-mesh-tower-v2",
           "softdevice-s140-v6"
         ],
-        "lto": "configured"
+        "requested": {
+          "lto": "configured"
+        },
+        "effective_release": {
+          "opt_level": "size-min",
+          "debug": "full",
+          "split_debuginfo": "toolchain-default",
+          "strip": "none",
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "lto": "fat",
+          "panic": "unwind",
+          "incremental": false,
+          "codegen_units": 1,
+          "rpath": false
+        },
+        "package_overrides": [],
+        "build_override": {
+          "opt_level": "zero",
+          "debug": "none",
+          "split_debuginfo": "toolchain-default",
+          "strip": "none",
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "incremental": false,
+          "codegen_units": 256
+        }
       },
       "toolchain": {
         "fingerprint": "75a6259eaebb5273ab6bf620ea36e19f31bda7caff1a56a239816a600f70e5f2",
@@ -16017,7 +16917,7 @@
         "linker_version": "LLD 22.1.8 (https://github.com/rust-lang/llvm-project.git 52ed14fcd56afc30f9cccd8ca8ce237c2eef7e04) (compatible with GNU linkers)"
       },
       "memory_contract": {
-        "fingerprint": "405897d9bb3f6a1f1eeaa0d8479d8de3f4f8965471704c9dea132ebe03863373",
+        "fingerprint": "171a6f8d90fa5c11eb0f5b57a76f1ec3d4b75e0af9f11b530518cb95d5ca7931",
         "address_spaces": [
           {
             "id": "internal-flash",
@@ -16027,6 +16927,12 @@
               "start": 0,
               "end": 1048576
             },
+            "linker_ranges": [
+              {
+                "start": 155648,
+                "end": 925696
+              }
+            ],
             "backing_store": "internal-flash",
             "backing_offset": 0
           },
@@ -16038,6 +16944,12 @@
               "start": 536920064,
               "end": 537133056
             },
+            "linker_ranges": [
+              {
+                "start": 536920064,
+                "end": 537133056
+              }
+            ],
             "backing_store": "internal-sram",
             "backing_offset": 49152
           }
@@ -16883,7 +17795,7 @@
                   }
                 ],
                 "direct_call_count": 13473,
-                "largest_known_path": {
+                "largest_modeled_direct_call_chain": {
                   "bytes": 46488,
                   "frames": [
                     {
@@ -16908,11 +17820,14 @@
                     }
                   ]
                 },
-                "limit": {
+                "reservation": {
                   "kind": "declared",
                   "reservation": "minimum-runtime-stack",
                   "bytes": 69632,
-                  "headroom_bytes": 23144
+                  "assessment": {
+                    "kind": "within-reservation",
+                    "remaining_bytes": 23144
+                  }
                 },
                 "gaps": [
                   {
@@ -16942,8 +17857,8 @@
                 ],
                 "artifact": {
                   "path": "work/mesh-tower-v2/stack-evidence.json",
-                  "bytes": 5981298,
-                  "fingerprint": "23c228275f97a2566a8ba33c1c81d571154d915ced163f803af3d0169bb199bf"
+                  "bytes": 5981384,
+                  "fingerprint": "44fd3cf95660c80a3926d54c99ca8f823442f365c214edee37735003bdaf5068"
                 }
               }
             }
@@ -16981,8 +17896,17 @@
               }
             ],
             "scenario_futures": {
-              "kind": "unavailable",
-              "reason": "semantic-harness-not-produced"
+              "kind": "measured",
+              "futures": [
+                {
+                  "scenario": "sx126x",
+                  "bytes": 828
+                },
+                {
+                  "scenario": "lr1110",
+                  "bytes": 928
+                }
+              ]
             }
           }
         }

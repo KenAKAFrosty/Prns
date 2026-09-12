@@ -1,6 +1,7 @@
 mod async_memory;
 mod baseline;
 mod build;
+mod build_settings;
 mod compare;
 mod contract;
 mod document;

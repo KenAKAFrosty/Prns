@@ -10,7 +10,7 @@ use super::*;
 use crate::matrix::{Matrix, Target, TargetPlatform};
 use crate::report::build::{architecture_identity, build_identity, target_identity};
 use crate::report::contract;
-use crate::report::tests::{report_value, retarget_executable};
+use crate::report::tests::{refresh_build_fingerprint, report_value, retarget_executable};
 
 #[test]
 fn summary_merges_catalog_order_and_reports_numeric_deltas(
@@ -173,7 +173,8 @@ fn summary_rejects_stale_build_identity_before_writing() -> Result<(), Box<dyn s
     let reports = temporary.path().join("fragments");
     write_reports(&reports, &matrix, &context, |target, value| {
         if target.id() == "t114" {
-            value["build"]["fingerprint"] = Value::String("b".repeat(64));
+            value["build"]["binary"] = json!("stale-t114");
+            refresh_build_fingerprint(value).expect("stale build fixture must remain valid");
         }
     })?;
     let output = temporary.path().join("summary");
@@ -189,6 +190,8 @@ fn summary_rejects_stale_build_identity_before_writing() -> Result<(), Box<dyn s
 }
 
 fn context<'a>(repository: &'a Path, output: &'a Path) -> Result<BuildContext<'a>, BuildError> {
+    crate::report::tests::copy_build_manifests(repository)
+        .map_err(|error| BuildError::Manifest(error.to_string()))?;
     BuildContext::new(repository, output, BuildVersion::Developer("0.1.0")).map(|context| {
         context.with_intent(BuildIntent::ResourceReport {
             lto: LtoMode::Configured,

@@ -7,18 +7,13 @@ use std::path::Path;
 use object::read::elf::ProgramHeader;
 use object::{Object, ObjectSection, ObjectSymbol, SectionFlags};
 use personal_hopspot_memory::{
-    AddressRange, AddressSpaceGeometry, MemoryProfile, ProcessorArchitecture,
+    linker_address_profile, AddressRange, AddressSpaceKind, LinkerAddressProfile, MemoryProfile,
+    ProcessorArchitecture,
 };
 
 use super::{ExecutableError, ExecutableSection, StartupStructure};
 
 type AddressNormalizer = fn(u64) -> u64;
-type PlacementValidator = for<'data> fn(
-    &Path,
-    &MemoryProfile,
-    &object::File<'data>,
-    &[u8],
-) -> Result<(), ExecutableError>;
 type StartupAnalyzer = for<'data> fn(
     &Path,
     &MemoryProfile,
@@ -30,7 +25,7 @@ type InstructionDecoder = fn(&str) -> Option<DecodedInstruction>;
 type CallDecoder = fn(&[DecodedInstruction], usize) -> CallTarget;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum StackLimit {
+pub(super) enum StackReservation {
     RuntimeReservation(&'static str),
     Undeclared,
 }
@@ -39,11 +34,10 @@ pub(super) struct AssuranceAdapter {
     pub(super) id: &'static str,
     pub(super) object_architecture: object::Architecture,
     pub(super) normalize_code_address: AddressNormalizer,
-    pub(super) validate_allocated_sections: PlacementValidator,
     pub(super) startup: StartupAnalyzer,
     pub(super) decoded_instruction: InstructionDecoder,
     pub(super) call_target: CallDecoder,
-    pub(super) stack_limit: StackLimit,
+    pub(super) stack_reservation: StackReservation,
     pub(super) dwarf_cfa_registers: &'static [u16],
 }
 
@@ -62,16 +56,6 @@ impl AssuranceAdapter {
 
     pub(super) const fn code_address_normalizer(&self) -> AddressNormalizer {
         self.normalize_code_address
-    }
-
-    pub(super) fn validate_allocated_sections(
-        &self,
-        path: &Path,
-        profile: &MemoryProfile,
-        object: &object::File<'_>,
-        bytes: &[u8],
-    ) -> Result<(), ExecutableError> {
-        (self.validate_allocated_sections)(path, profile, object, bytes)
     }
 
     pub(super) fn startup(
@@ -97,8 +81,8 @@ impl AssuranceAdapter {
         (self.call_target)(instructions, index)
     }
 
-    pub(super) const fn stack_limit(&self) -> StackLimit {
-        self.stack_limit
+    pub(super) const fn stack_reservation(&self) -> StackReservation {
+        self.stack_reservation
     }
 
     pub(super) const fn dwarf_cfa_registers(&self) -> &'static [u16] {
@@ -140,58 +124,49 @@ pub(super) const fn adapter_for(architecture: ProcessorArchitecture) -> &'static
     }
 }
 
-pub(super) fn validate_fixed_placement(
-    path: &Path,
-    profile: &MemoryProfile,
-    object: &object::File<'_>,
-) -> Result<(), ExecutableError> {
-    for section in object
-        .sections()
-        .filter(|section| section.size() != 0 && is_allocated(section.flags()))
-    {
-        let name = section_name(path, &section)?;
-        let range = section_range(&name, section.address(), section.size())?;
-        if !profile.address_spaces.iter().any(|space| {
-            matches!(space.geometry, AddressSpaceGeometry::Fixed(bounds) if bounds.contains(range))
-        }) {
-            return Err(ExecutableError::UnmappedSection {
-                section: name,
-                start: range.start(),
-                end: range.end(),
-            });
-        }
-    }
-    Ok(())
-}
-
-pub(super) fn validate_windowed_placement(
-    path: &Path,
-    object: &object::File<'_>,
-    windows: &[AddressRange],
-) -> Result<(), ExecutableError> {
-    for section in object
-        .sections()
-        .filter(|section| section.size() != 0 && is_allocated(section.flags()))
-    {
-        let name = section_name(path, &section)?;
-        let range = section_range(&name, section.address(), section.size())?;
-        if !windows.iter().any(|window| window.contains(range)) {
-            return Err(ExecutableError::UnmappedSection {
-                section: name,
-                start: range.start(),
-                end: range.end(),
-            });
-        }
-    }
-    Ok(())
-}
-
-pub(super) fn validate_flash_loads(
+pub(super) fn validate_profile_placement(
     path: &Path,
     profile: &MemoryProfile,
     object: &object::File<'_>,
     bytes: &[u8],
 ) -> Result<(), ExecutableError> {
+    let linker_profile =
+        linker_address_profile(profile.id).ok_or(ExecutableError::MissingLinkerAddressProfile {
+            profile: profile.id.0,
+        })?;
+    linker_profile.validate(profile).map_err(|reason| {
+        ExecutableError::InvalidLinkerAddressProfile {
+            profile: profile.id.0,
+            reason,
+        }
+    })?;
+    for section in object
+        .sections()
+        .filter(|section| section.size() != 0 && is_allocated(section.flags()))
+    {
+        let name = section_name(path, &section)?;
+        let range = section_range(&name, section.address(), section.size())?;
+        let mut mapped = false;
+        for space in linker_profile.address_spaces {
+            let ranges = space.ranges(profile).map_err(|reason| {
+                ExecutableError::InvalidLinkerAddressProfile {
+                    profile: profile.id.0,
+                    reason,
+                }
+            })?;
+            if ranges.into_iter().any(|bounds| bounds.contains(range)) {
+                mapped = true;
+                break;
+            }
+        }
+        if !mapped {
+            return Err(ExecutableError::UnmappedSection {
+                section: name,
+                start: range.start(),
+                end: range.end(),
+            });
+        }
+    }
     let elf =
         object::read::elf::ElfFile32::<object::Endianness>::parse(bytes).map_err(|source| {
             ExecutableError::Parse {
@@ -235,7 +210,17 @@ pub(super) fn validate_flash_loads(
         let load_start = u64::from(segment.p_paddr(endian))
             .saturating_add(section_offset - u64::from(segment.p_offset(endian)));
         let load_range = section_range(&name, load_start, section_bytes)?;
-        if !firmware.range.contains(load_range) {
+        let run_range = section_range(&name, section.address(), section.size())?;
+        if load_range == run_range {
+            continue;
+        }
+        let mapped_flash = mapped_to_kind(
+            profile,
+            linker_profile,
+            AddressSpaceKind::InternalFlash,
+            load_range,
+        )?;
+        if !mapped_flash && !firmware.range.contains(load_range) {
             let region = profile
                 .regions
                 .iter()
@@ -253,6 +238,33 @@ pub(super) fn validate_flash_loads(
         }
     }
     Ok(())
+}
+
+fn mapped_to_kind(
+    profile: &MemoryProfile,
+    linker_profile: &LinkerAddressProfile,
+    kind: AddressSpaceKind,
+    range: AddressRange,
+) -> Result<bool, ExecutableError> {
+    for space in profile
+        .address_spaces
+        .iter()
+        .filter(|space| space.kind == kind)
+    {
+        let Some(linker_space) = linker_profile.address_space(space.id) else {
+            continue;
+        };
+        let ranges = linker_space.ranges(profile).map_err(|reason| {
+            ExecutableError::InvalidLinkerAddressProfile {
+                profile: profile.id.0,
+                reason,
+            }
+        })?;
+        if ranges.into_iter().any(|bounds| bounds.contains(range)) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 pub(super) fn entry_section(

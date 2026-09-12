@@ -1,8 +1,9 @@
 {
-  "schema_version": 8,
+  "schema_version": 9,
   "source": {
-    "kind": "clean-commit",
-    "commit": "ddc9f20bab25e48cd8107a61cdf1a87c39ad08c1"
+    "kind": "working-tree",
+    "head": "5cb30c612397b906c70e13e8801ac3b32ff6c375",
+    "diff_fingerprint": "0fe73f9aa92e71ad88d32663901f9c5eca18e28f5a5bf2d74f5aead00dfb7404"
   },
   "target": {
     "id": "mesh-tower-v2",
@@ -23,17 +24,44 @@
     ]
   },
   "build": {
-    "fingerprint": "74d9f869b050e0b1ba67977463a84c5461efacc91bb505dd60382c9b8d2fd181",
+    "fingerprint": "2aba36b47342e3b27d1f21652242dcb27ff12ef4a108fa870b73a7fd86f32c09",
     "firmware_version": "0.3.7",
     "cargo_profile": "release",
     "recipe_kind": "build-only",
+    "manifest": "personal-hopspot/embedded/nrf52840/Cargo.toml",
     "package": "t-echo",
     "binary": "heltec-mesh-tower-v2",
     "features": [
       "board-mesh-tower-v2",
       "softdevice-s140-v6"
     ],
-    "lto": "thin"
+    "requested": {
+      "lto": "thin"
+    },
+    "effective_release": {
+      "opt_level": "size-min",
+      "debug": "full",
+      "split_debuginfo": "toolchain-default",
+      "strip": "none",
+      "debug_assertions": false,
+      "overflow_checks": false,
+      "lto": "thin",
+      "panic": "unwind",
+      "incremental": false,
+      "codegen_units": 1,
+      "rpath": false
+    },
+    "package_overrides": [],
+    "build_override": {
+      "opt_level": "zero",
+      "debug": "none",
+      "split_debuginfo": "toolchain-default",
+      "strip": "none",
+      "debug_assertions": false,
+      "overflow_checks": false,
+      "incremental": false,
+      "codegen_units": 256
+    }
   },
   "toolchain": {
     "fingerprint": "75a6259eaebb5273ab6bf620ea36e19f31bda7caff1a56a239816a600f70e5f2",
@@ -43,7 +71,7 @@
     "linker_version": "LLD 22.1.8 (https://github.com/rust-lang/llvm-project.git 52ed14fcd56afc30f9cccd8ca8ce237c2eef7e04) (compatible with GNU linkers)"
   },
   "memory_contract": {
-    "fingerprint": "405897d9bb3f6a1f1eeaa0d8479d8de3f4f8965471704c9dea132ebe03863373",
+    "fingerprint": "171a6f8d90fa5c11eb0f5b57a76f1ec3d4b75e0af9f11b530518cb95d5ca7931",
     "address_spaces": [
       {
         "id": "internal-flash",
@@ -53,6 +81,12 @@
           "start": 0,
           "end": 1048576
         },
+        "linker_ranges": [
+          {
+            "start": 155648,
+            "end": 925696
+          }
+        ],
         "backing_store": "internal-flash",
         "backing_offset": 0
       },
@@ -64,6 +98,12 @@
           "start": 536920064,
           "end": 537133056
         },
+        "linker_ranges": [
+          {
+            "start": 536920064,
+            "end": 537133056
+          }
+        ],
         "backing_store": "internal-sram",
         "backing_offset": 49152
       }
@@ -909,7 +949,7 @@
               }
             ],
             "direct_call_count": 15671,
-            "largest_known_path": {
+            "largest_modeled_direct_call_chain": {
               "bytes": 33664,
               "frames": [
                 {
@@ -1034,11 +1074,14 @@
                 }
               ]
             },
-            "limit": {
+            "reservation": {
               "kind": "declared",
               "reservation": "minimum-runtime-stack",
               "bytes": 69632,
-              "headroom_bytes": 35968
+              "assessment": {
+                "kind": "within-reservation",
+                "remaining_bytes": 35968
+              }
             },
             "gaps": [
               {
@@ -1072,8 +1115,8 @@
             ],
             "artifact": {
               "path": "work/mesh-tower-v2/stack-evidence.json",
-              "bytes": 7230372,
-              "fingerprint": "0283012aa02f9c4208baa2c2bd89532bceb33fb89e93288e01882765e878b876"
+              "bytes": 7230458,
+              "fingerprint": "94e9acdf90525defc2ca0d68ff25feb08137eabafb0713d76c07006f746dd470"
             }
           }
         }

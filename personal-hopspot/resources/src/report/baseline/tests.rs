@@ -186,6 +186,19 @@ fn load_rejects_unknown_baseline_and_report_schemas() -> Result<(), Box<dyn std:
         Err(BaselineError::UnsupportedReportSchema { actual, .. })
             if actual == SCHEMA_VERSION + 1
     ));
+    std::fs::write(
+        &path,
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": BASELINE_SCHEMA_VERSION,
+            "report_schema_version": SCHEMA_VERSION - 1,
+            "targets": [{"old_schema_field": true}]
+        }))?,
+    )?;
+    assert!(matches!(
+        load(&path),
+        Err(BaselineError::UnsupportedReportSchema { actual, .. })
+            if actual == SCHEMA_VERSION - 1
+    ));
     Ok(())
 }
 
@@ -194,6 +207,8 @@ fn context<'a>(
     output: &'a Path,
     lto: LtoMode,
 ) -> Result<BuildContext<'a>, BuildError> {
+    crate::report::tests::copy_build_manifests(repository)
+        .map_err(|error| BuildError::Manifest(error.to_string()))?;
     BuildContext::new(repository, output, BuildVersion::Developer("0.1.0"))
         .map(|context| context.with_intent(BuildIntent::ResourceReport { lto }))
 }

@@ -28,3 +28,8 @@ pub use profiles::{
     MESH_TOWER_V2, NRF52840_MEMORY_X_BINDING, T096, T1000_E, T114, T_BEAM_SUPREME, T_ECHO_S140_V6,
     T_ECHO_S140_V7, XIAO_ESP32_C6,
 };
+#[cfg(feature = "linker-addresses")]
+pub use profiles::{
+    linker_address_profile, LinkerAddressProfile, LinkerAddressSpace, LinkerAddressValidationError,
+    ALL_LINKER_ADDRESS_PROFILES,
+};

@@ -1,3 +1,5 @@
+use std::ffi::OsString;
+
 use thiserror::Error;
 
 use crate::LinkOverflowEvidence;
@@ -22,4 +24,6 @@ pub enum BuildError {
     LinkOverflow(Box<LinkOverflowEvidence>),
     #[error("{0}")]
     Manifest(String),
+    #[error("resource builds reject inherited semantic Cargo environment variable {variable:?}")]
+    SemanticEnvironmentOverride { variable: OsString },
 }

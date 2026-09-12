@@ -83,7 +83,7 @@ pub(crate) enum CanonicalReportError {
         dimension: &'static str,
     },
     #[error("could not derive the current build identity: {0}")]
-    BuildIdentity(#[from] serde_json::Error),
+    BuildIdentity(#[from] super::build::BuildIdentityError),
     #[error(transparent)]
     MemoryContract(#[from] contract::ContractIdentityError),
 }
@@ -115,27 +115,39 @@ pub(super) fn load(path: &Path) -> Result<CanonicalBaseline, BaselineError> {
         path: path.to_path_buf(),
         source,
     })?;
+    let schema = serde_json::from_slice::<BaselineSchema>(&bytes).map_err(|source| {
+        BaselineError::Parse {
+            path: path.to_path_buf(),
+            source,
+        }
+    })?;
+    if schema.schema_version != BASELINE_SCHEMA_VERSION {
+        return Err(BaselineError::UnsupportedSchema {
+            path: path.to_path_buf(),
+            actual: schema.schema_version,
+            supported: BASELINE_SCHEMA_VERSION,
+        });
+    }
+    if schema.report_schema_version != SCHEMA_VERSION {
+        return Err(BaselineError::UnsupportedReportSchema {
+            path: path.to_path_buf(),
+            actual: schema.report_schema_version,
+            supported: SCHEMA_VERSION,
+        });
+    }
     let baseline = serde_json::from_slice::<CanonicalBaseline>(&bytes).map_err(|source| {
         BaselineError::Parse {
             path: path.to_path_buf(),
             source,
         }
     })?;
-    if baseline.schema_version != BASELINE_SCHEMA_VERSION {
-        return Err(BaselineError::UnsupportedSchema {
-            path: path.to_path_buf(),
-            actual: baseline.schema_version,
-            supported: BASELINE_SCHEMA_VERSION,
-        });
-    }
-    if baseline.report_schema_version != SCHEMA_VERSION {
-        return Err(BaselineError::UnsupportedReportSchema {
-            path: path.to_path_buf(),
-            actual: baseline.report_schema_version,
-            supported: SCHEMA_VERSION,
-        });
-    }
     Ok(baseline)
+}
+
+#[derive(Deserialize)]
+struct BaselineSchema {
+    schema_version: u32,
+    report_schema_version: u32,
 }
 
 pub(crate) fn refresh_baseline(

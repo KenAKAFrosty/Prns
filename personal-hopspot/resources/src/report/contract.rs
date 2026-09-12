@@ -1,15 +1,15 @@
 use personal_hopspot_memory::{
-    AddressSpaceGeometry, AddressSpaceKind, MemoryProfile, RegionOwner, RegionRetention,
-    RegionRole, ReservationAccounting, ReservationCharge, TransportCompatibility,
+    linker_address_profile, AddressSpaceGeometry, AddressSpaceKind, MemoryProfile, RegionOwner,
+    RegionRetention, RegionRole, ReservationAccounting, ReservationCharge, TransportCompatibility,
 };
 use serde::Serialize;
 use thiserror::Error;
 
 use super::fingerprint::fingerprint;
 use super::model::{
-    AddressSpaceGeometryIdentity, AddressSpaceIdentity, MemoryContractIdentity,
-    MemoryRegionIdentity, ReservationAccountingIdentity, RuntimeReservationIdentity,
-    TransportEnvelopeIdentity,
+    AddressRangeIdentity, AddressSpaceGeometryIdentity, AddressSpaceIdentity,
+    MemoryContractIdentity, MemoryRegionIdentity, ReservationAccountingIdentity,
+    RuntimeReservationIdentity, TransportEnvelopeIdentity,
 };
 
 #[derive(Debug, Error)]
@@ -19,6 +19,13 @@ pub(crate) enum ContractIdentityError {
         profile: &'static str,
         region: &'static str,
     },
+    #[error("memory profile {profile:?} has no linker-address contract")]
+    MissingLinkerAddressProfile { profile: &'static str },
+    #[error("memory profile {profile:?} has an invalid linker-address contract: {reason:?}")]
+    InvalidLinkerAddressProfile {
+        profile: &'static str,
+        reason: personal_hopspot_memory::LinkerAddressValidationError,
+    },
     #[error("could not fingerprint memory profile: {0}")]
     Fingerprint(#[from] serde_json::Error),
 }
@@ -26,6 +33,17 @@ pub(crate) enum ContractIdentityError {
 pub(super) fn identity(
     profile: &MemoryProfile,
 ) -> Result<MemoryContractIdentity, ContractIdentityError> {
+    let linker_profile = linker_address_profile(profile.id).ok_or(
+        ContractIdentityError::MissingLinkerAddressProfile {
+            profile: profile.id.0,
+        },
+    )?;
+    linker_profile.validate(profile).map_err(|reason| {
+        ContractIdentityError::InvalidLinkerAddressProfile {
+            profile: profile.id.0,
+            reason,
+        }
+    })?;
     let firmware_region = profile
         .region(profile.firmware.firmware_owned_region)
         .ok_or(ContractIdentityError::MissingFirmwareRegion {
@@ -35,14 +53,40 @@ pub(super) fn identity(
     let address_spaces = profile
         .address_spaces
         .iter()
-        .map(|space| AddressSpaceIdentity {
-            id: space.id.0.to_string(),
-            kind: address_space_kind(space.kind).to_string(),
-            geometry: geometry(space.geometry),
-            backing_store: space.backing_store.0.to_string(),
-            backing_offset: space.backing_offset,
+        .map(|space| {
+            let linker_space =
+                linker_profile
+                    .address_space(space.id)
+                    .ok_or(ContractIdentityError::InvalidLinkerAddressProfile {
+                    profile: profile.id.0,
+                    reason:
+                        personal_hopspot_memory::LinkerAddressValidationError::MissingAddressSpace {
+                            address_space: space.id,
+                        },
+                })?;
+            let linker_ranges = linker_space
+                .ranges(profile)
+                .map_err(
+                    |reason| ContractIdentityError::InvalidLinkerAddressProfile {
+                        profile: profile.id.0,
+                        reason,
+                    },
+                )?
+                .map(|range| AddressRangeIdentity {
+                    start: range.start(),
+                    end: range.end(),
+                })
+                .collect();
+            Ok(AddressSpaceIdentity {
+                id: space.id.0.to_string(),
+                kind: address_space_kind(space.kind).to_string(),
+                geometry: geometry(space.geometry),
+                linker_ranges,
+                backing_store: space.backing_store.0.to_string(),
+                backing_offset: space.backing_offset,
+            })
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, ContractIdentityError>>()?;
     let regions = profile
         .regions
         .iter()
@@ -89,6 +133,20 @@ pub(super) fn identity(
         firmware_owned_region: firmware_region.id.0.to_string(),
         transport_envelope,
         runtime_reservations,
+    })
+}
+
+pub(super) fn memory_contract_fingerprint(
+    profile: &str,
+    identity: &MemoryContractIdentity,
+) -> Result<super::fingerprint::Fingerprint, serde_json::Error> {
+    fingerprint(&MemoryContractFingerprint {
+        profile,
+        address_spaces: &identity.address_spaces,
+        regions: &identity.regions,
+        firmware_owned_region: &identity.firmware_owned_region,
+        transport_envelope: &identity.transport_envelope,
+        runtime_reservations: &identity.runtime_reservations,
     })
 }
 

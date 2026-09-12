@@ -113,7 +113,7 @@ mod tests {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("experiments/lto/t-echo-s140-v6-fat.json");
         let document = Document::load(&path)?;
-        assert_eq!(document.schema_version(), 8);
+        assert_eq!(document.schema_version(), 9);
         assert_eq!(document.target_id(), "t-echo-s140-v6");
         assert_eq!(document.memory_profile(), "t-echo-s140-v6");
         assert_eq!(document.rust_target(), "thumbv7em-none-eabihf");

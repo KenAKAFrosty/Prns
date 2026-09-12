@@ -1,10 +1,10 @@
 use std::path::Path;
 
-use personal_hopspot_memory::{AddressRange, MemoryProfile};
+use personal_hopspot_memory::MemoryProfile;
 
 use super::{
     direct_operand, entry_section, executable_section, parse_instruction, require_symbol,
-    validate_windowed_placement, AssuranceAdapter, CallTarget, DecodedInstruction, StackLimit,
+    AssuranceAdapter, CallTarget, DecodedInstruction, StackReservation,
 };
 use crate::analysis::executable::{
     ExecutableError, ExecutableSection, StartupAnchor, StartupAnchorRole, StartupStructure,
@@ -13,34 +13,19 @@ use personal_hopspot_memory::ProcessorArchitecture;
 
 const ENTRY_SYMBOL: &str = "_start";
 const TRAP_SECTION: &str = ".trap";
-const WINDOWS: [AddressRange; 2] = [
-    AddressRange::new(0x4080_0000, 0x4090_0000),
-    AddressRange::new(0x4200_0000, 0x4240_0000),
-];
-
 pub(super) static ADAPTER: AssuranceAdapter = AssuranceAdapter {
     id: ProcessorArchitecture::RiscV32Imac.id(),
     object_architecture: object::Architecture::Riscv32,
     normalize_code_address: normalize,
-    validate_allocated_sections: validate,
     startup,
     decoded_instruction,
     call_target,
-    stack_limit: StackLimit::Undeclared,
+    stack_reservation: StackReservation::Undeclared,
     dwarf_cfa_registers: &[2],
 };
 
 fn normalize(address: u64) -> u64 {
     address
-}
-
-fn validate(
-    path: &Path,
-    _profile: &MemoryProfile,
-    object: &object::File<'_>,
-    _bytes: &[u8],
-) -> Result<(), ExecutableError> {
-    validate_windowed_placement(path, object, &WINDOWS)
 }
 
 fn startup(

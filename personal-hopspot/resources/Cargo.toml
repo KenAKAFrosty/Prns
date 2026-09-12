@@ -15,13 +15,14 @@ gimli = "0.32.3"
 object = { version = "0.39.1", default-features = false, features = ["elf", "read_core", "std"] }
 personal-hopspot-assurance-kernel = { path = "../assurance-kernel" }
 personal-hopspot-builder = { path = "../builder" }
-personal-hopspot-memory = { path = "../memory" }
+personal-hopspot-memory = { path = "../memory", features = ["linker-addresses"] }
 prns-flash-manifest = { path = "../../prns-flash-manifest" }
 rustc-demangle = "0.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tempfile = "3.23"
 thiserror = "2.0"
+toml = "1.1"
 
 [lints]
 workspace = true

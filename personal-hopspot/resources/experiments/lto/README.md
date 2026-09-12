@@ -1,26 +1,27 @@
 # nRF52840 LTO experiment
 
-These reports preserve the production-resource experiment reproduced from clean
-source commit `ddc9f20bab25e48cd8107a61cdf1a87c39ad08c1` on 2026-09-11. The builds
-used the same pinned Rust 1.96.0 toolchain and Arm codegen policy except for the
-reported LTO selection.
+These reports preserve the production-resource experiment reproduced from the
+working tree at `5cb30c612397b906c70e13e8801ac3b32ff6c375` with source-diff
+fingerprint `0fe73f9aa92e71ad88d32663901f9c5eca18e28f5a5bf2d74f5aead00dfb7404`.
+The builds used the same pinned Rust 1.96.0 toolchain and Arm codegen policy
+except for the reported LTO selection.
 
 ## Production resource evidence
 
-| Target | LTO | Result | Flash | Static RAM headroom | Known stack-path lower bound | Task pools | Scenario futures |
+| Target | LTO | Result | Flash | Static RAM headroom | Largest modeled direct-call chain | Task pools | Scenario futures |
 |---|---|---|---:|---:|---:|---:|---:|
-| T-Echo S140 v6 | fat | success | 621,976 B image; 4,712 B headroom | 4,816 B | 45,344 B; 24,288 B declared headroom | 56,440 B | SX126x 828 B; LR1110 928 B |
+| T-Echo S140 v6 | fat | success | 621,976 B image; 4,712 B headroom | 4,816 B | 45,344 B; 24,288 B within reservation (advisory) | 56,440 B | SX126x 828 B; LR1110 928 B |
 | T-Echo S140 v6 | thin | memory overflow | 86,560 B beyond `FLASH` | unavailable | unavailable | unavailable | unavailable |
-| MeshTower V2 | configured (fat) | success | 563,184 B image; 206,864 B headroom | 11,332 B | 46,488 B; 23,144 B declared headroom | 49,528 B | SX126x 828 B; LR1110 928 B |
-| MeshTower V2 | thin | success | 651,508 B image; 118,540 B headroom | 11,324 B | 33,664 B; 35,968 B declared headroom | 49,528 B | SX126x 828 B; LR1110 928 B |
+| MeshTower V2 | configured (fat) | success | 563,184 B image; 206,864 B headroom | 11,332 B | 46,488 B; 23,144 B within reservation (advisory) | 49,528 B | SX126x 828 B; LR1110 928 B |
+| MeshTower V2 | thin | success | 651,508 B image; 118,540 B headroom | 11,324 B | 33,664 B; 35,968 B within reservation (advisory) | 49,528 B | SX126x 828 B; LR1110 928 B |
 
 The failed T-Echo link provides authoritative overflow and partial attribution
 evidence, but no final ELF. Consequently its thin-LTO static RAM, stack,
 task-pool, future, and machine-code measurements are unavailable rather than
 estimated. The successful MeshTower control makes those comparisons possible:
 thin LTO added 88,324 flash bytes and four static RAM bytes, left task-pool and
-scenario-future sizes unchanged, and reduced the largest known stack-path lower
-bound by 12,824 bytes. Its executable code grew from 484,324 to 508,908 bytes
+scenario-future sizes unchanged, and reduced the largest modeled direct-call
+chain by 12,824 bytes. Its executable code grew from 484,324 to 508,908 bytes
 and its discovered function boundaries grew from 3,412 to 5,708.
 
 The T-Echo partial map contains 91,272 more analyzed flash bytes under thin LTO.
@@ -66,8 +67,9 @@ hardware integration. The historical functional report should remain an
 unconfirmed hardware observation unless it can be reproduced with a precise
 milestone and captured fault evidence. The fat build's partial stack analysis
 also leaves unresolved indirect calls, interrupt nesting, foreign frames, and
-one recursive cycle; its 45,344-byte known-path value is a sound lower bound,
-not a complete upper-bound proof.
+one recursive cycle. Its 45,344-byte modeled direct-call chain is useful
+pressure evidence, but path feasibility is not proven and it is not a stack
+safety bound.
 
 ## Reproduction
 

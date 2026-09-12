@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use personal_hopspot_builder::{BuildContext, BuildIntent, BuildVersion, LtoMode, SourceCustody};
+use personal_hopspot_builder::{BuildContext, BuildIntent, BuildVersion, LtoMode};
 use personal_hopspot_memory::T114;
 use serde_json::{json, Value};
 
@@ -8,8 +8,8 @@ use super::build::{build_identity, firmware_flash_usage, ReportError};
 use super::compare::{self, ComparisonError, CompatibilityDimension};
 use super::contract;
 use super::model::{
-    BuildStatus, Evidence, ResourceReport, ScenarioFutureSizesIdentity, StackLimitIdentity,
-    SCHEMA_VERSION,
+    BuildStatus, CargoLtoIdentity, Evidence, ModeledChainAssessmentIdentity, RequestedLtoIdentity,
+    ResourceReport, ScenarioFutureSizesIdentity, StackReservationIdentity, SCHEMA_VERSION,
 };
 use crate::matrix::RecipeIdentity;
 
@@ -29,6 +29,23 @@ fn report_schema_rejects_unknown_fields() {
 }
 
 #[test]
+fn report_loader_rejects_old_schemas_before_decoding_their_fields(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempfile::tempdir()?;
+    let path = temporary.path().join("old-report.json");
+    let mut value = report_value();
+    value["schema_version"] = json!(SCHEMA_VERSION - 1);
+    value["old_schema_field"] = json!(true);
+    std::fs::write(&path, serde_json::to_vec(&value)?)?;
+    assert!(matches!(
+        compare::load_report(&path),
+        Err(ComparisonError::UnsupportedSchema { actual, .. })
+            if actual == SCHEMA_VERSION - 1
+    ));
+    Ok(())
+}
+
+#[test]
 fn report_schema_rejects_malformed_fingerprints() {
     let mut value = report_value();
     value["build"]["fingerprint"] = Value::String("invalid".to_string());
@@ -44,6 +61,54 @@ fn report_validation_rejects_a_tampered_toolchain_identity(
     assert!(matches!(
         compare::validate_report(Path::new("report.json"), &report),
         Err(ComparisonError::InvalidToolchainIdentity { .. })
+    ));
+    Ok(())
+}
+
+#[test]
+fn report_validation_rejects_tampered_build_and_memory_identities(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut build = report_value();
+    build["build"]["effective_release"]["opt_level"] = json!("zero");
+    let build: ResourceReport = serde_json::from_value(build)?;
+    assert!(matches!(
+        compare::validate_report(Path::new("report.json"), &build),
+        Err(ComparisonError::InvalidBuildIdentity { .. })
+    ));
+
+    let mut memory = report_value();
+    memory["memory_contract"]["firmware_owned_region"] = json!("other");
+    let memory: ResourceReport = serde_json::from_value(memory)?;
+    assert!(matches!(
+        compare::validate_report(Path::new("report.json"), &memory),
+        Err(ComparisonError::InvalidMemoryContractIdentity { .. })
+    ));
+    Ok(())
+}
+
+#[test]
+fn report_validation_rejects_self_consistent_invalid_build_settings(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut request = report_value();
+    request["build"]["requested"]["lto"] = json!("thin");
+    refresh_build_fingerprint(&mut request)?;
+    let request: ResourceReport = serde_json::from_value(request)?;
+    assert!(matches!(
+        compare::validate_report(Path::new("report.json"), &request),
+        Err(ComparisonError::InvalidBuildIdentity { .. })
+    ));
+
+    let mut overrides = report_value();
+    let settings = overrides["build"]["build_override"].clone();
+    overrides["build"]["package_overrides"] = json!([
+        {"package": "duplicate", "settings": settings},
+        {"package": "duplicate", "settings": settings}
+    ]);
+    refresh_build_fingerprint(&mut overrides)?;
+    let overrides: ResourceReport = serde_json::from_value(overrides)?;
+    assert!(matches!(
+        compare::validate_report(Path::new("report.json"), &overrides),
+        Err(ComparisonError::InvalidBuildIdentity { .. })
     ));
     Ok(())
 }
@@ -181,12 +246,12 @@ fn malformed_stack_evidence_is_rejected() -> Result<(), Box<dyn std::error::Erro
             value["analysis"]["executable"]["value"]["stack"]["kind"] = json!("complete");
         },
         |value: &mut Value| {
-            value["analysis"]["executable"]["value"]["stack"]["value"]["largest_known_path"]
-                ["bytes"] = json!(31);
+            value["analysis"]["executable"]["value"]["stack"]["value"]
+                ["largest_modeled_direct_call_chain"]["bytes"] = json!(31);
         },
         |value: &mut Value| {
-            value["analysis"]["executable"]["value"]["stack"]["value"]["limit"]["headroom_bytes"] =
-                json!(69_599);
+            value["analysis"]["executable"]["value"]["stack"]["value"]["reservation"]
+                ["assessment"]["remaining_bytes"] = json!(69_599);
         },
         |value: &mut Value| {
             value["analysis"]["executable"]["value"]["stack"]["value"]["frame_source"] =
@@ -201,6 +266,21 @@ fn malformed_stack_evidence_is_rejected() -> Result<(), Box<dyn std::error::Erro
             Err(ComparisonError::InvalidExecutableEvidence { .. })
         ));
     }
+    Ok(())
+}
+
+#[test]
+fn modeled_chain_over_reservation_is_valid_advisory_evidence(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut value = report_value();
+    value["analysis"]["executable"]["value"]["stack"]["value"]
+        ["largest_modeled_direct_call_chain"]["bytes"] = json!(70_000);
+    value["analysis"]["executable"]["value"]["stack"]["value"]
+        ["largest_modeled_direct_call_chain"]["frames"][0]["frame_bytes"] = json!(70_000);
+    value["analysis"]["executable"]["value"]["stack"]["value"]["reservation"]["assessment"] =
+        json!({"kind": "over-reservation", "excess_bytes": 368});
+    let report: ResourceReport = serde_json::from_value(value)?;
+    compare::validate_report(Path::new("advisory.json"), &report)?;
     Ok(())
 }
 
@@ -268,8 +348,9 @@ fn overflow_reports_reject_duplicate_regions() -> Result<(), Box<dyn std::error:
 fn compatible_reports_call_out_lto_and_resource_deltas() -> Result<(), Box<dyn std::error::Error>> {
     let before: ResourceReport = serde_json::from_value(report_value())?;
     let mut after_value = report_value();
-    after_value["build"]["fingerprint"] = Value::String("b".repeat(64));
-    after_value["build"]["lto"] = Value::String("thin".to_string());
+    after_value["build"]["requested"]["lto"] = json!("thin");
+    after_value["build"]["effective_release"]["lto"] = json!("thin");
+    refresh_build_fingerprint(&mut after_value)?;
     after_value["firmware_flash"]["value"]["image_bytes"] = json!(699_000);
     after_value["firmware_flash"]["value"]["headroom_bytes"] = json!(66_952);
     after_value["artifacts"]["value"][0]["bytes"] = json!(40);
@@ -330,10 +411,12 @@ fn compatible_reports_call_out_lto_and_resource_deltas() -> Result<(), Box<dyn s
         Evidence::Unavailable => return Err("fixture has no stack evidence".into()),
     };
     stack.largest_frames[0].bytes = 24;
-    stack.largest_known_path.bytes = 24;
-    stack.largest_known_path.frames[0].frame_bytes = 24;
-    if let super::model::StackLimitIdentity::Declared { headroom_bytes, .. } = &mut stack.limit {
-        *headroom_bytes = 69_608;
+    stack.largest_modeled_direct_call_chain.bytes = 24;
+    stack.largest_modeled_direct_call_chain.frames[0].frame_bytes = 24;
+    if let StackReservationIdentity::Declared { assessment, .. } = &mut stack.reservation {
+        *assessment = ModeledChainAssessmentIdentity::WithinReservation {
+            remaining_bytes: 69_608,
+        };
     }
     let async_memory = match &mut after.analysis.async_memory {
         Evidence::Complete(async_memory) => async_memory,
@@ -356,7 +439,8 @@ fn compatible_reports_call_out_lto_and_resource_deltas() -> Result<(), Box<dyn s
         Path::new("before.json"),
         Path::new("after.json"),
     );
-    assert!(rendered.contains("setting lto configured -> thin"));
+    assert!(rendered.contains("setting requested-lto configured -> thin"));
+    assert!(rendered.contains("setting effective-lto fat -> thin"));
     assert!(rendered.contains("flash image 700000 -> 699000 (-1000)"));
     assert!(rendered.contains("flash headroom 65952 -> 66952 (+1000)"));
     assert!(rendered.contains("artifact \"firmware.bin\" fingerprint changed"));
@@ -375,8 +459,8 @@ fn compatible_reports_call_out_lto_and_resource_deltas() -> Result<(), Box<dyn s
     assert!(rendered.contains("stack evidence partial -> partial"));
     assert!(rendered.contains("stack frame-source unchanged"));
     assert!(rendered.contains("stack frame-source evidence 5 -> 5 (0)"));
-    assert!(rendered.contains("stack known-path lower-bound 32 -> 24 (-8)"));
-    assert!(rendered.contains("stack known-path headroom 69600 -> 69608 (+8)"));
+    assert!(rendered.contains("stack largest-modeled-direct-call-chain 32 -> 24 (-8)"));
+    assert!(rendered.contains("stack modeled-chain advisory remaining 69600 -> 69608 (+8)"));
     assert!(rendered.contains("async task-pool total 32 -> 24 (-8)"));
     assert!(rendered.contains("async task-pool \"example::run\" 32 -> 24 (-8)"));
     assert!(rendered.contains("async scenario-future \"sx126x\" 828 -> 800 (-28)"));
@@ -389,8 +473,9 @@ fn successful_and_overflowing_builds_compare_without_invented_deltas(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let before: ResourceReport = serde_json::from_value(report_value())?;
     let mut after_value = report_value();
-    after_value["build"]["fingerprint"] = Value::String("b".repeat(64));
-    after_value["build"]["lto"] = Value::String("thin".to_string());
+    after_value["build"]["requested"]["lto"] = json!("thin");
+    after_value["build"]["effective_release"]["lto"] = json!("thin");
+    refresh_build_fingerprint(&mut after_value)?;
     make_overflow(&mut after_value, "FLASH", 86_240);
     let after: ResourceReport = serde_json::from_value(after_value)?;
     compare::validate_report(Path::new("before.json"), &before)?;
@@ -401,7 +486,8 @@ fn successful_and_overflowing_builds_compare_without_invented_deltas(
         Path::new("before.json"),
         Path::new("after.json"),
     );
-    assert!(introduced.contains("setting lto configured -> thin"));
+    assert!(introduced.contains("setting requested-lto configured -> thin"));
+    assert!(introduced.contains("setting effective-lto fat -> thin"));
     assert!(introduced.contains("status success -> memory-overflow"));
     assert!(introduced.contains("overflow \"FLASH\" none -> 86240"));
     assert!(introduced.contains("flash evidence complete -> unavailable"));
@@ -452,9 +538,9 @@ fn preserved_lto_experiment_captures_overflow_and_control() -> Result<(), Box<dy
     let control = compare::load_report(&control_path)?;
 
     assert_eq!(fat.target.id, "t-echo-s140-v6");
-    assert_eq!(fat.build.lto, "fat");
+    assert_eq!(fat.build.requested.lto, RequestedLtoIdentity::Fat);
+    assert_eq!(fat.build.effective_release.lto, CargoLtoIdentity::Fat);
     assert!(matches!(fat.status, BuildStatus::Success));
-    assert!(matches!(fat.source, SourceCustody::CleanCommit { .. }));
     let fat_flash = fat
         .firmware_flash
         .complete()
@@ -465,7 +551,8 @@ fn preserved_lto_experiment_captures_overflow_and_control() -> Result<(), Box<dy
     );
 
     assert_eq!(thin.target, fat.target);
-    assert_eq!(thin.build.lto, "thin");
+    assert_eq!(thin.build.requested.lto, RequestedLtoIdentity::Thin);
+    assert_eq!(thin.build.effective_release.lto, CargoLtoIdentity::Thin);
     assert!(matches!(
         &thin.status,
         BuildStatus::MemoryOverflow { regions }
@@ -481,7 +568,8 @@ fn preserved_lto_experiment_captures_overflow_and_control() -> Result<(), Box<dy
     assert!(matches!(thin.analysis.async_memory, Evidence::Unavailable));
 
     assert_eq!(control.target.id, "mesh-tower-v2");
-    assert_eq!(control.build.lto, "thin");
+    assert_eq!(control.build.requested.lto, RequestedLtoIdentity::Thin);
+    assert_eq!(control.build.effective_release.lto, CargoLtoIdentity::Thin);
     assert!(matches!(control.status, BuildStatus::Success));
     let control_flash = control
         .firmware_flash
@@ -507,12 +595,14 @@ fn preserved_lto_experiment_captures_overflow_and_control() -> Result<(), Box<dy
             return Err("fat T-Echo stack evidence must remain explicitly partial".into());
         }
     };
-    assert_eq!(fat_stack.largest_known_path.bytes, 45_344);
+    assert_eq!(fat_stack.largest_modeled_direct_call_chain.bytes, 45_344);
     assert!(matches!(
-        fat_stack.limit,
-        StackLimitIdentity::Declared {
+        fat_stack.reservation,
+        StackReservationIdentity::Declared {
             bytes: 69_632,
-            headroom_bytes: 24_288,
+            assessment: ModeledChainAssessmentIdentity::WithinReservation {
+                remaining_bytes: 24_288,
+            },
             ..
         }
     ));
@@ -536,7 +626,8 @@ fn preserved_lto_experiment_captures_overflow_and_control() -> Result<(), Box<dy
         &fat_path,
         &thin_path,
     );
-    assert!(rendered.contains("setting lto fat -> thin"));
+    assert!(rendered.contains("setting requested-lto fat -> thin"));
+    assert!(rendered.contains("setting effective-lto fat -> thin"));
     assert!(rendered.contains("overflow \"FLASH\" none -> 86560"));
     assert!(
         rendered.contains("attribution crates candidate 1 154592 -> 199770 (+45178) \"prns_core\"")
@@ -624,27 +715,31 @@ fn build_only_reports_need_no_transport_artifacts() -> Result<(), Box<dyn std::e
 
 #[test]
 fn build_fingerprint_distinguishes_lto_configuration() -> Result<(), Box<dyn std::error::Error>> {
-    let configured = BuildContext::new(
-        Path::new("/repository"),
-        Path::new("/output"),
-        BuildVersion::Developer("0.1.0"),
-    )?
-    .with_intent(BuildIntent::ResourceReport {
-        lto: LtoMode::Configured,
-    });
-    let thin = BuildContext::new(
-        Path::new("/repository"),
-        Path::new("/output"),
-        BuildVersion::Developer("0.1.0"),
-    )?
-    .with_intent(BuildIntent::ResourceReport { lto: LtoMode::Thin });
+    let repository = tempfile::tempdir()?;
+    std::fs::write(
+        repository.path().join("Cargo.toml"),
+        "[profile.release]\nlto = \"fat\"\n",
+    )?;
+    let output = repository.path().join("output");
+    let configured =
+        BuildContext::new(repository.path(), &output, BuildVersion::Developer("0.1.0"))?
+            .with_intent(BuildIntent::ResourceReport {
+                lto: LtoMode::Configured,
+            });
+    let thin = BuildContext::new(repository.path(), &output, BuildVersion::Developer("0.1.0"))?
+        .with_intent(BuildIntent::ResourceReport { lto: LtoMode::Thin });
     let configured = build_identity(&configured, recipe())?;
     let thin = build_identity(&thin, recipe())?;
     assert_ne!(configured.fingerprint, thin.fingerprint);
     assert_eq!(
-        (configured.lto.as_str(), thin.lto.as_str()),
+        (
+            configured.requested.lto.as_str(),
+            thin.requested.lto.as_str()
+        ),
         ("configured", "thin")
     );
+    assert_eq!(configured.effective_release.lto, CargoLtoIdentity::Fat);
+    assert_eq!(thin.effective_release.lto, CargoLtoIdentity::Thin);
     Ok(())
 }
 
@@ -667,6 +762,14 @@ fn memory_contract_identity_captures_the_complete_profile() -> Result<(), Box<dy
             T114.runtime_reservations.len(),
             T114.firmware.firmware_owned_region.0,
         )
+    );
+    assert_eq!(
+        identity
+            .address_spaces
+            .iter()
+            .map(|space| space.linker_ranges.len())
+            .collect::<Vec<_>>(),
+        vec![1, 1]
     );
     Ok(())
 }
@@ -705,6 +808,7 @@ fn firmware_flash_usage_is_bounded_by_the_owned_region() -> Result<(), ReportErr
 fn recipe() -> RecipeIdentity<'static> {
     RecipeIdentity {
         kind: "nrf-serial-dfu",
+        manifest: "Cargo.toml",
         package: "personal-hopspot-t114",
         binary: "personal-hopspot-t114",
         features: vec!["t114"],
@@ -764,10 +868,35 @@ pub(super) fn report_value() -> Value {
             "firmware_version": "0.1.0",
             "cargo_profile": "release",
             "recipe_kind": "nrf-serial-dfu",
+            "manifest": "personal-hopspot/embedded/nrf52840/Cargo.toml",
             "package": "personal-hopspot-t114",
             "binary": "personal-hopspot-t114",
             "features": ["t114"],
-            "lto": "configured"
+            "requested": {"lto": "configured"},
+            "effective_release": {
+                "opt_level": "size-min",
+                "debug": "full",
+                "split_debuginfo": "toolchain-default",
+                "strip": "none",
+                "debug_assertions": false,
+                "overflow_checks": false,
+                "lto": "fat",
+                "panic": "unwind",
+                "incremental": false,
+                "codegen_units": 1,
+                "rpath": false
+            },
+            "package_overrides": [],
+            "build_override": {
+                "opt_level": "zero",
+                "debug": "none",
+                "split_debuginfo": "toolchain-default",
+                "strip": "none",
+                "debug_assertions": false,
+                "overflow_checks": false,
+                "incremental": false,
+                "codegen_units": 256
+            }
         },
         "toolchain": {
             "fingerprint": toolchain_fingerprint,
@@ -973,7 +1102,22 @@ pub(super) fn report_value() -> Value {
     });
     value["analysis"]["executable"]["value"]["stack"] = stack_value(&fingerprint);
     value["analysis"]["async_memory"] = async_memory_value();
+    refresh_build_fingerprint(&mut value).expect("resource report fixture must be valid");
+    let report: ResourceReport =
+        serde_json::from_value(value.clone()).expect("resource report fixture must deserialize");
+    value["memory_contract"]["fingerprint"] = json!(contract::memory_contract_fingerprint(
+        &report.target.memory_profile,
+        &report.memory_contract,
+    )
+    .expect("resource report fixture memory identity must serialize"));
     value
+}
+
+pub(super) fn refresh_build_fingerprint(value: &mut Value) -> Result<(), serde_json::Error> {
+    let report: ResourceReport = serde_json::from_value(value.clone())?;
+    value["build"]["fingerprint"] =
+        serde_json::to_value(super::build::build_fingerprint(&report.build)?)?;
+    Ok(())
 }
 
 fn stack_value(fingerprint: &str) -> Value {
@@ -995,7 +1139,7 @@ fn stack_value(fingerprint: &str) -> Value {
                 "address": 155648
             }],
             "direct_call_count": 0,
-            "largest_known_path": {
+            "largest_modeled_direct_call_chain": {
                 "bytes": 32,
                 "frames": [{
                     "name": "example::run",
@@ -1003,11 +1147,14 @@ fn stack_value(fingerprint: &str) -> Value {
                     "frame_bytes": 32
                 }]
             },
-            "limit": {
+            "reservation": {
                 "kind": "declared",
                 "reservation": "minimum-runtime-stack",
                 "bytes": 69632,
-                "headroom_bytes": 69600
+                "assessment": {
+                    "kind": "within-reservation",
+                    "remaining_bytes": 69600
+                }
             },
             "gaps": [{
                 "kind": "interrupt-nesting-unmodeled",
@@ -1064,24 +1211,29 @@ pub(super) fn retarget_executable(report: &mut ResourceReport, target: &crate::m
                         .iter()
                         .find(|reservation| reservation.id.0 == "minimum-runtime-stack")
                         .expect("Arm fixture profile has a stack reservation");
-                    stack.limit = super::model::StackLimitIdentity::Declared {
+                    stack.reservation = StackReservationIdentity::Declared {
                         reservation: reservation.id.0.to_string(),
                         bytes: reservation.bytes,
-                        headroom_bytes: reservation.bytes - stack.largest_known_path.bytes,
+                        assessment: ModeledChainAssessmentIdentity::WithinReservation {
+                            remaining_bytes: reservation.bytes
+                                - stack.largest_modeled_direct_call_chain.bytes,
+                        },
                     };
                     stack.gaps.retain(|gap| {
-                        gap.kind != super::model::StackAnalysisGapKindIdentity::StackLimitUndeclared
+                        gap.kind
+                            != super::model::StackAnalysisGapKindIdentity::StackReservationUndeclared
                     });
                 }
                 personal_hopspot_memory::ProcessorArchitecture::RiscV32Imac
                 | personal_hopspot_memory::ProcessorArchitecture::XtensaEsp32S3 => {
                     stack.frame_source = super::model::StackFrameSourceIdentity::DwarfDebugFrame;
-                    stack.limit = super::model::StackLimitIdentity::Undeclared;
+                    stack.reservation = StackReservationIdentity::Undeclared;
                     if !stack.gaps.iter().any(|gap| {
-                        gap.kind == super::model::StackAnalysisGapKindIdentity::StackLimitUndeclared
+                        gap.kind
+                            == super::model::StackAnalysisGapKindIdentity::StackReservationUndeclared
                     }) {
                         stack.gaps.push(super::model::StackAnalysisGapIdentity {
-                            kind: super::model::StackAnalysisGapKindIdentity::StackLimitUndeclared,
+                            kind: super::model::StackAnalysisGapKindIdentity::StackReservationUndeclared,
                             occurrences: 1,
                         });
                     }
@@ -1089,4 +1241,24 @@ pub(super) fn retarget_executable(report: &mut ResourceReport, target: &crate::m
             }
         }
     }
+}
+
+pub(super) fn copy_build_manifests(repository: &Path) -> std::io::Result<()> {
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("resources crate must live below the repository root");
+    for relative in [
+        "personal-hopspot/embedded/esp32/Cargo.toml",
+        "personal-hopspot/embedded/nrf52840/Cargo.toml",
+    ] {
+        let destination = repository.join(relative);
+        std::fs::create_dir_all(
+            destination
+                .parent()
+                .expect("firmware manifest must have a parent"),
+        )?;
+        std::fs::copy(source.join(relative), destination)?;
+    }
+    Ok(())
 }
