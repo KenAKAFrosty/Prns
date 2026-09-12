@@ -388,6 +388,9 @@ impl From<personal_hopspot_builder::BuildError> for AppError {
             personal_hopspot_builder::BuildError::Manifest(message) => {
                 Self::developer_manifest(message)
             }
+            error @ personal_hopspot_builder::BuildError::SemanticEnvironmentOverride { .. } => {
+                Self::developer_build(error.to_string())
+            }
         }
     }
 }
@@ -435,6 +438,14 @@ mod tests {
                 maximum: 1,
             }),
             AppError::DeveloperBuild(DeveloperBuildError::Artifact(_))
+        ));
+        assert!(matches!(
+            AppError::from(
+                personal_hopspot_builder::BuildError::SemanticEnvironmentOverride {
+                    variable: "CARGO_PROFILE_RELEASE_LTO".into(),
+                }
+            ),
+            AppError::DeveloperBuild(DeveloperBuildError::Build(_))
         ));
     }
 
