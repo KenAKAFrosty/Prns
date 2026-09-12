@@ -777,7 +777,7 @@ tiers = ["pr"]
 platform = "any"
 toolchain = "nightly"
 timeout_seconds = 3600
-command = ["__RUNNER_PYTHON__", "validation/hardening/embedded_miri.py", "quick"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.hardening.embedded_miri", "quick"]
 inputs = [
     "validation/hardening/embedded_miri.py",
     "validation/hardening/embedded-miri.toml",
@@ -797,7 +797,7 @@ tiers = ["release", "scheduled"]
 platform = "any"
 toolchain = "nightly"
 timeout_seconds = 7200
-command = ["__RUNNER_PYTHON__", "validation/hardening/embedded_miri.py", "full"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.hardening.embedded_miri", "full"]
 inputs = [
     "validation/hardening/embedded_miri.py",
     "validation/hardening/embedded-miri.toml",

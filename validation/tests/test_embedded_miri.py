@@ -35,6 +35,26 @@ class EmbeddedMiriTests(unittest.TestCase):
         )
         self.assertEqual(len(scenarios[2].quick_filters), 3)
 
+    def test_validation_registry_launches_miri_as_a_repository_module(self) -> None:
+        manifest = embedded_miri.tomllib.loads(
+            (ROOT / "validation" / "manifest.toml").read_text(encoding="utf-8")
+        )
+        suites = {
+            suite["id"]: suite
+            for suite in manifest["suite"]
+            if suite["id"] in {"embedded-miri-quick", "embedded-miri-full"}
+        }
+
+        for suite in suites.values():
+            self.assertEqual(
+                suite["command"][:3],
+                [
+                    "__RUNNER_PYTHON__",
+                    "-m",
+                    "validation.hardening.embedded_miri",
+                ],
+            )
+
     def test_quick_and_full_modes_select_explicit_borrow_models(self) -> None:
         quick = embedded_miri.mode_configuration(embedded_miri.Mode.QUICK)
         full = embedded_miri.mode_configuration(embedded_miri.Mode.FULL)
