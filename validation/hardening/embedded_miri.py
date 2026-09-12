@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -53,6 +54,20 @@ class Observation:
     model: BorrowModel
     completed_tests: int
     log: Path
+
+
+@dataclass(frozen=True)
+class ToolchainIdentity:
+    channel: str
+    rustc_version: str
+    miri_version: str
+
+
+@dataclass(frozen=True)
+class ModeConfiguration:
+    borrow_models: tuple[BorrowModel, ...]
+    coverage: str
+    runner: str
 
 
 class EmbeddedMiriError(RuntimeError):
@@ -135,12 +150,20 @@ def repository_file(value: object, kind: str) -> Path:
     return path
 
 
-def models(mode: Mode) -> tuple[BorrowModel, ...]:
+def mode_configuration(mode: Mode) -> ModeConfiguration:
     match mode:
         case Mode.QUICK:
-            return (BorrowModel.STACKED,)
+            return ModeConfiguration(
+                borrow_models=(BorrowModel.STACKED,),
+                coverage="stacked",
+                runner="miri-stacked",
+            )
         case Mode.FULL:
-            return (BorrowModel.STACKED, BorrowModel.TREE)
+            return ModeConfiguration(
+                borrow_models=(BorrowModel.STACKED, BorrowModel.TREE),
+                coverage="stacked-and-tree",
+                runner="miri-stacked-tree",
+            )
 
 
 def nightly_toolchain() -> str:
@@ -219,19 +242,42 @@ def command_for(
     return tuple(command)
 
 
-def miri_flags(model: BorrowModel) -> str:
-    inherited = os.environ.get("MIRIFLAGS", "").strip()
-    flags = [inherited] if inherited else []
-    if model is BorrowModel.TREE:
-        flags.append("-Zmiri-tree-borrows")
-    return " ".join(flags)
+def miri_flags(model: BorrowModel) -> tuple[str, ...]:
+    match model:
+        case BorrowModel.STACKED:
+            return ()
+        case BorrowModel.TREE:
+            return ("-Zmiri-tree-borrows",)
+
+
+def miri_environment(model: BorrowModel) -> dict[str, str]:
+    environment = os.environ.copy()
+    environment["MIRIFLAGS"] = " ".join(miri_flags(model))
+    return environment
+
+
+def render_log(
+    model: BorrowModel,
+    identity: ToolchainIdentity,
+    outputs: list[bytes],
+) -> bytes:
+    header = (
+        f"borrow-model={model.value}\n"
+        f"miri-flags={json.dumps(miri_flags(model), separators=(',', ':'))}\n"
+        f"toolchain={identity.channel}\n"
+        f"rustc={identity.rustc_version}\n"
+        f"miri={identity.miri_version}\n"
+    ).encode()
+    if not outputs:
+        return header
+    return header + b"\n" + b"\n".join(outputs)
 
 
 def run_scenario(
     scenario: Scenario,
     mode: Mode,
     model: BorrowModel,
-    toolchain: str,
+    identity: ToolchainIdentity,
     artifact_directory: Path,
 ) -> Observation:
     log = artifact_directory / f"{scenario.component}-{model.value}.log"
@@ -240,9 +286,8 @@ def run_scenario(
     successful_outputs = []
     failed_commands = []
     for test_filter in scenario.filters(mode):
-        command = command_for(scenario, test_filter, toolchain)
-        environment = os.environ.copy()
-        environment["MIRIFLAGS"] = miri_flags(model)
+        command = command_for(scenario, test_filter, identity.channel)
+        environment = miri_environment(model)
         print(f"[embedded-miri:{model.value}] {' '.join(command)}", flush=True)
         result = subprocess.run(command, cwd=ROOT, env=environment, capture_output=True)
         output = result.stderr + result.stdout
@@ -253,7 +298,7 @@ def run_scenario(
             failed_commands.append(test_filter)
             continue
         successful_outputs.append(output)
-    log.write_bytes(b"\n".join(outputs))
+    log.write_bytes(render_log(model, identity, outputs))
     if failed_commands:
         joined = ", ".join(failed_commands)
         raise EmbeddedMiriError(
@@ -283,19 +328,16 @@ def tool_version(command: tuple[str, ...]) -> str:
 
 def record_proof(
     scenario: Scenario,
-    mode: Mode,
+    configuration: ModeConfiguration,
     observations: tuple[Observation, ...],
     artifact_directory: Path,
-    rustc_version: str,
-    miri_version: str,
+    identity: ToolchainIdentity,
 ) -> None:
     completed = {observation.completed_tests for observation in observations}
     if len(completed) != 1:
         raise EmbeddedMiriError(
             f"{scenario.component} borrow models completed different test inventories: {sorted(completed)}"
         )
-    coverage = "stacked" if mode is Mode.QUICK else "stacked-and-tree"
-    runner = "miri-stacked" if mode is Mode.QUICK else "miri-stacked-tree"
     output = artifact_directory / f"{scenario.component}.assurance.json"
     command = [
         str(ROOT / "tools" / "prns"),
@@ -309,15 +351,15 @@ def record_proof(
         "--scenario",
         scenario.identifier,
         "--runner",
-        runner,
+        configuration.runner,
         "--coverage",
-        coverage,
+        configuration.coverage,
         "--completed-tests",
         str(next(iter(completed))),
         "--rustc-version",
-        rustc_version,
+        identity.rustc_version,
         "--miri-version",
-        miri_version,
+        identity.miri_version,
         "--output",
         str(output),
     ]
@@ -362,43 +404,46 @@ def relative(path: Path) -> str:
 
 def run(mode: Mode) -> None:
     scenarios = load_inventory()
+    configuration = mode_configuration(mode)
     artifacts = artifact_directory()
     clear_owned_artifacts(scenarios, artifacts)
     toolchain = nightly_toolchain()
     prepare_miri(toolchain)
-    rustc_version = tool_version(("rustc", f"+{toolchain}", "--version"))
-    miri_version = tool_version(("cargo", f"+{toolchain}", "miri", "--version"))
+    identity = ToolchainIdentity(
+        channel=toolchain,
+        rustc_version=tool_version(("rustc", f"+{toolchain}", "--version")),
+        miri_version=tool_version(("cargo", f"+{toolchain}", "miri", "--version")),
+    )
     failures = []
     for scenario in scenarios:
         observations = []
-        for model in models(mode):
+        for model in configuration.borrow_models:
             try:
                 observations.append(
                     run_scenario(
                         scenario,
                         mode,
                         model,
-                        toolchain,
+                        identity,
                         artifacts,
                     )
                 )
             except (EmbeddedMiriError, OSError, subprocess.SubprocessError) as error:
                 failures.append(str(error))
-        if len(observations) != len(models(mode)):
+        if len(observations) != len(configuration.borrow_models):
             continue
         record_proof(
             scenario,
-            mode,
+            configuration,
             tuple(observations),
             artifacts,
-            rustc_version,
-            miri_version,
+            identity,
         )
     if failures:
         raise EmbeddedMiriError("\n".join(failures))
     print(
         f"EMBEDDED_MIRI_OK mode={mode.value} scenarios={len(scenarios)} "
-        f"models={len(models(mode))}"
+        f"models={len(configuration.borrow_models)}"
     )
 
 

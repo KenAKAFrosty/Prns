@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -11,6 +12,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "validation" / "hardening" / "embedded_miri.py"
+CORE_SCRIPT = ROOT / "validation" / "hardening" / "miri.sh"
 SPEC = importlib.util.spec_from_file_location("embedded_miri", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 embedded_miri = importlib.util.module_from_spec(SPEC)
@@ -33,16 +35,106 @@ class EmbeddedMiriTests(unittest.TestCase):
         self.assertEqual(len(scenarios[2].quick_filters), 3)
 
     def test_quick_and_full_modes_select_explicit_borrow_models(self) -> None:
+        quick = embedded_miri.mode_configuration(embedded_miri.Mode.QUICK)
+        full = embedded_miri.mode_configuration(embedded_miri.Mode.FULL)
+
         self.assertEqual(
-            embedded_miri.models(embedded_miri.Mode.QUICK),
-            (embedded_miri.BorrowModel.STACKED,),
+            (quick.borrow_models, quick.coverage, quick.runner),
+            ((embedded_miri.BorrowModel.STACKED,), "stacked", "miri-stacked"),
         )
         self.assertEqual(
-            embedded_miri.models(embedded_miri.Mode.FULL),
+            (full.borrow_models, full.coverage, full.runner),
             (
-                embedded_miri.BorrowModel.STACKED,
-                embedded_miri.BorrowModel.TREE,
+                (
+                    embedded_miri.BorrowModel.STACKED,
+                    embedded_miri.BorrowModel.TREE,
+                ),
+                "stacked-and-tree",
+                "miri-stacked-tree",
             ),
+        )
+
+    def test_borrow_models_replace_inherited_miri_flags(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {"MIRIFLAGS": "-Zmiri-tree-borrows -Zmiri-disable-isolation"},
+        ):
+            stacked = embedded_miri.miri_environment(
+                embedded_miri.BorrowModel.STACKED
+            )
+            tree = embedded_miri.miri_environment(embedded_miri.BorrowModel.TREE)
+
+        self.assertEqual(stacked["MIRIFLAGS"], "")
+        self.assertEqual(tree["MIRIFLAGS"], "-Zmiri-tree-borrows")
+
+    def test_core_runner_replaces_inherited_miri_flags(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            temporary = Path(directory)
+            binaries = temporary / "bin"
+            binaries.mkdir()
+            capture = temporary / "miri-flags"
+            self.write_executable(binaries / "python3", "echo nightly-test\n")
+            self.write_executable(binaries / "rustup", "exit 0\n")
+            self.write_executable(
+                binaries / "cargo",
+                'if [ "$3" != "setup" ]; then printf "%s\\n" "$MIRIFLAGS" >> "$CAPTURE"; fi\n',
+            )
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "CAPTURE": str(capture),
+                    "MIRIFLAGS": "-Zmiri-tree-borrows -Zmiri-disable-isolation",
+                    "PATH": f"{binaries}:{environment['PATH']}",
+                }
+            )
+
+            subprocess.run(
+                ("/bin/bash", str(CORE_SCRIPT), "--stacked", "one-filter"),
+                cwd=ROOT,
+                env=environment,
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run(
+                ("/bin/bash", str(CORE_SCRIPT), "--tree", "one-filter"),
+                cwd=ROOT,
+                env=environment,
+                check=True,
+                capture_output=True,
+            )
+
+            self.assertEqual(
+                capture.read_text(encoding="utf-8").splitlines(),
+                [
+                    "-Zmiri-env-forward=PROPTEST_CASES "
+                    "-Zmiri-env-forward=PROPTEST_DISABLE_FAILURE_PERSISTENCE",
+                    "-Zmiri-env-forward=PROPTEST_CASES "
+                    "-Zmiri-env-forward=PROPTEST_DISABLE_FAILURE_PERSISTENCE "
+                    "-Zmiri-tree-borrows",
+                ],
+            )
+
+    def test_log_records_exact_model_flags_and_toolchain(self) -> None:
+        identity = embedded_miri.ToolchainIdentity(
+            channel="nightly-2026-01-02",
+            rustc_version="rustc test",
+            miri_version="miri test",
+        )
+
+        rendered = embedded_miri.render_log(
+            embedded_miri.BorrowModel.TREE,
+            identity,
+            [b"runner output"],
+        )
+
+        self.assertEqual(
+            rendered,
+            b'borrow-model=tree\n'
+            b'miri-flags=["-Zmiri-tree-borrows"]\n'
+            b'toolchain=nightly-2026-01-02\n'
+            b'rustc=rustc test\n'
+            b'miri=miri test\n\n'
+            b'runner output',
         )
 
     def test_miri_test_count_comes_from_successful_runner_output(self) -> None:
@@ -124,6 +216,10 @@ sources = ["prns-interfaces/impls/embassy/src/radios/sx126x.rs"]
             ):
                 embedded_miri.prepare_miri("nightly-test")
 
+    @staticmethod
+    def write_executable(path: Path, body: str) -> None:
+        path.write_text(f"#!/bin/sh\n{body}", encoding="utf-8")
+        path.chmod(0o755)
 
 if __name__ == "__main__":
     unittest.main()
