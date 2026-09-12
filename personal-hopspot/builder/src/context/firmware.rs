@@ -231,8 +231,11 @@ fn validate_resource_environment(
 fn semantic_override(name: &OsStr) -> bool {
     let name = name.to_string_lossy();
     name.starts_with("CARGO_PROFILE_")
+        || name.starts_with("ESP_")
+        || name.starts_with("HOPSPOT_")
         || name.starts_with("PRNS_BUILD_")
         || name.starts_with("PRNS_SOURCE_")
+        || name.starts_with("TROUBLE_HOST_")
         || matches!(
             name.as_ref(),
             "CARGO_ENCODED_RUSTFLAGS"
@@ -266,6 +269,13 @@ mod tests {
             "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER",
             "CARGO_CONFIG",
             "CARGO_INCREMENTAL",
+            "ESP_HAL_CONFIG_STACK_GUARD_OFFSET",
+            "ESP_LOG",
+            "HOPSPOT_TCP_TARGET",
+            "HOPSPOT_WIFI_PASSWORD",
+            "HOPSPOT_WIFI_SECURITY_PROBE_MODE",
+            "HOPSPOT_WIFI_SECURITY_STATION_PROBE",
+            "HOPSPOT_WIFI_SSID",
             "PRNS_BUILD_COMMIT",
             "PRNS_BUILD_COMMIT_SHORT",
             "PRNS_BUILD_CHANNEL",
@@ -280,6 +290,8 @@ mod tests {
             "RUSTC_WRAPPER",
             "RUSTC_WORKSPACE_WRAPPER",
             "SOURCE_DATE_EPOCH",
+            "TROUBLE_HOST_GATT_CLIENT_NOTIFICATION_MAX_SUBSCRIBERS",
+            "TROUBLE_HOST_GATT_CLIENT_NOTIFICATION_QUEUE_SIZE",
         ] {
             assert!(matches!(
                 validate_resource_environment([OsString::from(variable)]),

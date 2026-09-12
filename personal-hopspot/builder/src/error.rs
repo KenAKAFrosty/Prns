@@ -24,6 +24,6 @@ pub enum BuildError {
     LinkOverflow(Box<LinkOverflowEvidence>),
     #[error("{0}")]
     Manifest(String),
-    #[error("resource builds reject inherited semantic Cargo environment variable {variable:?}")]
+    #[error("resource builds reject inherited build-semantic environment variable {variable:?}")]
     SemanticEnvironmentOverride { variable: OsString },
 }
