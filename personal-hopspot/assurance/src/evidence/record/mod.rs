@@ -1,3 +1,4 @@
+mod failure;
 mod source;
 
 use std::fs;
@@ -13,6 +14,8 @@ use crate::contract::{
     ProofContractError, ProofEvidence, ProofFragment, ProofKind, RunnerId, ScenarioId, Subject,
     SupportLevel, ToolIdentity, ToolKind, ValueError, Verdict, PROOF_FRAGMENT_SCHEMA_VERSION,
 };
+
+pub(crate) use failure::{record_failure, FailureCapability, FailureRecordRequest};
 
 pub(crate) struct MiriRecordRequest {
     pub component: ComponentId,
@@ -314,12 +317,7 @@ fn validate_request(request: &MiriRecordRequest) -> Result<(), RecordError> {
     if request.completed_tests == 0 {
         return Err(RecordError::NoCompletedTests);
     }
-    if request.sources.is_empty() {
-        return Err(RecordError::MissingSources);
-    }
-    if request.logs.is_empty() {
-        return Err(RecordError::MissingLogs);
-    }
+    validate_common(&request.sources, &request.logs, &request.output)?;
     for (kind, version) in [
         (ToolKind::Rustc, request.rustc_version.as_str()),
         (ToolKind::Miri, request.miri_version.as_str()),
@@ -328,19 +326,14 @@ fn validate_request(request: &MiriRecordRequest) -> Result<(), RecordError> {
             return Err(RecordError::EmptyToolIdentity(kind));
         }
     }
-    validate_output(&request.output)
+    Ok(())
 }
 
 fn validate_target_isa_request(request: &TargetIsaRecordRequest) -> Result<(), RecordError> {
     if request.completed_scenarios == 0 {
         return Err(RecordError::NoCompletedScenarios);
     }
-    if request.sources.is_empty() {
-        return Err(RecordError::MissingSources);
-    }
-    if request.logs.is_empty() {
-        return Err(RecordError::MissingLogs);
-    }
+    validate_common(&request.sources, &request.logs, &request.output)?;
     for (kind, version) in [
         (ToolKind::Cargo, request.cargo_version.as_str()),
         (ToolKind::Rustc, request.rustc_version.as_str()),
@@ -350,16 +343,11 @@ fn validate_target_isa_request(request: &TargetIsaRecordRequest) -> Result<(), R
             return Err(RecordError::EmptyToolIdentity(kind));
         }
     }
-    validate_output(&request.output)
+    Ok(())
 }
 
 fn validate_platform_request(request: &PlatformRecordRequest) -> Result<(), RecordError> {
-    if request.sources.is_empty() {
-        return Err(RecordError::MissingSources);
-    }
-    if request.logs.is_empty() {
-        return Err(RecordError::MissingLogs);
-    }
+    validate_common(&request.sources, &request.logs, &request.output)?;
     if !matches!(request.emulator, ToolKind::Qemu | ToolKind::Renode) {
         return Err(RecordError::PlatformEmulator(request.emulator));
     }
@@ -373,7 +361,21 @@ fn validate_platform_request(request: &PlatformRecordRequest) -> Result<(), Reco
             return Err(RecordError::EmptyToolIdentity(kind));
         }
     }
-    validate_output(&request.output)
+    Ok(())
+}
+
+fn validate_common(
+    sources: &[PathBuf],
+    logs: &[PathBuf],
+    output: &Path,
+) -> Result<(), RecordError> {
+    if sources.is_empty() {
+        return Err(RecordError::MissingSources);
+    }
+    if logs.is_empty() {
+        return Err(RecordError::MissingLogs);
+    }
+    validate_output(output)
 }
 
 fn validate_output(output: &Path) -> Result<(), RecordError> {

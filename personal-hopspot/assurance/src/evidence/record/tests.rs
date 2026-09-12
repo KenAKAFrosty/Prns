@@ -2,9 +2,13 @@ use std::fs;
 
 use tempfile::tempdir;
 
-use super::{artifact, artifact_root, validate_capability, RecordError};
+use super::{
+    artifact, artifact_root, record_failure, validate_capability, FailureCapability,
+    FailureRecordRequest, RecordError,
+};
 use crate::contract::{
-    ArchitectureId, ComponentId, PlatformId, ProofArtifactKind, ProofKind, ScenarioId, Subject,
+    ArchitectureId, ComponentId, FailureKind, PlatformId, ProofArtifactKind, ProofFragment,
+    ProofKind, RunnerId, ScenarioId, Subject, ToolKind, Verdict,
 };
 
 #[test]
@@ -118,5 +122,54 @@ fn relative_artifact_roots_are_canonicalized() -> Result<(), Box<dyn std::error:
 
     assert!(root.is_absolute());
     assert_eq!(root, std::env::current_dir()?.canonicalize()?);
+    Ok(())
+}
+
+#[test]
+fn failed_miri_evidence_round_trips_with_typed_cause() -> Result<(), Box<dyn std::error::Error>> {
+    let repository = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let directory = tempdir()?;
+    let log = directory.path().join("sx126x.log");
+    let output = directory.path().join("sx126x.assurance.json");
+    fs::write(&log, b"Miri rejected an exercised operation")?;
+
+    record_failure(
+        &repository,
+        FailureRecordRequest {
+            capability: FailureCapability::Miri {
+                component: ComponentId::parse("sx126x")?,
+                rustc_version: "rustc 1.96.0-nightly".into(),
+                miri_version: "miri 0.1.0".into(),
+            },
+            scenario: ScenarioId::parse("sx126x-state-machine")?,
+            runner: RunnerId::parse("miri-stacked")?,
+            kind: FailureKind::StructuralViolation,
+            diagnostic: "Miri rejected an exercised operation".into(),
+            sources: vec![repository.join("validation/hardening/embedded_miri.py")],
+            logs: vec![log],
+            output: output.clone(),
+        },
+    )?;
+
+    let fragment: ProofFragment = serde_json::from_slice(&fs::read(output)?)?;
+    assert!(matches!(
+        fragment.verdict,
+        Verdict::Failed {
+            failure: crate::contract::Failure {
+                kind: FailureKind::StructuralViolation,
+                ref diagnostic,
+            },
+        } if diagnostic == "Miri rejected an exercised operation"
+    ));
+    assert_eq!(
+        fragment
+            .tools
+            .iter()
+            .map(|identity| identity.kind)
+            .collect::<Vec<_>>(),
+        vec![ToolKind::Rustc, ToolKind::Miri]
+    );
+    assert_eq!(fragment.artifacts.len(), 1);
+    fragment.validate()?;
     Ok(())
 }

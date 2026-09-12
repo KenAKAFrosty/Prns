@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
@@ -215,6 +216,94 @@ sources = ["prns-interfaces/impls/embassy/src/radios/sx126x.rs"]
                 embedded_miri.EmbeddedMiriError, "doctor embedded-assurance"
             ):
                 embedded_miri.prepare_miri("nightly-test")
+
+    def test_miri_rejection_is_structural_failure_with_preserved_log(self) -> None:
+        scenario = replace(
+            embedded_miri.load_inventory()[0],
+            quick_filters=("rejected-filter",),
+        )
+        identity = embedded_miri.ToolchainIdentity(
+            channel="nightly-test",
+            rustc_version="rustc test",
+            miri_version="miri test",
+        )
+        result = subprocess.CompletedProcess(
+            args=("cargo",),
+            returncode=1,
+            stdout=b"test result: FAILED",
+            stderr=b"Miri rejected an operation",
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            artifacts = Path(directory)
+            with mock.patch.object(embedded_miri.subprocess, "run", return_value=result):
+                with self.assertRaises(
+                    embedded_miri.ProofExecutionError
+                ) as raised:
+                    embedded_miri.run_scenario(
+                        scenario,
+                        embedded_miri.Mode.QUICK,
+                        embedded_miri.BorrowModel.STACKED,
+                        identity,
+                        artifacts,
+                    )
+
+            self.assertEqual(
+                raised.exception.failure.kind,
+                embedded_miri.FailureKind.STRUCTURAL_VIOLATION,
+            )
+            log = artifacts / "sx126x-stacked.log"
+            self.assertTrue(log.is_file())
+            self.assertIn(b"Miri rejected an operation", log.read_bytes())
+
+    def test_recorder_failure_does_not_mask_the_miri_rejection(self) -> None:
+        scenario = embedded_miri.load_inventory()[0]
+        original = embedded_miri.ProofFailure(
+            kind=embedded_miri.FailureKind.STRUCTURAL_VIOLATION,
+            diagnostic="original Miri rejection",
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            artifacts = Path(directory)
+            with (
+                mock.patch.object(
+                    embedded_miri,
+                    "load_inventory",
+                    return_value=(scenario,),
+                ),
+                mock.patch.object(
+                    embedded_miri,
+                    "artifact_directory",
+                    return_value=artifacts,
+                ),
+                mock.patch.object(embedded_miri, "prepare_miri"),
+                mock.patch.object(
+                    embedded_miri,
+                    "nightly_toolchain",
+                    return_value="nightly-test",
+                ),
+                mock.patch.object(
+                    embedded_miri,
+                    "tool_version",
+                    side_effect=("rustc test", "miri test"),
+                ),
+                mock.patch.object(
+                    embedded_miri,
+                    "run_scenario",
+                    side_effect=embedded_miri.ProofExecutionError(original),
+                ),
+                mock.patch.object(
+                    embedded_miri,
+                    "record_failure",
+                    side_effect=subprocess.CalledProcessError(1, ("recorder",)),
+                ),
+            ):
+                with self.assertRaises(embedded_miri.EmbeddedMiriError) as raised:
+                    embedded_miri.run(embedded_miri.Mode.QUICK)
+
+        diagnostic = str(raised.exception)
+        self.assertIn("original Miri rejection", diagnostic)
+        self.assertIn("failure evidence could not be recorded", diagnostic)
 
     @staticmethod
     def write_executable(path: Path, body: str) -> None:

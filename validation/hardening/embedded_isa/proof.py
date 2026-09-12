@@ -9,6 +9,7 @@ from validation.hardening.embedded_isa.contract import (
     Architecture,
     Kernel,
 )
+from validation.hardening.embedded_failure import ProofFailure
 
 
 IMPLEMENTATION_PATH = Path(__file__).resolve().parent
@@ -54,6 +55,59 @@ def record(
         str(transcript),
         "--executable",
         str(target_executable),
+        "--log",
+        str(log),
+        "--output",
+        str(output),
+    ]
+    for source in (
+        INVENTORY_PATH,
+        IMPLEMENTATION_PATH,
+        *kernel.sources,
+        *extra_sources,
+    ):
+        command.extend(("--source", str(source)))
+    subprocess.run(command, cwd=ROOT, check=True)
+
+
+def record_failure(
+    architecture: Architecture,
+    kernel: Kernel,
+    emulator_executable: Path,
+    log: Path,
+    failure: ProofFailure,
+    cargo_version: str,
+    rustc_version: str,
+    qemu_version: str,
+    extra_sources: tuple[Path, ...] = (),
+) -> None:
+    output = log.parent / f"{architecture.identifier}.assurance.json"
+    command = [
+        str(ROOT / "tools" / "prns"),
+        "build",
+        "embedded",
+        "assurance",
+        "record",
+        "failure",
+        "isa",
+        "--architecture",
+        architecture.identifier,
+        "--scenario",
+        kernel.scenario,
+        "--runner",
+        architecture.runner,
+        "--failure-kind",
+        failure.kind.value,
+        "--diagnostic",
+        failure.diagnostic,
+        "--cargo-version",
+        cargo_version,
+        "--rustc-version",
+        rustc_version,
+        "--qemu-version",
+        qemu_version,
+        "--qemu-executable",
+        str(emulator_executable),
         "--log",
         str(log),
         "--output",

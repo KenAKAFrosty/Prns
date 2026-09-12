@@ -8,12 +8,13 @@ use thiserror::Error;
 
 use crate::baseline::{self, BaselineError};
 use crate::contract::{
-    ArchitectureId, ComponentId, IdentifierError, MatrixStatus, MiriCoverage, PlatformId,
-    PlatformMilestone, RunnerId, ScenarioId, ToolKind,
+    ArchitectureId, ComponentId, FailureKind, IdentifierError, MatrixStatus, MiriCoverage,
+    PlatformId, PlatformMilestone, RunnerId, ScenarioId, ToolKind,
 };
 use crate::evidence::{
-    record_miri, record_platform_emulation, record_target_isa, MiriRecordRequest,
-    PlatformRecordRequest, RecordError, TargetIsaRecordRequest,
+    record_failure, record_miri, record_platform_emulation, record_target_isa, FailureCapability,
+    FailureRecordRequest, MiriRecordRequest, PlatformRecordRequest, RecordError,
+    TargetIsaRecordRequest,
 };
 use crate::report::{self, ComparisonError, SummaryError};
 
@@ -40,9 +41,89 @@ struct RecordArguments {
 
 #[derive(Subcommand)]
 enum RecordCommand {
+    Failure(FailureRecordArguments),
     Isa(TargetIsaRecordArguments),
     Miri(MiriRecordArguments),
     Platform(PlatformRecordArguments),
+}
+
+#[derive(Args)]
+struct FailureRecordArguments {
+    #[command(subcommand)]
+    capability: FailureCapabilityArguments,
+}
+
+#[derive(Subcommand)]
+enum FailureCapabilityArguments {
+    Isa(TargetIsaFailureArguments),
+    Miri(MiriFailureArguments),
+    Platform(PlatformFailureArguments),
+}
+
+#[derive(Args)]
+struct FailureArguments {
+    #[arg(long)]
+    scenario: String,
+    #[arg(long)]
+    runner: String,
+    #[arg(long)]
+    failure_kind: FailureKindArgument,
+    #[arg(long)]
+    diagnostic: String,
+    #[arg(long)]
+    source: Vec<PathBuf>,
+    #[arg(long)]
+    log: Vec<PathBuf>,
+    #[arg(long)]
+    output: PathBuf,
+}
+
+#[derive(Args)]
+struct MiriFailureArguments {
+    #[command(flatten)]
+    failure: FailureArguments,
+    #[arg(long)]
+    component: String,
+    #[arg(long)]
+    rustc_version: String,
+    #[arg(long)]
+    miri_version: String,
+}
+
+#[derive(Args)]
+struct TargetIsaFailureArguments {
+    #[command(flatten)]
+    failure: FailureArguments,
+    #[arg(long)]
+    architecture: String,
+    #[arg(long)]
+    cargo_version: String,
+    #[arg(long)]
+    rustc_version: String,
+    #[arg(long)]
+    qemu_version: String,
+    #[arg(long)]
+    qemu_executable: PathBuf,
+}
+
+#[derive(Args)]
+struct PlatformFailureArguments {
+    #[command(flatten)]
+    failure: FailureArguments,
+    #[arg(long)]
+    platform: String,
+    #[arg(long)]
+    cargo_version: String,
+    #[arg(long)]
+    rustc_version: String,
+    #[arg(long)]
+    linker_version: String,
+    #[arg(long)]
+    emulator: PlatformEmulatorArgument,
+    #[arg(long)]
+    emulator_version: String,
+    #[arg(long)]
+    emulator_executable: PathBuf,
 }
 
 #[derive(Args)]
@@ -169,6 +250,27 @@ enum PlatformEmulatorArgument {
     Renode,
 }
 
+#[derive(Clone, Copy, ValueEnum)]
+enum FailureKindArgument {
+    Crash,
+    ScenarioMismatch,
+    StructuralViolation,
+    Timeout,
+    ToolFailure,
+}
+
+impl From<FailureKindArgument> for FailureKind {
+    fn from(value: FailureKindArgument) -> Self {
+        match value {
+            FailureKindArgument::Crash => Self::Crash,
+            FailureKindArgument::ScenarioMismatch => Self::ScenarioMismatch,
+            FailureKindArgument::StructuralViolation => Self::StructuralViolation,
+            FailureKindArgument::Timeout => Self::Timeout,
+            FailureKindArgument::ToolFailure => Self::ToolFailure,
+        }
+    }
+}
+
 impl From<PlatformEmulatorArgument> for ToolKind {
     fn from(value: PlatformEmulatorArgument) -> Self {
         match value {
@@ -249,6 +351,55 @@ fn run(cli: Cli) -> Result<(), AssuranceError> {
             print!("{}", report::compare(&arguments.before, &arguments.after)?);
         }
         AssuranceCommand::Record(arguments) => match arguments.command {
+            RecordCommand::Failure(arguments) => {
+                let (capability, failure) = match arguments.capability {
+                    FailureCapabilityArguments::Miri(arguments) => (
+                        FailureCapability::Miri {
+                            component: ComponentId::parse(arguments.component)?,
+                            rustc_version: arguments.rustc_version,
+                            miri_version: arguments.miri_version,
+                        },
+                        arguments.failure,
+                    ),
+                    FailureCapabilityArguments::Isa(arguments) => (
+                        FailureCapability::TargetIsa {
+                            architecture: ArchitectureId::parse(arguments.architecture)?,
+                            cargo_version: arguments.cargo_version,
+                            rustc_version: arguments.rustc_version,
+                            qemu_version: arguments.qemu_version,
+                            qemu_executable: arguments.qemu_executable,
+                        },
+                        arguments.failure,
+                    ),
+                    FailureCapabilityArguments::Platform(arguments) => (
+                        FailureCapability::Platform {
+                            platform: PlatformId::parse(arguments.platform)?,
+                            cargo_version: arguments.cargo_version,
+                            rustc_version: arguments.rustc_version,
+                            linker_version: arguments.linker_version,
+                            emulator: arguments.emulator.into(),
+                            emulator_version: arguments.emulator_version,
+                            emulator_executable: arguments.emulator_executable,
+                        },
+                        arguments.failure,
+                    ),
+                };
+                let output = failure.output.clone();
+                record_failure(
+                    &root,
+                    FailureRecordRequest {
+                        capability,
+                        scenario: ScenarioId::parse(failure.scenario)?,
+                        runner: RunnerId::parse(failure.runner)?,
+                        kind: failure.failure_kind.into(),
+                        diagnostic: failure.diagnostic,
+                        sources: failure.source,
+                        logs: failure.log,
+                        output: failure.output,
+                    },
+                )?;
+                println!("EMBEDDED_FAILURE_PROOF: {}", output.display());
+            }
             RecordCommand::Isa(arguments) => {
                 let output = arguments.output.clone();
                 record_target_isa(

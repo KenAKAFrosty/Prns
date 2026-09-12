@@ -23,11 +23,19 @@ from validation.hardening.embedded_isa.emulator import (
     executable as emulator_executable,
     require_identity as require_emulator_identity,
 )
-from validation.hardening.embedded_isa.process import execute, require_success, tool_version
+from validation.hardening.embedded_failure import (
+    FailureKind,
+    ProofExecutionError,
+    ProofFailure,
+    execution_error,
+    require_process_success,
+)
+from validation.hardening.embedded_isa.process import execute, tool_version
 from validation.hardening.embedded_isa.toolchain import resolve as resolve_target_toolchain
 
 
 DOCTOR = "./tools/prns doctor embedded-assurance"
+FAILURE_SOURCE = ROOT / "validation" / "hardening" / "embedded_failure.py"
 
 
 def target_directory() -> Path:
@@ -100,22 +108,27 @@ def run(suite: str) -> None:
     require_emulator_identity(architecture, qemu_version)
 
     observations = []
-    host = execute(
-        cargo_command(
-            inventory.kernel,
-            inventory.rust_toolchain,
-            "run",
-            inventory.kernel.host_feature,
-            inventory.kernel.host_binary,
-        ),
-        900,
-    )
-    observations.append(host)
+    failure = None
+    cause = None
     try:
-        require_success(host, "host reference")
-        host_transcript = transcript.parse(
-            host.output(), inventory.kernel.completed_scenarios
+        host = execute(
+            cargo_command(
+                inventory.kernel,
+                inventory.rust_toolchain,
+                "run",
+                inventory.kernel.host_feature,
+                inventory.kernel.host_binary,
+            ),
+            900,
         )
+        observations.append(host)
+        require_process_success(host, "host reference", FailureKind.TOOL_FAILURE)
+        try:
+            host_transcript = transcript.parse(
+                host.output(), inventory.kernel.completed_scenarios
+            )
+        except EmbeddedIsaError as error:
+            raise execution_error(FailureKind.TOOL_FAILURE, str(error)) from error
         build = execute(
             cargo_command(
                 inventory.kernel,
@@ -129,7 +142,11 @@ def run(suite: str) -> None:
             900,
         )
         observations.append(build)
-        require_success(build, f"{architecture.identifier} build")
+        require_process_success(
+            build,
+            f"{architecture.identifier} build",
+            FailureKind.TOOL_FAILURE,
+        )
         built_target = target_executable(architecture)
         target = artifact_directory / f"{architecture.identifier}.elf"
         shutil.copyfile(built_target, target)
@@ -138,11 +155,27 @@ def run(suite: str) -> None:
             architecture.timeout_seconds,
         )
         observations.append(emulation)
-        require_success(emulation, f"{architecture.identifier} emulation")
-        target_transcript = transcript.parse(
-            emulation.output(), inventory.kernel.completed_scenarios
+        require_process_success(
+            emulation,
+            f"{architecture.identifier} emulation",
+            FailureKind.CRASH,
         )
-        transcript.require_match(host_transcript, target_transcript)
+        try:
+            target_transcript = transcript.parse(
+                emulation.output(), inventory.kernel.completed_scenarios
+            )
+            transcript.require_match(host_transcript, target_transcript)
+        except EmbeddedIsaError as error:
+            raise execution_error(FailureKind.SCENARIO_MISMATCH, str(error)) from error
+    except ProofExecutionError as error:
+        failure = error.failure
+        cause = error
+    except (EmbeddedIsaError, OSError, subprocess.SubprocessError) as error:
+        failure = ProofFailure(
+            kind=FailureKind.TOOL_FAILURE,
+            diagnostic=str(error),
+        )
+        cause = error
     finally:
         log = artifact_directory / f"{architecture.identifier}.log"
         log.write_bytes(
@@ -158,6 +191,26 @@ def run(suite: str) -> None:
             )
         )
 
+    proof_sources = (FAILURE_SOURCE, *target_toolchain.proof_sources)
+    if failure is not None:
+        try:
+            proof.record_failure(
+                architecture,
+                inventory.kernel,
+                emulator,
+                log,
+                failure,
+                target_toolchain.cargo_version,
+                target_toolchain.rustc_version,
+                qemu_version,
+                proof_sources,
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            raise EmbeddedIsaError(
+                f"{failure.diagnostic}; failure evidence could not be recorded: {error}"
+            ) from cause
+        raise EmbeddedIsaError(failure.diagnostic) from cause
+
     transcript_path = artifact_directory / f"{architecture.identifier}.transcript.bin"
     transcript_path.write_bytes(target_transcript.events)
     proof.record(
@@ -170,7 +223,7 @@ def run(suite: str) -> None:
         target_toolchain.cargo_version,
         target_toolchain.rustc_version,
         qemu_version,
-        target_toolchain.proof_sources,
+        proof_sources,
     )
     print(
         f"EMBEDDED_ISA_OK architecture={architecture.identifier} "

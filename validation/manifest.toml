@@ -650,6 +650,7 @@ inputs = [
     "prns-interfaces/impls/embassy/src/radios",
     "validation/hardening/embedded-isa.toml",
     "validation/hardening/embedded_architectures.py",
+    "validation/hardening/embedded_failure.py",
     "validation/hardening/embedded_isa",
 ]
 artifacts = "validation-artifacts/results/embedded-isa-thumbv7em"
@@ -674,6 +675,7 @@ inputs = [
     "prns-interfaces/impls/embassy/src/radios",
     "validation/hardening/embedded-isa.toml",
     "validation/hardening/embedded_architectures.py",
+    "validation/hardening/embedded_failure.py",
     "validation/hardening/embedded_isa",
 ]
 artifacts = "validation-artifacts/results/embedded-isa-riscv32imac"
@@ -699,6 +701,7 @@ inputs = [
     "tools/release/release-esp-toolchain-identity.sh",
     "validation/hardening/embedded-isa.toml",
     "validation/hardening/embedded_architectures.py",
+    "validation/hardening/embedded_failure.py",
     "validation/hardening/embedded_isa",
     "validation/hardening/embedded_readiness/contract.py",
 ]
@@ -724,6 +727,7 @@ inputs = [
     "validation/hardening/embedded-platform.toml",
     "validation/hardening/embedded_architectures.py",
     "validation/hardening/embedded_execution.py",
+    "validation/hardening/embedded_failure.py",
     "validation/hardening/embedded_host.py",
     "validation/hardening/embedded_platform",
 ]
@@ -756,6 +760,7 @@ inputs = [
     "validation/hardening/embedded-isa.toml",
     "validation/hardening/embedded_architectures.py",
     "validation/hardening/embedded_execution.py",
+    "validation/hardening/embedded_failure.py",
     "validation/hardening/embedded_host.py",
     "validation/hardening/embedded_isa/emulator.py",
     "validation/hardening/embedded_isa/toolchain.py",
@@ -776,6 +781,7 @@ command = ["__RUNNER_PYTHON__", "validation/hardening/embedded_miri.py", "quick"
 inputs = [
     "validation/hardening/embedded_miri.py",
     "validation/hardening/embedded-miri.toml",
+    "validation/hardening/embedded_failure.py",
     "personal-hopspot/assurance",
     "prns-interfaces/impls/embassy/src/radios",
     "prns-runtime/impls/embassy/src/runtime/embedded_persistence.rs",
@@ -795,6 +801,7 @@ command = ["__RUNNER_PYTHON__", "validation/hardening/embedded_miri.py", "full"]
 inputs = [
     "validation/hardening/embedded_miri.py",
     "validation/hardening/embedded-miri.toml",
+    "validation/hardening/embedded_failure.py",
     "personal-hopspot/assurance",
     "prns-interfaces/impls/embassy/src/radios",
     "prns-runtime/impls/embassy/src/runtime/embedded_persistence.rs",

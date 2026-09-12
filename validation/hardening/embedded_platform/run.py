@@ -8,6 +8,13 @@ from pathlib import Path
 
 from validation.hardening import embedded_execution
 from validation.hardening.embedded_execution import ExitReason, ProcessObservation
+from validation.hardening.embedded_failure import (
+    FailureKind,
+    ProofExecutionError,
+    ProofFailure,
+    execution_error,
+    require_process_success,
+)
 from validation.hardening.embedded_isa.architecture import ArchitectureAdapterError
 from validation.hardening.embedded_isa.contract import (
     InventoryError as IsaInventoryError,
@@ -42,6 +49,7 @@ from validation.hardening.embedded_platform.platform import (
 
 
 DOCTOR = "./tools/prns doctor embedded-assurance"
+FAILURE_SOURCE = ROOT / "validation" / "hardening" / "embedded_failure.py"
 
 
 def execute(
@@ -168,6 +176,8 @@ def run(suite: str) -> None:
     target = artifact_directory / f"{platform.identifier}.elf"
     transcript_path = artifact_directory / f"{platform.identifier}.transcript"
     environment = platform_build.environment(platform, target_toolchain)
+    failure = None
+    cause = None
     try:
         build = execute(
             platform_build.cargo_command(platform, target_toolchain.channel),
@@ -176,7 +186,11 @@ def run(suite: str) -> None:
             platform.build.workspace,
         )
         observations.append(build)
-        require_success(build, f"{platform.identifier} integration build")
+        require_process_success(
+            build,
+            f"{platform.identifier} integration build",
+            FailureKind.TOOL_FAILURE,
+        )
         shutil.copyfile(platform_build.executable(platform), target)
 
         if isinstance(execution, RenodeExecution):
@@ -206,15 +220,35 @@ def run(suite: str) -> None:
                 environment,
             )
             observations.append(packaging)
-            require_success(packaging, f"{platform.identifier} flash image packaging")
+            require_process_success(
+                packaging,
+                f"{platform.identifier} flash image packaging",
+                FailureKind.TOOL_FAILURE,
+            )
             emulation = execute(
                 qemu_command(platform, emulator, flash_image),
                 platform.timeout_seconds,
                 environment,
             )
         observations.append(emulation)
-        require_success(emulation, f"{platform.identifier} emulation")
-        transcript_path.write_bytes(milestone.parse(emulation.output(), platform))
+        require_process_success(
+            emulation,
+            f"{platform.identifier} emulation",
+            FailureKind.CRASH,
+        )
+        try:
+            transcript_path.write_bytes(milestone.parse(emulation.output(), platform))
+        except EmbeddedPlatformError as error:
+            raise execution_error(FailureKind.SCENARIO_MISMATCH, str(error)) from error
+    except ProofExecutionError as error:
+        failure = error.failure
+        cause = error
+    except (EmbeddedPlatformError, OSError, subprocess.SubprocessError) as error:
+        failure = ProofFailure(
+            kind=FailureKind.TOOL_FAILURE,
+            diagnostic=str(error),
+        )
+        cause = error
     finally:
         log = artifact_directory / f"{platform.identifier}.log"
         log.write_bytes(
@@ -227,6 +261,26 @@ def run(suite: str) -> None:
                 emulator_evidence,
             )
         )
+    proof_sources = (FAILURE_SOURCE, *target_toolchain.proof_sources)
+    if failure is not None:
+        try:
+            proof.record_failure(
+                platform,
+                emulator,
+                log,
+                failure,
+                target_toolchain.cargo_version,
+                target_toolchain.rustc_version,
+                target_toolchain.linker_identity,
+                identity,
+                platform.emulator_kind,
+                proof_sources,
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            raise EmbeddedPlatformError(
+                f"{failure.diagnostic}; failure evidence could not be recorded: {error}"
+            ) from cause
+        raise EmbeddedPlatformError(failure.diagnostic) from cause
     proof.record(
         platform,
         emulator,
@@ -238,7 +292,7 @@ def run(suite: str) -> None:
         target_toolchain.linker_identity,
         identity,
         platform.emulator_kind,
-        target_toolchain.proof_sources,
+        proof_sources,
     )
     print(
         f"EMBEDDED_PLATFORM_OK platform={platform.identifier} "
