@@ -10,6 +10,7 @@ import tomllib
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from typing import Mapping
 
 from validation.hardening.embedded_failure import (
     FailureKind,
@@ -27,6 +28,7 @@ VALID_IDENTIFIER = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?")
 TEST_RESULT = re.compile(
     rb"test result: ok\. (?P<passed>[0-9]+) passed; 0 failed; [0-9]+ ignored;"
 )
+PROVISIONING_ENV = "PRNS_EMBEDDED_MIRI_PROVISIONING"
 
 
 class Mode(Enum):
@@ -37,6 +39,11 @@ class Mode(Enum):
 class BorrowModel(Enum):
     STACKED = "stacked"
     TREE = "tree"
+
+
+class ProvisioningPolicy(Enum):
+    ALLOW = "allow"
+    REQUIRE_EXISTING = "require-existing"
 
 
 @dataclass(frozen=True)
@@ -182,7 +189,24 @@ def nightly_toolchain() -> str:
     return value
 
 
-def prepare_miri(toolchain: str) -> None:
+def provisioning_policy(
+    environment: Mapping[str, str] | None = None,
+) -> ProvisioningPolicy:
+    values = os.environ if environment is None else environment
+    value = values.get(PROVISIONING_ENV, ProvisioningPolicy.ALLOW.value)
+    try:
+        return ProvisioningPolicy(value)
+    except ValueError as error:
+        raise EmbeddedMiriError(
+            f"{PROVISIONING_ENV} must be "
+            + " or ".join(policy.value for policy in ProvisioningPolicy)
+        ) from error
+
+
+def prepare_miri(
+    toolchain: str,
+    policy: ProvisioningPolicy = ProvisioningPolicy.ALLOW,
+) -> None:
     try:
         available = subprocess.run(
             ("rustup", "run", toolchain, "rustc", "--version"),
@@ -190,6 +214,11 @@ def prepare_miri(toolchain: str) -> None:
             capture_output=True,
         )
         if available.returncode != 0:
+            if policy is ProvisioningPolicy.REQUIRE_EXISTING:
+                raise EmbeddedMiriError(
+                    f"pinned Miri toolchain {toolchain} is unavailable; run "
+                    "./tools/prns doctor embedded-assurance"
+                )
             subprocess.run(
                 ("rustup", "toolchain", "install", toolchain, "--profile", "minimal"),
                 cwd=ROOT,
@@ -207,6 +236,11 @@ def prepare_miri(toolchain: str) -> None:
             line == "rust-src" or line.startswith("rust-src-") for line in installed
         )
         if not has_miri or not has_rust_src:
+            if policy is ProvisioningPolicy.REQUIRE_EXISTING:
+                raise EmbeddedMiriError(
+                    f"pinned Miri components are unavailable for {toolchain}; run "
+                    "./tools/prns doctor embedded-assurance"
+                )
             subprocess.run(
                 (
                     "rustup",
@@ -220,9 +254,12 @@ def prepare_miri(toolchain: str) -> None:
                 cwd=ROOT,
                 check=True,
             )
-        subprocess.run(
-            ("cargo", f"+{toolchain}", "miri", "setup"), cwd=ROOT, check=True
-        )
+        if policy is ProvisioningPolicy.ALLOW:
+            subprocess.run(
+                ("cargo", f"+{toolchain}", "miri", "setup"), cwd=ROOT, check=True
+            )
+    except EmbeddedMiriError:
+        raise
     except (OSError, subprocess.SubprocessError) as error:
         raise EmbeddedMiriError(
             "could not prepare the pinned Miri toolchain; run "
@@ -470,7 +507,7 @@ def run(mode: Mode) -> None:
     artifacts = artifact_directory()
     clear_owned_artifacts(scenarios, artifacts)
     toolchain = nightly_toolchain()
-    prepare_miri(toolchain)
+    prepare_miri(toolchain, provisioning_policy())
     identity = ToolchainIdentity(
         channel=toolchain,
         rustc_version=tool_version(("rustc", f"+{toolchain}", "--version")),

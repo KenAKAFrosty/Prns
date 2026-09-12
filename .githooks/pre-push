@@ -59,7 +59,8 @@ if [ "${#pushed_updates[@]}" -gt 0 ]; then
     if ! python3 "${repo_root}/validation/hygiene/pre-push-ci-parity.py" "${pushed_updates[@]}"; then
         echo ""
         echo "✗ push blocked by a diff-selected CI parity check (see above)."
-        echo "  fix the failing Clippy, host binding, or RustSec lane before retrying."
+        echo "  fix the failing selected lane before retrying."
+        echo "  for embedded tool readiness, run ./tools/prns doctor embedded-assurance."
         exit 1
     fi
 fi

@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
 
-from embedded_assurance_selection import Lane, selection_for_paths
+from embedded_assurance_selection import Lane, Selection, selection_for_paths
 
 
 ZERO_SHA = "0" * 40
@@ -32,11 +32,24 @@ class Gate:
     env: tuple[tuple[str, str], ...] = ()
 
 
+@dataclass(frozen=True)
+class PrePushPlan:
+    gates: tuple[Gate, ...]
+    assurance: Selection
+
+
 def _has_prefix(paths: set[str], prefixes: Iterable[str]) -> bool:
     return any(path.startswith(prefix) for path in paths for prefix in prefixes)
 
 
-def plan_for_paths(paths: set[str]) -> tuple[Gate, ...]:
+def validation_command(suites: tuple[str, ...]) -> tuple[str, ...]:
+    command = ["python3", "validation/run.py", "run"]
+    for suite in suites:
+        command.extend(("--suite", suite))
+    return tuple(command)
+
+
+def plan_for_paths(paths: set[str]) -> PrePushPlan:
     gates: list[Gate] = []
 
     root_rust = (
@@ -112,6 +125,23 @@ def plan_for_paths(paths: set[str]) -> tuple[Gate, ...]:
                 ),
                 ROOT / "prns-runtime/impls/embassy",
                 (("RUSTFLAGS", "-D warnings --cfg aes_armv8"),),
+            )
+        )
+    miri_suites = embedded.suite_ids(Lane.MIRI)
+    if miri_suites:
+        gates.append(
+            Gate(
+                "embedded Miri",
+                validation_command(miri_suites),
+                env=(("PRNS_EMBEDDED_MIRI_PROVISIONING", "require-existing"),),
+            )
+        )
+    isa_suites = embedded.suite_ids(Lane.ISA)
+    if isa_suites:
+        gates.append(
+            Gate(
+                "embedded target-ISA",
+                validation_command(isa_suites),
             )
         )
 
@@ -431,7 +461,7 @@ def plan_for_paths(paths: set[str]) -> tuple[Gate, ...]:
             )
         )
 
-    return tuple(gates)
+    return PrePushPlan(tuple(gates), embedded)
 
 
 def changed_paths(updates: Sequence[tuple[str, str]]) -> set[str]:
@@ -473,19 +503,36 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     paths = changed_paths(tuple(map(tuple, args.update)))
-    gates = plan_for_paths(paths)
+    plan = plan_for_paths(paths)
 
-    if not gates:
+    if not plan.gates and not plan.assurance.required(Lane.PILOTS):
         print("[pre-push-ci-parity] no additional CI lanes selected")
         return 0
 
-    print("[pre-push-ci-parity] selected:")
-    for gate in gates:
-        print(f"  - {gate.name}")
+    if plan.gates:
+        print("[pre-push-ci-parity] selected:")
+        for gate in plan.gates:
+            print(f"  - {gate.name}")
+    for lane in (Lane.RESOURCES, Lane.MIRI, Lane.ISA):
+        selected_suites = plan.assurance.suites(lane)
+        if not selected_suites:
+            continue
+        print(f"[pre-push-ci-parity] selected {lane.value} suites:")
+        for selected in selected_suites:
+            print(f"  - {selected.suite.value}")
+            for path in selected.matched_paths:
+                print(f"    matched {path}")
+    pilots = plan.assurance.suites(Lane.PILOTS)
+    if pilots:
+        print("[pre-push-ci-parity] deferred scheduled/release pilots:")
+        for selected in pilots:
+            print(f"  - {selected.suite.value}")
+            for path in selected.matched_paths:
+                print(f"    matched {path}")
     if args.plan:
         return 0
 
-    for gate in gates:
+    for gate in plan.gates:
         print(f"\n[pre-push-ci-parity] {gate.name}", flush=True)
         result = subprocess.run(
             gate.command,

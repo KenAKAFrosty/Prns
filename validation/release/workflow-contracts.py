@@ -547,14 +547,32 @@ def validate() -> list[str]:
         "fetch-depth: 0" not in selection_job
         or "required: ${{ steps.assurance.outputs.resources_required }}" not in selection_job
         or "miri_required: ${{ steps.assurance.outputs.miri_required }}" not in selection_job
+        or "miri_suites: ${{ steps.assurance.outputs.miri_suites }}" not in selection_job
         or "isa_required: ${{ steps.assurance.outputs.isa_required }}" not in selection_job
+        or "isa_suites: ${{ steps.assurance.outputs.isa_suites }}" not in selection_job
         or "pilots_required: ${{ steps.assurance.outputs.pilots_required }}" not in selection_job
+        or "pilots_suites: ${{ steps.assurance.outputs.pilots_suites }}" not in selection_job
+        or "resources_suites: ${{ steps.assurance.outputs.resources_suites }}" not in selection_job
+        or "embedded_builds_required: ${{ steps.assurance.outputs.embedded_builds_required }}"
+        not in selection_job
+        or "esp32_firmware_check_required: "
+        "${{ steps.assurance.outputs.esp32_firmware_check_required }}"
+        not in selection_job
+        or "aggregate_required: ${{ steps.assurance.outputs.aggregate_required }}"
+        not in selection_job
     ):
         errors.append("embedded resource selection does not expose a full-history decision")
-    selection_condition = "if: needs.embedded-resource-selection.outputs.required == 'true'"
-    for job_name in ("no-std-embedded", "esp32-firmware"):
+    for job_name, output in (
+        ("no-std-embedded", "embedded_builds_required"),
+        ("esp32-firmware", "esp32_firmware_check_required"),
+    ):
+        selection_condition = (
+            f"needs.embedded-resource-selection.outputs.{output} == 'true'"
+        )
         if selection_condition not in ci_jobs.get(job_name, ""):
-            errors.append(f"ci.yml {job_name} does not use the shared resource selection")
+            errors.append(
+                f"ci.yml {job_name} does not use its exact shared resource selection"
+            )
     summary_job = ci_jobs.get("embedded-resource-summary", "")
     for dependency in (
         "embedded-resource-selection",
@@ -586,7 +604,8 @@ def validate() -> list[str]:
     for miri_gate in (
         "needs.embedded-resource-selection.outputs.miri_required == 'true'",
         "validation/run.py toolchain nightly",
-        "run --suite embedded-miri-quick",
+        "SELECTED_MIRI_SUITES: ${{ needs.embedded-resource-selection.outputs.miri_suites }}",
+        'python3 validation/run.py run "${arguments[@]}"',
         "name: embedded-assurance-miri",
     ):
         if miri_gate not in miri_job:
@@ -595,9 +614,8 @@ def validate() -> list[str]:
     for isa_gate in (
         "needs.embedded-resource-selection.outputs.isa_required == 'true'",
         "prepare-embedded-assurance",
-        "--suite embedded-isa-thumbv7em",
-        "--suite embedded-isa-riscv32imac",
-        "--suite embedded-isa-xtensa-esp32s3",
+        "SELECTED_ISA_SUITES: ${{ needs.embedded-resource-selection.outputs.isa_suites }}",
+        'arguments+=(--suite "$suite")',
         "name: embedded-assurance-isa",
     ):
         if isa_gate not in isa_job:
@@ -613,9 +631,7 @@ def validate() -> list[str]:
         if f"- {dependency}" not in assurance_summary:
             errors.append(f"embedded assurance summary does not depend on {dependency}")
     for assurance_gate in (
-        "outputs.resources_required == 'true'",
-        "outputs.miri_required == 'true'",
-        "outputs.isa_required == 'true'",
+        "outputs.aggregate_required == 'true'",
         "--resources target/flash-artifacts/assurance/resources",
         "--proofs target/flash-artifacts/assurance/proofs",
         'matrix/matrix.md >> "$GITHUB_STEP_SUMMARY"',

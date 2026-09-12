@@ -330,9 +330,16 @@ jobs:
     outputs:
       required: ${{ steps.assurance.outputs.resources_required }}
       resources_required: ${{ steps.assurance.outputs.resources_required }}
+      resources_suites: ${{ steps.assurance.outputs.resources_suites }}
+      embedded_builds_required: ${{ steps.assurance.outputs.embedded_builds_required }}
+      esp32_firmware_check_required: ${{ steps.assurance.outputs.esp32_firmware_check_required }}
       miri_required: ${{ steps.assurance.outputs.miri_required }}
+      miri_suites: ${{ steps.assurance.outputs.miri_suites }}
       isa_required: ${{ steps.assurance.outputs.isa_required }}
+      isa_suites: ${{ steps.assurance.outputs.isa_suites }}
       pilots_required: ${{ steps.assurance.outputs.pilots_required }}
+      pilots_suites: ${{ steps.assurance.outputs.pilots_suites }}
+      aggregate_required: ${{ steps.assurance.outputs.aggregate_required }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -344,7 +351,7 @@ jobs:
 
   no-std-embedded:
     needs: embedded-resource-selection
-    if: needs.embedded-resource-selection.outputs.required == 'true'
+    if: needs.embedded-resource-selection.outputs.embedded_builds_required == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -373,7 +380,7 @@ jobs:
 
   esp32-firmware:
     needs: embedded-resource-selection
-    if: needs.embedded-resource-selection.outputs.required == 'true'
+    if: needs.embedded-resource-selection.outputs.esp32_firmware_check_required == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -426,7 +433,15 @@ jobs:
         with:
           shared-key: embedded-miri-quick
       - name: execute affected embedded Rust under Miri
-        run: python3 validation/run.py run --suite embedded-miri-quick --expected-sha "$GITHUB_SHA"
+        env:
+          SELECTED_MIRI_SUITES: ${{ needs.embedded-resource-selection.outputs.miri_suites }}
+        run: |
+          read -r -a suites <<< "$SELECTED_MIRI_SUITES"
+          arguments=()
+          for suite in "${suites[@]}"; do
+            arguments+=(--suite "$suite")
+          done
+          python3 validation/run.py run "${arguments[@]}" --expected-sha "$GITHUB_SHA"
       - name: upload embedded Miri evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -458,20 +473,28 @@ jobs:
       - name: install checksum-pinned ESP compiler and tools
         run: ./tools/prns release toolchain esp install -- "${RUNNER_TEMP}/prns-esp-tools"
       - name: prepare contract-pinned target-ISA emulators
+        env:
+          SELECTED_ISA_SUITES: ${{ needs.embedded-resource-selection.outputs.isa_suites }}
         run: |
+          read -r -a suites <<< "$SELECTED_ISA_SUITES"
+          arguments=()
+          for suite in "${suites[@]}"; do
+            arguments+=(--suite "$suite")
+          done
           python3 validation/run.py prepare-embedded-assurance \
             --root "${RUNNER_TEMP}/prns-embedded-assurance" \
-            --suite embedded-isa-thumbv7em \
-            --suite embedded-isa-riscv32imac \
-            --suite embedded-isa-xtensa-esp32s3
+            "${arguments[@]}"
           echo "${RUNNER_TEMP}/prns-embedded-assurance/bin" >> "$GITHUB_PATH"
-      - name: execute shared scenarios on every production instruction architecture
+      - name: execute selected shared scenarios as target instructions
+        env:
+          SELECTED_ISA_SUITES: ${{ needs.embedded-resource-selection.outputs.isa_suites }}
         run: |
-          python3 validation/run.py run \
-            --suite embedded-isa-thumbv7em \
-            --suite embedded-isa-riscv32imac \
-            --suite embedded-isa-xtensa-esp32s3 \
-            --expected-sha "$GITHUB_SHA"
+          read -r -a suites <<< "$SELECTED_ISA_SUITES"
+          arguments=()
+          for suite in "${suites[@]}"; do
+            arguments+=(--suite "$suite")
+          done
+          python3 validation/run.py run "${arguments[@]}" --expected-sha "$GITHUB_SHA"
       - name: upload target-ISA evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -542,9 +565,7 @@ jobs:
     if: >-
       always() &&
       needs.embedded-resource-selection.result == 'success' &&
-      needs.embedded-resource-selection.outputs.resources_required == 'true' &&
-      needs.embedded-resource-selection.outputs.miri_required == 'true' &&
-      needs.embedded-resource-selection.outputs.isa_required == 'true'
+      needs.embedded-resource-selection.outputs.aggregate_required == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -843,7 +864,8 @@ jobs:
       EMBEDDED_REQUIRED: ${{ needs.embedded-resource-selection.outputs.required }}
       EMBEDDED_MIRI_REQUIRED: ${{ needs.embedded-resource-selection.outputs.miri_required }}
       EMBEDDED_ISA_REQUIRED: ${{ needs.embedded-resource-selection.outputs.isa_required }}
-      EMBEDDED_ASSURANCE_REQUIRED: ${{ needs.embedded-resource-selection.outputs.resources_required == 'true' && needs.embedded-resource-selection.outputs.miri_required == 'true' && needs.embedded-resource-selection.outputs.isa_required == 'true' }}
+      EMBEDDED_ASSURANCE_REQUIRED: >-
+        ${{ needs.embedded-resource-selection.outputs.aggregate_required }}
       EMBEDDED_RESULT: ${{ needs.no-std-embedded.result }}
       ESP32_RESULT: ${{ needs.esp32-firmware.result }}
       EMBEDDED_SUMMARY_RESULT: ${{ needs.embedded-resource-summary.result }}

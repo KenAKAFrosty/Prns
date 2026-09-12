@@ -41,6 +41,13 @@ The nRF52840 pilot builds a small integration image with the production `t-echo-
 
 The ESP32-S3 pilot builds in the production ESP workspace with the pinned ESP Rust toolchain, `linkall.x`, frame-pointer policy, ESP-IDF application descriptor, ESP HAL, ESP RTOS, and Embassy entrypoint. The shared firmware builder packages that ELF with the 8 MiB production partition table; Espressif QEMU boots the resulting flash image through its modeled ROM and reaches the named runtime-initialized milestone. The representative `heltec-wireless-stick-lite-v3` profile deliberately avoids a PSRAM claim. This pilot does not initialize or prove radios, Wi-Fi, Bluetooth, USB, displays, external storage, timing, power, or physical peripherals. ESP32-C6 platform emulation remains explicitly unsupported; its RISC-V target-ISA evidence is separate.
 
+The pre-push hook and pull-request CI use the same changed-path classifier. They
+print the exact resource, Miri, and target-ISA suites selected and the paths that
+selected each suite. Pre-push runs those required suites without installing
+missing tools; readiness failures point back to the embedded-assurance doctor.
+Platform pilots remain scheduled/release work, so pre-push reports selected
+pilots as deferred instead of silently omitting them.
+
 Run the full Miri borrow-model matrix before release-sensitive changes:
 
 ```console

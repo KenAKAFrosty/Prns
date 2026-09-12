@@ -217,6 +217,64 @@ sources = ["prns-interfaces/impls/embassy/src/radios/sx126x.rs"]
             ):
                 embedded_miri.prepare_miri("nightly-test")
 
+    def test_pre_push_policy_refuses_to_install_a_missing_toolchain(self) -> None:
+        unavailable = subprocess.CompletedProcess(
+            args=("rustup",),
+            returncode=1,
+        )
+        with mock.patch.object(
+            embedded_miri.subprocess,
+            "run",
+            return_value=unavailable,
+        ) as run:
+            with self.assertRaisesRegex(
+                embedded_miri.EmbeddedMiriError, "doctor embedded-assurance"
+            ):
+                embedded_miri.prepare_miri(
+                    "nightly-test",
+                    embedded_miri.ProvisioningPolicy.REQUIRE_EXISTING,
+                )
+
+        run.assert_called_once_with(
+            ("rustup", "run", "nightly-test", "rustc", "--version"),
+            cwd=ROOT,
+            capture_output=True,
+        )
+
+    def test_pre_push_policy_refuses_to_add_missing_components(self) -> None:
+        available = subprocess.CompletedProcess(
+            args=("rustup",),
+            returncode=0,
+        )
+        installed = subprocess.CompletedProcess(
+            args=("rustup",),
+            returncode=0,
+            stdout="rustc-test\n",
+        )
+        with mock.patch.object(
+            embedded_miri.subprocess,
+            "run",
+            side_effect=(available, installed),
+        ) as run:
+            with self.assertRaisesRegex(
+                embedded_miri.EmbeddedMiriError, "doctor embedded-assurance"
+            ):
+                embedded_miri.prepare_miri(
+                    "nightly-test",
+                    embedded_miri.ProvisioningPolicy.REQUIRE_EXISTING,
+                )
+
+        self.assertEqual(run.call_count, 2)
+
+    def test_provisioning_policy_rejects_unknown_values(self) -> None:
+        with self.assertRaisesRegex(
+            embedded_miri.EmbeddedMiriError,
+            embedded_miri.PROVISIONING_ENV,
+        ):
+            embedded_miri.provisioning_policy(
+                {embedded_miri.PROVISIONING_ENV: "sometimes"}
+            )
+
     def test_miri_rejection_is_structural_failure_with_preserved_log(self) -> None:
         scenario = replace(
             embedded_miri.load_inventory()[0],

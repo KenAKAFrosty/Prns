@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import sys
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -18,7 +21,7 @@ SPEC.loader.exec_module(parity)
 
 class PrePushCiParityTests(unittest.TestCase):
     def gate_names(self, paths: set[str]) -> set[str]:
-        return {gate.name for gate in parity.plan_for_paths(paths)}
+        return {gate.name for gate in parity.plan_for_paths(paths).gates}
 
     def test_core_change_checks_root_feature_and_native_consumers(self) -> None:
         names = self.gate_names({"prns-core/src/engine.rs"})
@@ -47,7 +50,7 @@ class PrePushCiParityTests(unittest.TestCase):
     def test_swift_binding_change_runs_contract_smoke(self) -> None:
         gates = parity.plan_for_paths(
             {"prns-host/bindings/swift/Sources/PersonalRns/Command.swift"}
-        )
+        ).gates
         gate = next(
             gate for gate in gates if gate.name == "Swift host contract smoke"
         )
@@ -63,7 +66,7 @@ class PrePushCiParityTests(unittest.TestCase):
         )
 
     def test_lockfile_change_runs_scoped_policy_and_unsafe_checks(self) -> None:
-        gates = parity.plan_for_paths({"prnsd/Cargo.lock"})
+        gates = parity.plan_for_paths({"prnsd/Cargo.lock"}).gates
         names = {gate.name for gate in gates}
 
         self.assertIn("license policy parity", names)
@@ -82,7 +85,7 @@ class PrePushCiParityTests(unittest.TestCase):
     def test_embassy_change_links_the_exact_resource_matrix(self) -> None:
         gates = parity.plan_for_paths(
             {"prns-runtime/impls/embassy/src/runtime/request_runner.rs"}
-        )
+        ).gates
         names = {gate.name for gate in gates}
 
         self.assertIn("embedded resource matrix", names)
@@ -110,7 +113,7 @@ class PrePushCiParityTests(unittest.TestCase):
             "tools/release/release-esp-toolchain-identity.sh",
         ):
             with self.subTest(path=path):
-                gates = parity.plan_for_paths({path})
+                gates = parity.plan_for_paths({path}).gates
                 gate = next(
                     gate for gate in gates if gate.name == "embedded resource matrix"
                 )
@@ -126,10 +129,133 @@ class PrePushCiParityTests(unittest.TestCase):
                     ),
                 )
 
+    def test_shared_component_runs_miri_and_every_target_isa_suite(self) -> None:
+        plan = parity.plan_for_paths(
+            {"prns-interfaces/impls/embassy/src/radios/sx126x.rs"}
+        )
+        miri = next(gate for gate in plan.gates if gate.name == "embedded Miri")
+        isa = next(
+            gate for gate in plan.gates if gate.name == "embedded target-ISA"
+        )
+        self.assertEqual(
+            miri.command,
+            (
+                "python3",
+                "validation/run.py",
+                "run",
+                "--suite",
+                "embedded-miri-quick",
+            ),
+        )
+        self.assertEqual(
+            miri.env,
+            (("PRNS_EMBEDDED_MIRI_PROVISIONING", "require-existing"),),
+        )
+        self.assertEqual(
+            isa.command,
+            (
+                "python3",
+                "validation/run.py",
+                "run",
+                "--suite",
+                "embedded-isa-thumbv7em",
+                "--suite",
+                "embedded-isa-riscv32imac",
+                "--suite",
+                "embedded-isa-xtensa-esp32s3",
+            ),
+        )
+
+    def test_board_change_runs_only_its_selected_target_isa_suite(self) -> None:
+        plan = parity.plan_for_paths(
+            {"personal-hopspot/embedded/nrf52840/src/bin/t096.rs"}
+        )
+        isa = next(
+            gate for gate in plan.gates if gate.name == "embedded target-ISA"
+        )
+        self.assertEqual(
+            isa.command,
+            (
+                "python3",
+                "validation/run.py",
+                "run",
+                "--suite",
+                "embedded-isa-thumbv7em",
+            ),
+        )
+        self.assertFalse(any(gate.name == "embedded Miri" for gate in plan.gates))
+
+    def test_pre_push_plan_preserves_the_classifier_result_and_defers_pilots(self) -> None:
+        paths = {"personal-hopspot/memory/src/profiles/nrf52840/mod.rs"}
+        plan = parity.plan_for_paths(paths)
+        self.assertEqual(plan.assurance, parity.selection_for_paths(paths))
+        self.assertEqual(
+            plan.assurance.suite_ids(parity.Lane.PILOTS),
+            ("embedded-platform-nrf52840",),
+        )
+        self.assertFalse(any("platform" in gate.name for gate in plan.gates))
+
+        output = io.StringIO()
+        with mock.patch.object(
+            parity, "changed_paths", return_value=paths
+        ), mock.patch.object(
+            sys,
+            "argv",
+            [
+                "pre-push-ci-parity.py",
+                "--update",
+                "a" * 40,
+                "b" * 40,
+                "--plan",
+            ],
+        ), redirect_stdout(output):
+            self.assertEqual(parity.main(), 0)
+        rendered = output.getvalue()
+        self.assertIn("selected resources suites", rendered)
+        self.assertIn("embedded-builds", rendered)
+        self.assertIn("selected isa suites", rendered)
+        self.assertIn("embedded-isa-thumbv7em", rendered)
+        self.assertIn("deferred scheduled/release pilots", rendered)
+        self.assertIn("embedded-platform-nrf52840", rendered)
+        self.assertEqual(
+            rendered.count(
+                "matched personal-hopspot/memory/src/profiles/nrf52840/mod.rs"
+            ),
+            4,
+        )
+
+    def test_pilot_only_change_is_reported_even_without_an_executed_gate(self) -> None:
+        paths = {
+            "validation/hardening/embedded_platform/platform/nrf52840.py"
+        }
+        plan = parity.plan_for_paths(paths)
+        self.assertEqual(plan.gates, ())
+
+        output = io.StringIO()
+        with mock.patch.object(
+            parity, "changed_paths", return_value=paths
+        ), mock.patch.object(
+            sys,
+            "argv",
+            [
+                "pre-push-ci-parity.py",
+                "--update",
+                "a" * 40,
+                "b" * 40,
+                "--plan",
+            ],
+        ), redirect_stdout(output):
+            self.assertEqual(parity.main(), 0)
+
+        rendered = output.getvalue()
+        self.assertIn("deferred scheduled/release pilots", rendered)
+        self.assertIn("embedded-platform-nrf52840", rendered)
+        self.assertNotIn("no additional CI lanes selected", rendered)
+
     def test_tokio_runtime_change_runs_all_features_clippy(self) -> None:
         gates = parity.plan_for_paths(
             {"prns-runtime/impls/tokio/src/manifold/driver/mod.rs"}
-        )
+        ).gates
         gate = next(
             gate for gate in gates if gate.name == "Tokio runtime all-features Clippy"
         )
@@ -153,7 +279,7 @@ class PrePushCiParityTests(unittest.TestCase):
     def test_tokio_runtime_change_runs_umbrella_feature_family_clippy(self) -> None:
         gates = parity.plan_for_paths(
             {"prns-runtime/impls/tokio/src/manifold/driver/mod.rs"}
-        )
+        ).gates
         gate = next(
             gate
             for gate in gates
@@ -182,7 +308,7 @@ class PrePushCiParityTests(unittest.TestCase):
     def test_runtime_change_runs_validation_integration_capstones_clippy(self) -> None:
         gates = parity.plan_for_paths(
             {"prns-runtime/impls/tokio/src/manifold/driver/mod.rs"}
-        )
+        ).gates
         gate = next(
             gate
             for gate in gates
@@ -207,7 +333,7 @@ class PrePushCiParityTests(unittest.TestCase):
     def test_runtime_change_runs_prnsd_all_features_clippy(self) -> None:
         gates = parity.plan_for_paths(
             {"prns-runtime/core/src/runtime/observability.rs"}
-        )
+        ).gates
         gate = next(
             gate for gate in gates if gate.name == "prnsd all-features Clippy"
         )
@@ -230,7 +356,7 @@ class PrePushCiParityTests(unittest.TestCase):
         )
 
     def test_core_change_runs_prns_wasm_wasm32_clippy(self) -> None:
-        gates = parity.plan_for_paths({"prns-core/src/engine.rs"})
+        gates = parity.plan_for_paths({"prns-core/src/engine.rs"}).gates
         gate = next(gate for gate in gates if gate.name == "prns-wasm wasm32 Clippy")
 
         self.assertEqual(gate.cwd, ROOT / "prns-wasm")
@@ -253,7 +379,7 @@ class PrePushCiParityTests(unittest.TestCase):
     def test_runtime_change_runs_javascript_browser_package_smoke(self) -> None:
         gates = parity.plan_for_paths(
             {"prns-runtime/core/src/runtime/observability.rs"}
-        )
+        ).gates
         gate = next(
             gate
             for gate in gates
