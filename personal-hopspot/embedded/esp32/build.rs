@@ -53,7 +53,7 @@ fn app_descriptor_timestamp() -> Result<Option<(String, String)>, Box<dyn Error>
         Err(env::VarError::NotPresent) => return Ok(None),
         Err(error) => return Err(error.into()),
     };
-    let timestamp = Timestamp::from_microsecond(value.parse()?)?;
+    let timestamp = Timestamp::from_second(value.parse()?)?;
     Ok(Some((
         timestamp.strftime("%H:%M:%S").to_string(),
         timestamp.strftime("%Y-%m-%d").to_string(),
