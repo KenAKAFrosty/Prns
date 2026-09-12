@@ -5,7 +5,8 @@ use personal_hopspot_builder::{BuildError, SourceCustody};
 use thiserror::Error;
 
 use crate::contract::{
-    CapabilityResult, MatrixStatus, MiriCoverage, ProofEvidence, SourceCommit, Verdict,
+    AssuranceMatrix, CapabilityResult, MatrixStatus, MiriCoverage, ProofEvidence, SourceCommit,
+    Verdict,
 };
 use crate::evidence::{load_canonical_matrix, MatrixValidationError};
 
@@ -17,9 +18,9 @@ pub enum BaselineError {
     Matrix(#[from] MatrixValidationError),
     #[error("assurance baseline requires a matrix with every required check passing")]
     RequiredEvidenceFailed,
-    #[error("assurance baseline requires clean-commit proof custody")]
+    #[error("assurance baseline requires clean-commit evidence custody")]
     WorkingTreeEvidence,
-    #[error("assurance baseline combines proof evidence from multiple commits")]
+    #[error("assurance baseline combines evidence from multiple commits")]
     MixedSourceCommits,
     #[error("assurance baseline requires stacked-and-tree Miri coverage")]
     IncompleteMiriCoverage,
@@ -65,7 +66,7 @@ pub fn refresh(
     if !matches!(matrix.status, MatrixStatus::Passed) {
         return Err(BaselineError::RequiredEvidenceFailed);
     }
-    validate_proof_custody(&matrix.capabilities)?;
+    validate_evidence_custody(&matrix)?;
     crate::evidence::validate_current(&matrix, source)?;
     let mut bytes = serde_json::to_vec_pretty(&matrix)?;
     bytes.push(b'\n');
@@ -77,22 +78,18 @@ pub fn refresh(
     })
 }
 
-fn validate_proof_custody(results: &[CapabilityResult]) -> Result<(), BaselineError> {
+fn validate_evidence_custody(matrix: &AssuranceMatrix) -> Result<(), BaselineError> {
     let mut commit: Option<&SourceCommit> = None;
-    for result in results {
+    for target in &matrix.targets {
+        if let Verdict::Passed { evidence } = &target.resource {
+            merge_source(&evidence.source, &mut commit)?;
+        }
+    }
+    for result in &matrix.capabilities {
         let CapabilityResult::Observed { proof, .. } = result else {
             continue;
         };
-        let SourceCustody::CleanCommit {
-            commit: proof_commit,
-        } = &proof.source.custody
-        else {
-            return Err(BaselineError::WorkingTreeEvidence);
-        };
-        if commit.is_some_and(|commit| commit != proof_commit) {
-            return Err(BaselineError::MixedSourceCommits);
-        }
-        commit = Some(proof_commit);
+        merge_source(&proof.source.custody, &mut commit)?;
         if matches!(
             &proof.verdict,
             Verdict::Passed {
@@ -108,20 +105,45 @@ fn validate_proof_custody(results: &[CapabilityResult]) -> Result<(), BaselineEr
     Ok(())
 }
 
+fn merge_source<'a>(
+    source: &'a SourceCustody,
+    commit: &mut Option<&'a SourceCommit>,
+) -> Result<(), BaselineError> {
+    let SourceCustody::CleanCommit {
+        commit: source_commit,
+    } = source
+    else {
+        return Err(BaselineError::WorkingTreeEvidence);
+    };
+    if commit.is_some_and(|commit| commit != source_commit) {
+        return Err(BaselineError::MixedSourceCommits);
+    }
+    *commit = Some(source_commit);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
 
     use tempfile::tempdir;
 
-    use super::{refresh, validate_proof_custody, BaselineError};
+    use super::{refresh, validate_evidence_custody, BaselineError};
     use crate::contract::{
-        Capability, CapabilityResult, ComponentId, EvidenceFingerprint, MiriCoverage,
+        Capability, CapabilityResult, ComponentId, EvidenceFingerprint, MatrixStatus, MiriCoverage,
         ProofEvidence, ProofFragment, ProofKind, RunnerId, ScenarioId, SourceCommit, SourceCustody,
         SourceIdentity, Subject, SupportLevel, ToolIdentity, ToolKind, Verdict,
         WorkingTreeFingerprint, PROOF_FRAGMENT_SCHEMA_VERSION,
     };
     use crate::evidence::assemble;
+
+    fn matrix_with_capabilities(
+        capabilities: Vec<CapabilityResult>,
+    ) -> Result<crate::contract::AssuranceMatrix, Box<dyn std::error::Error>> {
+        let mut matrix = assemble(Vec::new(), Vec::new())?;
+        matrix.capabilities = capabilities;
+        Ok(matrix)
+    }
 
     fn observed_miri(
         component: &str,
@@ -202,9 +224,14 @@ mod tests {
 
     #[test]
     fn canonical_baseline_requires_full_miri_coverage() -> Result<(), Box<dyn std::error::Error>> {
-        let results = vec![observed_miri("sx126x", 'a', clean, MiriCoverage::Stacked)?];
+        let matrix = matrix_with_capabilities(vec![observed_miri(
+            "sx126x",
+            'a',
+            clean,
+            MiriCoverage::Stacked,
+        )?])?;
         assert!(matches!(
-            validate_proof_custody(&results),
+            validate_evidence_custody(&matrix),
             Err(BaselineError::IncompleteMiriCoverage)
         ));
         Ok(())
@@ -213,14 +240,14 @@ mod tests {
     #[test]
     fn canonical_baseline_rejects_working_tree_evidence() -> Result<(), Box<dyn std::error::Error>>
     {
-        let results = vec![observed_miri(
+        let matrix = matrix_with_capabilities(vec![observed_miri(
             "sx126x",
             'a',
             working_tree,
             MiriCoverage::StackedAndTree,
-        )?];
+        )?])?;
         assert!(matches!(
-            validate_proof_custody(&results),
+            validate_evidence_custody(&matrix),
             Err(BaselineError::WorkingTreeEvidence)
         ));
         Ok(())
@@ -228,12 +255,39 @@ mod tests {
 
     #[test]
     fn canonical_baseline_rejects_mixed_commits() -> Result<(), Box<dyn std::error::Error>> {
-        let results = vec![
+        let matrix = matrix_with_capabilities(vec![
             observed_miri("sx126x", 'a', clean, MiriCoverage::StackedAndTree)?,
             observed_miri("lr1110", 'b', clean, MiriCoverage::StackedAndTree)?,
-        ];
+        ])?;
         assert!(matches!(
-            validate_proof_custody(&results),
+            validate_evidence_custody(&matrix),
+            Err(BaselineError::MixedSourceCommits)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn committed_baseline_is_complete_and_canonical() -> Result<(), Box<dyn std::error::Error>> {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("baseline/canonical.json");
+        let matrix = crate::evidence::load_canonical_matrix(&path)?;
+        assert!(matches!(matrix.status, MatrixStatus::Passed));
+        validate_evidence_custody(&matrix)?;
+        Ok(())
+    }
+
+    #[test]
+    fn canonical_baseline_rejects_resource_proof_commit_split(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("baseline/canonical.json");
+        let mut matrix = crate::evidence::load_canonical_matrix(&path)?;
+        let Verdict::Passed { evidence } = &mut matrix.targets[0].resource else {
+            return Err("canonical fixture has no resource evidence".into());
+        };
+        evidence.source = SourceCustody::CleanCommit {
+            commit: SourceCommit::parse("f".repeat(40))?,
+        };
+        assert!(matches!(
+            validate_evidence_custody(&matrix),
             Err(BaselineError::MixedSourceCommits)
         ));
         Ok(())

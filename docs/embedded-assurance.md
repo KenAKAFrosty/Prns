@@ -66,4 +66,13 @@ After resource and proof artifacts exist, combine them without rebuilding firmwa
 
 Resource reports and linker evidence live below `target/flash-artifacts/resources`. Miri, ISA, and platform-pilot proof fragments, transcripts, target ELFs, and emulator logs live below `validation-artifacts/results`. The combined JSON and Markdown matrix is written to the requested output directory.
 
+Replace the reviewed baseline only from a complete passing matrix:
+
+```console
+./tools/prns build embedded assurance refresh-baseline \
+  --matrix validation-artifacts/assurance/matrix.json
+```
+
+Refresh rejects missing required evidence, incompatible target or capability contracts, working-tree or mixed-commit evidence, and Miri results without both borrow models. The assurance crate also parses the checked-in baseline during its tests so schema or canonical-matrix drift cannot leave the snapshot silently stale.
+
 These checks establish memory contracts, executable structure, measured stack evidence, production task-pool allocation, target-ABI sizes for named semantic-scenario futures, Rust memory-model behavior for exercised components, and matching component behavior as target instructions. The checks do not prove RF behavior, physical peripherals, timing, power, SoftDevice behavior, or whole-board operation.
