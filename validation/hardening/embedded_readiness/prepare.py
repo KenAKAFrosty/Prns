@@ -64,6 +64,11 @@ class IdentityScope(Enum):
     ALL_LINES = "all-lines"
 
 
+class ArchivePurpose(Enum):
+    HOSTED_PACKAGE = "hosted-package"
+    SOURCE_BUILD = "source-build"
+
+
 @dataclass(frozen=True)
 class ModelRequirement:
     path: str
@@ -258,7 +263,7 @@ def install_hosted(
         with tempfile.TemporaryDirectory(dir=root) as temporary:
             staging = Path(temporary) / "package"
             staging.mkdir()
-            extract_archive(archive, staging)
+            extract_archive(archive, staging, ArchivePurpose.HOSTED_PACKAGE)
             destination.parent.mkdir(parents=True, exist_ok=True)
             staging.rename(destination)
     return locate_executables(destination, requirements)
@@ -282,7 +287,7 @@ def install_source(
         temporary_path = Path(temporary)
         sources = temporary_path / "sources"
         sources.mkdir()
-        extract_archive(archive, sources)
+        extract_archive(archive, sources, ArchivePurpose.SOURCE_BUILD)
         source = source_root(sources)
         build = temporary_path / "build"
         build.mkdir()
@@ -343,21 +348,32 @@ def download_file(url: str, destination: Path) -> None:
         raise PreparationError(f"could not download {url}: {error}") from error
 
 
-def extract_archive(archive: Path, destination: Path) -> None:
+def extract_archive(
+    archive: Path,
+    destination: Path,
+    purpose: ArchivePurpose = ArchivePurpose.HOSTED_PACKAGE,
+) -> None:
     if archive.name.endswith((".tar.xz", ".tar.gz")):
         with tarfile.open(archive) as source:
             members = source.getmembers()
+            extractable = []
             for member in members:
                 validate_archive_path(destination, member.name)
                 if member.isdev():
                     raise PreparationError(f"archive contains device {member.name!r}")
                 if member.issym():
+                    if (
+                        purpose is ArchivePurpose.SOURCE_BUILD
+                        and Path(member.linkname).is_absolute()
+                    ):
+                        continue
                     validate_archive_path(
                         destination, str(Path(member.name).parent / member.linkname)
                     )
                 elif member.islnk():
                     validate_archive_path(destination, member.linkname)
-            source.extractall(destination)
+                extractable.append(member)
+            source.extractall(destination, extractable)
         return
     if archive.name.endswith(".zip"):
         with zipfile.ZipFile(archive) as source:

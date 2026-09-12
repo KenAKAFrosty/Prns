@@ -4,6 +4,7 @@ import copy
 import importlib.util
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -134,6 +135,29 @@ class RegistryTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.manifest = runner.load_manifest()
+
+    def test_script_entrypoint_owns_repository_imports_in_isolated_python(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run(
+                (
+                    sys.executable,
+                    "-I",
+                    str(RUNNER_PATH),
+                    "prepare-embedded-assurance",
+                    "--root",
+                    directory,
+                    "--suite",
+                    "unknown-suite",
+                ),
+                cwd=runner.ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("unknown embedded assurance suite", result.stderr)
+        self.assertNotIn("ModuleNotFoundError", result.stderr)
 
     def test_duplicate_suite_ids_are_rejected(self) -> None:
         suite = copy.deepcopy(self.manifest["suite"][0])

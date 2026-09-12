@@ -11,6 +11,7 @@ from pathlib import Path
 from validation.hardening.embedded_host import HostPlatform
 from validation.hardening.embedded_readiness.prepare import (
     Archive,
+    ArchivePurpose,
     EmulatorRequirement,
     HostedArchive,
     IdentityScope,
@@ -92,6 +93,38 @@ class EmbeddedPreparationTests(unittest.TestCase):
             extract_archive(archive, destination)
 
         self.assertFalse((self.root / "escaped").exists())
+
+    def test_source_build_omits_absolute_symlinks_without_weakening_packages(self) -> None:
+        archive = self.root / "absolute-link.tar.gz"
+        with tarfile.open(archive, "w:gz") as output:
+            regular = tarfile.TarInfo("source/configure")
+            regular.mode = 0o755
+            regular.size = 4
+            output.addfile(regular, io.BytesIO(b"true"))
+            link = tarfile.TarInfo("source/unused-system-headers")
+            link.type = tarfile.SYMTYPE
+            link.linkname = "/opt/example/include"
+            output.addfile(link)
+
+        package_destination = self.root / "package"
+        package_destination.mkdir()
+        with self.assertRaisesRegex(PreparationError, "escapes destination"):
+            extract_archive(archive, package_destination)
+
+        source_destination = self.root / "source"
+        source_destination.mkdir()
+        extract_archive(
+            archive,
+            source_destination,
+            ArchivePurpose.SOURCE_BUILD,
+        )
+        self.assertEqual(
+            (source_destination / "source" / "configure").read_bytes(),
+            b"true",
+        )
+        self.assertFalse(
+            (source_destination / "source" / "unused-system-headers").exists()
+        )
 
     def test_hosted_archive_is_verified_and_located(self) -> None:
         source = self.root / "fixture.tar.gz"

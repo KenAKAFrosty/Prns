@@ -33,6 +33,8 @@ except ModuleNotFoundError:  # pragma: no cover - the workspace MSRV has tomllib
 
 
 ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 MANIFEST_PATH = ROOT / "validation" / "manifest.toml"
 TRIAGE_PATH = ROOT / "validation" / "mutation" / "triage.toml"
 MANIFEST_SCHEMA = 1
