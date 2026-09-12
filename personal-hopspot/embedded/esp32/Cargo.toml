@@ -66,6 +66,9 @@ embedded-storage-async = "0.4"
 embassy-futures = { version = "0.1", default-features = false }
 personal-rns = { path = "../../../personal-rns", default-features = false }
 
+[build-dependencies]
+jiff = { version = "0.2", default-features = false, features = ["std"] }
+
 [target.'cfg(target_arch = "xtensa")'.dependencies]
 personal-rns = { path = "../../../personal-rns", default-features = false, features = ["embassy-host", "external-alloc", "flash", "log"] }
 prns-core = { path = "../../../prns-core", default-features = false }

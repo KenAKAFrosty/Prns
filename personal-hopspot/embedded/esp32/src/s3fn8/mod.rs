@@ -10,7 +10,6 @@ use embassy_sync::signal::Signal;
 use embassy_time::{Delay, Duration, Timer};
 use embedded_hal_bus::spi::ExclusiveDevice;
 use esp_backtrace as _;
-use esp_bootloader_esp_idf::esp_app_desc;
 use esp_hal::gpio::{Input, Output};
 use esp_hal::peripherals::BT;
 use esp_hal::rng::TrngSource;
@@ -42,7 +41,7 @@ use static_cell::StaticCell;
 use crate::storage::InternalStorage;
 use entropy::S3Fn8EntropySource;
 
-esp_app_desc!();
+firmware_app_descriptor!();
 
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"wslv3usb");
 const USB_UART_BAUD: u32 = 115_200;

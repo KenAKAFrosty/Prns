@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 use crate::architecture::Adapter;
+use crate::source::source_date_epoch;
 use crate::toolchain::capture_toolchain_evidence;
 use crate::{run_status, BuildError, FirmwareEvidence, LinkOverflowEvidence, ToolchainEvidence};
 
@@ -41,6 +42,11 @@ impl BuildContext<'_> {
     ) -> Result<FirmwareBuildCapture, BuildError> {
         if self.intent.is_resource_report() {
             validate_resource_environment(std::env::vars_os().map(|(name, _)| name))?;
+            command.env(
+                "SOURCE_DATE_EPOCH",
+                source_date_epoch(self.repository())
+                    .map_err(|error| BuildError::Repository(error.to_string()))?,
+            );
         }
         if let Some(lto) = self.intent.lto().cargo_value() {
             command.env("CARGO_PROFILE_RELEASE_LTO", lto);
@@ -225,6 +231,8 @@ fn validate_resource_environment(
 fn semantic_override(name: &OsStr) -> bool {
     let name = name.to_string_lossy();
     name.starts_with("CARGO_PROFILE_")
+        || name.starts_with("PRNS_BUILD_")
+        || name.starts_with("PRNS_SOURCE_")
         || matches!(
             name.as_ref(),
             "CARGO_ENCODED_RUSTFLAGS"
@@ -234,18 +242,11 @@ fn semantic_override(name: &OsStr) -> bool {
                 | "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER"
                 | "CARGO_CONFIG"
                 | "CARGO_INCREMENTAL"
-                | "PRNS_BUILD_COMMIT"
-                | "PRNS_BUILD_COMMIT_SHORT"
-                | "PRNS_BUILD_SOURCE_DIGEST"
                 | "PRNS_FLASH_VERSION"
-                | "PRNS_SOURCE_ARCHIVE"
-                | "PRNS_SOURCE_COMMIT"
-                | "PRNS_SOURCE_SHA256"
-                | "PRNS_SOURCE_SIZE"
-                | "PRNS_SOURCE_VERSION"
                 | "RUSTC"
                 | "RUSTC_WRAPPER"
                 | "RUSTC_WORKSPACE_WRAPPER"
+                | "SOURCE_DATE_EPOCH"
         )
 }
 
@@ -267,6 +268,7 @@ mod tests {
             "CARGO_INCREMENTAL",
             "PRNS_BUILD_COMMIT",
             "PRNS_BUILD_COMMIT_SHORT",
+            "PRNS_BUILD_CHANNEL",
             "PRNS_BUILD_SOURCE_DIGEST",
             "PRNS_FLASH_VERSION",
             "PRNS_SOURCE_ARCHIVE",
@@ -277,6 +279,7 @@ mod tests {
             "RUSTC",
             "RUSTC_WRAPPER",
             "RUSTC_WORKSPACE_WRAPPER",
+            "SOURCE_DATE_EPOCH",
         ] {
             assert!(matches!(
                 validate_resource_environment([OsString::from(variable)]),

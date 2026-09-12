@@ -2494,6 +2494,7 @@ dependencies = [
  "esp-radio-rtos-driver",
  "esp-rtos",
  "heapless 0.8.0",
+ "jiff",
  "log",
  "personal-hopspot-core",
  "personal-hopspot-memory",

@@ -6,7 +6,6 @@ mod gnss;
 use alloc::string::{String, ToString};
 use core::fmt::Write as _;
 use esp_backtrace as _;
-use esp_bootloader_esp_idf::esp_app_desc;
 use esp_hal::clock::CpuClock;
 use esp_hal::efuse::base_mac_address;
 use esp_hal::gpio::Input;
@@ -130,7 +129,7 @@ pub(crate) use entropy::{
 };
 pub(crate) use gnss::{GnssProvider, GnssShared, NoGnss};
 
-esp_app_desc!();
+firmware_app_descriptor!();
 
 const AP_IPV4: [u8; 4] = [192, 168, 4, 1];
 const CAPTIVE_PORTAL_HOST: &str = "192.168.4.1";

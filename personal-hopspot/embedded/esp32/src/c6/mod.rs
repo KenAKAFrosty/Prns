@@ -2,7 +2,6 @@ mod board;
 mod entropy;
 
 use esp_backtrace as _;
-use esp_bootloader_esp_idf::esp_app_desc;
 use esp_hal::peripherals::{BT, USB_DEVICE};
 use esp_hal::usb_serial_jtag::{UsbSerialJtagRx, UsbSerialJtagTx};
 use esp_hal::Async;
@@ -53,7 +52,7 @@ use personal_rns::interfaces::esp_now::{
 };
 use personal_rns::manifold::interface_seam::Interface;
 
-esp_app_desc!();
+firmware_app_descriptor!();
 
 use board::{
     C6Hardware, XiaoEsp32C6, ANNOUNCE_APP_DATA, MEMORY_PROFILE, NODE_ANNOUNCE_APP_DATA,

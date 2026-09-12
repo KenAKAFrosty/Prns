@@ -1,14 +1,18 @@
 use std::env;
+use std::error::Error;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
-fn main() {
+use jiff::Timestamp;
+
+fn main() -> Result<(), Box<dyn Error>> {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=../../../VERSION");
     println!("cargo:rerun-if-env-changed=PRNS_BUILD_VERSION");
     println!("cargo:rerun-if-env-changed=PRNS_BUILD_SOURCE_DIGEST");
     println!("cargo:rerun-if-env-changed=PRNS_SOURCE_SHA256");
+    println!("cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH");
     track_git_head();
     let build_commit_short = git_commit_short();
     let build_version = env::var("PRNS_BUILD_VERSION")
@@ -36,6 +40,24 @@ fn main() {
     println!(
         "cargo:rustc-env=HOPSPOT_BUILD_IDENTITY=version={build_version} source={build_source_digest}"
     );
+    if let Some((time, date)) = app_descriptor_timestamp()? {
+        println!("cargo:rustc-env=HOPSPOT_BUILD_TIME={time}");
+        println!("cargo:rustc-env=HOPSPOT_BUILD_DATE={date}");
+    }
+    Ok(())
+}
+
+fn app_descriptor_timestamp() -> Result<Option<(String, String)>, Box<dyn Error>> {
+    let value = match env::var("SOURCE_DATE_EPOCH") {
+        Ok(value) => value,
+        Err(env::VarError::NotPresent) => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let timestamp = Timestamp::from_microsecond(value.parse()?)?;
+    Ok(Some((
+        timestamp.strftime("%H:%M:%S").to_string(),
+        timestamp.strftime("%Y-%m-%d").to_string(),
+    )))
 }
 
 fn git_commit_short() -> String {

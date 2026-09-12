@@ -52,6 +52,8 @@ pub enum SourceCaptureError {
     },
     #[error("invalid repository commit {0:?}")]
     InvalidCommit(String),
+    #[error("git returned invalid source commit timestamp {0:?}")]
+    InvalidCommitTimestamp(String),
 }
 
 impl RepositoryCommit {
@@ -170,6 +172,24 @@ pub fn capture_source_custody(repository: &Path) -> Result<SourceCustody, Source
     })
 }
 
+pub(crate) fn source_date_epoch(repository: &Path) -> Result<String, SourceCaptureError> {
+    let output = git(
+        repository,
+        "resolve source commit timestamp",
+        &["show", "-s", "--format=%ct", "HEAD"],
+    )?;
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    parse_source_date_epoch(value)
+}
+
+fn parse_source_date_epoch(value: String) -> Result<String, SourceCaptureError> {
+    value
+        .parse::<u64>()
+        .is_ok_and(|timestamp| timestamp > 0)
+        .then_some(value.clone())
+        .ok_or(SourceCaptureError::InvalidCommitTimestamp(value))
+}
+
 fn working_tree_fingerprint(
     repository: &Path,
     diff: &[u8],
@@ -256,5 +276,21 @@ mod tests {
         let second = working_tree_fingerprint(repository.path(), b"diff", b"source.rs\0")?;
         assert_ne!(first, second);
         Ok(())
+    }
+
+    #[test]
+    fn commit_timestamp_requires_a_positive_integer() {
+        assert!(matches!(
+            parse_source_date_epoch("1".to_string()),
+            Ok(value) if value == "1"
+        ));
+        assert!(matches!(
+            parse_source_date_epoch("0".to_string()),
+            Err(SourceCaptureError::InvalidCommitTimestamp(value)) if value == "0"
+        ));
+        assert!(matches!(
+            parse_source_date_epoch("invalid".to_string()),
+            Err(SourceCaptureError::InvalidCommitTimestamp(value)) if value == "invalid"
+        ));
     }
 }
