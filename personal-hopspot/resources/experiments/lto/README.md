@@ -1,8 +1,7 @@
 # nRF52840 LTO experiment
 
 These reports preserve the production-resource experiment reproduced from the
-working tree at `5cb30c612397b906c70e13e8801ac3b32ff6c375` with source-diff
-fingerprint `0fe73f9aa92e71ad88d32663901f9c5eca18e28f5a5bf2d74f5aead00dfb7404`.
+clean commit `5bc902b9b96cc3e74ab4c517cba2bd00ec95f69f`.
 The builds used the same pinned Rust 1.96.0 toolchain and Arm codegen policy
 except for the reported LTO selection.
 

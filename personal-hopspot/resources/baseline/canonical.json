@@ -5,9 +5,8 @@
     {
       "schema_version": 9,
       "source": {
-        "kind": "working-tree",
-        "head": "5cb30c612397b906c70e13e8801ac3b32ff6c375",
-        "diff_fingerprint": "73cf8697ac494b5a333e09a6af7e6fbeebe2fdf368a3808ff740372577e90ff1"
+        "kind": "clean-commit",
+        "commit": "5bc902b9b96cc3e74ab4c517cba2bd00ec95f69f"
       },
       "target": {
         "id": "heltec-v4",
@@ -375,8 +374,8 @@
           "region": "firmware",
           "start": 65536,
           "end": 15192064,
-          "image_bytes": 2198912,
-          "headroom_bytes": 12927616
+          "image_bytes": 2198896,
+          "headroom_bytes": 12927632
         }
       },
       "static_ram": {
@@ -494,13 +493,13 @@
           },
           {
             "path": "firmware/hopspot/heltec-v4/0.3.7/application.bin",
-            "bytes": 2198912,
-            "fingerprint": "024441488ff9781c8f50c1bf26bb7acc6b149ab74d819c53076e5c35ef4a067f"
+            "bytes": 2198896,
+            "fingerprint": "f0953de4b7ee0de04c3ee2516c21d49d86d5cc257ffa87cdcf5522f42fd432ef"
           }
         ]
       },
       "analysis": {
-        "linker_map_bytes": 10536770,
+        "linker_map_bytes": 10536692,
         "allocated_sections": {
           "kind": "complete",
           "value": [
@@ -571,16 +570,16 @@
               "name": ".rodata",
               "kind": "read-only-data",
               "run_address": 1006633248,
-              "run_end": 1006870708,
-              "run_bytes": 237460,
-              "load_bytes": 237460,
+              "run_end": 1006870700,
+              "run_bytes": 237452,
+              "load_bytes": 237452,
               "alignment": 16
             },
             {
               "name": ".rodata.wifi",
               "kind": "read-only-data",
-              "run_address": 1006870708,
-              "run_end": 1006900604,
+              "run_address": 1006870700,
+              "run_end": 1006900596,
               "run_bytes": 29896,
               "load_bytes": 29896,
               "alignment": 4
@@ -664,9 +663,9 @@
           "value": {
             "crates": {
               "coverage": {
-                "analyzed_bytes": 2198799,
+                "analyzed_bytes": 2198791,
                 "attributed_bytes": 1536075,
-                "unclassified_bytes": 662724
+                "unclassified_bytes": 662716
               },
               "largest": [
                 {
@@ -773,9 +772,9 @@
             },
             "symbols": {
               "coverage": {
-                "analyzed_bytes": 2198799,
+                "analyzed_bytes": 2198791,
                 "attributed_bytes": 1536658,
-                "unclassified_bytes": 662141
+                "unclassified_bytes": 662133
               },
               "largest": [
                 {
@@ -893,11 +892,11 @@
               {
                 "file_offset": 4128,
                 "run_address": 1006632992,
-                "run_end": 1006900604,
+                "run_end": 1006900596,
                 "load_address": 1006632992,
-                "load_end": 1006900604,
-                "file_bytes": 267612,
-                "memory_bytes": 267612,
+                "load_end": 1006900596,
+                "file_bytes": 267604,
+                "memory_bytes": 267604,
                 "alignment": 4096,
                 "permissions": [
                   "read"
@@ -907,8 +906,8 @@
                 "file_offset": 4096,
                 "run_address": 1611653120,
                 "run_end": 1611653128,
-                "load_address": 1006900604,
-                "load_end": 1006900612,
+                "load_address": 1006900596,
+                "load_end": 1006900604,
                 "file_bytes": 0,
                 "memory_bytes": 8,
                 "alignment": 4096,
@@ -996,7 +995,7 @@
                 "end": 1077393944,
                 "bytes": 13848,
                 "alignment": 4,
-                "fingerprint": "47b2179baa1afdaa8fcf793a2497ff577cd4b52691dbeef716ff4a813f782c44"
+                "fingerprint": "28cd89ca821ebbe8dea03ef343d92634c2a49335ea4fb332d8195a0a6ef07ad8"
               },
               {
                 "name": ".rwtext.wifi",
@@ -1004,7 +1003,7 @@
                 "end": 1077443488,
                 "bytes": 49544,
                 "alignment": 4,
-                "fingerprint": "3279ef8929ab09d2cf91d5ad45d6f07ce297c5cbaa22f59853d2a8c089121046"
+                "fingerprint": "2857b46993c0d8461cd5d0cc7242e132531f8d9124d4c5b70778ad8d8c91474a"
               },
               {
                 "name": ".vectors",
@@ -1020,7 +1019,7 @@
                 "end": 1109455321,
                 "bytes": 1831353,
                 "alignment": 4,
-                "fingerprint": "402c7371baef95a63328938a8324f9e72c1381f1b498fc68dac6ac6d87a8d6bf"
+                "fingerprint": "0ad4bb6b0e4b44118a58f77e4689eaa2df233876891568341710a2afd8c10007"
               },
               {
                 "name": ".init",
@@ -1058,11 +1057,11 @@
             "functions": {
               "normalization": "linked-function-body-sha256-v1",
               "boundary_count": 4942,
-              "boundaries_fingerprint": "77398ccb5afca330f4b5cdfa7f8cff41d6ea297cde4b920f9fca4e5fa087bcfd",
+              "boundaries_fingerprint": "a89d63237540a4562bc4755d918e9b65c9ab0785ecdff20654af714040fbdcaf",
               "boundaries_artifact": {
                 "path": "work/heltec-v4/function-boundaries.json",
                 "bytes": 1307890,
-                "fingerprint": "3bb722fe37953d73e1d24b46e13166e8c9ec07eb3fd018d629540a299f43de58"
+                "fingerprint": "e08c95e0c4690042de0db1421445f561237ff215f1a940fcca60c051b98b4ff3"
               },
               "classified_bytes": 1794475,
               "unclassified_bytes": 101300,
@@ -1128,7 +1127,7 @@
                   "address": 1107817016,
                   "end": 1107857752,
                   "bytes": 40736,
-                  "fingerprint": "a4e24dc5b0e62c3a2153e0c834bb825bdaa9b88a004119ba8d480a8fce0974c0"
+                  "fingerprint": "286bfbfedd4dfd352c57d68cb4ee4a05e552c561ee0e42e85512ccf324a89271"
                 },
                 {
                   "name": "prns_runtime::manifold::wake_schedule::fire_due_reason::<prns_core::storage::impls::esp32s3::Esp32S3<personal_hopspot_esp32::storage::PsramAlloc, 5, 5, 4>, prns…ed_persistence::EmbeddedPersistenceDiagnostic), 64>>>::{closure#0}::{closure#8}> [sha256:0f777dffd1df]",
@@ -1215,9 +1214,9 @@
               "program": "xtensa-esp32s3-elf-objdump",
               "version": "the GNU General Public License version 3 or (at your option) any later version.",
               "executable_bytes": 1895775,
-              "decoded_bytes": 1872274,
-              "undecoded_bytes": 23501,
-              "instruction_count": 716952
+              "decoded_bytes": 1872286,
+              "undecoded_bytes": 23489,
+              "instruction_count": 716938
             },
             "stack": {
               "kind": "partial",
@@ -1474,7 +1473,7 @@
                   },
                   {
                     "kind": "call-site-outside-function",
-                    "occurrences": 1398
+                    "occurrences": 1383
                   },
                   {
                     "kind": "direct-call-outside-functions",
@@ -1508,7 +1507,7 @@
                 "artifact": {
                   "path": "work/heltec-v4/stack-evidence.json",
                   "bytes": 1569813,
-                  "fingerprint": "ebbf37f7ffa23116cc2de7cd8929164e29ec05204cae54110929fe0d02e5bb62"
+                  "fingerprint": "36d0f7c5f8f2b8b376d5082995ade38b208e62a6f75419d8df79b2acd30acf41"
                 }
               }
             }
@@ -1679,9 +1678,8 @@
     {
       "schema_version": 9,
       "source": {
-        "kind": "working-tree",
-        "head": "5cb30c612397b906c70e13e8801ac3b32ff6c375",
-        "diff_fingerprint": "73cf8697ac494b5a333e09a6af7e6fbeebe2fdf368a3808ff740372577e90ff1"
+        "kind": "clean-commit",
+        "commit": "5bc902b9b96cc3e74ab4c517cba2bd00ec95f69f"
       },
       "target": {
         "id": "heltec-v4-r8",
@@ -2172,7 +2170,7 @@
           {
             "path": "firmware/hopspot/heltec-v4-r8/0.3.7/application.bin",
             "bytes": 2187488,
-            "fingerprint": "36466815a6c17f30a72e7796d5ddbfb995271c36d02b3691c97ce6511736301e"
+            "fingerprint": "71dc259dfdc2218e4a447f04467d648019a40db50ac15075b7a544fadb50bee7"
           }
         ]
       },
@@ -2697,7 +2695,7 @@
                 "end": 1109445589,
                 "bytes": 1821621,
                 "alignment": 4,
-                "fingerprint": "8a7804c8ebd583006996ef557a2d82ddda37fa4bf52d980f870063bf8d369b7a"
+                "fingerprint": "c4e3ceb6b068a221e460b95e09032a49ccca448a1efa9e8a28fc0718f2e871d8"
               },
               {
                 "name": ".init",
@@ -2735,11 +2733,11 @@
             "functions": {
               "normalization": "linked-function-body-sha256-v1",
               "boundary_count": 4906,
-              "boundaries_fingerprint": "259727ee7531d6214fb9cf84a47ed0361e992b49d343ca9b74293fdffe77cbc9",
+              "boundaries_fingerprint": "8596b52b099112e966db8e25442553cb236aa8fec1d58d098bbc79151055d2da",
               "boundaries_artifact": {
                 "path": "work/heltec-v4-r8/function-boundaries.json",
                 "bytes": 1297634,
-                "fingerprint": "d42e1fa5d82df5ff12a3a5635f3c49b4c52200640c9b17285708270f522dfc3a"
+                "fingerprint": "f993529e887cad94866689fd24721a23ded62712ac9d0183ea931a4946d08f0d"
               },
               "classified_bytes": 1785214,
               "unclassified_bytes": 100665,
@@ -2805,7 +2803,7 @@
                   "address": 1107812552,
                   "end": 1107853288,
                   "bytes": 40736,
-                  "fingerprint": "53dcb1e62c2068f3233a56ac11d75eec7ea25c56d60694be8c6cd43a6bcad323"
+                  "fingerprint": "2fe6e21ee8321dcc4d5d085be799032999d43b7e23a90bd8a61aa2b9d9c156ca"
                 },
                 {
                   "name": "prns_runtime::manifold::wake_schedule::fire_due_reason::<prns_core::storage::impls::esp32s3::Esp32S3<personal_hopspot_esp32::storage::PsramAlloc, 5, 5, 4>, prns…ed_persistence::EmbeddedPersistenceDiagnostic), 64>>>::{closure#0}::{closure#8}> [sha256:0f777dffd1df]",
@@ -2892,9 +2890,9 @@
               "program": "xtensa-esp32s3-elf-objdump",
               "version": "the GNU General Public License version 3 or (at your option) any later version.",
               "executable_bytes": 1885879,
-              "decoded_bytes": 1862483,
-              "undecoded_bytes": 23396,
-              "instruction_count": 713391
+              "decoded_bytes": 1862447,
+              "undecoded_bytes": 23432,
+              "instruction_count": 713372
             },
             "stack": {
               "kind": "partial",
@@ -3146,7 +3144,7 @@
                   },
                   {
                     "kind": "call-site-outside-function",
-                    "occurrences": 1347
+                    "occurrences": 1351
                   },
                   {
                     "kind": "direct-call-outside-functions",
@@ -3180,7 +3178,7 @@
                 "artifact": {
                   "path": "work/heltec-v4-r8/stack-evidence.json",
                   "bytes": 1563454,
-                  "fingerprint": "71a068b42406a2fb48e8e540da110c73786b6ed53443cc96c4cbcba65ee7d547"
+                  "fingerprint": "1fdf885b3f4edf90847f20c9cd768c5b348f2205be14a90f2ca8a930013507b8"
                 }
               }
             }
@@ -3345,9 +3343,8 @@
     {
       "schema_version": 9,
       "source": {
-        "kind": "working-tree",
-        "head": "5cb30c612397b906c70e13e8801ac3b32ff6c375",
-        "diff_fingerprint": "73cf8697ac494b5a333e09a6af7e6fbeebe2fdf368a3808ff740372577e90ff1"
+        "kind": "clean-commit",
+        "commit": "5bc902b9b96cc3e74ab4c517cba2bd00ec95f69f"
       },
       "target": {
         "id": "heltec-e290",
@@ -3838,7 +3835,7 @@
           {
             "path": "firmware/hopspot/heltec-e290/0.3.7/application.bin",
             "bytes": 2174032,
-            "fingerprint": "79fb55ba624a4d0a376851acf021026e8b60bc193b42c1cec49e4b716156d157"
+            "fingerprint": "665ddf0c04cdaf5a4b2bef7a76923537168bdb4f7708e6130fc0ac8eaa401ed5"
           }
         ]
       },
@@ -4339,7 +4336,7 @@
                 "end": 1077393696,
                 "bytes": 13600,
                 "alignment": 4,
-                "fingerprint": "b81441022becda6713d5192d7154254dc4bf077adc50e9d4d69e9aff7fe19231"
+                "fingerprint": "ce46d2187f524a5a5216ffe8b5ba5c35836bfca12123c17062eee9a9c8b041fd"
               },
               {
                 "name": ".rwtext.wifi",
@@ -4363,7 +4360,7 @@
                 "end": 1109433885,
                 "bytes": 1809917,
                 "alignment": 4,
-                "fingerprint": "5ac995d8f8075bc071fa0d1196d9ba88a65f3350f2f8611b36a1b6d50149f8c3"
+                "fingerprint": "03d03741a244ade07b152a432c60cdb2f01c260fbfc3af68e34d4f51a0246a5b"
               },
               {
                 "name": ".init",
@@ -4401,11 +4398,11 @@
             "functions": {
               "normalization": "linked-function-body-sha256-v1",
               "boundary_count": 4892,
-              "boundaries_fingerprint": "5865d63542537dff7fac670fe4c64221bf1fa91ea71203e698a10feb17116793",
+              "boundaries_fingerprint": "067b5f539b56b37e5b1f56de2a36bb4e1c6f2b268fd757a7d8f32b54888a0c1d",
               "boundaries_artifact": {
                 "path": "work/heltec-e290/function-boundaries.json",
                 "bytes": 1293091,
-                "fingerprint": "a82f27f5d10196bf5f8f6e57033a5408f83b9a9aae69a640ee6b9b265bad93a6"
+                "fingerprint": "35e08d523f0564cd7472448a8e9341e172da4307327d91527dfae0deacbae404"
               },
               "classified_bytes": 1774326,
               "unclassified_bytes": 99765,
@@ -4471,7 +4468,7 @@
                   "address": 1107803604,
                   "end": 1107844340,
                   "bytes": 40736,
-                  "fingerprint": "3e9dbe349c88de4e3577f209b127462063a6ae8497957e9067607c159eb369ff"
+                  "fingerprint": "60c206a52f5242a5d38a6155e1481b41d7818a519fdbe838bcbb27ce2d942cad"
                 },
                 {
                   "name": "prns_runtime::manifold::wake_schedule::fire_due_reason::<prns_core::storage::impls::esp32s3::Esp32S3<personal_hopspot_esp32::storage::PsramAlloc, 5, 5, 4>, prns…ed_persistence::EmbeddedPersistenceDiagnostic), 64>>>::{closure#0}::{closure#8}> [sha256:0f777dffd1df]",
@@ -4499,7 +4496,7 @@
                   "address": 1108382832,
                   "end": 1108405344,
                   "bytes": 22512,
-                  "fingerprint": "604a6e831b17d7cb8f2b5360a6620c0a1d6ff3dcdbeddfa0a144c59220873b3b"
+                  "fingerprint": "0869a847955acd63e48d082901bcba6232369bcf589af2c1342f8e0c83045a93"
                 },
                 {
                   "name": "<embassy_futures::select::Select<core::future::poll_fn::PollFn<<embassy_sync::signal::Signal<embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex, ()>>::w…:controller::BleConnector>>::{closure#0}> as core::future::future::Future>::poll [sha256:612d63326fca]",
@@ -4548,7 +4545,7 @@
                   "address": 1108604252,
                   "end": 1108616944,
                   "bytes": 12692,
-                  "fingerprint": "3b893955810f89654975b7219fba293af52bfb6296a31c8d2846ee576f321a08"
+                  "fingerprint": "38bc81d26005021b85f782aca0cfd9696109151e9987098fc92053f14d362c9b"
                 }
               ]
             },
@@ -4558,9 +4555,9 @@
               "program": "xtensa-esp32s3-elf-objdump",
               "version": "the GNU General Public License version 3 or (at your option) any later version.",
               "executable_bytes": 1874091,
-              "decoded_bytes": 1851304,
-              "undecoded_bytes": 22787,
-              "instruction_count": 709285
+              "decoded_bytes": 1851295,
+              "undecoded_bytes": 22796,
+              "instruction_count": 709290
             },
             "stack": {
               "kind": "partial",
@@ -4812,7 +4809,7 @@
                   },
                   {
                     "kind": "call-site-outside-function",
-                    "occurrences": 1447
+                    "occurrences": 1436
                   },
                   {
                     "kind": "direct-call-outside-functions",
@@ -4846,7 +4843,7 @@
                 "artifact": {
                   "path": "work/heltec-e290/stack-evidence.json",
                   "bytes": 1560466,
-                  "fingerprint": "12602866943746d9e04996981614c27bc9534941d894b6f9ad50a2f147ab9a75"
+                  "fingerprint": "52a7916e07d0b5f109e0efd4fd27d2bc48a74b25c0fa975ff4727d7e09a64851"
                 }
               }
             }
@@ -5011,9 +5008,8 @@
     {
       "schema_version": 9,
       "source": {
-        "kind": "working-tree",
-        "head": "5cb30c612397b906c70e13e8801ac3b32ff6c375",
-        "diff_fingerprint": "73cf8697ac494b5a333e09a6af7e6fbeebe2fdf368a3808ff740372577e90ff1"
+        "kind": "clean-commit",
+        "commit": "5bc902b9b96cc3e74ab4c517cba2bd00ec95f69f"
       },
       "target": {
         "id": "heltec-wireless-stick-lite-v3",
@@ -5448,7 +5444,7 @@
           {
             "path": "firmware/hopspot/heltec-wireless-stick-lite-v3/0.3.7/application.bin",
             "bytes": 1290992,
-            "fingerprint": "71592d029f6dcd5044872b0fee7caf7b3ce4d9780596918019346047f143b244"
+            "fingerprint": "b3b9d795ce8670ba4b20d9165b6f01cb0eb0f166cd70320c7c95c6ef54fc466e"
           }
         ]
       },
@@ -5918,7 +5914,7 @@
                 "end": 1108569261,
                 "bytes": 1141901,
                 "alignment": 4,
-                "fingerprint": "5f58450f076c870ce9734f8b0315545abf4f760f1591efd24ae163d3eca17d7d"
+                "fingerprint": "26420ff90852ea3094b6597ab99a2395a93e8cb5ba37b517c4ce61e1c06217b7"
               },
               {
                 "name": ".init",
@@ -5956,11 +5952,11 @@
             "functions": {
               "normalization": "linked-function-body-sha256-v1",
               "boundary_count": 2178,
-              "boundaries_fingerprint": "5ea8b2d7b7f3ae5d93200f2318115791e662a133a8298e215c04797ad901151d",
+              "boundaries_fingerprint": "8eeb9f9e5158b68512667b7b2e3f61253adb583a32accd8d10ef170520d24b0f",
               "boundaries_artifact": {
                 "path": "work/heltec-wireless-stick-lite-v3/function-boundaries.json",
                 "bytes": 640724,
-                "fingerprint": "2d7b3347214713bc03655db5995d8c35aa1f2a669312ccdb712d61a323eaacf6"
+                "fingerprint": "56f5beca177d37f28326b181624f8537b82c412129a4d4ce6a7fef5f2b14607a"
               },
               "classified_bytes": 1133539,
               "unclassified_bytes": 41116,
@@ -5998,7 +5994,7 @@
                   "address": 1108241192,
                   "end": 1108284869,
                   "bytes": 43677,
-                  "fingerprint": "2cf2f8d69aaa646275c0ab85c6fdef9354b92bf2adbfb229da784950f9beac5d"
+                  "fingerprint": "71d590dc1e5055d227ccd79e8744d82c728b100abdfea963f3ef516e5ff86cf6"
                 },
                 {
                   "name": "prns_runtime_embassy::manifold::driver::inline_work::fulfill_owed_work_inline::<personal_hopspot_esp32::storage::internal::InternalStorage, prns_runtime_embassy…ed_persistence::EmbeddedPersistenceDiagnostic), 32>>>::{closure#0}::{closure#6}> [sha256:920dfda7bbdb]",
@@ -6026,7 +6022,7 @@
                   "address": 1108206844,
                   "end": 1108241189,
                   "bytes": 34345,
-                  "fingerprint": "e89432542aa8698fbe66927827e5d1e56eb5268a5f2c2e519245713670d79d92"
+                  "fingerprint": "35b200978ec4faa1385ffa1816f26038bb25d36255588e71176ddba2ac2f14e4"
                 },
                 {
                   "name": "<prns_interfaces_embassy::lora::LoRaInterface<prns_interfaces_embassy::radios::sx126x::Sx126x<embedded_hal_bus::spi::exclusive::ExclusiveDevice<esp_hal::spi::ma…ersonal_hopspot_esp32::s3fn8::entropy::S3Fn8EntropySource, 3, 508>>::{closure#0} [sha256:8991ffbf4681]",
@@ -6113,9 +6109,9 @@
               "program": "xtensa-esp32s3-elf-objdump",
               "version": "the GNU General Public License version 3 or (at your option) any later version.",
               "executable_bytes": 1174655,
-              "decoded_bytes": 1163778,
-              "undecoded_bytes": 10877,
-              "instruction_count": 447664
+              "decoded_bytes": 1163770,
+              "undecoded_bytes": 10885,
+              "instruction_count": 447661
             },
             "stack": {
               "kind": "partial",
@@ -6316,7 +6312,7 @@
                 "artifact": {
                   "path": "work/heltec-wireless-stick-lite-v3/stack-evidence.json",
                   "bytes": 416074,
-                  "fingerprint": "a9e487f3ff0b46891ad2f6307d0df803f066f042cbb88251c47da09ea871e86c"
+                  "fingerprint": "c611ad5aadbffd274683c5fc519dd33b2889538eda67f9505bb2b1924ba5e02b"
                 }
               }
             }
@@ -6379,9 +6375,8 @@
     {
       "schema_version": 9,
       "source": {
-        "kind": "working-tree",
-        "head": "5cb30c612397b906c70e13e8801ac3b32ff6c375",
-        "diff_fingerprint": "73cf8697ac494b5a333e09a6af7e6fbeebe2fdf368a3808ff740372577e90ff1"
+        "kind": "clean-commit",
+        "commit": "5bc902b9b96cc3e74ab4c517cba2bd00ec95f69f"
       },
       "target": {
         "id": "t-beam-supreme",
@@ -6869,12 +6864,12 @@
           {
             "path": "firmware/hopspot/t-beam-supreme/0.3.7/application.bin",
             "bytes": 2193568,
-            "fingerprint": "2fbdb384d082797839cc297aec94da6e7e0d0abd0e66c873bc17fb11e4abdd70"
+            "fingerprint": "163467cc6f64bc0dfc01093429376d6f8358f501d37382946434121318706853"
           }
         ]
       },
       "analysis": {
-        "linker_map_bytes": 10761093,
+        "linker_map_bytes": 10761132,
         "allocated_sections": {
           "kind": "complete",
           "value": [
@@ -7394,7 +7389,7 @@
                 "end": 1109451125,
                 "bytes": 1827157,
                 "alignment": 4,
-                "fingerprint": "493cb741c624c4861833def257a99eb82e21cc2d4b6795ec2fabb37781bfc6be"
+                "fingerprint": "474b6dd8a61d130020e2355ca3aa7534d76d09524327f86e53ba257849418b46"
               },
               {
                 "name": ".init",
@@ -7432,11 +7427,11 @@
             "functions": {
               "normalization": "linked-function-body-sha256-v1",
               "boundary_count": 4940,
-              "boundaries_fingerprint": "7ade0cb6efa2931652a0f6ece217cea53a715fc53115037d4b645e21e20bef0d",
+              "boundaries_fingerprint": "7531c3e5b46d2783edbb97a48f1f0ab34d54a94ecf7e887127717393892e786f",
               "boundaries_artifact": {
                 "path": "work/t-beam-supreme/function-boundaries.json",
                 "bytes": 1306779,
-                "fingerprint": "58395928df3cc2e1d909facc7f82838b0e1ea2a9bcd087c168c0f02f0a424439"
+                "fingerprint": "ce12039da7d29dee3e70c8b359886b1d6c77ffe3612dcf8afb450be2bcbeaf09"
               },
               "classified_bytes": 1790586,
               "unclassified_bytes": 100993,
@@ -7589,9 +7584,9 @@
               "program": "xtensa-esp32s3-elf-objdump",
               "version": "the GNU General Public License version 3 or (at your option) any later version.",
               "executable_bytes": 1891579,
-              "decoded_bytes": 1868563,
-              "undecoded_bytes": 23016,
-              "instruction_count": 715840
+              "decoded_bytes": 1868561,
+              "undecoded_bytes": 23018,
+              "instruction_count": 715858
             },
             "stack": {
               "kind": "partial",
@@ -7848,7 +7843,7 @@
                   },
                   {
                     "kind": "call-site-outside-function",
-                    "occurrences": 1407
+                    "occurrences": 1401
                   },
                   {
                     "kind": "direct-call-outside-functions",
@@ -7882,7 +7877,7 @@
                 "artifact": {
                   "path": "work/t-beam-supreme/stack-evidence.json",
                   "bytes": 1568986,
-                  "fingerprint": "ee5af179590657121931f156d7dc5cb4e2560393ea40842770b9ca7c25b89f94"
+                  "fingerprint": "97df1ecbe2b6828c8f0caf8d913e7726009361d11eba8c16ca08848d62ba6a9f"
                 }
               }
             }
@@ -8053,9 +8048,8 @@
     {
       "schema_version": 9,
       "source": {
-        "kind": "working-tree",
-        "head": "5cb30c612397b906c70e13e8801ac3b32ff6c375",
-        "diff_fingerprint": "73cf8697ac494b5a333e09a6af7e6fbeebe2fdf368a3808ff740372577e90ff1"
+        "kind": "clean-commit",
+        "commit": "5bc902b9b96cc3e74ab4c517cba2bd00ec95f69f"
       },
       "target": {
         "id": "xiao-esp32-c6",
@@ -8353,7 +8347,7 @@
           {
             "path": "firmware/hopspot/xiao-esp32-c6/0.3.7/application.bin",
             "bytes": 1714896,
-            "fingerprint": "be7d6a6e1a34b5a8c0c6b9e2cc3c4ceb9c664e048f778aa826c55513364e5881"
+            "fingerprint": "130dfb08ca4c3001d409038eac6fdff7a834574d15c20babfad6887a8b3881cd"
           }
         ]
       },
@@ -8803,7 +8797,7 @@
                 "end": 1108954764,
                 "bytes": 1396332,
                 "alignment": 4,
-                "fingerprint": "810164ff14097945beacfc3d750b962a486edadb0b24a87d63bab54c9c237097"
+                "fingerprint": "99370af2da08b5f81d959ccab553a584376742e00178325698f280236a6b887c"
               }
             ],
             "startup": {
@@ -8825,11 +8819,11 @@
             "functions": {
               "normalization": "linked-function-body-sha256-v1",
               "boundary_count": 4889,
-              "boundaries_fingerprint": "f54e34e51be61ed95cfb24b6f608d019d3ca7d30e3432c61e14455ab9833fc98",
+              "boundaries_fingerprint": "d2778bfd368dadcf6ee7aad92646d31ec672aa9ee7a78dbb3c22d34e4f101266",
               "boundaries_artifact": {
                 "path": "work/xiao-esp32-c6/function-boundaries.json",
                 "bytes": 1216367,
-                "fingerprint": "62ed8d0100d05c0aad09ec1a56af723b251a27c657fab19038eb670d1a5f5d27"
+                "fingerprint": "0474d71c1b48da617d77ae2b96038376baaad165ded5cf5616044ae01f5eb821"
               },
               "classified_bytes": 1476968,
               "unclassified_bytes": 1716,
@@ -8860,7 +8854,7 @@
                   "address": 1107559180,
                   "end": 1107601544,
                   "bytes": 42364,
-                  "fingerprint": "4e2a8facaaca04523735bd7c836b5c1597741bbc2db12572c65a8cd4c1703c2b"
+                  "fingerprint": "d2129826edf6076963c11fe7223243cff6e7254264bb3f7dc535e7a8e439bec7"
                 },
                 {
                   "name": "<prns_core::engine::state::EngineState<personal_hopspot_esp32::storage::internal::InternalStorage>>::ingest_classified_into_report::<prns_runtime_embassy::manif…ed_persistence::EmbeddedPersistenceDiagnostic), 32>>>::{closure#0}::{closure#2}> [sha256:7a1d54698b62]",
@@ -8909,7 +8903,7 @@
                   "address": 1108024404,
                   "end": 1108038358,
                   "bytes": 13954,
-                  "fingerprint": "13182a2783ceec57cb7cdf734d84b80485ac32dc99e26e34838a4cf3891f0b7f"
+                  "fingerprint": "8fc9eb74b5d9a88178c3dcd8ec39f39874143f924b9c9e11de2be4a37d318635"
                 },
                 {
                   "name": "sha2::sha256::compress256",
@@ -8923,7 +8917,7 @@
                   "address": 1108051694,
                   "end": 1108064246,
                   "bytes": 12552,
-                  "fingerprint": "153056cd4f61b7e752f63c026abd2eb7d1d929911806725e348b394d3313a5dc"
+                  "fingerprint": "5c68888e6081f725f4e4f49fd7d8b6a3620b2089eb3ae1136999b61e927b1b73"
                 },
                 {
                   "name": "<core::pin::Pin<&mut <trouble_host::host::RxRunner<bt_hci::controller::ExternalController<prns_interfaces_embassy::bluetooth_auto::cooperative_transport::Cooper…ouble::backend::ScanFunnel>::{closure#0}> as core::future::future::Future>::poll [sha256:e0d579c34ef4]",
@@ -8937,7 +8931,7 @@
                   "address": 1108010352,
                   "end": 1108021566,
                   "bytes": 11214,
-                  "fingerprint": "380a8eb5dd2b3479ee58ce3deeab86db0e43d066c8587091a85c02ac8af9aafc"
+                  "fingerprint": "f10980a9028f421656ea246fe046ded041403f089daea4113e552e6ec7c9ebfa"
                 },
                 {
                   "name": "<trouble_host::host::ControlRunner<bt_hci::controller::ExternalController<prns_interfaces_embassy::bluetooth_auto::cooperative_transport::CooperativeTransport<e…sync::blocking_mutex::raw::CriticalSectionRawMutex, 512, 32>>>::run::{closure#0} [sha256:55bf92ed19a6]",
@@ -8958,7 +8952,7 @@
                   "address": 1108096734,
                   "end": 1108105266,
                   "bytes": 8532,
-                  "fingerprint": "ba1bd4a43742ab6545779f39bfc8468ed9c856f7f883dc4a697a2b5592f97039"
+                  "fingerprint": "04213ebe1155a44228064affc6fa4cafa096ff8eb02204cc541cd5bad0c40906"
                 },
                 {
                   "name": "<curve25519_dalek::backend::serial::u32::scalar::Scalar29>::mul",
@@ -9263,9 +9257,8 @@
     {
       "schema_version": 9,
       "source": {
-        "kind": "working-tree",
-        "head": "5cb30c612397b906c70e13e8801ac3b32ff6c375",
-        "diff_fingerprint": "73cf8697ac494b5a333e09a6af7e6fbeebe2fdf368a3808ff740372577e90ff1"
+        "kind": "clean-commit",
+        "commit": "5bc902b9b96cc3e74ab4c517cba2bd00ec95f69f"
       },
       "target": {
         "id": "t-echo-s140-v6",
@@ -10341,9 +10334,8 @@
     {
       "schema_version": 9,
       "source": {
-        "kind": "working-tree",
-        "head": "5cb30c612397b906c70e13e8801ac3b32ff6c375",
-        "diff_fingerprint": "73cf8697ac494b5a333e09a6af7e6fbeebe2fdf368a3808ff740372577e90ff1"
+        "kind": "clean-commit",
+        "commit": "5bc902b9b96cc3e74ab4c517cba2bd00ec95f69f"
       },
       "target": {
         "id": "t-echo-s140-v7",
@@ -11419,9 +11411,8 @@
     {
       "schema_version": 9,
       "source": {
-        "kind": "working-tree",
-        "head": "5cb30c612397b906c70e13e8801ac3b32ff6c375",
-        "diff_fingerprint": "73cf8697ac494b5a333e09a6af7e6fbeebe2fdf368a3808ff740372577e90ff1"
+        "kind": "clean-commit",
+        "commit": "5bc902b9b96cc3e74ab4c517cba2bd00ec95f69f"
       },
       "target": {
         "id": "t114",
@@ -12540,9 +12531,8 @@
     {
       "schema_version": 9,
       "source": {
-        "kind": "working-tree",
-        "head": "5cb30c612397b906c70e13e8801ac3b32ff6c375",
-        "diff_fingerprint": "73cf8697ac494b5a333e09a6af7e6fbeebe2fdf368a3808ff740372577e90ff1"
+        "kind": "clean-commit",
+        "commit": "5bc902b9b96cc3e74ab4c517cba2bd00ec95f69f"
       },
       "target": {
         "id": "mesh-pocket-5000",
@@ -13617,9 +13607,8 @@
     {
       "schema_version": 9,
       "source": {
-        "kind": "working-tree",
-        "head": "5cb30c612397b906c70e13e8801ac3b32ff6c375",
-        "diff_fingerprint": "73cf8697ac494b5a333e09a6af7e6fbeebe2fdf368a3808ff740372577e90ff1"
+        "kind": "clean-commit",
+        "commit": "5bc902b9b96cc3e74ab4c517cba2bd00ec95f69f"
       },
       "target": {
         "id": "mesh-pocket-10000",
@@ -14694,9 +14683,8 @@
     {
       "schema_version": 9,
       "source": {
-        "kind": "working-tree",
-        "head": "5cb30c612397b906c70e13e8801ac3b32ff6c375",
-        "diff_fingerprint": "73cf8697ac494b5a333e09a6af7e6fbeebe2fdf368a3808ff740372577e90ff1"
+        "kind": "clean-commit",
+        "commit": "5bc902b9b96cc3e74ab4c517cba2bd00ec95f69f"
       },
       "target": {
         "id": "t096",
@@ -15796,9 +15784,8 @@
     {
       "schema_version": 9,
       "source": {
-        "kind": "working-tree",
-        "head": "5cb30c612397b906c70e13e8801ac3b32ff6c375",
-        "diff_fingerprint": "73cf8697ac494b5a333e09a6af7e6fbeebe2fdf368a3808ff740372577e90ff1"
+        "kind": "clean-commit",
+        "commit": "5bc902b9b96cc3e74ab4c517cba2bd00ec95f69f"
       },
       "target": {
         "id": "t1000-e",
@@ -16847,9 +16834,8 @@
     {
       "schema_version": 9,
       "source": {
-        "kind": "working-tree",
-        "head": "5cb30c612397b906c70e13e8801ac3b32ff6c375",
-        "diff_fingerprint": "73cf8697ac494b5a333e09a6af7e6fbeebe2fdf368a3808ff740372577e90ff1"
+        "kind": "clean-commit",
+        "commit": "5bc902b9b96cc3e74ab4c517cba2bd00ec95f69f"
       },
       "target": {
         "id": "mesh-tower-v2",
