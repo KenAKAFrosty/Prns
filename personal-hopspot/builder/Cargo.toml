@@ -16,6 +16,7 @@ prns-flash-manifest = { path = "../../prns-flash-manifest" }
 prns-nrf-dfu = { path = "../../prns-nrf-dfu" }
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "2.0"
+toml = "1.1"
 
 [dev-dependencies]
 serde_json = "1.0"
