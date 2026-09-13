@@ -1868,3 +1868,9 @@ name = "target_attempt_deadlines_are_strictly_future_and_pairing_bounded"
 source = "prns-core/src/remote_control/pairing/target_pairing/kani_proofs.rs"
 group = "remote-control"
 tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "unexpired_pairing_windows_always_admit_a_bounded_attempt_timeout"
+source = "prns-core/src/remote_control/pairing/target_pairing/kani_proofs.rs"
+group = "remote-control"
+tiers = ["release", "scheduled"]

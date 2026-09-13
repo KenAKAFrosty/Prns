@@ -62,6 +62,19 @@ impl TargetPairingFixture {
         RemoteControlPairingContext::new(self.session.endpoint(), self.link_id)
     }
 
+    fn with_window(opened_at: u64, expires_at: u64, timeout: u64) -> Self {
+        let mut fixture = Self::new();
+        fixture.session = RemoteControlPairingSession::new(
+            RemoteControlPairingIdentity::new(fixture.session.identity().identity_hash()),
+            RemoteControlPairingWindow::new(InstantMillis(opened_at), InstantMillis(expires_at))
+                .unwrap(),
+            permissions(),
+            RemoteControlPairingAttemptTimeout::try_from(DurationMillis(timeout)).unwrap(),
+            invitation_code().verifier(),
+        );
+        fixture
+    }
+
     fn permissions(&self) -> &RemoteControlPairingPermissions {
         self.session.permissions()
     }
@@ -158,12 +171,20 @@ fn prepare_offer(
     state: &mut RemoteControlTargetPairingState,
     fixture: &TargetPairingFixture,
 ) -> (RemoteControlPairingAttemptId, RemoteControlPairingOffer) {
+    prepare_offer_at(state, fixture, ATTEMPT_STARTED_AT)
+}
+
+fn prepare_offer_at(
+    state: &mut RemoteControlTargetPairingState,
+    fixture: &TargetPairingFixture,
+    started_at: InstantMillis,
+) -> (RemoteControlPairingAttemptId, RemoteControlPairingOffer) {
     let arrival = fixture.begin_arrival(0x60);
     match state.begin(
         &fixture.target_signer,
         &fixture.session,
         &arrival,
-        ATTEMPT_STARTED_AT,
+        started_at,
     ) {
         BeginRemoteControlTargetPairingOutcome::OfferPrepared {
             attempt_id,
@@ -411,6 +432,155 @@ fn attempt_windows_are_positive_bounded_by_the_pairing_window_and_overflow_safe(
             }
         ),
     );
+}
+
+#[test]
+fn begin_signs_the_timeout_that_fits_the_remaining_pairing_window() {
+    let cases = [
+        // A 120-second invitation with a configured 60-second attempt.
+        (1_000, 121_000, 1_000, 60_000, 61_000),
+        (1_000, 121_000, 61_000, 60_000, 121_000),
+        (1_000, 121_000, 76_000, 45_000, 121_000),
+        (1_000, 121_000, 120_999, 1, 121_000),
+        // Bound before adding, so a still-open near-MAX window cannot overflow.
+        (
+            u64::MAX - 120_000,
+            u64::MAX,
+            u64::MAX - 45_000,
+            45_000,
+            u64::MAX,
+        ),
+        (u64::MAX - 120_000, u64::MAX, u64::MAX - 1, 1, u64::MAX),
+    ];
+    for (opened_at, expires_at, started_at, expected_timeout, expected_expiry) in cases {
+        let fixture = TargetPairingFixture::with_window(opened_at, expires_at, 60_000);
+        let mut state = RemoteControlTargetPairingState::default();
+        let (attempt_id, offer) = prepare_offer_at(&mut state, &fixture, InstantMillis(started_at));
+        let transcript = offer.verify(fixture.context(), &fixture.begin).unwrap();
+        let window = attempt_view(&state).window();
+
+        assert_eq!(
+            offer.attempt_timeout().duration(),
+            DurationMillis(expected_timeout)
+        );
+        assert_eq!(transcript.attempt_timeout(), offer.attempt_timeout());
+        assert_eq!(window.attempt_timeout(), offer.attempt_timeout());
+        assert_eq!(window.expires_at(), InstantMillis(expected_expiry));
+        assert_eq!(window.started_at(), InstantMillis(started_at));
+        assert_eq!(attempt_id, RemoteControlPairingAttemptId::from(&transcript));
+        assert_eq!(
+            fixture.session.attempt_timeout().duration(),
+            DurationMillis(60_000)
+        );
+        assert!(window.expires_at() > window.started_at());
+        assert!(window.expires_at() <= fixture.session.window().expires_at());
+    }
+}
+
+#[test]
+fn begin_still_refuses_elapsed_pairing_windows_without_an_offer() {
+    for (opened_at, expires_at, started_at) in [
+        (1_000, 121_000, 121_000),
+        (1_000, 121_000, 121_001),
+        (u64::MAX - 120_000, u64::MAX, u64::MAX),
+    ] {
+        let fixture = TargetPairingFixture::with_window(opened_at, expires_at, 60_000);
+        let mut state = RemoteControlTargetPairingState::default();
+        assert_eq!(
+            state.begin(
+                &fixture.target_signer,
+                &fixture.session,
+                &fixture.begin_arrival(0x60),
+                InstantMillis(started_at),
+            ),
+            BeginRemoteControlTargetPairingOutcome::PairingUnavailable {
+                reason: RemoteControlTargetPairingAttemptWindowError::PairingWindowElapsed {
+                    started_at: InstantMillis(started_at),
+                    pairing_expires_at: InstantMillis(expires_at),
+                },
+            },
+        );
+        assert_eq!(state.view(), RemoteControlTargetPairingView::Idle);
+    }
+}
+
+#[test]
+fn late_attempt_confirmation_expires_at_the_original_pairing_deadline() {
+    let fixture = TargetPairingFixture::with_window(1_000, 121_000, 60_000);
+    let mut state = RemoteControlTargetPairingState::default();
+    let (attempt_id, _) = prepare_offer_at(&mut state, &fixture, InstantMillis(76_000));
+    assert!(matches!(
+        state.offer_dispatched(attempt_id),
+        DispatchRemoteControlTargetPairingOfferOutcome::AwaitingConfirmation { .. }
+    ));
+    assert_eq!(
+        state.expire(InstantMillis(120_999)),
+        ExpireRemoteControlTargetPairingOutcome::NotDue {
+            expires_at: InstantMillis(121_000)
+        },
+    );
+    assert_eq!(
+        state.approve(attempt_id, InstantMillis(121_000)),
+        ApproveRemoteControlTargetPairingOutcome::Expired {
+            expired: RemoteControlTargetPairingAborted::AwaitingBoth {
+                attempt_id,
+                context: fixture.context(),
+            },
+        },
+    );
+    assert_eq!(state.view(), RemoteControlTargetPairingView::Idle);
+}
+
+#[test]
+fn late_attempt_authorization_cannot_extend_the_pairing_deadline() {
+    for persisted_at in [120_999, 121_000, 121_001] {
+        let fixture = TargetPairingFixture::with_window(1_000, 121_000, 60_000);
+        let mut state = RemoteControlTargetPairingState::default();
+        let now = InstantMillis(76_000);
+        let (attempt_id, offer) = prepare_offer_at(&mut state, &fixture, now);
+        let transcript = offer.verify(fixture.context(), &fixture.begin).unwrap();
+        state.offer_dispatched(attempt_id);
+        assert_eq!(
+            state.approve(attempt_id, now),
+            ApproveRemoteControlTargetPairingOutcome::AwaitingControllerCommit { attempt_id },
+        );
+        // Commit the actual shortened transcript, not the configured 60-second offer.
+        let arrival = RemoteControlTargetPairingCommitArrival::new(
+            RemoteControlPairingCommit::new(&transcript),
+            responder(fixture.link_id, 0x61),
+            fixture.begin.controller().identity_hash(),
+        );
+        let CommitRemoteControlTargetPairingOutcome::AuthorizationOwed { grant, .. } =
+            state.commit(arrival, now)
+        else {
+            panic!("the signed shortened offer can be committed")
+        };
+        let result = state.authorization_persisted(
+            attempt_id,
+            &fixture.target_signer,
+            InstantMillis(persisted_at),
+        );
+        if persisted_at < 121_000 {
+            assert!(matches!(
+                result,
+                PersistRemoteControlTargetPairingAuthorizationOutcome::CompletionOwed { .. }
+            ));
+            assert_eq!(
+                attempt_view(&state).window().expires_at(),
+                InstantMillis(121_000)
+            );
+        } else {
+            assert_eq!(
+                result,
+                PersistRemoteControlTargetPairingAuthorizationOutcome::AuthorizationPersistedAfterDeadline {
+                    attempt_id,
+                    context: fixture.context(),
+                    grant,
+                },
+            );
+            assert_eq!(state.view(), RemoteControlTargetPairingView::Idle);
+        }
+    }
 }
 
 #[test]
