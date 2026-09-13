@@ -15658,11 +15658,11 @@
       "name": "personal-hopspot-esp32",
       "source": "personal-hopspot/embedded/esp32",
       "unsafe": {
-        "blocks": 1013,
+        "blocks": 1016,
         "externs": 779,
-        "functions": 123,
+        "functions": 124,
         "impls": 39,
-        "tokens": 2087
+        "tokens": 2091
       },
       "version": "0.1.0"
     },
@@ -16660,6 +16660,7 @@
         "engine": [
           "alloc",
           "default",
+          "embassy-host",
           "flash",
           "resource-work-offload",
           "std",
