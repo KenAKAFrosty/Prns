@@ -9,7 +9,7 @@ use prns_flash_manifest::{
 };
 
 use crate::architecture::adapter_for_rust_target;
-use crate::{embedded_cargo_command, BuildContext, BuildError, FirmwareEvidence};
+use crate::{embedded_cargo_command, BuildContext, BuildError, FirmwareEvidence, LtoMode};
 
 const PARTITION_TABLE_OFFSET: u32 = 0x8000;
 
@@ -102,7 +102,12 @@ pub fn build(
         cargo.env("PRNS_BUILD_SOURCE_DIGEST", source_digest);
     }
     let adapter = adapter_for_rust_target(&recipe.rust_target)?;
-    let capture = context.configure_firmware_cargo(memory.id().0, adapter, &mut cargo)?;
+    let capture = context.configure_firmware_cargo(
+        memory.id().0,
+        adapter,
+        LtoMode::Configured,
+        &mut cargo,
+    )?;
     let firmware = context.run_firmware_build(
         &mut cargo,
         "embedded ESP cargo build",

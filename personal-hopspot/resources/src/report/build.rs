@@ -389,7 +389,11 @@ pub(super) fn build_identity(
     let requested = RequestedBuildSettingsIdentity {
         lto: requested_lto(context.intent().lto()),
     };
-    let settings = build_settings::resolve(context.repository(), manifest, context.intent().lto())?;
+    let settings = build_settings::resolve(
+        context.repository(),
+        manifest,
+        context.intent().lto().resolve(recipe.configured_lto),
+    )?;
     let fingerprint = fingerprint(&BuildFingerprint {
         firmware_version: version,
         cargo_profile: CARGO_PROFILE,

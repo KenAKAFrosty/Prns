@@ -13,7 +13,9 @@ use prns_nrf_dfu::{
 
 use crate::architecture::adapter_for_rust_target;
 use crate::artifact::publish;
-use crate::{embedded_cargo_command, run_status, BuildContext, BuildError, FirmwareEvidence};
+use crate::{
+    embedded_cargo_command, run_status, BuildContext, BuildError, FirmwareEvidence, LtoMode,
+};
 
 use super::binary;
 
@@ -82,7 +84,12 @@ pub fn build(
         .env("PRNS_BUILD_VERSION", context.version())
         .current_dir(&crate_dir);
     let adapter = adapter_for_rust_target(&recipe.rust_target)?;
-    let capture = context.configure_firmware_cargo(memory.id().0, adapter, &mut cargo)?;
+    let capture = context.configure_firmware_cargo(
+        memory.id().0,
+        adapter,
+        LtoMode::Configured,
+        &mut cargo,
+    )?;
     let firmware = context.run_firmware_build(
         &mut cargo,
         "Nordic serial DFU cargo build",

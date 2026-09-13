@@ -43,7 +43,7 @@ pub(crate) enum BuildSettingsError {
 pub(super) fn resolve(
     repository: &Path,
     manifest: &str,
-    requested_lto: LtoMode,
+    lto_selection: LtoMode,
 ) -> Result<ResolvedBuildSettings, BuildSettingsError> {
     let path = repository.join(manifest);
     let source = std::fs::read_to_string(&path).map_err(|source| BuildSettingsError::Read {
@@ -58,14 +58,14 @@ pub(super) fn resolve(
     normalize(
         &path,
         manifest.profile.release.unwrap_or_default(),
-        requested_lto,
+        lto_selection,
     )
 }
 
 fn normalize(
     path: &Path,
     profile: RawReleaseProfile,
-    requested_lto: LtoMode,
+    lto_selection: LtoMode,
 ) -> Result<ResolvedBuildSettings, BuildSettingsError> {
     let mut effective_release = ReleaseSettingsIdentity {
         opt_level: optimization_level(
@@ -115,7 +115,7 @@ fn normalize(
         )?,
         rpath: profile.rpath.unwrap_or(false),
     };
-    effective_release.lto = match requested_lto {
+    effective_release.lto = match lto_selection {
         LtoMode::Configured => effective_release.lto,
         LtoMode::Fat => CargoLtoIdentity::Fat,
         LtoMode::Thin => CargoLtoIdentity::Thin,

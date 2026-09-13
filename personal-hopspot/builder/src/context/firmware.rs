@@ -5,7 +5,9 @@ use std::process::{Command, Stdio};
 use crate::architecture::Adapter;
 use crate::source::source_date_epoch;
 use crate::toolchain::capture_toolchain_evidence;
-use crate::{run_status, BuildError, FirmwareEvidence, LinkOverflowEvidence, ToolchainEvidence};
+use crate::{
+    run_status, BuildError, FirmwareEvidence, LinkOverflowEvidence, LtoMode, ToolchainEvidence,
+};
 
 use super::BuildContext;
 
@@ -39,6 +41,7 @@ impl BuildContext<'_> {
         &self,
         target_id: &str,
         adapter: &Adapter,
+        configured_lto: LtoMode,
         command: &mut Command,
     ) -> Result<FirmwareBuildCapture, BuildError> {
         if self.intent.is_resource_report() {
@@ -49,7 +52,7 @@ impl BuildContext<'_> {
                     .map_err(|error| BuildError::Repository(error.to_string()))?,
             );
         }
-        if let Some(lto) = self.intent.lto().cargo_value() {
+        if let Some(lto) = self.intent.lto().resolve(configured_lto).cargo_value() {
             command.env("CARGO_PROFILE_RELEASE_LTO", lto);
         }
         let linker = adapter.configure_cargo(command, self.intent)?;

@@ -744,6 +744,35 @@ fn build_fingerprint_distinguishes_lto_configuration() -> Result<(), Box<dyn std
 }
 
 #[test]
+fn configured_build_uses_recipe_lto_and_explicit_override_wins(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let repository = tempfile::tempdir()?;
+    std::fs::write(
+        repository.path().join("Cargo.toml"),
+        "[profile.release]\nlto = \"fat\"\n",
+    )?;
+    let output = repository.path().join("output");
+    let configured =
+        BuildContext::new(repository.path(), &output, BuildVersion::Developer("0.1.0"))?
+            .with_intent(BuildIntent::ResourceReport {
+                lto: LtoMode::Configured,
+            });
+    let explicit_fat =
+        BuildContext::new(repository.path(), &output, BuildVersion::Developer("0.1.0"))?
+            .with_intent(BuildIntent::ResourceReport { lto: LtoMode::Fat });
+
+    let configured = build_identity(&configured, recipe_with_lto(LtoMode::Thin))?;
+    let explicit_fat = build_identity(&explicit_fat, recipe_with_lto(LtoMode::Thin))?;
+
+    assert_eq!(configured.requested.lto, RequestedLtoIdentity::Configured);
+    assert_eq!(configured.effective_release.lto, CargoLtoIdentity::Thin);
+    assert_eq!(explicit_fat.requested.lto, RequestedLtoIdentity::Fat);
+    assert_eq!(explicit_fat.effective_release.lto, CargoLtoIdentity::Fat);
+    assert_ne!(configured.fingerprint, explicit_fat.fingerprint);
+    Ok(())
+}
+
+#[test]
 fn memory_contract_identity_captures_the_complete_profile() -> Result<(), Box<dyn std::error::Error>>
 {
     let identity = contract::identity(&T114)?;
@@ -806,12 +835,17 @@ fn firmware_flash_usage_is_bounded_by_the_owned_region() -> Result<(), ReportErr
 }
 
 fn recipe() -> RecipeIdentity<'static> {
+    recipe_with_lto(LtoMode::Configured)
+}
+
+fn recipe_with_lto(configured_lto: LtoMode) -> RecipeIdentity<'static> {
     RecipeIdentity {
         kind: "nrf-serial-dfu",
         manifest: "Cargo.toml",
         package: "personal-hopspot-t114",
         binary: "personal-hopspot-t114",
         features: vec!["t114"],
+        configured_lto,
     }
 }
 

@@ -134,3 +134,23 @@ fn unknown_targets_are_rejected() -> Result<(), Box<dyn std::error::Error>> {
     ));
     Ok(())
 }
+
+#[test]
+fn mesh_tower_alone_selects_thin_lto() -> Result<(), Box<dyn std::error::Error>> {
+    let catalog = prns_flash_manifest::board_catalog()?;
+    let matrix = Matrix::from_catalog(&catalog)?;
+    let selections = matrix
+        .iter()
+        .map(|target| (target.id(), target.recipe_identity().configured_lto))
+        .collect::<Vec<_>>();
+
+    for (target, lto) in selections {
+        let expected = if target == "mesh-tower-v2" {
+            personal_hopspot_builder::LtoMode::Thin
+        } else {
+            personal_hopspot_builder::LtoMode::Configured
+        };
+        assert_eq!(lto, expected, "unexpected LTO policy for {target}");
+    }
+    Ok(())
+}

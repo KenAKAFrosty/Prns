@@ -2,10 +2,10 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-crate="$root/personal-hopspot/embedded/nrf52840"
 output="$root/target/hopspot-mesh-tower-v2"
-cargo_target="$output/cargo"
-elf="$cargo_target/thumbv7em-none-eabihf/release/heltec-mesh-tower-v2"
+resource_work="$root/target/flash-artifacts/resources/configured/work/mesh-tower-v2"
+elf="$resource_work/cargo/thumbv7em-none-eabihf/release/heltec-mesh-tower-v2"
+resource_binary="$resource_work/firmware.bin"
 binary="$output/heltec-mesh-tower-v2.bin"
 uf2="$output/heltec-mesh-tower-v2.uf2"
 nrf52840_uf2_family=0xADA52840
@@ -24,21 +24,14 @@ if [[ -z "$rust_host" ]]; then
 fi
 
 llvm_tools="$rust_sysroot/lib/rustlib/$rust_host/bin"
-llvm_objcopy="$llvm_tools/llvm-objcopy"
 llvm_objdump="$llvm_tools/llvm-objdump"
-if [[ ! -x "$llvm_objcopy" || ! -x "$llvm_objdump" ]]; then
+if [[ ! -x "$llvm_objdump" ]]; then
     echo "llvm-tools-preview is required; run: rustup component add llvm-tools-preview" >&2
     exit 1
 fi
 
 mkdir -p "$output"
-(
-    cd "$crate"
-    cargo build --release --locked --no-default-features \
-        --features board-mesh-tower-v2,softdevice-s140-v6 \
-        --bin heltec-mesh-tower-v2 \
-        --target-dir "$cargo_target"
-)
+"$root/tools/prns" build embedded resources report --target mesh-tower-v2
 
 application_base=""
 while read -r section_index section_name section_size section_vma section_rest; do
@@ -52,7 +45,7 @@ if [[ -z "$application_base" ]]; then
     exit 1
 fi
 
-"$llvm_objcopy" -O binary "$elf" "$binary"
+cp "$resource_binary" "$binary"
 python3 "$root/tools/device/bin2uf2.py" \
     "$binary" \
     "$uf2" \

@@ -11,7 +11,7 @@ except for the reported LTO selection.
 |---|---|---|---:|---:|---:|---:|---:|
 | T-Echo S140 v6 | fat | success | 621,976 B image; 4,712 B headroom | 4,816 B | 45,344 B; 24,288 B within reservation (advisory) | 56,440 B | SX126x 828 B; LR1110 928 B |
 | T-Echo S140 v6 | thin | memory overflow | 86,560 B beyond `FLASH` | unavailable | unavailable | unavailable | unavailable |
-| MeshTower V2 | configured (fat) | success | 563,184 B image; 206,864 B headroom | 11,332 B | 46,488 B; 23,144 B within reservation (advisory) | 49,528 B | SX126x 828 B; LR1110 928 B |
+| MeshTower V2 | fat | success | 563,184 B image; 206,864 B headroom | 11,332 B | 46,488 B; 23,144 B within reservation (advisory) | 49,528 B | SX126x 828 B; LR1110 928 B |
 | MeshTower V2 | thin | success | 651,508 B image; 118,540 B headroom | 11,324 B | 33,664 B; 35,968 B within reservation (advisory) | 49,528 B | SX126x 828 B; LR1110 928 B |
 
 The failed T-Echo link provides authoritative overflow and partial attribution
@@ -60,15 +60,15 @@ can link production firmware on the same compiler and processor architecture,
 but grows this firmware family substantially; the assurance kernel separately
 confirms target-instruction execution.
 
-The current evidence therefore supports retaining fat LTO as the canonical
-codegen policy. It neither proves nor disproves a fault limited to T-Echo
-hardware integration. The historical functional report should remain an
-unconfirmed hardware observation unless it can be reproduced with a precise
-milestone and captured fault evidence. The fat build's partial stack analysis
-also leaves unresolved indirect calls, interrupt nesting, foreign frames, and
-one recursive cycle. Its 45,344-byte modeled direct-call chain is useful
-pressure evidence, but path feasibility is not proven and it is not a stack
-safety bound.
+The evidence does not support changing the shared nRF52840 profile to thin LTO:
+T-Echo S140 v6 cannot fit that configuration. MeshTower instead selects thin
+LTO in its own build recipe. That accepts the reported hardware mitigation as a
+board-scoped precaution because the measured image fits with 118,540 bytes of
+headroom; it does not present the hardware observation as reproduced or proven.
+The T-Echo fat build's partial stack analysis also leaves unresolved indirect
+calls, interrupt nesting, foreign frames, and one recursive cycle. Its
+45,344-byte modeled direct-call chain is useful pressure evidence, but path
+feasibility is not proven and it is not a stack safety bound.
 
 ## Reproduction
 
@@ -77,14 +77,14 @@ Build and compare the production evidence:
 ```console
 ./tools/prns build embedded resources report --target t-echo-s140-v6 --lto fat
 ./tools/prns build embedded resources report --target t-echo-s140-v6 --lto thin --allow-overflow
+./tools/prns build embedded resources report --target mesh-tower-v2 --lto fat
 ./tools/prns build embedded resources report --target mesh-tower-v2 --lto configured
-./tools/prns build embedded resources report --target mesh-tower-v2 --lto thin
 ./tools/prns build embedded resources compare \
   target/flash-artifacts/resources/fat/reports/t-echo-s140-v6.json \
   target/flash-artifacts/resources/thin/reports/t-echo-s140-v6.json
 ./tools/prns build embedded resources compare \
-  target/flash-artifacts/resources/configured/reports/mesh-tower-v2.json \
-  target/flash-artifacts/resources/thin/reports/mesh-tower-v2.json
+  target/flash-artifacts/resources/fat/reports/mesh-tower-v2.json \
+  target/flash-artifacts/resources/configured/reports/mesh-tower-v2.json
 ```
 
 Run the Arm semantic experiment into ignored artifact directories:
