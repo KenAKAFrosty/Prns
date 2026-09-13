@@ -2,6 +2,8 @@
 use crate::engine::AnnounceOrigin;
 use crate::engine::{Directive, EngineReaction, FanTarget, Journaled};
 use crate::interfaces::{InterfaceId, InterfaceKind};
+#[cfg(feature = "movable-frame-forwarding")]
+use crate::wire::{WirePacketHeader, HEADER_MAX_LEN};
 
 pub struct AnnounceDirective<'a> {
     bytes: &'a [u8],
@@ -53,6 +55,17 @@ pub trait DirectiveEgress {
         size_hint: usize,
         fill: &mut dyn FnMut(&mut [u8]) -> Option<usize>,
     );
+
+    #[cfg(feature = "movable-frame-forwarding")]
+    fn forward_frame(&mut self, target: InterfaceId, header: WirePacketHeader, payload: &[u8]) {
+        self.emit_frame(target, HEADER_MAX_LEN + payload.len(), &mut |slot| {
+            let header_len = header.write(slot).ok()?;
+            let frame_len = header_len.checked_add(payload.len())?;
+            let destination = slot.get_mut(header_len..frame_len)?;
+            destination.copy_from_slice(payload);
+            Some(frame_len)
+        });
+    }
 
     fn send_measured_local_announce(&mut self, target: InterfaceId, bytes: &[u8]) {
         self.send(target, bytes);
@@ -135,6 +148,14 @@ pub fn route_reaction<Work>(
             fill,
         }) => {
             egress.emit_frame(target, size_hint, fill);
+        }
+        #[cfg(feature = "movable-frame-forwarding")]
+        EngineReaction::Directive(Directive::ForwardFrame {
+            target,
+            header,
+            payload,
+        }) => {
+            egress.forward_frame(target, header, payload);
         }
         #[cfg(feature = "runtime-metrics")]
         EngineReaction::Directive(Directive::SendMeasuredLocalAnnounce { target, bytes }) => {

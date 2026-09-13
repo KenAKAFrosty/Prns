@@ -1,7 +1,7 @@
 use super::address::{TransportId, WireAddress};
 use super::context::WireContext;
 use super::flags::{ContextFlag, DestinationType, IfacFlag, PacketType, PropagationType};
-use super::limits::TRUNCATED_HASH_BYTE_LEN;
+use super::limits::{HEADER_MIN_LEN, TRUNCATED_HASH_BYTE_LEN};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WireError {
@@ -27,6 +27,15 @@ pub struct WirePacketHeader {
 }
 
 impl WirePacketHeader {
+    pub const fn wire_len(&self) -> usize {
+        HEADER_MIN_LEN
+            + if self.transport_id.is_some() {
+                TRUNCATED_HASH_BYTE_LEN
+            } else {
+                0
+            }
+    }
+
     pub fn parse(bytes: &[u8]) -> Result<(WirePacketHeader, &[u8]), WireError> {
         let (&meta, rest) = bytes.split_first().ok_or(WireError::BufferTooShort)?;
         let (&hops, rest) = rest.split_first().ok_or(WireError::BufferTooShort)?;
@@ -63,12 +72,7 @@ impl WirePacketHeader {
     }
 
     pub fn write(&self, buf: &mut [u8]) -> Result<usize, WireError> {
-        let transport_len = if self.transport_id.is_some() {
-            TRUNCATED_HASH_BYTE_LEN
-        } else {
-            0
-        };
-        let header_len = 2 + transport_len + TRUNCATED_HASH_BYTE_LEN + 1;
+        let header_len = self.wire_len();
         if buf.len() < header_len {
             return Err(WireError::BufferTooShort);
         }

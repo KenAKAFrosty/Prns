@@ -42,13 +42,13 @@ pub use crypto_pool::{CryptoPoolConfig, CryptoWorkerPlacement, PoolWorkers};
 pub use egress::Egress;
 pub(crate) use host::TokioEntropy;
 pub use host::{TokioClock, TokioHost};
-pub(crate) use host_protocol::HostResourceDigestPreparation;
 pub use host_protocol::{
     AddInterfaceCommand, HostCommand, HostResourceMetadata, HostResourcePayload,
     HostResourcePayloadError, ProvideDecompressedHostCommand, RequestAnyHostCommand,
     ResourceInbound, RespondAnyHostCommand, SendResourceHostCommand,
     SendResourceSegmentHostCommand, StreamInbound,
 };
+pub(crate) use host_protocol::{HostResourceDigestPreparation, HostResourceRecycler};
 pub use interface_seam::TokioInterfaceSeam;
 pub use interface_status::TokioInterfaceStatus;
 pub(crate) use local_command_lane::{

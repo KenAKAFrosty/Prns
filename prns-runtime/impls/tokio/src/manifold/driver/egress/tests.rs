@@ -16,6 +16,9 @@ use crate::runtime::{
     AnnounceBackpressureEvent, AnnounceEgressOutcome, EgressLaneMetricsSnapshot,
     EgressMetricsSnapshot,
 };
+use crate::wire::{
+    ContextFlag, DestinationType, IfacFlag, PacketType, PropagationType, WireAddress,
+};
 
 use super::super::interface_status::TokioInterfaceStatus;
 
@@ -26,6 +29,122 @@ fn no_pacers() -> InterfacePacers {
 
 fn no_ifacs() -> InterfaceIfacs {
     InterfaceIfacs::default()
+}
+
+fn forwarded_header(hops: u8) -> WirePacketHeader {
+    WirePacketHeader {
+        ifac_flag: IfacFlag::Open,
+        context_flag: ContextFlag::Unset,
+        propagation: PropagationType::Broadcast,
+        destination_type: DestinationType::Link,
+        packet_type: PacketType::Data,
+        hops,
+        transport_id: None,
+        address: WireAddress::new([0x44; 16]),
+        context: WireContext::Resource,
+    }
+}
+
+#[test]
+fn same_shape_forwarding_moves_the_ingress_allocation_into_egress() {
+    let target = InterfaceId::new([0x71; 8]);
+    let payload = [0xA5; 96];
+    let mut wire = vec![0u8; HEADER_MAX_LEN + payload.len()];
+    let header_len = forwarded_header(0).write(&mut wire).unwrap();
+    wire[header_len..header_len + payload.len()].copy_from_slice(&payload);
+    wire.truncate(header_len + payload.len());
+
+    let (mut inbound_producer, mut inbound_consumer) = tokio_grant_lane(256, 1);
+    inbound_producer.try_grant().unwrap().fill(&wire);
+    inbound_producer.commit();
+    inbound_consumer.try_peek().unwrap();
+    let source = inbound_consumer.take_peeked().unwrap();
+    let source_allocation = source.bytes.as_ptr();
+    let payload_range = header_len..wire.len();
+
+    let (outbound_producer, mut outbound_consumer) = tokio_grant_lane(256, 1);
+    let mut egress = Egress::new(vec![(target, outbound_producer)]);
+    let ForwardedSlotOutcome::Moved { vacated } =
+        egress.try_move_forwarded_slot(target, forwarded_header(1), payload_range, source)
+    else {
+        panic!("same-shape forwarding moves the slot");
+    };
+
+    assert!(vacated.bytes.is_empty());
+    let forwarded = outbound_consumer.try_peek().unwrap();
+    assert_eq!(forwarded.bytes.as_ptr(), source_allocation);
+    let (header, forwarded_payload) = WirePacketHeader::parse(forwarded.frame()).unwrap();
+    assert_eq!(
+        (header, forwarded_payload),
+        (forwarded_header(1), payload.as_slice())
+    );
+}
+
+#[test]
+fn changed_header_shape_keeps_the_source_for_the_copy_fallback() {
+    let target = InterfaceId::new([0x72; 8]);
+    let mut incoming_header = forwarded_header(0);
+    incoming_header.transport_id = Some(crate::wire::TransportId::new([0x55; 16]));
+    let payload = [0x5A; 96];
+    let mut wire = vec![0u8; HEADER_MAX_LEN + payload.len()];
+    let header_len = incoming_header.write(&mut wire).unwrap();
+    wire[header_len..header_len + payload.len()].copy_from_slice(&payload);
+    wire.truncate(header_len + payload.len());
+
+    let (mut inbound_producer, mut inbound_consumer) = tokio_grant_lane(256, 1);
+    inbound_producer.try_grant().unwrap().fill(&wire);
+    inbound_producer.commit();
+    inbound_consumer.try_peek().unwrap();
+    let source = inbound_consumer.take_peeked().unwrap();
+    let payload_range = header_len..wire.len();
+
+    let (outbound_producer, mut outbound_consumer) = tokio_grant_lane(256, 1);
+    let mut egress = Egress::new(vec![(target, outbound_producer)]);
+    let ForwardedSlotOutcome::CopyRequired { source } =
+        egress.try_move_forwarded_slot(target, forwarded_header(1), payload_range.clone(), source)
+    else {
+        panic!("a changed header shape retains the source slot");
+    };
+
+    assert_eq!(&source.frame()[payload_range], &payload);
+    assert!(outbound_consumer.try_peek().is_none());
+}
+
+#[test]
+fn forwarded_slot_move_respects_unavailable_lane_isolation() {
+    let target = InterfaceId::new([0x73; 8]);
+    let payload = [0x3C; 96];
+    let mut wire = vec![0u8; HEADER_MAX_LEN + payload.len()];
+    let header_len = forwarded_header(0).write(&mut wire).unwrap();
+    wire[header_len..header_len + payload.len()].copy_from_slice(&payload);
+    wire.truncate(header_len + payload.len());
+
+    let (mut inbound_producer, mut inbound_consumer) = tokio_grant_lane(256, 1);
+    inbound_producer.try_grant().unwrap().fill(&wire);
+    inbound_producer.commit();
+    inbound_consumer.try_peek().unwrap();
+    let source = inbound_consumer.take_peeked().unwrap();
+    let source_allocation = source.bytes.as_ptr();
+    let payload_range = header_len..wire.len();
+
+    let status = TokioInterfaceStatus::new_unaccounted(target, ConnectionState::Disconnected);
+    let (outbound_producer, mut outbound_consumer) = tokio_grant_lane(256, 1);
+    let mut egress = Egress::new(vec![]);
+    egress.add_lane(
+        target,
+        target,
+        outbound_producer,
+        Some(ConnectionView::of(status)),
+    );
+    let ForwardedSlotOutcome::CopyRequired { source } =
+        egress.try_move_forwarded_slot(target, forwarded_header(1), payload_range.clone(), source)
+    else {
+        panic!("an unavailable lane retains the ingress slot for fallback handling");
+    };
+
+    assert_eq!(source.bytes.as_ptr(), source_allocation);
+    assert_eq!(&source.frame()[payload_range], &payload);
+    assert!(outbound_consumer.try_peek().is_none());
 }
 
 #[test]

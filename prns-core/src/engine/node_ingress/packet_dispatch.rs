@@ -32,7 +32,9 @@ use crate::routing::links::resources::send::ResourceSealExecution;
 use crate::routing::links::resources::ResourceOffer;
 use crate::routing::proof::ProofRequest;
 use crate::storage::StorageLayout;
-use crate::wire::{BROADCAST_MTU, HEADER_MAX_LEN};
+use crate::wire::BROADCAST_MTU;
+#[cfg(not(feature = "movable-frame-forwarding"))]
+use crate::wire::HEADER_MAX_LEN;
 
 pub struct IngestIo<'a, FillEntropy, OnProofRequest, OnResourceOffer, Sink>
 where
@@ -260,13 +262,22 @@ impl<S: StorageLayout> EngineState<S> {
             }
             IngestPacketOutcome::Forward(forward) => {
                 if interfaces.is_egress_eligible(forward.fire_on, Egress::Transport) {
-                    let size_hint = HEADER_MAX_LEN + forward.payload.len();
-                    let mut fill = |slot: &mut [u8]| forward.to_wire(slot).ok();
-                    sink(EngineReaction::Directive(Directive::EmitFrame {
+                    #[cfg(feature = "movable-frame-forwarding")]
+                    sink(EngineReaction::Directive(Directive::ForwardFrame {
                         target: forward.fire_on,
-                        size_hint,
-                        fill: &mut fill,
+                        header: forward.header,
+                        payload: forward.payload,
                     }));
+                    #[cfg(not(feature = "movable-frame-forwarding"))]
+                    {
+                        let size_hint = HEADER_MAX_LEN + forward.payload.len();
+                        let mut fill = |slot: &mut [u8]| forward.to_wire(slot).ok();
+                        sink(EngineReaction::Directive(Directive::EmitFrame {
+                            target: forward.fire_on,
+                            size_hint,
+                            fill: &mut fill,
+                        }));
+                    }
                 }
             }
             IngestPacketOutcome::AnswerPathRequest { destination } => {

@@ -47,7 +47,7 @@ fn fixed_slot_removal_preserves_a_newer_duplicate_key() {
 
 #[cfg(feature = "alloc")]
 mod heap {
-    use super::super::HeapLemireIndex;
+    use super::super::{HeapIndexEntry, HeapLemireIndex};
     use crate::wire::DestinationHash;
 
     fn dest_n(n: u32) -> DestinationHash {
@@ -63,13 +63,23 @@ mod heap {
         let mut index = HeapLemireIndex::default();
         let mut keys = std::vec::Vec::new();
         for n in 0..1_000u32 {
-            keys.push(dest_n(n));
-            index.insert(keys.len() - 1, &keys);
+            let key = dest_n(n);
+            let HeapIndexEntry::Vacant(vacancy) = index.entry(&key, &keys) else {
+                panic!("new key was already occupied");
+            };
+            keys.push(key);
+            vacancy.insert(keys.len() - 1, &keys);
         }
         for (slot, key) in keys.iter().enumerate() {
             assert_eq!(index.get(key, &keys), Some(slot));
+            assert!(matches!(index.entry(key, &keys), HeapIndexEntry::Occupied));
         }
-        assert_eq!(index.get(&dest_n(1_000), &keys), None);
+        let absent = dest_n(1_000);
+        assert_eq!(index.get(&absent, &keys), None);
+        assert!(matches!(
+            index.entry(&absent, &keys),
+            HeapIndexEntry::Vacant(_)
+        ));
     }
 
     #[test]

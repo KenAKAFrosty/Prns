@@ -1,4 +1,5 @@
 use super::*;
+use futures_util::{stream::FuturesUnordered, StreamExt};
 
 pub(super) struct RequestServer {
     pub(super) served: Arc<AtomicU64>,
@@ -306,7 +307,7 @@ pub(super) async fn initiate_request_runtime(
     let started = tokio::time::Instant::now();
     let deadline = started + duration;
     let timeout = RequestResponseTimeout::Exact(DurationMillis(profile.drain_timeout_ms));
-    let mut tasks = tokio::task::JoinSet::new();
+    let mut requests = FuturesUnordered::new();
     let mut available_links = links
         .iter()
         .copied()
@@ -319,7 +320,7 @@ pub(super) async fn initiate_request_runtime(
     let mut expected_response_bytes = 0u64;
     let mut rtts = Vec::new();
 
-    let mut launch = |link_id, tasks: &mut tokio::task::JoinSet<_>| {
+    let mut launch = |link_id, requests: &mut FuturesUnordered<_>| {
         let sequence = sent + 1;
         let request_len = request_sizes.next_len();
         let wanted = response_sizes.next_len() as u16;
@@ -329,7 +330,7 @@ pub(super) async fn initiate_request_runtime(
         framed.extend_from_slice(&scratch[..request_len - 2]);
         let issued_at = tokio::time::Instant::now();
         let handle = commands.clone();
-        tasks.spawn(async move {
+        requests.push(async move {
             let result = handle
                 .request_with_response_timeout(link_id, path_hash, &framed, timeout)
                 .await;
@@ -351,13 +352,13 @@ pub(super) async fn initiate_request_runtime(
             available_links
                 .pop_front()
                 .expect("one link per request lane"),
-            &mut tasks,
+            &mut requests,
         );
     }
 
-    while let Some(joined) = tasks.join_next().await {
-        let (sequence, link_id, _request_len, _wanted, issued_at, result) =
-            joined.expect("request task remains alive");
+    while let Some((sequence, link_id, _request_len, _wanted, issued_at, result)) =
+        requests.next().await
+    {
         match result {
             Ok((response, _protocol_rtt)) => {
                 delivered += 1;
@@ -379,7 +380,7 @@ pub(super) async fn initiate_request_runtime(
                 available_links
                     .pop_front()
                     .expect("a settled lane returns one link"),
-                &mut tasks,
+                &mut requests,
             );
         }
     }

@@ -1,8 +1,6 @@
-#[cfg(feature = "runtime-metrics")]
-use crate::engine::Directive;
 use crate::engine::{
-    ClassifiedInboundPacket, CryptoOwed, EngineReaction, EngineState, IngestIo, InstantMillis,
-    Journaled, OwedWork, ProofRequest, WakeSchedules,
+    ClassifiedInboundPacket, CryptoOwed, Directive, EngineReaction, EngineState, IngestIo,
+    InstantMillis, Journaled, OwedWork, ProofRequest, WakeSchedules,
 };
 use crate::interfaces::{
     FrameAccountingEvent, IfacUnmaskError, InboundPacket, InterfaceId, PacketPhyStats,
@@ -15,12 +13,13 @@ use crate::routing::links::LinkId;
 use crate::runtime::InterfaceStore;
 use crate::storage::StorageLayout;
 #[cfg(feature = "runtime-metrics")]
-use crate::wire::{WireContext, WirePacketHeader};
+use crate::wire::WireContext;
+use crate::wire::WirePacketHeader;
 
 use super::crypto_pool::{run_link_sign_job, CryptoPool, LinkSignCompleted, LinkSignJob};
 use super::egress::{
-    ifac_for, route_reaction, route_reaction_with_work, Egress, InterfaceIfacs, InterfacePacers,
-    WireScratch,
+    forward_from_ingress, ifac_for, route_reaction, route_reaction_with_work, Egress,
+    ForwardedSlotOutcome, InterfaceIfacs, InterfacePacers, WireScratch,
 };
 use super::interface_topology::InterfaceTopology;
 use super::journal_delivery::JournalDispatch;
@@ -58,6 +57,12 @@ struct DeferredResourcePartHash {
     part: std::ops::Range<usize>,
 }
 
+struct DeferredForward {
+    target: InterfaceId,
+    header: WirePacketHeader,
+    payload: std::ops::Range<usize>,
+}
+
 #[cfg(feature = "runtime-metrics")]
 #[derive(Clone, Copy)]
 enum ResourceControlPacket {
@@ -80,12 +85,35 @@ fn route_ingress_reaction_with_owed_work<J>(
     link_signs: &mut std::vec::Vec<LinkSignJob>,
     link_identity_barriers: &mut std::vec::Vec<(InterfaceId, LinkId)>,
     packet_span: IngressPacketSpan,
+    deferred_forward: &mut Option<DeferredForward>,
     deferred_resource_part_hash: &mut Option<DeferredResourcePartHash>,
     source: InterfaceId,
     now: InstantMillis,
 ) where
     J: for<'a> FnMut(Journaled<'a>),
 {
+    let reaction = match reaction {
+        EngineReaction::Directive(Directive::ForwardFrame {
+            target,
+            header,
+            payload,
+        }) if deferred_forward.is_none() => match packet_span.locate(payload) {
+            Some(payload) => {
+                *deferred_forward = Some(DeferredForward {
+                    target,
+                    header,
+                    payload,
+                });
+                return;
+            }
+            None => EngineReaction::Directive(Directive::ForwardFrame {
+                target,
+                header,
+                payload,
+            }),
+        },
+        reaction => reaction,
+    };
     route_reaction_with_work(
         reaction,
         egress,
@@ -334,6 +362,7 @@ impl InboundDispatch {
                     bytes,
                 });
                 retain_packet_phy(packet_phy_store, &mut packet, packet_phy);
+                let mut deferred_forward = None;
                 let mut deferred_resource_part_hash = None;
                 let ingest_report = engine.ingest_classified_into_report(
                     packet,
@@ -348,7 +377,10 @@ impl InboundDispatch {
                             let resource_frame = resource_request_started_at.is_some()
                                 && matches!(
                                     &reaction,
-                                    EngineReaction::Directive(Directive::EmitFrame { .. })
+                                    EngineReaction::Directive(
+                                        Directive::EmitFrame { .. }
+                                            | Directive::ForwardFrame { .. }
+                                    )
                                 );
                             route_ingress_reaction_with_owed_work(
                                 reaction,
@@ -362,6 +394,7 @@ impl InboundDispatch {
                                 link_signs,
                                 link_identity_barriers,
                                 packet_span,
+                                &mut deferred_forward,
                                 &mut deferred_resource_part_hash,
                                 source,
                                 now,
@@ -422,9 +455,56 @@ impl InboundDispatch {
                         FrameAccountingEvent::ProtocolViolation
                     });
                 }
-                match (buffer_source, deferred_resource_part_hash) {
+                debug_assert!(deferred_forward.is_none() || deferred_resource_part_hash.is_none());
+                match (buffer_source, deferred_forward, deferred_resource_part_hash) {
+                    (IngressBufferSource::GrantSlot, Some(forward), _) => {
+                        if let Some(slot) = lane.take_peeked() {
+                            let outcome = if ifac_for(&topology.ifacs, forward.target).is_none() {
+                                topology.egress.try_move_forwarded_slot(
+                                    forward.target,
+                                    forward.header,
+                                    forward.payload.clone(),
+                                    slot,
+                                )
+                            } else {
+                                ForwardedSlotOutcome::CopyRequired { source: slot }
+                            };
+                            match outcome {
+                                ForwardedSlotOutcome::Moved { vacated } => {
+                                    lane.return_slot(vacated);
+                                }
+                                ForwardedSlotOutcome::CopyRequired { source: slot } => {
+                                    if let Some(payload) = slot.frame().get(forward.payload) {
+                                        forward_from_ingress(
+                                            &mut topology.egress,
+                                            &topology.ifacs,
+                                            forward.target,
+                                            forward.header,
+                                            payload,
+                                            wire_scratch,
+                                        );
+                                    }
+                                    lane.return_slot(slot);
+                                }
+                            }
+                        }
+                    }
+                    (IngressBufferSource::UnmaskScratch, Some(forward), _) => {
+                        if let Some(payload) = unmask_scratch.get(forward.payload) {
+                            forward_from_ingress(
+                                &mut topology.egress,
+                                &topology.ifacs,
+                                forward.target,
+                                forward.header,
+                                payload,
+                                wire_scratch,
+                            );
+                        }
+                        lane.release();
+                    }
                     (
                         IngressBufferSource::GrantSlot,
+                        None,
                         Some(DeferredResourcePartHash { plan, part }),
                     ) => {
                         if let Some(frame) = lane.take_peeked() {
@@ -433,12 +513,17 @@ impl InboundDispatch {
                     }
                     (
                         IngressBufferSource::UnmaskScratch,
+                        None,
                         Some(DeferredResourcePartHash { plan, part }),
                     ) => {
                         owed_work.push_resource_part_hash_copy(plan, &unmask_scratch[part]);
                         lane.release();
                     }
-                    (IngressBufferSource::GrantSlot | IngressBufferSource::UnmaskScratch, None) => {
+                    (
+                        IngressBufferSource::GrantSlot | IngressBufferSource::UnmaskScratch,
+                        None,
+                        None,
+                    ) => {
                         lane.release();
                     }
                 }

@@ -26,6 +26,7 @@ interface-discovery-archive = ["std", "interface-discovery", "prns-core/interfac
 external-alloc = ["alloc", "prns-core/external-alloc"]
 std = ["alloc", "prns-core/std"]
 runtime-metrics = ["alloc", "prns-core/runtime-metrics"]
+movable-frame-forwarding = ["prns-core/movable-frame-forwarding"]
 rns-management = ["alloc", "prns-core/shared-instance-rpc"]
 resource-bzip2 = ["std", "dep:bzip2"]
 

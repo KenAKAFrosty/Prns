@@ -43,6 +43,7 @@ std-sync-host = ["std"]
 tokio-host = ["std"]
 embassy-host = []
 runtime-metrics = ["alloc"]
+movable-frame-forwarding = []
 stream-compression = ["std"]
 # Gives capable fixed-storage targets one 256 KiB outgoing static-response window. Incoming
 # resource limits are deliberately unchanged.
