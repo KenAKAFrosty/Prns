@@ -388,9 +388,15 @@ impl From<personal_hopspot_builder::BuildError> for AppError {
             personal_hopspot_builder::BuildError::Manifest(message) => {
                 Self::developer_manifest(message)
             }
-            error @ personal_hopspot_builder::BuildError::SemanticEnvironmentOverride { .. } => {
-                Self::developer_build(error.to_string())
+            error @ (personal_hopspot_builder::BuildError::SemanticEnvironmentOverride {
+                ..
             }
+            | personal_hopspot_builder::BuildError::MissingCargoWorkingDirectory
+            | personal_hopspot_builder::BuildError::CargoConfigurationIo { .. }
+            | personal_hopspot_builder::BuildError::CargoConfigurationParse { .. }
+            | personal_hopspot_builder::BuildError::ExternalCargoConfiguration {
+                ..
+            }) => Self::developer_build(error.to_string()),
         }
     }
 }
@@ -447,6 +453,27 @@ mod tests {
             ),
             AppError::DeveloperBuild(DeveloperBuildError::Build(_))
         ));
+        let cargo_configuration_errors = [
+            personal_hopspot_builder::BuildError::MissingCargoWorkingDirectory,
+            personal_hopspot_builder::BuildError::CargoConfigurationIo {
+                path: ".cargo/config.toml".into(),
+                source: std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied"),
+            },
+            personal_hopspot_builder::BuildError::CargoConfigurationParse {
+                path: ".cargo/config.toml".into(),
+                reason: "invalid".to_string(),
+            },
+            personal_hopspot_builder::BuildError::ExternalCargoConfiguration {
+                path: ".cargo/config.toml".into(),
+                key: "build.rustflags".to_string(),
+            },
+        ];
+        for error in cargo_configuration_errors {
+            assert!(matches!(
+                AppError::from(error),
+                AppError::DeveloperBuild(DeveloperBuildError::Build(_))
+            ));
+        }
     }
 
     #[test]

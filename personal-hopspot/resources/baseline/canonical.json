@@ -6,7 +6,7 @@
       "schema_version": 9,
       "source": {
         "kind": "clean-commit",
-        "commit": "5bc902b9b96cc3e74ab4c517cba2bd00ec95f69f"
+        "commit": "d7806c47ef8ef268e7b9b2ecbae30c5ee7415178"
       },
       "target": {
         "id": "heltec-v4",
@@ -494,7 +494,7 @@
           {
             "path": "firmware/hopspot/heltec-v4/0.3.7/application.bin",
             "bytes": 2198896,
-            "fingerprint": "f0953de4b7ee0de04c3ee2516c21d49d86d5cc257ffa87cdcf5522f42fd432ef"
+            "fingerprint": "df62cad9cafe969fe2cc1f86703b0bf462854e9de1ca6eebb11423ae9fa1dd76"
           }
         ]
       },
@@ -1679,7 +1679,7 @@
       "schema_version": 9,
       "source": {
         "kind": "clean-commit",
-        "commit": "5bc902b9b96cc3e74ab4c517cba2bd00ec95f69f"
+        "commit": "d7806c47ef8ef268e7b9b2ecbae30c5ee7415178"
       },
       "target": {
         "id": "heltec-v4-r8",
@@ -2170,7 +2170,7 @@
           {
             "path": "firmware/hopspot/heltec-v4-r8/0.3.7/application.bin",
             "bytes": 2187488,
-            "fingerprint": "71dc259dfdc2218e4a447f04467d648019a40db50ac15075b7a544fadb50bee7"
+            "fingerprint": "4516ae8697a74b2418b244bdbcb3823a493ed9533124e9c9e7d298c1dcfea737"
           }
         ]
       },
@@ -3344,7 +3344,7 @@
       "schema_version": 9,
       "source": {
         "kind": "clean-commit",
-        "commit": "5bc902b9b96cc3e74ab4c517cba2bd00ec95f69f"
+        "commit": "d7806c47ef8ef268e7b9b2ecbae30c5ee7415178"
       },
       "target": {
         "id": "heltec-e290",
@@ -3835,7 +3835,7 @@
           {
             "path": "firmware/hopspot/heltec-e290/0.3.7/application.bin",
             "bytes": 2174032,
-            "fingerprint": "665ddf0c04cdaf5a4b2bef7a76923537168bdb4f7708e6130fc0ac8eaa401ed5"
+            "fingerprint": "fd58abfc3aa1d89630cbb65eec6145de311977298eef0844041ac2aa00f4d595"
           }
         ]
       },
@@ -5009,7 +5009,7 @@
       "schema_version": 9,
       "source": {
         "kind": "clean-commit",
-        "commit": "5bc902b9b96cc3e74ab4c517cba2bd00ec95f69f"
+        "commit": "d7806c47ef8ef268e7b9b2ecbae30c5ee7415178"
       },
       "target": {
         "id": "heltec-wireless-stick-lite-v3",
@@ -5444,7 +5444,7 @@
           {
             "path": "firmware/hopspot/heltec-wireless-stick-lite-v3/0.3.7/application.bin",
             "bytes": 1290992,
-            "fingerprint": "b3b9d795ce8670ba4b20d9165b6f01cb0eb0f166cd70320c7c95c6ef54fc466e"
+            "fingerprint": "038ebc295e29001ffb91465745f00052b3e92bcfbc1206210a9a1e846a8ef590"
           }
         ]
       },
@@ -6376,7 +6376,7 @@
       "schema_version": 9,
       "source": {
         "kind": "clean-commit",
-        "commit": "5bc902b9b96cc3e74ab4c517cba2bd00ec95f69f"
+        "commit": "d7806c47ef8ef268e7b9b2ecbae30c5ee7415178"
       },
       "target": {
         "id": "t-beam-supreme",
@@ -6864,7 +6864,7 @@
           {
             "path": "firmware/hopspot/t-beam-supreme/0.3.7/application.bin",
             "bytes": 2193568,
-            "fingerprint": "163467cc6f64bc0dfc01093429376d6f8358f501d37382946434121318706853"
+            "fingerprint": "c448bbe6cb46914c0a410da0515453678d8e3ec2a3322ab97a740f12489bdeb0"
           }
         ]
       },
@@ -8049,7 +8049,7 @@
       "schema_version": 9,
       "source": {
         "kind": "clean-commit",
-        "commit": "5bc902b9b96cc3e74ab4c517cba2bd00ec95f69f"
+        "commit": "d7806c47ef8ef268e7b9b2ecbae30c5ee7415178"
       },
       "target": {
         "id": "xiao-esp32-c6",
@@ -8347,7 +8347,7 @@
           {
             "path": "firmware/hopspot/xiao-esp32-c6/0.3.7/application.bin",
             "bytes": 1714896,
-            "fingerprint": "130dfb08ca4c3001d409038eac6fdff7a834574d15c20babfad6887a8b3881cd"
+            "fingerprint": "1378e95f22cbce0648dae2069a0fed5b2a726649f1efd861afc6d9ee98814eba"
           }
         ]
       },
@@ -9258,7 +9258,7 @@
       "schema_version": 9,
       "source": {
         "kind": "clean-commit",
-        "commit": "5bc902b9b96cc3e74ab4c517cba2bd00ec95f69f"
+        "commit": "d7806c47ef8ef268e7b9b2ecbae30c5ee7415178"
       },
       "target": {
         "id": "t-echo-s140-v6",
@@ -10335,7 +10335,7 @@
       "schema_version": 9,
       "source": {
         "kind": "clean-commit",
-        "commit": "5bc902b9b96cc3e74ab4c517cba2bd00ec95f69f"
+        "commit": "d7806c47ef8ef268e7b9b2ecbae30c5ee7415178"
       },
       "target": {
         "id": "t-echo-s140-v7",
@@ -11412,7 +11412,7 @@
       "schema_version": 9,
       "source": {
         "kind": "clean-commit",
-        "commit": "5bc902b9b96cc3e74ab4c517cba2bd00ec95f69f"
+        "commit": "d7806c47ef8ef268e7b9b2ecbae30c5ee7415178"
       },
       "target": {
         "id": "t114",
@@ -12532,7 +12532,7 @@
       "schema_version": 9,
       "source": {
         "kind": "clean-commit",
-        "commit": "5bc902b9b96cc3e74ab4c517cba2bd00ec95f69f"
+        "commit": "d7806c47ef8ef268e7b9b2ecbae30c5ee7415178"
       },
       "target": {
         "id": "mesh-pocket-5000",
@@ -13608,7 +13608,7 @@
       "schema_version": 9,
       "source": {
         "kind": "clean-commit",
-        "commit": "5bc902b9b96cc3e74ab4c517cba2bd00ec95f69f"
+        "commit": "d7806c47ef8ef268e7b9b2ecbae30c5ee7415178"
       },
       "target": {
         "id": "mesh-pocket-10000",
@@ -14684,7 +14684,7 @@
       "schema_version": 9,
       "source": {
         "kind": "clean-commit",
-        "commit": "5bc902b9b96cc3e74ab4c517cba2bd00ec95f69f"
+        "commit": "d7806c47ef8ef268e7b9b2ecbae30c5ee7415178"
       },
       "target": {
         "id": "t096",
@@ -15785,7 +15785,7 @@
       "schema_version": 9,
       "source": {
         "kind": "clean-commit",
-        "commit": "5bc902b9b96cc3e74ab4c517cba2bd00ec95f69f"
+        "commit": "d7806c47ef8ef268e7b9b2ecbae30c5ee7415178"
       },
       "target": {
         "id": "t1000-e",
@@ -16835,7 +16835,7 @@
       "schema_version": 9,
       "source": {
         "kind": "clean-commit",
-        "commit": "5bc902b9b96cc3e74ab4c517cba2bd00ec95f69f"
+        "commit": "d7806c47ef8ef268e7b9b2ecbae30c5ee7415178"
       },
       "target": {
         "id": "mesh-tower-v2",

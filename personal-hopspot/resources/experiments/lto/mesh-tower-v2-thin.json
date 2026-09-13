@@ -2,7 +2,7 @@
   "schema_version": 9,
   "source": {
     "kind": "clean-commit",
-    "commit": "5bc902b9b96cc3e74ab4c517cba2bd00ec95f69f"
+    "commit": "d7806c47ef8ef268e7b9b2ecbae30c5ee7415178"
   },
   "target": {
     "id": "mesh-tower-v2",

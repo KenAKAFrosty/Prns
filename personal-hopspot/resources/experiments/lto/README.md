@@ -1,7 +1,7 @@
 # nRF52840 LTO experiment
 
 These reports preserve the production-resource experiment reproduced from the
-clean commit `5bc902b9b96cc3e74ab4c517cba2bd00ec95f69f`.
+clean commit `d7806c47ef8ef268e7b9b2ecbae30c5ee7415178`.
 The builds used the same pinned Rust 1.96.0 toolchain and Arm codegen policy
 except for the reported LTO selection.
 
