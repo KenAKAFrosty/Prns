@@ -36,6 +36,7 @@ personal-rns = { path = "../../../personal-rns", default-features = false, featu
     "parallel-resource-hash",
 ] }
 prns-host = { path = "../../core" }
+prns-host-snapshot = { path = "../snapshot" }
 tokio = { version = "1", default-features = false, features = [
     "rt-multi-thread",
     "sync",

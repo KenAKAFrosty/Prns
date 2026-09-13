@@ -11023,7 +11023,8 @@
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
         "host-c-macos": [],
-        "host-c-windows": []
+        "host-c-windows": [],
+        "wasm": []
       },
       "name": "itoa",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -16917,6 +16918,23 @@
     },
     {
       "graphs": {
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": []
+      },
+      "name": "prns-host-snapshot",
+      "source": "prns-host/impls/snapshot",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.3.7"
+    },
+    {
+      "graphs": {
         "android": [
           "bluetooth-auto",
           "log",
@@ -19860,6 +19878,9 @@
           "derive",
           "serde_derive",
           "std"
+        ],
+        "wasm": [
+          "alloc"
         ]
       },
       "name": "serde",
@@ -20021,6 +20042,10 @@
           "alloc",
           "result",
           "std"
+        ],
+        "wasm": [
+          "alloc",
+          "result"
         ]
       },
       "name": "serde_core",
@@ -20138,6 +20163,7 @@
           "std"
         ],
         "engine": [
+          "alloc",
           "default",
           "std"
         ]
@@ -20156,8 +20182,22 @@
     {
       "graphs": {
         "host-c-linux": [
+          "alloc",
           "default",
           "std"
+        ],
+        "host-c-macos": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "host-c-windows": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "wasm": [
+          "alloc"
         ]
       },
       "name": "serde_json",
@@ -26699,7 +26739,10 @@
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
-        "host-c-linux": []
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
+        "wasm": []
       },
       "name": "zmij",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
