@@ -1,12 +1,12 @@
 use core::sync::atomic::{AtomicU8, Ordering};
 
-#[cfg(feature = "board-t1000e")]
+#[cfg(any(feature = "board-t1000e", feature = "board-sensecap-solar-node"))]
 use embassy_embedded_hal::adapter::BlockingAsync;
-#[cfg(feature = "board-t1000e")]
+#[cfg(any(feature = "board-t1000e", feature = "board-sensecap-solar-node"))]
 use embassy_nrf::nvmc::Nvmc;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::mutex::Mutex;
-#[cfg(not(feature = "board-t1000e"))]
+#[cfg(not(any(feature = "board-t1000e", feature = "board-sensecap-solar-node")))]
 use nrf_softdevice::{Flash, Softdevice};
 use personal_hopspot_core::PersistenceState;
 use personal_rns::runtime::{
@@ -21,9 +21,9 @@ use crate::storage::Nrf52840Storage as Storage;
 const FLASH_CAPACITY: usize = 1024 * 1024;
 const PENDING: usize = 8;
 
-#[cfg(not(feature = "board-t1000e"))]
+#[cfg(not(any(feature = "board-t1000e", feature = "board-sensecap-solar-node")))]
 type FlashDriver = Flash;
-#[cfg(feature = "board-t1000e")]
+#[cfg(any(feature = "board-t1000e", feature = "board-sensecap-solar-node"))]
 type FlashDriver = BlockingAsync<Nvmc<'static>>;
 
 pub(crate) type BoardFlash = SharedNorFlash<'static, CriticalSectionRawMutex, FlashDriver>;
@@ -51,7 +51,7 @@ const _: () = assert!(
 
 static PERSISTENCE_STATE: AtomicU8 = AtomicU8::new(PersistenceState::Durable.encode());
 
-#[cfg(not(feature = "board-t1000e"))]
+#[cfg(not(any(feature = "board-t1000e", feature = "board-sensecap-solar-node")))]
 pub(crate) fn take_flash(sd: &'static Softdevice) -> BoardFlash {
     static FLASH_STORAGE: StaticCell<Mutex<CriticalSectionRawMutex, FlashDriver>> =
         StaticCell::new();
@@ -59,7 +59,7 @@ pub(crate) fn take_flash(sd: &'static Softdevice) -> BoardFlash {
     SharedNorFlash::new(FLASH_STORAGE.init(Mutex::new(flash)), FLASH_CAPACITY)
 }
 
-#[cfg(feature = "board-t1000e")]
+#[cfg(any(feature = "board-t1000e", feature = "board-sensecap-solar-node"))]
 pub(crate) fn take_flash(nvmc: Nvmc<'static>) -> BoardFlash {
     static FLASH_STORAGE: StaticCell<Mutex<CriticalSectionRawMutex, FlashDriver>> =
         StaticCell::new();

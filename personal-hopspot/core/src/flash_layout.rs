@@ -58,6 +58,11 @@ pub const T_ECHO_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET: u32 = 0xBF000;
 pub const HELTEC_DISPLAY_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET: u32 = 0xE1000;
 pub const MESH_TOWER_V2_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET: u32 = 0xE2000;
 pub const T1000E_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET: u32 = 0xE9000;
+// The SenseCAP Solar Node carries the same Adafruit bootloader, the same factory S140 7.3.0 and
+// the same 0xF4000 bootloader offset as the T1000-E, so it reuses that proven flash geometry.
+pub const SOLAR_NODE_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET: u32 = 0xE9000;
+pub const SOLAR_NODE_NODE_IDENTITY_FLASH_OFFSET: u32 = 0xF0000;
+pub const SOLAR_NODE_RECOVERY_BOOTLOADER_FLASH_OFFSET: u32 = 0xF4000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Nrf52840FirmwareMemory {
@@ -91,6 +96,7 @@ const NRF52840_S140_V7_APPLICATION_FLASH_ORIGIN: u32 = 0x27000;
 // Keeping one proven origin gives every S140 board the same application-RAM contract.
 const NRF52840_S140_APPLICATION_RAM_ORIGIN: u32 = 0x2000C000;
 const T1000E_APPLICATION_RAM_ORIGIN: u32 = 0x20010000;
+const SOLAR_NODE_APPLICATION_RAM_ORIGIN: u32 = 0x20010000;
 const NRF52840_RAM_END: u32 = 0x20040000;
 const NRF52840_MINIMUM_RUNTIME_STACK_BYTES: u32 = 68 * 1024;
 pub const T_ECHO_MIN_ARENA_BYTES: usize = 19 * HOPSPOT_FLASH_PAGE_BYTES;
@@ -175,6 +181,21 @@ pub const T1000E_FIRMWARE_MEMORY: Nrf52840FirmwareMemory = Nrf52840FirmwareMemor
         T1000E_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET,
     ),
     application_ram: FirmwareAddressRange::new(T1000E_APPLICATION_RAM_ORIGIN, NRF52840_RAM_END),
+    minimum_runtime_stack_bytes: NRF52840_MINIMUM_RUNTIME_STACK_BYTES,
+};
+pub const SOLAR_NODE_JOURNAL_LAYOUT: FlashJournalLayout = FlashJournalLayout::new(
+    [0xEA000, 0xEB000],
+    [
+        FlashArenaRange::new(0xEC000, 0xEE000),
+        FlashArenaRange::new(0xEE000, 0xF0000),
+    ],
+);
+pub const SOLAR_NODE_FIRMWARE_MEMORY: Nrf52840FirmwareMemory = Nrf52840FirmwareMemory {
+    application_flash: FirmwareAddressRange::new(
+        NRF52840_S140_V7_APPLICATION_FLASH_ORIGIN,
+        SOLAR_NODE_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET,
+    ),
+    application_ram: FirmwareAddressRange::new(SOLAR_NODE_APPLICATION_RAM_ORIGIN, NRF52840_RAM_END),
     minimum_runtime_stack_bytes: NRF52840_MINIMUM_RUNTIME_STACK_BYTES,
 };
 
@@ -292,6 +313,24 @@ const _: () = {
     assert!(T1000E_JOURNAL_LAYOUT.arenas[1].end == T1000E_NODE_IDENTITY_FLASH_OFFSET);
     assert!(
         T1000E_NODE_IDENTITY_FLASH_OFFSET + 4 * PAGE == T1000E_RECOVERY_BOOTLOADER_FLASH_OFFSET
+    );
+    assert!(
+        SOLAR_NODE_FIRMWARE_MEMORY.application_flash.end
+            == SOLAR_NODE_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET
+    );
+    assert!(
+        SOLAR_NODE_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET + PAGE
+            == SOLAR_NODE_JOURNAL_LAYOUT.timebase_regions[0]
+    );
+    assert!(SOLAR_NODE_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET.is_multiple_of(PAGE));
+    assert!(
+        SOLAR_NODE_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET + PAGE
+            <= SOLAR_NODE_NODE_IDENTITY_FLASH_OFFSET
+    );
+    assert!(SOLAR_NODE_JOURNAL_LAYOUT.arenas[1].end == SOLAR_NODE_NODE_IDENTITY_FLASH_OFFSET);
+    assert!(
+        SOLAR_NODE_NODE_IDENTITY_FLASH_OFFSET + 4 * PAGE
+            == SOLAR_NODE_RECOVERY_BOOTLOADER_FLASH_OFFSET
     );
     assert!(NRF52840_NODE_IDENTITY_FLASH_OFFSET + PAGE == T096_APPLICATION_DATA_END);
     assert!(T096_APPLICATION_DATA_END + PAGE == T096_FACTORY_RESERVED_FLASH_OFFSET);
@@ -440,6 +479,14 @@ mod tests {
                 minimum_runtime_stack_bytes: 68 * 1024,
             }
         );
+        assert_eq!(
+            SOLAR_NODE_FIRMWARE_MEMORY,
+            Nrf52840FirmwareMemory {
+                application_flash: FirmwareAddressRange::new(0x27000, 0xE9000),
+                application_ram: FirmwareAddressRange::new(0x20010000, 0x20040000),
+                minimum_runtime_stack_bytes: 68 * 1024,
+            }
+        );
     }
 
     #[test]
@@ -465,6 +512,12 @@ mod tests {
             ),
             (
                 T1000E_JOURNAL_LAYOUT,
+                0xEA000,
+                0xF0000,
+                [NRF52840_MIN_ARENA_BYTES; 2],
+            ),
+            (
+                SOLAR_NODE_JOURNAL_LAYOUT,
                 0xEA000,
                 0xF0000,
                 [NRF52840_MIN_ARENA_BYTES; 2],

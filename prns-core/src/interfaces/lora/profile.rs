@@ -396,6 +396,25 @@ pub const DEFAULT_915_PROFILE: RadioProfile = RadioProfile {
     region: Region::Us915,
 };
 
+/// The EU868 counterpart of [`DEFAULT_915_PROFILE`], for boards shipped into the European
+/// 868 MHz band. `MediumFast` occupies 250 kHz, so the 868.3 MHz centre sits wholly inside the
+/// 868.0-868.6 MHz band. Transmit power is 14 dBm rather than 22 dBm because that is the EU868
+/// ceiling (`Region::max_tx_power`); a 22 dBm profile is rejected by `RadioProfile::validate`.
+/// `AirtimePolicy::Regional` additionally applies the band's 1% duty cycle.
+pub const DEFAULT_868_PROFILE: RadioProfile = RadioProfile {
+    frequency: Region::Eu868.default_frequency(),
+    modulation: ModemPreset::MediumFast.modulation(),
+    tx_power: Region::Eu868.max_tx_power(),
+    preamble: PreambleSymbols::new(18),
+    region: Region::Eu868,
+};
+
+const _: () = {
+    assert!(DEFAULT_868_PROFILE.validate().is_ok());
+    assert!(DEFAULT_868_PROFILE.frequency.hz() == 868_300_000);
+    assert!(DEFAULT_868_PROFILE.tx_power.dbm() == 14);
+};
+
 pub fn channel_tag(profile: &RadioProfile) -> HeaplessVec<u8, CHANNEL_TAG_CAP> {
     let mut tag = HeaplessVec::new();
     let _ = tag.extend_from_slice(&profile.frequency.hz().to_be_bytes());

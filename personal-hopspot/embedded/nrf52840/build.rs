@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 
 use personal_hopspot_core::{
     Nrf52840FirmwareMemory, HELTEC_DISPLAY_NRF52840_FIRMWARE_MEMORY, MESH_TOWER_V2_FIRMWARE_MEMORY,
-    T1000E_FIRMWARE_MEMORY, T_ECHO_S140_V6_FIRMWARE_MEMORY, T_ECHO_S140_V7_FIRMWARE_MEMORY,
+    SOLAR_NODE_FIRMWARE_MEMORY, T1000E_FIRMWARE_MEMORY, T_ECHO_S140_V6_FIRMWARE_MEMORY,
+    T_ECHO_S140_V7_FIRMWARE_MEMORY,
 };
 
 const BOARD_T_ECHO_FEATURE: &str = "CARGO_FEATURE_BOARD_T_ECHO";
@@ -12,6 +13,7 @@ const BOARD_T096_FEATURE: &str = "CARGO_FEATURE_BOARD_T096";
 const BOARD_T114_FEATURE: &str = "CARGO_FEATURE_BOARD_T114";
 const BOARD_T1000E_FEATURE: &str = "CARGO_FEATURE_BOARD_T1000E";
 const BOARD_MESH_TOWER_V2_FEATURE: &str = "CARGO_FEATURE_BOARD_MESH_TOWER_V2";
+const BOARD_SENSECAP_SOLAR_NODE_FEATURE: &str = "CARGO_FEATURE_BOARD_SENSECAP_SOLAR_NODE";
 const S140_V6_FEATURE: &str = "CARGO_FEATURE_SOFTDEVICE_S140_V6";
 const S140_V7_FEATURE: &str = "CARGO_FEATURE_SOFTDEVICE_S140_V7";
 
@@ -21,6 +23,7 @@ enum Board {
     T114,
     T1000e,
     MeshTowerV2,
+    SenseCapSolarNode,
 }
 
 enum Softdevice {
@@ -57,6 +60,10 @@ fn main() {
         (Board::T1000e, Some(_)) => {
             panic!("T1000-E does not support S140 compatibility features")
         }
+        (Board::SenseCapSolarNode, None) => SOLAR_NODE_FIRMWARE_MEMORY,
+        (Board::SenseCapSolarNode, Some(_)) => {
+            panic!("SenseCAP Solar Node does not support S140 compatibility features")
+        }
     };
     write_nrf52840_memory(&out, memory);
     println!("cargo:rustc-link-search={}", out.display());
@@ -83,13 +90,17 @@ fn selected_board() -> Board {
         env::var_os(BOARD_T114_FEATURE).is_some(),
         env::var_os(BOARD_T1000E_FEATURE).is_some(),
         env::var_os(BOARD_MESH_TOWER_V2_FEATURE).is_some(),
+        env::var_os(BOARD_SENSECAP_SOLAR_NODE_FEATURE).is_some(),
     ) {
-        (true, false, false, false, false) => Board::TEcho,
-        (false, true, false, false, false) => Board::T096,
-        (false, false, true, false, false) => Board::T114,
-        (false, false, false, true, false) => Board::T1000e,
-        (false, false, false, false, true) => Board::MeshTowerV2,
-        (false, false, false, false, false) => panic!("select exactly one nRF52840 board feature"),
+        (true, false, false, false, false, false) => Board::TEcho,
+        (false, true, false, false, false, false) => Board::T096,
+        (false, false, true, false, false, false) => Board::T114,
+        (false, false, false, true, false, false) => Board::T1000e,
+        (false, false, false, false, true, false) => Board::MeshTowerV2,
+        (false, false, false, false, false, true) => Board::SenseCapSolarNode,
+        (false, false, false, false, false, false) => {
+            panic!("select exactly one nRF52840 board feature")
+        }
         _ => panic!("nRF52840 board features are mutually exclusive"),
     }
 }

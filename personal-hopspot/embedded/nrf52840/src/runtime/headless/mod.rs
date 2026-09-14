@@ -8,7 +8,9 @@ use static_cell::{ConstStaticCell, StaticCell};
 
 use personal_hopspot_core as hopspot;
 use personal_rns::engine::IssuedCommand;
-#[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
+#[cfg(feature = "board-sensecap-solar-node")]
+use personal_rns::interfaces::lora::DEFAULT_868_PROFILE;
+#[cfg(any(feature = "board-t1000e", feature = "board-mesh-tower-v2"))]
 use personal_rns::interfaces::lora::DEFAULT_915_PROFILE;
 use personal_rns::interfaces::lora::{AirtimePolicy, LORA_MAX_PAYLOAD};
 use personal_rns::interfaces::usb_auto::{WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID};
@@ -36,7 +38,7 @@ use board::{
     USB_INTERFACE_ID, USB_MANUFACTURER, USB_PRODUCT, USB_SERIAL_NUMBER,
 };
 
-#[cfg(feature = "board-t1000e")]
+#[cfg(any(feature = "board-t1000e", feature = "board-sensecap-solar-node"))]
 use super::entropy::install_hal_runtime_entropy;
 #[cfg(any(
     feature = "board-t096",
@@ -66,6 +68,9 @@ mod selected;
 mod selected;
 #[cfg(feature = "board-t1000e")]
 #[path = "t1000e.rs"]
+mod selected;
+#[cfg(feature = "board-sensecap-solar-node")]
+#[path = "sensecap_solar_node.rs"]
 mod selected;
 
 const USB_CONFIG_DESCRIPTOR_BYTES: usize = 64;
@@ -163,7 +168,7 @@ async fn manifold_task(
 
 #[allow(clippy::too_many_lines)]
 pub async fn run(spawner: Spawner) -> ! {
-    #[cfg(feature = "board-t1000e")]
+    #[cfg(any(feature = "board-t1000e", feature = "board-sensecap-solar-node"))]
     let ((node_bootstrap, remote_control_bootstrap, entropy), hardware) =
         Board::initialize(|nvmc, rng| {
             let mut entropy = seed_from_hal(rng);
@@ -228,7 +233,7 @@ pub async fn run(spawner: Spawner) -> ! {
         button,
         mut status_led,
     } = hardware;
-    #[cfg(feature = "board-t1000e")]
+    #[cfg(any(feature = "board-t1000e", feature = "board-sensecap-solar-node"))]
     let Hardware {
         flash,
         usb: usb_driver,
@@ -236,7 +241,7 @@ pub async fn run(spawner: Spawner) -> ! {
         mut status_led,
         gnss,
     } = hardware;
-    #[cfg(feature = "board-t1000e")]
+    #[cfg(any(feature = "board-t1000e", feature = "board-sensecap-solar-node"))]
     install_hal_runtime_entropy(entropy);
     #[cfg(feature = "board-mesh-tower-v2")]
     let Hardware {
@@ -301,7 +306,7 @@ pub async fn run(spawner: Spawner) -> ! {
         feature = "board-mesh-tower-v2"
     ))]
     let shared_flash = super::learned_state::take_flash(sd);
-    #[cfg(feature = "board-t1000e")]
+    #[cfg(any(feature = "board-t1000e", feature = "board-sensecap-solar-node"))]
     let shared_flash = super::learned_state::take_flash(flash);
     let persistence = super::learned_state::new(shared_flash);
 
@@ -326,8 +331,10 @@ pub async fn run(spawner: Spawner) -> ! {
     let loaded_lora_profile = selected::load_profile(shared_flash).await;
     #[cfg(any(feature = "board-t096", feature = "board-t114"))]
     let lora_profile = loaded_lora_profile.profile;
-    #[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
+    #[cfg(any(feature = "board-t1000e", feature = "board-mesh-tower-v2"))]
     let lora_profile = DEFAULT_915_PROFILE;
+    #[cfg(feature = "board-sensecap-solar-node")]
+    let lora_profile = DEFAULT_868_PROFILE;
     let lora_id = LoraInterface::interface_id(&lora_profile);
     static LORA_STATUS: StaticCell<EmbassyInterfaceStatus> = StaticCell::new();
     let lora_status: &'static EmbassyInterfaceStatus = LORA_STATUS.init(
@@ -487,7 +494,7 @@ pub async fn run(spawner: Spawner) -> ! {
         )
         .await;
     }
-    #[cfg(feature = "board-t1000e")]
+    #[cfg(any(feature = "board-t1000e", feature = "board-sensecap-solar-node"))]
     selected::run(io, lora.run(lora_seam), gnss).await;
     #[cfg(feature = "board-mesh-tower-v2")]
     selected::run(
