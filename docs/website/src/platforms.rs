@@ -268,8 +268,8 @@ pub const UPCOMING_BOARD_TARGETS: &[BoardTarget] = &[
         name: "SenseCAP Solar Node P1",
         slug: "seeed-sensecap-solar-node-p1",
         silicon: "nRF52840 + SX1262",
-        tier: Tier::Roadmap,
-        interfaces: &[],
+        tier: Tier::BringUp,
+        interfaces: &["LoRa", "USB Auto"],
         icon: Some("nordicsemiconductor"),
         preparation_profile: None,
         flash_target: None,
@@ -706,6 +706,7 @@ mod tests {
                 "Heltec Wireless Stick Lite V3",
                 "Raspberry Pi Zero 2 W",
                 "RAK WisBlock Starter Kit",
+                "SenseCAP Solar Node P1",
             ]
         );
         assert!(

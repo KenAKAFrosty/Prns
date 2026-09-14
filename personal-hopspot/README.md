@@ -85,6 +85,12 @@ control faces, Bluetooth Auto, and a 60-second display auto-off:
     ./tools/prns build hopspot t096
     ./tools/prns build hopspot t114
 
+The headless T1000-E and Seeed SenseCAP Solar Node build the same way. The Solar
+Node runs bare-metal beside its resident S140 7.3.0 and defaults to EU868:
+
+    ./tools/prns build hopspot t1000e
+    ./tools/prns build hopspot sensecap-solar-node
+
 ## Local developer web flasher
 
 Build and serve the current working tree for one or more cataloged boards with:
