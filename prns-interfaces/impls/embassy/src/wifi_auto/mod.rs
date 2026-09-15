@@ -731,7 +731,11 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
         state: &mut AutoWifiRunState<MEMBERS>,
         fleet: &Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
     ) {
+        // Tear down data peers and discovery memory together. Leaving the
+        // brain populated after clear_wifi_peers makes the next beacon
+        // Refreshed against a vacant table (no re-insert → unknown_peer).
         clear_wifi_peers(&mut state.peers, &self.status, fleet).await;
+        self.brain.clear_known_peers();
         clear_tcp_members(
             &mut self.rendezvous,
             &mut state.tcp_peers,

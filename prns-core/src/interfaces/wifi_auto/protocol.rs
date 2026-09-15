@@ -302,6 +302,14 @@ impl<S: PeerStore + Default> PeerTable<S> {
         before - self.peers.as_slice().len()
     }
 
+    /// Drop every remembered peer so the next authenticated beacon is
+    /// [`PeerObservation::NewlyDiscovered`] again (e.g. wifi-auto disable).
+    pub fn clear_known_peers(&mut self) {
+        while !self.peers.as_slice().is_empty() {
+            self.peers.swap_remove(0);
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.peers.as_slice().len()
     }
@@ -406,6 +414,10 @@ impl<S: PeerStore + Default> AutoInterfaceProtocol<S> {
 
     pub fn prune_stale_peers(&mut self, now_ms: u64) -> usize {
         self.peers.prune_stale_peers(now_ms)
+    }
+
+    pub fn clear_known_peers(&mut self) {
+        self.peers.clear_known_peers();
     }
 
     pub fn refresh_known_peer(&mut self, addr: Ipv6Addr, now_ms: u64) -> bool {
@@ -615,5 +627,38 @@ mod tests {
         assert!(brain.refresh_known_peer(peer, 21_000));
         assert_eq!(brain.prune_stale_peers(PEERING_TIMEOUT_MS + 1), 0);
         assert_eq!(brain.prune_stale_peers(21_000 + PEERING_TIMEOUT_MS + 1), 1);
+    }
+
+    #[test]
+    fn clearing_known_peers_makes_the_next_sighting_newly_discovered() {
+        let local = nth_peer(30);
+        let peer = nth_peer(31);
+        let mut brain = FixedAutoInterfaceProtocol::<2>::from_link_local(local);
+        let token = peering_token(&peer);
+
+        assert_eq!(
+            brain.observe_discovery_datagram(peer, token.as_bytes(), 0),
+            BeaconObservation::AuthenticatedPeer {
+                address: peer,
+                peer_observation: PeerObservation::NewlyDiscovered,
+            }
+        );
+        assert_eq!(
+            brain.observe_discovery_datagram(peer, token.as_bytes(), 1),
+            BeaconObservation::AuthenticatedPeer {
+                address: peer,
+                peer_observation: PeerObservation::Refreshed,
+            }
+        );
+
+        brain.clear_known_peers();
+        assert_eq!(brain.peer_count(), 0);
+        assert_eq!(
+            brain.observe_discovery_datagram(peer, token.as_bytes(), 2),
+            BeaconObservation::AuthenticatedPeer {
+                address: peer,
+                peer_observation: PeerObservation::NewlyDiscovered,
+            }
+        );
     }
 }
