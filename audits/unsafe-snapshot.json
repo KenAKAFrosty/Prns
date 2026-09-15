@@ -16841,11 +16841,11 @@
       "name": "prns-ffi",
       "source": "prns-ffi",
       "unsafe": {
-        "blocks": 124,
+        "blocks": 126,
         "externs": 3,
         "functions": 0,
         "impls": 22,
-        "tokens": 185
+        "tokens": 187
       },
       "version": "0.3.7"
     },
@@ -22339,11 +22339,11 @@
       "name": "t-echo",
       "source": "personal-hopspot/embedded/nrf52840",
       "unsafe": {
-        "blocks": 1476,
+        "blocks": 1477,
         "externs": 13,
         "functions": 298,
         "impls": 15,
-        "tokens": 1803
+        "tokens": 1804
       },
       "version": "0.1.0"
     },
