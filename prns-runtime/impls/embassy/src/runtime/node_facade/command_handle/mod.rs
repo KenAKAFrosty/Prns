@@ -16,7 +16,7 @@ use crate::engine::{
 use crate::identity::IdentityHash;
 use crate::remote_control::{
     ForgetRemoteControlTargetOutcome, RemoteControlControllerGrant,
-    RemoteControlControllerIdentity, RemoteControlTargetAccess, RemoteControlTargetIdentity,
+    RemoteControlControllerIdentity, RemoteControlTargetAccess,
     RevokeRemoteControlControllerOutcome, SetRemoteControlControllerGrantOutcome,
     SetRemoteControlTargetAccessOutcome,
 };

@@ -128,6 +128,7 @@ impl<const N: usize> RunnerRequest<N> {
         })
     }
 
+    #[allow(dead_code)]
     pub(super) fn try_enqueue<M, const CAP: usize>(
         journaled: &Journaled<'_>,
         sender: &Sender<'_, M, Self, CAP>,
@@ -179,6 +180,7 @@ impl<const N: usize> RunnerRequest<N> {
     }
 }
 
+#[allow(dead_code)]
 pub(super) fn trace_journaled(journaled: &Journaled<'_>) {
     #[cfg(feature = "log")]
     match journaled {

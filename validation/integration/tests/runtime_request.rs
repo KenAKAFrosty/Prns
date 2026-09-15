@@ -31,6 +31,8 @@ fn secret(byte: u8) -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
 
 struct Responder;
 
+impl personal_rns::runtime::RemoteControlHostControls for Responder {}
+
 struct Echo;
 impl RequestEndpoint<Responder> for Echo {
     const ENDPOINT_ID: &'static str = QUERY_PATH;

@@ -208,6 +208,8 @@ mod tests {
             links,
             transported_links: 0,
             membership: Membership::Independent,
+            radio: personal_rns::interfaces::RadioIndication::NotRadio,
+            details: personal_rns::interfaces::PeerDetails::NotApplicable,
         }
     }
 
