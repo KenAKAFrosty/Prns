@@ -14,7 +14,6 @@ pub enum SpreadingFactor {
 }
 
 impl SpreadingFactor {
-    #[cfg(feature = "alloc")]
     pub(crate) const fn from_number(value: u8) -> Option<Self> {
         match value {
             5 => Some(Self::Sf5),
@@ -93,6 +92,16 @@ pub enum CodingRate {
 impl CodingRate {
     pub const fn denominator(self) -> u8 {
         self as u8
+    }
+
+    pub const fn from_denominator(value: u8) -> Option<Self> {
+        match value {
+            5 => Some(Self::Cr45),
+            6 => Some(Self::Cr46),
+            7 => Some(Self::Cr47),
+            8 => Some(Self::Cr48),
+            _ => None,
+        }
     }
 
     pub const fn next(self) -> Self {

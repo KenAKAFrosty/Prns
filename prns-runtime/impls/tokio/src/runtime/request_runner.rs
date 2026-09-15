@@ -10,6 +10,8 @@ use crate::engine::{
     InstantMillis, RespondFailure, RespondRejection, SendResourceFailure, SendResourceRejection,
 };
 use crate::identity::IdentityHash;
+#[cfg(feature = "tracing")]
+use crate::remote_control::RemoteControlControllerGrantTable;
 use crate::routing::links::request::RequestId;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
@@ -69,7 +71,7 @@ impl RunnerRequest {
 
 enum PreparedRequestRoute {
     Application,
-    RemoteControl(AdmittedRemoteControlRequest),
+    RemoteControl(Box<AdmittedRemoteControlRequest>),
     Declined(Decline),
 }
 
@@ -79,11 +81,11 @@ struct PreparedRunnerRequest {
 }
 
 fn prepare_request(
-    remote_control: &AssembledRemoteControl,
+    remote_control: &mut AssembledRemoteControl,
     request: RunnerRequest,
 ) -> PreparedRunnerRequest {
     let route = if let Some((controller_grants, available_requests, self_announcement)) =
-        remote_control.request_configuration(request.destination, request.path_hash)
+        remote_control.request_configuration_mut(request.destination, request.path_hash)
     {
         match admit_remote_control_request(
             controller_grants,
@@ -91,12 +93,38 @@ fn prepare_request(
             self_announcement,
             &request.inbound(),
         ) {
-            Ok(admission) => PreparedRequestRoute::RemoteControl(admission),
-            Err(decline) => PreparedRequestRoute::Declined(decline),
+            Ok(admission) => PreparedRequestRoute::RemoteControl(Box::new(admission)),
+            Err(error) => {
+                #[cfg(feature = "tracing")]
+                tracing::debug!(
+                    target: "prns.runtime",
+                    event = "remote_control_admit_declined",
+                    reason = ?error,
+                    has_grant = request
+                        .requester
+                        .is_some_and(|controller| controller_grants.grant_for(&controller).is_some()),
+                    controller = ?request.requester.map(|identity| *identity.as_bytes()),
+                    destination = ?request.destination.as_bytes(),
+                );
+                PreparedRequestRoute::Declined(error.into())
+            }
         }
     } else {
         PreparedRequestRoute::Application
     };
+    #[cfg(feature = "tracing")]
+    tracing::debug!(
+        target: "prns.runtime",
+        event = "request_routed",
+        route = match &route {
+            PreparedRequestRoute::RemoteControl(_) => "remote_control",
+            PreparedRequestRoute::Application => "application",
+            PreparedRequestRoute::Declined(_) => "declined",
+        },
+        destination = ?request.destination.as_bytes(),
+        path_hash = ?request.path_hash,
+        link_id = ?request.link_id.as_bytes(),
+    );
     PreparedRunnerRequest { request, route }
 }
 
@@ -190,7 +218,10 @@ pub(super) async fn run_router<St, R: RequestEndpointSet<St>>(
     mut requests: mpsc::Receiver<RunnerRequest>,
     authorization: RemoteControlAuthorizationRuntime<'_>,
     commands: PrnsNodeHandle,
-) -> Result<(), RemoteControlAuthorizationPersistenceFailure> {
+) -> Result<(), RemoteControlAuthorizationPersistenceFailure>
+where
+    St: prns_runtime::runtime::RemoteControlHostControls,
+{
     let mut in_flight = FuturesUnordered::new();
     let mut response_lanes: std::collections::HashMap<LinkId, Weak<Mutex<()>>> =
         std::collections::HashMap::new();
@@ -240,7 +271,9 @@ async fn dispatch_guarded<St, R: RequestEndpointSet<St>>(
     commands: &PrnsNodeHandle,
     request: PreparedRunnerRequest,
     response_lane: Arc<Mutex<()>>,
-) {
+) where
+    St: prns_runtime::runtime::RemoteControlHostControls,
+{
     let link_id = request.request.link_id;
     if AssertUnwindSafe(dispatch::<St, R>(state, commands, request, response_lane))
         .catch_unwind()
@@ -269,7 +302,9 @@ async fn dispatch<St, R: RequestEndpointSet<St>>(
     commands: &PrnsNodeHandle,
     request: PreparedRunnerRequest,
     response_lane: Arc<Mutex<()>>,
-) {
+) where
+    St: prns_runtime::runtime::RemoteControlHostControls,
+{
     let PreparedRunnerRequest { request, route } = request;
     let link_id = request.link_id;
     let inbound = request.inbound();
@@ -277,8 +312,10 @@ async fn dispatch<St, R: RequestEndpointSet<St>>(
     let mut body = RunnerResponse::Buffered(std::vec::Vec::new());
     let dispatched = match route {
         PreparedRequestRoute::RemoteControl(admission) => {
-            dispatch_admitted_remote_control_request(state, commands, inbound, &mut body, admission)
-                .await
+            dispatch_admitted_remote_control_request(
+                state, commands, inbound, &mut body, *admission,
+            )
+            .await
         }
         PreparedRequestRoute::Application => {
             dispatch_request::<St, R>(state, commands, request.path_hash, inbound, &mut body).await
@@ -345,11 +382,27 @@ async fn dispatch<St, R: RequestEndpointSet<St>>(
                 }
             }
         }
-        Err(Decline::Ignore) => {}
+        Err(Decline::Ignore) => {
+            #[cfg(feature = "tracing")]
+            tracing::debug!(
+                target: "prns.runtime",
+                event = "request_declined",
+                reason = "ignore",
+                path_hash = ?request.path_hash,
+                link_id = ?link_id.as_bytes(),
+            );
+        }
         Err(Decline::CloseLink) => {
             commands.close_link(responder.link_id);
         }
-        Err(Decline::ResponseTooLarge) => {}
+        Err(Decline::ResponseTooLarge) => {
+            #[cfg(feature = "tracing")]
+            tracing::warn!(
+                target: "prns.runtime",
+                event = "request_response_too_large",
+                link_id = ?link_id.as_bytes(),
+            );
+        }
     }
 }
 
@@ -413,13 +466,13 @@ mod tests {
     async fn a_panicking_request_handler_closes_its_link() {
         let (commands, mut command_rx) = mpsc::unbounded_channel();
         let handle = PrnsNodeHandle::over(commands);
-        let remote_control = remote_control();
+        let mut remote_control = remote_control();
         let link_id = LinkId::new([0x44; 16]);
         dispatch_guarded::<(), PanickingRequestEndpointSet>(
             &(),
             &handle,
             prepare_request(
-                &remote_control,
+                &mut remote_control,
                 RunnerRequest {
                     destination: DestinationHash::new([0x33; 16]),
                     link_id,
@@ -463,12 +516,12 @@ mod tests {
     ) -> mpsc::UnboundedReceiver<HostCommand> {
         let (commands, mut command_rx) = mpsc::unbounded_channel();
         let handle = PrnsNodeHandle::over(commands);
-        let remote_control = remote_control();
+        let mut remote_control = remote_control();
         let dispatched = dispatch_guarded::<(), PongRequestEndpointSet>(
             &(),
             &handle,
             prepare_request(
-                &remote_control,
+                &mut remote_control,
                 RunnerRequest {
                     destination: DestinationHash::new([0x33; 16]),
                     link_id: LinkId::new([0x44; 16]),
@@ -597,9 +650,10 @@ mod tests {
             let Some(HostCommand::RespondAny(response)) = command_rx.recv().await else {
                 panic!("RemoteControl response command")
             };
-            let expected = RemoteControlDescription::try_from(RemoteControlRequestSet::only(
-                RemoteControlRequestKind::Describe,
-            ))
+            let expected = RemoteControlDescription::try_from(
+                RemoteControlRequestSet::only(RemoteControlRequestKind::Describe)
+                    .with_current_operator_edits(),
+            )
             .expect("Describe is available");
             assert_eq!(
                 RemoteControlResponse::parse(response.packed.as_slice()),

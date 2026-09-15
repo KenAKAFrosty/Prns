@@ -157,6 +157,21 @@ impl<'a> RemoteControlConfiguration<'a> {
     #[must_use]
     pub fn available_requests(&self) -> RemoteControlRequestSet {
         let mut available = RemoteControlRequestSet::only(RemoteControlRequestKind::Describe);
+        let _inventory = available.insert(RemoteControlRequestKind::InventoryInterfaces);
+        let _power = available.insert(RemoteControlRequestKind::SetInterfacePower);
+        let _sleep = available.insert(RemoteControlRequestKind::SleepRadios);
+        let _wake = available.insert(RemoteControlRequestKind::WakeRadios);
+        let _mode = available.insert(RemoteControlRequestKind::SetInterfaceMode);
+        let _group = available.insert(RemoteControlRequestKind::SetInterfaceGroup);
+        let _peers = available.insert(RemoteControlRequestKind::InventoryInterfacePeers);
+        let _config = available.insert(RemoteControlRequestKind::InventoryInterfaceConfig);
+        let _lora = available.insert(RemoteControlRequestKind::SetInterfaceLoRaProfile);
+        let _build = available.insert(RemoteControlRequestKind::DescribeBuild);
+        let _power = available.insert(RemoteControlRequestKind::DescribePower);
+        let _wifi = available.insert(RemoteControlRequestKind::SetInterfaceWifiStation);
+        let _controllers = available.insert(RemoteControlRequestKind::InventoryControllers);
+        let _authorize = available.insert(RemoteControlRequestKind::AuthorizeController);
+        let _revoke = available.insert(RemoteControlRequestKind::RevokeController);
         match self.self_announcement {
             RemoteControlSelfAnnouncement::Unavailable => {}
             RemoteControlSelfAnnouncement::Destination(_) => {
@@ -347,9 +362,27 @@ mod tests {
             unavailable.available_requests(),
             RemoteControlRequestSet::empty(),
         );
+        let mut describe_without_announce =
+            RemoteControlRequestSet::only(RemoteControlRequestKind::Describe);
+        let _ = describe_without_announce.insert(RemoteControlRequestKind::InventoryInterfaces);
+        let _ = describe_without_announce.insert(RemoteControlRequestKind::SetInterfacePower);
+        let _ = describe_without_announce.insert(RemoteControlRequestKind::SleepRadios);
+        let _ = describe_without_announce.insert(RemoteControlRequestKind::WakeRadios);
+        let _ = describe_without_announce.insert(RemoteControlRequestKind::SetInterfaceMode);
+        let _ = describe_without_announce.insert(RemoteControlRequestKind::SetInterfaceGroup);
+        let _ = describe_without_announce.insert(RemoteControlRequestKind::InventoryInterfacePeers);
+        let _ =
+            describe_without_announce.insert(RemoteControlRequestKind::InventoryInterfaceConfig);
+        let _ = describe_without_announce.insert(RemoteControlRequestKind::SetInterfaceLoRaProfile);
+        let _ = describe_without_announce.insert(RemoteControlRequestKind::DescribeBuild);
+        let _ = describe_without_announce.insert(RemoteControlRequestKind::DescribePower);
+        let _ = describe_without_announce.insert(RemoteControlRequestKind::SetInterfaceWifiStation);
+        let _ = describe_without_announce.insert(RemoteControlRequestKind::InventoryControllers);
+        let _ = describe_without_announce.insert(RemoteControlRequestKind::AuthorizeController);
+        let _ = describe_without_announce.insert(RemoteControlRequestKind::RevokeController);
         assert_eq!(
             describe_only.available_requests(),
-            RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
+            describe_without_announce,
         );
         assert_eq!(
             available.available_requests(),

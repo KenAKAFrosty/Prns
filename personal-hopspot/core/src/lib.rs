@@ -13,6 +13,8 @@ mod identity;
 mod mobile;
 pub mod node_pages;
 mod persistence;
+mod power_publish;
+mod remote_control_inventory;
 #[cfg(feature = "display")]
 mod screen;
 mod soft_ap;
@@ -42,6 +44,7 @@ pub use mobile::{
     MOBILE_PANEL_WIDTH, MOBILE_PIXEL_COUNT, MOBILE_RGBA_BYTES,
 };
 pub use persistence::PersistenceState;
+pub use power_publish::{latest_power_snapshot, publish_power_snapshot};
 pub use prns_core::capabilities::positioning::gnss::{
     GnssFix, GnssReceiverCommand, GnssSnapshot, NmeaParser,
 };
@@ -51,6 +54,11 @@ pub use prns_core::capabilities::positioning::{
 pub use prns_core::capabilities::power::{
     BatteryGauge, BatteryPercent, BatterySource, ChargingState, ExternalPowerState, NoBattery,
     PowerSnapshot,
+};
+pub use remote_control_inventory::{
+    bluetooth_auto_interface_name, decorate_hopspot_remote_control_card,
+    hopspot_remote_control_build_version, remote_control_interface_config_from_snapshots,
+    remote_control_interface_peers_from_snapshots, remote_control_inventory_from_snapshots,
 };
 #[cfg(feature = "display")]
 pub use screen::{
@@ -240,6 +248,8 @@ mod tests {
             links: 0,
             transported_links: 0,
             membership: Membership::Independent,
+            radio: personal_rns::interfaces::RadioIndication::for_kind(Some(kind)),
+            details: personal_rns::interfaces::PeerDetails::NotApplicable,
         }
     }
 

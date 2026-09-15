@@ -500,15 +500,7 @@ enum RemoteControlPairingPersistenceState {
     WaitingRollbackStore {
         required: RemoteControlPairingPersistenceRequired,
         rollback_failure: Option<EmbeddedRemoteControlPairingPersistenceFailure>,
-        completion: RollbackCompletion,
-    },
-}
-
-#[derive(Clone, Copy)]
-enum RollbackCompletion {
-    SettleFailed,
-    Return {
-        failure: Option<EmbeddedRemoteControlPairingPersistenceFailure>,
+        completion: Option<EmbeddedRemoteControlPairingPersistenceFailure>,
     },
 }
 
@@ -550,9 +542,6 @@ impl RemoteControlPairingPersistenceProgress {
         M: RawMutex,
     {
         debug_assert!(self.is_ready());
-        let Some(stores) = stores else {
-            return settle_persistence_failure(required, node).await;
-        };
         let attempt_id = required.attempt_id();
         let projected = match prepare_authorization(
             remote_control,
@@ -562,37 +551,65 @@ impl RemoteControlPairingPersistenceProgress {
         ) {
             Ok(projected) => projected,
             Err(failure) => {
+                if let Some(stores) = stores {
+                    stores
+                        .report_failure(
+                            EmbeddedRemoteControlPairingPersistenceFailure::AuthorizationTransaction {
+                                attempt_id,
+                                operation:
+                                    EmbeddedRemoteControlPairingPersistenceOperation::PrepareAuthorization,
+                                failure,
+                            },
+                        )
+                        .await;
+                }
+                return settle_persistence_failure(required, node).await;
+            }
+        };
+        let rollback = match snapshot_authorization_rollback(
+            remote_control,
+            authorization,
+            attempt_id,
+        ) {
+            Ok(rollback) => rollback,
+            Err(failure) => {
+                if let Some(stores) = stores {
+                    stores
+                            .report_failure(
+                                EmbeddedRemoteControlPairingPersistenceFailure::AuthorizationTransaction {
+                                    attempt_id,
+                                    operation:
+                                        EmbeddedRemoteControlPairingPersistenceOperation::SnapshotRollback,
+                                    failure,
+                                },
+                            )
+                            .await;
+                }
+                release_authorization_locally(authorization, attempt_id)?;
+                return settle_persistence_failure(required, node).await;
+            }
+        };
+        // Completed already left the engine. Activate now so inventory can
+        // admit the new controller while flash is still writing.
+        if let Err(failure) = activate_authorization(remote_control, authorization, attempt_id) {
+            if let Some(stores) = stores {
                 stores
                     .report_failure(
                         EmbeddedRemoteControlPairingPersistenceFailure::AuthorizationTransaction {
                             attempt_id,
                             operation:
-                                EmbeddedRemoteControlPairingPersistenceOperation::PrepareAuthorization,
+                                EmbeddedRemoteControlPairingPersistenceOperation::ActivateAuthorization,
                             failure,
                         },
                     )
                     .await;
-                return settle_persistence_failure(required, node).await;
             }
+            release_authorization_locally(authorization, attempt_id)?;
+            return settle_persistence_failure(required, node).await;
+        }
+        let Some(stores) = stores else {
+            return settle_activated_authorization(required, authorization, node).await;
         };
-        let rollback =
-            match snapshot_authorization_rollback(remote_control, authorization, attempt_id) {
-                Ok(rollback) => rollback,
-                Err(failure) => {
-                    stores
-                    .report_failure(
-                        EmbeddedRemoteControlPairingPersistenceFailure::AuthorizationTransaction {
-                            attempt_id,
-                            operation:
-                                EmbeddedRemoteControlPairingPersistenceOperation::SnapshotRollback,
-                            failure,
-                        },
-                    )
-                    .await;
-                    release_authorization_locally(authorization, attempt_id)?;
-                    return settle_persistence_failure(required, node).await;
-                }
-            };
         stores.submit(
             required.snapshot_kind(),
             projected,
@@ -636,30 +653,8 @@ impl RemoteControlPairingPersistenceProgress {
                             failure,
                         })
                         .await;
-                    release_authorization_locally(authorization, attempt_id)?;
-                    return settle_persistence_failure(required, node).await;
-                }
-                if let Err(failure) =
-                    activate_authorization(remote_control, authorization, attempt_id)
-                {
-                    stores
-                        .report_failure(
-                            EmbeddedRemoteControlPairingPersistenceFailure::AuthorizationTransaction {
-                                attempt_id,
-                                operation:
-                                    EmbeddedRemoteControlPairingPersistenceOperation::ActivateAuthorization,
-                                failure,
-                            },
-                        )
-                        .await;
-                    return self.begin_rollback(
-                        required,
-                        rollback,
-                        RollbackCompletion::SettleFailed,
-                        remote_control,
-                        authorization,
-                        stores,
-                    );
+                    let _ = rollback;
+                    return settle_activated_authorization(required, authorization, node).await;
                 }
                 match settle_persisted_authorization(required, node).await {
                     ActivatedAuthorizationSettlement::Release => {
@@ -668,7 +663,7 @@ impl RemoteControlPairingPersistenceProgress {
                     ActivatedAuthorizationSettlement::RollBack { failure } => self.begin_rollback(
                         required,
                         rollback,
-                        RollbackCompletion::Return { failure },
+                        failure,
                         remote_control,
                         authorization,
                         stores,
@@ -692,12 +687,7 @@ impl RemoteControlPairingPersistenceProgress {
                     return Err(failure);
                 }
                 release_authorization_locally(authorization, attempt_id)?;
-                match completion {
-                    RollbackCompletion::SettleFailed => {
-                        settle_persistence_failure(required, node).await
-                    }
-                    RollbackCompletion::Return { failure } => failure.map_or(Ok(()), Err),
-                }
+                completion.map_or(Ok(()), Err)
             }
         }
     }
@@ -706,7 +696,7 @@ impl RemoteControlPairingPersistenceProgress {
         &mut self,
         required: RemoteControlPairingPersistenceRequired,
         expected: RemoteControlAuthorizationSnapshot,
-        completion: RollbackCompletion,
+        completion: Option<EmbeddedRemoteControlPairingPersistenceFailure>,
         remote_control: &mut AssembledRemoteControl,
         authorization: &mut RemoteControlPairingAuthorizationTransactionState,
         stores: &RemoteControlAuthorizationStoreExchange<M>,
@@ -764,6 +754,33 @@ enum ActivatedAuthorizationSettlement {
     RollBack {
         failure: Option<EmbeddedRemoteControlPairingPersistenceFailure>,
     },
+}
+
+#[inline(never)]
+async fn settle_activated_authorization<
+    M,
+    const COMMANDS: usize,
+    const COMPLETIONS: usize,
+    const REQUEST_COMPLETIONS: usize,
+    const RESPONSE_BYTES: usize,
+>(
+    required: RemoteControlPairingPersistenceRequired,
+    authorization: &mut RemoteControlPairingAuthorizationTransactionState,
+    node: PrnsNodeHandle<'_, M, COMMANDS, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>,
+) -> Result<(), EmbeddedRemoteControlPairingPersistenceFailure>
+where
+    M: RawMutex,
+{
+    let attempt_id = required.attempt_id();
+    match settle_persisted_authorization(required, node).await {
+        ActivatedAuthorizationSettlement::Release => {
+            release_authorization_locally(authorization, attempt_id)
+        }
+        ActivatedAuthorizationSettlement::RollBack { failure } => {
+            release_authorization_locally(authorization, attempt_id)?;
+            failure.map_or(Ok(()), Err)
+        }
+    }
 }
 
 #[inline(never)]
@@ -940,7 +957,10 @@ where
             {
                 Ok(RemoteControlTargetPairingFinalization::AuthorizationFailureRecorded {
                     ..
-                }) => Ok(()),
+                })
+                | Ok(RemoteControlTargetPairingFinalization::CompletionDispatched { .. }) => {
+                    Ok(())
+                }
                 Ok(finalization) => Err(unexpected_target_finalization(
                     EmbeddedRemoteControlPairingPersistenceOperation::SettleFailed,
                     finalization,

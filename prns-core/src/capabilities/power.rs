@@ -71,6 +71,11 @@ impl PowerSnapshot {
     /// A snapshot with neither a battery reading nor external-power evidence.
     pub const UNKNOWN: Self = Self::new(None, ExternalPowerState::Unknown);
 
+    /// Fixed remote-control / inventory body: external-power tag + percent-or-absent.
+    pub const ENCODED_LEN: usize = 2;
+
+    const BATTERY_ABSENT: u8 = 0xFF;
+
     #[must_use]
     pub const fn new(battery: Option<BatteryPercent>, external_power: ExternalPowerState) -> Self {
         Self {
@@ -89,6 +94,84 @@ impl PowerSnapshot {
     #[must_use]
     pub const fn external_power(self) -> ExternalPowerState {
         self.external_power
+    }
+
+    /// True when at least one of battery percent or external power is known.
+    #[must_use]
+    pub const fn is_applicable(self) -> bool {
+        self.battery.is_some() || !matches!(self.external_power, ExternalPowerState::Unknown)
+    }
+
+    #[must_use]
+    pub const fn encoded_body_len(self) -> usize {
+        Self::ENCODED_LEN
+    }
+
+    pub fn write_into(self, out: &mut [u8]) -> Option<&mut [u8]> {
+        let (external_out, rest) = out.split_first_mut()?;
+        let (percent_out, rest) = rest.split_first_mut()?;
+        *external_out = self.external_power.wire_tag();
+        *percent_out = match self.battery {
+            Some(percent) => percent.get(),
+            None => Self::BATTERY_ABSENT,
+        };
+        Some(rest)
+    }
+
+    #[must_use]
+    pub fn parse(input: &[u8]) -> Option<(Self, &[u8])> {
+        let (external_tag, rest) = input.split_first()?;
+        let (percent, rest) = rest.split_first()?;
+        let external_power = ExternalPowerState::from_wire_tag(*external_tag)?;
+        let battery = match *percent {
+            Self::BATTERY_ABSENT => None,
+            value if value <= 100 => Some(BatteryPercent::saturating(value)),
+            _ => return None,
+        };
+        Some((Self::new(battery, external_power), rest))
+    }
+}
+
+impl ExternalPowerState {
+    const TAG_UNKNOWN: u8 = 0;
+    const TAG_ABSENT: u8 = 1;
+    const TAG_PRESENT_UNKNOWN: u8 = 2;
+    const TAG_PRESENT_CHARGING: u8 = 3;
+    const TAG_PRESENT_IDLE: u8 = 4;
+
+    #[must_use]
+    pub const fn wire_tag(self) -> u8 {
+        match self {
+            Self::Unknown => Self::TAG_UNKNOWN,
+            Self::Absent => Self::TAG_ABSENT,
+            Self::Present {
+                charging: ChargingState::Unknown,
+            } => Self::TAG_PRESENT_UNKNOWN,
+            Self::Present {
+                charging: ChargingState::Charging,
+            } => Self::TAG_PRESENT_CHARGING,
+            Self::Present {
+                charging: ChargingState::Idle,
+            } => Self::TAG_PRESENT_IDLE,
+        }
+    }
+
+    #[must_use]
+    pub const fn from_wire_tag(tag: u8) -> Option<Self> {
+        match tag {
+            Self::TAG_UNKNOWN => Some(Self::Unknown),
+            Self::TAG_ABSENT => Some(Self::Absent),
+            Self::TAG_PRESENT_UNKNOWN => Some(Self::Present {
+                charging: ChargingState::Unknown,
+            }),
+            Self::TAG_PRESENT_CHARGING => Some(Self::Present {
+                charging: ChargingState::Charging,
+            }),
+            Self::TAG_PRESENT_IDLE => Some(Self::Present {
+                charging: ChargingState::Idle,
+            }),
+            _ => None,
+        }
     }
 }
 
@@ -222,5 +305,47 @@ mod tests {
 
         assert_eq!(snapshot.battery(), Some(BatteryPercent::saturating(50)));
         assert_eq!(snapshot.external_power(), ExternalPowerState::Unknown);
+    }
+
+    #[test]
+    fn power_snapshot_round_trips_on_the_wire() {
+        for snapshot in [
+            PowerSnapshot::UNKNOWN,
+            PowerSnapshot::new(
+                Some(BatteryPercent::saturating(0)),
+                ExternalPowerState::Absent,
+            ),
+            PowerSnapshot::new(
+                Some(BatteryPercent::saturating(73)),
+                ExternalPowerState::Present {
+                    charging: ChargingState::Charging,
+                },
+            ),
+            PowerSnapshot::new(
+                None,
+                ExternalPowerState::Present {
+                    charging: ChargingState::Idle,
+                },
+            ),
+            PowerSnapshot::new(
+                Some(BatteryPercent::saturating(100)),
+                ExternalPowerState::Present {
+                    charging: ChargingState::Unknown,
+                },
+            ),
+        ] {
+            let mut buf = [0u8; PowerSnapshot::ENCODED_LEN];
+            let _ = snapshot.write_into(&mut buf).expect("encode");
+            let (parsed, rest) = PowerSnapshot::parse(&buf).expect("parse");
+            assert_eq!(parsed, snapshot);
+            assert!(rest.is_empty());
+        }
+        assert!(!PowerSnapshot::UNKNOWN.is_applicable());
+        assert!(PowerSnapshot::new(
+            Some(BatteryPercent::saturating(1)),
+            ExternalPowerState::Unknown
+        )
+        .is_applicable());
+        assert!(PowerSnapshot::new(None, ExternalPowerState::Absent).is_applicable());
     }
 }

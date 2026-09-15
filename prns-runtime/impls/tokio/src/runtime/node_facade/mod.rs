@@ -63,14 +63,14 @@ pub use node_lifecycle::{
     NodeRunError, NonRoutingIdentityError, PrnsNode, RegisterRequestEndpointError,
     SharedInstanceIdentityError,
 };
-pub(crate) use persistence::RemoteControlAuthorizationPersistence;
 pub use persistence::{
     boot_timeline_origin, wall_clock_timeline_origin, DefaultLocationError,
     DestinationIdentitySeedReport, FlushError, FlushFailurePolicy, FlushMark, FlushReport,
     NodePersistence, PersistenceEvent, PersistenceFlushStatus, PersistenceIntent,
     PersistenceRestoreReport, PersistenceTrigger, PersistenceWorker, PrepareFlushError,
-    PreparedFlush, RatchetSeedReport, RegionFlush, RemoteControlAuthorizationSeedReport,
-    RouteSeedProgress, RouteSeedReport, SaveOnLearn, SaveOnLearnWiring, TunnelSeedReport,
+    PreparedFlush, RatchetSeedReport, RegionFlush, RemoteControlAuthorizationPersistence,
+    RemoteControlAuthorizationSeedReport, RouteSeedProgress, RouteSeedReport, SaveOnLearn,
+    SaveOnLearnWiring, TunnelSeedReport,
 };
 pub use remote_control::{RemoteControlHandle, RemoteControlTargetHandle};
 pub use request_response::{RequestOptions, ResponseSendError};

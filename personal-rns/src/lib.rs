@@ -95,7 +95,7 @@ pub use prns_runtime::runtime::{
     RemoteControlControllerGrantControl, RemoteControlControllerPairingConfirmation,
     RemoteControlControllerPairingInitiationControl,
     RemoteControlControllerPairingInitiationTransport, RemoteControlDescribe, RemoteControlError,
-    RemoteControlPairingConfirmation, RemoteControlPairingControl,
+    RemoteControlHostControls, RemoteControlPairingConfirmation, RemoteControlPairingControl,
     RemoteControlPairingControlError, RemoteControlPairingLinkCleanupOutcome,
     RemoteControlTargetAccessControl, RemoteControlTargetConnection,
     RemoteControlTargetConnectionControl, RemoteControlTargetConnectionTransport,
