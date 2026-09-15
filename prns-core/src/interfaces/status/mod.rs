@@ -127,6 +127,11 @@ pub trait InterfaceStatus {
     fn frame_accounting(&self) -> Option<FrameAccounting> {
         None
     }
+
+    /// Peer IPv6 link-local when the interface family keeps one (wifi-auto members).
+    fn link_local(&self) -> Option<core::net::Ipv6Addr> {
+        None
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -247,5 +252,9 @@ impl<T: InterfaceStatus + ?Sized> InterfaceStatus for &T {
 
     fn frame_accounting(&self) -> Option<FrameAccounting> {
         (**self).frame_accounting()
+    }
+
+    fn link_local(&self) -> Option<core::net::Ipv6Addr> {
+        (**self).link_local()
     }
 }

@@ -2050,3 +2050,20 @@ name = "target_attempt_deadlines_are_strictly_future_and_pairing_bounded"
 source = "prns-core/src/remote_control/pairing/target_pairing/kani_proofs.rs"
 group = "remote-control"
 tiers = ["release", "scheduled"]
+
+[[suite]]
+id = "wifi-auto-tokio-without-ipv6-ll-multicast"
+domain = "native"
+group = "wifi-auto"
+platform = "current"
+owner = "core"
+gate = "pr"
+command = ["cargo", "test", "--locked", "--manifest-path", "prns-interfaces/impls/tokio/Cargo.toml", "--features", "wifi-auto-mdns", "--lib", "without_ipv6_ll_multicast"]
+inputs = [
+  "prns-interfaces/impls/tokio/src/wifi_auto/without_ipv6_ll_multicast.rs",
+  "prns-interfaces/impls/tokio/src/wifi_auto/mdns_without_ipv6_ll_multicast.rs",
+  "prns-interfaces/impls/tokio/src/wifi_auto/mdns.rs",
+  "prns-interfaces/impls/tokio/src/wifi_auto/mod.rs",
+]
+artifacts = "validation-artifacts/results/wifi-auto-tokio-without-ipv6-ll-multicast"
+

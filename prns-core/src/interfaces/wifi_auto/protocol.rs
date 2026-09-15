@@ -597,7 +597,7 @@ mod tests {
     }
 
     #[test]
-    fn known_peer_data_activity_refreshes_liveness_without_admitting_unknown_sources() {
+    fn known_peer_refresh_updates_liveness_without_admitting_unknown_sources() {
         let local = nth_peer(20);
         let peer = nth_peer(21);
         let unknown = nth_peer(22);

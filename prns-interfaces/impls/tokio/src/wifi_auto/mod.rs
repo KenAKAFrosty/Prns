@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io;
 use std::net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6};
@@ -36,6 +37,7 @@ use prns_runtime::runtime::{AttachedInterface, Fleet, InterfaceSupervisor};
 ))]
 mod apple;
 mod discovery;
+mod host_lan;
 #[cfg(feature = "wifi-auto-mdns")]
 mod mdns;
 #[cfg(feature = "wifi-auto-mdns")]
@@ -50,8 +52,12 @@ pub use discovery::{
     DiscoveryLifecycleError, DiscoveryParticipation, ServiceDiscovery, ServiceDiscoveryPublisher,
     SnapshotPublication,
 };
+pub use host_lan::{
+    HostLanAddress, HostLanInterface, HostLanInterfaceError, HostLanInventory,
+    HostLanReplaceOutcome,
+};
 #[cfg(feature = "wifi-auto-mdns")]
-pub use mdns::native_service_discovery;
+pub use mdns::{native_service_discovery, native_service_discovery_with_host_lan};
 
 const BEACON_INTERVAL: Duration = Duration::from_millis(1600);
 const UNICAST_REPEER_EVERY: u32 = 3;
@@ -222,6 +228,13 @@ impl Interface for AutoWifiPeer {
                         continue;
                     }
                     self.status.add_rx(frame.len() as u64);
+                    #[cfg(feature = "tracing")]
+                    tracing::debug!(
+                        target: "prns_interfaces_tokio::wifi_auto",
+                        "wifi-auto: peer data rx from {} len={}",
+                        self.peer,
+                        frame.len()
+                    );
                     let now = InstantMillis(started.elapsed().as_millis() as u64);
                     throughput.record_rx(now, frame.len() as u64);
                     self.status.set_transfer_rates(throughput.rates());
@@ -233,9 +246,22 @@ impl Interface for AutoWifiPeer {
                     }
                     let Ok(sent) = self.socket.send_to(outbound, SocketAddr::V6(self.peer)).await
                     else {
+                        #[cfg(feature = "tracing")]
+                        tracing::warn!(
+                            target: "prns_interfaces_tokio::wifi_auto",
+                            "wifi-auto: peer data tx fail to {}",
+                            self.peer
+                        );
                         continue;
                     };
                     self.status.add_tx(sent as u64);
+                    #[cfg(feature = "tracing")]
+                    tracing::debug!(
+                        target: "prns_interfaces_tokio::wifi_auto",
+                        "wifi-auto: peer data tx ok to {} bytes={}",
+                        self.peer,
+                        sent
+                    );
                     let now = InstantMillis(started.elapsed().as_millis() as u64);
                     throughput.record_tx(now, sent as u64);
                     self.status.set_transfer_rates(throughput.rates());
@@ -254,6 +280,7 @@ pub struct AutoWifi {
     service_discovery: Option<ServiceDiscovery>,
     rendezvous_listener: Option<TcpListener>,
     network_discovery_owner: NetworkDiscoveryOwner,
+    host_lan: HostLanInventory,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -498,14 +525,22 @@ impl AutoWifi {
         settings: AutoWifiSettings,
     ) -> Self {
         let id = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, &settings.instance_tag);
+        let group_id = settings.group_id.clone();
         Self {
             policy,
             settings,
-            status: AutoWifiStatus::new(id),
+            status: AutoWifiStatus::new(id, group_id),
             service_discovery: None,
             rendezvous_listener: None,
             network_discovery_owner: NetworkDiscoveryOwner::Host,
+            host_lan: HostLanInventory::default(),
         }
+    }
+
+    #[must_use]
+    pub fn with_host_lan_inventory(mut self, host_lan: HostLanInventory) -> Self {
+        self.host_lan = host_lan;
+        self
     }
 
     #[must_use]
@@ -552,6 +587,7 @@ struct AutoWifiShared {
     id: InterfaceId,
     enabled: watch::Sender<bool>,
     member_updates: watch::Sender<std::vec::Vec<TokioInterfaceStatus>>,
+    group_id: watch::Sender<std::vec::Vec<u8>>,
     accounting: Mutex<AutoWifiAccounting>,
 }
 
@@ -564,6 +600,7 @@ struct CompletedTraffic {
 struct AutoWifiAccounting {
     completed: CompletedTraffic,
     members: std::vec::Vec<TokioInterfaceStatus>,
+    local_addresses: std::vec::Vec<(IpAddr, u32)>,
 }
 
 impl CompletedTraffic {
@@ -574,20 +611,41 @@ impl CompletedTraffic {
 }
 
 impl AutoWifiStatus {
-    fn new(id: InterfaceId) -> Self {
+    fn new(id: InterfaceId, group_id: std::vec::Vec<u8>) -> Self {
         let (enabled, _) = watch::channel(true);
         let (member_updates, _) = watch::channel(std::vec::Vec::new());
+        let (group_id, _) = watch::channel(group_id);
         Self {
             shared: Arc::new(AutoWifiShared {
                 id,
                 enabled,
                 member_updates,
+                group_id,
                 accounting: Mutex::new(AutoWifiAccounting {
                     completed: CompletedTraffic::default(),
                     members: std::vec::Vec::new(),
+                    local_addresses: std::vec::Vec::new(),
                 }),
             }),
         }
+    }
+
+    pub fn set_group_id(&self, group: &[u8]) -> bool {
+        if group.is_empty() || group.len() > 32 {
+            return false;
+        }
+        self.shared.group_id.send_if_modified(|current| {
+            if current.as_slice() == group {
+                return false;
+            }
+            *current = group.to_vec();
+            true
+        });
+        true
+    }
+
+    fn subscribe_group(&self) -> watch::Receiver<std::vec::Vec<u8>> {
+        self.shared.group_id.subscribe()
     }
 
     pub fn enable(&self) {
@@ -663,6 +721,21 @@ impl AutoWifiStatus {
         match self.shared.accounting.lock() {
             Ok(accounting) => accounting.members.clone(),
             Err(_) => std::vec::Vec::new(),
+        }
+    }
+
+    /// Addresses this supervisor is currently using on allowed NICs.
+    #[must_use]
+    pub fn local_addresses(&self) -> std::vec::Vec<(IpAddr, u32)> {
+        match self.shared.accounting.lock() {
+            Ok(accounting) => accounting.local_addresses.clone(),
+            Err(_) => std::vec::Vec::new(),
+        }
+    }
+
+    fn set_local_addresses(&self, addresses: std::vec::Vec<(IpAddr, u32)>) {
+        if let Ok(mut accounting) = self.shared.accounting.lock() {
+            accounting.local_addresses = addresses;
         }
     }
 }
@@ -766,10 +839,11 @@ impl InterfaceSupervisor for AutoWifi {
             mut service_discovery,
             rendezvous_listener: supplied_rendezvous_listener,
             network_discovery_owner,
+            host_lan,
         } = self;
         let mut nics = std::vec::Vec::new();
         let mut sockets = None;
-        let prefixes = local_prefixes(&settings.devices);
+        let prefixes = local_prefixes(&settings.devices, &host_lan);
         let mut supervisor = Supervisor {
             brains: HashMap::new(),
             members: HashMap::new(),
@@ -784,8 +858,10 @@ impl InterfaceSupervisor for AutoWifi {
             settings: settings.clone(),
             status,
             completed: CompletedTraffic::default(),
+            host_lan,
         };
         supervisor.publish_status();
+        let mut group_rx = supervisor.status.subscribe_group();
 
         let runtime_started_at = tokio::time::Instant::now();
         let mut beacon_interval = tokio::time::interval(BEACON_INTERVAL);
@@ -853,6 +929,17 @@ impl InterfaceSupervisor for AutoWifi {
                 rendezvous_claim_schedule = RendezvousClaimSchedule::Waiting;
             }
             tokio::select! {
+                changed = group_rx.changed() => {
+                    if changed.is_ok() {
+                        let group = group_rx.borrow_and_update().clone();
+                        supervisor.apply_discovery_group(
+                            group,
+                            &mut nics,
+                            &mut sockets,
+                            network_discovery_owner,
+                        );
+                    }
+                }
                 accepted_connection = accept_maybe(&rendezvous_listener) => {
                     supervisor.accept_rendezvous_connection(accepted_connection);
                 }
@@ -910,11 +997,13 @@ impl InterfaceSupervisor for AutoWifi {
                     service_discovery.as_mut(),
                     discovery_participation,
                 ) => {
+                    let elapsed_millis = runtime_started_at.elapsed().as_millis() as u64;
                     supervisor.apply_discovery_snapshot(
                         discovery_snapshot,
                         &mut service_discovery,
                         sockets.as_ref().map(|sockets| &sockets.unicast_discovery),
                         network_discovery_owner,
+                        elapsed_millis,
                     ).await;
                 }
                 () = supervisor.status.wait_until_disabled() => continue,
@@ -1019,6 +1108,8 @@ impl DiscoveredServices {
         fleet: &Fleet,
         policy: EffectiveInterfacePolicy,
         completed_traffic: &mut CompletedTraffic,
+        udp_peer_members: &std::collections::HashMap<ScopedPeer, PeerMember>,
+        known_udp_peer_addresses: &BTreeSet<Ipv6Addr>,
     ) -> NewlyActiveUdpTargets {
         let selected_tcp_endpoints = selected_discovery_endpoints(
             discovery_snapshot,
@@ -1031,6 +1122,8 @@ impl DiscoveredServices {
             fleet,
             policy,
             completed_traffic,
+            udp_peer_members,
+            known_udp_peer_addresses,
         );
 
         let selected_udp_endpoints = selected_discovery_endpoints(
@@ -1065,6 +1158,8 @@ impl DiscoveredTcpDials {
         fleet: &Fleet,
         policy: EffectiveInterfacePolicy,
         completed_traffic: &mut CompletedTraffic,
+        udp_peer_members: &std::collections::HashMap<ScopedPeer, PeerMember>,
+        known_udp_peer_addresses: &BTreeSet<Ipv6Addr>,
     ) {
         let removed_endpoints: std::vec::Vec<DiscoveryEndpoint> = self
             .members
@@ -1080,6 +1175,16 @@ impl DiscoveredTcpDials {
         }
         for desired_endpoint in desired_endpoints {
             if self.members.contains_key(&desired_endpoint) {
+                continue;
+            }
+            if tcp_endpoint_covered_by_udp_peer(
+                desired_endpoint,
+                udp_peer_members,
+                known_udp_peer_addresses,
+            ) {
+                crate::diagnostic_log::debug!(
+                    "wifi-auto: TCP dial skipped for {desired_endpoint}; UDP peer already present"
+                );
                 continue;
             }
             crate::diagnostic_log::debug!(
@@ -1099,6 +1204,28 @@ impl DiscoveredTcpDials {
                     status: client_status,
                 },
             );
+        }
+    }
+
+    fn drop_dials_matching_udp_peer(
+        &mut self,
+        peer: ScopedPeer,
+        completed_traffic: &mut CompletedTraffic,
+    ) {
+        let matching_endpoints: std::vec::Vec<DiscoveryEndpoint> = self
+            .members
+            .keys()
+            .copied()
+            .filter(|endpoint| discovery_endpoint_matches_scoped_peer(*endpoint, peer))
+            .collect();
+        for endpoint in matching_endpoints {
+            if let Some(removed_dial) = self.members.remove(&endpoint) {
+                crate::diagnostic_log::debug!(
+                    "wifi-auto: tearing down TCP dial {endpoint}; UDP peer {peer:?} connected"
+                );
+                completed_traffic.retain(&removed_dial.status);
+                removed_dial.attached.teardown();
+            }
         }
     }
 
@@ -1213,6 +1340,7 @@ struct Supervisor {
     settings: AutoWifiSettings,
     status: AutoWifiStatus,
     completed: CompletedTraffic,
+    host_lan: HostLanInventory,
 }
 
 struct GatewayDial {
@@ -1243,9 +1371,11 @@ impl Supervisor {
         if let Some(_active_sockets) = sockets {
             return NetworkActivation::AlreadyActive;
         }
-        let fresh_nics = link_local_nics(&self.settings.devices);
+        let fresh_nics = link_local_nics(&self.settings.devices, &self.host_lan);
         if fresh_nics.is_empty() {
             nics.clear();
+            self.prefixes.clear();
+            self.publish_local_addresses(nics);
             return NetworkActivation::NoEligibleInterfaces;
         }
         let opened_sockets =
@@ -1340,6 +1470,21 @@ impl Supervisor {
     ) {
         match accepted_connection {
             Ok((tcp_stream, peer_address)) if is_local_peer(peer_address.ip(), &self.prefixes) => {
+                if let SocketAddr::V6(peer_v6) = peer_address {
+                    let peer = ScopedPeer::from_socket_address(peer_v6);
+                    if self.members.contains_key(&peer)
+                        || self.brains.get(&peer.scope_id).is_some_and(|brain| {
+                            brain
+                                .known_peer_addresses()
+                                .any(|known| known == peer.ip_address)
+                        })
+                    {
+                        crate::diagnostic_log::debug!(
+                            "wifi-auto: rejecting rendezvous connection from {peer_address}; UDP peer already present"
+                        );
+                        return;
+                    }
+                }
                 self.reap_accepted_rendezvous();
                 if self.accepted.len() >= usize::from(TCP_RENDEZVOUS_ACCEPTED_CAPACITY) {
                     crate::diagnostic_log::debug!(
@@ -1371,9 +1516,11 @@ impl Supervisor {
         service_discovery: &mut Option<ServiceDiscovery>,
         unicast_discovery_socket: Option<&UdpSocket>,
         network_discovery_owner: NetworkDiscoveryOwner,
+        now_ms: u64,
     ) {
         match discovery_snapshot {
             Ok(discovery_snapshot) => {
+                self.refresh_known_peers_from_discovery_snapshot(&discovery_snapshot, now_ms);
                 let newly_active_udp_targets =
                     self.reconcile_discovery(&discovery_snapshot, network_discovery_owner);
                 let probes = self.prepare_udp_peering_probes(newly_active_udp_targets.iter());
@@ -1382,6 +1529,27 @@ impl Supervisor {
             Err(discovery::DiscoverySnapshotError::PublisherClosed) => {
                 *service_discovery = None;
                 self.clear_discovered_services();
+            }
+        }
+    }
+
+    fn refresh_known_peers_from_discovery_snapshot(
+        &mut self,
+        discovery_snapshot: &DiscoverySnapshot,
+        now_ms: u64,
+    ) {
+        for advertisement in discovery_snapshot.iter() {
+            for endpoint in advertisement.endpoints() {
+                if endpoint.transport() != DiscoveryTransport::Udp {
+                    continue;
+                }
+                let SocketAddr::V6(v6) = endpoint.socket_addr() else {
+                    continue;
+                };
+                let Some(brain) = self.brains.get_mut(&v6.scope_id()) else {
+                    continue;
+                };
+                let _ = brain.refresh_known_peer(*v6.ip(), now_ms);
             }
         }
     }
@@ -1467,18 +1635,30 @@ impl Supervisor {
                         .await;
                 }
                 if peering_refresh == PeeringRefresh::Due {
-                    for peer_address in auto_interface_protocol.known_peer_addresses() {
-                        let _ = sockets
+                    let known_peers: std::vec::Vec<_> =
+                        auto_interface_protocol.known_peer_addresses().collect();
+                    crate::diagnostic_log::debug!(
+                        "wifi-auto: unicast peering refresh cycle ifindex={interface_index} known_peers={}",
+                        known_peers.len()
+                    );
+                    for peer_address in known_peers {
+                        let target = scoped(
+                            peer_address,
+                            self.settings.reverse_discovery_port(),
+                            interface_index,
+                        );
+                        match sockets
                             .unicast_discovery
-                            .send_to(
-                                &peering_token,
-                                scoped(
-                                    peer_address,
-                                    self.settings.reverse_discovery_port(),
-                                    interface_index,
-                                ),
-                            )
-                            .await;
+                            .send_to(&peering_token, target)
+                            .await
+                        {
+                            Ok(bytes) => crate::diagnostic_log::debug!(
+                                "wifi-auto: unicast peering tx ok to {target} bytes={bytes}"
+                            ),
+                            Err(error) => crate::diagnostic_log::warn!(
+                                "wifi-auto: unicast peering tx fail to {target}: {error}"
+                            ),
+                        }
                     }
                 }
             }
@@ -1510,6 +1690,23 @@ impl Supervisor {
         }
     }
 
+    fn apply_discovery_group(
+        &mut self,
+        group_id: std::vec::Vec<u8>,
+        nics: &mut std::vec::Vec<Nic>,
+        sockets: &mut Option<Sockets>,
+        network_discovery_owner: NetworkDiscoveryOwner,
+    ) {
+        if self.settings.group_id == group_id {
+            return;
+        }
+        self.settings.group_id = group_id;
+        self.disable_members();
+        drop(sockets.take());
+        nics.clear();
+        let _activation = self.ensure_network_active(nics, sockets, network_discovery_owner);
+    }
+
     fn activate_network(&mut self, nics: &[Nic], sockets: Option<&Sockets>) {
         self.brains = if sockets.is_some() {
             nics.iter()
@@ -1527,13 +1724,20 @@ impl Supervisor {
             HashMap::new()
         };
         self.data = sockets.map(|sockets| sockets.data.clone());
-        self.prefixes = local_prefixes(&self.settings.devices);
+        self.prefixes = local_prefixes(&self.settings.devices, &self.host_lan);
+        self.publish_local_addresses(nics);
     }
 
     fn deactivate_network(&mut self) {
         self.brains.clear();
         self.data = None;
         self.prefixes.clear();
+        self.publish_local_addresses(&[]);
+    }
+
+    fn publish_local_addresses(&self, nics: &[Nic]) {
+        self.status
+            .set_local_addresses(supervisor_local_addresses(&self.prefixes, nics));
     }
 
     fn teardown_auto_interface_network(&mut self) {
@@ -1562,19 +1766,48 @@ impl Supervisor {
         let peer = ScopedPeer::from_socket_address(v6);
         let member_admission = self.peer_member_admission(peer);
         if member_admission == PeerMemberAdmission::AtCapacity {
+            if matches!(beacon_channel, BeaconChannel::Unicast) {
+                crate::diagnostic_log::debug!(
+                    "wifi-auto: unicast peering rx dropped {}%{} reason=member_capacity",
+                    v6.ip(),
+                    scope
+                );
+            }
             return PeeringTokenReply::NotRequired;
         }
         let Some(brain) = self.brains.get_mut(&scope) else {
+            if matches!(beacon_channel, BeaconChannel::Unicast) {
+                crate::diagnostic_log::debug!(
+                    "wifi-auto: unicast peering rx dropped {}%{} reason=no_brain_for_scope",
+                    v6.ip(),
+                    scope
+                );
+            }
             return PeeringTokenReply::NotRequired;
         };
         let peering_token = *brain.our_peering_token().as_bytes();
+        let observation = brain.observe_discovery_datagram(*v6.ip(), bytes, now_ms);
         let contract::BeaconObservation::AuthenticatedPeer {
             address,
             peer_observation,
-        } = brain.observe_discovery_datagram(*v6.ip(), bytes, now_ms)
+        } = observation
         else {
+            if matches!(beacon_channel, BeaconChannel::Unicast) {
+                crate::diagnostic_log::debug!(
+                    "wifi-auto: unicast peering rx rejected {}%{} observation={observation:?} len={}",
+                    v6.ip(),
+                    scope,
+                    bytes.len()
+                );
+            }
             return PeeringTokenReply::NotRequired;
         };
+        if matches!(beacon_channel, BeaconChannel::Unicast) {
+            crate::diagnostic_log::debug!(
+                "wifi-auto: unicast peering rx ok {address}%{scope} observation={peer_observation:?} members={}",
+                self.members.len()
+            );
+        }
         if peer_observation == contract::PeerObservation::TableFull {
             return PeeringTokenReply::NotRequired;
         }
@@ -1618,6 +1851,9 @@ impl Supervisor {
         let Some(data) = self.data.clone() else {
             return;
         };
+        if self.members.contains_key(&peer_address) {
+            return;
+        }
         let (inbound_tx, inbound_rx) = mpsc::channel(TOKIO_PEER_INBOUND_DEPTH);
         let peer = SocketAddrV6::new(
             peer_address.ip_address,
@@ -1647,6 +1883,9 @@ impl Supervisor {
                 status,
             },
         );
+        self.discovered_services
+            .tcp_dials
+            .drop_dials_matching_udp_peer(peer_address, &mut self.completed);
         self.publish_status();
     }
 
@@ -1687,6 +1926,11 @@ impl Supervisor {
         discovery_snapshot: &DiscoverySnapshot,
         network_discovery_owner: NetworkDiscoveryOwner,
     ) -> NewlyActiveUdpTargets {
+        let known_udp_peer_addresses = self
+            .brains
+            .values()
+            .flat_map(|brain| brain.known_peer_addresses())
+            .collect::<BTreeSet<_>>();
         let newly_active_udp_targets = self.discovered_services.reconcile(
             discovery_snapshot,
             network_discovery_owner,
@@ -1694,6 +1938,8 @@ impl Supervisor {
             &self.fleet,
             self.policy,
             &mut self.completed,
+            &self.members,
+            &known_udp_peer_addresses,
         );
         self.publish_status();
         newly_active_udp_targets
@@ -1726,15 +1972,32 @@ impl Supervisor {
         let SocketAddr::V6(target) = discovery_endpoint.socket_addr() else {
             return UdpPeeringProbePreparation::EndpointContractMismatch;
         };
+        let scoped_peer = ScopedPeer::from_socket_address(target);
+        if self.members.contains_key(&scoped_peer) {
+            crate::diagnostic_log::debug!(
+                "wifi-auto: UDP probe skipped for {discovery_endpoint}; peer member already present"
+            );
+            return UdpPeeringProbePreparation::PeerAlreadyKnown;
+        }
         let Some(auto_interface_protocol) = self.brains.get(&target.scope_id()) else {
+            crate::diagnostic_log::debug!(
+                "wifi-auto: UDP probe skipped for {discovery_endpoint}; no brain for ifindex {}",
+                target.scope_id()
+            );
             return UdpPeeringProbePreparation::LocalInterfaceUnavailable;
         };
         if auto_interface_protocol
             .known_peer_addresses()
             .any(|peer_address| peer_address == *target.ip())
         {
+            crate::diagnostic_log::debug!(
+                "wifi-auto: UDP probe skipped for {discovery_endpoint}; peer already known"
+            );
             return UdpPeeringProbePreparation::PeerAlreadyKnown;
         }
+        crate::diagnostic_log::debug!(
+            "wifi-auto: UDP probing discovered service {discovery_endpoint}"
+        );
         UdpPeeringProbePreparation::Ready(UdpPeeringProbe {
             target,
             peering_token: *auto_interface_protocol.our_peering_token().as_bytes(),
@@ -1767,7 +2030,8 @@ impl Supervisor {
             return;
         }
         let target = std::format!("127.0.0.1:{}", contract::TCP_RENDEZVOUS_PORT);
-        let client = TcpClientInterface::with_policy(target, self.policy, RENDEZVOUS_RECONNECT);
+        let client =
+            TcpClientInterface::with_policy(target.clone(), self.policy, RENDEZVOUS_RECONNECT);
         let status = client.status();
         let attached = self.fleet.add(client);
         self.loopback = Some(AttachedStatus { attached, status });
@@ -1887,7 +2151,8 @@ impl Supervisor {
             crate::diagnostic_log::debug!(
                 "wifi-auto: dialing gateway rendezvous {target} on ifindex {index}"
             );
-            let client = TcpClientInterface::with_policy(target, self.policy, RENDEZVOUS_RECONNECT);
+            let client =
+                TcpClientInterface::with_policy(target.clone(), self.policy, RENDEZVOUS_RECONNECT);
             let status = client.status();
             let attached = self.fleet.add(client);
             self.gateways.insert(
@@ -1911,9 +2176,10 @@ impl Supervisor {
             NetworkDiscoveryOwner::Host => platform_gateway_inventory(),
             NetworkDiscoveryOwner::Platform => Err(GatewayInventoryUnavailable),
         };
-        let fresh = link_local_nics(&self.settings.devices);
-        self.prefixes = local_prefixes(&self.settings.devices);
+        let fresh = link_local_nics(&self.settings.devices, &self.host_lan);
+        self.prefixes = local_prefixes(&self.settings.devices, &self.host_lan);
         self.apply_reconcile(discovery, nics, fresh, gateways);
+        self.publish_local_addresses(nics);
     }
 
     fn apply_reconcile(
@@ -1937,7 +2203,16 @@ impl Supervisor {
         }
         for nic in plan.added {
             if let Some(discovery) = discovery {
-                let _ = discovery.join_multicast_v6(&discovery_group, nic.index);
+                match discovery.join_multicast_v6(&discovery_group, nic.index) {
+                    Ok(()) => crate::diagnostic_log::debug!(
+                        "wifi-auto: joined classic discovery group {discovery_group} on ifindex {}",
+                        nic.index
+                    ),
+                    Err(join_error) => crate::diagnostic_log::debug!(
+                        "wifi-auto: classic discovery group join failed on ifindex {}: {join_error}",
+                        nic.index
+                    ),
+                }
             }
             self.brains.insert(
                 nic.index,
@@ -1997,9 +2272,12 @@ struct Sockets {
 }
 
 /// The per-scope probe obtains the kernel's send-source link-local address so the beacon token matches what peers recompute from the datagram source.
-fn link_local_nics(devices: &AutoWifiDevicePolicy) -> std::vec::Vec<Nic> {
+fn link_local_nics(
+    devices: &AutoWifiDevicePolicy,
+    host_lan: &HostLanInventory,
+) -> std::vec::Vec<Nic> {
     let Ok(ifaces) = if_addrs::get_if_addrs() else {
-        return std::vec::Vec::new();
+        return host_link_local_nics(devices, host_lan, HashSet::new());
     };
     let mut nics = std::vec::Vec::new();
     let mut seen: HashSet<u32> = HashSet::new();
@@ -2009,12 +2287,38 @@ fn link_local_nics(devices: &AutoWifiDevicePolicy) -> std::vec::Vec<Nic> {
             continue;
         }
         let Some(index) = iface.index else { continue };
-        if !seen.insert(index) {
+        if seen.contains(&index) {
             continue;
         }
-        if let Some(link_local) = link_local_for_scope(index) {
-            nics.push(Nic { link_local, index });
+        let Some(link_local) = link_local_for_scope(index) else {
+            continue;
+        };
+        seen.insert(index);
+        nics.push(Nic { link_local, index });
+    }
+    host_link_local_nics(devices, host_lan, seen)
+        .into_iter()
+        .for_each(|nic| nics.push(nic));
+    nics
+}
+
+fn host_link_local_nics(
+    devices: &AutoWifiDevicePolicy,
+    host_lan: &HostLanInventory,
+    mut seen: HashSet<u32>,
+) -> std::vec::Vec<Nic> {
+    let mut nics = std::vec::Vec::new();
+    for interface in host_lan.allowed_interfaces(devices) {
+        let Some(link_local) = interface.link_local() else {
+            continue;
+        };
+        if !seen.insert(interface.index()) {
+            continue;
         }
+        nics.push(Nic {
+            link_local,
+            index: interface.index(),
+        });
     }
     nics
 }
@@ -2026,28 +2330,83 @@ struct LocalPrefix {
     index: u32,
 }
 
-fn local_prefixes(auto_wifi_device_policy: &AutoWifiDevicePolicy) -> std::vec::Vec<LocalPrefix> {
-    let Ok(network_interfaces) = if_addrs::get_if_addrs() else {
-        return std::vec::Vec::new();
-    };
-    network_interfaces
+fn supervisor_local_addresses(
+    prefixes: &[LocalPrefix],
+    nics: &[Nic],
+) -> std::vec::Vec<(IpAddr, u32)> {
+    let mut addresses: std::vec::Vec<(IpAddr, u32)> = prefixes
         .iter()
-        .filter(|network_interface| {
-            auto_wifi_device_policy.allows(&network_interface.name, network_interface.is_loopback())
-        })
-        .map(|network_interface| match &network_interface.addr {
-            if_addrs::IfAddr::V4(ipv4_address) => LocalPrefix {
-                addr: IpAddr::V4(ipv4_address.ip),
-                netmask: IpAddr::V4(ipv4_address.netmask),
-                index: network_interface.index.unwrap_or(0),
-            },
-            if_addrs::IfAddr::V6(ipv6_address) => LocalPrefix {
-                addr: IpAddr::V6(ipv6_address.ip),
-                netmask: IpAddr::V6(ipv6_address.netmask),
-                index: network_interface.index.unwrap_or(0),
-            },
-        })
-        .collect()
+        .filter(|prefix| !prefix.addr.is_loopback() && !prefix.addr.is_unspecified())
+        .map(|prefix| (prefix.addr, prefix.index))
+        .collect();
+    for nic in nics {
+        if !nic.link_local.is_unicast_link_local() {
+            continue;
+        }
+        let addr = IpAddr::V6(nic.link_local);
+        if !addresses
+            .iter()
+            .any(|(existing, index)| *existing == addr && *index == nic.index)
+        {
+            addresses.push((addr, nic.index));
+        }
+    }
+    addresses.sort_by(compare_local_address);
+    addresses
+}
+
+fn compare_local_address(left: &(IpAddr, u32), right: &(IpAddr, u32)) -> Ordering {
+    match (left.0, right.0) {
+        (IpAddr::V4(_), IpAddr::V6(_)) => Ordering::Less,
+        (IpAddr::V6(_), IpAddr::V4(_)) => Ordering::Greater,
+        (IpAddr::V4(a), IpAddr::V4(b)) => a.cmp(&b).then(left.1.cmp(&right.1)),
+        (IpAddr::V6(a), IpAddr::V6(b)) => a.cmp(&b).then(left.1.cmp(&right.1)),
+    }
+}
+
+fn local_prefixes(
+    auto_wifi_device_policy: &AutoWifiDevicePolicy,
+    host_lan: &HostLanInventory,
+) -> std::vec::Vec<LocalPrefix> {
+    let mut prefixes = match if_addrs::get_if_addrs() {
+        Ok(network_interfaces) => network_interfaces
+            .iter()
+            .filter(|network_interface| {
+                auto_wifi_device_policy
+                    .allows(&network_interface.name, network_interface.is_loopback())
+            })
+            .map(|network_interface| match &network_interface.addr {
+                if_addrs::IfAddr::V4(ipv4_address) => LocalPrefix {
+                    addr: IpAddr::V4(ipv4_address.ip),
+                    netmask: IpAddr::V4(ipv4_address.netmask),
+                    index: network_interface.index.unwrap_or(0),
+                },
+                if_addrs::IfAddr::V6(ipv6_address) => LocalPrefix {
+                    addr: IpAddr::V6(ipv6_address.ip),
+                    netmask: IpAddr::V6(ipv6_address.netmask),
+                    index: network_interface.index.unwrap_or(0),
+                },
+            })
+            .collect(),
+        Err(_) => std::vec::Vec::new(),
+    };
+    let present: HashSet<(IpAddr, u32)> = prefixes
+        .iter()
+        .map(|prefix| (prefix.addr, prefix.index))
+        .collect();
+    for interface in host_lan.allowed_interfaces(auto_wifi_device_policy) {
+        for address in interface.addresses() {
+            if present.contains(&(address.addr(), interface.index())) {
+                continue;
+            }
+            prefixes.push(LocalPrefix {
+                addr: address.addr(),
+                netmask: address.netmask(),
+                index: interface.index(),
+            });
+        }
+    }
+    prefixes
 }
 
 fn is_local_peer(peer_address: IpAddr, local_prefixes: &[LocalPrefix]) -> bool {
@@ -2076,16 +2435,46 @@ fn endpoint_is_eligible(
     if network_discovery_owner == NetworkDiscoveryOwner::Platform {
         return true;
     }
-    local_prefixes.iter().any(|local_prefix| {
-        if let SocketAddr::V6(ipv6_socket_address) = socket_address {
-            if ipv6_socket_address.ip().is_unicast_link_local()
-                && ipv6_socket_address.scope_id() != local_prefix.index
-            {
-                return false;
-            }
+    // Link-local UDP peers are scoped to an interface: same ifindex means same link.
+    // Do not also require an IPv6 prefix/netmask match — some hosts omit usable LL netmasks
+    // from if_addrs, which would falsely reject mDNS-discovered LL targets.
+    if let SocketAddr::V6(ipv6_socket_address) = socket_address {
+        if ipv6_socket_address.ip().is_unicast_link_local() {
+            let scope_id = ipv6_socket_address.scope_id();
+            return scope_id != 0
+                && local_prefixes
+                    .iter()
+                    .any(|local_prefix| local_prefix.index == scope_id);
         }
+    }
+    local_prefixes.iter().any(|local_prefix| {
         is_same_subnet(local_prefix.addr, local_prefix.netmask, socket_address.ip())
     })
+}
+
+fn discovery_endpoint_matches_scoped_peer(
+    discovery_endpoint: DiscoveryEndpoint,
+    peer: ScopedPeer,
+) -> bool {
+    let SocketAddr::V6(socket_address) = discovery_endpoint.socket_addr() else {
+        return false;
+    };
+    *socket_address.ip() == peer.ip_address && socket_address.scope_id() == peer.scope_id
+}
+
+fn tcp_endpoint_covered_by_udp_peer(
+    discovery_endpoint: DiscoveryEndpoint,
+    udp_peer_members: &HashMap<ScopedPeer, PeerMember>,
+    known_udp_peer_addresses: &BTreeSet<Ipv6Addr>,
+) -> bool {
+    let SocketAddr::V6(socket_address) = discovery_endpoint.socket_addr() else {
+        return false;
+    };
+    if !socket_address.ip().is_unicast_link_local() {
+        return false;
+    }
+    let peer = ScopedPeer::from_socket_address(socket_address);
+    udp_peer_members.contains_key(&peer) || known_udp_peer_addresses.contains(&peer.ip_address)
 }
 
 fn gateway_for(routes: &HashMap<u32, IpAddr>, index: u32) -> Option<IpAddr> {
@@ -2201,9 +2590,18 @@ async fn send_udp_peering_probes(
         return;
     };
     for probe in probes {
-        let _ = unicast_discovery_socket
-            .send_to(&probe.peering_token, SocketAddr::V6(probe.target))
-            .await;
+        let target = SocketAddr::V6(probe.target);
+        match unicast_discovery_socket
+            .send_to(&probe.peering_token, target)
+            .await
+        {
+            Ok(bytes) => crate::diagnostic_log::debug!(
+                "wifi-auto: unicast peering probe tx ok to {target} bytes={bytes}"
+            ),
+            Err(error) => crate::diagnostic_log::warn!(
+                "wifi-auto: unicast peering probe tx fail to {target}: {error}"
+            ),
+        }
     }
 }
 
@@ -2216,9 +2614,18 @@ async fn send_peering_token_reply(
     else {
         return;
     };
-    let _ = unicast_discovery_socket
-        .send_to(&reply.peering_token, SocketAddr::V6(reply.target))
-        .await;
+    let target = SocketAddr::V6(reply.target);
+    match unicast_discovery_socket
+        .send_to(&reply.peering_token, target)
+        .await
+    {
+        Ok(bytes) => crate::diagnostic_log::debug!(
+            "wifi-auto: unicast peering reciprocal tx ok to {target} bytes={bytes}"
+        ),
+        Err(error) => crate::diagnostic_log::warn!(
+            "wifi-auto: unicast peering reciprocal tx fail to {target}: {error}"
+        ),
+    }
 }
 
 async fn next_discovery_snapshot(
@@ -2292,6 +2699,9 @@ fn discovery_socket(nics: &[Nic], settings: &AutoWifiSettings) -> io::Result<Udp
     if joined == 0 {
         return Err(io::Error::other("no interface joined the discovery group"));
     }
+    crate::diagnostic_log::debug!(
+        "wifi-auto: joined classic discovery group {discovery_group} on {joined} interface(s)"
+    );
     into_tokio(socket)
 }
 
@@ -2346,6 +2756,9 @@ impl prns_core::interfaces::ReportsStatus for AutoWifiPeer {
         Some(prns_core::interfaces::ConnectionView::of(self.status()))
     }
 }
+
+#[cfg(test)]
+mod without_ipv6_ll_multicast;
 
 #[cfg(test)]
 mod tests {
@@ -2645,6 +3058,39 @@ mod tests {
         assert!(!is_local_peer(v4([172, 16, 0, 1]), &prefixes));
     }
 
+    #[test]
+    fn supervisor_local_addresses_list_each_ipv4_and_ipv6_and_skip_loopback() {
+        let prefixes = [
+            prefix([192, 168, 1, 18], [255, 255, 255, 0]),
+            LocalPrefix {
+                addr: IpAddr::V6(Ipv6Addr::LOCALHOST),
+                netmask: IpAddr::V6(Ipv6Addr::from([0xff; 16])),
+                index: 1,
+            },
+            LocalPrefix {
+                addr: v4([127, 0, 0, 1]),
+                netmask: v4([255, 0, 0, 0]),
+                index: 1,
+            },
+        ];
+        let nics = [nic(47, 0x3321)];
+        assert_eq!(
+            supervisor_local_addresses(&prefixes, &nics),
+            vec![
+                (v4([192, 168, 1, 18]), 1),
+                (IpAddr::V6(nics[0].link_local), 47),
+            ]
+        );
+    }
+
+    #[test]
+    fn auto_wifi_status_stores_local_addresses() {
+        let id = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, contract::GROUP_ID);
+        let status = AutoWifiStatus::new(id, contract::GROUP_ID.to_vec());
+        status.set_local_addresses(std::vec![(v4([192, 168, 1, 18]), 47)]);
+        assert_eq!(status.local_addresses(), vec![(v4([192, 168, 1, 18]), 47)]);
+    }
+
     fn test_supervisor() -> (Supervisor, prns_runtime::runtime::DetachedFleet) {
         let id = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, contract::GROUP_ID);
         let settings = AutoWifiSettings::default();
@@ -2662,9 +3108,10 @@ mod tests {
             fleet,
             data: Some(Arc::new(UdpSocket::from_std(data).expect("into tokio"))),
             policy: contract::configured_policy(Default::default()),
-            settings,
-            status: AutoWifiStatus::new(id),
+            settings: settings.clone(),
+            status: AutoWifiStatus::new(id, settings.group_id.clone()),
             completed: CompletedTraffic::default(),
+            host_lan: HostLanInventory::default(),
         };
         (supervisor, guard)
     }
@@ -3104,6 +3551,152 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn classic_beacon_then_mdns_udp_converges_to_one_member_without_second_probe() {
+        let (mut supervisor, _guard) = test_supervisor();
+        let scope_id = 7;
+        let our_link_local = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1);
+        let peer_link_local = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 8);
+        supervisor.brains.insert(
+            scope_id,
+            AutoWifiBrain::from_link_local_with_group(our_link_local, contract::GROUP_ID),
+        );
+        let peer_token = contract::peering_token(&peer_link_local);
+        assert!(matches!(
+            supervisor.ingest_beacon(
+                SocketAddr::V6(SocketAddrV6::new(
+                    peer_link_local,
+                    contract::DEFAULT_DISCOVERY_PORT,
+                    0,
+                    scope_id,
+                )),
+                peer_token.as_bytes(),
+                1,
+                BeaconChannel::Multicast,
+            ),
+            PeeringTokenReply::NotRequired
+        ));
+        assert_eq!(supervisor.members.len(), 1);
+
+        let udp_endpoint = udp_discovery_endpoint(8, scope_id);
+        let mut snapshot = DiscoverySnapshot::new(TEST_DISCOVERY_CAPACITY);
+        insert_advertisement(&mut snapshot, "peer-mdns", udp_endpoint);
+        let newly_active =
+            supervisor.reconcile_discovery(&snapshot, NetworkDiscoveryOwner::Platform);
+        assert!(supervisor
+            .prepare_udp_peering_probes(newly_active.iter())
+            .is_empty());
+        assert_eq!(supervisor.members.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn mdns_sighting_refreshes_known_peer_liveness() {
+        let (mut supervisor, _guard) = test_supervisor();
+        let scope_id = 7;
+        let our_link_local = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1);
+        let peer_link_local = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 8);
+        supervisor.brains.insert(
+            scope_id,
+            AutoWifiBrain::from_link_local_with_group(our_link_local, contract::GROUP_ID),
+        );
+        let peer_token = contract::peering_token(&peer_link_local);
+        assert!(matches!(
+            supervisor.ingest_beacon(
+                SocketAddr::V6(SocketAddrV6::new(
+                    peer_link_local,
+                    contract::DEFAULT_DISCOVERY_PORT,
+                    0,
+                    scope_id,
+                )),
+                peer_token.as_bytes(),
+                1,
+                BeaconChannel::Multicast,
+            ),
+            PeeringTokenReply::NotRequired
+        ));
+
+        let udp_endpoint = udp_discovery_endpoint(8, scope_id);
+        let mut snapshot = DiscoverySnapshot::new(TEST_DISCOVERY_CAPACITY);
+        insert_advertisement(&mut snapshot, "peer-mdns", udp_endpoint);
+        supervisor.refresh_known_peers_from_discovery_snapshot(&snapshot, 20_000);
+
+        assert_eq!(
+            supervisor
+                .brains
+                .get_mut(&scope_id)
+                .expect("brain")
+                .prune_stale_peers(20_000 + contract::PEERING_TIMEOUT_MS),
+            0,
+            "mDNS sighting must refresh last_heard past the original beacon time"
+        );
+        assert_eq!(
+            supervisor
+                .brains
+                .get_mut(&scope_id)
+                .expect("brain")
+                .prune_stale_peers(20_000 + contract::PEERING_TIMEOUT_MS + 1),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn mdns_tcp_dial_is_skipped_when_udp_member_already_exists() {
+        let (mut supervisor, _guard) = test_supervisor();
+        let scope_id = 7;
+        let our_link_local = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1);
+        let peer_link_local = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 8);
+        supervisor.brains.insert(
+            scope_id,
+            AutoWifiBrain::from_link_local_with_group(our_link_local, contract::GROUP_ID),
+        );
+        supervisor.spawn_member(ScopedPeer {
+            ip_address: peer_link_local,
+            scope_id,
+        });
+        assert_eq!(supervisor.members.len(), 1);
+
+        let tcp_endpoint = DiscoveryEndpoint::tcp(SocketAddr::V6(SocketAddrV6::new(
+            peer_link_local,
+            contract::TCP_RENDEZVOUS_PORT,
+            0,
+            scope_id,
+        )))
+        .unwrap();
+        let mut snapshot = DiscoverySnapshot::new(TEST_DISCOVERY_CAPACITY);
+        insert_advertisement(&mut snapshot, "peer-tcp", tcp_endpoint);
+        supervisor.reconcile_discovery(&snapshot, NetworkDiscoveryOwner::Platform);
+        assert!(
+            supervisor.discovered_services.tcp_dials.members.is_empty(),
+            "TCP rendezvous must not duplicate an existing UDP peer"
+        );
+        assert_eq!(supervisor.members.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn spawning_udp_member_tears_down_matching_tcp_dial() {
+        let (mut supervisor, _guard) = test_supervisor();
+        let scope_id = 7;
+        let peer_link_local = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 8);
+        let tcp_endpoint = DiscoveryEndpoint::tcp(SocketAddr::V6(SocketAddrV6::new(
+            peer_link_local,
+            contract::TCP_RENDEZVOUS_PORT,
+            0,
+            scope_id,
+        )))
+        .unwrap();
+        let mut snapshot = DiscoverySnapshot::new(TEST_DISCOVERY_CAPACITY);
+        insert_advertisement(&mut snapshot, "peer-tcp", tcp_endpoint);
+        supervisor.reconcile_discovery(&snapshot, NetworkDiscoveryOwner::Platform);
+        assert_eq!(supervisor.discovered_services.tcp_dials.members.len(), 1);
+
+        supervisor.spawn_member(ScopedPeer {
+            ip_address: peer_link_local,
+            scope_id,
+        });
+        assert!(supervisor.discovered_services.tcp_dials.members.is_empty());
+        assert_eq!(supervisor.members.len(), 1);
+    }
+
     #[test]
     fn udp_peer_and_target_state_have_the_shared_u8_ceiling() {
         assert_eq!(
@@ -3274,6 +3867,34 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn link_local_udp_is_eligible_from_matching_ifindex_even_without_v6_prefix() {
+        // Host NICs often expose only IPv4 in local_prefixes for a given ifindex, or
+        // report an unusable LL netmask. Scope match alone is enough for LL UDP peers.
+        let v4_only = LocalPrefix {
+            addr: "192.168.1.36".parse().unwrap(),
+            netmask: "255.255.255.0".parse().unwrap(),
+            index: 14,
+        };
+        let peer = DiscoveryEndpoint::udp(SocketAddr::V6(SocketAddrV6::new(
+            "fe80::12bd:a3ff:fe9d:f90c".parse().unwrap(),
+            contract::UNICAST_DISCOVERY_PORT,
+            0,
+            14,
+        )))
+        .unwrap();
+        assert!(endpoint_is_eligible(
+            peer,
+            NetworkDiscoveryOwner::Host,
+            &[v4_only]
+        ));
+        assert!(!endpoint_is_eligible(
+            peer,
+            NetworkDiscoveryOwner::Host,
+            &[]
+        ));
+    }
+
     #[tokio::test]
     async fn custom_group_nodes_never_dial_the_stock_loopback_rendezvous() {
         let (mut supervisor, _guard) = test_supervisor();
@@ -3311,7 +3932,7 @@ mod tests {
     #[test]
     fn the_parent_connection_follows_the_best_live_child_state() {
         let id = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, contract::GROUP_ID);
-        let status = AutoWifiStatus::new(id);
+        let status = AutoWifiStatus::new(id, contract::GROUP_ID.to_vec());
         let first = TokioInterfaceStatus::new_unaccounted(
             InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, b"first"),
             ConnectionState::Initializing,
@@ -3337,9 +3958,20 @@ mod tests {
     }
 
     #[test]
+    fn set_group_id_rejects_empty_and_oversized_names() {
+        let id = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, b"group");
+        let status = AutoWifiStatus::new(id, contract::GROUP_ID.to_vec());
+        assert!(!status.set_group_id(b""));
+        assert!(!status.set_group_id(&[b'a'; 33]));
+        assert!(status.set_group_id(b"field-mesh"));
+        assert_eq!(status.subscribe_group().borrow().as_slice(), b"field-mesh");
+        assert!(status.set_group_id(b"field-mesh"));
+    }
+
+    #[test]
     fn completed_and_reconnected_member_traffic_is_monotonic() {
         let id = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, b"accounting");
-        let status = AutoWifiStatus::new(id);
+        let status = AutoWifiStatus::new(id, contract::GROUP_ID.to_vec());
         let first = TokioInterfaceStatus::new_unaccounted(
             InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, b"peer"),
             ConnectionState::Connected,
