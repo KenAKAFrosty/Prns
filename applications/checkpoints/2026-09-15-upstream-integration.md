@@ -39,7 +39,19 @@ the six compatible SDK 57 patches and their required transitive updates were
 committed separately. React Native, API 29 and the generated binding boundary are
 unchanged. These source/host checks do not establish phone lifecycle acceptance.
 
-## Current Android device build
+Detached extraction also passes at `8e6ae75fa`, selecting exact core `a751b1cda`
+from the local Git repository. It includes the full detached app checks and the
+proven native/Python LXMF exchange. The generated JavaScript artifact SHA-256 is
+`0b292b27e05d5c3f4e6f0d0861c1ef159059c62116ac983105f055eee5a71296`.
+This checks extraction against exact local source, not remote pin availability.
+The isolated checkout and disposable compilation/test caches were removed afterward.
+
+## Android device builds
+
+The current installed APK is the Expo-patched second build below. Results for
+the initial APK are retained separately to make the retests explicit.
+
+### Initial integrated APK
 
 The bundled, standalone arm64 APK built successfully for Android API 29, passed
 its JVM and 16 KiB native-library alignment checks, and was installed on the
@@ -71,6 +83,8 @@ and after a cold launch, the saved conversation remained visible; Retry followed
 by Cancel changed the same record to Cancelled. That state survived another cold
 launch. The observed intermediate state was Sending, not a captured Queued state.
 
+### Expo-patched APK
+
 The Expo patch update produced a second standalone APK, installed without clearing
 data. Its SHA-256 is
 `8c221aa11cb86da89b6b1d99bb225ffeef748d438ee8d09e7371d8547833aa14`;
@@ -81,9 +95,38 @@ passed with phone delivery confirmation in 195 ms. The old cancelled message was
 not received by the peer during that bounded exchange. This is not indefinite
 no-resend or general upgrade/migration qualification.
 
-These are distinct APKs: pristine import and the first offline action journey
-were performed before the Expo patch update. Fresh pairing, authenticated
-requests, controlled caller cancellation and repeated recovery remain open.
+Pristine import was then repeated on the patched APK after resetting only the
+disposable test data: picker cancellation, malformed-file rejection, correct
+preview/import, and same-primary-identity retention after cold restart all pass.
+The new test controller identity is `68f67abd65b0fdb389359c71ee672fe6`.
+The earlier test messages were removed by this explicit reset; their recorded
+evidence is retained, not claimed to remain on the phone.
+
+On that patched APK, Stop remained stopped after a Home/foreground round trip;
+manual Start restored the connection. Three further Settings Bluetooth off/on
+cycles each produced a fresh E290 data/control subscription. The first automation
+attempt stopped safely while the Settings switch was still transitioning; it is
+not counted as a completed cycle. A bounded transition wait enabled the three
+recorded passes without changing app code or Android settings policy.
+
+After these cycles, the phone received and proved an incoming message while the
+Samsung launcher remained the resumed activity before and after proof. Returning
+to the app showed the stored verified message, and an outgoing reply completed
+the third two-way exchange (193 ms reported delivery). This is one controlled
+off-screen foreground-service observation on a USB-powered phone, not continuous
+lock, deep Doze, natural suspension or guaranteed background delivery.
+
+Finally, the cold Bluetooth-off Retry/Cancel journey was repeated on the patched
+APK. The saved failed message `c3fbb0b39e4b637d7b984cf5d1aa42fb49c53b248368dd435e9f11d89a8505d8`
+remained visible after cold launch, Retry entered Sending, Cancel completed, and
+the identical record retained its Cancelled state after another cold launch.
+Bluetooth was restored afterward. This closes the recorded Android offline-action
+gap on this exact APK; it is not caller cancellation of an authenticated node read,
+power-loss durability or a claim that a queued message was never transmitted.
+
+Fresh pairing, authenticated requests and controlled caller cancellation remain
+open; Bluetooth subscription is not remote-control success. The app is left on
+Pair a node, awaiting the board's user-opened invitation window.
 No physical iOS result is claimed for this integration.
 
 ## Upstream contribution follow-up
@@ -130,7 +173,7 @@ repaired in the isolated external build root, without changing global tools or
 waiving gates. Miri quick passed 35 tests (stacked borrows); the Thumbv7em and
 RISC-V quick suites passed two shared-state-machine scenarios each with matching
 transcripts. Pins are Rust 1.96.0, nightly-2025-11-21 and QEMU 11.1.1. These runs
-captured working-tree custody at `1a4dbfe54`, with different documentation diff
+captured working-tree custody at `1a4dbfe54`, with different working-tree diff
 fingerprints; they are development evidence, not one clean publication baseline.
 The full normal publishing selection and other emulator/platform scopes remain
 separate.
