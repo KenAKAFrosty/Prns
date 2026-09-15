@@ -60,6 +60,8 @@ use super::entropy::{runtime_entropy, seed_from_hal};
     feature = "board-mesh-tower-v2"
 ))]
 mod bluetooth;
+#[cfg(any(feature = "board-t1000e", feature = "board-sensecap-solar-node"))]
+mod node_page_announce;
 #[cfg(feature = "board-mesh-tower-v2")]
 #[path = "mesh_tower_v2.rs"]
 mod selected;
@@ -494,9 +496,7 @@ pub async fn run(spawner: Spawner) -> ! {
         )
         .await;
     }
-    #[cfg(feature = "board-t1000e")]
-    selected::run(io, lora.run(lora_seam), gnss).await;
-    #[cfg(feature = "board-sensecap-solar-node")]
+    #[cfg(any(feature = "board-t1000e", feature = "board-sensecap-solar-node"))]
     selected::run(io, lora.run(lora_seam), gnss, node_page_destination).await;
     #[cfg(feature = "board-mesh-tower-v2")]
     selected::run(
