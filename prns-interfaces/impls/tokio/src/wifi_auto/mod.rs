@@ -1087,6 +1087,17 @@ struct AttachedStatus {
     status: TokioInterfaceStatus,
 }
 
+struct DiscoveryReconcile<'a> {
+    discovery_snapshot: &'a DiscoverySnapshot,
+    network_discovery_owner: NetworkDiscoveryOwner,
+    local_prefixes: &'a [LocalPrefix],
+    fleet: &'a Fleet,
+    policy: EffectiveInterfacePolicy,
+    completed_traffic: &'a mut CompletedTraffic,
+    udp_peer_members: &'a std::collections::HashMap<ScopedPeer, PeerMember>,
+    known_udp_peer_addresses: &'a BTreeSet<Ipv6Addr>,
+}
+
 struct DiscoveredServices {
     tcp_dials: DiscoveredTcpDials,
     udp_targets: DiscoveredUdpTargets,
@@ -1100,37 +1111,27 @@ impl DiscoveredServices {
         }
     }
 
-    fn reconcile(
-        &mut self,
-        discovery_snapshot: &DiscoverySnapshot,
-        network_discovery_owner: NetworkDiscoveryOwner,
-        local_prefixes: &[LocalPrefix],
-        fleet: &Fleet,
-        policy: EffectiveInterfacePolicy,
-        completed_traffic: &mut CompletedTraffic,
-        udp_peer_members: &std::collections::HashMap<ScopedPeer, PeerMember>,
-        known_udp_peer_addresses: &BTreeSet<Ipv6Addr>,
-    ) -> NewlyActiveUdpTargets {
+    fn reconcile(&mut self, request: DiscoveryReconcile<'_>) -> NewlyActiveUdpTargets {
         let selected_tcp_endpoints = selected_discovery_endpoints(
-            discovery_snapshot,
+            request.discovery_snapshot,
             DiscoveryTransport::Tcp,
-            network_discovery_owner,
-            local_prefixes,
+            request.network_discovery_owner,
+            request.local_prefixes,
         );
         self.tcp_dials.reconcile(
             selected_tcp_endpoints.values().copied().collect(),
-            fleet,
-            policy,
-            completed_traffic,
-            udp_peer_members,
-            known_udp_peer_addresses,
+            request.fleet,
+            request.policy,
+            request.completed_traffic,
+            request.udp_peer_members,
+            request.known_udp_peer_addresses,
         );
 
         let selected_udp_endpoints = selected_discovery_endpoints(
-            discovery_snapshot,
+            request.discovery_snapshot,
             DiscoveryTransport::Udp,
-            network_discovery_owner,
-            local_prefixes,
+            request.network_discovery_owner,
+            request.local_prefixes,
         );
         self.udp_targets.reconcile(selected_udp_endpoints)
     }
@@ -1931,16 +1932,16 @@ impl Supervisor {
             .values()
             .flat_map(|brain| brain.known_peer_addresses())
             .collect::<BTreeSet<_>>();
-        let newly_active_udp_targets = self.discovered_services.reconcile(
+        let newly_active_udp_targets = self.discovered_services.reconcile(DiscoveryReconcile {
             discovery_snapshot,
             network_discovery_owner,
-            &self.prefixes,
-            &self.fleet,
-            self.policy,
-            &mut self.completed,
-            &self.members,
-            &known_udp_peer_addresses,
-        );
+            local_prefixes: &self.prefixes,
+            fleet: &self.fleet,
+            policy: self.policy,
+            completed_traffic: &mut self.completed,
+            udp_peer_members: &self.members,
+            known_udp_peer_addresses: &known_udp_peer_addresses,
+        });
         self.publish_status();
         newly_active_udp_targets
     }
