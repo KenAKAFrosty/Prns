@@ -122,6 +122,8 @@ struct ServerState {
     completed: tokio::sync::mpsc::UnboundedSender<Result<(), ServerFailure>>,
 }
 
+impl personal_rns::runtime::RemoteControlHostControls for ServerState {}
+
 struct Complete;
 
 impl RequestEndpoint<ServerState> for Complete {
