@@ -15,6 +15,8 @@ struct StatusBoard {
     hits: Cell<u32>,
 }
 
+impl RemoteControlHostControls for StatusBoard {}
+
 struct Status;
 impl RequestEndpoint<StatusBoard> for Status {
     const ENDPOINT_ID: &'static str = STATUS_ENDPOINT_ID;
@@ -34,6 +36,8 @@ impl RequestEndpoint<StatusBoard> for Status {
 struct AnnounceRelay {
     heard: tokio::sync::mpsc::UnboundedSender<DestinationHash>,
 }
+
+impl RemoteControlHostControls for AnnounceRelay {}
 
 fn forward_announces(event: PrnsEvent<'_>, relay: &AnnounceRelay) {
     if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event {
