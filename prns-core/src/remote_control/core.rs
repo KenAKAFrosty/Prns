@@ -17,7 +17,8 @@ impl RemoteControlStorageRequirements {
     pub const AVAILABLE: Self = Self {
         held_identities: 3,
         upstream_app_destinations: 3,
-        request_handlers: 1,
+        // Live `/remote-control` plus the ephemeral pairing-session handler.
+        request_handlers: 2,
     };
 
     #[must_use]
@@ -403,10 +404,17 @@ pub trait RemoteControlTargetAccessTable {
         &mut self,
         access: RemoteControlTargetAccess,
     ) -> Result<SetRemoteControlTargetAccessOutcome, SetRemoteControlTargetAccessError>;
+    fn forget_by_identity_hash(
+        &mut self,
+        identity: &IdentityHash,
+    ) -> ForgetRemoteControlTargetOutcome;
+
     fn forget_target(
         &mut self,
         target: &RemoteControlTargetIdentity,
-    ) -> ForgetRemoteControlTargetOutcome;
+    ) -> ForgetRemoteControlTargetOutcome {
+        self.forget_by_identity_hash(&target.identity_hash())
+    }
 
     fn is_empty(&self) -> bool {
         self.len() == 0

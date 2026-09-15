@@ -54,8 +54,14 @@ pub use node::{
     PrnsNodeRecipe, ServeMyRequestEndpoints,
 };
 pub use remote_control::{
-    RemoteControlAnnounceSelf, RemoteControlAnnounceSelfFailure, RemoteControlDescribe,
-    RemoteControlError,
+    RemoteControlAnnounceSelf, RemoteControlAnnounceSelfFailure, RemoteControlAuthorizeController,
+    RemoteControlDescribe, RemoteControlDescribeBuild, RemoteControlDescribePower,
+    RemoteControlError, RemoteControlHostControls, RemoteControlInventoryControllers,
+    RemoteControlInventoryInterfaceConfig, RemoteControlInventoryInterfacePeers,
+    RemoteControlInventoryInterfaces, RemoteControlRevokeController,
+    RemoteControlSetInterfaceGroup, RemoteControlSetInterfaceLoRaProfile,
+    RemoteControlSetInterfaceMode, RemoteControlSetInterfacePower,
+    RemoteControlSetInterfaceWifiStation, RemoteControlSleepRadios, RemoteControlWakeRadios,
 };
 pub use remote_control_authorizations::{
     RemoteControlAuthorizationRestoreError, RemoteControlAuthorizationRestoreOutcome,
@@ -102,7 +108,7 @@ pub mod placement {
     pub use super::node::assemble_node_in_place;
     pub use super::remote_control::{
         admit_remote_control_request, dispatch_admitted_remote_control_request,
-        dispatch_remote_control_request, AdmittedRemoteControlRequest,
+        dispatch_remote_control_request, AdmittedRemoteControlRequest, RemoteControlAdmitError,
     };
 }
 

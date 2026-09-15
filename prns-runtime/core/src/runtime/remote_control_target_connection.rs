@@ -165,11 +165,14 @@ mod tests {
             (connection.target(), connection.link_id()),
             (target, link_id)
         );
-        assert_eq!(
-            connection.permitted_requests(),
-            &RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
-        );
+        let mut expected = RemoteControlRequestSet::only(RemoteControlRequestKind::Describe);
+        assert!(expected.insert(RemoteControlRequestKind::DescribeBuild));
+        assert_eq!(connection.permitted_requests(), &expected);
         assert_eq!(connection.admit(RemoteControlRequestKind::Describe), Ok(()));
+        assert_eq!(
+            connection.admit(RemoteControlRequestKind::DescribeBuild),
+            Ok(()),
+        );
         assert_eq!(
             connection.admit(RemoteControlRequestKind::AnnounceSelf),
             Err(RemoteControlTargetOperationError::NotPermitted(

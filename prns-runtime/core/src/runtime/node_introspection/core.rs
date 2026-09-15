@@ -1,7 +1,8 @@
 use prns_core::interfaces::IfacSize;
 use prns_core::interfaces::{
     BitrateBps, ConnectionState, FrameAccounting, InterfaceCapabilities, InterfaceGravity,
-    InterfaceId, InterfaceMode, InterfaceOriginKind, InterfaceSnapshot, Membership, TransferRates,
+    InterfaceId, InterfaceMode, InterfaceOriginKind, InterfaceSnapshot, Membership, PeerDetails,
+    RadioIndication, TransferRates,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -225,6 +226,14 @@ impl<Label> FoldedInterface<Label> {
                 links: self.links,
                 transported_links: self.transported_links,
                 membership: Membership::Independent,
+                radio: match self.root {
+                    Some(snapshot) => snapshot.radio,
+                    None => RadioIndication::for_kind(self.id.kind()),
+                },
+                details: match self.root {
+                    Some(snapshot) => snapshot.details,
+                    None => PeerDetails::NotApplicable,
+                },
             },
             ifac: self.ifac,
         }
@@ -337,6 +346,8 @@ mod tests {
                 links,
                 transported_links: 0,
                 membership,
+                radio: RadioIndication::for_kind(id.kind()),
+                details: PeerDetails::NotApplicable,
             },
             ifac: None,
         }

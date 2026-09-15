@@ -1,6 +1,15 @@
 mod connection;
+mod details;
+mod radio;
 
 pub use connection::ConnectionState;
+pub use details::PeerDetails;
+#[cfg(feature = "tokio-host")]
+pub use details::PeerDetailsNotify;
+#[allow(unused_imports)]
+pub use radio::{
+    BluetoothIndication, LoRaIndication, RadioFamily, RadioIndication, WifiIndication,
+};
 
 use crate::interfaces::{InterfaceGravity, InterfaceId, InterfaceMode};
 
@@ -127,6 +136,14 @@ pub trait InterfaceStatus {
     fn frame_accounting(&self) -> Option<FrameAccounting> {
         None
     }
+
+    fn radio(&self) -> RadioIndication {
+        RadioIndication::for_kind(self.id().kind())
+    }
+
+    fn details(&self) -> PeerDetails {
+        PeerDetails::NotApplicable
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -144,6 +161,8 @@ pub struct InterfaceVitals {
     pub tx_bytes: u64,
     pub transfer_rates: Option<TransferRates>,
     pub frame_accounting: Option<FrameAccounting>,
+    pub radio: RadioIndication,
+    pub details: PeerDetails,
 }
 
 impl InterfaceVitals {
@@ -156,6 +175,8 @@ impl InterfaceVitals {
             tx_bytes: status.tx_bytes(),
             transfer_rates: status.transfer_rates(),
             frame_accounting: status.frame_accounting(),
+            radio: status.radio(),
+            details: status.details(),
         }
     }
 }
@@ -174,6 +195,8 @@ pub struct InterfaceSnapshot {
     pub links: u32,
     pub transported_links: u32,
     pub membership: Membership,
+    pub radio: RadioIndication,
+    pub details: PeerDetails,
 }
 
 #[cfg(feature = "tokio-host")]
@@ -247,5 +270,13 @@ impl<T: InterfaceStatus + ?Sized> InterfaceStatus for &T {
 
     fn frame_accounting(&self) -> Option<FrameAccounting> {
         (**self).frame_accounting()
+    }
+
+    fn radio(&self) -> RadioIndication {
+        (**self).radio()
+    }
+
+    fn details(&self) -> PeerDetails {
+        (**self).details()
     }
 }
