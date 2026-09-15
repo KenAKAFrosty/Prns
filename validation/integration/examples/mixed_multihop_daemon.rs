@@ -27,12 +27,12 @@ async fn main() {
         remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: Some(Zeroizing::new([0xD2; IDENTITY_SECRET_KEY_LEN])),
         pre_configured_destinations: [] as [personal_rns::runtime::PreConfiguredDestination; 0],
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
-        on_event: |_, _state: &()| {},
+        on_event: |_, _state: &personal_rns::runtime::NoRemoteControlHostControls| {},
     })
     .with_protocol_policy(EngineProtocolPolicy {
         recursive_path_request_default: RecursivePathRequestDefault::Enabled,

@@ -1,11 +1,15 @@
+use core::fmt::Write as _;
+use heapless::String as HeaplessString;
 use heapless::Vec as HeaplessVec;
 
-use crate::interfaces::subghz::{Frequency, SubGRegion, TxPower};
+use crate::interfaces::subghz::{Frequency, RegulatoryRegion, SubGRegion, TxPower};
 use crate::interfaces::AirtimeDutyCycle;
 
 use super::modulation::{CodingRate, LoraBandwidth, Modulation, SpreadingFactor};
 
 const MODULATION_TAG_LORA: u8 = 0x00;
+
+pub const INVENTORY_CONFIG_CAP: usize = 48;
 
 pub const CHANNEL_TAG_CAP: usize = 11;
 
@@ -291,6 +295,43 @@ impl RadioProfile {
         Ok(())
     }
 
+    /// Compact card text: `L,{region},{khz},{sf},{bw},{cr},{tx_dbm},{preamble}`.
+    ///
+    /// Bandwidth is `1`/`2`/`5` for 125/250/500 kHz so a six-supervisor
+    /// inventory still fits one link packet.
+    pub fn inventory_config(self) -> HeaplessString<INVENTORY_CONFIG_CAP> {
+        let Modulation::Lora {
+            spreading_factor,
+            bandwidth,
+            coding_rate,
+        } = self.modulation;
+        let mut out = HeaplessString::new();
+        if write!(
+            out,
+            "L,{},{},{},{},{},{},{}",
+            self.region.inventory_index(),
+            self.frequency.hz() / 1_000,
+            spreading_factor as u8,
+            bandwidth_inventory_code(bandwidth),
+            coding_rate.denominator(),
+            self.tx_power.dbm(),
+            self.preamble.count(),
+        )
+        .is_err()
+        {
+            out.clear();
+            let _ = out.push_str("LoRa");
+        }
+        out
+    }
+
+    pub fn parse_inventory_config(text: &str) -> Option<Self> {
+        if let Some(compact) = text.strip_prefix("L,") {
+            return parse_compact_inventory_config(compact);
+        }
+        parse_verbose_inventory_config(text)
+    }
+
     pub const fn nominal_bitrate_bps(self) -> u32 {
         self.modulation.nominal_bitrate_bps()
     }
@@ -331,6 +372,130 @@ impl RadioProfile {
         (payload_us + tail_us) as u64
     }
 }
+
+impl SubGRegion {
+    const fn inventory_index(self) -> u8 {
+        match self {
+            Self::Regulated(RegulatoryRegion::Us915) => 0,
+            Self::Regulated(RegulatoryRegion::Au915) => 1,
+            Self::Regulated(RegulatoryRegion::Eu433) => 2,
+            Self::Regulated(RegulatoryRegion::Eu865) => 3,
+            Self::Regulated(RegulatoryRegion::Eu868) => 4,
+            Self::Regulated(RegulatoryRegion::Eu869) => 5,
+            Self::Regulated(RegulatoryRegion::As923) => 6,
+            Self::Regulated(RegulatoryRegion::In865) => 7,
+            Self::Regulated(RegulatoryRegion::Cn470) => 8,
+            Self::Regulated(RegulatoryRegion::Kr920) => 9,
+            Self::Regulated(RegulatoryRegion::Jp920) => 10,
+            Self::Custom => 11,
+        }
+    }
+
+    const fn from_inventory_index(index: u8) -> Option<Self> {
+        match index {
+            0 => Some(Self::Regulated(RegulatoryRegion::Us915)),
+            1 => Some(Self::Regulated(RegulatoryRegion::Au915)),
+            2 => Some(Self::Regulated(RegulatoryRegion::Eu433)),
+            3 => Some(Self::Regulated(RegulatoryRegion::Eu865)),
+            4 => Some(Self::Regulated(RegulatoryRegion::Eu868)),
+            5 => Some(Self::Regulated(RegulatoryRegion::Eu869)),
+            6 => Some(Self::Regulated(RegulatoryRegion::As923)),
+            7 => Some(Self::Regulated(RegulatoryRegion::In865)),
+            8 => Some(Self::Regulated(RegulatoryRegion::Cn470)),
+            9 => Some(Self::Regulated(RegulatoryRegion::Kr920)),
+            10 => Some(Self::Regulated(RegulatoryRegion::Jp920)),
+            11 => Some(Self::Custom),
+            _ => None,
+        }
+    }
+
+    fn from_inventory_label(label: &str) -> Option<Self> {
+        match label {
+            "Custom" => Some(Self::Custom),
+            other => RegulatoryRegion::ALL
+                .into_iter()
+                .find(|region| region.label() == other)
+                .map(Self::Regulated),
+        }
+    }
+}
+
+const fn bandwidth_inventory_code(bandwidth: LoraBandwidth) -> u8 {
+    match bandwidth {
+        LoraBandwidth::Bw125kHz => 1,
+        LoraBandwidth::Bw250kHz => 2,
+        LoraBandwidth::Bw500kHz => 5,
+    }
+}
+
+fn bandwidth_from_inventory_code(code: u32) -> Option<LoraBandwidth> {
+    match code {
+        1 | 125 => Some(LoraBandwidth::Bw125kHz),
+        2 | 250 => Some(LoraBandwidth::Bw250kHz),
+        5 | 500 => Some(LoraBandwidth::Bw500kHz),
+        _ => None,
+    }
+}
+
+fn parse_compact_inventory_config(text: &str) -> Option<RadioProfile> {
+    let mut parts = text.split(',');
+    let region = SubGRegion::from_inventory_index(parts.next()?.parse().ok()?)?;
+    let frequency_khz: u32 = parts.next()?.parse().ok()?;
+    let spreading_factor = SpreadingFactor::from_number(parts.next()?.parse().ok()?)?;
+    let bandwidth = bandwidth_from_inventory_code(parts.next()?.parse().ok()?)?;
+    let coding_rate = CodingRate::from_denominator(parts.next()?.parse().ok()?)?;
+    let tx_power = parts.next()?.parse().ok()?;
+    let preamble = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    RadioProfile::new(
+        region,
+        Frequency::new(frequency_khz.saturating_mul(1_000)),
+        Modulation::Lora {
+            spreading_factor,
+            bandwidth,
+            coding_rate,
+        },
+        TxPower::new(tx_power),
+        PreambleSymbols::new(preamble),
+    )
+    .ok()
+}
+
+fn parse_verbose_inventory_config(text: &str) -> Option<RadioProfile> {
+    let mut parts = text.split(',');
+    if parts.next()? != "LoRa" {
+        return None;
+    }
+    let region = SubGRegion::from_inventory_label(parts.next()?)?;
+    let frequency_hz = parts.next()?.parse().ok()?;
+    let spreading_factor = SpreadingFactor::from_number(parts.next()?.parse().ok()?)?;
+    let bandwidth = bandwidth_from_inventory_code(parts.next()?.parse().ok()?)?;
+    let coding_rate = CodingRate::from_denominator(parts.next()?.parse().ok()?)?;
+    let tx_power = parts.next()?.parse().ok()?;
+    let preamble = parts.next()?.parse().ok()?;
+    let _preset = parts.next();
+    if parts.next().is_some() {
+        return None;
+    }
+    RadioProfile::new(
+        region,
+        Frequency::new(frequency_hz),
+        Modulation::Lora {
+            spreading_factor,
+            bandwidth,
+            coding_rate,
+        },
+        TxPower::new(tx_power),
+        PreambleSymbols::new(preamble),
+    )
+    .ok()
+}
+
+/// Alias used by Remote Control LoRa inventory examples and host defaults.
+pub const DEFAULT_915_PROFILE: RadioProfile =
+    crate::interfaces::subghz::regions::us915::US915_AUTO_LORA_PROFILE;
 
 pub fn channel_tag(profile: &RadioProfile) -> HeaplessVec<u8, CHANNEL_TAG_CAP> {
     let mut tag = HeaplessVec::new();

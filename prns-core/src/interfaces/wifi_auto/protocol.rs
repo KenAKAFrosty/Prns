@@ -1,4 +1,4 @@
-//! Each node periodically multicasts a beacon whose payload is `sha256(group_id ++ <its own link-local, as a canonical string>)`; a receiver recomputes that hash from the datagram's *source* address and peers only on a match, authenticating the source as a group member. Data is unicast to each peer's [`DEFAULT_DATA_PORT`]; discovery completes over multicast either direction plus the unicast reverse-peering channel ([`UNICAST_DISCOVERY_PORT`]).
+//! Each node periodically multicasts a beacon whose payload is `sha256(group_id ++ <its own link-local, as a canonical string>)`; a receiver recomputes that hash from the datagram's *source* address and peers only on a match. The match classifies the beacon into a configured discovery lane; because the group material is observable and copyable, it is not peer authentication. Data is unicast to each peer's [`DEFAULT_DATA_PORT`]; discovery completes over multicast either direction plus the unicast reverse-peering channel ([`UNICAST_DISCOVERY_PORT`]).
 
 use core::fmt::Write as _;
 use core::net::Ipv6Addr;
@@ -6,7 +6,7 @@ use core::net::Ipv6Addr;
 use heapless::{String as HString, Vec as HVec};
 
 use crate::crypto::{sha256, Sha256PrefixState};
-use crate::interfaces::MacAddress;
+use crate::interfaces::{DiscoveryGroupId, DiscoveryGroupSet, MacAddress, MAX_DISCOVERY_GROUPS};
 
 pub const GROUP_NAME: &str = "reticulum";
 pub const GROUP_ID: &[u8] = GROUP_NAME.as_bytes();
@@ -120,7 +120,8 @@ pub fn link_local_from_mac(mac: MacAddress) -> Ipv6Addr {
     )
 }
 
-/// The token is sent in cleartext, so ordinary equality matches RNS without leaking a secret.
+/// The token is sent in cleartext, so ordinary equality matches RNS. It is a discovery filter,
+/// not a secret or an authentication boundary.
 #[derive(PartialEq, Eq)]
 pub struct PeeringToken([u8; PEERING_TOKEN_BYTES]);
 
@@ -187,9 +188,35 @@ pub enum PeerObservation {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BeaconObservation {
+    /// Legacy API terminology: this means that the observable discovery token matched, not that
+    /// the peer's identity was authenticated.
     AuthenticatedPeer {
         address: Ipv6Addr,
         peer_observation: PeerObservation,
+    },
+    SelfEcho,
+    AuthenticationFailed,
+    TooShort,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DiscoveryGroupLane(u8);
+
+impl DiscoveryGroupLane {
+    #[must_use]
+    pub const fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GroupBeaconObservation {
+    /// Legacy API terminology: this means that the observable discovery token matched, not that
+    /// the peer's identity was authenticated.
+    AuthenticatedPeer {
+        address: Ipv6Addr,
+        peer_observation: PeerObservation,
+        lane: DiscoveryGroupLane,
     },
     SelfEcho,
     AuthenticationFailed,
@@ -206,6 +233,7 @@ pub trait PeerStore {
     fn as_mut_slice(&mut self) -> &mut [Peer];
     fn push(&mut self, peer: Peer) -> Result<(), Peer>;
     fn swap_remove(&mut self, index: usize) -> Peer;
+    fn clear(&mut self);
 }
 
 #[cfg(feature = "alloc")]
@@ -226,6 +254,10 @@ impl PeerStore for alloc::vec::Vec<Peer> {
     fn swap_remove(&mut self, index: usize) -> Peer {
         alloc::vec::Vec::swap_remove(self, index)
     }
+
+    fn clear(&mut self) {
+        alloc::vec::Vec::clear(self);
+    }
 }
 
 impl<const N: usize> PeerStore for HVec<Peer, N> {
@@ -243,6 +275,10 @@ impl<const N: usize> PeerStore for HVec<Peer, N> {
 
     fn swap_remove(&mut self, index: usize) -> Peer {
         HVec::swap_remove(self, index)
+    }
+
+    fn clear(&mut self) {
+        HVec::clear(self);
     }
 }
 
@@ -302,6 +338,12 @@ impl<S: PeerStore + Default> PeerTable<S> {
         before - self.peers.as_slice().len()
     }
 
+    /// Forgets every admitted peer so subsequent matching observations
+    /// are admitted as [`PeerObservation::NewlyDiscovered`].
+    pub fn clear_known_peers(&mut self) {
+        self.peers.clear();
+    }
+
     pub fn len(&self) -> usize {
         self.peers.as_slice().len()
     }
@@ -325,6 +367,156 @@ impl<S: PeerStore + Default> Default for PeerTable<S> {
 pub type HeapAutoInterfaceProtocol = AutoInterfaceProtocol<alloc::vec::Vec<Peer>>;
 
 pub type FixedAutoInterfaceProtocol<const N: usize> = AutoInterfaceProtocol<HVec<Peer, N>>;
+
+#[cfg(feature = "alloc")]
+pub type HeapMultiAutoInterfaceProtocol = MultiAutoInterfaceProtocol<alloc::vec::Vec<Peer>>;
+
+pub type FixedMultiAutoInterfaceProtocol<const N: usize> =
+    MultiAutoInterfaceProtocol<HVec<Peer, N>>;
+
+struct DiscoveryLane {
+    id: DiscoveryGroupId,
+    our_token: PeeringToken,
+    token_prefix: Sha256PrefixState,
+}
+
+pub struct MultiAutoInterfaceProtocol<S> {
+    our_link_local: Ipv6Addr,
+    lanes: [Option<DiscoveryLane>; MAX_DISCOVERY_GROUPS],
+    lane_count: u8,
+    peers: PeerTable<S>,
+    auth_failure_count: u32,
+}
+
+impl<S: PeerStore + Default> MultiAutoInterfaceProtocol<S> {
+    pub fn new(our_mac_address: MacAddress, groups: &DiscoveryGroupSet) -> Self {
+        Self::from_link_local(link_local_from_mac(our_mac_address), groups)
+    }
+
+    pub fn from_link_local(our_link_local: Ipv6Addr, groups: &DiscoveryGroupSet) -> Self {
+        let mut lanes = core::array::from_fn(|_| None);
+        for (slot, id) in lanes.iter_mut().zip(groups.iter()) {
+            *slot = Some(DiscoveryLane {
+                id: *id,
+                our_token: peering_token_for_group(id.as_bytes(), &our_link_local),
+                token_prefix: Sha256PrefixState::absorb(&[id.as_bytes()]),
+            });
+        }
+        Self {
+            our_link_local,
+            lanes,
+            lane_count: groups.len() as u8,
+            peers: PeerTable::new(),
+            auth_failure_count: 0,
+        }
+    }
+
+    #[must_use]
+    pub const fn our_link_local(&self) -> Ipv6Addr {
+        self.our_link_local
+    }
+
+    pub fn lanes(
+        &self,
+    ) -> impl Iterator<Item = (DiscoveryGroupLane, &DiscoveryGroupId, &PeeringToken)> {
+        self.lanes[..usize::from(self.lane_count)]
+            .iter()
+            .enumerate()
+            .filter_map(|(index, lane)| {
+                lane.as_ref()
+                    .map(|lane| (DiscoveryGroupLane(index as u8), &lane.id, &lane.our_token))
+            })
+    }
+
+    pub fn peering_token(&self, lane: DiscoveryGroupLane) -> Option<&PeeringToken> {
+        self.lanes
+            .get(lane.index())
+            .and_then(Option::as_ref)
+            .map(|lane| &lane.our_token)
+    }
+
+    pub fn peering_token_for_group(&self, group: &DiscoveryGroupId) -> Option<&PeeringToken> {
+        self.lanes()
+            .find(|(_, candidate, _)| *candidate == group)
+            .map(|(_, _, token)| token)
+    }
+
+    pub fn observe_discovery_datagram(
+        &mut self,
+        src: Ipv6Addr,
+        bytes: &[u8],
+        now_ms: u64,
+    ) -> GroupBeaconObservation {
+        self.observe_discovery_datagram_on(src, bytes, now_ms, self.our_link_local)
+    }
+
+    pub fn observe_discovery_datagram_on(
+        &mut self,
+        src: Ipv6Addr,
+        bytes: &[u8],
+        now_ms: u64,
+        local_link_local: Ipv6Addr,
+    ) -> GroupBeaconObservation {
+        if src == local_link_local {
+            return GroupBeaconObservation::SelfEcho;
+        }
+        let Some(claimed) = PeeringToken::from_beacon_prefix(bytes) else {
+            return GroupBeaconObservation::TooShort;
+        };
+        let mut rendered: HString<48> = HString::new();
+        let _ = write!(rendered, "{src}");
+        let matched = self.lanes[..usize::from(self.lane_count)]
+            .iter()
+            .enumerate()
+            .find_map(|(index, lane)| {
+                let lane = lane.as_ref()?;
+                let expected =
+                    PeeringToken(lane.token_prefix.digest_with_suffix(rendered.as_bytes()));
+                (claimed == expected).then_some(DiscoveryGroupLane(index as u8))
+            });
+        let Some(lane) = matched else {
+            self.auth_failure_count = self.auth_failure_count.wrapping_add(1);
+            return GroupBeaconObservation::AuthenticationFailed;
+        };
+        GroupBeaconObservation::AuthenticatedPeer {
+            address: src,
+            peer_observation: self.peers.upsert_peer(src, now_ms),
+            lane,
+        }
+    }
+
+    pub fn replace_groups(&mut self, groups: &DiscoveryGroupSet) {
+        let replacement = Self::from_link_local(self.our_link_local, groups);
+        self.lanes = replacement.lanes;
+        self.lane_count = replacement.lane_count;
+        self.peers.clear_known_peers();
+        self.auth_failure_count = 0;
+    }
+
+    pub fn prune_stale_peers(&mut self, now_ms: u64) -> usize {
+        self.peers.prune_stale_peers(now_ms)
+    }
+
+    pub fn clear_known_peers(&mut self) {
+        self.peers.clear_known_peers();
+    }
+
+    pub fn refresh_known_peer(&mut self, addr: Ipv6Addr, now_ms: u64) -> bool {
+        self.peers.refresh_known_peer(addr, now_ms)
+    }
+
+    pub fn known_peer_addresses(&self) -> impl Iterator<Item = Ipv6Addr> + '_ {
+        self.peers.known_peer_addresses()
+    }
+
+    pub fn peer_count(&self) -> usize {
+        self.peers.len()
+    }
+
+    pub const fn auth_failures(&self) -> u32 {
+        self.auth_failure_count
+    }
+}
 
 pub struct AutoInterfaceProtocol<S> {
     our_link_local: Ipv6Addr,
@@ -408,6 +600,10 @@ impl<S: PeerStore + Default> AutoInterfaceProtocol<S> {
         self.peers.prune_stale_peers(now_ms)
     }
 
+    pub fn clear_known_peers(&mut self) {
+        self.peers.clear_known_peers();
+    }
+
     pub fn refresh_known_peer(&mut self, addr: Ipv6Addr, now_ms: u64) -> bool {
         self.peers.refresh_known_peer(addr, now_ms)
     }
@@ -452,6 +648,54 @@ mod tests {
 
     const MAX_PEERS: usize = 8;
 
+    fn group_set(names: &[&str]) -> DiscoveryGroupSet {
+        let ids: std::vec::Vec<_> = names
+            .iter()
+            .map(|name| DiscoveryGroupId::parse(name).expect("valid test group"))
+            .collect();
+        DiscoveryGroupSet::try_from_slice(&ids).expect("valid test group set")
+    }
+
+    #[test]
+    fn multi_group_protocol_matches_each_upstream_lane_and_deduplicates_peers() {
+        let local = Ipv6Addr::new(0xfe80, 0, 0, 0, 0x0211, 0x22ff, 0xfe33, 0x4455);
+        let peer = nth_peer(4);
+        let groups = group_set(&["alpha", "crossover", "zulu"]);
+        let mut protocol =
+            FixedMultiAutoInterfaceProtocol::<MAX_PEERS>::from_link_local(local, &groups);
+
+        for expected_lane in 0..groups.len() {
+            let group = groups.iter().nth(expected_lane).expect("configured lane");
+            let token = peering_token_for_group(group.as_bytes(), &peer);
+            assert!(matches!(
+                protocol.observe_discovery_datagram(peer, token.as_bytes(), expected_lane as u64),
+                GroupBeaconObservation::AuthenticatedPeer { address, lane, .. }
+                    if address == peer && lane.index() == expected_lane
+            ));
+        }
+        assert_eq!(protocol.peer_count(), 1);
+    }
+
+    #[test]
+    fn multi_group_replies_use_the_lane_that_matched_the_beacon() {
+        let local = Ipv6Addr::new(0xfe80, 0, 0, 0, 0x0211, 0x22ff, 0xfe33, 0x4455);
+        let peer = nth_peer(5);
+        let groups = group_set(&["alpha", "bravo"]);
+        let mut protocol =
+            FixedMultiAutoInterfaceProtocol::<MAX_PEERS>::from_link_local(local, &groups);
+        let second = groups.iter().nth(1).expect("second lane");
+        let token = peering_token_for_group(second.as_bytes(), &peer);
+        let GroupBeaconObservation::AuthenticatedPeer { lane, .. } =
+            protocol.observe_discovery_datagram(peer, token.as_bytes(), 1)
+        else {
+            panic!("second lane matches");
+        };
+        assert_eq!(
+            protocol.peering_token(lane).map(PeeringToken::as_bytes),
+            Some(peering_token_for_group(second.as_bytes(), &local).as_bytes())
+        );
+    }
+
     #[test]
     fn from_link_local_token_hashes_over_the_given_address() {
         let addr = Ipv6Addr::new(0xfe80, 0, 0, 0, 0x0211, 0x22ff, 0xfe33, 0x4455);
@@ -464,7 +708,7 @@ mod tests {
     }
 
     #[test]
-    fn configured_group_changes_both_multicast_address_and_peer_authentication() {
+    fn configured_group_changes_both_multicast_address_and_discovery_token() {
         let addr = Ipv6Addr::new(0xfe80, 0, 0, 0, 0x0211, 0x22ff, 0xfe33, 0x4455);
         let custom_group = b"field-team";
         let mut brain =
@@ -564,7 +808,7 @@ mod tests {
     }
 
     #[test]
-    fn authenticated_observation_names_peer_admission_outcomes() {
+    fn matching_observation_names_peer_admission_outcomes() {
         let local = nth_peer(10);
         let first_peer = nth_peer(11);
         let second_peer = nth_peer(12);
@@ -597,7 +841,7 @@ mod tests {
     }
 
     #[test]
-    fn known_peer_data_activity_refreshes_liveness_without_admitting_unknown_sources() {
+    fn known_peer_refresh_updates_liveness_without_admitting_unknown_sources() {
         let local = nth_peer(20);
         let peer = nth_peer(21);
         let unknown = nth_peer(22);
@@ -615,5 +859,54 @@ mod tests {
         assert!(brain.refresh_known_peer(peer, 21_000));
         assert_eq!(brain.prune_stale_peers(PEERING_TIMEOUT_MS + 1), 0);
         assert_eq!(brain.prune_stale_peers(21_000 + PEERING_TIMEOUT_MS + 1), 1);
+    }
+
+    fn assert_clearing_known_peers_readmits_every_peer<S: PeerStore + Default>() {
+        let local = nth_peer(30);
+        let first_peer = nth_peer(31);
+        let second_peer = nth_peer(32);
+        let mut brain = AutoInterfaceProtocol::<S>::from_link_local(local);
+        let first_token = peering_token(&first_peer);
+        let second_token = peering_token(&second_peer);
+
+        assert_eq!(
+            brain.observe_discovery_datagram(first_peer, first_token.as_bytes(), 0),
+            BeaconObservation::AuthenticatedPeer {
+                address: first_peer,
+                peer_observation: PeerObservation::NewlyDiscovered,
+            }
+        );
+        assert_eq!(
+            brain.observe_discovery_datagram(second_peer, second_token.as_bytes(), 1),
+            BeaconObservation::AuthenticatedPeer {
+                address: second_peer,
+                peer_observation: PeerObservation::NewlyDiscovered,
+            }
+        );
+        assert_eq!(brain.peer_count(), 2);
+
+        brain.clear_known_peers();
+        assert_eq!(brain.peer_count(), 0);
+        assert_eq!(
+            brain.observe_discovery_datagram(first_peer, first_token.as_bytes(), 2),
+            BeaconObservation::AuthenticatedPeer {
+                address: first_peer,
+                peer_observation: PeerObservation::NewlyDiscovered,
+            }
+        );
+        assert_eq!(
+            brain.observe_discovery_datagram(second_peer, second_token.as_bytes(), 3),
+            BeaconObservation::AuthenticatedPeer {
+                address: second_peer,
+                peer_observation: PeerObservation::NewlyDiscovered,
+            }
+        );
+    }
+
+    #[test]
+    fn fixed_and_heap_peer_stores_clear_every_known_peer() {
+        assert_clearing_known_peers_readmits_every_peer::<HVec<Peer, 2>>();
+        #[cfg(feature = "alloc")]
+        assert_clearing_known_peers_readmits_every_peer::<alloc::vec::Vec<Peer>>();
     }
 }

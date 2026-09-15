@@ -4,8 +4,8 @@ use crate::units::InstantMillis;
 use crate::wire::DestinationHash;
 
 use super::{
-    RemoteControlRequestSet, REMOTE_CONTROL_APPLICATION_NAME, REMOTE_CONTROL_NAMESPACE_ASPECT,
-    REMOTE_CONTROL_SERVICE_ASPECT,
+    RemoteControlControllerAuthority, RemoteControlRequestSet, REMOTE_CONTROL_APPLICATION_NAME,
+    REMOTE_CONTROL_NAMESPACE_ASPECT, REMOTE_CONTROL_SERVICE_ASPECT,
 };
 
 mod availability;
@@ -83,14 +83,48 @@ impl From<RemoteControlPairingEndpoint> for DestinationHash {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RemoteControlPairingPermissionsError {
     NoPermittedRequests,
+    AdministratorRequestRequiresAuthority {
+        request: super::RemoteControlRequestKind,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteControlPairingPermissions {
+    authority: RemoteControlControllerAuthority,
     permitted_requests: RemoteControlRequestSet,
 }
 
 impl RemoteControlPairingPermissions {
+    pub fn new(
+        authority: RemoteControlControllerAuthority,
+        permitted_requests: RemoteControlRequestSet,
+    ) -> Result<Self, RemoteControlPairingPermissionsError> {
+        if permitted_requests.is_empty() {
+            return Err(RemoteControlPairingPermissionsError::NoPermittedRequests);
+        }
+        if authority == RemoteControlControllerAuthority::Operator {
+            if let Some(request) = permitted_requests
+                .iter()
+                .find(|request| request.requires_administrator())
+            {
+                return Err(
+                    RemoteControlPairingPermissionsError::AdministratorRequestRequiresAuthority {
+                        request,
+                    },
+                );
+            }
+        }
+        Ok(Self {
+            authority,
+            permitted_requests,
+        })
+    }
+
+    #[must_use]
+    pub const fn authority(&self) -> RemoteControlControllerAuthority {
+        self.authority
+    }
+
     #[must_use]
     pub const fn permitted_requests(&self) -> &RemoteControlRequestSet {
         &self.permitted_requests
@@ -106,10 +140,10 @@ impl TryFrom<RemoteControlRequestSet> for RemoteControlPairingPermissions {
     type Error = RemoteControlPairingPermissionsError;
 
     fn try_from(permitted_requests: RemoteControlRequestSet) -> Result<Self, Self::Error> {
-        if permitted_requests.is_empty() {
-            return Err(RemoteControlPairingPermissionsError::NoPermittedRequests);
-        }
-        Ok(Self { permitted_requests })
+        Self::new(
+            RemoteControlControllerAuthority::Operator,
+            permitted_requests,
+        )
     }
 }
 

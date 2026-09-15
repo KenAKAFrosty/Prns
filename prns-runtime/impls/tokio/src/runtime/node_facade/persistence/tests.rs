@@ -78,12 +78,12 @@ fn boot_blackholes_seed_against_the_resumed_timeline() {
         transport_identity: None,
         remote_control: test_remote_control_service(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
-        app_state: (),
+        app_state: crate::runtime::NoRemoteControlHostControls,
         storage: crate::storage::GrowableHeap,
         request_endpoints: crate::request_endpoints![],
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
-        on_event: |_event, _state: &()| {},
+        on_event: |_event, _state: &crate::runtime::NoRemoteControlHostControls| {},
     })
     .with_timeline_origin(InstantMillis(1_000));
     let identity = crate::identity::IdentityHash::new([0x31; 16]);
@@ -132,12 +132,12 @@ async fn a_tolerated_write_failure_is_retried_while_the_node_keeps_running() {
         transport_identity: None,
         remote_control: test_remote_control_service(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
-        app_state: (),
+        app_state: crate::runtime::NoRemoteControlHostControls,
         storage: crate::storage::GrowableHeap,
         request_endpoints: crate::request_endpoints![],
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
-        on_event: |_event, _state: &()| {},
+        on_event: |_event, _state: &crate::runtime::NoRemoteControlHostControls| {},
     });
     let worker = persistence
         .worker(node.handle())
@@ -225,12 +225,12 @@ fn remote_control_authorizations_restore_as_complete_runtime_tables() {
         transport_identity: None,
         remote_control: test_remote_control_service(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
-        app_state: (),
+        app_state: crate::runtime::NoRemoteControlHostControls,
         storage: crate::storage::GrowableHeap,
         request_endpoints: crate::request_endpoints![],
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
-        on_event: |_event, _state: &()| {},
+        on_event: |_event, _state: &crate::runtime::NoRemoteControlHostControls| {},
     });
     let identities = test_remote_control_service()
         .configuration()
@@ -239,11 +239,13 @@ fn remote_control_authorizations_restore_as_complete_runtime_tables() {
         .identities();
     let grant = RemoteControlControllerGrant::new(
         *identities.controller(),
+        crate::remote_control::RemoteControlControllerAuthority::Operator,
         RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
     )
     .unwrap();
     let access = RemoteControlTargetAccess::new(
         RemoteControlTargetIdentity::new(*identities.target().public_keys()),
+        crate::remote_control::RemoteControlControllerAuthority::Operator,
         RemoteControlRequestSet::only(RemoteControlRequestKind::AnnounceSelf),
     )
     .unwrap();
@@ -299,12 +301,12 @@ fn remote_control_authorizations_restore_as_complete_runtime_tables() {
         transport_identity: None,
         remote_control: test_remote_control_service(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
-        app_state: (),
+        app_state: crate::runtime::NoRemoteControlHostControls,
         storage: crate::storage::GrowableHeap,
         request_endpoints: crate::request_endpoints![],
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
-        on_event: |_event, _state: &()| {},
+        on_event: |_event, _state: &crate::runtime::NoRemoteControlHostControls| {},
     });
     assert_eq!(
         restored.seed_remote_control_controller_grants_from_store(&store),

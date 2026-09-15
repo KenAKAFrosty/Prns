@@ -45,6 +45,17 @@ impl EspFirmwareMemory {
         self.flash_offset(RegionRole::RemoteControlIdentity)
     }
 
+    #[cfg(all(target_arch = "xtensa", feature = "wifi-auto"))]
+    pub(crate) const fn wifi_configuration_pages(&self) -> [u32; 2] {
+        let region = self.region(RegionRole::WifiConfiguration);
+        let page_bytes = self.journal().page_bytes;
+        assert!(region.range.byte_len() == 2 * page_bytes);
+        [
+            narrow_address(region.range.start()),
+            narrow_address(region.range.start() + page_bytes),
+        ]
+    }
+
     #[cfg(target_arch = "xtensa")]
     pub(crate) const fn radio_profile_pages(&self) -> [u32; 2] {
         let region = self.region(RegionRole::RadioProfile);

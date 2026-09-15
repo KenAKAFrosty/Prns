@@ -1,16 +1,17 @@
 use super::*;
 use personal_hopspot_core::display::{
-    DisplayBlankReason, DisplayDuration, DisplayVisibility, MonotonicMillis, PresentationUrgency,
+    DisplayDuration, DisplayVisibility, MonotonicMillis, PresentationUrgency,
 };
 #[cfg(feature = "remote-control-pairing")]
 use personal_rns::engine::{OpenRemoteControlPairing, RemoteControlTargetPairingApproval};
-use personal_rns::remote_control::{
-    RemoteControlInitialControllerGrants, RemoteControlSelfAnnouncement, RemoteControlService,
-};
 #[cfg(feature = "remote-control-pairing")]
 use personal_rns::remote_control::{
-    RemoteControlPairingAttemptTimeout, RemoteControlPairingExpiresAfter,
-    RemoteControlPairingPermissions, RemoteControlPairingPublicAppDataBytes,
+    RemoteControlControllerAuthority, RemoteControlPairingAttemptTimeout,
+    RemoteControlPairingExpiresAfter, RemoteControlPairingPermissions,
+    RemoteControlPairingPublicAppDataBytes, RemoteControlRequestKind, RemoteControlRequestSet,
+};
+use personal_rns::remote_control::{
+    RemoteControlInitialControllerGrants, RemoteControlSelfAnnouncement, RemoteControlService,
 };
 
 #[cfg(feature = "remote-control-pairing")]
@@ -22,6 +23,7 @@ enum RenderLoopEvent {
     Button(screen::InputEvent),
     Tick,
     InterfacesChanged,
+    RemoteControlCommand(screen::PendingHopspotCommand),
     #[cfg(feature = "remote-control-pairing")]
     RemoteControlChanged,
 }
@@ -106,7 +108,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 ble: ble_bootstrap,
                 destination_hashes,
             },
-        entropy: boot_entropy,
+        entropy: mut boot_entropy,
     } = hardware.runtime_bootstrap;
     let mut battery_source = battery;
     let gnss = hardware.gnss;
@@ -123,16 +125,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         timebase,
         rtc,
     } = hardware.manifold;
-    let (wifi_config, wifi_config_source) = hopspot_wifi_config();
-    let station_configured = wifi_config.has_station();
-    let radio_mode = boot_radio_mode(station_configured);
-    log::info!(
-        "wifi-config source={wifi_config_source:?} station={} ssid_len={} password_len={} tcp={}",
-        station_configured,
-        wifi_config.ssid.len(),
-        wifi_config.password.len(),
-        wifi_config.tcp_client.is_some()
-    );
+    let (mut wifi_config, mut wifi_config_source) = hopspot_wifi_config();
 
     // Defer claiming USB-JTAG until after Wi-Fi bring-up so boot logs stay visible through radio init.
     let usb_status: &'static EmbassyInterfaceStatus = mk_static!(
@@ -152,6 +145,54 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         memory.flash_capacity(),
     )));
     let shared_flash = SharedNorFlash::new(flash, memory.flash_capacity());
+    let remote_control_bootstrap =
+        remote_control_bootstrap.expect("RemoteControl identity bootstrap failed");
+    let (remote_control_identity_secrets, _remote_control_identity_origins) =
+        remote_control_bootstrap.into_parts();
+    let wifi_configuration_key = remote_control_identity_secrets
+        .target_sealing_key(screen::WIFI_CONFIGURATION_SEALING_DOMAIN);
+    let mut wifi_configuration_store =
+        screen::WifiConfigurationStore::new(shared_flash, memory.wifi_configuration_pages());
+    let mut runtime_wifi_station = None;
+    match wifi_configuration_store
+        .load(&wifi_configuration_key, &mut boot_entropy)
+        .await
+    {
+        Ok(loaded) => {
+            if let Some(station) = loaded.active {
+                wifi_config.ssid = station.ssid().to_string();
+                wifi_config_source = HopspotWifiConfigSource::RuntimeSealed;
+                runtime_wifi_station = Some(station);
+            }
+            if loaded.recovered_unconfirmed_transaction {
+                log::warn!("wifi-config: restored the last confirmed revision after reboot");
+            }
+        }
+        Err(error) => {
+            log::error!("wifi-config: sealed configuration load failed: {error:?}");
+        }
+    }
+    // Keep sealed credentials in their move-only, zeroizing representation. Immutable provisioning
+    // is the legacy fallback and crosses into that representation only once at task ownership.
+    let initial_wifi_station = runtime_wifi_station.or_else(|| {
+        if wifi_config.has_station() {
+            personal_rns::remote_control::RemoteControlWifiStation::parse(
+                &wifi_config.ssid,
+                &wifi_config.password,
+            )
+            .ok()
+        } else {
+            None
+        }
+    });
+    let station_configured = initial_wifi_station.is_some();
+    let radio_mode = boot_radio_mode(station_configured);
+    log::info!(
+        "wifi-config source={wifi_config_source:?} station={} ssid_len={} tcp={}",
+        station_configured,
+        wifi_config.ssid.len(),
+        wifi_config.tcp_client.is_some()
+    );
     #[cfg(feature = "lora")]
     let mut subg_configuration_store =
         screen::SubGConfigurationStore::new(shared_flash, memory.radio_profile_pages());
@@ -218,8 +259,6 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     #[cfg(feature = "lora")]
     lora_status.set_id(lora.id());
 
-    let remote_control_bootstrap =
-        remote_control_bootstrap.expect("RemoteControl identity bootstrap failed");
     crate::identity::log_persistence("node", node_bootstrap.persistence());
     crate::identity::log_persistence("Bluetooth", ble_bootstrap.persistence());
 
@@ -231,7 +270,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         wifi_hardware,
         boot_entropy,
         mac_octets,
-        &wifi_config,
+        initial_wifi_station,
         radio_mode == RadioMode::AccessPoint,
     );
     boot_stage(BootPhase::WifiReady);
@@ -245,23 +284,30 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let node_identity = node_bootstrap.into_identity();
     let transport_secret = node_identity.transport_secret();
     let destination_secret = node_identity.into_destination_secret();
-    let (remote_control_identity_secrets, _remote_control_identity_origins) =
-        remote_control_bootstrap.into_parts();
     #[cfg(feature = "remote-control-pairing")]
     let stable_target_destination = remote_control_identity_secrets
         .identities()
         .target()
         .endpoint()
         .destination_hash();
-    let remote_control = RemoteControlService::new(
+    let remote_control = RemoteControlService::with_capabilities(
         remote_control_identity_secrets,
         RemoteControlInitialControllerGrants::Nobody,
         RemoteControlSelfAnnouncement::Destination(destination_hashes.node_page),
+        remote_control::capabilities::<B>(),
     );
     #[cfg(feature = "remote-control-pairing")]
-    let remote_control_pairing_permissions =
-        RemoteControlPairingPermissions::try_from(remote_control.available_requests())
-            .expect("RemoteControl exposes at least one supported request");
+    let remote_control_pairing_permissions = {
+        // Keep the existing pairing promise until the UI can explicitly authorize the new
+        // controls. Advertising board capabilities must not silently widen a pairing grant.
+        let mut requests = RemoteControlRequestSet::only(RemoteControlRequestKind::Describe);
+        requests.insert(RemoteControlRequestKind::AnnounceSelf);
+        RemoteControlPairingPermissions::new(
+            RemoteControlControllerAuthority::Operator,
+            requests.intersection(&remote_control.available_requests()),
+        )
+        .expect("RemoteControl supports the existing pairing requests")
+    };
     #[cfg(feature = "remote-control-pairing")]
     let remote_control_pairing_public_app_data =
         RemoteControlPairingPublicAppDataBytes::try_from(B::NODE_ANNOUNCE_APP_DATA)
@@ -301,16 +347,17 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let tcp_status = tcp_built.as_ref().map(|(_, status, _)| *status);
     let tcp_id = tcp_built.as_ref().map(|(_, _, id)| *id);
 
+    let remote_control_handle = REMOTE_CONTROL_COMMANDS.handle();
     let recipe = PrnsNodeRecipe {
         transport_identity: Some(transport_secret),
         remote_control,
         pre_configured_destinations: destinations.into_preconfigured_destinations(),
-        app_state: (),
+        app_state: remote_control_handle,
         storage: EngineStorageType::default(),
         request_endpoints: screen::node_pages::NodePageRoutes,
         interfaces: personal_rns::runtime::ManuallyAttached,
         persistence: crate::persistence::s3(shared_flash, &memory),
-        on_event: firmware_on_event as for<'a> fn(PrnsEvent<'a>, &()),
+        on_event: firmware_on_event as for<'a> fn(PrnsEvent<'a>, &RemoteControlHandle),
     };
 
     #[cfg(feature = "lora")]
@@ -476,6 +523,16 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         use personal_rns::interfaces::InterfaceStatus;
         status.id()
     });
+    if let Some(groups) = personal_rns::runtime::restored_discovery_groups(BLE_SUPERVISOR_ID).await
+    {
+        let _ = personal_rns::bluetooth_auto::BluetoothAutoStatus::new(&BLE_SHARED)
+            .restore_discovery_groups_before_start(groups);
+    }
+    if let Some(status) = wifi_status.as_ref() {
+        if let Some(groups) = personal_rns::runtime::restored_discovery_groups(status.id()).await {
+            let _ = status.restore_discovery_groups_before_start(groups);
+        }
+    }
     if let Some((interface, fleet)) = wifi {
         let data_buf: &'static mut [u8] = alloc::vec![0u8; wifi_auto_contract::HARDWARE_MTU].leak();
         let secondary_data_buf: &'static mut [u8] =
@@ -513,6 +570,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             } else {
                 screen::RemoteControlPairingAvailability::Unavailable
             },
+            discovery_groups: screen::DiscoveryGroupEditorAvailability::Available,
         });
         let startup_notice = identity_startup_notice.or(subg_startup_notice);
         let mut pending_startup_notice = identity_startup_notice
@@ -549,7 +607,67 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         let mut first_render_pending = true;
         let mut first_render_started = false;
         let mut presentation_urgency = PresentationUrgency::Immediate;
+        let mut wifi_confirmation = None;
+        let mut scheduled_remote_control_effect = None;
+        let mut system = remote_control::SystemIntent::from_status(
+            usb_status,
+            lora_card_status,
+            wifi_status.as_ref(),
+            espnow_card_status,
+            tcp_status,
+            ui_state.gnss_visible(),
+        );
+        macro_rules! execute_hopspot_command {
+            ($snapshots:expr, $command:expr) => {
+                remote_control::execute::<B>(
+                    remote_control::S3RemoteControlContext {
+                        snapshots: &$snapshots,
+                        usb_status,
+                        lora_status: lora_card_status,
+                        wifi_status: wifi_status.as_ref(),
+                        espnow_status: espnow_card_status,
+                        tcp_status,
+                        wifi_config: &mut wifi_config,
+                        power: battery_state,
+                        display: &mut display,
+                        radio_mode,
+                        system: &mut system,
+                        scheduled_effect: &mut scheduled_remote_control_effect,
+                        wifi_store: &mut wifi_configuration_store,
+                        wifi_key: &wifi_configuration_key,
+                        wifi_confirmation: &mut wifi_confirmation,
+                        #[cfg(feature = "lora")]
+                        lora_controller: &mut lora_controller,
+                        #[cfg(feature = "lora")]
+                        subg_store: &mut subg_configuration_store,
+                        #[cfg(feature = "lora")]
+                        subg_configuration: &mut working_subg_configuration,
+                    },
+                    $command,
+                )
+                .await
+            };
+        }
         loop {
+            remote_control::apply_scheduled::<B>(
+                &mut scheduled_remote_control_effect,
+                usb_status,
+                lora_card_status,
+                wifi_status.as_ref(),
+                espnow_card_status,
+                tcp_status,
+                &mut display,
+                &mut system,
+                &mut wifi_config,
+                &mut wifi_confirmation,
+            );
+            remote_control::rollback_expired(
+                &mut wifi_configuration_store,
+                &wifi_configuration_key,
+                &mut wifi_confirmation,
+                &mut wifi_config,
+            )
+            .await;
             if ticks_to_battery_sample == 0 {
                 sampled_battery_state = battery_gauge.sample(&mut battery_source);
                 ticks_to_battery_sample = RENDER_TICKS_PER_BATTERY_SAMPLE;
@@ -704,33 +822,43 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             }
 
             #[cfg(feature = "remote-control-pairing")]
+            let loop_event = match select5(
+                BUTTON_EVENTS.receive(),
+                render_tick.next(),
+                INTERFACE_STORE.changed(),
+                REMOTE_CONTROL_COMMANDS.receive(),
+                REMOTE_CONTROL_UI_WAKE.wait(),
+            )
+            .await
+            {
+                Either5::First(event) => RenderLoopEvent::Button(event),
+                Either5::Second(()) => RenderLoopEvent::Tick,
+                Either5::Third(()) => RenderLoopEvent::InterfacesChanged,
+                Either5::Fourth(pending) => RenderLoopEvent::RemoteControlCommand(pending),
+                Either5::Fifth(()) => RenderLoopEvent::RemoteControlChanged,
+            };
+            #[cfg(not(feature = "remote-control-pairing"))]
             let loop_event = match select4(
                 BUTTON_EVENTS.receive(),
                 render_tick.next(),
                 INTERFACE_STORE.changed(),
-                REMOTE_CONTROL_UI_WAKE.wait(),
+                REMOTE_CONTROL_COMMANDS.receive(),
             )
             .await
             {
                 Either4::First(event) => RenderLoopEvent::Button(event),
                 Either4::Second(()) => RenderLoopEvent::Tick,
                 Either4::Third(()) => RenderLoopEvent::InterfacesChanged,
-                Either4::Fourth(()) => RenderLoopEvent::RemoteControlChanged,
-            };
-            #[cfg(not(feature = "remote-control-pairing"))]
-            let loop_event = match select3(
-                BUTTON_EVENTS.receive(),
-                render_tick.next(),
-                INTERFACE_STORE.changed(),
-            )
-            .await
-            {
-                Either3::First(event) => RenderLoopEvent::Button(event),
-                Either3::Second(()) => RenderLoopEvent::Tick,
-                Either3::Third(()) => RenderLoopEvent::InterfacesChanged,
+                Either4::Fourth(pending) => RenderLoopEvent::RemoteControlCommand(pending),
             };
 
             match loop_event {
+                RenderLoopEvent::RemoteControlCommand(pending) => {
+                    let (token, command) = pending.into_parts();
+                    let result = execute_hopspot_command!(snapshots, command);
+                    REMOTE_CONTROL_COMMANDS.complete(token, result);
+                    presentation_urgency = PresentationUrgency::Immediate;
+                }
                 #[cfg(feature = "remote-control-pairing")]
                 RenderLoopEvent::RemoteControlChanged => {
                     presentation_urgency = PresentationUrgency::Immediate;
@@ -777,29 +905,39 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                             notice_timer.reconcile(ui_state.visible_notice());
                             match action {
                                 screen::UiAction::BlankDisplay => {
-                                    show_notice(
-                                        &mut ui_state,
-                                        &mut notice_timer,
-                                        screen::UiNotice::DisplayOff,
-                                        NOTICE_DURATION,
-                                    );
-                                    if let Err(error) = display.schedule_blanking(
-                                        MonotonicMillis::new(now_ms.saturating_add(NOTICE_MS)),
-                                        DisplayBlankReason::DisplayOnly,
+                                    if let Err(error) = execute_hopspot_command!(snapshots,
+                                        personal_rns::runtime::RemoteControlHostCommand::SetDisplayVisibility {
+                                            visibility: personal_rns::remote_control::RemoteControlDisplayVisibility::Hidden,
+                                        }
                                     ) {
-                                        log::error!("display-off scheduling failed: {error:?}");
+                                        log::error!("display-off apply failed: {error:?}");
                                     }
                                 }
                                 screen::UiAction::ToggleDisplayAutoOff => {
-                                    match display.toggle_auto_off(MonotonicMillis::new(now_ms)) {
-                                        Ok(auto_off) => {
-                                            let notice = match auto_off {
-                                                screen::display::DisplayAutoOff::Enabled => {
-                                                    screen::UiNotice::DisplayAutoOffOn
-                                                }
-                                                screen::display::DisplayAutoOff::Disabled => {
-                                                    screen::UiNotice::DisplayAutoOffOff
-                                                }
+                                    let desired = match display.auto_off() {
+                                        Ok(screen::display::DisplayAutoOff::Enabled) => {
+                                            personal_rns::remote_control::RemoteControlDisplayAutoOff::Disabled
+                                        }
+                                        Ok(screen::display::DisplayAutoOff::Disabled) => {
+                                            personal_rns::remote_control::RemoteControlDisplayAutoOff::Enabled
+                                        }
+                                        Err(error) => {
+                                            log::error!("display auto-off read failed: {error:?}");
+                                            continue;
+                                        }
+                                    };
+                                    match execute_hopspot_command!(snapshots,
+                                        personal_rns::runtime::RemoteControlHostCommand::SetDisplayAutoOff {
+                                            auto_off: desired,
+                                        }
+                                    ) {
+                                        Ok(_) => {
+                                            let notice = if desired
+                                                == personal_rns::remote_control::RemoteControlDisplayAutoOff::Enabled
+                                            {
+                                                screen::UiNotice::DisplayAutoOffOn
+                                            } else {
+                                                screen::UiNotice::DisplayAutoOffOff
                                             };
                                             show_notice(
                                                 &mut ui_state,
@@ -808,15 +946,25 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                                 NOTICE_DURATION,
                                             );
                                         }
-                                        Err(error) => {
-                                            log::error!(
-                                                "display auto-off toggle failed: {error:?}"
-                                            );
-                                        }
+                                        Err(error) => log::error!(
+                                            "display auto-off apply failed: {error:?}"
+                                        ),
                                     }
                                 }
                                 screen::UiAction::ControlGnss(command) => {
-                                    B::Gnss::control(command);
+                                    let power = match command {
+                                        screen::GnssReceiverCommand::Enable => {
+                                            personal_rns::remote_control::RemoteControlGnssPower::On
+                                        }
+                                        screen::GnssReceiverCommand::Disable => {
+                                            personal_rns::remote_control::RemoteControlGnssPower::Off
+                                        }
+                                    };
+                                    if let Err(error) = execute_hopspot_command!(snapshots,
+                                        personal_rns::runtime::RemoteControlHostCommand::SetGnssPower { power }
+                                    ) {
+                                        log::error!("GNSS control failed: {error:?}");
+                                    }
                                 }
                                 screen::UiAction::Sleep => {
                                     show_notice(
@@ -825,68 +973,27 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                         screen::UiNotice::Sleeping,
                                         NOTICE_DURATION,
                                     );
-                                    if let Err(error) = display.schedule_blanking(
-                                        MonotonicMillis::new(
-                                            now_ms.saturating_add(DISPLAY_SLEEP_DELAY_MS),
-                                        ),
-                                        DisplayBlankReason::SystemSleep,
+                                    if let Err(error) = execute_hopspot_command!(snapshots,
+                                        personal_rns::runtime::RemoteControlHostCommand::SetSystemPower {
+                                            power: personal_rns::remote_control::RemoteControlSystemPower::Asleep,
+                                        }
                                     ) {
-                                        log::error!(
-                                            "system-sleep display scheduling failed: {error:?}"
-                                        );
+                                        log::error!("system sleep scheduling failed: {error:?}");
                                     }
-                                    usb_status.disable();
-                                    if let Some(status) = lora_card_status {
-                                        status.disable();
-                                    }
-                                    if let Some(status) = wifi_status.as_ref() {
-                                        status.disable();
-                                        status.disable_station_uplink();
-                                    }
-                                    if let Some(status) = espnow_card_status {
-                                        status.disable();
-                                    }
-                                    if let Some(tcp) = tcp_status {
-                                        tcp.disable();
-                                    }
-                                    {
-                                        let status = BluetoothAutoStatus::new(&BLE_SHARED);
-                                        status.disable();
-                                    }
-                                    B::Gnss::control(screen::GnssReceiverCommand::Disable);
                                 }
                                 screen::UiAction::Wake => {
-                                    if let Err(error) = display
-                                        .request_visible(MonotonicMillis::new(now_ms), display_now)
-                                    {
-                                        log::error!("display wake failed: {error:?}");
-                                    }
                                     show_notice(
                                         &mut ui_state,
                                         &mut notice_timer,
                                         screen::UiNotice::Awake,
                                         NOTICE_DURATION,
                                     );
-                                    usb_status.enable();
-                                    if let Some(status) = lora_card_status {
-                                        status.enable();
-                                    }
-                                    if let Some(status) = wifi_status.as_ref() {
-                                        status.enable_station_uplink();
-                                        status.enable();
-                                    }
-                                    if let Some(status) = espnow_card_status {
-                                        status.enable();
-                                    }
-                                    if let Some(tcp) = tcp_status {
-                                        tcp.enable();
-                                    }
-                                    {
-                                        let status = BluetoothAutoStatus::new(&BLE_SHARED);
-                                        status.enable();
-                                    }
-                                    if ui_state.gnss_visible() {
-                                        B::Gnss::control(screen::GnssReceiverCommand::Enable);
+                                    if let Err(error) = execute_hopspot_command!(snapshots,
+                                        personal_rns::runtime::RemoteControlHostCommand::SetSystemPower {
+                                            power: personal_rns::remote_control::RemoteControlSystemPower::Awake,
+                                        }
+                                    ) {
+                                        log::error!("system wake failed: {error:?}");
                                     }
                                 }
                                 screen::UiAction::Announce => {
@@ -1074,68 +1181,29 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                 }
                                 screen::UiAction::ToggleSelectedInterface => {
                                     if let Some(card) = ui_state.selected_card(content.cards) {
-                                        let mut handled = false;
-                                        let mut show_toggle_notice = |enabled: bool| {
-                                            let notice = if enabled {
+                                        let enabled = card.connection() != ConnectionState::Disabled;
+                                        let power = if enabled {
+                                            personal_rns::remote_control::RemoteControlInterfacePower::Off
+                                        } else {
+                                            personal_rns::remote_control::RemoteControlInterfacePower::On
+                                        };
+                                        show_notice(
+                                            &mut ui_state,
+                                            &mut notice_timer,
+                                            if enabled {
                                                 screen::UiNotice::TurningOff
                                             } else {
                                                 screen::UiNotice::TurningOn
-                                            };
-                                            show_notice(
-                                                &mut ui_state,
-                                                &mut notice_timer,
-                                                notice,
-                                                NOTICE_DURATION,
-                                            );
-                                        };
-                                        if card.id() == usb_status.id() {
-                                            show_toggle_notice(usb_status.is_enabled());
-                                            usb_status.toggle_enabled();
-                                            handled = true;
-                                        }
-                                        // LoRa profile changes deliberately retag the interface,
-                                        // while the card's role remains stable across that retag.
-                                        if !handled
-                                            && matches!(card.kind(), screen::CardKind::SubG(_))
-                                        {
-                                            if let Some(status) = lora_card_status {
-                                                show_toggle_notice(status.is_enabled());
-                                                status.toggle_enabled();
-                                                handled = true;
+                                            },
+                                            NOTICE_DURATION,
+                                        );
+                                        if let Err(error) = execute_hopspot_command!(snapshots,
+                                            personal_rns::runtime::RemoteControlHostCommand::SetInterfacePower {
+                                                id: card.id(),
+                                                power,
                                             }
-                                        }
-                                        if !handled {
-                                            if let Some(status) = wifi_status.as_ref() {
-                                                if card.id() == status.id() {
-                                                    show_toggle_notice(status.is_enabled());
-                                                    status.toggle_enabled();
-                                                    handled = true;
-                                                }
-                                            }
-                                        }
-                                        if !handled && Some(card.id()) == espnow_card_id {
-                                            if let Some(status) = espnow_card_status {
-                                                show_toggle_notice(status.is_enabled());
-                                                status.toggle_enabled();
-                                                handled = true;
-                                            }
-                                        }
-                                        if !handled {
-                                            if let (Some(tcp), Some(tcp_id)) = (tcp_status, tcp_id)
-                                            {
-                                                if card.id() == tcp_id {
-                                                    show_toggle_notice(tcp.is_enabled());
-                                                    tcp.toggle_enabled();
-                                                    {
-                                                        handled = true;
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        if !handled && card.id() == BLE_SUPERVISOR_ID {
-                                            let status = BluetoothAutoStatus::new(&BLE_SHARED);
-                                            show_toggle_notice(status.is_enabled());
-                                            status.toggle_enabled();
+                                        ) {
+                                            log::error!("interface power apply failed: {error:?}");
                                         }
                                     }
                                 }
@@ -1152,8 +1220,75 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                             notice,
                                             NOTICE_DURATION,
                                         );
-                                        status.toggle_station_uplink();
+                                        let uplink = if status.is_station_uplink_enabled() {
+                                            personal_rns::remote_control::RemoteControlStationUplink::Disabled
+                                        } else {
+                                            personal_rns::remote_control::RemoteControlStationUplink::Enabled
+                                        };
+                                        if let Err(error) = execute_hopspot_command!(snapshots,
+                                            personal_rns::runtime::RemoteControlHostCommand::SetStationUplink {
+                                                id: status.id(),
+                                                uplink,
+                                            }
+                                        ) {
+                                            log::error!("station uplink apply failed: {error:?}");
+                                        }
                                     }
+                                }
+                                screen::UiAction::OpenDiscoveryGroupsEditor(id) => {
+                                    let groups = if id == BLE_SUPERVISOR_ID {
+                                        Some(
+                                            personal_rns::bluetooth_auto::BluetoothAutoStatus::new(
+                                                &BLE_SHARED,
+                                            )
+                                            .discovery_groups(),
+                                        )
+                                    } else {
+                                        wifi_status
+                                            .as_ref()
+                                            .filter(|status| status.id() == id)
+                                            .map(|status| status.discovery_groups())
+                                    };
+                                    if let Some(groups) = groups {
+                                        ui_state.open_discovery_groups_editor(id, &groups);
+                                    }
+                                }
+                                screen::UiAction::ReplaceDiscoveryGroups => {
+                                    let Some(replacement) =
+                                        ui_state.take_discovery_group_replacement()
+                                    else {
+                                        continue;
+                                    };
+                                    let id = replacement.interface_id();
+                                    let groups = replacement.into_groups();
+                                    let result = execute_hopspot_command!(snapshots,
+                                        personal_rns::runtime::RemoteControlHostCommand::ReplaceInterfaceDiscoveryGroups {
+                                            id,
+                                            groups: personal_rns::remote_control::RemoteControlDiscoveryGroups::new(groups),
+                                        }
+                                    );
+                                    let notice = match result {
+                                        Ok(personal_rns::runtime::RemoteControlHostResponse::ReplaceInterfaceDiscoveryGroups(
+                                            personal_rns::remote_control::RemoteControlDiscoveryGroupsReplaceOutcome::Applied
+                                            | personal_rns::remote_control::RemoteControlDiscoveryGroupsReplaceOutcome::Unchanged,
+                                        )) => screen::UiNotice::Saved,
+                                        Err(personal_rns::runtime::RemoteControlHostCommandError::Busy) => {
+                                            screen::UiNotice::GroupsBusy
+                                        }
+                                        Err(personal_rns::runtime::RemoteControlHostCommandError::PersistenceFailed) => {
+                                            screen::UiNotice::GroupsNotSaved
+                                        }
+                                        Err(personal_rns::runtime::RemoteControlHostCommandError::RollbackFailed) => {
+                                            screen::UiNotice::GroupsRollbackFailed
+                                        }
+                                        _ => screen::UiNotice::GroupsApplyFailed,
+                                    };
+                                    show_notice(
+                                        &mut ui_state,
+                                        &mut notice_timer,
+                                        notice,
+                                        NOTICE_DURATION,
+                                    );
                                 }
                                 screen::UiAction::OpenSubGEditor => {
                                     #[cfg(feature = "lora")]
@@ -1165,7 +1300,6 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                 #[cfg(feature = "lora")]
                                 action @ (screen::UiAction::SetSubGConfiguration(_)
                                 | screen::UiAction::ClearSubGConfiguration) => {
-                                    let previous = working_subg_configuration;
                                     let requested = if let screen::UiAction::SetSubGConfiguration(
                                         configuration,
                                     ) = action
@@ -1174,65 +1308,25 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                     } else {
                                         SubGConfigurationState::Unconfigured
                                     };
-                                    let result = match lora_controller
-                                        .apply_configuration(requested)
-                                        .await
+                                    let result = match remote_control::apply_subg_configuration(
+                                        &mut lora_controller,
+                                        &mut subg_configuration_store,
+                                        &mut working_subg_configuration,
+                                        requested,
+                                    )
+                                    .await
                                     {
-                                        LoRaApplyOutcome::Rejected => {
-                                            log::error!("SubG configuration apply failed");
+                                        Ok(()) => screen::SubGConfigurationChangeResult::Saved,
+                                        Err(personal_rns::runtime::RemoteControlHostCommandError::ApplyFailed) => {
                                             screen::SubGConfigurationChangeResult::ApplyFailed
                                         }
-                                        LoRaApplyOutcome::Applied => {
-                                            let persistence = match requested {
-                                                SubGConfigurationState::Configured(
-                                                    configuration,
-                                                ) => {
-                                                    subg_configuration_store
-                                                        .save(configuration)
-                                                        .await
-                                                }
-                                                SubGConfigurationState::Unconfigured => {
-                                                    subg_configuration_store.clear().await
-                                                }
-                                            };
-                                            match persistence {
-                                                screen::SubGConfigurationCommitOutcome::Committed => {
-                                                    screen::SubGConfigurationChangeResult::Saved
-                                                }
-                                                screen::SubGConfigurationCommitOutcome::Indeterminate(error) => {
-                                                    log::error!(
-                                                        "SubG configuration persistence is indeterminate: {error:?}"
-                                                    );
-                                                    screen::SubGConfigurationChangeResult::PersistenceUncertain
-                                                }
-                                                screen::SubGConfigurationCommitOutcome::NotCommitted(error) => {
-                                                    log::error!(
-                                                        "SubG configuration persistence failed: {error:?}"
-                                                    );
-                                                    match lora_controller
-                                                        .apply_configuration(previous)
-                                                        .await
-                                                    {
-                                                        LoRaApplyOutcome::Applied => {
-                                                            screen::SubGConfigurationChangeResult::PersistenceFailed
-                                                        }
-                                                        LoRaApplyOutcome::Rejected => {
-                                                            log::error!(
-                                                                "SubG configuration rollback failed"
-                                                            );
-                                                            screen::SubGConfigurationChangeResult::RollbackFailed
-                                                        }
-                                                    }
-                                                }
-                                            }
+                                        Err(personal_rns::runtime::RemoteControlHostCommandError::RollbackFailed) => {
+                                            screen::SubGConfigurationChangeResult::RollbackFailed
+                                        }
+                                        Err(_) => {
+                                            screen::SubGConfigurationChangeResult::PersistenceFailed
                                         }
                                     };
-                                    if matches!(
-                                        result.active_configuration(),
-                                        screen::ActiveSubGConfiguration::Requested
-                                    ) {
-                                        working_subg_configuration = requested;
-                                    }
                                     let notice = result.notice();
                                     show_notice(
                                         &mut ui_state,
@@ -1242,11 +1336,15 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                     );
                                 }
                                 screen::UiAction::SwapRadioMode => {
-                                    let next = match radio_mode {
-                                        RadioMode::Ble => RadioMode::AccessPoint,
-                                        RadioMode::AccessPoint => RadioMode::Ble,
+                                    let mode = match radio_mode {
+                                        RadioMode::Ble => personal_rns::remote_control::RemoteControlEspRadioMode::AccessPoint,
+                                        RadioMode::AccessPoint => personal_rns::remote_control::RemoteControlEspRadioMode::Bluetooth,
                                     };
-                                    request_radio_mode(next);
+                                    if let Err(error) = execute_hopspot_command!(snapshots,
+                                        personal_rns::runtime::RemoteControlHostCommand::SetEspRadioMode { mode }
+                                    ) {
+                                        log::error!("radio-mode scheduling failed: {error:?}");
+                                    }
                                 }
                                 screen::UiAction::OpenDocs => {}
                                 screen::UiAction::CopySharedInstanceConfig => {}

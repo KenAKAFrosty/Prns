@@ -489,13 +489,13 @@ async fn a_serial_drop_removes_and_recreates_every_logical_radio_together() {
     let node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: std::iter::empty::<PreConfiguredDestination<'static>>(),
-        app_state: (),
+        app_state: prns_runtime::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: prns_runtime::request_endpoints![],
         remote_control: prns_runtime::remote_control::RemoteControlService::Unavailable,
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
-        on_event: |_event, _state: &()| {},
+        on_event: |_event, _state: &prns_runtime::runtime::NoRemoteControlHostControls| {},
     });
     let handle = node.handle();
     let registered = interface.register(&handle);

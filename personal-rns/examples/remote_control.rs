@@ -32,11 +32,14 @@ async fn main() {
     let self_destination_hash = self_destination
         .destination_hash()
         .expect("the example destination name is valid");
+    let mut permitted_requests = RemoteControlRequestSet::only(RemoteControlRequestKind::Describe);
+    let _inserted = permitted_requests.insert(RemoteControlRequestKind::AnnounceSelf);
     let controller_grants = [RemoteControlControllerGrant::new(
         controller_public_identity,
-        RemoteControlRequestSet::all(),
+        personal_rns::remote_control::RemoteControlControllerAuthority::Operator,
+        permitted_requests,
     )
-    .expect("the complete request set is not empty")];
+    .expect("the explicit operator request set is not empty")];
     let target_remote_control = RemoteControlService::new(
         target_identity_secrets,
         RemoteControlInitialControllerGrants::Grants(
@@ -63,7 +66,7 @@ async fn main() {
         transport_identity: None,
         remote_control: target_remote_control,
         pre_configured_destinations: [self_destination],
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         on_event: |_event, _state| {},
@@ -78,7 +81,7 @@ async fn main() {
         transport_identity: None,
         remote_control: controller_remote_control,
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         on_event: move |event, _state| {

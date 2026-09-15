@@ -62,8 +62,8 @@ fn rust_tool_for(directory: Option<&Path>, name: &str) -> Result<PathBuf, BuildE
 
 fn configured_rustc(directory: Option<&Path>) -> Command {
     let mut command = Command::new("rustc");
-    command.env_remove("RUSTUP_TOOLCHAIN");
     if let Some(directory) = directory {
+        command.env_remove("RUSTUP_TOOLCHAIN");
         command.current_dir(directory);
     }
     command
@@ -105,6 +105,7 @@ pub fn capture_stdout(command: &mut Command, label: &str) -> Result<String, Buil
 mod tests {
     use std::collections::BTreeMap;
     use std::ffi::OsStr;
+    use std::path::Path;
 
     use super::*;
 
@@ -119,6 +120,30 @@ mod tests {
                 (OsStr::new("RUSTFLAGS"), None),
                 (OsStr::new("RUSTUP_TOOLCHAIN"), None),
             ])
+        );
+    }
+
+    #[test]
+    fn host_rust_tool_preserves_the_explicit_toolchain_selection() {
+        let command = configured_rustc(None);
+
+        assert!(command
+            .get_envs()
+            .all(|(key, _)| key != OsStr::new("RUSTUP_TOOLCHAIN")));
+    }
+
+    #[test]
+    fn directory_rust_tool_uses_the_directory_toolchain_override() {
+        let command = configured_rustc(Some(Path::new("embedded-workspace")));
+        let environments = command.get_envs().collect::<BTreeMap<_, _>>();
+
+        assert_eq!(
+            environments.get(OsStr::new("RUSTUP_TOOLCHAIN")),
+            Some(&None)
+        );
+        assert_eq!(
+            command.get_current_dir(),
+            Some(Path::new("embedded-workspace"))
         );
     }
 }

@@ -15,31 +15,52 @@ pub(super) fn build_snapshots(
     let ble = BluetoothAutoStatus::new(&BLE_SHARED);
     let mut entries: heapless::Vec<(&dyn InterfaceStatus, Membership), { MEMBERS + 4 }> =
         heapless::Vec::new();
-    let _ = entries.push((lora, Membership::Independent));
-    let _ = entries.push((usb, Membership::Independent));
+    assert!(
+        entries.push((lora, Membership::Independent)).is_ok(),
+        "interface capacity covers LoRa"
+    );
+    assert!(
+        entries.push((usb, Membership::Independent)).is_ok(),
+        "interface capacity covers USB"
+    );
     let supervisor_id = ble.id();
-    let _ = entries.push((&ble, Membership::Independent));
+    assert!(
+        entries.push((&ble, Membership::Independent)).is_ok(),
+        "interface capacity covers Bluetooth"
+    );
     for member in ble.members() {
-        let _ = entries.push((member, Membership::FleetMember { supervisor_id }));
+        assert!(
+            entries
+                .push((member, Membership::FleetMember { supervisor_id }))
+                .is_ok(),
+            "interface capacity covers Bluetooth members"
+        );
     }
     let mut snapshots: heapless::Vec<InterfaceSnapshot, { MEMBERS + 4 }> = heapless::Vec::new();
     for (status, membership) in &entries {
         let id = status.id();
         let counts = INTERFACE_STORE.counts(id);
-        let _ = snapshots.push(InterfaceSnapshot {
-            id,
-            mode: personal_rns::interfaces::InterfaceMode::Full,
-            gravity: personal_rns::interfaces::InterfaceGravity::ZERO,
-            connection: status.connection(),
-            failure_reason: status.failure_reason(),
-            rx_bytes: status.rx_bytes(),
-            tx_bytes: status.tx_bytes(),
-            transfer_rates: status.transfer_rates(),
-            destinations: counts.destinations,
-            links: counts.links,
-            transported_links: counts.transported_links,
-            membership: *membership,
-        });
+        assert!(
+            snapshots
+                .push(InterfaceSnapshot {
+                    id,
+                    mode: personal_rns::interfaces::InterfaceMode::Full,
+                    gravity: personal_rns::interfaces::InterfaceGravity::ZERO,
+                    connection: status.connection(),
+                    failure_reason: status.failure_reason(),
+                    rx_bytes: status.rx_bytes(),
+                    tx_bytes: status.tx_bytes(),
+                    transfer_rates: status.transfer_rates(),
+                    destinations: counts.destinations,
+                    links: counts.links,
+                    transported_links: counts.transported_links,
+                    membership: *membership,
+                    radio: status.radio(),
+                    details: status.details(),
+                })
+                .is_ok(),
+            "snapshot capacity matches interface capacity"
+        );
     }
     snapshots
 }

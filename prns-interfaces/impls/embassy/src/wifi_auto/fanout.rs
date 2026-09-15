@@ -49,6 +49,10 @@ impl<const MEMBERS: usize> FanoutPlan<MEMBERS> {
         }
     }
 
+    pub(super) fn selected_count(&self) -> usize {
+        self.remaining
+    }
+
     fn next_slot(&mut self) -> Option<usize> {
         while self.remaining > 0 {
             let slot = self.next;
@@ -77,21 +81,40 @@ pub(super) trait FanoutSender {
     async fn send_to_slot(&mut self, slot: usize) -> bool;
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct FanoutDispatch {
+    pub(super) completion: FanoutCompletion,
+    pub(super) selected: usize,
+    pub(super) sent: usize,
+}
+
 pub(super) async fn dispatch_fanout<const MEMBERS: usize>(
     plan: &mut FanoutPlan<MEMBERS>,
     sender: &mut impl FanoutSender,
     budget: Duration,
-) -> FanoutCompletion {
+) -> FanoutDispatch {
+    let selected = plan.selected_count();
+    let mut sent = 0usize;
     let per_attempt = plan.per_attempt_budget(budget);
-    match with_timeout(budget, async {
+    let completion = match with_timeout(budget, async {
         while let Some(slot) = plan.next_slot() {
-            let _ = with_timeout(per_attempt, sender.send_to_slot(slot)).await;
+            if matches!(
+                with_timeout(per_attempt, sender.send_to_slot(slot)).await,
+                Ok(true)
+            ) {
+                sent = sent.saturating_add(1);
+            }
         }
     })
     .await
     {
         Ok(()) => FanoutCompletion::Complete,
         Err(_) => FanoutCompletion::BudgetExhausted,
+    };
+    FanoutDispatch {
+        completion,
+        selected,
+        sent,
     }
 }
 
@@ -130,17 +153,18 @@ impl<const MEMBERS: usize> FanoutSender for UdpFanoutSender<'_, '_, MEMBERS> {
     }
 }
 
-pub(super) async fn send_beacon(socket: Option<&UdpSocket<'_>>, token: Option<&[u8; 32]>) -> bool {
-    let (Some(socket), Some(token)) = (socket, token) else {
+pub(super) async fn send_beacon(
+    socket: Option<&UdpSocket<'_>>,
+    target: Option<::core::net::Ipv6Addr>,
+    token: Option<&[u8; 32]>,
+) -> bool {
+    let (Some(socket), Some(target), Some(token)) = (socket, target, token) else {
         return false;
     };
     socket
         .send_to(
             token,
-            (
-                IpAddress::Ipv6(contract::DISCOVERY_GROUP),
-                contract::DEFAULT_DISCOVERY_PORT,
-            ),
+            (IpAddress::Ipv6(target), contract::DEFAULT_DISCOVERY_PORT),
         )
         .await
         .is_ok()
@@ -287,7 +311,8 @@ mod tests {
             Duration::from_millis(60),
         ));
 
-        assert_eq!(completion, FanoutCompletion::Complete);
+        assert_eq!(completion.completion, FanoutCompletion::Complete);
+        assert_eq!(completion.selected, 3);
         assert_eq!(sender.attempts, [0, 1, 2]);
     }
 

@@ -1107,13 +1107,13 @@ async fn run(
             HostRole::Transport => Some(host_identity.clone()),
         },
         pre_configured_destinations: destinations,
-        app_state: (),
+        app_state: personal_rns::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         interfaces: ManuallyAttached,
         persistence,
-        on_event: move |event, _state: &()| {
+        on_event: move |event, _state: &personal_rns::NoRemoteControlHostControls| {
             if !publish_event(event_sink.as_ref(), event, &event_persistence) {
                 event_backpressure.notify_waiters();
             }
@@ -1542,6 +1542,7 @@ fn reference_interface(config: &InterfaceConfig) -> Result<ReferenceInterface, C
             "AutoInterface",
             ReferenceConfigParams::Auto {
                 group_id: group_id.clone(),
+                group_ids: None,
                 discovery_scope: discovery_scope.map(|scope| {
                     match scope {
                         prns_host::DiscoveryScope::Link => "link",
@@ -1803,7 +1804,10 @@ fn reference_interface(config: &InterfaceConfig) -> Result<ReferenceInterface, C
         InterfaceConfig::AutomaticUsb => ("PrnsUsbAuto", ReferenceConfigParams::PrnsUsbAuto, None),
         InterfaceConfig::AutomaticBluetoothLe => (
             "PrnsBluetoothAuto",
-            ReferenceConfigParams::PrnsBluetoothAuto,
+            ReferenceConfigParams::PrnsBluetoothAuto {
+                group_id: None,
+                group_ids: None,
+            },
             None,
         ),
         InterfaceConfig::WebSocketClient { target, framing } => (

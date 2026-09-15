@@ -157,13 +157,42 @@ impl RemoteControlTargetPairingState {
                 return BeginRemoteControlTargetPairingOutcome::PairingUnavailable { reason }
             }
         };
-        let prepared = RemoteControlPairingPreparedOffer::new(
+        let prepared = match RemoteControlPairingPreparedOffer::new(
             target_signer,
             RemoteControlPairingContext::new(session.endpoint(), arrival.responder.link_id()),
             &arrival.begin,
             session.permissions().clone(),
             attempt_timeout,
-        );
+        ) {
+            Ok(prepared) => prepared,
+            Err(super::super::RemoteControlPairingPreparedOfferError::AuthorityUnsupported {
+                version,
+                authority,
+            }) => {
+                return BeginRemoteControlTargetPairingOutcome::Rejected {
+                    rejected: arrival.responder,
+                    reason: RemoteControlTargetPairingBeginRejection::AuthorityUnsupported {
+                        version,
+                        authority,
+                    },
+                }
+            }
+            Err(
+                super::super::RemoteControlPairingPreparedOfferError::RequestUnsupportedForVersion {
+                    version,
+                    request,
+                },
+            ) => {
+                return BeginRemoteControlTargetPairingOutcome::Rejected {
+                    rejected: arrival.responder,
+                    reason:
+                        RemoteControlTargetPairingBeginRejection::RequestUnsupportedForVersion {
+                            version,
+                            request,
+                        },
+                }
+            }
+        };
         let (offer, transcript) = prepared.into_parts();
         let attempt = RemoteControlTargetPairingAttempt { transcript, window };
         let attempt_id = attempt.attempt_id();

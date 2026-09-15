@@ -14,6 +14,7 @@ async fn a_msgpack_path_table_renders_each_route_as_a_dict() {
             last_route_activity_at: prns_core::engine::InstantMillis(2_250),
             expires_at: prns_core::engine::InstantMillis(62_250),
             interface: InterfaceId::new([0x07; 8]),
+            retention: prns_core::routing::RouteRetention::Network,
         }],
         interfaces: std::vec![],
     };
@@ -47,6 +48,7 @@ async fn a_msgpack_path_table_honors_signed_and_unbounded_max_hops() {
         last_route_activity_at: prns_core::engine::InstantMillis(0),
         expires_at: prns_core::engine::InstantMillis(u64::from(hops)),
         interface: InterfaceId::new([0x07; 8]),
+        retention: prns_core::routing::RouteRetention::Network,
     };
     let query = StubQuery {
         links: 0,
@@ -109,6 +111,8 @@ async fn interface_stats_renders_each_held_interface_with_its_live_counters() {
                     links: 0,
                     transported_links: 0,
                     membership: prns_core::interfaces::Membership::Independent,
+                    radio: prns_core::interfaces::RadioIndication::NotRadio,
+                    details: prns_core::interfaces::PeerDetails::NotApplicable,
                 },
                 ifac: Some(InterfaceIfacSnapshot {
                     signature: [0x5a; 64],
@@ -137,6 +141,8 @@ async fn interface_stats_renders_each_held_interface_with_its_live_counters() {
                     links: 0,
                     transported_links: 0,
                     membership: prns_core::interfaces::Membership::Independent,
+                    radio: prns_core::interfaces::RadioIndication::NotRadio,
+                    details: prns_core::interfaces::PeerDetails::NotApplicable,
                 },
                 ifac: None,
             },
@@ -217,6 +223,7 @@ fn one_via_route() -> StubQuery {
             last_route_activity_at: prns_core::engine::InstantMillis(0),
             expires_at: prns_core::engine::InstantMillis(0),
             interface: InterfaceId::new([0x07; 8]),
+            retention: prns_core::routing::RouteRetention::Network,
         }],
         interfaces: std::vec![],
     }
@@ -252,6 +259,7 @@ async fn a_directly_reachable_next_hop_is_the_destination_itself() {
             last_route_activity_at: prns_core::engine::InstantMillis(0),
             expires_at: prns_core::engine::InstantMillis(0),
             interface: InterfaceId::new([0x07; 8]),
+            retention: prns_core::routing::RouteRetention::Network,
         }],
         interfaces: std::vec![],
     };

@@ -1,3 +1,4 @@
+mod architecture;
 mod python;
 
 use std::fmt;
@@ -67,6 +68,8 @@ pub(crate) enum ContractError {
     },
     #[error("failed to render the Python release memory contract: {0}")]
     Python(#[from] PythonContractError),
+    #[error("failed to render the Python architecture contract: {0}")]
+    Architecture(#[from] architecture::ArchitectureContractError),
     #[error(
         "partition artifact {path} differs between memory profiles {canonical:?} and {conflicting:?}"
     )]
@@ -168,6 +171,7 @@ fn render_artifacts(root: &Path) -> Result<Vec<RenderedArtifact>, ContractError>
         })
         .collect::<Result<Vec<_>, ContractError>>()?;
     rendered.push(python::render(root)?);
+    rendered.push(architecture::render(root)?);
     Ok(rendered)
 }
 

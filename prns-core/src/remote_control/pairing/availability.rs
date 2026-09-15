@@ -94,6 +94,7 @@ prns_macros::iterable_enum! {
     #[repr(u8)]
     pub enum RemoteControlPairingAvailabilityProtocolVersion {
         V1 = 1,
+        V2 = 2,
     }
 }
 
@@ -106,6 +107,7 @@ impl RemoteControlPairingAvailabilityProtocolVersion {
     const fn from_wire(value: u8) -> Option<Self> {
         match value {
             1 => Some(Self::V1),
+            2 => Some(Self::V2),
             _ => None,
         }
     }
@@ -600,7 +602,7 @@ impl<'a> RemoteControlPairingAvailability<'a> {
         };
         let (expires_after_output, public_app_data_output) =
             signed_body.split_at_mut(PAIRING_AVAILABILITY_EXPIRES_AFTER_LEN);
-        *signed_version = RemoteControlPairingAvailabilityProtocolVersion::V1.wire_value();
+        *signed_version = RemoteControlPairingAvailabilityProtocolVersion::V2.wire_value();
         *signed_kind = RemoteControlPairingAvailabilityKind::PairingAvailable.wire_value();
         expires_after_output.copy_from_slice(&expires_after.to_wire());
         public_app_data_output.copy_from_slice(public_app_data.as_bytes());
@@ -631,7 +633,7 @@ impl<'a> RemoteControlPairingAvailability<'a> {
                 actual: output.len(),
             });
         };
-        *envelope_version = RemoteControlPairingAvailabilityProtocolVersion::V1.wire_value();
+        *envelope_version = RemoteControlPairingAvailabilityProtocolVersion::V2.wire_value();
         let Some(envelope_kind) = envelope_kind.first_mut() else {
             return Err(RemoteControlPairingAvailabilityWriteError::BufferTooShort {
                 required,
@@ -948,9 +950,9 @@ mod tests {
             )),
         );
         assert_eq!(
-            RemoteControlPairingAvailability::parse(&[2, 1]),
+            RemoteControlPairingAvailability::parse(&[3, 1]),
             Err(RemoteControlPairingAvailabilityParseError::EnvelopeHeader(
-                RemoteControlPairingAvailabilityHeaderError::UnsupportedVersion { found: 2 },
+                RemoteControlPairingAvailabilityHeaderError::UnsupportedVersion { found: 3 },
             )),
         );
         assert_eq!(

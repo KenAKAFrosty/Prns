@@ -39,9 +39,10 @@ const RESOLVE_TIMEOUT: f64 = 6.0;
 const AF_INET: u8 = 2;
 const AF_INET6: u8 = 30;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MdnsError {
     PublishFailed,
+    ServiceUnavailable,
     PublishTimeout,
     InvalidPublicationName,
     Closed,
@@ -51,6 +52,7 @@ impl core::fmt::Display for MdnsError {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::PublishFailed => formatter.write_str("Apple DNS-SD publication failed"),
+            Self::ServiceUnavailable => formatter.write_str("Apple DNS-SD service is unavailable"),
             Self::PublishTimeout => formatter.write_str("Apple DNS-SD publication timed out"),
             Self::InvalidPublicationName => {
                 formatter.write_str("Apple DNS-SD publication name is invalid")
@@ -65,62 +67,7 @@ impl std::error::Error for MdnsError {}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PublicationOutcome {
     Published,
-    Rejected,
-}
-
-struct AdvertiserDelegateIvars {
-    ready: RefCell<Option<oneshot::Sender<PublicationOutcome>>>,
-    backend_failed: Arc<AtomicBool>,
-}
-
-define_class!(
-    #[unsafe(super(NSObject))]
-    #[ivars = AdvertiserDelegateIvars]
-    struct AdvertiserDelegate;
-
-    unsafe impl NSObjectProtocol for AdvertiserDelegate {}
-
-    unsafe impl NSNetServiceDelegate for AdvertiserDelegate {
-        #[unsafe(method(netServiceDidStop:))]
-        fn did_stop(&self, _sender: &NSNetService) {
-            self.ivars().backend_failed.store(true, Ordering::Release);
-        }
-
-        #[unsafe(method(netServiceDidPublish:))]
-        fn did_publish(&self, _sender: &NSNetService) {
-            if let Some(ready) = self.ivars().ready.borrow_mut().take() {
-                let _ = ready.send(PublicationOutcome::Published);
-            }
-        }
-
-        #[unsafe(method(netService:didNotPublish:))]
-        fn did_not_publish(
-            &self,
-            _sender: &NSNetService,
-            error: &NSDictionary<NSString, NSNumber>,
-        ) {
-            crate::diagnostic_log::error!("mdns: advertise failed: {error:?}");
-            self.ivars().backend_failed.store(true, Ordering::Release);
-            if let Some(ready) = self.ivars().ready.borrow_mut().take() {
-                let _ = ready.send(PublicationOutcome::Rejected);
-            }
-        }
-    }
-);
-
-impl AdvertiserDelegate {
-    fn new(
-        ready: oneshot::Sender<PublicationOutcome>,
-        backend_failed: Arc<AtomicBool>,
-    ) -> Retained<Self> {
-        let this = Self::alloc().set_ivars(AdvertiserDelegateIvars {
-            ready: RefCell::new(Some(ready)),
-            backend_failed,
-        });
-        // SAFETY: `this` is a freshly allocated AdvertiserDelegate with fully initialized ivars;
-        // forwarding to NSObject's designated initializer preserves its allocation identity.
-        unsafe { msg_send![super(this), init] }
-    }
+    Rejected(MdnsError),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -417,28 +364,384 @@ fn apple_service_type(discovery_transport: DiscoveryTransport) -> String {
     format!("{}.", discovery_transport.dns_sd_base_service_type())
 }
 
-fn publish_service(
-    publication: &ApplePublication,
-    advertiser: &AdvertiserDelegate,
-    txt: &[(String, Vec<u8>)],
-) -> Retained<NSNetService> {
-    let service = NSNetService::initWithDomain_type_name_port(
-        NSNetService::alloc(),
-        &NSString::from_str(DNS_SD_LOCAL_DOMAIN),
-        &NSString::from_str(&apple_service_type(publication.transport)),
-        &NSString::from_str(publication.instance_name.as_str()),
-        core::ffi::c_int::from(publication.transport.port()),
-    );
-    let advertiser_protocol = ProtocolObject::from_ref(advertiser);
-    // SAFETY: the service and retained advertiser delegate remain on the native run-loop thread,
-    // and the protocol object has NSNetServiceDelegate's runtime type.
-    unsafe { service.setDelegate(Some(advertiser_protocol)) };
-    service.setIncludesPeerToPeer(true);
-    if let Some(data) = build_txt(txt) {
-        service.setTXTRecordData(Some(&data));
+mod dns_sd_ll {
+    use super::{DiscoveryTransport, MdnsError, TXT_VERSION_KEY, TXT_VERSION_VALUE};
+    use std::ffi::{c_void, CString};
+    use std::net::Ipv6Addr;
+    use std::ptr;
+    use std::vec::Vec;
+
+    type DnsServiceErrorType = i32;
+    type DnsServiceFlags = u32;
+    type DnsServiceRef = *mut c_void;
+    type DnsRecordRef = *mut c_void;
+
+    const DNS_SERVICE_NO_ERROR: DnsServiceErrorType = 0;
+    const DNS_SERVICE_ERR_SERVICE_NOT_RUNNING: DnsServiceErrorType = -65563;
+    const DNS_SERVICE_FLAGS_SHARED: DnsServiceFlags = 0x10;
+    const DNS_SERVICE_FLAGS_UNIQUE: DnsServiceFlags = 0x20;
+    const DNS_SERVICE_FLAGS_SHARE_CONNECTION: DnsServiceFlags = 0x4000;
+    const DNS_SERVICE_TYPE_AAAA: u16 = 28;
+    const DNS_SERVICE_CLASS_IN: u16 = 1;
+    const DNS_SERVICE_INTERFACE_INDEX_ANY: u32 = 0;
+
+    #[link(name = "System")]
+    unsafe extern "C" {
+        fn DNSServiceCreateConnection(sd_ref: *mut DnsServiceRef) -> DnsServiceErrorType;
+        fn DNSServiceRegister(
+            sd_ref: *mut DnsServiceRef,
+            flags: DnsServiceFlags,
+            interface_index: u32,
+            name: *const libc::c_char,
+            regtype: *const libc::c_char,
+            domain: *const libc::c_char,
+            host: *const libc::c_char,
+            port: u16,
+            txt_len: u16,
+            txt_record: *const c_void,
+            call_back: Option<
+                unsafe extern "C" fn(
+                    DnsServiceRef,
+                    DnsServiceFlags,
+                    u32,
+                    DnsServiceErrorType,
+                    *const libc::c_char,
+                    *const libc::c_char,
+                    *const libc::c_char,
+                    u16,
+                    *mut c_void,
+                ),
+            >,
+            context: *mut c_void,
+        ) -> DnsServiceErrorType;
+        fn DNSServiceRegisterRecord(
+            sd_ref: DnsServiceRef,
+            record_ref: *mut DnsRecordRef,
+            flags: DnsServiceFlags,
+            interface_index: u32,
+            fullname: *const libc::c_char,
+            rrtype: u16,
+            rrclass: u16,
+            rdlen: u16,
+            rdata: *const c_void,
+            ttl: u32,
+            call_back: Option<
+                unsafe extern "C" fn(
+                    DnsServiceRef,
+                    DnsRecordRef,
+                    DnsServiceFlags,
+                    DnsServiceErrorType,
+                    *mut c_void,
+                ),
+            >,
+            context: *mut c_void,
+        ) -> DnsServiceErrorType;
+        fn DNSServiceProcessResult(sd_ref: DnsServiceRef) -> DnsServiceErrorType;
+        fn DNSServiceRefDeallocate(sd_ref: DnsServiceRef);
+        fn DNSServiceRefSockFD(sd_ref: DnsServiceRef) -> libc::c_int;
     }
-    service.publish();
-    service
+
+    /// `DNSServiceRegisterRecord` rejects a NULL callback (`kDNSServiceErr_BadParam`).
+    unsafe extern "C" fn register_record_reply(
+        _sd_ref: DnsServiceRef,
+        _record_ref: DnsRecordRef,
+        _flags: DnsServiceFlags,
+        error_code: DnsServiceErrorType,
+        _context: *mut c_void,
+    ) {
+        if error_code != DNS_SERVICE_NO_ERROR {
+            crate::diagnostic_log::debug!(
+                "mdns: DNSServiceRegisterRecord async error {error_code}"
+            );
+        }
+    }
+
+    const fn publication_error(error_code: DnsServiceErrorType) -> MdnsError {
+        if error_code == DNS_SERVICE_ERR_SERVICE_NOT_RUNNING {
+            MdnsError::ServiceUnavailable
+        } else {
+            MdnsError::PublishFailed
+        }
+    }
+
+    pub(super) const fn record_registration_flags(record_index: usize) -> DnsServiceFlags {
+        if record_index == 0 {
+            DNS_SERVICE_FLAGS_UNIQUE
+        } else {
+            DNS_SERVICE_FLAGS_SHARED
+        }
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub(super) struct LinkLocalHostAddress {
+        address: Ipv6Addr,
+        interface_index: u32,
+    }
+
+    pub(super) struct LinkLocalPublisher {
+        connection: DnsServiceRef,
+        _aaaa_records: Vec<DnsRecordRef>,
+        _service_refs: Vec<DnsServiceRef>,
+        _advertised_addresses: Vec<Ipv6Addr>,
+    }
+
+    // SAFETY: `LinkLocalPublisher` owns the DNSService connection exclusively on the
+    // native mDNS thread and never shares the raw refs across threads.
+    unsafe impl Send for LinkLocalPublisher {}
+
+    impl LinkLocalPublisher {
+        pub(super) fn advertise(
+            hostname_label: &str,
+            tcp_instance_name: &str,
+            udp_instance_name: &str,
+            tcp_port: u16,
+            udp_port: u16,
+        ) -> Result<Self, MdnsError> {
+            let link_local_hosts = local_unicast_link_local_hosts();
+            if link_local_hosts.is_empty() {
+                crate::diagnostic_log::debug!(
+                    "mdns: no eligible unicast link-local IPv6 hosts for DNS-SD publication"
+                );
+                return Err(MdnsError::PublishFailed);
+            }
+
+            let hostname = CString::new(format!("{hostname_label}.local."))
+                .map_err(|_| MdnsError::InvalidPublicationName)?;
+            let tcp_name =
+                CString::new(tcp_instance_name).map_err(|_| MdnsError::InvalidPublicationName)?;
+            let udp_name =
+                CString::new(udp_instance_name).map_err(|_| MdnsError::InvalidPublicationName)?;
+            let tcp_type = CString::new(format!(
+                "{}.",
+                DiscoveryTransport::Tcp.dns_sd_base_service_type()
+            ))
+            .map_err(|_| MdnsError::InvalidPublicationName)?;
+            let udp_type = CString::new(format!(
+                "{}.",
+                DiscoveryTransport::Udp.dns_sd_base_service_type()
+            ))
+            .map_err(|_| MdnsError::InvalidPublicationName)?;
+            let txt_record = txt_version_record();
+
+            let mut connection: DnsServiceRef = ptr::null_mut();
+            // SAFETY: DNSServiceCreateConnection writes a valid opaque ref on success.
+            let create_error = unsafe { DNSServiceCreateConnection(&mut connection) };
+            if create_error != DNS_SERVICE_NO_ERROR || connection.is_null() {
+                crate::diagnostic_log::debug!(
+                    "mdns: DNSServiceCreateConnection failed ({create_error})"
+                );
+                return Err(publication_error(create_error));
+            }
+
+            let advertised_addresses = link_local_hosts
+                .iter()
+                .map(|host| host.address)
+                .collect::<Vec<_>>();
+            let mut publisher = Self {
+                connection,
+                _aaaa_records: Vec::new(),
+                _service_refs: Vec::new(),
+                _advertised_addresses: advertised_addresses.clone(),
+            };
+
+            for (index, host) in link_local_hosts.iter().enumerate() {
+                let mut record_ref: DnsRecordRef = ptr::null_mut();
+                let octets = host.address.octets();
+                // First AAAA claims uniqueness; additional same-name records are shared.
+                let record_flags = record_registration_flags(index);
+                // SAFETY: connection is live; callback is non-null (required by DNS-SD);
+                // rdata points at a 16-byte AAAA payload for the call.
+                let register_error = unsafe {
+                    DNSServiceRegisterRecord(
+                        publisher.connection,
+                        &mut record_ref,
+                        record_flags,
+                        host.interface_index,
+                        hostname.as_ptr(),
+                        DNS_SERVICE_TYPE_AAAA,
+                        DNS_SERVICE_CLASS_IN,
+                        u16::try_from(octets.len()).unwrap_or(0),
+                        octets.as_ptr().cast::<c_void>(),
+                        0,
+                        Some(register_record_reply),
+                        ptr::null_mut(),
+                    )
+                };
+                if register_error != DNS_SERVICE_NO_ERROR {
+                    crate::diagnostic_log::debug!(
+                        "mdns: DNSServiceRegisterRecord({}) on ifindex {} failed ({register_error})",
+                        host.address,
+                        host.interface_index
+                    );
+                    return Err(publication_error(register_error));
+                }
+                publisher._aaaa_records.push(record_ref);
+            }
+
+            publisher.register_service(&tcp_name, &tcp_type, &hostname, tcp_port, &txt_record)?;
+            publisher.register_service(&udp_name, &udp_type, &hostname, udp_port, &txt_record)?;
+
+            crate::diagnostic_log::debug!(
+                "mdns: publishing LL-only AAAA {:?} for {hostname_label}.local. ports {tcp_port}/{udp_port}",
+                advertised_addresses
+            );
+            Ok(publisher)
+        }
+
+        fn register_service(
+            &mut self,
+            name: &CString,
+            regtype: &CString,
+            host: &CString,
+            port: u16,
+            txt_record: &[u8],
+        ) -> Result<(), MdnsError> {
+            let mut service_ref = self.connection;
+            // SAFETY: ShareConnection reuses `self.connection`; port is network-order as required.
+            let register_error = unsafe {
+                DNSServiceRegister(
+                    &mut service_ref,
+                    DNS_SERVICE_FLAGS_SHARE_CONNECTION,
+                    DNS_SERVICE_INTERFACE_INDEX_ANY,
+                    name.as_ptr(),
+                    regtype.as_ptr(),
+                    ptr::null(),
+                    host.as_ptr(),
+                    port.to_be(),
+                    u16::try_from(txt_record.len()).unwrap_or(0),
+                    txt_record.as_ptr().cast::<c_void>(),
+                    None,
+                    ptr::null_mut(),
+                )
+            };
+            if register_error != DNS_SERVICE_NO_ERROR {
+                crate::diagnostic_log::debug!("mdns: DNSServiceRegister failed ({register_error})");
+                return Err(publication_error(register_error));
+            }
+            self._service_refs.push(service_ref);
+            Ok(())
+        }
+
+        pub(super) fn process_pending(&self) {
+            let sock_fd = // SAFETY: connection remains owned by this publisher.
+                unsafe { DNSServiceRefSockFD(self.connection) };
+            if sock_fd < 0 {
+                return;
+            }
+            let mut poll_fd = libc::pollfd {
+                fd: sock_fd,
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            // SAFETY: poll inspects one stack-local descriptor for readability.
+            let ready = unsafe { libc::poll(&mut poll_fd, 1, 0) };
+            if ready > 0 && poll_fd.revents & libc::POLLIN != 0 {
+                // SAFETY: connection is valid and has readable daemon traffic.
+                let _ = unsafe { DNSServiceProcessResult(self.connection) };
+            }
+        }
+    }
+
+    impl Drop for LinkLocalPublisher {
+        fn drop(&mut self) {
+            // SAFETY: deallocate the shared connection; subordinate refs are invalidated with it.
+            unsafe { DNSServiceRefDeallocate(self.connection) };
+            self.connection = ptr::null_mut();
+            self._aaaa_records.clear();
+            self._service_refs.clear();
+        }
+    }
+
+    fn txt_version_record() -> Vec<u8> {
+        let entry = format!("{TXT_VERSION_KEY}={TXT_VERSION_VALUE}");
+        let mut record = Vec::with_capacity(entry.len() + 1);
+        record.push(u8::try_from(entry.len()).unwrap_or(0));
+        record.extend(entry.bytes());
+        record
+    }
+
+    pub(super) fn interface_name_is_infrastructure(name: &str) -> bool {
+        // Skip Apple peer-to-peer / tunnel ifaces; AutoWifi peers over LAN infra (en*).
+        !(name.starts_with("awdl")
+            || name.starts_with("llw")
+            || name.starts_with("utun")
+            || name.starts_with("bridge")
+            || name.starts_with("ap"))
+    }
+
+    pub(super) fn local_unicast_link_local_hosts() -> Vec<LinkLocalHostAddress> {
+        let mut hosts = Vec::new();
+        let mut ifaddrs_head: *mut libc::ifaddrs = ptr::null_mut();
+        // SAFETY: getifaddrs allocates a linked list freed with freeifaddrs below.
+        if unsafe { libc::getifaddrs(&mut ifaddrs_head) } != 0 {
+            return hosts;
+        }
+        let mut cursor = ifaddrs_head;
+        while !cursor.is_null() {
+            // SAFETY: cursor walks the getifaddrs list until null.
+            let interface = unsafe { &*cursor };
+            let name = if interface.ifa_name.is_null() {
+                None
+            } else {
+                // SAFETY: ifa_name is a C string owned by getifaddrs.
+                unsafe { std::ffi::CStr::from_ptr(interface.ifa_name) }
+                    .to_str()
+                    .ok()
+            };
+            let Some(name) = name else {
+                cursor = interface.ifa_next;
+                continue;
+            };
+            let flags = interface.ifa_flags;
+            let is_up = (flags & libc::IFF_UP as libc::c_uint) != 0;
+            let is_running = (flags & libc::IFF_RUNNING as libc::c_uint) != 0;
+            let is_loopback = (flags & libc::IFF_LOOPBACK as libc::c_uint) != 0;
+            let is_point_to_point = (flags & libc::IFF_POINTOPOINT as libc::c_uint) != 0;
+            let is_multicast = (flags & libc::IFF_MULTICAST as libc::c_uint) != 0;
+            if !is_up
+                || !is_running
+                || is_loopback
+                || is_point_to_point
+                || !is_multicast
+                || !interface_name_is_infrastructure(name)
+            {
+                cursor = interface.ifa_next;
+                continue;
+            }
+
+            let addr = interface.ifa_addr;
+            if !addr.is_null() {
+                // SAFETY: ifa_addr is a sockaddr from getifaddrs when non-null.
+                let family = unsafe { (*addr).sa_family };
+                if family == libc::AF_INET6 as libc::sa_family_t {
+                    // SAFETY: AF_INET6 sockaddr is sockaddr_in6-sized in this list.
+                    let sockaddr_in6 = unsafe { &*(addr as *const libc::sockaddr_in6) };
+                    let octets = sockaddr_in6.sin6_addr.s6_addr;
+                    let ipv6 = Ipv6Addr::from(octets);
+                    if ipv6.is_unicast_link_local() {
+                        // SAFETY: if_nametoindex accepts the same C string getifaddrs provided.
+                        let interface_index = unsafe { libc::if_nametoindex(interface.ifa_name) };
+                        if interface_index != 0 {
+                            hosts.push(LinkLocalHostAddress {
+                                address: ipv6,
+                                interface_index,
+                            });
+                        }
+                    }
+                }
+            }
+            cursor = interface.ifa_next;
+        }
+        // SAFETY: pairs with the successful getifaddrs above.
+        unsafe { libc::freeifaddrs(ifaddrs_head) };
+        hosts.sort_by(|left, right| {
+            left.interface_index
+                .cmp(&right.interface_index)
+                .then_with(|| left.address.cmp(&right.address))
+        });
+        hosts.dedup();
+        hosts
+    }
 }
 
 fn browse_for_services(
@@ -463,7 +766,7 @@ async fn wait_for_publication(
 ) -> Result<(), MdnsError> {
     match publication_outcome.await {
         Ok(PublicationOutcome::Published) => Ok(()),
-        Ok(PublicationOutcome::Rejected) => Err(MdnsError::PublishFailed),
+        Ok(PublicationOutcome::Rejected(error)) => Err(error),
         Err(_native_thread_closed) => Err(MdnsError::Closed),
     }
 }
@@ -492,20 +795,31 @@ impl AppleServiceDiscoveryBackend {
         let (snapshot_state, snapshot_receiver) = SnapshotState::channel(DISCOVERY_CAPACITY);
         let (shutdown_tx, shutdown_rx) = sync_mpsc::channel::<()>();
         let backend_failed = Arc::new(AtomicBool::new(false));
-        let txt = [(
-            String::from(TXT_VERSION_KEY),
-            TXT_VERSION_VALUE.as_bytes().to_vec(),
-        )];
 
         let join = thread::Builder::new()
             .name("hopspot-mdns".into())
             .spawn(move || {
-                let tcp_advertiser =
-                    AdvertiserDelegate::new(tcp_ready_sender, Arc::clone(&backend_failed));
-                let udp_advertiser =
-                    AdvertiserDelegate::new(udp_ready_sender, Arc::clone(&backend_failed));
-                let tcp_service = publish_service(&tcp_publication, &tcp_advertiser, &txt);
-                let udp_service = publish_service(&udp_publication, &udp_advertiser, &txt);
+                let publisher = match dns_sd_ll::LinkLocalPublisher::advertise(
+                    tcp_publication.instance_name.as_str(),
+                    tcp_publication.instance_name.as_str(),
+                    udp_publication.instance_name.as_str(),
+                    tcp_publication.transport.port(),
+                    udp_publication.transport.port(),
+                ) {
+                    Ok(publisher) => {
+                        let _ = tcp_ready_sender.send(PublicationOutcome::Published);
+                        let _ = udp_ready_sender.send(PublicationOutcome::Published);
+                        Some(publisher)
+                    }
+                    Err(publication_error) => {
+                        backend_failed.store(true, Ordering::Release);
+                        let _ =
+                            tcp_ready_sender.send(PublicationOutcome::Rejected(publication_error));
+                        let _ =
+                            udp_ready_sender.send(PublicationOutcome::Rejected(publication_error));
+                        None
+                    }
+                };
 
                 let resolver = ResolveDelegate::new(Arc::clone(&snapshot_state));
                 let browser_delegate = BrowserDelegate::new(
@@ -520,23 +834,16 @@ impl AppleServiceDiscoveryBackend {
                 while !backend_failed.load(Ordering::Acquire)
                     && matches!(shutdown_rx.try_recv(), Err(sync_mpsc::TryRecvError::Empty))
                 {
+                    if let Some(publisher) = publisher.as_ref() {
+                        publisher.process_pending();
+                    }
                     // SAFETY: the process-global default run-loop mode has static lifetime.
                     let mode = unsafe { kCFRunLoopDefaultMode };
                     let _ = CFRunLoop::run_in_mode(mode, 0.1, false);
                 }
-                tcp_service.stop();
-                udp_service.stop();
                 tcp_browser.stop();
                 udp_browser.stop();
-                drop((
-                    tcp_service,
-                    udp_service,
-                    tcp_advertiser,
-                    udp_advertiser,
-                    tcp_browser,
-                    udp_browser,
-                    browser_delegate,
-                ));
+                drop((publisher, tcp_browser, udp_browser, browser_delegate));
             })
             .map_err(|_| MdnsError::Closed)?;
         let native_thread = NativeMdnsThread {
@@ -552,7 +859,7 @@ impl AppleServiceDiscoveryBackend {
         match publication_result {
             Ok(Ok(())) => {
                 crate::diagnostic_log::debug!(
-                    "mdns: advertising + browsing {} on port {} and {} on port {}",
+                    "mdns: advertising LL-only + browsing {} on port {} and {} on port {}",
                     TCP_DNS_SD_BASE_SERVICE_TYPE,
                     TCP_RENDEZVOUS_PORT,
                     UDP_DNS_SD_BASE_SERVICE_TYPE,
@@ -694,6 +1001,12 @@ fn resolved_service_advertisement(
         let Some(socket_address) = parse_sockaddr(&address.to_vec()) else {
             continue;
         };
+        let SocketAddr::V6(ipv6_socket_address) = socket_address else {
+            continue;
+        };
+        if !ipv6_socket_address.ip().is_unicast_link_local() {
+            continue;
+        }
         if let Ok(discovery_endpoint) =
             DiscoveryEndpoint::try_from((discovery_transport, socket_address))
         {
@@ -811,24 +1124,6 @@ fn txt_version_metadata(
         };
     }
     Ok(version_metadata)
-}
-
-fn build_txt(pairs: &[(String, Vec<u8>)]) -> Option<Retained<NSData>> {
-    if pairs.is_empty() {
-        return None;
-    }
-    let keys: Vec<Retained<NSString>> = pairs
-        .iter()
-        .map(|(key, _)| NSString::from_str(key))
-        .collect();
-    let values: Vec<Retained<NSData>> = pairs
-        .iter()
-        .map(|(_, value)| NSData::with_bytes(value))
-        .collect();
-    let key_refs: Vec<&NSString> = keys.iter().map(|key| &**key).collect();
-    let value_refs: Vec<&NSData> = values.iter().map(|value| &**value).collect();
-    let dict = NSDictionary::from_slices(&key_refs, &value_refs);
-    Some(NSNetService::dataFromTXTRecordDictionary(&dict))
 }
 
 #[cfg(test)]
@@ -981,10 +1276,25 @@ mod native_thread_tests {
         let (tcp_ready_sender, tcp_ready_receiver) = oneshot::channel();
         let (udp_ready_sender, udp_ready_receiver) = oneshot::channel();
         assert_eq!(tcp_ready_sender.send(PublicationOutcome::Published), Ok(()));
-        assert_eq!(udp_ready_sender.send(PublicationOutcome::Rejected), Ok(()));
+        assert_eq!(
+            udp_ready_sender.send(PublicationOutcome::Rejected(MdnsError::PublishFailed)),
+            Ok(())
+        );
         assert_eq!(
             wait_for_publications(tcp_ready_receiver, udp_ready_receiver).await,
             Err(MdnsError::PublishFailed)
+        );
+
+        let (tcp_ready_sender, tcp_ready_receiver) = oneshot::channel();
+        let (udp_ready_sender, udp_ready_receiver) = oneshot::channel();
+        assert_eq!(
+            tcp_ready_sender.send(PublicationOutcome::Rejected(MdnsError::ServiceUnavailable)),
+            Ok(())
+        );
+        assert_eq!(udp_ready_sender.send(PublicationOutcome::Published), Ok(()));
+        assert_eq!(
+            wait_for_publications(tcp_ready_receiver, udp_ready_receiver).await,
+            Err(MdnsError::ServiceUnavailable)
         );
     }
 
@@ -996,10 +1306,10 @@ mod native_thread_tests {
         let tcp_service = apple_service(DiscoveryTransport::Tcp, "tcp-peer", TCP_RENDEZVOUS_PORT);
         let udp_service =
             apple_service(DiscoveryTransport::Udp, "udp-peer", UNICAST_DISCOVERY_PORT);
-        let tcp_addresses = NSArray::from_retained_slice(&[ipv4_sockaddr_data(
-            "192.168.1.8".parse()?,
-            TCP_RENDEZVOUS_PORT,
-        )]);
+        let tcp_addresses = NSArray::from_retained_slice(&[
+            ipv4_sockaddr_data("192.168.1.8".parse()?, TCP_RENDEZVOUS_PORT),
+            ipv6_sockaddr_data("fe80::8".parse()?, TCP_RENDEZVOUS_PORT, 7),
+        ]);
         let udp_addresses = NSArray::from_retained_slice(&[ipv6_sockaddr_data(
             "fe80::8".parse()?,
             UNICAST_DISCOVERY_PORT,
@@ -1025,7 +1335,7 @@ mod native_thread_tests {
             snapshot
                 .get(&tcp_service_name)
                 .map(ServiceAdvertisement::endpoints),
-            Some(&[DiscoveryEndpoint::tcp("192.168.1.8:42699".parse()?)?][..])
+            Some(&[DiscoveryEndpoint::tcp("[fe80::8%7]:42699".parse()?)?][..])
         );
         assert_eq!(
             snapshot
@@ -1116,8 +1426,8 @@ mod native_thread_tests {
         let service = apple_service(DiscoveryTransport::Tcp, "peer", TCP_RENDEZVOUS_PORT);
         let addresses = NSArray::from_retained_slice(&[
             ipv4_sockaddr_data("192.168.1.8".parse()?, TCP_RENDEZVOUS_PORT),
-            ipv4_sockaddr_data("10.0.0.8".parse()?, TCP_RENDEZVOUS_PORT),
-            ipv4_sockaddr_data("8.8.8.8".parse()?, TCP_RENDEZVOUS_PORT),
+            ipv6_sockaddr_data("fe80::8".parse()?, TCP_RENDEZVOUS_PORT, 7),
+            ipv6_sockaddr_data("fd00::8".parse()?, TCP_RENDEZVOUS_PORT, 0),
         ]);
 
         assert_eq!(
@@ -1128,11 +1438,7 @@ mod native_thread_tests {
             DiscoveryServiceName::from_instance("peer", DiscoveryTransport::Tcp)?,
         );
         assert_eq!(
-            expected_advertisement.insert(DiscoveryEndpoint::tcp("10.0.0.8:42699".parse()?,)?),
-            Ok(CandidateInsertion::Inserted)
-        );
-        assert_eq!(
-            expected_advertisement.insert(DiscoveryEndpoint::tcp("192.168.1.8:42699".parse()?,)?),
+            expected_advertisement.insert(DiscoveryEndpoint::tcp("[fe80::8%7]:42699".parse()?,)?),
             Ok(CandidateInsertion::Inserted)
         );
         let mut expected_snapshot = DiscoverySnapshot::new(NonZeroU8::MIN);
@@ -1192,6 +1498,47 @@ mod native_thread_tests {
             decoded => assert!(
                 matches!(decoded, Some(SocketAddr::V6(_))),
                 "expected a scoped IPv6 address"
+            ),
+        }
+    }
+
+    #[test]
+    fn link_local_publisher_skips_peer_to_peer_and_tunnel_interfaces() {
+        assert!(super::dns_sd_ll::interface_name_is_infrastructure("en0"));
+        assert!(super::dns_sd_ll::interface_name_is_infrastructure("en1"));
+        assert!(!super::dns_sd_ll::interface_name_is_infrastructure("awdl0"));
+        assert!(!super::dns_sd_ll::interface_name_is_infrastructure("llw0"));
+        assert!(!super::dns_sd_ll::interface_name_is_infrastructure("utun5"));
+        assert!(!super::dns_sd_ll::interface_name_is_infrastructure(
+            "bridge0"
+        ));
+        assert!(!super::dns_sd_ll::interface_name_is_infrastructure("ap1"));
+    }
+
+    #[test]
+    fn link_local_record_flags_are_valid_for_a_connected_dns_sd_ref() {
+        assert_eq!(super::dns_sd_ll::record_registration_flags(0), 0x20);
+        assert_eq!(super::dns_sd_ll::record_registration_flags(1), 0x10);
+        assert_eq!(super::dns_sd_ll::record_registration_flags(0) & 0x4000, 0);
+        assert_eq!(super::dns_sd_ll::record_registration_flags(1) & 0x4000, 0);
+    }
+
+    #[test]
+    fn link_local_publisher_names_daemon_unavailability_as_environmental() {
+        if super::dns_sd_ll::local_unicast_link_local_hosts().is_empty() {
+            return;
+        }
+        let publisher = super::dns_sd_ll::LinkLocalPublisher::advertise(
+            "prns-llpubtest",
+            "prns-llpubtest-tcp",
+            "prns-llpubtest-udp",
+            TCP_RENDEZVOUS_PORT,
+            UNICAST_DISCOVERY_PORT,
+        );
+        match publisher {
+            Ok(_) | Err(MdnsError::ServiceUnavailable) => {}
+            Err(error) => panic!(
+                "expected DNS-SD LL publish to succeed with a non-null RegisterRecord callback: {error:?}"
             ),
         }
     }

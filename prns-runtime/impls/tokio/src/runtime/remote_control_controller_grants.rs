@@ -3,12 +3,21 @@ use std::sync::Arc;
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tokio::sync::{oneshot, Mutex, OwnedMutexGuard};
 
+use crate::persistence::SnapshotRegion;
 use crate::remote_control::{
-    RemoteControlControllerGrant, RemoteControlControllerIdentity,
+    RemoteControlAuthorizeControllerOutcome, RemoteControlControllerGrant,
+    RemoteControlControllerIdentity, RemoteControlResponse, RemoteControlRevokeControllerOutcome,
     RevokeRemoteControlControllerOutcome, SetRemoteControlControllerGrantOutcome,
 };
 
 use super::node_facade::PrnsNodeHandle;
+use super::node_facade::RemoteControlAuthorizationPersistence;
+use super::remote_control_pairing_persistence::{
+    activate_controller_grant_change, prepare_controller_grant_set, prepare_controller_revocation,
+    restore_controller_grants_snapshot, rollback_controller_grant_change,
+    RemoteControlAuthorizationPersistenceFailure,
+};
+use super::request_endpoints::RespondToken;
 use super::{
     AssembledRemoteControl, RemoteControlControllerGrantControl,
     RevokeRemoteControlControllerControlError, RevokeRemoteControlControllerServiceError,
@@ -32,6 +41,18 @@ pub(super) enum RemoteControlControllerGrantCommand {
         completion: oneshot::Sender<
             Result<RevokeRemoteControlControllerOutcome, RevokeRemoteControlControllerServiceError>,
         >,
+    },
+    AuthorizeControllerAndRespond {
+        grant: RemoteControlControllerGrant,
+        responder: RespondToken,
+        node: PrnsNodeHandle,
+        completion: oneshot::Sender<()>,
+    },
+    RevokeControllerAndRespond {
+        controller: RemoteControlControllerIdentity,
+        responder: RespondToken,
+        node: PrnsNodeHandle,
+        completion: oneshot::Sender<()>,
     },
     Snapshot {
         completion: oneshot::Sender<
@@ -110,28 +131,232 @@ impl RemoteControlControllerGrantReceiver {
 }
 
 impl RemoteControlControllerGrantCommand {
-    pub(super) fn apply(self, remote_control: &mut AssembledRemoteControl) {
+    pub(super) async fn apply(
+        self,
+        remote_control: &mut AssembledRemoteControl,
+        persistence: Option<&RemoteControlAuthorizationPersistence>,
+    ) -> Result<(), RemoteControlAuthorizationPersistenceFailure> {
         match self {
             Self::SetControllerGrant { grant, completion } => {
                 if completion.is_closed() {
-                    return;
+                    return Ok(());
                 }
-                let outcome = remote_control.set_controller_grant(grant);
-                let _completion = completion.send(outcome);
+                let prepared = match prepare_controller_grant_set(remote_control, grant) {
+                    Ok(prepared) => prepared,
+                    Err(error) => {
+                        let _completion = completion.send(Err(error));
+                        return Ok(());
+                    }
+                };
+                let Some(outcome) = prepared.set_outcome() else {
+                    let _completion = completion.send(Err(
+                        SetRemoteControlControllerGrantServiceError::Unavailable,
+                    ));
+                    return Ok(());
+                };
+                if prepared.is_unchanged() {
+                    let _completion = completion.send(Ok(outcome));
+                    return Ok(());
+                }
+                let Some(persistence) = persistence else {
+                    let _completion = completion.send(Err(
+                        SetRemoteControlControllerGrantServiceError::Unavailable,
+                    ));
+                    return Ok(());
+                };
+                let (mutation, projected, rollback) = prepared.into_parts();
+                if persistence
+                    .store(SnapshotRegion::RemoteControlControllerGrants, projected)
+                    .await
+                    .is_err()
+                {
+                    restore_controller_grants_snapshot(persistence, rollback).await?;
+                    let _completion = completion.send(Err(
+                        SetRemoteControlControllerGrantServiceError::Unavailable,
+                    ));
+                    return Ok(());
+                }
+                if completion.is_closed() {
+                    restore_controller_grants_snapshot(persistence, rollback).await?;
+                    return Ok(());
+                }
+                if activate_controller_grant_change(remote_control, mutation).is_err() {
+                    restore_controller_grants_snapshot(persistence, rollback).await?;
+                    let _completion = completion.send(Err(
+                        SetRemoteControlControllerGrantServiceError::Unavailable,
+                    ));
+                    return Ok(());
+                }
+                if completion.send(Ok(outcome)).is_err() {
+                    rollback_controller_grant_change(remote_control, mutation)?;
+                    restore_controller_grants_snapshot(persistence, rollback).await?;
+                }
             }
             Self::RevokeController {
                 controller,
                 completion,
             } => {
                 if completion.is_closed() {
-                    return;
+                    return Ok(());
                 }
-                let outcome = remote_control.revoke_controller(&controller);
-                let _completion = completion.send(outcome);
+                let prepared = match prepare_controller_revocation(remote_control, controller) {
+                    Ok(prepared) => prepared,
+                    Err(error) => {
+                        let _completion = completion.send(Err(error));
+                        return Ok(());
+                    }
+                };
+                let Some(outcome) = prepared.revoke_outcome() else {
+                    let _completion = completion
+                        .send(Err(RevokeRemoteControlControllerServiceError::Unavailable));
+                    return Ok(());
+                };
+                if prepared.is_unchanged() {
+                    let _completion = completion.send(Ok(outcome));
+                    return Ok(());
+                }
+                let Some(persistence) = persistence else {
+                    let _completion = completion
+                        .send(Err(RevokeRemoteControlControllerServiceError::Unavailable));
+                    return Ok(());
+                };
+                let (mutation, projected, rollback) = prepared.into_parts();
+                if persistence
+                    .store(SnapshotRegion::RemoteControlControllerGrants, projected)
+                    .await
+                    .is_err()
+                {
+                    restore_controller_grants_snapshot(persistence, rollback).await?;
+                    let _completion = completion
+                        .send(Err(RevokeRemoteControlControllerServiceError::Unavailable));
+                    return Ok(());
+                }
+                if completion.is_closed() {
+                    restore_controller_grants_snapshot(persistence, rollback).await?;
+                    return Ok(());
+                }
+                if activate_controller_grant_change(remote_control, mutation).is_err() {
+                    restore_controller_grants_snapshot(persistence, rollback).await?;
+                    let _completion = completion
+                        .send(Err(RevokeRemoteControlControllerServiceError::Unavailable));
+                    return Ok(());
+                }
+                if completion.send(Ok(outcome)).is_err() {
+                    rollback_controller_grant_change(remote_control, mutation)?;
+                    restore_controller_grants_snapshot(persistence, rollback).await?;
+                }
+            }
+            Self::AuthorizeControllerAndRespond {
+                grant,
+                responder,
+                node,
+                completion,
+            } => {
+                let prepared = match prepare_controller_grant_set(remote_control, grant) {
+                    Ok(prepared) => prepared,
+                    Err(SetRemoteControlControllerGrantServiceError::CapacityExhausted) => {
+                        respond_to_remote_controller_grant(
+                            &node,
+                            responder,
+                            RemoteControlResponse::AuthorizeController(
+                                RemoteControlAuthorizeControllerOutcome::CapacityExhausted,
+                            ),
+                        )
+                        .await;
+                        let _completed = completion.send(());
+                        return Ok(());
+                    }
+                    Err(
+                        SetRemoteControlControllerGrantServiceError::Unavailable
+                        | SetRemoteControlControllerGrantServiceError::TransactionInProgress,
+                    ) => {
+                        respond_to_remote_controller_grant(
+                            &node,
+                            responder,
+                            RemoteControlResponse::AuthorizeController(
+                                RemoteControlAuthorizeControllerOutcome::Failed,
+                            ),
+                        )
+                        .await;
+                        let _completed = completion.send(());
+                        return Ok(());
+                    }
+                };
+                let success = RemoteControlResponse::AuthorizeController(
+                    RemoteControlAuthorizeControllerOutcome::Applied,
+                );
+                let failure = RemoteControlResponse::AuthorizeController(
+                    RemoteControlAuthorizeControllerOutcome::Failed,
+                );
+                apply_remote_controller_grant_transaction(
+                    remote_control,
+                    persistence,
+                    &node,
+                    responder,
+                    prepared,
+                    success,
+                    failure,
+                )
+                .await?;
+                let _completed = completion.send(());
+            }
+            Self::RevokeControllerAndRespond {
+                controller,
+                responder,
+                node,
+                completion,
+            } => {
+                let prepared = match prepare_controller_revocation(remote_control, controller) {
+                    Ok(prepared) => prepared,
+                    Err(
+                        RevokeRemoteControlControllerServiceError::Unavailable
+                        | RevokeRemoteControlControllerServiceError::TransactionInProgress,
+                    ) => {
+                        respond_to_remote_controller_grant(
+                            &node,
+                            responder,
+                            RemoteControlResponse::RevokeController(
+                                RemoteControlRevokeControllerOutcome::Failed,
+                            ),
+                        )
+                        .await;
+                        let _completed = completion.send(());
+                        return Ok(());
+                    }
+                };
+                let success = match prepared.revoke_outcome() {
+                    Some(RevokeRemoteControlControllerOutcome::Revoked { .. }) => {
+                        RemoteControlResponse::RevokeController(
+                            RemoteControlRevokeControllerOutcome::Applied,
+                        )
+                    }
+                    Some(RevokeRemoteControlControllerOutcome::NotFound) => {
+                        RemoteControlResponse::RevokeController(
+                            RemoteControlRevokeControllerOutcome::NotFound,
+                        )
+                    }
+                    None => RemoteControlResponse::RevokeController(
+                        RemoteControlRevokeControllerOutcome::Failed,
+                    ),
+                };
+                let failure = RemoteControlResponse::RevokeController(
+                    RemoteControlRevokeControllerOutcome::Failed,
+                );
+                apply_remote_controller_grant_transaction(
+                    remote_control,
+                    persistence,
+                    &node,
+                    responder,
+                    prepared,
+                    success,
+                    failure,
+                )
+                .await?;
+                let _completed = completion.send(());
             }
             Self::Snapshot { completion } => {
                 if completion.is_closed() {
-                    return;
+                    return Ok(());
                 }
                 let mut snapshot = std::vec![
                     0;
@@ -150,10 +375,160 @@ impl RemoteControlControllerGrantCommand {
                 let _completion = completion.send(outcome);
             }
         }
+        Ok(())
     }
 }
 
+async fn apply_remote_controller_grant_transaction(
+    remote_control: &mut AssembledRemoteControl,
+    persistence: Option<&RemoteControlAuthorizationPersistence>,
+    node: &PrnsNodeHandle,
+    responder: RespondToken,
+    prepared: super::remote_control_pairing_persistence::PreparedControllerGrantChange,
+    success: RemoteControlResponse,
+    failure: RemoteControlResponse,
+) -> Result<(), RemoteControlAuthorizationPersistenceFailure> {
+    if prepared.is_unchanged() {
+        respond_to_remote_controller_grant(node, responder, success).await;
+        return Ok(());
+    }
+    let Some(persistence) = persistence else {
+        respond_to_remote_controller_grant(node, responder, failure).await;
+        return Ok(());
+    };
+    let (mutation, projected, rollback) = prepared.into_parts();
+    if persistence
+        .store(SnapshotRegion::RemoteControlControllerGrants, projected)
+        .await
+        .is_err()
+    {
+        restore_controller_grants_snapshot(persistence, rollback).await?;
+        respond_to_remote_controller_grant(node, responder, failure).await;
+        return Ok(());
+    }
+    if activate_controller_grant_change(remote_control, mutation).is_err() {
+        restore_controller_grants_snapshot(persistence, rollback).await?;
+        respond_to_remote_controller_grant(node, responder, failure).await;
+        return Ok(());
+    }
+    if respond_to_remote_controller_grant(node, responder, success).await {
+        return Ok(());
+    }
+    rollback_controller_grant_change(remote_control, mutation)?;
+    restore_controller_grants_snapshot(persistence, rollback).await
+}
+
+async fn respond_to_remote_controller_grant(
+    node: &PrnsNodeHandle,
+    responder: RespondToken,
+    response: RemoteControlResponse,
+) -> bool {
+    let mut encoded = std::vec![0; RemoteControlResponse::MAX_ENCODED_LEN];
+    let Ok(encoded_len) = response.write_into(encoded.as_mut_slice()) else {
+        let _closed = node.close_link(responder.link_id);
+        return false;
+    };
+    encoded.truncate(encoded_len);
+    if node
+        .respond_owned_packed_settled(responder, encoded)
+        .await
+        .is_ok()
+    {
+        return true;
+    }
+    let _closed = node.close_link(responder.link_id);
+    false
+}
+
 impl PrnsNodeHandle {
+    pub(super) async fn authorize_remote_control_controller_and_respond(
+        &self,
+        grant: RemoteControlControllerGrant,
+        responder: RespondToken,
+    ) {
+        let (completion, settled) = oneshot::channel();
+        let operation = self.remote_control_controller_grants.submit(
+            RemoteControlControllerGrantCommand::AuthorizeControllerAndRespond {
+                grant,
+                responder,
+                node: self.clone(),
+                completion,
+            },
+        );
+        let _operation = match operation {
+            Ok(operation) => operation,
+            Err(RemoteControlControllerGrantSubmissionError::Busy) => {
+                respond_to_remote_controller_grant(
+                    self,
+                    responder,
+                    RemoteControlResponse::AuthorizeController(
+                        RemoteControlAuthorizeControllerOutcome::Busy,
+                    ),
+                )
+                .await;
+                return;
+            }
+            Err(RemoteControlControllerGrantSubmissionError::NodeStopped) => {
+                respond_to_remote_controller_grant(
+                    self,
+                    responder,
+                    RemoteControlResponse::AuthorizeController(
+                        RemoteControlAuthorizeControllerOutcome::Failed,
+                    ),
+                )
+                .await;
+                return;
+            }
+        };
+        if settled.await.is_err() {
+            let _closed = self.close_link(responder.link_id);
+        }
+    }
+
+    pub(super) async fn revoke_remote_control_controller_and_respond(
+        &self,
+        controller: RemoteControlControllerIdentity,
+        responder: RespondToken,
+    ) {
+        let (completion, settled) = oneshot::channel();
+        let operation = self.remote_control_controller_grants.submit(
+            RemoteControlControllerGrantCommand::RevokeControllerAndRespond {
+                controller,
+                responder,
+                node: self.clone(),
+                completion,
+            },
+        );
+        let _operation = match operation {
+            Ok(operation) => operation,
+            Err(RemoteControlControllerGrantSubmissionError::Busy) => {
+                respond_to_remote_controller_grant(
+                    self,
+                    responder,
+                    RemoteControlResponse::RevokeController(
+                        RemoteControlRevokeControllerOutcome::Busy,
+                    ),
+                )
+                .await;
+                return;
+            }
+            Err(RemoteControlControllerGrantSubmissionError::NodeStopped) => {
+                respond_to_remote_controller_grant(
+                    self,
+                    responder,
+                    RemoteControlResponse::RevokeController(
+                        RemoteControlRevokeControllerOutcome::Failed,
+                    ),
+                )
+                .await;
+                return;
+            }
+        };
+        if settled.await.is_err() {
+            let _closed = self.close_link(responder.link_id);
+        }
+    }
+
     pub(super) async fn snapshot_remote_control_controller_grants(
         &self,
     ) -> Result<Option<std::vec::Vec<u8>>, super::PrepareFlushError> {
@@ -258,7 +633,9 @@ mod tests {
 
         let (completion, settled) = oneshot::channel();
         RemoteControlControllerGrantCommand::SetControllerGrant { grant, completion }
-            .apply(&mut remote_control);
+            .apply(&mut remote_control, None)
+            .await
+            .unwrap();
         assert_eq!(
             settled.await.expect("set completion remains connected"),
             Err(SetRemoteControlControllerGrantServiceError::Unavailable),
@@ -269,7 +646,9 @@ mod tests {
             controller: *grant.controller(),
             completion,
         }
-        .apply(&mut remote_control);
+        .apply(&mut remote_control, None)
+        .await
+        .unwrap();
         assert_eq!(
             settled.await.expect("revoke completion remains connected"),
             Err(RevokeRemoteControlControllerServiceError::Unavailable),
@@ -391,7 +770,7 @@ mod tests {
         let mut remote_control =
             crate::runtime::configure_remote_control_service(&mut engine, service)
                 .expect("RemoteControl fits growable storage");
-        command.apply(&mut remote_control);
+        command.apply(&mut remote_control, None).await.unwrap();
         assert!(remote_control.controller_grants().unwrap().is_empty());
     }
 

@@ -2825,6 +2825,10 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
+        "engine": [
+          "restore-state-bool",
+          "std"
+        ],
         "esp32-c6": [
           "restore-state-u32"
         ],
@@ -15477,11 +15481,11 @@
       "name": "personal-hopspot-android",
       "source": "personal-hopspot/mobile/android/rust",
       "unsafe": {
-        "blocks": 20,
+        "blocks": 22,
         "externs": 0,
         "functions": 0,
         "impls": 0,
-        "tokens": 20
+        "tokens": 22
       },
       "version": "0.1.0"
     },
@@ -15543,6 +15547,7 @@
           "host"
         ],
         "nrf52840": [
+          "compact-node-pages",
           "display",
           "embedded"
         ],
@@ -15689,11 +15694,11 @@
       "name": "personal-hopspot-ios",
       "source": "personal-hopspot/mobile/ios/rust",
       "unsafe": {
-        "blocks": 10,
-        "externs": 5,
+        "blocks": 12,
+        "externs": 7,
         "functions": 0,
         "impls": 0,
-        "tokens": 15
+        "tokens": 19
       },
       "version": "0.1.0"
     },
@@ -16574,6 +16579,7 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
+          "rns-management-wire",
           "shared-instance-rpc",
           "std",
           "tokio-host"
@@ -16590,6 +16596,7 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
+          "rns-management-wire",
           "rnx",
           "shared-instance-rpc",
           "signed-artifact",
@@ -16608,6 +16615,7 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
+          "rns-management-wire",
           "rnx",
           "shared-instance-rpc",
           "signed-artifact",
@@ -16626,6 +16634,7 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
+          "rns-management-wire",
           "rnx",
           "shared-instance-rpc",
           "signed-artifact",
@@ -16641,6 +16650,7 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
+          "rns-management-wire",
           "shared-instance-rpc",
           "std",
           "tokio-host"
@@ -16654,6 +16664,7 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
+          "rns-management-wire",
           "shared-instance-rpc",
           "std",
           "tokio-host"
@@ -16667,6 +16678,7 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
+          "rns-management-wire",
           "shared-instance-rpc",
           "std",
           "tokio-host"
@@ -16674,8 +16686,10 @@
         "engine": [
           "alloc",
           "default",
+          "embassy-host",
           "flash",
           "resource-work-offload",
+          "rns-management-wire",
           "std",
           "std-sync-host",
           "test-support"
@@ -16688,6 +16702,7 @@
           "flash",
           "movable-frame-forwarding",
           "resource-work-offload",
+          "rns-management-wire",
           "std",
           "tokio-host"
         ],
@@ -16699,6 +16714,7 @@
           "flash",
           "movable-frame-forwarding",
           "resource-work-offload",
+          "rns-management-wire",
           "std",
           "tokio-host"
         ],
@@ -16710,6 +16726,7 @@
           "flash",
           "movable-frame-forwarding",
           "resource-work-offload",
+          "rns-management-wire",
           "std",
           "tokio-host"
         ],
@@ -16721,6 +16738,7 @@
           "flash",
           "movable-frame-forwarding",
           "resource-work-offload",
+          "rns-management-wire",
           "std",
           "tokio-host"
         ],
@@ -16732,6 +16750,7 @@
           "flash",
           "movable-frame-forwarding",
           "resource-work-offload",
+          "rns-management-wire",
           "std",
           "tokio-host"
         ],
@@ -16743,6 +16762,7 @@
           "flash",
           "movable-frame-forwarding",
           "resource-work-offload",
+          "rns-management-wire",
           "std",
           "tokio-host"
         ],
@@ -16757,6 +16777,7 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
+          "rns-management-wire",
           "std",
           "tokio-host"
         ],
@@ -16771,6 +16792,7 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
+          "rns-management-wire",
           "std",
           "tokio-host"
         ],
@@ -16785,6 +16807,7 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
+          "rns-management-wire",
           "std",
           "tokio-host"
         ],
@@ -16797,6 +16820,7 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
+          "rns-management-wire",
           "std",
           "tokio-host"
         ],
@@ -16807,6 +16831,7 @@
           "flash",
           "movable-frame-forwarding",
           "resource-work-offload",
+          "rns-management-wire",
           "std",
           "tokio-host"
         ],
@@ -16814,6 +16839,7 @@
           "alloc",
           "flash",
           "resource-work-offload",
+          "rns-management-wire",
           "std"
         ]
       },
@@ -16854,11 +16880,11 @@
       "name": "prns-ffi",
       "source": "prns-ffi",
       "unsafe": {
-        "blocks": 132,
-        "externs": 3,
+        "blocks": 145,
+        "externs": 7,
         "functions": 0,
-        "impls": 22,
-        "tokens": 193
+        "impls": 21,
+        "tokens": 205
       },
       "version": "0.3.7"
     },
@@ -17429,6 +17455,7 @@
         "android": [
           "alloc",
           "movable-frame-forwarding",
+          "remote-control-wifi-host",
           "resource-bzip2",
           "rns-management",
           "std"
@@ -17438,6 +17465,7 @@
           "interface-discovery",
           "interface-discovery-archive",
           "movable-frame-forwarding",
+          "remote-control-wifi-host",
           "resource-bzip2",
           "rns-management",
           "rnx",
@@ -17448,6 +17476,7 @@
           "interface-discovery",
           "interface-discovery-archive",
           "movable-frame-forwarding",
+          "remote-control-wifi-host",
           "resource-bzip2",
           "rns-management",
           "rnx",
@@ -17458,6 +17487,7 @@
           "interface-discovery",
           "interface-discovery-archive",
           "movable-frame-forwarding",
+          "remote-control-wifi-host",
           "resource-bzip2",
           "rns-management",
           "rnx",
@@ -17466,6 +17496,7 @@
         "desktop-linux": [
           "alloc",
           "movable-frame-forwarding",
+          "remote-control-wifi-host",
           "resource-bzip2",
           "rns-management",
           "std"
@@ -17473,6 +17504,7 @@
         "desktop-macos": [
           "alloc",
           "movable-frame-forwarding",
+          "remote-control-wifi-host",
           "resource-bzip2",
           "rns-management",
           "std"
@@ -17480,6 +17512,7 @@
         "desktop-windows": [
           "alloc",
           "movable-frame-forwarding",
+          "remote-control-wifi-host",
           "resource-bzip2",
           "rns-management",
           "std"
@@ -17493,6 +17526,7 @@
           "alloc",
           "external-alloc",
           "movable-frame-forwarding",
+          "remote-control-wifi-host",
           "resource-bzip2",
           "std"
         ],
@@ -17500,6 +17534,7 @@
           "alloc",
           "external-alloc",
           "movable-frame-forwarding",
+          "remote-control-wifi-host",
           "resource-bzip2",
           "std"
         ],
@@ -17507,6 +17542,7 @@
           "alloc",
           "external-alloc",
           "movable-frame-forwarding",
+          "remote-control-wifi-host",
           "resource-bzip2",
           "std"
         ],
@@ -17514,6 +17550,7 @@
           "alloc",
           "external-alloc",
           "movable-frame-forwarding",
+          "remote-control-wifi-host",
           "resource-bzip2",
           "std"
         ],
@@ -17521,6 +17558,7 @@
           "alloc",
           "external-alloc",
           "movable-frame-forwarding",
+          "remote-control-wifi-host",
           "resource-bzip2",
           "std"
         ],
@@ -17528,6 +17566,7 @@
           "alloc",
           "external-alloc",
           "movable-frame-forwarding",
+          "remote-control-wifi-host",
           "resource-bzip2",
           "std"
         ],
@@ -17535,6 +17574,7 @@
           "alloc",
           "interface-discovery",
           "movable-frame-forwarding",
+          "remote-control-wifi-host",
           "resource-bzip2",
           "std"
         ],
@@ -17542,6 +17582,7 @@
           "alloc",
           "interface-discovery",
           "movable-frame-forwarding",
+          "remote-control-wifi-host",
           "resource-bzip2",
           "std"
         ],
@@ -17549,12 +17590,14 @@
           "alloc",
           "interface-discovery",
           "movable-frame-forwarding",
+          "remote-control-wifi-host",
           "resource-bzip2",
           "std"
         ],
         "ios": [
           "alloc",
           "movable-frame-forwarding",
+          "remote-control-wifi-host",
           "resource-bzip2",
           "std"
         ],
@@ -19187,21 +19230,7 @@
         "daemon-windows": [
           "ring",
           "std"
-        ]
-      },
-      "name": "rustls",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "unsafe": {
-        "blocks": 0,
-        "externs": 0,
-        "functions": 0,
-        "impls": 0,
-        "tokens": 0
-      },
-      "version": "0.23.42"
-    },
-    {
-      "graphs": {
+        ],
         "host-c-linux": [
           "ring",
           "std"
@@ -19224,7 +19253,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.23.43"
+      "version": "0.23.45"
     },
     {
       "graphs": {
@@ -19346,7 +19375,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.103.13"
+      "version": "0.103.15"
     },
     {
       "graphs": {
@@ -22391,11 +22420,11 @@
       "name": "t-echo",
       "source": "personal-hopspot/embedded/nrf52840",
       "unsafe": {
-        "blocks": 1476,
+        "blocks": 1481,
         "externs": 13,
-        "functions": 298,
-        "impls": 15,
-        "tokens": 1803
+        "functions": 299,
+        "impls": 17,
+        "tokens": 1811
       },
       "version": "0.1.0"
     },
@@ -25540,10 +25569,6 @@
           "Win32_Graphics_Dwm",
           "Win32_Graphics_Gdi",
           "Win32_Media",
-          "Win32_NetworkManagement",
-          "Win32_NetworkManagement_IpHelper",
-          "Win32_Networking",
-          "Win32_Networking_WinSock",
           "Win32_Security",
           "Win32_System",
           "Win32_System_Com",
@@ -25566,21 +25591,6 @@
           "Win32_UI_Shell",
           "Win32_UI_TextServices",
           "Win32_UI_WindowsAndMessaging",
-          "default"
-        ],
-        "host-c-windows": [
-          "Win32",
-          "Win32_Foundation",
-          "Win32_Networking",
-          "Win32_Networking_WinSock",
-          "Win32_Storage",
-          "Win32_Storage_FileSystem",
-          "Win32_System",
-          "Win32_System_Console",
-          "Win32_System_Diagnostics",
-          "Win32_System_Diagnostics_Debug",
-          "Win32_System_SystemInformation",
-          "Win32_System_Threading",
           "default"
         ]
       },
@@ -25644,9 +25654,15 @@
           "Win32_NetworkManagement_Ndis",
           "Win32_Networking",
           "Win32_Networking_WinSock",
+          "Win32_Storage",
+          "Win32_Storage_FileSystem",
           "Win32_System",
+          "Win32_System_Console",
+          "Win32_System_Diagnostics",
+          "Win32_System_Diagnostics_Debug",
           "Win32_System_IO",
           "Win32_System_Memory",
+          "Win32_System_SystemInformation",
           "Win32_System_Threading",
           "default"
         ]

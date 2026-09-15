@@ -14,19 +14,21 @@ use crate::engine::{
     SetRegisteredAnnounceAppData, Settleable, Settlement,
 };
 use crate::identity::IdentityHash;
+use crate::interfaces::rns_management::RnsRemotePathTableRequest;
 use crate::remote_control::{
     ForgetRemoteControlTargetOutcome, RemoteControlControllerGrant,
-    RemoteControlControllerIdentity, RemoteControlTargetAccess, RemoteControlTargetIdentity,
+    RemoteControlControllerIdentity, RemoteControlTargetAccess,
     RevokeRemoteControlControllerOutcome, SetRemoteControlControllerGrantOutcome,
     SetRemoteControlTargetAccessOutcome,
 };
+use crate::routing::links::request::{response_envelope_prefix, RequestId, RESPONSE_WIRE_OVERHEAD};
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::units::{ByteLimit, RttMillis};
 use crate::wire::DestinationHash;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
-use embassy_sync::channel::Sender;
+use embassy_sync::channel::{Channel, Receiver, Sender};
 use embassy_sync::signal::Signal;
 
 use super::super::remote_control_controller_grants::{
@@ -70,6 +72,20 @@ pub struct CompletionPool<
     remote_control_controller_grants: RemoteControlControllerGrantExchange<M>,
     remote_control_target_accesses: RemoteControlTargetAccessExchange<M>,
     remote_control_pairing_settlement: RemoteControlPairingSettlementAwaiter<M>,
+    resource_responses: Channel<M, ResourceResponse<RESPONSE_BYTES>, 1>,
+}
+
+pub struct ResourceResponse<const N: usize> {
+    pub(crate) id: CommandId,
+    pub(crate) link_id: LinkId,
+    pub(crate) request_id: RequestId,
+    pub(crate) payload: ResourceResponsePayload<N>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ResourceResponsePayload<const N: usize> {
+    Ready(heapless::Vec<u8, N>),
+    RnsPathTable(RnsRemotePathTableRequest),
 }
 
 enum RemoteControlPairingSettlementState {
@@ -172,7 +188,7 @@ enum RequestResponse<const RESPONSE_BYTES: usize> {
 
 pub type RequestResponseData<const RESPONSE_BYTES: usize> = heapless::Vec<u8, RESPONSE_BYTES>;
 
-pub(super) enum JournalRoute {
+pub(in crate::runtime) enum JournalRoute {
     Application,
     Awaiter,
 }
@@ -223,6 +239,7 @@ impl<
             remote_control_controller_grants: RemoteControlControllerGrantExchange::new(),
             remote_control_target_accesses: RemoteControlTargetAccessExchange::new(),
             remote_control_pairing_settlement: RemoteControlPairingSettlementAwaiter::new(),
+            resource_responses: Channel::new(),
         }
     }
 
@@ -750,6 +767,51 @@ impl<
         .is_some()
     }
 
+    pub(crate) async fn respond_owned_resource(
+        &self,
+        responder: RespondToken,
+        mut data: heapless::Vec<u8, RESPONSE_BYTES>,
+    ) -> bool {
+        let Some(prefix) = data.get_mut(..RESPONSE_WIRE_OVERHEAD) else {
+            return false;
+        };
+        prefix.copy_from_slice(&response_envelope_prefix(&responder.request_id));
+        self.pool
+            .resource_responses
+            .send(ResourceResponse {
+                id: self.pool.mint(),
+                link_id: responder.link_id,
+                request_id: responder.request_id,
+                payload: ResourceResponsePayload::Ready(data),
+            })
+            .await;
+        true
+    }
+
+    /// Defers an RNS-compatible path-table Resource response to the live manifold.
+    pub async fn respond_rns_path_table(
+        &self,
+        responder: RespondToken,
+        request: RnsRemotePathTableRequest,
+    ) -> bool {
+        self.pool
+            .resource_responses
+            .send(ResourceResponse {
+                id: self.pool.mint(),
+                link_id: responder.link_id,
+                request_id: responder.request_id,
+                payload: ResourceResponsePayload::RnsPathTable(request),
+            })
+            .await;
+        true
+    }
+
+    pub fn resource_response_receiver(
+        &self,
+    ) -> Receiver<'a, M, ResourceResponse<RESPONSE_BYTES>, 1> {
+        self.pool.resource_responses.receiver()
+    }
+
     #[cfg(feature = "large-static-responses")]
     pub fn respond_static_file(
         &self,
@@ -853,7 +915,7 @@ impl<
         }
     }
 
-    pub(super) fn route_journaled<'event, A>(
+    pub(in crate::runtime) fn route_journaled<'event, A>(
         &self,
         journaled: Journaled<'event>,
         on_application: A,
@@ -1324,7 +1386,7 @@ impl<
 
     async fn forget_remote_control_target(
         &self,
-        target: RemoteControlTargetIdentity,
+        target: IdentityHash,
     ) -> Result<ForgetRemoteControlTargetOutcome, ForgetRemoteControlTargetControlError> {
         let id = self.pool.mint();
         let command = RemoteControlTargetAccessCommand::ForgetTarget { id, target };
@@ -1364,7 +1426,7 @@ impl<
 }
 
 impl<
-        M: RawMutex,
+        M: RawMutex + Sync,
         const COMMANDS: usize,
         const COMPLETIONS: usize,
         const REQUEST_COMPLETIONS: usize,
@@ -1429,6 +1491,14 @@ impl<
 
     fn respond_packed(&self, responder: RespondToken, packed: &[u8]) -> bool {
         self.respond_packed(responder, packed)
+    }
+
+    async fn respond_rns_path_table(
+        &self,
+        responder: RespondToken,
+        request: RnsRemotePathTableRequest,
+    ) -> bool {
+        self.respond_rns_path_table(responder, request).await
     }
 
     fn close_link(&self, link_id: LinkId) -> bool {

@@ -48,6 +48,7 @@ const HCI_COMMAND_CAPACITY: usize = 20;
 const ATTRIBUTE_TABLE: usize = 32;
 const CCCD_TABLE: usize = 4;
 pub const GATT_VALUE_CAP: usize = 244;
+const _: () = assert!(CONTROL_MAX_LEN <= GATT_VALUE_CAP);
 const MAX_SERVICES: usize = 2;
 
 const CONTROL_UUID_LAST: u8 = 0xe7;

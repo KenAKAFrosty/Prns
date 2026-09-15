@@ -1541,6 +1541,33 @@ mod tests {
     }
 
     #[test]
+    fn dropping_a_pending_receive_preserves_the_latched_frame() {
+        let log: Log = Rc::new(RefCell::new(Vec::new()));
+        let mut radio = Sx126x::new(
+            MockSpi::new(log),
+            MockWait,
+            Dio1NeverHigh,
+            MockOut,
+            MockDelay,
+            board(),
+        );
+        block_on(radio.init(radio_config(US915_AUTO_LORA_PROFILE))).expect("init");
+        block_on(radio.arm_rx()).expect("arm receive");
+
+        let mut buffer = [0; MAX_LORA_PAYLOAD];
+        {
+            let mut receive = Box::pin(radio.read_event(&mut buffer));
+            let waker = Waker::noop();
+            let mut context = Context::from_waker(waker);
+            assert!(receive.as_mut().poll(&mut context).is_pending());
+        }
+
+        let event = block_on(radio.poll_event(&mut buffer)).expect("poll latched event");
+        assert!(matches!(event, Some(RadioEvent::Frame(frame)) if frame.len == 16));
+        assert_eq!(&buffer[..16], b"PRNS-HELTEC-SMOK");
+    }
+
+    #[test]
     fn receive_irq_classification_preserves_channel_evidence() {
         assert_eq!(
             classify_rx_irq(irq::PREAMBLE_DETECTED),

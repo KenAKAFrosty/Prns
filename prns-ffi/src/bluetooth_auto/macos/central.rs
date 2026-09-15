@@ -33,10 +33,10 @@ use super::{
     ManagerSignalSender, SendCentralManager, SendCharacteristicRef, SendPeripheral, Sighting,
 };
 
-pub(super) fn is_system_connected(
+pub(super) fn connected_peripheral(
     central: &CBCentralManager,
     peer_id: CoreBluetoothPeerId,
-) -> bool {
+) -> Option<Retained<CBPeripheral>> {
     let uuid = service_uuid();
     let services = NSArray::from_slice(&[&*uuid]);
     // SAFETY: the live manager is queried on its serial dispatch queue and the retained service
@@ -44,7 +44,32 @@ pub(super) fn is_system_connected(
     let connected = unsafe { central.retrieveConnectedPeripheralsWithServices(&services) };
     connected
         .iter()
-        .any(|peripheral| core_bluetooth_peer_id(&peripheral) == peer_id)
+        .find(|peripheral| core_bluetooth_peer_id(peripheral) == peer_id)
+        .map(|peripheral| peripheral.retain())
+}
+
+pub(super) fn is_system_connected(
+    central: &CBCentralManager,
+    peer_id: CoreBluetoothPeerId,
+) -> bool {
+    connected_peripheral(central, peer_id).is_some()
+}
+
+pub(super) fn cancel_system_connection(
+    central: &CBCentralManager,
+    peer_id: CoreBluetoothPeerId,
+    peripheral: &CBPeripheral,
+) {
+    if let Some(connected) = connected_peripheral(central, peer_id)
+        .filter(|connected| !core::ptr::eq(&**connected, peripheral))
+    {
+        // SAFETY: both retained objects remain alive through this call and are messaged only on
+        // the CoreBluetooth serial dispatch queue.
+        unsafe { central.cancelPeripheralConnection(&connected) };
+    }
+    // SAFETY: the queue-confined caller retains this exact peripheral. It may differ from the
+    // connected system object; an identical object is cancelled only once.
+    unsafe { central.cancelPeripheralConnection(peripheral) };
 }
 
 pub(super) fn discover_prns_services(peripheral: &CBPeripheral) {
@@ -72,6 +97,7 @@ pub(super) enum DialCompletion {
 pub(super) enum DialRejection {
     YieldToSystemConnection,
     YieldToInboundSession,
+    StaleSystemConnection,
     RestoredConnectionUnavailable,
     ExistingCentralSession,
     RadioOff,
@@ -928,8 +954,7 @@ impl CentralPeerSession {
     }
 
     pub(super) fn data_receiver_closed(&self) -> bool {
-        // The control receiver is handshake-only and closes when a link settles. The data
-        // receiver is retained by the attached member for the full lifetime of this role.
+        // The control receiver is handshake-only; the data receiver lives for the attached role.
         self.data_tx.is_closed()
     }
 
@@ -1901,11 +1926,20 @@ impl CentralDelegate {
                 peer_id.address().octets()
             );
             if needs_cancel {
-                // SAFETY: this method and all callers are confined to the manager's serial dispatch
-                // queue; both retained framework objects remain live through the cancellation call.
-                unsafe { central.cancelPeripheralConnection(&peripheral.0) };
+                cancel_system_connection(central, peer_id, &peripheral.0);
             }
         }
+    }
+
+    pub(super) fn has_session(&self, peer_id: CoreBluetoothPeerId) -> bool {
+        self.ivars().sessions.borrow().contains_key(&peer_id)
+    }
+
+    pub(super) fn note_stale_cancellation(&self, peer_id: CoreBluetoothPeerId) {
+        self.ivars()
+            .discovery_guard
+            .borrow_mut()
+            .record_stale_cancellation(peer_id, Instant::now());
     }
 
     pub(super) fn submit_write(

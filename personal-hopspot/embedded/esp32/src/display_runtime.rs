@@ -50,6 +50,8 @@ pub(crate) enum S3Presentation {
 }
 
 pub(crate) trait S3BoardDisplay {
+    const REMOTE_VISIBILITY_CONTROL: bool;
+    const REMOTE_AUTO_OFF_CONTROL: bool;
     type Runtime: S3DisplayRuntime;
 
     fn into_runtime(self, now: MonotonicMillis) -> Self::Runtime;
@@ -61,6 +63,8 @@ pub(crate) trait RetainedDisplayDevice {
 }
 
 impl<D: RetainedDisplayDevice> S3BoardDisplay for RetainedBoardDisplay<D> {
+    const REMOTE_VISIBILITY_CONTROL: bool = false;
+    const REMOTE_AUTO_OFF_CONTROL: bool = false;
     type Runtime = RetainedDisplayRuntime<D>;
 
     fn into_runtime(self, _now: MonotonicMillis) -> Self::Runtime {
@@ -112,7 +116,13 @@ pub(crate) trait S3DisplayRuntime {
         completed_at: impl FnOnce() -> MonotonicMillis,
     ) -> Result<BlankingDecision, BlankingError>;
 
-    fn toggle_auto_off(&mut self, now: MonotonicMillis) -> Result<DisplayAutoOff, BlankingError>;
+    fn auto_off(&self) -> Result<DisplayAutoOff, BlankingError>;
+
+    fn set_auto_off(
+        &mut self,
+        auto_off: DisplayAutoOff,
+        now: MonotonicMillis,
+    ) -> Result<DisplayAutoOff, BlankingError>;
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -242,7 +252,15 @@ impl<D: RetainedDisplayDevice> S3DisplayRuntime for RetainedDisplayRuntime<D> {
         Ok(BlankingDecision::Settled)
     }
 
-    fn toggle_auto_off(&mut self, _now: MonotonicMillis) -> Result<DisplayAutoOff, BlankingError> {
+    fn auto_off(&self) -> Result<DisplayAutoOff, BlankingError> {
+        Err(BlankingError::UserBlankingUnavailable)
+    }
+
+    fn set_auto_off(
+        &mut self,
+        _auto_off: DisplayAutoOff,
+        _now: MonotonicMillis,
+    ) -> Result<DisplayAutoOff, BlankingError> {
         Err(BlankingError::UserBlankingUnavailable)
     }
 }
@@ -303,6 +321,7 @@ mod tests {
             #[cfg(feature = "remote-control-pairing")]
             remote_control_pairing:
                 personal_hopspot_core::RemoteControlPairingAvailability::Unavailable,
+            discovery_groups: personal_hopspot_core::DiscoveryGroupEditorAvailability::Unavailable,
         })
     }
 
@@ -427,7 +446,7 @@ mod tests {
             Ok(BlankingDecision::Settled)
         );
         assert_eq!(
-            runtime.toggle_auto_off(MonotonicMillis::new(8)),
+            runtime.set_auto_off(DisplayAutoOff::Disabled, MonotonicMillis::new(8)),
             Err(BlankingError::UserBlankingUnavailable)
         );
         assert_eq!(runtime.visibility(), DisplayVisibility::Visible);

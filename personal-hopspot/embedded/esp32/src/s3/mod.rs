@@ -2,13 +2,13 @@ mod board;
 pub mod boards;
 mod entropy;
 mod gnss;
+mod remote_control;
 
 use alloc::string::{String, ToString};
 #[cfg(feature = "remote-control-pairing")]
 use core::cell::RefCell;
 use core::fmt::Write as _;
 use esp_backtrace as _;
-use esp_bootloader_esp_idf::esp_app_desc;
 use esp_hal::clock::CpuClock;
 use esp_hal::efuse::base_mac_address;
 use esp_hal::gpio::Input;
@@ -25,8 +25,10 @@ use esp_hal::Async;
 
 use embassy_executor::Spawner;
 #[cfg(feature = "remote-control-pairing")]
-use embassy_futures::select::{select, select4, Either, Either4};
+use embassy_futures::select::{select, select5, Either, Either5};
 use embassy_futures::select::{select3, Either3};
+#[cfg(not(feature = "remote-control-pairing"))]
+use embassy_futures::select::{select4, Either4};
 use embassy_net::tcp::TcpSocket;
 use embassy_net::udp::{PacketMetadata, UdpSocket};
 use embassy_net::{
@@ -144,7 +146,7 @@ pub(crate) use entropy::{
 };
 pub(crate) use gnss::{GnssProvider, GnssShared, NoGnss};
 
-esp_app_desc!();
+firmware_app_descriptor!();
 
 const AP_IPV4: [u8; 4] = [192, 168, 4, 1];
 const CAPTIVE_PORTAL_HOST: &str = "192.168.4.1";
@@ -227,13 +229,13 @@ const RENDER_TICKS_PER_BATTERY_SAMPLE: u8 = (BATTERY_SAMPLE_INTERVAL_MS / RENDER
 const RENDER_TICKS_PER_BATTERY_DISPLAY: u8 =
     (BATTERY_DISPLAY_INTERVAL_MS / RENDER_INTERVAL_MS) as u8;
 const NOTICE_MS: u64 = 900;
-const DISPLAY_SLEEP_DELAY_MS: u64 = 2_500;
-
 const BUTTON_LONG_PRESS: Duration = Duration::from_millis(500);
 const BUTTON_DEBOUNCE: Duration = Duration::from_millis(25);
 
 type Mtx = CriticalSectionRawMutex;
 type Handle = PrnsNodeHandle<'static, Mtx, COMMANDS_CAP, COMPLETIONS_CAP>;
+type RemoteControlHandle =
+    screen::HopspotCommandHandle<{ remote_control::REMOTE_CONTROL_COMMAND_DEPTH }>;
 type UsbSeam =
     EmbassyInterfaceSeam<'static, Mtx, S3EntropySource, NOTIFY_CAP, EMBEDDED_MAX_WIRE_FRAME_LEN>;
 #[cfg(feature = "lora")]
@@ -255,9 +257,9 @@ type InterfaceStore = EmbassyInterfaceStore<
 >;
 /// The fully-spelled node type, so it can ride to core 1 as a concrete `#[task]` argument.
 type S3Node = PrnsNode<
-    (),
+    RemoteControlHandle,
     screen::node_pages::NodePageRoutes,
-    for<'a> fn(PrnsEvent<'a>, &()),
+    for<'a> fn(PrnsEvent<'a>, &RemoteControlHandle),
     EngineStorageType,
     EmbassyHost<Mtx, S3EntropySource>,
     Mtx,
@@ -282,7 +284,7 @@ mod connectivity;
 mod display;
 
 use captive_portal::ap_ssid;
-use configuration::{hopspot_wifi_config, HopspotWifiConfig};
+use configuration::{hopspot_wifi_config, HopspotWifiConfig, HopspotWifiConfigSource};
 use configuration::{HopspotTcpClientConfig, HopspotTcpClientHost};
 use connectivity::{build_tcp, build_wifi, espnow_channel_policy, EspNowAdapter, ESPNOW_PHY};
 use display::build_interface_menu_details;
@@ -350,10 +352,17 @@ const PACKET_PHY_INDEX_BUCKETS: usize =
 static WIFI_STATION_JOINED: AtomicBool = AtomicBool::new(false);
 static WIFI_STATION_DATA_PATH_DEGRADED: AtomicBool = AtomicBool::new(false);
 static WIFI_DRIVER_RESTART_REQUESTED: AtomicBool = AtomicBool::new(false);
+static WIFI_ACTIVE_CREDENTIAL_REVISION: AtomicU32 = AtomicU32::new(0);
+static WIFI_NETWORK_READY_REVISION: AtomicU32 = AtomicU32::new(0);
+static WIFI_CREDENTIALS: screen::HopspotWifiCredentialMailbox =
+    screen::HopspotWifiCredentialMailbox::new();
+static REMOTE_CONTROL_COMMANDS: screen::HopspotCommandMailbox<
+    { remote_control::REMOTE_CONTROL_COMMAND_DEPTH },
+> = screen::HopspotCommandMailbox::new();
 static CORE_ONE_HEARTBEAT: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(not(feature = "remote-control-pairing"))]
-fn firmware_on_event(_event: PrnsEvent<'_>, _state: &()) {}
+fn firmware_on_event(_event: PrnsEvent<'_>, _state: &RemoteControlHandle) {}
 
 #[cfg(feature = "remote-control-pairing")]
 fn apply_remote_control_effects(effects: RemoteControlCompositionEffects) {
@@ -408,7 +417,7 @@ fn observe_restored_remote_control_grants(restored_count: u32) {
 }
 
 #[cfg(feature = "remote-control-pairing")]
-fn firmware_on_event(event: PrnsEvent<'_>, _state: &()) {
+fn firmware_on_event(event: PrnsEvent<'_>, _state: &RemoteControlHandle) {
     match event {
         PrnsEvent::Message(Message::RemoteControlTargetPairingConfirmationRequired(pairing)) => {
             let confirmation = pairing.confirmation();

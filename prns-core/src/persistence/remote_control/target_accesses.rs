@@ -25,6 +25,7 @@ pub fn write_remote_control_target_accesses_snapshot(
             .iter()
             .map(|access| RemoteControlAuthorizationRow {
                 public_keys: access.target().public_keys(),
+                authority: access.authority(),
                 permitted_requests: access.permitted_requests(),
             }),
         out,
@@ -57,6 +58,7 @@ impl Iterator for PersistedRemoteControlTargetAccesses<'_> {
         let row = self.rows.next()?;
         RemoteControlTargetAccess::new(
             RemoteControlTargetIdentity::new(row.public_keys),
+            row.authority,
             row.permitted_requests,
         )
         .ok()
@@ -78,8 +80,8 @@ mod tests {
     };
     use crate::persistence::{SnapshotOpenError, SNAPSHOT_OVERHEAD_LEN};
     use crate::remote_control::{
-        FixedRemoteControlTargetAccessTable, RemoteControlRequestKind, RemoteControlRequestSet,
-        SetRemoteControlTargetAccessOutcome,
+        FixedRemoteControlTargetAccessTable, RemoteControlControllerAuthority,
+        RemoteControlRequestKind, RemoteControlRequestSet, SetRemoteControlTargetAccessOutcome,
     };
     use proptest::prelude::*;
     use std::vec::Vec;
@@ -92,7 +94,12 @@ mod tests {
     }
 
     fn access(fill: u8, permitted_requests: RemoteControlRequestSet) -> RemoteControlTargetAccess {
-        RemoteControlTargetAccess::new(identity(fill), permitted_requests).unwrap()
+        RemoteControlTargetAccess::new(
+            identity(fill),
+            RemoteControlControllerAuthority::Operator,
+            permitted_requests,
+        )
+        .unwrap()
     }
 
     fn table<const N: usize>(
@@ -119,7 +126,12 @@ mod tests {
                 0x43,
                 RemoteControlRequestSet::only(RemoteControlRequestKind::AnnounceSelf),
             ),
-            access(0x65, RemoteControlRequestSet::all()),
+            RemoteControlTargetAccess::new(
+                identity(0x65),
+                RemoteControlControllerAuthority::Administrator,
+                RemoteControlRequestSet::all(),
+            )
+            .unwrap(),
         ]);
         let mut out = std::vec![
             0u8;
@@ -142,7 +154,7 @@ mod tests {
     #[test]
     fn empty_target_accesses_round_trip() {
         let accesses = FixedRemoteControlTargetAccessTable::<0>::default();
-        let mut out = [0u8; SNAPSHOT_OVERHEAD_LEN + super::super::rows::ROW_COUNT_LEN];
+        let mut out = [0u8; remote_control_target_accesses_snapshot_capacity(0)];
         let len = write_remote_control_target_accesses_snapshot(&accesses, &mut out).unwrap();
 
         assert_eq!(
@@ -209,7 +221,12 @@ mod tests {
 
     #[test]
     fn a_short_target_access_buffer_is_refused() {
-        let accesses = table([access(0xCB, RemoteControlRequestSet::all())]);
+        let accesses = table([RemoteControlTargetAccess::new(
+            identity(0xCB),
+            RemoteControlControllerAuthority::Administrator,
+            RemoteControlRequestSet::all(),
+        )
+        .unwrap()]);
         let mut short = std::vec![
             0u8;
             remote_control_target_accesses_snapshot_capacity(accesses.len()) - 1

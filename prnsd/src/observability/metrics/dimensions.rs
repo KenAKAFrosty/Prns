@@ -420,6 +420,8 @@ mod tests {
 
         assert!(source.contains("prns_announces_pacer_deferred_depth"));
         assert!(source.contains("prns_egress_lane_occupancy"));
+        assert!(source.contains("prns_egress_lane_pending"));
+        assert!(source.contains("prns_egress_pending_stalled_seconds"));
         assert!(!source.contains(
             "prns_announces_egress_total{outcome!~\\\"enqueued|interface_unavailable\\\"}"
         ));

@@ -23,6 +23,7 @@ use gnss::draw_gnss_panel;
 use layout::*;
 #[cfg(feature = "remote-control-pairing")]
 use menus::draw_remote_control_pairing;
+use menus::groups::draw_group_editor;
 use menus::subg::draw_subg_editor;
 use menus::{
     draw_global_menu, draw_interface_menu, draw_limits_page, draw_notice, draw_radio_confirm,
@@ -52,6 +53,11 @@ pub(super) fn draw<D: DrawTarget<Color = BinaryColor>>(
 
     if let UiMode::SubGEditor { screen, profile } = state.mode {
         draw_subg_editor(display, screen, &profile);
+        return;
+    }
+
+    if let UiMode::DiscoveryGroupEditor(editor) = state.mode {
+        draw_group_editor(display, editor);
         return;
     }
 
@@ -94,6 +100,7 @@ pub(super) fn draw<D: DrawTarget<Color = BinaryColor>>(
                 selected_card,
                 selected_item,
                 state.shared_instance_config_export,
+                state.discovery_groups,
                 interface_menu_details,
             );
             return;

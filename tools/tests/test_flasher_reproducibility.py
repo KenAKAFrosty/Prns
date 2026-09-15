@@ -623,9 +623,14 @@ class FlasherReproducibilityTests(unittest.TestCase):
             identity,
         )
         self.assertIn('ESP_RUSTC_COMMIT_DATE="2026-04-15"', identity)
+        self.assertIn(
+            'ESP_OBJDUMP_BANNER="GNU objdump (crosstool-NG esp-15.2.0_20250920) 2.45"',
+            identity,
+        )
         self.assertIn("verify-release-esp-toolchain.sh", installer)
         self.assertIn("commit_hash", verifier)
         self.assertIn("commit_date", verifier)
+        self.assertIn("ESP_OBJDUMP_BANNER", verifier)
         self.assertNotIn("xtensa-esp32s3-elf-gcc", installer)
 
     def test_two_independent_archives_must_match_byte_for_byte(self) -> None:

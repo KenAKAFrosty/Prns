@@ -80,12 +80,12 @@ async fn main() {
         remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: Some(secret),
         pre_configured_destinations: [] as [personal_rns::runtime::PreConfiguredDestination; 0],
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
-        on_event: |event, _state: &()| {
+        on_event: |event, _state: &personal_rns::runtime::NoRemoteControlHostControls| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
                 destination,
                 hops,

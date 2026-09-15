@@ -5,16 +5,17 @@ use core::future::Future;
 use embassy_futures::join::join5;
 #[cfg(feature = "board-t096")]
 use embassy_futures::join::{join3, join4};
-use embassy_futures::select::{select3, Either3};
+use embassy_futures::select::{select4, Either4};
 use embassy_nrf::gpio::Input;
 use embassy_time::{Duration, Timer};
 use personal_hopspot_core as hopspot;
 use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, PrnsCommand};
 use personal_rns::interfaces::subghz::SubGConfigurationState;
 use personal_rns::interfaces::{
-    InterfaceGravity, InterfaceId, InterfaceMode, InterfaceSnapshot, InterfaceStatus, Membership,
+    ConnectionState, InterfaceGravity, InterfaceId, InterfaceMode, InterfaceSnapshot,
+    InterfaceStatus, Membership,
 };
-use personal_rns::lora::{LoRaApplyOutcome, LoRaController, LoRaSpectrumStatus};
+use personal_rns::lora::{LoRaController, LoRaSpectrumStatus};
 use personal_rns::manifold::embassy::EmbassyInterfaceStatus;
 use personal_rns::runtime::PrnsNodeHandle;
 use personal_rns::storage::StorageLayout;
@@ -23,7 +24,7 @@ use personal_rns::wire::DestinationHash;
 use crate::boards::selected as board;
 
 use super::bluetooth::{self, BluetoothAutoStatus, BLE_SHARED, BLE_SUPERVISOR_ID, MEMBERS};
-use super::{BLE_MANIFOLD_LANE, COMMANDS, COMPLETION, INTERFACE_STORE};
+use super::{BLE_MANIFOLD_LANE, COMMANDS, COMPLETION, INTERFACE_STORE, REMOTE_CONTROL_COMMANDS};
 
 pub(super) const INTERFACE_CAPACITY: usize = 2 + MEMBERS;
 pub(super) const LANE_COUNT: usize = 3;
@@ -109,6 +110,7 @@ pub(super) fn face(input: FaceInput) -> impl Future {
             user_blanking: display.user_blanking(),
             access_point: hopspot::AccessPointState::Unsupported,
             shared_instance_config_export: hopspot::SharedInstanceConfigExport::Unavailable,
+            discovery_groups: hopspot::DiscoveryGroupEditorAvailability::Available,
             #[cfg(feature = "board-t096")]
             gnss: hopspot::GnssAvailability::Available,
             #[cfg(feature = "board-t114")]
@@ -128,13 +130,50 @@ pub(super) fn face(input: FaceInput) -> impl Future {
         }
         let mut notice_until_ms =
             startup_notice.map(|notice| (embassy_time::Instant::now().as_millis() + 5_000, notice));
+        let mut scheduled_remote_control_effect = None;
+        let mut system = super::remote_control::SystemIntent::from_status(lora_status, usb_status);
+        #[cfg(feature = "board-t096")]
+        let mut gnss_wanted = false;
+        macro_rules! execute_hopspot_command {
+            ($snapshots:expr, $power:expr, $command:expr) => {
+                super::remote_control::execute(
+                    super::remote_control::Context {
+                        snapshots: &$snapshots,
+                        lora_status,
+                        usb_status,
+                        display: &mut display,
+                        power: $power,
+                        system: &mut system,
+                        scheduled_effect: &mut scheduled_remote_control_effect,
+                        lora_controller: &mut lora_controller,
+                        subg_store: &mut subg_configuration_store,
+                        subg_configuration: &mut working_subg_configuration,
+                        #[cfg(feature = "board-t096")]
+                        gnss_wanted: &mut gnss_wanted,
+                    },
+                    $command,
+                )
+                .await
+            };
+        }
         loop {
+            super::remote_control::apply_scheduled(
+                &mut scheduled_remote_control_effect,
+                lora_status,
+                usb_status,
+                &mut display,
+                &mut system,
+            )
+            .await;
             let battery_mv = battery.sample_millivolts().await;
             let battery_state = battery_gauge.update(
                 Some(battery_mv),
                 hopspot::ExternalPowerState::from_presence(bluetooth::usb_vbus_present()),
             );
-            let snapshots = snapshots(lora_status, usb_status);
+            let (snapshots, snapshot_failed) = match snapshots(lora_status, usb_status) {
+                Ok(snapshots) => (snapshots, false),
+                Err(SnapshotBuildError::CapacityExhausted) => (heapless::Vec::new(), true),
+            };
             let mut cards = cards(
                 &snapshots,
                 working_subg_configuration,
@@ -218,14 +257,24 @@ pub(super) fn face(input: FaceInput) -> impl Future {
                 now,
                 display_now,
             );
-            match select3(
+            match select4(
                 board::INPUT_EVENTS.receive(),
                 INTERFACE_STORE.changed(),
                 Timer::after(Duration::from_secs(1)),
+                REMOTE_CONTROL_COMMANDS.receive(),
             )
             .await
             {
-                Either3::First(event) => {
+                Either4::Fourth(pending) => {
+                    let (token, command) = pending.into_parts();
+                    let result = if snapshot_failed {
+                        Err(personal_rns::runtime::RemoteControlHostCommandError::ApplyFailed)
+                    } else {
+                        execute_hopspot_command!(snapshots, battery_state, command)
+                    };
+                    REMOTE_CONTROL_COMMANDS.complete(token, result);
+                }
+                Either4::First(event) => {
                     let now_ms = embassy_time::Instant::now().as_millis();
                     let now = hopspot::display::MonotonicMillis::new(now_ms);
                     match display.button_pressed(now, display_now).await {
@@ -256,49 +305,58 @@ pub(super) fn face(input: FaceInput) -> impl Future {
                             let notice = hopspot::UiNotice::Sleeping;
                             ui_state.show_notice(notice);
                             notice_until_ms = Some((now_ms + NOTICE_MS, notice));
-                            let _scheduled = display.schedule_blanking(
-                                hopspot::display::MonotonicMillis::new(
-                                    now_ms.saturating_add(NOTICE_MS),
-                                ),
-                                hopspot::display::DisplayBlankReason::SystemSleep,
+                            let _result = execute_hopspot_command!(
+                                snapshots,
+                                battery_state,
+                                personal_rns::runtime::RemoteControlHostCommand::SetSystemPower {
+                                    power: personal_rns::remote_control::RemoteControlSystemPower::Asleep,
+                                }
                             );
-                            lora_status.disable();
-                            usb_status.disable();
-                            BluetoothAutoStatus::new(&BLE_SHARED).disable();
-                            #[cfg(feature = "board-t096")]
-                            board::control_gnss(hopspot::GnssReceiverCommand::Disable);
                         }
                         hopspot::UiAction::Wake => {
-                            let _restoration = display.request_visible(now, display_now).await;
                             let notice = hopspot::UiNotice::Awake;
                             ui_state.show_notice(notice);
                             notice_until_ms = Some((now_ms + NOTICE_MS, notice));
-                            lora_status.enable();
-                            usb_status.enable();
-                            BluetoothAutoStatus::new(&BLE_SHARED).enable();
-                            #[cfg(feature = "board-t096")]
-                            if ui_state.gnss_visible() {
-                                board::control_gnss(hopspot::GnssReceiverCommand::Enable);
-                            }
+                            let _result = execute_hopspot_command!(
+                                snapshots,
+                                battery_state,
+                                personal_rns::runtime::RemoteControlHostCommand::SetSystemPower {
+                                    power: personal_rns::remote_control::RemoteControlSystemPower::Awake,
+                                }
+                            );
                         }
                         hopspot::UiAction::BlankDisplay => {
                             let notice = hopspot::UiNotice::DisplayOff;
                             ui_state.show_notice(notice);
                             notice_until_ms = Some((now_ms + NOTICE_MS, notice));
-                            let _scheduled = display.schedule_blanking(
-                                hopspot::display::MonotonicMillis::new(
-                                    now_ms.saturating_add(NOTICE_MS),
-                                ),
-                                hopspot::display::DisplayBlankReason::DisplayOnly,
+                            let _result = execute_hopspot_command!(
+                                snapshots,
+                                battery_state,
+                                personal_rns::runtime::RemoteControlHostCommand::SetDisplayVisibility {
+                                    visibility: personal_rns::remote_control::RemoteControlDisplayVisibility::Hidden,
+                                }
                             );
                         }
                         hopspot::UiAction::ToggleDisplayAutoOff => {
-                            if let Ok(auto_off) = display.toggle_auto_off(now) {
-                                let notice = match auto_off {
+                            if let Ok(current) = display.auto_off() {
+                                let auto_off = match current {
                                     hopspot::display::DisplayAutoOff::Enabled => {
-                                        hopspot::UiNotice::DisplayAutoOffOn
+                                        personal_rns::remote_control::RemoteControlDisplayAutoOff::Disabled
                                     }
                                     hopspot::display::DisplayAutoOff::Disabled => {
+                                        personal_rns::remote_control::RemoteControlDisplayAutoOff::Enabled
+                                    }
+                                };
+                                let _result = execute_hopspot_command!(
+                                    snapshots,
+                                    battery_state,
+                                    personal_rns::runtime::RemoteControlHostCommand::SetDisplayAutoOff { auto_off }
+                                );
+                                let notice = match auto_off {
+                                    personal_rns::remote_control::RemoteControlDisplayAutoOff::Enabled => {
+                                        hopspot::UiNotice::DisplayAutoOffOn
+                                    }
+                                    personal_rns::remote_control::RemoteControlDisplayAutoOff::Disabled => {
                                         hopspot::UiNotice::DisplayAutoOffOff
                                     }
                                 };
@@ -307,47 +365,96 @@ pub(super) fn face(input: FaceInput) -> impl Future {
                             }
                         }
                         #[cfg(feature = "board-t096")]
-                        hopspot::UiAction::ControlGnss(command) => board::control_gnss(command),
+                        hopspot::UiAction::ControlGnss(command) => {
+                            let power = match command {
+                                hopspot::GnssReceiverCommand::Enable => {
+                                    personal_rns::remote_control::RemoteControlGnssPower::On
+                                }
+                                hopspot::GnssReceiverCommand::Disable => {
+                                    personal_rns::remote_control::RemoteControlGnssPower::Off
+                                }
+                            };
+                            let _result = execute_hopspot_command!(
+                                snapshots,
+                                battery_state,
+                                personal_rns::runtime::RemoteControlHostCommand::SetGnssPower {
+                                    power
+                                }
+                            );
+                        }
                         #[cfg(feature = "board-t114")]
                         hopspot::UiAction::ControlGnss(_) => {}
                         hopspot::UiAction::ToggleSelectedInterface => {
                             if let Some(card) = ui_state.selected_card(content.cards) {
-                                let status = if card.id() == lora_status.id() {
-                                    Some(lora_status)
-                                } else if card.id() == usb_status.id() {
-                                    Some(usb_status)
-                                } else if card.id() == BLE_SUPERVISOR_ID {
-                                    let status = BluetoothAutoStatus::new(&BLE_SHARED);
-                                    let notice = if status.is_enabled() {
-                                        hopspot::UiNotice::TurningOff
-                                    } else {
-                                        hopspot::UiNotice::TurningOn
-                                    };
-                                    ui_state.show_notice(notice);
-                                    notice_until_ms = Some((now_ms + NOTICE_MS, notice));
-                                    status.toggle_enabled();
-                                    None
+                                let enabled = card.connection() != ConnectionState::Disabled;
+                                let notice = if enabled {
+                                    hopspot::UiNotice::TurningOff
                                 } else {
-                                    None
+                                    hopspot::UiNotice::TurningOn
                                 };
-                                if let Some(status) = status {
-                                    let notice = if status.is_enabled() {
-                                        hopspot::UiNotice::TurningOff
-                                    } else {
-                                        hopspot::UiNotice::TurningOn
-                                    };
-                                    ui_state.show_notice(notice);
-                                    notice_until_ms = Some((now_ms + NOTICE_MS, notice));
-                                    status.toggle_enabled();
-                                }
+                                ui_state.show_notice(notice);
+                                notice_until_ms = Some((now_ms + NOTICE_MS, notice));
+                                let power = if enabled {
+                                    personal_rns::remote_control::RemoteControlInterfacePower::Off
+                                } else {
+                                    personal_rns::remote_control::RemoteControlInterfacePower::On
+                                };
+                                let _result = execute_hopspot_command!(
+                                    snapshots,
+                                    battery_state,
+                                    personal_rns::runtime::RemoteControlHostCommand::SetInterfacePower {
+                                        id: card.id(),
+                                        power,
+                                    }
+                                );
                             }
+                        }
+                        hopspot::UiAction::OpenDiscoveryGroupsEditor(id) => {
+                            if id == BLE_SUPERVISOR_ID {
+                                let groups =
+                                    BluetoothAutoStatus::new(&BLE_SHARED).discovery_groups();
+                                ui_state.open_discovery_groups_editor(id, &groups);
+                            }
+                        }
+                        hopspot::UiAction::ReplaceDiscoveryGroups => {
+                            let Some(replacement) = ui_state.take_discovery_group_replacement()
+                            else {
+                                continue;
+                            };
+                            let id = replacement.interface_id();
+                            let groups = replacement.into_groups();
+                            let result = execute_hopspot_command!(
+                                snapshots,
+                                battery_state,
+                                personal_rns::runtime::RemoteControlHostCommand::ReplaceInterfaceDiscoveryGroups {
+                                    id,
+                                    groups: personal_rns::remote_control::RemoteControlDiscoveryGroups::new(groups),
+                                }
+                            );
+                            let notice = match result {
+                                Ok(personal_rns::runtime::RemoteControlHostResponse::ReplaceInterfaceDiscoveryGroups(
+                                    personal_rns::remote_control::RemoteControlDiscoveryGroupsReplaceOutcome::Applied
+                                    | personal_rns::remote_control::RemoteControlDiscoveryGroupsReplaceOutcome::Unchanged,
+                                )) => hopspot::UiNotice::Saved,
+                                Err(personal_rns::runtime::RemoteControlHostCommandError::Busy) => {
+                                    hopspot::UiNotice::GroupsBusy
+                                }
+                                Err(personal_rns::runtime::RemoteControlHostCommandError::PersistenceFailed) => {
+                                    hopspot::UiNotice::GroupsNotSaved
+                                }
+                                Err(personal_rns::runtime::RemoteControlHostCommandError::RollbackFailed) => {
+                                    hopspot::UiNotice::GroupsRollbackFailed
+                                }
+                                _ => hopspot::UiNotice::GroupsApplyFailed,
+                            };
+                            ui_state.show_notice(notice);
+                            notice_until_ms = Some((now_ms + NOTICE_MS, notice));
                         }
                         hopspot::UiAction::OpenSubGEditor => {
                             ui_state.open_subg_editor(working_subg_configuration);
                         }
                         action @ (hopspot::UiAction::SetSubGConfiguration(_)
                         | hopspot::UiAction::ClearSubGConfiguration) => {
-                            let previous = working_subg_configuration;
                             let requested =
                                 if let hopspot::UiAction::SetSubGConfiguration(configuration) =
                                     action
@@ -356,49 +463,26 @@ pub(super) fn face(input: FaceInput) -> impl Future {
                                 } else {
                                     SubGConfigurationState::Unconfigured
                                 };
-                            let result = match lora_controller.apply_configuration(requested).await
+                            let result = match super::remote_control::apply_subg_configuration(
+                                &mut lora_controller,
+                                &mut subg_configuration_store,
+                                &mut working_subg_configuration,
+                                requested,
+                            )
+                            .await
                             {
-                                LoRaApplyOutcome::Rejected => {
+                                Ok(()) => hopspot::SubGConfigurationChangeResult::Saved,
+                                Err(personal_rns::runtime::RemoteControlHostCommandError::ApplyFailed) => {
                                     hopspot::SubGConfigurationChangeResult::ApplyFailed
                                 }
-                                LoRaApplyOutcome::Applied => {
-                                    let persistence = match requested {
-                                        SubGConfigurationState::Configured(configuration) => {
-                                            subg_configuration_store.save(configuration).await
-                                        }
-                                        SubGConfigurationState::Unconfigured => {
-                                            subg_configuration_store.clear().await
-                                        }
-                                    };
-                                    match persistence {
-                                        hopspot::SubGConfigurationCommitOutcome::Committed => {
-                                            hopspot::SubGConfigurationChangeResult::Saved
-                                        }
-                                        hopspot::SubGConfigurationCommitOutcome::Indeterminate(_) => {
-                                            hopspot::SubGConfigurationChangeResult::PersistenceUncertain
-                                        }
-                                        hopspot::SubGConfigurationCommitOutcome::NotCommitted(_) => {
-                                            match lora_controller
-                                                .apply_configuration(previous)
-                                                .await
-                                            {
-                                                LoRaApplyOutcome::Applied => {
-                                                    hopspot::SubGConfigurationChangeResult::PersistenceFailed
-                                                }
-                                                LoRaApplyOutcome::Rejected => {
-                                                    hopspot::SubGConfigurationChangeResult::RollbackFailed
-                                                }
-                                            }
-                                        }
-                                    }
+                                Err(personal_rns::runtime::RemoteControlHostCommandError::RollbackFailed) => {
+                                    hopspot::SubGConfigurationChangeResult::RollbackFailed
                                 }
+                                Err(personal_rns::runtime::RemoteControlHostCommandError::PersistenceFailed) => {
+                                    hopspot::SubGConfigurationChangeResult::PersistenceFailed
+                                }
+                                Err(_) => hopspot::SubGConfigurationChangeResult::PersistenceUncertain,
                             };
-                            if matches!(
-                                result.active_configuration(),
-                                hopspot::ActiveSubGConfiguration::Requested
-                            ) {
-                                working_subg_configuration = requested;
-                            }
                             let notice = result.notice();
                             ui_state.show_notice(notice);
                             notice_until_ms = Some((now_ms + NOTICE_MS, notice));
@@ -410,7 +494,7 @@ pub(super) fn face(input: FaceInput) -> impl Future {
                         | hopspot::UiAction::CopySharedInstanceConfig => {}
                     }
                 }
-                Either3::Second(()) | Either3::Third(()) => {}
+                Either4::Second(()) | Either4::Third(()) => {}
             }
         }
     }
@@ -452,39 +536,56 @@ where
     join3(primary, board::drive_gnss(gnss), bluetooth)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SnapshotBuildError {
+    CapacityExhausted,
+}
+
 fn snapshots(
     lora: &EmbassyInterfaceStatus,
     usb: &EmbassyInterfaceStatus,
-) -> heapless::Vec<InterfaceSnapshot, { MEMBERS + 4 }> {
+) -> Result<heapless::Vec<InterfaceSnapshot, { MEMBERS + 4 }>, SnapshotBuildError> {
     let ble = BluetoothAutoStatus::new(&BLE_SHARED);
     let mut entries: heapless::Vec<(&dyn InterfaceStatus, Membership), { MEMBERS + 4 }> =
         heapless::Vec::new();
-    let _ = entries.push((lora, Membership::Independent));
-    let _ = entries.push((usb, Membership::Independent));
+    entries
+        .push((lora, Membership::Independent))
+        .map_err(|_| SnapshotBuildError::CapacityExhausted)?;
+    entries
+        .push((usb, Membership::Independent))
+        .map_err(|_| SnapshotBuildError::CapacityExhausted)?;
     let supervisor_id = ble.id();
-    let _ = entries.push((&ble, Membership::Independent));
+    entries
+        .push((&ble, Membership::Independent))
+        .map_err(|_| SnapshotBuildError::CapacityExhausted)?;
     for member in ble.members() {
-        let _ = entries.push((member, Membership::FleetMember { supervisor_id }));
+        entries
+            .push((member, Membership::FleetMember { supervisor_id }))
+            .map_err(|_| SnapshotBuildError::CapacityExhausted)?;
     }
     let mut snapshots = heapless::Vec::new();
     for (status, membership) in &entries {
         let counts = INTERFACE_STORE.counts(status.id());
-        let _ = snapshots.push(InterfaceSnapshot {
-            id: status.id(),
-            mode: InterfaceMode::Full,
-            gravity: InterfaceGravity::ZERO,
-            connection: status.connection(),
-            failure_reason: status.failure_reason(),
-            rx_bytes: status.rx_bytes(),
-            tx_bytes: status.tx_bytes(),
-            transfer_rates: status.transfer_rates(),
-            destinations: counts.destinations,
-            links: counts.links,
-            transported_links: counts.transported_links,
-            membership: *membership,
-        });
+        snapshots
+            .push(InterfaceSnapshot {
+                id: status.id(),
+                mode: InterfaceMode::Full,
+                gravity: InterfaceGravity::ZERO,
+                connection: status.connection(),
+                failure_reason: status.failure_reason(),
+                rx_bytes: status.rx_bytes(),
+                tx_bytes: status.tx_bytes(),
+                transfer_rates: status.transfer_rates(),
+                destinations: counts.destinations,
+                links: counts.links,
+                transported_links: counts.transported_links,
+                membership: *membership,
+                radio: status.radio(),
+                details: status.details(),
+            })
+            .map_err(|_| SnapshotBuildError::CapacityExhausted)?;
     }
-    snapshots
+    Ok(snapshots)
 }
 
 fn cards(

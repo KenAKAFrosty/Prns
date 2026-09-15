@@ -20,6 +20,8 @@ const BLANKING_RETRY_BACKOFF_DURATION: DisplayDuration = match DisplayDuration::
 };
 
 impl<D: ImmediateDisplayDevice> S3BoardDisplay for ImmediateBoardDisplay<D> {
+    const REMOTE_VISIBILITY_CONTROL: bool = true;
+    const REMOTE_AUTO_OFF_CONTROL: bool = true;
     type Runtime = ImmediateDisplayRuntime<D>;
 
     fn into_runtime(self, now: MonotonicMillis) -> ImmediateDisplayRuntime<D> {
@@ -90,8 +92,16 @@ impl<D: ImmediateDisplayDevice> S3DisplayRuntime for ImmediateDisplayRuntime<D> 
         ImmediateDisplayRuntime::request_visible(self, now, completed_at)
     }
 
-    fn toggle_auto_off(&mut self, now: MonotonicMillis) -> Result<DisplayAutoOff, BlankingError> {
-        ImmediateDisplayRuntime::toggle_auto_off(self, now)
+    fn auto_off(&self) -> Result<DisplayAutoOff, BlankingError> {
+        ImmediateDisplayRuntime::auto_off(self)
+    }
+
+    fn set_auto_off(
+        &mut self,
+        auto_off: DisplayAutoOff,
+        now: MonotonicMillis,
+    ) -> Result<DisplayAutoOff, BlankingError> {
+        ImmediateDisplayRuntime::set_auto_off(self, auto_off, now)
     }
 }
 
@@ -242,11 +252,16 @@ impl<D: ImmediateDisplayDevice> ImmediateDisplayRuntime<D> {
         self.apply_blanking(decision, completed_at)
     }
 
-    pub(crate) fn toggle_auto_off(
+    pub(crate) fn auto_off(&self) -> Result<DisplayAutoOff, BlankingError> {
+        self.coordinator.auto_off()
+    }
+
+    pub(crate) fn set_auto_off(
         &mut self,
+        auto_off: DisplayAutoOff,
         now: MonotonicMillis,
     ) -> Result<DisplayAutoOff, BlankingError> {
-        self.coordinator.toggle_auto_off(now)
+        self.coordinator.set_auto_off(auto_off, now)
     }
 
     fn apply_blanking(
@@ -359,6 +374,7 @@ mod tests {
             #[cfg(feature = "remote-control-pairing")]
             remote_control_pairing:
                 personal_hopspot_core::RemoteControlPairingAvailability::Unavailable,
+            discovery_groups: personal_hopspot_core::DiscoveryGroupEditorAvailability::Unavailable,
         })
     }
 

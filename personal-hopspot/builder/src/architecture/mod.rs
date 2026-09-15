@@ -12,7 +12,9 @@ use std::process::Command;
 
 use personal_hopspot_memory::ProcessorArchitecture;
 
-use crate::BuildError;
+use crate::{BuildError, BuildIntent};
+
+const STACK_SIZE_EVIDENCE_RUSTFLAGS: [&str; 2] = ["-Z", "emit-stack-sizes=yes"];
 
 pub use linker::{MemoryOverflow, MemoryOverflows};
 
@@ -32,6 +34,82 @@ pub enum LinkerFlavor {
     GnuLd,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DisassemblerFlavor {
+    LlvmObjdump,
+    GnuObjdump,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StackFrameEvidence {
+    LlvmStackSizes,
+    DwarfDebugFrame,
+}
+
+impl DisassemblerFlavor {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::LlvmObjdump => "llvm-objdump",
+            Self::GnuObjdump => "gnu-objdump",
+        }
+    }
+}
+
+#[derive(Debug)]
+struct DisassemblerTool {
+    flavor: DisassemblerFlavor,
+    program: &'static str,
+    version_arguments: &'static [&'static str],
+    resolve: fn() -> Result<PathBuf, BuildError>,
+}
+
+impl DisassemblerTool {
+    const fn new(
+        flavor: DisassemblerFlavor,
+        program: &'static str,
+        version_arguments: &'static [&'static str],
+        resolve: fn() -> Result<PathBuf, BuildError>,
+    ) -> Self {
+        Self {
+            flavor,
+            program,
+            version_arguments,
+            resolve,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct ResolvedDisassembler {
+    flavor: DisassemblerFlavor,
+    program: &'static str,
+    path: PathBuf,
+    version_arguments: &'static [&'static str],
+}
+
+impl ResolvedDisassembler {
+    #[must_use]
+    pub const fn flavor(&self) -> DisassemblerFlavor {
+        self.flavor
+    }
+
+    #[must_use]
+    pub const fn program(&self) -> &'static str {
+        self.program
+    }
+
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    #[must_use]
+    pub const fn version_arguments(&self) -> &'static [&'static str] {
+        self.version_arguments
+    }
+}
+
 impl LinkerFlavor {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -47,6 +125,8 @@ struct LinkerTool {
     flavor: LinkerFlavor,
     program: &'static str,
     version_arguments: &'static [&'static str],
+    configure: fn(&mut Command) -> Result<PathBuf, BuildError>,
+    map_argument: fn(&Path) -> OsString,
 }
 
 impl LinkerTool {
@@ -54,11 +134,15 @@ impl LinkerTool {
         flavor: LinkerFlavor,
         program: &'static str,
         version_arguments: &'static [&'static str],
+        configure: fn(&mut Command) -> Result<PathBuf, BuildError>,
+        map_argument: fn(&Path) -> OsString,
     ) -> Self {
         Self {
             flavor,
             program,
             version_arguments,
+            configure,
+            map_argument,
         }
     }
 }
@@ -69,8 +153,8 @@ pub struct Adapter {
     architecture: ProcessorArchitecture,
     linker: LinkerTool,
     rustflags: &'static [&'static str],
-    configure_linker: fn(&mut Command) -> Result<PathBuf, BuildError>,
-    linker_map_argument: fn(&Path) -> OsString,
+    disassembler: DisassemblerTool,
+    stack_frame_evidence: StackFrameEvidence,
 }
 
 impl Adapter {
@@ -79,16 +163,16 @@ impl Adapter {
         architecture: ProcessorArchitecture,
         linker: LinkerTool,
         rustflags: &'static [&'static str],
-        configure_linker: fn(&mut Command) -> Result<PathBuf, BuildError>,
-        linker_map_argument: fn(&Path) -> OsString,
+        disassembler: DisassemblerTool,
+        stack_frame_evidence: StackFrameEvidence,
     ) -> Self {
         Self {
             id: AdapterId(id),
             architecture,
             linker,
             rustflags,
-            configure_linker,
-            linker_map_argument,
+            disassembler,
+            stack_frame_evidence,
         }
     }
 
@@ -122,26 +206,73 @@ impl Adapter {
     }
 
     #[must_use]
-    pub const fn rustflags(&self) -> &'static [&'static str] {
+    pub const fn firmware_rustflags(&self) -> &'static [&'static str] {
         self.rustflags
     }
 
-    pub fn configure_cargo(&self, command: &mut Command) -> Result<PathBuf, BuildError> {
-        self.configure_rustflags(command);
-        let linker = (self.configure_linker)(command)?;
+    #[must_use]
+    pub fn rustflags(&self, intent: BuildIntent) -> Vec<&'static str> {
+        let mut rustflags = self.rustflags.to_vec();
+        if intent.is_resource_report()
+            && self.stack_frame_evidence == StackFrameEvidence::LlvmStackSizes
+        {
+            rustflags.extend(STACK_SIZE_EVIDENCE_RUSTFLAGS);
+        }
+        rustflags
+    }
+
+    #[must_use]
+    pub const fn stack_frame_evidence(&self) -> StackFrameEvidence {
+        self.stack_frame_evidence
+    }
+
+    pub fn configure_cargo(
+        &self,
+        command: &mut Command,
+        intent: BuildIntent,
+    ) -> Result<PathBuf, BuildError> {
+        self.configure_rustflags(command, intent);
+        let linker = (self.linker.configure)(command)?;
         command.env(cargo_linker_environment(self.rust_target()), &linker);
         Ok(linker)
     }
 
-    fn configure_rustflags(&self, command: &mut Command) {
-        command.env_remove(cargo_rustflags_environment(self.rust_target()));
-        if !self.rustflags.is_empty() {
-            command.env("RUSTFLAGS", self.rustflags.join(" "));
+    fn configure_rustflags(&self, command: &mut Command, intent: BuildIntent) {
+        command
+            .env_remove(cargo_rustflags_environment(self.rust_target()))
+            .env_remove("RUSTC_BOOTSTRAP");
+        if intent.is_resource_report()
+            && self.stack_frame_evidence == StackFrameEvidence::LlvmStackSizes
+        {
+            command.env("RUSTC_BOOTSTRAP", "1");
+        }
+        let rustflags = self.rustflags(intent);
+        if !rustflags.is_empty() {
+            command.env("RUSTFLAGS", rustflags.join(" "));
         }
     }
 
     pub(crate) fn linker_map_argument(&self, path: &Path) -> OsString {
-        (self.linker_map_argument)(path)
+        (self.linker.map_argument)(path)
+    }
+
+    pub fn resolve_disassembler(&self) -> Result<ResolvedDisassembler, BuildError> {
+        Ok(ResolvedDisassembler {
+            flavor: self.disassembler.flavor,
+            program: self.disassembler.program,
+            path: (self.disassembler.resolve)()?,
+            version_arguments: self.disassembler.version_arguments,
+        })
+    }
+
+    #[must_use]
+    pub const fn disassembler_flavor(&self) -> DisassemblerFlavor {
+        self.disassembler.flavor
+    }
+
+    #[must_use]
+    pub const fn disassembler_program(&self) -> &'static str {
+        self.disassembler.program
     }
 
     pub(crate) fn detect_memory_overflow(&self, diagnostics: &str) -> Option<MemoryOverflows> {

@@ -1,3 +1,4 @@
+use prns_core::interfaces::DiscoveryGroupSet;
 use prns_runtime::interfaces::bluetooth_auto::{self as contract, BleIdentity};
 use prns_runtime::interfaces::IfacContext;
 use prns_runtime::interfaces::{
@@ -25,6 +26,7 @@ pub type AutoBluetoothLe = AutoBle;
 pub struct ConfiguredAutoBle {
     identity: BleIdentity,
     policy: EffectiveInterfacePolicy,
+    discovery_groups: DiscoveryGroupSet,
 }
 
 /// Canonical name for a configured Bluetooth LE auto-interface.
@@ -41,7 +43,24 @@ impl AutoBle {
         identity: BleIdentity,
         policy: EffectiveInterfacePolicy,
     ) -> ConfiguredAutoBle {
-        ConfiguredAutoBle { identity, policy }
+        ConfiguredAutoBle {
+            identity,
+            policy,
+            discovery_groups: DiscoveryGroupSet::reticulum(),
+        }
+    }
+
+    #[must_use]
+    pub fn with_policy_and_discovery_groups(
+        identity: BleIdentity,
+        policy: EffectiveInterfacePolicy,
+        discovery_groups: DiscoveryGroupSet,
+    ) -> ConfiguredAutoBle {
+        ConfiguredAutoBle {
+            identity,
+            policy,
+            discovery_groups,
+        }
     }
 
     /// Creates the restoration-aware CoreBluetooth managers immediately while leaving radio
@@ -340,6 +359,7 @@ impl Attachable for AutoBle {
             )
             .configured(ConfiguredInterfacePolicy::default()),
             None,
+            DiscoveryGroupSet::reticulum(),
         )
     }
 
@@ -357,6 +377,7 @@ impl Attachable for AutoBle {
             )
             .configured(ConfiguredInterfacePolicy::default()),
             Some((ifac, network_name)),
+            DiscoveryGroupSet::reticulum(),
         )
     }
 }
@@ -365,7 +386,13 @@ impl Attachable for ConfiguredAutoBle {
     type Attached = AttachedBle;
 
     fn attach_to(self, handle: &PrnsNodeHandle) -> AttachedBle {
-        attach_platform_bluetooth(handle, self.identity, self.policy, None)
+        attach_platform_bluetooth(
+            handle,
+            self.identity,
+            self.policy,
+            None,
+            self.discovery_groups,
+        )
     }
 
     fn attach_to_with_ifac(
@@ -379,6 +406,7 @@ impl Attachable for ConfiguredAutoBle {
             self.identity,
             self.policy,
             Some((ifac, network_name)),
+            self.discovery_groups,
         )
     }
 }
@@ -580,8 +608,9 @@ fn attach_platform_bluetooth(
     ble_identity: BleIdentity,
     policy: EffectiveInterfacePolicy,
     ifac: Option<(IfacContext, Option<String>)>,
+    discovery_groups: DiscoveryGroupSet,
 ) -> AttachedBle {
-    let status = BluetoothAutoStatus::new();
+    let status = BluetoothAutoStatus::new_with_discovery_groups(discovery_groups);
     let bluetooth = PlatformBluetooth {
         ble_identity,
         policy,
@@ -851,13 +880,13 @@ mod tests {
         let node = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: None,
             pre_configured_destinations: std::iter::empty::<PreConfiguredDestination<'static>>(),
-            app_state: (),
+            app_state: prns_runtime::runtime::NoRemoteControlHostControls,
             storage: GrowableHeap,
             request_endpoints: prns_runtime::request_endpoints![],
             remote_control: prns_runtime::remote_control::RemoteControlService::Unavailable,
             interfaces: ManuallyAttached,
             persistence: NoPersistence,
-            on_event: |_event, _state: &()| {},
+            on_event: |_event, _state: &prns_runtime::runtime::NoRemoteControlHostControls| {},
         });
         let attached = node
             .handle()

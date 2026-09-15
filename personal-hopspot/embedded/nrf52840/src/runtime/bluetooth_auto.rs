@@ -2,7 +2,7 @@
 
 use core::cell::{Cell, UnsafeCell};
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use embassy_futures::select::{select, select3, select4, Either, Either3};
 use embassy_futures::yield_now;
 use embassy_nrf::usb::vbus_detect::SoftwareVbusDetect;
@@ -14,7 +14,7 @@ use embassy_sync::signal::Signal;
 use embassy_time::{with_timeout, Duration, Timer};
 
 use nrf_softdevice::ble::{
-    central, gatt_client, gatt_server, l2cap, peripheral, Address, Connection, GattError,
+    central, gatt_client, gatt_server, l2cap, peripheral, Address, Connection, GattError, TxPower,
 };
 use nrf_softdevice::{raw, RawError, SocEvent, Softdevice};
 
@@ -51,7 +51,6 @@ pub(super) const BLE_SUPERVISOR_ID: InterfaceId =
 pub(super) const POOL: usize = MEMBERS + 2;
 const _: () = assert!(POOL == 7, "serve_slot pool_size must equal POOL");
 
-const CTRL_DEPTH: usize = 4;
 const DATA_TOKEN_DEPTH: usize = 2;
 const SHARED_FRAME_CAPACITY: usize = MEMBERS;
 const SHARED_FRAME_WAITERS: usize = POOL;
@@ -308,9 +307,221 @@ struct SeenPeer {
     rssi: i8,
 }
 
+enum ControlOutboxAdmission {
+    Enqueued,
+    Occupied,
+    PoolExhausted,
+    InvalidControl,
+}
+
+// The generic BLE supervisor admits two concurrent handshakes. A greeting can still be waiting in
+// each direction when the peer replies, so four wire slots cover the exact maximum live handshake
+// state without charging every one of the seven physical connection slots for two 153-byte values.
+const CONTROL_WIRE_SLOTS: usize = 4;
+const _: () = assert!(CONTROL_WIRE_SLOTS <= 128);
+const _: () = assert!(CONTROL_MAX_LEN <= u8::MAX as usize);
+
+struct ControlWirePool {
+    bytes: [UnsafeCell<[u8; CONTROL_MAX_LEN]>; CONTROL_WIRE_SLOTS],
+    free: [AtomicBool; CONTROL_WIRE_SLOTS],
+    available: Signal<Mtx, ()>,
+}
+
+// SAFETY: `claim` changes exactly one slot from free to owned before exposing its UnsafeCell. The
+// owning ControlOutbox keeps that slot until its sole transport worker drops the ControlWireLease,
+// so readers and writers never alias mutable access to a pool entry.
+unsafe impl Sync for ControlWirePool {}
+
+impl ControlWirePool {
+    const fn new() -> Self {
+        Self {
+            bytes: [const { UnsafeCell::new([0; CONTROL_MAX_LEN]) }; CONTROL_WIRE_SLOTS],
+            free: [const { AtomicBool::new(true) }; CONTROL_WIRE_SLOTS],
+            available: Signal::new(),
+        }
+    }
+
+    fn claim(&self) -> Option<u8> {
+        let mut index = 0;
+        while index < CONTROL_WIRE_SLOTS {
+            if self.free[index]
+                .compare_exchange(true, false, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                return Some(index as u8);
+            }
+            index += 1;
+        }
+        None
+    }
+
+    fn encode(&self, index: u8, control: &Control) -> Option<u8> {
+        // SAFETY: Only the ControlOutbox that owns `index` calls this before publishing `ready`.
+        let bytes = unsafe { &mut *self.bytes[usize::from(index)].get() };
+        control.encode(bytes).map(|len| len as u8)
+    }
+
+    fn copy_from_slice(&self, index: u8, wire: &[u8]) {
+        // SAFETY: Only the ControlOutbox that owns `index` calls this before publishing `ready`.
+        let bytes = unsafe { &mut *self.bytes[usize::from(index)].get() };
+        bytes[..wire.len()].copy_from_slice(wire);
+    }
+
+    /// # Safety
+    ///
+    /// `index` must remain uniquely claimed for the returned reference's lifetime, and `len` must
+    /// be the initialized length published by the claiming outbox.
+    unsafe fn bytes(&self, index: u8, len: u8) -> &[u8] {
+        // SAFETY: upheld by the caller contract.
+        unsafe { &(&*self.bytes[usize::from(index)].get())[..usize::from(len)] }
+    }
+
+    fn release(&self, index: u8) {
+        self.free[usize::from(index)].store(true, Ordering::Release);
+        self.available.signal(());
+    }
+}
+
+static CONTROL_WIRES: ControlWirePool = ControlWirePool::new();
+
+struct ControlOutbox {
+    state: AtomicU16,
+    ready: Signal<Mtx, ()>,
+    consumed: Signal<Mtx, ()>,
+}
+
+struct ControlWireLease {
+    outbox: &'static ControlOutbox,
+    wire: u8,
+    len: u8,
+}
+
+impl ControlWireLease {
+    fn as_bytes(&self) -> &[u8] {
+        // SAFETY: this lease is created only from the outbox's published claimed slot and releases
+        // that slot in Drop, so the claim outlives the returned borrow.
+        unsafe { CONTROL_WIRES.bytes(self.wire, self.len) }
+    }
+}
+
+impl Drop for ControlWireLease {
+    fn drop(&mut self) {
+        self.outbox.release();
+    }
+}
+
+const CONTROL_OUTBOX_RESERVED: u16 = 1;
+
+const fn control_outbox_state(wire: u8, len: u8) -> u16 {
+    (len as u16) << 8 | (wire as u16) << 1 | CONTROL_OUTBOX_RESERVED
+}
+
+// SAFETY: `occupied` grants the only writer exclusive ownership of one shared wire slot before
+// `ready` publishes it. The link's worker is the only reader and releases that ownership only after
+// its transport await; a link slot is reset only after that worker invocation has ended.
+unsafe impl Sync for ControlOutbox {}
+
+impl ControlOutbox {
+    const fn new() -> Self {
+        Self {
+            state: AtomicU16::new(0),
+            ready: Signal::new(),
+            consumed: Signal::new(),
+        }
+    }
+
+    fn try_enqueue(&self, control: &Control) -> ControlOutboxAdmission {
+        if self
+            .state
+            .compare_exchange(
+                0,
+                CONTROL_OUTBOX_RESERVED,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_err()
+        {
+            return ControlOutboxAdmission::Occupied;
+        }
+        let Some(wire) = CONTROL_WIRES.claim() else {
+            self.state.store(0, Ordering::Release);
+            return ControlOutboxAdmission::PoolExhausted;
+        };
+        let Some(len) = CONTROL_WIRES.encode(wire, control) else {
+            CONTROL_WIRES.release(wire);
+            self.state.store(0, Ordering::Release);
+            return ControlOutboxAdmission::InvalidControl;
+        };
+        self.state
+            .store(control_outbox_state(wire, len), Ordering::Release);
+        self.ready.signal(());
+        ControlOutboxAdmission::Enqueued
+    }
+
+    fn try_enqueue_wire(&self, wire: &[u8]) -> ControlOutboxAdmission {
+        // The sole consumer performs the canonical decode exactly once before admitting the
+        // handshake. Keeping this producer to the structural bound avoids parsing every inbound
+        // control value twice while still ensuring the shared slot can hold the complete value.
+        if wire.len() > CONTROL_MAX_LEN {
+            return ControlOutboxAdmission::InvalidControl;
+        }
+        if self
+            .state
+            .compare_exchange(
+                0,
+                CONTROL_OUTBOX_RESERVED,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_err()
+        {
+            return ControlOutboxAdmission::Occupied;
+        }
+        let Some(slot) = CONTROL_WIRES.claim() else {
+            self.state.store(0, Ordering::Release);
+            return ControlOutboxAdmission::PoolExhausted;
+        };
+        CONTROL_WIRES.copy_from_slice(slot, wire);
+        self.state.store(
+            control_outbox_state(slot, wire.len() as u8),
+            Ordering::Release,
+        );
+        self.ready.signal(());
+        ControlOutboxAdmission::Enqueued
+    }
+
+    async fn wait(&'static self) -> ControlWireLease {
+        loop {
+            self.ready.wait().await;
+            let state = self.state.load(Ordering::Acquire);
+            if state > CONTROL_OUTBOX_RESERVED {
+                return ControlWireLease {
+                    outbox: self,
+                    wire: ((state >> 1) & 0x7f) as u8,
+                    len: (state >> 8) as u8,
+                };
+            }
+        }
+    }
+
+    fn release(&self) {
+        let state = self.state.swap(0, Ordering::AcqRel);
+        if state > CONTROL_OUTBOX_RESERVED {
+            let wire = ((state >> 1) & 0x7f) as u8;
+            CONTROL_WIRES.release(wire);
+            self.consumed.signal(());
+        }
+    }
+
+    fn reset(&self) {
+        self.ready.reset();
+        self.release();
+    }
+}
+
 struct LinkChannels {
-    control_in: Channel<Mtx, Control, CTRL_DEPTH>,
-    control_out: Channel<Mtx, Control, CTRL_DEPTH>,
+    control_in: ControlOutbox,
+    control_out: ControlOutbox,
     data_in: Channel<Mtx, SharedFrameLease, DATA_TOKEN_DEPTH>,
     data_out: Channel<Mtx, SharedFrameLease, DATA_TOKEN_DEPTH>,
     acknowledged_writes: Channel<Mtx, ServerWrite, 1>,
@@ -330,8 +541,8 @@ struct LinkChannels {
 impl LinkChannels {
     const fn new() -> Self {
         Self {
-            control_in: Channel::new(),
-            control_out: Channel::new(),
+            control_in: ControlOutbox::new(),
+            control_out: ControlOutbox::new(),
             data_in: Channel::new(),
             data_out: Channel::new(),
             acknowledged_writes: Channel::new(),
@@ -366,8 +577,8 @@ impl LinkChannels {
         self.data_plane.reset();
         self.profile_ready.reset();
         self.peer_protocol.lock(|current| current.set(None));
-        self.control_in.clear();
-        self.control_out.clear();
+        self.control_in.reset();
+        self.control_out.reset();
         self.data_in.clear();
         self.data_out.clear();
         self.acknowledged_writes.clear();
@@ -378,8 +589,8 @@ impl LinkChannels {
     fn link(&'static self, slot: BleSlotLink) -> NrfBleLink {
         NrfBleLink {
             peer_protocol: self.peer_protocol().unwrap_or(PeerProtocol::Native),
-            control_in: self.control_in.receiver(),
-            control_out: self.control_out.sender(),
+            control_in: &self.control_in,
+            control_out: &self.control_out,
             data_in: self.data_in.receiver(),
             data_out: self.data_out.sender(),
             identity_in: &self.identity_in,
@@ -579,8 +790,8 @@ impl BleBackend<{ NrfBleBackend::MAX_PEERS }> for NrfBleBackend {
 
 pub(super) struct NrfBleLink {
     peer_protocol: PeerProtocol,
-    control_in: Receiver<'static, Mtx, Control, CTRL_DEPTH>,
-    control_out: Sender<'static, Mtx, Control, CTRL_DEPTH>,
+    control_in: &'static ControlOutbox,
+    control_out: &'static ControlOutbox,
     data_in: Receiver<'static, Mtx, SharedFrameLease, DATA_TOKEN_DEPTH>,
     data_out: Sender<'static, Mtx, SharedFrameLease, DATA_TOKEN_DEPTH>,
     identity_in: &'static Signal<Mtx, BleIdentity>,
@@ -605,16 +816,32 @@ impl BleLink for NrfBleLink {
     }
 
     async fn control_send(&mut self, msg: &Control) -> Result<(), Closed> {
-        match select(self.control_out.send(*msg), self.slot.wait_for_close()).await {
-            Either::First(()) => Ok(()),
-            Either::Second(()) => Err(Closed),
+        loop {
+            let available = match self.control_out.try_enqueue(msg) {
+                ControlOutboxAdmission::Enqueued => return Ok(()),
+                ControlOutboxAdmission::InvalidControl => return Err(Closed),
+                ControlOutboxAdmission::Occupied => &self.control_out.consumed,
+                ControlOutboxAdmission::PoolExhausted => &CONTROL_WIRES.available,
+            };
+            match select(available.wait(), self.slot.wait_for_close()).await {
+                Either::First(()) => {}
+                Either::Second(()) => return Err(Closed),
+            }
         }
     }
 
     async fn control_recv(&mut self) -> Result<Control, Closed> {
-        match select(self.control_in.receive(), self.slot.wait_for_close()).await {
-            Either::First(msg) => Ok(msg),
-            Either::Second(()) => Err(Closed),
+        loop {
+            match select(self.control_in.wait(), self.slot.wait_for_close()).await {
+                Either::First(wire) => {
+                    let control = Control::decode(wire.as_bytes());
+                    drop(wire);
+                    if let Some(control) = control {
+                        return Ok(control);
+                    }
+                }
+                Either::Second(()) => return Err(Closed),
+            }
         }
     }
 
@@ -714,10 +941,55 @@ fn preferred_conn_params() -> raw::ble_gap_conn_params_t {
     }
 }
 
+/// MeshTower V2 BLE uses the nRF52840 internal 2.4 GHz radio (the KCT8103L FEM is LoRa-only).
+#[cfg(feature = "board-mesh-tower-v2")]
+fn preferred_tx_power() -> TxPower {
+    TxPower::Plus8dBm
+}
+
+#[cfg(not(feature = "board-mesh-tower-v2"))]
+fn preferred_tx_power() -> TxPower {
+    TxPower::ZerodBm
+}
+
+fn peripheral_adv_config() -> peripheral::Config {
+    let mut config = peripheral::Config::default();
+    config.tx_power = preferred_tx_power();
+    config
+}
+
+fn idle_scan_config() -> central::ScanConfig<'static> {
+    central::ScanConfig {
+        active: false,
+        extended: false,
+        interval: IDLE_SCAN_INTERVAL,
+        window: IDLE_SCAN_WINDOW,
+        timeout: SCAN_WINDOW_TICKS,
+        tx_power: preferred_tx_power(),
+        ..Default::default()
+    }
+}
+
 fn initiate_data_length_extension(conn: &mut Connection) {
     // `None` asks the SoftDevice for the largest data length supported by this build's connection
     // event and RAM configuration. Peers without DLE support retain the mandatory 27-byte floor.
     let _ = conn.data_length_update(None);
+}
+
+fn tune_link(conn: &mut Connection) {
+    if preferred_tx_power() != TxPower::ZerodBm {
+        if let Some(handle) = conn.handle() {
+            let ret = unsafe {
+                raw::sd_ble_gap_tx_power_set(
+                    raw::BLE_GAP_TX_POWER_ROLES_BLE_GAP_TX_POWER_ROLE_CONN as _,
+                    handle,
+                    preferred_tx_power() as i8,
+                )
+            };
+            let _ = RawError::convert(ret);
+        }
+    }
+    initiate_data_length_extension(conn);
 }
 
 #[derive(Clone, Copy)]
@@ -814,22 +1086,26 @@ async fn admit_inbound_frame_with_backpressure(
 fn process_unacknowledged_write(
     write: &ServerWrite,
     slot: &'static LinkChannels,
-    control_in_tx: &Sender<'static, Mtx, Control, CTRL_DEPTH>,
     data_in_tx: &Sender<'static, Mtx, SharedFrameLease, DATA_TOKEN_DEPTH>,
     reassembler: &mut Reassembler<GATT_REASSEMBLY_CAP>,
 ) -> IngressAdmission {
     match write.target() {
-        WriteTarget::Control => {
-            let Some(control) = Control::decode(write.value()) else {
-                return IngressAdmission::Admitted;
-            };
-            if slot.peer_protocol().is_none() {
-                slot.set_peer_protocol(PeerProtocol::Native);
+        WriteTarget::Control => match slot.control_in.try_enqueue_wire(write.value()) {
+            ControlOutboxAdmission::Enqueued => {
+                if slot.peer_protocol().is_none() {
+                    slot.set_peer_protocol(PeerProtocol::Native);
+                }
             }
-            if control_in_tx.try_send(control).is_err() {
+            ControlOutboxAdmission::Occupied => {
                 return record_ingress_pressure(IngressPressure::ControlQueueFull);
             }
-        }
+            ControlOutboxAdmission::PoolExhausted => {
+                return record_ingress_pressure(IngressPressure::ControlQueueFull);
+            }
+            ControlOutboxAdmission::InvalidControl => {
+                return IngressAdmission::Admitted;
+            }
+        },
         WriteTarget::Data => {
             let Some(fragment) = Fragment::decode(write.value()) else {
                 return IngressAdmission::Admitted;
@@ -859,18 +1135,25 @@ fn process_unacknowledged_write(
 }
 
 async fn process_acknowledged_writes(slot: &'static LinkChannels) {
-    let control_in_tx = slot.control_in.sender();
     let data_in_tx = slot.data_in.sender();
     let mut reassembler: Reassembler<GATT_REASSEMBLY_CAP> = Reassembler::new();
     loop {
         let write = slot.acknowledged_writes.receive().await;
         let admitted = match write.target() {
             WriteTarget::Control => {
-                if let Some(control) = Control::decode(write.value()) {
-                    if slot.peer_protocol().is_none() {
-                        slot.set_peer_protocol(PeerProtocol::Native);
-                    }
-                    control_in_tx.send(control).await;
+                loop {
+                    let available = match slot.control_in.try_enqueue_wire(write.value()) {
+                        ControlOutboxAdmission::Enqueued => {
+                            if slot.peer_protocol().is_none() {
+                                slot.set_peer_protocol(PeerProtocol::Native);
+                            }
+                            break;
+                        }
+                        ControlOutboxAdmission::Occupied => &slot.control_in.consumed,
+                        ControlOutboxAdmission::PoolExhausted => &CONTROL_WIRES.available,
+                        ControlOutboxAdmission::InvalidControl => break,
+                    };
+                    available.wait().await;
                 }
                 true
             }
@@ -971,9 +1254,7 @@ async fn serve_peripheral(
     link: BleSlotLink,
     worker: &BleSlotWorker,
 ) {
-    let control_out_rx = slot.control_out.receiver();
     let data_out_rx = slot.data_out.receiver();
-    let control_in_tx = slot.control_in.sender();
     let data_in_tx = slot.data_in.sender();
     let mut unacknowledged_reassembler: Reassembler<GATT_REASSEMBLY_CAP> = Reassembler::new();
 
@@ -988,7 +1269,6 @@ async fn serve_peripheral(
             let _ = process_unacknowledged_write(
                 &write,
                 slot,
-                &control_in_tx,
                 &data_in_tx,
                 &mut unacknowledged_reassembler,
             );
@@ -1005,15 +1285,18 @@ async fn serve_peripheral(
 
     let control_outbound = async {
         loop {
-            let ctrl = control_out_rx.receive().await;
-            let mut buf = [0u8; CONTROL_MAX_LEN];
-            if let Some(n) = ctrl.encode(&mut buf) {
-                if notify_with_backpressure(server, conn, ServerNotification::Control, &buf[..n])
-                    .await
-                    .is_err()
-                {
-                    return;
-                }
+            let wire = slot.control_out.wait().await;
+            let sent = notify_with_backpressure(
+                server,
+                conn,
+                ServerNotification::Control,
+                wire.as_bytes(),
+            )
+            .await
+            .is_ok();
+            drop(wire);
+            if !sent {
+                return;
             }
         }
     };
@@ -1082,10 +1365,11 @@ async fn serve_central(
     config.scan_config.timeout = CONNECT_WINDOW_TICKS;
     config.scan_config.interval = CONNECT_SCAN_INTERVAL;
     config.scan_config.window = CONNECT_SCAN_WINDOW;
+    config.scan_config.tx_power = preferred_tx_power();
     config.conn_params = preferred_conn_params();
     let conn = match select(central::connect(sd, &config), worker.wait_for_close()).await {
         Either::First(Ok(mut conn)) => {
-            initiate_data_length_extension(&mut conn);
+            tune_link(&mut conn);
             conn
         }
         Either::First(Err(_)) => {
@@ -1152,20 +1436,23 @@ async fn serve_native_central(
     slot.set_peer_protocol(PeerProtocol::Native);
     hub.ready.send(link.into_ready(Origin::Dialed)).await;
 
-    let control_out_rx = slot.control_out.receiver();
     let data_out_rx = slot.data_out.receiver();
-    let control_in_tx = slot.control_in.sender();
     let data_in_tx = slot.data_in.sender();
     let mut reassembler: Reassembler<GATT_REASSEMBLY_CAP> = Reassembler::new();
 
     let inbound = gatt_client::run(&conn, &client, |event| match event {
         NativeReticulumClientEvent::ControlNotification(value) => {
-            if let Some(ctrl) = Control::decode(&value) {
-                if control_in_tx.try_send(ctrl).is_err() {
-                    let _ = record_ingress_pressure(IngressPressure::ControlQueueFull);
-                } else {
+            match slot.control_in.try_enqueue_wire(&value) {
+                ControlOutboxAdmission::Enqueued => {
                     BluetoothAutoStatus::new(&BLE_SHARED).note_successful_admission();
                 }
+                ControlOutboxAdmission::Occupied => {
+                    let _ = record_ingress_pressure(IngressPressure::ControlQueueFull);
+                }
+                ControlOutboxAdmission::PoolExhausted => {
+                    let _ = record_ingress_pressure(IngressPressure::ControlQueueFull);
+                }
+                ControlOutboxAdmission::InvalidControl => {}
             }
         }
         NativeReticulumClientEvent::DataNotification(value) => {
@@ -1179,14 +1466,14 @@ async fn serve_native_central(
 
     let control_outbound = async {
         loop {
-            let ctrl = control_out_rx.receive().await;
-            let mut buf = [0u8; CONTROL_MAX_LEN];
-            if let Some(n) = ctrl.encode(&mut buf) {
-                if let Ok(value) = GattValue::from_slice(&buf[..n]) {
-                    if client.control_write(&value).await.is_err() {
-                        return;
-                    }
-                }
+            let wire = slot.control_out.wait().await;
+            let sent = match GattValue::from_slice(wire.as_bytes()) {
+                Ok(value) => client.control_write(&value).await.is_ok(),
+                Err(_) => false,
+            };
+            drop(wire);
+            if !sent {
+                return;
             }
         }
     };
@@ -1322,11 +1609,12 @@ pub(super) async fn serve_slot(
         slot.reset();
         match job {
             SlotJob::Accept {
-                connection: conn,
+                connection: mut conn,
                 slot: lease,
             } => {
                 let ConnectionSlotOwners { worker, link } = lease.activate();
                 slot.set_address(conn.peer_address().bytes());
+                tune_link(&mut conn);
                 serve_peripheral(l2cap, server, &conn, slot, hub, link, &worker).await;
             }
             SlotJob::Dial {
@@ -1364,7 +1652,7 @@ pub(super) async fn acceptor(sd: &'static Softdevice, hub: &'static BleHub) -> !
             adv_data: &adv_buf[..adv_len],
             scan_data: &scan_data,
         };
-        let adv_config = peripheral::Config::default();
+        let adv_config = peripheral_adv_config();
         let advertise = peripheral::advertise_connectable(sd, adv, &adv_config);
         match select(advertise, hub.advertise.wait()).await {
             Either::First(Ok(conn)) => {
@@ -1395,14 +1683,7 @@ pub(super) async fn scanner(sd: &'static Softdevice, hub: &'static BleHub) -> ! 
             continue;
         }
         let central_radio = hub.acquire_central_radio().await;
-        let config = central::ScanConfig {
-            active: false,
-            extended: false,
-            interval: IDLE_SCAN_INTERVAL,
-            window: IDLE_SCAN_WINDOW,
-            timeout: SCAN_WINDOW_TICKS,
-            ..Default::default()
-        };
+        let config = idle_scan_config();
         let scan = central::scan(sd, &config, |report| {
             if report.data.len == 0 {
                 return None;

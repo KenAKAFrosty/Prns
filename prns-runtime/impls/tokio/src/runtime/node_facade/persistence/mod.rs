@@ -1,10 +1,9 @@
 mod host;
 
-pub(crate) use host::RemoteControlAuthorizationPersistence;
 pub use host::{
     DefaultLocationError, FlushFailurePolicy, NodePersistence, PersistenceEvent,
     PersistenceFlushStatus, PersistenceIntent, PersistenceRestoreReport, PersistenceTrigger,
-    PersistenceWorker, SaveOnLearn, SaveOnLearnWiring,
+    PersistenceWorker, RemoteControlAuthorizationPersistence, SaveOnLearn, SaveOnLearnWiring,
 };
 
 use tokio::sync::oneshot;

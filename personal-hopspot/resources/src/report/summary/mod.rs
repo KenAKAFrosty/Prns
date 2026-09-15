@@ -9,14 +9,16 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use personal_hopspot_builder::artifact::publish;
-use personal_hopspot_builder::{BuildContext, BuildError};
+use personal_hopspot_builder::{BuildContext, BuildError, SourceCustody};
 use thiserror::Error;
 
 use crate::matrix::Matrix;
 
 use super::baseline::{self, BaselineError, CanonicalReportError, BASELINE_SCHEMA_VERSION};
 use super::compare::{self, ComparisonError};
-use super::model::{Evidence, RamCapacityIdentity, ResourceReport, SCHEMA_VERSION};
+use super::model::{
+    Evidence, EvidenceArtifactIdentity, RamCapacityIdentity, ResourceReport, SCHEMA_VERSION,
+};
 use model::{
     ByteMetric, MatrixSummary, TargetSummary, ToolchainRelation, ToolchainSummary,
     SCHEMA_VERSION as SUMMARY_SCHEMA_VERSION,
@@ -65,6 +67,30 @@ pub(crate) enum SummaryError {
         actual: u64,
         expected: u64,
     },
+    #[error("could not inspect evidence artifact {path}: {source}")]
+    EvidenceArtifactMetadata {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("evidence artifact is not a regular file: {path}")]
+    InvalidEvidenceArtifact { path: PathBuf },
+    #[error(
+        "evidence artifact {path} contains {actual} bytes, but its report records {expected} bytes"
+    )]
+    EvidenceArtifactSize {
+        path: PathBuf,
+        actual: u64,
+        expected: u64,
+    },
+    #[error("could not read evidence artifact {path}: {source}")]
+    ReadEvidenceArtifact {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("evidence artifact {path} does not match its recorded fingerprint")]
+    EvidenceArtifactFingerprint { path: PathBuf },
     #[error("{set} resource evidence repeats target {target:?}")]
     DuplicateTarget { set: EvidenceSet, target: String },
     #[error("{set} resource evidence is missing target {target:?}")]
@@ -113,6 +139,7 @@ pub(crate) fn summarize(
     reports_root: &Path,
     baseline_path: &Path,
     output: &Path,
+    current_source: &SourceCustody,
 ) -> Result<SummaryOutcome, SummaryError> {
     let baseline = baseline::load(baseline_path)?;
     let mut baseline_reports = BTreeMap::new();
@@ -161,9 +188,20 @@ pub(crate) fn summarize(
                     set: EvidenceSet::Current,
                     target: target.id().to_string(),
                 })?;
-        baseline::validate_target(target, context, &baseline_report)?;
+        baseline::validate_target(
+            target,
+            context,
+            &baseline_report,
+            baseline::SourceExpectation::Historical,
+        )?;
         validate_linker_map(&current.path, &current.report)?;
-        baseline::validate_target(target, context, &current.report)?;
+        validate_evidence_artifacts(&current.path, &current.report)?;
+        baseline::validate_target(
+            target,
+            context,
+            &current.report,
+            baseline::SourceExpectation::Current(current_source),
+        )?;
         compare::require_matrix_compatible(&baseline_report, &current.report)?;
         targets.push(target_summary(
             target.id(),
@@ -318,6 +356,67 @@ fn validate_linker_map(path: &Path, report: &ResourceReport) -> Result<(), Summa
             actual: metadata.len(),
             expected: report.analysis.linker_map_bytes,
         });
+    }
+    Ok(())
+}
+
+fn validate_evidence_artifacts(
+    report_path: &Path,
+    report: &ResourceReport,
+) -> Result<(), SummaryError> {
+    let fragment = report_path.parent().and_then(Path::parent).ok_or_else(|| {
+        SummaryError::InvalidReportLayout {
+            path: report_path.to_path_buf(),
+        }
+    })?;
+    let executable =
+        report
+            .analysis
+            .executable
+            .complete()
+            .ok_or_else(|| SummaryError::IncompleteEvidence {
+                target: report.target.id.clone(),
+                evidence: "executable",
+            })?;
+    validate_evidence_artifact(fragment, &executable.functions.boundaries_artifact)?;
+    let stack = match &executable.stack {
+        Evidence::Complete(stack) | Evidence::Partial(stack) => stack,
+        Evidence::Unavailable => {
+            return Err(SummaryError::IncompleteEvidence {
+                target: report.target.id.clone(),
+                evidence: "stack",
+            });
+        }
+    };
+    validate_evidence_artifact(fragment, &stack.artifact)
+}
+
+fn validate_evidence_artifact(
+    fragment: &Path,
+    artifact: &EvidenceArtifactIdentity,
+) -> Result<(), SummaryError> {
+    let path = fragment.join(&artifact.path);
+    let metadata =
+        fs::symlink_metadata(&path).map_err(|source| SummaryError::EvidenceArtifactMetadata {
+            path: path.clone(),
+            source,
+        })?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(SummaryError::InvalidEvidenceArtifact { path });
+    }
+    if metadata.len() != artifact.bytes {
+        return Err(SummaryError::EvidenceArtifactSize {
+            path,
+            actual: metadata.len(),
+            expected: artifact.bytes,
+        });
+    }
+    let bytes = fs::read(&path).map_err(|source| SummaryError::ReadEvidenceArtifact {
+        path: path.clone(),
+        source,
+    })?;
+    if prns_flash_manifest::sha256_hex(&bytes) != artifact.fingerprint.as_str() {
+        return Err(SummaryError::EvidenceArtifactFingerprint { path });
     }
     Ok(())
 }

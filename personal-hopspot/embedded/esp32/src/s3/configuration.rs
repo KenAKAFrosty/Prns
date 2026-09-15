@@ -1,10 +1,21 @@
 use super::*;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(super) struct HopspotWifiConfig {
     pub(super) ssid: String,
     pub(super) password: String,
     pub(super) tcp_client: Option<HopspotTcpClientConfig>,
+}
+
+impl core::fmt::Debug for HopspotWifiConfig {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("HopspotWifiConfig")
+            .field("ssid", &self.ssid)
+            .field("password", &"**REDACTED**")
+            .field("tcp_client", &self.tcp_client)
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -35,6 +46,7 @@ impl HopspotWifiConfig {
 
 #[derive(Clone, Copy, Debug)]
 pub(super) enum HopspotWifiConfigSource {
+    RuntimeSealed,
     Provisioning,
     BuildEnvironment,
 }

@@ -41,9 +41,9 @@ impl Default for AutoWifiDevicePolicy {
 }
 
 fn is_virtual(name: &str) -> bool {
-    const VIRTUAL_PREFIXES: [&str; 14] = [
+    const VIRTUAL_PREFIXES: [&str; 15] = [
         "utun", "tun", "tap", "ppp", "ipsec", "awdl", "llw", "gif", "stf", "bridge", "vmnet",
-        "vnic", "docker", "p2p",
+        "vnic", "docker", "p2p", "dummy",
     ];
     VIRTUAL_PREFIXES
         .iter()
@@ -60,6 +60,8 @@ mod tests {
         assert!(is_virtual("p2p-dev-wlan0"));
         assert!(!is_virtual("wlan0"));
         assert!(!is_virtual("wlp0s20f3"));
+        assert!(is_virtual("dummy0"));
+        assert!(!AutoWifiDevicePolicy::default().allows("dummy0", false));
     }
 
     #[test]

@@ -686,7 +686,10 @@ where
     /// Dropping or cancelling this future cannot perform asynchronous cleanup. Call
     /// [`run_until`](Self::run_until) when recipe-managed persistence must land a final
     /// state and ratchet flush.
-    pub async fn run(self) -> Result<(), NodeRunError> {
+    pub async fn run(self) -> Result<(), NodeRunError>
+    where
+        St: prns_runtime::runtime::RemoteControlHostControls,
+    {
         self.run_with_proof_decider(|_| false).await
     }
 
@@ -700,6 +703,7 @@ where
     pub async fn run_with_proof_decider<P>(self, should_prove: P) -> Result<(), NodeRunError>
     where
         P: FnMut(&ProofRequest) -> bool,
+        St: prns_runtime::runtime::RemoteControlHostControls,
     {
         self.run_until_with_proof_decider(core::future::pending::<()>(), should_prove)
             .await
@@ -712,7 +716,10 @@ where
     /// and commits its final state and ratchet snapshots. Successful shutdown flushes,
     /// or a terminal persistence failure, reach the recipe's `on_event` callback before
     /// this method returns.
-    pub async fn run_until(self, shutdown: impl Future<Output = ()>) -> Result<(), NodeRunError> {
+    pub async fn run_until(self, shutdown: impl Future<Output = ()>) -> Result<(), NodeRunError>
+    where
+        St: prns_runtime::runtime::RemoteControlHostControls,
+    {
         self.run_until_with_proof_decider(shutdown, |_| false).await
     }
 
@@ -724,6 +731,7 @@ where
     ) -> Result<(), NodeRunError>
     where
         P: FnMut(&ProofRequest) -> bool,
+        St: prns_runtime::runtime::RemoteControlHostControls,
     {
         let restored = match self.persistence.take() {
             Some(node_persistence) => {

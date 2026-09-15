@@ -23,8 +23,8 @@ use prns_core::interfaces::bluetooth_auto::{
 use prns_core::interfaces::bluetooth_auto::{BleAddress, BleIdentity, Control, Psm};
 
 use super::central::{
-    discover_prns_services, is_system_connected, CentralDelegate, CentralDialCandidate,
-    CentralPeerSession, DialCommand, DialCompletion, DialRejection,
+    cancel_system_connection, discover_prns_services, is_system_connected, CentralDelegate,
+    CentralDialCandidate, CentralPeerSession, DialCommand, DialCompletion, DialRejection,
     CENTRAL_CONTROL_INBOUND_CAPACITY,
 };
 use super::discovery::PeripheralLinkState;
@@ -253,11 +253,15 @@ pub(super) enum DialAdmission {
     /// The target peer already owns an inbound peripheral session. Dialing that same peer as a
     /// central would create the dual-role link that handshake policy is trying to eliminate.
     YieldToInboundSession,
+    /// CoreBluetooth still lists a central-role connection, but Prns no longer has a session for
+    /// it. Cancel that zombie instead of yielding forever to a non-existent inbound owner.
+    CancelStaleSystemConnection,
 }
 
 pub(super) const fn dial_admission(
     already_system_connected: bool,
     target_has_inbound_session: bool,
+    has_central_session: bool,
     restored_state: Option<PeripheralLinkState>,
 ) -> DialAdmission {
     if target_has_inbound_session {
@@ -271,8 +275,10 @@ pub(super) const fn dial_admission(
                 DialAdmission::RejectRestoredConnection
             }
         }
-    } else if already_system_connected {
+    } else if already_system_connected && has_central_session {
         DialAdmission::YieldToSystemConnection
+    } else if already_system_connected {
+        DialAdmission::CancelStaleSystemConnection
     } else {
         DialAdmission::AttachCentralSession
     }
@@ -373,15 +379,15 @@ fn begin_dial(command: DialCommand, target_has_inbound_session: bool, restored_c
     let admission = dial_admission(
         already_system_connected,
         target_has_inbound_session,
+        delegate.has_session(peer_id),
         restored_state,
     );
     let start = match admission {
         DialAdmission::YieldToSystemConnection => {
             crate::diagnostic_log::debug!(
-                "bluetooth: yielding dial to {:02x?} — peer is already connected system-wide outside this manager's restored state",
+                "bluetooth: yielding dial to {:02x?} — a live central session already owns this peer",
                 peer_id.address().octets()
             );
-            delegate.discard_peer(peer_id);
             session.reject(DialRejection::YieldToSystemConnection);
             return;
         }
@@ -412,6 +418,17 @@ fn begin_dial(command: DialCommand, target_has_inbound_session: bool, restored_c
         DialAdmission::AttachCentralSession => DialStart::Connect,
         DialAdmission::ResumeRestoredSession => DialStart::Discover,
         DialAdmission::AwaitRestoredConnection => DialStart::AwaitConnection,
+        DialAdmission::CancelStaleSystemConnection => {
+            crate::diagnostic_log::debug!(
+                "bluetooth: cancelling stale system-wide connection to {:02x?} — no Prns session owns the link",
+                peer_id.address().octets()
+            );
+            cancel_system_connection(&central, peer_id, &peripheral);
+            delegate.discard_peer(peer_id);
+            delegate.note_stale_cancellation(peer_id);
+            session.reject(DialRejection::StaleSystemConnection);
+            return;
+        }
     };
     // SAFETY: both retained Objective-C objects stay alive for the delegate assignment, which runs
     // on the CoreBluetooth serial dispatch queue.

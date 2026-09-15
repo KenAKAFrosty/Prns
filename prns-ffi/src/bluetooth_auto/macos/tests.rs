@@ -15,8 +15,8 @@ use super::backend::{
 };
 use super::central::{
     closed_central_session_ids, CentralDialCandidate, CentralPeerRegistry, CentralPeerSession,
-    RestoredAdmission, RestoredBufferResult, RestoredCallbackBuffer,
-    CENTRAL_CONTROL_INBOUND_CAPACITY,
+    DialCompletion, RestorationProfileAction, RestoredAdmission, RestoredBufferResult,
+    RestoredCallbackBuffer, CENTRAL_CONTROL_INBOUND_CAPACITY,
 };
 use super::data_plane::{DataPlane, PendingL2cap};
 use super::discovery::{
@@ -601,13 +601,27 @@ fn dial_admission_is_scoped_to_the_target_peer() {
     let inbound_sessions = HashMap::from([(inbound_peer, ())]);
 
     assert_eq!(
-        dial_admission(true, false, None),
+        dial_admission(true, false, true, None),
         DialAdmission::YieldToSystemConnection
+    );
+    assert_eq!(
+        dial_admission(true, false, false, None),
+        DialAdmission::CancelStaleSystemConnection
+    );
+    assert_eq!(
+        dial_admission(
+            true,
+            has_session_for_peer(&inbound_sessions, inbound_peer),
+            false,
+            None,
+        ),
+        DialAdmission::YieldToInboundSession
     );
     assert_eq!(
         dial_admission(
             false,
             has_session_for_peer(&inbound_sessions, inbound_peer),
+            false,
             None,
         ),
         DialAdmission::YieldToInboundSession
@@ -616,6 +630,7 @@ fn dial_admission_is_scoped_to_the_target_peer() {
         dial_admission(
             false,
             has_session_for_peer(&inbound_sessions, unrelated_peer),
+            false,
             None,
         ),
         DialAdmission::AttachCentralSession
@@ -625,37 +640,97 @@ fn dial_admission_is_scoped_to_the_target_peer() {
 #[test]
 fn restored_dial_admission_uses_the_exact_peripheral_state() {
     assert_eq!(
-        dial_admission(false, false, Some(PeripheralLinkState::Connected)),
+        dial_admission(false, false, false, Some(PeripheralLinkState::Connected)),
         DialAdmission::ResumeRestoredSession
     );
     assert_eq!(
-        dial_admission(false, false, Some(PeripheralLinkState::Connecting)),
+        dial_admission(false, false, false, Some(PeripheralLinkState::Connecting)),
         DialAdmission::AwaitRestoredConnection
     );
     assert_eq!(
-        dial_admission(false, false, Some(PeripheralLinkState::Disconnected)),
+        dial_admission(false, false, false, Some(PeripheralLinkState::Disconnected)),
         DialAdmission::AttachCentralSession
     );
     assert_eq!(
-        dial_admission(false, false, Some(PeripheralLinkState::Disconnecting)),
+        dial_admission(
+            false,
+            false,
+            false,
+            Some(PeripheralLinkState::Disconnecting)
+        ),
         DialAdmission::RejectRestoredConnection
     );
     assert_eq!(
-        dial_admission(false, false, Some(PeripheralLinkState::Unknown)),
+        dial_admission(false, false, false, Some(PeripheralLinkState::Unknown)),
         DialAdmission::RejectRestoredConnection
     );
     assert_eq!(
-        dial_admission(true, false, Some(PeripheralLinkState::Connecting)),
+        dial_admission(true, false, false, Some(PeripheralLinkState::Connecting)),
         DialAdmission::AwaitRestoredConnection
     );
     assert_eq!(
-        dial_admission(false, true, Some(PeripheralLinkState::Connected),),
+        dial_admission(false, true, false, Some(PeripheralLinkState::Connected)),
         DialAdmission::YieldToInboundSession
     );
     assert_eq!(
-        dial_admission(true, true, None),
+        dial_admission(true, true, false, None),
         DialAdmission::YieldToInboundSession
     );
+}
+
+#[test]
+fn restored_ownership_precedes_stale_system_link_recovery() {
+    for (state, expected) in [
+        (
+            PeripheralLinkState::Connected,
+            DialAdmission::ResumeRestoredSession,
+        ),
+        (
+            PeripheralLinkState::Connecting,
+            DialAdmission::AwaitRestoredConnection,
+        ),
+        (
+            PeripheralLinkState::Disconnected,
+            DialAdmission::AttachCentralSession,
+        ),
+        (
+            PeripheralLinkState::Disconnecting,
+            DialAdmission::RejectRestoredConnection,
+        ),
+        (
+            PeripheralLinkState::Unknown,
+            DialAdmission::RejectRestoredConnection,
+        ),
+    ] {
+        assert_eq!(dial_admission(true, false, false, Some(state)), expected);
+        assert_eq!(
+            dial_admission(true, true, false, Some(state)),
+            DialAdmission::YieldToInboundSession,
+        );
+    }
+}
+
+#[test]
+fn stale_dial_rejection_releases_claim_for_a_later_sighting() {
+    let peer = peer_id(1);
+    let mut registry = CentralPeerRegistry::new(1, 1);
+    assert!(registry.observe(peer, 10_u8, None));
+    assert!(matches!(
+        registry.claim(peer.address()),
+        CentralDialCandidate::Ready { .. }
+    ));
+    assert_eq!(
+        dial_admission(true, false, false, None),
+        DialAdmission::CancelStaleSystemConnection
+    );
+    assert_eq!(registry.remove_peer(peer), Some(10));
+    assert_eq!(registry.peripheral_len(), 0);
+    assert!(registry.observe(peer, 11, None));
+    assert!(matches!(
+        registry.claim(peer.address()),
+        CentralDialCandidate::Ready { peripheral: 11, .. }
+    ));
+    assert!(matches!(registry.begin_session(peer), Ok(None)));
 }
 
 #[test]
@@ -738,7 +813,7 @@ fn role_cleanup_only_selects_a_session_after_its_data_receiver_closes() {
     drop(data_rx);
     assert!(session.data_receiver_closed());
 
-    let (open_control_tx, _open_control_rx) = mpsc::channel::<Control>(1);
+    let (open_control_tx, open_control_rx) = mpsc::channel::<Control>(1);
     let (open_completion_tx, _open_completion_rx) = oneshot::channel();
     let (open_data_tx, _open_data_rx) = gatt_inbound_channel();
     let open_peer = peer_id(2);
@@ -748,8 +823,44 @@ fn role_cleanup_only_selects_a_session_after_its_data_receiver_closes() {
         open_completion_tx,
         open_data_tx,
     );
+    drop(open_control_rx);
     let sessions = HashMap::from([(closed_peer, session), (open_peer, open_session)]);
     assert!(closed_central_session_ids(&sessions) == vec![closed_peer]);
+}
+
+#[test]
+fn closed_session_reaping_does_not_repeat_a_restoration_cancel() {
+    for restored in [false, true] {
+        let peer = peer_id(1);
+        let (control_tx, _control_rx) = mpsc::channel::<Control>(1);
+        let (completion_tx, mut completion_rx) = oneshot::channel();
+        let (data_tx, data_rx) = gatt_inbound_channel();
+        let mut session =
+            CentralPeerSession::new(peer.address(), control_tx, completion_tx, data_tx);
+        session.configure_restoration_recovery(true, restored);
+        if restored {
+            assert_eq!(
+                session.restoration_profile(
+                    prns_core::interfaces::bluetooth_auto::PeerProtocol::Native
+                ),
+                Ok(RestorationProfileAction::Disconnect),
+            );
+        }
+        let mut sessions = HashMap::from([(peer, session)]);
+        assert!(closed_central_session_ids(&sessions).is_empty());
+        drop(data_rx);
+        let closed = closed_central_session_ids(&sessions);
+        assert!(closed == vec![peer]);
+        for peer in closed {
+            let needs_cancel = sessions.remove(&peer).map(CentralPeerSession::retire);
+            assert_eq!(needs_cancel, Some(!restored));
+        }
+        assert!(closed_central_session_ids(&sessions).is_empty());
+        assert!(matches!(
+            completion_rx.try_recv(),
+            Ok(DialCompletion::Failed)
+        ));
+    }
 }
 
 #[tokio::test]

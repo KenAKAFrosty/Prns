@@ -24,6 +24,7 @@ pub struct RemoteTransportStatus {
     pub transport_identity: IdentityHash,
     pub network_identity: Option<IdentityHash>,
     pub uptime: Duration,
+    pub probe_responder: Option<prns_core::wire::DestinationHash>,
 }
 
 pub fn encode_status_response(
@@ -34,11 +35,14 @@ pub fn encode_status_response(
 ) -> Result<Vec<u8>, RemoteResponseEncodeError> {
     let mut stats = interface_stats(inventory);
     if let Some(transport) = transport {
-        stats = stats.with_transport(RnsTransportStatus::new(
-            transport.transport_identity,
-            transport.network_identity,
-            transport.uptime,
-        ));
+        stats = stats.with_transport(
+            RnsTransportStatus::new(
+                transport.transport_identity,
+                transport.network_identity,
+                transport.uptime,
+            )
+            .with_probe_responder(transport.probe_responder),
+        );
     }
     let link_count =
         (request == RemoteStatusRequest::InterfaceStatsAndLinkCount).then_some(link_count);
@@ -71,7 +75,7 @@ pub fn encode_rate_table_response(
 mod tests {
     use super::*;
     use prns_core::interfaces::{InterfaceId, InterfaceKind};
-    use prns_core::routing::NextHop;
+    use prns_core::routing::{NextHop, RouteRetention};
     use prns_core::units::InstantMillis;
     use prns_core::wire::DestinationHash;
 
@@ -109,6 +113,7 @@ mod tests {
                 transport_identity: IdentityHash::new([0x11; 16]),
                 network_identity: Some(IdentityHash::new([0x22; 16])),
                 uptime: Duration::from_millis(1_500),
+                probe_responder: None,
             }),
         )
         .unwrap();
@@ -130,6 +135,7 @@ mod tests {
             last_route_activity_at: InstantMillis(1_500),
             expires_at: InstantMillis(2_000),
             interface: InterfaceId::from_channel_tag(InterfaceKind::TcpClient, b"remote"),
+            retention: RouteRetention::Network,
         }
     }
 
