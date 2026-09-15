@@ -27,11 +27,64 @@ versions.
 - USB Auto unit selection: 11 passed.
 - Tool and validation registry checks; 102 selected tooling/registry tests.
 - App UI tests: 221 passed; TypeScript checks passed.
+- SDK JavaScript tests: 49 passed.
+- Native application tests: 136 unit and four integration tests passed.
+- Swift lifecycle, protected-data, start-dispatch, restoration-diagnostic and
+  release-symbol selections passed on the host.
 
-These are source and host checks, not phone Bluetooth or lifecycle acceptance.
-Android packaging, firmware resource measurements and device journeys are the
-next qualification stage. Historical firmware margins and earlier phone results
-do not qualify this integration.
+Full `applications` verification passes at `a122dd21c`, including generated
+bindings/provenance, portable native, SDK/UI, configuration, Expo Doctor 21/21
+and web export. The first run stopped at Expo's newly updated patch requirements;
+the six compatible SDK 57 patches and their required transitive updates were
+committed separately. React Native, API 29 and the generated binding boundary are
+unchanged. These source/host checks do not establish phone lifecycle acceptance.
+
+## Current Android device build
+
+The bundled, standalone arm64 APK built successfully for Android API 29, passed
+its JVM and 16 KiB native-library alignment checks, and was installed on the
+Galaxy S9+ running Android 10. It requires no Metro connection. APK SHA-256:
+`78e630beae02f764595eab7c5671572f2b3494d53e42d2bf320f7e24f61f7cd5`.
+Its native core is the integrated `a751b1cda`; the subsequent `1a4dbfe54`
+compatibility pin/documentation commit does not change compiled application code.
+
+Before updating the board, a retained-grant Check failed against its older
+`6800e43ab2ac` firmware despite an established Bluetooth connection. This is
+recorded as a failed mixed-version trial, not evidence of successful retained
+pairing or proof of a regression in the new build.
+
+The disposable application data was then reset through its development UI.
+Pristine interactive identity import passed these physical checks:
+
+- Cancelling the picker leaves import unavailable and setup unchanged.
+- A malformed 13-byte file is rejected before confirmation.
+- A public 64-byte test identity previews and imports with the independently
+  calculated identity hash `5235c813b0219ff915bc86f8725b51f4`.
+- After a force-stop and cold launch, the local node runs with that same primary
+  identity. The identity is deliberately public test material, not user key data.
+
+On this first APK, a full physical two-way exchange through E290 passed against
+the pinned Python LXMF peer. Python verified the app's message, and the phone
+stored the incoming verified message and outgoing delivery confirmation (378 ms).
+A subsequent message to the stopped peer failed as expected. With Bluetooth off
+and after a cold launch, the saved conversation remained visible; Retry followed
+by Cancel changed the same record to Cancelled. That state survived another cold
+launch. The observed intermediate state was Sending, not a captured Queued state.
+
+The Expo patch update produced a second standalone APK, installed without clearing
+data. Its SHA-256 is
+`8c221aa11cb86da89b6b1d99bb225ffeef748d438ee8d09e7371d8547833aa14`;
+source changes are committed in `a122dd21c`. The new APK retained the three saved
+messages while Bluetooth was off, including the cancelled record. Turning
+Bluetooth on restored the E290 connection, and a second complete Python exchange
+passed with phone delivery confirmation in 195 ms. The old cancelled message was
+not received by the peer during that bounded exchange. This is not indefinite
+no-resend or general upgrade/migration qualification.
+
+These are distinct APKs: pristine import and the first offline action journey
+were performed before the Expo patch update. Fresh pairing, authenticated
+requests, controlled caller cancellation and repeated recovery remain open.
+No physical iOS result is claimed for this integration.
 
 ## Upstream contribution follow-up
 
@@ -52,12 +105,41 @@ qualification of an isolated PR branch.
 
 Upstream adds a third Hopspot destination and new embedded assurance gates.
 T-Echo retains its configured fat LTO; thin LTO is specific to MeshTower V2.
-Remeasure the integrated firmware rather than transferring either upstream's
-or the previous app's flash margin.
+Five canonical memory contracts and two freshly built resource profiles passed:
 
-The embedded readiness check found missing pinned Miri/ISA emulator prerequisites
-and a local ESP tool executable linked to a removed library. Resource-tool
-repair is separate from full assurance readiness; no gate is waived.
+| Target | Application image | FLASH headroom | Static-RAM headroom |
+| --- | ---: | ---: | ---: |
+| T-Echo S140 v7 | 622,264 bytes | **328 bytes** | 4,032 bytes |
+| E290 | 2,202,944 bytes | 12,923,584 bytes | 47,860 bytes |
+
+These measurements use source `1a4dbfe54`, stable Rust 1.98.1, and working-tree
+custody: unrelated untracked files were preserved. They are not clean-commit
+assurance-baseline evidence or a fresh result for all 14 configured profiles.
+The small T-Echo margin remains a release risk; do not attribute its difference
+from earlier measurements solely to upstream source changes.
+
+The E290 was rebuilt and flashed through the canonical local-flash path, with
+all three sparse parts verified and saved Wi-Fi/NVS settings preserved. Runtime
+logging confirms boot source `1a4dbfe54e50`. Flashed application SHA-256:
+`9c55cdd5f64f47eb004a3459293c1da7d25536ed1fff19c798970a907902d2f1`.
+The resource and flashed images have identical code/data and section sizes;
+four build-timestamp bytes differ, so their distinct hashes are retained.
+
+The missing pinned Miri/ISA tools and broken local ESP tool dependency were
+repaired in the isolated external build root, without changing global tools or
+waiving gates. Miri quick passed 35 tests (stacked borrows); the Thumbv7em and
+RISC-V quick suites passed two shared-state-machine scenarios each with matching
+transcripts. Pins are Rust 1.96.0, nightly-2025-11-21 and QEMU 11.1.1. These runs
+captured working-tree custody at `1a4dbfe54`, with different documentation diff
+fingerprints; they are development evidence, not one clean publication baseline.
+The full normal publishing selection and other emulator/platform scopes remain
+separate.
+
+Local raw logs, copied resource reports, the flash receipt, identity-import UI
+captures and hashes are kept under `scratch/prns-app/2026-09-15/`. An unsuccessful
+UI dump reused an old Android XML file; that capture is explicitly marked
+`invalid-stale` and excluded from acceptance. The helper now rejects failed fresh
+dumps, and a current screenshot verifies the retained identity instead.
 
 Only the main source checkout is needed. Build caches and firmware artifacts
 use a bounded external build root; archived historical working-directory paths

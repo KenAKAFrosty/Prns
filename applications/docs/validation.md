@@ -10,9 +10,9 @@ Browser and Tauri runtime providers are not implemented.
 The generated-binding cutover, follow-up builds and earlier phone trials are
 different evidence. Do not transfer physical acceptance between their binaries.
 Dated checkpoints describe their recorded source and builds, not current PR
-status. Upstream integration and refreshed Android physical acceptance began on
-September 15 and are in progress; no results for the resulting app or firmware
-builds are claimed below.
+status. The [September 15 integration](../checkpoints/2026-09-15-upstream-integration.md)
+records the refreshed source, APK and firmware hashes. Android acceptance is in
+progress; its completed import checks are separate from earlier phone results.
 
 | Evidence | Recorded scope | Not established |
 | --- | --- | --- |
@@ -27,6 +27,7 @@ builds are claimed below.
 | Pre-correction iOS diagnostic framework | USB-captured restored-handshake stall, local cleanup and fresh handshake; incoming proof in 474 ms, first resumed Check in 383 ms and four exact stored-message checks | A transport fix, original-startup-failure cause, fresh pairing, natural suspension, continuously locked or Metro-off qualification |
 | Corrected iOS restoration framework | Two captured one-shot recoveries without the old stall; SIGTERM reset-to-Welcome in 2.395 s, incoming proof in 485 ms, first resumed Check in 354 ms, stored-message verification and a separate full two-way exchange | Initial ordinary-start failure or 32-second-delay fix, fresh pairing, confirmed no-touch window, natural suspension, continuous lock or Metro-off qualification |
 | Corrected iOS framework with offline Inbox UI fix | Cold denied-access saved messages/contacts, Failed → Retry → Queued → Cancelled, same-record retention after process restart; restored access, first Check in 378 ms, incoming delivery and bounded no-resend | Retry as first SDK call, power-loss durability, Android acceptance of this UI revision, fresh pairing or broader lifecycle qualification |
+| September 15 integrated standalone Android APK | Pristine picker cancellation, malformed identity rejection, verified public test identity import and same-identity cold restart | Fresh pairing, authenticated requests on updated firmware, messaging, offline actions, repeated recovery or iOS acceptance of this integration |
 
 The [generated-binding checkpoint](../checkpoints/2026-09-09-validation.md#generated-binding-cutover)
 records the harness and integrated test boundaries. The [clean Android checkpoint](../checkpoints/2026-09-09-validation.md#clean-combined-checkpoint--september-9)
@@ -82,6 +83,14 @@ host tests, an APK build, and a physical journey answer different questions.
 Platform procedures are in the [iOS](ios.md) and [Android](android.md) guides.
 
 ## Firmware and repository checks
+
+The [September 15 integration](../checkpoints/2026-09-15-upstream-integration.md)
+passes five canonical memory contracts and fresh T-Echo S140 v7/E290 resource
+builds. T-Echo has **328 bytes** of FLASH and 4,032 bytes of static-RAM headroom;
+E290 has 12,923,584 and 47,860 bytes respectively. These are working-tree
+measurements on the recorded source/toolchain, not a new full-profile or
+clean-commit assurance result. E290's canonical flash and subsequent boot were
+verified; saved Wi-Fi/NVS settings were retained.
 
 The [September 10 app qualification](../checkpoints/2026-09-10-app-publication.md)
 records fresh full-app, detached-consumer and iOS platform checks for core
@@ -185,8 +194,9 @@ failures; these are different commands, neither silently waived.
 - Complete the exact-build physical journeys in the follow-up checkpoint.
   Fresh generated-binding pairing, controlled caller cancellation and current
   repeated radio/lifecycle recovery remain open; grant reuse is not new pairing.
-- Pristine interactive identity-import onboarding, separately from picker
-  guards and isolated native import tests.
+- Pristine interactive identity-import onboarding on iOS. The September 15
+  Galaxy build passed the interactive import and cold-retention journey;
+  picker guards and isolated native tests alone are not phone acceptance.
 - iOS natural suspension and repeated restoration, authorized force-quit
   behavior and negative controls, protected-storage boundaries, and
   repeatable delivery/resume recovery with complete native timelines. The bounded

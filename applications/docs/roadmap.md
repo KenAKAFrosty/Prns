@@ -25,10 +25,11 @@ observations remain tied to their recorded builds.
 
 ## Next: finish the current transition
 
-The September 15 pass starts with upstream integration against the reviewed
-trunk `35859bb89`, then refreshed Android acceptance with the connected test
-devices. Both are in progress; earlier checkpoints do not qualify the resulting
-app or firmware builds.
+The [September 15 checkpoint](../checkpoints/2026-09-15-upstream-integration.md)
+integrates reviewed upstream trunk `35859bb89`. A new standalone Android build
+and matching E290 firmware are installed; pristine Galaxy identity import and
+cold-restart retention pass. Fresh pairing and the remaining mobile journeys
+are in progress. Earlier checkpoints do not qualify these binaries.
 
 1. Diagnose the initial iOS nonconnection and recheck chooser visibility.
    The same framework later passed retained-grant checks and
@@ -42,7 +43,9 @@ app or firmware builds.
    messaging. Extend its lifecycle qualification; it does not yet explain or fix
    the initial ordinary-start timeout.
 2. Close the remaining generated-binding physical checks: fresh pairing,
-   pristine import, controlled read cancellation and repeated recovery. The
+   controlled read cancellation and repeated recovery. Pristine interactive
+   import now passes on the September 15 Galaxy build; iOS import is still open.
+   The
    [offline continuation](../checkpoints/2026-09-09-offline-and-upstream-refresh.md)
    now covers cold iOS saved messages/contacts, Retry/Cancel, restart retention
    and a bounded return of the peer. Android still needs current-build offline
@@ -58,8 +61,10 @@ app or firmware builds.
    window. The earlier trials remain separate. Natural suspension, quiet idle,
    Metro-off, force-quit and
    protected-data cases remain explicit qualification work. Preserve the firmware
-   size gate: the [September 10 app qualification](../checkpoints/2026-09-10-app-publication.md)
-   leaves just 624 bytes on T-Echo S140 v7. Remeasure after firmware-relevant changes.
+   size gate: the September 15 integrated T-Echo S140 v7 build leaves just
+   **328 bytes** of FLASH headroom. Only T-Echo and E290 were remeasured in this
+   pass; the full configured profile matrix remains separate. Remeasure after
+   firmware-relevant changes.
 4. Finish upstream integration and landing. September 12 publication opened
    eleven draft PRs, [#215](https://github.com/KenAKAFrosty/Prns/pull/215) through
    [#225](https://github.com/KenAKAFrosty/Prns/pull/225), and updated the shared
