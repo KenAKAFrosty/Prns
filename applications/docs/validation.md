@@ -9,6 +9,10 @@ Browser and Tauri runtime providers are not implemented.
 
 The generated-binding cutover, follow-up builds and earlier phone trials are
 different evidence. Do not transfer physical acceptance between their binaries.
+Dated checkpoints describe their recorded source and builds, not current PR
+status. Upstream integration and refreshed Android physical acceptance began on
+September 15 and are in progress; no results for the resulting app or firmware
+builds are claimed below.
 
 | Evidence | Recorded scope | Not established |
 | --- | --- | --- |
@@ -18,7 +22,7 @@ different evidence. Do not transfer physical acceptance between their binaries.
 | Earlier physical iOS builds | Accessory authorization, pairing, authenticated checks, direct messaging, and bounded suspension/restoration observations | Reliable first-attempt recovery, complete restoration behavior, or qualification of the generated-binding build |
 | Earlier physical Android 10 builds | Pairing, direct messaging, Stop/Start, permission recovery, offline retry/cancel, retention, and twenty-two clean radio cycles | Qualification of the generated-binding build, newer Android versions, deep Doze, or power-loss durability |
 | Generated-binding Android follow-up, before footprint integration | Existing-grant checks, Stop/Start without resurrection, two-way Python LXMF messaging and cold-process retention | Fresh pairing, controlled radio recovery, held-request cancellation or qualification of the later rebuilt APK |
-| Current generated-binding Android APK | Cold retained-grant check, one real Settings Bluetooth cycle with successful first reconnect check, and retained-data spot-check | Fresh pairing, repeated messaging, full controller power-off, long idle or controlled cancellation |
+| Recorded generated-binding Android APK | Cold retained-grant check, one real Settings Bluetooth cycle with successful first reconnect check, and retained-data spot-check | Fresh pairing, repeated messaging, full controller power-off, long idle or controlled cancellation |
 | Pre-diagnostic generated-binding iOS framework | Initial timeout, later foreground checks/two-way messaging and restart retention; logged SIGTERM restoration trial; separate controlled off-screen receipt, stored-message UI and first resumed Check in 359 ms | Initial-failure cause or fix, fresh pairing or full lifecycle qualification; no native timeline for the controlled repeat |
 | Pre-correction iOS diagnostic framework | USB-captured restored-handshake stall, local cleanup and fresh handshake; incoming proof in 474 ms, first resumed Check in 383 ms and four exact stored-message checks | A transport fix, original-startup-failure cause, fresh pairing, natural suspension, continuously locked or Metro-off qualification |
 | Corrected iOS restoration framework | Two captured one-shot recoveries without the old stall; SIGTERM reset-to-Welcome in 2.395 s, incoming proof in 485 ms, first resumed Check in 354 ms, stored-message verification and a separate full two-way exchange | Initial ordinary-start failure or 32-second-delay fix, fresh pairing, confirmed no-touch window, natural suspension, continuous lock or Metro-off qualification |
@@ -81,7 +85,7 @@ Platform procedures are in the [iOS](ios.md) and [Android](android.md) guides.
 
 The [September 10 app qualification](../checkpoints/2026-09-10-app-publication.md)
 records fresh full-app, detached-consumer and iOS platform checks for core
-`451e669da`, and the current repository/firmware results. Earlier checkpoints
+`451e669da`, and that build's repository/firmware results. Earlier checkpoints
 below remain measurements of their own source and builds, not current PR state.
 
 The [September 10 test fixes](../checkpoints/2026-09-10-app-ci-fixes.md) address
@@ -97,15 +101,19 @@ The [follow-up measurement](../checkpoints/2026-09-09-follow-up.md#firmware-foot
 distinguishes those builds and preserves the earlier 1,984-byte overflow.
 This is not a new full repository publishing-gate result or device qualification.
 
-The [latest unpublished refresh](../checkpoints/2026-09-09-offline-and-upstream-refresh.md#unpublished-upstream-refresh)
+The [September 9 Nordic refresh](../checkpoints/2026-09-09-offline-and-upstream-refresh.md#unpublished-upstream-refresh)
 fits T-Echo S140 v7 with 1,224 bytes remaining; its diagnostics-only parent fails
-by 1,344 bytes. It should therefore be proposed as one combined PR. The refreshed
-iOS copies pass focused FFI and canonical inventory checks, but broader CI and
-peripheral-role hardware qualification remain. The separate
+by 1,344 bytes. These changes were published together as
+[#215](https://github.com/KenAKAFrosty/Prns/pull/215) on September 12. The refreshed
+iOS candidates passed focused FFI and canonical inventory checks; native recovery
+and write batching were subsequently published as
+[#218](https://github.com/KenAKAFrosty/Prns/pull/218) and
+[#223](https://github.com/KenAKAFrosty/Prns/pull/223). The separate
 [write-batch source correction](../checkpoints/2026-09-09-corebluetooth-write-batches.md)
-is committed and integrated with a new core pin; native and generated-contract
-checks pass. No new phone binary was installed, so earlier physical results
-remain tied to their recorded builds. Original PR heads are unchanged.
+was committed and integrated with a new core pin; native and generated-contract
+checks passed. That checkpoint installed no new phone binary. Publication does
+not add peripheral-role hardware acceptance or transfer earlier phone results
+to a new build.
 
 The [publication continuation](../checkpoints/2026-09-09-publication-preparation.md)
 adds a real Mac manager/radio smoke and refreshed #199/#208/#209 candidates.
@@ -136,6 +144,29 @@ and #199 (14), each with 22 host workspaces and all 14 firmware profiles.
 T-Echo S140 v7 retained 472 and 480 FLASH bytes respectively. Fresh focused FFI
 and USB tests passed; the app remote and installed devices were unchanged.
 The new GitHub runs were still incomplete at the post-publication readback.
+
+On September 12, eleven new draft PRs were published:
+[#215](https://github.com/KenAKAFrosty/Prns/pull/215),
+[#216](https://github.com/KenAKAFrosty/Prns/pull/216),
+[#217](https://github.com/KenAKAFrosty/Prns/pull/217),
+[#218](https://github.com/KenAKAFrosty/Prns/pull/218),
+[#219](https://github.com/KenAKAFrosty/Prns/pull/219),
+[#220](https://github.com/KenAKAFrosty/Prns/pull/220),
+[#221](https://github.com/KenAKAFrosty/Prns/pull/221),
+[#222](https://github.com/KenAKAFrosty/Prns/pull/222),
+[#223](https://github.com/KenAKAFrosty/Prns/pull/223),
+[#224](https://github.com/KenAKAFrosty/Prns/pull/224), and
+[#225](https://github.com/KenAKAFrosty/Prns/pull/225).
+Each exact published branch passed its unchanged normal first-publication hook:
+22 host workspaces, 41 selected parity lanes and all 14 firmware profiles.
+The shared Host snapshot [#201](https://github.com/KenAKAFrosty/Prns/pull/201)
+was updated separately to `851b8b359`; its two normal follow-up pushes passed
+23 host workspaces and their separately selected parity checks. The app remained
+at `f3755a977`, and publication involved no device installation, board flash or
+new hardware acceptance. Remote CI still had inherited USB-fixture/notices
+failures, reviewed test-only CodeQL findings and an unresolved Android Auto-WiFi
+test timeout at that readback. These are dated observations, not a current CI
+snapshot or a claim that all published branches passed the remote matrix.
 
 Keep compiled Cargo targets separate for each worktree. A reused target accepted
 older source timestamps and ran another checkout's test binary; its firmware

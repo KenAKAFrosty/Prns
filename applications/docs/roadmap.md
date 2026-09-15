@@ -18,12 +18,17 @@ generated API and native lifecycle boundary.
 - A responsive Expo shell and stable screen catalog. Web has an explicitly
   unavailable runtime; browser/Tauri ownership decisions exist, not providers.
 
-These are development capabilities. The [follow-up checkpoint](../checkpoints/2026-09-09-follow-up.md)
+These are development capabilities. The [dated follow-up checkpoint](../checkpoints/2026-09-09-follow-up.md)
 records completed cold Retry admission, iOS preparation-queue and connection-check
 lifetime fixes, plus the constrained firmware footprint correction. Physical
 observations remain tied to their recorded builds.
 
 ## Next: finish the current transition
+
+The September 15 pass starts with upstream integration against the reviewed
+trunk `35859bb89`, then refreshed Android acceptance with the connected test
+devices. Both are in progress; earlier checkpoints do not qualify the resulting
+app or firmware builds.
 
 1. Diagnose the initial iOS nonconnection and recheck chooser visibility.
    The same framework later passed retained-grant checks and
@@ -53,21 +58,23 @@ observations remain tied to their recorded builds.
    window. The earlier trials remain separate. Natural suspension, quiet idle,
    Metro-off, force-quit and
    protected-data cases remain explicit qualification work. Preserve the firmware
-   size gate: the [latest app qualification](../checkpoints/2026-09-10-app-publication.md)
+   size gate: the [September 10 app qualification](../checkpoints/2026-09-10-app-publication.md)
    leaves just 624 bytes on T-Echo S140 v7. Remeasure after firmware-relevant changes.
-4. Finish upstream landing and remaining contributions. Independent CI fixes
-   [#213](https://github.com/KenAKAFrosty/Prns/pull/213) and
-   [#214](https://github.com/KenAKAFrosty/Prns/pull/214) are open. The five reviewed
-   USB/iOS PRs are now [refreshed and published](../checkpoints/2026-09-09-pr-refresh.md),
-   with verified backups, fresh passing local gates and revised descriptions.
-   Complete remote CI remains open; the separate fixes must land before treating
-   the whole stack as green. Recheck refs and prepare new protected updates as
-   upstream advances. Native recovery, the [peripheral write-batch correction](../checkpoints/2026-09-09-corebluetooth-write-batches.md)
-   and combined Nordic diagnostics/footprint remain unpublished. Keep the Nordic
-   changes together because diagnostics alone do not fit T-Echo. Physical write
-   batching is still unqualified. App qualification and its draft-update scope
-   are recorded in the [September 10 checkpoint](../checkpoints/2026-09-10-app-publication.md);
-   use PR #197 for current publication and remote CI status.
+4. Finish upstream integration and landing. September 12 publication opened
+   eleven draft PRs, [#215](https://github.com/KenAKAFrosty/Prns/pull/215) through
+   [#225](https://github.com/KenAKAFrosty/Prns/pull/225), and updated the shared
+   Host snapshot [#201](https://github.com/KenAKAFrosty/Prns/pull/201). This includes
+   combined Nordic diagnostics/footprint (#215), native iOS recovery
+   [#218](https://github.com/KenAKAFrosty/Prns/pull/218), and atomic CoreBluetooth
+   write batches [#223](https://github.com/KenAKAFrosty/Prns/pull/223); they are no
+   longer unpublished candidates. Keep the Nordic changes together: the recorded
+   diagnostics-only parent does not fit T-Echo. Physical write batching remains
+   unqualified. Recheck upstream overlap, PR dependencies and remote CI before
+   rebasing affected branches; passing local publication gates did not make the
+   entire remote matrix green. The [validation record](validation.md#firmware-and-repository-checks)
+   separates these results from app qualification and device evidence. Use
+   [#197](https://github.com/KenAKAFrosty/Prns/pull/197) for the app's current
+   publication and remote CI status.
 
 Finish this bounded transition before expanding the product surface.
 
