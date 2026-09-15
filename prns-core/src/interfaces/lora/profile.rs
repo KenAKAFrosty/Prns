@@ -396,6 +396,48 @@ pub const DEFAULT_915_PROFILE: RadioProfile = RadioProfile {
     region: Region::Us915,
 };
 
+/// The EU868 counterpart of [`DEFAULT_915_PROFILE`], for boards shipped into the European
+/// 868 MHz band. `MediumFast` occupies 250 kHz, so the 868.3 MHz centre sits wholly inside the
+/// 868.0-868.6 MHz band. Transmit power is 14 dBm rather than 22 dBm because that is the EU868
+/// ceiling (`Region::max_tx_power`); a 22 dBm profile is rejected by `RadioProfile::validate`.
+/// `AirtimePolicy::Regional` additionally applies the band's 1% duty cycle.
+pub const DEFAULT_868_PROFILE: RadioProfile = RadioProfile {
+    frequency: Region::Eu868.default_frequency(),
+    modulation: ModemPreset::MediumFast.modulation(),
+    tx_power: Region::Eu868.max_tx_power(),
+    preamble: PreambleSymbols::new(18),
+    region: Region::Eu868,
+};
+
+const _: () = {
+    assert!(DEFAULT_868_PROFILE.validate().is_ok());
+    assert!(DEFAULT_868_PROFILE.frequency.hz() == 868_300_000);
+    assert!(DEFAULT_868_PROFILE.tx_power.dbm() == 14);
+};
+
+/// The EU 869.4-869.65 MHz "g3" sub-band profile: 500 mW ERP and a 10 % duty cycle instead of
+/// EU868's 25 mW / 1 %, which is what a LoRa repeater needs. 869.4625 MHz / 125 kHz / SF8 / 4:5
+/// is the channel the nearby public gateways publish on rmap.world (Essen, Ede, Utrecht), so a
+/// node on this profile joins them rather than sitting on a private channel. Transmit power is the
+/// `Region::Eu869` ceiling of 22 dBm, the SX1262's own limit and well inside 27 dBm ERP.
+pub const DEFAULT_869_PROFILE: RadioProfile = RadioProfile {
+    frequency: Frequency::new(869_462_500),
+    modulation: Modulation::Lora {
+        spreading_factor: SpreadingFactor::Sf8,
+        bandwidth: LoraBandwidth::Bw125kHz,
+        coding_rate: CodingRate::Cr45,
+    },
+    tx_power: Region::Eu869.max_tx_power(),
+    preamble: PreambleSymbols::new(18),
+    region: Region::Eu869,
+};
+
+const _: () = {
+    assert!(DEFAULT_869_PROFILE.validate().is_ok());
+    assert!(DEFAULT_869_PROFILE.frequency.hz() == 869_462_500);
+    assert!(DEFAULT_869_PROFILE.tx_power.dbm() == 22);
+};
+
 pub fn channel_tag(profile: &RadioProfile) -> HeaplessVec<u8, CHANNEL_TAG_CAP> {
     let mut tag = HeaplessVec::new();
     let _ = tag.extend_from_slice(&profile.frequency.hz().to_be_bytes());
@@ -434,6 +476,25 @@ mod tests {
             ..DEFAULT_915_PROFILE
         };
         assert_eq!(sub_sf7.time_on_air_us(50), 13_834);
+    }
+
+    #[test]
+    fn eu869_profile_matches_the_essen_ruhr_reti_gateway_channel() {
+        // rmap.world, 2026-09-15: the nearest public gateways (RUHR-RETI and CORALLE in Essen,
+        // the Ede/Utrecht cluster) all publish 869.4625 MHz / 125 kHz / SF8 in the 10 % duty g3 band.
+        assert_eq!(DEFAULT_869_PROFILE.frequency.hz(), 869_462_500);
+        assert_eq!(
+            DEFAULT_869_PROFILE.modulation,
+            Modulation::Lora {
+                spreading_factor: SpreadingFactor::Sf8,
+                bandwidth: LoraBandwidth::Bw125kHz,
+                coding_rate: CodingRate::Cr45,
+            }
+        );
+        assert_eq!(DEFAULT_869_PROFILE.region, Region::Eu869);
+        assert_eq!(DEFAULT_869_PROFILE.tx_power, Region::Eu869.max_tx_power());
+        assert_eq!(DEFAULT_869_PROFILE.preamble, PreambleSymbols::new(18));
+        assert!(DEFAULT_869_PROFILE.validate().is_ok());
     }
 
     #[test]

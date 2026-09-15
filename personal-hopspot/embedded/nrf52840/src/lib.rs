@@ -5,10 +5,11 @@
     feature = "board-t096",
     feature = "board-t114",
     feature = "board-t1000e",
-    feature = "board-mesh-tower-v2"
+    feature = "board-mesh-tower-v2",
+    feature = "board-sensecap-solar-node"
 )))]
 compile_error!(
-    "select exactly one nRF52840 board feature; available: board-t-echo, board-t096, board-t114, board-t1000e, board-mesh-tower-v2"
+    "select exactly one nRF52840 board feature; available: board-t-echo, board-t096, board-t114, board-t1000e, board-mesh-tower-v2, board-sensecap-solar-node"
 );
 
 #[cfg(any(
@@ -16,12 +17,17 @@ compile_error!(
     all(feature = "board-t-echo", feature = "board-t114"),
     all(feature = "board-t-echo", feature = "board-t1000e"),
     all(feature = "board-t-echo", feature = "board-mesh-tower-v2"),
+    all(feature = "board-t-echo", feature = "board-sensecap-solar-node"),
     all(feature = "board-t096", feature = "board-t114"),
     all(feature = "board-t096", feature = "board-t1000e"),
     all(feature = "board-t096", feature = "board-mesh-tower-v2"),
+    all(feature = "board-t096", feature = "board-sensecap-solar-node"),
     all(feature = "board-t114", feature = "board-t1000e"),
     all(feature = "board-t114", feature = "board-mesh-tower-v2"),
-    all(feature = "board-t1000e", feature = "board-mesh-tower-v2")
+    all(feature = "board-t114", feature = "board-sensecap-solar-node"),
+    all(feature = "board-t1000e", feature = "board-mesh-tower-v2"),
+    all(feature = "board-t1000e", feature = "board-sensecap-solar-node"),
+    all(feature = "board-mesh-tower-v2", feature = "board-sensecap-solar-node")
 ))]
 compile_error!("nRF52840 board features are mutually exclusive");
 
@@ -58,6 +64,14 @@ compile_error!("S140 compatibility features are mutually exclusive");
 ))]
 compile_error!("T1000-E does not support S140 compatibility features");
 
+#[cfg(all(
+    feature = "board-sensecap-solar-node",
+    any(feature = "softdevice-s140-v6", feature = "softdevice-s140-v7")
+))]
+compile_error!(
+    "SenseCAP Solar Node runs bare-metal; its factory S140 7.3.0 stays resident but unused"
+);
+
 mod boards;
 #[cfg(any(feature = "board-t096", feature = "board-t114"))]
 mod immediate_display;
@@ -69,35 +83,48 @@ mod retained_display;
         not(feature = "board-t096"),
         not(feature = "board-t114"),
         not(feature = "board-t1000e"),
-        not(feature = "board-mesh-tower-v2")
+        not(feature = "board-mesh-tower-v2"),
+        not(feature = "board-sensecap-solar-node")
     ),
     all(
         feature = "board-t096",
         not(feature = "board-t-echo"),
         not(feature = "board-t114"),
         not(feature = "board-t1000e"),
-        not(feature = "board-mesh-tower-v2")
+        not(feature = "board-mesh-tower-v2"),
+        not(feature = "board-sensecap-solar-node")
     ),
     all(
         feature = "board-t114",
         not(feature = "board-t-echo"),
         not(feature = "board-t096"),
         not(feature = "board-t1000e"),
-        not(feature = "board-mesh-tower-v2")
+        not(feature = "board-mesh-tower-v2"),
+        not(feature = "board-sensecap-solar-node")
     ),
     all(
         feature = "board-t1000e",
         not(feature = "board-t-echo"),
         not(feature = "board-t096"),
         not(feature = "board-t114"),
-        not(feature = "board-mesh-tower-v2")
+        not(feature = "board-mesh-tower-v2"),
+        not(feature = "board-sensecap-solar-node")
     ),
     all(
         feature = "board-mesh-tower-v2",
         not(feature = "board-t-echo"),
         not(feature = "board-t096"),
         not(feature = "board-t114"),
-        not(feature = "board-t1000e")
+        not(feature = "board-t1000e"),
+        not(feature = "board-sensecap-solar-node")
+    ),
+    all(
+        feature = "board-sensecap-solar-node",
+        not(feature = "board-t-echo"),
+        not(feature = "board-t096"),
+        not(feature = "board-t114"),
+        not(feature = "board-t1000e"),
+        not(feature = "board-mesh-tower-v2")
     )
 ))]
 mod runtime;
@@ -109,35 +136,48 @@ mod storage;
         not(feature = "board-t096"),
         not(feature = "board-t114"),
         not(feature = "board-t1000e"),
-        not(feature = "board-mesh-tower-v2")
+        not(feature = "board-mesh-tower-v2"),
+        not(feature = "board-sensecap-solar-node")
     ),
     all(
         feature = "board-t096",
         not(feature = "board-t-echo"),
         not(feature = "board-t114"),
         not(feature = "board-t1000e"),
-        not(feature = "board-mesh-tower-v2")
+        not(feature = "board-mesh-tower-v2"),
+        not(feature = "board-sensecap-solar-node")
     ),
     all(
         feature = "board-t114",
         not(feature = "board-t-echo"),
         not(feature = "board-t096"),
         not(feature = "board-t1000e"),
-        not(feature = "board-mesh-tower-v2")
+        not(feature = "board-mesh-tower-v2"),
+        not(feature = "board-sensecap-solar-node")
     ),
     all(
         feature = "board-t1000e",
         not(feature = "board-t-echo"),
         not(feature = "board-t096"),
         not(feature = "board-t114"),
-        not(feature = "board-mesh-tower-v2")
+        not(feature = "board-mesh-tower-v2"),
+        not(feature = "board-sensecap-solar-node")
     ),
     all(
         feature = "board-mesh-tower-v2",
         not(feature = "board-t-echo"),
         not(feature = "board-t096"),
         not(feature = "board-t114"),
-        not(feature = "board-t1000e")
+        not(feature = "board-t1000e"),
+        not(feature = "board-sensecap-solar-node")
+    ),
+    all(
+        feature = "board-sensecap-solar-node",
+        not(feature = "board-t-echo"),
+        not(feature = "board-t096"),
+        not(feature = "board-t114"),
+        not(feature = "board-t1000e"),
+        not(feature = "board-mesh-tower-v2")
     )
 ))]
 pub use runtime::run;

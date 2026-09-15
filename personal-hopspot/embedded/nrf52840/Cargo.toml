@@ -20,6 +20,7 @@ board-t-echo = ["personal-hopspot-core/display", "dep:embedded-graphics"]
 board-t096 = ["personal-hopspot-core/display", "dep:embedded-graphics", "softdevice-s140-v6"]
 board-t114 = ["personal-hopspot-core/display", "dep:embedded-graphics", "softdevice-s140-v6"]
 board-t1000e = ["cortex-m/critical-section-single-core"]
+board-sensecap-solar-node = ["cortex-m/critical-section-single-core"]
 board-mesh-tower-v2 = ["embassy-nrf/nfc-pins-as-gpio"]
 softdevice-s140-v6 = ["dep:nrf-softdevice", "nrf-softdevice/s140-v6"]
 softdevice-s140-v7 = ["dep:nrf-softdevice", "nrf-softdevice/s140-v7"]
@@ -47,6 +48,11 @@ required-features = ["board-t114"]
 name = "t1000e"
 path = "src/bin/t1000e.rs"
 required-features = ["board-t1000e"]
+
+[[bin]]
+name = "sensecap-solar-node"
+path = "src/bin/sensecap_solar_node.rs"
+required-features = ["board-sensecap-solar-node"]
 
 [[bin]]
 name = "heltec-mesh-tower-v2"

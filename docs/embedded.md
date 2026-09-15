@@ -84,7 +84,8 @@ installs with Git for Windows.)
 The Linux `embedded-builds` validation suite adds the Embassy interface
 cross-builds, both S140 6.1.1 and 7.3.0 T-Echo firmware layouts, the
 display-equipped Heltec T096 and T114 with Bluetooth Auto and display auto-off,
-and the headless T1000-E and MeshTower V2 developer UF2s. Every embedded
+and the headless T1000-E, MeshTower V2, and SenseCAP Solar Node developer
+UF2s. Every embedded
 Hopspot board target restores learned routes and retained self-ratchet history
 from its board-owned flash journal:
 

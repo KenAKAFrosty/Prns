@@ -28,5 +28,6 @@ cargo build \
 ./tools/prns build hopspot t096
 ./tools/prns build hopspot t114
 ./tools/prns build hopspot mesh-tower-v2
+./tools/prns build hopspot sensecap-solar-node
 
 echo "EMBEDDED_BUILD_GATE_OK"
