@@ -101,6 +101,10 @@ impl DiscoveryInstance {
         Self { label }
     }
 
+    pub(super) fn label(&self) -> &str {
+        core::str::from_utf8(&self.label).unwrap_or("prns-?")
+    }
+
     pub(super) fn service_labels(&self) -> [&[u8]; 4] {
         [
             &self.label,

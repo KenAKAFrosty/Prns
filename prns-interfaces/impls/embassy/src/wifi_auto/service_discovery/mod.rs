@@ -218,8 +218,9 @@ impl<'a, S: EntropySource + Send + 'static, const TARGETS: usize>
             return PublicationActivation::Retry;
         }
         crate::diagnostic_log::info!(
-            "wifi-auto: embedded UDP DNS-SD active ({:?})",
-            self.multicast
+            "wifi-auto: embedded UDP DNS-SD active ({:?}) aaaa={}",
+            self.multicast,
+            self.address
         );
         PublicationActivation::Active
     }
@@ -234,6 +235,7 @@ impl<'a, S: EntropySource + Send + 'static, const TARGETS: usize>
         self.publish(
             &packet[..packet_len],
             PublicationPurpose::InitialAnnouncement,
+            instance,
         )
         .await;
         self.send_browse_queries().await;
@@ -254,7 +256,7 @@ impl<'a, S: EntropySource + Send + 'static, const TARGETS: usize>
                 Either5::First(Ok((length, meta))) => {
                     match query_relevance(&self.storage.receive_packet[..length], instance) {
                         QueryRelevance::Relevant => {
-                            crate::diagnostic_log::info!(
+                            crate::diagnostic_log::debug!(
                                 "wifi-auto: DNS-SD relevant query from={meta:?} len={length}"
                             );
                             if let Some(packet_len) = self.encode_publication(
@@ -265,25 +267,26 @@ impl<'a, S: EntropySource + Send + 'static, const TARGETS: usize>
                                 self.publish(
                                     &packet[..packet_len],
                                     PublicationPurpose::QueryResponse,
+                                    instance,
                                 )
                                 .await;
                             }
                         }
                         QueryRelevance::Response => {
-                            crate::diagnostic_log::info!(
+                            crate::diagnostic_log::debug!(
                                 "wifi-auto: DNS-SD response from={meta:?} len={length}"
                             );
                             self.apply_response(length, instance);
                         }
                         QueryRelevance::Malformed => {
-                            crate::diagnostic_log::info!(
+                            crate::diagnostic_log::debug!(
                                 "wifi-auto: DNS-SD malformed from={meta:?} len={length}"
                             );
                         }
                         QueryRelevance::Unrelated => {
                             unrelated_rx = unrelated_rx.saturating_add(1);
                             if unrelated_rx == 1 || unrelated_rx.is_multiple_of(32) {
-                                crate::diagnostic_log::info!(
+                                crate::diagnostic_log::debug!(
                                     "wifi-auto: DNS-SD unrelated rx count={unrelated_rx} last_from={meta:?} len={length}"
                                 );
                             }
@@ -291,7 +294,7 @@ impl<'a, S: EntropySource + Send + 'static, const TARGETS: usize>
                     }
                 }
                 Either5::First(Err(error)) => {
-                    crate::diagnostic_log::info!(
+                    crate::diagnostic_log::debug!(
                         "wifi-auto: embedded UDP DNS-SD packet dropped: {error:?}"
                     );
                 }
@@ -299,7 +302,7 @@ impl<'a, S: EntropySource + Send + 'static, const TARGETS: usize>
                     if let Some(packet_len) =
                         self.encode_publication(&mut packet, instance, PUBLICATION_TTL_SECONDS)
                     {
-                        self.publish(&packet[..packet_len], PublicationPurpose::Refresh)
+                        self.publish(&packet[..packet_len], PublicationPurpose::Refresh, instance)
                             .await;
                     }
                 }
@@ -315,8 +318,12 @@ impl<'a, S: EntropySource + Send + 'static, const TARGETS: usize>
     async fn deactivate(&mut self, instance: &DiscoveryInstance) {
         let mut goodbye = [0u8; UDP_SERVICE_DISCOVERY_PACKET_BYTES];
         if let Some(goodbye_len) = self.encode_publication(&mut goodbye, instance, 0) {
-            self.publish(&goodbye[..goodbye_len], PublicationPurpose::Withdrawal)
-                .await;
+            self.publish(
+                &goodbye[..goodbye_len],
+                PublicationPurpose::Withdrawal,
+                instance,
+            )
+            .await;
         }
         self.clear_targets();
         self.socket.close();
@@ -356,7 +363,6 @@ impl<'a, S: EntropySource + Send + 'static, const TARGETS: usize>
     fn apply_response(&mut self, packet_length: usize, instance: &DiscoveryInstance) {
         let now_ms = Instant::now().as_millis();
         let packet = &self.storage.receive_packet[..packet_length];
-        let previous_targets = self.storage.catalog.targets(now_ms, self.address);
         match self
             .storage
             .catalog
@@ -364,7 +370,7 @@ impl<'a, S: EntropySource + Send + 'static, const TARGETS: usize>
         {
             CatalogUpdate::Applied => {}
             CatalogUpdate::Malformed => {
-                crate::diagnostic_log::info!(
+                crate::diagnostic_log::debug!(
                     "wifi-auto: DNS-SD response parse malformed len={packet_length}"
                 );
                 return;
@@ -373,14 +379,14 @@ impl<'a, S: EntropySource + Send + 'static, const TARGETS: usize>
         let current_targets = self.storage.catalog.targets(now_ms, self.address);
         let (resolved, pending, incompatible, expired) =
             self.storage.catalog.resolution_counts(now_ms);
-        crate::diagnostic_log::info!(
+        crate::diagnostic_log::debug!(
             "wifi-auto: DNS-SD catalog services={} targets={} resolved={resolved} pending={pending} incompatible={incompatible} expired={expired}",
             self.storage.catalog.len(),
             current_targets.len()
         );
-        if current_targets != previous_targets {
-            self.status.publish_discovery_targets(current_targets);
-        }
+        // Always publish so the AutoWifi loop can refresh_known_peer on repeated ads, not only
+        // when the target set changes.
+        self.status.publish_discovery_targets(current_targets);
     }
 
     fn prune_targets(&mut self) {
@@ -406,7 +412,7 @@ impl<'a, S: EntropySource + Send + 'static, const TARGETS: usize>
         };
         let query_count = self.storage.catalog.len().saturating_add(1);
         let now_ms = Instant::now().as_millis();
-        crate::diagnostic_log::info!(
+        crate::diagnostic_log::debug!(
             "wifi-auto: DNS-SD browse send start catalog={} queries={query_count}",
             self.storage.catalog.len()
         );
@@ -447,7 +453,7 @@ impl<'a, S: EntropySource + Send + 'static, const TARGETS: usize>
                 {
                     Ok(()) => sent = sent.saturating_add(1),
                     Err(error) => {
-                        crate::diagnostic_log::info!(
+                        crate::diagnostic_log::debug!(
                             "wifi-auto: DNS-SD browse send failed type={} err={error:?}",
                             query.record_type
                         );
@@ -457,32 +463,41 @@ impl<'a, S: EntropySource + Send + 'static, const TARGETS: usize>
         });
         match sends.await {
             Ok(()) => {
-                crate::diagnostic_log::info!("wifi-auto: DNS-SD browse send done sent={sent}");
+                crate::diagnostic_log::debug!("wifi-auto: DNS-SD browse send done sent={sent}");
             }
             Err(_timeout) => {
-                crate::diagnostic_log::info!(
+                crate::diagnostic_log::debug!(
                     "wifi-auto: DNS-SD browse send budget exhausted sent={sent}"
                 );
             }
         }
     }
 
-    async fn publish(&self, packet: &[u8], purpose: PublicationPurpose) {
+    async fn publish(
+        &self,
+        packet: &[u8],
+        purpose: PublicationPurpose,
+        instance: &DiscoveryInstance,
+    ) {
         match self.send(packet).await {
             PublicationSend::Sent => match purpose {
                 PublicationPurpose::Refresh => {}
                 PublicationPurpose::InitialAnnouncement
                 | PublicationPurpose::QueryResponse
                 | PublicationPurpose::Withdrawal => {
-                    crate::diagnostic_log::info!(
-                        "wifi-auto: DNS-SD publish {purpose:?} bytes={}",
+                    crate::diagnostic_log::debug!(
+                        "wifi-auto: DNS-SD publish {purpose:?} instance={} aaaa={} bytes={}",
+                        instance.label(),
+                        self.address,
                         packet.len()
                     );
                 }
             },
             PublicationSend::Failed => {
-                crate::diagnostic_log::info!(
-                    "wifi-auto: DNS-SD publish {purpose:?} failed bytes={}",
+                crate::diagnostic_log::debug!(
+                    "wifi-auto: DNS-SD publish {purpose:?} failed instance={} aaaa={} bytes={}",
+                    instance.label(),
+                    self.address,
                     packet.len()
                 );
             }

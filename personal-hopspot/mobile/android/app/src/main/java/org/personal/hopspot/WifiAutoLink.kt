@@ -589,20 +589,68 @@ class WifiAutoLink(context: Context) {
         )
     }
 
-    private fun serviceInfo(publication: DiscoveryPublication) = NsdServiceInfo().apply {
-        serviceName = publication.instanceName
-        serviceType = publication.contract.serviceType
-        port = publication.contract.port
-        when (AndroidDiscoveryVersionMetadata.forApiLevel(Build.VERSION.SDK_INT)) {
-            AndroidDiscoveryVersionMetadata.ImplicitV1 -> Unit
-            AndroidDiscoveryVersionMetadata.ExplicitV1 -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                    setAttribute(versionKey, versionValue)
-                } else {
-                    error("explicit DNS-SD version metadata requires Android API 21")
+    private fun serviceInfo(publication: DiscoveryPublication): NsdServiceInfo {
+        val linkLocalHosts = publicationLinkLocalHosts()
+        if (linkLocalHosts.isEmpty()) {
+            error(
+                "refusing ${publication.contract.serviceType} registration without scoped IPv6 link-local host addresses",
+            )
+        }
+        return NsdServiceInfo().apply {
+            serviceName = publication.instanceName
+            serviceType = publication.contract.serviceType
+            port = publication.contract.port
+            pinPublicationHosts(this, linkLocalHosts)
+            when (AndroidDiscoveryVersionMetadata.forApiLevel(Build.VERSION.SDK_INT)) {
+                AndroidDiscoveryVersionMetadata.ImplicitV1 -> Unit
+                AndroidDiscoveryVersionMetadata.ExplicitV1 -> {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                        setAttribute(versionKey, versionValue)
+                    } else {
+                        error("explicit DNS-SD version metadata requires Android API 21")
+                    }
                 }
             }
+            Log.i(
+                TAG,
+                "publishing ${publication.contract.serviceType} on port ${publication.contract.port} " +
+                    "hosts=${linkLocalHosts.joinToString { it.hostAddress ?: it.toString() }}",
+            )
         }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun pinPublicationHosts(serviceInfo: NsdServiceInfo, hosts: List<Inet6Address>) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            serviceInfo.hostAddresses = hosts
+            return
+        }
+        serviceInfo.setHost(hosts.first())
+    }
+
+    private fun publicationLinkLocalHosts(): List<Inet6Address> {
+        val hosts = LinkedHashSet<Inet6Address>()
+        try {
+            for (nif in Collections.list(NetworkInterface.getNetworkInterfaces())) {
+                if (!nif.isUp || nif.isLoopback || nif.index <= 0) {
+                    continue
+                }
+                for (address in Collections.list(nif.inetAddresses)) {
+                    if (address is Inet6Address && address.isLinkLocalAddress) {
+                        hosts.add(
+                            Inet6Address.getByAddress(
+                                null,
+                                address.address,
+                                nif,
+                            ),
+                        )
+                    }
+                }
+            }
+        } catch (failure: Exception) {
+            Log.w(TAG, "could not enumerate link-local hosts for NSD publication", failure)
+        }
+        return hosts.toList()
     }
 
     /**
@@ -615,9 +663,7 @@ class WifiAutoLink(context: Context) {
         val candidates = ArrayList<ResolvedCandidate>(resolvedCandidateInputCapacity)
         for (address in serviceAddresses(service)) {
             when (address) {
-                is Inet4Address -> {
-                    candidates.add(ResolvedCandidate(address.address, 0))
-                }
+                is Inet4Address -> candidates.add(ResolvedCandidate(address.address, 0))
                 is Inet6Address -> {
                     if (address.isLinkLocalAddress) {
                         val reportedScope = address.scopeId

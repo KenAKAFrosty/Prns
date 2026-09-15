@@ -20,7 +20,9 @@ pub(super) fn stand_up(
     );
     #[cfg(feature = "wifi-auto-mdns")]
     let auto_wifi = match native_service_discovery {
-        Some(native_service_discovery) => auto_wifi.with_host_discovery(native_service_discovery),
+        Some(native_service_discovery) => {
+            auto_wifi.with_native_host_discovery(native_service_discovery)
+        }
         None => auto_wifi,
     };
     let attached_auto_wifi = interface_construction.attach(auto_wifi);
