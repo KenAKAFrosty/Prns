@@ -202,9 +202,6 @@ async fn persist_controller_grant(
     attempt_id: RemoteControlPairingAttemptId,
     grant: RemoteControlControllerGrant,
 ) -> Result<(), RemoteControlAuthorizationPersistenceFailure> {
-    let Some(persistence) = persistence else {
-        return settle_controller_grant_persistence_failure(node, attempt_id).await;
-    };
     let controller = *grant.controller();
     let mutation = match remote_control.set_controller_grant(grant) {
         Ok(SetRemoteControlControllerGrantOutcome::Added) => {
@@ -215,6 +212,13 @@ async fn persist_controller_grant(
             ControllerGrantMutation::Updated { previous }
         }
         Err(_) => return settle_controller_grant_persistence_failure(node, attempt_id).await,
+    };
+    let Some(persistence) = persistence else {
+        // Hosts that drive NodePersistence out-of-band (prnsd) still need the
+        // in-memory grant applied and the pairing exchange completed. Failing
+        // here previously retired the link with LocallyClosed before Completed
+        // could be sent to the controller.
+        return settle_controller_grant_persisted(node, attempt_id).await;
     };
     let snapshot = match controller_grants_snapshot(remote_control) {
         Ok(snapshot) => snapshot,
@@ -260,9 +264,6 @@ async fn persist_target_access(
     attempt_id: RemoteControlPairingAttemptId,
     access: RemoteControlTargetAccess,
 ) -> Result<(), RemoteControlAuthorizationPersistenceFailure> {
-    let Some(persistence) = persistence else {
-        return settle_target_access_persistence_failure(node, attempt_id).await;
-    };
     let target_public_keys = *access.target().public_keys();
     let mutation = match remote_control.set_target_access(access) {
         Ok(SetRemoteControlTargetAccessOutcome::Added) => {
@@ -273,6 +274,9 @@ async fn persist_target_access(
             TargetAccessMutation::Updated { previous }
         }
         Err(_) => return settle_target_access_persistence_failure(node, attempt_id).await,
+    };
+    let Some(persistence) = persistence else {
+        return settle_target_access_persisted(node, attempt_id).await;
     };
     let snapshot = match target_accesses_snapshot(remote_control) {
         Ok(snapshot) => snapshot,
@@ -289,6 +293,36 @@ async fn persist_target_access(
         rollback_target_access(remote_control, mutation)?;
         return settle_target_access_persistence_failure(node, attempt_id).await;
     }
+    settle_target_access_persisted(node, attempt_id).await
+}
+
+async fn settle_controller_grant_persisted(
+    node: &PrnsNodeHandle,
+    attempt_id: RemoteControlPairingAttemptId,
+) -> Result<(), RemoteControlAuthorizationPersistenceFailure> {
+    let settled = settle_pairing_command(
+        node,
+        SettleRemoteControlTargetPairingAuthorization {
+            attempt_id,
+            persistence: RemoteControlTargetPairingAuthorizationPersistence::Persisted,
+        },
+    )
+    .await
+    .ok_or(RemoteControlAuthorizationPersistenceFailure::RuntimeState)?;
+    match settled {
+        Ok(RemoteControlTargetPairingFinalization::CompletionDispatched { .. }) => Ok(()),
+        Ok(RemoteControlTargetPairingFinalization::AuthorizationRollbackRequired { .. }) => {
+            Err(RemoteControlAuthorizationPersistenceFailure::RuntimeState)
+        }
+        Ok(RemoteControlTargetPairingFinalization::AuthorizationFailureRecorded { .. })
+        | Err(_) => Err(RemoteControlAuthorizationPersistenceFailure::RuntimeState),
+    }
+}
+
+async fn settle_target_access_persisted(
+    node: &PrnsNodeHandle,
+    attempt_id: RemoteControlPairingAttemptId,
+) -> Result<(), RemoteControlAuthorizationPersistenceFailure> {
     let settled = settle_pairing_command(
         node,
         SettleRemoteControlControllerPairingPersistence {

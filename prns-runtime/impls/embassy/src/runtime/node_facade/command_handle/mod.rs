@@ -1324,7 +1324,7 @@ impl<
 
     async fn forget_remote_control_target(
         &self,
-        target: RemoteControlTargetIdentity,
+        target: IdentityHash,
     ) -> Result<ForgetRemoteControlTargetOutcome, ForgetRemoteControlTargetControlError> {
         let id = self.pool.mint();
         let command = RemoteControlTargetAccessCommand::ForgetTarget { id, target };

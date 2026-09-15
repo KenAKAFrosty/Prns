@@ -15,7 +15,7 @@ pub use crate::{
     RemoteControlControllerGrantControl, RemoteControlControllerPairingConfirmation,
     RemoteControlControllerPairingInitiationControl,
     RemoteControlControllerPairingInitiationTransport, RemoteControlDescribe, RemoteControlError,
-    RemoteControlPairingConfirmation, RemoteControlPairingControl,
+    RemoteControlHostControls, RemoteControlPairingConfirmation, RemoteControlPairingControl,
     RemoteControlPairingControlError, RemoteControlPairingLinkCleanupOutcome,
     RemoteControlTargetAccessControl, RemoteControlTargetConnection,
     RemoteControlTargetConnectionControl, RemoteControlTargetConnectionTransport,
@@ -82,7 +82,8 @@ pub use crate::Esp32S3;
 pub use crate::{
     try_generate_identity_secret, AttachIntent, Attachable, AttachedInterface, AttachedSupervisor,
     Fleet, OsRuntimeEntropy, PrnsNode, PrnsNodeHandle, RemoteControlFileIdentityBootstrapError,
-    RemoteControlHandle, RemoteControlIdentityDirectory, RemoteControlTargetHandle,
+    RemoteControlHandle, RemoteControlHostControls, RemoteControlIdentityDirectory,
+    RemoteControlTargetHandle,
 };
 
 #[cfg(feature = "tokio-host")]

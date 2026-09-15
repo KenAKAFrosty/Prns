@@ -1,6 +1,6 @@
 use embassy_futures::select::{select4, Either4};
 use embassy_sync::blocking_mutex::raw::RawMutex;
-use embassy_sync::channel::Receiver;
+use embassy_sync::channel::{Receiver, Sender};
 use heapless::Vec as HeaplessVec;
 
 use crate::engine::{InstantMillis, Journaled, RespondData};
@@ -10,7 +10,9 @@ use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::units::RttMillis;
 use crate::wire::DestinationHash;
-use prns_runtime::runtime::placement::dispatch_remote_control_request;
+use prns_runtime::runtime::placement::{
+    admit_remote_control_request, dispatch_admitted_remote_control_request,
+};
 
 use super::node_facade::PrnsNodeHandle;
 use super::remote_control_controller_grants::{
@@ -125,6 +127,120 @@ impl<const N: usize> RunnerRequest<N> {
             data: HeaplessVec::from_slice(data).ok()?,
         })
     }
+
+    pub(super) fn try_enqueue<M, const CAP: usize>(
+        journaled: &Journaled<'_>,
+        sender: &Sender<'_, M, Self, CAP>,
+    ) where
+        M: RawMutex,
+    {
+        let Journaled::RequestReceived { data, .. } = journaled else {
+            return;
+        };
+        #[cfg_attr(not(feature = "log"), allow(unused_variables))]
+        let inbound_len = data.len();
+        let Some(request) = Self::copy_from(journaled) else {
+            #[cfg(feature = "log")]
+            log::info!(
+                target: "personal_hopspot_esp32",
+                "rc: drop copy_failed bytes={inbound_len}"
+            );
+            return;
+        };
+        if sender.try_send(request).is_err() {
+            #[cfg(feature = "log")]
+            log::info!(
+                target: "personal_hopspot_esp32",
+                "rc: drop queue_full bytes={inbound_len}"
+            );
+        } else {
+            #[cfg(feature = "log")]
+            if let Journaled::RequestReceived {
+                destination,
+                link_id,
+                requester,
+                path_hash,
+                data,
+                ..
+            } = journaled
+            {
+                log::info!(
+                    target: "personal_hopspot_esp32",
+                    "rc: enqueue dest={} link={} path={} ctrl={} kind={:?} bytes={}",
+                    hex4(destination.as_bytes()),
+                    hex4(link_id.as_bytes()),
+                    hex4(path_hash.as_bytes()),
+                    hash4(*requester),
+                    data.get(1).copied(),
+                    data.len()
+                );
+            }
+        }
+    }
+}
+
+pub(super) fn trace_journaled(journaled: &Journaled<'_>) {
+    #[cfg(feature = "log")]
+    match journaled {
+        Journaled::LinkEstablished(established) => {
+            log::info!(
+                target: "personal_hopspot_esp32",
+                "rc: link up id={} rtt={}",
+                hex4(established.link_id.as_bytes()),
+                established.rtt_millis
+            );
+        }
+        Journaled::PeerIdentified { link_id, identity } => {
+            log::info!(
+                target: "personal_hopspot_esp32",
+                "rc: identified link={} peer={}",
+                hex4(link_id.as_bytes()),
+                hex4(identity.as_bytes())
+            );
+        }
+        Journaled::RequestReceived {
+            destination,
+            link_id,
+            requester,
+            path_hash,
+            data,
+            ..
+        } => {
+            log::info!(
+                target: "personal_hopspot_esp32",
+                "rc: request dest={} link={} path={} ctrl={} kind={:?} bytes={}",
+                hex4(destination.as_bytes()),
+                hex4(link_id.as_bytes()),
+                hex4(path_hash.as_bytes()),
+                hash4(*requester),
+                data.get(1).copied(),
+                data.len()
+            );
+        }
+        Journaled::LinkClosed { link_id, reason } => {
+            log::info!(
+                target: "personal_hopspot_esp32",
+                "rc: link close id={} reason={reason:?}",
+                hex4(link_id.as_bytes())
+            );
+        }
+        Journaled::LinkInterfaceMismatch {
+            link_id,
+            attached_interface,
+            arrived_on,
+        } => {
+            log::info!(
+                target: "personal_hopspot_esp32",
+                "rc: link mismatch id={} attached={} arrived={}",
+                hex4(link_id.as_bytes()),
+                hex4(attached_interface.as_bytes()),
+                hex4(arrived_on.as_bytes())
+            );
+        }
+        _ => {}
+    }
+    #[cfg(not(feature = "log"))]
+    let _ = journaled;
 }
 
 pub(super) async fn run_router<
@@ -147,9 +263,12 @@ pub(super) async fn run_router<
 ) where
     R: RequestEndpointSet<St>,
     M: RawMutex,
+    St: prns_runtime::runtime::RemoteControlHostControls,
 {
     let mut authorization_transaction = RemoteControlPairingAuthorizationTransactionState::new();
     let mut pairing_persistence = RemoteControlPairingPersistenceProgress::new();
+    #[cfg(feature = "log")]
+    log::info!(target: "personal_hopspot_esp32", "rc: runner up");
     loop {
         match select4(
             next_pairing_persistence_input(
@@ -260,7 +379,7 @@ pub(super) async fn run_router<
                 let outcome = if authorization_transaction.is_active() {
                     Err(super::ForgetRemoteControlTargetServiceError::TransactionInProgress)
                 } else {
-                    remote_control.forget_target(&target)
+                    remote_control.forget_target_by_hash(target)
                 };
                 let _settled = commands.settle_remote_control_target_access(
                     id,
@@ -268,6 +387,14 @@ pub(super) async fn run_router<
                 );
             }
             Either4::Fourth(request) => {
+                #[cfg(feature = "log")]
+                log::info!(
+                    target: "personal_hopspot_esp32",
+                    "rc: dequeue kind={:?} bytes={} link={}",
+                    request.data.get(1).copied(),
+                    request.data.len(),
+                    hex4(request.link_id.as_bytes())
+                );
                 dispatch::<
                     St,
                     R,
@@ -320,12 +447,13 @@ async fn dispatch<
     const REQUEST_BYTES: usize,
 >(
     state: &St,
-    remote_control: &AssembledRemoteControl,
+    remote_control: &mut AssembledRemoteControl,
     commands: PrnsNodeHandle<'_, M, COMMANDS, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>,
     request: RunnerRequest<REQUEST_BYTES>,
 ) where
     R: RequestEndpointSet<St>,
     M: RawMutex,
+    St: prns_runtime::runtime::RemoteControlHostControls,
 {
     let inbound = InboundRequest::new(
         request.destination,
@@ -338,38 +466,145 @@ async fn dispatch<
     );
     let responder = inbound.respond_token();
     let mut body = RunnerResponse::Buffered(RespondData::new());
+    #[cfg_attr(not(feature = "log"), allow(unused_variables))]
+    let kind = request.data.get(1).copied();
     let dispatched = if let Some((controller_grants, available_requests, self_announcement)) =
-        remote_control.request_configuration(request.destination, request.path_hash)
+        remote_control.request_configuration_mut(request.destination, request.path_hash)
     {
-        dispatch_remote_control_request(
-            state,
+        match admit_remote_control_request(
             controller_grants,
             available_requests,
             self_announcement,
-            &commands,
-            inbound,
-            &mut body,
-        )
-        .await
+            &inbound,
+        ) {
+            Ok(admission) => {
+                #[cfg(feature = "log")]
+                log::info!(
+                    target: "personal_hopspot_esp32",
+                    "rc: admit ok kind={kind:?} ctrl={} bytes={}",
+                    hash4(request.requester),
+                    request.data.len()
+                );
+                dispatch_admitted_remote_control_request(
+                    state, &commands, inbound, &mut body, admission,
+                )
+                .await
+            }
+            Err(reason) => {
+                #[cfg(feature = "log")]
+                log::info!(
+                    target: "personal_hopspot_esp32",
+                    "rc: admit {reason:?} kind={kind:?} ctrl={} bytes={}",
+                    hash4(request.requester),
+                    request.data.len()
+                );
+                Err(reason.into())
+            }
+        }
     } else {
+        #[cfg(feature = "log")]
+        log::info!(
+            target: "personal_hopspot_esp32",
+            "rc: not_control_dest kind={kind:?} ctrl={} bytes={}",
+            hash4(request.requester),
+            request.data.len()
+        );
         dispatch_request::<St, R>(state, &commands, request.path_hash, inbound, &mut body).await
     };
     match dispatched {
-        Ok(()) => match body {
-            RunnerResponse::Buffered(body) => {
-                commands.respond_owned_packed(responder, body);
+        Ok(()) => {
+            #[cfg_attr(not(feature = "log"), allow(unused_variables))]
+            let reply_len = match &body {
+                RunnerResponse::Buffered(body) => body.len(),
+                RunnerResponse::StaticBytes(bytes) => bytes.len(),
+                #[cfg(feature = "large-static-responses")]
+                RunnerResponse::StaticFile { bytes, .. } => bytes.len(),
+            };
+            #[cfg(feature = "log")]
+            log::info!(
+                target: "personal_hopspot_esp32",
+                "rc: reply queued kind={kind:?} bytes={reply_len}"
+            );
+            match body {
+                RunnerResponse::Buffered(body) => {
+                    commands.respond_owned_packed(responder, body);
+                }
+                RunnerResponse::StaticBytes(bytes) => {
+                    commands.respond_static_bytes(responder, bytes);
+                }
+                #[cfg(feature = "large-static-responses")]
+                RunnerResponse::StaticFile { name, bytes } => {
+                    commands.respond_static_file(responder, name, bytes);
+                }
             }
-            RunnerResponse::StaticBytes(bytes) => {
-                commands.respond_static_bytes(responder, bytes);
-            }
-            #[cfg(feature = "large-static-responses")]
-            RunnerResponse::StaticFile { name, bytes } => {
-                commands.respond_static_file(responder, name, bytes);
-            }
-        },
-        Err(Decline::Ignore | Decline::ResponseTooLarge) => {}
+        }
+        Err(Decline::Ignore) => {
+            #[cfg(feature = "log")]
+            log::info!(
+                target: "personal_hopspot_esp32",
+                "rc: drop Ignore kind={kind:?} ctrl={}",
+                hash4(request.requester)
+            );
+        }
+        Err(Decline::ResponseTooLarge) => {
+            #[cfg(feature = "log")]
+            log::info!(
+                target: "personal_hopspot_esp32",
+                "rc: drop ResponseTooLarge kind={kind:?} ctrl={}",
+                hash4(request.requester)
+            );
+        }
         Err(Decline::CloseLink) => {
+            #[cfg(feature = "log")]
+            log::info!(
+                target: "personal_hopspot_esp32",
+                "rc: drop CloseLink kind={kind:?} ctrl={}",
+                hash4(request.requester)
+            );
             commands.close_link(responder.link_id);
+        }
+    }
+}
+
+#[cfg(feature = "log")]
+fn hex4(bytes: &[u8]) -> Hex4<'_> {
+    Hex4(bytes)
+}
+
+#[cfg(feature = "log")]
+struct Hex4<'a>(&'a [u8]);
+
+#[cfg(feature = "log")]
+impl core::fmt::Display for Hex4<'_> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.0 {
+            [a, b, c, d, ..] => write!(formatter, "{a:02x}{b:02x}{c:02x}{d:02x}"),
+            _ => formatter.write_str("----"),
+        }
+    }
+}
+
+#[cfg(feature = "log")]
+fn hash4(identity: Option<IdentityHash>) -> Hash4 {
+    Hash4(identity)
+}
+
+#[cfg(feature = "log")]
+struct Hash4(Option<IdentityHash>);
+
+#[cfg(feature = "log")]
+impl core::fmt::Display for Hash4 {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.0 {
+            None => formatter.write_str("none"),
+            Some(identity) => {
+                let bytes = identity.as_bytes();
+                write!(
+                    formatter,
+                    "{:02x}{:02x}{:02x}{:02x}",
+                    bytes[0], bytes[1], bytes[2], bytes[3]
+                )
+            }
         }
     }
 }
@@ -480,7 +715,7 @@ mod tests {
         let channel = Channel::<M, crate::engine::IssuedCommand, 1>::new();
         let completions = crate::runtime::CompletionPool::<M, 1>::new();
         let handle = PrnsNodeHandle::new(channel.sender(), &completions);
-        let remote_control = remote_control();
+        let mut remote_control = remote_control();
         let request = RunnerRequest {
             destination: DestinationHash::new([0x5A; 16]),
             link_id: LinkId::new([1; 16]),
@@ -494,7 +729,7 @@ mod tests {
 
         block_on(dispatch::<(), StaticRoutes, M, 1, 1, 0, 0, 16>(
             &(),
-            &remote_control,
+            &mut remote_control,
             handle,
             request,
         ));
@@ -520,7 +755,7 @@ mod tests {
         let channel = Channel::<M, crate::engine::IssuedCommand, 1>::new();
         let completions = crate::runtime::CompletionPool::<M, 1>::new();
         let handle = PrnsNodeHandle::new(channel.sender(), &completions);
-        let remote_control = remote_control();
+        let mut remote_control = remote_control();
         let destination = DestinationHash::new([0x5a; 16]);
         let request = RunnerRequest {
             destination,
@@ -535,7 +770,7 @@ mod tests {
 
         block_on(dispatch::<(), DestinationRoutes, M, 1, 1, 0, 0, 16>(
             &(),
-            &remote_control,
+            &mut remote_control,
             handle,
             request,
         ));
@@ -658,9 +893,10 @@ mod tests {
             let crate::engine::RespondPayload::Packed(data) = response.payload else {
                 panic!("packed RemoteControl response")
             };
-            let expected = RemoteControlDescription::try_from(RemoteControlRequestSet::only(
-                RemoteControlRequestKind::Describe,
-            ))
+            let expected = RemoteControlDescription::try_from(
+                RemoteControlRequestSet::only(RemoteControlRequestKind::Describe)
+                    .with_current_operator_edits(),
+            )
             .unwrap();
             assert_eq!(
                 RemoteControlResponse::parse(data.as_slice()),
@@ -746,6 +982,12 @@ mod tests {
             Either::First(()) => {}
             Either::Second(()) => panic!("router returned"),
         }
-        assert!(remote_control.controller_grants().unwrap().is_empty());
+        assert_eq!(
+            remote_control
+                .controller_grants()
+                .unwrap()
+                .grants_in_identity_hash_order(),
+            &[pairing_grant],
+        );
     }
 }

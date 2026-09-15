@@ -1,12 +1,12 @@
 use alloc::vec::Vec;
 
+use crate::identity::IdentityHash;
 use crate::remote_control::{
     ForgetRemoteControlTargetOutcome, RemoteControlControllerGrant,
     RemoteControlControllerGrantTable, RemoteControlControllerIdentity, RemoteControlTargetAccess,
-    RemoteControlTargetAccessTable, RemoteControlTargetIdentity,
-    RevokeRemoteControlControllerOutcome, SetRemoteControlControllerGrantError,
-    SetRemoteControlControllerGrantOutcome, SetRemoteControlTargetAccessError,
-    SetRemoteControlTargetAccessOutcome,
+    RemoteControlTargetAccessTable, RevokeRemoteControlControllerOutcome,
+    SetRemoteControlControllerGrantError, SetRemoteControlControllerGrantOutcome,
+    SetRemoteControlTargetAccessError, SetRemoteControlTargetAccessOutcome,
 };
 
 #[derive(Debug, Default)]
@@ -117,15 +117,14 @@ impl RemoteControlTargetAccessTable for HeapRemoteControlTargetAccessTable {
         Ok(SetRemoteControlTargetAccessOutcome::Added)
     }
 
-    fn forget_target(
+    fn forget_by_identity_hash(
         &mut self,
-        target: &RemoteControlTargetIdentity,
+        identity: &IdentityHash,
     ) -> ForgetRemoteControlTargetOutcome {
-        let identity_hash = target.identity_hash();
         let Some(index) = self
             .accesses
             .iter()
-            .position(|access| access.target().identity_hash() == identity_hash)
+            .position(|access| access.target().identity_hash() == *identity)
         else {
             return ForgetRemoteControlTargetOutcome::NotFound;
         };

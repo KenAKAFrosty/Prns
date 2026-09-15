@@ -2,15 +2,29 @@ use embassy_sync::blocking_mutex::raw::RawMutex;
 
 use crate::engine::{EstablishLinkFailure, IdentifyFailure};
 use crate::identity::IdentityHash;
+use crate::interfaces::InterfaceId;
 use crate::routing::links::LinkId;
 use crate::runtime::{
     CloseRemoteControlTargetOutcome, ConnectRemoteControlTargetError, RemoteControlAnnounceSelf,
-    RemoteControlDescribe, RemoteControlTargetConnection, RemoteControlTargetConnectionControl,
-    RemoteControlTargetConnectionTransport, RemoteControlTargetOperationError, SendError,
+    RemoteControlDescribe, RemoteControlDescribeBuild, RemoteControlDescribePower,
+    RemoteControlInventoryInterfaces, RemoteControlSleepRadios, RemoteControlTargetConnection,
+    RemoteControlTargetConnectionControl, RemoteControlTargetConnectionTransport,
+    RemoteControlTargetOperationError, RemoteControlWakeRadios, SendError,
 };
 use crate::units::RttMillis;
 use crate::wire::DestinationHash;
-use prns_core::remote_control::RemoteControlDescription;
+use prns_core::capabilities::power::PowerSnapshot;
+use prns_core::interfaces::InterfaceMode;
+use prns_core::remote_control::{
+    RemoteControlAuthorizeControllerOutcome, RemoteControlBuildVersion,
+    RemoteControlControllerIdentity, RemoteControlControllerInventory, RemoteControlDescription,
+    RemoteControlGroupOutcome, RemoteControlInterfaceConfigOutcome, RemoteControlInterfaceGroup,
+    RemoteControlInterfaceInventory, RemoteControlInterfacePeersOutcome,
+    RemoteControlInterfacePower, RemoteControlLoRaOutcome, RemoteControlLoRaProfile,
+    RemoteControlModeOutcome, RemoteControlPowerOutcome, RemoteControlRequestKind,
+    RemoteControlRevokeControllerOutcome, RemoteControlSleepOutcome, RemoteControlWifiStation,
+    RemoteControlWifiStationOutcome,
+};
 
 use super::{PrnsNodeHandle, RemoteControlHandle};
 
@@ -124,5 +138,188 @@ impl<
         self.connection
             .admit(RemoteControlDescribe::REQUEST.kind())?;
         self.remote_control.describe().await.map_err(Into::into)
+    }
+
+    pub async fn describe_build(
+        &self,
+    ) -> Result<(RemoteControlBuildVersion, RttMillis), RemoteControlTargetOperationError> {
+        self.connection
+            .admit(RemoteControlDescribeBuild::REQUEST.kind())?;
+        self.remote_control
+            .describe_build()
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn describe_power(
+        &self,
+    ) -> Result<(PowerSnapshot, RttMillis), RemoteControlTargetOperationError> {
+        self.connection
+            .admit(RemoteControlDescribePower::REQUEST.kind())?;
+        self.remote_control
+            .describe_power()
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn inventory_interfaces(
+        &self,
+    ) -> Result<(RemoteControlInterfaceInventory, RttMillis), RemoteControlTargetOperationError>
+    {
+        self.connection
+            .admit(RemoteControlInventoryInterfaces::REQUEST.kind())?;
+        self.remote_control
+            .inventory_interfaces()
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn set_interface_power(
+        &self,
+        id: InterfaceId,
+        power: RemoteControlInterfacePower,
+    ) -> Result<(RemoteControlPowerOutcome, RttMillis), RemoteControlTargetOperationError> {
+        self.connection
+            .admit(RemoteControlRequestKind::SetInterfacePower)?;
+        self.remote_control
+            .set_interface_power(id, power)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn set_interface_mode(
+        &self,
+        id: InterfaceId,
+        mode: InterfaceMode,
+    ) -> Result<(RemoteControlModeOutcome, RttMillis), RemoteControlTargetOperationError> {
+        self.connection
+            .admit(RemoteControlRequestKind::SetInterfaceMode)?;
+        self.remote_control
+            .set_interface_mode(id, mode)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn set_interface_group(
+        &self,
+        id: InterfaceId,
+        group: RemoteControlInterfaceGroup,
+    ) -> Result<(RemoteControlGroupOutcome, RttMillis), RemoteControlTargetOperationError> {
+        self.connection
+            .admit(RemoteControlRequestKind::SetInterfaceGroup)?;
+        self.remote_control
+            .set_interface_group(id, group)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn set_interface_lora_profile(
+        &self,
+        id: InterfaceId,
+        profile: RemoteControlLoRaProfile,
+    ) -> Result<(RemoteControlLoRaOutcome, RttMillis), RemoteControlTargetOperationError> {
+        self.connection
+            .admit(RemoteControlRequestKind::SetInterfaceLoRaProfile)?;
+        self.remote_control
+            .set_interface_lora_profile(id, profile)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn set_interface_wifi_station(
+        &self,
+        id: InterfaceId,
+        station: RemoteControlWifiStation,
+    ) -> Result<(RemoteControlWifiStationOutcome, RttMillis), RemoteControlTargetOperationError>
+    {
+        self.connection
+            .admit(RemoteControlRequestKind::SetInterfaceWifiStation)?;
+        self.remote_control
+            .set_interface_wifi_station(id, station)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn inventory_controllers(
+        &self,
+    ) -> Result<(RemoteControlControllerInventory, RttMillis), RemoteControlTargetOperationError>
+    {
+        self.connection
+            .admit(RemoteControlRequestKind::InventoryControllers)?;
+        self.remote_control
+            .inventory_controllers()
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn authorize_controller(
+        &self,
+        controller: RemoteControlControllerIdentity,
+    ) -> Result<
+        (RemoteControlAuthorizeControllerOutcome, RttMillis),
+        RemoteControlTargetOperationError,
+    > {
+        self.connection
+            .admit(RemoteControlRequestKind::AuthorizeController)?;
+        self.remote_control
+            .authorize_controller(controller)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn revoke_controller(
+        &self,
+        hash: IdentityHash,
+    ) -> Result<(RemoteControlRevokeControllerOutcome, RttMillis), RemoteControlTargetOperationError>
+    {
+        self.connection
+            .admit(RemoteControlRequestKind::RevokeController)?;
+        self.remote_control
+            .revoke_controller(hash)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn inventory_interface_peers(
+        &self,
+        id: InterfaceId,
+        offset: u8,
+    ) -> Result<(RemoteControlInterfacePeersOutcome, RttMillis), RemoteControlTargetOperationError>
+    {
+        self.connection
+            .admit(RemoteControlRequestKind::InventoryInterfacePeers)?;
+        self.remote_control
+            .inventory_interface_peers(id, offset)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn inventory_interface_config(
+        &self,
+        id: InterfaceId,
+    ) -> Result<(RemoteControlInterfaceConfigOutcome, RttMillis), RemoteControlTargetOperationError>
+    {
+        self.connection
+            .admit(RemoteControlRequestKind::InventoryInterfaceConfig)?;
+        self.remote_control
+            .inventory_interface_config(id)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn sleep_radios(
+        &self,
+    ) -> Result<(RemoteControlSleepOutcome, RttMillis), RemoteControlTargetOperationError> {
+        self.connection
+            .admit(RemoteControlSleepRadios::REQUEST.kind())?;
+        self.remote_control.sleep_radios().await.map_err(Into::into)
+    }
+
+    pub async fn wake_radios(
+        &self,
+    ) -> Result<(RemoteControlSleepOutcome, RttMillis), RemoteControlTargetOperationError> {
+        self.connection
+            .admit(RemoteControlWakeRadios::REQUEST.kind())?;
+        self.remote_control.wake_radios().await.map_err(Into::into)
     }
 }
