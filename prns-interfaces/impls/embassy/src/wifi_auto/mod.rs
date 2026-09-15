@@ -67,9 +67,9 @@ enum SecondaryStackReadiness {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SegmentActivationError {
-    MulticastDiscoveryBind(UdpBindError),
-    UnicastDiscoveryBind(UdpBindError),
-    DataBind(UdpBindError),
+    MulticastDiscovery(UdpBindError),
+    UnicastDiscovery(UdpBindError),
+    Data(UdpBindError),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -155,15 +155,15 @@ fn activate_segment(segment: &mut AutoWifiSegment<'_>) -> Result<(), SegmentActi
     segment
         .discovery
         .bind(contract::DEFAULT_DISCOVERY_PORT)
-        .map_err(SegmentActivationError::MulticastDiscoveryBind)?;
+        .map_err(SegmentActivationError::MulticastDiscovery)?;
     segment
         .unicast_discovery
         .bind(contract::UNICAST_DISCOVERY_PORT)
-        .map_err(SegmentActivationError::UnicastDiscoveryBind)?;
+        .map_err(SegmentActivationError::UnicastDiscovery)?;
     segment
         .data
         .bind(contract::DEFAULT_DATA_PORT)
-        .map_err(SegmentActivationError::DataBind)?;
+        .map_err(SegmentActivationError::Data)?;
     // Classic AutoWifi multicast discovery is best-effort. On some STA stacks (notably
     // ESP32-C6 + embassy-net) IPv6 group join fails while unicast LL + mDNS still work;
     // do not fail the whole segment and leave :29717 unbound/unread.

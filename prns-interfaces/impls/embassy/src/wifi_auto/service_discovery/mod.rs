@@ -282,7 +282,7 @@ impl<'a, S: EntropySource + Send + 'static, const TARGETS: usize>
                         }
                         QueryRelevance::Unrelated => {
                             unrelated_rx = unrelated_rx.saturating_add(1);
-                            if unrelated_rx == 1 || unrelated_rx % 32 == 0 {
+                            if unrelated_rx == 1 || unrelated_rx.is_multiple_of(32) {
                                 crate::diagnostic_log::info!(
                                     "wifi-auto: DNS-SD unrelated rx count={unrelated_rx} last_from={meta:?} len={length}"
                                 );
