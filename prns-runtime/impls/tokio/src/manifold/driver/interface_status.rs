@@ -4,7 +4,7 @@ use tokio::sync::watch;
 
 use crate::interfaces::{
     AirtimeUtilization, ConnectionState, FrameAccounting, FrameAccountingEvent, InterfaceId,
-    InterfaceStatus, RecordsFrameAccounting, TransferRates,
+    InterfaceStatus, PeerDetails, RadioIndication, RecordsFrameAccounting, TransferRates,
 };
 
 #[derive(Clone)]
@@ -26,10 +26,14 @@ struct StatusCell {
     protocol_violations: AtomicU64,
     frames_undecodable: AtomicU64,
     frames_delivered: AtomicU64,
+    radio: AtomicU64,
+    details_tag: AtomicU8,
+    details_payload: AtomicU8,
 }
 
 const AIRTIME_UNPUBLISHED: u32 = u32::MAX;
 const RATES_UNPUBLISHED: u64 = u64::MAX;
+const RADIO_UNPUBLISHED: u64 = u64::MAX;
 
 fn pack_airtime(utilization: AirtimeUtilization) -> u32 {
     (u32::from(utilization.short_per_mille) << 16) | u32::from(utilization.long_per_mille)
@@ -73,6 +77,9 @@ impl TokioInterfaceStatus {
                 protocol_violations: AtomicU64::new(0),
                 frames_undecodable: AtomicU64::new(0),
                 frames_delivered: AtomicU64::new(0),
+                radio: AtomicU64::new(RADIO_UNPUBLISHED),
+                details_tag: AtomicU8::new(PeerDetails::NotApplicable.wire_tag()),
+                details_payload: AtomicU8::new(0),
             }),
         }
     }
@@ -150,6 +157,23 @@ impl TokioInterfaceStatus {
         self.inner
             .airtime
             .store(pack_airtime(utilization), Ordering::Relaxed);
+    }
+
+    pub fn set_radio(&self, indication: RadioIndication) {
+        let mut bytes = [0xff; 8];
+        let _ = indication.write_into(&mut bytes);
+        self.inner
+            .radio
+            .store(u64::from_be_bytes(bytes), Ordering::Relaxed);
+    }
+
+    pub fn set_details(&self, details: PeerDetails) {
+        self.inner
+            .details_tag
+            .store(details.wire_tag(), Ordering::Relaxed);
+        self.inner
+            .details_payload
+            .store(details.wire_payload(), Ordering::Relaxed);
     }
 
     pub fn set_transfer_rates(&self, rates: TransferRates) {
@@ -230,6 +254,25 @@ impl InterfaceStatus for TokioInterfaceStatus {
             undecodable: self.inner.frames_undecodable.load(Ordering::Relaxed),
             delivered: self.inner.frames_delivered.load(Ordering::Relaxed),
         })
+    }
+
+    fn radio(&self) -> RadioIndication {
+        let packed = self.inner.radio.load(Ordering::Relaxed);
+        if packed == RADIO_UNPUBLISHED {
+            return RadioIndication::for_kind(self.inner.id.kind());
+        }
+        match RadioIndication::parse(&packed.to_be_bytes()) {
+            Some((indication, _)) => indication,
+            None => RadioIndication::for_kind(self.inner.id.kind()),
+        }
+    }
+
+    fn details(&self) -> PeerDetails {
+        PeerDetails::from_wire(
+            self.inner.details_tag.load(Ordering::Relaxed),
+            self.inner.details_payload.load(Ordering::Relaxed),
+        )
+        .unwrap_or(PeerDetails::NotApplicable)
     }
 }
 
@@ -323,6 +366,22 @@ mod tests {
                 undecodable: 1,
                 delivered: 1,
             })
+        );
+    }
+
+    #[test]
+    fn radio_stays_classified_from_kind_until_a_sample_is_published() {
+        let id =
+            InterfaceId::from_channel_tag(crate::interfaces::InterfaceKind::BluetoothPeer, b"peer");
+        let status = TokioInterfaceStatus::new_unaccounted(id, ConnectionState::Connected);
+        assert_eq!(
+            status.radio(),
+            RadioIndication::Bluetooth(crate::interfaces::BluetoothIndication::Pending)
+        );
+        status.set_radio(RadioIndication::from_bluetooth_rssi(Some(-64)));
+        assert_eq!(
+            status.radio(),
+            RadioIndication::from_bluetooth_rssi(Some(-64))
         );
     }
 }

@@ -13,11 +13,16 @@ mod identity;
 mod mobile;
 pub mod node_pages;
 mod persistence;
+mod power_publish;
 mod remote_control;
+#[cfg(feature = "embedded")]
+mod remote_control_executor;
+mod remote_control_inventory;
 #[cfg(feature = "display")]
 mod screen;
 mod soft_ap;
 mod subg_configuration_store;
+mod wifi_configuration_store;
 
 pub use destinations::{
     hopspot_destination_hashes, HopspotDestinationHashes, HopspotDestinationSet,
@@ -43,6 +48,7 @@ pub use mobile::{
     MOBILE_PANEL_WIDTH, MOBILE_PIXEL_COUNT, MOBILE_RGBA_BYTES,
 };
 pub use persistence::PersistenceState;
+pub use power_publish::{latest_power_snapshot, publish_power_snapshot};
 pub use prns_core::capabilities::positioning::gnss::{
     GnssFix, GnssReceiverCommand, GnssSnapshot, NmeaParser,
 };
@@ -58,6 +64,17 @@ pub use remote_control::{
     RemoteControlTargetPairingPhase, RemoteControlTargetPairingState,
     RemoteControlTargetPairingUpdate, StableTargetAnnouncementAction,
     StableTargetAnnouncementStatus, StableTargetAnnouncer, STABLE_TARGET_ANNOUNCE_OFFSETS_MILLIS,
+};
+#[cfg(feature = "embedded")]
+pub use remote_control_executor::{
+    run_hopspot_command_executor, HopspotCommandExecutor, HopspotCommandHandle,
+    HopspotCommandMailbox, HopspotCommandToken, HopspotWifiCredentialCommand,
+    HopspotWifiCredentialMailbox, HopspotWifiCredentialUpdate, PendingHopspotCommand,
+};
+pub use remote_control_inventory::{
+    bluetooth_auto_interface_name, decorate_hopspot_remote_control_card,
+    hopspot_remote_control_build_version, remote_control_interface_config_from_snapshots,
+    remote_control_interface_peers_from_snapshots, remote_control_inventory_from_snapshots,
 };
 #[cfg(feature = "display")]
 pub use screen::{
@@ -75,6 +92,11 @@ pub use soft_ap::SoftApLeaseTable;
 pub use subg_configuration_store::{
     LoadedSubGConfiguration, SubGConfigurationCommitOutcome, SubGConfigurationFlashOperation,
     SubGConfigurationLoadNotice, SubGConfigurationStore, SubGConfigurationStoreError,
+};
+pub use wifi_configuration_store::{
+    LoadedWifiConfiguration, WifiConfigurationCommitOutcome, WifiConfigurationFlashOperation,
+    WifiConfigurationStatus, WifiConfigurationStore, WifiConfigurationStoreError,
+    WifiConfigurationTransactionPhase, WIFI_CONFIGURATION_SEALING_DOMAIN,
 };
 
 use personal_rns::engine::{
@@ -247,6 +269,8 @@ mod tests {
             links: 0,
             transported_links: 0,
             membership: Membership::Independent,
+            radio: personal_rns::interfaces::RadioIndication::for_kind(Some(kind)),
+            details: personal_rns::interfaces::PeerDetails::NotApplicable,
         }
     }
 

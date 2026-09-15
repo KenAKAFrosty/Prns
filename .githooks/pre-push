@@ -25,6 +25,16 @@ if [ "${#pushed_tips[@]}" -gt 0 ]; then
     fi
 fi
 
+if [ "${#pushed_updates[@]}" -gt 0 ]; then
+    if ! python3 "${repo_root}/validation/hygiene/pre-push-ci-parity.py" \
+        "${pushed_updates[@]}" --phase preflight; then
+        echo ""
+        echo "✗ push blocked by a fast diff-selected preflight (see above)."
+        echo "  repair stale generated inputs or contracts before compiling the repository."
+        exit 1
+    fi
+fi
+
 if ! bash "${repo_root}/validation/hygiene/fmt-docs.sh"; then
     echo ""
     echo "✗ push blocked by the hygiene gate (see above)."
@@ -56,10 +66,12 @@ if ! "${repo_root}/tools/prns" repo cargo-check; then
 fi
 
 if [ "${#pushed_updates[@]}" -gt 0 ]; then
-    if ! python3 "${repo_root}/validation/hygiene/pre-push-ci-parity.py" "${pushed_updates[@]}"; then
+    if ! python3 "${repo_root}/validation/hygiene/pre-push-ci-parity.py" \
+        "${pushed_updates[@]}" --phase verification; then
         echo ""
         echo "✗ push blocked by a diff-selected CI parity check (see above)."
-        echo "  fix the failing Clippy, host binding, or RustSec lane before retrying."
+        echo "  fix the failing selected lane before retrying."
+        echo "  for embedded tool readiness, run ./tools/prns doctor embedded-assurance."
         exit 1
     fi
 fi

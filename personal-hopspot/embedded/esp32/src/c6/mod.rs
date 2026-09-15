@@ -1,13 +1,14 @@
 mod board;
 mod entropy;
+mod remote_control;
 
 use esp_backtrace as _;
-use esp_bootloader_esp_idf::esp_app_desc;
 use esp_hal::peripherals::{BT, USB_DEVICE};
 use esp_hal::usb_serial_jtag::{UsbSerialJtagRx, UsbSerialJtagTx};
 use esp_hal::Async;
 
 use embassy_executor::Spawner;
+use embassy_futures::join::join;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Timer};
@@ -33,7 +34,7 @@ use crate::storage::{C6Storage, EngineStorageType};
 
 use embassy_sync::signal::Signal;
 #[cfg(feature = "bluetooth-auto")]
-use personal_rns::bluetooth_auto::BluetoothAutoShared;
+use personal_rns::bluetooth_auto::{BluetoothAutoShared, BluetoothAutoStatus};
 use personal_rns::interfaces::InterfaceKind;
 use personal_rns::runtime::Fleet;
 #[cfg(feature = "bluetooth-auto")]
@@ -53,7 +54,7 @@ use personal_rns::interfaces::esp_now::{
 };
 use personal_rns::manifold::interface_seam::Interface;
 
-esp_app_desc!();
+firmware_app_descriptor!();
 
 use board::{
     C6Hardware, XiaoEsp32C6, ANNOUNCE_APP_DATA, MEMORY_PROFILE, NODE_ANNOUNCE_APP_DATA,
@@ -107,10 +108,12 @@ type InterfaceStore = EmbassyInterfaceStore<
 >;
 #[cfg(feature = "bluetooth-auto")]
 type C6BleFleet = Fleet<Mtx, BLE_HW_MTU, NOTIFY_CAP, LIFECYCLE_CAP>;
+const REMOTE_CONTROL_COMMAND_DEPTH: usize = 1;
+type AppState = personal_hopspot_core::HopspotCommandHandle<REMOTE_CONTROL_COMMAND_DEPTH>;
 type Node = PrnsNode<
-    (),
+    AppState,
     personal_hopspot_core::node_pages::NodePageRoutes,
-    for<'a> fn(PrnsEvent<'a>, &()),
+    for<'a> fn(PrnsEvent<'a>, &AppState),
     EngineStorageType,
     EmbassyHost<Mtx, C6EntropySource>,
     Mtx,
@@ -128,6 +131,9 @@ static COMMANDS: Channel<Mtx, IssuedCommand, COMMANDS_CAP> = Channel::new();
 static LIFECYCLE: Channel<Mtx, InterfaceLifecycle, LIFECYCLE_CAP> = Channel::new();
 static COMPLETION: CompletionPool<Mtx, COMPLETIONS_CAP> = CompletionPool::new();
 static INTERFACE_STORE: InterfaceStore = EmbassyInterfaceStore::new();
+static REMOTE_CONTROL_COMMANDS: personal_hopspot_core::HopspotCommandMailbox<
+    REMOTE_CONTROL_COMMAND_DEPTH,
+> = personal_hopspot_core::HopspotCommandMailbox::new();
 static USB_MANIFOLD_LANE: StaticManifoldLane<
     Mtx,
     EMBEDDED_MAX_WIRE_FRAME_LEN,
@@ -169,7 +175,7 @@ macro_rules! mk_static {
     }};
 }
 
-fn ignore_events(_event: PrnsEvent<'_>, _state: &()) {}
+fn ignore_events(_event: PrnsEvent<'_>, _state: &AppState) {}
 
 #[embassy_executor::task]
 async fn usb_device_task(

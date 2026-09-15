@@ -29,6 +29,7 @@ pub(super) const NOTIFY_CAP: usize = minimum_manifold_notification_capacity(LANE
 const COMMANDS_CAP: usize = 2;
 pub(super) const LIFECYCLE_CAP: usize = bluetooth_auto::MEMBERS;
 const COMPLETIONS_CAP: usize = 4;
+const REMOTE_CONTROL_COMMAND_DEPTH: usize = 1;
 const INTERFACE_STORE_CAP: usize = minimum_interface_store_capacity(INTERFACE_CAPACITY);
 const PACKET_PHY_RETENTION_CAPACITY: usize =
     match <EngineStorageType as StorageLayout>::LIMITS.packet_hashes {
@@ -41,6 +42,8 @@ const PACKET_PHY_INDEX_BUCKETS: usize =
 const _: () = assert!(EngineStorageType::LINK_SESSIONS > bluetooth_auto::MEMBERS);
 
 pub(crate) type Mtx = CriticalSectionRawMutex;
+pub(super) type RemoteControlHandle =
+    personal_hopspot_core::HopspotCommandHandle<REMOTE_CONTROL_COMMAND_DEPTH>;
 type EngineStorageType = crate::boards::selected::Storage;
 type InterfaceStore = EmbassyInterfaceStore<
     Mtx,
@@ -49,9 +52,9 @@ type InterfaceStore = EmbassyInterfaceStore<
     PACKET_PHY_INDEX_BUCKETS,
 >;
 pub(super) type Node = PrnsNode<
-    (),
+    RemoteControlHandle,
     personal_hopspot_core::node_pages::NodePageRoutes,
-    for<'a> fn(PrnsEvent<'a>, &()),
+    for<'a> fn(PrnsEvent<'a>, &RemoteControlHandle),
     EngineStorageType,
     EmbassyHost<Mtx, super::entropy::NrfEntropySource>,
     Mtx,
@@ -69,6 +72,9 @@ pub(super) static COMMANDS: Channel<Mtx, IssuedCommand, COMMANDS_CAP> = Channel:
 pub(super) static LIFECYCLE: Channel<Mtx, InterfaceLifecycle, LIFECYCLE_CAP> = Channel::new();
 pub(super) static COMPLETION: CompletionPool<Mtx, COMPLETIONS_CAP> = CompletionPool::new();
 pub(super) static INTERFACE_STORE: InterfaceStore = EmbassyInterfaceStore::new();
+pub(super) static REMOTE_CONTROL_COMMANDS: personal_hopspot_core::HopspotCommandMailbox<
+    REMOTE_CONTROL_COMMAND_DEPTH,
+> = personal_hopspot_core::HopspotCommandMailbox::new();
 pub(super) static LORA_MANIFOLD_LANE: StaticManifoldLane<
     Mtx,
     LORA_MAX_PAYLOAD,
@@ -87,4 +93,4 @@ pub(super) static USB_MANIFOLD_LANE: StaticManifoldLane<
     LANE_DEPTH,
 > = StaticManifoldLane::new();
 
-pub(super) fn ignore_events(_event: PrnsEvent<'_>, _state: &()) {}
+pub(super) fn ignore_events(_event: PrnsEvent<'_>, _state: &RemoteControlHandle) {}

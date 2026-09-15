@@ -206,6 +206,7 @@ pub trait PeerStore {
     fn as_mut_slice(&mut self) -> &mut [Peer];
     fn push(&mut self, peer: Peer) -> Result<(), Peer>;
     fn swap_remove(&mut self, index: usize) -> Peer;
+    fn clear(&mut self);
 }
 
 #[cfg(feature = "alloc")]
@@ -226,6 +227,10 @@ impl PeerStore for alloc::vec::Vec<Peer> {
     fn swap_remove(&mut self, index: usize) -> Peer {
         alloc::vec::Vec::swap_remove(self, index)
     }
+
+    fn clear(&mut self) {
+        alloc::vec::Vec::clear(self);
+    }
 }
 
 impl<const N: usize> PeerStore for HVec<Peer, N> {
@@ -243,6 +248,10 @@ impl<const N: usize> PeerStore for HVec<Peer, N> {
 
     fn swap_remove(&mut self, index: usize) -> Peer {
         HVec::swap_remove(self, index)
+    }
+
+    fn clear(&mut self) {
+        HVec::clear(self);
     }
 }
 
@@ -300,6 +309,12 @@ impl<S: PeerStore + Default> PeerTable<S> {
             }
         }
         before - self.peers.as_slice().len()
+    }
+
+    /// Forgets every admitted peer so subsequent authenticated observations
+    /// are admitted as [`PeerObservation::NewlyDiscovered`].
+    pub fn clear_known_peers(&mut self) {
+        self.peers.clear();
     }
 
     pub fn len(&self) -> usize {
@@ -406,6 +421,10 @@ impl<S: PeerStore + Default> AutoInterfaceProtocol<S> {
 
     pub fn prune_stale_peers(&mut self, now_ms: u64) -> usize {
         self.peers.prune_stale_peers(now_ms)
+    }
+
+    pub fn clear_known_peers(&mut self) {
+        self.peers.clear_known_peers();
     }
 
     pub fn refresh_known_peer(&mut self, addr: Ipv6Addr, now_ms: u64) -> bool {
@@ -597,7 +616,7 @@ mod tests {
     }
 
     #[test]
-    fn known_peer_data_activity_refreshes_liveness_without_admitting_unknown_sources() {
+    fn known_peer_refresh_updates_liveness_without_admitting_unknown_sources() {
         let local = nth_peer(20);
         let peer = nth_peer(21);
         let unknown = nth_peer(22);
@@ -615,5 +634,54 @@ mod tests {
         assert!(brain.refresh_known_peer(peer, 21_000));
         assert_eq!(brain.prune_stale_peers(PEERING_TIMEOUT_MS + 1), 0);
         assert_eq!(brain.prune_stale_peers(21_000 + PEERING_TIMEOUT_MS + 1), 1);
+    }
+
+    fn assert_clearing_known_peers_readmits_every_peer<S: PeerStore + Default>() {
+        let local = nth_peer(30);
+        let first_peer = nth_peer(31);
+        let second_peer = nth_peer(32);
+        let mut brain = AutoInterfaceProtocol::<S>::from_link_local(local);
+        let first_token = peering_token(&first_peer);
+        let second_token = peering_token(&second_peer);
+
+        assert_eq!(
+            brain.observe_discovery_datagram(first_peer, first_token.as_bytes(), 0),
+            BeaconObservation::AuthenticatedPeer {
+                address: first_peer,
+                peer_observation: PeerObservation::NewlyDiscovered,
+            }
+        );
+        assert_eq!(
+            brain.observe_discovery_datagram(second_peer, second_token.as_bytes(), 1),
+            BeaconObservation::AuthenticatedPeer {
+                address: second_peer,
+                peer_observation: PeerObservation::NewlyDiscovered,
+            }
+        );
+        assert_eq!(brain.peer_count(), 2);
+
+        brain.clear_known_peers();
+        assert_eq!(brain.peer_count(), 0);
+        assert_eq!(
+            brain.observe_discovery_datagram(first_peer, first_token.as_bytes(), 2),
+            BeaconObservation::AuthenticatedPeer {
+                address: first_peer,
+                peer_observation: PeerObservation::NewlyDiscovered,
+            }
+        );
+        assert_eq!(
+            brain.observe_discovery_datagram(second_peer, second_token.as_bytes(), 3),
+            BeaconObservation::AuthenticatedPeer {
+                address: second_peer,
+                peer_observation: PeerObservation::NewlyDiscovered,
+            }
+        );
+    }
+
+    #[test]
+    fn fixed_and_heap_peer_stores_clear_every_known_peer() {
+        assert_clearing_known_peers_readmits_every_peer::<HVec<Peer, 2>>();
+        #[cfg(feature = "alloc")]
+        assert_clearing_known_peers_readmits_every_peer::<alloc::vec::Vec<Peer>>();
     }
 }

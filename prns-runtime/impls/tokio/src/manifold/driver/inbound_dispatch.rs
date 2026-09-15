@@ -3,8 +3,7 @@ use crate::engine::{
     InstantMillis, Journaled, OwedWork, ProofRequest, WakeSchedules,
 };
 use crate::interfaces::{
-    FrameAccountingEvent, IfacUnmaskError, InboundPacket, InterfaceId, InterfaceIfac,
-    PacketPhyStats,
+    FrameAccountingEvent, IfacUnmaskError, InboundPacket, InterfaceId, PacketPhyStats,
 };
 use crate::manifold::wake_schedule::merge_wake_schedules_delta;
 use crate::manifold::Host;
@@ -19,8 +18,8 @@ use crate::wire::WirePacketHeader;
 
 use super::crypto_pool::{run_link_sign_job, CryptoPool, LinkSignCompleted, LinkSignJob};
 use super::egress::{
-    forward_from_ingress, ifac_for, route_ingress_reaction, route_ingress_reaction_with_work,
-    Egress, ForwardedSlotOutcome, InterfacePacer, WireScratch,
+    forward_from_ingress, ifac_for, route_reaction, route_reaction_with_work, Egress,
+    ForwardedSlotOutcome, InterfaceIfacs, InterfacePacers, WireScratch,
 };
 use super::interface_topology::InterfaceTopology;
 use super::journal_delivery::JournalDispatch;
@@ -77,8 +76,8 @@ enum ResourceControlPacket {
 fn route_ingress_reaction_with_owed_work<J>(
     reaction: EngineReaction<'_, OwedWork<'_>>,
     egress: &mut Egress,
-    ifacs: &[InterfaceIfac],
-    pacers: &mut [InterfacePacer],
+    ifacs: &InterfaceIfacs,
+    pacers: &mut InterfacePacers,
     wire_scratch: &mut WireScratch,
     journal: &mut JournalDispatch<J>,
     owed_work: &mut PendingOwedWork,
@@ -115,7 +114,7 @@ fn route_ingress_reaction_with_owed_work<J>(
         },
         reaction => reaction,
     };
-    route_ingress_reaction_with_work(
+    route_reaction_with_work(
         reaction,
         egress,
         ifacs,
@@ -163,12 +162,11 @@ fn route_ingress_reaction_with_owed_work<J>(
                 owed_work.push(OwedWork::ResourceDecompression(owed), crypto_pool);
             }
         },
-        source,
     );
 }
 
 pub(super) struct InboundDispatch {
-    ready_lanes: std::vec::Vec<InterfaceId>,
+    ready_lanes: super::indexed_rows::IndexedRows<InterfaceId>,
     unmask_scratch: std::boxed::Box<[u8]>,
     link_signs: std::vec::Vec<LinkSignJob>,
     inline_link_signs: std::vec::Vec<LinkSignJob>,
@@ -182,7 +180,7 @@ pub(super) struct InboundDispatch {
 impl InboundDispatch {
     pub(super) fn new(frame_capacity: usize) -> Self {
         Self {
-            ready_lanes: std::vec::Vec::new(),
+            ready_lanes: super::indexed_rows::IndexedRows::default(),
             unmask_scratch: std::vec![0u8; frame_capacity].into_boxed_slice(),
             link_signs: std::vec::Vec::new(),
             inline_link_signs: std::vec::Vec::new(),
@@ -210,15 +208,13 @@ impl InboundDispatch {
     }
 
     pub(super) fn mark_ready(&mut self, source: InterfaceId) {
-        if !self.ready_lanes.contains(&source) {
-            self.ready_lanes.push(source);
-        }
+        self.ready_lanes.push(source);
     }
 
     pub(super) fn discover_ready(&mut self, topology: &mut InterfaceTopology) {
-        for (source, lane) in &mut topology.inbound_lanes {
-            if lane.try_peek().is_some() && !self.ready_lanes.contains(source) {
-                self.ready_lanes.push(*source);
+        for lane in topology.inbound_lanes.iter_mut() {
+            if lane.consumer.try_peek().is_some() {
+                self.ready_lanes.push(lane.id);
             }
         }
     }
@@ -272,9 +268,6 @@ impl InboundDispatch {
             if processed_frames == max_frames_total {
                 break;
             }
-            if topology.egress.blocks_source(source) {
-                continue;
-            }
             if !link_identity_barriers.is_empty()
                 && link_identity_barriers
                     .iter()
@@ -285,13 +278,10 @@ impl InboundDispatch {
             debug_assert!(link_signs.is_empty());
             debug_assert!(inline_link_signs.is_empty());
             let frame_accounting = topology.frame_accounting_recorder(source);
-            let Some((_, lane)) = topology
-                .inbound_lanes
-                .iter_mut()
-                .find(|(id, _)| *id == source)
-            else {
+            let Some(inbound) = topology.inbound_lanes.get_mut(&source) else {
                 continue;
             };
+            let lane = &mut inbound.consumer;
             for _ in 0..max_frames_per_lane {
                 if processed_frames == max_frames_total {
                     break;
@@ -488,7 +478,6 @@ impl InboundDispatch {
                                         forward_from_ingress(
                                             &mut topology.egress,
                                             &topology.ifacs,
-                                            source,
                                             forward.target,
                                             forward.header,
                                             payload,
@@ -505,7 +494,6 @@ impl InboundDispatch {
                             forward_from_ingress(
                                 &mut topology.egress,
                                 &topology.ifacs,
-                                source,
                                 forward.target,
                                 forward.header,
                                 payload,
@@ -553,9 +541,6 @@ impl InboundDispatch {
                 {
                     break;
                 }
-                if topology.egress.blocks_source(source) {
-                    break;
-                }
             }
             {
                 let inline_signs = crypto_pool.map_or(usize::MAX, |_| 0);
@@ -572,7 +557,7 @@ impl InboundDispatch {
                     match run_link_sign_job(job) {
                         LinkSignCompleted::ChannelAck(completed) => {
                             engine.resume_channel_ack_sign(completed, now, &mut |reaction| {
-                                route_ingress_reaction(
+                                route_reaction(
                                     reaction,
                                     &mut topology.egress,
                                     &topology.ifacs,
@@ -580,13 +565,12 @@ impl InboundDispatch {
                                     wire_scratch,
                                     now,
                                     &mut |journaled| journal.route(journaled),
-                                    source,
                                 );
                             });
                         }
                         LinkSignCompleted::Receipt(completed) => {
                             engine.resume_link_receipt_sign(completed, now, &mut |reaction| {
-                                route_ingress_reaction(
+                                route_reaction(
                                     reaction,
                                     &mut topology.egress,
                                     &topology.ifacs,
@@ -594,14 +578,13 @@ impl InboundDispatch {
                                     wire_scratch,
                                     now,
                                     &mut |journaled| journal.route(journaled),
-                                    source,
                                 );
                             });
                         }
                         LinkSignCompleted::Identify(completed) => {
                             let changed =
                                 engine.resume_identify_sign(completed, now, &mut |reaction| {
-                                    route_ingress_reaction(
+                                    route_reaction(
                                         reaction,
                                         &mut topology.egress,
                                         &topology.ifacs,
@@ -609,7 +592,6 @@ impl InboundDispatch {
                                         wire_scratch,
                                         now,
                                         &mut |journaled| journal.route(journaled),
-                                        source,
                                     );
                                 });
                             merge_wake_schedules_delta(
@@ -629,9 +611,8 @@ impl InboundDispatch {
         ready_lanes.retain(|source| {
             topology
                 .inbound_lanes
-                .iter_mut()
-                .find(|(id, _)| id == source)
-                .is_some_and(|(_, lane)| lane.try_peek().is_some())
+                .get_mut(source)
+                .is_some_and(|lane| lane.consumer.try_peek().is_some())
         });
         if ready_lanes.len() > 1 {
             ready_lanes.rotate_left(1);

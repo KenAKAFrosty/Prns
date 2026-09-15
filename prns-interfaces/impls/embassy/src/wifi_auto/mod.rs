@@ -9,7 +9,7 @@ use ::core::net::Ipv6Addr;
 use embassy_futures::join::join;
 use embassy_futures::select::{select, select4, select5, Either, Either4, Either5};
 use embassy_net::udp::{BindError as UdpBindError, RecvError, UdpMetadata, UdpSocket};
-use embassy_net::{IpAddress, MulticastError, Stack};
+use embassy_net::{IpAddress, Stack};
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex};
 use embassy_sync::blocking_mutex::CriticalSectionMutex;
 use embassy_sync::signal::Signal;
@@ -43,12 +43,13 @@ use service_discovery::{
     EMBEDDED_SERVICE_DISCOVERY_CAPACITY as SERVICE_DISCOVERY_INSTANCES,
 };
 pub use service_discovery::{
-    UdpServiceDiscovery, UdpServiceDiscoveryConstructionError, UdpServiceDiscoveryStorage,
-    EMBEDDED_SERVICE_DISCOVERY_CAPACITY, UDP_SERVICE_DISCOVERY_PACKET_BYTES,
-    UDP_SERVICE_DISCOVERY_RECEIVE_PACKET_BYTES, UDP_SERVICE_DISCOVERY_RX_QUEUED_PACKETS,
-    UDP_SERVICE_DISCOVERY_RX_SOCKET_BYTES, UDP_SERVICE_DISCOVERY_RX_SOCKET_METADATA,
-    UDP_SERVICE_DISCOVERY_SOCKET_COUNT, UDP_SERVICE_DISCOVERY_TX_QUEUED_PACKETS,
-    UDP_SERVICE_DISCOVERY_TX_SOCKET_BYTES, UDP_SERVICE_DISCOVERY_TX_SOCKET_METADATA,
+    MdnsMulticastFamily, UdpServiceDiscovery, UdpServiceDiscoveryConstructionError,
+    UdpServiceDiscoveryStorage, EMBEDDED_SERVICE_DISCOVERY_CAPACITY,
+    UDP_SERVICE_DISCOVERY_PACKET_BYTES, UDP_SERVICE_DISCOVERY_RECEIVE_PACKET_BYTES,
+    UDP_SERVICE_DISCOVERY_RX_QUEUED_PACKETS, UDP_SERVICE_DISCOVERY_RX_SOCKET_BYTES,
+    UDP_SERVICE_DISCOVERY_RX_SOCKET_METADATA, UDP_SERVICE_DISCOVERY_SOCKET_COUNT,
+    UDP_SERVICE_DISCOVERY_TX_QUEUED_PACKETS, UDP_SERVICE_DISCOVERY_TX_SOCKET_BYTES,
+    UDP_SERVICE_DISCOVERY_TX_SOCKET_METADATA,
 };
 
 const BEACON_INTERVAL: Duration = Duration::from_millis(1600);
@@ -66,10 +67,9 @@ enum SecondaryStackReadiness {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SegmentActivationError {
-    MulticastDiscoveryBind(UdpBindError),
-    UnicastDiscoveryBind(UdpBindError),
-    DataBind(UdpBindError),
-    MulticastJoin(MulticastError),
+    MulticastDiscovery(UdpBindError),
+    UnicastDiscovery(UdpBindError),
+    Data(UdpBindError),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -155,19 +155,27 @@ fn activate_segment(segment: &mut AutoWifiSegment<'_>) -> Result<(), SegmentActi
     segment
         .discovery
         .bind(contract::DEFAULT_DISCOVERY_PORT)
-        .map_err(SegmentActivationError::MulticastDiscoveryBind)?;
+        .map_err(SegmentActivationError::MulticastDiscovery)?;
     segment
         .unicast_discovery
         .bind(contract::UNICAST_DISCOVERY_PORT)
-        .map_err(SegmentActivationError::UnicastDiscoveryBind)?;
+        .map_err(SegmentActivationError::UnicastDiscovery)?;
     segment
         .data
         .bind(contract::DEFAULT_DATA_PORT)
-        .map_err(SegmentActivationError::DataBind)?;
-    segment
+        .map_err(SegmentActivationError::Data)?;
+    // Classic AutoWifi multicast discovery is best-effort. On some STA stacks (notably
+    // ESP32-C6 + embassy-net) IPv6 group join fails while unicast LL + mDNS still work;
+    // do not fail the whole segment and leave :29717 unbound/unread.
+    if let Err(error) = segment
         .stack
         .join_multicast_group(IpAddress::Ipv6(contract::DISCOVERY_GROUP))
-        .map_err(SegmentActivationError::MulticastJoin)
+    {
+        crate::diagnostic_log::warn!(
+            "wifi-auto: IPv6 discovery multicast join failed ({error:?}); continuing with unicast + mDNS"
+        );
+    }
+    Ok(())
 }
 
 async fn activate_secondary_segment<const MEMBERS: usize>(
@@ -190,6 +198,7 @@ async fn activate_secondary_segment<const MEMBERS: usize>(
 /// The reusable slot's peer id uses a critical-section cell so cross-core readers see it coherently.
 pub struct WifiMemberStatus {
     id: CriticalSectionMutex<Cell<InterfaceId>>,
+    link_local: CriticalSectionMutex<Cell<Option<Ipv6Addr>>>,
     connection: AtomicU8,
     rx: AtomicU64,
     tx: AtomicU64,
@@ -221,7 +230,6 @@ impl<const TARGETS: usize> EmbeddedDiscoveryTargets<TARGETS> {
         self.addresses.get(index).copied()
     }
 
-    #[cfg(test)]
     fn iter(&self) -> impl Iterator<Item = Ipv6Addr> + '_ {
         self.addresses.iter().copied()
     }
@@ -265,6 +273,7 @@ impl WifiMemberStatus {
     const fn new() -> Self {
         Self {
             id: CriticalSectionMutex::new(Cell::new(InterfaceId::new([0u8; 8]))),
+            link_local: CriticalSectionMutex::new(Cell::new(None)),
             connection: AtomicU8::new(ConnectionState::Disconnected.as_u8()),
             rx: AtomicU64::new(0),
             tx: AtomicU64::new(0),
@@ -274,8 +283,9 @@ impl WifiMemberStatus {
         }
     }
 
-    fn assign(&self, id: InterfaceId) {
+    fn assign(&self, id: InterfaceId, link_local: Option<Ipv6Addr>) {
         self.id.lock(|cell| cell.set(id));
+        self.link_local.lock(|cell| cell.set(link_local));
         self.connection
             .store(ConnectionState::Connected.as_u8(), Ordering::Relaxed);
         self.session_rx_start.store_relaxed(self.rx.load_relaxed());
@@ -311,6 +321,10 @@ impl InterfaceStatus for WifiMemberStatus {
         self.tx
             .load_relaxed()
             .saturating_sub(self.session_tx_start.load_relaxed())
+    }
+
+    fn link_local(&self) -> Option<Ipv6Addr> {
+        self.link_local.lock(|cell| cell.get())
     }
 }
 
@@ -502,6 +516,7 @@ impl<const MEMBERS: usize> AutoWifiStatus<MEMBERS> {
         member
             .connection
             .store(ConnectionState::Disconnected.as_u8(), Ordering::Relaxed);
+        member.link_local.lock(|cell| cell.set(None));
     }
 
     fn republish_peer_count(&self) {
@@ -716,7 +731,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
         state: &mut AutoWifiRunState<MEMBERS>,
         fleet: &Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
     ) {
-        clear_wifi_peers(&mut state.peers, &self.status, fleet).await;
+        clear_wifi_peer_state(&mut self.brain, &mut state.peers, &self.status, fleet).await;
         clear_tcp_members(
             &mut self.rendezvous,
             &mut state.tcp_peers,
@@ -775,6 +790,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
     ) {
         if let Ok((len, meta)) = received {
             if let IpAddress::Ipv6(src) = meta.endpoint.addr {
+                crate::diagnostic_log::debug!("wifi-auto: unicast discovery from {src} len={len}");
                 let peering_token_reply = ingest_beacon(
                     &mut self.brain,
                     &mut state.peers,
@@ -873,7 +889,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
         }
     }
 
-    fn handle_inbound_data<
+    async fn handle_inbound_data<
         M: RawMutex + 'static,
         const FRAME: usize,
         const NOTIFY: usize,
@@ -887,16 +903,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
     ) {
         if let Ok((len, meta)) = received {
             if let IpAddress::Ipv6(src) = meta.endpoint.addr {
-                if route_inbound(fleet, &state.peers, &self.status, src, &bytes[..len]) {
-                    // Discovery authenticated this source before it entered the peer table. Live
-                    // data from that exact peer is equally strong liveness evidence, and prevents
-                    // a missed multicast beacon from tearing down an active interface and all of
-                    // the routes learned through it.
-                    let now_ms = Instant::now().as_millis();
-                    if self.brain.refresh_known_peer(src, now_ms) {
-                        self.status.record_peer_heard(now_ms);
-                    }
-                }
+                let _ = route_inbound(fleet, &state.peers, &self.status, src, &bytes[..len]).await;
             }
         }
     }
@@ -951,10 +958,17 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                 &self.primary.unicast_discovery,
                 &state.discovered_targets,
                 &self.brain,
+                &state.peers,
                 &mut state.discovery_probe_cursor,
                 self.status,
             )
             .await;
+            // mDNS/browse targets are not the only peers we must keep alive: hosts often
+            // discover us via announce+probe, so they never appear in discovered_targets.
+            // Without unicast refresh, and with IPv6 multicast beacons blocked on many APs,
+            // those peers time out after PEERING_TIMEOUT_MS.
+            send_unicast_peer_refresh(&self.primary.unicast_discovery, &self.brain, self.status)
+                .await;
         }
         BeaconMaintenanceOutcome::Completed
     }
@@ -979,7 +993,21 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
             bytes: outbound.bytes(),
         };
         let dispatch = dispatch_fanout(&mut plan, &mut sender, SEND_TIMEOUT);
-        let _ = select(self.status.wait_until_disabled(), dispatch).await;
+        let fanout = select(self.status.wait_until_disabled(), dispatch).await;
+        let (selected, sent) = match &fanout {
+            Either::Second(stats) => (stats.selected, stats.sent),
+            Either::First(()) => (0, 0),
+        };
+        crate::diagnostic_log::debug!(
+            "wifi-auto: data fanout len={} target={:?} selected={selected} sent={sent}",
+            outbound.len(),
+            outbound.target()
+        );
+        crate::diagnostic_log::debug!(
+            "path-req: fanout len={} target={:?} selected={selected} sent={sent}",
+            outbound.len(),
+            outbound.target()
+        );
         let Some(rendezvous) = self.rendezvous.as_mut() else {
             return;
         };
@@ -1001,15 +1029,22 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
     }
 
     async fn handle_discovery_targets(
-        &self,
+        &mut self,
         state: &mut AutoWifiRunState<MEMBERS>,
         targets: EmbeddedDiscoveryTargets<MEMBERS>,
     ) {
         state.discovered_targets = targets;
+        let now_ms = Instant::now().as_millis();
+        for address in state.discovered_targets.iter() {
+            if self.brain.refresh_known_peer(address, now_ms) {
+                self.status.record_peer_heard(now_ms);
+            }
+        }
         send_discovery_probes(
             &self.primary.unicast_discovery,
             &state.discovered_targets,
             &self.brain,
+            &state.peers,
             &mut state.discovery_probe_cursor,
             self.status,
         )
@@ -1026,7 +1061,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
     {
         wait_for_primary_stack(&self.primary.stack, self.status).await;
         match activate_segment(&mut self.primary) {
-            Ok(()) => crate::diagnostic_log::debug!("wifi-auto: primary segment active"),
+            Ok(()) => crate::diagnostic_log::info!("wifi-auto: primary segment active"),
             Err(error) => {
                 crate::diagnostic_log::warn!(
                     "wifi-auto: primary segment activation failed: {error:?}"
@@ -1111,7 +1146,8 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                         &mut fleet,
                         received,
                         receive_buffers.primary_data,
-                    );
+                    )
+                    .await;
                 }
                 AutoWifiEvent::BeaconTick => {
                     match self.handle_beacon_tick(&mut state, &fleet).await {
@@ -1146,7 +1182,8 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                         &mut fleet,
                         received,
                         receive_buffers.secondary_data,
-                    );
+                    )
+                    .await;
                 }
                 AutoWifiEvent::Rendezvous { client, slot } => {
                     let rejected_session = match slot.event() {
@@ -1319,7 +1356,7 @@ async fn handle_rendezvous_event<
                     contract::policy_for_bitrate(bitrate),
                 ))
                 .await;
-            status.member(slot).assign(id);
+            status.member(slot).assign(id, None);
             status.record_peer_heard(Instant::now().as_millis());
             *tcp_peer = Some(TcpPeer {
                 client,
@@ -1430,15 +1467,32 @@ async fn ingest_beacon<
 ) -> PeeringTokenReply {
     let peer_lookup = peers.lookup(src);
     if peer_lookup == WifiPeerLookup::Full {
+        if matches!(beacon_channel, BeaconChannel::Unicast) {
+            crate::diagnostic_log::debug!(
+                "wifi-auto: unicast peering rx dropped {src} reason=peer_table_full"
+            );
+        }
         return PeeringTokenReply::NotRequired;
     }
+    let observation = brain.observe_discovery_datagram(src, bytes, now_ms);
     let contract::BeaconObservation::AuthenticatedPeer {
         address,
         peer_observation,
-    } = brain.observe_discovery_datagram(src, bytes, now_ms)
+    } = observation
     else {
+        if matches!(beacon_channel, BeaconChannel::Unicast) {
+            crate::diagnostic_log::debug!(
+                "wifi-auto: unicast peering rx rejected {src} observation={observation:?} len={}",
+                bytes.len()
+            );
+        }
         return PeeringTokenReply::NotRequired;
     };
+    if matches!(beacon_channel, BeaconChannel::Unicast) {
+        crate::diagnostic_log::debug!(
+            "wifi-auto: unicast peering rx ok {address} observation={peer_observation:?} segment={segment:?}"
+        );
+    }
     match (peer_lookup, peer_observation) {
         (
             WifiPeerLookup::Present { slot, .. },
@@ -1458,7 +1512,7 @@ async fn ingest_beacon<
                 .await;
             match peers.insert(slot, peer) {
                 WifiPeerInsertion::Inserted { .. } => {
-                    status.member(slot).assign(id);
+                    status.member(slot).assign(id, Some(address));
                     status.republish_peer_count();
                 }
                 WifiPeerInsertion::Occupied { .. }
@@ -1521,12 +1575,24 @@ async fn send_peering_token_reply<const MEMBERS: usize>(
         ),
     );
     match select(status.wait_until_disabled(), send).await {
-        Either::First(()) | Either::Second(Ok(Ok(()))) => {}
+        Either::First(()) => {}
+        Either::Second(Ok(Ok(()))) => {
+            crate::diagnostic_log::debug!(
+                "wifi-auto: unicast peering reciprocal tx ok to {address}:{}",
+                contract::UNICAST_DISCOVERY_PORT
+            );
+        }
         Either::Second(Ok(Err(error))) => {
-            crate::diagnostic_log::debug!("wifi-auto: reciprocal peering reply failed: {error:?}");
+            crate::diagnostic_log::warn!(
+                "wifi-auto: unicast peering reciprocal tx fail to {address}:{} err={error:?}",
+                contract::UNICAST_DISCOVERY_PORT
+            );
         }
         Either::Second(Err(_timeout)) => {
-            crate::diagnostic_log::debug!("wifi-auto: reciprocal peering reply timed out");
+            crate::diagnostic_log::warn!(
+                "wifi-auto: unicast peering reciprocal tx timeout to {address}:{}",
+                contract::UNICAST_DISCOVERY_PORT
+            );
         }
     }
 }
@@ -1535,6 +1601,7 @@ async fn send_discovery_probes<const MEMBERS: usize>(
     unicast_discovery_socket: &UdpSocket<'_>,
     discovery_targets: &EmbeddedDiscoveryTargets<MEMBERS>,
     brain: &contract::FixedAutoInterfaceProtocol<MEMBERS>,
+    peers: &WifiPeerTable<MEMBERS>,
     cursor: &mut RoundRobinCursor,
     status: AutoWifiStatus<MEMBERS>,
 ) {
@@ -1554,6 +1621,9 @@ async fn send_discovery_probes<const MEMBERS: usize>(
             {
                 continue;
             }
+            if matches!(peers.lookup(address), WifiPeerLookup::Present { .. }) {
+                continue;
+            }
             let _send_result = unicast_discovery_socket
                 .send_to(
                     token.as_bytes(),
@@ -1570,7 +1640,52 @@ async fn send_discovery_probes<const MEMBERS: usize>(
     }
 }
 
-fn route_inbound<
+async fn send_unicast_peer_refresh<const MEMBERS: usize>(
+    unicast_discovery_socket: &UdpSocket<'_>,
+    brain: &contract::FixedAutoInterfaceProtocol<MEMBERS>,
+    status: AutoWifiStatus<MEMBERS>,
+) {
+    let token = brain.our_peering_token();
+    let known_peers: heapless::Vec<Ipv6Addr, MEMBERS> = {
+        let mut known_peers = heapless::Vec::new();
+        for address in brain.known_peer_addresses() {
+            let _ = known_peers.push(address);
+        }
+        known_peers
+    };
+    crate::diagnostic_log::debug!(
+        "wifi-auto: unicast peering refresh cycle known_peers={}",
+        known_peers.len()
+    );
+    let send = with_timeout(SEND_TIMEOUT, async {
+        for address in known_peers.iter().copied() {
+            match unicast_discovery_socket
+                .send_to(
+                    token.as_bytes(),
+                    (IpAddress::Ipv6(address), contract::UNICAST_DISCOVERY_PORT),
+                )
+                .await
+            {
+                Ok(()) => crate::diagnostic_log::debug!(
+                    "wifi-auto: unicast peering tx ok to {address}:{}",
+                    contract::UNICAST_DISCOVERY_PORT
+                ),
+                Err(error) => crate::diagnostic_log::warn!(
+                    "wifi-auto: unicast peering tx fail to {address}:{} err={error:?}",
+                    contract::UNICAST_DISCOVERY_PORT
+                ),
+            }
+        }
+    });
+    match select(status.wait_until_disabled(), send).await {
+        Either::First(()) | Either::Second(Ok(())) => {}
+        Either::Second(Err(_timeout)) => {
+            crate::diagnostic_log::warn!("wifi-auto: unicast peer refresh budget exhausted");
+        }
+    }
+}
+
+async fn route_inbound<
     M: RawMutex + 'static,
     const FRAME: usize,
     const MEMBERS: usize,
@@ -1587,25 +1702,49 @@ fn route_inbound<
         return false;
     }
     let WifiPeerLookup::Present { slot, id } = peers.lookup(src) else {
+        crate::diagnostic_log::debug!(
+            "wifi-auto: data rx dropped {src} len={} reason=unknown_peer",
+            bytes.len()
+        );
         return false;
     };
-    if fleet.try_deliver_inbound(id, bytes).is_ok() {
-        status.member(slot).add_rx(bytes.len() as u64);
+    // Same as TCP rendezvous Frame intake: await the lane instead of try_deliver + drop.
+    match fleet.deliver_inbound(id, bytes).await {
+        Ok(()) => {
+            status.member(slot).add_rx(bytes.len() as u64);
+            crate::diagnostic_log::debug!(
+                "wifi-auto: data rx ok {src} len={} delivered",
+                bytes.len()
+            );
+        }
+        Err(error) => {
+            crate::diagnostic_log::warn!(
+                "wifi-auto: data rx {src} len={} deliver_failed err={error:?}",
+                bytes.len()
+            );
+            crate::diagnostic_log::debug!(
+                "path-req: wifi deliver_failed len={} err={error:?}",
+                bytes.len()
+            );
+        }
     }
     true
 }
 
-async fn clear_wifi_peers<
+async fn clear_wifi_peer_state<
     M: RawMutex + 'static,
     const FRAME: usize,
     const MEMBERS: usize,
     const NOTIFY: usize,
     const LIFECYCLE: usize,
 >(
+    brain: &mut contract::FixedAutoInterfaceProtocol<MEMBERS>,
     peers: &mut WifiPeerTable<MEMBERS>,
     status: &AutoWifiStatus<MEMBERS>,
     fleet: &Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
 ) -> WifiPeerClear {
+    // Protocol discovery memory and registered UDP peers share one enablement lifetime.
+    brain.clear_known_peers();
     let mut outcome = WifiPeerClear::AlreadyEmpty;
     for slot in 0..MEMBERS {
         let WifiPeerSlotLookup::Occupied(peer) = peers.lookup_slot(slot) else {
@@ -1790,7 +1929,7 @@ mod tests {
         status.set_lifecycle(ConnectionState::Connected);
         assert_eq!(status.connection(), ConnectionState::Disconnected);
         assert_eq!(status.peer_count(), 0);
-        status.member(0).assign(id(1));
+        status.member(0).assign(id(1), None);
         status.republish_peer_count();
         assert_eq!(status.peer_count(), 1);
         assert_eq!(status.connection(), ConnectionState::Connected);
@@ -1815,7 +1954,7 @@ mod tests {
     fn retired_and_reconnected_member_traffic_is_monotonic() {
         let status = AutoWifiStatus::new(&ACCOUNTING_SHARED);
         status.set_lifecycle(ConnectionState::Connected);
-        status.member(0).assign(id(1));
+        status.member(0).assign(id(1), None);
         status.member(0).add_rx(90);
         status.member(0).add_tx(45);
 
@@ -1830,7 +1969,7 @@ mod tests {
         assert_eq!(status.peer_count(), 0);
         assert_eq!((status.rx_bytes(), status.tx_bytes()), (90, 45));
 
-        status.member(0).assign(id(2));
+        status.member(0).assign(id(2), None);
         status.republish_peer_count();
         assert_eq!(status.connection(), ConnectionState::Connected);
         status.member(0).add_rx(30);

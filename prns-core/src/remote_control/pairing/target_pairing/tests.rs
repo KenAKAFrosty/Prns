@@ -91,6 +91,7 @@ impl TargetPairingFixture {
             self.permissions().clone(),
             self.attempt_timeout(),
         )
+        .unwrap()
     }
 
     fn commit(&self, request_fill: u8) -> RemoteControlTargetPairingCommitArrival {

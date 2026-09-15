@@ -1094,7 +1094,8 @@ mod tests {
             &begin,
             permissions(),
             RemoteControlPairingAttemptTimeout::try_from(attempt_timeout).unwrap(),
-        );
+        )
+        .unwrap();
         let (offer, transcript) = prepared.into_parts();
         let ReceiveRemoteControlControllerPairingOfferOutcome::ConfirmationRequired { attempt_id } =
             engine
@@ -1192,7 +1193,8 @@ mod tests {
             &begin,
             permissions(),
             RemoteControlPairingAttemptTimeout::try_from(DurationMillis(3_000)).unwrap(),
-        );
+        )
+        .unwrap();
         let (offer, transcript) = prepared.into_parts();
         let attempt_id = (&transcript).into();
         let packed = packed_response(RemoteControlPairingResponse::Offer(offer));

@@ -52,6 +52,7 @@ objc2-core-bluetooth = "0.3"
 objc2-core-foundation = { version = "0.3", features = ["CFStream", "dispatch2", "CFRunLoop", "CFDate", "CFString", "CFDictionary"] }
 objc2-io-kit = { version = "0.3.2", default-features = false, features = ["std", "libc", "serial"] }
 dispatch2 = "0.3"
+libc = "0.2"
 
 # The Windows backend rides WinRT (GATT-only): GattServiceProvider for the peripheral/advertise role
 # and a GATT client for central, projected by the official `windows` crate. The WinRT projections are

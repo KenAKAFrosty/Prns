@@ -2,9 +2,8 @@ use crate::identity::IdentityHash;
 use crate::remote_control::{
     FixedRemoteControlTargetAccessTable, ForgetRemoteControlTargetOutcome,
     RemoteControlControllerIdentity, RemoteControlEndpoint, RemoteControlRequestSet,
-    RemoteControlTargetAccess, RemoteControlTargetAccessTable, RemoteControlTargetIdentity,
-    SetRemoteControlTargetAccessError, SetRemoteControlTargetAccessOutcome,
-    DEFAULT_MAX_REMOTE_CONTROL_TARGET_ACCESSES,
+    RemoteControlTargetAccess, RemoteControlTargetAccessTable, SetRemoteControlTargetAccessError,
+    SetRemoteControlTargetAccessOutcome, DEFAULT_MAX_REMOTE_CONTROL_TARGET_ACCESSES,
 };
 use heapless::Vec;
 
@@ -113,7 +112,7 @@ impl From<(&RemoteControlControllerIdentity, &RemoteControlTargetAccess)>
             target: access.target().identity_hash(),
             endpoint: access.endpoint(),
             controller: *controller,
-            permitted_requests: *access.permitted_requests(),
+            permitted_requests: access.effective_requests(),
         }
     }
 }
@@ -259,7 +258,7 @@ pub trait RemoteControlTargetAccessControl {
 
     fn forget_remote_control_target(
         &self,
-        target: RemoteControlTargetIdentity,
+        target: IdentityHash,
     ) -> impl core::future::Future<
         Output = Result<ForgetRemoteControlTargetOutcome, ForgetRemoteControlTargetControlError>,
     > + Send;

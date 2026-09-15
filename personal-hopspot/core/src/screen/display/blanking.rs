@@ -137,6 +137,13 @@ impl BlankingCapability {
         }
     }
 
+    pub(super) const fn auto_off(&self) -> Result<DisplayAutoOff, BlankingError> {
+        match self {
+            Self::Unavailable => Err(BlankingError::UserBlankingUnavailable),
+            Self::Available(blanking) => Ok(blanking.auto_off()),
+        }
+    }
+
     pub(super) const fn presentation_is_allowed(&self) -> bool {
         match self {
             Self::Unavailable => true,
@@ -412,13 +419,32 @@ impl BlankingState {
         &mut self,
         now: MonotonicMillis,
     ) -> Result<DisplayAutoOff, BlankingError> {
+        let desired = match self.auto_off.setting() {
+            DisplayAutoOff::Enabled => DisplayAutoOff::Disabled,
+            DisplayAutoOff::Disabled => DisplayAutoOff::Enabled,
+        };
+        self.set_auto_off(desired, now)
+    }
+
+    pub(super) const fn auto_off(&self) -> DisplayAutoOff {
+        self.auto_off.setting()
+    }
+
+    pub(super) fn set_auto_off(
+        &mut self,
+        desired: DisplayAutoOff,
+        now: MonotonicMillis,
+    ) -> Result<DisplayAutoOff, BlankingError> {
         self.observe(now)?;
         if !matches!(self.phase, BlankingPhase::Settled(_)) {
             return Err(BlankingError::OperationInFlight);
         }
-        match self.auto_off.setting() {
-            DisplayAutoOff::Enabled => self.auto_off = AutoOffState::Disabled,
-            DisplayAutoOff::Disabled => {
+        if self.auto_off.setting() == desired {
+            return Ok(desired);
+        }
+        match desired {
+            DisplayAutoOff::Disabled => self.auto_off = AutoOffState::Disabled,
+            DisplayAutoOff::Enabled => {
                 self.auto_off = AutoOffState::Disarmed;
                 if self.visibility() == DisplayVisibility::Visible && self.scheduled.is_none() {
                     self.rearm_auto_off(now);

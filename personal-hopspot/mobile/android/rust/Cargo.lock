@@ -1897,6 +1897,7 @@ dependencies = [
  "prns-core",
  "prns-macros",
  "sha2",
+ "zeroize",
 ]
 
 [[package]]
@@ -2050,6 +2051,7 @@ version = "0.3.7"
 dependencies = [
  "cfg-if",
  "dispatch2",
+ "libc",
  "log",
  "objc2",
  "objc2-core-bluetooth",

@@ -15,14 +15,13 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  # Warnings fail the build for *our* crates. Cargo applies `--cap-lints allow` to
-  # registry dependencies, so this never breaks on third-party warnings.
-  RUSTFLAGS: "-D warnings --cfg aes_armv8"
 
 jobs:
   fmt:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      RUSTFLAGS: "-D warnings --cfg aes_armv8"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -31,12 +30,16 @@ jobs:
         with:
           components: rustfmt
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+      - name: reject stale third-party notice inputs before compilation
+        run: ./tools/prns repo notices check-inputs
       - name: registry, format, and documentation gate
         run: bash validation/hygiene/fmt-docs.sh
 
   clippy:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      RUSTFLAGS: "-D warnings --cfg aes_armv8"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -50,6 +53,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      RUSTFLAGS: "-D warnings --cfg aes_armv8"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -166,14 +171,6 @@ jobs:
         env:
           RUSTDOCFLAGS: "-D rustdoc::broken_intra_doc_links"
         working-directory: prns-interfaces/impls/embassy
-      # The cross-crate capstones: engine + runtime binds + real interface impls over live loopback
-      # sockets, public API only (the tests that used to live inside personal-rns/tests).
-      - name: clippy — validation integration capstones
-        run: cargo clippy --all-targets --locked -- -D warnings
-        working-directory: validation/integration
-      - name: test — validation integration capstones
-        run: cargo test --locked -- --test-threads=1
-        working-directory: validation/integration
       - name: clippy — prns-runtime-embassy
         run: cargo clippy --all-targets --locked -- -D warnings
         working-directory: prns-runtime/impls/embassy
@@ -211,6 +208,32 @@ jobs:
       - name: clippy — prns-wasm (wasm32)
         run: cargo clippy --target wasm32-unknown-unknown --all-targets --locked -- -D warnings
         working-directory: prns-wasm
+
+  integration-capstones:
+    # Keep the live cross-crate capstones independently retryable: engine + runtime binds + real
+    # interface implementations over live loopback sockets, through public API only.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      RUSTFLAGS: "-D warnings --cfg aes_armv8"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: integration-capstones
+      - name: Install Linux native development packages
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - name: clippy — validation integration capstones
+        run: cargo clippy --all-targets --locked -- -D warnings
+        working-directory: validation/integration
+      - name: test — validation integration capstones
+        run: cargo test --locked -- --test-threads=1
+        working-directory: validation/integration
 
   flasher-contracts:
     runs-on: ubuntu-24.04
@@ -328,19 +351,41 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
-      required: ${{ steps.resources.outputs.required }}
+      required: ${{ steps.assurance.outputs.resources_required }}
+      resources_required: ${{ steps.assurance.outputs.resources_required }}
+      resources_suites: ${{ steps.assurance.outputs.resources_suites }}
+      embedded_builds_required: ${{ steps.assurance.outputs.embedded_builds_required }}
+      esp32_firmware_check_required: ${{ steps.assurance.outputs.esp32_firmware_check_required }}
+      miri_required: ${{ steps.assurance.outputs.miri_required }}
+      miri_suites: ${{ steps.assurance.outputs.miri_suites }}
+      isa_required: ${{ steps.assurance.outputs.isa_required }}
+      isa_suites: ${{ steps.assurance.outputs.isa_suites }}
+      pilots_required: ${{ steps.assurance.outputs.pilots_required }}
+      pilots_suites: ${{ steps.assurance.outputs.pilots_suites }}
+      aggregate_required: ${{ steps.assurance.outputs.aggregate_required }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
           persist-credentials: false
           submodules: false
-      - id: resources
-        run: python3 validation/hygiene/embedded_resource_selection.py
+      - id: assurance
+        run: python3 validation/hygiene/embedded_assurance_selection.py
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        if: steps.assurance.outputs.resources_required == 'true'
+        with:
+          toolchain: 1.96.0
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        if: steps.assurance.outputs.resources_required == 'true'
+        with:
+          shared-key: embedded-baseline-contracts
+      - name: reject stale embedded baseline contracts before firmware builds
+        if: steps.assurance.outputs.resources_required == 'true'
+        run: ./tools/prns build embedded resources baseline-contracts
 
   no-std-embedded:
     needs: embedded-resource-selection
-    if: needs.embedded-resource-selection.outputs.required == 'true'
+    if: needs.embedded-resource-selection.outputs.embedded_builds_required == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -353,7 +398,9 @@ jobs:
           targets: riscv32imac-unknown-none-elf, thumbv7em-none-eabihf
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
       - name: complete no_std and nRF52840 firmware matrix
-        run: python3 validation/run.py run --suite embedded-builds --expected-sha "$GITHUB_SHA"
+        run: |
+          unset CARGO_INCREMENTAL
+          python3 validation/run.py run --suite embedded-builds --expected-sha "$GITHUB_SHA"
       - name: upload nRF embedded resource evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -364,10 +411,12 @@ jobs:
           path: |
             target/flash-artifacts/resources/configured/reports/*.json
             target/flash-artifacts/resources/configured/work/*/linker.map
+            target/flash-artifacts/resources/configured/work/*/function-boundaries.json
+            target/flash-artifacts/resources/configured/work/*/stack-evidence.json
 
   esp32-firmware:
     needs: embedded-resource-selection
-    if: needs.embedded-resource-selection.outputs.required == 'true'
+    if: needs.embedded-resource-selection.outputs.esp32_firmware_check_required == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -377,15 +426,19 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
-          toolchain: 1.96.0
+          components: llvm-tools-preview
       - name: Install checksum-pinned ESP compiler and tools
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: ./tools/prns release toolchain esp install -- "${RUNNER_TEMP}/prns-esp-tools"
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           workspaces: personal-hopspot/embedded/esp32
           shared-key: esp32-firmware-check
       - name: compile every ESP32 shipping face on its real architecture
-        run: python3 validation/run.py run --suite esp32-firmware-check --expected-sha "$GITHUB_SHA"
+        run: |
+          unset CARGO_INCREMENTAL
+          python3 validation/run.py run --suite esp32-firmware-check --expected-sha "$GITHUB_SHA"
       - name: upload ESP embedded resource evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -396,6 +449,104 @@ jobs:
           path: |
             target/flash-artifacts/resources/configured/reports/*.json
             target/flash-artifacts/resources/configured/work/*/linker.map
+            target/flash-artifacts/resources/configured/work/*/function-boundaries.json
+            target/flash-artifacts/resources/configured/work/*/stack-evidence.json
+
+  embedded-miri:
+    needs: embedded-resource-selection
+    if: needs.embedded-resource-selection.outputs.miri_required == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          submodules: false
+      - id: toolchain
+        run: echo "nightly=$(python3 validation/run.py toolchain nightly)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: ${{ steps.toolchain.outputs.nightly }}
+          components: miri,rust-src
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: embedded-miri-quick
+      - name: execute affected embedded Rust under Miri
+        env:
+          SELECTED_MIRI_SUITES: ${{ needs.embedded-resource-selection.outputs.miri_suites }}
+        run: |
+          read -r -a suites <<< "$SELECTED_MIRI_SUITES"
+          arguments=()
+          for suite in "${suites[@]}"; do
+            arguments+=(--suite "$suite")
+          done
+          python3 validation/run.py run "${arguments[@]}" --expected-sha "$GITHUB_SHA"
+      - name: upload embedded Miri evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: embedded-assurance-miri
+          retention-days: 7
+          if-no-files-found: warn
+          path: validation-artifacts/results/embedded-miri-quick/**
+
+  embedded-isa:
+    needs: embedded-resource-selection
+    if: needs.embedded-resource-selection.outputs.isa_required == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          submodules: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.96.0
+          targets: riscv32imac-unknown-none-elf,thumbv7em-none-eabihf
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: embedded-target-isa
+      - name: install emulator build and runtime dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential libgcrypt20 libglib2.0-dev libpixman-1-dev libsdl2-2.0-0 libslirp0 ninja-build pkg-config python3-setuptools python3-venv xz-utils
+      - name: install checksum-pinned ESP compiler and tools
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./tools/prns release toolchain esp install -- "${RUNNER_TEMP}/prns-esp-tools"
+      - name: prepare contract-pinned target-ISA emulators
+        env:
+          SELECTED_ISA_SUITES: ${{ needs.embedded-resource-selection.outputs.isa_suites }}
+        run: |
+          read -r -a suites <<< "$SELECTED_ISA_SUITES"
+          arguments=()
+          for suite in "${suites[@]}"; do
+            arguments+=(--suite "$suite")
+          done
+          python3 validation/run.py prepare-embedded-assurance \
+            --root "${RUNNER_TEMP}/prns-embedded-assurance" \
+            "${arguments[@]}"
+          echo "${RUNNER_TEMP}/prns-embedded-assurance/bin" >> "$GITHUB_PATH"
+      - name: execute selected shared scenarios as target instructions
+        env:
+          SELECTED_ISA_SUITES: ${{ needs.embedded-resource-selection.outputs.isa_suites }}
+        run: |
+          read -r -a suites <<< "$SELECTED_ISA_SUITES"
+          arguments=()
+          for suite in "${suites[@]}"; do
+            arguments+=(--suite "$suite")
+          done
+          python3 validation/run.py run "${arguments[@]}" --expected-sha "$GITHUB_SHA"
+      - name: upload target-ISA evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: embedded-assurance-isa
+          retention-days: 7
+          if-no-files-found: warn
+          path: |
+            validation-artifacts/results/embedded-isa-thumbv7em/**
+            validation-artifacts/results/embedded-isa-riscv32imac/**
+            validation-artifacts/results/embedded-isa-xtensa-esp32s3/**
 
   embedded-resource-summary:
     needs:
@@ -442,6 +593,65 @@ jobs:
             target/flash-artifacts/resources/matrix/*
             target/flash-artifacts/resources/fragments/**/reports/*.json
             target/flash-artifacts/resources/fragments/**/work/*/linker.map
+            target/flash-artifacts/resources/fragments/**/work/*/function-boundaries.json
+            target/flash-artifacts/resources/fragments/**/work/*/stack-evidence.json
+
+  embedded-assurance-summary:
+    needs:
+      - embedded-resource-selection
+      - no-std-embedded
+      - esp32-firmware
+      - embedded-miri
+      - embedded-isa
+    if: >-
+      always() &&
+      needs.embedded-resource-selection.result == 'success' &&
+      needs.embedded-resource-selection.outputs.aggregate_required == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          submodules: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.96.0
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: embedded-assurance-summary
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: embedded-resources-nrf52840
+          path: target/flash-artifacts/assurance/resources/nrf52840
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: embedded-resources-esp
+          path: target/flash-artifacts/assurance/resources/esp
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: embedded-assurance-miri
+          path: target/flash-artifacts/assurance/proofs/embedded-miri-quick
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: embedded-assurance-isa
+          path: target/flash-artifacts/assurance/proofs/embedded-isa
+      - name: compose the complete affected embedded assurance matrix
+        run: |
+          ./tools/prns build embedded assurance summarize \
+            --resources target/flash-artifacts/assurance/resources \
+            --proofs target/flash-artifacts/assurance/proofs \
+            --output target/flash-artifacts/assurance/matrix
+      - name: publish embedded assurance matrix to the job summary
+        run: cat target/flash-artifacts/assurance/matrix/matrix.md >> "$GITHUB_STEP_SUMMARY"
+      - name: upload combined embedded assurance evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: embedded-assurance-matrix
+          retention-days: 7
+          if-no-files-found: error
+          path: target/flash-artifacts/assurance/matrix/*
 
   android-service:
     # Android is now more than a foreground Activity shell: the Hopspot app packages a foreground
@@ -470,6 +680,8 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: platform-tools
       - name: install Android SDK pieces
         run: sdkmanager "platforms;android-34" "build-tools;34.0.0" "ndk;27.2.12479018"
       - name: install cargo-ndk
@@ -785,6 +997,7 @@ jobs:
       - test
       - cargo-check
       - feature-configs
+      - integration-capstones
       - flasher-contracts
       - release-workflow-contracts
       - msrv
@@ -792,6 +1005,9 @@ jobs:
       - no-std-embedded
       - esp32-firmware
       - embedded-resource-summary
+      - embedded-miri
+      - embedded-isa
+      - embedded-assurance-summary
       - android-service
       - macos-ble
       - windows-desktop
@@ -810,14 +1026,22 @@ jobs:
       TEST_RESULT: ${{ needs.test.result }}
       CARGO_CHECK_RESULT: ${{ needs.cargo-check.result }}
       FEATURES_RESULT: ${{ needs.feature-configs.result }}
+      INTEGRATION_CAPSTONES_RESULT: ${{ needs.integration-capstones.result }}
       FLASHER_RESULT: ${{ needs.flasher-contracts.result }}
       WORKFLOWS_RESULT: ${{ needs.release-workflow-contracts.result }}
       MSRV_RESULT: ${{ needs.msrv.result }}
       EMBEDDED_SELECTION_RESULT: ${{ needs.embedded-resource-selection.result }}
       EMBEDDED_REQUIRED: ${{ needs.embedded-resource-selection.outputs.required }}
+      EMBEDDED_MIRI_REQUIRED: ${{ needs.embedded-resource-selection.outputs.miri_required }}
+      EMBEDDED_ISA_REQUIRED: ${{ needs.embedded-resource-selection.outputs.isa_required }}
+      EMBEDDED_ASSURANCE_REQUIRED: >-
+        ${{ needs.embedded-resource-selection.outputs.aggregate_required }}
       EMBEDDED_RESULT: ${{ needs.no-std-embedded.result }}
       ESP32_RESULT: ${{ needs.esp32-firmware.result }}
       EMBEDDED_SUMMARY_RESULT: ${{ needs.embedded-resource-summary.result }}
+      EMBEDDED_MIRI_RESULT: ${{ needs.embedded-miri.result }}
+      EMBEDDED_ISA_RESULT: ${{ needs.embedded-isa.result }}
+      EMBEDDED_ASSURANCE_RESULT: ${{ needs.embedded-assurance-summary.result }}
       ANDROID_RESULT: ${{ needs.android-service.result }}
       APPLE_RESULT: ${{ needs.macos-ble.result }}
       WINDOWS_RESULT: ${{ needs.windows-desktop.result }}
@@ -837,6 +1061,7 @@ jobs:
             "$TEST_RESULT" \
             "$CARGO_CHECK_RESULT" \
             "$FEATURES_RESULT" \
+            "$INTEGRATION_CAPSTONES_RESULT" \
             "$FLASHER_RESULT" \
             "$WORKFLOWS_RESULT" \
             "$MSRV_RESULT" \
@@ -862,4 +1087,22 @@ jobs:
             test "$EMBEDDED_RESULT" = "skipped"
             test "$ESP32_RESULT" = "skipped"
             test "$EMBEDDED_SUMMARY_RESULT" = "skipped"
+          fi
+          if [ "$EMBEDDED_MIRI_REQUIRED" = "true" ]; then
+            test "$EMBEDDED_MIRI_RESULT" = "success"
+          else
+            test "$EMBEDDED_MIRI_REQUIRED" = "false"
+            test "$EMBEDDED_MIRI_RESULT" = "skipped"
+          fi
+          if [ "$EMBEDDED_ISA_REQUIRED" = "true" ]; then
+            test "$EMBEDDED_ISA_RESULT" = "success"
+          else
+            test "$EMBEDDED_ISA_REQUIRED" = "false"
+            test "$EMBEDDED_ISA_RESULT" = "skipped"
+          fi
+          if [ "$EMBEDDED_ASSURANCE_REQUIRED" = "true" ]; then
+            test "$EMBEDDED_ASSURANCE_RESULT" = "success"
+          else
+            test "$EMBEDDED_ASSURANCE_REQUIRED" = "false"
+            test "$EMBEDDED_ASSURANCE_RESULT" = "skipped"
           fi

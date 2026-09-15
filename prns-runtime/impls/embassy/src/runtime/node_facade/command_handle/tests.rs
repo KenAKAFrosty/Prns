@@ -239,6 +239,7 @@ fn remote_control_target_resolution_preserves_the_exact_target_and_settlement() 
     let target = identities.target().identity_hash();
     let access = RemoteControlTargetAccess::new(
         RemoteControlTargetIdentity::new(*identities.target().public_keys()),
+        crate::remote_control::RemoteControlControllerAuthority::Operator,
         RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
     )
     .unwrap();
@@ -275,6 +276,7 @@ fn remote_control_target_inventory_preserves_the_exact_settlement() {
         .identities();
     let access = RemoteControlTargetAccess::new(
         RemoteControlTargetIdentity::new(*identities.target().public_keys()),
+        crate::remote_control::RemoteControlControllerAuthority::Operator,
         RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
     )
     .unwrap();

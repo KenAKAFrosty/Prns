@@ -72,10 +72,11 @@ pub async fn run(spawner: Spawner) {
         .node_page;
     let (remote_control_identity_secrets, _remote_control_identity_origins) =
         remote_control_bootstrap.into_parts();
-    let remote_control = RemoteControlService::new(
+    let remote_control = RemoteControlService::with_capabilities(
         remote_control_identity_secrets,
         RemoteControlInitialControllerGrants::Nobody,
         RemoteControlSelfAnnouncement::Destination(node_page_destination),
+        remote_control::capabilities(),
     );
     #[cfg(feature = "bluetooth-auto")]
     let ble_identity = Some(ble_bootstrap.into_identity());
@@ -128,12 +129,12 @@ pub async fn run(spawner: Spawner) {
         transport_identity: Some(transport_secret),
         remote_control,
         pre_configured_destinations: destinations.into_preconfigured_destinations(),
-        app_state: (),
+        app_state: REMOTE_CONTROL_COMMANDS.handle(),
         storage: C6Storage,
         request_endpoints: personal_hopspot_core::node_pages::NodePageRoutes,
         interfaces: personal_rns::runtime::ManuallyAttached,
         persistence: crate::persistence::c6(&memory),
-        on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
+        on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &AppState),
     };
 
     static NODE: StaticCell<Node> = StaticCell::new();
@@ -150,7 +151,15 @@ pub async fn run(spawner: Spawner) {
         );
     }
     #[cfg(feature = "esp-now")]
-    espnow.run(espnow_seam).await;
+    join(
+        espnow.run(espnow_seam),
+        remote_control::run(&USB_STATUS, Some(espnow_status)),
+    )
+    .await;
     #[cfg(not(feature = "esp-now"))]
-    core::future::pending().await
+    join(
+        core::future::pending::<()>(),
+        remote_control::run(&USB_STATUS, None),
+    )
+    .await;
 }

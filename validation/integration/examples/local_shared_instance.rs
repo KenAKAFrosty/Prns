@@ -67,35 +67,37 @@ async fn main() {
         remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: None,
         pre_configured_destinations: [destination],
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
-        on_event: move |event, _state: &()| match event {
-            PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
-                destination,
-                hops,
-                source_interface,
-                app_data,
-            }) => {
-                println!(
-                    "HEARD dest={} hops={} kind={:?}",
-                    hex16(destination.as_bytes()),
+        on_event: move |event, _state: &personal_rns::runtime::NoRemoteControlHostControls| {
+            match event {
+                PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
+                    destination,
                     hops,
-                    source_interface.kind()
-                );
-                if app_data == EXPECTED_STOCK_ANNOUNCE {
-                    let _ = observed_tx.send(Observation::Announce);
+                    source_interface,
+                    app_data,
+                }) => {
+                    println!(
+                        "HEARD dest={} hops={} kind={:?}",
+                        hex16(destination.as_bytes()),
+                        hops,
+                        source_interface.kind()
+                    );
+                    if app_data == EXPECTED_STOCK_ANNOUNCE {
+                        let _ = observed_tx.send(Observation::Announce);
+                    }
                 }
+                PrnsEvent::Message(Message::Delivered(Delivery::Single(delivery)))
+                    if delivery.destination == own_destination
+                        && delivery.plaintext == EXPECTED_FROM_STOCK =>
+                {
+                    let _ = delivery_tx.send(Observation::Delivery);
+                }
+                _ => {}
             }
-            PrnsEvent::Message(Message::Delivered(Delivery::Single(delivery)))
-                if delivery.destination == own_destination
-                    && delivery.plaintext == EXPECTED_FROM_STOCK =>
-            {
-                let _ = delivery_tx.send(Observation::Delivery);
-            }
-            _ => {}
         },
     });
     let handle = node.handle();

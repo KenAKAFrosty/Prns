@@ -2431,6 +2431,7 @@ mod tests {
             .set_target_access(
                 RemoteControlTargetAccess::new(
                     RemoteControlTargetIdentity::new(target_public_keys),
+                    crate::remote_control::RemoteControlControllerAuthority::Operator,
                     RemoteControlRequestSet::only(RemoteControlRequestKind::AnnounceSelf),
                 )
                 .unwrap(),
@@ -2719,6 +2720,7 @@ mod tests {
             };
             let access = RemoteControlTargetAccess::new(
                 RemoteControlTargetIdentity::new(target_public_keys),
+                crate::remote_control::RemoteControlControllerAuthority::Operator,
                 RemoteControlRequestSet::only(RemoteControlRequestKind::AnnounceSelf),
             )
             .unwrap();

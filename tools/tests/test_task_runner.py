@@ -186,10 +186,22 @@ class TaskRegistryTests(unittest.TestCase):
         profiles = runner.doctor_profile_map(self.manifest)
         self.assertEqual(
             set(profiles),
-            {"getting-started", "node", "rust", "docs", "tests", "benchmarks"},
+            {
+                "getting-started",
+                "node",
+                "rust",
+                "docs",
+                "tests",
+                "benchmarks",
+                "embedded-assurance",
+            },
         )
         self.assertEqual(profiles["docs"]["exact_versions"]["dx"], "0.7.5")
         self.assertEqual(profiles["rust"]["minimum_versions"]["rustc"], "1.90")
+        self.assertEqual(
+            profiles["embedded-assurance"]["probe"],
+            ["python", "-m", "validation.hardening.embedded_readiness.run"],
+        )
 
     def test_doctor_profile_name_cannot_collide_with_a_task_or_domain(self) -> None:
         manifest = copy.deepcopy(self.manifest)
@@ -204,6 +216,25 @@ class TaskRegistryTests(unittest.TestCase):
             mock.patch.object(runner, "command_version", return_value=(1, 0, 0)),
         ):
             self.assertFalse(runner.doctor_profile(profile))
+
+    def test_doctor_profile_propagates_deep_probe_failure(self) -> None:
+        profile = copy.deepcopy(
+            runner.doctor_profile_map(self.manifest)["embedded-assurance"]
+        )
+        completed = subprocess.CompletedProcess(profile["probe"], 1)
+        with (
+            mock.patch.object(runner, "command_path", return_value="/test/tool"),
+            mock.patch.object(runner, "command_version", return_value=(99, 0, 0)),
+            mock.patch.object(runner.subprocess, "run", return_value=completed) as run,
+        ):
+            self.assertFalse(runner.doctor_profile(profile))
+        run.assert_called_once()
+
+    def test_doctor_profile_probe_must_be_repository_owned(self) -> None:
+        manifest = copy.deepcopy(self.manifest)
+        manifest["doctor_profile"][0]["probe"] = ["python", "-m", "outside.probe"]
+        errors = runner.validate_manifest(manifest, check_callers=False)
+        self.assertTrue(any("probe must name one repository implementation" in error for error in errors))
 
     def test_benchmark_doctor_selects_only_the_host_compiler(self) -> None:
         profile = copy.deepcopy(runner.doctor_profile_map(self.manifest)["benchmarks"])
