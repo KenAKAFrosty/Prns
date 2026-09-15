@@ -31,6 +31,7 @@ use crate::utilities::remote_control::transient_remote_control_service;
 
 use super::identity::{home_directory, load_identity, pretty_hash};
 use super::{RnxArgs, RnxError};
+use personal_rns::runtime::RemoteControlHostControls;
 
 const MAX_CONCURRENT_COMMANDS: usize = 8;
 
@@ -253,3 +254,5 @@ fn load_allowed_identities(allowed: &mut Vec<IdentityHash>) -> Result<(), RnxErr
     }
     Ok(())
 }
+
+impl RemoteControlHostControls for ListenerState {}

@@ -1,3 +1,4 @@
+use personal_rns::runtime::RemoteControlHostControls;
 use super::*;
 use futures_util::{stream::FuturesUnordered, StreamExt};
 
@@ -405,3 +406,5 @@ pub(super) async fn initiate_request_runtime(
         links.len(),
     );
 }
+
+impl RemoteControlHostControls for RequestServer {}
