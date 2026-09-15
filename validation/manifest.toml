@@ -2055,15 +2055,17 @@ tiers = ["release", "scheduled"]
 id = "wifi-auto-tokio-without-ipv6-ll-multicast"
 domain = "native"
 group = "wifi-auto"
-platform = "current"
-owner = "core"
-gate = "pr"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 1200
 command = ["cargo", "test", "--locked", "--manifest-path", "prns-interfaces/impls/tokio/Cargo.toml", "--features", "wifi-auto-mdns", "--lib", "without_ipv6_ll_multicast"]
 inputs = [
   "prns-interfaces/impls/tokio/src/wifi_auto/without_ipv6_ll_multicast.rs",
   "prns-interfaces/impls/tokio/src/wifi_auto/mdns_without_ipv6_ll_multicast.rs",
   "prns-interfaces/impls/tokio/src/wifi_auto/mdns.rs",
   "prns-interfaces/impls/tokio/src/wifi_auto/mod.rs",
+  "prns-interfaces/impls/tokio/src/wifi_auto/host_lan.rs",
+  "prns-interfaces/impls/tokio/src/network_device.rs",
 ]
 artifacts = "validation-artifacts/results/wifi-auto-tokio-without-ipv6-ll-multicast"
-
