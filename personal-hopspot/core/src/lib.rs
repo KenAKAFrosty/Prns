@@ -9,6 +9,7 @@ extern crate std;
 mod destinations;
 mod flash_identity;
 mod flash_layout;
+pub mod headless_announce;
 mod identity;
 #[cfg(feature = "display")]
 mod mobile;

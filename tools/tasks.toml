@@ -100,7 +100,7 @@ setup = "Install Rust with rustup so the nRF52840 target and llvm-tools-preview 
 
 [[task]]
 id = "build.hopspot.sensecap-solar-node"
-summary = "Build the headless Seeed SenseCAP Solar Node firmware for EU868 and package its recovery-compatible developer UF2."
+summary = "Build the headless Seeed SenseCAP Solar Node firmware for EU869 (869.4625 MHz, 10 % duty) and package its recovery-compatible developer UF2."
 domain = "build"
 effect = "workspace-write"
 platforms = ["linux", "macos"]

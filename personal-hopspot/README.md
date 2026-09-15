@@ -86,7 +86,10 @@ control faces, Bluetooth Auto, and a 60-second display auto-off:
     ./tools/prns build hopspot t114
 
 The headless T1000-E and Seeed SenseCAP Solar Node build the same way. The Solar
-Node runs bare-metal beside its resident S140 7.3.0 and defaults to EU868:
+Node runs bare-metal beside its resident S140 7.3.0 and defaults to the EU869
+"g3" sub-band (869.4625 MHz, 125 kHz, SF8, 10 % duty cycle), the channel the
+public EU gateways on rmap.world share; having no button, it announces its node
+page 15 seconds after boot and every six hours:
 
     ./tools/prns build hopspot t1000e
     ./tools/prns build hopspot sensecap-solar-node

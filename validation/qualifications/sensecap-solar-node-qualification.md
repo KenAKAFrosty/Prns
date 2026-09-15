@@ -124,3 +124,58 @@ One caveat on the observation platform rather than the board: the Raspberry Pi
 hosting the peer was intermittently under-voltage and thermally throttled
 throughout, which cost several transport retries on the peer side. It did not
 affect the Solar Node, whose USB Auto session and heartbeat were continuous.
+
+## Follow-up observations, 2026-09-15
+
+Observed against the same hardware, with the host daemon on Windows (USB Auto)
+and the Heltec V4 peer on the Raspberry Pi now running RNS 1.5.4 with its
+RNode in `internal` mode and its TCP uplinks in `boundary` mode.
+
+**Battery.** The board ran unpowered outdoors, in rain, from 15:55 on
+2026-09-14 to 09:22 on 2026-09-15 (about 17.5 hours) and resumed its USB Auto
+session on reconnection without intervention. Battery sensing is still not
+wired, so no voltage was observed.
+
+**Forwarding as a transport node, confirmed from both sides.** A LilyGo
+T-Deck running Ratspeak on the shared channel announced over LoRa; the host
+learned its `lxmf.delivery` destination at two hops via the Solar Node's own
+transport instance `b6b9526b98bcb58ff69f86fccc63b6bc` on the USB Auto
+interface. A freshly generated destination announced from the peer arrived at
+the host the same way within five seconds. A host-originated path request was
+received by the peer over LoRa, confirming USB-to-LoRa forwarding of path
+requests as well as announces.
+
+**Degradation after an announce flood.** For thirteen hours before this
+observation the peer, misconfigured with a `full`-mode TCP uplink beside its
+`internal` RNode, relayed about 11,400 internet announces onto the channel.
+Afterwards the Solar Node relayed only some announces: in a controlled
+quiet-channel sequence from the peer, four of twelve announces of one
+destination reached the host, with no pattern in size (177-327 bytes) or
+order, and every announce that reached the host also produced a LoRa
+re-emission heard by the peer while every miss produced none. A single reset
+restored the behaviour: the same sequence then relayed five of five. The first
+reset attempt enumerated on USB, degraded after four seconds, and left the bus
+until a second reset booted cleanly; the firmware links `panic-halt`, which
+would produce that signature, but no root cause was captured. Recovery from
+an announce storm without a reboot is not qualified.
+
+**No self-announce, now fixed.** The headless runtime had no announce path:
+"Personal Hopspot Solar Node" was never observed on the peer, the T-Deck, or
+the host. This change announces the node page 15 seconds after boot and every
+six hours (`personal_hopspot_core::headless_announce`).
+
+**Channel change.** The profile statements above are superseded: the board now
+builds with `DEFAULT_869_PROFILE`, 869.4625 MHz, 125 kHz, SF8, coding rate
+4/5, 22 dBm, in `Region::Eu869` with its 10 % duty cycle. On 2026-09-15
+rmap.world listed 113 of 210 EU RNodes in that sub-band and every node within
+150 km of the observation site on that channel or the adjacent 869.525 MHz
+slot, so a node on `DEFAULT_868_PROFILE` was on a private channel.
+
+**On-air result of this build.** Flashed through the `SENSECAP` bootloader at
+11:03 on 2026-09-15. Sixteen seconds later the host learned the node page
+`d0719fc884b585c720bf7e7525470267` at one hop over USB Auto, and the peer's
+RNode, reconfigured to the same channel with `airtime_limit_long = 10`, heard
+the same announce over LoRa: stock RNS 1.5.4 accepted it and NomadNet-side
+tooling showed "Personal Hopspot Solar Node" at one hop with identity
+`b6b9526b98bcb58ff69f86fccc63b6bc`. A fresh destination announced from the
+peer reached the host at two hops via the Solar Node within five seconds.
