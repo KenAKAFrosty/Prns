@@ -48,6 +48,7 @@ use super::session::{
     UtilityNodeIdentity, UtilityNodeSession, UtilityNodeSessionError, UtilityNodeStopped,
     UtilityPathError,
 };
+use personal_rns::runtime::RemoteControlHostControls;
 
 struct FetchPlan {
     jail: Option<PathBuf>,
@@ -1008,3 +1009,5 @@ impl fmt::Display for RncpError {
 }
 
 impl std::error::Error for RncpError {}
+
+impl RemoteControlHostControls for ListenerState {}
