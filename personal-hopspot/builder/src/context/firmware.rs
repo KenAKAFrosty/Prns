@@ -75,10 +75,14 @@ impl BuildContext<'_> {
             .then(|| self.work_output(target_id).join("linker.map"))
     }
 
-    pub fn cargo_target_directory(&self, target_id: &str) -> Option<PathBuf> {
+    pub fn cargo_target_directory(&self, _target_id: &str) -> Option<PathBuf> {
+        // Resource reports build the matrix sequentially, so Cargo can safely
+        // reuse one cache across boards and architectures. Keep the linker maps
+        // and analyzed evidence target-local, but avoid duplicating the entire
+        // dependency graph for every shipping profile.
         self.intent
             .is_resource_report()
-            .then(|| self.work_output(target_id).join("cargo"))
+            .then(|| self.configured_output_root().join("cargo-cache"))
     }
 
     pub fn pending_linker_map_path(&self, target_id: &str) -> Option<PathBuf> {
