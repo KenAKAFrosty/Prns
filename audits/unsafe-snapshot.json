@@ -19157,21 +19157,7 @@
         "daemon-windows": [
           "ring",
           "std"
-        ]
-      },
-      "name": "rustls",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "unsafe": {
-        "blocks": 0,
-        "externs": 0,
-        "functions": 0,
-        "impls": 0,
-        "tokens": 0
-      },
-      "version": "0.23.42"
-    },
-    {
-      "graphs": {
+        ],
         "host-c-linux": [
           "ring",
           "std"
@@ -19194,7 +19180,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.23.43"
+      "version": "0.23.45"
     },
     {
       "graphs": {
@@ -19316,7 +19302,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.103.13"
+      "version": "0.103.15"
     },
     {
       "graphs": {
@@ -25488,10 +25474,6 @@
           "Win32_Graphics_Dwm",
           "Win32_Graphics_Gdi",
           "Win32_Media",
-          "Win32_NetworkManagement",
-          "Win32_NetworkManagement_IpHelper",
-          "Win32_Networking",
-          "Win32_Networking_WinSock",
           "Win32_Security",
           "Win32_System",
           "Win32_System_Com",
@@ -25514,21 +25496,6 @@
           "Win32_UI_Shell",
           "Win32_UI_TextServices",
           "Win32_UI_WindowsAndMessaging",
-          "default"
-        ],
-        "host-c-windows": [
-          "Win32",
-          "Win32_Foundation",
-          "Win32_Networking",
-          "Win32_Networking_WinSock",
-          "Win32_Storage",
-          "Win32_Storage_FileSystem",
-          "Win32_System",
-          "Win32_System_Console",
-          "Win32_System_Diagnostics",
-          "Win32_System_Diagnostics_Debug",
-          "Win32_System_SystemInformation",
-          "Win32_System_Threading",
           "default"
         ]
       },
@@ -25592,9 +25559,15 @@
           "Win32_NetworkManagement_Ndis",
           "Win32_Networking",
           "Win32_Networking_WinSock",
+          "Win32_Storage",
+          "Win32_Storage_FileSystem",
           "Win32_System",
+          "Win32_System_Console",
+          "Win32_System_Diagnostics",
+          "Win32_System_Diagnostics_Debug",
           "Win32_System_IO",
           "Win32_System_Memory",
+          "Win32_System_SystemInformation",
           "Win32_System_Threading",
           "default"
         ]
