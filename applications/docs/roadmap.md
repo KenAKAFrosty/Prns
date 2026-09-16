@@ -29,8 +29,9 @@ The [September 15 checkpoint](../checkpoints/2026-09-15-upstream-integration.md)
 integrates reviewed upstream trunk `35859bb89`. A new standalone Android build
 and matching E290 firmware are installed. The final patched Galaxy build passes
 pristine identity import, cold retention, offline Retry/Cancel, Stop/Start, three
-Bluetooth cycles, two-way messaging and one controlled off-screen receipt.
-Fresh pairing and the remaining mobile journeys are in progress. Earlier
+Bluetooth cycles, two-way messaging, one controlled off-screen receipt, fresh
+pairing, authenticated checks and bounded pending-read route-exit/retry recovery.
+The board's navigation freeze/startup-notice event remains unresolved. Earlier
 checkpoints do not qualify these binaries.
 
 1. Diagnose the initial iOS nonconnection and recheck chooser visibility.
@@ -44,17 +45,19 @@ checkpoints do not qualify these binaries.
    bounded physical restorations without that stall, a first resumed Check and
    messaging. Extend its lifecycle qualification; it does not yet explain or fix
    the initial ordinary-start timeout.
-2. Close the remaining generated-binding physical checks: fresh pairing,
-   controlled read cancellation and broader recovery. Pristine interactive
-   import and three radio cycles pass on the September 15 Galaxy build; iOS
-   import is still open. The
+2. Close the remaining generated-binding physical checks: iOS fresh pairing,
+   wider read-cancellation cases and broader recovery. Pristine interactive
+   import, fresh pairing, authenticated checks, pending-read route-exit/retry and
+   three radio cycles pass on the September 15 Galaxy build; iOS import is still
+   open. Diagnose the E290's roughly 15-second menu freeze followed by its startup
+   notice: watchdog reset is a hypothesis, not a captured cause. The
    [offline continuation](../checkpoints/2026-09-09-offline-and-upstream-refresh.md)
    now covers cold iOS saved messages/contacts, Retry/Cancel, restart retention
    and a bounded return of the peer. Cold offline actions now also pass on the
    September 15 Android build, including same-record cancellation retention.
    Retained-grant checks and messaging have bounded evidence on
    both platforms, tied to their exact recorded builds rather than transferred
-   across rebuilds. They are not fresh-pairing acceptance.
+   across rebuilds. Earlier retained-grant results are not fresh-pairing acceptance.
 3. Repeat the completed no-touch receipt/resume journey with a complete native
    timeline and investigate its 32.024-second submission-to-proof delay, which
    did not reproduce in the later active-traffic comparisons. One
