@@ -113,6 +113,22 @@ def plan_for_paths(paths: set[str]) -> PrePushPlan:
         )
         gates.append(
             Gate(
+                "embedded resource summary",
+                (
+                    "./tools/prns",
+                    "build",
+                    "embedded",
+                    "resources",
+                    "summarize",
+                    "--reports",
+                    "target/flash-artifacts/resources/configured/reports",
+                    "--output",
+                    "target/flash-artifacts/resources/pre-push-matrix",
+                ),
+            )
+        )
+        gates.append(
+            Gate(
                 "Embassy runtime Clippy",
                 (
                     "cargo",
