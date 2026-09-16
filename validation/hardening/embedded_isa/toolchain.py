@@ -28,6 +28,23 @@ class TargetToolchain:
     proof_sources: tuple[Path, ...]
 
 
+def build_environment(toolchain: TargetToolchain) -> dict[str, str]:
+    values = dict(os.environ)
+    values.update(toolchain.environment)
+    for name in tuple(values):
+        if name in {
+            "CARGO_BUILD_RUSTFLAGS",
+            "CARGO_ENCODED_RUSTFLAGS",
+            "RUSTFLAGS",
+            "RUSTUP_TOOLCHAIN",
+        } or (
+            name.startswith("CARGO_TARGET_")
+            and (name.endswith("_LINKER") or name.endswith("_RUSTFLAGS"))
+        ):
+            values.pop(name)
+    return values
+
+
 def resolve(
     architecture: Architecture,
     upstream_channel: str,
