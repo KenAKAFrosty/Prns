@@ -1,10 +1,12 @@
 //! Compact interface inventory carried by Remote Control InventoryInterfaces responses.
 
 use super::{
-    RemoteControlControllerGrant, RemoteControlControllerGrantTable,
-    RemoteControlControllerIdentity, RemoteControlRequestSet, RevokeRemoteControlControllerOutcome,
-    SetRemoteControlControllerGrantError, SetRemoteControlControllerGrantOutcome,
-    DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS,
+    RemoteControlControllerAuthority, RemoteControlControllerContinuation,
+    RemoteControlControllerCursor, RemoteControlControllerGrant, RemoteControlControllerGrantTable,
+    RemoteControlControllerIdentity, RemoteControlControllerPage,
+    RemoteControlInterfaceContinuation, RemoteControlPeerContinuation, RemoteControlRequestSet,
+    RevokeRemoteControlControllerOutcome, SetRemoteControlControllerGrantError,
+    SetRemoteControlControllerGrantOutcome,
 };
 use crate::identity::{IdentityHash, PublicIdentityMaterial, IDENTITY_PUBLIC_KEY_LEN};
 use crate::interfaces::lora::RadioProfile;
@@ -13,8 +15,9 @@ use crate::interfaces::{
     INTERFACE_ID_LEN,
 };
 use crate::wire::TRUNCATED_HASH_BYTE_LEN;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
-pub const REMOTE_CONTROL_INTERFACE_INVENTORY_CAP: usize = 16;
+pub const REMOTE_CONTROL_INTERFACE_INVENTORY_CAP: usize = 4;
 pub const REMOTE_CONTROL_INTERFACE_ENTRY_ENCODED_LEN: usize = INTERFACE_ID_LEN
     .saturating_add(1) // kind
     .saturating_add(1) // mode
@@ -32,7 +35,7 @@ pub const REMOTE_CONTROL_WIFI_SSID_CAP: usize = 32;
 pub const REMOTE_CONTROL_WIFI_PASSWORD_CAP: usize = 64;
 pub const REMOTE_CONTROL_WIFI_STATION_INVENTORY_PREFIX: &str = "W,";
 pub const REMOTE_CONTROL_INTERFACE_FAILURE_CAP: usize = 48;
-pub const REMOTE_CONTROL_INTERFACE_PEER_CAP: usize = 8;
+pub const REMOTE_CONTROL_INTERFACE_PEER_CAP: usize = 4;
 pub const REMOTE_CONTROL_INTERFACE_PEER_ENCODED_LEN: usize = INTERFACE_ID_LEN
     .saturating_add(1) // connection
     .saturating_add(8) // tx_bytes
@@ -42,7 +45,6 @@ pub const REMOTE_CONTROL_INTERFACE_PEER_ENCODED_LEN: usize = INTERFACE_ID_LEN
     .saturating_add(4) // rate_bytes_per_sec
     .saturating_add(RadioIndication::MAX_ENCODED_LEN)
     .saturating_add(PeerDetails::ENCODED_LEN);
-const INVENTORY_CARD_TRAILER_TAG: u8 = 0x02;
 pub const REMOTE_CONTROL_INTERFACE_CARD_MAX_ENCODED_LEN: usize = 4usize
     .saturating_add(4)
     .saturating_add(1)
@@ -52,16 +54,9 @@ pub const REMOTE_CONTROL_INTERFACE_CARD_MAX_ENCODED_LEN: usize = 4usize
     .saturating_add(1)
     .saturating_add(REMOTE_CONTROL_INTERFACE_CONFIG_CAP)
     .saturating_add(1)
-    .saturating_add(REMOTE_CONTROL_INTERFACE_FAILURE_CAP)
-    .saturating_add(1)
-    .saturating_add(
-        REMOTE_CONTROL_INTERFACE_PEER_CAP.saturating_mul(REMOTE_CONTROL_INTERFACE_PEER_ENCODED_LEN),
-    );
-pub const REMOTE_CONTROL_INTERFACE_INVENTORY_TRAILER_MAX_ENCODED_LEN: usize = 1usize
-    .saturating_add(
-        REMOTE_CONTROL_INTERFACE_INVENTORY_CAP
-            .saturating_mul(REMOTE_CONTROL_INTERFACE_CARD_MAX_ENCODED_LEN),
-    );
+    .saturating_add(REMOTE_CONTROL_INTERFACE_FAILURE_CAP);
+pub const REMOTE_CONTROL_INTERFACE_INVENTORY_CONTINUATION_MAX_ENCODED_LEN: usize =
+    RemoteControlInterfaceContinuation::MAX_ENCODED_LEN;
 
 const FLAG_ENABLED: u8 = 0x01;
 
@@ -99,7 +94,6 @@ pub struct RemoteControlInterfaceCard {
     pub failure: heapless::String<REMOTE_CONTROL_INTERFACE_FAILURE_CAP>,
     pub destinations: u32,
     pub transported_links: u32,
-    pub peers: heapless::Vec<RemoteControlInterfacePeer, REMOTE_CONTROL_INTERFACE_PEER_CAP>,
 }
 
 impl RemoteControlInterfaceCard {
@@ -112,7 +106,6 @@ impl RemoteControlInterfaceCard {
             failure: heapless::String::new(),
             destinations: 0,
             transported_links: 0,
-            peers: heapless::Vec::new(),
         }
     }
 
@@ -124,7 +117,6 @@ impl RemoteControlInterfaceCard {
             && self.failure.is_empty()
             && self.destinations == 0
             && self.transported_links == 0
-            && self.peers.is_empty()
     }
 
     pub fn set_name(&mut self, name: &str) {
@@ -145,15 +137,6 @@ impl RemoteControlInterfaceCard {
     pub fn set_failure(&mut self, failure: &str) {
         self.failure.clear();
         push_truncated(&mut self.failure, failure);
-    }
-
-    pub fn push_peer(
-        &mut self,
-        peer: RemoteControlInterfacePeer,
-    ) -> Result<(), RemoteControlInterfaceInventoryError> {
-        self.peers
-            .push(peer)
-            .map_err(|_| RemoteControlInterfaceInventoryError::Full)
     }
 }
 
@@ -250,7 +233,7 @@ impl RemoteControlInterfaceEntry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteControlInterfaceInventory {
     entries: heapless::Vec<RemoteControlInterfaceEntry, REMOTE_CONTROL_INTERFACE_INVENTORY_CAP>,
-    cards: heapless::Vec<RemoteControlInterfaceCard, REMOTE_CONTROL_INTERFACE_INVENTORY_CAP>,
+    continuation: RemoteControlInterfaceContinuation,
 }
 
 impl RemoteControlInterfaceInventory {
@@ -258,7 +241,7 @@ impl RemoteControlInterfaceInventory {
     pub const fn empty() -> Self {
         Self {
             entries: heapless::Vec::new(),
-            cards: heapless::Vec::new(),
+            continuation: RemoteControlInterfaceContinuation::Complete,
         }
     }
 
@@ -268,87 +251,56 @@ impl RemoteControlInterfaceInventory {
     }
 
     #[must_use]
-    pub fn cards(&self) -> &[RemoteControlInterfaceCard] {
-        self.cards.as_slice()
-    }
-
-    #[must_use]
-    pub fn card(&self, index: usize) -> Option<&RemoteControlInterfaceCard> {
-        self.cards.get(index)
+    pub const fn continuation(&self) -> RemoteControlInterfaceContinuation {
+        self.continuation
     }
 
     pub fn push(
         &mut self,
         entry: RemoteControlInterfaceEntry,
     ) -> Result<(), RemoteControlInterfaceInventoryError> {
+        if self
+            .entries
+            .last()
+            .is_some_and(|previous| previous.id.as_bytes() >= entry.id.as_bytes())
+        {
+            return Err(RemoteControlInterfaceInventoryError::NonAscending);
+        }
         self.entries
             .push(entry)
             .map_err(|_| RemoteControlInterfaceInventoryError::Full)
     }
 
-    pub fn push_detailed(
+    pub fn set_continuation(
         &mut self,
-        entry: RemoteControlInterfaceEntry,
-        card: RemoteControlInterfaceCard,
+        continuation: RemoteControlInterfaceContinuation,
     ) -> Result<(), RemoteControlInterfaceInventoryError> {
-        self.pad_cards()?;
-        self.entries
-            .push(entry)
-            .map_err(|_| RemoteControlInterfaceInventoryError::Full)?;
-        self.cards
-            .push(card)
-            .map_err(|_| RemoteControlInterfaceInventoryError::Full)
-    }
-
-    pub fn pop(&mut self) -> bool {
-        let popped = self.entries.pop().is_some();
-        if self.cards.len() > self.entries.len() {
-            let _ = self.cards.pop();
+        if let RemoteControlInterfaceContinuation::More(cursor) = continuation {
+            let Some(last) = self.entries.last() else {
+                return Err(RemoteControlInterfaceInventoryError::InvalidContinuation);
+            };
+            if cursor.id() != last.id {
+                return Err(RemoteControlInterfaceInventoryError::InvalidContinuation);
+            }
         }
-        popped
-    }
-
-    fn pad_cards(&mut self) -> Result<(), RemoteControlInterfaceInventoryError> {
-        while self.cards.len() < self.entries.len() {
-            self.cards
-                .push(RemoteControlInterfaceCard::empty())
-                .map_err(|_| RemoteControlInterfaceInventoryError::Full)?;
-        }
+        self.continuation = continuation;
         Ok(())
     }
 
-    #[must_use]
-    fn compact_len(&self) -> usize {
-        1usize.saturating_add(
-            self.entries
-                .len()
-                .saturating_mul(RemoteControlInterfaceEntry::ENCODED_LEN),
-        )
-    }
-
-    #[must_use]
-    fn writes_cards(&self) -> bool {
-        self.cards.len() == self.entries.len()
-            && !self.entries.is_empty()
-            && self.cards.iter().any(|card| !card.is_empty())
+    pub fn pop(&mut self) -> bool {
+        self.continuation = RemoteControlInterfaceContinuation::Complete;
+        self.entries.pop().is_some()
     }
 
     #[must_use]
     pub fn encoded_body_len(&self) -> usize {
-        let compact = self.compact_len();
-        if !self.writes_cards() {
-            return compact;
-        }
-        compact.saturating_add(self.encoded_trailer_len())
-    }
-
-    #[must_use]
-    fn encoded_trailer_len(&self) -> usize {
-        let mut len = 1usize;
-        for card in self.cards.iter() {
-            len = len.saturating_add(card_encoded_len(card));
-        }
-        len
+        1usize
+            .saturating_add(
+                self.entries
+                    .len()
+                    .saturating_mul(RemoteControlInterfaceEntry::ENCODED_LEN),
+            )
+            .saturating_add(self.continuation.encoded_len())
     }
 
     pub fn write_body(&self, body: &mut [u8]) -> Result<(), super::RemoteControlMessageWriteError> {
@@ -368,17 +320,14 @@ impl RemoteControlInterfaceInventory {
             };
             entry.write_into(slot)?;
         }
-        if !self.writes_cards() {
-            return Ok(());
-        }
-        let trailer_start = self
+        let continuation_start = self
             .entries
             .len()
             .saturating_mul(RemoteControlInterfaceEntry::ENCODED_LEN);
-        let Some(trailer) = rest.get_mut(trailer_start..) else {
+        let Some(continuation) = rest.get_mut(continuation_start..) else {
             return Err(super::RemoteControlMessageWriteError::BufferTooShort);
         };
-        write_cards_trailer(&self.cards, trailer)
+        self.continuation.write_into(continuation)
     }
 
     pub fn parse_body(body: &[u8]) -> Result<Self, super::RemoteControlResponseParseError> {
@@ -401,17 +350,24 @@ impl RemoteControlInterfaceInventory {
                 rest.get(start..end)
                     .ok_or(super::RemoteControlResponseParseError::Truncated)?,
             )?;
+            if inventory
+                .entries
+                .last()
+                .is_some_and(|previous| previous.id.as_bytes() >= entry.id.as_bytes())
+            {
+                return Err(super::RemoteControlResponseParseError::NonCanonicalCursor);
+            }
             inventory
                 .push(entry)
                 .map_err(|_| super::RemoteControlResponseParseError::Malformed)?;
         }
-        let Some(trailer) = rest.get(expected..) else {
-            return Ok(inventory);
-        };
-        if trailer.is_empty() {
-            return Ok(inventory);
-        }
-        inventory.cards = parse_cards_trailer(trailer, count)?;
+        let continuation = rest
+            .get(expected..)
+            .and_then(RemoteControlInterfaceContinuation::parse)
+            .ok_or(super::RemoteControlResponseParseError::NonCanonicalCursor)?;
+        inventory
+            .set_continuation(continuation)
+            .map_err(|_| super::RemoteControlResponseParseError::NonCanonicalCursor)?;
         Ok(inventory)
     }
 }
@@ -419,6 +375,8 @@ impl RemoteControlInterfaceInventory {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RemoteControlInterfaceInventoryError {
     Full,
+    NonAscending,
+    InvalidContinuation,
 }
 
 const INTERFACE_PEERS_PAGE_TAG: u8 = 0x01;
@@ -427,29 +385,55 @@ const INTERFACE_PEERS_UNKNOWN_TAG: u8 = 0x02;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteControlInterfacePeerPage {
     pub id: InterfaceId,
-    pub offset: u8,
-    pub total: u8,
     pub peers: heapless::Vec<RemoteControlInterfacePeer, REMOTE_CONTROL_INTERFACE_PEER_CAP>,
+    continuation: RemoteControlPeerContinuation,
 }
 
 impl RemoteControlInterfacePeerPage {
     #[must_use]
-    pub fn empty(id: InterfaceId, offset: u8, total: u8) -> Self {
+    pub fn empty(id: InterfaceId) -> Self {
         Self {
             id,
-            offset,
-            total,
             peers: heapless::Vec::new(),
+            continuation: RemoteControlPeerContinuation::Complete,
         }
+    }
+
+    #[must_use]
+    pub const fn continuation(&self) -> RemoteControlPeerContinuation {
+        self.continuation
     }
 
     pub fn push(
         &mut self,
         peer: RemoteControlInterfacePeer,
     ) -> Result<(), RemoteControlInterfaceInventoryError> {
+        if self
+            .peers
+            .last()
+            .is_some_and(|previous| previous.id.as_bytes() >= peer.id.as_bytes())
+        {
+            return Err(RemoteControlInterfaceInventoryError::NonAscending);
+        }
         self.peers
             .push(peer)
             .map_err(|_| RemoteControlInterfaceInventoryError::Full)
+    }
+
+    pub fn set_continuation(
+        &mut self,
+        continuation: RemoteControlPeerContinuation,
+    ) -> Result<(), RemoteControlInterfaceInventoryError> {
+        if let RemoteControlPeerContinuation::More(cursor) = continuation {
+            let Some(last) = self.peers.last() else {
+                return Err(RemoteControlInterfaceInventoryError::InvalidContinuation);
+            };
+            if cursor.id() != last.id {
+                return Err(RemoteControlInterfaceInventoryError::InvalidContinuation);
+            }
+        }
+        self.continuation = continuation;
+        Ok(())
     }
 
     #[must_use]
@@ -457,13 +441,12 @@ impl RemoteControlInterfacePeerPage {
         1usize
             .saturating_add(INTERFACE_ID_LEN)
             .saturating_add(1)
-            .saturating_add(1)
-            .saturating_add(1)
             .saturating_add(
                 self.peers
                     .len()
                     .saturating_mul(REMOTE_CONTROL_INTERFACE_PEER_ENCODED_LEN),
             )
+            .saturating_add(self.continuation.encoded_len())
     }
 }
 
@@ -478,12 +461,11 @@ impl RemoteControlInterfacePeersOutcome {
     pub const MAX_ENCODED_LEN: usize = 1usize
         .saturating_add(INTERFACE_ID_LEN)
         .saturating_add(1)
-        .saturating_add(1)
-        .saturating_add(1)
         .saturating_add(
             REMOTE_CONTROL_INTERFACE_PEER_CAP
                 .saturating_mul(REMOTE_CONTROL_INTERFACE_PEER_ENCODED_LEN),
-        );
+        )
+        .saturating_add(RemoteControlPeerContinuation::MAX_ENCODED_LEN);
 
     #[must_use]
     pub fn encoded_body_len(&self) -> usize {
@@ -511,14 +493,6 @@ impl RemoteControlInterfacePeersOutcome {
                     return Err(super::RemoteControlMessageWriteError::BufferTooShort);
                 };
                 id_out.copy_from_slice(page.id.as_bytes());
-                let Some((offset_out, rest)) = rest.split_first_mut() else {
-                    return Err(super::RemoteControlMessageWriteError::BufferTooShort);
-                };
-                *offset_out = page.offset;
-                let Some((total_out, rest)) = rest.split_first_mut() else {
-                    return Err(super::RemoteControlMessageWriteError::BufferTooShort);
-                };
-                *total_out = page.total;
                 let Some((count_out, mut rest)) = rest.split_first_mut() else {
                     return Err(super::RemoteControlMessageWriteError::BufferTooShort);
                 };
@@ -526,7 +500,7 @@ impl RemoteControlInterfacePeersOutcome {
                 for peer in page.peers.iter() {
                     rest = write_peer(rest, peer)?;
                 }
-                Ok(())
+                page.continuation.write_into(rest)
             }
         }
     }
@@ -543,12 +517,6 @@ impl RemoteControlInterfacePeersOutcome {
                 };
                 let mut id = [0u8; INTERFACE_ID_LEN];
                 id.copy_from_slice(id_bytes);
-                let Some((offset, rest)) = rest.split_first() else {
-                    return Err(super::RemoteControlResponseParseError::Truncated);
-                };
-                let Some((total, rest)) = rest.split_first() else {
-                    return Err(super::RemoteControlResponseParseError::Truncated);
-                };
                 let Some((count, mut rest)) = rest.split_first() else {
                     return Err(super::RemoteControlResponseParseError::Truncated);
                 };
@@ -556,17 +524,17 @@ impl RemoteControlInterfacePeersOutcome {
                 if count > REMOTE_CONTROL_INTERFACE_PEER_CAP {
                     return Err(super::RemoteControlResponseParseError::Malformed);
                 }
-                let mut page =
-                    RemoteControlInterfacePeerPage::empty(InterfaceId::new(id), *offset, *total);
+                let mut page = RemoteControlInterfacePeerPage::empty(InterfaceId::new(id));
                 for _ in 0..count {
                     let (peer, after) = parse_peer(rest)?;
                     page.push(peer)
                         .map_err(|_| super::RemoteControlResponseParseError::Malformed)?;
                     rest = after;
                 }
-                if !rest.is_empty() {
-                    return Err(super::RemoteControlResponseParseError::Malformed);
-                }
+                let continuation = RemoteControlPeerContinuation::parse(rest)
+                    .ok_or(super::RemoteControlResponseParseError::NonCanonicalCursor)?;
+                page.set_continuation(continuation)
+                    .map_err(|_| super::RemoteControlResponseParseError::NonCanonicalCursor)?;
                 Ok(Self::Page(page))
             }
             _ => Err(super::RemoteControlResponseParseError::Malformed),
@@ -670,6 +638,8 @@ prns_macros::iterable_enum! {
         Applied = 0x01,
         UnknownInterface = 0x02,
         Failed = 0x03,
+        Unchanged = 0x04,
+        Scheduled = 0x05,
     }
 }
 
@@ -686,6 +656,8 @@ impl RemoteControlPowerOutcome {
             0x01 => Some(Self::Applied),
             0x02 => Some(Self::UnknownInterface),
             0x03 => Some(Self::Failed),
+            0x04 => Some(Self::Unchanged),
+            0x05 => Some(Self::Scheduled),
             _ => None,
         }
     }
@@ -820,6 +792,8 @@ prns_macros::iterable_enum! {
         Applied = 0x01,
         CapacityExhausted = 0x02,
         Failed = 0x03,
+        Forbidden = 0x04,
+        Busy = 0x05,
     }
 }
 
@@ -836,6 +810,8 @@ impl RemoteControlAuthorizeControllerOutcome {
             0x01 => Some(Self::Applied),
             0x02 => Some(Self::CapacityExhausted),
             0x03 => Some(Self::Failed),
+            0x04 => Some(Self::Forbidden),
+            0x05 => Some(Self::Busy),
             _ => None,
         }
     }
@@ -849,6 +825,7 @@ prns_macros::iterable_enum! {
         NotFound = 0x02,
         Forbidden = 0x03,
         Failed = 0x04,
+        Busy = 0x05,
     }
 }
 
@@ -866,6 +843,7 @@ impl RemoteControlRevokeControllerOutcome {
             0x02 => Some(Self::NotFound),
             0x03 => Some(Self::Forbidden),
             0x04 => Some(Self::Failed),
+            0x05 => Some(Self::Busy),
             _ => None,
         }
     }
@@ -873,30 +851,52 @@ impl RemoteControlRevokeControllerOutcome {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteControlControllerInventory {
-    hashes: heapless::Vec<IdentityHash, DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS>,
+    hashes: heapless::Vec<IdentityHash, REMOTE_CONTROL_CONTROLLER_INVENTORY_PAGE_CAP>,
+    continuation: RemoteControlControllerContinuation,
 }
 
+pub const REMOTE_CONTROL_CONTROLLER_INVENTORY_PAGE_CAP: usize = 4;
+
 impl RemoteControlControllerInventory {
-    pub const MAX_ENCODED_LEN: usize = 1usize.saturating_add(
-        DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS.saturating_mul(TRUNCATED_HASH_BYTE_LEN),
-    );
+    pub const MAX_ENCODED_LEN: usize = 1usize
+        .saturating_add(
+            REMOTE_CONTROL_CONTROLLER_INVENTORY_PAGE_CAP.saturating_mul(TRUNCATED_HASH_BYTE_LEN),
+        )
+        .saturating_add(RemoteControlControllerContinuation::MAX_ENCODED_LEN);
 
     #[must_use]
     pub fn empty() -> Self {
         Self {
             hashes: heapless::Vec::new(),
+            continuation: RemoteControlControllerContinuation::Complete,
         }
     }
 
     #[must_use]
-    pub fn from_grants(grants: &impl RemoteControlControllerGrantTable) -> Self {
+    pub fn from_grants(
+        grants: &impl RemoteControlControllerGrantTable,
+        page: RemoteControlControllerPage,
+    ) -> Self {
         let mut inventory = Self::empty();
+        let after = match page {
+            RemoteControlControllerPage::First => None,
+            RemoteControlControllerPage::After(cursor) => Some(cursor.identity()),
+        };
         for grant in grants.grants_in_identity_hash_order() {
-            if inventory
-                .hashes
-                .push(grant.controller().identity_hash())
-                .is_err()
-            {
+            let identity = grant.controller().identity_hash();
+            if after.is_some_and(|after| identity.as_bytes() <= after.as_bytes()) {
+                continue;
+            }
+            if inventory.hashes.len() == REMOTE_CONTROL_CONTROLLER_INVENTORY_PAGE_CAP {
+                let Some(last) = inventory.hashes.last().copied() else {
+                    break;
+                };
+                inventory.continuation = RemoteControlControllerContinuation::More(
+                    RemoteControlControllerCursor::after(last),
+                );
+                break;
+            }
+            if inventory.hashes.push(identity).is_err() {
                 break;
             }
         }
@@ -909,23 +909,47 @@ impl RemoteControlControllerInventory {
     }
 
     #[must_use]
+    pub const fn continuation(&self) -> RemoteControlControllerContinuation {
+        self.continuation
+    }
+
+    #[must_use]
     pub fn encoded_body_len(&self) -> usize {
-        1usize.saturating_add(self.hashes.len().saturating_mul(TRUNCATED_HASH_BYTE_LEN))
+        1usize
+            .saturating_add(self.hashes.len().saturating_mul(TRUNCATED_HASH_BYTE_LEN))
+            .saturating_add(self.continuation.encoded_len())
     }
 
     pub fn parse_body(body: &[u8]) -> Option<Self> {
         let (count, rest) = body.split_first()?;
         let count = usize::from(*count);
         let expected = count.saturating_mul(TRUNCATED_HASH_BYTE_LEN);
-        if rest.len() != expected || count > DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS {
+        if rest.len() <= expected || count > REMOTE_CONTROL_CONTROLLER_INVENTORY_PAGE_CAP {
             return None;
         }
         let mut inventory = Self::empty();
-        for chunk in rest.chunks_exact(TRUNCATED_HASH_BYTE_LEN) {
-            let mut bytes = [0u8; TRUNCATED_HASH_BYTE_LEN];
-            bytes.copy_from_slice(chunk);
-            inventory.hashes.push(IdentityHash::new(bytes)).ok()?;
+        let (hashes, remainder) = rest.get(..expected)?.as_chunks::<TRUNCATED_HASH_BYTE_LEN>();
+        if !remainder.is_empty() {
+            return None;
         }
+        for bytes in hashes {
+            let identity = IdentityHash::new(*bytes);
+            if inventory
+                .hashes
+                .last()
+                .is_some_and(|previous| previous.as_bytes() >= identity.as_bytes())
+            {
+                return None;
+            }
+            inventory.hashes.push(identity).ok()?;
+        }
+        let continuation = RemoteControlControllerContinuation::parse(rest.get(expected..)?)?;
+        if let RemoteControlControllerContinuation::More(cursor) = continuation {
+            if inventory.hashes.last().copied() != Some(cursor.identity()) {
+                return None;
+            }
+        }
+        inventory.continuation = continuation;
         Some(inventory)
     }
 
@@ -939,6 +963,10 @@ impl RemoteControlControllerInventory {
             let slot = rest.get_mut(start..start.saturating_add(TRUNCATED_HASH_BYTE_LEN))?;
             slot.copy_from_slice(hash.as_bytes());
         }
+        let continuation_start = self.hashes.len().saturating_mul(TRUNCATED_HASH_BYTE_LEN);
+        self.continuation
+            .write_into(rest.get_mut(continuation_start..)?)
+            .ok()?;
         Some(())
     }
 }
@@ -949,7 +977,11 @@ pub fn authorize_remote_control_controller(
     controller: RemoteControlControllerIdentity,
     permitted_requests: RemoteControlRequestSet,
 ) -> RemoteControlAuthorizeControllerOutcome {
-    let Ok(grant) = RemoteControlControllerGrant::new(controller, permitted_requests) else {
+    let Ok(grant) = RemoteControlControllerGrant::new(
+        controller,
+        RemoteControlControllerAuthority::Operator,
+        permitted_requests,
+    ) else {
         return RemoteControlAuthorizeControllerOutcome::Failed;
     };
     match grants.set_controller_grant(grant) {
@@ -976,6 +1008,9 @@ pub fn revoke_remote_control_controller_hash(
     let Some(grant) = grants.grant_for(&hash).copied() else {
         return RemoteControlRevokeControllerOutcome::NotFound;
     };
+    if grant.authority() == RemoteControlControllerAuthority::Administrator {
+        return RemoteControlRevokeControllerOutcome::Forbidden;
+    }
     match grants.revoke_controller(grant.controller()) {
         RevokeRemoteControlControllerOutcome::Revoked { .. } => {
             RemoteControlRevokeControllerOutcome::Applied
@@ -1013,7 +1048,7 @@ impl RemoteControlWifiStationOutcome {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
 pub struct RemoteControlWifiStation {
     ssid: [u8; REMOTE_CONTROL_WIFI_SSID_CAP],
     ssid_len: u8,
@@ -1083,7 +1118,7 @@ impl RemoteControlWifiStation {
     }
 
     #[must_use]
-    pub const fn encoded_body_len(self) -> usize {
+    pub const fn encoded_body_len(&self) -> usize {
         1usize
             .saturating_add(self.ssid_len as usize)
             .saturating_add(1)
@@ -1352,12 +1387,6 @@ fn card_encoded_len(card: &RemoteControlInterfaceCard) -> usize {
         .saturating_add(card.config.len())
         .saturating_add(1)
         .saturating_add(card.failure.len())
-        .saturating_add(1)
-        .saturating_add(
-            card.peers
-                .len()
-                .saturating_mul(REMOTE_CONTROL_INTERFACE_PEER_ENCODED_LEN),
-        )
 }
 
 fn write_card<'a>(
@@ -1376,14 +1405,6 @@ fn write_card<'a>(
     rest = write_counted_bytes(rest, card.group.as_bytes())?;
     rest = write_counted_bytes(rest, card.config.as_bytes())?;
     rest = write_counted_bytes(rest, card.failure.as_bytes())?;
-    let Some((peer_count, next)) = rest.split_first_mut() else {
-        return Err(super::RemoteControlMessageWriteError::BufferTooShort);
-    };
-    *peer_count = card.peers.len() as u8;
-    rest = next;
-    for peer in card.peers.iter() {
-        rest = write_peer(rest, peer)?;
-    }
     Ok(rest)
 }
 
@@ -1410,21 +1431,6 @@ fn parse_card(
     let (group, next) = parse_counted_string::<REMOTE_CONTROL_INTERFACE_GROUP_CAP>(next)?;
     let (config, next) = parse_counted_string::<REMOTE_CONTROL_INTERFACE_CONFIG_CAP>(next)?;
     let (failure, next) = parse_counted_string::<REMOTE_CONTROL_INTERFACE_FAILURE_CAP>(next)?;
-    let Some((peer_count, mut next)) = next.split_first() else {
-        return Err(super::RemoteControlResponseParseError::Truncated);
-    };
-    let peer_count = usize::from(*peer_count);
-    if peer_count > REMOTE_CONTROL_INTERFACE_PEER_CAP {
-        return Err(super::RemoteControlResponseParseError::Malformed);
-    }
-    let mut peers = heapless::Vec::new();
-    for _ in 0..peer_count {
-        let (peer, after_peer) = parse_peer(next)?;
-        peers
-            .push(peer)
-            .map_err(|_| super::RemoteControlResponseParseError::Malformed)?;
-        next = after_peer;
-    }
     Ok((
         RemoteControlInterfaceCard {
             name,
@@ -1433,24 +1439,9 @@ fn parse_card(
             failure,
             destinations,
             transported_links,
-            peers,
         },
         next,
     ))
-}
-
-fn write_cards_trailer(
-    cards: &[RemoteControlInterfaceCard],
-    trailer: &mut [u8],
-) -> Result<(), super::RemoteControlMessageWriteError> {
-    let Some((tag, mut rest)) = trailer.split_first_mut() else {
-        return Err(super::RemoteControlMessageWriteError::BufferTooShort);
-    };
-    *tag = INVENTORY_CARD_TRAILER_TAG;
-    for card in cards {
-        rest = write_card(rest, card)?;
-    }
-    Ok(())
 }
 
 fn write_peer<'a>(
@@ -1594,33 +1585,6 @@ fn write_counted_bytes<'a>(
     };
     slot.copy_from_slice(src);
     Ok(rest)
-}
-
-fn parse_cards_trailer(
-    trailer: &[u8],
-    count: usize,
-) -> Result<
-    heapless::Vec<RemoteControlInterfaceCard, REMOTE_CONTROL_INTERFACE_INVENTORY_CAP>,
-    super::RemoteControlResponseParseError,
-> {
-    let Some((tag, mut rest)) = trailer.split_first() else {
-        return Err(super::RemoteControlResponseParseError::Truncated);
-    };
-    if *tag != INVENTORY_CARD_TRAILER_TAG {
-        return Err(super::RemoteControlResponseParseError::Malformed);
-    }
-    let mut cards = heapless::Vec::new();
-    for _ in 0..count {
-        let (card, next) = parse_card(rest)?;
-        rest = next;
-        cards
-            .push(card)
-            .map_err(|_| super::RemoteControlResponseParseError::Malformed)?;
-    }
-    if !rest.is_empty() {
-        return Err(super::RemoteControlResponseParseError::Malformed);
-    }
-    Ok(cards)
 }
 
 fn parse_counted_string<const N: usize>(

@@ -151,7 +151,7 @@ where
     F: FnMut(PrnsEvent<'_>, &St),
     S: StorageLayout,
     H: Host,
-    M: RawMutex + 'static,
+    M: RawMutex + Sync + 'static,
 {
     pub fn new<'d, D>(
         recipe: PrnsNodeRecipe<'d, D, St, R, F, ManuallyAttached, S>,
@@ -215,7 +215,7 @@ where
     F: FnMut(PrnsEvent<'_>, &St),
     S: StorageLayout,
     H: Host,
-    M: RawMutex + 'static,
+    M: RawMutex + Sync + 'static,
 {
     pub fn init_static<'d, D>(
         cell: &'static StaticCell<Self>,

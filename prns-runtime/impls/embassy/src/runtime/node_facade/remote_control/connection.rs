@@ -16,14 +16,18 @@ use crate::wire::DestinationHash;
 use prns_core::capabilities::power::PowerSnapshot;
 use prns_core::interfaces::InterfaceMode;
 use prns_core::remote_control::{
-    RemoteControlAuthorizeControllerOutcome, RemoteControlBuildVersion,
-    RemoteControlControllerIdentity, RemoteControlControllerInventory, RemoteControlDescription,
-    RemoteControlGroupOutcome, RemoteControlInterfaceConfigOutcome, RemoteControlInterfaceGroup,
-    RemoteControlInterfaceInventory, RemoteControlInterfacePeersOutcome,
-    RemoteControlInterfacePower, RemoteControlLoRaOutcome, RemoteControlLoRaProfile,
-    RemoteControlModeOutcome, RemoteControlPowerOutcome, RemoteControlRequestKind,
-    RemoteControlRevokeControllerOutcome, RemoteControlSleepOutcome, RemoteControlWifiStation,
-    RemoteControlWifiStationOutcome,
+    RemoteControlApplyOutcome, RemoteControlAuthorizeControllerOutcome, RemoteControlBuildVersion,
+    RemoteControlControllerIdentity, RemoteControlControllerInventory, RemoteControlControllerPage,
+    RemoteControlDescription, RemoteControlDisplayAutoOff, RemoteControlDisplayVisibility,
+    RemoteControlEspRadioMode, RemoteControlGnssPower, RemoteControlGroupOutcome,
+    RemoteControlInterfaceConfigOutcome, RemoteControlInterfaceGroup,
+    RemoteControlInterfaceInventory, RemoteControlInterfacePage,
+    RemoteControlInterfacePeersOutcome, RemoteControlInterfacePower, RemoteControlLoRaOutcome,
+    RemoteControlLoRaProfile, RemoteControlModeOutcome, RemoteControlPeerPage,
+    RemoteControlPowerOutcome, RemoteControlRequestKind, RemoteControlRequestSet,
+    RemoteControlRevokeControllerOutcome, RemoteControlSleepOutcome, RemoteControlStationUplink,
+    RemoteControlSystemPower, RemoteControlWifiCredentialRevision, RemoteControlWifiStageOutcome,
+    RemoteControlWifiStation, RemoteControlWifiStationOutcome, RemoteControlWifiTransactionStatus,
 };
 
 use super::{PrnsNodeHandle, RemoteControlHandle};
@@ -39,6 +43,21 @@ pub struct RemoteControlTargetHandle<
     remote_control:
         RemoteControlHandle<'a, M, COMMANDS, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>,
     connection: RemoteControlTargetConnection,
+}
+
+macro_rules! remote_control_target_apply_method {
+    ($method:ident, $kind:ident, $field:ident, $field_type:ty) => {
+        pub async fn $method(
+            &self,
+            $field: $field_type,
+        ) -> Result<(RemoteControlApplyOutcome, RttMillis), RemoteControlTargetOperationError> {
+            self.connection.admit(RemoteControlRequestKind::$kind)?;
+            self.remote_control
+                .$method($field)
+                .await
+                .map_err(Into::into)
+        }
+    };
 }
 
 impl<
@@ -112,6 +131,55 @@ impl<
         const RESPONSE_BYTES: usize,
     > RemoteControlTargetHandle<'_, M, COMMANDS, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>
 {
+    remote_control_target_apply_method!(
+        set_system_power,
+        SetSystemPower,
+        power,
+        RemoteControlSystemPower
+    );
+    remote_control_target_apply_method!(
+        set_gnss_power,
+        SetGnssPower,
+        power,
+        RemoteControlGnssPower
+    );
+    remote_control_target_apply_method!(
+        set_display_visibility,
+        SetDisplayVisibility,
+        visibility,
+        RemoteControlDisplayVisibility
+    );
+    remote_control_target_apply_method!(
+        set_display_auto_off,
+        SetDisplayAutoOff,
+        auto_off,
+        RemoteControlDisplayAutoOff
+    );
+    remote_control_target_apply_method!(
+        set_esp_radio_mode,
+        SetEspRadioMode,
+        mode,
+        RemoteControlEspRadioMode
+    );
+    remote_control_target_apply_method!(
+        activate_wifi_credentials,
+        ActivateWifiCredentials,
+        revision,
+        RemoteControlWifiCredentialRevision
+    );
+    remote_control_target_apply_method!(
+        confirm_wifi_credentials,
+        ConfirmWifiCredentials,
+        revision,
+        RemoteControlWifiCredentialRevision
+    );
+    remote_control_target_apply_method!(
+        cancel_wifi_credentials,
+        CancelWifiCredentials,
+        revision,
+        RemoteControlWifiCredentialRevision
+    );
+
     #[must_use]
     pub const fn connection(&self) -> &RemoteControlTargetConnection {
         &self.connection
@@ -170,6 +238,19 @@ impl<
             .admit(RemoteControlInventoryInterfaces::REQUEST.kind())?;
         self.remote_control
             .inventory_interfaces()
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn inventory_interfaces_page(
+        &self,
+        page: RemoteControlInterfacePage,
+    ) -> Result<(RemoteControlInterfaceInventory, RttMillis), RemoteControlTargetOperationError>
+    {
+        self.connection
+            .admit(RemoteControlInventoryInterfaces::REQUEST.kind())?;
+        self.remote_control
+            .inventory_interfaces_page(page)
             .await
             .map_err(Into::into)
     }
@@ -252,9 +333,23 @@ impl<
             .map_err(Into::into)
     }
 
+    pub async fn inventory_controllers_page(
+        &self,
+        page: RemoteControlControllerPage,
+    ) -> Result<(RemoteControlControllerInventory, RttMillis), RemoteControlTargetOperationError>
+    {
+        self.connection
+            .admit(RemoteControlRequestKind::InventoryControllers)?;
+        self.remote_control
+            .inventory_controllers_page(page)
+            .await
+            .map_err(Into::into)
+    }
+
     pub async fn authorize_controller(
         &self,
         controller: RemoteControlControllerIdentity,
+        permitted_requests: RemoteControlRequestSet,
     ) -> Result<
         (RemoteControlAuthorizeControllerOutcome, RttMillis),
         RemoteControlTargetOperationError,
@@ -262,7 +357,7 @@ impl<
         self.connection
             .admit(RemoteControlRequestKind::AuthorizeController)?;
         self.remote_control
-            .authorize_controller(controller)
+            .authorize_controller(controller, permitted_requests)
             .await
             .map_err(Into::into)
     }
@@ -283,13 +378,13 @@ impl<
     pub async fn inventory_interface_peers(
         &self,
         id: InterfaceId,
-        offset: u8,
+        page: RemoteControlPeerPage,
     ) -> Result<(RemoteControlInterfacePeersOutcome, RttMillis), RemoteControlTargetOperationError>
     {
         self.connection
             .admit(RemoteControlRequestKind::InventoryInterfacePeers)?;
         self.remote_control
-            .inventory_interface_peers(id, offset)
+            .inventory_interface_peers(id, page)
             .await
             .map_err(Into::into)
     }
@@ -321,5 +416,42 @@ impl<
         self.connection
             .admit(RemoteControlWakeRadios::REQUEST.kind())?;
         self.remote_control.wake_radios().await.map_err(Into::into)
+    }
+
+    pub async fn set_station_uplink(
+        &self,
+        id: InterfaceId,
+        uplink: RemoteControlStationUplink,
+    ) -> Result<(RemoteControlApplyOutcome, RttMillis), RemoteControlTargetOperationError> {
+        self.connection
+            .admit(RemoteControlRequestKind::SetStationUplink)?;
+        self.remote_control
+            .set_station_uplink(id, uplink)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn stage_wifi_credentials(
+        &self,
+        station: RemoteControlWifiStation,
+    ) -> Result<(RemoteControlWifiStageOutcome, RttMillis), RemoteControlTargetOperationError> {
+        self.connection
+            .admit(RemoteControlRequestKind::StageWifiCredentials)?;
+        self.remote_control
+            .stage_wifi_credentials(station)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn inspect_wifi_transaction(
+        &self,
+    ) -> Result<(RemoteControlWifiTransactionStatus, RttMillis), RemoteControlTargetOperationError>
+    {
+        self.connection
+            .admit(RemoteControlRequestKind::InspectWifiTransaction)?;
+        self.remote_control
+            .inspect_wifi_transaction()
+            .await
+            .map_err(Into::into)
     }
 }

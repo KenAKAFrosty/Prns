@@ -450,11 +450,13 @@ mod tests {
 
     struct PanickingRequestEndpointSet;
 
-    impl RequestEndpointSet<()> for PanickingRequestEndpointSet {
+    impl RequestEndpointSet<crate::runtime::NoRemoteControlHostControls>
+        for PanickingRequestEndpointSet
+    {
         const REGISTRATIONS: &'static [(&'static str, RequestEndpointPolicy)] = &[];
 
         async fn dispatch(
-            _context: RequestContext<'_, ()>,
+            _context: RequestContext<'_, crate::runtime::NoRemoteControlHostControls>,
             _node: &impl crate::runtime::PrnsNodeApi,
             _path_hash: RequestPathHash,
         ) -> Result<(), Decline> {
@@ -468,8 +470,8 @@ mod tests {
         let handle = PrnsNodeHandle::over(commands);
         let mut remote_control = remote_control();
         let link_id = LinkId::new([0x44; 16]);
-        dispatch_guarded::<(), PanickingRequestEndpointSet>(
-            &(),
+        dispatch_guarded::<crate::runtime::NoRemoteControlHostControls, PanickingRequestEndpointSet>(
+            &crate::runtime::NoRemoteControlHostControls,
             &handle,
             prepare_request(
                 &mut remote_control,
@@ -499,11 +501,11 @@ mod tests {
 
     struct PongRequestEndpointSet;
 
-    impl RequestEndpointSet<()> for PongRequestEndpointSet {
+    impl RequestEndpointSet<crate::runtime::NoRemoteControlHostControls> for PongRequestEndpointSet {
         const REGISTRATIONS: &'static [(&'static str, RequestEndpointPolicy)] = &[];
 
         async fn dispatch(
-            mut context: RequestContext<'_, ()>,
+            mut context: RequestContext<'_, crate::runtime::NoRemoteControlHostControls>,
             _node: &impl crate::runtime::PrnsNodeApi,
             _path_hash: RequestPathHash,
         ) -> Result<(), Decline> {
@@ -517,8 +519,11 @@ mod tests {
         let (commands, mut command_rx) = mpsc::unbounded_channel();
         let handle = PrnsNodeHandle::over(commands);
         let mut remote_control = remote_control();
-        let dispatched = dispatch_guarded::<(), PongRequestEndpointSet>(
-            &(),
+        let dispatched = dispatch_guarded::<
+            crate::runtime::NoRemoteControlHostControls,
+            PongRequestEndpointSet,
+        >(
+            &crate::runtime::NoRemoteControlHostControls,
             &handle,
             prepare_request(
                 &mut remote_control,
@@ -630,18 +635,19 @@ mod tests {
         let (_pairing_persistence_sender, mut pairing_persistence) =
             super::super::remote_control_pairing_persistence::remote_control_pairing_persistence_lane();
 
-        let router = run_router::<(), PongRequestEndpointSet>(
-            &(),
-            &mut remote_control,
-            request_rx,
-            RemoteControlAuthorizationRuntime {
-                controller_grants: &mut controller_grants,
-                target_accesses: &mut target_accesses,
-                pairing_persistence: &mut pairing_persistence,
-                persistence: None,
-            },
-            handle.clone(),
-        );
+        let router =
+            run_router::<crate::runtime::NoRemoteControlHostControls, PongRequestEndpointSet>(
+                &crate::runtime::NoRemoteControlHostControls,
+                &mut remote_control,
+                request_rx,
+                RemoteControlAuthorizationRuntime {
+                    controller_grants: &mut controller_grants,
+                    target_accesses: &mut target_accesses,
+                    pairing_persistence: &mut pairing_persistence,
+                    persistence: None,
+                },
+                handle.clone(),
+            );
         let exercise = async {
             assert_eq!(
                 setting.await,
@@ -650,10 +656,9 @@ mod tests {
             let Some(HostCommand::RespondAny(response)) = command_rx.recv().await else {
                 panic!("RemoteControl response command")
             };
-            let expected = RemoteControlDescription::try_from(
-                RemoteControlRequestSet::only(RemoteControlRequestKind::Describe)
-                    .with_current_operator_edits(),
-            )
+            let expected = RemoteControlDescription::try_from(RemoteControlRequestSet::only(
+                RemoteControlRequestKind::Describe,
+            ))
             .expect("Describe is available");
             assert_eq!(
                 RemoteControlResponse::parse(response.packed.as_slice()),

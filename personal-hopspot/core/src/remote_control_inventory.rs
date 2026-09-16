@@ -5,15 +5,16 @@ use personal_rns::interfaces::lora::RadioProfile;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot, Membership};
 use personal_rns::remote_control::{
     wifi_station_inventory_config, RemoteControlBuildVersion, RemoteControlInterfaceCard,
-    RemoteControlInterfaceConfigOutcome, RemoteControlInterfaceEntry,
-    RemoteControlInterfaceInventory, RemoteControlInterfaceInventoryError,
-    RemoteControlInterfacePeer, RemoteControlInterfacePeerPage, RemoteControlInterfacePeersOutcome,
+    RemoteControlInterfaceConfigOutcome, RemoteControlInterfaceContinuation,
+    RemoteControlInterfaceCursor, RemoteControlInterfaceEntry, RemoteControlInterfaceInventory,
+    RemoteControlInterfacePage, RemoteControlInterfacePeer, RemoteControlInterfacePeerPage,
+    RemoteControlInterfacePeersOutcome, RemoteControlPeerContinuation, RemoteControlPeerCursor,
+    RemoteControlPeerPage, RemoteControlResponse, REMOTE_CONTROL_INTERFACE_INVENTORY_CAP,
     REMOTE_CONTROL_INTERFACE_PEER_CAP,
 };
 use prns_core::engine::MAX_RESPOND_DATA_LEN;
 
-/// Matches `RemoteControlResponse` header (version + kind).
-const INVENTORY_RESPONSE_HEADER_LEN: usize = 2;
+const _: () = assert!(RemoteControlResponse::MAX_ENCODED_LEN <= MAX_RESPOND_DATA_LEN);
 
 #[must_use]
 pub fn hopspot_remote_control_build_version() -> RemoteControlBuildVersion {
@@ -28,11 +29,24 @@ pub fn hopspot_remote_control_build_version() -> RemoteControlBuildVersion {
 /// `InventoryInterfacePeers`.
 pub fn remote_control_inventory_from_snapshots(
     snapshots: &[InterfaceSnapshot],
+    page: RemoteControlInterfacePage,
 ) -> RemoteControlInterfaceInventory {
     let mut inventory = RemoteControlInterfaceInventory::empty();
-    for snapshot in snapshots {
+    let mut after = match page {
+        RemoteControlInterfacePage::First => None,
+        RemoteControlInterfacePage::After(cursor) => Some(cursor.id()),
+    };
+    while inventory.entries().len() < REMOTE_CONTROL_INTERFACE_INVENTORY_CAP {
+        let Some(snapshot) = snapshots
+            .iter()
+            .filter(|snapshot| operator_interface(snapshot))
+            .filter(|snapshot| after.is_none_or(|after| snapshot.id.as_bytes() > after.as_bytes()))
+            .min_by_key(|snapshot| *snapshot.id.as_bytes())
+        else {
+            break;
+        };
         let Some(kind) = operator_kind(snapshot) else {
-            continue;
+            break;
         };
         let entry = RemoteControlInterfaceEntry {
             id: snapshot.id,
@@ -48,9 +62,16 @@ pub fn remote_control_inventory_from_snapshots(
         if inventory.push(entry).is_err() {
             break;
         }
-        if inventory_response_len(&inventory) > MAX_RESPOND_DATA_LEN {
-            let _ = inventory.pop();
-            break;
+        after = Some(snapshot.id);
+    }
+    if let Some(last) = inventory.entries().last() {
+        let has_more = snapshots.iter().any(|snapshot| {
+            operator_interface(snapshot) && snapshot.id.as_bytes() > last.id.as_bytes()
+        });
+        if has_more {
+            let _ = inventory.set_continuation(RemoteControlInterfaceContinuation::More(
+                RemoteControlInterfaceCursor::after(last.id),
+            ));
         }
     }
     inventory
@@ -85,7 +106,7 @@ pub fn remote_control_interface_config_from_snapshots(
 pub fn remote_control_interface_peers_from_snapshots(
     snapshots: &[InterfaceSnapshot],
     id: InterfaceId,
-    offset: u8,
+    requested_page: RemoteControlPeerPage,
 ) -> RemoteControlInterfacePeersOutcome {
     let Some(supervisor) = snapshots
         .iter()
@@ -93,26 +114,37 @@ pub fn remote_control_interface_peers_from_snapshots(
     else {
         return RemoteControlInterfacePeersOutcome::UnknownInterface;
     };
-    let mut total = 0u8;
-    let mut page = RemoteControlInterfacePeerPage::empty(supervisor.id, offset, 0);
-    for snapshot in snapshots {
-        let Some(peer) = remote_control_peer_for_supervisor(id, snapshot) else {
-            continue;
+    let mut after = match requested_page {
+        RemoteControlPeerPage::First => None,
+        RemoteControlPeerPage::After(cursor) => Some(cursor.id()),
+    };
+    let mut page = RemoteControlInterfacePeerPage::empty(supervisor.id);
+    while page.peers.len() < REMOTE_CONTROL_INTERFACE_PEER_CAP {
+        let Some(peer) = snapshots
+            .iter()
+            .filter_map(|snapshot| remote_control_peer_for_supervisor(id, snapshot))
+            .filter(|peer| after.is_none_or(|after| peer.id.as_bytes() > after.as_bytes()))
+            .min_by_key(|peer| *peer.id.as_bytes())
+        else {
+            break;
         };
-        if total >= offset && page.peers.len() < REMOTE_CONTROL_INTERFACE_PEER_CAP {
-            match page.push(peer) {
-                Ok(()) => {}
-                Err(RemoteControlInterfaceInventoryError::Full) => {}
-            }
+        after = Some(peer.id);
+        if page.push(peer).is_err() {
+            break;
         }
-        total = total.saturating_add(1);
     }
-    page.total = total;
+    if let Some(last) = page.peers.last() {
+        let has_more = snapshots
+            .iter()
+            .filter_map(|snapshot| remote_control_peer_for_supervisor(id, snapshot))
+            .any(|peer| peer.id.as_bytes() > last.id.as_bytes());
+        if has_more {
+            let _ = page.set_continuation(RemoteControlPeerContinuation::More(
+                RemoteControlPeerCursor::after(last.id),
+            ));
+        }
+    }
     RemoteControlInterfacePeersOutcome::Page(page)
-}
-
-fn inventory_response_len(inventory: &RemoteControlInterfaceInventory) -> usize {
-    INVENTORY_RESPONSE_HEADER_LEN.saturating_add(inventory.encoded_body_len())
 }
 
 /// Shared Hopspot name, LoRa tune, Auto Wi-Fi SSID, and BLE group labels for one config card.
@@ -276,11 +308,11 @@ mod tests {
         member.membership = Membership::FleetMember { supervisor_id };
 
         let snapshots = [supervisor, member];
-        let inventory = remote_control_inventory_from_snapshots(&snapshots);
+        let inventory =
+            remote_control_inventory_from_snapshots(&snapshots, RemoteControlInterfacePage::First);
 
         assert_eq!(inventory.entries().len(), 1);
         assert_eq!(inventory.entries()[0].links, 3);
-        assert!(inventory.card(0).is_none());
         let RemoteControlInterfaceConfigOutcome::Card(card) =
             remote_control_interface_config_from_snapshots(
                 &snapshots,
@@ -307,16 +339,18 @@ mod tests {
         assert!(card.config.is_empty());
         assert_eq!(card.destinations, 3);
         assert_eq!(card.transported_links, 2);
-        assert!(card.peers.is_empty());
 
         let RemoteControlInterfacePeersOutcome::Page(page) =
-            remote_control_interface_peers_from_snapshots(&snapshots, supervisor_id, 0)
+            remote_control_interface_peers_from_snapshots(
+                &snapshots,
+                supervisor_id,
+                RemoteControlPeerPage::First,
+            )
         else {
             panic!("BLE supervisor should page its members");
         };
-        assert_eq!(page.total, 1);
-        assert_eq!(page.offset, 0);
         assert_eq!(page.peers.len(), 1);
+        assert_eq!(page.continuation(), RemoteControlPeerContinuation::Complete);
         assert_eq!(page.peers[0].id, member_id);
         assert_eq!(page.peers[0].tx_bytes, 4);
         assert_eq!(page.peers[0].rx_bytes, 5);
@@ -365,36 +399,61 @@ mod tests {
             assert!(snapshots.push(member).is_ok());
         }
 
-        let inventory = remote_control_inventory_from_snapshots(&snapshots);
+        let inventory =
+            remote_control_inventory_from_snapshots(&snapshots, RemoteControlInterfacePage::First);
 
         assert_eq!(inventory.entries().len(), 1);
         assert_eq!(inventory.entries()[0].kind, InterfaceKind::AutoWifi);
-        assert!(inventory.card(0).is_none());
         assert!(
             RemoteControlResponse::InventoryInterfaces(inventory).encoded_len()
                 <= MAX_RESPOND_DATA_LEN
         );
 
         let RemoteControlInterfacePeersOutcome::Page(first) =
-            remote_control_interface_peers_from_snapshots(&snapshots, supervisor_id, 0)
+            remote_control_interface_peers_from_snapshots(
+                &snapshots,
+                supervisor_id,
+                RemoteControlPeerPage::First,
+            )
         else {
             panic!("Wi-Fi supervisor should page its members");
         };
-        assert_eq!(first.total, 12);
         assert_eq!(first.peers.len(), REMOTE_CONTROL_INTERFACE_PEER_CAP);
+        let RemoteControlPeerContinuation::More(cursor) = first.continuation() else {
+            panic!("first page should continue");
+        };
         let RemoteControlInterfacePeersOutcome::Page(second) =
-            remote_control_interface_peers_from_snapshots(&snapshots, supervisor_id, 8)
+            remote_control_interface_peers_from_snapshots(
+                &snapshots,
+                supervisor_id,
+                RemoteControlPeerPage::After(cursor),
+            )
         else {
             panic!("Wi-Fi supervisor should page remaining members");
         };
-        assert_eq!(second.total, 12);
-        assert_eq!(second.offset, 8);
-        assert_eq!(second.peers.len(), 4);
+        assert_eq!(second.peers.len(), REMOTE_CONTROL_INTERFACE_PEER_CAP);
+        let RemoteControlPeerContinuation::More(cursor) = second.continuation() else {
+            panic!("second page should continue");
+        };
+        let RemoteControlInterfacePeersOutcome::Page(third) =
+            remote_control_interface_peers_from_snapshots(
+                &snapshots,
+                supervisor_id,
+                RemoteControlPeerPage::After(cursor),
+            )
+        else {
+            panic!("Wi-Fi supervisor should page final members");
+        };
+        assert_eq!(third.peers.len(), REMOTE_CONTROL_INTERFACE_PEER_CAP);
+        assert_eq!(
+            third.continuation(),
+            RemoteControlPeerContinuation::Complete
+        );
         assert_eq!(
             remote_control_interface_peers_from_snapshots(
                 &snapshots,
                 InterfaceId::new([0xff; 8]),
-                0
+                RemoteControlPeerPage::First,
             ),
             RemoteControlInterfacePeersOutcome::UnknownInterface
         );
@@ -405,11 +464,11 @@ mod tests {
         let id = InterfaceId::new(*b"heltecr8");
         let mut cookie = snapshot(InterfaceKind::Loopback);
         cookie.id = id;
-        let inventory = remote_control_inventory_from_snapshots(&[cookie]);
+        let inventory =
+            remote_control_inventory_from_snapshots(&[cookie], RemoteControlInterfacePage::First);
         assert_eq!(inventory.entries().len(), 1);
         assert_eq!(inventory.entries()[0].id, id);
         assert_eq!(inventory.entries()[0].kind, InterfaceKind::UsbAutoDevice);
-        assert!(inventory.card(0).is_none());
     }
 
     #[test]
@@ -441,17 +500,26 @@ mod tests {
             assert!(snapshots.push(member).is_ok());
         }
 
-        let inventory = remote_control_inventory_from_snapshots(&snapshots);
-
-        assert_eq!(
-            inventory.entries().len(),
-            kinds.len(),
-            "encoded {} of {MAX_RESPOND_DATA_LEN}",
-            RemoteControlResponse::InventoryInterfaces(inventory.clone()).encoded_len()
+        let first =
+            remote_control_inventory_from_snapshots(&snapshots, RemoteControlInterfacePage::First);
+        let RemoteControlInterfaceContinuation::More(cursor) = first.continuation() else {
+            panic!("first supervisor page should continue");
+        };
+        let second = remote_control_inventory_from_snapshots(
+            &snapshots,
+            RemoteControlInterfacePage::After(cursor),
         );
-        let lora_id = inventory
+        assert_eq!(
+            first.entries().len() + second.entries().len(),
+            kinds.len(),
+            "encoded first={} second={} of {MAX_RESPOND_DATA_LEN}",
+            RemoteControlResponse::InventoryInterfaces(first.clone()).encoded_len(),
+            RemoteControlResponse::InventoryInterfaces(second.clone()).encoded_len()
+        );
+        let lora_id = first
             .entries()
             .iter()
+            .chain(second.entries())
             .find(|entry| entry.kind == InterfaceKind::LoRa)
             .expect("LoRa supervisor")
             .id;
@@ -480,15 +548,19 @@ mod tests {
                 .as_str()
         );
         assert_eq!(
-            inventory
+            first
                 .entries()
                 .iter()
+                .chain(second.entries())
                 .filter(|entry| entry.kind.supervisor_kind().is_some())
                 .count(),
             0,
         );
         assert!(
-            RemoteControlResponse::InventoryInterfaces(inventory).encoded_len()
+            RemoteControlResponse::InventoryInterfaces(first).encoded_len() <= MAX_RESPOND_DATA_LEN
+        );
+        assert!(
+            RemoteControlResponse::InventoryInterfaces(second).encoded_len()
                 <= MAX_RESPOND_DATA_LEN
         );
     }

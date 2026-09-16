@@ -54,14 +54,21 @@ pub use node::{
     PrnsNodeRecipe, ServeMyRequestEndpoints,
 };
 pub use remote_control::{
-    RemoteControlAnnounceSelf, RemoteControlAnnounceSelfFailure, RemoteControlAuthorizeController,
-    RemoteControlDescribe, RemoteControlDescribeBuild, RemoteControlDescribePower,
-    RemoteControlError, RemoteControlHostControls, RemoteControlInventoryControllers,
-    RemoteControlInventoryInterfaceConfig, RemoteControlInventoryInterfacePeers,
-    RemoteControlInventoryInterfaces, RemoteControlRevokeController,
+    NoRemoteControlHostControls, RemoteControlActivateWifiCredentials, RemoteControlAnnounceSelf,
+    RemoteControlAnnounceSelfFailure, RemoteControlAuthorizeController,
+    RemoteControlCancelWifiCredentials, RemoteControlConfirmWifiCredentials, RemoteControlDescribe,
+    RemoteControlDescribeBuild, RemoteControlDescribePower, RemoteControlError,
+    RemoteControlHostCommand, RemoteControlHostCommandError, RemoteControlHostControls,
+    RemoteControlHostResponse, RemoteControlInspectWifiTransaction,
+    RemoteControlInventoryControllers, RemoteControlInventoryInterfaceConfig,
+    RemoteControlInventoryInterfacePeers, RemoteControlInventoryInterfaces,
+    RemoteControlRevokeController, RemoteControlSetDisplayAutoOff,
+    RemoteControlSetDisplayVisibility, RemoteControlSetEspRadioMode, RemoteControlSetGnssPower,
     RemoteControlSetInterfaceGroup, RemoteControlSetInterfaceLoRaProfile,
     RemoteControlSetInterfaceMode, RemoteControlSetInterfacePower,
-    RemoteControlSetInterfaceWifiStation, RemoteControlSleepRadios, RemoteControlWakeRadios,
+    RemoteControlSetInterfaceWifiStation, RemoteControlSetStationUplink,
+    RemoteControlSetSystemPower, RemoteControlSleepRadios, RemoteControlStageWifiCredentials,
+    RemoteControlWakeRadios,
 };
 pub use remote_control_authorizations::{
     RemoteControlAuthorizationRestoreError, RemoteControlAuthorizationRestoreOutcome,
@@ -107,8 +114,11 @@ pub use remote_control_target_connection::{
 pub mod placement {
     pub use super::node::assemble_node_in_place;
     pub use super::remote_control::{
-        admit_remote_control_request, dispatch_admitted_remote_control_request,
-        dispatch_remote_control_request, AdmittedRemoteControlRequest, RemoteControlAdmitError,
+        admit_remote_control_request, admit_verified_remote_control_request,
+        dispatch_admitted_remote_control_request, dispatch_remote_control_request,
+        dispatch_verified_admitted_remote_control_request, verify_admitted_remote_control_request,
+        AdmittedRemoteControlRequest, RemoteControlAdmitError,
+        VerifiedAdmittedRemoteControlRequest,
     };
 }
 

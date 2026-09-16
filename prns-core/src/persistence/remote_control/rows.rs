@@ -6,22 +6,30 @@ use super::super::{SnapshotReadError, SnapshotRegion};
 use crate::identity::{
     IdentityHash, IdentityPublicKeys, PublicIdentityMaterial, IDENTITY_PUBLIC_KEY_LEN,
 };
-use crate::remote_control::{RemoteControlRequestKind, RemoteControlRequestSet};
+use crate::remote_control::{
+    RemoteControlControllerAuthority, RemoteControlRequestKind, RemoteControlRequestSet,
+};
 
 pub(super) const ROW_COUNT_LEN: usize = 4;
+const AUTHORIZATION_ROWS_MAGIC: &[u8; 4] = b"RCA2";
+const AUTHORITY_LEN: usize = 1;
 const REQUEST_COUNT_LEN: usize = 1;
 const REMOTE_CONTROL_IDENTITY_WIRE_LEN: usize = IDENTITY_PUBLIC_KEY_LEN;
-const MAX_REMOTE_CONTROL_ACCESS_ROW_WIRE_LEN: usize =
-    REMOTE_CONTROL_IDENTITY_WIRE_LEN + REQUEST_COUNT_LEN + RemoteControlRequestKind::ALL.len();
+const MAX_REMOTE_CONTROL_ACCESS_ROW_WIRE_LEN: usize = REMOTE_CONTROL_IDENTITY_WIRE_LEN
+    + AUTHORITY_LEN
+    + REQUEST_COUNT_LEN
+    + RemoteControlRequestKind::ALL.len();
 
 pub(super) const fn remote_control_authorization_snapshot_capacity(row_count: usize) -> usize {
     SNAPSHOT_OVERHEAD_LEN
+        .saturating_add(AUTHORIZATION_ROWS_MAGIC.len())
         .saturating_add(ROW_COUNT_LEN)
         .saturating_add(row_count.saturating_mul(MAX_REMOTE_CONTROL_ACCESS_ROW_WIRE_LEN))
 }
 
 pub(super) struct RemoteControlAuthorizationRow<'a> {
     pub(super) public_keys: &'a IdentityPublicKeys,
+    pub(super) authority: RemoteControlControllerAuthority,
     pub(super) permitted_requests: &'a RemoteControlRequestSet,
 }
 
@@ -31,7 +39,8 @@ pub(super) fn write_remote_control_authorization_rows<'a>(
     rows: impl Iterator<Item = RemoteControlAuthorizationRow<'a>>,
     out: &mut [u8],
 ) -> Result<usize, SnapshotSealError> {
-    let payload_start = SNAPSHOT_HEADER_LEN.saturating_add(ROW_COUNT_LEN);
+    let row_count_start = SNAPSHOT_HEADER_LEN.saturating_add(AUTHORIZATION_ROWS_MAGIC.len());
+    let payload_start = row_count_start.saturating_add(ROW_COUNT_LEN);
     if out.len() < payload_start {
         return Err(SnapshotSealError::BufferTooShort);
     }
@@ -40,6 +49,7 @@ pub(super) fn write_remote_control_authorization_rows<'a>(
     let mut encoded_rows = 0u32;
     for row in rows {
         let encoded_len = REMOTE_CONTROL_IDENTITY_WIRE_LEN
+            .saturating_add(AUTHORITY_LEN)
             .saturating_add(REQUEST_COUNT_LEN)
             .saturating_add(row.permitted_requests.len());
         let Some(next_at) = at.checked_add(encoded_len) else {
@@ -51,6 +61,8 @@ pub(super) fn write_remote_control_authorization_rows<'a>(
         out[at..at + REMOTE_CONTROL_IDENTITY_WIRE_LEN]
             .copy_from_slice(&row.public_keys.public_key_bytes());
         at += REMOTE_CONTROL_IDENTITY_WIRE_LEN;
+        out[at] = row.authority.wire_value();
+        at += AUTHORITY_LEN;
         out[at] = row.permitted_requests.wire_count();
         at += REQUEST_COUNT_LEN;
         for request in row.permitted_requests.iter() {
@@ -64,7 +76,8 @@ pub(super) fn write_remote_control_authorization_rows<'a>(
     if encoded_rows != row_count {
         return Err(SnapshotSealError::BufferTooShort);
     }
-    out[SNAPSHOT_HEADER_LEN..payload_start].copy_from_slice(&row_count.to_le_bytes());
+    out[SNAPSHOT_HEADER_LEN..row_count_start].copy_from_slice(AUTHORIZATION_ROWS_MAGIC);
+    out[row_count_start..payload_start].copy_from_slice(&row_count.to_le_bytes());
     seal_snapshot_in_place(region, at - SNAPSHOT_HEADER_LEN, out)
 }
 
@@ -72,6 +85,7 @@ pub(super) fn write_remote_control_authorization_rows<'a>(
 pub(super) struct PersistedRemoteControlAuthorizationRows<'a> {
     rest: &'a [u8],
     row_count: usize,
+    format: AuthorizationRowsFormat,
 }
 
 impl PersistedRemoteControlAuthorizationRows<'_> {
@@ -83,14 +97,21 @@ impl PersistedRemoteControlAuthorizationRows<'_> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct ParsedRemoteControlAuthorizationRow {
     pub(super) public_keys: IdentityPublicKeys,
+    pub(super) authority: RemoteControlControllerAuthority,
     pub(super) permitted_requests: RemoteControlRequestSet,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AuthorizationRowsFormat {
+    Legacy,
+    AuthorityV2,
 }
 
 impl Iterator for PersistedRemoteControlAuthorizationRows<'_> {
     type Item = ParsedRemoteControlAuthorizationRow;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let (row, rest) = parse_remote_control_authorization_row(self.rest)?;
+        let (row, rest) = parse_remote_control_authorization_row(self.rest, self.format)?;
         self.rest = rest;
         self.row_count = self.row_count.saturating_sub(1);
         Some(row)
@@ -108,6 +129,10 @@ pub(super) fn read_remote_control_authorization_rows(
     bytes: &[u8],
 ) -> Result<PersistedRemoteControlAuthorizationRows<'_>, SnapshotReadError> {
     let payload = open_snapshot(region, bytes).map_err(SnapshotReadError::Envelope)?;
+    let (format, payload) = match payload.strip_prefix(AUTHORIZATION_ROWS_MAGIC) {
+        Some(versioned) => (AuthorizationRowsFormat::AuthorityV2, versioned),
+        None => (AuthorizationRowsFormat::Legacy, payload),
+    };
     let Some((row_count_bytes, rows)) = payload.split_first_chunk::<ROW_COUNT_LEN>() else {
         return Err(SnapshotReadError::MalformedPayload);
     };
@@ -116,7 +141,7 @@ pub(super) fn read_remote_control_authorization_rows(
     let mut rest = rows;
     let mut previous_identity: Option<IdentityHash> = None;
     for _ in 0..row_count {
-        let Some((row, remaining)) = parse_remote_control_authorization_row(rest) else {
+        let Some((row, remaining)) = parse_remote_control_authorization_row(rest, format) else {
             return Err(SnapshotReadError::MalformedPayload);
         };
         let identity = row.public_keys.identity_hash();
@@ -132,13 +157,25 @@ pub(super) fn read_remote_control_authorization_rows(
     Ok(PersistedRemoteControlAuthorizationRows {
         rest: rows,
         row_count,
+        format,
     })
 }
 
 fn parse_remote_control_authorization_row(
     bytes: &[u8],
+    format: AuthorizationRowsFormat,
 ) -> Option<(ParsedRemoteControlAuthorizationRow, &[u8])> {
     let (public_keys, rest) = bytes.split_first_chunk::<REMOTE_CONTROL_IDENTITY_WIRE_LEN>()?;
+    let (authority, rest) = match format {
+        AuthorizationRowsFormat::Legacy => (RemoteControlControllerAuthority::Operator, rest),
+        AuthorizationRowsFormat::AuthorityV2 => {
+            let (authority, rest) = rest.split_first()?;
+            (
+                RemoteControlControllerAuthority::from_wire(*authority)?,
+                rest,
+            )
+        }
+    };
     let (request_count, rest) = rest.split_first()?;
     let (requests, rest) = rest.split_at_checked(usize::from(*request_count))?;
     let mut permitted_requests = RemoteControlRequestSet::empty();
@@ -156,9 +193,17 @@ fn parse_remote_control_authorization_row(
     if permitted_requests.is_empty() {
         return None;
     }
+    if authority == RemoteControlControllerAuthority::Operator
+        && permitted_requests
+            .iter()
+            .any(RemoteControlRequestKind::requires_administrator)
+    {
+        return None;
+    }
     Some((
         ParsedRemoteControlAuthorizationRow {
             public_keys: PublicIdentityMaterial::from_bytes(*public_keys).public_keys(),
+            authority,
             permitted_requests,
         },
         rest,

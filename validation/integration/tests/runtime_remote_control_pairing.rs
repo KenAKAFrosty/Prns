@@ -77,7 +77,7 @@ async fn direct_pairing_persists_matching_authorizations_on_both_nodes() {
         transport_identity: None,
         remote_control: remote_control_service(target_identity_secrets),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         on_event: move |event, _state| match event {
@@ -127,7 +127,7 @@ async fn direct_pairing_persists_matching_authorizations_on_both_nodes() {
         transport_identity: None,
         remote_control: remote_control_service(controller_identity_secrets),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         on_event: move |event, _state| match event {
@@ -337,7 +337,7 @@ async fn target_rejection_retires_the_exchange_without_authorizing_either_node()
         transport_identity: None,
         remote_control: remote_control_service(target_identity_secrets),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         on_event: move |event, _state| match event {
@@ -384,7 +384,7 @@ async fn target_rejection_retires_the_exchange_without_authorizing_either_node()
         transport_identity: None,
         remote_control: remote_control_service(controller_identity_secrets),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         on_event: move |event, _state| match event {
@@ -575,7 +575,7 @@ async fn describe_through_restored_pairing(persistence: &PairingPersistenceDirec
         transport_identity: None,
         remote_control: remote_control_service(target_identity_secrets),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         on_event: move |event, _state| match event {
@@ -609,7 +609,7 @@ async fn describe_through_restored_pairing(persistence: &PairingPersistenceDirec
         transport_identity: None,
         remote_control: remote_control_service(controller_identity_secrets),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         on_event: move |event, _state| match event {

@@ -133,12 +133,12 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
         transport_identity: Some(transport_secret),
         remote_control,
         pre_configured_destinations: destinations.into_preconfigured_destinations(),
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: personal_hopspot_core::node_pages::NodePageRoutes,
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
-        on_event: move |event, _state: &()| {
+        on_event: move |event, _state: &personal_rns::runtime::NoRemoteControlHostControls| {
             if let PrnsEvent::Diagnostic(Diagnostic::SelfRatchetRotated { destination }) = event {
                 let _ = rotated_tx.send(destination);
             }

@@ -11,7 +11,7 @@ use crate::routing::request_handlers::RequestPathHash;
 use crate::units::RttMillis;
 use crate::wire::DestinationHash;
 use prns_runtime::runtime::placement::{
-    admit_remote_control_request, dispatch_admitted_remote_control_request,
+    admit_verified_remote_control_request, dispatch_verified_admitted_remote_control_request,
 };
 
 use super::node_facade::PrnsNodeHandle;
@@ -264,7 +264,7 @@ pub(super) async fn run_router<
     commands: PrnsNodeHandle<'_, M, COMMANDS, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>,
 ) where
     R: RequestEndpointSet<St>,
-    M: RawMutex,
+    M: RawMutex + Sync,
     St: prns_runtime::runtime::RemoteControlHostControls,
 {
     let mut authorization_transaction = RemoteControlPairingAuthorizationTransactionState::new();
@@ -454,7 +454,7 @@ async fn dispatch<
     request: RunnerRequest<REQUEST_BYTES>,
 ) where
     R: RequestEndpointSet<St>,
-    M: RawMutex,
+    M: RawMutex + Sync,
     St: prns_runtime::runtime::RemoteControlHostControls,
 {
     let inbound = InboundRequest::new(
@@ -473,13 +473,13 @@ async fn dispatch<
     let dispatched = if let Some((controller_grants, available_requests, self_announcement)) =
         remote_control.request_configuration_mut(request.destination, request.path_hash)
     {
-        match admit_remote_control_request(
+        match admit_verified_remote_control_request(
             controller_grants,
             available_requests,
             self_announcement,
             &inbound,
         ) {
-            Ok(admission) => {
+            Ok(verified) => {
                 #[cfg(feature = "log")]
                 log::info!(
                     target: "personal_hopspot_esp32",
@@ -487,8 +487,8 @@ async fn dispatch<
                     hash4(request.requester),
                     request.data.len()
                 );
-                dispatch_admitted_remote_control_request(
-                    state, &commands, inbound, &mut body, admission,
+                dispatch_verified_admitted_remote_control_request(
+                    state, &commands, inbound, &mut body, verified,
                 )
                 .await
             }
@@ -636,12 +636,12 @@ mod tests {
     struct DestinationEcho;
     struct DestinationRoutes;
 
-    impl RequestEndpoint<()> for DestinationEcho {
+    impl RequestEndpoint<crate::runtime::NoRemoteControlHostControls> for DestinationEcho {
         const ENDPOINT_ID: &'static str = "/destination";
         const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
         async fn handle(
-            mut context: RequestContext<'_, ()>,
+            mut context: RequestContext<'_, crate::runtime::NoRemoteControlHostControls>,
             _node: &impl crate::runtime::PrnsNodeApi,
         ) -> Result<(), Decline> {
             let destination = context.destination;
@@ -649,12 +649,12 @@ mod tests {
         }
     }
 
-    impl RequestEndpointSet<()> for DestinationRoutes {
+    impl RequestEndpointSet<crate::runtime::NoRemoteControlHostControls> for DestinationRoutes {
         const REGISTRATIONS: &'static [(&'static str, RequestEndpointPolicy)] =
             &[(DestinationEcho::ENDPOINT_ID, DestinationEcho::POLICY)];
 
         async fn dispatch(
-            context: RequestContext<'_, ()>,
+            context: RequestContext<'_, crate::runtime::NoRemoteControlHostControls>,
             node: &impl crate::runtime::PrnsNodeApi,
             path_hash: RequestPathHash,
         ) -> Result<(), Decline> {
@@ -682,24 +682,24 @@ mod tests {
         assert_eq!(bytes.as_ptr(), PAGE.as_ptr());
     }
 
-    impl RequestEndpoint<()> for StaticPage {
+    impl RequestEndpoint<crate::runtime::NoRemoteControlHostControls> for StaticPage {
         const ENDPOINT_ID: &'static str = "/page";
         const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
         async fn handle(
-            mut context: RequestContext<'_, ()>,
+            mut context: RequestContext<'_, crate::runtime::NoRemoteControlHostControls>,
             _node: &impl crate::runtime::PrnsNodeApi,
         ) -> Result<(), Decline> {
             context.respond_static_messagepack_bytes(&PAGE)
         }
     }
 
-    impl RequestEndpointSet<()> for StaticRoutes {
+    impl RequestEndpointSet<crate::runtime::NoRemoteControlHostControls> for StaticRoutes {
         const REGISTRATIONS: &'static [(&'static str, RequestEndpointPolicy)] =
             &[(StaticPage::ENDPOINT_ID, StaticPage::POLICY)];
 
         async fn dispatch(
-            context: RequestContext<'_, ()>,
+            context: RequestContext<'_, crate::runtime::NoRemoteControlHostControls>,
             node: &impl crate::runtime::PrnsNodeApi,
             path_hash: RequestPathHash,
         ) -> Result<(), Decline> {
@@ -729,8 +729,17 @@ mod tests {
             data: HeaplessVec::<u8, 16>::new(),
         };
 
-        block_on(dispatch::<(), StaticRoutes, M, 1, 1, 0, 0, 16>(
-            &(),
+        block_on(dispatch::<
+            crate::runtime::NoRemoteControlHostControls,
+            StaticRoutes,
+            M,
+            1,
+            1,
+            0,
+            0,
+            16,
+        >(
+            &crate::runtime::NoRemoteControlHostControls,
             &mut remote_control,
             handle,
             request,
@@ -770,8 +779,17 @@ mod tests {
             data: HeaplessVec::<u8, 16>::new(),
         };
 
-        block_on(dispatch::<(), DestinationRoutes, M, 1, 1, 0, 0, 16>(
-            &(),
+        block_on(dispatch::<
+            crate::runtime::NoRemoteControlHostControls,
+            DestinationRoutes,
+            M,
+            1,
+            1,
+            0,
+            0,
+            16,
+        >(
+            &crate::runtime::NoRemoteControlHostControls,
             &mut remote_control,
             handle,
             request,
@@ -812,14 +830,15 @@ mod tests {
         let grant = super::super::node_facade::test_remote_control_grant(
             RemoteControlRequestKind::Describe,
         );
-        let router = run_router::<(), (), M, 1, 0, 0, 0, 1, 16>(
-            &(),
-            &mut remote_control,
-            requests.receiver(),
-            &pairing_events,
-            None,
-            handle,
-        );
+        let router =
+            run_router::<crate::runtime::NoRemoteControlHostControls, (), M, 1, 0, 0, 0, 1, 16>(
+                &crate::runtime::NoRemoteControlHostControls,
+                &mut remote_control,
+                requests.receiver(),
+                &pairing_events,
+                None,
+                handle,
+            );
         let exercise = async {
             assert_eq!(
                 handle.set_remote_control_controller_grant(grant).await,
@@ -875,8 +894,18 @@ mod tests {
             data: HeaplessVec::from_slice(&request_bytes[..request_len]).unwrap(),
         };
         assert!(requests.try_send(request).is_ok());
-        let router = run_router::<(), DestinationRoutes, M, 1, 0, 0, 0, 1, 16>(
-            &(),
+        let router = run_router::<
+            crate::runtime::NoRemoteControlHostControls,
+            DestinationRoutes,
+            M,
+            1,
+            0,
+            0,
+            0,
+            1,
+            16,
+        >(
+            &crate::runtime::NoRemoteControlHostControls,
             &mut remote_control,
             requests.receiver(),
             &pairing_events,
@@ -895,10 +924,9 @@ mod tests {
             let crate::engine::RespondPayload::Packed(data) = response.payload else {
                 panic!("packed RemoteControl response")
             };
-            let expected = RemoteControlDescription::try_from(
-                RemoteControlRequestSet::only(RemoteControlRequestKind::Describe)
-                    .with_current_operator_edits(),
-            )
+            let expected = RemoteControlDescription::try_from(RemoteControlRequestSet::only(
+                RemoteControlRequestKind::Describe,
+            ))
             .unwrap();
             assert_eq!(
                 RemoteControlResponse::parse(data.as_slice()),
@@ -947,14 +975,15 @@ mod tests {
             attempt_id,
             grant: pairing_grant,
         });
-        let router = run_router::<(), (), M, 1, 0, 0, 0, 1, 16>(
-            &(),
-            &mut remote_control,
-            requests.receiver(),
-            &pairing_events,
-            Some(&authorization_stores),
-            handle,
-        );
+        let router =
+            run_router::<crate::runtime::NoRemoteControlHostControls, (), M, 1, 0, 0, 0, 1, 16>(
+                &crate::runtime::NoRemoteControlHostControls,
+                &mut remote_control,
+                requests.receiver(),
+                &pairing_events,
+                Some(&authorization_stores),
+                handle,
+            );
         let exercise = async {
             let (app_mutation, (target_inventory, target_resolution)) = join(
                 handle.set_remote_control_controller_grant(app_grant),

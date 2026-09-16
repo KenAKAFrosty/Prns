@@ -1010,4 +1010,16 @@ impl fmt::Display for RncpError {
 
 impl std::error::Error for RncpError {}
 
-impl RemoteControlHostControls for ListenerState {}
+impl RemoteControlHostControls for ListenerState {
+    async fn execute_remote_control(
+        &self,
+        command: personal_rns::runtime::RemoteControlHostCommand,
+    ) -> Result<
+        personal_rns::runtime::RemoteControlHostResponse,
+        personal_rns::runtime::RemoteControlHostCommandError,
+    > {
+        personal_rns::runtime::NoRemoteControlHostControls
+            .execute_remote_control(command)
+            .await
+    }
+}

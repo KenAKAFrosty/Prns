@@ -128,12 +128,13 @@ pub async fn run(spawner: Spawner) {
         transport_identity: Some(transport_secret),
         remote_control,
         pre_configured_destinations: destinations.into_preconfigured_destinations(),
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: C6Storage,
         request_endpoints: personal_hopspot_core::node_pages::NodePageRoutes,
         interfaces: personal_rns::runtime::ManuallyAttached,
         persistence: crate::persistence::c6(&memory),
-        on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
+        on_event: ignore_events
+            as for<'a> fn(PrnsEvent<'a>, &personal_rns::runtime::NoRemoteControlHostControls),
     };
 
     static NODE: StaticCell<Node> = StaticCell::new();

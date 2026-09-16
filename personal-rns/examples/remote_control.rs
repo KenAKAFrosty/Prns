@@ -63,7 +63,7 @@ async fn main() {
         transport_identity: None,
         remote_control: target_remote_control,
         pre_configured_destinations: [self_destination],
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         on_event: |_event, _state| {},
@@ -78,7 +78,7 @@ async fn main() {
         transport_identity: None,
         remote_control: controller_remote_control,
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         on_event: move |event, _state| {

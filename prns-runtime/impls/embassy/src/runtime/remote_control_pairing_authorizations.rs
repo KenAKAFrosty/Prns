@@ -1,10 +1,10 @@
 use crate::identity::IdentityPublicKeys;
 use crate::persistence::SnapshotSealError;
 use crate::remote_control::{
-    ForgetRemoteControlTargetOutcome, RemoteControlControllerGrant, RemoteControlPairingAttemptId,
-    RemoteControlRequestSet, RemoteControlTargetAccess, RemoteControlTargetIdentity,
-    RevokeRemoteControlControllerOutcome, SetRemoteControlControllerGrantOutcome,
-    SetRemoteControlTargetAccessOutcome,
+    ForgetRemoteControlTargetOutcome, RemoteControlControllerAuthority,
+    RemoteControlControllerGrant, RemoteControlPairingAttemptId, RemoteControlRequestSet,
+    RemoteControlTargetAccess, RemoteControlTargetIdentity, RevokeRemoteControlControllerOutcome,
+    SetRemoteControlControllerGrantOutcome, SetRemoteControlTargetAccessOutcome,
 };
 
 use super::embedded_persistence::RemoteControlAuthorizationSnapshot;
@@ -15,6 +15,7 @@ pub(super) enum RemoteControlPairingAuthorization {
     ControllerGrant(RemoteControlControllerGrant),
     TargetAccess {
         target_public_keys: IdentityPublicKeys,
+        authority: RemoteControlControllerAuthority,
         permitted_requests: RemoteControlRequestSet,
     },
 }
@@ -23,6 +24,7 @@ pub(super) enum RemoteControlPairingAuthorization {
 enum RemoteControlTargetAccessSpec {
     Access {
         target_public_keys: IdentityPublicKeys,
+        authority: RemoteControlControllerAuthority,
         permitted_requests: RemoteControlRequestSet,
     },
 }
@@ -31,6 +33,7 @@ impl RemoteControlTargetAccessSpec {
     fn from_access(access: &RemoteControlTargetAccess) -> Self {
         Self::Access {
             target_public_keys: *access.target().public_keys(),
+            authority: access.authority(),
             permitted_requests: *access.permitted_requests(),
         }
     }
@@ -39,9 +42,11 @@ impl RemoteControlTargetAccessSpec {
         match self {
             Self::Access {
                 target_public_keys,
+                authority,
                 permitted_requests,
             } => RemoteControlTargetAccess::new(
                 RemoteControlTargetIdentity::new(target_public_keys),
+                authority,
                 permitted_requests,
             )
             .map_err(|_| ()),
@@ -332,10 +337,12 @@ fn apply_authorization(
         }
         RemoteControlPairingAuthorization::TargetAccess {
             target_public_keys,
+            authority,
             permitted_requests,
         } => {
             let desired = RemoteControlTargetAccessSpec::Access {
                 target_public_keys,
+                authority,
                 permitted_requests,
             };
             let access = desired
@@ -385,9 +392,11 @@ fn authorization_from_mutation(
         | RemoteControlAuthorizationMutation::TargetUpdated { desired, .. } => match desired {
             RemoteControlTargetAccessSpec::Access {
                 target_public_keys,
+                authority,
                 permitted_requests,
             } => Ok(RemoteControlPairingAuthorization::TargetAccess {
                 target_public_keys,
+                authority,
                 permitted_requests,
             }),
         },
@@ -557,6 +566,7 @@ mod tests {
         let attempt_id = attempt(0x73);
         let grant = RemoteControlControllerGrant::new(
             controller(0x44),
+            RemoteControlControllerAuthority::Operator,
             RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
         )
         .unwrap();
@@ -600,6 +610,7 @@ mod tests {
         let target_public_keys = *target(0x61).public_keys();
         let previous = RemoteControlTargetAccess::new(
             crate::remote_control::RemoteControlTargetIdentity::new(target_public_keys),
+            RemoteControlControllerAuthority::Operator,
             RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
         )
         .unwrap();
@@ -613,6 +624,7 @@ mod tests {
             attempt_id,
             RemoteControlPairingAuthorization::TargetAccess {
                 target_public_keys,
+                authority: RemoteControlControllerAuthority::Operator,
                 permitted_requests: RemoteControlRequestSet::only(
                     RemoteControlRequestKind::AnnounceSelf,
                 ),
@@ -665,6 +677,7 @@ mod tests {
         let interfering = attempt(0x76);
         let grant = RemoteControlControllerGrant::new(
             controller(0x45),
+            RemoteControlControllerAuthority::Operator,
             RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
         )
         .unwrap();

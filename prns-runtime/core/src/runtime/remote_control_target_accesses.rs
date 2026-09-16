@@ -112,7 +112,7 @@ impl From<(&RemoteControlControllerIdentity, &RemoteControlTargetAccess)>
             target: access.target().identity_hash(),
             endpoint: access.endpoint(),
             controller: *controller,
-            permitted_requests: access.permitted_requests().with_current_operator_edits(),
+            permitted_requests: access.effective_requests(),
         }
     }
 }

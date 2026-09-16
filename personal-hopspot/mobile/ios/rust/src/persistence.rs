@@ -264,7 +264,7 @@ mod tests {
             transport_identity: None,
             remote_control: test_remote_control(),
             pre_configured_destinations: [test_destination(0xA1)],
-            app_state: (),
+            app_state: personal_rns::runtime::NoRemoteControlHostControls,
             storage: GrowableHeap,
             request_endpoints: personal_rns::request_endpoints![],
             interfaces: ManuallyAttached,
@@ -287,7 +287,7 @@ mod tests {
             transport_identity: None,
             remote_control: test_remote_control(),
             pre_configured_destinations: [test_destination(0xB2)],
-            app_state: (),
+            app_state: personal_rns::runtime::NoRemoteControlHostControls,
             storage: GrowableHeap,
             request_endpoints: personal_rns::request_endpoints![],
             interfaces: |handle: &PrnsNodeHandle| {
@@ -364,7 +364,7 @@ mod tests {
             transport_identity: Some(Zeroizing::new([0xB3; IDENTITY_SECRET_KEY_LEN])),
             remote_control: test_remote_control(),
             pre_configured_destinations: [test_destination(0xB2)],
-            app_state: (),
+            app_state: personal_rns::runtime::NoRemoteControlHostControls,
             storage: GrowableHeap,
             request_endpoints: personal_rns::request_endpoints![],
             interfaces: ManuallyAttached,
@@ -390,7 +390,7 @@ mod tests {
             transport_identity: None,
             remote_control: test_remote_control(),
             pre_configured_destinations: std::iter::empty::<PreConfiguredDestination<'static>>(),
-            app_state: (),
+            app_state: personal_rns::runtime::NoRemoteControlHostControls,
             storage: GrowableHeap,
             request_endpoints: personal_rns::request_endpoints![],
             interfaces: move |handle: &PrnsNodeHandle| {
@@ -459,15 +459,17 @@ mod tests {
         destination: PreConfiguredDestination<'static>,
         on_event: F,
         timeline_origin: InstantMillis,
-    ) -> PrnsNode<(), (), F, GrowableHeap>
+    ) -> PrnsNode<personal_rns::runtime::NoRemoteControlHostControls, (), F, GrowableHeap>
     where
-        F: FnMut(PrnsEvent<'_>, &()) + Send + 'static,
+        F: FnMut(PrnsEvent<'_>, &personal_rns::runtime::NoRemoteControlHostControls)
+            + Send
+            + 'static,
     {
         PrnsNode::new(PrnsNodeRecipe {
             transport_identity: None,
             remote_control: test_remote_control(),
             pre_configured_destinations: [destination],
-            app_state: (),
+            app_state: personal_rns::runtime::NoRemoteControlHostControls,
             storage: GrowableHeap,
             request_endpoints: personal_rns::request_endpoints![],
             interfaces: ManuallyAttached,

@@ -31,7 +31,21 @@ fn secret(byte: u8) -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
 
 struct Responder;
 
-impl personal_rns::runtime::RemoteControlHostControls for Responder {}
+impl personal_rns::runtime::RemoteControlHostControls for Responder {
+    async fn execute_remote_control(
+        &self,
+        command: personal_rns::runtime::RemoteControlHostCommand,
+    ) -> Result<
+        personal_rns::runtime::RemoteControlHostResponse,
+        personal_rns::runtime::RemoteControlHostCommandError,
+    > {
+        personal_rns::runtime::RemoteControlHostControls::execute_remote_control(
+            &personal_rns::runtime::NoRemoteControlHostControls,
+            command,
+        )
+        .await
+    }
+}
 
 struct Echo;
 impl RequestEndpoint<Responder> for Echo {
@@ -140,7 +154,7 @@ async fn a_request_endpoints_answers_a_live_request_over_tcp() {
             maximum_request_bytes: Default::default(),
             request_endpoints: ServeMyRequestEndpoints::No,
         }],
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         on_event: move |event, _state| {
@@ -291,7 +305,7 @@ async fn request_auto_negotiates_both_rungs_over_tcp() {
             maximum_request_bytes: Default::default(),
             request_endpoints: ServeMyRequestEndpoints::No,
         }],
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         on_event: move |event, _state| {
@@ -378,7 +392,7 @@ async fn the_hopspot_node_page_serves_over_tcp() {
         remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: None,
         pre_configured_destinations: [responder_dest],
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: request_endpoints![node_pages::NodeIndexPage],
         on_event: |_event, _state| {},
@@ -423,7 +437,7 @@ async fn the_hopspot_node_page_serves_over_tcp() {
             maximum_request_bytes: Default::default(),
             request_endpoints: ServeMyRequestEndpoints::No,
         }],
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         on_event: move |event, _state| {
@@ -509,7 +523,7 @@ async fn serve_the_hopspot_page_for_a_stock_client() {
         remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: None,
         pre_configured_destinations: [responder_dest],
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: node_pages::NodePageRoutes,
         on_event: |_event, _state| {},
@@ -616,7 +630,7 @@ async fn a_split_response_answers_a_small_request_over_tcp() {
             maximum_request_bytes: Default::default(),
             request_endpoints: ServeMyRequestEndpoints::No,
         }],
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         on_event: move |event, _state| {

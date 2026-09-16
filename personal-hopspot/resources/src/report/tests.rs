@@ -894,7 +894,9 @@ pub(super) fn report_value() -> Value {
                 "-C",
                 "llvm-args=-enable-machine-outliner",
                 "-C",
-                "llvm-args=-machine-outliner-reruns=2"
+                "llvm-args=-machine-outliner-reruns=2",
+                "--cfg",
+                "sha2_backend_soft=\"compact\""
             ]
         },
         "build": {

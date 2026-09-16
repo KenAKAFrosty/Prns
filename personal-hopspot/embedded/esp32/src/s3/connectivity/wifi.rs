@@ -170,9 +170,9 @@ pub(in crate::s3) fn build_wifi(
         None,
     ));
 
-    // Opportunistic station uplink: only a configured SSID stands a station netif up and runs
-    // the connect loop; otherwise the keepalive task just owns the controller, no scanning.
-    let station_segment: Option<AutoWifiSegment<'static>> = if config.has_station() {
+    // Keep a station netif available even without immutable boot credentials. A sealed Remote
+    // Control revision can then replace the credentials without rebuilding the network stack.
+    let station_segment: Option<AutoWifiSegment<'static>> = {
         let link_local = wifi_auto_contract::link_local_from_mac(MacAddress::new(mac));
         // Dual-stack: the v6 link-local carries Wi-Fi Auto's discovery/data UDP; v4 over DHCP gives
         // the board a routable address to dial a Reticulum TCP node by ip:port.
@@ -197,15 +197,21 @@ pub(in crate::s3) fn build_wifi(
         let data = wifi_auto_data_socket(stack);
         let wifi_status = AutoWifiStatus::new(&WIFI_SHARED);
         start_udp_service_discovery(spawner, stack, link_local, wifi_status);
-        let station_credentials = StationCredentials {
+        let station_credentials = config.has_station().then(|| StationCredentials {
             ssid: config.ssid.clone(),
             password: config.password.clone(),
-        };
+        });
         spawner.spawn(net_task(runner).expect("net task fits"));
         spawner.spawn(network_ready_task(stack).expect("network readiness task fits"));
         spawner.spawn(
-            wifi_connect_task(controller, wifi_status, station_credentials, ap_enabled)
-                .expect("wifi connect task fits"),
+            wifi_connect_task(
+                controller,
+                wifi_status,
+                station_credentials,
+                &WIFI_CREDENTIALS,
+                ap_enabled,
+            )
+            .expect("wifi connect task fits"),
         );
         Some(AutoWifiSegment {
             stack,
@@ -214,10 +220,6 @@ pub(in crate::s3) fn build_wifi(
             data,
             mac,
         })
-    } else {
-        spawner
-            .spawn(wifi_radio_keepalive_task(controller).expect("wifi radio keepalive task fits"));
-        None
     };
     let tcp_stack = station_segment.as_ref().map(|segment| segment.stack);
 
@@ -358,14 +360,4 @@ async fn udp_service_discovery_task(
     service_discovery: UdpServiceDiscovery<'static, S3EntropySource, MEMBERS>,
 ) -> ! {
     service_discovery.run().await
-}
-
-/// Hold the Wi-Fi controller alive with no AP association — dropping it would stop the radio — so
-/// ESP-NOW keeps the Wi-Fi MAC up on a fixed channel when no SSID is configured. The radio was started
-/// synchronously by [`build_wifi`] before this task takes the controller.
-#[embassy_executor::task]
-async fn wifi_radio_keepalive_task(_controller: WifiController<'static>) -> ! {
-    loop {
-        Timer::after(Duration::from_secs(3600)).await;
-    }
 }

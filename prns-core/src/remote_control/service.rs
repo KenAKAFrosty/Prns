@@ -11,6 +11,49 @@ pub const DEFAULT_MAX_REMOTE_CONTROL_TARGET_ACCESSES: usize = 8;
 pub const REMOTE_CONTROL_REQUEST_ENDPOINT_ID: &str = "/remote-control";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RemoteControlCapabilities {
+    requests: RemoteControlRequestSet,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteControlCapabilitiesError {
+    DescribeRequired,
+}
+
+impl RemoteControlCapabilities {
+    #[must_use]
+    pub fn describe_only() -> Self {
+        Self {
+            requests: RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
+        }
+    }
+
+    pub fn from_requests(
+        requests: RemoteControlRequestSet,
+    ) -> Result<Self, RemoteControlCapabilitiesError> {
+        if !requests.supports(RemoteControlRequestKind::Describe) {
+            return Err(RemoteControlCapabilitiesError::DescribeRequired);
+        }
+        Ok(Self { requests })
+    }
+
+    #[must_use]
+    pub const fn requests(self) -> RemoteControlRequestSet {
+        self.requests
+    }
+
+    #[must_use]
+    pub fn supports(self, request: RemoteControlRequestKind) -> bool {
+        self.requests.supports(request)
+    }
+
+    #[must_use]
+    pub fn authorized_for(self, grant: &RemoteControlControllerGrant) -> RemoteControlRequestSet {
+        self.requests.intersection(&grant.effective_requests())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RemoteControlControllerGrantsError {
     Empty,
     TooMany { actual: usize, maximum: usize },
@@ -92,11 +135,12 @@ pub struct RemoteControlConfiguration<'a> {
     identity_secrets: RemoteControlNodeIdentitySecrets,
     initial_controller_grants: RemoteControlInitialControllerGrants<'a>,
     self_announcement: RemoteControlSelfAnnouncement,
+    capabilities: RemoteControlCapabilities,
 }
 
 impl<'a> RemoteControlService<'a> {
     #[must_use]
-    pub const fn new(
+    pub fn new(
         identity_secrets: RemoteControlNodeIdentitySecrets,
         initial_controller_grants: RemoteControlInitialControllerGrants<'a>,
         self_announcement: RemoteControlSelfAnnouncement,
@@ -105,6 +149,22 @@ impl<'a> RemoteControlService<'a> {
             identity_secrets,
             initial_controller_grants,
             self_announcement,
+            capabilities: RemoteControlCapabilities::describe_only(),
+        })
+    }
+
+    #[must_use]
+    pub const fn with_capabilities(
+        identity_secrets: RemoteControlNodeIdentitySecrets,
+        initial_controller_grants: RemoteControlInitialControllerGrants<'a>,
+        self_announcement: RemoteControlSelfAnnouncement,
+        capabilities: RemoteControlCapabilities,
+    ) -> Self {
+        Self::Available(RemoteControlConfiguration {
+            identity_secrets,
+            initial_controller_grants,
+            self_announcement,
+            capabilities,
         })
     }
 
@@ -156,22 +216,7 @@ impl<'a> RemoteControlConfiguration<'a> {
 
     #[must_use]
     pub fn available_requests(&self) -> RemoteControlRequestSet {
-        let mut available = RemoteControlRequestSet::only(RemoteControlRequestKind::Describe);
-        let _inventory = available.insert(RemoteControlRequestKind::InventoryInterfaces);
-        let _power = available.insert(RemoteControlRequestKind::SetInterfacePower);
-        let _sleep = available.insert(RemoteControlRequestKind::SleepRadios);
-        let _wake = available.insert(RemoteControlRequestKind::WakeRadios);
-        let _mode = available.insert(RemoteControlRequestKind::SetInterfaceMode);
-        let _group = available.insert(RemoteControlRequestKind::SetInterfaceGroup);
-        let _peers = available.insert(RemoteControlRequestKind::InventoryInterfacePeers);
-        let _config = available.insert(RemoteControlRequestKind::InventoryInterfaceConfig);
-        let _lora = available.insert(RemoteControlRequestKind::SetInterfaceLoRaProfile);
-        let _build = available.insert(RemoteControlRequestKind::DescribeBuild);
-        let _power = available.insert(RemoteControlRequestKind::DescribePower);
-        let _wifi = available.insert(RemoteControlRequestKind::SetInterfaceWifiStation);
-        let _controllers = available.insert(RemoteControlRequestKind::InventoryControllers);
-        let _authorize = available.insert(RemoteControlRequestKind::AuthorizeController);
-        let _revoke = available.insert(RemoteControlRequestKind::RevokeController);
+        let mut available = self.capabilities.requests();
         match self.self_announcement {
             RemoteControlSelfAnnouncement::Unavailable => {}
             RemoteControlSelfAnnouncement::Destination(_) => {
@@ -207,9 +252,9 @@ mod tests {
         IDENTITY_SECRET_KEY_LEN,
     };
     use crate::remote_control::{
-        RemoteControlControllerGrantError, RemoteControlControllerIdentity,
-        RemoteControlControllerIdentitySecret, RemoteControlRequestKind, RemoteControlRequestSet,
-        RemoteControlTargetIdentitySecret,
+        RemoteControlControllerAuthority, RemoteControlControllerGrantError,
+        RemoteControlControllerIdentity, RemoteControlControllerIdentitySecret,
+        RemoteControlRequestKind, RemoteControlRequestSet, RemoteControlTargetIdentitySecret,
     };
 
     const TOO_MANY_GRANTS: usize = DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS.saturating_add(1);
@@ -224,6 +269,7 @@ mod tests {
     fn grant(fill: u8) -> RemoteControlControllerGrant {
         RemoteControlControllerGrant::new(
             controller(fill),
+            RemoteControlControllerAuthority::Operator,
             RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
         )
         .unwrap()
@@ -244,13 +290,22 @@ mod tests {
     #[test]
     fn a_controller_grant_requires_at_least_one_permitted_request() {
         assert_eq!(
-            RemoteControlControllerGrant::new(controller(1), RemoteControlRequestSet::empty()),
+            RemoteControlControllerGrant::new(
+                controller(1),
+                RemoteControlControllerAuthority::Operator,
+                RemoteControlRequestSet::empty(),
+            ),
             Err(RemoteControlControllerGrantError::NoPermittedRequests),
         );
         let controller = controller(2);
         let permitted_requests =
             RemoteControlRequestSet::only(RemoteControlRequestKind::AnnounceSelf);
-        let grant = RemoteControlControllerGrant::new(controller, permitted_requests).unwrap();
+        let grant = RemoteControlControllerGrant::new(
+            controller,
+            RemoteControlControllerAuthority::Operator,
+            permitted_requests,
+        )
+        .unwrap();
 
         assert_eq!(grant.controller(), &controller);
         assert_eq!(grant.permitted_requests(), &permitted_requests);
@@ -349,10 +404,13 @@ mod tests {
             RemoteControlInitialControllerGrants::Nobody,
             RemoteControlSelfAnnouncement::Unavailable,
         );
-        let available = RemoteControlService::new(
+        let mut supported = RemoteControlRequestSet::only(RemoteControlRequestKind::Describe);
+        let _ = supported.insert(RemoteControlRequestKind::DescribeBuild);
+        let available = RemoteControlService::with_capabilities(
             identity_secrets(),
             RemoteControlInitialControllerGrants::Nobody,
             RemoteControlSelfAnnouncement::Destination(DestinationHash::new([0x43; 16])),
+            RemoteControlCapabilities::from_requests(supported).unwrap(),
         );
 
         assert!(!unavailable.is_available());
@@ -362,31 +420,15 @@ mod tests {
             unavailable.available_requests(),
             RemoteControlRequestSet::empty(),
         );
-        let mut describe_without_announce =
-            RemoteControlRequestSet::only(RemoteControlRequestKind::Describe);
-        let _ = describe_without_announce.insert(RemoteControlRequestKind::InventoryInterfaces);
-        let _ = describe_without_announce.insert(RemoteControlRequestKind::SetInterfacePower);
-        let _ = describe_without_announce.insert(RemoteControlRequestKind::SleepRadios);
-        let _ = describe_without_announce.insert(RemoteControlRequestKind::WakeRadios);
-        let _ = describe_without_announce.insert(RemoteControlRequestKind::SetInterfaceMode);
-        let _ = describe_without_announce.insert(RemoteControlRequestKind::SetInterfaceGroup);
-        let _ = describe_without_announce.insert(RemoteControlRequestKind::InventoryInterfacePeers);
-        let _ =
-            describe_without_announce.insert(RemoteControlRequestKind::InventoryInterfaceConfig);
-        let _ = describe_without_announce.insert(RemoteControlRequestKind::SetInterfaceLoRaProfile);
-        let _ = describe_without_announce.insert(RemoteControlRequestKind::DescribeBuild);
-        let _ = describe_without_announce.insert(RemoteControlRequestKind::DescribePower);
-        let _ = describe_without_announce.insert(RemoteControlRequestKind::SetInterfaceWifiStation);
-        let _ = describe_without_announce.insert(RemoteControlRequestKind::InventoryControllers);
-        let _ = describe_without_announce.insert(RemoteControlRequestKind::AuthorizeController);
-        let _ = describe_without_announce.insert(RemoteControlRequestKind::RevokeController);
         assert_eq!(
             describe_only.available_requests(),
-            describe_without_announce,
+            RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
         );
+        let _ = supported.insert(RemoteControlRequestKind::AnnounceSelf);
+        assert_eq!(available.available_requests(), supported,);
         assert_eq!(
-            available.available_requests(),
-            RemoteControlRequestSet::all(),
+            RemoteControlCapabilities::from_requests(RemoteControlRequestSet::empty()),
+            Err(RemoteControlCapabilitiesError::DescribeRequired),
         );
     }
 }

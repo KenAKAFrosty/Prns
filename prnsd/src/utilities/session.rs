@@ -32,7 +32,12 @@ use super::remote_control::{
     transient_remote_control_service, TransientRemoteControlIdentityError,
 };
 
-type UtilityNode = PrnsNode<(), (), fn(PrnsEvent<'_>, &()), GrowableHeap>;
+type UtilityNode = PrnsNode<
+    personal_rns::runtime::NoRemoteControlHostControls,
+    (),
+    fn(PrnsEvent<'_>, &personal_rns::runtime::NoRemoteControlHostControls),
+    GrowableHeap,
+>;
 
 pub enum UtilityNodeIdentity {
     Anonymous,
@@ -244,7 +249,7 @@ fn utility_node() -> Result<UtilityNode, TransientRemoteControlIdentityError> {
         transport_identity: None,
         remote_control,
         pre_configured_destinations: std::iter::empty(),
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         interfaces: ManuallyAttached,
@@ -253,7 +258,11 @@ fn utility_node() -> Result<UtilityNode, TransientRemoteControlIdentityError> {
     }))
 }
 
-fn ignore_event(_event: PrnsEvent<'_>, _state: &()) {}
+fn ignore_event(
+    _event: PrnsEvent<'_>,
+    _state: &personal_rns::runtime::NoRemoteControlHostControls,
+) {
+}
 
 #[derive(Debug)]
 pub struct UtilityNodeStopped {
