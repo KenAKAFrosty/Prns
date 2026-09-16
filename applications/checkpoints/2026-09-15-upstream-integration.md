@@ -124,10 +124,59 @@ Bluetooth was restored afterward. This closes the recorded Android offline-actio
 gap on this exact APK; it is not caller cancellation of an authenticated node read,
 power-loss durability or a claim that a queued message was never transmitted.
 
-Fresh pairing, authenticated requests and controlled caller cancellation remain
-open; Bluetooth subscription is not remote-control success. The app is left on
-Pair a node, awaiting the board's user-opened invitation window.
+The user subsequently completed fresh pairing on this patched APK and the
+`1a4dbfe54e50` E290 firmware. The new controller above is paired with node
+`568151a94a182261c37f14c2f397f2b1`. The user's authenticated Check returned in
+197 ms; a separate captured Check returned in 189 ms, with the matching node,
+controller and destination and permission to view information/share the address.
+This is fresh-pairing acceptance, not just a Bluetooth subscription.
+
+A bounded route-exit cancellation/retry journey also passed with Bluetooth
+disabled in Android Settings. Check remained pending; Back left that read after
+2.251 seconds. Reopening Manage node exposed an enabled Check, and a second
+request was observed pending 11.426 seconds after the first began—before its
+20-second native command deadline. Back then left the second request. After
+Bluetooth was restored, the page showed no old result and a newly requested
+authenticated Check succeeded in 186 ms. This covers the physical pending-read
+route-exit/retry behavior, alongside the existing host cancellation tests; it
+does not establish on-wire cancellation after a request reaches the board, every
+Stop/background race, or indefinite absence of later traffic. Earlier manual
+probes returned to the Nodes list rather than reopening Manage node promptly;
+they are not counted as before-timeout cancellation evidence. The initial radio
+wait also expected `OFF`, whereas this Samsung reports disabled Bluetooth as
+`BLE_ON`; the bounded trial used the disabled setting and fresh UI observations.
+
+Fresh pairing and authenticated recovery are now recorded for Android. Broader
+read-cancellation and OS-lifecycle cases remain separate, as does the board issue
+below. Bluetooth is restored and the app is left on the successful Manage node
+result; no app reset or firmware change followed this new pairing.
 No physical iOS result is claimed for this integration.
+
+### Board navigation freeze remains unresolved
+
+Before pairing, the user reported a roughly 15-second freeze after opening the
+board's main menu, followed by `SubG / Migrated` and normal operation. The Galaxy
+logged a Bluetooth disconnect at September 15 20:19:36 local time (EDT), then a
+fresh data/control subscription at 20:19:47.581. USB logging ended with
+`Device not configured` at about 20:19:45. The captured boot banner is from the
+earlier controlled serial opening, not this event: there is no captured reset
+reason for the freeze.
+
+The firmware has a 15-second watchdog, and `SubG / Migrated` is a startup notice
+when loading legacy radio configuration. That load does not rewrite the record,
+so the notice can recur on boot without a new settings change. Opening the main
+menu itself returns no persistence/radio action. These facts are consistent with
+a watchdog restart, but neither its cause nor a particular stalled function is
+proven. The captured display refreshes completed without error; ordinary async
+display waits do not explain watchdog starvation by themselves. The recent
+upstream integration did not change these menu/display/watchdog/notice paths.
+
+A similar older symptom and a separately captured `SysRtcWdt` occurred on a
+different E290; that history is not the reset reason for today's board. Next
+diagnosis should preserve button/display/task progress across a reset and repeat
+the boot reason in runtime health output so losing USB at reboot does not lose
+the evidence. Do not weaken the watchdog or claim a speculative display fix.
+Successful Android pairing and checks do not close this firmware issue.
 
 ## Upstream contribution follow-up
 

@@ -28,7 +28,7 @@ progress; its recorded journeys are separate from earlier phone results.
 | Corrected iOS restoration framework | Two captured one-shot recoveries without the old stall; SIGTERM reset-to-Welcome in 2.395 s, incoming proof in 485 ms, first resumed Check in 354 ms, stored-message verification and a separate full two-way exchange | Initial ordinary-start failure or 32-second-delay fix, fresh pairing, confirmed no-touch window, natural suspension, continuous lock or Metro-off qualification |
 | Corrected iOS framework with offline Inbox UI fix | Cold denied-access saved messages/contacts, Failed → Retry → Queued → Cancelled, same-record retention after process restart; restored access, first Check in 378 ms, incoming delivery and bounded no-resend | Retry as first SDK call, power-loss durability, Android acceptance of this UI revision, fresh pairing or broader lifecycle qualification |
 | September 15 first integrated Android APK | Pristine import, cold retention, two-way Python messaging, cold Bluetooth-off Retry/Cancel and retained cancellation | Acceptance of later Expo patches, fresh pairing, authenticated node requests or broader lifecycle behavior |
-| September 15 Expo-patched standalone Android APK | Repeated pristine import/cold retention, retained-data install, cold offline Retry/Cancel with same-record retention, two-way Python messaging, Stop/Start, three radio cycles and one controlled off-screen receipt | Fresh pairing, authenticated node requests, controlled caller cancellation, deep Doze/continuous lock or iOS acceptance of this integration |
+| September 15 Expo-patched standalone Android APK | Repeated pristine import/cold retention, retained-data install, cold offline Retry/Cancel with same-record retention, two-way Python messaging, Stop/Start, three radio cycles, one controlled off-screen receipt, fresh pairing, authenticated checks and bounded pending-read route-exit/retry recovery | On-wire cancellation after board receipt, all Stop/background races, deep Doze/continuous lock, resolution of the board navigation freeze or iOS acceptance of this integration |
 
 The [generated-binding checkpoint](../checkpoints/2026-09-09-validation.md#generated-binding-cutover)
 records the harness and integrated test boundaries. The [clean Android checkpoint](../checkpoints/2026-09-09-validation.md#clean-combined-checkpoint--september-9)
@@ -193,10 +193,14 @@ failures; these are different commands, neither silently waived.
 ## Qualification still required
 
 - Complete the exact-build physical journeys in the follow-up checkpoint.
-  Fresh generated-binding pairing and controlled caller cancellation remain open;
-  grant reuse is not new pairing. The September 15 Android build now has three
-  repeated radio cycles and one bounded off-screen receipt; broader OS lifecycle
-  and repeated authenticated-request recovery remain unqualified.
+  The September 15 Android build now passes fresh pairing, authenticated checks,
+  bounded pending-read route-exit/retry recovery, three repeated radio cycles and
+  one bounded off-screen receipt. iOS fresh pairing, wider cancellation races,
+  broader OS lifecycle and repeated authenticated-request recovery remain open;
+  grant reuse is not new pairing.
+- Diagnose the E290 navigation freeze/startup-notice event in the September 15
+  checkpoint. Its timing and lost USB/Bluetooth connections are consistent with
+  a watchdog restart, but the reset reason and trigger were not captured.
 - Pristine interactive identity-import onboarding on iOS. The September 15
   Galaxy build passed the interactive import and cold-retention journey;
   picker guards and isolated native tests alone are not phone acceptance.
