@@ -15,14 +15,13 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  # Warnings fail the build for *our* crates. Cargo applies `--cap-lints allow` to
-  # registry dependencies, so this never breaks on third-party warnings.
-  RUSTFLAGS: "-D warnings --cfg aes_armv8"
 
 jobs:
   fmt:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      RUSTFLAGS: "-D warnings --cfg aes_armv8"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -31,12 +30,16 @@ jobs:
         with:
           components: rustfmt
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+      - name: reject stale third-party notice inputs before compilation
+        run: ./tools/prns repo notices check-inputs
       - name: registry, format, and documentation gate
         run: bash validation/hygiene/fmt-docs.sh
 
   clippy:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      RUSTFLAGS: "-D warnings --cfg aes_armv8"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -50,6 +53,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      RUSTFLAGS: "-D warnings --cfg aes_armv8"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -166,14 +171,6 @@ jobs:
         env:
           RUSTDOCFLAGS: "-D rustdoc::broken_intra_doc_links"
         working-directory: prns-interfaces/impls/embassy
-      # The cross-crate capstones: engine + runtime binds + real interface impls over live loopback
-      # sockets, public API only (the tests that used to live inside personal-rns/tests).
-      - name: clippy — validation integration capstones
-        run: cargo clippy --all-targets --locked -- -D warnings
-        working-directory: validation/integration
-      - name: test — validation integration capstones
-        run: cargo test --locked -- --test-threads=1
-        working-directory: validation/integration
       - name: clippy — prns-runtime-embassy
         run: cargo clippy --all-targets --locked -- -D warnings
         working-directory: prns-runtime/impls/embassy
@@ -211,6 +208,32 @@ jobs:
       - name: clippy — prns-wasm (wasm32)
         run: cargo clippy --target wasm32-unknown-unknown --all-targets --locked -- -D warnings
         working-directory: prns-wasm
+
+  integration-capstones:
+    # Keep the live cross-crate capstones independently retryable: engine + runtime binds + real
+    # interface implementations over live loopback sockets, through public API only.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      RUSTFLAGS: "-D warnings --cfg aes_armv8"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: integration-capstones
+      - name: Install Linux native development packages
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - name: clippy — validation integration capstones
+        run: cargo clippy --all-targets --locked -- -D warnings
+        working-directory: validation/integration
+      - name: test — validation integration capstones
+        run: cargo test --locked -- --test-threads=1
+        working-directory: validation/integration
 
   flasher-contracts:
     runs-on: ubuntu-24.04
@@ -348,6 +371,17 @@ jobs:
           submodules: false
       - id: assurance
         run: python3 validation/hygiene/embedded_assurance_selection.py
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        if: steps.assurance.outputs.resources_required == 'true'
+        with:
+          toolchain: 1.96.0
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        if: steps.assurance.outputs.resources_required == 'true'
+        with:
+          shared-key: embedded-baseline-contracts
+      - name: reject stale embedded baseline contracts before firmware builds
+        if: steps.assurance.outputs.resources_required == 'true'
+        run: ./tools/prns build embedded resources baseline-contracts
 
   no-std-embedded:
     needs: embedded-resource-selection
@@ -843,6 +877,7 @@ jobs:
       - test
       - cargo-check
       - feature-configs
+      - integration-capstones
       - flasher-contracts
       - release-workflow-contracts
       - msrv
@@ -866,6 +901,7 @@ jobs:
       TEST_RESULT: ${{ needs.test.result }}
       CARGO_CHECK_RESULT: ${{ needs.cargo-check.result }}
       FEATURES_RESULT: ${{ needs.feature-configs.result }}
+      INTEGRATION_CAPSTONES_RESULT: ${{ needs.integration-capstones.result }}
       FLASHER_RESULT: ${{ needs.flasher-contracts.result }}
       WORKFLOWS_RESULT: ${{ needs.release-workflow-contracts.result }}
       MSRV_RESULT: ${{ needs.msrv.result }}
@@ -895,6 +931,7 @@ jobs:
             "$TEST_RESULT" \
             "$CARGO_CHECK_RESULT" \
             "$FEATURES_RESULT" \
+            "$INTEGRATION_CAPSTONES_RESULT" \
             "$FLASHER_RESULT" \
             "$WORKFLOWS_RESULT" \
             "$MSRV_RESULT" \

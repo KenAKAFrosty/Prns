@@ -15,6 +15,7 @@ from validation.hardening.embedded_platform.discovery import (
     RENODE_ROOT_ENV,
     description_candidates,
 )
+from validation.hardening.embedded_readiness.contract import ROOT
 from validation.hardening.embedded_readiness.model import (
     CheckState,
     CommandOutput,
@@ -25,6 +26,11 @@ from validation.hardening.embedded_readiness.model import (
 from validation.hardening.embedded_readiness.system import SystemProbe
 
 
+# The complete resource/ISA build can temporarily retain roughly 20 GiB of target and evidence
+# data. Keep enough headroom for atomic reports and the host toolchains that produce them.
+MINIMUM_WORKSPACE_FREE_BYTES = 24 * 1024**3
+
+
 def inspect(contract: ReadinessContract, probe: SystemProbe) -> tuple[ReadinessCheck, ...]:
     rust_targets = tuple(
         architecture.rust_target
@@ -32,6 +38,7 @@ def inspect(contract: ReadinessContract, probe: SystemProbe) -> tuple[ReadinessC
         if architecture.compiler is Compiler.UPSTREAM
     )
     checks = [
+        inspect_disk_space(probe),
         inspect_rust(
             probe,
             ReadinessLane.ISA,
@@ -69,6 +76,35 @@ def inspect(contract: ReadinessContract, probe: SystemProbe) -> tuple[ReadinessC
         if isinstance(platform.execution, RenodeExecution)
     )
     return tuple(checks)
+
+
+def inspect_disk_space(probe: SystemProbe) -> ReadinessCheck:
+    free = probe.free_bytes(ROOT)
+    required_gib = MINIMUM_WORKSPACE_FREE_BYTES // 1024**3
+    setup = (f"free at least {required_gib} GiB on the repository volume",)
+    if free is None:
+        return ReadinessCheck(
+            ReadinessLane.RESOURCES,
+            "embedded assurance disk space",
+            CheckState.MISSING,
+            "could not inspect free workspace capacity",
+            setup,
+        )
+    free_gib = free / 1024**3
+    if free < MINIMUM_WORKSPACE_FREE_BYTES:
+        return ReadinessCheck(
+            ReadinessLane.RESOURCES,
+            "embedded assurance disk space",
+            CheckState.INSUFFICIENT,
+            f"{free_gib:.1f} GiB free; at least {required_gib} GiB required",
+            setup,
+        )
+    return ReadinessCheck(
+        ReadinessLane.RESOURCES,
+        "embedded assurance disk space",
+        CheckState.READY,
+        f"{free_gib:.1f} GiB free; minimum {required_gib} GiB",
+    )
 
 
 def inspect_rust(

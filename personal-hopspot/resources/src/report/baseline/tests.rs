@@ -43,6 +43,91 @@ fn refresh_writes_the_complete_matrix_in_canonical_order() -> Result<(), Box<dyn
 }
 
 #[test]
+fn static_contract_check_accepts_the_complete_current_matrix(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempfile::tempdir()?;
+    let catalog = prns_flash_manifest::board_catalog()?;
+    let matrix = Matrix::from_catalog(&catalog)?;
+    let output = temporary.path().join("output");
+    let context = context(temporary.path(), &output, LtoMode::Configured)?;
+    let reports = write_reports(temporary.path(), &matrix, &context)?;
+    refresh_baseline(
+        temporary.path(),
+        &matrix,
+        &context,
+        &reports,
+        &source_custody()?,
+    )?;
+
+    let outcome = validate_baseline_contracts(temporary.path(), &matrix)?;
+
+    assert_eq!(outcome.targets(), matrix.iter().count());
+    Ok(())
+}
+
+#[test]
+fn static_contract_check_rejects_stale_memory_without_building_firmware(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempfile::tempdir()?;
+    let catalog = prns_flash_manifest::board_catalog()?;
+    let matrix = Matrix::from_catalog(&catalog)?;
+    let output = temporary.path().join("output");
+    let context = context(temporary.path(), &output, LtoMode::Configured)?;
+    let reports = write_reports(temporary.path(), &matrix, &context)?;
+    let outcome = refresh_baseline(
+        temporary.path(),
+        &matrix,
+        &context,
+        &reports,
+        &source_custody()?,
+    )?;
+    let mut value: serde_json::Value = serde_json::from_slice(&std::fs::read(outcome.path())?)?;
+    value["targets"][0]["memory_contract"]["fingerprint"] = serde_json::json!("0".repeat(64));
+    std::fs::write(outcome.path(), serde_json::to_vec_pretty(&value)?)?;
+
+    assert!(matches!(
+        validate_baseline_contracts(temporary.path(), &matrix),
+        Err(BaselineError::CanonicalReport(
+            CanonicalReportError::StaleTarget {
+                dimension: "memory contract",
+                ..
+            }
+        ))
+    ));
+    Ok(())
+}
+
+#[test]
+fn static_contract_check_rejects_duplicate_targets() -> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempfile::tempdir()?;
+    let catalog = prns_flash_manifest::board_catalog()?;
+    let matrix = Matrix::from_catalog(&catalog)?;
+    let output = temporary.path().join("output");
+    let context = context(temporary.path(), &output, LtoMode::Configured)?;
+    let reports = write_reports(temporary.path(), &matrix, &context)?;
+    let outcome = refresh_baseline(
+        temporary.path(),
+        &matrix,
+        &context,
+        &reports,
+        &source_custody()?,
+    )?;
+    let mut value: serde_json::Value = serde_json::from_slice(&std::fs::read(outcome.path())?)?;
+    let duplicate = value["targets"][0].clone();
+    value["targets"]
+        .as_array_mut()
+        .ok_or("targets is not an array")?
+        .push(duplicate);
+    std::fs::write(outcome.path(), serde_json::to_vec_pretty(&value)?)?;
+
+    assert!(matches!(
+        validate_baseline_contracts(temporary.path(), &matrix),
+        Err(BaselineError::DuplicateTarget { .. })
+    ));
+    Ok(())
+}
+
+#[test]
 fn refresh_rejects_incomplete_and_duplicate_matrices() -> Result<(), Box<dyn std::error::Error>> {
     let temporary = tempfile::tempdir()?;
     let catalog = prns_flash_manifest::board_catalog()?;

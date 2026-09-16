@@ -2,13 +2,14 @@ use core::time::Duration;
 use personal_rns::runtime::NoPersistence;
 
 use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EstablishLink, PrnsCommand,
-    RatchetPolicy, SendRequest, SendRequestData, Settlement,
+    AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EstablishLink, LinkClosedReason,
+    PrnsCommand, RatchetPolicy, SendRequest, SendRequestData, Settlement,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::BitrateBps;
 use personal_rns::manifold::reconnect::ReconnectPolicy;
 use personal_rns::request_endpoints;
+use personal_rns::routing::links::LinkId;
 use personal_rns::routing::request_handlers::RequestPathHash;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::request_endpoints::{
@@ -81,6 +82,14 @@ enum Heard {
     Destination(DestinationHash),
     Settled(CommandId, Box<Settlement>),
     Response(std::vec::Vec<u8>),
+}
+
+enum SplitResponseEvent {
+    Destination(DestinationHash),
+    LinkClosed {
+        link_id: LinkId,
+        reason: LinkClosedReason,
+    },
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -634,8 +643,17 @@ async fn a_split_response_answers_a_small_request_over_tcp() {
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         on_event: move |event, _state| {
-            if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event {
-                let _ = heard_tx.send(destination);
+            let mapped = match event {
+                PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) => {
+                    Some(SplitResponseEvent::Destination(destination))
+                }
+                PrnsEvent::Diagnostic(Diagnostic::LinkClosed { link_id, reason }) => {
+                    Some(SplitResponseEvent::LinkClosed { link_id, reason })
+                }
+                _ => None,
+            };
+            if let Some(event) = mapped {
+                let _ = heard_tx.send(event);
             }
         },
         interfaces: |node: &PrnsNodeHandle| {
@@ -647,8 +665,11 @@ async fn a_split_response_answers_a_small_request_over_tcp() {
 
     let conversation = async {
         let destination = loop {
-            if heard_rx.recv().await.expect("initiator stays alive") == dest_a {
-                break dest_a;
+            match heard_rx.recv().await.expect("initiator stays alive") {
+                SplitResponseEvent::Destination(destination) if destination == dest_a => {
+                    break destination;
+                }
+                _ => {}
             }
         };
         let link_id = handle
@@ -656,10 +677,23 @@ async fn a_split_response_answers_a_small_request_over_tcp() {
             .await
             .expect("the link establishes");
 
-        let (answer, _rtt) = handle
-            .request(link_id, RequestPathHash::of("/test/fat"), b"gimme")
-            .await
-            .expect("the split response round-trips");
+        let request = handle.request(link_id, RequestPathHash::of("/test/fat"), b"gimme");
+        tokio::pin!(request);
+        let (answer, _rtt) = loop {
+            tokio::select! {
+                biased;
+                event = heard_rx.recv() => match event.expect("initiator stays alive") {
+                    SplitResponseEvent::LinkClosed { link_id: closed, reason }
+                        if closed == link_id => {
+                            panic!("split-response link {link_id:?} closed: {reason:?}");
+                        }
+                    _ => {}
+                },
+                result = &mut request => {
+                    break result.expect("the split response round-trips");
+                }
+            }
+        };
         assert_eq!(
             answer,
             fat_body(),

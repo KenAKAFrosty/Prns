@@ -209,11 +209,39 @@ pub(crate) fn refresh_baseline(
     })
 }
 
-pub(super) fn validate_target(
+pub(crate) fn validate_baseline_contracts(
+    repository: &Path,
+    matrix: &Matrix<'_>,
+) -> Result<BaselineOutcome, BaselineError> {
+    let path = path(repository);
+    let baseline = load(&path)?;
+    let mut reports = BTreeMap::new();
+    for report in baseline.targets {
+        let target = report.target.id.clone();
+        if reports.insert(target.clone(), report).is_some() {
+            return Err(BaselineError::DuplicateTarget { target });
+        }
+    }
+
+    let mut targets = 0;
+    for target in matrix.iter() {
+        let report = reports
+            .remove(target.id())
+            .ok_or_else(|| BaselineError::MissingTarget {
+                target: target.id().to_string(),
+            })?;
+        validate_static_target(target, &report)?;
+        targets += 1;
+    }
+    if let Some((target, _)) = reports.into_iter().next() {
+        return Err(BaselineError::UnexpectedTarget { target });
+    }
+    Ok(BaselineOutcome { path, targets })
+}
+
+fn validate_static_target(
     target: &crate::matrix::Target<'_>,
-    context: &BuildContext<'_>,
     report: &ResourceReport,
-    source: SourceExpectation<'_>,
 ) -> Result<(), CanonicalReportError> {
     if !matches!(report.status, BuildStatus::Success) {
         return Err(CanonicalReportError::UnsuccessfulTarget {
@@ -231,14 +259,23 @@ pub(super) fn validate_target(
         "architecture adapter",
     )?;
     require_current(
-        report.build == build_identity(context, target.recipe_identity())?,
-        target.id(),
-        "build recipe",
-    )?;
-    require_current(
         report.memory_contract == contract::identity(target.profile())?,
         target.id(),
         "memory contract",
+    )
+}
+
+pub(super) fn validate_target(
+    target: &crate::matrix::Target<'_>,
+    context: &BuildContext<'_>,
+    report: &ResourceReport,
+    source: SourceExpectation<'_>,
+) -> Result<(), CanonicalReportError> {
+    validate_static_target(target, report)?;
+    require_current(
+        report.build == build_identity(context, target.recipe_identity())?,
+        target.id(),
+        "build recipe",
     )?;
     if let SourceExpectation::Current(expected) = source {
         require_current(report.source == *expected, target.id(), "source custody")?;
