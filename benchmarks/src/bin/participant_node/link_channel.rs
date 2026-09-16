@@ -77,8 +77,15 @@ pub(super) async fn run_runtime_endpoint(
         };
 
     if role == "responder" {
-        let (mut node, bound) =
-            build_responder_node(single, (), request_endpoints![], on_event, manifest, addr).await;
+        let (mut node, bound) = build_responder_node(
+            single,
+            personal_rns::runtime::NoRemoteControlHostControls,
+            request_endpoints![],
+            on_event,
+            manifest,
+            addr,
+        )
+        .await;
         let commands = node
             .take_local_handle()
             .expect("the endpoint owns its executor-local command lane");

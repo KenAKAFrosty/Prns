@@ -79,8 +79,15 @@ pub(super) async fn run_resource_endpoint(
         };
 
     if role == "responder" {
-        let (node, bound) =
-            build_responder_node(single, (), request_endpoints![], on_event, manifest, addr).await;
+        let (node, bound) = build_responder_node(
+            single,
+            personal_rns::runtime::NoRemoteControlHostControls,
+            request_endpoints![],
+            on_event,
+            manifest,
+            addr,
+        )
+        .await;
         let commands = node.handle();
         println!("READY role=responder addr={bound}");
         let firehose = async {

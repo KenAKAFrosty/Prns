@@ -545,7 +545,7 @@ async fn run_relay(manifest: &Manifest, addr: &str) {
         storage: NodeStorage::default(),
         request_endpoints: request_endpoints![],
         remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
-        on_event: |_: PrnsEvent<'_>, _: &()| {},
+        on_event: |_: PrnsEvent<'_>, _: &personal_rns::runtime::NoRemoteControlHostControls| {},
         interfaces: |node: &PrnsNodeHandle| {
             node.add_interface(side_a);
             node.add_interface(side_b);
@@ -643,7 +643,7 @@ async fn build_initiator_node<F>(
     on_event: F,
     manifest: &Manifest,
     addr: &str,
-) -> PrnsNode<(), (), F, NodeStorage>
+) -> PrnsNode<personal_rns::runtime::NoRemoteControlHostControls, (), F, NodeStorage>
 where
     F: FnMut(PrnsEvent<'_>, &personal_rns::runtime::NoRemoteControlHostControls),
 {
