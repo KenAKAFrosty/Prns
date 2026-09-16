@@ -11,6 +11,7 @@ members = [
     "personal-hopspot/builder",
     "personal-hopspot/assurance",
     "personal-hopspot/assurance-kernel",
+    "personal-hopspot/xtensa-qemu",
     "personal-hopspot/core",
     "personal-hopspot/memory",
     "personal-hopspot/resources",

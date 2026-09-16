@@ -64,6 +64,7 @@ def record(
         INVENTORY_PATH,
         IMPLEMENTATION_PATH,
         *kernel.sources,
+        *architecture.sources,
         *extra_sources,
     ):
         command.extend(("--source", str(source)))
@@ -117,6 +118,7 @@ def record_failure(
         INVENTORY_PATH,
         IMPLEMENTATION_PATH,
         *kernel.sources,
+        *architecture.sources,
         *extra_sources,
     ):
         command.extend(("--source", str(source)))

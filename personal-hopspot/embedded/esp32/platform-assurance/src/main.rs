@@ -1,15 +1,12 @@
 #![no_std]
 #![no_main]
-#![feature(asm_experimental_arch)]
 #![deny(unsafe_code)]
 
 use core::fmt::{self, Write};
 use core::panic::PanicInfo;
 use embassy_executor::Spawner;
 use personal_hopspot_memory::HELTEC_WIRELESS_STICK_LITE_V3;
-
-#[allow(unsafe_code)]
-mod qemu;
+use personal_hopspot_xtensa_qemu as qemu;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 

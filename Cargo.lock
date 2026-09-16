@@ -2992,6 +2992,7 @@ dependencies = [
  "embedded-hal-async",
  "panic-halt",
  "personal-hopspot-memory",
+ "personal-hopspot-xtensa-qemu",
  "prns-core",
  "prns-interfaces-embassy",
  "riscv-rt",
@@ -3052,6 +3053,10 @@ dependencies = [
  "thiserror 2.0.18",
  "toml",
 ]
+
+[[package]]
+name = "personal-hopspot-xtensa-qemu"
+version = "0.1.0"
 
 [[package]]
 name = "personal-rns"
