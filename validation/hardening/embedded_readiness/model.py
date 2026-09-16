@@ -12,6 +12,7 @@ class CheckState(Enum):
     READY = "ready"
     MISSING = "missing"
     MISMATCH = "version-mismatch"
+    INSUFFICIENT = "insufficient"
 
 
 class ReadinessLane(Enum):

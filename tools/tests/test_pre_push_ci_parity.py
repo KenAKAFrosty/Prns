@@ -32,11 +32,13 @@ class PrePushCiParityTests(unittest.TestCase):
         self.assertIn("Tokio runtime all-features Clippy", names)
         self.assertIn("Tokio umbrella feature-family Clippy", names)
         self.assertIn("validation integration capstones Clippy", names)
+        self.assertIn("validation integration capstones tests", names)
         self.assertIn("prnsd all-features Clippy", names)
         self.assertIn("prns-wasm wasm32 Clippy", names)
         self.assertIn("JavaScript browser package smoke", names)
         self.assertIn("embedded resource matrix", names)
         self.assertIn("embedded resource summary", names)
+        self.assertIn("embedded baseline contracts", names)
         self.assertIn("Embassy runtime Clippy", names)
         self.assertIn("unsafe dependency inventory", names)
 
@@ -73,6 +75,7 @@ class PrePushCiParityTests(unittest.TestCase):
         self.assertIn("license policy parity", names)
         self.assertIn("dependency policy (prnsd/Cargo.lock)", names)
         self.assertIn("unsafe dependency inventory", names)
+        self.assertIn("third-party notice inputs", names)
         policy = next(
             gate
             for gate in gates
@@ -147,6 +150,11 @@ class PrePushCiParityTests(unittest.TestCase):
                     ),
                 )
                 self.assertLess(gates.index(gate), gates.index(summary))
+                baseline = next(
+                    gate for gate in gates if gate.name == "embedded baseline contracts"
+                )
+                self.assertEqual(baseline.phase, parity.GatePhase.PREFLIGHT)
+                self.assertLess(gates.index(baseline), gates.index(gate))
 
     def test_shared_component_runs_miri_and_every_target_isa_suite(self) -> None:
         plan = parity.plan_for_paths(
@@ -347,6 +355,67 @@ class PrePushCiParityTests(unittest.TestCase):
                 "-D",
                 "warnings",
             ),
+        )
+
+        tests = next(
+            candidate
+            for candidate in gates
+            if candidate.name == "validation integration capstones tests"
+        )
+        self.assertEqual(tests.cwd, ROOT / "validation/integration")
+        self.assertEqual(tests.env, (("RUSTFLAGS", "-D warnings --cfg aes_armv8"),))
+        self.assertEqual(
+            tests.command,
+            ("cargo", "test", "--locked", "--", "--test-threads=1"),
+        )
+
+    def test_manifest_change_runs_fast_notice_check_before_compilation(self) -> None:
+        gates = parity.plan_for_paths({"prnsd/Cargo.toml"}).gates
+        notice = next(gate for gate in gates if gate.name == "third-party notice inputs")
+        compile_gate = next(gate for gate in gates if gate.name == "prnsd all-features Clippy")
+
+        self.assertEqual(notice.phase, parity.GatePhase.PREFLIGHT)
+        self.assertEqual(
+            notice.command,
+            (
+                "./tools/prns",
+                "repo",
+                "notices",
+                "check-inputs",
+            ),
+        )
+        self.assertLess(gates.index(notice), gates.index(compile_gate))
+
+    def test_phase_selection_runs_only_the_requested_cost_class(self) -> None:
+        paths = {"prns-core/src/engine.rs", "Cargo.toml"}
+        executed: list[str] = []
+
+        def run(command: tuple[str, ...], **_kwargs: object) -> mock.Mock:
+            executed.append(command[0])
+            return mock.Mock(returncode=0)
+
+        with mock.patch.object(
+            parity, "changed_paths", return_value=paths
+        ), mock.patch.object(
+            parity.subprocess, "run", side_effect=run
+        ), mock.patch.object(
+            sys,
+            "argv",
+            [
+                "pre-push-ci-parity.py",
+                "--update",
+                "a" * 40,
+                "b" * 40,
+                "--phase",
+                "preflight",
+            ],
+        ), redirect_stdout(io.StringIO()):
+            self.assertEqual(parity.main(), 0)
+
+        self.assertTrue(executed)
+        self.assertEqual(
+            executed,
+            [gate.command[0] for gate in parity.plan_for_paths(paths).gates if gate.phase is parity.GatePhase.PREFLIGHT],
         )
 
     def test_runtime_change_runs_prnsd_all_features_clippy(self) -> None:

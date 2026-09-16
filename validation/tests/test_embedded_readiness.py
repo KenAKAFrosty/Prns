@@ -32,6 +32,7 @@ from validation.hardening.embedded_readiness import (
     load_esp_identity,
 )
 from validation.hardening.embedded_readiness.run import render
+from validation.hardening.embedded_readiness.checks import MINIMUM_WORKSPACE_FREE_BYTES
 
 
 class FakeProbe:
@@ -41,11 +42,13 @@ class FakeProbe:
         outputs: dict[tuple[str, ...], CommandOutput],
         fingerprints: dict[Path, str] | None = None,
         environment: dict[str, str] | None = None,
+        free_bytes: int | None = MINIMUM_WORKSPACE_FREE_BYTES,
     ) -> None:
         self.paths = paths
         self.outputs = outputs
         self.fingerprints = fingerprints or {}
         self.environment_values = environment or {}
+        self.free_bytes_value = free_bytes
 
     def environment(self, name: str) -> str | None:
         return self.environment_values.get(name)
@@ -61,6 +64,9 @@ class FakeProbe:
 
     def fingerprint(self, path: Path) -> str | None:
         return self.fingerprints.get(path)
+
+    def free_bytes(self, _path: Path) -> int | None:
+        return self.free_bytes_value
 
 
 class EmbeddedReadinessTests(unittest.TestCase):
@@ -203,12 +209,13 @@ class EmbeddedReadinessTests(unittest.TestCase):
             FakeProbe(self.paths, self.outputs, self.fingerprints),
         )
 
-        self.assertEqual(len(checks), 8)
+        self.assertEqual(len(checks), 9)
         self.assertTrue(all(check.state is CheckState.READY for check in checks))
         self.assertEqual(
             {check.subject for check in checks},
             {
                 "target-ISA Rust",
+                "embedded assurance disk space",
                 "resource Rust",
                 "embedded Miri",
                 "ESP resource toolchain",
@@ -217,6 +224,26 @@ class EmbeddedReadinessTests(unittest.TestCase):
                 "xtensa-esp32s3 emulator",
                 "nrf52840 platform emulator",
             },
+        )
+
+    def test_insufficient_disk_space_fails_before_the_expensive_lanes(self) -> None:
+        checks = inspect(
+            self.contract,
+            FakeProbe(
+                self.paths,
+                self.outputs,
+                self.fingerprints,
+                free_bytes=MINIMUM_WORKSPACE_FREE_BYTES - 1,
+            ),
+        )
+
+        disk = checks[0]
+        self.assertEqual(disk.subject, "embedded assurance disk space")
+        self.assertEqual(disk.state, CheckState.INSUFFICIENT)
+        self.assertIn("at least 24 GiB required", disk.detail)
+        self.assertEqual(
+            disk.setup,
+            ("free at least 24 GiB on the repository volume",),
         )
 
     def test_platform_pilot_checks_exact_emulator_and_model_identities(self) -> None:

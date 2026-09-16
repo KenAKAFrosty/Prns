@@ -13,7 +13,7 @@ mod summary;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use baseline::{refresh_baseline, BaselineError};
+pub(crate) use baseline::{refresh_baseline, validate_baseline_contracts, BaselineError};
 pub(crate) use build::{write, write_overflow, ReportError};
 pub(crate) use compare::compare_files;
 pub use compare::ComparisonError;

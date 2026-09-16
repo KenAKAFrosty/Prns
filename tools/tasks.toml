@@ -553,6 +553,16 @@ entrypoint = ["python", "tools/release/smoke-maven-package.py"]
 requires = ["java"]
 
 [[task]]
+id = "repo.notices.check-inputs"
+summary = "Check the third-party notice input fingerprint without resolving dependency graphs."
+domain = "repo"
+effect = "read-only"
+platforms = ["any"]
+audience = ["developer", "ci", "release"]
+entrypoint = ["python3", "tools/repo/generate-third-party-notices.py", "--check-inputs"]
+requires = ["python3"]
+
+[[task]]
 id = "repo.notices.generate"
 summary = "Regenerate the repository's locked third-party notice document."
 domain = "repo"

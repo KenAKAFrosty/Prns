@@ -24,6 +24,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum ResourceCommand {
+    BaselineContracts,
     Compare(CompareArguments),
     Contracts(ContractsArguments),
     RefreshBaseline,
@@ -200,6 +201,16 @@ fn run(cli: Cli) -> Result<(), ResourceError> {
         }
     })?;
     match cli.command {
+        ResourceCommand::BaselineContracts => {
+            let catalog = prns_flash_manifest::board_catalog()?;
+            let matrix = Matrix::from_catalog(&catalog)?;
+            let outcome = report::validate_baseline_contracts(&root, &matrix)?;
+            println!(
+                "EMBEDDED_BASELINE_CONTRACTS_OK: targets={} baseline={}",
+                outcome.targets(),
+                outcome.path().display()
+            );
+        }
         ResourceCommand::Compare(arguments) => {
             print!(
                 "{}",
@@ -493,6 +504,14 @@ mod tests {
         let cli = Cli::try_parse_from(["resources", "refresh-baseline"])?;
         assert!(matches!(cli.command, ResourceCommand::RefreshBaseline));
         assert!(Cli::try_parse_from(["resources", "refresh-baseline", "--lto", "thin"]).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn baseline_contracts_accepts_no_arguments() -> Result<(), Box<dyn std::error::Error>> {
+        let cli = Cli::try_parse_from(["resources", "baseline-contracts"])?;
+        assert!(matches!(cli.command, ResourceCommand::BaselineContracts));
+        assert!(Cli::try_parse_from(["resources", "baseline-contracts", "--write"]).is_err());
         Ok(())
     }
 

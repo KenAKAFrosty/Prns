@@ -113,6 +113,40 @@ def validate_resource_bounds(workflow: Path, text: str) -> list[str]:
     return errors
 
 
+def validate_ci_compiler_environment(text: str) -> list[str]:
+    """Keep host-only compiler flags out of every cross-toolchain environment."""
+    errors: list[str] = []
+    jobs_offset = text.find("\njobs:\n")
+    header = text if jobs_offset < 0 else text[:jobs_offset]
+    top_level_env = re.search(r"(?ms)^env:\n(.*?)(?=^[A-Za-z0-9_-]+:|\Z)", header)
+    if top_level_env is not None and re.search(
+        r"(?m)^  RUSTFLAGS:", top_level_env.group(1)
+    ):
+        errors.append(
+            "ci.yml must not define workflow-global RUSTFLAGS; cross-toolchain jobs "
+            "inherit them"
+        )
+
+    cross_toolchain_markers = (
+        "wasm32-unknown-unknown",
+        "thumbv7em-none-eabihf",
+        "riscv32imac-unknown-none-elf",
+        "xtensa-esp32s3-none-elf",
+        "aarch64-linux-android",
+        "aarch64-apple-ios",
+        "components: miri",
+        "toolchain: esp",
+    )
+    for job_name, block in workflow_jobs(text):
+        if any(marker in block for marker in cross_toolchain_markers) and re.search(
+            r"(?m)^\s+RUSTFLAGS:", block
+        ):
+            errors.append(
+                f"ci.yml cross-toolchain job {job_name} must not define host RUSTFLAGS"
+            )
+    return errors
+
+
 def validate() -> list[str]:
     errors: list[str] = []
     lock_path = ROOT / "release" / "flash" / "action-pins.json"
@@ -332,10 +366,12 @@ def validate() -> list[str]:
             )
 
     ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    errors.extend(validate_ci_compiler_environment(ci))
     readiness = (
         ROOT / ".github" / "workflows" / "release-readiness.yml"
     ).read_text(encoding="utf-8")
     for preflight_fragment in (
+        "./tools/prns repo notices check-inputs",
         "astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86",
         'python3 validation/run.py run --suite release-contracts --expected-sha "$GITHUB_SHA"',
     ):
@@ -562,6 +598,31 @@ def validate() -> list[str]:
         not in selection_job
     ):
         errors.append("embedded resource selection does not expose a full-history decision")
+    if "resources baseline-contracts" not in selection_job:
+        errors.append(
+            "embedded resource selection does not reject stale baseline contracts before builds"
+        )
+    if selection_job.count(
+        "if: steps.assurance.outputs.resources_required == 'true'"
+    ) != 3:
+        errors.append(
+            "embedded baseline preflight does not keep toolchain, cache, and validation "
+            "diff-selected"
+        )
+    integration_capstones = ci_jobs.get("integration-capstones", "")
+    feature_configs = ci_jobs.get("feature-configs", "")
+    for capstone_gate in (
+        "cargo clippy --all-targets --locked -- -D warnings",
+        "cargo test --locked -- --test-threads=1",
+        "working-directory: validation/integration",
+        "shared-key: integration-capstones",
+    ):
+        if capstone_gate not in integration_capstones:
+            errors.append(
+                f"integration-capstones is missing isolated gate {capstone_gate!r}"
+            )
+    if "working-directory: validation/integration" in feature_configs:
+        errors.append("feature-configs still owns the independently retryable capstones")
     for job_name, output in (
         ("no-std-embedded", "embedded_builds_required"),
         ("esp32-firmware", "esp32_firmware_check_required"),
@@ -650,6 +711,15 @@ def validate() -> list[str]:
                     f"ci.yml {resource_job_name} does not upload {evidence}"
                 )
     release_critical = ci_jobs.get("release-critical", "")
+    for capstone_gate in (
+        "- integration-capstones",
+        "INTEGRATION_CAPSTONES_RESULT: ${{ needs.integration-capstones.result }}",
+        '"$INTEGRATION_CAPSTONES_RESULT"',
+    ):
+        if capstone_gate not in release_critical:
+            errors.append(
+                f"release-critical does not require integration capstones via {capstone_gate!r}"
+            )
     for result_name, successful_result in (
         ("nRF", 'test "$EMBEDDED_RESULT" = "success"'),
         ("ESP", 'test "$ESP32_RESULT" = "success"'),

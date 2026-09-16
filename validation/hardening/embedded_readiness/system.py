@@ -62,3 +62,9 @@ class SystemProbe:
             return file_sha256(path.resolve(strict=True))
         except OSError:
             return None
+
+    def free_bytes(self, path: Path) -> int | None:
+        try:
+            return shutil.disk_usage(path).free
+        except OSError:
+            return None
