@@ -29,6 +29,10 @@ from validation.hardening.embedded_isa.run import (
     emulator_executable,
     require_emulator_identity,
 )
+from validation.hardening.embedded_isa.toolchain import (
+    TargetToolchain,
+    build_environment,
+)
 from validation.hardening.embedded_isa.transcript import concise, parse, require_match
 
 
@@ -170,6 +174,36 @@ class EmbeddedIsaTests(unittest.TestCase):
             r'target.xtensa-esp32s3-none-elf.linker="C:\\ESP Tools\\xtensa-gcc.exe"',
             arguments,
         )
+
+    def test_target_build_environment_refuses_inherited_codegen_overrides(self) -> None:
+        toolchain = TargetToolchain(
+            channel="esp",
+            cargo_version="cargo",
+            rustc_version="rustc",
+            linker_identity="linker",
+            cargo_arguments=(),
+            search_paths=(),
+            environment=(("PATH", "/pinned/esp/bin"),),
+            proof_sources=(),
+        )
+        inherited = {
+            "CARGO_BUILD_RUSTFLAGS": "--cfg stale_build_flag",
+            "CARGO_ENCODED_RUSTFLAGS": "--cfg\x1fstale_encoded_flag",
+            "CARGO_TARGET_DIR": "/shared/target",
+            "CARGO_TARGET_XTENSA_ESP32S3_NONE_ELF_LINKER": "/wrong/linker",
+            "CARGO_TARGET_XTENSA_ESP32S3_NONE_ELF_RUSTFLAGS": "-Twrong.x",
+            "PATH": "/host/bin",
+            "RUSTFLAGS": "-D warnings --cfg aes_armv8",
+            "RUSTUP_TOOLCHAIN": "stable",
+        }
+
+        with mock.patch.dict(os.environ, inherited, clear=True):
+            environment = build_environment(toolchain)
+
+        self.assertEqual(environment["PATH"], "/pinned/esp/bin")
+        self.assertEqual(environment["CARGO_TARGET_DIR"], "/shared/target")
+        for name in inherited.keys() - {"CARGO_TARGET_DIR", "PATH"}:
+            self.assertNotIn(name, environment)
 
     def test_transcript_is_length_and_digest_checked(self) -> None:
         events = b"\x01\x00\x03arm"

@@ -3,7 +3,10 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from validation.hardening.embedded_isa.toolchain import TargetToolchain
+from validation.hardening.embedded_isa.toolchain import (
+    TargetToolchain,
+    build_environment,
+)
 from validation.hardening.embedded_platform.contract import (
     ROOT,
     ArchitectureQemuExecution,
@@ -18,8 +21,7 @@ MEMORY_PROFILE_ENV = "PRNS_ASSURANCE_MEMORY_PROFILE"
 def environment(
     platform: Platform, toolchain: TargetToolchain
 ) -> dict[str, str]:
-    values = dict(os.environ)
-    values.update(toolchain.environment)
+    values = build_environment(toolchain)
     values[MEMORY_PROFILE_ENV] = platform.memory_profile
     return values
 

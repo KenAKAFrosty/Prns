@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Mapping
 
 from validation.hardening.embedded_execution import (
     ExitReason,
@@ -12,9 +13,13 @@ from validation.hardening.embedded_isa.error import EmbeddedIsaError
 from validation.hardening.embedded_isa.transcript import concise
 
 
-def execute(command: tuple[str, ...], timeout_seconds: int) -> ProcessObservation:
+def execute(
+    command: tuple[str, ...],
+    timeout_seconds: int,
+    environment: Mapping[str, str] | None = None,
+) -> ProcessObservation:
     print(f"[embedded-isa] {' '.join(command)}", flush=True)
-    observation = execute_process(command, ROOT, timeout_seconds)
+    observation = execute_process(command, ROOT, timeout_seconds, environment)
     sys.stdout.buffer.write(concise(observation.output()))
     sys.stdout.flush()
     return observation

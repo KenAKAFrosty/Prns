@@ -31,7 +31,10 @@ from validation.hardening.embedded_failure import (
     require_process_success,
 )
 from validation.hardening.embedded_isa.process import execute, tool_version
-from validation.hardening.embedded_isa.toolchain import resolve as resolve_target_toolchain
+from validation.hardening.embedded_isa.toolchain import (
+    build_environment,
+    resolve as resolve_target_toolchain,
+)
 
 
 DOCTOR = "./tools/prns doctor embedded-assurance"
@@ -140,6 +143,7 @@ def run(suite: str) -> None:
             + ("--target", architecture.rust_target)
             + target_toolchain.cargo_arguments,
             900,
+            build_environment(target_toolchain),
         )
         observations.append(build)
         require_process_success(
