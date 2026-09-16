@@ -1,22 +1,30 @@
+use crate::crypto::{sha256, SHA256_OUTPUT_LEN};
 use crate::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, InstantMillis, SendRequestFailure,
 };
 use crate::identity::IdentityHash;
 use crate::interfaces::{InterfaceId, InterfaceMode};
 use crate::remote_control::{
-    authorize_remote_control_controller, revoke_remote_control_controller_hash,
-    RemoteControlAnnounceSelfOutcome, RemoteControlAuthorizeControllerOutcome,
-    RemoteControlBuildVersion, RemoteControlControllerGrantTable, RemoteControlControllerIdentity,
-    RemoteControlControllerInventory, RemoteControlDescription, RemoteControlDescriptionError,
-    RemoteControlGroupOutcome, RemoteControlInterfaceConfigOutcome, RemoteControlInterfaceGroup,
-    RemoteControlInterfaceInventory, RemoteControlInterfacePeersOutcome,
-    RemoteControlInterfacePower, RemoteControlLoRaOutcome, RemoteControlLoRaProfile,
-    RemoteControlMessageWriteError, RemoteControlModeOutcome, RemoteControlPowerOutcome,
-    RemoteControlProtocolError, RemoteControlRequest, RemoteControlRequestKind,
-    RemoteControlRequestParseError, RemoteControlRequestSet, RemoteControlResponse,
-    RemoteControlResponseKind, RemoteControlResponseParseError,
-    RemoteControlRevokeControllerOutcome, RemoteControlSelfAnnouncement, RemoteControlSleepOutcome,
-    RemoteControlWifiStation, RemoteControlWifiStationOutcome, REMOTE_CONTROL_REQUEST_ENDPOINT_ID,
+    RemoteControlAnnounceSelfOutcome, RemoteControlApplyOutcome,
+    RemoteControlAuthorizeControllerOutcome, RemoteControlBuildVersion,
+    RemoteControlControllerAuthority, RemoteControlControllerGrant,
+    RemoteControlControllerGrantTable, RemoteControlControllerIdentity,
+    RemoteControlControllerInventory, RemoteControlControllerPage, RemoteControlDescription,
+    RemoteControlDescriptionError, RemoteControlDisplayAutoOff, RemoteControlDisplayVisibility,
+    RemoteControlEspRadioMode, RemoteControlGnssPower, RemoteControlGroupOutcome,
+    RemoteControlInterfaceConfigOutcome, RemoteControlInterfaceGroup,
+    RemoteControlInterfaceInventory, RemoteControlInterfacePage,
+    RemoteControlInterfacePeersOutcome, RemoteControlInterfacePower, RemoteControlLoRaOutcome,
+    RemoteControlLoRaProfile, RemoteControlMessageWriteError, RemoteControlModeOutcome,
+    RemoteControlPeerPage, RemoteControlPowerOutcome, RemoteControlProtocolError,
+    RemoteControlRequest, RemoteControlRequestKind, RemoteControlRequestParseError,
+    RemoteControlRequestSet, RemoteControlResponse, RemoteControlResponseKind,
+    RemoteControlResponseParseError, RemoteControlRevokeControllerOutcome,
+    RemoteControlSelfAnnouncement, RemoteControlSleepOutcome, RemoteControlStationUplink,
+    RemoteControlSystemPower, RemoteControlWifiCredentialRevision, RemoteControlWifiStageOutcome,
+    RemoteControlWifiStation, RemoteControlWifiStationOutcome, RemoteControlWifiTransactionStatus,
+    RevokeRemoteControlControllerOutcome, SetRemoteControlControllerGrantOutcome,
+    REMOTE_CONTROL_REQUEST_ENDPOINT_ID,
 };
 use crate::routing::links::request::REQUEST_WIRE_OVERHEAD;
 use crate::units::ByteLimit;
@@ -27,7 +35,10 @@ use super::request_endpoints::{
     Decline, InboundRequest, RequestContext, RequestEndpoint, RequestEndpointPolicy, RespondToken,
     ResponseSink,
 };
-use super::{AnnounceNowError, PrnsNodeApi, SendError};
+use super::{
+    AnnounceNowError, PrnsNodeApi, RevokeRemoteControlControllerControlError, SendError,
+    SetRemoteControlControllerGrantControlError,
+};
 
 pub(super) const REMOTE_CONTROL_REQUEST_PLAINTEXT_MAX: usize =
     REQUEST_WIRE_OVERHEAD.saturating_add(RemoteControlRequest::MAX_ENCODED_LEN);
@@ -151,96 +162,316 @@ impl RemoteControlAnnounceSelf {
     }
 }
 
-/// Host-side interface apply hooks used by Remote Control Inventory/Power/Mode/Sleep kinds.
-///
-/// Types that do not expose interface controls can use an empty `impl` and keep the
-/// default unavailable/empty outcomes.
-pub trait RemoteControlHostControls {
-    fn inventory_interfaces(&self) -> RemoteControlInterfaceInventory {
-        RemoteControlInterfaceInventory::empty()
-    }
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, PartialEq, Eq)]
+pub enum RemoteControlHostCommand {
+    InventoryInterfaces {
+        page: RemoteControlInterfacePage,
+    },
+    SetInterfacePower {
+        id: InterfaceId,
+        power: RemoteControlInterfacePower,
+    },
+    SetInterfaceMode {
+        id: InterfaceId,
+        mode: InterfaceMode,
+    },
+    SetInterfaceGroup {
+        id: InterfaceId,
+        group: RemoteControlInterfaceGroup,
+    },
+    InventoryInterfacePeers {
+        id: InterfaceId,
+        page: RemoteControlPeerPage,
+    },
+    InventoryInterfaceConfig {
+        id: InterfaceId,
+    },
+    SetInterfaceLoRaProfile {
+        id: InterfaceId,
+        profile: RemoteControlLoRaProfile,
+    },
+    SetInterfaceWifiStation {
+        id: InterfaceId,
+        station: RemoteControlWifiStation,
+    },
+    DescribeBuild,
+    DescribePower,
+    SleepRadios,
+    WakeRadios,
+    SetSystemPower {
+        power: RemoteControlSystemPower,
+    },
+    SetGnssPower {
+        power: RemoteControlGnssPower,
+    },
+    SetDisplayVisibility {
+        visibility: RemoteControlDisplayVisibility,
+    },
+    SetDisplayAutoOff {
+        auto_off: RemoteControlDisplayAutoOff,
+    },
+    SetStationUplink {
+        id: InterfaceId,
+        uplink: RemoteControlStationUplink,
+    },
+    SetEspRadioMode {
+        mode: RemoteControlEspRadioMode,
+    },
+    StageWifiCredentials {
+        controller: IdentityHash,
+        station: RemoteControlWifiStation,
+    },
+    ActivateWifiCredentials {
+        controller: IdentityHash,
+        revision: RemoteControlWifiCredentialRevision,
+    },
+    ConfirmWifiCredentials {
+        controller: IdentityHash,
+        revision: RemoteControlWifiCredentialRevision,
+    },
+    CancelWifiCredentials {
+        controller: IdentityHash,
+        revision: RemoteControlWifiCredentialRevision,
+    },
+    InspectWifiTransaction {
+        controller: IdentityHash,
+    },
+}
 
-    fn set_interface_power(
-        &self,
-        _id: InterfaceId,
-        _power: RemoteControlInterfacePower,
-    ) -> RemoteControlPowerOutcome {
-        RemoteControlPowerOutcome::Failed
-    }
-
-    fn set_interface_mode(
-        &self,
-        _id: InterfaceId,
-        _mode: InterfaceMode,
-    ) -> RemoteControlModeOutcome {
-        RemoteControlModeOutcome::Failed
-    }
-
-    fn set_interface_group(
-        &self,
-        _id: InterfaceId,
-        _group: RemoteControlInterfaceGroup,
-    ) -> RemoteControlGroupOutcome {
-        RemoteControlGroupOutcome::Failed
-    }
-
-    fn inventory_interface_peers(
-        &self,
-        _id: InterfaceId,
-        _offset: u8,
-    ) -> RemoteControlInterfacePeersOutcome {
-        RemoteControlInterfacePeersOutcome::UnknownInterface
-    }
-
-    fn inventory_interface_config(&self, _id: InterfaceId) -> RemoteControlInterfaceConfigOutcome {
-        RemoteControlInterfaceConfigOutcome::UnknownInterface
-    }
-
-    fn set_interface_lora_profile(
-        &self,
-        _id: InterfaceId,
-        _profile: RemoteControlLoRaProfile,
-    ) -> RemoteControlLoRaOutcome {
-        RemoteControlLoRaOutcome::Failed
-    }
-
-    fn set_interface_wifi_station(
-        &self,
-        _id: InterfaceId,
-        _station: RemoteControlWifiStation,
-    ) -> RemoteControlWifiStationOutcome {
-        RemoteControlWifiStationOutcome::Failed
-    }
-
-    fn build_version(&self) -> RemoteControlBuildVersion {
-        RemoteControlBuildVersion::empty()
-    }
-
-    fn power_snapshot(&self) -> PowerSnapshot {
-        PowerSnapshot::UNKNOWN
-    }
-
-    fn sleep_radios(&self) -> RemoteControlSleepOutcome {
-        RemoteControlSleepOutcome::Unavailable
-    }
-
-    fn wake_radios(&self) -> RemoteControlSleepOutcome {
-        RemoteControlSleepOutcome::Unavailable
+impl RemoteControlHostCommand {
+    #[must_use]
+    pub const fn request_kind(&self) -> RemoteControlRequestKind {
+        match self {
+            Self::InventoryInterfaces { .. } => RemoteControlRequestKind::InventoryInterfaces,
+            Self::SetInterfacePower { .. } => RemoteControlRequestKind::SetInterfacePower,
+            Self::SetInterfaceMode { .. } => RemoteControlRequestKind::SetInterfaceMode,
+            Self::SetInterfaceGroup { .. } => RemoteControlRequestKind::SetInterfaceGroup,
+            Self::InventoryInterfacePeers { .. } => {
+                RemoteControlRequestKind::InventoryInterfacePeers
+            }
+            Self::InventoryInterfaceConfig { .. } => {
+                RemoteControlRequestKind::InventoryInterfaceConfig
+            }
+            Self::SetInterfaceLoRaProfile { .. } => {
+                RemoteControlRequestKind::SetInterfaceLoRaProfile
+            }
+            Self::SetInterfaceWifiStation { .. } => {
+                RemoteControlRequestKind::SetInterfaceWifiStation
+            }
+            Self::DescribeBuild => RemoteControlRequestKind::DescribeBuild,
+            Self::DescribePower => RemoteControlRequestKind::DescribePower,
+            Self::SleepRadios => RemoteControlRequestKind::SleepRadios,
+            Self::WakeRadios => RemoteControlRequestKind::WakeRadios,
+            Self::SetSystemPower { .. } => RemoteControlRequestKind::SetSystemPower,
+            Self::SetGnssPower { .. } => RemoteControlRequestKind::SetGnssPower,
+            Self::SetDisplayVisibility { .. } => RemoteControlRequestKind::SetDisplayVisibility,
+            Self::SetDisplayAutoOff { .. } => RemoteControlRequestKind::SetDisplayAutoOff,
+            Self::SetStationUplink { .. } => RemoteControlRequestKind::SetStationUplink,
+            Self::SetEspRadioMode { .. } => RemoteControlRequestKind::SetEspRadioMode,
+            Self::StageWifiCredentials { .. } => RemoteControlRequestKind::StageWifiCredentials,
+            Self::ActivateWifiCredentials { .. } => {
+                RemoteControlRequestKind::ActivateWifiCredentials
+            }
+            Self::ConfirmWifiCredentials { .. } => RemoteControlRequestKind::ConfirmWifiCredentials,
+            Self::CancelWifiCredentials { .. } => RemoteControlRequestKind::CancelWifiCredentials,
+            Self::InspectWifiTransaction { .. } => RemoteControlRequestKind::InspectWifiTransaction,
+        }
     }
 }
 
-impl RemoteControlHostControls for () {}
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemoteControlHostResponse {
+    InventoryInterfaces(RemoteControlInterfaceInventory),
+    SetInterfacePower(RemoteControlPowerOutcome),
+    SetInterfaceMode(RemoteControlModeOutcome),
+    SetInterfaceGroup(RemoteControlGroupOutcome),
+    InventoryInterfacePeers(RemoteControlInterfacePeersOutcome),
+    InventoryInterfaceConfig(RemoteControlInterfaceConfigOutcome),
+    SetInterfaceLoRaProfile(RemoteControlLoRaOutcome),
+    SetInterfaceWifiStation(RemoteControlWifiStationOutcome),
+    DescribeBuild(RemoteControlBuildVersion),
+    DescribePower(PowerSnapshot),
+    SleepRadios(RemoteControlSleepOutcome),
+    WakeRadios(RemoteControlSleepOutcome),
+    SetSystemPower(RemoteControlApplyOutcome),
+    SetGnssPower(RemoteControlApplyOutcome),
+    SetDisplayVisibility(RemoteControlApplyOutcome),
+    SetDisplayAutoOff(RemoteControlApplyOutcome),
+    SetStationUplink(RemoteControlApplyOutcome),
+    SetEspRadioMode(RemoteControlApplyOutcome),
+    StageWifiCredentials(RemoteControlWifiStageOutcome),
+    ActivateWifiCredentials(RemoteControlApplyOutcome),
+    ConfirmWifiCredentials(RemoteControlApplyOutcome),
+    CancelWifiCredentials(RemoteControlApplyOutcome),
+    InspectWifiTransaction(RemoteControlWifiTransactionStatus),
+}
+
+impl RemoteControlHostResponse {
+    #[must_use]
+    pub const fn request_kind(&self) -> RemoteControlRequestKind {
+        match self {
+            Self::InventoryInterfaces(_) => RemoteControlRequestKind::InventoryInterfaces,
+            Self::SetInterfacePower(_) => RemoteControlRequestKind::SetInterfacePower,
+            Self::SetInterfaceMode(_) => RemoteControlRequestKind::SetInterfaceMode,
+            Self::SetInterfaceGroup(_) => RemoteControlRequestKind::SetInterfaceGroup,
+            Self::InventoryInterfacePeers(_) => RemoteControlRequestKind::InventoryInterfacePeers,
+            Self::InventoryInterfaceConfig(_) => RemoteControlRequestKind::InventoryInterfaceConfig,
+            Self::SetInterfaceLoRaProfile(_) => RemoteControlRequestKind::SetInterfaceLoRaProfile,
+            Self::SetInterfaceWifiStation(_) => RemoteControlRequestKind::SetInterfaceWifiStation,
+            Self::DescribeBuild(_) => RemoteControlRequestKind::DescribeBuild,
+            Self::DescribePower(_) => RemoteControlRequestKind::DescribePower,
+            Self::SleepRadios(_) => RemoteControlRequestKind::SleepRadios,
+            Self::WakeRadios(_) => RemoteControlRequestKind::WakeRadios,
+            Self::SetSystemPower(_) => RemoteControlRequestKind::SetSystemPower,
+            Self::SetGnssPower(_) => RemoteControlRequestKind::SetGnssPower,
+            Self::SetDisplayVisibility(_) => RemoteControlRequestKind::SetDisplayVisibility,
+            Self::SetDisplayAutoOff(_) => RemoteControlRequestKind::SetDisplayAutoOff,
+            Self::SetStationUplink(_) => RemoteControlRequestKind::SetStationUplink,
+            Self::SetEspRadioMode(_) => RemoteControlRequestKind::SetEspRadioMode,
+            Self::StageWifiCredentials(_) => RemoteControlRequestKind::StageWifiCredentials,
+            Self::ActivateWifiCredentials(_) => RemoteControlRequestKind::ActivateWifiCredentials,
+            Self::ConfirmWifiCredentials(_) => RemoteControlRequestKind::ConfirmWifiCredentials,
+            Self::CancelWifiCredentials(_) => RemoteControlRequestKind::CancelWifiCredentials,
+            Self::InspectWifiTransaction(_) => RemoteControlRequestKind::InspectWifiTransaction,
+        }
+    }
+
+    fn into_wire_response(self) -> RemoteControlResponse {
+        match self {
+            Self::InventoryInterfaces(inventory) => {
+                RemoteControlResponse::InventoryInterfaces(inventory)
+            }
+            Self::SetInterfacePower(outcome) => RemoteControlResponse::SetInterfacePower(outcome),
+            Self::SetInterfaceMode(outcome) => RemoteControlResponse::SetInterfaceMode(outcome),
+            Self::SetInterfaceGroup(outcome) => RemoteControlResponse::SetInterfaceGroup(outcome),
+            Self::InventoryInterfacePeers(outcome) => {
+                RemoteControlResponse::InventoryInterfacePeers(outcome)
+            }
+            Self::InventoryInterfaceConfig(outcome) => {
+                RemoteControlResponse::InventoryInterfaceConfig(outcome)
+            }
+            Self::SetInterfaceLoRaProfile(outcome) => {
+                RemoteControlResponse::SetInterfaceLoRaProfile(outcome)
+            }
+            Self::SetInterfaceWifiStation(outcome) => {
+                RemoteControlResponse::SetInterfaceWifiStation(outcome)
+            }
+            Self::DescribeBuild(version) => RemoteControlResponse::DescribeBuild(version),
+            Self::DescribePower(snapshot) => RemoteControlResponse::DescribePower(snapshot),
+            Self::SleepRadios(outcome) => RemoteControlResponse::SleepRadios(outcome),
+            Self::WakeRadios(outcome) => RemoteControlResponse::WakeRadios(outcome),
+            Self::SetSystemPower(outcome) => RemoteControlResponse::SetSystemPower(outcome),
+            Self::SetGnssPower(outcome) => RemoteControlResponse::SetGnssPower(outcome),
+            Self::SetDisplayVisibility(outcome) => {
+                RemoteControlResponse::SetDisplayVisibility(outcome)
+            }
+            Self::SetDisplayAutoOff(outcome) => RemoteControlResponse::SetDisplayAutoOff(outcome),
+            Self::SetStationUplink(outcome) => RemoteControlResponse::SetStationUplink(outcome),
+            Self::SetEspRadioMode(outcome) => RemoteControlResponse::SetEspRadioMode(outcome),
+            Self::StageWifiCredentials(outcome) => {
+                RemoteControlResponse::StageWifiCredentials(outcome)
+            }
+            Self::ActivateWifiCredentials(outcome) => {
+                RemoteControlResponse::ActivateWifiCredentials(outcome)
+            }
+            Self::ConfirmWifiCredentials(outcome) => {
+                RemoteControlResponse::ConfirmWifiCredentials(outcome)
+            }
+            Self::CancelWifiCredentials(outcome) => {
+                RemoteControlResponse::CancelWifiCredentials(outcome)
+            }
+            Self::InspectWifiTransaction(status) => {
+                RemoteControlResponse::InspectWifiTransaction(status)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteControlHostCommandError {
+    Unsupported,
+    Busy,
+    ApplyFailed,
+    PersistenceFailed,
+    RollbackFailed,
+}
+
+impl RemoteControlHostCommandError {
+    fn into_protocol_error(self, request: RemoteControlRequestKind) -> RemoteControlProtocolError {
+        match self {
+            Self::Unsupported => RemoteControlProtocolError::UnsupportedRequest { request },
+            Self::Busy => RemoteControlProtocolError::Busy { request },
+            Self::ApplyFailed => RemoteControlProtocolError::ApplyFailed { request },
+            Self::PersistenceFailed => RemoteControlProtocolError::PersistenceFailed { request },
+            Self::RollbackFailed => RemoteControlProtocolError::RollbackFailed { request },
+        }
+    }
+}
+
+/// Executes Remote Control effects against state owned by the host.
+///
+/// Implementations must settle each command exactly once and return only the response variant
+/// belonging to that command. Hardware-owning runtimes should enqueue commands into one bounded
+/// executor rather than touching peripherals from the request task.
+#[allow(async_fn_in_trait)]
+pub trait RemoteControlHostControls {
+    async fn execute_remote_control(
+        &self,
+        command: RemoteControlHostCommand,
+    ) -> Result<RemoteControlHostResponse, RemoteControlHostCommandError>;
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct NoRemoteControlHostControls;
+
+impl RemoteControlHostControls for NoRemoteControlHostControls {
+    async fn execute_remote_control(
+        &self,
+        _command: RemoteControlHostCommand,
+    ) -> Result<RemoteControlHostResponse, RemoteControlHostCommandError> {
+        Err(RemoteControlHostCommandError::Unsupported)
+    }
+}
+
+async fn execute_remote_control_host(
+    state: &impl RemoteControlHostControls,
+    command: RemoteControlHostCommand,
+) -> RemoteControlResponse {
+    let request = command.request_kind();
+    match state.execute_remote_control(command).await {
+        Ok(response) if response.request_kind() == request => response.into_wire_response(),
+        Ok(_) => {
+            RemoteControlResponse::ProtocolError(RemoteControlProtocolError::InternalFailure {
+                request,
+            })
+        }
+        Err(error) => RemoteControlResponse::ProtocolError(error.into_protocol_error(request)),
+    }
+}
 
 pub struct RemoteControlInventoryInterfaces;
 
 impl RemoteControlInventoryInterfaces {
-    pub const REQUEST: RemoteControlRequest = RemoteControlRequest::InventoryInterfaces;
+    pub const REQUEST: RemoteControlRequest = RemoteControlRequest::InventoryInterfaces {
+        page: RemoteControlInterfacePage::First,
+    };
     pub const RESPONSE_CAPACITY: usize = Self::REQUEST.maximum_response_encoded_len();
     pub const MAXIMUM_RESPONSE_BYTES: ByteLimit =
         ByteLimit::Maximum(Self::RESPONSE_CAPACITY as u64);
 
     pub fn write_request(out: &mut [u8]) -> Result<usize, RemoteControlError> {
         Self::REQUEST
+            .write_into(out)
+            .map_err(RemoteControlError::Encode)
+    }
+
+    pub fn write_page_request(
+        page: RemoteControlInterfacePage,
+        out: &mut [u8],
+    ) -> Result<usize, RemoteControlError> {
+        RemoteControlRequest::InventoryInterfaces { page }
             .write_into(out)
             .map_err(RemoteControlError::Encode)
     }
@@ -384,13 +615,24 @@ impl RemoteControlSetInterfaceWifiStation {
 pub struct RemoteControlInventoryControllers;
 
 impl RemoteControlInventoryControllers {
-    pub const REQUEST: RemoteControlRequest = RemoteControlRequest::InventoryControllers;
+    pub const REQUEST: RemoteControlRequest = RemoteControlRequest::InventoryControllers {
+        page: RemoteControlControllerPage::First,
+    };
     pub const RESPONSE_CAPACITY: usize = Self::REQUEST.maximum_response_encoded_len();
     pub const MAXIMUM_RESPONSE_BYTES: ByteLimit =
         ByteLimit::Maximum(Self::RESPONSE_CAPACITY as u64);
 
     pub fn write_request(out: &mut [u8]) -> Result<usize, RemoteControlError> {
         Self::REQUEST
+            .write_into(out)
+            .map_err(RemoteControlError::Encode)
+    }
+
+    pub fn write_page_request(
+        page: RemoteControlControllerPage,
+        out: &mut [u8],
+    ) -> Result<usize, RemoteControlError> {
+        RemoteControlRequest::InventoryControllers { page }
             .write_into(out)
             .map_err(RemoteControlError::Encode)
     }
@@ -419,11 +661,15 @@ impl RemoteControlAuthorizeController {
 
     pub fn write_request(
         controller: RemoteControlControllerIdentity,
+        permitted_requests: RemoteControlRequestSet,
         out: &mut [u8],
     ) -> Result<usize, RemoteControlError> {
-        RemoteControlRequest::AuthorizeController { controller }
-            .write_into(out)
-            .map_err(RemoteControlError::Encode)
+        RemoteControlRequest::AuthorizeController {
+            controller,
+            permitted_requests,
+        }
+        .write_into(out)
+        .map_err(RemoteControlError::Encode)
     }
 
     pub fn parse_response(
@@ -508,10 +754,10 @@ impl RemoteControlInventoryInterfacePeers {
 
     pub fn write_request(
         id: InterfaceId,
-        offset: u8,
+        page: RemoteControlPeerPage,
         out: &mut [u8],
     ) -> Result<usize, RemoteControlError> {
-        RemoteControlRequest::InventoryInterfacePeers { id, offset }
+        RemoteControlRequest::InventoryInterfacePeers { id, page }
             .write_into(out)
             .map_err(RemoteControlError::Encode)
     }
@@ -662,6 +908,181 @@ impl RemoteControlWakeRadios {
     }
 }
 
+macro_rules! remote_control_apply_exchange {
+    ($type_name:ident, $variant:ident, $field:ident, $field_type:ty) => {
+        pub struct $type_name;
+
+        impl $type_name {
+            pub const RESPONSE_CAPACITY: usize =
+                RemoteControlRequestKind::$variant.maximum_response_encoded_len();
+            pub const MAXIMUM_RESPONSE_BYTES: ByteLimit =
+                ByteLimit::Maximum(Self::RESPONSE_CAPACITY as u64);
+
+            pub fn write_request(
+                $field: $field_type,
+                out: &mut [u8],
+            ) -> Result<usize, RemoteControlError> {
+                RemoteControlRequest::$variant { $field }
+                    .write_into(out)
+                    .map_err(RemoteControlError::Encode)
+            }
+
+            pub fn parse_response(
+                bytes: &[u8],
+            ) -> Result<RemoteControlApplyOutcome, RemoteControlError> {
+                match RemoteControlResponse::parse(bytes).map_err(RemoteControlError::Response)? {
+                    RemoteControlResponse::$variant(outcome) => Ok(outcome),
+                    RemoteControlResponse::ProtocolError(error) => {
+                        Err(RemoteControlError::Remote(error))
+                    }
+                    response => Err(RemoteControlError::UnexpectedResponse {
+                        expected: RemoteControlResponseKind::$variant,
+                        found: response.kind(),
+                    }),
+                }
+            }
+        }
+    };
+}
+
+remote_control_apply_exchange!(
+    RemoteControlSetSystemPower,
+    SetSystemPower,
+    power,
+    RemoteControlSystemPower
+);
+remote_control_apply_exchange!(
+    RemoteControlSetGnssPower,
+    SetGnssPower,
+    power,
+    RemoteControlGnssPower
+);
+remote_control_apply_exchange!(
+    RemoteControlSetDisplayVisibility,
+    SetDisplayVisibility,
+    visibility,
+    RemoteControlDisplayVisibility
+);
+remote_control_apply_exchange!(
+    RemoteControlSetDisplayAutoOff,
+    SetDisplayAutoOff,
+    auto_off,
+    RemoteControlDisplayAutoOff
+);
+remote_control_apply_exchange!(
+    RemoteControlSetEspRadioMode,
+    SetEspRadioMode,
+    mode,
+    RemoteControlEspRadioMode
+);
+remote_control_apply_exchange!(
+    RemoteControlActivateWifiCredentials,
+    ActivateWifiCredentials,
+    revision,
+    RemoteControlWifiCredentialRevision
+);
+remote_control_apply_exchange!(
+    RemoteControlConfirmWifiCredentials,
+    ConfirmWifiCredentials,
+    revision,
+    RemoteControlWifiCredentialRevision
+);
+remote_control_apply_exchange!(
+    RemoteControlCancelWifiCredentials,
+    CancelWifiCredentials,
+    revision,
+    RemoteControlWifiCredentialRevision
+);
+
+pub struct RemoteControlSetStationUplink;
+
+impl RemoteControlSetStationUplink {
+    pub const RESPONSE_CAPACITY: usize =
+        RemoteControlRequestKind::SetStationUplink.maximum_response_encoded_len();
+    pub const MAXIMUM_RESPONSE_BYTES: ByteLimit =
+        ByteLimit::Maximum(Self::RESPONSE_CAPACITY as u64);
+
+    pub fn write_request(
+        id: InterfaceId,
+        uplink: RemoteControlStationUplink,
+        out: &mut [u8],
+    ) -> Result<usize, RemoteControlError> {
+        RemoteControlRequest::SetStationUplink { id, uplink }
+            .write_into(out)
+            .map_err(RemoteControlError::Encode)
+    }
+
+    pub fn parse_response(bytes: &[u8]) -> Result<RemoteControlApplyOutcome, RemoteControlError> {
+        match RemoteControlResponse::parse(bytes).map_err(RemoteControlError::Response)? {
+            RemoteControlResponse::SetStationUplink(outcome) => Ok(outcome),
+            RemoteControlResponse::ProtocolError(error) => Err(RemoteControlError::Remote(error)),
+            response => Err(RemoteControlError::UnexpectedResponse {
+                expected: RemoteControlResponseKind::SetStationUplink,
+                found: response.kind(),
+            }),
+        }
+    }
+}
+
+pub struct RemoteControlStageWifiCredentials;
+
+impl RemoteControlStageWifiCredentials {
+    pub const RESPONSE_CAPACITY: usize =
+        RemoteControlRequestKind::StageWifiCredentials.maximum_response_encoded_len();
+    pub const MAXIMUM_RESPONSE_BYTES: ByteLimit =
+        ByteLimit::Maximum(Self::RESPONSE_CAPACITY as u64);
+
+    pub fn write_request(
+        station: RemoteControlWifiStation,
+        out: &mut [u8],
+    ) -> Result<usize, RemoteControlError> {
+        RemoteControlRequest::StageWifiCredentials { station }
+            .write_into(out)
+            .map_err(RemoteControlError::Encode)
+    }
+
+    pub fn parse_response(
+        bytes: &[u8],
+    ) -> Result<RemoteControlWifiStageOutcome, RemoteControlError> {
+        match RemoteControlResponse::parse(bytes).map_err(RemoteControlError::Response)? {
+            RemoteControlResponse::StageWifiCredentials(outcome) => Ok(outcome),
+            RemoteControlResponse::ProtocolError(error) => Err(RemoteControlError::Remote(error)),
+            response => Err(RemoteControlError::UnexpectedResponse {
+                expected: RemoteControlResponseKind::StageWifiCredentials,
+                found: response.kind(),
+            }),
+        }
+    }
+}
+
+pub struct RemoteControlInspectWifiTransaction;
+
+impl RemoteControlInspectWifiTransaction {
+    pub const REQUEST: RemoteControlRequest = RemoteControlRequest::InspectWifiTransaction;
+    pub const RESPONSE_CAPACITY: usize = Self::REQUEST.maximum_response_encoded_len();
+    pub const MAXIMUM_RESPONSE_BYTES: ByteLimit =
+        ByteLimit::Maximum(Self::RESPONSE_CAPACITY as u64);
+
+    pub fn write_request(out: &mut [u8]) -> Result<usize, RemoteControlError> {
+        Self::REQUEST
+            .write_into(out)
+            .map_err(RemoteControlError::Encode)
+    }
+
+    pub fn parse_response(
+        bytes: &[u8],
+    ) -> Result<RemoteControlWifiTransactionStatus, RemoteControlError> {
+        match RemoteControlResponse::parse(bytes).map_err(RemoteControlError::Response)? {
+            RemoteControlResponse::InspectWifiTransaction(status) => Ok(status),
+            RemoteControlResponse::ProtocolError(error) => Err(RemoteControlError::Remote(error)),
+            response => Err(RemoteControlError::UnexpectedResponse {
+                expected: RemoteControlResponseKind::InspectWifiTransaction,
+                found: response.kind(),
+            }),
+        }
+    }
+}
+
 fn require_available(
     available_requests: RemoteControlRequestSet,
     kind: RemoteControlRequestKind,
@@ -717,12 +1138,12 @@ impl RemoteControlRequestEndpoint {
                 };
                 Ok(AdmittedRemoteControlOperation::AnnounceSelf { destination })
             }
-            Ok(RemoteControlRequest::InventoryInterfaces) => {
+            Ok(RemoteControlRequest::InventoryInterfaces { page }) => {
                 require_available(
                     available_requests,
                     RemoteControlRequestKind::InventoryInterfaces,
                 )?;
-                Ok(AdmittedRemoteControlOperation::InventoryInterfaces)
+                Ok(AdmittedRemoteControlOperation::InventoryInterfaces { page })
             }
             Ok(RemoteControlRequest::SetInterfacePower { id, power }) => {
                 require_available(
@@ -745,12 +1166,12 @@ impl RemoteControlRequestEndpoint {
                 )?;
                 Ok(AdmittedRemoteControlOperation::SetInterfaceGroup { id, group })
             }
-            Ok(RemoteControlRequest::InventoryInterfacePeers { id, offset }) => {
+            Ok(RemoteControlRequest::InventoryInterfacePeers { id, page }) => {
                 require_available(
                     available_requests,
                     RemoteControlRequestKind::InventoryInterfacePeers,
                 )?;
-                Ok(AdmittedRemoteControlOperation::InventoryInterfacePeers { id, offset })
+                Ok(AdmittedRemoteControlOperation::InventoryInterfacePeers { id, page })
             }
             Ok(RemoteControlRequest::InventoryInterfaceConfig { id }) => {
                 require_available(
@@ -773,19 +1194,25 @@ impl RemoteControlRequestEndpoint {
                 )?;
                 Ok(AdmittedRemoteControlOperation::SetInterfaceWifiStation { id, station })
             }
-            Ok(RemoteControlRequest::InventoryControllers) => {
+            Ok(RemoteControlRequest::InventoryControllers { page }) => {
                 require_available(
                     available_requests,
                     RemoteControlRequestKind::InventoryControllers,
                 )?;
-                Ok(AdmittedRemoteControlOperation::InventoryControllers)
+                Ok(AdmittedRemoteControlOperation::InventoryControllers { page })
             }
-            Ok(RemoteControlRequest::AuthorizeController { controller }) => {
+            Ok(RemoteControlRequest::AuthorizeController {
+                controller,
+                permitted_requests,
+            }) => {
                 require_available(
                     available_requests,
                     RemoteControlRequestKind::AuthorizeController,
                 )?;
-                Ok(AdmittedRemoteControlOperation::AuthorizeController { controller })
+                Ok(AdmittedRemoteControlOperation::AuthorizeController {
+                    controller,
+                    permitted_requests,
+                })
             }
             Ok(RemoteControlRequest::RevokeController { hash }) => {
                 require_available(
@@ -810,6 +1237,77 @@ impl RemoteControlRequestEndpoint {
                 require_available(available_requests, RemoteControlRequestKind::WakeRadios)?;
                 Ok(AdmittedRemoteControlOperation::WakeRadios)
             }
+            Ok(RemoteControlRequest::SetSystemPower { power }) => {
+                require_available(available_requests, RemoteControlRequestKind::SetSystemPower)?;
+                Ok(AdmittedRemoteControlOperation::SetSystemPower { power })
+            }
+            Ok(RemoteControlRequest::SetGnssPower { power }) => {
+                require_available(available_requests, RemoteControlRequestKind::SetGnssPower)?;
+                Ok(AdmittedRemoteControlOperation::SetGnssPower { power })
+            }
+            Ok(RemoteControlRequest::SetDisplayVisibility { visibility }) => {
+                require_available(
+                    available_requests,
+                    RemoteControlRequestKind::SetDisplayVisibility,
+                )?;
+                Ok(AdmittedRemoteControlOperation::SetDisplayVisibility { visibility })
+            }
+            Ok(RemoteControlRequest::SetDisplayAutoOff { auto_off }) => {
+                require_available(
+                    available_requests,
+                    RemoteControlRequestKind::SetDisplayAutoOff,
+                )?;
+                Ok(AdmittedRemoteControlOperation::SetDisplayAutoOff { auto_off })
+            }
+            Ok(RemoteControlRequest::SetStationUplink { id, uplink }) => {
+                require_available(
+                    available_requests,
+                    RemoteControlRequestKind::SetStationUplink,
+                )?;
+                Ok(AdmittedRemoteControlOperation::SetStationUplink { id, uplink })
+            }
+            Ok(RemoteControlRequest::SetEspRadioMode { mode }) => {
+                require_available(
+                    available_requests,
+                    RemoteControlRequestKind::SetEspRadioMode,
+                )?;
+                Ok(AdmittedRemoteControlOperation::SetEspRadioMode { mode })
+            }
+            Ok(RemoteControlRequest::StageWifiCredentials { station }) => {
+                require_available(
+                    available_requests,
+                    RemoteControlRequestKind::StageWifiCredentials,
+                )?;
+                Ok(AdmittedRemoteControlOperation::StageWifiCredentials { station })
+            }
+            Ok(RemoteControlRequest::ActivateWifiCredentials { revision }) => {
+                require_available(
+                    available_requests,
+                    RemoteControlRequestKind::ActivateWifiCredentials,
+                )?;
+                Ok(AdmittedRemoteControlOperation::ActivateWifiCredentials { revision })
+            }
+            Ok(RemoteControlRequest::ConfirmWifiCredentials { revision }) => {
+                require_available(
+                    available_requests,
+                    RemoteControlRequestKind::ConfirmWifiCredentials,
+                )?;
+                Ok(AdmittedRemoteControlOperation::ConfirmWifiCredentials { revision })
+            }
+            Ok(RemoteControlRequest::CancelWifiCredentials { revision }) => {
+                require_available(
+                    available_requests,
+                    RemoteControlRequestKind::CancelWifiCredentials,
+                )?;
+                Ok(AdmittedRemoteControlOperation::CancelWifiCredentials { revision })
+            }
+            Ok(RemoteControlRequest::InspectWifiTransaction) => {
+                require_available(
+                    available_requests,
+                    RemoteControlRequestKind::InspectWifiTransaction,
+                )?;
+                Ok(AdmittedRemoteControlOperation::InspectWifiTransaction)
+            }
             Err(error) => Ok(AdmittedRemoteControlOperation::ProtocolError(
                 RemoteControlProtocolError::from(error),
             )),
@@ -825,6 +1323,9 @@ impl RemoteControlRequestEndpoint {
         AppState: RemoteControlHostControls,
     {
         let response = match operation {
+            AdmittedRemoteControlOperation::Host(command) => {
+                execute_remote_control_host(context.state, command).await
+            }
             AdmittedRemoteControlOperation::Describe(description) => {
                 RemoteControlResponse::Describe(description)
             }
@@ -850,46 +1351,48 @@ impl RemoteControlRequestEndpoint {
                 };
                 RemoteControlResponse::AnnounceSelf(outcome)
             }
-            AdmittedRemoteControlOperation::InventoryInterfaces => {
-                RemoteControlResponse::InventoryInterfaces(context.state.inventory_interfaces())
-            }
-            AdmittedRemoteControlOperation::SetInterfacePower { id, power } => {
-                RemoteControlResponse::SetInterfacePower(
-                    context.state.set_interface_power(id, power),
-                )
-            }
-            AdmittedRemoteControlOperation::SetInterfaceMode { id, mode } => {
-                RemoteControlResponse::SetInterfaceMode(context.state.set_interface_mode(id, mode))
-            }
-            AdmittedRemoteControlOperation::SetInterfaceGroup { id, group } => {
-                RemoteControlResponse::SetInterfaceGroup(
-                    context.state.set_interface_group(id, group),
-                )
-            }
-            AdmittedRemoteControlOperation::InventoryInterfacePeers { id, offset } => {
-                RemoteControlResponse::InventoryInterfacePeers(
-                    context.state.inventory_interface_peers(id, offset),
-                )
-            }
-            AdmittedRemoteControlOperation::InventoryInterfaceConfig { id } => {
-                RemoteControlResponse::InventoryInterfaceConfig(
-                    context.state.inventory_interface_config(id),
-                )
-            }
-            AdmittedRemoteControlOperation::SetInterfaceLoRaProfile { id, profile } => {
-                RemoteControlResponse::SetInterfaceLoRaProfile(
-                    context.state.set_interface_lora_profile(id, profile),
-                )
-            }
-            AdmittedRemoteControlOperation::SetInterfaceWifiStation { id, station } => {
-                RemoteControlResponse::SetInterfaceWifiStation(
-                    context.state.set_interface_wifi_station(id, station),
-                )
-            }
-            AdmittedRemoteControlOperation::InventoryControllers => {
+            AdmittedRemoteControlOperation::InventoryControllers { .. } => {
                 RemoteControlResponse::InventoryControllers(
                     RemoteControlControllerInventory::empty(),
                 )
+            }
+            AdmittedRemoteControlOperation::AuthorizeControllerGrant { grant } => {
+                let outcome = match node.set_remote_control_controller_grant(grant).await {
+                    Ok(
+                        SetRemoteControlControllerGrantOutcome::Added
+                        | SetRemoteControlControllerGrantOutcome::Unchanged
+                        | SetRemoteControlControllerGrantOutcome::Updated { .. },
+                    ) => RemoteControlAuthorizeControllerOutcome::Applied,
+                    Err(SetRemoteControlControllerGrantControlError::CapacityExhausted) => {
+                        RemoteControlAuthorizeControllerOutcome::CapacityExhausted
+                    }
+                    Err(SetRemoteControlControllerGrantControlError::Busy) => {
+                        RemoteControlAuthorizeControllerOutcome::Busy
+                    }
+                    Err(
+                        SetRemoteControlControllerGrantControlError::NodeStopped
+                        | SetRemoteControlControllerGrantControlError::Unavailable,
+                    ) => RemoteControlAuthorizeControllerOutcome::Failed,
+                };
+                RemoteControlResponse::AuthorizeController(outcome)
+            }
+            AdmittedRemoteControlOperation::RevokeControllerGrant { controller } => {
+                let outcome = match node.revoke_remote_control_controller(controller).await {
+                    Ok(RevokeRemoteControlControllerOutcome::Revoked { .. }) => {
+                        RemoteControlRevokeControllerOutcome::Applied
+                    }
+                    Ok(RevokeRemoteControlControllerOutcome::NotFound) => {
+                        RemoteControlRevokeControllerOutcome::NotFound
+                    }
+                    Err(RevokeRemoteControlControllerControlError::Busy) => {
+                        RemoteControlRevokeControllerOutcome::Busy
+                    }
+                    Err(
+                        RevokeRemoteControlControllerControlError::NodeStopped
+                        | RevokeRemoteControlControllerControlError::Unavailable,
+                    ) => RemoteControlRevokeControllerOutcome::Failed,
+                };
+                RemoteControlResponse::RevokeController(outcome)
             }
             AdmittedRemoteControlOperation::AuthorizeController { .. } => {
                 RemoteControlResponse::AuthorizeController(
@@ -910,21 +1413,10 @@ impl RemoteControlRequestEndpoint {
             AdmittedRemoteControlOperation::RevokeControllerReady(outcome) => {
                 RemoteControlResponse::RevokeController(outcome)
             }
-            AdmittedRemoteControlOperation::DescribeBuild => {
-                RemoteControlResponse::DescribeBuild(context.state.build_version())
-            }
-            AdmittedRemoteControlOperation::DescribePower => {
-                RemoteControlResponse::DescribePower(context.state.power_snapshot())
-            }
-            AdmittedRemoteControlOperation::SleepRadios => {
-                RemoteControlResponse::SleepRadios(context.state.sleep_radios())
-            }
-            AdmittedRemoteControlOperation::WakeRadios => {
-                RemoteControlResponse::WakeRadios(context.state.wake_radios())
-            }
             AdmittedRemoteControlOperation::ProtocolError(error) => {
                 RemoteControlResponse::ProtocolError(error)
             }
+            _ => return Err(Decline::Ignore),
         };
         let mut out = [0u8; RemoteControlResponse::MAX_ENCODED_LEN];
         let encoded_len = response
@@ -956,11 +1448,14 @@ where
 }
 
 enum AdmittedRemoteControlOperation {
+    Host(RemoteControlHostCommand),
     Describe(RemoteControlDescription),
     AnnounceSelf {
         destination: DestinationHash,
     },
-    InventoryInterfaces,
+    InventoryInterfaces {
+        page: RemoteControlInterfacePage,
+    },
     SetInterfacePower {
         id: InterfaceId,
         power: RemoteControlInterfacePower,
@@ -975,7 +1470,7 @@ enum AdmittedRemoteControlOperation {
     },
     InventoryInterfacePeers {
         id: InterfaceId,
-        offset: u8,
+        page: RemoteControlPeerPage,
     },
     InventoryInterfaceConfig {
         id: InterfaceId,
@@ -988,12 +1483,21 @@ enum AdmittedRemoteControlOperation {
         id: InterfaceId,
         station: RemoteControlWifiStation,
     },
-    InventoryControllers,
+    InventoryControllers {
+        page: RemoteControlControllerPage,
+    },
     AuthorizeController {
         controller: RemoteControlControllerIdentity,
+        permitted_requests: RemoteControlRequestSet,
     },
     RevokeController {
         hash: IdentityHash,
+    },
+    AuthorizeControllerGrant {
+        grant: RemoteControlControllerGrant,
+    },
+    RevokeControllerGrant {
+        controller: RemoteControlControllerIdentity,
     },
     InventoryControllersReady(RemoteControlControllerInventory),
     AuthorizeControllerReady(RemoteControlAuthorizeControllerOutcome),
@@ -1002,7 +1506,115 @@ enum AdmittedRemoteControlOperation {
     DescribePower,
     SleepRadios,
     WakeRadios,
+    SetSystemPower {
+        power: RemoteControlSystemPower,
+    },
+    SetGnssPower {
+        power: RemoteControlGnssPower,
+    },
+    SetDisplayVisibility {
+        visibility: RemoteControlDisplayVisibility,
+    },
+    SetDisplayAutoOff {
+        auto_off: RemoteControlDisplayAutoOff,
+    },
+    SetStationUplink {
+        id: InterfaceId,
+        uplink: RemoteControlStationUplink,
+    },
+    SetEspRadioMode {
+        mode: RemoteControlEspRadioMode,
+    },
+    StageWifiCredentials {
+        station: RemoteControlWifiStation,
+    },
+    ActivateWifiCredentials {
+        revision: RemoteControlWifiCredentialRevision,
+    },
+    ConfirmWifiCredentials {
+        revision: RemoteControlWifiCredentialRevision,
+    },
+    CancelWifiCredentials {
+        revision: RemoteControlWifiCredentialRevision,
+    },
+    InspectWifiTransaction,
     ProtocolError(RemoteControlProtocolError),
+}
+
+impl AdmittedRemoteControlOperation {
+    fn prepare_host(self, controller: IdentityHash) -> Self {
+        let command = match self {
+            Self::InventoryInterfaces { page } => {
+                RemoteControlHostCommand::InventoryInterfaces { page }
+            }
+            Self::SetInterfacePower { id, power } => {
+                RemoteControlHostCommand::SetInterfacePower { id, power }
+            }
+            Self::SetInterfaceMode { id, mode } => {
+                RemoteControlHostCommand::SetInterfaceMode { id, mode }
+            }
+            Self::SetInterfaceGroup { id, group } => {
+                RemoteControlHostCommand::SetInterfaceGroup { id, group }
+            }
+            Self::InventoryInterfacePeers { id, page } => {
+                RemoteControlHostCommand::InventoryInterfacePeers { id, page }
+            }
+            Self::InventoryInterfaceConfig { id } => {
+                RemoteControlHostCommand::InventoryInterfaceConfig { id }
+            }
+            Self::SetInterfaceLoRaProfile { id, profile } => {
+                RemoteControlHostCommand::SetInterfaceLoRaProfile { id, profile }
+            }
+            Self::SetInterfaceWifiStation { id, station } => {
+                RemoteControlHostCommand::SetInterfaceWifiStation { id, station }
+            }
+            Self::DescribeBuild => RemoteControlHostCommand::DescribeBuild,
+            Self::DescribePower => RemoteControlHostCommand::DescribePower,
+            Self::SleepRadios => RemoteControlHostCommand::SleepRadios,
+            Self::WakeRadios => RemoteControlHostCommand::WakeRadios,
+            Self::SetSystemPower { power } => RemoteControlHostCommand::SetSystemPower { power },
+            Self::SetGnssPower { power } => RemoteControlHostCommand::SetGnssPower { power },
+            Self::SetDisplayVisibility { visibility } => {
+                RemoteControlHostCommand::SetDisplayVisibility { visibility }
+            }
+            Self::SetDisplayAutoOff { auto_off } => {
+                RemoteControlHostCommand::SetDisplayAutoOff { auto_off }
+            }
+            Self::SetStationUplink { id, uplink } => {
+                RemoteControlHostCommand::SetStationUplink { id, uplink }
+            }
+            Self::SetEspRadioMode { mode } => RemoteControlHostCommand::SetEspRadioMode { mode },
+            Self::StageWifiCredentials { station } => {
+                RemoteControlHostCommand::StageWifiCredentials {
+                    controller,
+                    station,
+                }
+            }
+            Self::ActivateWifiCredentials { revision } => {
+                RemoteControlHostCommand::ActivateWifiCredentials {
+                    controller,
+                    revision,
+                }
+            }
+            Self::ConfirmWifiCredentials { revision } => {
+                RemoteControlHostCommand::ConfirmWifiCredentials {
+                    controller,
+                    revision,
+                }
+            }
+            Self::CancelWifiCredentials { revision } => {
+                RemoteControlHostCommand::CancelWifiCredentials {
+                    controller,
+                    revision,
+                }
+            }
+            Self::InspectWifiTransaction => {
+                RemoteControlHostCommand::InspectWifiTransaction { controller }
+            }
+            operation => return operation,
+        };
+        Self::Host(command)
+    }
 }
 
 struct RemoteControlRequestBinding {
@@ -1010,7 +1622,7 @@ struct RemoteControlRequestBinding {
     controller: IdentityHash,
     responder: RespondToken,
     requested_at: InstantMillis,
-    data: [u8; RemoteControlRequest::MAX_ENCODED_LEN],
+    data_hash: [u8; SHA256_OUTPUT_LEN],
     data_len: usize,
 }
 
@@ -1019,17 +1631,15 @@ impl RemoteControlRequestBinding {
         let Some(controller) = request.requester else {
             return Err(RemoteControlAdmitError::UnidentifiedRequester);
         };
-        let mut data = [0; RemoteControlRequest::MAX_ENCODED_LEN];
-        let Some(bound) = data.get_mut(..request.data.len()) else {
+        if request.data.len() > RemoteControlRequest::MAX_ENCODED_LEN {
             return Err(RemoteControlAdmitError::RequestTooLarge);
-        };
-        bound.copy_from_slice(request.data);
+        }
         Ok(Self {
             destination: request.destination,
             controller,
             responder: request.respond_token(),
             requested_at: request.requested_at,
-            data,
+            data_hash: sha256(request.data),
             data_len: request.data.len(),
         })
     }
@@ -1039,10 +1649,8 @@ impl RemoteControlRequestBinding {
             && request.requester == Some(self.controller)
             && self.responder == request.respond_token()
             && self.requested_at == request.requested_at
-            && self
-                .data
-                .get(..self.data_len)
-                .is_some_and(|data| data == request.data)
+            && self.data_len == request.data.len()
+            && self.data_hash == sha256(request.data)
     }
 }
 
@@ -1051,8 +1659,24 @@ pub struct AdmittedRemoteControlRequest {
     operation: AdmittedRemoteControlOperation,
 }
 
+pub struct VerifiedAdmittedRemoteControlRequest {
+    operation: AdmittedRemoteControlOperation,
+}
+
+pub fn verify_admitted_remote_control_request(
+    admission: AdmittedRemoteControlRequest,
+    request: &InboundRequest<'_>,
+) -> Result<VerifiedAdmittedRemoteControlRequest, Decline> {
+    if !admission.binding.matches(request) {
+        return Err(Decline::Ignore);
+    }
+    Ok(VerifiedAdmittedRemoteControlRequest {
+        operation: admission.operation,
+    })
+}
+
 pub fn admit_remote_control_request<ControllerGrants>(
-    controller_grants: &mut ControllerGrants,
+    controller_grants: &ControllerGrants,
     supported_requests: RemoteControlRequestSet,
     self_announcement: RemoteControlSelfAnnouncement,
     request: &InboundRequest<'_>,
@@ -1061,49 +1685,124 @@ where
     ControllerGrants: RemoteControlControllerGrantTable,
 {
     let binding = RemoteControlRequestBinding::new(request)?;
-    let Some(grant) = controller_grants.grant_for(&binding.controller).copied() else {
-        return Err(RemoteControlAdmitError::NoGrant);
-    };
-    let available_requests =
-        supported_requests.intersection(&grant.permitted_requests().with_current_operator_edits());
-    let operation = RemoteControlRequestEndpoint::resolve(
-        RemoteControlRequest::parse(request.data),
-        available_requests,
+    let operation = resolve_admitted_remote_control_operation(
+        controller_grants,
+        supported_requests,
         self_announcement,
+        binding.controller,
+        request.data,
     )?;
-    let operation =
-        apply_controller_grant_edits(controller_grants, binding.controller, grant, operation);
     Ok(AdmittedRemoteControlRequest { binding, operation })
 }
 
-fn apply_controller_grant_edits<ControllerGrants>(
-    controller_grants: &mut ControllerGrants,
+pub fn admit_verified_remote_control_request<ControllerGrants>(
+    controller_grants: &ControllerGrants,
+    supported_requests: RemoteControlRequestSet,
+    self_announcement: RemoteControlSelfAnnouncement,
+    request: &InboundRequest<'_>,
+) -> Result<VerifiedAdmittedRemoteControlRequest, RemoteControlAdmitError>
+where
+    ControllerGrants: RemoteControlControllerGrantTable,
+{
+    let Some(controller) = request.requester else {
+        return Err(RemoteControlAdmitError::UnidentifiedRequester);
+    };
+    if request.data.len() > RemoteControlRequest::MAX_ENCODED_LEN {
+        return Err(RemoteControlAdmitError::RequestTooLarge);
+    }
+    let operation = resolve_admitted_remote_control_operation(
+        controller_grants,
+        supported_requests,
+        self_announcement,
+        controller,
+        request.data,
+    )?;
+    Ok(VerifiedAdmittedRemoteControlRequest { operation })
+}
+
+fn resolve_admitted_remote_control_operation<ControllerGrants>(
+    controller_grants: &ControllerGrants,
+    supported_requests: RemoteControlRequestSet,
+    self_announcement: RemoteControlSelfAnnouncement,
+    controller: IdentityHash,
+    request: &[u8],
+) -> Result<AdmittedRemoteControlOperation, RemoteControlAdmitError>
+where
+    ControllerGrants: RemoteControlControllerGrantTable,
+{
+    let Some(grant) = controller_grants.grant_for(&controller).copied() else {
+        return Err(RemoteControlAdmitError::NoGrant);
+    };
+    let available_requests = supported_requests.intersection(&grant.effective_requests());
+    let operation = RemoteControlRequestEndpoint::resolve(
+        RemoteControlRequest::parse(request),
+        available_requests,
+        self_announcement,
+    )?;
+    let operation = prepare_controller_grant_operation(controller_grants, controller, operation);
+    Ok(operation.prepare_host(controller))
+}
+
+fn prepare_controller_grant_operation<ControllerGrants>(
+    controller_grants: &ControllerGrants,
     requester: IdentityHash,
-    requester_grant: crate::remote_control::RemoteControlControllerGrant,
     operation: AdmittedRemoteControlOperation,
 ) -> AdmittedRemoteControlOperation
 where
     ControllerGrants: RemoteControlControllerGrantTable,
 {
     match operation {
-        AdmittedRemoteControlOperation::InventoryControllers => {
+        AdmittedRemoteControlOperation::InventoryControllers { page } => {
             AdmittedRemoteControlOperation::InventoryControllersReady(
-                RemoteControlControllerInventory::from_grants(controller_grants),
+                RemoteControlControllerInventory::from_grants(controller_grants, page),
             )
         }
-        AdmittedRemoteControlOperation::AuthorizeController { controller } => {
-            AdmittedRemoteControlOperation::AuthorizeControllerReady(
-                authorize_remote_control_controller(
-                    controller_grants,
-                    controller,
-                    *requester_grant.permitted_requests(),
+        AdmittedRemoteControlOperation::AuthorizeController {
+            controller,
+            permitted_requests,
+        } => {
+            let target = controller.identity_hash();
+            if target == requester
+                || controller_grants.grant_for(&target).is_some_and(|grant| {
+                    grant.authority() == RemoteControlControllerAuthority::Administrator
+                })
+            {
+                return AdmittedRemoteControlOperation::AuthorizeControllerReady(
+                    RemoteControlAuthorizeControllerOutcome::Forbidden,
+                );
+            }
+            match RemoteControlControllerGrant::new(
+                controller,
+                RemoteControlControllerAuthority::Operator,
+                permitted_requests,
+            ) {
+                Ok(grant) => AdmittedRemoteControlOperation::AuthorizeControllerGrant { grant },
+                Err(_) => AdmittedRemoteControlOperation::AuthorizeControllerReady(
+                    RemoteControlAuthorizeControllerOutcome::Failed,
                 ),
-            )
+            }
         }
         AdmittedRemoteControlOperation::RevokeController { hash } => {
-            AdmittedRemoteControlOperation::RevokeControllerReady(
-                revoke_remote_control_controller_hash(controller_grants, hash, requester),
-            )
+            if hash == requester {
+                return AdmittedRemoteControlOperation::RevokeControllerReady(
+                    RemoteControlRevokeControllerOutcome::Forbidden,
+                );
+            }
+            match controller_grants.grant_for(&hash).copied() {
+                None => AdmittedRemoteControlOperation::RevokeControllerReady(
+                    RemoteControlRevokeControllerOutcome::NotFound,
+                ),
+                Some(grant)
+                    if grant.authority() == RemoteControlControllerAuthority::Administrator =>
+                {
+                    AdmittedRemoteControlOperation::RevokeControllerReady(
+                        RemoteControlRevokeControllerOutcome::Forbidden,
+                    )
+                }
+                Some(grant) => AdmittedRemoteControlOperation::RevokeControllerGrant {
+                    controller: *grant.controller(),
+                },
+            }
         }
         operation => operation,
     }
@@ -1119,15 +1818,25 @@ pub async fn dispatch_admitted_remote_control_request<'a, AppState>(
 where
     AppState: RemoteControlHostControls,
 {
-    if !admission.binding.matches(&request) {
-        return Err(Decline::Ignore);
-    }
+    let verified = verify_admitted_remote_control_request(admission, &request)?;
+    dispatch_verified_admitted_remote_control_request(state, node, request, sink, verified).await
+}
+
+pub fn dispatch_verified_admitted_remote_control_request<'a, AppState>(
+    state: &'a AppState,
+    node: &'a impl PrnsNodeApi,
+    request: InboundRequest<'a>,
+    sink: &'a mut dyn ResponseSink,
+    verified: VerifiedAdmittedRemoteControlRequest,
+) -> impl core::future::Future<Output = Result<(), Decline>> + 'a
+where
+    AppState: RemoteControlHostControls,
+{
     RemoteControlRequestEndpoint::handle_admitted(
         RequestContext::from_inbound(state, request, sink),
         node,
-        admission.operation,
+        verified.operation,
     )
-    .await
 }
 
 pub async fn dispatch_remote_control_request<'a, AppState, ControllerGrants>(
@@ -1154,6 +1863,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use super::super::RemoteControlControllerGrantControl;
     use super::*;
     use crate::crypto::{Ed25519PublicKey, X25519PublicKey};
     use crate::identity::{
@@ -1169,19 +1879,72 @@ mod tests {
     use crate::runtime::request_endpoints::InboundRequest;
     use crate::units::{InstantMillis, RttMillis};
     use crate::wire::DestinationHash;
-    use core::cell::RefCell;
+    use std::sync::Mutex;
 
     struct AnnounceNode {
         result: Result<(), AnnounceNowError>,
-        received: RefCell<Option<AnnounceNow>>,
+        received: Mutex<Option<AnnounceNow>>,
+        controller_grant_result: Result<
+            SetRemoteControlControllerGrantOutcome,
+            SetRemoteControlControllerGrantControlError,
+        >,
+        revoked_controller_result:
+            Result<RevokeRemoteControlControllerOutcome, RevokeRemoteControlControllerControlError>,
+        received_controller_grant: Mutex<Option<RemoteControlControllerGrant>>,
+        received_revocation: Mutex<Option<RemoteControlControllerIdentity>>,
     }
 
     impl AnnounceNode {
         fn new(result: Result<(), AnnounceNowError>) -> Self {
             Self {
                 result,
-                received: RefCell::new(None),
+                received: Mutex::new(None),
+                controller_grant_result: Err(
+                    SetRemoteControlControllerGrantControlError::NodeStopped,
+                ),
+                revoked_controller_result: Err(
+                    RevokeRemoteControlControllerControlError::NodeStopped,
+                ),
+                received_controller_grant: Mutex::new(None),
+                received_revocation: Mutex::new(None),
             }
+        }
+
+        fn authorization(revoked: RemoteControlControllerGrant) -> Self {
+            Self {
+                result: Err(AnnounceNowError::NodeStopped),
+                received: Mutex::new(None),
+                controller_grant_result: Ok(SetRemoteControlControllerGrantOutcome::Updated {
+                    previous: revoked,
+                }),
+                revoked_controller_result: Ok(RevokeRemoteControlControllerOutcome::Revoked {
+                    grant: revoked,
+                }),
+                received_controller_grant: Mutex::new(None),
+                received_revocation: Mutex::new(None),
+            }
+        }
+    }
+
+    impl RemoteControlControllerGrantControl for AnnounceNode {
+        async fn set_remote_control_controller_grant(
+            &self,
+            grant: RemoteControlControllerGrant,
+        ) -> Result<
+            SetRemoteControlControllerGrantOutcome,
+            SetRemoteControlControllerGrantControlError,
+        > {
+            *self.received_controller_grant.lock().unwrap() = Some(grant);
+            self.controller_grant_result
+        }
+
+        async fn revoke_remote_control_controller(
+            &self,
+            controller: RemoteControlControllerIdentity,
+        ) -> Result<RevokeRemoteControlControllerOutcome, RevokeRemoteControlControllerControlError>
+        {
+            *self.received_revocation.lock().unwrap() = Some(controller);
+            self.revoked_controller_result
         }
     }
 
@@ -1191,7 +1954,7 @@ mod tests {
         }
 
         async fn announce_now(&self, announce: AnnounceNow) -> Result<(), AnnounceNowError> {
-            self.received.replace(Some(announce));
+            *self.received.lock().unwrap() = Some(announce);
             self.result
         }
 
@@ -1271,7 +2034,7 @@ mod tests {
     fn controller_grants(
         allowed: RemoteControlControllerIdentity,
     ) -> FixedRemoteControlControllerGrantTable<1> {
-        controller_grants_permitting(allowed, RemoteControlRequestSet::all())
+        controller_grants_permitting(allowed, RemoteControlRequestSet::all_operator())
     }
 
     fn controller_grants_permitting(
@@ -1281,7 +2044,12 @@ mod tests {
         let mut controller_grants = FixedRemoteControlControllerGrantTable::default();
         controller_grants
             .set_controller_grant(
-                RemoteControlControllerGrant::new(allowed, permitted_requests).unwrap(),
+                RemoteControlControllerGrant::new(
+                    allowed,
+                    RemoteControlControllerAuthority::Operator,
+                    permitted_requests,
+                )
+                .unwrap(),
             )
             .unwrap();
         controller_grants
@@ -1334,7 +2102,7 @@ mod tests {
             data,
         );
         dispatch_remote_control_request(
-            &(),
+            &NoRemoteControlHostControls,
             controller_grants,
             supported_requests,
             self_announcement,
@@ -1498,7 +2266,7 @@ mod tests {
                 Ok(()),
             );
             assert_eq!(
-                node.received.take(),
+                node.received.lock().unwrap().take(),
                 Some(AnnounceNow {
                     destination: DestinationHash::new([0x87; 16]),
                     target: AnnounceTarget::AllInterfaces,
@@ -1559,7 +2327,7 @@ mod tests {
                 Err(Decline::Ignore),
             );
             assert!(response.is_empty());
-            assert!(node.received.borrow().is_none());
+            assert!(node.received.lock().unwrap().is_none());
         });
     }
 
@@ -1586,7 +2354,7 @@ mod tests {
                 Err(Decline::Ignore),
             );
             assert!(response.is_empty());
-            assert!(node.received.borrow().is_none());
+            assert!(node.received.lock().unwrap().is_none());
 
             assert_eq!(
                 dispatch_with_node(
@@ -1599,10 +2367,7 @@ mod tests {
                 .await,
                 Ok(()),
             );
-            let description = RemoteControlDescription::try_from(
-                permitted_requests.with_current_operator_edits(),
-            )
-            .unwrap();
+            let description = RemoteControlDescription::try_from(permitted_requests).unwrap();
             assert_eq!(
                 RemoteControlResponse::parse(response.as_slice()),
                 Ok(RemoteControlResponse::Describe(description)),
@@ -1736,7 +2501,7 @@ mod tests {
     #[test]
     fn the_endpoint_requires_an_identified_requester_before_access_is_checked() {
         assert_eq!(
-            <RemoteControlRequestEndpoint as RequestEndpoint<()>>::POLICY,
+            <RemoteControlRequestEndpoint as RequestEndpoint<NoRemoteControlHostControls>>::POLICY,
             RequestEndpointPolicy::RequireIdentified,
         );
     }
@@ -1761,10 +2526,7 @@ mod tests {
                 .await,
                 Ok(()),
             );
-            let description = RemoteControlDescription::try_from(
-                available_requests.with_current_operator_edits(),
-            )
-            .unwrap();
+            let description = RemoteControlDescription::try_from(available_requests).unwrap();
             assert_eq!(
                 RemoteControlResponse::parse(response.as_slice()),
                 Ok(RemoteControlResponse::Describe(description)),
@@ -1793,7 +2555,7 @@ mod tests {
                     Err(Decline::Ignore),
                 );
                 assert!(response.is_empty());
-                assert!(node.received.borrow().is_none());
+                assert!(node.received.lock().unwrap().is_none());
             }
         });
     }
@@ -1801,7 +2563,7 @@ mod tests {
     #[test]
     fn admit_names_the_silent_ignore_reasons() {
         let allowed = identity(0x43);
-        let mut grants = controller_grants_permitting(
+        let grants = controller_grants_permitting(
             allowed,
             RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
         );
@@ -1819,7 +2581,7 @@ mod tests {
 
         assert_eq!(
             admit_remote_control_request(
-                &mut grants,
+                &grants,
                 RemoteControlRequestSet::all(),
                 RemoteControlSelfAnnouncement::Unavailable,
                 &inbound(None, &announce).inbound(),
@@ -1829,7 +2591,7 @@ mod tests {
         );
         assert_eq!(
             admit_remote_control_request(
-                &mut grants,
+                &grants,
                 RemoteControlRequestSet::all(),
                 RemoteControlSelfAnnouncement::Unavailable,
                 &inbound(Some(identity(0x65).identity_hash()), &announce).inbound(),
@@ -1839,7 +2601,7 @@ mod tests {
         );
         assert_eq!(
             admit_remote_control_request(
-                &mut grants,
+                &grants,
                 RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
                 RemoteControlSelfAnnouncement::Unavailable,
                 &inbound(Some(allowed.identity_hash()), &announce).inbound(),
@@ -1847,10 +2609,10 @@ mod tests {
             .err(),
             Some(RemoteControlAdmitError::KindNotPermitted),
         );
-        let mut all_grants = controller_grants(allowed);
+        let all_grants = controller_grants(allowed);
         assert_eq!(
             admit_remote_control_request(
-                &mut all_grants,
+                &all_grants,
                 RemoteControlRequestSet::all(),
                 RemoteControlSelfAnnouncement::Unavailable,
                 &inbound(Some(allowed.identity_hash()), &announce).inbound(),
@@ -1859,7 +2621,7 @@ mod tests {
             Some(RemoteControlAdmitError::AnnounceUnavailable),
         );
         assert!(admit_remote_control_request(
-            &mut grants,
+            &grants,
             RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
             RemoteControlSelfAnnouncement::Unavailable,
             &inbound(Some(allowed.identity_hash()), &describe).inbound(),
@@ -1918,17 +2680,26 @@ mod tests {
     }
 
     #[test]
-    fn controller_whitelist_inventory_authorize_and_revoke_mutate_the_grant_table() {
+    fn controller_management_is_prepared_during_admission_and_mutated_only_by_persistent_control() {
         futures_executor::block_on(async {
             let allowed = identity(0x31);
             let extra = identity(0x42);
             let mut grants = FixedRemoteControlControllerGrantTable::<2>::default();
-            grants
-                .set_controller_grant(
-                    RemoteControlControllerGrant::new(allowed, RemoteControlRequestSet::all())
-                        .unwrap(),
-                )
-                .unwrap();
+            let administrator = RemoteControlControllerGrant::new(
+                allowed,
+                RemoteControlControllerAuthority::Administrator,
+                RemoteControlRequestSet::all_operator(),
+            )
+            .unwrap();
+            let prior_operator = RemoteControlControllerGrant::new(
+                extra,
+                RemoteControlControllerAuthority::Operator,
+                RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
+            )
+            .unwrap();
+            grants.set_controller_grant(administrator).unwrap();
+            grants.set_controller_grant(prior_operator).unwrap();
+            let node = AnnounceNode::authorization(prior_operator);
 
             let mut request = [0u8; RemoteControlRequest::MAX_ENCODED_LEN];
             let encoded_len = RemoteControlInventoryControllers::write_request(&mut request)
@@ -1936,8 +2707,9 @@ mod tests {
             let mut response =
                 heapless::Vec::<u8, { RemoteControlResponse::MAX_ENCODED_LEN }>::new();
             assert_eq!(
-                dispatch(
+                dispatch_with_node(
                     &mut grants,
+                    &node,
                     Some(allowed.identity_hash()),
                     &request[..encoded_len],
                     &mut response,
@@ -1950,14 +2722,23 @@ mod tests {
             else {
                 panic!("expected controller inventory");
             };
-            assert_eq!(inventory.hashes(), &[allowed.identity_hash()]);
+            assert_eq!(inventory.hashes().len(), 2);
+            assert!(inventory.hashes().contains(&allowed.identity_hash()));
+            assert!(inventory.hashes().contains(&extra.identity_hash()));
 
-            let encoded_len = RemoteControlAuthorizeController::write_request(extra, &mut request)
-                .expect("authorize request");
+            let updated_requests =
+                RemoteControlRequestSet::only(RemoteControlRequestKind::AnnounceSelf);
+            let encoded_len = RemoteControlAuthorizeController::write_request(
+                extra,
+                updated_requests,
+                &mut request,
+            )
+            .expect("authorize request");
             response.clear();
             assert_eq!(
-                dispatch(
+                dispatch_with_node(
                     &mut grants,
+                    &node,
                     Some(allowed.identity_hash()),
                     &request[..encoded_len],
                     &mut response,
@@ -1971,15 +2752,30 @@ mod tests {
                     RemoteControlAuthorizeControllerOutcome::Applied,
                 )),
             );
-            assert!(grants.contains_controller(&extra.identity_hash()));
+            assert_eq!(
+                grants.grant_for(&extra.identity_hash()),
+                Some(&prior_operator)
+            );
+            assert_eq!(
+                *node.received_controller_grant.lock().unwrap(),
+                Some(
+                    RemoteControlControllerGrant::new(
+                        extra,
+                        RemoteControlControllerAuthority::Operator,
+                        updated_requests,
+                    )
+                    .unwrap(),
+                ),
+            );
 
             let encoded_len =
                 RemoteControlRevokeController::write_request(allowed.identity_hash(), &mut request)
                     .expect("self-revoke request");
             response.clear();
             assert_eq!(
-                dispatch(
+                dispatch_with_node(
                     &mut grants,
+                    &node,
                     Some(allowed.identity_hash()),
                     &request[..encoded_len],
                     &mut response,
@@ -2000,8 +2796,9 @@ mod tests {
                     .expect("revoke request");
             response.clear();
             assert_eq!(
-                dispatch(
+                dispatch_with_node(
                     &mut grants,
+                    &node,
                     Some(allowed.identity_hash()),
                     &request[..encoded_len],
                     &mut response,
@@ -2015,7 +2812,8 @@ mod tests {
                     RemoteControlRevokeControllerOutcome::Applied,
                 )),
             );
-            assert!(!grants.contains_controller(&extra.identity_hash()));
+            assert!(grants.contains_controller(&extra.identity_hash()));
+            assert_eq!(*node.received_revocation.lock().unwrap(), Some(extra));
         });
     }
 }

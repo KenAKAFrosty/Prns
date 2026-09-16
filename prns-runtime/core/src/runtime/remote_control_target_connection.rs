@@ -151,6 +151,7 @@ mod tests {
         let controller = RemoteControlControllerIdentity::new(public_keys(0x21));
         let access = RemoteControlTargetAccess::new(
             RemoteControlTargetIdentity::new(public_keys(0x31)),
+            crate::remote_control::RemoteControlControllerAuthority::Operator,
             RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
         )
         .unwrap();
@@ -165,13 +166,14 @@ mod tests {
             (connection.target(), connection.link_id()),
             (target, link_id)
         );
-        let mut expected = RemoteControlRequestSet::only(RemoteControlRequestKind::Describe);
-        assert!(expected.insert(RemoteControlRequestKind::DescribeBuild));
+        let expected = RemoteControlRequestSet::only(RemoteControlRequestKind::Describe);
         assert_eq!(connection.permitted_requests(), &expected);
         assert_eq!(connection.admit(RemoteControlRequestKind::Describe), Ok(()));
         assert_eq!(
             connection.admit(RemoteControlRequestKind::DescribeBuild),
-            Ok(()),
+            Err(RemoteControlTargetOperationError::NotPermitted(
+                RemoteControlRequestKind::DescribeBuild,
+            )),
         );
         assert_eq!(
             connection.admit(RemoteControlRequestKind::AnnounceSelf),

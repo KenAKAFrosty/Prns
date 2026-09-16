@@ -595,44 +595,48 @@ async fn run_engine(
         transport_identity: Some(transport_secret),
         remote_control,
         pre_configured_destinations: destinations.into_preconfigured_destinations(),
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: personal_hopspot_core::node_pages::NodePageRoutes,
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
-        on_event: move |event: PrnsEvent<'_>, _state: &()| match event {
-            PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
-                destination,
-                hops,
-                source_interface,
-                app_data: _,
-            }) => {
-                diagnostic(
-                    "route",
-                    format_args!(
-                        "state=accepted destination={} hops={} interface={}",
-                        full_hex(destination.as_bytes()),
+        on_event:
+            move |event: PrnsEvent<'_>,
+                  _state: &personal_rns::runtime::NoRemoteControlHostControls| {
+                match event {
+                    PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
+                        destination,
                         hops,
-                        abbreviated_hex(source_interface.as_bytes())
-                    ),
-                );
-                let _ = persistence_change_tx.send(());
-            }
-            PrnsEvent::Diagnostic(Diagnostic::RouteRemoved { destination, cause }) => {
-                diagnostic(
-                    "route",
-                    format_args!(
-                        "state=removed destination={} cause={cause:?}",
-                        full_hex(destination.as_bytes())
-                    ),
-                );
-                let _ = persistence_change_tx.send(());
-            }
-            PrnsEvent::Diagnostic(Diagnostic::SelfRatchetRotated { destination }) => {
-                let _ = rotated_tx.send(destination);
-            }
-            _ => {}
-        },
+                        source_interface,
+                        app_data: _,
+                    }) => {
+                        diagnostic(
+                            "route",
+                            format_args!(
+                                "state=accepted destination={} hops={} interface={}",
+                                full_hex(destination.as_bytes()),
+                                hops,
+                                abbreviated_hex(source_interface.as_bytes())
+                            ),
+                        );
+                        let _ = persistence_change_tx.send(());
+                    }
+                    PrnsEvent::Diagnostic(Diagnostic::RouteRemoved { destination, cause }) => {
+                        diagnostic(
+                            "route",
+                            format_args!(
+                                "state=removed destination={} cause={cause:?}",
+                                full_hex(destination.as_bytes())
+                            ),
+                        );
+                        let _ = persistence_change_tx.send(());
+                    }
+                    PrnsEvent::Diagnostic(Diagnostic::SelfRatchetRotated { destination }) => {
+                        let _ = rotated_tx.send(destination);
+                    }
+                    _ => {}
+                }
+            },
     })
     .with_timeline_origin(timeline_origin);
     let restored = prepared_persistence.restore(&mut node);

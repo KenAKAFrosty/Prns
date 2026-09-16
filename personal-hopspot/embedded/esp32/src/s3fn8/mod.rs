@@ -89,9 +89,9 @@ type InterfaceStore = EmbassyInterfaceStore<
     PACKET_PHY_INDEX_BUCKETS,
 >;
 type Node = PrnsNode<
-    (),
+    personal_rns::runtime::NoRemoteControlHostControls,
     personal_hopspot_core::node_pages::NodePageRoutes,
-    for<'a> fn(PrnsEvent<'a>, &()),
+    for<'a> fn(PrnsEvent<'a>, &personal_rns::runtime::NoRemoteControlHostControls),
     InternalStorage,
     EmbassyHost<Mtx, S3Fn8EntropySource>,
     Mtx,
@@ -188,6 +188,10 @@ async fn ble_task(
     crate::bluetooth_auto::run(connector, mac, identity, fleet, &BLE_SHARED, spawner).await;
 }
 
-fn ignore_events(_event: PrnsEvent<'_>, _state: &()) {}
+fn ignore_events(
+    _event: PrnsEvent<'_>,
+    _state: &personal_rns::runtime::NoRemoteControlHostControls,
+) {
+}
 
 pub use firmware::run;

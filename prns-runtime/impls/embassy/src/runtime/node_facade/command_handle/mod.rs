@@ -172,7 +172,7 @@ enum RequestResponse<const RESPONSE_BYTES: usize> {
 
 pub type RequestResponseData<const RESPONSE_BYTES: usize> = heapless::Vec<u8, RESPONSE_BYTES>;
 
-pub(super) enum JournalRoute {
+pub(in crate::runtime) enum JournalRoute {
     Application,
     Awaiter,
 }
@@ -853,7 +853,7 @@ impl<
         }
     }
 
-    pub(super) fn route_journaled<'event, A>(
+    pub(in crate::runtime) fn route_journaled<'event, A>(
         &self,
         journaled: Journaled<'event>,
         on_application: A,
@@ -1364,7 +1364,7 @@ impl<
 }
 
 impl<
-        M: RawMutex,
+        M: RawMutex + Sync,
         const COMMANDS: usize,
         const COMPLETIONS: usize,
         const REQUEST_COMPLETIONS: usize,

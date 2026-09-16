@@ -15,7 +15,16 @@ struct StatusBoard {
     hits: Cell<u32>,
 }
 
-impl RemoteControlHostControls for StatusBoard {}
+impl RemoteControlHostControls for StatusBoard {
+    async fn execute_remote_control(
+        &self,
+        command: RemoteControlHostCommand,
+    ) -> Result<RemoteControlHostResponse, RemoteControlHostCommandError> {
+        NoRemoteControlHostControls
+            .execute_remote_control(command)
+            .await
+    }
+}
 
 struct Status;
 impl RequestEndpoint<StatusBoard> for Status {
@@ -37,7 +46,16 @@ struct AnnounceRelay {
     heard: tokio::sync::mpsc::UnboundedSender<DestinationHash>,
 }
 
-impl RemoteControlHostControls for AnnounceRelay {}
+impl RemoteControlHostControls for AnnounceRelay {
+    async fn execute_remote_control(
+        &self,
+        command: RemoteControlHostCommand,
+    ) -> Result<RemoteControlHostResponse, RemoteControlHostCommandError> {
+        NoRemoteControlHostControls
+            .execute_remote_control(command)
+            .await
+    }
+}
 
 fn forward_announces(event: PrnsEvent<'_>, relay: &AnnounceRelay) {
     if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event {

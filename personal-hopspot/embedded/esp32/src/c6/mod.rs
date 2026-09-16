@@ -107,9 +107,9 @@ type InterfaceStore = EmbassyInterfaceStore<
 #[cfg(feature = "bluetooth-auto")]
 type C6BleFleet = Fleet<Mtx, BLE_HW_MTU, NOTIFY_CAP, LIFECYCLE_CAP>;
 type Node = PrnsNode<
-    (),
+    personal_rns::runtime::NoRemoteControlHostControls,
     personal_hopspot_core::node_pages::NodePageRoutes,
-    for<'a> fn(PrnsEvent<'a>, &()),
+    for<'a> fn(PrnsEvent<'a>, &personal_rns::runtime::NoRemoteControlHostControls),
     EngineStorageType,
     EmbassyHost<Mtx, C6EntropySource>,
     Mtx,
@@ -168,7 +168,11 @@ macro_rules! mk_static {
     }};
 }
 
-fn ignore_events(_event: PrnsEvent<'_>, _state: &()) {}
+fn ignore_events(
+    _event: PrnsEvent<'_>,
+    _state: &personal_rns::runtime::NoRemoteControlHostControls,
+) {
+}
 
 #[embassy_executor::task]
 async fn usb_device_task(

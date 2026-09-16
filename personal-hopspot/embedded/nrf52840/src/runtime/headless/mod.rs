@@ -58,6 +58,8 @@ use super::entropy::{runtime_entropy, seed_from_hal};
     feature = "board-mesh-tower-v2"
 ))]
 mod bluetooth;
+#[cfg(any(feature = "board-t096", feature = "board-t114"))]
+mod remote_control;
 #[cfg(feature = "board-mesh-tower-v2")]
 #[path = "mesh_tower_v2.rs"]
 mod selected;
@@ -109,10 +111,17 @@ type InterfaceStore = EmbassyInterfaceStore<
     PACKET_PHY_RETENTION_CAPACITY,
     PACKET_PHY_INDEX_BUCKETS,
 >;
+#[cfg(any(feature = "board-t096", feature = "board-t114"))]
+const REMOTE_CONTROL_COMMAND_DEPTH: usize = 1;
+#[cfg(any(feature = "board-t096", feature = "board-t114"))]
+type AppState = hopspot::HopspotCommandHandle<REMOTE_CONTROL_COMMAND_DEPTH>;
+#[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
+type AppState = personal_rns::runtime::NoRemoteControlHostControls;
+
 type Node = PrnsNode<
-    (),
+    AppState,
     hopspot::node_pages::NodePageRoutes,
-    for<'a> fn(PrnsEvent<'a>, &()),
+    for<'a> fn(PrnsEvent<'a>, &AppState),
     Storage,
     EmbassyHost<Mtx, super::entropy::NrfEntropySource>,
     Mtx,
@@ -130,6 +139,9 @@ static COMMANDS: Channel<Mtx, IssuedCommand, COMMANDS_CAP> = Channel::new();
 static LIFECYCLE: Channel<Mtx, InterfaceLifecycle, LIFECYCLE_CAP> = Channel::new();
 static COMPLETION: CompletionPool<Mtx, COMPLETIONS_CAP> = CompletionPool::new();
 static INTERFACE_STORE: InterfaceStore = EmbassyInterfaceStore::new();
+#[cfg(any(feature = "board-t096", feature = "board-t114"))]
+static REMOTE_CONTROL_COMMANDS: hopspot::HopspotCommandMailbox<REMOTE_CONTROL_COMMAND_DEPTH> =
+    hopspot::HopspotCommandMailbox::new();
 static LORA_MANIFOLD_LANE: StaticManifoldLane<
     Mtx,
     LORA_MAX_PAYLOAD,
@@ -315,6 +327,14 @@ pub async fn run(spawner: Spawner) -> ! {
     .expect("the hopspot destination names are valid")
     .node_page;
     let self_announcement = RemoteControlSelfAnnouncement::Destination(node_page_destination);
+    #[cfg(any(feature = "board-t096", feature = "board-t114"))]
+    let remote_control = RemoteControlService::with_capabilities(
+        remote_control_identity_secrets,
+        RemoteControlInitialControllerGrants::Nobody,
+        self_announcement,
+        remote_control::capabilities(),
+    );
+    #[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
     let remote_control = RemoteControlService::new(
         remote_control_identity_secrets,
         RemoteControlInitialControllerGrants::Nobody,
@@ -400,6 +420,10 @@ pub async fn run(spawner: Spawner) -> ! {
     let entropy = runtime_entropy();
     let host = EmbassyHost::new(entropy);
     static NODE: StaticCell<Node> = StaticCell::new();
+    #[cfg(any(feature = "board-t096", feature = "board-t114"))]
+    let app_state = REMOTE_CONTROL_COMMANDS.handle();
+    #[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
+    let app_state = personal_rns::runtime::NoRemoteControlHostControls;
     let recipe = PrnsNodeRecipe {
         transport_identity: Some(transport_secret),
         remote_control,
@@ -409,12 +433,12 @@ pub async fn run(spawner: Spawner) -> ! {
             NODE_ANNOUNCE_APP_DATA,
         )
         .into_preconfigured_destinations(),
-        app_state: (),
+        app_state,
         storage: Storage,
         request_endpoints: hopspot::node_pages::NodePageRoutes,
         interfaces: personal_rns::runtime::ManuallyAttached,
         persistence,
-        on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
+        on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &AppState),
     };
     let (node, persistence) =
         PrnsNode::init_static_with_persistence(&NODE, recipe, manifold_wiring, host);
@@ -510,4 +534,4 @@ pub async fn run(spawner: Spawner) -> ! {
     core::future::pending().await
 }
 
-fn ignore_events(_event: PrnsEvent<'_>, _state: &()) {}
+fn ignore_events(_event: PrnsEvent<'_>, _state: &AppState) {}

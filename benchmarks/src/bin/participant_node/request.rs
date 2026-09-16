@@ -122,20 +122,22 @@ pub(super) async fn run_request_endpoint(
         }
     } else if role == "initiator" {
         let (event_tx, event_rx) = event_channel(&manifest.profile);
-        let on_event = move |event: PrnsEvent<'_>, _state: &()| {
-            let mapped = match event {
-                PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) => {
-                    Some(Event::Heard(destination))
+        let on_event =
+            move |event: PrnsEvent<'_>,
+                  _state: &personal_rns::runtime::NoRemoteControlHostControls| {
+                let mapped = match event {
+                    PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) => {
+                        Some(Event::Heard(destination))
+                    }
+                    PrnsEvent::Diagnostic(Diagnostic::CommandSettled { id, settlement }) => {
+                        Some(Event::Settled(id, settlement))
+                    }
+                    _ => None,
+                };
+                if let Some(event) = mapped {
+                    send_event(&event_tx, event);
                 }
-                PrnsEvent::Diagnostic(Diagnostic::CommandSettled { id, settlement }) => {
-                    Some(Event::Settled(id, settlement))
-                }
-                _ => None,
             };
-            if let Some(event) = mapped {
-                send_event(&event_tx, event);
-            }
-        };
         let node = build_initiator_node(single, on_event, manifest, addr).await;
         let commands = node.handle();
         println!("READY role=initiator");
@@ -407,4 +409,16 @@ pub(super) async fn initiate_request_runtime(
     );
 }
 
-impl RemoteControlHostControls for RequestServer {}
+impl RemoteControlHostControls for RequestServer {
+    async fn execute_remote_control(
+        &self,
+        command: personal_rns::runtime::RemoteControlHostCommand,
+    ) -> Result<
+        personal_rns::runtime::RemoteControlHostResponse,
+        personal_rns::runtime::RemoteControlHostCommandError,
+    > {
+        personal_rns::runtime::NoRemoteControlHostControls
+            .execute_remote_control(command)
+            .await
+    }
+}

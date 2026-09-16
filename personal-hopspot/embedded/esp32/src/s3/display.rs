@@ -186,6 +186,8 @@ pub(super) fn build_snapshots(
             links: counts.links,
             transported_links: counts.transported_links,
             membership: *membership,
+            radio: status.radio(),
+            details: status.details(),
         });
     }
     snapshots

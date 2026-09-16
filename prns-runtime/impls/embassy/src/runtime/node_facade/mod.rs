@@ -50,6 +50,7 @@ pub(crate) fn test_remote_control_grant(
         .identities();
     prns_core::remote_control::RemoteControlControllerGrant::new(
         *identities.controller(),
+        prns_core::remote_control::RemoteControlControllerAuthority::Operator,
         prns_core::remote_control::RemoteControlRequestSet::only(request),
     )
     .unwrap()
@@ -102,7 +103,8 @@ pub(crate) fn test_remote_control_pairing_attempt(
         ))
         .unwrap(),
         RemoteControlPairingAttemptTimeout::try_from(DurationMillis(30_000)).unwrap(),
-    );
+    )
+    .unwrap();
     let (_, transcript) = prepared.into_parts();
     (&transcript).into()
 }

@@ -27,6 +27,14 @@ pub(super) async fn network_ready_task(stack: Stack<'static>) -> ! {
             .map(|(_, previous_link, previous_ipv4)| previous_link && previous_ipv4)
             .unwrap_or(false);
         let ready = link_up && has_ipv4;
+        WIFI_NETWORK_READY_REVISION.store(
+            if ready {
+                WIFI_ACTIVE_CREDENTIAL_REVISION.load(Ordering::Acquire)
+            } else {
+                0
+            },
+            Ordering::Release,
+        );
         let internal_free = esp_alloc::HEAP.free_caps(esp_alloc::MemoryCapability::Internal.into());
         let external_free = esp_alloc::HEAP.free_caps(esp_alloc::MemoryCapability::External.into());
         internal_free_low_water = internal_free_low_water.min(internal_free);
@@ -140,6 +148,31 @@ pub(super) struct StationCredentials {
     pub(super) password: String,
 }
 
+impl From<screen::HopspotWifiCredentialUpdate> for StationCredentials {
+    fn from(update: screen::HopspotWifiCredentialUpdate) -> Self {
+        WIFI_ACTIVE_CREDENTIAL_REVISION.store(
+            update.revision.map_or(0, |revision| revision.get()),
+            Ordering::Release,
+        );
+        Self {
+            ssid: update.station.ssid().to_string(),
+            password: update.station.password().to_string(),
+        }
+    }
+}
+
+fn apply_credential_command(
+    command: screen::HopspotWifiCredentialCommand,
+) -> Option<StationCredentials> {
+    match command {
+        screen::HopspotWifiCredentialCommand::Replace(update) => Some(update.into()),
+        screen::HopspotWifiCredentialCommand::Clear => {
+            WIFI_ACTIVE_CREDENTIAL_REVISION.store(0, Ordering::Release);
+            None
+        }
+    }
+}
+
 fn observed_authentication(authentication: Option<AuthenticationMethod>) -> ObservedAuthentication {
     match authentication {
         None => ObservedAuthentication::Unknown,
@@ -216,15 +249,30 @@ async fn stop_station_scan() {
 pub(super) async fn wifi_connect_task(
     mut controller: WifiController<'static>,
     status: AutoWifiStatus<MEMBERS>,
-    credentials: StationCredentials,
+    initial_credentials: Option<StationCredentials>,
+    credential_updates: &'static screen::HopspotWifiCredentialMailbox,
     ap_enabled: bool,
 ) -> ! {
-    let base = StationConfig::default()
-        .with_ssid(credentials.ssid.clone())
-        .with_password(credentials.password.clone());
+    let mut credentials = initial_credentials;
     let mut recovery = StationRecovery::new(DiscoveryScope::FullBand);
 
     loop {
+        if let Some(update) = credential_updates.try_receive() {
+            WIFI_NETWORK_READY_REVISION.store(0, Ordering::Release);
+            if controller.is_connected() {
+                let _ = controller.disconnect_async().await;
+            }
+            credentials = apply_credential_command(update);
+            recovery = StationRecovery::new(DiscoveryScope::FullBand);
+        }
+        let Some(credentials) = credentials.as_ref() else {
+            credentials = apply_credential_command(credential_updates.receive().await);
+            recovery = StationRecovery::new(DiscoveryScope::FullBand);
+            continue;
+        };
+        let base = StationConfig::default()
+            .with_ssid(credentials.ssid.clone())
+            .with_password(credentials.password.clone());
         let mut resumed = false;
         while !status.is_station_uplink_enabled() {
             WIFI_STATION_DATA_PATH_DEGRADED.store(false, Ordering::Release);

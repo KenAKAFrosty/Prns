@@ -2,6 +2,7 @@ mod board;
 pub mod boards;
 mod entropy;
 mod gnss;
+mod remote_control;
 
 use alloc::string::{String, ToString};
 use core::fmt::Write as _;
@@ -21,7 +22,7 @@ use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
 use esp_hal::Async;
 
 use embassy_executor::Spawner;
-use embassy_futures::select::{select3, Either3};
+use embassy_futures::select::{select3, select4, Either3, Either4};
 use embassy_net::tcp::TcpSocket;
 use embassy_net::udp::{PacketMetadata, UdpSocket};
 use embassy_net::{
@@ -212,13 +213,13 @@ const RENDER_TICKS_PER_BATTERY_SAMPLE: u8 = (BATTERY_SAMPLE_INTERVAL_MS / RENDER
 const RENDER_TICKS_PER_BATTERY_DISPLAY: u8 =
     (BATTERY_DISPLAY_INTERVAL_MS / RENDER_INTERVAL_MS) as u8;
 const NOTICE_MS: u64 = 900;
-const DISPLAY_SLEEP_DELAY_MS: u64 = 2_500;
-
 const BUTTON_LONG_PRESS: Duration = Duration::from_millis(500);
 const BUTTON_DEBOUNCE: Duration = Duration::from_millis(25);
 
 type Mtx = CriticalSectionRawMutex;
 type Handle = PrnsNodeHandle<'static, Mtx, COMMANDS_CAP, COMPLETIONS_CAP>;
+type RemoteControlHandle =
+    screen::HopspotCommandHandle<{ remote_control::REMOTE_CONTROL_COMMAND_DEPTH }>;
 type UsbSeam =
     EmbassyInterfaceSeam<'static, Mtx, S3EntropySource, NOTIFY_CAP, EMBEDDED_MAX_WIRE_FRAME_LEN>;
 #[cfg(feature = "lora")]
@@ -240,9 +241,9 @@ type InterfaceStore = EmbassyInterfaceStore<
 >;
 /// The fully-spelled node type, so it can ride to core 1 as a concrete `#[task]` argument.
 type S3Node = PrnsNode<
-    (),
+    RemoteControlHandle,
     screen::node_pages::NodePageRoutes,
-    for<'a> fn(PrnsEvent<'a>, &()),
+    for<'a> fn(PrnsEvent<'a>, &RemoteControlHandle),
     EngineStorageType,
     EmbassyHost<Mtx, S3EntropySource>,
     Mtx,
@@ -267,7 +268,7 @@ mod connectivity;
 mod display;
 
 use captive_portal::ap_ssid;
-use configuration::{hopspot_wifi_config, HopspotWifiConfig};
+use configuration::{hopspot_wifi_config, HopspotWifiConfig, HopspotWifiConfigSource};
 use configuration::{HopspotTcpClientConfig, HopspotTcpClientHost};
 use connectivity::{build_tcp, build_wifi, espnow_channel_policy, EspNowAdapter, ESPNOW_PHY};
 use display::build_interface_menu_details;
@@ -319,9 +320,16 @@ const PACKET_PHY_INDEX_BUCKETS: usize =
 static WIFI_STATION_JOINED: AtomicBool = AtomicBool::new(false);
 static WIFI_STATION_DATA_PATH_DEGRADED: AtomicBool = AtomicBool::new(false);
 static WIFI_DRIVER_RESTART_REQUESTED: AtomicBool = AtomicBool::new(false);
+static WIFI_ACTIVE_CREDENTIAL_REVISION: AtomicU32 = AtomicU32::new(0);
+static WIFI_NETWORK_READY_REVISION: AtomicU32 = AtomicU32::new(0);
+static WIFI_CREDENTIALS: screen::HopspotWifiCredentialMailbox =
+    screen::HopspotWifiCredentialMailbox::new();
+static REMOTE_CONTROL_COMMANDS: screen::HopspotCommandMailbox<
+    { remote_control::REMOTE_CONTROL_COMMAND_DEPTH },
+> = screen::HopspotCommandMailbox::new();
 static CORE_ONE_HEARTBEAT: AtomicU64 = AtomicU64::new(0);
 
-fn ignore_events(_event: PrnsEvent<'_>, _state: &()) {}
+fn ignore_events(_event: PrnsEvent<'_>, _state: &RemoteControlHandle) {}
 
 const BOOT_PHASE_MAGIC: u32 = 0x5052_0000;
 

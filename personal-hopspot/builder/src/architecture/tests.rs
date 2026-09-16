@@ -41,6 +41,8 @@ fn adapters_define_target_and_linker_identity() {
                 "llvm-args=-enable-machine-outliner",
                 "-C",
                 "llvm-args=-machine-outliner-reruns=2",
+                "--cfg",
+                "sha2_backend_soft=\"compact\"",
             ][..],
             DisassemblerFlavor::LlvmObjdump,
             "llvm-objdump",
@@ -142,7 +144,7 @@ fn thumb_codegen_policy_is_applied_to_cargo() {
             .find(|(key, _)| *key == OsStr::new("RUSTFLAGS"))
             .and_then(|(_, value)| value),
         Some(OsStr::new(
-            "-C link-arg=--icf=all -C llvm-args=-enable-machine-outliner -C llvm-args=-machine-outliner-reruns=2"
+            "-C link-arg=--icf=all -C llvm-args=-enable-machine-outliner -C llvm-args=-machine-outliner-reruns=2 --cfg sha2_backend_soft=\"compact\""
         ))
     );
     assert_eq!(
@@ -173,7 +175,7 @@ fn resource_intent_adds_stack_evidence_without_changing_firmware_policy() {
             .find(|(key, _)| *key == OsStr::new("RUSTFLAGS"))
             .and_then(|(_, value)| value),
         Some(OsStr::new(
-            "-C link-arg=--icf=all -C llvm-args=-enable-machine-outliner -C llvm-args=-machine-outliner-reruns=2"
+            "-C link-arg=--icf=all -C llvm-args=-enable-machine-outliner -C llvm-args=-machine-outliner-reruns=2 --cfg sha2_backend_soft=\"compact\""
         ))
     );
     assert_eq!(
@@ -182,7 +184,7 @@ fn resource_intent_adds_stack_evidence_without_changing_firmware_policy() {
             .find(|(key, _)| *key == OsStr::new("RUSTFLAGS"))
             .and_then(|(_, value)| value),
         Some(OsStr::new(
-            "-C link-arg=--icf=all -C llvm-args=-enable-machine-outliner -C llvm-args=-machine-outliner-reruns=2 -Z emit-stack-sizes=yes"
+            "-C link-arg=--icf=all -C llvm-args=-enable-machine-outliner -C llvm-args=-machine-outliner-reruns=2 --cfg sha2_backend_soft=\"compact\" -Z emit-stack-sizes=yes"
         ))
     );
     assert_eq!(

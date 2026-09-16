@@ -2010,13 +2010,49 @@ group = "gnss"
 tiers = ["release", "scheduled"]
 
 [[kani]]
-name = "remote_control_request_parse_terminates_for_every_distinct_wire_shape"
+name = "request_parser_handles_discovery_and_power_family"
 source = "prns-core/src/remote_control/message.rs"
 group = "remote-control"
 tiers = ["release", "scheduled"]
 
 [[kani]]
-name = "remote_control_response_parse_terminates_for_every_distinct_wire_shape"
+name = "request_parser_handles_inventory_and_authorization_family"
+source = "prns-core/src/remote_control/message.rs"
+group = "remote-control"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "request_parser_handles_interface_configuration_family"
+source = "prns-core/src/remote_control/message.rs"
+group = "remote-control"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "request_parser_handles_desired_state_and_wifi_transaction_family"
+source = "prns-core/src/remote_control/message.rs"
+group = "remote-control"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "response_parser_handles_inventory_family"
+source = "prns-core/src/remote_control/message.rs"
+group = "remote-control"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "response_parser_handles_interface_configuration_family"
+source = "prns-core/src/remote_control/message.rs"
+group = "remote-control"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "response_parser_handles_desired_state_and_wifi_transaction_family"
+source = "prns-core/src/remote_control/message.rs"
+group = "remote-control"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "response_parser_handles_identity_power_and_error_family"
 source = "prns-core/src/remote_control/message.rs"
 group = "remote-control"
 tiers = ["release", "scheduled"]

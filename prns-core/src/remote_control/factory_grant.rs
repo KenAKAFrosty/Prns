@@ -1,7 +1,10 @@
 use crate::identity::vault::{IdentityLabel, IdentityVault, MAX_IDENTITY_LABEL_LEN};
 use crate::identity::{IdentityPublicKeys, IDENTITY_PUBLIC_KEY_LEN, IDENTITY_SECRET_KEY_LEN};
 
-use super::{parse_controller_public_keys, RemoteControlControllerGrant, RemoteControlRequestSet};
+use super::{
+    parse_controller_public_keys, RemoteControlControllerAuthority, RemoteControlControllerGrant,
+    RemoteControlRequestSet,
+};
 
 const TARGET_IDENTITY_LABEL: &str = "target";
 
@@ -64,7 +67,12 @@ pub fn decode_factory_controller_grant_blob(bytes: &[u8]) -> Option<RemoteContro
     }
     let keys = bytes.get(FACTORY_CONTROLLER_GRANT_MAGIC.len()..)?;
     let identity = parse_controller_public_keys(keys)?;
-    RemoteControlControllerGrant::new(identity, RemoteControlRequestSet::all()).ok()
+    RemoteControlControllerGrant::new(
+        identity,
+        RemoteControlControllerAuthority::Administrator,
+        RemoteControlRequestSet::all(),
+    )
+    .ok()
 }
 
 pub fn load_factory_controller_grant<V: IdentityVault>(

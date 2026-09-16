@@ -9,27 +9,36 @@ use crate::remote_control::REMOTE_CONTROL_REQUEST_ENDPOINT_ID;
 use crate::routing::links::LinkId;
 use crate::runtime::request_endpoints::RequestEndpointId;
 use crate::runtime::{
-    RemoteControlAnnounceSelf, RemoteControlAuthorizeController, RemoteControlDescribe,
-    RemoteControlDescribeBuild, RemoteControlDescribePower, RemoteControlError,
+    RemoteControlActivateWifiCredentials, RemoteControlAnnounceSelf,
+    RemoteControlAuthorizeController, RemoteControlCancelWifiCredentials,
+    RemoteControlConfirmWifiCredentials, RemoteControlDescribe, RemoteControlDescribeBuild,
+    RemoteControlDescribePower, RemoteControlError, RemoteControlInspectWifiTransaction,
     RemoteControlInventoryControllers, RemoteControlInventoryInterfaceConfig,
     RemoteControlInventoryInterfacePeers, RemoteControlInventoryInterfaces,
-    RemoteControlRevokeController, RemoteControlSetInterfaceGroup,
-    RemoteControlSetInterfaceLoRaProfile, RemoteControlSetInterfaceMode,
-    RemoteControlSetInterfacePower, RemoteControlSetInterfaceWifiStation, RemoteControlSleepRadios,
+    RemoteControlRevokeController, RemoteControlSetDisplayAutoOff,
+    RemoteControlSetDisplayVisibility, RemoteControlSetEspRadioMode, RemoteControlSetGnssPower,
+    RemoteControlSetInterfaceGroup, RemoteControlSetInterfaceLoRaProfile,
+    RemoteControlSetInterfaceMode, RemoteControlSetInterfacePower,
+    RemoteControlSetInterfaceWifiStation, RemoteControlSetStationUplink,
+    RemoteControlSetSystemPower, RemoteControlSleepRadios, RemoteControlStageWifiCredentials,
     RemoteControlWakeRadios,
 };
 use crate::units::RttMillis;
 use prns_core::capabilities::power::PowerSnapshot;
 use prns_core::interfaces::{InterfaceId, InterfaceMode};
 use prns_core::remote_control::{
-    RemoteControlAuthorizeControllerOutcome, RemoteControlBuildVersion,
-    RemoteControlControllerIdentity, RemoteControlControllerInventory, RemoteControlDescription,
-    RemoteControlGroupOutcome, RemoteControlInterfaceConfigOutcome, RemoteControlInterfaceGroup,
-    RemoteControlInterfaceInventory, RemoteControlInterfacePeersOutcome,
-    RemoteControlInterfacePower, RemoteControlLoRaOutcome, RemoteControlLoRaProfile,
-    RemoteControlModeOutcome, RemoteControlPowerOutcome, RemoteControlRequest,
-    RemoteControlRevokeControllerOutcome, RemoteControlSleepOutcome, RemoteControlWifiStation,
-    RemoteControlWifiStationOutcome,
+    RemoteControlApplyOutcome, RemoteControlAuthorizeControllerOutcome, RemoteControlBuildVersion,
+    RemoteControlControllerIdentity, RemoteControlControllerInventory, RemoteControlControllerPage,
+    RemoteControlDescription, RemoteControlDisplayAutoOff, RemoteControlDisplayVisibility,
+    RemoteControlEspRadioMode, RemoteControlGnssPower, RemoteControlGroupOutcome,
+    RemoteControlInterfaceConfigOutcome, RemoteControlInterfaceGroup,
+    RemoteControlInterfaceInventory, RemoteControlInterfacePage,
+    RemoteControlInterfacePeersOutcome, RemoteControlInterfacePower, RemoteControlLoRaOutcome,
+    RemoteControlLoRaProfile, RemoteControlModeOutcome, RemoteControlPeerPage,
+    RemoteControlPowerOutcome, RemoteControlRequest, RemoteControlRequestSet,
+    RemoteControlRevokeControllerOutcome, RemoteControlSleepOutcome, RemoteControlStationUplink,
+    RemoteControlSystemPower, RemoteControlWifiCredentialRevision, RemoteControlWifiStageOutcome,
+    RemoteControlWifiStation, RemoteControlWifiStationOutcome, RemoteControlWifiTransactionStatus,
 };
 
 use super::{PrnsNodeHandle, RequestOptions};
@@ -37,6 +46,34 @@ use super::{PrnsNodeHandle, RequestOptions};
 pub struct RemoteControlHandle<'a> {
     node: &'a PrnsNodeHandle,
     link_id: LinkId,
+}
+
+macro_rules! remote_control_apply_method {
+    ($method:ident, $exchange:ident, $field:ident, $field_type:ty) => {
+        pub async fn $method(
+            &self,
+            $field: $field_type,
+        ) -> Result<(RemoteControlApplyOutcome, RttMillis), RemoteControlError> {
+            let mut encoded = std::vec![0u8; RemoteControlRequest::MAX_ENCODED_LEN];
+            let encoded_len = $exchange::write_request($field, encoded.as_mut_slice())?;
+            encoded.truncate(encoded_len);
+            let (response, rtt) = self
+                .node
+                .request_owned_with_options(
+                    self.link_id,
+                    RequestEndpointId::of(REMOTE_CONTROL_REQUEST_ENDPOINT_ID),
+                    encoded,
+                    RequestOptions {
+                        response_timeout: RequestResponseTimeout::LinkDefault,
+                        maximum_response_bytes: $exchange::MAXIMUM_RESPONSE_BYTES,
+                    },
+                )
+                .await
+                .map_err(RemoteControlError::Request)?;
+            let outcome = $exchange::parse_response(response.as_slice())?;
+            Ok((outcome, rtt))
+        }
+    };
 }
 
 impl PrnsNodeHandle {
@@ -50,6 +87,55 @@ impl PrnsNodeHandle {
 }
 
 impl RemoteControlHandle<'_> {
+    remote_control_apply_method!(
+        set_system_power,
+        RemoteControlSetSystemPower,
+        power,
+        RemoteControlSystemPower
+    );
+    remote_control_apply_method!(
+        set_gnss_power,
+        RemoteControlSetGnssPower,
+        power,
+        RemoteControlGnssPower
+    );
+    remote_control_apply_method!(
+        set_display_visibility,
+        RemoteControlSetDisplayVisibility,
+        visibility,
+        RemoteControlDisplayVisibility
+    );
+    remote_control_apply_method!(
+        set_display_auto_off,
+        RemoteControlSetDisplayAutoOff,
+        auto_off,
+        RemoteControlDisplayAutoOff
+    );
+    remote_control_apply_method!(
+        set_esp_radio_mode,
+        RemoteControlSetEspRadioMode,
+        mode,
+        RemoteControlEspRadioMode
+    );
+    remote_control_apply_method!(
+        activate_wifi_credentials,
+        RemoteControlActivateWifiCredentials,
+        revision,
+        RemoteControlWifiCredentialRevision
+    );
+    remote_control_apply_method!(
+        confirm_wifi_credentials,
+        RemoteControlConfirmWifiCredentials,
+        revision,
+        RemoteControlWifiCredentialRevision
+    );
+    remote_control_apply_method!(
+        cancel_wifi_credentials,
+        RemoteControlCancelWifiCredentials,
+        revision,
+        RemoteControlWifiCredentialRevision
+    );
+
     pub async fn announce_self(&self) -> Result<RttMillis, RemoteControlError> {
         let mut encoded = std::vec![0u8; RemoteControlAnnounceSelf::REQUEST.encoded_len()];
         let encoded_len = RemoteControlAnnounceSelf::write_request(encoded.as_mut_slice())?;
@@ -141,8 +227,17 @@ impl RemoteControlHandle<'_> {
     pub async fn inventory_interfaces(
         &self,
     ) -> Result<(RemoteControlInterfaceInventory, RttMillis), RemoteControlError> {
-        let mut encoded = std::vec![0u8; RemoteControlInventoryInterfaces::REQUEST.encoded_len()];
-        let encoded_len = RemoteControlInventoryInterfaces::write_request(encoded.as_mut_slice())?;
+        self.inventory_interfaces_page(RemoteControlInterfacePage::First)
+            .await
+    }
+
+    pub async fn inventory_interfaces_page(
+        &self,
+        page: RemoteControlInterfacePage,
+    ) -> Result<(RemoteControlInterfaceInventory, RttMillis), RemoteControlError> {
+        let mut encoded = std::vec![0u8; RemoteControlRequest::MAX_ENCODED_LEN];
+        let encoded_len =
+            RemoteControlInventoryInterfaces::write_page_request(page, encoded.as_mut_slice())?;
         encoded.truncate(encoded_len);
         let (response, rtt) = self
             .node
@@ -303,8 +398,17 @@ impl RemoteControlHandle<'_> {
     pub async fn inventory_controllers(
         &self,
     ) -> Result<(RemoteControlControllerInventory, RttMillis), RemoteControlError> {
-        let mut encoded = std::vec![0u8; RemoteControlInventoryControllers::REQUEST.encoded_len()];
-        let encoded_len = RemoteControlInventoryControllers::write_request(encoded.as_mut_slice())?;
+        self.inventory_controllers_page(RemoteControlControllerPage::First)
+            .await
+    }
+
+    pub async fn inventory_controllers_page(
+        &self,
+        page: RemoteControlControllerPage,
+    ) -> Result<(RemoteControlControllerInventory, RttMillis), RemoteControlError> {
+        let mut encoded = std::vec![0u8; RemoteControlRequest::MAX_ENCODED_LEN];
+        let encoded_len =
+            RemoteControlInventoryControllers::write_page_request(page, encoded.as_mut_slice())?;
         encoded.truncate(encoded_len);
         let (response, rtt) = self
             .node
@@ -327,10 +431,14 @@ impl RemoteControlHandle<'_> {
     pub async fn authorize_controller(
         &self,
         controller: RemoteControlControllerIdentity,
+        permitted_requests: RemoteControlRequestSet,
     ) -> Result<(RemoteControlAuthorizeControllerOutcome, RttMillis), RemoteControlError> {
         let mut encoded = std::vec![0u8; RemoteControlRequest::MAX_ENCODED_LEN];
-        let encoded_len =
-            RemoteControlAuthorizeController::write_request(controller, encoded.as_mut_slice())?;
+        let encoded_len = RemoteControlAuthorizeController::write_request(
+            controller,
+            permitted_requests,
+            encoded.as_mut_slice(),
+        )?;
         encoded.truncate(encoded_len);
         let (response, rtt) = self
             .node
@@ -378,14 +486,11 @@ impl RemoteControlHandle<'_> {
     pub async fn inventory_interface_peers(
         &self,
         id: InterfaceId,
-        offset: u8,
+        page: RemoteControlPeerPage,
     ) -> Result<(RemoteControlInterfacePeersOutcome, RttMillis), RemoteControlError> {
         let mut encoded = std::vec![0u8; RemoteControlRequest::MAX_ENCODED_LEN];
-        let encoded_len = RemoteControlInventoryInterfacePeers::write_request(
-            id,
-            offset,
-            encoded.as_mut_slice(),
-        )?;
+        let encoded_len =
+            RemoteControlInventoryInterfacePeers::write_request(id, page, encoded.as_mut_slice())?;
         encoded.truncate(encoded_len);
         let (response, rtt) = self
             .node
@@ -475,6 +580,82 @@ impl RemoteControlHandle<'_> {
             .map_err(RemoteControlError::Request)?;
         let outcome = RemoteControlWakeRadios::parse_response(response.as_slice())?;
         Ok((outcome, rtt))
+    }
+
+    pub async fn set_station_uplink(
+        &self,
+        id: InterfaceId,
+        uplink: RemoteControlStationUplink,
+    ) -> Result<(RemoteControlApplyOutcome, RttMillis), RemoteControlError> {
+        let mut encoded = std::vec![0u8; RemoteControlRequest::MAX_ENCODED_LEN];
+        let encoded_len =
+            RemoteControlSetStationUplink::write_request(id, uplink, encoded.as_mut_slice())?;
+        encoded.truncate(encoded_len);
+        let (response, rtt) = self
+            .node
+            .request_owned_with_options(
+                self.link_id,
+                RequestEndpointId::of(REMOTE_CONTROL_REQUEST_ENDPOINT_ID),
+                encoded,
+                RequestOptions {
+                    response_timeout: RequestResponseTimeout::LinkDefault,
+                    maximum_response_bytes: RemoteControlSetStationUplink::MAXIMUM_RESPONSE_BYTES,
+                },
+            )
+            .await
+            .map_err(RemoteControlError::Request)?;
+        let outcome = RemoteControlSetStationUplink::parse_response(response.as_slice())?;
+        Ok((outcome, rtt))
+    }
+
+    pub async fn stage_wifi_credentials(
+        &self,
+        station: RemoteControlWifiStation,
+    ) -> Result<(RemoteControlWifiStageOutcome, RttMillis), RemoteControlError> {
+        let mut encoded = std::vec![0u8; RemoteControlRequest::MAX_ENCODED_LEN];
+        let encoded_len =
+            RemoteControlStageWifiCredentials::write_request(station, encoded.as_mut_slice())?;
+        encoded.truncate(encoded_len);
+        let (response, rtt) = self
+            .node
+            .request_owned_with_options(
+                self.link_id,
+                RequestEndpointId::of(REMOTE_CONTROL_REQUEST_ENDPOINT_ID),
+                encoded,
+                RequestOptions {
+                    response_timeout: RequestResponseTimeout::LinkDefault,
+                    maximum_response_bytes:
+                        RemoteControlStageWifiCredentials::MAXIMUM_RESPONSE_BYTES,
+                },
+            )
+            .await
+            .map_err(RemoteControlError::Request)?;
+        let outcome = RemoteControlStageWifiCredentials::parse_response(response.as_slice())?;
+        Ok((outcome, rtt))
+    }
+
+    pub async fn inspect_wifi_transaction(
+        &self,
+    ) -> Result<(RemoteControlWifiTransactionStatus, RttMillis), RemoteControlError> {
+        let mut encoded = std::vec![0u8; RemoteControlRequest::MAX_ENCODED_LEN];
+        let encoded_len = RemoteControlInspectWifiTransaction::write_request(&mut encoded)?;
+        encoded.truncate(encoded_len);
+        let (response, rtt) = self
+            .node
+            .request_owned_with_options(
+                self.link_id,
+                RequestEndpointId::of(REMOTE_CONTROL_REQUEST_ENDPOINT_ID),
+                encoded,
+                RequestOptions {
+                    response_timeout: RequestResponseTimeout::LinkDefault,
+                    maximum_response_bytes:
+                        RemoteControlInspectWifiTransaction::MAXIMUM_RESPONSE_BYTES,
+                },
+            )
+            .await
+            .map_err(RemoteControlError::Request)?;
+        let status = RemoteControlInspectWifiTransaction::parse_response(response.as_slice())?;
+        Ok((status, rtt))
     }
 }
 

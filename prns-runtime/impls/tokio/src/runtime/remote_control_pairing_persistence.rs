@@ -12,11 +12,12 @@ use crate::persistence::{
     remote_control_target_accesses_snapshot_capacity, SnapshotRegion, SnapshotSealError,
 };
 use crate::remote_control::{
-    ForgetRemoteControlTargetOutcome, RemoteControlControllerGrant,
-    RemoteControlControllerIdentity, RemoteControlPairingAttemptId, RemoteControlRequestSet,
-    RemoteControlTargetAccess, RemoteControlTargetIdentity, RevokeRemoteControlControllerOutcome,
-    SetRemoteControlControllerGrantOutcome, SetRemoteControlTargetAccessOutcome,
-    DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS, DEFAULT_MAX_REMOTE_CONTROL_TARGET_ACCESSES,
+    ForgetRemoteControlTargetOutcome, RemoteControlControllerAuthority,
+    RemoteControlControllerGrant, RemoteControlControllerIdentity, RemoteControlPairingAttemptId,
+    RemoteControlRequestSet, RemoteControlTargetAccess, RemoteControlTargetIdentity,
+    RevokeRemoteControlControllerOutcome, SetRemoteControlControllerGrantOutcome,
+    SetRemoteControlTargetAccessOutcome, DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS,
+    DEFAULT_MAX_REMOTE_CONTROL_TARGET_ACCESSES,
 };
 
 use super::node_facade::{PrnsNodeHandle, RemoteControlAuthorizationPersistence};
@@ -30,6 +31,7 @@ pub(super) enum RemoteControlPairingPersistenceCommand {
     TargetAccess {
         attempt_id: RemoteControlPairingAttemptId,
         target_public_keys: IdentityPublicKeys,
+        authority: RemoteControlControllerAuthority,
         permitted_requests: RemoteControlRequestSet,
     },
 }
@@ -116,6 +118,7 @@ impl RemoteControlPairingPersistenceSender {
                 RemoteControlPairingPersistenceCommand::TargetAccess {
                     attempt_id: pairing.attempt_id(),
                     target_public_keys: *pairing.access().target().public_keys(),
+                    authority: pairing.access().authority(),
                     permitted_requests: *pairing.access().permitted_requests(),
                 }
             }
@@ -178,10 +181,12 @@ impl RemoteControlPairingPersistenceCommand {
             Self::TargetAccess {
                 attempt_id,
                 target_public_keys,
+                authority,
                 permitted_requests,
             } => {
                 let access = match RemoteControlTargetAccess::new(
                     RemoteControlTargetIdentity::new(target_public_keys),
+                    authority,
                     permitted_requests,
                 ) {
                     Ok(access) => access,

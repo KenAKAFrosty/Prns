@@ -541,7 +541,7 @@ async fn run_relay(manifest: &Manifest, addr: &str) {
     let node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: Some(generate_identity_secret()),
         pre_configured_destinations: std::iter::empty::<PreConfiguredDestination<'static>>(),
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: NodeStorage::default(),
         request_endpoints: request_endpoints![],
         remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
@@ -645,7 +645,7 @@ async fn build_initiator_node<F>(
     addr: &str,
 ) -> PrnsNode<(), (), F, NodeStorage>
 where
-    F: FnMut(PrnsEvent<'_>, &()),
+    F: FnMut(PrnsEvent<'_>, &personal_rns::runtime::NoRemoteControlHostControls),
 {
     let client = TcpClientInterface::with_id_and_policy(
         TCP_INTERFACE_ID,
@@ -656,7 +656,7 @@ where
     PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [single],
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: NodeStorage::default(),
         request_endpoints: request_endpoints![],
         remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,

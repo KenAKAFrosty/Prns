@@ -5,7 +5,10 @@ use personal_rns::rns_remote_management::RemoteTransportStatus;
 use personal_rns::runtime::PrnsNodeHandle;
 
 use crate::nnpages::NnPagesCatalog;
-use personal_rns::runtime::RemoteControlHostControls;
+use personal_rns::runtime::{
+    NoRemoteControlHostControls, RemoteControlHostCommand, RemoteControlHostCommandError,
+    RemoteControlHostControls, RemoteControlHostResponse,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TransportStatusIdentity {
@@ -55,4 +58,13 @@ impl DaemonRequestState {
     }
 }
 
-impl RemoteControlHostControls for DaemonRequestState {}
+impl RemoteControlHostControls for DaemonRequestState {
+    async fn execute_remote_control(
+        &self,
+        command: RemoteControlHostCommand,
+    ) -> Result<RemoteControlHostResponse, RemoteControlHostCommandError> {
+        NoRemoteControlHostControls
+            .execute_remote_control(command)
+            .await
+    }
+}

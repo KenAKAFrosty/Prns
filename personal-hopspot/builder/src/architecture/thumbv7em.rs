@@ -27,6 +27,8 @@ pub(super) static ADAPTER: Adapter = Adapter::new(
         "llvm-args=-enable-machine-outliner",
         "-C",
         "llvm-args=-machine-outliner-reruns=2",
+        "--cfg",
+        "sha2_backend_soft=\"compact\"",
     ],
     DisassemblerTool::new(
         DisassemblerFlavor::LlvmObjdump,
