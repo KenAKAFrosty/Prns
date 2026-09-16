@@ -58,6 +58,12 @@ class EmbeddedIsaTests(unittest.TestCase):
             xtensa.emulator.identity.banner,
             "QEMU emulator version 9.2.2 (esp_develop_9.2.2_20260417)",
         )
+        self.assertEqual(
+            tuple(path.relative_to(ROOT).as_posix() for path in xtensa.sources),
+            ("personal-hopspot/xtensa-qemu",),
+        )
+        self.assertEqual(arm.sources, ())
+        self.assertEqual(riscv.sources, ())
         self.assertIsInstance(xtensa.emulator.acquisition, HostedPackages)
         packages = cast(HostedPackages, xtensa.emulator.acquisition)
         self.assertEqual(
@@ -301,6 +307,20 @@ class EmbeddedIsaTests(unittest.TestCase):
     def test_unknown_architecture_id_is_rejected(self) -> None:
         contents = INVENTORY_PATH.read_text(encoding="utf-8")
         malformed = contents.replace('id = "thumbv7em"', 'id = "unknown"', 1)
+        with tempfile.TemporaryDirectory() as directory:
+            inventory = Path(directory) / "embedded-isa.toml"
+            inventory.write_text(malformed, encoding="utf-8")
+
+            with self.assertRaises(InventoryError):
+                load_inventory(inventory)
+
+    def test_architecture_sources_are_unique_repository_paths(self) -> None:
+        contents = INVENTORY_PATH.read_text(encoding="utf-8")
+        malformed = contents.replace(
+            'sources = ["personal-hopspot/xtensa-qemu"]',
+            'sources = ["personal-hopspot/xtensa-qemu", '
+            '"personal-hopspot/xtensa-qemu"]',
+        )
         with tempfile.TemporaryDirectory() as directory:
             inventory = Path(directory) / "embedded-isa.toml"
             inventory.write_text(malformed, encoding="utf-8")

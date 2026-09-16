@@ -81,6 +81,7 @@ sources = [
     "personal-hopspot/embedded/esp32/Cargo.toml",
     "personal-hopspot/embedded/esp32/platform-assurance",
     "personal-hopspot/memory",
+    "personal-hopspot/xtensa-qemu",
     "prns-flash-manifest",
     "release/flash/boards.json",
     "validation/hardening/embedded-isa.toml",

@@ -119,6 +119,22 @@ class EmbeddedAssuranceSelectionTests(unittest.TestCase):
                 selected = selection.selection_for_paths({path})
                 self.assertEqual(selected.suite_ids(selection.Lane.ISA), (suite,))
 
+    def test_xtensa_qemu_boundary_selects_its_exact_consumers(self) -> None:
+        selected = selection.selection_for_paths(
+            {"personal-hopspot/xtensa-qemu/src/lib.rs"}
+        )
+
+        self.assertEqual(selected.suite_ids(selection.Lane.RESOURCES), ())
+        self.assertEqual(selected.suite_ids(selection.Lane.MIRI), ())
+        self.assertEqual(
+            selected.suite_ids(selection.Lane.ISA),
+            ("embedded-isa-xtensa-esp32s3",),
+        )
+        self.assertEqual(
+            selected.suite_ids(selection.Lane.PILOTS),
+            ("embedded-platform-esp32s3",),
+        )
+
     def test_memory_profiles_select_their_consuming_architectures_and_pilots(self) -> None:
         cases = (
             (

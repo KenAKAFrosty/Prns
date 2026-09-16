@@ -15662,11 +15662,11 @@
       "name": "personal-hopspot-esp32",
       "source": "personal-hopspot/embedded/esp32",
       "unsafe": {
-        "blocks": 1016,
+        "blocks": 1013,
         "externs": 779,
-        "functions": 124,
+        "functions": 123,
         "impls": 39,
-        "tokens": 2091
+        "tokens": 2087
       },
       "version": "0.1.0"
     },

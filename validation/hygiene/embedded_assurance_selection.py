@@ -237,6 +237,7 @@ def isa_suites(path: str) -> tuple[Suite, ...]:
             "personal-hopspot/assurance-kernel/src/bin/xtensa_esp32s3.rs",
             (Suite.ISA_XTENSA_ESP32S3,),
         ),
+        ("personal-hopspot/xtensa-qemu/", (Suite.ISA_XTENSA_ESP32S3,)),
         ("validation/hardening/embedded_isa/architecture/thumbv7em.py", (Suite.ISA_THUMBV7EM,)),
         ("validation/hardening/embedded_isa/architecture/riscv32imac.py", (Suite.ISA_RISCV32IMAC,)),
         (
@@ -289,6 +290,7 @@ def pilot_suites(path: str) -> tuple[Suite, ...]:
         ("personal-hopspot/embedded/nrf52840/", (Suite.PILOT_NRF52840,)),
         ("personal-hopspot/embedded/esp32/boards/xiao-esp32-c6/", ()),
         ("personal-hopspot/embedded/esp32/", (Suite.PILOT_ESP32S3,)),
+        ("personal-hopspot/xtensa-qemu/", (Suite.PILOT_ESP32S3,)),
         ("personal-hopspot/memory/src/profiles/nrf52840/", (Suite.PILOT_NRF52840,)),
         ("personal-hopspot/memory/src/profiles/espressif/", (Suite.PILOT_ESP32S3,)),
         ("personal-hopspot/assurance-kernel/", (Suite.PILOT_NRF52840,)),

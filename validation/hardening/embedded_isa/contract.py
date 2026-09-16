@@ -89,6 +89,7 @@ class Architecture:
     runner: str
     emulator: Emulator
     timeout_seconds: int
+    sources: tuple[Path, ...]
 
 
 @dataclass(frozen=True)
@@ -187,6 +188,7 @@ def parse_architecture(value: object) -> Architecture:
         runner=f"qemu-{architecture}",
         emulator=emulator,
         timeout_seconds=positive_integer(entry.get("timeout_seconds"), "timeout"),
+        sources=optional_repository_paths(entry.get("sources"), "architecture sources"),
     )
 
 
@@ -294,6 +296,12 @@ def repository_paths(value: object, name: str) -> tuple[Path, ...]:
     ):
         raise InventoryError(f"embedded ISA {name} must contain unique paths")
     return tuple(repository_path(item, name) for item in value)
+
+
+def optional_repository_paths(value: object, name: str) -> tuple[Path, ...]:
+    if value is None:
+        return ()
+    return repository_paths(value, name)
 
 
 def repository_path(value: object, name: str) -> Path:

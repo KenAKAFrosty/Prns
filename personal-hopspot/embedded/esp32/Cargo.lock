@@ -2518,10 +2518,15 @@ dependencies = [
  "esp-hal",
  "esp-rtos",
  "personal-hopspot-memory",
+ "personal-hopspot-xtensa-qemu",
 ]
 
 [[package]]
 name = "personal-hopspot-memory"
+version = "0.1.0"
+
+[[package]]
+name = "personal-hopspot-xtensa-qemu"
 version = "0.1.0"
 
 [[package]]
