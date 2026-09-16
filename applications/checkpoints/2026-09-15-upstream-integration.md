@@ -155,7 +155,10 @@ No physical iOS result is claimed for this integration.
 ### Board navigation freeze remains unresolved
 
 Before pairing, the user reported a roughly 15-second freeze after opening the
-board's main menu, followed by `SubG / Migrated` and normal operation. The Galaxy
+board's main menu, followed by `SubG / Migrated` and normal operation. The user
+clarified the sequence: one long press opened the menu, then short presses to
+navigate toward Pair remote preceded the freeze. This was normal navigation,
+not an intentional reboot gesture. The Galaxy
 logged a Bluetooth disconnect at September 15 20:19:36 local time (EDT), then a
 fresh data/control subscription at 20:19:47.581. USB logging ended with
 `Device not configured` at about 20:19:45. The captured boot banner is from the
@@ -177,6 +180,23 @@ diagnosis should preserve button/display/task progress across a reset and repeat
 the boot reason in runtime health output so losing USB at reboot does not lose
 the evidence. Do not weaken the watchdog or claim a speculative display fix.
 Successful Android pairing and checks do not close this firmware issue.
+
+The follow-up input audit found no software long-hold reboot gesture. Short
+presses in the main menu only advance its selection; a radio-mode restart needs
+additional long-press selection and explicit confirmation. All 31 selected
+`personal-hopspot-core` screen-state tests pass at `611c94a25`, including the
+long-press/menu-navigation sequence and pairing selection. These host tests do
+not exercise physical GPIO scheduling or reproduce the firmware stall.
+
+The GPIO handler does have an independently actionable robustness gap: it waits
+for a future release edge, including after awaiting delivery of a long-press
+event to its four-entry queue. A release during delayed scheduling or queue
+backpressure can therefore be missed, swallowing later input or classifying a
+short press as long. That is not a demonstrated watchdog cause. Future reset
+diagnostics should retain both the classified event and resulting UI action,
+alongside display/task progress; regression tests should cover already-released
+input, release while delivery is blocked, and exactly one event per held press.
+No button-handling fix or diagnostic firmware was installed during this audit.
 
 ## Upstream contribution follow-up
 
