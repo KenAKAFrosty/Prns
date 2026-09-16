@@ -731,11 +731,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
         state: &mut AutoWifiRunState<MEMBERS>,
         fleet: &Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
     ) {
-        // Tear down data peers and discovery memory together. Leaving the
-        // brain populated after clear_wifi_peers makes the next beacon
-        // Refreshed against a vacant table (no re-insert → unknown_peer).
-        clear_wifi_peers(&mut state.peers, &self.status, fleet).await;
-        self.brain.clear_known_peers();
+        clear_wifi_peer_state(&mut self.brain, &mut state.peers, &self.status, fleet).await;
         clear_tcp_members(
             &mut self.rendezvous,
             &mut state.tcp_peers,
@@ -1735,17 +1731,20 @@ async fn route_inbound<
     true
 }
 
-async fn clear_wifi_peers<
+async fn clear_wifi_peer_state<
     M: RawMutex + 'static,
     const FRAME: usize,
     const MEMBERS: usize,
     const NOTIFY: usize,
     const LIFECYCLE: usize,
 >(
+    brain: &mut contract::FixedAutoInterfaceProtocol<MEMBERS>,
     peers: &mut WifiPeerTable<MEMBERS>,
     status: &AutoWifiStatus<MEMBERS>,
     fleet: &Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
 ) -> WifiPeerClear {
+    // Protocol discovery memory and registered UDP peers share one enablement lifetime.
+    brain.clear_known_peers();
     let mut outcome = WifiPeerClear::AlreadyEmpty;
     for slot in 0..MEMBERS {
         let WifiPeerSlotLookup::Occupied(peer) = peers.lookup_slot(slot) else {
