@@ -395,6 +395,8 @@ jobs:
           toolchain: 1.96.0
           components: llvm-tools-preview
       - name: Install checksum-pinned ESP compiler and tools
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: ./tools/prns release toolchain esp install -- "${RUNNER_TEMP}/prns-esp-tools"
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
@@ -475,6 +477,8 @@ jobs:
       - name: install emulator build and runtime dependencies
         run: sudo apt-get update && sudo apt-get install -y build-essential libgcrypt20 libglib2.0-dev libpixman-1-dev libsdl2-2.0-0 libslirp0 ninja-build pkg-config python3-setuptools python3-venv xz-utils
       - name: install checksum-pinned ESP compiler and tools
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: ./tools/prns release toolchain esp install -- "${RUNNER_TEMP}/prns-esp-tools"
       - name: prepare contract-pinned target-ISA emulators
         env:
