@@ -93,6 +93,8 @@ jobs:
           shared-key: deep-resources-${{ matrix.id }}
       - name: Install exact ESP compiler and tools
         if: matrix.toolchain == 'esp'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: ./tools/prns release toolchain esp install -- "${RUNNER_TEMP}/prns-esp-tools"
       - run: |
           unset CARGO_INCREMENTAL
@@ -243,6 +245,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libgcrypt20 libglib2.0-0 libpixman-1-0 libsdl2-2.0-0 libslirp0
       - name: Install exact ESP compiler and tools
         if: matrix.toolchain == 'esp'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: ./tools/prns release toolchain esp install -- "${RUNNER_TEMP}/prns-esp-tools"
       - name: Restore exact embedded assurance emulators
         if: matrix.group == 'embedded-isa' || matrix.group == 'embedded-platform'
