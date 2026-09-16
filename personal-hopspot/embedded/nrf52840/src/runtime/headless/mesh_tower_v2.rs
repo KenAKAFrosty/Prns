@@ -22,10 +22,11 @@ pub(super) async fn maintain() {
     board::maintain().await;
 }
 
-pub(super) fn run<I, L, B>(
+pub(super) fn run<I, L, B, R>(
     io: I,
     lora: L,
     bluetooth: B,
+    remote_control: R,
     button: Input<'static>,
     node_page_destination: DestinationHash,
 ) -> impl Future
@@ -33,6 +34,7 @@ where
     I: Future,
     L: Future,
     B: Future,
+    R: Future,
 {
     let announce_handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
     let announce = async move {
@@ -51,7 +53,7 @@ where
         }
     };
     join(
-        join3(io, bluetooth, lora),
+        join3(io, bluetooth, join(lora, remote_control)),
         join(board::drive_button(button), announce),
     )
 }

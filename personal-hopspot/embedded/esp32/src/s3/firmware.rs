@@ -118,6 +118,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         .target_sealing_key(screen::WIFI_CONFIGURATION_SEALING_DOMAIN);
     let mut wifi_configuration_store =
         screen::WifiConfigurationStore::new(shared_flash, memory.wifi_configuration_pages());
+    let mut runtime_wifi_station = None;
     match wifi_configuration_store
         .load(&wifi_configuration_key, &mut boot_entropy)
         .await
@@ -125,8 +126,8 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         Ok(loaded) => {
             if let Some(station) = loaded.active {
                 wifi_config.ssid = station.ssid().to_string();
-                wifi_config.password = station.password().to_string();
                 wifi_config_source = HopspotWifiConfigSource::RuntimeSealed;
+                runtime_wifi_station = Some(station);
             }
             if loaded.recovered_unconfirmed_transaction {
                 log::warn!("wifi-config: restored the last confirmed revision after reboot");
@@ -136,13 +137,25 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             log::error!("wifi-config: sealed configuration load failed: {error:?}");
         }
     }
-    let station_configured = wifi_config.has_station();
+    // Keep sealed credentials in their move-only, zeroizing representation. Immutable provisioning
+    // is the legacy fallback and crosses into that representation only once at task ownership.
+    let initial_wifi_station = runtime_wifi_station.or_else(|| {
+        if wifi_config.has_station() {
+            personal_rns::remote_control::RemoteControlWifiStation::parse(
+                &wifi_config.ssid,
+                &wifi_config.password,
+            )
+            .ok()
+        } else {
+            None
+        }
+    });
+    let station_configured = initial_wifi_station.is_some();
     let radio_mode = boot_radio_mode(station_configured);
     log::info!(
-        "wifi-config source={wifi_config_source:?} station={} ssid_len={} password_len={} tcp={}",
+        "wifi-config source={wifi_config_source:?} station={} ssid_len={} tcp={}",
         station_configured,
         wifi_config.ssid.len(),
-        wifi_config.password.len(),
         wifi_config.tcp_client.is_some()
     );
     #[cfg(feature = "lora")]
@@ -222,7 +235,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         wifi_hardware,
         boot_entropy,
         mac_octets,
-        &wifi_config,
+        initial_wifi_station,
         radio_mode == RadioMode::AccessPoint,
     );
     boot_stage(BootPhase::WifiReady);
@@ -512,8 +525,14 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         let mut presentation_urgency = PresentationUrgency::Immediate;
         let mut wifi_confirmation = None;
         let mut scheduled_remote_control_effect = None;
-        let mut system_awake = true;
-        let mut gnss_wanted = ui_state.gnss_visible();
+        let mut system = remote_control::SystemIntent::from_status(
+            usb_status,
+            lora_card_status,
+            wifi_status.as_ref(),
+            espnow_card_status,
+            tcp_status,
+            ui_state.gnss_visible(),
+        );
         macro_rules! execute_hopspot_command {
             ($snapshots:expr, $command:expr) => {
                 remote_control::execute::<B>(
@@ -528,8 +547,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                         power: battery_state,
                         display: &mut display,
                         radio_mode,
-                        system_awake: &mut system_awake,
-                        gnss_wanted: &mut gnss_wanted,
+                        system: &mut system,
                         scheduled_effect: &mut scheduled_remote_control_effect,
                         wifi_store: &mut wifi_configuration_store,
                         wifi_key: &wifi_configuration_key,
@@ -555,7 +573,9 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 espnow_card_status,
                 tcp_status,
                 &mut display,
-                &mut system_awake,
+                &mut system,
+                &mut wifi_config,
+                &mut wifi_confirmation,
             );
             remote_control::rollback_expired(
                 &mut wifi_configuration_store,

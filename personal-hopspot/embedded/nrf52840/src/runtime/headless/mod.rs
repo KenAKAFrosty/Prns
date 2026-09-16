@@ -60,6 +60,9 @@ use super::entropy::{runtime_entropy, seed_from_hal};
 mod bluetooth;
 #[cfg(any(feature = "board-t096", feature = "board-t114"))]
 mod remote_control;
+#[cfg(any(feature = "board-t1000e", feature = "board-mesh-tower-v2"))]
+#[path = "remote_control_headless.rs"]
+mod remote_control;
 #[cfg(feature = "board-mesh-tower-v2")]
 #[path = "mesh_tower_v2.rs"]
 mod selected;
@@ -111,12 +114,8 @@ type InterfaceStore = EmbassyInterfaceStore<
     PACKET_PHY_RETENTION_CAPACITY,
     PACKET_PHY_INDEX_BUCKETS,
 >;
-#[cfg(any(feature = "board-t096", feature = "board-t114"))]
 const REMOTE_CONTROL_COMMAND_DEPTH: usize = 1;
-#[cfg(any(feature = "board-t096", feature = "board-t114"))]
 type AppState = hopspot::HopspotCommandHandle<REMOTE_CONTROL_COMMAND_DEPTH>;
-#[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
-type AppState = personal_rns::runtime::NoRemoteControlHostControls;
 
 type Node = PrnsNode<
     AppState,
@@ -139,7 +138,6 @@ static COMMANDS: Channel<Mtx, IssuedCommand, COMMANDS_CAP> = Channel::new();
 static LIFECYCLE: Channel<Mtx, InterfaceLifecycle, LIFECYCLE_CAP> = Channel::new();
 static COMPLETION: CompletionPool<Mtx, COMPLETIONS_CAP> = CompletionPool::new();
 static INTERFACE_STORE: InterfaceStore = EmbassyInterfaceStore::new();
-#[cfg(any(feature = "board-t096", feature = "board-t114"))]
 static REMOTE_CONTROL_COMMANDS: hopspot::HopspotCommandMailbox<REMOTE_CONTROL_COMMAND_DEPTH> =
     hopspot::HopspotCommandMailbox::new();
 static LORA_MANIFOLD_LANE: StaticManifoldLane<
@@ -327,18 +325,11 @@ pub async fn run(spawner: Spawner) -> ! {
     .expect("the hopspot destination names are valid")
     .node_page;
     let self_announcement = RemoteControlSelfAnnouncement::Destination(node_page_destination);
-    #[cfg(any(feature = "board-t096", feature = "board-t114"))]
     let remote_control = RemoteControlService::with_capabilities(
         remote_control_identity_secrets,
         RemoteControlInitialControllerGrants::Nobody,
         self_announcement,
         remote_control::capabilities(),
-    );
-    #[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
-    let remote_control = RemoteControlService::new(
-        remote_control_identity_secrets,
-        RemoteControlInitialControllerGrants::Nobody,
-        self_announcement,
     );
     let mut manifold_lanes = ManifoldLanes::new();
     #[cfg(any(feature = "board-t096", feature = "board-t114"))]
@@ -358,10 +349,7 @@ pub async fn run(spawner: Spawner) -> ! {
     static LORA_TX_QUEUE: ConstStaticCell<[u8; LORA_TX_QUEUE_BYTES]> =
         ConstStaticCell::new([0; LORA_TX_QUEUE_BYTES]);
     static LORA_CONTROL: StaticCell<LoRaControl> = StaticCell::new();
-    #[cfg(any(feature = "board-t096", feature = "board-t114"))]
     let (lora_controller, lora_control) = LORA_CONTROL.init(LoRaControl::new()).split();
-    #[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
-    let (_lora_controller, lora_control) = LORA_CONTROL.init(LoRaControl::new()).split();
     let lora = match LoRaInterface::new(LoRaInterfaceInput {
         radio,
         configuration: subg_configuration,
@@ -420,10 +408,7 @@ pub async fn run(spawner: Spawner) -> ! {
     let entropy = runtime_entropy();
     let host = EmbassyHost::new(entropy);
     static NODE: StaticCell<Node> = StaticCell::new();
-    #[cfg(any(feature = "board-t096", feature = "board-t114"))]
     let app_state = REMOTE_CONTROL_COMMANDS.handle();
-    #[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
-    let app_state = personal_rns::runtime::NoRemoteControlHostControls;
     let recipe = PrnsNodeRecipe {
         transport_identity: Some(transport_secret),
         remote_control,
@@ -521,12 +506,19 @@ pub async fn run(spawner: Spawner) -> ! {
         .await;
     }
     #[cfg(feature = "board-t1000e")]
-    selected::run(io, lora.run(lora_seam), gnss).await;
+    selected::run(
+        io,
+        lora.run(lora_seam),
+        remote_control::run_headless(lora_status, usb_status, lora_controller, subg_configuration),
+        gnss,
+    )
+    .await;
     #[cfg(feature = "board-mesh-tower-v2")]
     selected::run(
         io,
         lora.run(lora_seam),
         bluetooth::run(sd, bluetooth),
+        remote_control::run_headless(lora_status, usb_status, lora_controller, subg_configuration),
         button,
         node_page_destination,
     )

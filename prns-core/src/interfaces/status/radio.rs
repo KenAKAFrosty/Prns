@@ -236,6 +236,9 @@ impl RadioIndication {
             TAG_LORA_SAMPLE => {
                 let (rssi, rest) = parse_i16(rest)?;
                 let (flags, rest) = rest.split_first()?;
+                if *flags & !(LORA_FLAG_SNR | LORA_FLAG_QUALITY) != 0 {
+                    return None;
+                }
                 let (snr, rest) = if *flags & LORA_FLAG_SNR != 0 {
                     let (quarters, rest) = parse_i16(rest)?;
                     (Some(SnrQuarterDb::new(quarters)), rest)
@@ -306,6 +309,12 @@ mod tests {
             RadioIndication::for_kind(Some(InterfaceKind::LoRa)),
             RadioIndication::LoRa(LoRaIndication::Pending)
         );
+    }
+
+    #[test]
+    fn lora_samples_reject_unknown_flag_bits() {
+        let bytes = [TAG_LORA_SAMPLE, 0, 0, 0x80];
+        assert_eq!(RadioIndication::parse(&bytes), None);
     }
 
     #[test]

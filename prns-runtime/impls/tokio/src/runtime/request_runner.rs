@@ -18,8 +18,8 @@ use crate::routing::request_handlers::RequestPathHash;
 use crate::units::RttMillis;
 use crate::wire::DestinationHash;
 use prns_runtime::runtime::placement::{
-    admit_remote_control_request, dispatch_admitted_remote_control_request,
-    AdmittedRemoteControlRequest,
+    admit_remote_control_request, dispatch_verified_admitted_remote_control_request,
+    verify_admitted_remote_control_request, AdmittedRemoteControlRequest,
 };
 
 use super::node_facade::{
@@ -231,7 +231,7 @@ where
             biased;
             Some(()) = in_flight.next(), if !in_flight.is_empty() => {}
             Some(command) = authorization.controller_grants.receive() => {
-                command.apply(remote_control);
+                command.apply(remote_control, authorization.persistence).await?;
             }
             Some(command) = authorization.target_accesses.receive() => {
                 command.apply(remote_control);
@@ -312,8 +312,26 @@ async fn dispatch<St, R: RequestEndpointSet<St>>(
     let mut body = RunnerResponse::Buffered(std::vec::Vec::new());
     let dispatched = match route {
         PreparedRequestRoute::RemoteControl(admission) => {
-            dispatch_admitted_remote_control_request(
-                state, commands, inbound, &mut body, *admission,
+            let verified = match verify_admitted_remote_control_request(*admission, &inbound) {
+                Ok(verified) => verified,
+                Err(decline) => return handle_decline(commands, link_id, decline),
+            };
+            if let Some(grant) = verified.authorize_controller_grant() {
+                let _response_guard = response_lane.lock().await;
+                commands
+                    .authorize_remote_control_controller_and_respond(grant, responder)
+                    .await;
+                return;
+            }
+            if let Some(controller) = verified.revoke_controller_grant() {
+                let _response_guard = response_lane.lock().await;
+                commands
+                    .revoke_remote_control_controller_and_respond(controller, responder)
+                    .await;
+                return;
+            }
+            dispatch_verified_admitted_remote_control_request(
+                state, commands, inbound, &mut body, verified,
             )
             .await
         }
@@ -406,6 +424,15 @@ async fn dispatch<St, R: RequestEndpointSet<St>>(
     }
 }
 
+fn handle_decline(commands: &PrnsNodeHandle, link_id: LinkId, decline: Decline) {
+    match decline {
+        Decline::CloseLink => {
+            commands.close_link(link_id);
+        }
+        Decline::Ignore | Decline::ResponseTooLarge => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -422,6 +449,62 @@ mod tests {
             super::super::node_facade::test_remote_control_service(),
         )
         .expect("RemoteControl fits growable storage")
+    }
+
+    fn remote_control_with_administration() -> AssembledRemoteControl {
+        let mut engine = EngineState::<GrowableHeap>::default();
+        let capabilities = crate::remote_control::RemoteControlCapabilities::from_requests(
+            crate::remote_control::RemoteControlRequestSet::all(),
+        )
+        .unwrap();
+        crate::runtime::configure_remote_control_service(
+            &mut engine,
+            super::super::node_facade::test_remote_control_service_with_capabilities(capabilities),
+        )
+        .expect("Remote Control fits growable storage")
+    }
+
+    fn controller(fill: u8) -> crate::remote_control::RemoteControlControllerIdentity {
+        use crate::identity::in_memory::InMemoryNodeIdentity;
+        use crate::identity::vault::IdentitySecretKey;
+        use crate::identity::{IdentityPublicKeys, IdentitySigner};
+
+        let identity = InMemoryNodeIdentity::from_secret_key_bytes(&IdentitySecretKey::new(
+            [fill; crate::identity::IDENTITY_SECRET_KEY_LEN],
+        ));
+        crate::remote_control::RemoteControlControllerIdentity::new(IdentityPublicKeys {
+            encryption: identity.encryption_public_key(),
+            signing: identity.signing_public_key(),
+        })
+    }
+
+    fn authorize_controller_request(
+        remote_control: &AssembledRemoteControl,
+        administrator: crate::remote_control::RemoteControlControllerIdentity,
+        operator: crate::remote_control::RemoteControlControllerIdentity,
+    ) -> RunnerRequest {
+        use crate::remote_control::{
+            RemoteControlRequest, RemoteControlRequestKind, RemoteControlRequestSet,
+        };
+
+        let mut data = std::vec![0; RemoteControlRequest::MAX_ENCODED_LEN];
+        let encoded_len = RemoteControlRequest::AuthorizeController {
+            controller: operator,
+            permitted_requests: RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
+        }
+        .write_into(data.as_mut_slice())
+        .unwrap();
+        data.truncate(encoded_len);
+        RunnerRequest {
+            destination: remote_control.target_endpoint().unwrap().destination_hash(),
+            link_id: LinkId::new([0x81; 16]),
+            request_id: RequestId([0x82; 16]),
+            requester: Some(administrator.identity_hash()),
+            path_hash: remote_control.request_endpoint_id().unwrap(),
+            requested_at: InstantMillis(83),
+            rtt: RttMillis::new(84),
+            data,
+        }
     }
 
     #[test]
@@ -634,52 +717,173 @@ mod tests {
             super::super::remote_control_target_accesses::remote_control_target_access_lane();
         let (_pairing_persistence_sender, mut pairing_persistence) =
             super::super::remote_control_pairing_persistence::remote_control_pairing_persistence_lane();
+        let persistence_directory = std::env::temp_dir().join(format!(
+            "prns-remote-control-router-grants-{}",
+            std::process::id()
+        ));
+        let _removed = std::fs::remove_dir_all(&persistence_directory);
+        let persistence_worker = super::super::NodePersistence::custom_dir(&persistence_directory)
+            .unwrap()
+            .worker(handle.clone());
+        let authorization_persistence =
+            persistence_worker.remote_control_authorization_persistence();
 
-        let router =
-            run_router::<crate::runtime::NoRemoteControlHostControls, PongRequestEndpointSet>(
-                &crate::runtime::NoRemoteControlHostControls,
-                &mut remote_control,
-                request_rx,
-                RemoteControlAuthorizationRuntime {
-                    controller_grants: &mut controller_grants,
-                    target_accesses: &mut target_accesses,
-                    pairing_persistence: &mut pairing_persistence,
-                    persistence: None,
-                },
-                handle.clone(),
-            );
-        let exercise = async {
-            assert_eq!(
-                setting.await,
-                Ok(SetRemoteControlControllerGrantOutcome::Added),
-            );
-            let Some(HostCommand::RespondAny(response)) = command_rx.recv().await else {
-                panic!("RemoteControl response command")
+        {
+            let router =
+                run_router::<crate::runtime::NoRemoteControlHostControls, PongRequestEndpointSet>(
+                    &crate::runtime::NoRemoteControlHostControls,
+                    &mut remote_control,
+                    request_rx,
+                    RemoteControlAuthorizationRuntime {
+                        controller_grants: &mut controller_grants,
+                        target_accesses: &mut target_accesses,
+                        pairing_persistence: &mut pairing_persistence,
+                        persistence: Some(&authorization_persistence),
+                    },
+                    handle.clone(),
+                );
+            let exercise = async {
+                assert_eq!(
+                    setting.await,
+                    Ok(SetRemoteControlControllerGrantOutcome::Added),
+                );
+                let Some(HostCommand::RespondAny(response)) = command_rx.recv().await else {
+                    panic!("RemoteControl response command")
+                };
+                let expected = RemoteControlDescription::try_from(RemoteControlRequestSet::only(
+                    RemoteControlRequestKind::Describe,
+                ))
+                .expect("Describe is available");
+                assert_eq!(
+                    RemoteControlResponse::parse(response.packed.as_slice()),
+                    Ok(RemoteControlResponse::Describe(expected)),
+                );
+                let Some(completion) = response.completion else {
+                    panic!("settled RemoteControl response")
+                };
+                assert!(completion.send(Settlement::Respond(Ok(()))).is_ok());
+                assert_eq!(
+                    handle
+                        .revoke_remote_control_controller(*grant.controller())
+                        .await,
+                    Ok(RevokeRemoteControlControllerOutcome::Revoked { grant }),
+                );
             };
-            let expected = RemoteControlDescription::try_from(RemoteControlRequestSet::only(
-                RemoteControlRequestKind::Describe,
-            ))
-            .expect("Describe is available");
-            assert_eq!(
-                RemoteControlResponse::parse(response.packed.as_slice()),
-                Ok(RemoteControlResponse::Describe(expected)),
-            );
-            let Some(completion) = response.completion else {
-                panic!("settled RemoteControl response")
-            };
-            assert!(completion.send(Settlement::Respond(Ok(()))).is_ok());
-            assert_eq!(
-                handle
-                    .revoke_remote_control_controller(*grant.controller())
-                    .await,
-                Ok(RevokeRemoteControlControllerOutcome::Revoked { grant }),
-            );
-        };
-        tokio::pin!(router);
-        tokio::select! {
-            biased;
-            () = exercise => {}
-            result = &mut router => panic!("router returned while its lanes remained open: {result:?}"),
+            tokio::pin!(router);
+            tokio::select! {
+                biased;
+                () = exercise => {}
+                result = &mut router => panic!("router returned while its lanes remained open: {result:?}"),
+            }
         }
+        drop(persistence_worker);
+        std::fs::remove_dir_all(persistence_directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn remote_administrator_grant_rolls_back_when_its_response_fails() {
+        use crate::remote_control::{
+            RemoteControlAuthorizeControllerOutcome, RemoteControlControllerAuthority,
+            RemoteControlControllerGrant, RemoteControlControllerGrantTable,
+            RemoteControlRequestKind, RemoteControlRequestSet, RemoteControlResponse,
+        };
+
+        let (commands, mut command_rx) = mpsc::unbounded_channel();
+        let (handle, mut controller_grants) =
+            PrnsNodeHandle::over_with_remote_control_controller_grant_lane(commands);
+        let (request_tx, request_rx) = mpsc::channel(1);
+        let mut remote_control = remote_control_with_administration();
+        let administrator_identity = *super::super::node_facade::test_remote_control_grant(
+            RemoteControlRequestKind::Describe,
+        )
+        .controller();
+        let administrator = RemoteControlControllerGrant::new(
+            administrator_identity,
+            RemoteControlControllerAuthority::Administrator,
+            RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
+        )
+        .unwrap();
+        remote_control.set_controller_grant(administrator).unwrap();
+        let operator = controller(0x46);
+        request_tx
+            .send(authorize_controller_request(
+                &remote_control,
+                administrator_identity,
+                operator,
+            ))
+            .await
+            .unwrap();
+
+        let (_target_access_sender, mut target_accesses) =
+            super::super::remote_control_target_accesses::remote_control_target_access_lane();
+        let (_pairing_persistence_sender, mut pairing_persistence) =
+            super::super::remote_control_pairing_persistence::remote_control_pairing_persistence_lane();
+        let persistence_directory = std::env::temp_dir().join(format!(
+            "prns-remote-control-response-rollback-{}",
+            std::process::id()
+        ));
+        let _removed = std::fs::remove_dir_all(&persistence_directory);
+        let persistence_worker = super::super::NodePersistence::custom_dir(&persistence_directory)
+            .unwrap()
+            .worker(handle.clone());
+        let authorization_persistence =
+            persistence_worker.remote_control_authorization_persistence();
+
+        {
+            let router =
+                run_router::<crate::runtime::NoRemoteControlHostControls, PongRequestEndpointSet>(
+                    &crate::runtime::NoRemoteControlHostControls,
+                    &mut remote_control,
+                    request_rx,
+                    RemoteControlAuthorizationRuntime {
+                        controller_grants: &mut controller_grants,
+                        target_accesses: &mut target_accesses,
+                        pairing_persistence: &mut pairing_persistence,
+                        persistence: Some(&authorization_persistence),
+                    },
+                    handle.clone(),
+                );
+            let exercise = async {
+                let Some(HostCommand::RespondAny(response)) = command_rx.recv().await else {
+                    panic!("Remote Control response command")
+                };
+                assert_eq!(
+                    RemoteControlResponse::parse(response.packed.as_slice()),
+                    Ok(RemoteControlResponse::AuthorizeController(
+                        RemoteControlAuthorizeControllerOutcome::Applied,
+                    )),
+                );
+                response
+                    .completion
+                    .unwrap()
+                    .send(Settlement::Respond(Err(RespondFailure::WriteFailed)))
+                    .unwrap();
+                assert!(matches!(
+                    command_rx.recv().await,
+                    Some(HostCommand::Engine(IssuedCommand {
+                        command: PrnsCommand::CloseLink(close),
+                        ..
+                    })) if close.link_id == LinkId::new([0x81; 16])
+                ));
+                handle
+                    .snapshot_remote_control_controller_grants()
+                    .await
+                    .unwrap();
+            };
+            tokio::pin!(router);
+            tokio::select! {
+                biased;
+                () = exercise => {}
+                result = &mut router => panic!("router returned while its lanes remained open: {result:?}"),
+            }
+        }
+
+        assert!(remote_control
+            .controller_grants()
+            .unwrap()
+            .grant_for(&operator.identity_hash())
+            .is_none());
+        drop(persistence_worker);
+        std::fs::remove_dir_all(persistence_directory).unwrap();
     }
 }

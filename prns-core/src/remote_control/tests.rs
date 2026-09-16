@@ -141,6 +141,57 @@ fn a_zero_capacity_controller_grant_table_is_an_empty_disabled_table() {
     );
 }
 
+struct OutOfOrderControllerGrantTable {
+    grants: [RemoteControlControllerGrant; 2],
+}
+
+impl RemoteControlControllerGrantTable for OutOfOrderControllerGrantTable {
+    fn capacity(&self) -> usize {
+        self.grants.len()
+    }
+
+    fn len(&self) -> usize {
+        self.grants.len()
+    }
+
+    fn grants_in_identity_hash_order(&self) -> &[RemoteControlControllerGrant] {
+        &self.grants
+    }
+
+    fn set_controller_grant(
+        &mut self,
+        _grant: RemoteControlControllerGrant,
+    ) -> Result<SetRemoteControlControllerGrantOutcome, SetRemoteControlControllerGrantError> {
+        Err(SetRemoteControlControllerGrantError::CapacityExhausted)
+    }
+
+    fn revoke_controller(
+        &mut self,
+        _controller: &RemoteControlControllerIdentity,
+    ) -> RevokeRemoteControlControllerOutcome {
+        RevokeRemoteControlControllerOutcome::NotFound
+    }
+}
+
+#[test]
+fn controller_inventory_rejects_a_grant_table_that_breaks_its_ordering_contract() {
+    let first = grant(0x31, RemoteControlRequestKind::Describe);
+    let second = grant(0x32, RemoteControlRequestKind::Describe);
+    let grants = if first.controller().identity_hash().as_bytes()
+        < second.controller().identity_hash().as_bytes()
+    {
+        [second, first]
+    } else {
+        [first, second]
+    };
+    let table = OutOfOrderControllerGrantTable { grants };
+
+    assert_eq!(
+        RemoteControlControllerInventory::from_grants(&table, RemoteControlControllerPage::First,),
+        Err(RemoteControlControllerInventoryError::NonAscending),
+    );
+}
+
 fn target_identity(fill: u8) -> RemoteControlTargetIdentity {
     RemoteControlTargetIdentity::new(IdentityPublicKeys {
         encryption: IdentityEncryptionPublicKey::new(X25519PublicKey([fill; 32])),
@@ -595,7 +646,8 @@ fn protocol_discriminants_are_stable_typed_values() {
 fn describe_build_carries_a_length_prefixed_version_and_rejects_trailers() {
     use crate::remote_control::RemoteControlBuildVersion;
 
-    let version = RemoteControlBuildVersion::from_label("0.3.7", "abcdef0123456789");
+    let version = RemoteControlBuildVersion::from_label("0.3.7", "abcdef0123456789")
+        .expect("the build label is bounded");
     assert_eq!(version.as_str(), Some("0.3.7+abcdef0"));
     let request = RemoteControlRequest::DescribeBuild;
     let mut request_bytes = [0u8; RemoteControlRequest::DescribeBuild.encoded_len()];
@@ -626,9 +678,10 @@ fn describe_build_carries_a_length_prefixed_version_and_rejects_trailers() {
         RemoteControlResponse::parse(&trailing),
         Err(crate::remote_control::RemoteControlResponseParseError::Malformed),
     );
-    let truncated = RemoteControlBuildVersion::from_label(&"v".repeat(80), "deadbeef");
-    let expected = "v".repeat(48);
-    assert_eq!(truncated.as_str(), Some(expected.as_str()));
+    assert_eq!(
+        RemoteControlBuildVersion::from_label(&"v".repeat(80), "deadbeef"),
+        Err(crate::remote_control::RemoteControlBuildVersionLabelError::VersionTooLong),
+    );
 }
 
 #[test]
@@ -717,8 +770,18 @@ fn announce_self_request_round_trips_through_its_own_wire_shape() {
 
 #[test]
 fn wifi_station_credentials_reject_empty_ssid_and_omit_password_from_inventory() {
-    assert!(RemoteControlWifiStation::parse("", "secret").is_none());
-    assert!(RemoteControlWifiStation::parse("field-lab", &"x".repeat(65)).is_none());
+    assert_eq!(
+        RemoteControlWifiStation::parse("", "secret"),
+        Err(crate::remote_control::RemoteControlWifiStationParseError::EmptySsid),
+    );
+    assert_eq!(
+        RemoteControlWifiStation::parse(&"x".repeat(33), "secret"),
+        Err(crate::remote_control::RemoteControlWifiStationParseError::SsidTooLong),
+    );
+    assert_eq!(
+        RemoteControlWifiStation::parse("field-lab", &"x".repeat(65)),
+        Err(crate::remote_control::RemoteControlWifiStationParseError::PasswordTooLong),
+    );
     let station = RemoteControlWifiStation::parse("field-lab", "secret").expect("valid station");
     assert_eq!(station.ssid(), "field-lab");
     assert_eq!(station.password(), "secret");
@@ -727,8 +790,14 @@ fn wifi_station_credentials_reject_empty_ssid_and_omit_password_from_inventory()
         "password must not appear in Debug"
     );
     assert_eq!(
-        crate::remote_control::wifi_station_inventory_config("field-lab").as_str(),
+        crate::remote_control::wifi_station_inventory_config("field-lab")
+            .expect("a valid SSID fits its inventory field")
+            .as_str(),
         "W,field-lab"
+    );
+    assert_eq!(
+        crate::remote_control::wifi_station_inventory_config(&"s".repeat(33)),
+        Err(crate::remote_control::RemoteControlWifiStationInventoryConfigError::SsidTooLong),
     );
     assert_eq!(
         crate::remote_control::parse_wifi_station_ssid("W,field,lab"),
@@ -1320,6 +1389,7 @@ fn inventory_power_and_sleep_messages_round_trip() {
                 &grants,
                 RemoteControlControllerPage::First,
             )
+            .expect("ordered grants fit one inventory page")
         }),
         RemoteControlResponse::AuthorizeController(
             crate::remote_control::RemoteControlAuthorizeControllerOutcome::Applied,
@@ -1380,10 +1450,10 @@ fn inventory_power_and_sleep_messages_round_trip() {
     }
 
     let mut card = RemoteControlInterfaceCard::empty();
-    card.set_name("BLE");
-    card.set_group("home");
-    card.set_config("IFAC 16");
-    card.set_failure("radio timeout");
+    card.set_name("BLE").unwrap();
+    card.set_group("home").unwrap();
+    card.set_config("IFAC 16").unwrap();
+    card.set_failure("radio timeout").unwrap();
     card.destinations = 4;
     card.transported_links = 1;
     let mut bytes = [0u8; RemoteControlResponse::MAX_ENCODED_LEN];
@@ -1394,6 +1464,104 @@ fn inventory_power_and_sleep_messages_round_trip() {
     assert_eq!(
         RemoteControlResponse::parse(bytes.get(..written).expect("encode stays in buffer")),
         Ok(response)
+    );
+}
+
+#[test]
+fn inventory_responses_reject_overlong_and_noncanonical_fields() {
+    use crate::interfaces::{
+        ConnectionState, InterfaceId, InterfaceKind, InterfaceMode, PeerDetails, RadioIndication,
+        INTERFACE_ID_LEN,
+    };
+    use crate::remote_control::{
+        RemoteControlInterfaceCard, RemoteControlInterfaceCardError, RemoteControlInterfaceEntry,
+        RemoteControlInterfacePeer, RemoteControlInterfacePeerPage,
+        RemoteControlInterfacePeersOutcome,
+    };
+
+    let entry = RemoteControlInterfaceEntry {
+        id: InterfaceId::new([0x11; INTERFACE_ID_LEN]),
+        kind: InterfaceKind::LoRa,
+        mode: InterfaceMode::Full,
+        connection: ConnectionState::Connected,
+        enabled: true,
+        tx_bytes: 1,
+        rx_bytes: 2,
+        links: 3,
+        rate_bytes_per_sec: 4,
+    };
+    let mut entry_wire = [0u8; RemoteControlInterfaceEntry::ENCODED_LEN];
+    entry.write_into(&mut entry_wire).unwrap();
+    let connection_offset = INTERFACE_ID_LEN + 2;
+    *entry_wire.get_mut(connection_offset).unwrap() = 0x7e;
+    assert_eq!(
+        RemoteControlInterfaceEntry::parse(&entry_wire),
+        Err(RemoteControlResponseParseError::UnknownConnectionState { found: 0x7e }),
+    );
+    *entry_wire.get_mut(connection_offset).unwrap() = 1;
+    *entry_wire.get_mut(connection_offset + 1).unwrap() = 0x80;
+    assert_eq!(
+        RemoteControlInterfaceEntry::parse(&entry_wire),
+        Err(RemoteControlResponseParseError::Malformed),
+    );
+
+    let mut card = RemoteControlInterfaceCard::empty();
+    card.set_name("prior").unwrap();
+    assert_eq!(
+        card.set_name(&"n".repeat(33)),
+        Err(RemoteControlInterfaceCardError::NameTooLong),
+    );
+    assert_eq!(card.name.as_str(), "prior");
+    card.set_name(&"n".repeat(32)).unwrap();
+    let response = RemoteControlResponse::InventoryInterfaceConfig(
+        RemoteControlInterfaceConfigOutcome::Card(card),
+    );
+    let mut encoded = [0u8; RemoteControlResponse::MAX_ENCODED_LEN];
+    let written = response.write_into(&mut encoded).unwrap();
+    let mut overlong = encoded.get(..written).unwrap().to_vec();
+    let name_length_offset = 2 + 1 + 4 + 4;
+    *overlong.get_mut(name_length_offset).unwrap() = 33;
+    overlong.insert(name_length_offset + 1 + 32, b'n');
+    assert_eq!(
+        RemoteControlResponse::parse(&overlong),
+        Err(RemoteControlResponseParseError::Malformed),
+    );
+
+    let supervisor = InterfaceId::new([0x22; INTERFACE_ID_LEN]);
+    let mut peers = RemoteControlInterfacePeerPage::empty(supervisor);
+    peers
+        .push(RemoteControlInterfacePeer {
+            id: InterfaceId::new([0x23; INTERFACE_ID_LEN]),
+            connection: ConnectionState::Connected,
+            tx_bytes: 1,
+            rx_bytes: 2,
+            links: 3,
+            destinations: 4,
+            rate_bytes_per_sec: 5,
+            radio: RadioIndication::NotRadio,
+            details: PeerDetails::NotApplicable,
+        })
+        .unwrap();
+    let response = RemoteControlResponse::InventoryInterfacePeers(
+        RemoteControlInterfacePeersOutcome::Page(peers),
+    );
+    let mut encoded = [0u8; RemoteControlResponse::MAX_ENCODED_LEN];
+    let written = response.write_into(&mut encoded).unwrap();
+    let peer_start = 2 + 1 + INTERFACE_ID_LEN + 1;
+    let radio_start = peer_start + INTERFACE_ID_LEN + 1 + 8 + 8 + 4 + 4 + 4;
+    let mut nonzero_radio_padding = encoded.get(..written).unwrap().to_vec();
+    *nonzero_radio_padding.get_mut(radio_start + 1).unwrap() = 1;
+    assert_eq!(
+        RemoteControlResponse::parse(&nonzero_radio_padding),
+        Err(RemoteControlResponseParseError::Malformed),
+    );
+    let mut noncanonical_details = encoded.get(..written).unwrap().to_vec();
+    *noncanonical_details
+        .get_mut(radio_start + RadioIndication::MAX_ENCODED_LEN + 1)
+        .unwrap() = 1;
+    assert_eq!(
+        RemoteControlResponse::parse(&noncanonical_details),
+        Err(RemoteControlResponseParseError::Malformed),
     );
 }
 

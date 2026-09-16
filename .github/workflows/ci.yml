@@ -364,7 +364,9 @@ jobs:
           targets: riscv32imac-unknown-none-elf, thumbv7em-none-eabihf
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
       - name: complete no_std and nRF52840 firmware matrix
-        run: python3 validation/run.py run --suite embedded-builds --expected-sha "$GITHUB_SHA"
+        run: |
+          unset CARGO_INCREMENTAL
+          python3 validation/run.py run --suite embedded-builds --expected-sha "$GITHUB_SHA"
       - name: upload nRF embedded resource evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -399,7 +401,9 @@ jobs:
           workspaces: personal-hopspot/embedded/esp32
           shared-key: esp32-firmware-check
       - name: compile every ESP32 shipping face on its real architecture
-        run: python3 validation/run.py run --suite esp32-firmware-check --expected-sha "$GITHUB_SHA"
+        run: |
+          unset CARGO_INCREMENTAL
+          python3 validation/run.py run --suite esp32-firmware-check --expected-sha "$GITHUB_SHA"
       - name: upload ESP embedded resource evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

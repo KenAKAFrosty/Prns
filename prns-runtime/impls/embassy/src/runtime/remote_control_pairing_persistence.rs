@@ -285,7 +285,7 @@ impl RemoteControlPairingPersistenceRequired {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RemoteControlAuthorizationStoreRequirement {
+pub(super) enum RemoteControlAuthorizationStoreRequirement {
     Initial,
     Rollback,
 }
@@ -322,7 +322,7 @@ impl<M: RawMutex> RemoteControlAuthorizationStoreExchange<M> {
         self.completed.wait().await
     }
 
-    fn submit(
+    pub(super) fn submit(
         &self,
         kind: RemoteControlAuthorizationSnapshotKind,
         snapshot: RemoteControlAuthorizationSnapshot,
@@ -339,6 +339,25 @@ impl<M: RawMutex> RemoteControlAuthorizationStoreExchange<M> {
 
     pub(super) async fn next_completion(&self) -> Result<(), EmbeddedPersistenceFailure> {
         self.completed.wait().await
+    }
+
+    #[cfg(test)]
+    pub(super) async fn settle_next_test_store(
+        &self,
+        result: Result<(), EmbeddedPersistenceFailure>,
+    ) {
+        self.wait_for_next_test_store().await;
+        self.settle_test_store(result);
+    }
+
+    #[cfg(test)]
+    pub(super) async fn wait_for_next_test_store(&self) {
+        let _request = self.requests.wait().await;
+    }
+
+    #[cfg(test)]
+    pub(super) fn settle_test_store(&self, result: Result<(), EmbeddedPersistenceFailure>) {
+        self.completed.signal(result);
     }
 
     pub(super) async fn report_failure(
@@ -625,10 +644,19 @@ impl RemoteControlPairingPersistenceProgress {
                 };
                 }
             };
-        // Completed already left the engine. Activate now so inventory can
-        // admit the new controller while flash is still writing.
-        if let Err(failure) = activate_authorization(remote_control, authorization, attempt_id) {
-            return AcceptRequiredContinuation::SettleFailure {
+        if let Some(stores) = stores {
+            stores.submit(
+                required.snapshot_kind(),
+                projected,
+                RemoteControlAuthorizationStoreRequirement::Initial,
+            );
+            self.state =
+                RemoteControlPairingPersistenceState::WaitingInitialStore { required, rollback };
+            AcceptRequiredContinuation::AwaitingStore
+        } else if let Err(failure) =
+            activate_authorization(remote_control, authorization, attempt_id)
+        {
+            AcceptRequiredContinuation::SettleFailure {
                 failure: EmbeddedRemoteControlPairingPersistenceFailure::AuthorizationTransaction {
                     attempt_id,
                     operation:
@@ -636,19 +664,10 @@ impl RemoteControlPairingPersistenceProgress {
                     failure,
                 },
                 release_authorization: true,
-            };
+            }
+        } else {
+            AcceptRequiredContinuation::SettleActivated
         }
-        let Some(stores) = stores else {
-            return AcceptRequiredContinuation::SettleActivated;
-        };
-        stores.submit(
-            required.snapshot_kind(),
-            projected,
-            RemoteControlAuthorizationStoreRequirement::Initial,
-        );
-        self.state =
-            RemoteControlPairingPersistenceState::WaitingInitialStore { required, rollback };
-        AcceptRequiredContinuation::AwaitingStore
     }
 
     #[inline(never)]
@@ -693,6 +712,29 @@ impl RemoteControlPairingPersistenceProgress {
                     required,
                     rollback,
                     Some(store_failure),
+                    remote_control,
+                    authorization,
+                    stores,
+                );
+            }
+            if let Err(failure) = activate_authorization(remote_control, authorization, attempt_id)
+            {
+                let activation_failure =
+                    EmbeddedRemoteControlPairingPersistenceFailure::AuthorizationTransaction {
+                        attempt_id,
+                        operation:
+                            EmbeddedRemoteControlPairingPersistenceOperation::ActivateAuthorization,
+                        failure,
+                    };
+                let settlement_failure = settle_persistence_failure(required, node).await.err();
+                if let Some(failure) = settlement_failure {
+                    stores.report_failure(failure).await;
+                }
+                let rollback = self.take_initial_rollback(required);
+                return self.begin_rollback(
+                    required,
+                    rollback,
+                    Some(activation_failure),
                     remote_control,
                     authorization,
                     stores,
@@ -1338,7 +1380,7 @@ mod tests {
                     .controller_grants()
                     .unwrap()
                     .grants_in_identity_hash_order(),
-                &[grant],
+                &[],
             );
 
             let fail_store = progress.accept_store_completion(

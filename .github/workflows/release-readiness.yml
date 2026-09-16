@@ -204,7 +204,11 @@ jobs:
         env:
           PRNS_ANDROID_DEVICE: ${{ matrix.platform == 'android-device' && '1' || '0' }}
           VALIDATION_PYTHON: ${{ runner.os == 'Windows' && 'python' || 'python3' }}
-        run: '"$VALIDATION_PYTHON" validation/run.py run --suite "${{ matrix.id }}" --expected-sha "${{ github.sha }}" --fuzz-seconds "${{ inputs.fuzz_seconds }}"'
+        run: |
+          if [[ "${{ matrix.id }}" == "embedded-builds" || "${{ matrix.id }}" == "esp32-firmware-check" ]]; then
+            unset CARGO_INCREMENTAL
+          fi
+          "$VALIDATION_PYTHON" validation/run.py run --suite "${{ matrix.id }}" --expected-sha "${{ github.sha }}" --fuzz-seconds "${{ inputs.fuzz_seconds }}"
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

@@ -1,68 +1,30 @@
-use embassy_time::{Duration, Instant};
+use embassy_futures::select::{select, Either};
+use embassy_time::{Duration, Instant, Timer};
 use personal_hopspot_core as hopspot;
 use personal_rns::bluetooth_auto::BluetoothAutoStatus;
 use personal_rns::interfaces::subghz::{
     ResolvedSubGMode, SubGConfiguration, SubGConfigurationState,
 };
-use personal_rns::interfaces::{InterfaceId, InterfaceSnapshot, InterfaceStatus};
+use personal_rns::interfaces::{
+    InterfaceGravity, InterfaceId, InterfaceMode, InterfaceSnapshot, InterfaceStatus, Membership,
+};
 use personal_rns::manifold::embassy::EmbassyInterfaceStatus;
-#[cfg(feature = "board-t096")]
-use personal_rns::remote_control::RemoteControlGnssPower;
 use personal_rns::remote_control::{
-    RemoteControlApplyOutcome, RemoteControlCapabilities, RemoteControlDisplayAutoOff,
-    RemoteControlDisplayVisibility, RemoteControlInterfacePower, RemoteControlLoRaOutcome,
-    RemoteControlPowerOutcome, RemoteControlRequestKind, RemoteControlSystemPower,
+    RemoteControlApplyOutcome, RemoteControlCapabilities, RemoteControlInterfacePower,
+    RemoteControlLoRaOutcome, RemoteControlPowerOutcome, RemoteControlRequestKind,
+    RemoteControlSystemPower,
 };
 use personal_rns::runtime::{
     RemoteControlHostCommand, RemoteControlHostCommandError, RemoteControlHostResponse,
 };
 
-#[cfg(feature = "board-t096")]
-use crate::boards::selected as board;
-use crate::immediate_display::{ImmediateDisplayDevice, ImmediateDisplayRuntime};
-
-use super::bluetooth::{BLE_SHARED, BLE_SUPERVISOR_ID};
+use super::*;
 
 const RESPONSE_GRACE_PERIOD: Duration = Duration::from_millis(250);
-const SYSTEM_AWAKE: u8 = 1 << 0;
-const LORA_ENABLED: u8 = 1 << 1;
-const USB_ENABLED: u8 = 1 << 2;
-const BLUETOOTH_ENABLED: u8 = 1 << 3;
-
-pub(super) struct SystemIntent(u8);
-
-impl SystemIntent {
-    pub(super) fn from_status(
-        lora_status: &EmbassyInterfaceStatus,
-        usb_status: &EmbassyInterfaceStatus,
-    ) -> Self {
-        let mut bits = SYSTEM_AWAKE;
-        if lora_status.is_enabled() {
-            bits |= LORA_ENABLED;
-        }
-        if usb_status.is_enabled() {
-            bits |= USB_ENABLED;
-        }
-        if BluetoothAutoStatus::new(&BLE_SHARED).is_enabled() {
-            bits |= BLUETOOTH_ENABLED;
-        }
-        Self(bits)
-    }
-
-    fn is_awake(&self) -> bool {
-        self.0 & SYSTEM_AWAKE != 0
-    }
-
-    fn set_awake(&mut self, awake: bool) {
-        if awake {
-            self.0 |= SYSTEM_AWAKE;
-        } else {
-            self.0 &= !SYSTEM_AWAKE;
-        }
-    }
-}
-
-type ConfigurationStore = hopspot::SubGConfigurationStore<super::super::learned_state::BoardFlash>;
+const LORA_ENABLED: u8 = 1 << 0;
+const USB_ENABLED: u8 = 1 << 1;
+const BLUETOOTH_ENABLED: u8 = 1 << 2;
+type ConfigurationStore = hopspot::SubGConfigurationStore<crate::persistence::S3SharedFlash>;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ScheduledAction {
@@ -71,24 +33,27 @@ enum ScheduledAction {
     SleepSystem,
 }
 
-pub(super) struct ScheduledEffect {
+struct ScheduledEffect {
     action: ScheduledAction,
     apply_at: Instant,
 }
 
-pub(super) struct Context<'a, D: ImmediateDisplayDevice> {
-    pub snapshots: &'a [InterfaceSnapshot],
-    pub lora_status: &'a EmbassyInterfaceStatus,
-    pub usb_status: &'a EmbassyInterfaceStatus,
-    pub display: &'a mut ImmediateDisplayRuntime<D>,
-    pub power: hopspot::PowerSnapshot,
-    pub system: &'a mut SystemIntent,
-    pub scheduled_effect: &'a mut Option<ScheduledEffect>,
-    pub lora_controller: &'a mut personal_rns::lora::LoRaController<'static>,
-    pub subg_store: &'a mut ConfigurationStore,
-    pub subg_configuration: &'a mut SubGConfigurationState,
-    #[cfg(feature = "board-t096")]
-    pub gnss_wanted: &'a mut bool,
+impl ScheduledEffect {
+    fn deadline(&self) -> Instant {
+        self.apply_at
+    }
+}
+
+struct Context<'a> {
+    snapshots: &'a [InterfaceSnapshot],
+    lora_status: &'a EmbassyInterfaceStatus,
+    usb_status: &'a EmbassyInterfaceStatus,
+    system_awake: &'a mut bool,
+    desired_interfaces: &'a mut u8,
+    scheduled_effect: &'a mut Option<ScheduledEffect>,
+    lora_controller: &'a mut personal_rns::lora::LoRaController<'static>,
+    subg_store: &'a mut ConfigurationStore,
+    subg_configuration: &'a mut SubGConfigurationState,
 }
 
 pub(super) fn capabilities() -> RemoteControlCapabilities {
@@ -101,25 +66,78 @@ pub(super) fn capabilities() -> RemoteControlCapabilities {
         RemoteControlRequestKind::InventoryInterfaceConfig,
         RemoteControlRequestKind::SetInterfaceLoRaProfile,
         RemoteControlRequestKind::DescribeBuild,
-        RemoteControlRequestKind::DescribePower,
         RemoteControlRequestKind::SetSystemPower,
-        RemoteControlRequestKind::SetDisplayVisibility,
-        RemoteControlRequestKind::SetDisplayAutoOff,
         RemoteControlRequestKind::InventoryControllers,
         RemoteControlRequestKind::AuthorizeController,
         RemoteControlRequestKind::RevokeController,
     ] {
         capabilities = capabilities.with_request(kind);
     }
-    #[cfg(feature = "board-t096")]
-    {
-        capabilities = capabilities.with_request(RemoteControlRequestKind::SetGnssPower);
-    }
     capabilities
 }
 
-pub(super) async fn execute<D: ImmediateDisplayDevice>(
-    mut context: Context<'_, D>,
+pub(super) async fn run(
+    lora_status: &'static EmbassyInterfaceStatus,
+    usb_status: &'static EmbassyInterfaceStatus,
+    mut lora_controller: personal_rns::lora::LoRaController<'static>,
+    mut subg_store: ConfigurationStore,
+    mut subg_configuration: SubGConfigurationState,
+) -> ! {
+    let mut system_awake = true;
+    let mut desired_interfaces = enabled_interfaces(lora_status, usb_status);
+    let mut scheduled_effect: Option<ScheduledEffect> = None;
+    loop {
+        let pending = match scheduled_effect.as_ref() {
+            Some(effect) => match select(
+                REMOTE_CONTROL_COMMANDS.receive(),
+                Timer::at(effect.deadline()),
+            )
+            .await
+            {
+                Either::First(pending) => Some(pending),
+                Either::Second(()) => {
+                    apply_scheduled(
+                        &mut scheduled_effect,
+                        lora_status,
+                        usb_status,
+                        &mut system_awake,
+                        desired_interfaces,
+                    );
+                    None
+                }
+            },
+            None => Some(REMOTE_CONTROL_COMMANDS.receive().await),
+        };
+        let Some(pending) = pending else {
+            continue;
+        };
+        let (token, command) = pending.into_parts();
+        let result = match snapshots(lora_status, usb_status) {
+            Ok(snapshots) => {
+                execute(
+                    Context {
+                        snapshots: &snapshots,
+                        lora_status,
+                        usb_status,
+                        system_awake: &mut system_awake,
+                        desired_interfaces: &mut desired_interfaces,
+                        scheduled_effect: &mut scheduled_effect,
+                        lora_controller: &mut lora_controller,
+                        subg_store: &mut subg_store,
+                        subg_configuration: &mut subg_configuration,
+                    },
+                    command,
+                )
+                .await
+            }
+            Err(error) => Err(error),
+        };
+        REMOTE_CONTROL_COMMANDS.complete(token, result);
+    }
+}
+
+async fn execute(
+    mut context: Context<'_>,
     command: RemoteControlHostCommand,
 ) -> Result<RemoteControlHostResponse, RemoteControlHostCommandError> {
     match command {
@@ -162,9 +180,9 @@ pub(super) async fn execute<D: ImmediateDisplayDevice>(
                 ));
             };
             let desired = power == RemoteControlInterfacePower::On;
-            let outcome = if desired && !context.system.is_awake() {
+            let outcome = if desired && !*context.system_awake {
                 return Err(RemoteControlHostCommandError::Busy);
-            } else if !desired && !context.system.is_awake() {
+            } else if !desired && !*context.system_awake {
                 if enabled {
                     record_desired_interface(&mut context, id, false);
                     RemoteControlPowerOutcome::Applied
@@ -218,9 +236,6 @@ pub(super) async fn execute<D: ImmediateDisplayDevice>(
             hopspot::hopspot_remote_control_build_version()
                 .map_err(|_| RemoteControlHostCommandError::ApplyFailed)?,
         )),
-        RemoteControlHostCommand::DescribePower => {
-            Ok(RemoteControlHostResponse::DescribePower(context.power))
-        }
         RemoteControlHostCommand::SetSystemPower { power } => {
             let desired_awake = power == RemoteControlSystemPower::Awake;
             let outcome = if desired_awake && cancel_pending_sleep(context.scheduled_effect) {
@@ -233,94 +248,17 @@ pub(super) async fn execute<D: ImmediateDisplayDevice>(
                     )?;
                     RemoteControlApplyOutcome::Scheduled
                 }
-            } else if context.system.is_awake() == desired_awake {
+            } else if *context.system_awake == desired_awake {
                 RemoteControlApplyOutcome::Unchanged
             } else if desired_awake {
-                context
-                    .display
-                    .request_visible(display_now(), display_now)
-                    .await
-                    .map_err(|_| RemoteControlHostCommandError::ApplyFailed)?;
                 restore_desired_interfaces(&context);
-                #[cfg(feature = "board-t096")]
-                if *context.gnss_wanted {
-                    board::control_gnss(hopspot::GnssReceiverCommand::Enable);
-                }
-                context.system.set_awake(true);
+                *context.system_awake = true;
                 RemoteControlApplyOutcome::Applied
             } else {
                 schedule_effect(context.scheduled_effect, ScheduledAction::SleepSystem)?;
                 RemoteControlApplyOutcome::Scheduled
             };
             Ok(RemoteControlHostResponse::SetSystemPower(outcome))
-        }
-        RemoteControlHostCommand::SetDisplayVisibility { visibility } => {
-            if context.display.visibility() == hopspot::display::DisplayVisibility::Unavailable {
-                return Err(RemoteControlHostCommandError::Unsupported);
-            }
-            let desired_visible = visibility == RemoteControlDisplayVisibility::Visible;
-            if desired_visible && !context.system.is_awake() {
-                return Err(RemoteControlHostCommandError::Busy);
-            }
-            let currently_visible =
-                context.display.visibility() == hopspot::display::DisplayVisibility::Visible;
-            let outcome = if desired_visible == currently_visible {
-                RemoteControlApplyOutcome::Unchanged
-            } else {
-                if desired_visible {
-                    context
-                        .display
-                        .request_visible(display_now(), display_now)
-                        .await
-                        .map_err(|_| RemoteControlHostCommandError::ApplyFailed)?;
-                } else {
-                    blank_display(
-                        context.display,
-                        hopspot::display::DisplayBlankReason::DisplayOnly,
-                    )
-                    .await?;
-                }
-                RemoteControlApplyOutcome::Applied
-            };
-            Ok(RemoteControlHostResponse::SetDisplayVisibility(outcome))
-        }
-        RemoteControlHostCommand::SetDisplayAutoOff { auto_off } => {
-            let desired = match auto_off {
-                RemoteControlDisplayAutoOff::Enabled => hopspot::display::DisplayAutoOff::Enabled,
-                RemoteControlDisplayAutoOff::Disabled => hopspot::display::DisplayAutoOff::Disabled,
-            };
-            let current = context
-                .display
-                .auto_off()
-                .map_err(|_| RemoteControlHostCommandError::Unsupported)?;
-            let outcome = if current == desired {
-                RemoteControlApplyOutcome::Unchanged
-            } else {
-                context
-                    .display
-                    .set_auto_off(desired, display_now())
-                    .map_err(|_| RemoteControlHostCommandError::ApplyFailed)?;
-                RemoteControlApplyOutcome::Applied
-            };
-            Ok(RemoteControlHostResponse::SetDisplayAutoOff(outcome))
-        }
-        #[cfg(feature = "board-t096")]
-        RemoteControlHostCommand::SetGnssPower { power } => {
-            let desired = power == RemoteControlGnssPower::On;
-            let outcome = if *context.gnss_wanted == desired {
-                RemoteControlApplyOutcome::Unchanged
-            } else {
-                *context.gnss_wanted = desired;
-                if context.system.is_awake() {
-                    board::control_gnss(if desired {
-                        hopspot::GnssReceiverCommand::Enable
-                    } else {
-                        hopspot::GnssReceiverCommand::Disable
-                    });
-                }
-                RemoteControlApplyOutcome::Applied
-            };
-            Ok(RemoteControlHostResponse::SetGnssPower(outcome))
         }
         _ => Err(RemoteControlHostCommandError::Unsupported),
     }
@@ -359,25 +297,6 @@ fn has_pending_sleep(scheduled: &Option<ScheduledEffect>) -> bool {
         .is_some_and(|effect| effect.action == ScheduledAction::SleepSystem)
 }
 
-fn display_now() -> hopspot::display::MonotonicMillis {
-    hopspot::display::MonotonicMillis::new(Instant::now().as_millis())
-}
-
-async fn blank_display<D: ImmediateDisplayDevice>(
-    display: &mut ImmediateDisplayRuntime<D>,
-    reason: hopspot::display::DisplayBlankReason,
-) -> Result<(), RemoteControlHostCommandError> {
-    let now = display_now();
-    display
-        .schedule_blanking(now, reason)
-        .map_err(|_| RemoteControlHostCommandError::ApplyFailed)?;
-    display
-        .poll_blanking(now, display_now)
-        .await
-        .map_err(|_| RemoteControlHostCommandError::ApplyFailed)?;
-    Ok(())
-}
-
 fn schedule_effect(
     scheduled: &mut Option<ScheduledEffect>,
     action: ScheduledAction,
@@ -396,10 +315,7 @@ fn schedule_effect(
     Ok(())
 }
 
-fn interface_bit<D: ImmediateDisplayDevice>(
-    context: &Context<'_, D>,
-    id: InterfaceId,
-) -> Option<u8> {
+fn interface_bit(context: &Context<'_>, id: InterfaceId) -> Option<u8> {
     if context.lora_status.id() == id {
         Some(LORA_ENABLED)
     } else if context.usb_status.id() == id {
@@ -411,42 +327,27 @@ fn interface_bit<D: ImmediateDisplayDevice>(
     }
 }
 
-fn desired_interface_enabled<D: ImmediateDisplayDevice>(
-    context: &Context<'_, D>,
-    id: InterfaceId,
-) -> Option<bool> {
-    interface_bit(context, id).map(|bit| context.system.0 & bit != 0)
+fn desired_interface_enabled(context: &Context<'_>, id: InterfaceId) -> Option<bool> {
+    interface_bit(context, id).map(|bit| *context.desired_interfaces & bit != 0)
 }
 
-fn set_desired_interface<D: ImmediateDisplayDevice>(
-    context: &mut Context<'_, D>,
-    id: InterfaceId,
-    enabled: bool,
-) {
+fn set_desired_interface(context: &mut Context<'_>, id: InterfaceId, enabled: bool) {
     record_desired_interface(context, id, enabled);
     apply_interface_enabled(context, id, enabled);
 }
 
-fn record_desired_interface<D: ImmediateDisplayDevice>(
-    context: &mut Context<'_, D>,
-    id: InterfaceId,
-    enabled: bool,
-) {
+fn record_desired_interface(context: &mut Context<'_>, id: InterfaceId, enabled: bool) {
     let Some(bit) = interface_bit(context, id) else {
         return;
     };
     if enabled {
-        context.system.0 |= bit;
+        *context.desired_interfaces |= bit;
     } else {
-        context.system.0 &= !bit;
+        *context.desired_interfaces &= !bit;
     }
 }
 
-fn apply_interface_enabled<D: ImmediateDisplayDevice>(
-    context: &Context<'_, D>,
-    id: InterfaceId,
-    enabled: bool,
-) {
+fn apply_interface_enabled(context: &Context<'_>, id: InterfaceId, enabled: bool) {
     if context.lora_status.id() == id {
         set_status(context.lora_status, enabled);
     } else if context.usb_status.id() == id {
@@ -461,22 +362,45 @@ fn apply_interface_enabled<D: ImmediateDisplayDevice>(
     }
 }
 
-fn restore_desired_interfaces<D: ImmediateDisplayDevice>(context: &Context<'_, D>) {
-    set_status(context.lora_status, context.system.0 & LORA_ENABLED != 0);
-    set_status(context.usb_status, context.system.0 & USB_ENABLED != 0);
+fn restore_desired_interfaces(context: &Context<'_>) {
+    set_status(
+        context.lora_status,
+        *context.desired_interfaces & LORA_ENABLED != 0,
+    );
+    set_status(
+        context.usb_status,
+        *context.desired_interfaces & USB_ENABLED != 0,
+    );
     let bluetooth = BluetoothAutoStatus::new(&BLE_SHARED);
-    if context.system.0 & BLUETOOTH_ENABLED != 0 {
+    if *context.desired_interfaces & BLUETOOTH_ENABLED != 0 {
         bluetooth.enable();
     } else {
         bluetooth.disable();
     }
 }
 
-fn interfaces_match_desired<D: ImmediateDisplayDevice>(context: &Context<'_, D>) -> bool {
-    context.lora_status.is_enabled() == (context.system.0 & LORA_ENABLED != 0)
-        && context.usb_status.is_enabled() == (context.system.0 & USB_ENABLED != 0)
+fn interfaces_match_desired(context: &Context<'_>) -> bool {
+    context.lora_status.is_enabled() == (*context.desired_interfaces & LORA_ENABLED != 0)
+        && context.usb_status.is_enabled() == (*context.desired_interfaces & USB_ENABLED != 0)
         && (BluetoothAutoStatus::new(&BLE_SHARED).is_enabled()
-            == (context.system.0 & BLUETOOTH_ENABLED != 0))
+            == (*context.desired_interfaces & BLUETOOTH_ENABLED != 0))
+}
+
+fn enabled_interfaces(
+    lora_status: &EmbassyInterfaceStatus,
+    usb_status: &EmbassyInterfaceStatus,
+) -> u8 {
+    let mut enabled = 0;
+    if lora_status.is_enabled() {
+        enabled |= LORA_ENABLED;
+    }
+    if usb_status.is_enabled() {
+        enabled |= USB_ENABLED;
+    }
+    if BluetoothAutoStatus::new(&BLE_SHARED).is_enabled() {
+        enabled |= BLUETOOTH_ENABLED;
+    }
+    enabled
 }
 
 fn set_status(status: &EmbassyInterfaceStatus, enabled: bool) {
@@ -487,19 +411,13 @@ fn set_status(status: &EmbassyInterfaceStatus, enabled: bool) {
     }
 }
 
-pub(super) async fn apply_scheduled<D: ImmediateDisplayDevice>(
+fn apply_scheduled(
     scheduled: &mut Option<ScheduledEffect>,
     lora_status: &EmbassyInterfaceStatus,
     usb_status: &EmbassyInterfaceStatus,
-    display: &mut ImmediateDisplayRuntime<D>,
-    system: &mut SystemIntent,
+    system_awake: &mut bool,
+    desired_interfaces: u8,
 ) {
-    let Some(effect) = scheduled.as_ref() else {
-        return;
-    };
-    if Instant::now() < effect.apply_at {
-        return;
-    }
     let Some(effect) = scheduled.take() else {
         return;
     };
@@ -514,36 +432,24 @@ pub(super) async fn apply_scheduled<D: ImmediateDisplayDevice>(
             }
         }
         ScheduledAction::ReconcileInterfaces => {
-            set_status(lora_status, system.0 & LORA_ENABLED != 0);
-            set_status(usb_status, system.0 & USB_ENABLED != 0);
-            if system.0 & BLUETOOTH_ENABLED != 0 {
+            set_status(lora_status, desired_interfaces & LORA_ENABLED != 0);
+            set_status(usb_status, desired_interfaces & USB_ENABLED != 0);
+            if desired_interfaces & BLUETOOTH_ENABLED != 0 {
                 BluetoothAutoStatus::new(&BLE_SHARED).enable();
             } else {
                 BluetoothAutoStatus::new(&BLE_SHARED).disable();
             }
         }
         ScheduledAction::SleepSystem => {
-            if blank_display(display, hopspot::display::DisplayBlankReason::SystemSleep)
-                .await
-                .is_err()
-            {
-                *scheduled = Some(ScheduledEffect {
-                    action: ScheduledAction::SleepSystem,
-                    apply_at: Instant::now() + RESPONSE_GRACE_PERIOD,
-                });
-                return;
-            }
             lora_status.disable();
             usb_status.disable();
             BluetoothAutoStatus::new(&BLE_SHARED).disable();
-            #[cfg(feature = "board-t096")]
-            board::control_gnss(hopspot::GnssReceiverCommand::Disable);
-            system.set_awake(false);
+            *system_awake = false;
         }
     }
 }
 
-pub(super) async fn apply_subg_configuration(
+async fn apply_subg_configuration(
     controller: &mut personal_rns::lora::LoRaController<'static>,
     store: &mut ConfigurationStore,
     active: &mut SubGConfigurationState,
@@ -595,4 +501,52 @@ pub(super) async fn apply_subg_configuration(
             }
         }
     }
+}
+
+fn snapshots(
+    lora: &EmbassyInterfaceStatus,
+    usb: &EmbassyInterfaceStatus,
+) -> Result<heapless::Vec<InterfaceSnapshot, INTERFACE_CAPACITY>, RemoteControlHostCommandError> {
+    let bluetooth = BluetoothAutoStatus::new(&BLE_SHARED);
+    let mut entries: heapless::Vec<(&dyn InterfaceStatus, Membership), INTERFACE_CAPACITY> =
+        heapless::Vec::new();
+    entries
+        .push((lora, Membership::Independent))
+        .map_err(|_| RemoteControlHostCommandError::ApplyFailed)?;
+    entries
+        .push((usb, Membership::Independent))
+        .map_err(|_| RemoteControlHostCommandError::ApplyFailed)?;
+    let supervisor_id = bluetooth.id();
+    entries
+        .push((&bluetooth, Membership::Independent))
+        .map_err(|_| RemoteControlHostCommandError::ApplyFailed)?;
+    for member in bluetooth.members() {
+        entries
+            .push((member, Membership::FleetMember { supervisor_id }))
+            .map_err(|_| RemoteControlHostCommandError::ApplyFailed)?;
+    }
+
+    let mut snapshots = heapless::Vec::new();
+    for (status, membership) in &entries {
+        let counts = INTERFACE_STORE.counts(status.id());
+        snapshots
+            .push(InterfaceSnapshot {
+                id: status.id(),
+                mode: InterfaceMode::Full,
+                gravity: InterfaceGravity::ZERO,
+                connection: status.connection(),
+                failure_reason: status.failure_reason(),
+                rx_bytes: status.rx_bytes(),
+                tx_bytes: status.tx_bytes(),
+                transfer_rates: status.transfer_rates(),
+                destinations: counts.destinations,
+                links: counts.links,
+                transported_links: counts.transported_links,
+                membership: *membership,
+                radio: status.radio(),
+                details: status.details(),
+            })
+            .map_err(|_| RemoteControlHostCommandError::ApplyFailed)?;
+    }
+    Ok(snapshots)
 }

@@ -93,12 +93,12 @@ impl PeerDetails {
 
     #[must_use]
     pub const fn from_wire(tag: u8, payload: u8) -> Option<Self> {
-        match tag {
-            TAG_NOT_APPLICABLE => Some(Self::NotApplicable),
-            TAG_UNKNOWN => Some(Self::Unknown),
-            TAG_BLE_GATT => Some(Self::BleGatt),
-            TAG_BLE_COC => Some(Self::BleCoc),
-            TAG_WIFI_RF_CHANNEL => Some(Self::WifiRfChannel(payload)),
+        match (tag, payload) {
+            (TAG_NOT_APPLICABLE, 0) => Some(Self::NotApplicable),
+            (TAG_UNKNOWN, 0) => Some(Self::Unknown),
+            (TAG_BLE_GATT, 0) => Some(Self::BleGatt),
+            (TAG_BLE_COC, 0) => Some(Self::BleCoc),
+            (TAG_WIFI_RF_CHANNEL, payload) => Some(Self::WifiRfChannel(payload)),
             _ => None,
         }
     }

@@ -4,20 +4,22 @@ use personal_rns::interfaces::bluetooth_auto::BleIdentity;
 use personal_rns::interfaces::lora::RadioProfile;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot, Membership};
 use personal_rns::remote_control::{
-    wifi_station_inventory_config, RemoteControlBuildVersion, RemoteControlInterfaceCard,
+    wifi_station_inventory_config, RemoteControlBuildVersion, RemoteControlBuildVersionLabelError,
+    RemoteControlInterfaceCard, RemoteControlInterfaceCardError,
     RemoteControlInterfaceConfigOutcome, RemoteControlInterfaceContinuation,
     RemoteControlInterfaceCursor, RemoteControlInterfaceEntry, RemoteControlInterfaceInventory,
-    RemoteControlInterfacePage, RemoteControlInterfacePeer, RemoteControlInterfacePeerPage,
-    RemoteControlInterfacePeersOutcome, RemoteControlPeerContinuation, RemoteControlPeerCursor,
-    RemoteControlPeerPage, RemoteControlResponse, REMOTE_CONTROL_INTERFACE_INVENTORY_CAP,
+    RemoteControlInterfaceInventoryError, RemoteControlInterfacePage, RemoteControlInterfacePeer,
+    RemoteControlInterfacePeerPage, RemoteControlInterfacePeersOutcome,
+    RemoteControlPeerContinuation, RemoteControlPeerCursor, RemoteControlPeerPage,
+    RemoteControlResponse, REMOTE_CONTROL_INTERFACE_INVENTORY_CAP,
     REMOTE_CONTROL_INTERFACE_PEER_CAP,
 };
 use prns_core::engine::MAX_RESPOND_DATA_LEN;
 
 const _: () = assert!(RemoteControlResponse::MAX_ENCODED_LEN <= MAX_RESPOND_DATA_LEN);
 
-#[must_use]
-pub fn hopspot_remote_control_build_version() -> RemoteControlBuildVersion {
+pub fn hopspot_remote_control_build_version(
+) -> Result<RemoteControlBuildVersion, RemoteControlBuildVersionLabelError> {
     RemoteControlBuildVersion::from_label(
         crate::node_pages::BUILD_VERSION,
         crate::node_pages::BUILD_COMMIT,
@@ -30,7 +32,8 @@ pub fn hopspot_remote_control_build_version() -> RemoteControlBuildVersion {
 pub fn remote_control_inventory_from_snapshots(
     snapshots: &[InterfaceSnapshot],
     page: RemoteControlInterfacePage,
-) -> RemoteControlInterfaceInventory {
+) -> Result<RemoteControlInterfaceInventory, RemoteControlInterfaceInventoryError> {
+    reject_duplicate_snapshot_ids(snapshots)?;
     let mut inventory = RemoteControlInterfaceInventory::empty();
     let mut after = match page {
         RemoteControlInterfacePage::First => None,
@@ -59,9 +62,7 @@ pub fn remote_control_inventory_from_snapshots(
             links: snapshot.links.saturating_add(snapshot.transported_links),
             rate_bytes_per_sec: rate_bytes_per_sec(snapshot),
         };
-        if inventory.push(entry).is_err() {
-            break;
-        }
+        inventory.push(entry)?;
         after = Some(snapshot.id);
     }
     if let Some(last) = inventory.entries().last() {
@@ -69,36 +70,39 @@ pub fn remote_control_inventory_from_snapshots(
             operator_interface(snapshot) && snapshot.id.as_bytes() > last.id.as_bytes()
         });
         if has_more {
-            let _ = inventory.set_continuation(RemoteControlInterfaceContinuation::More(
+            inventory.set_continuation(RemoteControlInterfaceContinuation::More(
                 RemoteControlInterfaceCursor::after(last.id),
-            ));
+            ))?;
         }
     }
-    inventory
+    Ok(inventory)
 }
 
 /// One supervisor card: name, group, LoRa tune, destinations, failure.
 pub fn remote_control_interface_config_from_snapshots(
     snapshots: &[InterfaceSnapshot],
     id: InterfaceId,
-    decorate: impl FnOnce(&InterfaceSnapshot, &mut RemoteControlInterfaceCard),
-) -> RemoteControlInterfaceConfigOutcome {
+    decorate: impl FnOnce(
+        &InterfaceSnapshot,
+        &mut RemoteControlInterfaceCard,
+    ) -> Result<(), RemoteControlInterfaceCardError>,
+) -> Result<RemoteControlInterfaceConfigOutcome, RemoteControlInterfaceCardError> {
     let Some(snapshot) = snapshots
         .iter()
         .find(|snapshot| snapshot.id == id && operator_interface(snapshot))
     else {
-        return RemoteControlInterfaceConfigOutcome::UnknownInterface;
+        return Ok(RemoteControlInterfaceConfigOutcome::UnknownInterface);
     };
     let mut card = RemoteControlInterfaceCard::empty();
-    decorate(snapshot, &mut card);
+    decorate(snapshot, &mut card)?;
     if let Some(failure) = snapshot.failure_reason {
         if card.failure.is_empty() {
-            card.set_failure(failure);
+            card.set_failure(failure)?;
         }
     }
     card.destinations = snapshot.destinations;
     card.transported_links = snapshot.transported_links;
-    RemoteControlInterfaceConfigOutcome::Card(card)
+    Ok(RemoteControlInterfaceConfigOutcome::Card(card))
 }
 
 /// One packed page of fleet members for a supervisor. `offset` is the
@@ -107,12 +111,13 @@ pub fn remote_control_interface_peers_from_snapshots(
     snapshots: &[InterfaceSnapshot],
     id: InterfaceId,
     requested_page: RemoteControlPeerPage,
-) -> RemoteControlInterfacePeersOutcome {
+) -> Result<RemoteControlInterfacePeersOutcome, RemoteControlInterfaceInventoryError> {
+    reject_duplicate_snapshot_ids(snapshots)?;
     let Some(supervisor) = snapshots
         .iter()
         .find(|snapshot| snapshot.id == id && operator_interface(snapshot))
     else {
-        return RemoteControlInterfacePeersOutcome::UnknownInterface;
+        return Ok(RemoteControlInterfacePeersOutcome::UnknownInterface);
     };
     let mut after = match requested_page {
         RemoteControlPeerPage::First => None,
@@ -129,9 +134,7 @@ pub fn remote_control_interface_peers_from_snapshots(
             break;
         };
         after = Some(peer.id);
-        if page.push(peer).is_err() {
-            break;
-        }
+        page.push(peer)?;
     }
     if let Some(last) = page.peers.last() {
         let has_more = snapshots
@@ -139,12 +142,12 @@ pub fn remote_control_interface_peers_from_snapshots(
             .filter_map(|snapshot| remote_control_peer_for_supervisor(id, snapshot))
             .any(|peer| peer.id.as_bytes() > last.id.as_bytes());
         if has_more {
-            let _ = page.set_continuation(RemoteControlPeerContinuation::More(
+            page.set_continuation(RemoteControlPeerContinuation::More(
                 RemoteControlPeerCursor::after(last.id),
-            ));
+            ))?;
         }
     }
-    RemoteControlInterfacePeersOutcome::Page(page)
+    Ok(RemoteControlInterfacePeersOutcome::Page(page))
 }
 
 /// Shared Hopspot name, LoRa tune, Auto Wi-Fi SSID, and BLE group labels for one config card.
@@ -155,51 +158,72 @@ pub fn decorate_hopspot_remote_control_card(
     lora_profile: Option<RadioProfile>,
     wifi_ssid: Option<&str>,
     ble_identity: Option<BleIdentity>,
-) {
+) -> Result<(), RemoteControlInterfaceCardError> {
     let Some(kind) = operator_kind(snapshot) else {
-        return;
+        return Ok(());
     };
     if kind == InterfaceKind::BluetoothAuto {
         if let Some(identity) = ble_identity {
-            card.set_name(bluetooth_auto_interface_name(identity).as_str());
+            card.set_name(bluetooth_auto_interface_name(identity)?.as_str())?;
         } else {
-            card.set_name(kind.name());
+            card.set_name(kind.name())?;
         }
     } else {
-        card.set_name(kind.name());
+        card.set_name(kind.name())?;
     }
     if matches!(kind, InterfaceKind::LoRa | InterfaceKind::Rnode) {
         if let Some(profile) = lora_profile {
-            card.set_config(profile.inventory_config().as_str());
+            card.set_config(profile.inventory_config().as_str())?;
         } else {
-            card.set_config("LoRa");
+            card.set_config("LoRa")?;
         }
     }
     if kind == InterfaceKind::AutoWifi {
-        card.set_config(wifi_station_inventory_config(wifi_ssid.unwrap_or("")).as_str());
+        let config = wifi_station_inventory_config(wifi_ssid.unwrap_or(""))
+            .map_err(|_| RemoteControlInterfaceCardError::ConfigTooLong)?;
+        card.set_config(config.as_str())?;
     }
     if kind == InterfaceKind::BluetoothAuto {
         if let Some(group) = ble_group.filter(|group| !group.is_empty()) {
-            card.set_group(group);
+            card.set_group(group)?;
         }
     }
+    Ok(())
+}
+
+fn reject_duplicate_snapshot_ids(
+    snapshots: &[InterfaceSnapshot],
+) -> Result<(), RemoteControlInterfaceInventoryError> {
+    for (index, snapshot) in snapshots.iter().enumerate() {
+        if snapshots
+            .iter()
+            .skip(index.saturating_add(1))
+            .any(|other| other.id == snapshot.id)
+        {
+            return Err(RemoteControlInterfaceInventoryError::NonAscending);
+        }
+    }
+    Ok(())
 }
 
 /// Same `bluetooth-auto XXXX` title the Controller uses on Settings.
-#[must_use]
-pub fn bluetooth_auto_interface_name(identity: BleIdentity) -> heapless::String<32> {
+pub fn bluetooth_auto_interface_name(
+    identity: BleIdentity,
+) -> Result<heapless::String<32>, RemoteControlInterfaceCardError> {
     let id = InterfaceId::from_channel_tag(InterfaceKind::BluetoothPeer, identity.as_bytes());
     let bytes = id.as_bytes();
     let mut name = heapless::String::new();
     match (bytes.get(1), bytes.get(2)) {
         (Some(first), Some(second)) => {
-            let _ = write!(&mut name, "bluetooth-auto {first:02x}{second:02x}");
+            write!(&mut name, "bluetooth-auto {first:02x}{second:02x}")
+                .map_err(|_| RemoteControlInterfaceCardError::NameTooLong)?;
         }
         (Some(_) | None, Some(_) | None) => {
-            let _ = name.push_str("bluetooth-auto");
+            name.push_str("bluetooth-auto")
+                .map_err(|_| RemoteControlInterfaceCardError::NameTooLong)?;
         }
     }
-    name
+    Ok(name)
 }
 
 fn operator_interface(snapshot: &InterfaceSnapshot) -> bool {
@@ -309,11 +333,12 @@ mod tests {
 
         let snapshots = [supervisor, member];
         let inventory =
-            remote_control_inventory_from_snapshots(&snapshots, RemoteControlInterfacePage::First);
+            remote_control_inventory_from_snapshots(&snapshots, RemoteControlInterfacePage::First)
+                .unwrap();
 
         assert_eq!(inventory.entries().len(), 1);
         assert_eq!(inventory.entries()[0].links, 3);
-        let RemoteControlInterfaceConfigOutcome::Card(card) =
+        let Ok(RemoteControlInterfaceConfigOutcome::Card(card)) =
             remote_control_interface_config_from_snapshots(
                 &snapshots,
                 supervisor_id,
@@ -333,14 +358,16 @@ mod tests {
         };
         assert_eq!(
             card.name.as_str(),
-            bluetooth_auto_interface_name(BleIdentity::new(*b"stable-identity!")).as_str()
+            bluetooth_auto_interface_name(BleIdentity::new(*b"stable-identity!"))
+                .unwrap()
+                .as_str()
         );
         assert_eq!(card.group.as_str(), "lab");
         assert!(card.config.is_empty());
         assert_eq!(card.destinations, 3);
         assert_eq!(card.transported_links, 2);
 
-        let RemoteControlInterfacePeersOutcome::Page(page) =
+        let Ok(RemoteControlInterfacePeersOutcome::Page(page)) =
             remote_control_interface_peers_from_snapshots(
                 &snapshots,
                 supervisor_id,
@@ -363,7 +390,7 @@ mod tests {
         let supervisor_id = InterfaceId::new([InterfaceKind::AutoWifi as u8, 0, 0, 0, 0, 0, 0, 0]);
         let mut supervisor = snapshot(InterfaceKind::AutoWifi);
         supervisor.id = supervisor_id;
-        let RemoteControlInterfaceConfigOutcome::Card(card) =
+        let Ok(RemoteControlInterfaceConfigOutcome::Card(card)) =
             remote_control_interface_config_from_snapshots(
                 &[supervisor],
                 supervisor_id,
@@ -400,7 +427,8 @@ mod tests {
         }
 
         let inventory =
-            remote_control_inventory_from_snapshots(&snapshots, RemoteControlInterfacePage::First);
+            remote_control_inventory_from_snapshots(&snapshots, RemoteControlInterfacePage::First)
+                .unwrap();
 
         assert_eq!(inventory.entries().len(), 1);
         assert_eq!(inventory.entries()[0].kind, InterfaceKind::AutoWifi);
@@ -409,7 +437,7 @@ mod tests {
                 <= MAX_RESPOND_DATA_LEN
         );
 
-        let RemoteControlInterfacePeersOutcome::Page(first) =
+        let Ok(RemoteControlInterfacePeersOutcome::Page(first)) =
             remote_control_interface_peers_from_snapshots(
                 &snapshots,
                 supervisor_id,
@@ -422,7 +450,7 @@ mod tests {
         let RemoteControlPeerContinuation::More(cursor) = first.continuation() else {
             panic!("first page should continue");
         };
-        let RemoteControlInterfacePeersOutcome::Page(second) =
+        let Ok(RemoteControlInterfacePeersOutcome::Page(second)) =
             remote_control_interface_peers_from_snapshots(
                 &snapshots,
                 supervisor_id,
@@ -435,7 +463,7 @@ mod tests {
         let RemoteControlPeerContinuation::More(cursor) = second.continuation() else {
             panic!("second page should continue");
         };
-        let RemoteControlInterfacePeersOutcome::Page(third) =
+        let Ok(RemoteControlInterfacePeersOutcome::Page(third)) =
             remote_control_interface_peers_from_snapshots(
                 &snapshots,
                 supervisor_id,
@@ -455,7 +483,7 @@ mod tests {
                 InterfaceId::new([0xff; 8]),
                 RemoteControlPeerPage::First,
             ),
-            RemoteControlInterfacePeersOutcome::UnknownInterface
+            Ok(RemoteControlInterfacePeersOutcome::UnknownInterface)
         );
     }
 
@@ -465,10 +493,44 @@ mod tests {
         let mut cookie = snapshot(InterfaceKind::Loopback);
         cookie.id = id;
         let inventory =
-            remote_control_inventory_from_snapshots(&[cookie], RemoteControlInterfacePage::First);
+            remote_control_inventory_from_snapshots(&[cookie], RemoteControlInterfacePage::First)
+                .unwrap();
         assert_eq!(inventory.entries().len(), 1);
         assert_eq!(inventory.entries()[0].id, id);
         assert_eq!(inventory.entries()[0].kind, InterfaceKind::UsbAutoDevice);
+    }
+
+    #[test]
+    fn duplicate_snapshot_ids_are_rejected_instead_of_disappearing_between_pages() {
+        let duplicate = snapshot(InterfaceKind::LoRa);
+        assert_eq!(
+            remote_control_inventory_from_snapshots(
+                &[duplicate, duplicate],
+                RemoteControlInterfacePage::First,
+            ),
+            Err(RemoteControlInterfaceInventoryError::NonAscending),
+        );
+    }
+
+    #[test]
+    fn overlong_card_values_are_rejected_instead_of_truncated() {
+        let supervisor = snapshot(InterfaceKind::AutoWifi);
+        let long_ssid = "s".repeat(personal_rns::remote_control::REMOTE_CONTROL_WIFI_SSID_CAP + 1);
+        assert_eq!(
+            remote_control_interface_config_from_snapshots(
+                &[supervisor],
+                supervisor.id,
+                |snapshot, card| decorate_hopspot_remote_control_card(
+                    snapshot,
+                    card,
+                    None,
+                    None,
+                    Some(long_ssid.as_str()),
+                    None,
+                ),
+            ),
+            Err(RemoteControlInterfaceCardError::ConfigTooLong),
+        );
     }
 
     #[test]
@@ -501,14 +563,16 @@ mod tests {
         }
 
         let first =
-            remote_control_inventory_from_snapshots(&snapshots, RemoteControlInterfacePage::First);
+            remote_control_inventory_from_snapshots(&snapshots, RemoteControlInterfacePage::First)
+                .unwrap();
         let RemoteControlInterfaceContinuation::More(cursor) = first.continuation() else {
             panic!("first supervisor page should continue");
         };
         let second = remote_control_inventory_from_snapshots(
             &snapshots,
             RemoteControlInterfacePage::After(cursor),
-        );
+        )
+        .unwrap();
         assert_eq!(
             first.entries().len() + second.entries().len(),
             kinds.len(),
@@ -523,7 +587,7 @@ mod tests {
             .find(|entry| entry.kind == InterfaceKind::LoRa)
             .expect("LoRa supervisor")
             .id;
-        let RemoteControlInterfaceConfigOutcome::Card(lora) =
+        let Ok(RemoteControlInterfaceConfigOutcome::Card(lora)) =
             remote_control_interface_config_from_snapshots(
                 &snapshots,
                 lora_id,
@@ -535,7 +599,7 @@ mod tests {
                         Some(personal_rns::interfaces::lora::DEFAULT_915_PROFILE),
                         None,
                         None,
-                    );
+                    )
                 },
             )
         else {
