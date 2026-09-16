@@ -147,6 +147,8 @@ jobs:
           java-version: "17"
       - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
         if: matrix.group == 'android'
+        with:
+          packages: platform-tools
       - name: Prepare Android build tools
         if: matrix.group == 'android'
         run: |
