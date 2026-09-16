@@ -859,7 +859,7 @@ fn read_station(bytes: &[u8]) -> Option<RemoteControlWifiStation> {
         &bytes[password_len_offset + 1..password_len_offset + 1 + password_len],
     )
     .ok()?;
-    RemoteControlWifiStation::parse(ssid, password)
+    RemoteControlWifiStation::parse(ssid, password).ok()
 }
 
 fn equivalent_state(left: &StoredState, right: &StoredState) -> bool {
@@ -961,6 +961,18 @@ mod tests {
         fn fault(mut self, fault: Fault) -> Self {
             self.faults.push(fault);
             self
+        }
+
+        fn fault_from_now(&mut self, fault: Fault) {
+            let fault = match fault {
+                Fault::Read(offset) => Fault::Read(self.reads + offset),
+                Fault::Write(offset) => Fault::Write(self.writes + offset),
+                Fault::PartialWrite(offset, written) => {
+                    Fault::PartialWrite(self.writes + offset, written)
+                }
+                Fault::Erase(offset) => Fault::Erase(self.erases + offset),
+            };
+            self.faults.push(fault);
         }
 
         fn take_fault(&mut self, expected: Fault) -> bool {
@@ -1094,6 +1106,41 @@ mod tests {
             }
         }
     }
+
+    fn confirm_station(
+        store: &mut WifiConfigurationStore<FakeFlash>,
+        key: &RemoteControlTargetSealingKey,
+        entropy: &mut impl WifiConfigurationEntropy,
+        controller: IdentityHash,
+        ssid: &str,
+        password: &str,
+    ) -> RemoteControlWifiCredentialRevision {
+        let revision = committed(block_on(store.stage(
+            controller,
+            station(ssid, password),
+            key,
+            entropy,
+        )));
+        let _active = committed(block_on(store.activate(controller, revision, key, entropy)));
+        committed(block_on(store.confirm(controller, revision, key, entropy)));
+        revision
+    }
+
+    const COMMIT_BOUNDARY_FAULTS: [Fault; 13] = [
+        Fault::Read(0),
+        Fault::Read(1),
+        Fault::Read(2),
+        Fault::Read(3),
+        Fault::Erase(0),
+        Fault::Write(0),
+        Fault::PartialWrite(0, 8),
+        Fault::Write(1),
+        Fault::PartialWrite(1, 64),
+        Fault::Read(4),
+        Fault::Write(2),
+        Fault::PartialWrite(2, COMMIT_LEN),
+        Fault::Read(5),
+    ];
 
     #[test]
     fn staged_activation_and_confirmation_round_trip_without_exposing_passwords() {
@@ -1284,6 +1331,191 @@ mod tests {
                 Err(WifiConfigurationStoreError::AuthenticationFailed) => {}
                 Err(error) => panic!("unexpected reboot result after {fault:?}: {error:?}"),
             }
+        }
+    }
+
+    #[test]
+    fn interrupted_activation_boundaries_restore_the_last_confirmed_credentials() {
+        let key = sealing_key(0x27);
+        let controller = IdentityHash::new([0x47; CONTROLLER_LEN]);
+
+        for fault in COMMIT_BOUNDARY_FAULTS {
+            let mut entropy = entropy(0x37);
+            let mut store = WifiConfigurationStore::new(FakeFlash::erased(), PAGES);
+            let confirmed = confirm_station(
+                &mut store,
+                &key,
+                &mut entropy,
+                controller,
+                "known-good",
+                "first-password",
+            );
+            let candidate = committed(block_on(store.stage(
+                controller,
+                station("candidate", "second-password"),
+                &key,
+                &mut entropy,
+            )));
+            store.flash.fault_from_now(fault);
+
+            assert!(!matches!(
+                block_on(store.activate(controller, candidate, &key, &mut entropy)),
+                WifiConfigurationCommitOutcome::Committed(_)
+            ));
+            let mut rebooted = WifiConfigurationStore::new(store.into_flash(), PAGES);
+            let loaded = block_on(rebooted.load(&key, &mut entropy)).unwrap();
+            assert_eq!(loaded.active.as_ref().unwrap().ssid(), "known-good");
+            assert_eq!(
+                loaded.status,
+                WifiConfigurationStatus::Confirmed {
+                    revision: confirmed
+                }
+            );
+            assert!(loaded.recovered_unconfirmed_transaction, "fault={fault:?}");
+        }
+    }
+
+    #[test]
+    fn interrupted_confirmation_is_resolved_to_exactly_one_confirmed_revision() {
+        let key = sealing_key(0x28);
+        let controller = IdentityHash::new([0x48; CONTROLLER_LEN]);
+
+        for fault in COMMIT_BOUNDARY_FAULTS {
+            let mut entropy = entropy(0x38);
+            let mut store = WifiConfigurationStore::new(FakeFlash::erased(), PAGES);
+            let confirmed = confirm_station(
+                &mut store,
+                &key,
+                &mut entropy,
+                controller,
+                "known-good",
+                "first-password",
+            );
+            let candidate = committed(block_on(store.stage(
+                controller,
+                station("candidate", "second-password"),
+                &key,
+                &mut entropy,
+            )));
+            let _active = committed(block_on(store.activate(
+                controller,
+                candidate,
+                &key,
+                &mut entropy,
+            )));
+            store.flash.fault_from_now(fault);
+
+            assert!(!matches!(
+                block_on(store.confirm(controller, candidate, &key, &mut entropy)),
+                WifiConfigurationCommitOutcome::Committed(())
+            ));
+            let mut rebooted = WifiConfigurationStore::new(store.into_flash(), PAGES);
+            let loaded = block_on(rebooted.load(&key, &mut entropy)).unwrap();
+            let commit_marker_landed = matches!(fault, Fault::PartialWrite(2, _) | Fault::Read(5));
+            let (expected_revision, expected_ssid) = if commit_marker_landed {
+                (candidate, "candidate")
+            } else {
+                (confirmed, "known-good")
+            };
+            assert_eq!(loaded.active.as_ref().unwrap().ssid(), expected_ssid);
+            assert_eq!(
+                loaded.status,
+                WifiConfigurationStatus::Confirmed {
+                    revision: expected_revision
+                },
+                "fault={fault:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn interrupted_cancellation_never_leaves_the_candidate_active_after_reboot() {
+        let key = sealing_key(0x29);
+        let controller = IdentityHash::new([0x49; CONTROLLER_LEN]);
+
+        for fault in COMMIT_BOUNDARY_FAULTS {
+            let mut entropy = entropy(0x39);
+            let mut store = WifiConfigurationStore::new(FakeFlash::erased(), PAGES);
+            let confirmed = confirm_station(
+                &mut store,
+                &key,
+                &mut entropy,
+                controller,
+                "known-good",
+                "first-password",
+            );
+            let candidate = committed(block_on(store.stage(
+                controller,
+                station("candidate", "second-password"),
+                &key,
+                &mut entropy,
+            )));
+            let _active = committed(block_on(store.activate(
+                controller,
+                candidate,
+                &key,
+                &mut entropy,
+            )));
+            store.flash.fault_from_now(fault);
+
+            assert!(!matches!(
+                block_on(store.cancel(controller, candidate, &key, &mut entropy)),
+                WifiConfigurationCommitOutcome::Committed(_)
+            ));
+            let mut rebooted = WifiConfigurationStore::new(store.into_flash(), PAGES);
+            let loaded = block_on(rebooted.load(&key, &mut entropy)).unwrap();
+            assert_eq!(loaded.active.as_ref().unwrap().ssid(), "known-good");
+            assert_eq!(
+                loaded.status,
+                WifiConfigurationStatus::Confirmed {
+                    revision: confirmed
+                },
+                "fault={fault:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn interrupted_reboot_recovery_is_retryable_at_every_commit_boundary() {
+        let key = sealing_key(0x2A);
+        let controller = IdentityHash::new([0x4A; CONTROLLER_LEN]);
+
+        for fault in COMMIT_BOUNDARY_FAULTS {
+            let mut entropy = entropy(0x3A);
+            let mut store = WifiConfigurationStore::new(FakeFlash::erased(), PAGES);
+            let confirmed = confirm_station(
+                &mut store,
+                &key,
+                &mut entropy,
+                controller,
+                "known-good",
+                "first-password",
+            );
+            let candidate = committed(block_on(store.stage(
+                controller,
+                station("candidate", "second-password"),
+                &key,
+                &mut entropy,
+            )));
+            let _active = committed(block_on(store.activate(
+                controller,
+                candidate,
+                &key,
+                &mut entropy,
+            )));
+            store.flash.fault_from_now(fault);
+
+            assert!(block_on(store.load(&key, &mut entropy)).is_err());
+            let mut rebooted = WifiConfigurationStore::new(store.into_flash(), PAGES);
+            let loaded = block_on(rebooted.load(&key, &mut entropy)).unwrap();
+            assert_eq!(loaded.active.as_ref().unwrap().ssid(), "known-good");
+            assert_eq!(
+                loaded.status,
+                WifiConfigurationStatus::Confirmed {
+                    revision: confirmed
+                },
+                "fault={fault:?}"
+            );
         }
     }
 }

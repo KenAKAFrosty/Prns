@@ -94,7 +94,9 @@ jobs:
       - name: Install exact ESP compiler and tools
         if: matrix.toolchain == 'esp'
         run: ./tools/prns release toolchain esp install -- "${RUNNER_TEMP}/prns-esp-tools"
-      - run: python3 validation/run.py run --suite "${{ matrix.id }}" --expected-sha "$GITHUB_SHA"
+      - run: |
+          unset CARGO_INCREMENTAL
+          python3 validation/run.py run --suite "${{ matrix.id }}" --expected-sha "$GITHUB_SHA"
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

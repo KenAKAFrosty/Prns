@@ -37,6 +37,14 @@ impl RemoteControlCapabilities {
         Ok(Self { requests })
     }
 
+    /// Adds one supported operation while preserving the mandatory `Describe` capability.
+    /// Repeating an operation is intentionally idempotent.
+    #[must_use]
+    pub fn with_request(mut self, request: RemoteControlRequestKind) -> Self {
+        let _ = self.requests.insert(request);
+        self
+    }
+
     #[must_use]
     pub const fn requests(self) -> RemoteControlRequestSet {
         self.requests
@@ -430,5 +438,10 @@ mod tests {
             RemoteControlCapabilities::from_requests(RemoteControlRequestSet::empty()),
             Err(RemoteControlCapabilitiesError::DescribeRequired),
         );
+        let capabilities = RemoteControlCapabilities::describe_only()
+            .with_request(RemoteControlRequestKind::DescribeBuild)
+            .with_request(RemoteControlRequestKind::DescribeBuild);
+        assert!(capabilities.supports(RemoteControlRequestKind::Describe));
+        assert!(capabilities.supports(RemoteControlRequestKind::DescribeBuild));
     }
 }

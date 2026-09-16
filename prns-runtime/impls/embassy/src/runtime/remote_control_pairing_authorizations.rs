@@ -2,9 +2,10 @@ use crate::identity::IdentityPublicKeys;
 use crate::persistence::SnapshotSealError;
 use crate::remote_control::{
     ForgetRemoteControlTargetOutcome, RemoteControlControllerAuthority,
-    RemoteControlControllerGrant, RemoteControlPairingAttemptId, RemoteControlRequestSet,
-    RemoteControlTargetAccess, RemoteControlTargetIdentity, RevokeRemoteControlControllerOutcome,
-    SetRemoteControlControllerGrantOutcome, SetRemoteControlTargetAccessOutcome,
+    RemoteControlControllerGrant, RemoteControlControllerIdentity, RemoteControlPairingAttemptId,
+    RemoteControlRequestSet, RemoteControlTargetAccess, RemoteControlTargetIdentity,
+    RevokeRemoteControlControllerOutcome, SetRemoteControlControllerGrantOutcome,
+    SetRemoteControlTargetAccessOutcome,
 };
 
 use super::embedded_persistence::RemoteControlAuthorizationSnapshot;
@@ -13,6 +14,7 @@ use super::AssembledRemoteControl;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum RemoteControlPairingAuthorization {
     ControllerGrant(RemoteControlControllerGrant),
+    ControllerRevocation(RemoteControlControllerIdentity),
     TargetAccess {
         target_public_keys: IdentityPublicKeys,
         authority: RemoteControlControllerAuthority,
@@ -64,6 +66,10 @@ enum RemoteControlAuthorizationMutation {
         desired: RemoteControlControllerGrant,
         previous: RemoteControlControllerGrant,
     },
+    ControllerNotFound,
+    ControllerRevoked {
+        previous: RemoteControlControllerGrant,
+    },
     TargetAdded {
         desired: RemoteControlTargetAccessSpec,
     },
@@ -72,6 +78,247 @@ enum RemoteControlAuthorizationMutation {
         desired: RemoteControlTargetAccessSpec,
         previous: RemoteControlTargetAccessSpec,
     },
+}
+
+fn controller_grant_set_outcome(
+    mutation: RemoteControlAuthorizationMutation,
+) -> Option<SetRemoteControlControllerGrantOutcome> {
+    match mutation {
+        RemoteControlAuthorizationMutation::ControllerAdded { .. } => {
+            Some(SetRemoteControlControllerGrantOutcome::Added)
+        }
+        RemoteControlAuthorizationMutation::ControllerUnchanged => {
+            Some(SetRemoteControlControllerGrantOutcome::Unchanged)
+        }
+        RemoteControlAuthorizationMutation::ControllerUpdated { previous, .. } => {
+            Some(SetRemoteControlControllerGrantOutcome::Updated { previous })
+        }
+        RemoteControlAuthorizationMutation::ControllerNotFound
+        | RemoteControlAuthorizationMutation::ControllerRevoked { .. }
+        | RemoteControlAuthorizationMutation::TargetAdded { .. }
+        | RemoteControlAuthorizationMutation::TargetUnchanged
+        | RemoteControlAuthorizationMutation::TargetUpdated { .. } => None,
+    }
+}
+
+fn controller_revoke_outcome(
+    mutation: RemoteControlAuthorizationMutation,
+) -> Option<RevokeRemoteControlControllerOutcome> {
+    match mutation {
+        RemoteControlAuthorizationMutation::ControllerNotFound => {
+            Some(RevokeRemoteControlControllerOutcome::NotFound)
+        }
+        RemoteControlAuthorizationMutation::ControllerRevoked { previous } => {
+            Some(RevokeRemoteControlControllerOutcome::Revoked { grant: previous })
+        }
+        RemoteControlAuthorizationMutation::ControllerAdded { .. }
+        | RemoteControlAuthorizationMutation::ControllerUnchanged
+        | RemoteControlAuthorizationMutation::ControllerUpdated { .. }
+        | RemoteControlAuthorizationMutation::TargetAdded { .. }
+        | RemoteControlAuthorizationMutation::TargetUnchanged
+        | RemoteControlAuthorizationMutation::TargetUpdated { .. } => None,
+    }
+}
+
+pub(super) struct PreparedRemoteControlControllerGrantTransaction {
+    mutation: RemoteControlAuthorizationMutation,
+    projected: RemoteControlAuthorizationSnapshot,
+}
+
+impl PreparedRemoteControlControllerGrantTransaction {
+    pub(super) fn is_unchanged(&self) -> bool {
+        matches!(
+            self.mutation,
+            RemoteControlAuthorizationMutation::ControllerUnchanged
+                | RemoteControlAuthorizationMutation::ControllerNotFound
+        )
+    }
+
+    pub(super) fn set_outcome(&self) -> Option<SetRemoteControlControllerGrantOutcome> {
+        controller_grant_set_outcome(self.mutation)
+    }
+
+    pub(super) fn revoke_outcome(&self) -> Option<RevokeRemoteControlControllerOutcome> {
+        controller_revoke_outcome(self.mutation)
+    }
+
+    pub(super) fn into_projection(
+        self,
+    ) -> Result<
+        (
+            PendingRemoteControlControllerGrantActivation,
+            RemoteControlAuthorizationSnapshot,
+        ),
+        RemoteControlPairingAuthorizationTransactionFailure,
+    > {
+        Ok((
+            PendingRemoteControlControllerGrantActivation {
+                authorization: pending_controller_grant_authorization(self.mutation)?,
+                expected: controller_grant_mutation_kind(self.mutation)?,
+            },
+            self.projected,
+        ))
+    }
+}
+
+#[derive(Clone, Copy)]
+enum PendingRemoteControlControllerGrantAuthorization {
+    Set(RemoteControlControllerGrant),
+    Revoke(RemoteControlControllerIdentity),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RemoteControlControllerGrantMutationKind {
+    Added,
+    Updated,
+    Revoked,
+}
+
+pub(super) struct PendingRemoteControlControllerGrantActivation {
+    authorization: PendingRemoteControlControllerGrantAuthorization,
+    expected: RemoteControlControllerGrantMutationKind,
+}
+
+impl PendingRemoteControlControllerGrantActivation {
+    pub(super) fn activate(
+        self,
+        remote_control: &mut AssembledRemoteControl,
+    ) -> Result<
+        AppliedRemoteControlControllerGrantActivation,
+        RemoteControlPairingAuthorizationTransactionFailure,
+    > {
+        let authorization = match self.authorization {
+            PendingRemoteControlControllerGrantAuthorization::Set(grant) => {
+                RemoteControlPairingAuthorization::ControllerGrant(grant)
+            }
+            PendingRemoteControlControllerGrantAuthorization::Revoke(controller) => {
+                RemoteControlPairingAuthorization::ControllerRevocation(controller)
+            }
+        };
+        let mutation = apply_authorization(remote_control, authorization)?;
+        if controller_grant_mutation_kind(mutation).ok() != Some(self.expected) {
+            reverse_authorization(remote_control, mutation)?;
+            return Err(RemoteControlPairingAuthorizationTransactionFailure::RuntimeState);
+        }
+        Ok(AppliedRemoteControlControllerGrantActivation { mutation })
+    }
+}
+
+pub(super) struct AppliedRemoteControlControllerGrantActivation {
+    mutation: RemoteControlAuthorizationMutation,
+}
+
+impl AppliedRemoteControlControllerGrantActivation {
+    pub(super) fn set_outcome(&self) -> Option<SetRemoteControlControllerGrantOutcome> {
+        controller_grant_set_outcome(self.mutation)
+    }
+
+    pub(super) fn revoke_outcome(&self) -> Option<RevokeRemoteControlControllerOutcome> {
+        controller_revoke_outcome(self.mutation)
+    }
+
+    pub(super) fn roll_back(
+        &self,
+        remote_control: &mut AssembledRemoteControl,
+    ) -> Result<(), RemoteControlPairingAuthorizationTransactionFailure> {
+        reverse_authorization(remote_control, self.mutation)
+    }
+}
+
+fn pending_controller_grant_authorization(
+    mutation: RemoteControlAuthorizationMutation,
+) -> Result<
+    PendingRemoteControlControllerGrantAuthorization,
+    RemoteControlPairingAuthorizationTransactionFailure,
+> {
+    match mutation {
+        RemoteControlAuthorizationMutation::ControllerAdded { desired }
+        | RemoteControlAuthorizationMutation::ControllerUpdated { desired, .. } => Ok(
+            PendingRemoteControlControllerGrantAuthorization::Set(desired),
+        ),
+        RemoteControlAuthorizationMutation::ControllerRevoked { previous } => Ok(
+            PendingRemoteControlControllerGrantAuthorization::Revoke(*previous.controller()),
+        ),
+        _ => Err(RemoteControlPairingAuthorizationTransactionFailure::RuntimeState),
+    }
+}
+
+fn controller_grant_mutation_kind(
+    mutation: RemoteControlAuthorizationMutation,
+) -> Result<
+    RemoteControlControllerGrantMutationKind,
+    RemoteControlPairingAuthorizationTransactionFailure,
+> {
+    match mutation {
+        RemoteControlAuthorizationMutation::ControllerAdded { .. } => {
+            Ok(RemoteControlControllerGrantMutationKind::Added)
+        }
+        RemoteControlAuthorizationMutation::ControllerUpdated { .. } => {
+            Ok(RemoteControlControllerGrantMutationKind::Updated)
+        }
+        RemoteControlAuthorizationMutation::ControllerRevoked { .. } => {
+            Ok(RemoteControlControllerGrantMutationKind::Revoked)
+        }
+        _ => Err(RemoteControlPairingAuthorizationTransactionFailure::RuntimeState),
+    }
+}
+
+pub(super) fn prepare_controller_grant(
+    remote_control: &mut AssembledRemoteControl,
+    grant: RemoteControlControllerGrant,
+) -> Result<
+    PreparedRemoteControlControllerGrantTransaction,
+    RemoteControlPairingAuthorizationTransactionFailure,
+> {
+    prepare_controller_grant_transaction(
+        remote_control,
+        RemoteControlPairingAuthorization::ControllerGrant(grant),
+    )
+}
+
+pub(super) fn prepare_controller_revocation(
+    remote_control: &mut AssembledRemoteControl,
+    controller: RemoteControlControllerIdentity,
+) -> Result<
+    PreparedRemoteControlControllerGrantTransaction,
+    RemoteControlPairingAuthorizationTransactionFailure,
+> {
+    prepare_controller_grant_transaction(
+        remote_control,
+        RemoteControlPairingAuthorization::ControllerRevocation(controller),
+    )
+}
+
+fn prepare_controller_grant_transaction(
+    remote_control: &mut AssembledRemoteControl,
+    authorization: RemoteControlPairingAuthorization,
+) -> Result<
+    PreparedRemoteControlControllerGrantTransaction,
+    RemoteControlPairingAuthorizationTransactionFailure,
+> {
+    let mutation = apply_authorization(remote_control, authorization)?;
+    let projected = match authorization_snapshot(remote_control, mutation) {
+        Ok(projected) => projected,
+        Err(error) => {
+            reverse_authorization(remote_control, mutation)?;
+            return Err(error);
+        }
+    };
+    reverse_authorization(remote_control, mutation)?;
+    Ok(PreparedRemoteControlControllerGrantTransaction {
+        mutation,
+        projected,
+    })
+}
+
+pub(super) fn snapshot_controller_grants(
+    remote_control: &AssembledRemoteControl,
+) -> Result<RemoteControlAuthorizationSnapshot, RemoteControlPairingAuthorizationTransactionFailure>
+{
+    authorization_snapshot(
+        remote_control,
+        RemoteControlAuthorizationMutation::ControllerUnchanged,
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -163,18 +410,35 @@ pub(super) fn activate(
     if matches!(
         transaction.mutation,
         RemoteControlAuthorizationMutation::ControllerUnchanged
+            | RemoteControlAuthorizationMutation::ControllerNotFound
             | RemoteControlAuthorizationMutation::TargetUnchanged
     ) {
         *state = RemoteControlPairingAuthorizationTransactionState::Activated(transaction);
         return Ok(());
     }
-    let authorization = authorization_from_mutation(transaction.mutation)?;
+    activate_mutation(remote_control, transaction.mutation)?;
+    *state = RemoteControlPairingAuthorizationTransactionState::Activated(transaction);
+    Ok(())
+}
+
+fn activate_mutation(
+    remote_control: &mut AssembledRemoteControl,
+    mutation: RemoteControlAuthorizationMutation,
+) -> Result<(), RemoteControlPairingAuthorizationTransactionFailure> {
+    if matches!(
+        mutation,
+        RemoteControlAuthorizationMutation::ControllerUnchanged
+            | RemoteControlAuthorizationMutation::ControllerNotFound
+            | RemoteControlAuthorizationMutation::TargetUnchanged
+    ) {
+        return Ok(());
+    }
+    let authorization = authorization_from_mutation(mutation)?;
     let applied = apply_authorization(remote_control, authorization)?;
-    if applied != transaction.mutation {
+    if applied != mutation {
         reverse_authorization(remote_control, applied)?;
         return Err(RemoteControlPairingAuthorizationTransactionFailure::RuntimeState);
     }
-    *state = RemoteControlPairingAuthorizationTransactionState::Activated(transaction);
     Ok(())
 }
 
@@ -335,6 +599,22 @@ fn apply_authorization(
                 }
             }
         }
+        RemoteControlPairingAuthorization::ControllerRevocation(controller) => {
+            match remote_control.revoke_controller(&controller) {
+                Ok(RevokeRemoteControlControllerOutcome::NotFound) => {
+                    Ok(RemoteControlAuthorizationMutation::ControllerNotFound)
+                }
+                Ok(RevokeRemoteControlControllerOutcome::Revoked { grant }) => {
+                    Ok(RemoteControlAuthorizationMutation::ControllerRevoked { previous: grant })
+                }
+                Err(super::RevokeRemoteControlControllerServiceError::Unavailable) => {
+                    Err(RemoteControlPairingAuthorizationTransactionFailure::Unavailable)
+                }
+                Err(super::RevokeRemoteControlControllerServiceError::TransactionInProgress) => {
+                    Err(RemoteControlPairingAuthorizationTransactionFailure::RuntimeState)
+                }
+            }
+        }
         RemoteControlPairingAuthorization::TargetAccess {
             target_public_keys,
             authority,
@@ -384,7 +664,11 @@ fn authorization_from_mutation(
         | RemoteControlAuthorizationMutation::ControllerUpdated { desired, .. } => {
             Ok(RemoteControlPairingAuthorization::ControllerGrant(desired))
         }
+        RemoteControlAuthorizationMutation::ControllerRevoked { previous } => Ok(
+            RemoteControlPairingAuthorization::ControllerRevocation(*previous.controller()),
+        ),
         RemoteControlAuthorizationMutation::ControllerUnchanged
+        | RemoteControlAuthorizationMutation::ControllerNotFound
         | RemoteControlAuthorizationMutation::TargetUnchanged => {
             Err(RemoteControlPairingAuthorizationTransactionFailure::RuntimeState)
         }
@@ -422,7 +706,22 @@ fn reverse_authorization(
             }
         }
         RemoteControlAuthorizationMutation::ControllerUnchanged
+        | RemoteControlAuthorizationMutation::ControllerNotFound
         | RemoteControlAuthorizationMutation::TargetUnchanged => Ok(()),
+        RemoteControlAuthorizationMutation::ControllerRevoked { previous } => {
+            match remote_control.set_controller_grant(previous) {
+                Ok(SetRemoteControlControllerGrantOutcome::Added) => Ok(()),
+                Ok(
+                    SetRemoteControlControllerGrantOutcome::Unchanged
+                    | SetRemoteControlControllerGrantOutcome::Updated { .. },
+                )
+                | Err(
+                    super::SetRemoteControlControllerGrantServiceError::Unavailable
+                    | super::SetRemoteControlControllerGrantServiceError::CapacityExhausted
+                    | super::SetRemoteControlControllerGrantServiceError::TransactionInProgress,
+                ) => Err(RemoteControlPairingAuthorizationTransactionFailure::RuntimeState),
+            }
+        }
         RemoteControlAuthorizationMutation::ControllerUpdated { desired, previous } => {
             match remote_control.set_controller_grant(previous) {
                 Ok(SetRemoteControlControllerGrantOutcome::Updated { previous: replaced })
@@ -495,7 +794,9 @@ fn authorization_snapshot(
     let written = match mutation {
         RemoteControlAuthorizationMutation::ControllerAdded { .. }
         | RemoteControlAuthorizationMutation::ControllerUnchanged
-        | RemoteControlAuthorizationMutation::ControllerUpdated { .. } => remote_control
+        | RemoteControlAuthorizationMutation::ControllerUpdated { .. }
+        | RemoteControlAuthorizationMutation::ControllerNotFound
+        | RemoteControlAuthorizationMutation::ControllerRevoked { .. } => remote_control
             .write_controller_grants_snapshot(&mut bytes)
             .map_err(RemoteControlPairingAuthorizationTransactionFailure::Snapshot)?,
         RemoteControlAuthorizationMutation::TargetAdded { .. }

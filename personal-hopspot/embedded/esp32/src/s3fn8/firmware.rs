@@ -71,7 +71,7 @@ pub async fn run(spawner: Spawner) {
         StaticCell::new();
     let lora_tx_queue: &'static mut [u8; personal_rns::lora::LORA_TX_QUEUE_BYTES] =
         LORA_TX_QUEUE.init([0; personal_rns::lora::LORA_TX_QUEUE_BYTES]);
-    let (_lora_controller, lora_control) = LORA_CONTROL.init(LoRaControl::new()).split();
+    let (lora_controller, lora_control) = LORA_CONTROL.init(LoRaControl::new()).split();
     let lora = match LoRaInterface::new(LoRaInterfaceInput {
         radio: lora_radio,
         configuration: subg_configuration,
@@ -101,10 +101,11 @@ pub async fn run(spawner: Spawner) {
         .node_page;
     let (remote_control_identity_secrets, _remote_control_identity_origins) =
         remote_control_bootstrap.into_parts();
-    let remote_control = RemoteControlService::new(
+    let remote_control = RemoteControlService::with_capabilities(
         remote_control_identity_secrets,
         RemoteControlInitialControllerGrants::Nobody,
         RemoteControlSelfAnnouncement::Destination(node_page_destination),
+        remote_control::capabilities(),
     );
     let ble_identity = ble_bootstrap.into_identity();
 
@@ -139,13 +140,12 @@ pub async fn run(spawner: Spawner) {
         transport_identity: Some(transport_secret),
         remote_control,
         pre_configured_destinations: destinations.into_preconfigured_destinations(),
-        app_state: personal_rns::runtime::NoRemoteControlHostControls,
+        app_state: REMOTE_CONTROL_COMMANDS.handle(),
         storage: InternalStorage,
         request_endpoints: personal_hopspot_core::node_pages::NodePageRoutes,
         interfaces: personal_rns::runtime::ManuallyAttached,
         persistence: crate::persistence::s3fn8(shared_flash, &memory),
-        on_event: ignore_events
-            as for<'a> fn(PrnsEvent<'a>, &personal_rns::runtime::NoRemoteControlHostControls),
+        on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &AppState),
     };
 
     static NODE: StaticCell<Node> = StaticCell::new();
@@ -160,5 +160,15 @@ pub async fn run(spawner: Spawner) {
     spawner.spawn(
         ble_task(spawner, bluetooth, mac, ble_identity, ble_fleet).expect("Bluetooth task fits"),
     );
-    lora.run(lora_seam).await
+    join(
+        lora.run(lora_seam),
+        remote_control::run(
+            lora_status,
+            &USB_STATUS,
+            lora_controller,
+            subg_configuration_store,
+            subg_configuration,
+        ),
+    )
+    .await;
 }

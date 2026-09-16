@@ -130,7 +130,7 @@ pub(super) fn face(input: FaceInput) -> impl Future {
         let mut notice_until_ms =
             startup_notice.map(|notice| (embassy_time::Instant::now().as_millis() + 5_000, notice));
         let mut scheduled_remote_control_effect = None;
-        let mut system_awake = true;
+        let mut system = super::remote_control::SystemIntent::from_status(lora_status, usb_status);
         #[cfg(feature = "board-t096")]
         let mut gnss_wanted = false;
         macro_rules! execute_hopspot_command {
@@ -142,7 +142,7 @@ pub(super) fn face(input: FaceInput) -> impl Future {
                         usb_status,
                         display: &mut display,
                         power: $power,
-                        system_awake: &mut system_awake,
+                        system: &mut system,
                         scheduled_effect: &mut scheduled_remote_control_effect,
                         lora_controller: &mut lora_controller,
                         subg_store: &mut subg_configuration_store,
@@ -161,7 +161,7 @@ pub(super) fn face(input: FaceInput) -> impl Future {
                 lora_status,
                 usb_status,
                 &mut display,
-                &mut system_awake,
+                &mut system,
             )
             .await;
             let battery_mv = battery.sample_millivolts().await;
@@ -169,7 +169,10 @@ pub(super) fn face(input: FaceInput) -> impl Future {
                 Some(battery_mv),
                 hopspot::ExternalPowerState::from_presence(bluetooth::usb_vbus_present()),
             );
-            let snapshots = snapshots(lora_status, usb_status);
+            let (snapshots, snapshot_failed) = match snapshots(lora_status, usb_status) {
+                Ok(snapshots) => (snapshots, false),
+                Err(SnapshotBuildError::CapacityExhausted) => (heapless::Vec::new(), true),
+            };
             let mut cards = cards(
                 &snapshots,
                 working_subg_configuration,
@@ -263,7 +266,11 @@ pub(super) fn face(input: FaceInput) -> impl Future {
             {
                 Either4::Fourth(pending) => {
                     let (token, command) = pending.into_parts();
-                    let result = execute_hopspot_command!(snapshots, battery_state, command);
+                    let result = if snapshot_failed {
+                        Err(personal_rns::runtime::RemoteControlHostCommandError::ApplyFailed)
+                    } else {
+                        execute_hopspot_command!(snapshots, battery_state, command)
+                    };
                     REMOTE_CONTROL_COMMANDS.complete(token, result);
                 }
                 Either4::First(event) => {
@@ -487,41 +494,56 @@ where
     join3(primary, board::drive_gnss(gnss), bluetooth)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SnapshotBuildError {
+    CapacityExhausted,
+}
+
 fn snapshots(
     lora: &EmbassyInterfaceStatus,
     usb: &EmbassyInterfaceStatus,
-) -> heapless::Vec<InterfaceSnapshot, { MEMBERS + 4 }> {
+) -> Result<heapless::Vec<InterfaceSnapshot, { MEMBERS + 4 }>, SnapshotBuildError> {
     let ble = BluetoothAutoStatus::new(&BLE_SHARED);
     let mut entries: heapless::Vec<(&dyn InterfaceStatus, Membership), { MEMBERS + 4 }> =
         heapless::Vec::new();
-    let _ = entries.push((lora, Membership::Independent));
-    let _ = entries.push((usb, Membership::Independent));
+    entries
+        .push((lora, Membership::Independent))
+        .map_err(|_| SnapshotBuildError::CapacityExhausted)?;
+    entries
+        .push((usb, Membership::Independent))
+        .map_err(|_| SnapshotBuildError::CapacityExhausted)?;
     let supervisor_id = ble.id();
-    let _ = entries.push((&ble, Membership::Independent));
+    entries
+        .push((&ble, Membership::Independent))
+        .map_err(|_| SnapshotBuildError::CapacityExhausted)?;
     for member in ble.members() {
-        let _ = entries.push((member, Membership::FleetMember { supervisor_id }));
+        entries
+            .push((member, Membership::FleetMember { supervisor_id }))
+            .map_err(|_| SnapshotBuildError::CapacityExhausted)?;
     }
     let mut snapshots = heapless::Vec::new();
     for (status, membership) in &entries {
         let counts = INTERFACE_STORE.counts(status.id());
-        let _ = snapshots.push(InterfaceSnapshot {
-            id: status.id(),
-            mode: InterfaceMode::Full,
-            gravity: InterfaceGravity::ZERO,
-            connection: status.connection(),
-            failure_reason: status.failure_reason(),
-            rx_bytes: status.rx_bytes(),
-            tx_bytes: status.tx_bytes(),
-            transfer_rates: status.transfer_rates(),
-            destinations: counts.destinations,
-            links: counts.links,
-            transported_links: counts.transported_links,
-            membership: *membership,
-            radio: status.radio(),
-            details: status.details(),
-        });
+        snapshots
+            .push(InterfaceSnapshot {
+                id: status.id(),
+                mode: InterfaceMode::Full,
+                gravity: InterfaceGravity::ZERO,
+                connection: status.connection(),
+                failure_reason: status.failure_reason(),
+                rx_bytes: status.rx_bytes(),
+                tx_bytes: status.tx_bytes(),
+                transfer_rates: status.transfer_rates(),
+                destinations: counts.destinations,
+                links: counts.links,
+                transported_links: counts.transported_links,
+                membership: *membership,
+                radio: status.radio(),
+                details: status.details(),
+            })
+            .map_err(|_| SnapshotBuildError::CapacityExhausted)?;
     }
-    snapshots
+    Ok(snapshots)
 }
 
 fn cards(

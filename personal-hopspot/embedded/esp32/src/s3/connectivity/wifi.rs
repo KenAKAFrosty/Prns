@@ -130,7 +130,7 @@ pub(in crate::s3) fn build_wifi(
     wifi: esp_hal::peripherals::WIFI<'static>,
     boot_entropy: S3RuntimeEntropy,
     mac: [u8; 6],
-    config: &HopspotWifiConfig,
+    station_credentials: Option<StationCredentials>,
     ap_enabled: bool,
 ) -> (
     Option<AutoWifi<'static, MEMBERS>>,
@@ -197,10 +197,6 @@ pub(in crate::s3) fn build_wifi(
         let data = wifi_auto_data_socket(stack);
         let wifi_status = AutoWifiStatus::new(&WIFI_SHARED);
         start_udp_service_discovery(spawner, stack, link_local, wifi_status);
-        let station_credentials = config.has_station().then(|| StationCredentials {
-            ssid: config.ssid.clone(),
-            password: config.password.clone(),
-        });
         spawner.spawn(net_task(runner).expect("net task fits"));
         spawner.spawn(network_ready_task(stack).expect("network readiness task fits"));
         spawner.spawn(

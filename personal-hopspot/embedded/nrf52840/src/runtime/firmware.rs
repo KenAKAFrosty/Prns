@@ -375,7 +375,7 @@ pub async fn run(spawner: Spawner) -> ! {
         let mut battery_gauge = board::battery_gauge();
         let mut persistence_notice = hopspot::PersistenceNotice::new();
         let mut scheduled_remote_control_effect = None;
-        let mut system_awake = true;
+        let mut system = super::remote_control::SystemIntent::from_status(lora_status, usb_status);
         macro_rules! execute_hopspot_command {
             ($snapshots:expr, $power:expr, $command:expr) => {
                 super::remote_control::execute(
@@ -385,7 +385,7 @@ pub async fn run(spawner: Spawner) -> ! {
                         usb_status,
                         display: &mut display,
                         power: $power,
-                        system_awake: &mut system_awake,
+                        system: &mut system,
                         scheduled_effect: &mut scheduled_remote_control_effect,
                         lora_controller: &mut lora_controller,
                         subg_store: &mut subg_configuration_store,
@@ -402,7 +402,7 @@ pub async fn run(spawner: Spawner) -> ! {
                 lora_status,
                 usb_status,
                 &mut display,
-                &mut system_awake,
+                &mut system,
             )
             .await;
             let battery = battery_gauge.update(

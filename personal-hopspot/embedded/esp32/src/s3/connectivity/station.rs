@@ -143,29 +143,19 @@ const ESP_OK: i32 = 0;
 const ESP_ERR_WIFI_NOT_INIT: i32 = 12_289;
 const ESP_ERR_WIFI_NOT_STARTED: i32 = 12_290;
 
-pub(super) struct StationCredentials {
-    pub(super) ssid: String,
-    pub(super) password: String,
-}
-
-impl From<screen::HopspotWifiCredentialUpdate> for StationCredentials {
-    fn from(update: screen::HopspotWifiCredentialUpdate) -> Self {
-        WIFI_ACTIVE_CREDENTIAL_REVISION.store(
-            update.revision.map_or(0, |revision| revision.get()),
-            Ordering::Release,
-        );
-        Self {
-            ssid: update.station.ssid().to_string(),
-            password: update.station.password().to_string(),
-        }
-    }
-}
+pub(super) type StationCredentials = personal_rns::remote_control::RemoteControlWifiStation;
 
 fn apply_credential_command(
     command: screen::HopspotWifiCredentialCommand,
 ) -> Option<StationCredentials> {
     match command {
-        screen::HopspotWifiCredentialCommand::Replace(update) => Some(update.into()),
+        screen::HopspotWifiCredentialCommand::Replace(update) => {
+            WIFI_ACTIVE_CREDENTIAL_REVISION.store(
+                update.revision.map_or(0, |revision| revision.get()),
+                Ordering::Release,
+            );
+            Some(update.station)
+        }
         screen::HopspotWifiCredentialCommand::Clear => {
             WIFI_ACTIVE_CREDENTIAL_REVISION.store(0, Ordering::Release);
             None
@@ -271,8 +261,10 @@ pub(super) async fn wifi_connect_task(
             continue;
         };
         let base = StationConfig::default()
-            .with_ssid(credentials.ssid.clone())
-            .with_password(credentials.password.clone());
+            .with_ssid(credentials.ssid())
+            // The vendor configuration owns its password String; keep the only application-owned
+            // credential in RemoteControlWifiStation so all copies outside the driver zeroize.
+            .with_password(credentials.password().to_string());
         let mut resumed = false;
         while !status.is_station_uplink_enabled() {
             WIFI_STATION_DATA_PATH_DEGRADED.store(false, Ordering::Release);
@@ -466,7 +458,7 @@ pub(super) async fn wifi_connect_task(
                     log::info!("wifi: discovery sweep begin");
                 }
                 let scan_config = ScanConfig::default()
-                    .with_ssid(credentials.ssid.as_str())
+                    .with_ssid(credentials.ssid())
                     .with_channel(channel)
                     .with_scan_type(ScanTypeConfig::Active {
                         min: WIFI_SCAN_MIN_DWELL,
@@ -489,7 +481,7 @@ pub(super) async fn wifi_connect_task(
                             .filter_map(|access_point| {
                                 let observed = observed_authentication(access_point.auth_method);
                                 let Some(security) = observed
-                                    .compatible_station_security(credentials.password.is_empty())
+                                    .compatible_station_security(credentials.password().is_empty())
                                 else {
                                     incompatible_security_observed = true;
                                     return None;
@@ -518,7 +510,7 @@ pub(super) async fn wifi_connect_task(
                         } else if incompatible_security_observed {
                             log::warn!(
                                 "wifi: configured network ignored due to incompatible security channel={channel} password_is_empty={}",
-                                credentials.password.is_empty()
+                                credentials.password().is_empty()
                             );
                         } else if attempt.ends_sweep() {
                             log::warn!("wifi: configured network absent");

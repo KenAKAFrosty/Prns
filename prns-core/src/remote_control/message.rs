@@ -943,7 +943,7 @@ fn parse_wifi_station(
     let Ok(password) = core::str::from_utf8(password_bytes) else {
         return Err(RemoteControlRequestParseError::Malformed);
     };
-    let Some(station) = RemoteControlWifiStation::parse(ssid, password) else {
+    let Ok(station) = RemoteControlWifiStation::parse(ssid, password) else {
         return Err(RemoteControlRequestParseError::Malformed);
     };
     Ok(station)
@@ -1772,6 +1772,7 @@ pub enum RemoteControlResponseParseError {
     UnknownRequestKind { found: u8 },
     UnknownInterfaceKind { found: u8 },
     UnknownInterfaceMode { found: u8 },
+    UnknownConnectionState { found: u8 },
     NonCanonicalRequestSet,
     NonCanonicalCursor,
     Malformed,

@@ -17403,6 +17403,7 @@
         "android": [
           "alloc",
           "movable-frame-forwarding",
+          "remote-control-wifi-host",
           "resource-bzip2",
           "rns-management",
           "std"
@@ -17412,6 +17413,7 @@
           "interface-discovery",
           "interface-discovery-archive",
           "movable-frame-forwarding",
+          "remote-control-wifi-host",
           "resource-bzip2",
           "rns-management",
           "rnx",
@@ -17422,6 +17424,7 @@
           "interface-discovery",
           "interface-discovery-archive",
           "movable-frame-forwarding",
+          "remote-control-wifi-host",
           "resource-bzip2",
           "rns-management",
           "rnx",
@@ -17432,6 +17435,7 @@
           "interface-discovery",
           "interface-discovery-archive",
           "movable-frame-forwarding",
+          "remote-control-wifi-host",
           "resource-bzip2",
           "rns-management",
           "rnx",
@@ -17440,6 +17444,7 @@
         "desktop-linux": [
           "alloc",
           "movable-frame-forwarding",
+          "remote-control-wifi-host",
           "resource-bzip2",
           "rns-management",
           "std"
@@ -17447,6 +17452,7 @@
         "desktop-macos": [
           "alloc",
           "movable-frame-forwarding",
+          "remote-control-wifi-host",
           "resource-bzip2",
           "rns-management",
           "std"
@@ -17454,6 +17460,7 @@
         "desktop-windows": [
           "alloc",
           "movable-frame-forwarding",
+          "remote-control-wifi-host",
           "resource-bzip2",
           "rns-management",
           "std"
@@ -17467,6 +17474,7 @@
           "alloc",
           "external-alloc",
           "movable-frame-forwarding",
+          "remote-control-wifi-host",
           "resource-bzip2",
           "std"
         ],
@@ -17474,6 +17482,7 @@
           "alloc",
           "external-alloc",
           "movable-frame-forwarding",
+          "remote-control-wifi-host",
           "resource-bzip2",
           "std"
         ],
@@ -17481,6 +17490,7 @@
           "alloc",
           "external-alloc",
           "movable-frame-forwarding",
+          "remote-control-wifi-host",
           "resource-bzip2",
           "std"
         ],
@@ -17488,6 +17498,7 @@
           "alloc",
           "external-alloc",
           "movable-frame-forwarding",
+          "remote-control-wifi-host",
           "resource-bzip2",
           "std"
         ],
@@ -17495,6 +17506,7 @@
           "alloc",
           "external-alloc",
           "movable-frame-forwarding",
+          "remote-control-wifi-host",
           "resource-bzip2",
           "std"
         ],
@@ -17502,6 +17514,7 @@
           "alloc",
           "external-alloc",
           "movable-frame-forwarding",
+          "remote-control-wifi-host",
           "resource-bzip2",
           "std"
         ],
@@ -17509,6 +17522,7 @@
           "alloc",
           "interface-discovery",
           "movable-frame-forwarding",
+          "remote-control-wifi-host",
           "resource-bzip2",
           "std"
         ],
@@ -17516,6 +17530,7 @@
           "alloc",
           "interface-discovery",
           "movable-frame-forwarding",
+          "remote-control-wifi-host",
           "resource-bzip2",
           "std"
         ],
@@ -17523,12 +17538,14 @@
           "alloc",
           "interface-discovery",
           "movable-frame-forwarding",
+          "remote-control-wifi-host",
           "resource-bzip2",
           "std"
         ],
         "ios": [
           "alloc",
           "movable-frame-forwarding",
+          "remote-control-wifi-host",
           "resource-bzip2",
           "std"
         ],

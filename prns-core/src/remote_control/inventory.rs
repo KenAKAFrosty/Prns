@@ -34,6 +34,10 @@ pub const REMOTE_CONTROL_BUILD_VERSION_CAP: usize = 48;
 pub const REMOTE_CONTROL_WIFI_SSID_CAP: usize = 32;
 pub const REMOTE_CONTROL_WIFI_PASSWORD_CAP: usize = 64;
 pub const REMOTE_CONTROL_WIFI_STATION_INVENTORY_PREFIX: &str = "W,";
+const _: () = assert!(
+    REMOTE_CONTROL_WIFI_STATION_INVENTORY_PREFIX.len() + REMOTE_CONTROL_WIFI_SSID_CAP
+        <= REMOTE_CONTROL_INTERFACE_CONFIG_CAP
+);
 pub const REMOTE_CONTROL_INTERFACE_FAILURE_CAP: usize = 48;
 pub const REMOTE_CONTROL_INTERFACE_PEER_CAP: usize = 4;
 pub const REMOTE_CONTROL_INTERFACE_PEER_ENCODED_LEN: usize = INTERFACE_ID_LEN
@@ -119,25 +123,49 @@ impl RemoteControlInterfaceCard {
             && self.transported_links == 0
     }
 
-    pub fn set_name(&mut self, name: &str) {
-        self.name.clear();
-        push_truncated(&mut self.name, name);
+    pub fn set_name(&mut self, name: &str) -> Result<(), RemoteControlInterfaceCardError> {
+        let mut replacement = heapless::String::new();
+        replacement
+            .push_str(name)
+            .map_err(|_| RemoteControlInterfaceCardError::NameTooLong)?;
+        self.name = replacement;
+        Ok(())
     }
 
-    pub fn set_group(&mut self, group: &str) {
-        self.group.clear();
-        push_truncated(&mut self.group, group);
+    pub fn set_group(&mut self, group: &str) -> Result<(), RemoteControlInterfaceCardError> {
+        let mut replacement = heapless::String::new();
+        replacement
+            .push_str(group)
+            .map_err(|_| RemoteControlInterfaceCardError::GroupTooLong)?;
+        self.group = replacement;
+        Ok(())
     }
 
-    pub fn set_config(&mut self, config: &str) {
-        self.config.clear();
-        push_truncated(&mut self.config, config);
+    pub fn set_config(&mut self, config: &str) -> Result<(), RemoteControlInterfaceCardError> {
+        let mut replacement = heapless::String::new();
+        replacement
+            .push_str(config)
+            .map_err(|_| RemoteControlInterfaceCardError::ConfigTooLong)?;
+        self.config = replacement;
+        Ok(())
     }
 
-    pub fn set_failure(&mut self, failure: &str) {
-        self.failure.clear();
-        push_truncated(&mut self.failure, failure);
+    pub fn set_failure(&mut self, failure: &str) -> Result<(), RemoteControlInterfaceCardError> {
+        let mut replacement = heapless::String::new();
+        replacement
+            .push_str(failure)
+            .map_err(|_| RemoteControlInterfaceCardError::FailureTooLong)?;
+        self.failure = replacement;
+        Ok(())
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteControlInterfaceCardError {
+    NameTooLong,
+    GroupTooLong,
+    ConfigTooLong,
+    FailureTooLong,
 }
 
 impl RemoteControlInterfaceEntry {
@@ -179,6 +207,9 @@ impl RemoteControlInterfaceEntry {
     }
 
     pub fn parse(bytes: &[u8]) -> Result<Self, super::RemoteControlResponseParseError> {
+        if bytes.len() > Self::ENCODED_LEN {
+            return Err(super::RemoteControlResponseParseError::Malformed);
+        }
         let Some(body) = bytes.get(..Self::ENCODED_LEN) else {
             return Err(if bytes.is_empty() {
                 super::RemoteControlResponseParseError::Truncated
@@ -206,10 +237,17 @@ impl RemoteControlInterfaceEntry {
         let Some((connection_byte, rest)) = rest.split_first() else {
             return Err(super::RemoteControlResponseParseError::Truncated);
         };
-        let connection = connection_state_from_wire(*connection_byte);
+        let connection = connection_state_from_wire(*connection_byte).ok_or(
+            super::RemoteControlResponseParseError::UnknownConnectionState {
+                found: *connection_byte,
+            },
+        )?;
         let Some((flags_byte, rest)) = rest.split_first() else {
             return Err(super::RemoteControlResponseParseError::Truncated);
         };
+        if *flags_byte & !FLAG_ENABLED != 0 {
+            return Err(super::RemoteControlResponseParseError::Malformed);
+        }
         let enabled = *flags_byte & FLAG_ENABLED != 0;
         let mut offset = 0usize;
         let tx_bytes = read_u64_be(rest, &mut offset)?;
@@ -857,6 +895,12 @@ pub struct RemoteControlControllerInventory {
 
 pub const REMOTE_CONTROL_CONTROLLER_INVENTORY_PAGE_CAP: usize = 4;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteControlControllerInventoryError {
+    NonAscending,
+    CapacityExhausted,
+}
+
 impl RemoteControlControllerInventory {
     pub const MAX_ENCODED_LEN: usize = 1usize
         .saturating_add(
@@ -872,11 +916,10 @@ impl RemoteControlControllerInventory {
         }
     }
 
-    #[must_use]
     pub fn from_grants(
         grants: &impl RemoteControlControllerGrantTable,
         page: RemoteControlControllerPage,
-    ) -> Self {
+    ) -> Result<Self, RemoteControlControllerInventoryError> {
         let mut inventory = Self::empty();
         let after = match page {
             RemoteControlControllerPage::First => None,
@@ -888,19 +931,29 @@ impl RemoteControlControllerInventory {
                 continue;
             }
             if inventory.hashes.len() == REMOTE_CONTROL_CONTROLLER_INVENTORY_PAGE_CAP {
-                let Some(last) = inventory.hashes.last().copied() else {
-                    break;
-                };
+                let last = inventory
+                    .hashes
+                    .last()
+                    .copied()
+                    .ok_or(RemoteControlControllerInventoryError::CapacityExhausted)?;
                 inventory.continuation = RemoteControlControllerContinuation::More(
                     RemoteControlControllerCursor::after(last),
                 );
                 break;
             }
-            if inventory.hashes.push(identity).is_err() {
-                break;
+            if inventory
+                .hashes
+                .last()
+                .is_some_and(|previous| previous.as_bytes() >= identity.as_bytes())
+            {
+                return Err(RemoteControlControllerInventoryError::NonAscending);
             }
+            inventory
+                .hashes
+                .push(identity)
+                .map_err(|_| RemoteControlControllerInventoryError::CapacityExhausted)?;
         }
-        inventory
+        Ok(inventory)
     }
 
     #[must_use]
@@ -1067,31 +1120,37 @@ impl core::fmt::Debug for RemoteControlWifiStation {
 }
 
 impl RemoteControlWifiStation {
-    #[must_use]
-    pub fn parse(ssid: &str, password: &str) -> Option<Self> {
+    pub fn parse(ssid: &str, password: &str) -> Result<Self, RemoteControlWifiStationParseError> {
         let ssid_bytes = ssid.as_bytes();
         let password_bytes = password.as_bytes();
-        if ssid_bytes.is_empty() || ssid_bytes.len() > REMOTE_CONTROL_WIFI_SSID_CAP {
-            return None;
+        if ssid_bytes.is_empty() {
+            return Err(RemoteControlWifiStationParseError::EmptySsid);
+        }
+        if ssid_bytes.len() > REMOTE_CONTROL_WIFI_SSID_CAP {
+            return Err(RemoteControlWifiStationParseError::SsidTooLong);
         }
         if password_bytes.len() > REMOTE_CONTROL_WIFI_PASSWORD_CAP {
-            return None;
+            return Err(RemoteControlWifiStationParseError::PasswordTooLong);
         }
         let mut ssid_stored = [0u8; REMOTE_CONTROL_WIFI_SSID_CAP];
         ssid_stored
-            .get_mut(..ssid_bytes.len())?
+            .get_mut(..ssid_bytes.len())
+            .ok_or(RemoteControlWifiStationParseError::SsidTooLong)?
             .copy_from_slice(ssid_bytes);
         let mut password_stored = [0u8; REMOTE_CONTROL_WIFI_PASSWORD_CAP];
         if !password_bytes.is_empty() {
             password_stored
-                .get_mut(..password_bytes.len())?
+                .get_mut(..password_bytes.len())
+                .ok_or(RemoteControlWifiStationParseError::PasswordTooLong)?
                 .copy_from_slice(password_bytes);
         }
-        Some(Self {
+        Ok(Self {
             ssid: ssid_stored,
-            ssid_len: u8::try_from(ssid_bytes.len()).ok()?,
+            ssid_len: u8::try_from(ssid_bytes.len())
+                .map_err(|_| RemoteControlWifiStationParseError::SsidTooLong)?,
             password: password_stored,
-            password_len: u8::try_from(password_bytes.len()).ok()?,
+            password_len: u8::try_from(password_bytes.len())
+                .map_err(|_| RemoteControlWifiStationParseError::PasswordTooLong)?,
         })
     }
 
@@ -1126,18 +1185,35 @@ impl RemoteControlWifiStation {
     }
 }
 
-#[must_use]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteControlWifiStationParseError {
+    EmptySsid,
+    SsidTooLong,
+    PasswordTooLong,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteControlWifiStationInventoryConfigError {
+    SsidTooLong,
+}
+
 pub fn wifi_station_inventory_config(
     ssid: &str,
-) -> heapless::String<REMOTE_CONTROL_INTERFACE_CONFIG_CAP> {
-    let mut config = heapless::String::new();
-    let _ = config.push_str(REMOTE_CONTROL_WIFI_STATION_INVENTORY_PREFIX);
-    for character in ssid.chars() {
-        if config.push(character).is_err() {
-            break;
-        }
+) -> Result<
+    heapless::String<REMOTE_CONTROL_INTERFACE_CONFIG_CAP>,
+    RemoteControlWifiStationInventoryConfigError,
+> {
+    if ssid.len() > REMOTE_CONTROL_WIFI_SSID_CAP {
+        return Err(RemoteControlWifiStationInventoryConfigError::SsidTooLong);
     }
+    let mut config = heapless::String::new();
     config
+        .push_str(REMOTE_CONTROL_WIFI_STATION_INVENTORY_PREFIX)
+        .map_err(|_| RemoteControlWifiStationInventoryConfigError::SsidTooLong)?;
+    config
+        .push_str(ssid)
+        .map_err(|_| RemoteControlWifiStationInventoryConfigError::SsidTooLong)?;
+    Ok(config)
 }
 
 #[must_use]
@@ -1206,6 +1282,11 @@ pub struct RemoteControlBuildVersion {
     len: u8,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteControlBuildVersionLabelError {
+    VersionTooLong,
+}
+
 impl RemoteControlBuildVersion {
     pub const MAX_ENCODED_LEN: usize = 1usize.saturating_add(REMOTE_CONTROL_BUILD_VERSION_CAP);
 
@@ -1231,17 +1312,17 @@ impl RemoteControlBuildVersion {
         })
     }
 
-    #[must_use]
-    pub fn from_label(version: &str, commit: &str) -> Self {
+    pub fn from_label(
+        version: &str,
+        commit: &str,
+    ) -> Result<Self, RemoteControlBuildVersionLabelError> {
         let version = version.trim();
         if version.is_empty() {
-            return Self::empty();
-        }
-        if version.len() > REMOTE_CONTROL_BUILD_VERSION_CAP {
-            return Self::from_truncated(version);
+            return Ok(Self::empty());
         }
         if version.contains('+') || version.contains("-dev") {
-            return Self::from_text(version).unwrap_or_else(Self::empty);
+            return Self::from_text(version)
+                .ok_or(RemoteControlBuildVersionLabelError::VersionTooLong);
         }
         if let Some(short) = short_hex_commit(commit) {
             let mut label = heapless::String::<REMOTE_CONTROL_BUILD_VERSION_CAP>::new();
@@ -1249,10 +1330,11 @@ impl RemoteControlBuildVersion {
                 && label.push('+').is_ok()
                 && label.push_str(short).is_ok()
             {
-                return Self::from_text(label.as_str()).unwrap_or_else(Self::empty);
+                return Self::from_text(label.as_str())
+                    .ok_or(RemoteControlBuildVersionLabelError::VersionTooLong);
             }
         }
-        Self::from_text(version).unwrap_or_else(Self::empty)
+        Self::from_text(version).ok_or(RemoteControlBuildVersionLabelError::VersionTooLong)
     }
 
     #[must_use]
@@ -1278,14 +1360,6 @@ impl RemoteControlBuildVersion {
         if let Some(target) = rest.get_mut(..usize::from(self.len)) {
             target.copy_from_slice(self.as_bytes());
         }
-    }
-
-    fn from_truncated(text: &str) -> Self {
-        let mut end = REMOTE_CONTROL_BUILD_VERSION_CAP;
-        while end > 0 && !text.is_char_boundary(end) {
-            end = end.saturating_sub(1);
-        }
-        Self::from_text(text.get(..end).unwrap_or("")).unwrap_or_else(Self::empty)
     }
 }
 
@@ -1355,24 +1429,17 @@ const fn connection_state_wire(state: ConnectionState) -> u8 {
     }
 }
 
-const fn connection_state_from_wire(value: u8) -> ConnectionState {
+const fn connection_state_from_wire(value: u8) -> Option<ConnectionState> {
     match value {
-        0 => ConnectionState::Initializing,
-        1 => ConnectionState::Connected,
-        2 => ConnectionState::Degraded,
-        3 => ConnectionState::Reconnecting,
-        4 => ConnectionState::Failed,
-        5 => ConnectionState::Disconnected,
-        6 => ConnectionState::Disabled,
-        _ => ConnectionState::Unknown,
-    }
-}
-
-fn push_truncated<const N: usize>(out: &mut heapless::String<N>, value: &str) {
-    for character in value.chars() {
-        if out.push(character).is_err() {
-            break;
-        }
+        0 => Some(ConnectionState::Initializing),
+        1 => Some(ConnectionState::Connected),
+        2 => Some(ConnectionState::Degraded),
+        3 => Some(ConnectionState::Reconnecting),
+        4 => Some(ConnectionState::Failed),
+        5 => Some(ConnectionState::Disconnected),
+        6 => Some(ConnectionState::Disabled),
+        255 => Some(ConnectionState::Unknown),
+        _ => None,
     }
 }
 
@@ -1523,9 +1590,12 @@ fn parse_peer(
     let Some((radio_bytes, rest)) = rest.split_at_checked(RadioIndication::MAX_ENCODED_LEN) else {
         return Err(super::RemoteControlResponseParseError::Truncated);
     };
-    let Some((radio, _)) = RadioIndication::parse(radio_bytes) else {
+    let Some((radio, radio_padding)) = RadioIndication::parse(radio_bytes) else {
         return Err(super::RemoteControlResponseParseError::Malformed);
     };
+    if radio_padding.iter().any(|byte| *byte != 0) {
+        return Err(super::RemoteControlResponseParseError::Malformed);
+    }
     let Some((details_bytes, rest)) = rest.split_at_checked(PeerDetails::ENCODED_LEN) else {
         return Err(super::RemoteControlResponseParseError::Truncated);
     };
@@ -1535,7 +1605,11 @@ fn parse_peer(
     Ok((
         RemoteControlInterfacePeer {
             id: InterfaceId::new(id),
-            connection: connection_state_from_wire(*connection),
+            connection: connection_state_from_wire(*connection).ok_or(
+                super::RemoteControlResponseParseError::UnknownConnectionState {
+                    found: *connection,
+                },
+            )?,
             tx_bytes: u64::from_be_bytes(
                 tx_bytes
                     .try_into()
@@ -1600,7 +1674,8 @@ fn parse_counted_string<const N: usize>(
     let text = core::str::from_utf8(bytes)
         .map_err(|_| super::RemoteControlResponseParseError::Malformed)?;
     let mut out = heapless::String::new();
-    push_truncated(&mut out, text);
+    out.push_str(text)
+        .map_err(|_| super::RemoteControlResponseParseError::Malformed)?;
     Ok((out, rest))
 }
 

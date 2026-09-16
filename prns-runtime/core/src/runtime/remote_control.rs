@@ -191,6 +191,7 @@ pub enum RemoteControlHostCommand {
         id: InterfaceId,
         profile: RemoteControlLoRaProfile,
     },
+    #[cfg(feature = "remote-control-wifi-host")]
     SetInterfaceWifiStation {
         id: InterfaceId,
         station: RemoteControlWifiStation,
@@ -211,6 +212,7 @@ pub enum RemoteControlHostCommand {
     SetDisplayAutoOff {
         auto_off: RemoteControlDisplayAutoOff,
     },
+    #[cfg(feature = "remote-control-wifi-host")]
     SetStationUplink {
         id: InterfaceId,
         uplink: RemoteControlStationUplink,
@@ -218,22 +220,27 @@ pub enum RemoteControlHostCommand {
     SetEspRadioMode {
         mode: RemoteControlEspRadioMode,
     },
+    #[cfg(feature = "remote-control-wifi-host")]
     StageWifiCredentials {
         controller: IdentityHash,
         station: RemoteControlWifiStation,
     },
+    #[cfg(feature = "remote-control-wifi-host")]
     ActivateWifiCredentials {
         controller: IdentityHash,
         revision: RemoteControlWifiCredentialRevision,
     },
+    #[cfg(feature = "remote-control-wifi-host")]
     ConfirmWifiCredentials {
         controller: IdentityHash,
         revision: RemoteControlWifiCredentialRevision,
     },
+    #[cfg(feature = "remote-control-wifi-host")]
     CancelWifiCredentials {
         controller: IdentityHash,
         revision: RemoteControlWifiCredentialRevision,
     },
+    #[cfg(feature = "remote-control-wifi-host")]
     InspectWifiTransaction {
         controller: IdentityHash,
     },
@@ -256,6 +263,7 @@ impl RemoteControlHostCommand {
             Self::SetInterfaceLoRaProfile { .. } => {
                 RemoteControlRequestKind::SetInterfaceLoRaProfile
             }
+            #[cfg(feature = "remote-control-wifi-host")]
             Self::SetInterfaceWifiStation { .. } => {
                 RemoteControlRequestKind::SetInterfaceWifiStation
             }
@@ -267,14 +275,20 @@ impl RemoteControlHostCommand {
             Self::SetGnssPower { .. } => RemoteControlRequestKind::SetGnssPower,
             Self::SetDisplayVisibility { .. } => RemoteControlRequestKind::SetDisplayVisibility,
             Self::SetDisplayAutoOff { .. } => RemoteControlRequestKind::SetDisplayAutoOff,
+            #[cfg(feature = "remote-control-wifi-host")]
             Self::SetStationUplink { .. } => RemoteControlRequestKind::SetStationUplink,
             Self::SetEspRadioMode { .. } => RemoteControlRequestKind::SetEspRadioMode,
+            #[cfg(feature = "remote-control-wifi-host")]
             Self::StageWifiCredentials { .. } => RemoteControlRequestKind::StageWifiCredentials,
+            #[cfg(feature = "remote-control-wifi-host")]
             Self::ActivateWifiCredentials { .. } => {
                 RemoteControlRequestKind::ActivateWifiCredentials
             }
+            #[cfg(feature = "remote-control-wifi-host")]
             Self::ConfirmWifiCredentials { .. } => RemoteControlRequestKind::ConfirmWifiCredentials,
+            #[cfg(feature = "remote-control-wifi-host")]
             Self::CancelWifiCredentials { .. } => RemoteControlRequestKind::CancelWifiCredentials,
+            #[cfg(feature = "remote-control-wifi-host")]
             Self::InspectWifiTransaction { .. } => RemoteControlRequestKind::InspectWifiTransaction,
         }
     }
@@ -1187,6 +1201,7 @@ impl RemoteControlRequestEndpoint {
                 )?;
                 Ok(AdmittedRemoteControlOperation::SetInterfaceLoRaProfile { id, profile })
             }
+            #[cfg(feature = "remote-control-wifi-host")]
             Ok(RemoteControlRequest::SetInterfaceWifiStation { id, station }) => {
                 require_available(
                     available_requests,
@@ -1259,6 +1274,7 @@ impl RemoteControlRequestEndpoint {
                 )?;
                 Ok(AdmittedRemoteControlOperation::SetDisplayAutoOff { auto_off })
             }
+            #[cfg(feature = "remote-control-wifi-host")]
             Ok(RemoteControlRequest::SetStationUplink { id, uplink }) => {
                 require_available(
                     available_requests,
@@ -1273,6 +1289,7 @@ impl RemoteControlRequestEndpoint {
                 )?;
                 Ok(AdmittedRemoteControlOperation::SetEspRadioMode { mode })
             }
+            #[cfg(feature = "remote-control-wifi-host")]
             Ok(RemoteControlRequest::StageWifiCredentials { station }) => {
                 require_available(
                     available_requests,
@@ -1280,6 +1297,7 @@ impl RemoteControlRequestEndpoint {
                 )?;
                 Ok(AdmittedRemoteControlOperation::StageWifiCredentials { station })
             }
+            #[cfg(feature = "remote-control-wifi-host")]
             Ok(RemoteControlRequest::ActivateWifiCredentials { revision }) => {
                 require_available(
                     available_requests,
@@ -1287,6 +1305,7 @@ impl RemoteControlRequestEndpoint {
                 )?;
                 Ok(AdmittedRemoteControlOperation::ActivateWifiCredentials { revision })
             }
+            #[cfg(feature = "remote-control-wifi-host")]
             Ok(RemoteControlRequest::ConfirmWifiCredentials { revision }) => {
                 require_available(
                     available_requests,
@@ -1294,6 +1313,7 @@ impl RemoteControlRequestEndpoint {
                 )?;
                 Ok(AdmittedRemoteControlOperation::ConfirmWifiCredentials { revision })
             }
+            #[cfg(feature = "remote-control-wifi-host")]
             Ok(RemoteControlRequest::CancelWifiCredentials { revision }) => {
                 require_available(
                     available_requests,
@@ -1301,6 +1321,7 @@ impl RemoteControlRequestEndpoint {
                 )?;
                 Ok(AdmittedRemoteControlOperation::CancelWifiCredentials { revision })
             }
+            #[cfg(feature = "remote-control-wifi-host")]
             Ok(RemoteControlRequest::InspectWifiTransaction) => {
                 require_available(
                     available_requests,
@@ -1308,6 +1329,16 @@ impl RemoteControlRequestEndpoint {
                 )?;
                 Ok(AdmittedRemoteControlOperation::InspectWifiTransaction)
             }
+            #[cfg(not(feature = "remote-control-wifi-host"))]
+            Ok(
+                RemoteControlRequest::SetInterfaceWifiStation { .. }
+                | RemoteControlRequest::SetStationUplink { .. }
+                | RemoteControlRequest::StageWifiCredentials { .. }
+                | RemoteControlRequest::ActivateWifiCredentials { .. }
+                | RemoteControlRequest::ConfirmWifiCredentials { .. }
+                | RemoteControlRequest::CancelWifiCredentials { .. }
+                | RemoteControlRequest::InspectWifiTransaction,
+            ) => Err(RemoteControlAdmitError::KindNotPermitted),
             Err(error) => Ok(AdmittedRemoteControlOperation::ProtocolError(
                 RemoteControlProtocolError::from(error),
             )),
@@ -1479,6 +1510,7 @@ enum AdmittedRemoteControlOperation {
         id: InterfaceId,
         profile: RemoteControlLoRaProfile,
     },
+    #[cfg(feature = "remote-control-wifi-host")]
     SetInterfaceWifiStation {
         id: InterfaceId,
         station: RemoteControlWifiStation,
@@ -1518,6 +1550,7 @@ enum AdmittedRemoteControlOperation {
     SetDisplayAutoOff {
         auto_off: RemoteControlDisplayAutoOff,
     },
+    #[cfg(feature = "remote-control-wifi-host")]
     SetStationUplink {
         id: InterfaceId,
         uplink: RemoteControlStationUplink,
@@ -1525,24 +1558,31 @@ enum AdmittedRemoteControlOperation {
     SetEspRadioMode {
         mode: RemoteControlEspRadioMode,
     },
+    #[cfg(feature = "remote-control-wifi-host")]
     StageWifiCredentials {
         station: RemoteControlWifiStation,
     },
+    #[cfg(feature = "remote-control-wifi-host")]
     ActivateWifiCredentials {
         revision: RemoteControlWifiCredentialRevision,
     },
+    #[cfg(feature = "remote-control-wifi-host")]
     ConfirmWifiCredentials {
         revision: RemoteControlWifiCredentialRevision,
     },
+    #[cfg(feature = "remote-control-wifi-host")]
     CancelWifiCredentials {
         revision: RemoteControlWifiCredentialRevision,
     },
+    #[cfg(feature = "remote-control-wifi-host")]
     InspectWifiTransaction,
     ProtocolError(RemoteControlProtocolError),
 }
 
 impl AdmittedRemoteControlOperation {
     fn prepare_host(self, controller: IdentityHash) -> Self {
+        #[cfg(not(feature = "remote-control-wifi-host"))]
+        let _ = controller;
         let command = match self {
             Self::InventoryInterfaces { page } => {
                 RemoteControlHostCommand::InventoryInterfaces { page }
@@ -1565,6 +1605,7 @@ impl AdmittedRemoteControlOperation {
             Self::SetInterfaceLoRaProfile { id, profile } => {
                 RemoteControlHostCommand::SetInterfaceLoRaProfile { id, profile }
             }
+            #[cfg(feature = "remote-control-wifi-host")]
             Self::SetInterfaceWifiStation { id, station } => {
                 RemoteControlHostCommand::SetInterfaceWifiStation { id, station }
             }
@@ -1580,34 +1621,40 @@ impl AdmittedRemoteControlOperation {
             Self::SetDisplayAutoOff { auto_off } => {
                 RemoteControlHostCommand::SetDisplayAutoOff { auto_off }
             }
+            #[cfg(feature = "remote-control-wifi-host")]
             Self::SetStationUplink { id, uplink } => {
                 RemoteControlHostCommand::SetStationUplink { id, uplink }
             }
             Self::SetEspRadioMode { mode } => RemoteControlHostCommand::SetEspRadioMode { mode },
+            #[cfg(feature = "remote-control-wifi-host")]
             Self::StageWifiCredentials { station } => {
                 RemoteControlHostCommand::StageWifiCredentials {
                     controller,
                     station,
                 }
             }
+            #[cfg(feature = "remote-control-wifi-host")]
             Self::ActivateWifiCredentials { revision } => {
                 RemoteControlHostCommand::ActivateWifiCredentials {
                     controller,
                     revision,
                 }
             }
+            #[cfg(feature = "remote-control-wifi-host")]
             Self::ConfirmWifiCredentials { revision } => {
                 RemoteControlHostCommand::ConfirmWifiCredentials {
                     controller,
                     revision,
                 }
             }
+            #[cfg(feature = "remote-control-wifi-host")]
             Self::CancelWifiCredentials { revision } => {
                 RemoteControlHostCommand::CancelWifiCredentials {
                     controller,
                     revision,
                 }
             }
+            #[cfg(feature = "remote-control-wifi-host")]
             Self::InspectWifiTransaction => {
                 RemoteControlHostCommand::InspectWifiTransaction { controller }
             }
@@ -1661,6 +1708,24 @@ pub struct AdmittedRemoteControlRequest {
 
 pub struct VerifiedAdmittedRemoteControlRequest {
     operation: AdmittedRemoteControlOperation,
+}
+
+impl VerifiedAdmittedRemoteControlRequest {
+    pub fn authorize_controller_grant(&self) -> Option<RemoteControlControllerGrant> {
+        match self.operation {
+            AdmittedRemoteControlOperation::AuthorizeControllerGrant { grant } => Some(grant),
+            _ => None,
+        }
+    }
+
+    pub fn revoke_controller_grant(&self) -> Option<RemoteControlControllerIdentity> {
+        match self.operation {
+            AdmittedRemoteControlOperation::RevokeControllerGrant { controller } => {
+                Some(controller)
+            }
+            _ => None,
+        }
+    }
 }
 
 pub fn verify_admitted_remote_control_request(
@@ -1753,9 +1818,16 @@ where
 {
     match operation {
         AdmittedRemoteControlOperation::InventoryControllers { page } => {
-            AdmittedRemoteControlOperation::InventoryControllersReady(
-                RemoteControlControllerInventory::from_grants(controller_grants, page),
-            )
+            match RemoteControlControllerInventory::from_grants(controller_grants, page) {
+                Ok(inventory) => {
+                    AdmittedRemoteControlOperation::InventoryControllersReady(inventory)
+                }
+                Err(_) => AdmittedRemoteControlOperation::ProtocolError(
+                    RemoteControlProtocolError::InternalFailure {
+                        request: RemoteControlRequestKind::InventoryControllers,
+                    },
+                ),
+            }
         }
         AdmittedRemoteControlOperation::AuthorizeController {
             controller,
@@ -2127,6 +2199,19 @@ mod tests {
             .write_into(&mut request)
             .unwrap();
         request
+    }
+
+    #[cfg(not(feature = "remote-control-wifi-host"))]
+    #[test]
+    fn a_non_wifi_host_rejects_wifi_operations_even_when_the_capability_set_is_overstated() {
+        assert!(matches!(
+            RemoteControlRequestEndpoint::resolve(
+                Ok(RemoteControlRequest::InspectWifiTransaction),
+                RemoteControlRequestSet::all(),
+                RemoteControlSelfAnnouncement::Unavailable,
+            ),
+            Err(RemoteControlAdmitError::KindNotPermitted),
+        ));
     }
 
     #[derive(Clone, Copy)]

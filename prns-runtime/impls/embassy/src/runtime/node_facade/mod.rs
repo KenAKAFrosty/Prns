@@ -16,6 +16,15 @@ pub use remote_control::{RemoteControlHandle, RemoteControlTargetHandle};
 #[cfg(test)]
 pub(crate) fn test_remote_control_service(
 ) -> prns_core::remote_control::RemoteControlService<'static> {
+    test_remote_control_service_with_capabilities(
+        prns_core::remote_control::RemoteControlCapabilities::describe_only(),
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn test_remote_control_service_with_capabilities(
+    capabilities: prns_core::remote_control::RemoteControlCapabilities,
+) -> prns_core::remote_control::RemoteControlService<'static> {
     use prns_core::identity::vault::IdentitySecretKey;
     use prns_core::remote_control::{
         RemoteControlControllerIdentitySecret, RemoteControlInitialControllerGrants,
@@ -32,10 +41,11 @@ pub(crate) fn test_remote_control_service(
         )),
     )
     .expect("distinct test identities");
-    RemoteControlService::new(
+    RemoteControlService::with_capabilities(
         identity_secrets,
         RemoteControlInitialControllerGrants::Nobody,
         RemoteControlSelfAnnouncement::Unavailable,
+        capabilities,
     )
 }
 
