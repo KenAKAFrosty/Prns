@@ -32,11 +32,14 @@ async fn main() {
     let self_destination_hash = self_destination
         .destination_hash()
         .expect("the example destination name is valid");
+    let mut permitted_requests = RemoteControlRequestSet::only(RemoteControlRequestKind::Describe);
+    let _inserted = permitted_requests.insert(RemoteControlRequestKind::AnnounceSelf);
     let controller_grants = [RemoteControlControllerGrant::new(
         controller_public_identity,
-        RemoteControlRequestSet::all(),
+        personal_rns::remote_control::RemoteControlControllerAuthority::Operator,
+        permitted_requests,
     )
-    .expect("the complete request set is not empty")];
+    .expect("the explicit operator request set is not empty")];
     let target_remote_control = RemoteControlService::new(
         target_identity_secrets,
         RemoteControlInitialControllerGrants::Grants(

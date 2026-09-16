@@ -11,12 +11,12 @@ const EXAMPLE_ENDPOINT_ID: &str = "/example/echo";
 const EXCHANGE_TIMEOUT: Duration = Duration::from_secs(10);
 
 struct Echo;
-impl RequestEndpoint for Echo {
+impl RequestEndpoint<personal_rns::runtime::NoRemoteControlHostControls> for Echo {
     const ENDPOINT_ID: &'static str = EXAMPLE_ENDPOINT_ID;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
     async fn handle(
-        mut context: RequestContext<'_, ()>,
+        mut context: RequestContext<'_, personal_rns::runtime::NoRemoteControlHostControls>,
         _node: &impl personal_rns::runtime::PrnsNodeApi,
     ) -> Result<(), Decline> {
         let data_from_request = context.data;
