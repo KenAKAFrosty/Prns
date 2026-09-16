@@ -2825,6 +2825,10 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
+        "engine": [
+          "restore-state-bool",
+          "std"
+        ],
         "esp32-c6": [
           "restore-state-u32"
         ],
