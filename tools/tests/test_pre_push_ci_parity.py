@@ -36,6 +36,7 @@ class PrePushCiParityTests(unittest.TestCase):
         self.assertIn("prns-wasm wasm32 Clippy", names)
         self.assertIn("JavaScript browser package smoke", names)
         self.assertIn("embedded resource matrix", names)
+        self.assertIn("embedded resource summary", names)
         self.assertIn("Embassy runtime Clippy", names)
         self.assertIn("unsafe dependency inventory", names)
 
@@ -128,6 +129,24 @@ class PrePushCiParityTests(unittest.TestCase):
                         "--all",
                     ),
                 )
+                summary = next(
+                    gate for gate in gates if gate.name == "embedded resource summary"
+                )
+                self.assertEqual(
+                    summary.command,
+                    (
+                        "./tools/prns",
+                        "build",
+                        "embedded",
+                        "resources",
+                        "summarize",
+                        "--reports",
+                        "target/flash-artifacts/resources/configured/reports",
+                        "--output",
+                        "target/flash-artifacts/resources/pre-push-matrix",
+                    ),
+                )
+                self.assertLess(gates.index(gate), gates.index(summary))
 
     def test_shared_component_runs_miri_and_every_target_isa_suite(self) -> None:
         plan = parity.plan_for_paths(
