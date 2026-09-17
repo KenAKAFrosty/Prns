@@ -10,11 +10,15 @@ pub(in crate::report) struct ResourceComparison {
     pub(super) ram: EvidenceComparison<Vec<RamComparison>>,
     pub(super) sections: EvidenceComparison<Vec<SectionComparison>>,
     pub(super) attribution: AttributionComparison,
+    pub(super) executable: EvidenceComparison<ExecutableComparison>,
+    pub(super) stack: StackEvidenceComparison,
+    pub(super) async_memory: EvidenceComparison<AsyncMemoryComparison>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum SettingDifference {
-    Lto { before: String, after: String },
+    RequestedLto { before: String, after: String },
+    EffectiveLto { before: String, after: String },
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -70,6 +74,7 @@ pub(super) struct FlashComparison {
 pub(super) struct ArtifactComparison {
     pub(super) path: String,
     pub(super) bytes: ByteComparison,
+    pub(super) fingerprint: ChangeState,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -91,6 +96,108 @@ pub(super) struct SectionComparison {
     pub(super) kind: &'static str,
     pub(super) run_bytes: ByteComparison,
     pub(super) load_bytes: ByteComparison,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct ExecutableComparison {
+    pub(super) entry_point: ChangeState,
+    pub(super) section_bytes: ByteComparison,
+    pub(super) changed_sections: Vec<String>,
+    pub(super) function_boundaries: ChangeState,
+    pub(super) functions_before: u64,
+    pub(super) functions_after: u64,
+    pub(super) changed_ranked_functions: Vec<String>,
+    pub(super) decoded_bytes: ByteComparison,
+    pub(super) undecoded_bytes: ByteComparison,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum StackEvidenceComparison {
+    Comparable {
+        before: EvidenceAvailability,
+        after: EvidenceAvailability,
+        value: Box<StackComparison>,
+    },
+    NotComparable {
+        before: EvidenceAvailability,
+        after: EvidenceAvailability,
+    },
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct StackComparison {
+    pub(super) frame_source: ChangeState,
+    pub(super) source_bytes: ByteComparison,
+    pub(super) frames: CountComparison,
+    pub(super) modeled_chain: ByteComparison,
+    pub(super) changed_largest_frames: Vec<String>,
+    pub(super) reservation: StackReservationComparison,
+    pub(super) gaps: Vec<NamedCountComparison>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum StackReservationComparison {
+    Declared {
+        reservation: String,
+        bytes: u64,
+        assessment: ModeledChainAssessmentComparison,
+    },
+    Undeclared,
+    Changed,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum ModeledChainAssessmentComparison {
+    WithinReservation { remaining: ByteComparison },
+    OverReservation { excess: ByteComparison },
+    Changed,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct AsyncMemoryComparison {
+    pub(super) task_pool_total: ByteComparison,
+    pub(super) task_pools: Vec<NamedSizeComparison>,
+    pub(super) scenario_futures: ScenarioFutureComparison,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum ScenarioFutureComparison {
+    Measured(Vec<NamedSizeComparison>),
+    Unavailable { before: String, after: String },
+    AvailabilityChanged { before: String, after: String },
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct NamedSizeComparison {
+    pub(super) name: String,
+    pub(super) before: Option<u64>,
+    pub(super) after: Option<u64>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct NamedCountComparison {
+    pub(super) name: String,
+    pub(super) count: CountComparison,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct CountComparison {
+    pub(super) before: u64,
+    pub(super) after: u64,
+    pub(super) delta: CountDelta,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum CountDelta {
+    Decrease(u64),
+    Unchanged,
+    Increase(u64),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ChangeState {
+    Unchanged,
+    Changed,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -170,12 +277,39 @@ impl ByteComparison {
     }
 }
 
+impl CountComparison {
+    pub(super) const fn new(before: u64, after: u64) -> Self {
+        let delta = if before < after {
+            CountDelta::Increase(after - before)
+        } else if before == after {
+            CountDelta::Unchanged
+        } else {
+            CountDelta::Decrease(before - after)
+        };
+        Self {
+            before,
+            after,
+            delta,
+        }
+    }
+}
+
 impl fmt::Display for ByteDelta {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Decrease(bytes) => write!(formatter, "-{bytes}"),
             Self::Unchanged => formatter.write_str("0"),
             Self::Increase(bytes) => write!(formatter, "+{bytes}"),
+        }
+    }
+}
+
+impl fmt::Display for CountDelta {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Decrease(count) => write!(formatter, "-{count}"),
+            Self::Unchanged => formatter.write_str("0"),
+            Self::Increase(count) => write!(formatter, "+{count}"),
         }
     }
 }
@@ -206,5 +340,14 @@ impl fmt::Display for OverflowState {
             Self::NotReported => formatter.write_str("not-reported"),
             Self::Overflow(bytes) => write!(formatter, "{bytes}"),
         }
+    }
+}
+
+impl fmt::Display for ChangeState {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Unchanged => "unchanged",
+            Self::Changed => "changed",
+        })
     }
 }

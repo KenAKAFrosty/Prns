@@ -33,10 +33,10 @@ use super::{
     PeripheralTable, RestoredPeripherals, SendCharacteristicRef, SendPeripheral,
 };
 
-pub(super) fn is_system_connected(
+pub(super) fn connected_peripheral(
     central: &CBCentralManager,
     peer_id: CoreBluetoothPeerId,
-) -> bool {
+) -> Option<Retained<CBPeripheral>> {
     let uuid = service_uuid();
     let services = NSArray::from_slice(&[&*uuid]);
     // SAFETY: the live manager is queried on its serial dispatch queue and the retained service
@@ -44,7 +44,23 @@ pub(super) fn is_system_connected(
     let connected = unsafe { central.retrieveConnectedPeripheralsWithServices(&services) };
     connected
         .iter()
-        .any(|peripheral| core_bluetooth_peer_id(&peripheral) == peer_id)
+        .find(|peripheral| core_bluetooth_peer_id(peripheral) == peer_id)
+        .map(|peripheral| peripheral.retain())
+}
+
+pub(super) fn is_system_connected(
+    central: &CBCentralManager,
+    peer_id: CoreBluetoothPeerId,
+) -> bool {
+    connected_peripheral(central, peer_id).is_some()
+}
+
+pub(super) fn cancel_system_connection(central: &CBCentralManager, peer_id: CoreBluetoothPeerId) {
+    if let Some(peripheral) = connected_peripheral(central, peer_id) {
+        // SAFETY: both retained objects remain alive through this call and are messaged only on
+        // the CoreBluetooth serial dispatch queue.
+        unsafe { central.cancelPeripheralConnection(&peripheral) };
+    }
 }
 
 pub(super) struct DialChars {
@@ -217,9 +233,8 @@ impl CentralPeerSession {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn data_receiver_closed(&self) -> bool {
-        // The control receiver is handshake-only and closes when a link settles. The data
-        // receiver is retained by the attached member for the full lifetime of this role.
         self.data_tx.is_closed()
     }
 
@@ -786,7 +801,7 @@ impl CentralDelegate {
         peer_id: CoreBluetoothPeerId,
         session: CentralPeerSession,
     ) -> bool {
-        if self.ivars().sessions.borrow().contains_key(&peer_id) {
+        if self.has_session(peer_id) {
             session.reject();
             return false;
         }
@@ -794,23 +809,21 @@ impl CentralDelegate {
         true
     }
 
+    pub(super) fn has_session(&self, peer_id: CoreBluetoothPeerId) -> bool {
+        self.ivars().sessions.borrow().contains_key(&peer_id)
+    }
+
+    pub(super) fn note_stale_cancellation(&self, peer_id: CoreBluetoothPeerId) {
+        self.ivars()
+            .discovery_guard
+            .borrow_mut()
+            .record_stale_cancellation(peer_id, Instant::now());
+    }
+
     pub(super) fn remove_session(&self, peer_id: CoreBluetoothPeerId) {
         if let Some(session) = self.ivars().sessions.borrow_mut().remove(&peer_id) {
             session.fail();
         }
-    }
-
-    pub(super) fn remove_closed_session(&self, peer_id: CoreBluetoothPeerId) -> bool {
-        let link_closed = self
-            .ivars()
-            .sessions
-            .borrow()
-            .get(&peer_id)
-            .is_some_and(CentralPeerSession::data_receiver_closed);
-        if link_closed {
-            self.remove_session(peer_id);
-        }
-        link_closed
     }
 
     pub(super) fn submit_write(

@@ -54,7 +54,7 @@ pub async fn run_client() -> Result<(), ClientFailure> {
         remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: None,
         pre_configured_destinations: [] as [PreConfiguredDestination; 0],
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         interfaces: move |handle: &personal_rns::PrnsNodeHandle| {
@@ -120,6 +120,22 @@ pub async fn run_client() -> Result<(), ClientFailure> {
 
 struct ServerState {
     completed: tokio::sync::mpsc::UnboundedSender<Result<(), ServerFailure>>,
+}
+
+impl personal_rns::runtime::RemoteControlHostControls for ServerState {
+    async fn execute_remote_control(
+        &self,
+        command: personal_rns::runtime::RemoteControlHostCommand,
+    ) -> Result<
+        personal_rns::runtime::RemoteControlHostResponse,
+        personal_rns::runtime::RemoteControlHostCommandError,
+    > {
+        personal_rns::runtime::RemoteControlHostControls::execute_remote_control(
+            &personal_rns::runtime::NoRemoteControlHostControls,
+            command,
+        )
+        .await
+    }
 }
 
 struct Complete;

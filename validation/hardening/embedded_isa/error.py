@@ -1,0 +1,2 @@
+class EmbeddedIsaError(RuntimeError):
+    pass

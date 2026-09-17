@@ -5,6 +5,7 @@ use super::super::captive_portal::{
 use super::super::*;
 use super::station::{net_task, network_ready_task, wifi_connect_task, StationCredentials};
 use alloc::boxed::Box;
+use personal_rns::wifi_auto::MdnsMulticastFamily;
 
 fn psram_udp_socket<
     const RX_META: usize,
@@ -129,7 +130,7 @@ pub(in crate::s3) fn build_wifi(
     wifi: esp_hal::peripherals::WIFI<'static>,
     boot_entropy: S3RuntimeEntropy,
     mac: [u8; 6],
-    config: &HopspotWifiConfig,
+    station_credentials: Option<StationCredentials>,
     ap_enabled: bool,
 ) -> (
     Option<AutoWifi<'static, MEMBERS>>,
@@ -169,9 +170,9 @@ pub(in crate::s3) fn build_wifi(
         None,
     ));
 
-    // Opportunistic station uplink: only a configured SSID stands a station netif up and runs
-    // the connect loop; otherwise the keepalive task just owns the controller, no scanning.
-    let station_segment: Option<AutoWifiSegment<'static>> = if config.has_station() {
+    // Keep a station netif available even without immutable boot credentials. A sealed Remote
+    // Control revision can then replace the credentials without rebuilding the network stack.
+    let station_segment: Option<AutoWifiSegment<'static>> = {
         let link_local = wifi_auto_contract::link_local_from_mac(MacAddress::new(mac));
         // Dual-stack: the v6 link-local carries Wi-Fi Auto's discovery/data UDP; v4 over DHCP gives
         // the board a routable address to dial a Reticulum TCP node by ip:port.
@@ -196,15 +197,17 @@ pub(in crate::s3) fn build_wifi(
         let data = wifi_auto_data_socket(stack);
         let wifi_status = AutoWifiStatus::new(&WIFI_SHARED);
         start_udp_service_discovery(spawner, stack, link_local, wifi_status);
-        let station_credentials = StationCredentials {
-            ssid: config.ssid.clone(),
-            password: config.password.clone(),
-        };
         spawner.spawn(net_task(runner).expect("net task fits"));
         spawner.spawn(network_ready_task(stack).expect("network readiness task fits"));
         spawner.spawn(
-            wifi_connect_task(controller, wifi_status, station_credentials, ap_enabled)
-                .expect("wifi connect task fits"),
+            wifi_connect_task(
+                controller,
+                wifi_status,
+                station_credentials,
+                &WIFI_CREDENTIALS,
+                ap_enabled,
+            )
+            .expect("wifi connect task fits"),
         );
         Some(AutoWifiSegment {
             stack,
@@ -213,10 +216,6 @@ pub(in crate::s3) fn build_wifi(
             data,
             mac,
         })
-    } else {
-        spawner
-            .spawn(wifi_radio_keepalive_task(controller).expect("wifi radio keepalive task fits"));
-        None
     };
     let tcp_stack = station_segment.as_ref().map(|segment| segment.stack);
 
@@ -287,13 +286,16 @@ fn start_udp_service_discovery(
 ) {
     let socket = udp_service_discovery_socket(stack);
     let storage = crate::storage::allocate_psram(UdpServiceDiscoveryStorage::<MEMBERS>::new());
-    let service_discovery = match UdpServiceDiscovery::new(
+    // IPv4 mDNS (224.0.0.251) — works on APs that block IPv6 LL multicast (Android path).
+    // Publication carries LL AAAA plus station IPv4 A when DHCP/static v4 is up.
+    let service_discovery = match UdpServiceDiscovery::with_multicast(
         socket,
         stack,
         address,
         status,
         storage,
         runtime_entropy(),
+        MdnsMulticastFamily::Ipv4,
     ) {
         Ok(service_discovery) => service_discovery,
         Err(error) => {
@@ -309,6 +311,7 @@ fn start_udp_service_discovery(
         }
     };
     spawner.spawn(task);
+    log::info!("wifi-auto: UDP DNS-SD task started (IPv4 mDNS)");
 }
 
 fn build_tcp_rendezvous_listener(
@@ -353,14 +356,4 @@ async fn udp_service_discovery_task(
     service_discovery: UdpServiceDiscovery<'static, S3EntropySource, MEMBERS>,
 ) -> ! {
     service_discovery.run().await
-}
-
-/// Hold the Wi-Fi controller alive with no AP association — dropping it would stop the radio — so
-/// ESP-NOW keeps the Wi-Fi MAC up on a fixed channel when no SSID is configured. The radio was started
-/// synchronously by [`build_wifi`] before this task takes the controller.
-#[embassy_executor::task]
-async fn wifi_radio_keepalive_task(_controller: WifiController<'static>) -> ! {
-    loop {
-        Timer::after(Duration::from_secs(3600)).await;
-    }
 }

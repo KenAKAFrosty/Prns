@@ -23,6 +23,7 @@ mod egress;
 mod host;
 mod host_protocol;
 mod inbound_dispatch;
+mod indexed_rows;
 mod interface_seam;
 mod interface_status;
 mod interface_topology;
@@ -365,7 +366,6 @@ async fn run_inner<S, H, J, P, A, C>(
         let mut work_remaining = scheduler_policy.turn_work();
         let flushed_egress = topology.egress.flush_pending(work_remaining);
         work_remaining = work_remaining.saturating_sub(flushed_egress);
-        let mut egress_backpressured = topology.egress.has_pending();
         if pending_command.is_none() {
             pending_command = next_command(
                 &mut local_commands,
@@ -376,10 +376,7 @@ async fn run_inner<S, H, J, P, A, C>(
         }
 
         let mut progressed = flushed_egress > 0;
-        if let Some(pool) = crypto_pool
-            .as_ref()
-            .filter(|pool| !egress_backpressured && pool.has_completion())
-        {
+        if let Some(pool) = crypto_pool.as_ref().filter(|pool| pool.has_completion()) {
             let mut next = pool.pop_completion();
             let now = clock.observe_step(&host);
             let mut seal_buf = [0u8; crate::wire::BROADCAST_MTU];
@@ -419,10 +416,7 @@ async fn run_inner<S, H, J, P, A, C>(
                 }
                 work_remaining = work_remaining.saturating_sub(completed_work);
                 completed += 1;
-                if work_remaining == 0
-                    || completed == completion_budget
-                    || topology.egress.has_pending()
-                {
+                if work_remaining == 0 || completed == completion_budget {
                     break;
                 }
                 next = pool.pop_completion();
@@ -431,7 +425,6 @@ async fn run_inner<S, H, J, P, A, C>(
             {
                 turn_activity.completions = completed;
             }
-            egress_backpressured = topology.egress.has_pending();
             progressed = true;
         }
 
@@ -460,7 +453,6 @@ async fn run_inner<S, H, J, P, A, C>(
             {
                 turn_activity.inbound_frames = processed;
             }
-            egress_backpressured = topology.egress.has_pending();
             progressed |= processed > 0;
         }
 
@@ -500,7 +492,7 @@ async fn run_inner<S, H, J, P, A, C>(
                         }
                     }
                     command_budget -= 1;
-                    if command_budget == 0 || topology.egress.has_pending() {
+                    if command_budget == 0 {
                         break;
                     }
                     match next_command(
@@ -519,12 +511,11 @@ async fn run_inner<S, H, J, P, A, C>(
                 {
                     turn_activity.commands = commands_dispatched;
                 }
-                egress_backpressured = topology.egress.has_pending();
                 progressed = true;
             }
         }
 
-        if !egress_backpressured && armed.is_some_and(|(deadline, _)| deadline <= clock.now()) {
+        if armed.is_some_and(|(deadline, _)| deadline <= clock.now()) {
             if let Some((_deadline, reason)) = armed.take() {
                 let now = clock.observe_step(&host);
                 #[cfg(feature = "runtime-metrics")]
@@ -553,12 +544,11 @@ async fn run_inner<S, H, J, P, A, C>(
                     &engine,
                     topology.view(),
                 );
-                egress_backpressured = topology.egress.has_pending();
                 progressed = true;
             }
         }
 
-        if !egress_backpressured && pacer_armed.is_some_and(|deadline| deadline <= clock.now()) {
+        if pacer_armed.is_some_and(|deadline| deadline <= clock.now()) {
             let _deadline = pacer_armed.take().unwrap_or(InstantMillis(0));
             let now = clock.observe_step(&host);
             #[cfg(feature = "runtime-metrics")]
@@ -572,7 +562,7 @@ async fn run_inner<S, H, J, P, A, C>(
             progressed = true;
         }
 
-        if !egress_backpressured && (work_remaining > 0 || owed_work.has_pending()) {
+        if work_remaining > 0 || owed_work.has_pending() {
             #[cfg(feature = "runtime-metrics")]
             let inline_dispatch_started = crypto_pool.is_none().then(std::time::Instant::now);
             let dispatched = owed_work.dispatch(
@@ -690,7 +680,7 @@ async fn run_inner<S, H, J, P, A, C>(
         // after every synchronously observable source has reported cold.
         if crypto_pool
             .as_ref()
-            .is_some_and(|pool| !egress_backpressured && pool.prepare_completion_wait())
+            .is_some_and(CryptoPool::prepare_completion_wait)
         {
             continue;
         }
@@ -729,7 +719,7 @@ async fn run_inner<S, H, J, P, A, C>(
                 clock.observe_step(&host);
             }
             () = crypto_completion_wake.notified(),
-                if crypto_pool.is_some() && !egress_backpressured => {}
+                if crypto_pool.is_some() => {}
         }
     }
 }

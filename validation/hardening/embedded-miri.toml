@@ -1,0 +1,51 @@
+schema = 1
+
+[[scenario]]
+component = "sx126x"
+id = "sx126x-state-machine"
+manifest = "prns-interfaces/impls/embassy/Cargo.toml"
+features = ["lora"]
+quick_filters = ["radios::sx126x::tests"]
+full_filters = ["radios::sx126x::tests"]
+sources = [
+    "prns-interfaces/impls/embassy/Cargo.toml",
+    "prns-interfaces/impls/embassy/Cargo.lock",
+    "prns-interfaces/impls/embassy/src/radios/radio.rs",
+    "prns-interfaces/impls/embassy/src/radios/sx126x.rs",
+    "prns-core/src/interfaces/lora",
+    "prns-core/src/interfaces/subghz/regions/us915/mod.rs",
+]
+
+[[scenario]]
+component = "lr1110"
+id = "lr1110-state-machine"
+manifest = "prns-interfaces/impls/embassy/Cargo.toml"
+features = ["lora"]
+quick_filters = ["radios::lr1110::tests"]
+full_filters = ["radios::lr1110::tests"]
+sources = [
+    "prns-interfaces/impls/embassy/Cargo.toml",
+    "prns-interfaces/impls/embassy/Cargo.lock",
+    "prns-interfaces/impls/embassy/src/radios/lr1110",
+    "prns-interfaces/impls/embassy/src/radios/radio.rs",
+    "prns-core/src/interfaces/lora",
+    "prns-core/src/interfaces/subghz/regions/us915/mod.rs",
+]
+
+[[scenario]]
+component = "embedded-persistence"
+id = "flash-journal-state-machine"
+manifest = "prns-runtime/impls/embassy/Cargo.toml"
+features = ["std"]
+quick_filters = [
+    "runtime::embedded_persistence::tests::authorization_snapshots_survive_compaction_and_restore_complete_runtime_tables",
+    "runtime::embedded_persistence::tests::exact_route_and_ratchet_deadlines_are_distinct",
+    "runtime::embedded_persistence::tests::failures_keep_dirty_state_and_raise_the_notice",
+]
+full_filters = ["runtime::embedded_persistence::tests"]
+sources = [
+    "prns-runtime/impls/embassy/Cargo.toml",
+    "prns-runtime/impls/embassy/Cargo.lock",
+    "prns-runtime/impls/embassy/src/runtime/embedded_persistence.rs",
+    "prns-core/src/persistence",
+]

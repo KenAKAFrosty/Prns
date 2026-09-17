@@ -7,7 +7,7 @@ use tokio::net::TcpListener;
 
 use crate::byte_stream::framing;
 use crate::reconnect::ReconnectPolicy;
-use crate::tcp::tune;
+use crate::tcp::{tune, write_progress_timeout, TcpTunnelMode};
 use prns_core::interfaces::backbone;
 use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{
@@ -80,7 +80,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for BackboneServerConnection<S
             { backbone::READ_BUF_LEN },
             { backbone::FRAMED_LEN },
         >::new();
-        framing::serve::<
+        framing::serve_with_write_progress_timeout::<
             framing::HdlcFraming,
             { backbone::READ_BUF_LEN },
             { backbone::FRAMED_LEN },
@@ -97,6 +97,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for BackboneServerConnection<S
                 bitrate: self.policy.bitrate,
                 started,
             },
+            write_progress_timeout(TcpTunnelMode::Direct),
         )
         .await;
         self.status.set_connection(ConnectionState::Disconnected);

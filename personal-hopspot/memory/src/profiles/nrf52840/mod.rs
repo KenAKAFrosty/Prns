@@ -8,6 +8,9 @@ use crate::{
     ReservationId, RuntimeReservation,
 };
 
+#[cfg(feature = "linker-addresses")]
+pub(super) mod linker;
+
 const MINIMUM_RUNTIME_STACK: ReservationId = ReservationId("minimum-runtime-stack");
 
 const NRF52840_S140_RAM_SPACES: [AddressSpace; 2] = nrf52840_spaces(0x2000_C000);
