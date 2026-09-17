@@ -26,7 +26,7 @@ observations remain tied to their recorded builds.
 ## Current priority: upstream refresh and expanded node management
 
 The [September 17 refresh](../checkpoints/2026-09-17-remote-control-refresh.md)
-integrates upstream `79050535f`, including expanded
+integrates upstream `c4fd54dfd`, including expanded
 board remote control from PR #232. The [implementation plan](remote-control-expansion.md)
 defines the next sequence: explicit authority/capabilities, read-only inventories,
 ordinary controls, disruptive connectivity/power actions, transactional Wi-Fi,

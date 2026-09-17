@@ -11,7 +11,7 @@
   },
   "prns": {
     "repository": "https://github.com/KenAKAFrosty/Prns.git",
-    "revision": "457a2ff0e51372332f91c754524e13af78278f1c",
+    "revision": "6fe326c02e7c6b8503bf9bc2397320e791266ae7",
     "hostContract": {
       "id": "prns-host/v1",
       "schemaPath": "prns-host/schema/host-contract-v1.json",
