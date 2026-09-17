@@ -3,10 +3,15 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 use crate::architecture::Adapter;
+use crate::source::source_date_epoch;
 use crate::toolchain::capture_toolchain_evidence;
-use crate::{run_status, BuildError, FirmwareEvidence, LinkOverflowEvidence, ToolchainEvidence};
+use crate::{
+    run_status, BuildError, FirmwareEvidence, LinkOverflowEvidence, LtoMode, ToolchainEvidence,
+};
 
 use super::BuildContext;
+
+mod environment;
 
 pub(crate) struct LinkerMapCapture {
     pending: PathBuf,
@@ -36,12 +41,21 @@ impl BuildContext<'_> {
         &self,
         target_id: &str,
         adapter: &Adapter,
+        configured_lto: LtoMode,
         command: &mut Command,
     ) -> Result<FirmwareBuildCapture, BuildError> {
-        if let Some(lto) = self.intent.lto().cargo_value() {
+        if self.intent.is_resource_report() {
+            environment::validate(self.repository(), command, adapter.rust_target())?;
+            command.env(
+                "SOURCE_DATE_EPOCH",
+                source_date_epoch(self.repository())
+                    .map_err(|error| BuildError::Repository(error.to_string()))?,
+            );
+        }
+        if let Some(lto) = self.intent.lto().resolve(configured_lto).cargo_value() {
             command.env("CARGO_PROFILE_RELEASE_LTO", lto);
         }
-        let linker = adapter.configure_cargo(command)?;
+        let linker = adapter.configure_cargo(command, self.intent)?;
         match self.intent {
             crate::BuildIntent::Firmware => Ok(FirmwareBuildCapture::Firmware),
             crate::BuildIntent::ResourceReport { .. } => {
@@ -61,10 +75,14 @@ impl BuildContext<'_> {
             .then(|| self.work_output(target_id).join("linker.map"))
     }
 
-    pub fn cargo_target_directory(&self, target_id: &str) -> Option<PathBuf> {
+    pub fn cargo_target_directory(&self, _target_id: &str) -> Option<PathBuf> {
+        // Resource reports build the matrix sequentially, so Cargo can safely
+        // reuse one cache across boards and architectures. Keep the linker maps
+        // and analyzed evidence target-local, but avoid duplicating the entire
+        // dependency graph for every shipping profile.
         self.intent
             .is_resource_report()
-            .then(|| self.work_output(target_id).join("cargo"))
+            .then(|| self.configured_output_root().join("cargo-cache"))
     }
 
     pub fn pending_linker_map_path(&self, target_id: &str) -> Option<PathBuf> {

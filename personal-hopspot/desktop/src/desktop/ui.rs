@@ -898,6 +898,8 @@ mod tests {
                 links: 0,
                 transported_links: 0,
                 membership: Membership::Independent,
+                radio: personal_rns::interfaces::RadioIndication::NotRadio,
+                details: personal_rns::interfaces::PeerDetails::NotApplicable,
             }],
             |_| Some((screen::CardKind::Usb, screen::card_label("USB"))),
         )

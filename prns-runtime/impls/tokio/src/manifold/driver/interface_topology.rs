@@ -1,4 +1,5 @@
 use prns_core::interfaces::{AttachedInterfaces, IndexedAttachedInterfaces};
+use prns_core::lemire_index::IndexRow;
 
 use crate::engine::{Departure, EngineState, InstantMillis};
 use crate::interfaces::InterfaceIfac;
@@ -7,16 +8,43 @@ use crate::manifold::interface_seam::{frame_cap_for, BROADCAST_WIRE_FRAME_LEN};
 use crate::manifold::Host;
 use crate::storage::StorageLayout;
 
-use super::egress::{Egress, InterfacePacer};
+use super::egress::{Egress, InterfaceIfacs, InterfacePacer, InterfacePacers};
 use super::host_protocol::AddInterfaceCommand;
+use super::indexed_rows::IndexedRows;
 use super::{HeapFrameSlot, TokioGrantConsumer};
+
+pub(super) struct InboundLane {
+    pub(super) id: InterfaceId,
+    pub(super) consumer: TokioGrantConsumer,
+}
+
+impl IndexRow for InboundLane {
+    type Key = InterfaceId;
+
+    fn index_key(&self) -> &Self::Key {
+        &self.id
+    }
+}
+
+struct FrameAccountingLane {
+    id: InterfaceId,
+    recorder: FrameAccountingRecorder,
+}
+
+impl IndexRow for FrameAccountingLane {
+    type Key = InterfaceId;
+
+    fn index_key(&self) -> &Self::Key {
+        &self.id
+    }
+}
 
 pub(super) struct InterfaceTopology {
     pub(super) interfaces: IndexedAttachedInterfaces,
-    pub(super) ifacs: std::vec::Vec<InterfaceIfac>,
-    pub(super) inbound_lanes: std::vec::Vec<(InterfaceId, TokioGrantConsumer)>,
-    frame_accounting: std::vec::Vec<FrameAccountingRecorder>,
-    pub(super) pacers: std::vec::Vec<InterfacePacer>,
+    pub(super) ifacs: InterfaceIfacs,
+    pub(super) inbound_lanes: IndexedRows<InboundLane>,
+    frame_accounting: IndexedRows<FrameAccountingLane>,
+    pub(super) pacers: InterfacePacers,
     pub(super) egress: Egress,
 }
 
@@ -30,6 +58,11 @@ impl InterfaceTopology {
         host: &H,
     ) -> Self {
         let interfaces = IndexedAttachedInterfaces::from(descriptors);
+        let inbound_lanes = inbound_lanes
+            .into_iter()
+            .map(|(id, consumer)| InboundLane { id, consumer })
+            .collect::<std::vec::Vec<_>>()
+            .into();
         for descriptor in interfaces.descriptors() {
             #[cfg(feature = "runtime-metrics")]
             engine.attach_metrics_interface(descriptor.id, descriptor.id);
@@ -39,12 +72,13 @@ impl InterfaceTopology {
             .descriptors()
             .iter()
             .map(|descriptor| InterfacePacer::from_descriptor(descriptor, descriptor.id))
-            .collect();
+            .collect::<std::vec::Vec<_>>()
+            .into();
         Self {
             interfaces,
-            ifacs,
+            ifacs: ifacs.into(),
             inbound_lanes,
-            frame_accounting: std::vec::Vec::new(),
+            frame_accounting: IndexedRows::default(),
             pacers,
             egress,
         }
@@ -90,25 +124,43 @@ impl InterfaceTopology {
         }
 
         let frame_cap = frame_cap_for(&descriptor);
-        self.pacers.push(InterfacePacer::from_descriptor(
+        let pacer_inserted = self.pacers.push(InterfacePacer::from_descriptor(
             &descriptor,
             logical_interface,
         ));
+        debug_assert!(
+            pacer_inserted,
+            "pacer rows require unique live interface ids"
+        );
         #[cfg(feature = "runtime-metrics")]
         engine.attach_metrics_interface(id, logical_interface);
         engine.interface_attached(id, now);
         self.interfaces.push(descriptor);
-        self.inbound_lanes.push((id, inbound));
+        let inbound_inserted = self.inbound_lanes.push(InboundLane {
+            id,
+            consumer: inbound,
+        });
+        debug_assert!(
+            inbound_inserted,
+            "inbound lanes require unique live interface ids"
+        );
         if let Some(recorder) = frame_accounting {
             debug_assert_eq!(recorder.id(), id);
             if recorder.id() == id {
-                self.frame_accounting.push(recorder);
+                let accounting_inserted = self
+                    .frame_accounting
+                    .push(FrameAccountingLane { id, recorder });
+                debug_assert!(
+                    accounting_inserted,
+                    "frame-accounting rows require unique live interface ids"
+                );
             }
         }
         self.egress
             .add_lane(id, logical_interface, egress, connection);
         if let Some(context) = ifac {
-            self.ifacs.push(InterfaceIfac { id, context });
+            let ifac_inserted = self.ifacs.push(InterfaceIfac { id, context });
+            debug_assert!(ifac_inserted, "IFAC rows require unique live interface ids");
         }
         Some((id, frame_cap))
     }
@@ -122,10 +174,10 @@ impl InterfaceTopology {
     ) {
         engine.interface_departed(id, departure, now);
         self.interfaces.remove(id);
-        self.inbound_lanes.retain(|(lane_id, _)| *lane_id != id);
-        self.frame_accounting.retain(|recorder| recorder.id() != id);
-        self.pacers.retain(|pacer| pacer.id != id);
-        self.ifacs.retain(|entry| entry.id != id);
+        self.inbound_lanes.remove(&id);
+        self.frame_accounting.remove(&id);
+        self.pacers.remove(&id);
+        self.ifacs.remove(id);
         self.egress.remove_lane(id);
     }
 
@@ -134,14 +186,13 @@ impl InterfaceTopology {
         source: InterfaceId,
     ) -> Option<FrameAccountingRecorder> {
         self.frame_accounting
-            .iter()
-            .find(|recorder| recorder.id() == source)
-            .cloned()
+            .get(&source)
+            .map(|entry| entry.recorder.clone())
     }
 
     pub(super) fn return_inbound_slot(&mut self, source: InterfaceId, slot: HeapFrameSlot) {
-        if let Some((_, lane)) = self.inbound_lanes.iter_mut().find(|(id, _)| *id == source) {
-            lane.return_slot(slot);
+        if let Some(lane) = self.inbound_lanes.get_mut(&source) {
+            lane.consumer.return_slot(slot);
         }
     }
 }

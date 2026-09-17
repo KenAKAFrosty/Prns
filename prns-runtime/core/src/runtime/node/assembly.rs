@@ -165,6 +165,29 @@ impl AssembledRemoteControl {
         ))
     }
 
+    #[must_use]
+    pub fn request_configuration_mut(
+        &mut self,
+        destination: DestinationHash,
+        path: RequestPathHash,
+    ) -> Option<(
+        &mut FixedRemoteControlControllerGrantTable<DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS>,
+        RemoteControlRequestSet,
+        RemoteControlSelfAnnouncement,
+    )> {
+        let available = self.available.as_mut()?;
+        if destination != available.target_endpoint.destination_hash()
+            || path != available.request_endpoint_id
+        {
+            return None;
+        }
+        Some((
+            &mut available.controller_grants,
+            available.available_requests,
+            available.self_announcement,
+        ))
+    }
+
     pub fn set_controller_grant(
         &mut self,
         grant: crate::remote_control::RemoteControlControllerGrant,
@@ -241,12 +264,22 @@ impl AssembledRemoteControl {
         crate::remote_control::ForgetRemoteControlTargetOutcome,
         ForgetRemoteControlTargetServiceError,
     > {
+        self.forget_target_by_hash(target.identity_hash())
+    }
+
+    pub fn forget_target_by_hash(
+        &mut self,
+        target: crate::identity::IdentityHash,
+    ) -> Result<
+        crate::remote_control::ForgetRemoteControlTargetOutcome,
+        ForgetRemoteControlTargetServiceError,
+    > {
         Ok(self
             .available
             .as_mut()
             .ok_or(ForgetRemoteControlTargetServiceError::Unavailable)?
             .target_accesses
-            .forget_target(target))
+            .forget_by_identity_hash(&target))
     }
 
     pub fn restore_controller_grants(
@@ -684,6 +717,7 @@ mod tests {
     fn remote_control_grant(fill: u8) -> RemoteControlControllerGrant {
         RemoteControlControllerGrant::new(
             remote_control_controller(fill),
+            crate::remote_control::RemoteControlControllerAuthority::Operator,
             RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
         )
         .unwrap()
@@ -697,6 +731,7 @@ mod tests {
     fn remote_control_target_access(fill: u8) -> RemoteControlTargetAccess {
         RemoteControlTargetAccess::new(
             remote_control_target(fill),
+            crate::remote_control::RemoteControlControllerAuthority::Operator,
             RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
         )
         .unwrap()
@@ -716,6 +751,19 @@ mod tests {
 
         async fn dispatch(
             _cx: RequestContext<'_, ()>,
+            _node: &impl crate::runtime::PrnsNodeApi,
+            _path_hash: RequestPathHash,
+        ) -> Result<(), Decline> {
+            Err(Decline::Ignore)
+        }
+    }
+
+    impl RequestEndpointSet<crate::runtime::NoRemoteControlHostControls> for Routes {
+        const REGISTRATIONS: &'static [(&'static str, RequestEndpointPolicy)] =
+            &[("/test", RequestEndpointPolicy::AllowList(&[]))];
+
+        async fn dispatch(
+            _cx: RequestContext<'_, crate::runtime::NoRemoteControlHostControls>,
             _node: &impl crate::runtime::PrnsNodeApi,
             _path_hash: RequestPathHash,
         ) -> Result<(), Decline> {
@@ -934,6 +982,7 @@ mod tests {
         let first = remote_control_target_access(0x21);
         let second = RemoteControlTargetAccess::new(
             remote_control_target(0x31),
+            crate::remote_control::RemoteControlControllerAuthority::Administrator,
             RemoteControlRequestSet::all(),
         )
         .unwrap();
@@ -989,7 +1038,7 @@ mod tests {
                 crate::storage::StorageCapacity::Fixed(requirements.upstream_app_destinations()),
             ),
         );
-        assert_eq!(requirements.request_handlers(), 1);
+        assert_eq!(requirements.request_handlers(), 2);
     }
 
     #[test]
@@ -1033,6 +1082,7 @@ mod tests {
         let initial = remote_control_grant(0x41);
         let updated = RemoteControlControllerGrant::new(
             *initial.controller(),
+            crate::remote_control::RemoteControlControllerAuthority::Operator,
             RemoteControlRequestSet::only(RemoteControlRequestKind::AnnounceSelf),
         )
         .unwrap();
@@ -1080,7 +1130,7 @@ mod tests {
                     app_name: "test",
                     aspects: &["plain"],
                 }],
-                app_state: (),
+                app_state: crate::runtime::NoRemoteControlHostControls,
                 storage,
                 request_endpoints: (),
                 interfaces: ManuallyAttached,
@@ -1152,7 +1202,7 @@ mod tests {
                     app_name: "test",
                     aspects: &["plain"],
                 }],
-                app_state: (),
+                app_state: crate::runtime::NoRemoteControlHostControls,
                 storage,
                 request_endpoints: Routes,
                 interfaces: ManuallyAttached,

@@ -365,6 +365,7 @@ mod tests {
         Settlement,
     };
     use crate::interfaces::{AttachedInterfaces, InboundPacket};
+    #[cfg(all(feature = "resource-work-offload", feature = "alloc"))]
     use crate::routing::links::resources::receive::conclude::ConcludeResourceOutcome;
     use crate::routing::links::resources::receive::tests_support::*;
     #[cfg(feature = "resource-work-offload")]
@@ -807,6 +808,7 @@ mod tests {
         ));
     }
 
+    #[cfg(all(feature = "resource-work-offload", feature = "alloc"))]
     #[test]
     fn a_completed_heap_transfer_moves_through_the_tail_worker() {
         let mut sender = active_engine::<crate::storage::GrowableHeap>();

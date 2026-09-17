@@ -1,3 +1,6 @@
+use std::ffi::OsString;
+use std::path::PathBuf;
+
 use thiserror::Error;
 
 use crate::LinkOverflowEvidence;
@@ -22,4 +25,18 @@ pub enum BuildError {
     LinkOverflow(Box<LinkOverflowEvidence>),
     #[error("{0}")]
     Manifest(String),
+    #[error("resource builds reject inherited build-semantic environment variable {variable:?}")]
+    SemanticEnvironmentOverride { variable: OsString },
+    #[error("resource Cargo command has no working directory")]
+    MissingCargoWorkingDirectory,
+    #[error("could not inspect Cargo configuration {path:?}: {source}")]
+    CargoConfigurationIo {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("could not parse Cargo configuration {path:?}: {reason}")]
+    CargoConfigurationParse { path: PathBuf, reason: String },
+    #[error("resource builds reject external Cargo configuration key {key:?} from {path:?}")]
+    ExternalCargoConfiguration { path: PathBuf, key: String },
 }

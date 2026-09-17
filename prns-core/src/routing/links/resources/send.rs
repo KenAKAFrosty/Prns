@@ -670,6 +670,12 @@ impl<S: StorageLayout> EngineState<S> {
         let state = *self.outgoing_resources.state(index);
         if state.segment_index == 1 && state.total_segments > 1 {
             self.outgoing_assemblies.begin(reservation.link_id, hash);
+        } else if state.segment_index > 1 {
+            // The predecessor may have proved before this build was reserved, so a live
+            // continuation needs the same chain identity as a promoted staged build.
+            if let Some(original) = self.outgoing_assemblies.original_hash(&reservation.link_id) {
+                self.outgoing_resources.state_mut(index).original_hash = original;
+            }
         }
         let ActiveLinkLookup::Active(link) = self.links.active_view(&reservation.link_id) else {
             self.outgoing_resources.remove(&reservation.link_id, &hash);
@@ -2903,6 +2909,127 @@ mod tests {
         );
     }
 
+    #[test]
+    fn owning_split_continuation_after_predecessor_proof_keeps_the_original_hash() {
+        let mut engine = heap_sender_with_active_link();
+        let mut original_hash = None;
+        let segments = [
+            b"first split segment".as_slice(),
+            b"second split segment".as_slice(),
+        ];
+        let total_data_bytes = segments.iter().map(|data| data.len() as u64).sum();
+        for (ordinal, data) in segments.into_iter().enumerate() {
+            let segment_index = ordinal as u64 + 1;
+            let command_id = CommandId(70 + segment_index);
+            let now = 1_500 + ordinal as u64 * 2_000;
+            let resource = ResourceSend {
+                id: command_id,
+                link_id: link_id(),
+                body: ResourceBody {
+                    data,
+                    compressed_candidate: None,
+                    metadata: ResourceMetadata::None,
+                },
+                correlation: ResourceCorrelation::Unsolicited,
+            };
+            let mut emitted = None;
+            engine.request_resource_build(
+                &resource,
+                ResourceSegment {
+                    index: segment_index,
+                    total_segments: 2,
+                    total_data_bytes,
+                },
+                &mut |reaction| {
+                    if let EngineReaction::Directive(Directive::Fulfill(OwedWork::ResourceBuild(
+                        owed,
+                    ))) = reaction
+                    {
+                        emitted = Some(owed);
+                    } else {
+                        panic!("a valid request emits only its typed build directive");
+                    }
+                },
+            );
+            let owed = emitted.expect("each segment delegates its build");
+            let shape = owed.shape();
+            let reservation = owed.reservation();
+            assert_eq!(reservation.lane, TrackLane::Live);
+            let mut transfer = std::vec![0; shape.transfer_bytes()];
+            let mut names = std::vec![0; shape.part_count() * MAP_HASH_LEN];
+            let outcome = owed.execute(
+                &[0xA5; 16],
+                || [0xA5; RESOURCE_NONCE_LEN],
+                BuildRegions {
+                    transfer: &mut transfer,
+                    hashmap: &mut names,
+                },
+            );
+            let mut frames = std::vec::Vec::new();
+            engine.resume_resource_build(
+                ResourceBuildCompleted {
+                    reservation,
+                    transfer: ResourceBuildTransfer::borrowed(&transfer),
+                    names: &names,
+                    request_data: data,
+                    outcome,
+                },
+                InstantMillis(now),
+                &mut |bytes: &mut [u8]| bytes.fill(0xA5),
+                &mut |reaction| {
+                    if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
+                        frames.push(filled_frame(fill).expect("the advertisement fits"));
+                    }
+                },
+            );
+            assert_eq!(frames.len(), 1);
+            let (_, payload) = WirePacketHeader::parse(&frames[0]).unwrap();
+            let mut sealed = payload.to_vec();
+            let opened = link_key().open_in_place(&mut sealed).unwrap();
+            let advertisement = ResourceAdvertisement::parse(opened).unwrap();
+            let original = *original_hash.get_or_insert(advertisement.hash);
+            assert_eq!(advertisement.segment_index, segment_index);
+            if segment_index > 1 {
+                assert_ne!(advertisement.hash, original);
+            }
+            assert_eq!(
+                advertisement.original_hash, original,
+                "a continuation advertises the first segment hash"
+            );
+
+            feed(
+                &mut engine,
+                &request_frame(&advertisement.hash, None, advertisement.hashmap),
+                now + 100,
+            );
+            let index = engine
+                .outgoing_resources
+                .lookup(&link_id(), &advertisement.hash)
+                .unwrap();
+            let proof = engine.outgoing_resources.state(index).expected_proof;
+            let proved = feed(
+                &mut engine,
+                &proof_frame(&advertisement.hash, &proof),
+                now + 200,
+            );
+            assert!(matches!(
+                proved.settlements.as_slice(),
+                [(id, Settlement::SendResource(Ok(())))] if *id == command_id
+            ));
+            assert!(engine.outgoing_resources.is_empty());
+            if segment_index == 1 {
+                assert_eq!(
+                    engine.outgoing_assemblies.original_hash(&link_id()),
+                    Some(original)
+                );
+            }
+        }
+        assert!(engine
+            .outgoing_assemblies
+            .original_hash(&link_id())
+            .is_none());
+    }
+
     #[cfg(feature = "resource-work-offload")]
     #[test]
     fn an_owning_build_restores_the_reserved_transfer_allocation() {
@@ -4142,6 +4269,7 @@ mod tests {
         live
     }
 
+    #[cfg(feature = "resource-work-offload")]
     fn serve_live_parts<S: StorageLayout>(
         engine: &mut EngineState<S>,
         live: &ResourceHash,
@@ -4237,6 +4365,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "resource-work-offload")]
     #[test]
     fn serving_the_last_live_part_seals_the_staged_continuation() {
         let mut engine = heap_sender_with_active_link();
@@ -4264,6 +4393,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "resource-work-offload")]
     #[test]
     fn the_live_proof_promotes_the_sealed_continuation_in_the_same_pass() {
         let mut engine = heap_sender_with_active_link();
@@ -4319,6 +4449,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "resource-work-offload")]
     #[test]
     fn a_request_or_proof_for_a_staged_hash_is_ignored() {
         let mut engine = heap_sender_with_active_link();

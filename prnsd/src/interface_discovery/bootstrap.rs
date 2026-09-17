@@ -248,12 +248,12 @@ mod tests {
             transport_identity: None,
             remote_control: crate::test_support::remote_control_service(),
             pre_configured_destinations: std::iter::empty::<PreConfiguredDestination<'static>>(),
-            app_state: (),
+            app_state: personal_rns::runtime::NoRemoteControlHostControls,
             storage: GrowableHeap,
             request_endpoints: personal_rns::request_endpoints![],
             interfaces: ManuallyAttached,
             persistence: NoPersistence,
-            on_event: |_event, _state: &()| {},
+            on_event: |_event, _state: &personal_rns::runtime::NoRemoteControlHostControls| {},
         });
         let handle = node.handle();
         let monitored = MonitoredInterfaces::new([]);
