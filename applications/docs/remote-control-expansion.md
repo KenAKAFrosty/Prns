@@ -22,7 +22,7 @@ clearly unavailable, never silently simulated. Keep user-facing wording free of
 protocol details. Recheck authorization and capabilities before a write.
 
 Operator and Administrator are separate authority levels, not a request-bit
-convention. Existing grants remain Operator. Administrator authority permits
+convention. Existing Operator grants remain Operator. Administrator authority permits
 access management, but does not imply permission for every ordinary setting.
 Our board pairing UI retains its existing Describe/AnnounceSelf Operator policy
 until a deliberate permission-selection design is implemented and tested.
