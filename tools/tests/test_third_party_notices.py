@@ -21,7 +21,9 @@ SPEC.loader.exec_module(notices)
 
 
 class ThirdPartyNoticeTests(unittest.TestCase):
-    def test_input_fingerprint_covers_manifests_locks_and_notice_sources(self) -> None:
+    def test_input_fingerprint_covers_checked_in_manifests_locks_and_notice_sources(
+        self,
+    ) -> None:
         relative = {
             path.relative_to(ROOT).as_posix()
             for path in notices.notice_input_paths()
@@ -33,7 +35,10 @@ class ThirdPartyNoticeTests(unittest.TestCase):
         self.assertIn("prnsd/Cargo.lock", relative)
         self.assertIn("about.toml", relative)
         self.assertIn("docs/website/package-lock.json", relative)
+        self.assertIn("release/licenses/pako-Zlib.txt", relative)
         self.assertIn("release/licenses/mbedtls-Apache-2.0.txt", relative)
+        self.assertNotIn("docs/website/node_modules/atob-lite/LICENSE.md", relative)
+        self.assertFalse(any("node_modules" in Path(path).parts for path in relative))
 
     def test_fast_input_check_accepts_the_exact_fingerprint(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
