@@ -21,7 +21,7 @@ use super::{
 };
 
 const GATT_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
-const GATT_INBOUND_BUDGET_BYTES: usize = 128 * 1024;
+pub(super) const GATT_INBOUND_BUDGET_BYTES: usize = 128 * 1024;
 
 #[derive(Clone)]
 pub(super) struct GattInboundSender {
