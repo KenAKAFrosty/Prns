@@ -14,6 +14,8 @@ path = "src/lib.rs"
 
 [dependencies]
 prns-runtime = { path = "../../prns-runtime/core", default-features = false, features = ["alloc"] }
+serde = { version = "1", default-features = false, features = ["alloc"] }
+serde_json = { version = "1", default-features = false, features = ["alloc"] }
 
 [lints]
 workspace = true
