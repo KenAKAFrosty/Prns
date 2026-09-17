@@ -109,6 +109,11 @@ all passed. This uses the local Git source and establishes exact-revision source
 mobility, not remote availability or native-device acceptance. App publication
 remains blocked on the narrow UniFFI license exceptions pending approval.
 
+License-only checks were repeated at app `e9e8a54c1`, independently selecting
+the locked Apple/iOS and Android release feature graphs. Both reject exactly
+the same six existing UniFFI 0.31.2 packages. No source, lockfile, general license
+allowlist or publishing hook was changed to bypass that result.
+
 ## Publication accounting
 
 PR #214 was closed as fully superseded: all of its notices are in trunk. PRs #198
@@ -117,6 +122,26 @@ refresh was running. PRs #199 and #203 retain only
 useful test improvements after their production fixes landed upstream. Other
 contributions remain separate, with their dependencies and validation recorded
 in the refresh report; force pushes use the captured remote heads as leases.
+
+The core publication pass is complete. All 22 remaining contributions were
+force-pushed onto `c4fd54dfd`, with titles/bodies updated and independently read
+back: #199–#212, #215, #217–#220, #222, #223 and #225. Each passed its normal
+selected publishing checks, including all 14 configured firmware profiles.
+Each preserved matrix and four Miri/target-ISA results name the exact clean
+published commit. These are branch-specific results, not app-device evidence.
+
+The final audit at 21:39 UTC matched prepared heads, original local branch
+names, the actual Git remote and GitHub. All open PRs retain their existing
+draft states and `trunk` base. Upstream remained `c4fd54dfd`. All 22 still had
+pending hosted checks, with no new-head failure reported at that snapshot.
+The separate casework smoke limitation remains disclosed in #206; older hosted
+timing/CodeQL observations remain attributed to their original heads.
+
+App #197 is deliberately not included in that completed-push count. Its remote
+head remains `f3755a977`; the rebased source, compatibility changes and expanded
+control plan are committed locally, awaiting the scoped license-policy decision.
+Fresh detached qualification does not imply that its new core pin is available
+from the declared remote repository. Verify that separately after publication.
 
 ## Limits and next work
 
