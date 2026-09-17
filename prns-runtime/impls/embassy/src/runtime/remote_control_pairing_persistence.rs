@@ -236,6 +236,7 @@ impl RemoteControlPairingPersistenceRequired {
             | Journaled::RemoteControlTargetPairingConfirmationRequired(_)
             | Journaled::RemoteControlTargetPairingControllerCommitted { .. }
             | Journaled::RemoteControlTargetPairingAuthorizationPersisted { .. }
+            | Journaled::RemoteControlTargetPairingExpiredDuringAuthorization { .. }
             | Journaled::RemoteControlControllerPairingConfirmationRequired(_)
             | Journaled::RemoteControlControllerPairingAuthorizationPersisted { .. }
             | Journaled::RemoteControlControllerPairingExpired { .. }

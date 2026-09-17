@@ -455,6 +455,12 @@ pub enum Journaled<'a> {
         attempt_id: crate::remote_control::RemoteControlPairingAttemptId,
     },
 
+    /// The target pairing attempt crossed its deadline after its authorization was durably stored,
+    /// so that authorization must be rolled back instead of completing the pairing exchange.
+    RemoteControlTargetPairingExpiredDuringAuthorization {
+        attempt_id: crate::remote_control::RemoteControlPairingAttemptId,
+    },
+
     RemoteControlControllerPairingConfirmationRequired(
         crate::remote_control::RemoteControlControllerPairingAttemptView<'a>,
     ),
