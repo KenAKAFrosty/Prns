@@ -33,9 +33,13 @@ until a deliberate permission-selection design is implemented and tested.
 
 - Finish and qualify the new request/authority projections and generated
   bindings on both phones. Show the granted access level before approval.
-- Specify board-side permission selection and administrator enrollment without
-  automatically widening existing pairing grants. Keep that reusable firmware
-  work separate from app presentation.
+- Implement and test explicit board-side permission selection before physical
+  acceptance of the expanded screens. A reviewed read-only permission preset can
+  unlock the inventory slice before settings and administrator enrollment are
+  added. Existing pairings retain their grants; additional access requires
+  explicit re-enrollment or an authorized grant change. Keep this reusable
+  firmware work separate from app presentation. Provisioned test grants and UI
+  fixtures do not replace a usable enrollment flow.
 - Upstream currently drops authority when projecting a resolved target to the
   controller. Propose a narrow public authority projection before showing a
   persistent role badge; do not guess it from effective request bits.
