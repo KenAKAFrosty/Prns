@@ -145,13 +145,21 @@ INPUT_FINGERPRINT_PATTERN = re.compile(
 
 
 def notice_input_paths() -> tuple[Path, ...]:
-    """Return every local input that can alter the shipped notice inventory."""
+    """Return every checked-in input that can alter the shipped notice inventory."""
     paths = {
         Path(__file__).resolve(),
         ABOUT,
         ROOT / "docs/website/package-lock.json",
     }
-    paths.update(ROOT / relative for _, _, relative in NPM)
+    # The lockfile's integrity hashes bind the exact npm package archives, while
+    # this script binds their pinned package/version and license-source mapping.
+    # Installed node_modules files are needed for full generation, but including
+    # them here would make the fast fingerprint impossible in a clean checkout.
+    paths.update(
+        ROOT / relative
+        for _, _, relative in NPM
+        if "node_modules" not in Path(relative).parts
+    )
     paths.update(ROOT / relative for _, _, relative, _ in VENDORED)
     for pattern in ("Cargo.toml", "Cargo.lock"):
         paths.update(
