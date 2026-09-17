@@ -1,6 +1,6 @@
 # Expanded node management
 
-Implementation plan against upstream `79050535f`, following
+Implementation plan against upstream `c4fd54dfd`, following
 [PR #232](https://github.com/KenAKAFrosty/Prns/pull/232). This is a plan, not a
 claim that the app already implements these controls. The current app supports
 pairing, authenticated node checks and node-address sharing. The compatibility

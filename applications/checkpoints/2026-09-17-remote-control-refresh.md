@@ -3,13 +3,16 @@
 ## Source and scope
 
 Rebase the app and remaining contribution branches on upstream
-`79050535f7323043fb5d9fac829e5267aabcbfad`. This includes PR #232's expanded
+`c4fd54dfd7a83048fc2cf5096a09fec6fa17a0ec`. This includes PR #232's expanded
 remote control, subsequent Wi-Fi teardown and split-resource identity fixes,
 feature-gated validation corrections and clean-checkout notice fingerprinting.
+During publication, upstream also merged our remaining-window, local-Link-close
+and disconnected-packet corrections (#216, #221 and #224). The remaining open
+branches were refreshed again to include those merges.
 
 The app integration retains the upstream board command executor and transactional
 authorization persistence alongside the existing pairing UI and mobile transport
-work. Core snapshot `457a2ff0e51372332f91c754524e13af78278f1c` includes regressions
+work. Core snapshot `6fe326c02e7c6b8503bf9bc2397320e791266ae7` includes regressions
 ensuring capability growth does not widen the local pairing grant, and updates
 the shared-snapshot, runtime-event and diagnostic test fixtures for the new API. It remains an
 Operator grant for Describe/AnnounceSelf intersected with board capabilities.
@@ -80,11 +83,30 @@ the unchanged stack reservation. That small link-time margin is not a runtime
 stack qualification. The app pin includes the correction; its full publication
 and detached checks are repeated separately.
 
+The next detached verification passed at app `c58868a8f` / core `457a2ff0e`,
+including live Python LXMF interoperability. The normal publication run passed
+all 24 host workspaces, all 14 firmware profiles, Miri and three-ISA execution,
+integration and browser checks, but then failed the dependency license policy:
+six existing UniFFI 0.31.2 crates require narrow MPL-2.0 exceptions. That run did
+not publish the app. No exception or gate bypass is assumed here.
+
+That exact run linked T-Echo S140 v7 with 4,396 bytes of flash headroom and
+T096 with 80 bytes beyond the unchanged RAM stack reservation. The source was
+tracked-clean but had pre-existing untracked IDE/vendor files; its reports label
+it a working tree, not a clean commit. These are link-time measurements, not
+physical-device or runtime-stack qualification.
+
+The second rebase produced app `df021e163` / core `6fe326c02`. Before the pin and
+documentation update, their complete tracked trees matched `c58868a8f` and
+`457a2ff0e` respectively: the newly merged changes were already integrated in
+the app. The new revision needs its own publication result; the earlier failure
+is not reported as a successful publishing gate.
+
 ## Publication accounting
 
 PR #214 was closed as fully superseded: all of its notices are in trunk. PRs #198
-and #213 are already merged. PRs #216, #221 and #224 already contain the exact
-current trunk and retain their existing history. PRs #199 and #203 retain only
+and #213 are already merged. PRs #216, #221 and #224 were merged while this
+refresh was running. PRs #199 and #203 retain only
 useful test improvements after their production fixes landed upstream. Other
 contributions remain separate, with their dependencies and validation recorded
 in the refresh report; force pushes use the captured remote heads as leases.
