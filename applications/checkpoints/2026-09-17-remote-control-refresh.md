@@ -9,8 +9,9 @@ feature-gated validation corrections and clean-checkout notice fingerprinting.
 
 The app integration retains the upstream board command executor and transactional
 authorization persistence alongside the existing pairing UI and mobile transport
-work. Core snapshot `6a3a19d5cc77845663482d08bb9925ce67ac898c` adds regressions
-ensuring capability growth does not widen the local pairing grant. It remains an
+work. Core snapshot `abf32db96fe4f6db3ec40c7da4498fc9d5de976e` includes regressions
+ensuring capability growth does not widen the local pairing grant, and updates
+the shared-snapshot and diagnostic test fixtures for the new API. It remains an
 Operator grant for Describe/AnnounceSelf intersected with board capabilities.
 
 Application compatibility changes use the new explicit host-control state and
@@ -47,6 +48,11 @@ not replace the subsequent successful SDK lookup and Swift test results.
 Normal publication gates and clean detached verification are recorded separately
 as they finish. Focused results above are not a claim that every remote CI job or
 every contribution branch passes its entire matrix.
+
+The first detached attempt passed its native checks but timed out one existing
+UI test under concurrent build load. Concurrent core-fixture edits in the source
+checkout also invalidated its unchanged-source guard. That run is not counted as
+successful detached qualification; repeat against a stable committed checkout.
 
 ## Publication accounting
 
