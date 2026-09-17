@@ -39,7 +39,7 @@ pub async fn run_client() -> Result<(), ClientFailure> {
         remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: None,
         pre_configured_destinations: [] as [PreConfiguredDestination; 0],
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         interfaces: move |handle: &personal_rns::PrnsNodeHandle| {
@@ -117,7 +117,7 @@ pub async fn run_server() -> Result<(), ServerFailure> {
         remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: None,
         pre_configured_destinations: [destination],
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         interfaces: ManuallyAttached,

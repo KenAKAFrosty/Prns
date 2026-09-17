@@ -38,6 +38,8 @@ use crate::routing::tunnel::TunnelSynthesizeVerifyOwed;
 use crate::routing::RouteRemovalCause;
 use crate::units::RttMillis;
 use crate::wire::DestinationHash;
+#[cfg(feature = "movable-frame-forwarding")]
+use crate::wire::WirePacketHeader;
 
 // repr(C) on this enum, Journaled, and Directive: they cross the dual-core channel; see the layout note on [`PrnsCommand`].
 #[repr(C)]
@@ -645,6 +647,12 @@ pub enum Directive<'a, Work = NoOwedWork> {
         size_hint: usize,
         fill: &'a mut dyn FnMut(&mut [u8]) -> Option<usize>,
     },
+    #[cfg(feature = "movable-frame-forwarding")]
+    ForwardFrame {
+        target: InterfaceId,
+        header: WirePacketHeader,
+        payload: &'a [u8],
+    },
 
     #[cfg(feature = "runtime-metrics")]
     SendMeasuredLocalAnnounce {
@@ -720,6 +728,16 @@ impl<'a, Work> Directive<'a, Work> {
                 target,
                 size_hint,
                 fill,
+            },
+            #[cfg(feature = "movable-frame-forwarding")]
+            Self::ForwardFrame {
+                target,
+                header,
+                payload,
+            } => Directive::ForwardFrame {
+                target,
+                header,
+                payload,
             },
             #[cfg(feature = "runtime-metrics")]
             Self::SendMeasuredLocalAnnounce { target, bytes } => {

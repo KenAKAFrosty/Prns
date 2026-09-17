@@ -164,7 +164,7 @@ async fn a_wifi_direct_group_forms_and_carries_an_announce_between_two_nodes() {
         remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: None,
         pre_configured_destinations: [single_a],
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         on_event: |_event, _state| {},
@@ -179,7 +179,7 @@ async fn a_wifi_direct_group_forms_and_carries_an_announce_between_two_nodes() {
         remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: None,
         pre_configured_destinations: [single(secret(0xF2))],
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         on_event: move |event, _state| {

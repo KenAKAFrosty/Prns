@@ -373,6 +373,8 @@ jobs:
           targets: thumbv7em-none-eabihf,riscv32imac-unknown-none-elf,wasm32-unknown-unknown
           components: llvm-tools-preview
       - name: Install checksum-pinned ESP compiler and tools
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: ./tools/prns release toolchain esp install -- "${RUNNER_TEMP}/prns-esp-tools"
       - name: Force the non-ESP embedded build to production Rust
         run: rustup override set --path personal-hopspot/embedded/nrf52840 1.96.0

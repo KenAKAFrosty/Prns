@@ -1223,7 +1223,8 @@ mod tests {
             &invited_begin(controller, endpoint),
             session.permissions().clone(),
             session.attempt_timeout(),
-        );
+        )
+        .unwrap();
         prepared.into_parts().1
     }
 
@@ -1296,6 +1297,7 @@ mod tests {
         let transcript = pairing_transcript(engine, endpoint, link_id, controller);
         let expected_grant = RemoteControlControllerGrant::new(
             controller,
+            transcript.permissions().authority(),
             transcript.permissions().clone().into_permitted_requests(),
         )
         .unwrap();
@@ -1820,6 +1822,7 @@ mod tests {
                     session.permissions().clone(),
                     session.attempt_timeout(),
                 )
+                .unwrap()
             }
             RemoteControlPairingView::Unavailable | RemoteControlPairingView::Closed => {
                 panic!("open pairing")
@@ -2025,7 +2028,8 @@ mod tests {
                     &begin,
                     session.permissions().clone(),
                     session.attempt_timeout(),
-                );
+                )
+                .unwrap();
                 crate::remote_control::RemoteControlPairingCommit::new(prepared.transcript())
             }
             RemoteControlPairingView::Unavailable | RemoteControlPairingView::Closed => {
@@ -2442,9 +2446,12 @@ mod tests {
             ),
         );
         assert_eq!(controller_committed, Some(attempt_id));
-        let expected_grant =
-            RemoteControlControllerGrant::new(controller, permissions.into_permitted_requests())
-                .unwrap();
+        let expected_grant = RemoteControlControllerGrant::new(
+            controller,
+            permissions.authority(),
+            permissions.into_permitted_requests(),
+        )
+        .unwrap();
         let mut settlement = None;
         let mut authorization_required = None;
         let wake = engine.ingest_command_into(
@@ -2514,9 +2521,12 @@ mod tests {
                 panic!("open pairing")
             }
         };
-        let expected_grant =
-            RemoteControlControllerGrant::new(controller, permissions.into_permitted_requests())
-                .unwrap();
+        let expected_grant = RemoteControlControllerGrant::new(
+            controller,
+            permissions.authority(),
+            permissions.into_permitted_requests(),
+        )
+        .unwrap();
         let mut approval = None;
         engine.ingest_command_into(
             IssuedCommand {
@@ -2838,6 +2848,7 @@ mod tests {
         );
         let grant = RemoteControlControllerGrant::new(
             controller,
+            transcript.permissions().authority(),
             transcript.permissions().clone().into_permitted_requests(),
         )
         .unwrap();

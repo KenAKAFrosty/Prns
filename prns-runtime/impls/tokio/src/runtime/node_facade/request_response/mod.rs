@@ -202,6 +202,23 @@ impl PrnsNodeHandle {
             });
             return Some(responder.rtt);
         }
+        match compression::compression_preflight(packed.as_slice()) {
+            compression::CompressionPreflight::ShipUncompressed => {
+                return self
+                    .commands
+                    .send(HostCommand::RespondAny(RespondAnyHostCommand {
+                        id,
+                        link_id: responder.link_id,
+                        request_id: responder.request_id,
+                        packed,
+                        compressed_candidate: None,
+                        completion: None,
+                    }))
+                    .ok()
+                    .map(|()| responder.rtt);
+            }
+            compression::CompressionPreflight::AttemptCompression => {}
+        }
         let commands = self.commands.clone();
         let link_id = responder.link_id;
         let request_id = responder.request_id;
@@ -451,6 +468,14 @@ impl PrnsNodeHandle {
                         }
                         ResourceSendError::NodeStopped => ResponseSendError::NodeStopped,
                     });
+            }
+            match compression::compression_preflight(packed.as_slice()) {
+                compression::CompressionPreflight::ShipUncompressed => {
+                    return self
+                        .send_response_command_settled(id, responder, packed, None)
+                        .await;
+                }
+                compression::CompressionPreflight::AttemptCompression => {}
             }
             let (packed, compressed_candidate) = tokio::task::spawn_blocking(move || {
                 let candidate = compression::compress_if_smaller(packed.as_slice())

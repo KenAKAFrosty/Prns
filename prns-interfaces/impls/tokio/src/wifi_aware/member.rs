@@ -4,6 +4,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 
 use crate::byte_stream::framing;
+use crate::tcp::{write_progress_timeout, TcpTunnelMode};
 use prns_core::interfaces::tcp;
 use prns_core::interfaces::wifi_aware as contract;
 use prns_core::interfaces::{
@@ -78,7 +79,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for WifiAwareMember<S> {
             { tcp::READ_BUF_LEN },
             { tcp::FRAMED_LEN },
         >::new();
-        framing::serve::<framing::HdlcFraming, { tcp::READ_BUF_LEN }, { tcp::FRAMED_LEN }, _, _>(
+        framing::serve_with_write_progress_timeout::<
+            framing::HdlcFraming,
+            { tcp::READ_BUF_LEN },
+            { tcp::FRAMED_LEN },
+            _,
+            _,
+        >(
             stream,
             &mut buffers,
             &mut seam,
@@ -89,6 +96,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for WifiAwareMember<S> {
                 bitrate: self.policy.bitrate,
                 started,
             },
+            write_progress_timeout(TcpTunnelMode::Direct),
         )
         .await;
         self.status.set_connection(ConnectionState::Disconnected);

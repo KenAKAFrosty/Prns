@@ -2454,6 +2454,7 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 name = "personal-hopspot-core"
 version = "0.1.0"
 dependencies = [
+ "embassy-sync 0.8.0",
  "embedded-graphics",
  "embedded-storage",
  "embedded-storage-async",
@@ -2462,6 +2463,7 @@ dependencies = [
  "prns-core",
  "prns-macros",
  "sha2",
+ "zeroize",
 ]
 
 [[package]]
@@ -2494,6 +2496,7 @@ dependencies = [
  "esp-radio-rtos-driver",
  "esp-rtos",
  "heapless 0.8.0",
+ "jiff",
  "log",
  "personal-hopspot-core",
  "personal-hopspot-memory",
@@ -2507,7 +2510,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "personal-hopspot-esp32-platform-assurance"
+version = "0.1.0"
+dependencies = [
+ "embassy-executor",
+ "esp-bootloader-esp-idf",
+ "esp-hal",
+ "esp-rtos",
+ "personal-hopspot-memory",
+ "personal-hopspot-xtensa-qemu",
+]
+
+[[package]]
 name = "personal-hopspot-memory"
+version = "0.1.0"
+
+[[package]]
+name = "personal-hopspot-xtensa-qemu"
 version = "0.1.0"
 
 [[package]]
@@ -2654,6 +2673,7 @@ version = "0.3.7"
 dependencies = [
  "cfg-if",
  "dispatch2",
+ "libc",
  "log",
  "objc2",
  "objc2-core-bluetooth",

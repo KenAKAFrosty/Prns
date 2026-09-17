@@ -33,16 +33,44 @@ fn bench_size(group: &mut BenchmarkGroup<'_, WallTime>, n: u32, lookup: Interfac
 
 fn interface_lookup(c: &mut Criterion) {
     let mut hit = c.benchmark_group("interface_lookup_hit");
-    for n in [4u32, 16, 64, 256, 1024] {
+    for n in [4u32, 16, 64, 103, 256, 1024] {
         bench_size(&mut hit, n, iface_n(n / 2));
     }
     hit.finish();
 
     let mut miss = c.benchmark_group("interface_lookup_miss");
-    for n in [4u32, 16, 64, 256, 1024] {
+    for n in [4u32, 16, 64, 103, 256, 1024] {
         bench_size(&mut miss, n, iface_n(1_000_000 + n));
     }
     miss.finish();
+
+    let mut fanout = c.benchmark_group("interface_lookup_fanout_second_stage");
+    for n in [64u32, 103, 256] {
+        let descriptors: Vec<InterfaceDescriptor> = (0..n)
+            .map(|i| pipe::descriptor(iface_n(i), pipe::configured_policy(Default::default())))
+            .collect();
+        let targets: Vec<InterfaceId> =
+            descriptors.iter().map(|descriptor| descriptor.id).collect();
+        let indexed = IndexedAttachedInterfaces::from(descriptors.clone());
+
+        fanout.bench_with_input(BenchmarkId::new("linear", n), &n, |b, _| {
+            let view = AttachedInterfaces::new(&descriptors);
+            b.iter(|| {
+                for target in black_box(&targets) {
+                    black_box(view.descriptor_for(black_box(*target)));
+                }
+            })
+        });
+        fanout.bench_with_input(BenchmarkId::new("indexed", n), &n, |b, _| {
+            let view = indexed.view();
+            b.iter(|| {
+                for target in black_box(&targets) {
+                    black_box(view.descriptor_for(black_box(*target)));
+                }
+            })
+        });
+    }
+    fanout.finish();
 }
 
 criterion_group! {

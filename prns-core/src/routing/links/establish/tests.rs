@@ -2782,6 +2782,18 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
                             sent.push((target, frame));
                         }
                     }
+                    #[cfg(feature = "movable-frame-forwarding")]
+                    EngineReaction::Directive(Directive::ForwardFrame {
+                        target,
+                        header,
+                        payload,
+                    }) => {
+                        if let Some(frame) =
+                            crate::engine::test_support::forwarded_frame(header, payload)
+                        {
+                            sent.push((target, frame));
+                        }
+                    }
                     EngineReaction::Journaled(Journaled::Delivered(Delivery::Link(link))) => {
                         journaled.push(link.plaintext.to_vec());
                     }

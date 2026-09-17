@@ -1,12 +1,9 @@
-#[cfg(feature = "runtime-metrics")]
-use crate::engine::Directive;
 use crate::engine::{
-    ClassifiedInboundPacket, CryptoOwed, EngineReaction, EngineState, IngestIo, InstantMillis,
-    Journaled, OwedWork, ProofRequest, WakeSchedules,
+    ClassifiedInboundPacket, CryptoOwed, Directive, EngineReaction, EngineState, IngestIo,
+    InstantMillis, Journaled, OwedWork, ProofRequest, WakeSchedules,
 };
 use crate::interfaces::{
-    FrameAccountingEvent, IfacUnmaskError, InboundPacket, InterfaceId, InterfaceIfac,
-    PacketPhyStats,
+    FrameAccountingEvent, IfacUnmaskError, InboundPacket, InterfaceId, PacketPhyStats,
 };
 use crate::manifold::wake_schedule::merge_wake_schedules_delta;
 use crate::manifold::Host;
@@ -16,12 +13,13 @@ use crate::routing::links::LinkId;
 use crate::runtime::InterfaceStore;
 use crate::storage::StorageLayout;
 #[cfg(feature = "runtime-metrics")]
-use crate::wire::{WireContext, WirePacketHeader};
+use crate::wire::WireContext;
+use crate::wire::WirePacketHeader;
 
 use super::crypto_pool::{run_link_sign_job, CryptoPool, LinkSignCompleted, LinkSignJob};
 use super::egress::{
-    ifac_for, route_ingress_reaction, route_ingress_reaction_with_work, Egress, InterfacePacer,
-    WireScratch,
+    forward_from_ingress, ifac_for, route_reaction, route_reaction_with_work, Egress,
+    ForwardedSlotOutcome, InterfaceIfacs, InterfacePacers, WireScratch,
 };
 use super::interface_topology::InterfaceTopology;
 use super::journal_delivery::JournalDispatch;
@@ -59,6 +57,12 @@ struct DeferredResourcePartHash {
     part: std::ops::Range<usize>,
 }
 
+struct DeferredForward {
+    target: InterfaceId,
+    header: WirePacketHeader,
+    payload: std::ops::Range<usize>,
+}
+
 #[cfg(feature = "runtime-metrics")]
 #[derive(Clone, Copy)]
 enum ResourceControlPacket {
@@ -72,8 +76,8 @@ enum ResourceControlPacket {
 fn route_ingress_reaction_with_owed_work<J>(
     reaction: EngineReaction<'_, OwedWork<'_>>,
     egress: &mut Egress,
-    ifacs: &[InterfaceIfac],
-    pacers: &mut [InterfacePacer],
+    ifacs: &InterfaceIfacs,
+    pacers: &mut InterfacePacers,
     wire_scratch: &mut WireScratch,
     journal: &mut JournalDispatch<J>,
     owed_work: &mut PendingOwedWork,
@@ -81,13 +85,36 @@ fn route_ingress_reaction_with_owed_work<J>(
     link_signs: &mut std::vec::Vec<LinkSignJob>,
     link_identity_barriers: &mut std::vec::Vec<(InterfaceId, LinkId)>,
     packet_span: IngressPacketSpan,
+    deferred_forward: &mut Option<DeferredForward>,
     deferred_resource_part_hash: &mut Option<DeferredResourcePartHash>,
     source: InterfaceId,
     now: InstantMillis,
 ) where
     J: for<'a> FnMut(Journaled<'a>),
 {
-    route_ingress_reaction_with_work(
+    let reaction = match reaction {
+        EngineReaction::Directive(Directive::ForwardFrame {
+            target,
+            header,
+            payload,
+        }) if deferred_forward.is_none() => match packet_span.locate(payload) {
+            Some(payload) => {
+                *deferred_forward = Some(DeferredForward {
+                    target,
+                    header,
+                    payload,
+                });
+                return;
+            }
+            None => EngineReaction::Directive(Directive::ForwardFrame {
+                target,
+                header,
+                payload,
+            }),
+        },
+        reaction => reaction,
+    };
+    route_reaction_with_work(
         reaction,
         egress,
         ifacs,
@@ -135,12 +162,11 @@ fn route_ingress_reaction_with_owed_work<J>(
                 owed_work.push(OwedWork::ResourceDecompression(owed), crypto_pool);
             }
         },
-        source,
     );
 }
 
 pub(super) struct InboundDispatch {
-    ready_lanes: std::vec::Vec<InterfaceId>,
+    ready_lanes: super::indexed_rows::IndexedRows<InterfaceId>,
     unmask_scratch: std::boxed::Box<[u8]>,
     link_signs: std::vec::Vec<LinkSignJob>,
     inline_link_signs: std::vec::Vec<LinkSignJob>,
@@ -154,7 +180,7 @@ pub(super) struct InboundDispatch {
 impl InboundDispatch {
     pub(super) fn new(frame_capacity: usize) -> Self {
         Self {
-            ready_lanes: std::vec::Vec::new(),
+            ready_lanes: super::indexed_rows::IndexedRows::default(),
             unmask_scratch: std::vec![0u8; frame_capacity].into_boxed_slice(),
             link_signs: std::vec::Vec::new(),
             inline_link_signs: std::vec::Vec::new(),
@@ -182,15 +208,13 @@ impl InboundDispatch {
     }
 
     pub(super) fn mark_ready(&mut self, source: InterfaceId) {
-        if !self.ready_lanes.contains(&source) {
-            self.ready_lanes.push(source);
-        }
+        self.ready_lanes.push(source);
     }
 
     pub(super) fn discover_ready(&mut self, topology: &mut InterfaceTopology) {
-        for (source, lane) in &mut topology.inbound_lanes {
-            if lane.try_peek().is_some() && !self.ready_lanes.contains(source) {
-                self.ready_lanes.push(*source);
+        for lane in topology.inbound_lanes.iter_mut() {
+            if lane.consumer.try_peek().is_some() {
+                self.ready_lanes.push(lane.id);
             }
         }
     }
@@ -244,9 +268,6 @@ impl InboundDispatch {
             if processed_frames == max_frames_total {
                 break;
             }
-            if topology.egress.blocks_source(source) {
-                continue;
-            }
             if !link_identity_barriers.is_empty()
                 && link_identity_barriers
                     .iter()
@@ -257,13 +278,10 @@ impl InboundDispatch {
             debug_assert!(link_signs.is_empty());
             debug_assert!(inline_link_signs.is_empty());
             let frame_accounting = topology.frame_accounting_recorder(source);
-            let Some((_, lane)) = topology
-                .inbound_lanes
-                .iter_mut()
-                .find(|(id, _)| *id == source)
-            else {
+            let Some(inbound) = topology.inbound_lanes.get_mut(&source) else {
                 continue;
             };
+            let lane = &mut inbound.consumer;
             for _ in 0..max_frames_per_lane {
                 if processed_frames == max_frames_total {
                     break;
@@ -344,6 +362,7 @@ impl InboundDispatch {
                     bytes,
                 });
                 retain_packet_phy(packet_phy_store, &mut packet, packet_phy);
+                let mut deferred_forward = None;
                 let mut deferred_resource_part_hash = None;
                 let ingest_report = engine.ingest_classified_into_report(
                     packet,
@@ -358,7 +377,10 @@ impl InboundDispatch {
                             let resource_frame = resource_request_started_at.is_some()
                                 && matches!(
                                     &reaction,
-                                    EngineReaction::Directive(Directive::EmitFrame { .. })
+                                    EngineReaction::Directive(
+                                        Directive::EmitFrame { .. }
+                                            | Directive::ForwardFrame { .. }
+                                    )
                                 );
                             route_ingress_reaction_with_owed_work(
                                 reaction,
@@ -372,6 +394,7 @@ impl InboundDispatch {
                                 link_signs,
                                 link_identity_barriers,
                                 packet_span,
+                                &mut deferred_forward,
                                 &mut deferred_resource_part_hash,
                                 source,
                                 now,
@@ -432,9 +455,56 @@ impl InboundDispatch {
                         FrameAccountingEvent::ProtocolViolation
                     });
                 }
-                match (buffer_source, deferred_resource_part_hash) {
+                debug_assert!(deferred_forward.is_none() || deferred_resource_part_hash.is_none());
+                match (buffer_source, deferred_forward, deferred_resource_part_hash) {
+                    (IngressBufferSource::GrantSlot, Some(forward), _) => {
+                        if let Some(slot) = lane.take_peeked() {
+                            let outcome = if ifac_for(&topology.ifacs, forward.target).is_none() {
+                                topology.egress.try_move_forwarded_slot(
+                                    forward.target,
+                                    forward.header,
+                                    forward.payload.clone(),
+                                    slot,
+                                )
+                            } else {
+                                ForwardedSlotOutcome::CopyRequired { source: slot }
+                            };
+                            match outcome {
+                                ForwardedSlotOutcome::Moved { vacated } => {
+                                    lane.return_slot(vacated);
+                                }
+                                ForwardedSlotOutcome::CopyRequired { source: slot } => {
+                                    if let Some(payload) = slot.frame().get(forward.payload) {
+                                        forward_from_ingress(
+                                            &mut topology.egress,
+                                            &topology.ifacs,
+                                            forward.target,
+                                            forward.header,
+                                            payload,
+                                            wire_scratch,
+                                        );
+                                    }
+                                    lane.return_slot(slot);
+                                }
+                            }
+                        }
+                    }
+                    (IngressBufferSource::UnmaskScratch, Some(forward), _) => {
+                        if let Some(payload) = unmask_scratch.get(forward.payload) {
+                            forward_from_ingress(
+                                &mut topology.egress,
+                                &topology.ifacs,
+                                forward.target,
+                                forward.header,
+                                payload,
+                                wire_scratch,
+                            );
+                        }
+                        lane.release();
+                    }
                     (
                         IngressBufferSource::GrantSlot,
+                        None,
                         Some(DeferredResourcePartHash { plan, part }),
                     ) => {
                         if let Some(frame) = lane.take_peeked() {
@@ -443,12 +513,17 @@ impl InboundDispatch {
                     }
                     (
                         IngressBufferSource::UnmaskScratch,
+                        None,
                         Some(DeferredResourcePartHash { plan, part }),
                     ) => {
                         owed_work.push_resource_part_hash_copy(plan, &unmask_scratch[part]);
                         lane.release();
                     }
-                    (IngressBufferSource::GrantSlot | IngressBufferSource::UnmaskScratch, None) => {
+                    (
+                        IngressBufferSource::GrantSlot | IngressBufferSource::UnmaskScratch,
+                        None,
+                        None,
+                    ) => {
                         lane.release();
                     }
                 }
@@ -464,9 +539,6 @@ impl InboundDispatch {
                         .iter()
                         .any(|(blocked, _)| *blocked == source)
                 {
-                    break;
-                }
-                if topology.egress.blocks_source(source) {
                     break;
                 }
             }
@@ -485,7 +557,7 @@ impl InboundDispatch {
                     match run_link_sign_job(job) {
                         LinkSignCompleted::ChannelAck(completed) => {
                             engine.resume_channel_ack_sign(completed, now, &mut |reaction| {
-                                route_ingress_reaction(
+                                route_reaction(
                                     reaction,
                                     &mut topology.egress,
                                     &topology.ifacs,
@@ -493,13 +565,12 @@ impl InboundDispatch {
                                     wire_scratch,
                                     now,
                                     &mut |journaled| journal.route(journaled),
-                                    source,
                                 );
                             });
                         }
                         LinkSignCompleted::Receipt(completed) => {
                             engine.resume_link_receipt_sign(completed, now, &mut |reaction| {
-                                route_ingress_reaction(
+                                route_reaction(
                                     reaction,
                                     &mut topology.egress,
                                     &topology.ifacs,
@@ -507,14 +578,13 @@ impl InboundDispatch {
                                     wire_scratch,
                                     now,
                                     &mut |journaled| journal.route(journaled),
-                                    source,
                                 );
                             });
                         }
                         LinkSignCompleted::Identify(completed) => {
                             let changed =
                                 engine.resume_identify_sign(completed, now, &mut |reaction| {
-                                    route_ingress_reaction(
+                                    route_reaction(
                                         reaction,
                                         &mut topology.egress,
                                         &topology.ifacs,
@@ -522,7 +592,6 @@ impl InboundDispatch {
                                         wire_scratch,
                                         now,
                                         &mut |journaled| journal.route(journaled),
-                                        source,
                                     );
                                 });
                             merge_wake_schedules_delta(
@@ -542,9 +611,8 @@ impl InboundDispatch {
         ready_lanes.retain(|source| {
             topology
                 .inbound_lanes
-                .iter_mut()
-                .find(|(id, _)| id == source)
-                .is_some_and(|(_, lane)| lane.try_peek().is_some())
+                .get_mut(source)
+                .is_some_and(|lane| lane.consumer.try_peek().is_some())
         });
         if ready_lanes.len() > 1 {
             ready_lanes.rotate_left(1);

@@ -1517,6 +1517,70 @@ mod loop_tests {
 
     #[cfg(feature = "resource-work-offload")]
     #[test]
+    fn external_part_hashes_can_complete_out_of_order() {
+        let mut sender = engine_with_active_link();
+        let mut receiver = engine_with_active_link();
+        accept_everything(&mut receiver);
+        let data = eight_part_payload();
+
+        let advertisement = advertise_from(&mut sender, &data, None);
+        let pull = feed(&mut receiver, &advertisement, 2_000);
+        let serve = feed(&mut sender, &pull.frames[0].1, 2_100);
+        receiver.resource_part_hash_lane = ResourcePartHashLane::ExternalAtOrAbove {
+            minimum_input_bytes: 0,
+        };
+
+        let mut hashed = Vec::new();
+        for (arrived, (_, frame)) in serve.frames[..2].iter().enumerate() {
+            let mut raw = frame.clone();
+            receiver.ingest_packet_into(
+                crate::interfaces::InboundPacket {
+                    arrived_at: InstantMillis(2_200 + arrived as u64),
+                    source_interface: lane(),
+                    bytes: &mut raw,
+                },
+                IngestIo {
+                    interfaces: AttachedInterfaces::new(&[
+                        crate::engine::test_support::routable_descriptor(lane()),
+                    ]),
+                    now: InstantMillis(2_200 + arrived as u64),
+                    fill_random: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
+                    should_prove: &mut |_: &crate::engine::ProofRequest| false,
+                    should_accept_resource:
+                        &mut |_: &crate::routing::links::resources::ResourceOffer| false,
+                    sink: &mut |reaction| {
+                        if let EngineReaction::Directive(Directive::Fulfill(
+                            OwedWork::ResourcePartHash(owed),
+                        )) = reaction
+                        {
+                            let (plan, source) = owed.into_parts();
+                            hashed.push(plan.calculate(source.to_vec()));
+                        }
+                    },
+                },
+            );
+        }
+
+        assert_eq!(hashed.len(), 2);
+        assert_eq!(receiver.incoming_resources.state(0).received_part_count, 0);
+        for result in hashed.into_iter().rev() {
+            let _ = result.complete_with(|completed| {
+                receiver.resume_resource_part_hash(
+                    completed,
+                    InstantMillis(2_300),
+                    &mut |bytes: &mut [u8]| bytes.fill(0xC7),
+                    &mut |_| {},
+                )
+            });
+        }
+
+        let state = receiver.incoming_resources.state(0);
+        assert_eq!(state.received_part_count, 2);
+        assert_eq!(state.consecutive_completed, Some(1));
+    }
+
+    #[cfg(feature = "resource-work-offload")]
+    #[test]
     fn a_part_below_the_external_hash_threshold_lands_inline() {
         let mut sender = engine_with_active_link();
         let mut receiver = engine_with_active_link();

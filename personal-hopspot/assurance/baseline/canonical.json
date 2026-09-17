@@ -1,0 +1,825 @@
+{
+  "schema_version": 2,
+  "resource_report_schema_version": 9,
+  "status": {
+    "kind": "passed"
+  },
+  "targets": [
+    {
+      "id": "heltec-v4",
+      "display_name": "Heltec LoRa 32 V4 (S3R2)",
+      "memory_profile": "heltec-v4",
+      "architecture": "xtensa-esp32s3",
+      "rust_target": "xtensa-esp32s3-none-elf",
+      "architecture_adapter": "xtensa-esp32s3-gnu-ld",
+      "resource": {
+        "kind": "passed",
+        "evidence": {
+          "source": {
+            "kind": "clean-commit",
+            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+          },
+          "report_fingerprint": "a33269a83da4f39cfe5d5f45c337331f393244b21e070b40245c6242a4a22458",
+          "build_fingerprint": "fb29d4aed932ec1b3e69e34d8bcf57f252ffebe898746a0147d581e1435924d3",
+          "toolchain_fingerprint": "83ed0de60fca12fba07a7148839a28baa3839d982f2f3640d0f5f9c6e7ee0f98",
+          "memory_contract_fingerprint": "6bdf05a832be66d106f992cbbff9ee81aa2908f43aa1cd916a2d7d5036dc8050"
+        }
+      }
+    },
+    {
+      "id": "heltec-v4-r8",
+      "display_name": "Heltec LoRa 32 V4 (S3R8)",
+      "memory_profile": "heltec-v4-r8",
+      "architecture": "xtensa-esp32s3",
+      "rust_target": "xtensa-esp32s3-none-elf",
+      "architecture_adapter": "xtensa-esp32s3-gnu-ld",
+      "resource": {
+        "kind": "passed",
+        "evidence": {
+          "source": {
+            "kind": "clean-commit",
+            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+          },
+          "report_fingerprint": "84baba2befdfafce21d46660b0b623383209921fc6462c0f69c5afeb8d31b73a",
+          "build_fingerprint": "ba2f94fb2ac21174b5b1ab62e95ab8f14ea426e8b8dd923c8505fdeaec644ce4",
+          "toolchain_fingerprint": "83ed0de60fca12fba07a7148839a28baa3839d982f2f3640d0f5f9c6e7ee0f98",
+          "memory_contract_fingerprint": "edde6c941960211bbae24c72d078be01f78296665cf59be930b62a0504a0a0ae"
+        }
+      }
+    },
+    {
+      "id": "heltec-e290",
+      "display_name": "Heltec Vision Master E290-HF",
+      "memory_profile": "heltec-e290",
+      "architecture": "xtensa-esp32s3",
+      "rust_target": "xtensa-esp32s3-none-elf",
+      "architecture_adapter": "xtensa-esp32s3-gnu-ld",
+      "resource": {
+        "kind": "passed",
+        "evidence": {
+          "source": {
+            "kind": "clean-commit",
+            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+          },
+          "report_fingerprint": "1f51e6acbda56bf683daebf29a2a573cdd0f846cf133ab87314ce404f565b31a",
+          "build_fingerprint": "7bd0cff88105969798f43c7d0c3fb9344017a29985a5eff44df63a0c3238798f",
+          "toolchain_fingerprint": "83ed0de60fca12fba07a7148839a28baa3839d982f2f3640d0f5f9c6e7ee0f98",
+          "memory_contract_fingerprint": "02a248cfb04405e1b2ffd22d46eee20e11cd4daf1b2ec5e5edd9618e177fe83f"
+        }
+      }
+    },
+    {
+      "id": "heltec-wireless-stick-lite-v3",
+      "display_name": "Heltec Wireless Stick Lite V3",
+      "memory_profile": "heltec-wireless-stick-lite-v3",
+      "architecture": "xtensa-esp32s3",
+      "rust_target": "xtensa-esp32s3-none-elf",
+      "architecture_adapter": "xtensa-esp32s3-gnu-ld",
+      "resource": {
+        "kind": "passed",
+        "evidence": {
+          "source": {
+            "kind": "clean-commit",
+            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+          },
+          "report_fingerprint": "0a82787da16fb143a33daa3495b60c4e15c3366c442e1933329178847b5df02a",
+          "build_fingerprint": "f6a20de2e63999f7be51e6a3eb8d5a3102b39e2adc9634b92ccbf3ab7daacfee",
+          "toolchain_fingerprint": "83ed0de60fca12fba07a7148839a28baa3839d982f2f3640d0f5f9c6e7ee0f98",
+          "memory_contract_fingerprint": "668f69da930b8ff21ac8c831e00627b0e41fb95e15a3a0988486a4b4dd7a291a"
+        }
+      }
+    },
+    {
+      "id": "t-beam-supreme",
+      "display_name": "LilyGO T-Beam Supreme",
+      "memory_profile": "t-beam-supreme",
+      "architecture": "xtensa-esp32s3",
+      "rust_target": "xtensa-esp32s3-none-elf",
+      "architecture_adapter": "xtensa-esp32s3-gnu-ld",
+      "resource": {
+        "kind": "passed",
+        "evidence": {
+          "source": {
+            "kind": "clean-commit",
+            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+          },
+          "report_fingerprint": "f3f3f6357984389ec38ba87ba89f8045a7ecbbe85795ebcfc8b6a93b804fbbc8",
+          "build_fingerprint": "53ea7c013994772884fed0e050c2a450ac4ac8d8032f38ba65173e33c1c5198f",
+          "toolchain_fingerprint": "83ed0de60fca12fba07a7148839a28baa3839d982f2f3640d0f5f9c6e7ee0f98",
+          "memory_contract_fingerprint": "e74a361f8799e2b23315fd80fd3f5d7b7750c529519e0a736f55b08378d0b429"
+        }
+      }
+    },
+    {
+      "id": "xiao-esp32-c6",
+      "display_name": "Seeed XIAO ESP32-C6",
+      "memory_profile": "xiao-esp32-c6",
+      "architecture": "riscv32imac",
+      "rust_target": "riscv32imac-unknown-none-elf",
+      "architecture_adapter": "riscv32imac-rust-lld",
+      "resource": {
+        "kind": "passed",
+        "evidence": {
+          "source": {
+            "kind": "clean-commit",
+            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+          },
+          "report_fingerprint": "a61afb237f44c2811412b7abf5b84ae5fe60792ee7eb102d0ed3af8803951b88",
+          "build_fingerprint": "97797d01b7ffd38511b3132bc5eb8996c54d6364fa3f5dc4a6423fb7f93a15f4",
+          "toolchain_fingerprint": "05df86ce3c2a86bd89a98f1c4228c28cd12ba41314a6c80bbb51cb14de8b73fc",
+          "memory_contract_fingerprint": "772284c4db5165552c28eef25d051364dbde697a6e83a821738e19895f6e65b7"
+        }
+      }
+    },
+    {
+      "id": "t-echo-s140-v6",
+      "display_name": "LilyGO T-Echo S140 6.1.1",
+      "memory_profile": "t-echo-s140-v6",
+      "architecture": "thumbv7em",
+      "rust_target": "thumbv7em-none-eabihf",
+      "architecture_adapter": "thumbv7em-rust-lld",
+      "resource": {
+        "kind": "passed",
+        "evidence": {
+          "source": {
+            "kind": "clean-commit",
+            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+          },
+          "report_fingerprint": "8f459a2cb99135598d6025427d4e0cbbd87dee503342cf8afdf9e191c8066482",
+          "build_fingerprint": "9cfbdbdef5697e571ce627dfa04d4b0879e19a61709a81cc74035039ba79bb70",
+          "toolchain_fingerprint": "75a6259eaebb5273ab6bf620ea36e19f31bda7caff1a56a239816a600f70e5f2",
+          "memory_contract_fingerprint": "7d726b15f5339a3c519d79fe5d9258727bbbbf2d59d9de545fc56872dd1ef966"
+        }
+      }
+    },
+    {
+      "id": "t-echo-s140-v7",
+      "display_name": "LilyGO T-Echo S140 7.3.0",
+      "memory_profile": "t-echo-s140-v7",
+      "architecture": "thumbv7em",
+      "rust_target": "thumbv7em-none-eabihf",
+      "architecture_adapter": "thumbv7em-rust-lld",
+      "resource": {
+        "kind": "passed",
+        "evidence": {
+          "source": {
+            "kind": "clean-commit",
+            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+          },
+          "report_fingerprint": "f71ad8017d263ad5691e7bc7e6b935e75fbd19c112097729e8754580cf9f5d70",
+          "build_fingerprint": "a664c84f8ae355a06014302cdeee84948079f5afa250ae6b65482722c270cdf2",
+          "toolchain_fingerprint": "75a6259eaebb5273ab6bf620ea36e19f31bda7caff1a56a239816a600f70e5f2",
+          "memory_contract_fingerprint": "5031137380b84665145c00f57a0d1884a34c9d141b1716c08c846cc06f5764ae"
+        }
+      }
+    },
+    {
+      "id": "t114",
+      "display_name": "Heltec Mesh Node T114 S140 6.1.1",
+      "memory_profile": "t114",
+      "architecture": "thumbv7em",
+      "rust_target": "thumbv7em-none-eabihf",
+      "architecture_adapter": "thumbv7em-rust-lld",
+      "resource": {
+        "kind": "passed",
+        "evidence": {
+          "source": {
+            "kind": "clean-commit",
+            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+          },
+          "report_fingerprint": "87d3052278d17e1e830902c1d613888a77ded706423844bb036b4b651f9bda70",
+          "build_fingerprint": "4f8b0fcbfadf94f620af6e02e693198ea8a0b8aebe550b50c3ee772084f45e8e",
+          "toolchain_fingerprint": "75a6259eaebb5273ab6bf620ea36e19f31bda7caff1a56a239816a600f70e5f2",
+          "memory_contract_fingerprint": "84fd98e0890d45d58fda9c9016a3a9f29a6597290522b917fd53c307350e6e74"
+        }
+      }
+    },
+    {
+      "id": "mesh-pocket-5000",
+      "display_name": "Heltec MeshPocket 5000 mAh S140 6.1.1",
+      "memory_profile": "mesh-pocket-5000",
+      "architecture": "thumbv7em",
+      "rust_target": "thumbv7em-none-eabihf",
+      "architecture_adapter": "thumbv7em-rust-lld",
+      "resource": {
+        "kind": "passed",
+        "evidence": {
+          "source": {
+            "kind": "clean-commit",
+            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+          },
+          "report_fingerprint": "61d556a0635fa8e84622bfabc8c3f3cf43ba05e329c31d45a9b8fc13204763b0",
+          "build_fingerprint": "76cd90b4ec9c132c0516a7400e19232f86475afd4a8db222cd675cd8320d132d",
+          "toolchain_fingerprint": "75a6259eaebb5273ab6bf620ea36e19f31bda7caff1a56a239816a600f70e5f2",
+          "memory_contract_fingerprint": "67d46a84dbb0457acb7ab7eec2d788be69bad1c0321b532ea89eac04503e29b0"
+        }
+      }
+    },
+    {
+      "id": "mesh-pocket-10000",
+      "display_name": "Heltec MeshPocket 10000 mAh S140 6.1.1",
+      "memory_profile": "mesh-pocket-10000",
+      "architecture": "thumbv7em",
+      "rust_target": "thumbv7em-none-eabihf",
+      "architecture_adapter": "thumbv7em-rust-lld",
+      "resource": {
+        "kind": "passed",
+        "evidence": {
+          "source": {
+            "kind": "clean-commit",
+            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+          },
+          "report_fingerprint": "c88e3aacd4120e88e251125a5853c48ee948e2888f7f3f65b76d2fec1eeae34b",
+          "build_fingerprint": "02ef74edd9930ff1a226f8a08e12c5e5ea96aacb0ea382853f0e348019eef17b",
+          "toolchain_fingerprint": "75a6259eaebb5273ab6bf620ea36e19f31bda7caff1a56a239816a600f70e5f2",
+          "memory_contract_fingerprint": "61ca3603b893f24cfe8089db6fdb476fb2247a08731089bcc27c8c243a78335d"
+        }
+      }
+    },
+    {
+      "id": "t096",
+      "display_name": "Heltec Mesh Node T096 S140 6.1.1",
+      "memory_profile": "t096",
+      "architecture": "thumbv7em",
+      "rust_target": "thumbv7em-none-eabihf",
+      "architecture_adapter": "thumbv7em-rust-lld",
+      "resource": {
+        "kind": "passed",
+        "evidence": {
+          "source": {
+            "kind": "clean-commit",
+            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+          },
+          "report_fingerprint": "1dff689ba4f2b2bde453cb06e2a25d5404a7446c5cc739b6fa729b5ce4d39b32",
+          "build_fingerprint": "f793b36e19e64f0ae305163a1b589135ca48b95ef823608233c398569e733fd5",
+          "toolchain_fingerprint": "75a6259eaebb5273ab6bf620ea36e19f31bda7caff1a56a239816a600f70e5f2",
+          "memory_contract_fingerprint": "4202531688f76435d00b5616607a680308941b8e5de9b81d4e7240a5fbe278f0"
+        }
+      }
+    },
+    {
+      "id": "t1000-e",
+      "display_name": "Seeed SenseCAP T1000-E",
+      "memory_profile": "t1000-e",
+      "architecture": "thumbv7em",
+      "rust_target": "thumbv7em-none-eabihf",
+      "architecture_adapter": "thumbv7em-rust-lld",
+      "resource": {
+        "kind": "passed",
+        "evidence": {
+          "source": {
+            "kind": "clean-commit",
+            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+          },
+          "report_fingerprint": "2edd5c1c749332fc8a0deccb106ffbd824bc846d48bc424ff0cd95207d3be368",
+          "build_fingerprint": "b1e5f1ea9dce9a026b2a99a1508c46f6989e755a91b84a344ab96cf96c0dcba9",
+          "toolchain_fingerprint": "75a6259eaebb5273ab6bf620ea36e19f31bda7caff1a56a239816a600f70e5f2",
+          "memory_contract_fingerprint": "82bc66481701d83730861051b82f79f5e2e9863d9c6170467875bddd6af967a7"
+        }
+      }
+    },
+    {
+      "id": "mesh-tower-v2",
+      "display_name": "Heltec MeshTower V2",
+      "memory_profile": "mesh-tower-v2",
+      "architecture": "thumbv7em",
+      "rust_target": "thumbv7em-none-eabihf",
+      "architecture_adapter": "thumbv7em-rust-lld",
+      "resource": {
+        "kind": "passed",
+        "evidence": {
+          "source": {
+            "kind": "clean-commit",
+            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+          },
+          "report_fingerprint": "f38e730593deb6e17792a185d6510b1efc1d39e7ad3ab40d63605f03f1f92657",
+          "build_fingerprint": "5de4b9a223b2b31486456bbc2cd2c8750ce22a492338f6e5b0682c08cd279a29",
+          "toolchain_fingerprint": "75a6259eaebb5273ab6bf620ea36e19f31bda7caff1a56a239816a600f70e5f2",
+          "memory_contract_fingerprint": "171a6f8d90fa5c11eb0f5b57a76f1ec3d4b75e0af9f11b530518cb95d5ca7931"
+        }
+      }
+    }
+  ],
+  "capabilities": [
+    {
+      "kind": "observed",
+      "capability": {
+        "subject": {
+          "kind": "component",
+          "id": "sx126x"
+        },
+        "scenario": "sx126x-state-machine",
+        "proof": "miri",
+        "support": {
+          "kind": "required"
+        }
+      },
+      "proof": {
+        "schema_version": 2,
+        "subject": {
+          "kind": "component",
+          "id": "sx126x"
+        },
+        "scenario": "sx126x-state-machine",
+        "proof": "miri",
+        "runner": "miri-stacked-tree",
+        "source": {
+          "custody": {
+            "kind": "clean-commit",
+            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+          },
+          "scenario_fingerprint": "426a015ade10c2d879be01a968a386143f1d47980e56d7daa8a8afaf3a1ffa9b"
+        },
+        "tools": [
+          {
+            "kind": "rustc",
+            "version": "rustc 1.93.0-nightly (53732d5e0 2025-11-20)"
+          },
+          {
+            "kind": "miri",
+            "version": "miri 0.1.0 (53732d5e07 2025-11-20)"
+          }
+        ],
+        "verdict": {
+          "kind": "passed",
+          "evidence": {
+            "kind": "miri",
+            "coverage": "stacked-and-tree",
+            "completed_tests": 16
+          }
+        },
+        "artifacts": [
+          {
+            "kind": "log",
+            "path": "sx126x-stacked.log",
+            "bytes": 2042,
+            "fingerprint": "a1addf30a95b83d26a2235a5e99edbd5ce3a806a8bb2e75797ab641a719bd982"
+          },
+          {
+            "kind": "log",
+            "path": "sx126x-tree.log",
+            "bytes": 2060,
+            "fingerprint": "2fa58cded1ae0e6e402b84362abedb29edfb1298ec502ca416757242bb675a2e"
+          }
+        ]
+      }
+    },
+    {
+      "kind": "observed",
+      "capability": {
+        "subject": {
+          "kind": "component",
+          "id": "lr1110"
+        },
+        "scenario": "lr1110-state-machine",
+        "proof": "miri",
+        "support": {
+          "kind": "required"
+        }
+      },
+      "proof": {
+        "schema_version": 2,
+        "subject": {
+          "kind": "component",
+          "id": "lr1110"
+        },
+        "scenario": "lr1110-state-machine",
+        "proof": "miri",
+        "runner": "miri-stacked-tree",
+        "source": {
+          "custody": {
+            "kind": "clean-commit",
+            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+          },
+          "scenario_fingerprint": "91cc3cf0efeeaae05e018bd61a2b62f7affd9ebb77dfefdefe6391fdb45726b4"
+        },
+        "tools": [
+          {
+            "kind": "rustc",
+            "version": "rustc 1.93.0-nightly (53732d5e0 2025-11-20)"
+          },
+          {
+            "kind": "miri",
+            "version": "miri 0.1.0 (53732d5e07 2025-11-20)"
+          }
+        ],
+        "verdict": {
+          "kind": "passed",
+          "evidence": {
+            "kind": "miri",
+            "coverage": "stacked-and-tree",
+            "completed_tests": 16
+          }
+        },
+        "artifacts": [
+          {
+            "kind": "log",
+            "path": "lr1110-stacked.log",
+            "bytes": 1938,
+            "fingerprint": "039bfb5d736837a4602650d5809f0507dfb926a14a1f3cdda49217c2123e7ba7"
+          },
+          {
+            "kind": "log",
+            "path": "lr1110-tree.log",
+            "bytes": 1956,
+            "fingerprint": "58f2db9ed177667910b8b82faa41e86551015a7e4eba46f770cb23d1227efe18"
+          }
+        ]
+      }
+    },
+    {
+      "kind": "observed",
+      "capability": {
+        "subject": {
+          "kind": "component",
+          "id": "embedded-persistence"
+        },
+        "scenario": "flash-journal-state-machine",
+        "proof": "miri",
+        "support": {
+          "kind": "required"
+        }
+      },
+      "proof": {
+        "schema_version": 2,
+        "subject": {
+          "kind": "component",
+          "id": "embedded-persistence"
+        },
+        "scenario": "flash-journal-state-machine",
+        "proof": "miri",
+        "runner": "miri-stacked-tree",
+        "source": {
+          "custody": {
+            "kind": "clean-commit",
+            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+          },
+          "scenario_fingerprint": "2ea8b9c31c659f7bb38df45b4c84b4d2f220a46a2cb3d2e09664df96c9a56612"
+        },
+        "tools": [
+          {
+            "kind": "rustc",
+            "version": "rustc 1.93.0-nightly (53732d5e0 2025-11-20)"
+          },
+          {
+            "kind": "miri",
+            "version": "miri 0.1.0 (53732d5e07 2025-11-20)"
+          }
+        ],
+        "verdict": {
+          "kind": "passed",
+          "evidence": {
+            "kind": "miri",
+            "coverage": "stacked-and-tree",
+            "completed_tests": 18
+          }
+        },
+        "artifacts": [
+          {
+            "kind": "log",
+            "path": "embedded-persistence-stacked.log",
+            "bytes": 2665,
+            "fingerprint": "6c4a4117693ac83270967d0157a62d4a4fb7ee86d8155c2f49e255c8d7a13a14"
+          },
+          {
+            "kind": "log",
+            "path": "embedded-persistence-tree.log",
+            "bytes": 2683,
+            "fingerprint": "2080d3c6a0f1e0b9173cab7f3c276d9051fe6921a1e2044bdbbfd495c012a6a8"
+          }
+        ]
+      }
+    },
+    {
+      "kind": "observed",
+      "capability": {
+        "subject": {
+          "kind": "architecture",
+          "id": "thumbv7em"
+        },
+        "scenario": "shared-state-machines",
+        "proof": "target-isa",
+        "support": {
+          "kind": "required"
+        }
+      },
+      "proof": {
+        "schema_version": 2,
+        "subject": {
+          "kind": "architecture",
+          "id": "thumbv7em"
+        },
+        "scenario": "shared-state-machines",
+        "proof": "target-isa",
+        "runner": "qemu-thumbv7em",
+        "source": {
+          "custody": {
+            "kind": "clean-commit",
+            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+          },
+          "scenario_fingerprint": "0cbe62f9a374b9d802f430644d814fdbde824899cf6532b8f346ad7bc6a4779f"
+        },
+        "tools": [
+          {
+            "kind": "cargo",
+            "version": "cargo 1.96.0 (30a34c682 2026-05-25)"
+          },
+          {
+            "kind": "rustc",
+            "version": "rustc 1.96.0 (ac68faa20 2026-05-25)"
+          },
+          {
+            "kind": "qemu",
+            "version": "QEMU emulator version 11.1.1; executable-sha256=9cf6706396f03e3b75196da642cfb2d0c0f94968f468c6a9aa7927cfd39f236b"
+          }
+        ],
+        "verdict": {
+          "kind": "passed",
+          "evidence": {
+            "kind": "target-isa",
+            "architecture": "thumbv7em",
+            "completed_scenarios": 2,
+            "transcript_fingerprint": "c19243f10bc120a2ccfd880850451157a3d09ac75811347f5267f35e1e53e862"
+          }
+        },
+        "artifacts": [
+          {
+            "kind": "transcript",
+            "path": "thumbv7em.transcript.bin",
+            "bytes": 1737,
+            "fingerprint": "c19243f10bc120a2ccfd880850451157a3d09ac75811347f5267f35e1e53e862"
+          },
+          {
+            "kind": "executable",
+            "path": "thumbv7em.elf",
+            "bytes": 145552,
+            "fingerprint": "03537a780b6fd6a8db871caeb1e72b4c1d6822c76cc13e385e51e052d4547803"
+          },
+          {
+            "kind": "log",
+            "path": "thumbv7em.log",
+            "bytes": 14756,
+            "fingerprint": "ed516812d9abba3298841084ac55ec9a9dc6a5f72c7e434bbaa64342cea88e37"
+          }
+        ]
+      }
+    },
+    {
+      "kind": "observed",
+      "capability": {
+        "subject": {
+          "kind": "architecture",
+          "id": "riscv32imac"
+        },
+        "scenario": "shared-state-machines",
+        "proof": "target-isa",
+        "support": {
+          "kind": "required"
+        }
+      },
+      "proof": {
+        "schema_version": 2,
+        "subject": {
+          "kind": "architecture",
+          "id": "riscv32imac"
+        },
+        "scenario": "shared-state-machines",
+        "proof": "target-isa",
+        "runner": "qemu-riscv32imac",
+        "source": {
+          "custody": {
+            "kind": "clean-commit",
+            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+          },
+          "scenario_fingerprint": "0cbe62f9a374b9d802f430644d814fdbde824899cf6532b8f346ad7bc6a4779f"
+        },
+        "tools": [
+          {
+            "kind": "cargo",
+            "version": "cargo 1.96.0 (30a34c682 2026-05-25)"
+          },
+          {
+            "kind": "rustc",
+            "version": "rustc 1.96.0 (ac68faa20 2026-05-25)"
+          },
+          {
+            "kind": "qemu",
+            "version": "QEMU emulator version 11.1.1; executable-sha256=e242a76802246cbb5dbb9120fe4036f027df9fac9ef6dea2dc0262c048cbc288"
+          }
+        ],
+        "verdict": {
+          "kind": "passed",
+          "evidence": {
+            "kind": "target-isa",
+            "architecture": "riscv32imac",
+            "completed_scenarios": 2,
+            "transcript_fingerprint": "c19243f10bc120a2ccfd880850451157a3d09ac75811347f5267f35e1e53e862"
+          }
+        },
+        "artifacts": [
+          {
+            "kind": "transcript",
+            "path": "riscv32imac.transcript.bin",
+            "bytes": 1737,
+            "fingerprint": "c19243f10bc120a2ccfd880850451157a3d09ac75811347f5267f35e1e53e862"
+          },
+          {
+            "kind": "executable",
+            "path": "riscv32imac.elf",
+            "bytes": 103212,
+            "fingerprint": "878fa48e5e3d790047b51efbdf44914f07441850c0994eede3b9faed962848ec"
+          },
+          {
+            "kind": "log",
+            "path": "riscv32imac.log",
+            "bytes": 11395,
+            "fingerprint": "3a3a76fa21bf6714ea7a4365fd69ee4f42a1538114e46333b8fd07ec459c1026"
+          }
+        ]
+      }
+    },
+    {
+      "kind": "observed",
+      "capability": {
+        "subject": {
+          "kind": "architecture",
+          "id": "xtensa-esp32s3"
+        },
+        "scenario": "shared-state-machines",
+        "proof": "target-isa",
+        "support": {
+          "kind": "required"
+        }
+      },
+      "proof": {
+        "schema_version": 2,
+        "subject": {
+          "kind": "architecture",
+          "id": "xtensa-esp32s3"
+        },
+        "scenario": "shared-state-machines",
+        "proof": "target-isa",
+        "runner": "qemu-xtensa-esp32s3",
+        "source": {
+          "custody": {
+            "kind": "clean-commit",
+            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+          },
+          "scenario_fingerprint": "5e51185797ccbe4346432b84d55b90c752e8b698a348a496f543441d80ebddfd"
+        },
+        "tools": [
+          {
+            "kind": "cargo",
+            "version": "cargo 1.95.0-nightly (f2d3ce0bd 2026-03-21) (1.95.0.0)"
+          },
+          {
+            "kind": "rustc",
+            "version": "rustc 1.95.0-nightly (95e5bda86 2026-04-15) (1.95.0.0)"
+          },
+          {
+            "kind": "qemu",
+            "version": "QEMU emulator version 9.2.2 (esp_develop_9.2.2_20260417); executable-sha256=dab87a4b3be6493c37326ef1ef2db64d42592507ed9f381232d5a1b6fa5492fb"
+          }
+        ],
+        "verdict": {
+          "kind": "passed",
+          "evidence": {
+            "kind": "target-isa",
+            "architecture": "xtensa-esp32s3",
+            "completed_scenarios": 2,
+            "transcript_fingerprint": "c19243f10bc120a2ccfd880850451157a3d09ac75811347f5267f35e1e53e862"
+          }
+        },
+        "artifacts": [
+          {
+            "kind": "transcript",
+            "path": "xtensa-esp32s3.transcript.bin",
+            "bytes": 1737,
+            "fingerprint": "c19243f10bc120a2ccfd880850451157a3d09ac75811347f5267f35e1e53e862"
+          },
+          {
+            "kind": "executable",
+            "path": "xtensa-esp32s3.elf",
+            "bytes": 85336,
+            "fingerprint": "0da1411725c0a623a8e221ef324b576c77069d03d340344e6ab47ae4cad02404"
+          },
+          {
+            "kind": "log",
+            "path": "xtensa-esp32s3.log",
+            "bytes": 13861,
+            "fingerprint": "83c72ec4e48946e5c4dc0c4e0650951085f7b120a6db70ef58fe2b4b582cb7f6"
+          }
+        ]
+      }
+    },
+    {
+      "kind": "unavailable",
+      "capability": {
+        "subject": {
+          "kind": "platform",
+          "id": "nrf52840"
+        },
+        "scenario": "platform-startup",
+        "proof": "platform-emulation",
+        "support": {
+          "kind": "pilot"
+        }
+      },
+      "reason": "evidence-not-produced"
+    },
+    {
+      "kind": "observed",
+      "capability": {
+        "subject": {
+          "kind": "platform",
+          "id": "esp32s3"
+        },
+        "scenario": "platform-startup",
+        "proof": "platform-emulation",
+        "support": {
+          "kind": "pilot"
+        }
+      },
+      "proof": {
+        "schema_version": 2,
+        "subject": {
+          "kind": "platform",
+          "id": "esp32s3"
+        },
+        "scenario": "platform-startup",
+        "proof": "platform-emulation",
+        "runner": "qemu-esp32s3-startup",
+        "source": {
+          "custody": {
+            "kind": "clean-commit",
+            "commit": "e0b84ee86f0c33df27770b9a576f84a95d626c47"
+          },
+          "scenario_fingerprint": "0a2ca43caf5d00960b881661da25ec0f77d28c30efb9191a4afc8d98ed4d9d01"
+        },
+        "tools": [
+          {
+            "kind": "cargo",
+            "version": "cargo 1.95.0-nightly (f2d3ce0bd 2026-03-21) (1.95.0.0)"
+          },
+          {
+            "kind": "rustc",
+            "version": "rustc 1.95.0-nightly (95e5bda86 2026-04-15) (1.95.0.0)"
+          },
+          {
+            "kind": "linker",
+            "version": "xtensa-esp-elf-gcc (crosstool-NG esp-15.2.0_20250920) 15.2.0"
+          },
+          {
+            "kind": "qemu",
+            "version": "QEMU emulator version 9.2.2 (esp_develop_9.2.2_20260417); executable-sha256=dab87a4b3be6493c37326ef1ef2db64d42592507ed9f381232d5a1b6fa5492fb"
+          }
+        ],
+        "verdict": {
+          "kind": "passed",
+          "evidence": {
+            "kind": "platform-emulation",
+            "platform": "esp32s3",
+            "milestone": "runtime-initialized",
+            "transcript_fingerprint": "c91f1eb7a8925858d3cba8e22336ea30d9ec5448eba2bb34929fa7926c4ccf2a"
+          }
+        },
+        "artifacts": [
+          {
+            "kind": "transcript",
+            "path": "esp32s3.transcript",
+            "bytes": 118,
+            "fingerprint": "c91f1eb7a8925858d3cba8e22336ea30d9ec5448eba2bb34929fa7926c4ccf2a"
+          },
+          {
+            "kind": "executable",
+            "path": "esp32s3.elf",
+            "bytes": 697748,
+            "fingerprint": "6bd59bfad8f83c6080d92c787476a1bfd6db35d0dbf623d0f86ebffd073cf394"
+          },
+          {
+            "kind": "log",
+            "path": "esp32s3.log",
+            "bytes": 4378,
+            "fingerprint": "3adbb454693c7168f3649c32a4e739586b3d101c8d17eced337cf80d41d3db9a"
+          }
+        ]
+      }
+    },
+    {
+      "kind": "unavailable",
+      "capability": {
+        "subject": {
+          "kind": "platform",
+          "id": "esp32c6"
+        },
+        "scenario": "platform-startup",
+        "proof": "platform-emulation",
+        "support": {
+          "kind": "unsupported",
+          "reason": "emulator-does-not-model-platform"
+        }
+      },
+      "reason": "unsupported-by-contract"
+    }
+  ]
+}

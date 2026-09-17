@@ -1108,13 +1108,13 @@ async fn run(
             HostRole::Transport => Some(host_identity.clone()),
         },
         pre_configured_destinations: destinations,
-        app_state: (),
+        app_state: personal_rns::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         interfaces: ManuallyAttached,
         persistence,
-        on_event: move |event, _state: &()| {
+        on_event: move |event, _state: &personal_rns::NoRemoteControlHostControls| {
             if !publish_event(event_sink.as_ref(), event, &event_persistence) {
                 event_backpressure.notify_waiters();
             }

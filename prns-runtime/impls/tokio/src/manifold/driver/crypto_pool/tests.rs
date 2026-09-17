@@ -116,18 +116,25 @@ fn crypto_backpressure_depth_is_bounded_across_worker_counts() {
 }
 
 #[test]
+fn resource_part_hash_capacity_allows_two_in_flight() {
+    let pool = CryptoPool::spawn(2, Arc::new(Notify::new())).expect("workers spawn");
+
+    assert!(pool.has_resource_part_hash_capacity());
+    pool.resource_part_hash_jobs.set(1);
+    assert!(pool.has_resource_part_hash_capacity());
+    pool.resource_part_hash_jobs.set(2);
+    assert!(!pool.has_resource_part_hash_capacity());
+}
+
+#[test]
 fn verification_batch_target_uses_effective_parallelism_without_exceeding_worker_capacity() {
-    assert_eq!(
-        verify_batch_target(1, Some(4)),
-        MAX_INTERACTIVE_CRYPTO_BATCH
-    );
-    assert_eq!(
-        verify_batch_target(2, Some(4)),
-        MAX_INTERACTIVE_CRYPTO_BATCH
-    );
-    assert_eq!(verify_batch_target(4, Some(4)), 4);
-    assert_eq!(verify_batch_target(6, Some(4)), 4);
-    assert_eq!(verify_batch_target(8, None), 2);
+    assert_eq!(verify_batch_target(1, 1), MAX_INTERACTIVE_CRYPTO_BATCH);
+    assert_eq!(verify_batch_target(2, 2), MAX_INTERACTIVE_CRYPTO_BATCH);
+    assert_eq!(verify_batch_target(4, 4), 4);
+    assert_eq!(verify_batch_target(6, 4), 4);
+    assert_eq!(verify_batch_target(8, 3), 4);
+    assert_eq!(verify_batch_target(8, 6), 3);
+    assert_eq!(verify_batch_target(8, 8), 2);
 }
 
 #[test]

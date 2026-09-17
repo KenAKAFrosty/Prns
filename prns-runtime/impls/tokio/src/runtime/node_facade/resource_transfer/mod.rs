@@ -10,7 +10,7 @@ use crate::engine::{RespondFailure, SendResourceFailure, SendResourceRejection, 
 use crate::manifold::compression;
 use crate::manifold::driver::{
     HostCommand, HostResourceDigestPreparation, HostResourceMetadata, HostResourcePayload,
-    ResourceInbound, SendResourceSegmentHostCommand,
+    HostResourceRecycler, ResourceInbound, SendResourceSegmentHostCommand,
 };
 use crate::routing::links::request::RequestId;
 #[cfg(feature = "parallel-resource-hash")]
@@ -313,6 +313,7 @@ impl PrnsNodeHandle {
         let total_segments = plan.total_segments();
         let mut in_flight: VecDeque<PendingSegment> =
             VecDeque::with_capacity(max_in_flight_segments);
+        let segment_recycler = HostResourceRecycler::bounded(RESOURCE_PREPROCESS_LANES);
         let mut transferred = 0u64;
         let mut physical_transferred = 0u64;
         let mut preparing = FuturesOrdered::new();
@@ -325,7 +326,8 @@ impl PrnsNodeHandle {
                     .segment(next_segment_index)
                     .ok_or(ResourceSendError::UnrepresentableLength)?;
                 let this_segment = segment.data_end.saturating_sub(segment.data_start);
-                let mut data = std::vec![0u8; this_segment as usize];
+                let mut data = segment_recycler.take();
+                data.resize(this_segment as usize, 0);
                 source
                     .read_exact(&mut data)
                     .await
@@ -420,7 +422,10 @@ impl PrnsNodeHandle {
                     SendResourceSegmentHostCommand {
                         id,
                         link_id,
-                        data: prepared.data.into(),
+                        data: HostResourcePayload::recyclable(
+                            prepared.data,
+                            segment_recycler.clone(),
+                        ),
                         compressed_candidate: prepared.compressed_candidate,
                         metadata,
                         digest: prepared.digest,

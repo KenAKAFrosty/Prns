@@ -154,6 +154,40 @@ async fn a_large_response_carries_a_bz2_candidate() {
 }
 
 #[tokio::test]
+async fn a_dense_resource_response_is_queued_without_a_blocking_task() {
+    let (handle, mut command_rx) = handle();
+    let token = RespondToken {
+        link_id: LinkId::new([1; 16]),
+        request_id: RequestId([2; 16]),
+        rtt: RttMillis::new(50),
+    };
+    let mut state = 0x9E37_79B9_7F4A_7C15u64;
+    let body = (0..4096)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state as u8
+        })
+        .collect::<std::vec::Vec<_>>();
+
+    assert_eq!(
+        handle.respond_packed(token, &body),
+        Some(RttMillis::new(50))
+    );
+    let HostCommand::RespondAny(respond) = command_rx.try_recv().unwrap() else {
+        panic!("expected a RespondAny command");
+    };
+    assert!(respond.compressed_candidate.is_none());
+    let (enclosed_request, enclosed_body) =
+        parse_response_plaintext(respond.packed.as_slice()).unwrap();
+    assert_eq!(
+        (enclosed_request, enclosed_body),
+        (token.request_id, body.as_slice())
+    );
+}
+
+#[tokio::test]
 async fn a_packet_sized_response_skips_compression() {
     let (handle, mut command_rx) = handle();
     let token = RespondToken {

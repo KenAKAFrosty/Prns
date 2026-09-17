@@ -19,6 +19,7 @@ pub use impls::LemireIndex;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "alloc")] {
+        pub(crate) use impls::HeapIndexEntry;
         pub use impls::HeapLemireIndex;
     }
 }

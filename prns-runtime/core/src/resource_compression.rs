@@ -61,8 +61,9 @@ pub fn compress_resource_candidate(data: &[u8], packed_metadata: Option<&[u8]>) 
 /// entirely below that length — under half the payload — can hide.
 #[must_use]
 pub fn compress_if_smaller(data: &[u8]) -> Option<Vec<u8>> {
-    if adjacent_pairs_are_dense(data) {
-        return None;
+    match compression_preflight(data) {
+        CompressionPreflight::ShipUncompressed => return None,
+        CompressionPreflight::AttemptCompression => {}
     }
     if data.len() >= SAMPLE_GATE_LEN && !sample_shrinks(data) {
         return None;
@@ -77,10 +78,30 @@ pub const SAMPLE_GATE_LEN: usize = 256 * 1024;
 const SAMPLE_SLICE_LEN: usize = 16 * 1024;
 const DENSE_PAIR_GATE_MIN_LEN: usize = 1024;
 const DENSE_PAIR_GATE_MAX_LEN: usize = 8192;
+const DENSE_PAIR_SAMPLE_WINDOW_LEN: usize = 128;
 const BYTE_PAIR_COUNT: usize = 1 << 16;
 const BITS_PER_WORD: usize = u64::BITS as usize;
 const DENSE_PAIR_UNIQUENESS_NUMERATOR: usize = 15;
 const DENSE_PAIR_UNIQUENESS_DENOMINATOR: usize = 16;
+
+/// Whether a cheap, wire-legal screen can decline compression before work is delegated.
+pub enum CompressionPreflight {
+    ShipUncompressed,
+    AttemptCompression,
+}
+
+/// Classifies small payloads whose sampled adjacent pairs are dense enough to ship uncompressed.
+///
+/// `ShipUncompressed` changes only representation efficiency; the uncompressed payload remains
+/// protocol-valid.
+#[must_use]
+pub fn compression_preflight(data: &[u8]) -> CompressionPreflight {
+    if adjacent_pairs_are_dense(data) {
+        CompressionPreflight::ShipUncompressed
+    } else {
+        CompressionPreflight::AttemptCompression
+    }
+}
 
 fn adjacent_pairs_are_dense(data: &[u8]) -> bool {
     if !(DENSE_PAIR_GATE_MIN_LEN..=DENSE_PAIR_GATE_MAX_LEN).contains(&data.len()) {
@@ -88,17 +109,25 @@ fn adjacent_pairs_are_dense(data: &[u8]) -> bool {
     }
     let mut pairs = [0u64; BYTE_PAIR_COUNT / BITS_PER_WORD];
     let mut distinct = 0usize;
-    for pair in data.windows(2) {
-        let value = usize::from(u16::from_be_bytes([pair[0], pair[1]]));
-        let word = value / BITS_PER_WORD;
-        let bit = 1u64 << (value % BITS_PER_WORD);
-        if pairs[word] & bit == 0 {
-            pairs[word] |= bit;
-            distinct += 1;
+    let middle = (data.len() - DENSE_PAIR_SAMPLE_WINDOW_LEN) / 2;
+    let tail = data.len() - DENSE_PAIR_SAMPLE_WINDOW_LEN;
+    for window in [
+        &data[..DENSE_PAIR_SAMPLE_WINDOW_LEN],
+        &data[middle..middle + DENSE_PAIR_SAMPLE_WINDOW_LEN],
+        &data[tail..],
+    ] {
+        for pair in window.windows(2) {
+            let value = usize::from(u16::from_be_bytes([pair[0], pair[1]]));
+            let word = value / BITS_PER_WORD;
+            let bit = 1u64 << (value % BITS_PER_WORD);
+            if pairs[word] & bit == 0 {
+                pairs[word] |= bit;
+                distinct += 1;
+            }
         }
     }
-    distinct * DENSE_PAIR_UNIQUENESS_DENOMINATOR
-        >= (data.len() - 1) * DENSE_PAIR_UNIQUENESS_NUMERATOR
+    let sampled_pairs = 3 * (DENSE_PAIR_SAMPLE_WINDOW_LEN - 1);
+    distinct * DENSE_PAIR_UNIQUENESS_DENOMINATOR >= sampled_pairs * DENSE_PAIR_UNIQUENESS_NUMERATOR
 }
 
 fn sample_shrinks(data: &[u8]) -> bool {
@@ -302,7 +331,10 @@ mod tests {
     #[test]
     fn dense_small_payloads_skip_the_bz2_attempt() {
         for len in [1024, 1360, 2048, 4096] {
-            assert!(adjacent_pairs_are_dense(&xorshift_bytes(len)));
+            assert!(matches!(
+                compression_preflight(&xorshift_bytes(len)),
+                CompressionPreflight::ShipUncompressed
+            ));
         }
     }
 
@@ -327,7 +359,10 @@ mod tests {
             .take(4096)
             .collect();
         for data in [reference_input(), periodic, repeated_block] {
-            assert!(!adjacent_pairs_are_dense(&data));
+            assert!(matches!(
+                compression_preflight(&data),
+                CompressionPreflight::AttemptCompression
+            ));
             assert!(compress_if_smaller(&data).is_some());
         }
     }
