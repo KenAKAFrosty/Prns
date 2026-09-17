@@ -9,6 +9,7 @@ services. It consumes public core APIs; the core does not depend on this tree.
 - [iOS development](docs/ios.md) and [Android development](docs/android.md)
 - [Current validation and limits](docs/validation.md)
 - [Implementation roadmap](docs/roadmap.md)
+- [Expanded remote-control plan](docs/remote-control-expansion.md)
 
 This guide owns setup and workspace commands. The binding and platform guides
 own their narrower boundaries; dated checkpoints preserve historical evidence,

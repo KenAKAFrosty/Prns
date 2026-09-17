@@ -5,6 +5,12 @@ mobile implementation uses generated UniFFI bindings and one shared Rust image;
 see the [binding boundary](../prns/native-composition/bindings/README.md).
 Browser and Tauri runtime providers are not implemented.
 
+The [September 17 upstream refresh](../checkpoints/2026-09-17-remote-control-refresh.md)
+changes the native core and pairing contract.
+Earlier phone, firmware-size and background observations below do not qualify
+that rebase. New remote-control screens remain [planned](remote-control-expansion.md),
+not implemented or physically tested.
+
 ## What the evidence covers
 
 The generated-binding cutover, follow-up builds and earlier phone trials are

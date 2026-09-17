@@ -23,7 +23,22 @@ records completed cold Retry admission, iOS preparation-queue and connection-che
 lifetime fixes, plus the constrained firmware footprint correction. Physical
 observations remain tied to their recorded builds.
 
-## Next: finish the current transition
+## Current priority: upstream refresh and expanded node management
+
+The [September 17 refresh](../checkpoints/2026-09-17-remote-control-refresh.md)
+integrates upstream `79050535f`, including expanded
+board remote control from PR #232. The [implementation plan](remote-control-expansion.md)
+defines the next sequence: explicit authority/capabilities, read-only inventories,
+ordinary controls, disruptive connectivity/power actions, transactional Wi-Fi,
+then administrator access management. It preserves existing app/core ownership
+and requires capability-driven UI rather than board-specific screens.
+
+These controls are planned, not implemented. The compatibility refresh discloses
+pairing authority and names the new permissions without widening existing board
+pairing grants. Earlier physical and firmware evidence below belongs to its
+recorded source/binaries and does not qualify the rebased application.
+
+## Remaining qualification from the previous transition
 
 The [September 15 checkpoint](../checkpoints/2026-09-15-upstream-integration.md)
 integrates reviewed upstream trunk `35859bb89`. A new standalone Android build
@@ -87,7 +102,8 @@ checkpoints do not qualify these binaries.
    [#197](https://github.com/KenAKAFrosty/Prns/pull/197) for the app's current
    publication and remote CI status.
 
-Finish this bounded transition before expanding the product surface.
+Carry these qualification gaps alongside the new work; do not treat either
+source rebasing or new UI coverage as device acceptance.
 
 ## Following product slices
 
