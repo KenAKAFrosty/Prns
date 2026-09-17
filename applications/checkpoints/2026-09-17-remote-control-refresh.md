@@ -9,9 +9,9 @@ feature-gated validation corrections and clean-checkout notice fingerprinting.
 
 The app integration retains the upstream board command executor and transactional
 authorization persistence alongside the existing pairing UI and mobile transport
-work. Core snapshot `abf32db96fe4f6db3ec40c7da4498fc9d5de976e` includes regressions
+work. Core snapshot `74ed674be395a7504cacff63fc5d85a88f74cda2` includes regressions
 ensuring capability growth does not widen the local pairing grant, and updates
-the shared-snapshot and diagnostic test fixtures for the new API. It remains an
+the shared-snapshot, runtime-event and diagnostic test fixtures for the new API. It remains an
 Operator grant for Describe/AnnounceSelf intersected with board capabilities.
 
 Application compatibility changes use the new explicit host-control state and
@@ -34,6 +34,7 @@ correct. No production persistence failure is suppressed to preserve that test.
 - SDK: all 49 tests pass; five compatibility and 12 detached-tool unit tests pass.
 - Three board pairing regressions pass for capability intersection, refusal when
   no initial permission is supported, and no new control/admin escalation.
+- All four runtime-event regressions pass with the fallible pairing-offer API.
 - Generated-output tooling/provenance tests and explicit Swift startup queue,
   lifecycle, restoration diagnostics and release-symbol checks pass.
 - The recorded exact core revision and unchanged Host schema fingerprint pass
@@ -53,6 +54,15 @@ The first detached attempt passed its native checks but timed out one existing
 UI test under concurrent build load. Concurrent core-fixture edits in the source
 checkout also invalidated its unchanged-source guard. That run is not counted as
 successful detached qualification; repeat against a stable committed checkout.
+
+The stable retry passed the complete detached gate at app `ea9b7c4a5` / core
+`abf32db96`, including native composition, UI/SDK, generated bindings and live
+Python LXMF interoperability. A subsequent repository-wide host check passed 23
+of 24 workspaces and found one additional runtime-event test fixture using the
+old infallible pairing-offer API. The corrected fixture passes all four event
+tests; the pin now includes that test-only correction. Publication and detached
+checks are repeated against the final pin rather than attributing the earlier
+result to a different revision.
 
 ## Publication accounting
 
