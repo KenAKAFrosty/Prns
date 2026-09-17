@@ -383,6 +383,10 @@ impl<M: RawMutex> RemoteControlAuthorizationStoreExchange<M> {
         self.failures.try_receive().ok()
     }
 
+    fn has_failure(&self) -> bool {
+        !self.failures.is_empty()
+    }
+
     fn settle(&self, result: Result<(), EmbeddedPersistenceFailure>) {
         self.completed.signal(result);
     }
@@ -395,7 +399,6 @@ where
     persistence: &'a mut P,
     stores: &'a RemoteControlAuthorizationStoreExchange<M>,
     pending_request: Option<PendingRemoteControlAuthorizationStore>,
-    pending_failure: Option<EmbeddedRemoteControlPairingPersistenceFailure>,
 }
 
 impl<'a, M, P> RemoteControlPairingManifoldPersistence<'a, M, P>
@@ -410,7 +413,6 @@ where
             persistence,
             stores,
             pending_request: None,
-            pending_failure: None,
         }
     }
 }
@@ -437,9 +439,6 @@ where
         &mut self,
         now: crate::engine::InstantMillis,
     ) -> Option<crate::engine::InstantMillis> {
-        if self.pending_failure.is_none() {
-            self.pending_failure = self.stores.try_take_failure();
-        }
         if self.pending_request.is_none() {
             self.pending_request = self.stores.try_take_request().map(|request| {
                 PendingRemoteControlAuthorizationStore {
@@ -448,7 +447,9 @@ where
                 }
             });
         }
-        if self.pending_failure.is_some() {
+        // Leave failures in their bounded queue until progress observes them. Merely
+        // checking readiness must not require another resident failure payload.
+        if self.stores.has_failure() {
             return Some(now);
         }
         // New work and compaction steps are immediate, but a retained failed rollback
@@ -485,7 +486,7 @@ where
         engine: &mut crate::engine::EngineState<S>,
         now: crate::engine::InstantMillis,
     ) {
-        if let Some(failure) = self.pending_failure.take() {
+        if let Some(failure) = self.stores.try_take_failure() {
             self.persistence
                 .observe_remote_control_pairing_failure(failure);
             return;
@@ -1394,6 +1395,59 @@ mod tests {
             let ((), ()) = join(report, drive).await;
             drop(manifold);
             assert_eq!(persistence.observed_failure, Some(failure));
+        });
+    }
+
+    #[test]
+    fn failure_readiness_preserves_the_bounded_queue_until_progress() {
+        embassy_futures::block_on(async {
+            let stores = RemoteControlAuthorizationStoreExchange::<CriticalSectionRawMutex>::new();
+            let mut persistence = ScriptedPersistence {
+                deadline: Some(InstantMillis(60_000)),
+                fail_store_attempt: None,
+                retry_at: None,
+                compaction_steps: 0,
+                store_attempts: 0,
+                progress_calls: 0,
+                observed_failure: None,
+            };
+            let mut manifold =
+                RemoteControlPairingManifoldPersistence::new(&mut persistence, &stores);
+            let mut engine = EngineState::<GrowableHeap>::default();
+            let first = EmbeddedRemoteControlPairingPersistenceFailure::SettlementBusy {
+                attempt_id: super::super::node_facade::test_remote_control_pairing_attempt(0x91),
+                operation: EmbeddedRemoteControlPairingPersistenceOperation::SettlePersisted,
+            };
+            let second = EmbeddedRemoteControlPairingPersistenceFailure::NodeStopped {
+                attempt_id: super::super::node_facade::test_remote_control_pairing_attempt(0x92),
+                operation: EmbeddedRemoteControlPairingPersistenceOperation::SettleFailed,
+            };
+            stores.report_failure(first).await;
+            for now in [InstantMillis(10), InstantMillis(11)] {
+                manifold.wait_for_work().await;
+                assert_eq!(manifold.deadline(now), Some(now));
+                assert!(stores.failures.is_full());
+            }
+
+            let report_second = stores.report_failure(second);
+            let drive = async {
+                manifold.progress(&mut engine, InstantMillis(11)).await;
+                assert_eq!(manifold.persistence.observed_failure, Some(first));
+                manifold.wait_for_work().await;
+                assert_eq!(
+                    manifold.deadline(InstantMillis(12)),
+                    Some(InstantMillis(12))
+                );
+                manifold.progress(&mut engine, InstantMillis(12)).await;
+                assert_eq!(manifold.persistence.observed_failure, Some(second));
+            };
+            let ((), ()) = join(report_second, drive).await;
+            assert!(!stores.has_failure());
+            assert_eq!(
+                manifold.deadline(InstantMillis(13)),
+                Some(InstantMillis(60_000))
+            );
+            assert_eq!(manifold.persistence.progress_calls, 0);
         });
     }
 
