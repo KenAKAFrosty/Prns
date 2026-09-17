@@ -102,6 +102,13 @@ documentation update, their complete tracked trees matched `c58868a8f` and
 the app. The new revision needs its own publication result; the earlier failure
 is not reported as a successful publishing gate.
 
+Detached verification passed again at app `173a36df0889b0c205b1710f23be9b6d3679d555`
+with core `6fe326c02e7c6b8503bf9bc2397320e791266ae7`: generated bindings, native
+composition, 223 UI tests, 49 SDK tests, web export and live Python LXMF exchange
+all passed. This uses the local Git source and establishes exact-revision source
+mobility, not remote availability or native-device acceptance. App publication
+remains blocked on the narrow UniFFI license exceptions pending approval.
+
 ## Publication accounting
 
 PR #214 was closed as fully superseded: all of its notices are in trunk. PRs #198
