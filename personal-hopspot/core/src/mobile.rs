@@ -52,6 +52,11 @@ impl MobileActionCode {
         match action {
             UiAction::Announce => Self::Announce,
             UiAction::CopySharedInstanceConfig => Self::CopySharedInstanceConfig,
+            #[cfg(feature = "remote-control-pairing")]
+            UiAction::OpenRemoteControlPairing
+            | UiAction::CloseRemoteControlPairing
+            | UiAction::ApproveRemoteControlTargetPairing(_)
+            | UiAction::RejectRemoteControlTargetPairing(_) => Self::None,
             UiAction::None
             | UiAction::BlankDisplay
             | UiAction::ToggleDisplayAutoOff

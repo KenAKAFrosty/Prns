@@ -20,6 +20,8 @@ use crate::screen::state::{
     interface_menu_items, AccessPointState, SharedInstanceConfigExport, UiNotice, UiState,
     POWER_MENU_ITEM, STATION_UPLINK_MENU_ITEM,
 };
+#[cfg(feature = "remote-control-pairing")]
+use crate::{RemoteControlTargetPairingPhase, StableTargetAnnouncementStatus};
 
 use super::glyphs::{draw_global_icon, draw_interface_icon, draw_menu_cursor};
 use super::layout::*;
@@ -55,6 +57,17 @@ pub(in crate::screen) fn menu_item_char_width(label: &str) -> i32 {
 
 pub(in crate::screen) fn menu_item_text_right(label: &str) -> i32 {
     MENU_TEXT_X + label.chars().count() as i32 * menu_item_char_width(label)
+}
+
+#[cfg(feature = "remote-control-pairing")]
+pub(in crate::screen) const fn pairing_status_lines(
+    status: StableTargetAnnouncementStatus,
+) -> (&'static str, Option<&'static str>) {
+    match status {
+        StableTargetAnnouncementStatus::Idle => ("reachability", Some("queued")),
+        StableTargetAnnouncementStatus::Succeeded => ("reachability", Some("sent")),
+        StableTargetAnnouncementStatus::Failed => ("announce failed", None),
+    }
 }
 
 fn draw_menu_item<D: DrawTarget<Color = BinaryColor>>(
@@ -280,6 +293,133 @@ pub(super) fn draw_subg_clear_confirm<D: DrawTarget<Color = BinaryColor>>(
     .draw(display);
     draw_menu_item(display, MENU_ITEM_TOP + 31, "No", !confirm);
     draw_menu_item(display, MENU_ITEM_TOP + 44, "Yes", confirm);
+}
+
+#[cfg(feature = "remote-control-pairing")]
+pub(super) fn draw_remote_control_pairing<D: DrawTarget<Color = BinaryColor>>(
+    display: &mut D,
+    state: &UiState,
+) {
+    draw_remote_control_pairing_content(
+        display,
+        state.remote_control_state(),
+        state.remote_control_now(),
+        state.remote_control_pairing_approval_selected(),
+    );
+}
+
+#[cfg(feature = "remote-control-pairing")]
+pub(in crate::screen) fn draw_remote_control_pairing_content<
+    D: DrawTarget<Color = BinaryColor>,
+    Attempt: Copy + Eq,
+>(
+    display: &mut D,
+    pairing: crate::RemoteControlTargetPairingState<Attempt>,
+    now: personal_rns::units::InstantMillis,
+    approve_selected: bool,
+) {
+    let header_style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
+    let _ = Text::with_baseline(
+        "Remote",
+        Point::new(2, MENU_HEADER_Y),
+        header_style,
+        Baseline::Top,
+    )
+    .draw(display);
+    line(
+        display,
+        Point::new(0, MENU_DIVIDER_Y),
+        Point::new(WIDTH - 1, MENU_DIVIDER_Y),
+    );
+
+    let body = MonoTextStyle::new(&FONT_5X8, BinaryColor::On);
+    let small = MonoTextStyle::new(&FONT_4X6, BinaryColor::On);
+    let draw_body = |display: &mut D, y: i32, label: &str| {
+        let _ = Text::with_baseline(label, Point::new(2, y), body, Baseline::Top).draw(display);
+    };
+    let draw_small = |display: &mut D, y: i32, label: &str| {
+        let _ = Text::with_baseline(label, Point::new(2, y), small, Baseline::Top).draw(display);
+    };
+
+    match pairing.phase() {
+        RemoteControlTargetPairingPhase::Idle | RemoteControlTargetPairingPhase::Opening => {
+            draw_body(display, MENU_ITEM_TOP, "Opening...");
+            draw_small(display, MENU_ITEM_TOP + 16, "hold cancel");
+        }
+        RemoteControlTargetPairingPhase::Invitation => {
+            draw_small(display, MENU_ITEM_TOP, "Invitation");
+            let mut code: HString<12> = HString::new();
+            let _ = write!(code, "{:08X}", pairing.invitation_code().unwrap_or(0));
+            draw_body(display, MENU_ITEM_TOP + 10, &code);
+            let mut expiry: HString<20> = HString::new();
+            let remaining = pairing
+                .expires_at()
+                .map_or(0, |expires_at| expires_at.0.saturating_sub(now.0));
+            let seconds = remaining.saturating_add(999) / 1_000;
+            let _ = write!(expiry, "expires {seconds}s");
+            draw_small(display, MENU_ITEM_TOP + 25, &expiry);
+            draw_small(display, MENU_ITEM_TOP + 38, "hold cancel");
+        }
+        RemoteControlTargetPairingPhase::Confirmation => {
+            draw_small(display, MENU_ITEM_TOP, "Compare code");
+            let mut code: HString<12> = HString::new();
+            let _ = write!(code, "{:06}", pairing.confirmation_code().unwrap_or(0));
+            draw_body(display, MENU_ITEM_TOP + 10, &code);
+            draw_menu_item(display, MENU_ITEM_TOP + 28, "Reject", !approve_selected);
+            draw_menu_item(display, MENU_ITEM_TOP + 41, "Approve", approve_selected);
+        }
+        RemoteControlTargetPairingPhase::AwaitingControllerCommit => {
+            draw_body(display, MENU_ITEM_TOP, "Approved");
+            draw_small(display, MENU_ITEM_TOP + 16, "waiting for");
+            draw_small(display, MENU_ITEM_TOP + 23, "controller");
+            draw_small(display, MENU_ITEM_TOP + 36, "not paired yet");
+        }
+        RemoteControlTargetPairingPhase::Authorizing => {
+            draw_body(display, MENU_ITEM_TOP, "Authorizing");
+            draw_small(display, MENU_ITEM_TOP + 16, "saving grant...");
+            draw_small(display, MENU_ITEM_TOP + 29, "not paired yet");
+        }
+        RemoteControlTargetPairingPhase::Persisted => {
+            draw_body(display, MENU_ITEM_TOP, "Paired");
+            let (reachability, status) = pairing_status_lines(pairing.stable_announcement());
+            draw_small(display, MENU_ITEM_TOP + 16, reachability);
+            if let Some(status) = status {
+                draw_small(display, MENU_ITEM_TOP + 23, status);
+            }
+            draw_small(display, MENU_ITEM_TOP + 32, "hold close");
+        }
+        RemoteControlTargetPairingPhase::Rejected => {
+            draw_body(display, MENU_ITEM_TOP, "Rejected");
+            draw_small(display, MENU_ITEM_TOP + 20, "hold close");
+        }
+        RemoteControlTargetPairingPhase::Expired => {
+            draw_body(display, MENU_ITEM_TOP, "Expired");
+            draw_small(display, MENU_ITEM_TOP + 20, "hold close");
+        }
+        RemoteControlTargetPairingPhase::Cancelled => {
+            draw_body(display, MENU_ITEM_TOP, "Cancelled");
+            draw_small(display, MENU_ITEM_TOP + 20, "hold close");
+        }
+        RemoteControlTargetPairingPhase::Failed => {
+            draw_body(display, MENU_ITEM_TOP, "Failed");
+            let reason = pairing
+                .failure()
+                .map_or("unknown", |failure| match failure {
+                    crate::RemoteControlTargetPairingFailure::Projection => "projection",
+                    crate::RemoteControlTargetPairingFailure::Correlation => "wrong attempt",
+                    crate::RemoteControlTargetPairingFailure::Open => "open pairing",
+                    crate::RemoteControlTargetPairingFailure::Close => "close pairing",
+                    crate::RemoteControlTargetPairingFailure::Approval => "approve pairing",
+                    crate::RemoteControlTargetPairingFailure::Rejection => "reject pairing",
+                    crate::RemoteControlTargetPairingFailure::Persistence => "save grant",
+                    crate::RemoteControlTargetPairingFailure::PairingExpiry => "expiry cleanup",
+                    crate::RemoteControlTargetPairingFailure::LinkClosed => "pairing link",
+                    crate::RemoteControlTargetPairingFailure::CompletionExpired => "reply expired",
+                });
+            draw_small(display, MENU_ITEM_TOP + 16, reason);
+            draw_small(display, MENU_ITEM_TOP + 32, "hold close");
+        }
+    }
 }
 
 fn fmt_limit_value(value: LimitValue) -> HString<12> {
