@@ -11,9 +11,9 @@ use prns_core::persistence::{
     write_remote_control_controller_grants_snapshot,
 };
 use prns_core::remote_control::{
-    HeapRemoteControlControllerGrantTable, RemoteControlControllerGrant,
-    RemoteControlControllerGrantTable, RemoteControlControllerIdentity, RemoteControlRequestKind,
-    RemoteControlRequestSet,
+    HeapRemoteControlControllerGrantTable, RemoteControlControllerAuthority,
+    RemoteControlControllerGrant, RemoteControlControllerGrantTable,
+    RemoteControlControllerIdentity, RemoteControlRequestKind, RemoteControlRequestSet,
 };
 
 fuzz_target!(|data: &[u8]| {
@@ -37,8 +37,12 @@ fuzz_target!(|data: &[u8]| {
             encryption: IdentityEncryptionPublicKey::new(X25519PublicKey([fill; 32])),
             signing: IdentitySigningPublicKey::new(Ed25519PublicKey([fill.wrapping_add(1); 32])),
         });
-        let grant = RemoteControlControllerGrant::new(controller, permitted_requests)
-            .expect("the generated request set is nonempty");
+        let grant = RemoteControlControllerGrant::new(
+            controller,
+            RemoteControlControllerAuthority::Operator,
+            permitted_requests,
+        )
+        .expect("the generated request set is nonempty");
         grants
             .set_controller_grant(grant)
             .expect("the heap table admits every generated grant");

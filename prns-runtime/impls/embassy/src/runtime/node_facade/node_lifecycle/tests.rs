@@ -87,12 +87,13 @@ fn a_recipe_node_hears_an_ifac_announce_a_supervisor_stands_a_peer_up_for() {
             app_name: "lxmf",
             aspects: &["delivery"],
         }],
-        app_state: (),
+        app_state: crate::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: crate::request_endpoints![],
         interfaces: crate::runtime::ManuallyAttached,
         persistence: NoPersistence,
-        on_event: move |event: PrnsEvent<'_>, _state: &()| {
+        on_event: move |event: PrnsEvent<'_>,
+                        _state: &crate::runtime::NoRemoteControlHostControls| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { .. }) = event {
                 *heard_sink.borrow_mut() += 1;
             }
@@ -170,12 +171,12 @@ fn run_with_proof_decider_reaches_a_prove_if_recipe_destination() {
             maximum_request_bytes: Default::default(),
             request_endpoints: ServeMyRequestEndpoints::No,
         }],
-        app_state: (),
+        app_state: crate::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: crate::request_endpoints![],
         interfaces: crate::runtime::ManuallyAttached,
         persistence: NoPersistence,
-        on_event: |_event: PrnsEvent<'_>, _state: &()| {},
+        on_event: |_event: PrnsEvent<'_>, _state: &crate::runtime::NoRemoteControlHostControls| {},
     };
     let node: PrnsNode<_, _, _, _, _, _, 1, 1, 4, 4, 4, 4> = PrnsNode::new(
         recipe,

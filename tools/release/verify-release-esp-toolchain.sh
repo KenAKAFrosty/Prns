@@ -22,8 +22,18 @@ if [[ "$banner" != "$ESP_RUSTC_BANNER" ]] \
     exit 4
 fi
 
-if [[ "$(xtensa-esp-elf-gcc --version | head -n 1)" != "$ESP_GCC_BANNER" ]]; then
+gcc="$(command -v xtensa-esp-elf-gcc)"
+objdump="$(command -v xtensa-esp-elf-objdump)"
+if [[ "$("$gcc" --version | head -n 1)" != "$ESP_GCC_BANNER" ]]; then
     echo "installed Xtensa GCC identity does not match $ESP_CROSSTOOL_VERSION" >&2
+    exit 4
+fi
+if [[ "$("$objdump" --version | head -n 1)" != "$ESP_OBJDUMP_BANNER" ]]; then
+    echo "installed Xtensa objdump identity does not match $ESP_CROSSTOOL_VERSION" >&2
+    exit 4
+fi
+if [[ "$(dirname "$gcc")" != "$(dirname "$objdump")" ]]; then
+    echo "installed Xtensa GCC and objdump come from different toolchains" >&2
     exit 4
 fi
 

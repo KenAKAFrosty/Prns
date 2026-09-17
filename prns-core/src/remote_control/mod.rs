@@ -12,18 +12,26 @@
 )]
 
 mod bootstrap;
+mod control;
 mod core;
 mod endpoint;
+mod factory_grant;
 mod impls;
+mod inventory;
 mod message;
+mod pagination;
 mod pairing;
 mod service;
 
 pub use self::core::*;
 pub use bootstrap::*;
+pub use control::*;
 pub use endpoint::*;
+pub use factory_grant::*;
 pub use impls::*;
+pub use inventory::*;
 pub use message::*;
+pub use pagination::*;
 pub use pairing::*;
 pub use service::*;
 

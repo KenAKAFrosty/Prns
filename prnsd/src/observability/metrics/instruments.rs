@@ -26,8 +26,12 @@ pub(super) struct Instruments {
     pub(super) engine_commands: Counter<u64>,
     pub(super) ignored_packets: Counter<u64>,
     pub(super) egress_frames: Counter<u64>,
+    pub(super) egress_pending_frames: Gauge<u64>,
+    pub(super) egress_maximum_pending_frames: Gauge<u64>,
+    pub(super) egress_pending_stalled_seconds: Gauge<u64>,
     pub(super) egress_lane_capacity: Gauge<u64>,
     pub(super) egress_lane_occupancy: Gauge<u64>,
+    pub(super) egress_lane_pending: Gauge<u64>,
     pub(super) announce_ingress: Counter<u64>,
     pub(super) announce_accepted_by_interface: Counter<u64>,
     pub(super) announce_commands: Counter<u64>,
@@ -100,8 +104,16 @@ impl Instruments {
             engine_commands: meter.u64_counter("prns.engine.commands").build(),
             ignored_packets: meter.u64_counter("prns.engine.ignored_packets").build(),
             egress_frames: meter.u64_counter("prns.egress.frames").build(),
+            egress_pending_frames: meter.u64_gauge("prns.egress.pending_frames").build(),
+            egress_maximum_pending_frames: meter
+                .u64_gauge("prns.egress.maximum_pending_frames")
+                .build(),
+            egress_pending_stalled_seconds: meter
+                .u64_gauge("prns.egress.pending_stalled_seconds")
+                .build(),
             egress_lane_capacity: meter.u64_gauge("prns.egress.lane.capacity").build(),
             egress_lane_occupancy: meter.u64_gauge("prns.egress.lane.occupancy").build(),
+            egress_lane_pending: meter.u64_gauge("prns.egress.lane.pending").build(),
             announce_ingress: meter.u64_counter("prns.announces.ingress").build(),
             announce_accepted_by_interface: meter
                 .u64_counter("prns.announces.accepted_by_interface")

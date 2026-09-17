@@ -129,32 +129,60 @@ pub(super) fn build_snapshots(
     let ble = BluetoothAutoStatus::new(&BLE_SHARED);
     let mut entries: HVec<(&dyn InterfaceStatus, Membership), INTERFACE_CAPACITY> = HVec::new();
     if let Some(lora) = lora {
-        let _ = entries.push((lora, Membership::Independent));
+        assert!(
+            entries.push((lora, Membership::Independent)).is_ok(),
+            "interface capacity covers LoRa"
+        );
     }
     {
-        let _ = entries.push((&ble, Membership::Independent));
+        assert!(
+            entries.push((&ble, Membership::Independent)).is_ok(),
+            "interface capacity covers Bluetooth"
+        );
     }
     if let Some(wifi) = wifi {
-        let _ = entries.push((wifi, Membership::Independent));
+        assert!(
+            entries.push((wifi, Membership::Independent)).is_ok(),
+            "interface capacity covers Wi-Fi"
+        );
     }
     if let Some(espnow) = espnow {
-        let _ = entries.push((espnow, Membership::Independent));
+        assert!(
+            entries.push((espnow, Membership::Independent)).is_ok(),
+            "interface capacity covers ESP-NOW"
+        );
     }
     if let Some(tcp) = tcp {
-        let _ = entries.push((tcp, Membership::Independent));
+        assert!(
+            entries.push((tcp, Membership::Independent)).is_ok(),
+            "interface capacity covers TCP"
+        );
     }
-    let _ = entries.push((usb, Membership::Independent));
+    assert!(
+        entries.push((usb, Membership::Independent)).is_ok(),
+        "interface capacity covers USB"
+    );
 
     if let Some(wifi) = wifi {
         let supervisor_id = wifi.id();
         for member in wifi.members() {
-            let _ = entries.push((member, Membership::FleetMember { supervisor_id }));
+            assert!(
+                entries
+                    .push((member, Membership::FleetMember { supervisor_id }))
+                    .is_ok(),
+                "interface capacity covers Wi-Fi members"
+            );
         }
     }
     {
         let supervisor_id = ble.id();
         for member in ble.members() {
-            let _ = entries.push((member, Membership::FleetMember { supervisor_id }));
+            assert!(
+                entries
+                    .push((member, Membership::FleetMember { supervisor_id }))
+                    .is_ok(),
+                "interface capacity covers Bluetooth members"
+            );
         }
     }
     let mut snapshots: HVec<InterfaceSnapshot, INTERFACE_CAPACITY> = HVec::new();
@@ -173,20 +201,27 @@ pub(super) fn build_snapshots(
         } else {
             status.connection()
         };
-        let _ = snapshots.push(InterfaceSnapshot {
-            id,
-            mode: personal_rns::interfaces::InterfaceMode::Full,
-            gravity: personal_rns::interfaces::InterfaceGravity::ZERO,
-            connection,
-            failure_reason: status.failure_reason(),
-            rx_bytes: status.rx_bytes(),
-            tx_bytes: status.tx_bytes(),
-            transfer_rates: status.transfer_rates(),
-            destinations: counts.destinations,
-            links: counts.links,
-            transported_links: counts.transported_links,
-            membership: *membership,
-        });
+        assert!(
+            snapshots
+                .push(InterfaceSnapshot {
+                    id,
+                    mode: personal_rns::interfaces::InterfaceMode::Full,
+                    gravity: personal_rns::interfaces::InterfaceGravity::ZERO,
+                    connection,
+                    failure_reason: status.failure_reason(),
+                    rx_bytes: status.rx_bytes(),
+                    tx_bytes: status.tx_bytes(),
+                    transfer_rates: status.transfer_rates(),
+                    destinations: counts.destinations,
+                    links: counts.links,
+                    transported_links: counts.transported_links,
+                    membership: *membership,
+                    radio: status.radio(),
+                    details: status.details(),
+                })
+                .is_ok(),
+            "snapshot capacity matches interface capacity"
+        );
     }
     snapshots
 }

@@ -35,45 +35,57 @@ pub(super) async fn run_runtime_endpoint(
     let count_deliveries = role == "responder";
     let delivery_counters = Arc::new(DeliveryCounters::default());
     let callback_delivery_counters = delivery_counters.clone();
-    let on_event = move |event: PrnsEvent<'_>, _state: &()| {
-        let mapped = match event {
-            PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) => {
-                Some(Event::Heard(destination))
-            }
-            PrnsEvent::Diagnostic(Diagnostic::CommandSettled { id, settlement }) => {
-                Some(Event::Settled(id, settlement))
-            }
-            PrnsEvent::Diagnostic(Diagnostic::LinkEstablished(_)) => Some(Event::LinkUp),
-            PrnsEvent::Diagnostic(Diagnostic::LinkClosed { link_id, reason }) => {
-                if reason != LinkClosedReason::PeerClosed {
-                    eprintln!("DIED role={event_role} mechanism=link reason={reason:?}");
+    let on_event =
+        move |event: PrnsEvent<'_>, _state: &personal_rns::runtime::NoRemoteControlHostControls| {
+            let mapped = match event {
+                PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) => {
+                    Some(Event::Heard(destination))
                 }
-                Some(Event::Closed { link_id, reason })
-            }
-            PrnsEvent::Message(Message::Delivered(Delivery::Single(delivery))) => {
-                if count_deliveries && callback_delivery_counters.record(delivery.plaintext.len()) {
-                    Some(Event::FirstDelivered)
-                } else {
-                    None
+                PrnsEvent::Diagnostic(Diagnostic::CommandSettled { id, settlement }) => {
+                    Some(Event::Settled(id, settlement))
                 }
-            }
-            PrnsEvent::Message(Message::Delivered(Delivery::Link(delivery))) => {
-                if count_deliveries && callback_delivery_counters.record(delivery.plaintext.len()) {
-                    Some(Event::FirstDelivered)
-                } else {
-                    None
+                PrnsEvent::Diagnostic(Diagnostic::LinkEstablished(_)) => Some(Event::LinkUp),
+                PrnsEvent::Diagnostic(Diagnostic::LinkClosed { link_id, reason }) => {
+                    if reason != LinkClosedReason::PeerClosed {
+                        eprintln!("DIED role={event_role} mechanism=link reason={reason:?}");
+                    }
+                    Some(Event::Closed { link_id, reason })
                 }
+                PrnsEvent::Message(Message::Delivered(Delivery::Single(delivery))) => {
+                    if count_deliveries
+                        && callback_delivery_counters.record(delivery.plaintext.len())
+                    {
+                        Some(Event::FirstDelivered)
+                    } else {
+                        None
+                    }
+                }
+                PrnsEvent::Message(Message::Delivered(Delivery::Link(delivery))) => {
+                    if count_deliveries
+                        && callback_delivery_counters.record(delivery.plaintext.len())
+                    {
+                        Some(Event::FirstDelivered)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+            if let Some(event) = mapped {
+                send_event(&event_tx, event);
             }
-            _ => None,
         };
-        if let Some(event) = mapped {
-            send_event(&event_tx, event);
-        }
-    };
 
     if role == "responder" {
-        let (mut node, bound) =
-            build_responder_node(single, (), request_endpoints![], on_event, manifest, addr).await;
+        let (mut node, bound) = build_responder_node(
+            single,
+            personal_rns::runtime::NoRemoteControlHostControls,
+            request_endpoints![],
+            on_event,
+            manifest,
+            addr,
+        )
+        .await;
         let commands = node
             .take_local_handle()
             .expect("the endpoint owns its executor-local command lane");

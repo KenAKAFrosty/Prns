@@ -20,8 +20,12 @@ use personal_rns::interfaces::wifi_auto as wifi_auto_contract;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus};
 use personal_rns::manifold::tokio::TokioInterfaceStatus;
 use personal_rns::node_introspection::NodeIntrospection;
+use personal_rns::remote_control::{
+    RemoteControlInitialControllerGrants, RemoteControlSelfAnnouncement, RemoteControlService,
+};
 use personal_rns::runtime::{
-    Diagnostic, ManuallyAttached, NodeRunError, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
+    Diagnostic, ManuallyAttached, NodeRunError, PrnsEvent, PrnsNode, PrnsNodeHandle,
+    PrnsNodeRecipe, RemoteControlIdentityDirectory,
 };
 use personal_rns::storage::GrowableHeap;
 #[cfg(target_os = "ios")]
@@ -566,51 +570,73 @@ async fn run_engine(
         ),
     );
 
+    let remote_control_bootstrap =
+        match RemoteControlIdentityDirectory::new(storage_directory.join("remote_control"))
+            .load_or_generate()
+        {
+            Ok(bootstrap) => bootstrap,
+            Err(error) => {
+                diagnostic("remote_control", format_args!("state=failed error={error}"));
+                let _ = ready_tx.send(Err(MobileEngineFailure::StorageConfiguration));
+                return;
+            }
+        };
+    let (remote_control_identity_secrets, _) = remote_control_bootstrap.into_parts();
+    let remote_control = RemoteControlService::new(
+        remote_control_identity_secrets,
+        RemoteControlInitialControllerGrants::Nobody,
+        RemoteControlSelfAnnouncement::Destination(destination_hashes.node_page),
+    );
+
     let (persistence_change_tx, persistence_changes) = tokio::sync::mpsc::unbounded_channel::<()>();
     let (rotated_tx, rotated_rx) = tokio::sync::mpsc::unbounded_channel::<DestinationHash>();
     let timeline_origin = prepared_persistence.timeline_origin();
     let mut node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: Some(transport_secret),
+        remote_control,
         pre_configured_destinations: destinations.into_preconfigured_destinations(),
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: personal_hopspot_core::node_pages::NodePageRoutes,
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
-        on_event: move |event: PrnsEvent<'_>, _state: &()| match event {
-            PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
-                destination,
-                hops,
-                source_interface,
-                app_data: _,
-            }) => {
-                diagnostic(
-                    "route",
-                    format_args!(
-                        "state=accepted destination={} hops={} interface={}",
-                        full_hex(destination.as_bytes()),
+        on_event:
+            move |event: PrnsEvent<'_>,
+                  _state: &personal_rns::runtime::NoRemoteControlHostControls| {
+                match event {
+                    PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
+                        destination,
                         hops,
-                        abbreviated_hex(source_interface.as_bytes())
-                    ),
-                );
-                let _ = persistence_change_tx.send(());
-            }
-            PrnsEvent::Diagnostic(Diagnostic::RouteRemoved { destination, cause }) => {
-                diagnostic(
-                    "route",
-                    format_args!(
-                        "state=removed destination={} cause={cause:?}",
-                        full_hex(destination.as_bytes())
-                    ),
-                );
-                let _ = persistence_change_tx.send(());
-            }
-            PrnsEvent::Diagnostic(Diagnostic::SelfRatchetRotated { destination }) => {
-                let _ = rotated_tx.send(destination);
-            }
-            _ => {}
-        },
+                        source_interface,
+                        app_data: _,
+                    }) => {
+                        diagnostic(
+                            "route",
+                            format_args!(
+                                "state=accepted destination={} hops={} interface={}",
+                                full_hex(destination.as_bytes()),
+                                hops,
+                                abbreviated_hex(source_interface.as_bytes())
+                            ),
+                        );
+                        let _ = persistence_change_tx.send(());
+                    }
+                    PrnsEvent::Diagnostic(Diagnostic::RouteRemoved { destination, cause }) => {
+                        diagnostic(
+                            "route",
+                            format_args!(
+                                "state=removed destination={} cause={cause:?}",
+                                full_hex(destination.as_bytes())
+                            ),
+                        );
+                        let _ = persistence_change_tx.send(());
+                    }
+                    PrnsEvent::Diagnostic(Diagnostic::SelfRatchetRotated { destination }) => {
+                        let _ = rotated_tx.send(destination);
+                    }
+                    _ => {}
+                }
+            },
     })
     .with_timeline_origin(timeline_origin);
     let restored = prepared_persistence.restore(&mut node);
