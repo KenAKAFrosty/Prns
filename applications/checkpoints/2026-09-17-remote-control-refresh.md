@@ -9,7 +9,7 @@ feature-gated validation corrections and clean-checkout notice fingerprinting.
 
 The app integration retains the upstream board command executor and transactional
 authorization persistence alongside the existing pairing UI and mobile transport
-work. Core snapshot `74ed674be395a7504cacff63fc5d85a88f74cda2` includes regressions
+work. Core snapshot `457a2ff0e51372332f91c754524e13af78278f1c` includes regressions
 ensuring capability growth does not widen the local pairing grant, and updates
 the shared-snapshot, runtime-event and diagnostic test fixtures for the new API. It remains an
 Operator grant for Describe/AnnounceSelf intersected with board capabilities.
@@ -35,6 +35,8 @@ correct. No production persistence failure is suppressed to preserve that test.
 - Three board pairing regressions pass for capability intersection, refusal when
   no initial permission is supported, and no new control/admin escalation.
 - All four runtime-event regressions pass with the fallible pairing-offer API.
+- All 131 Embassy library tests pass after removing the duplicate pending-failure
+  payload; queue ordering, backpressure and retry-deadline coverage are retained.
 - Generated-output tooling/provenance tests and explicit Swift startup queue,
   lifecycle, restoration diagnostics and release-symbol checks pass.
 - The recorded exact core revision and unchanged Host schema fingerprint pass
@@ -63,6 +65,20 @@ old infallible pairing-offer API. The corrected fixture passes all four event
 tests; the pin now includes that test-only correction. Publication and detached
 checks are repeated against the final pin rather than attributing the earlier
 result to a different revision.
+
+That repeat also passed at app `1fe2ec0ae` / core `74ed674be`. The normal app
+publication gate then passed all 24 host workspaces and reached the firmware
+matrix. T-Echo S140 v7 linked with 4,524 bytes of flash headroom, but T096 exceeded
+its unchanged static-RAM/stack-reserve limit by 24 bytes. Trunk itself leaves no
+spare bytes in that T096 accounting. PR #215 alone did not fix the RAM increase.
+
+The persistence scheduling correction keeps failure reports in the existing
+one-entry channel until progress observes them, removing a second resident
+payload without changing retry deadlines or authorization transactions. The
+isolated pairing composition saves 104 bytes and links T096 with 80 bytes beyond
+the unchanged stack reservation. That small link-time margin is not a runtime
+stack qualification. The app pin includes the correction; its full publication
+and detached checks are repeated separately.
 
 ## Publication accounting
 
