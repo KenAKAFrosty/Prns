@@ -207,7 +207,7 @@ mod tests {
     use personal_rns::identity::PublicIdentityMaterial;
     use personal_rns::interfaces::{
         FrameAccounting, InterfaceGravity, InterfaceMode, InterfaceOriginKind,
-        InterfaceSnapshot as EngineInterfaceSnapshot, TransferRates,
+        InterfaceSnapshot as EngineInterfaceSnapshot, PeerDetails, RadioIndication, TransferRates,
     };
     use personal_rns::node_introspection::{
         DestinationIdentitySnapshot as EngineDestinationIdentitySnapshot, FrameAccountingCoverage,
@@ -260,6 +260,8 @@ mod tests {
                     membership: Membership::FleetMember {
                         supervisor_id: supervisor,
                     },
+                    radio: RadioIndication::NotRadio,
+                    details: PeerDetails::NotApplicable,
                 },
             ),
             inventory_entry(
@@ -282,6 +284,8 @@ mod tests {
                     membership: Membership::FleetMember {
                         supervisor_id: supervisor,
                     },
+                    radio: RadioIndication::NotRadio,
+                    details: PeerDetails::NotApplicable,
                 },
             ),
         ];
