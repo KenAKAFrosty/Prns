@@ -72,9 +72,10 @@ impl<S: StorageLayout> ManifoldPersistence<S> for AlwaysDuePersistence {
         _snapshot: &crate::runtime::RemoteControlAuthorizationSnapshot,
         _now: InstantMillis,
     ) -> crate::runtime::StoreRemoteControlAuthorizationSnapshotOutcome {
-        crate::runtime::StoreRemoteControlAuthorizationSnapshotOutcome::Failed(
-            crate::runtime::EmbeddedPersistenceFailure::Flash,
-        )
+        crate::runtime::StoreRemoteControlAuthorizationSnapshotOutcome::Failed {
+            failure: crate::runtime::EmbeddedPersistenceFailure::Flash,
+            retry_at: None,
+        }
     }
 }
 
