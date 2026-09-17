@@ -4,14 +4,13 @@ use personal_hopspot_core::display::{
 };
 #[cfg(feature = "remote-control-pairing")]
 use personal_rns::engine::{OpenRemoteControlPairing, RemoteControlTargetPairingApproval};
-#[cfg(feature = "remote-control-pairing")]
-use personal_rns::remote_control::{
-    RemoteControlControllerAuthority, RemoteControlPairingAttemptTimeout,
-    RemoteControlPairingExpiresAfter, RemoteControlPairingPermissions,
-    RemoteControlPairingPublicAppDataBytes, RemoteControlRequestKind, RemoteControlRequestSet,
-};
 use personal_rns::remote_control::{
     RemoteControlInitialControllerGrants, RemoteControlSelfAnnouncement, RemoteControlService,
+};
+#[cfg(feature = "remote-control-pairing")]
+use personal_rns::remote_control::{
+    RemoteControlPairingAttemptTimeout, RemoteControlPairingExpiresAfter,
+    RemoteControlPairingPublicAppDataBytes,
 };
 
 #[cfg(feature = "remote-control-pairing")]
@@ -297,17 +296,9 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         remote_control::capabilities::<B>(),
     );
     #[cfg(feature = "remote-control-pairing")]
-    let remote_control_pairing_permissions = {
-        // Keep the existing pairing promise until the UI can explicitly authorize the new
-        // controls. Advertising board capabilities must not silently widen a pairing grant.
-        let mut requests = RemoteControlRequestSet::only(RemoteControlRequestKind::Describe);
-        requests.insert(RemoteControlRequestKind::AnnounceSelf);
-        RemoteControlPairingPermissions::new(
-            RemoteControlControllerAuthority::Operator,
-            requests.intersection(&remote_control.available_requests()),
-        )
-        .expect("RemoteControl supports the existing pairing requests")
-    };
+    let remote_control_pairing_permissions =
+        screen::limited_remote_control_pairing_permissions(&remote_control.available_requests())
+            .expect("RemoteControl supports the existing pairing requests");
     #[cfg(feature = "remote-control-pairing")]
     let remote_control_pairing_public_app_data =
         RemoteControlPairingPublicAppDataBytes::try_from(B::NODE_ANNOUNCE_APP_DATA)
