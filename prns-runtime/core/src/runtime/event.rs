@@ -498,7 +498,8 @@ mod tests {
             &begin,
             permissions,
             timeout,
-        );
+        )
+        .expect("the test signer's permissions form a valid pairing offer");
         prepared.transcript().into()
     }
 
