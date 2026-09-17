@@ -1,7 +1,24 @@
-use personal_rns::remote_control::RemoteControlPairingAttemptId;
+use personal_rns::remote_control::{
+    RemoteControlControllerAuthority, RemoteControlPairingAttemptId,
+    RemoteControlPairingPermissions, RemoteControlPairingPermissionsError,
+    RemoteControlRequestKind, RemoteControlRequestSet,
+};
 use personal_rns::units::InstantMillis;
 
 pub const STABLE_TARGET_ANNOUNCE_OFFSETS_MILLIS: [u64; 3] = [0, 2_000, 8_000];
+
+/// Keep the local pairing UI's existing authorization promise as board capabilities grow.
+/// Additional controls require an explicit permission UI, not a wider advertised capability set.
+pub fn limited_remote_control_pairing_permissions(
+    available_requests: &RemoteControlRequestSet,
+) -> Result<RemoteControlPairingPermissions, RemoteControlPairingPermissionsError> {
+    let mut requests = RemoteControlRequestSet::only(RemoteControlRequestKind::Describe);
+    requests.insert(RemoteControlRequestKind::AnnounceSelf);
+    RemoteControlPairingPermissions::new(
+        RemoteControlControllerAuthority::Operator,
+        requests.intersection(available_requests),
+    )
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RemoteControlPairingAvailability {
@@ -600,6 +617,42 @@ impl Default for StableTargetAnnouncer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pairing_does_not_grant_new_controls_or_administrator_authority() {
+        let permissions =
+            limited_remote_control_pairing_permissions(&RemoteControlRequestSet::all()).unwrap();
+        assert_eq!(
+            permissions.authority(),
+            RemoteControlControllerAuthority::Operator
+        );
+        let mut expected = RemoteControlRequestSet::only(RemoteControlRequestKind::Describe);
+        expected.insert(RemoteControlRequestKind::AnnounceSelf);
+        assert_eq!(permissions.permitted_requests(), &expected);
+    }
+
+    #[test]
+    fn pairing_permissions_are_intersected_with_actual_board_capabilities() {
+        for request in [
+            RemoteControlRequestKind::Describe,
+            RemoteControlRequestKind::AnnounceSelf,
+        ] {
+            let supported = RemoteControlRequestSet::only(request);
+            let permissions = limited_remote_control_pairing_permissions(&supported).unwrap();
+            assert_eq!(permissions.permitted_requests(), &supported);
+        }
+    }
+
+    #[test]
+    fn pairing_refuses_a_board_without_any_supported_initial_permission() {
+        let unsupported =
+            RemoteControlRequestSet::only(RemoteControlRequestKind::SetInterfacePower);
+        assert_eq!(
+            limited_remote_control_pairing_permissions(&unsupported),
+            Err(RemoteControlPairingPermissionsError::NoPermittedRequests),
+        );
+    }
+
     #[test]
     fn event_burst_keeps_the_latest_authoritative_state_behind_one_pending_wake() {
         let id = 0xA5_u8;
