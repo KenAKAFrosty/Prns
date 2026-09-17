@@ -8,10 +8,14 @@ mod l2cap_lifecycle;
 mod peripheral;
 
 #[cfg(test)]
+mod peripheral_tests;
+#[cfg(test)]
+mod radio_lifecycle_tests;
+#[cfg(test)]
 mod tests;
 
-use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, Mutex};
+#[cfg(any(test, target_os = "ios"))]
+use std::fmt;
 
 use objc2::msg_send;
 use objc2::rc::Retained;
@@ -22,6 +26,7 @@ use objc2_core_bluetooth::{
     CBPeripheralManager, CBUUID,
 };
 use objc2_foundation::{NSArray, NSData, NSDictionary, NSNumber, NSString};
+use tokio::sync::{mpsc as tokio_mpsc, watch};
 
 use prns_core::interfaces::bluetooth_auto::{
     BleAddress, BleUuid, BLE_SERVICE_UUID, COLUMBA_IDENTITY_UUID, COLUMBA_RX_UUID, COLUMBA_TX_UUID,
@@ -29,14 +34,13 @@ use prns_core::interfaces::bluetooth_auto::{
 };
 
 use central::CentralDelegate;
-use gatt_link::GattLink;
 use peripheral::PeripheralDelegate;
 
-pub use backend::{MacosBleBackend, PreparedMacosBleBackend};
+pub use backend::{
+    CentralOnlyMacosBleBackend, MacosBleBackend, PreparedCentralOnlyMacosBleBackend,
+    PreparedMacosBleBackend,
+};
 pub use gatt_link::{GattSink, GattSource};
-
-type PeripheralTable = Arc<Mutex<HashMap<CoreBluetoothPeerId, (SendPeripheral, Option<i8>)>>>;
-type RestoredPeripherals = Arc<Mutex<VecDeque<CoreBluetoothPeerId>>>;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct CoreBluetoothPeerId([u8; 16]);
@@ -49,10 +53,122 @@ impl CoreBluetoothPeerId {
     }
 }
 
-#[cfg(target_os = "ios")]
+#[cfg(any(test, target_os = "ios"))]
 const CENTRAL_RESTORE_IDENTIFIER: &str = "com.personal.prns.ble.central";
-#[cfg(target_os = "ios")]
+#[cfg(any(test, target_os = "ios"))]
 const PERIPHERAL_RESTORE_IDENTIFIER: &str = "com.personal.prns.ble.peripheral";
+
+/// Stable, application-owned identifiers for the two CoreBluetooth managers used by Bluetooth
+/// Auto.
+///
+/// Passing these identifiers opts the caller into CoreBluetooth state preservation and
+/// restoration. The containing application is responsible for declaring the matching central and
+/// peripheral background modes and reinstantiating the managers with the same identifiers when
+/// iOS relaunches it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg(any(test, target_os = "ios"))]
+pub struct CoreBluetoothRestorationIdentifiers {
+    central: String,
+    peripheral: String,
+}
+
+/// Stable, application-owned identifier for the CoreBluetooth central manager used by a
+/// central-only Bluetooth Auto backend.
+///
+/// This identifier opts only the central manager into CoreBluetooth state preservation and
+/// restoration. The containing application is responsible for declaring the `bluetooth-central`
+/// background mode and recreating the manager with this exact identifier when iOS relaunches it.
+/// No peripheral restoration identifier is accepted because central-only preparation does not
+/// create a `CBPeripheralManager`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg(any(test, target_os = "ios"))]
+pub struct CoreBluetoothCentralRestorationIdentifier(String);
+
+#[cfg(any(test, target_os = "ios"))]
+impl CoreBluetoothCentralRestorationIdentifier {
+    pub fn new(
+        identifier: impl Into<String>,
+    ) -> Result<Self, CoreBluetoothRestorationIdentifiersError> {
+        let identifier = identifier.into();
+        if identifier.is_empty() {
+            return Err(CoreBluetoothRestorationIdentifiersError::EmptyCentral);
+        }
+        Ok(Self(identifier))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[cfg(any(test, target_os = "ios"))]
+impl CoreBluetoothRestorationIdentifiers {
+    pub fn new(
+        central: impl Into<String>,
+        peripheral: impl Into<String>,
+    ) -> Result<Self, CoreBluetoothRestorationIdentifiersError> {
+        let central = central.into();
+        if central.is_empty() {
+            return Err(CoreBluetoothRestorationIdentifiersError::EmptyCentral);
+        }
+        let peripheral = peripheral.into();
+        if peripheral.is_empty() {
+            return Err(CoreBluetoothRestorationIdentifiersError::EmptyPeripheral);
+        }
+        if central == peripheral {
+            return Err(CoreBluetoothRestorationIdentifiersError::Duplicate);
+        }
+        Ok(Self {
+            central,
+            peripheral,
+        })
+    }
+
+    #[must_use]
+    pub fn central(&self) -> &str {
+        &self.central
+    }
+
+    #[must_use]
+    pub fn peripheral(&self) -> &str {
+        &self.peripheral
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg(any(test, target_os = "ios"))]
+pub enum CoreBluetoothRestorationIdentifiersError {
+    EmptyCentral,
+    EmptyPeripheral,
+    Duplicate,
+}
+
+#[cfg(any(test, target_os = "ios"))]
+impl fmt::Display for CoreBluetoothRestorationIdentifiersError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyCentral => formatter
+                .write_str("the CoreBluetooth central restoration identifier must not be empty"),
+            Self::EmptyPeripheral => formatter
+                .write_str("the CoreBluetooth peripheral restoration identifier must not be empty"),
+            Self::Duplicate => formatter.write_str(
+                "the CoreBluetooth central and peripheral restoration identifiers must differ",
+            ),
+        }
+    }
+}
+
+#[cfg(any(test, target_os = "ios"))]
+impl std::error::Error for CoreBluetoothRestorationIdentifiersError {}
+
+#[cfg(any(test, target_os = "ios"))]
+fn legacy_restoration_identifiers() -> CoreBluetoothRestorationIdentifiers {
+    CoreBluetoothRestorationIdentifiers {
+        central: CENTRAL_RESTORE_IDENTIFIER.to_owned(),
+        peripheral: PERIPHERAL_RESTORE_IDENTIFIER.to_owned(),
+    }
+}
 
 fn cbuuid(uuid: BleUuid) -> Retained<CBUUID> {
     match uuid {
@@ -121,22 +237,22 @@ fn scan_options() -> Retained<NSDictionary<NSString, AnyObject>> {
 }
 
 #[cfg(target_os = "ios")]
-fn central_manager_options() -> Retained<NSDictionary<NSString, AnyObject>> {
+fn central_manager_options(identifier: &str) -> Retained<NSDictionary<NSString, AnyObject>> {
     use objc2_core_bluetooth::CBCentralManagerOptionRestoreIdentifierKey;
     // SAFETY: CoreBluetooth exports this NSString constant with process lifetime.
     let key: &NSString = unsafe { CBCentralManagerOptionRestoreIdentifierKey };
-    let value = NSString::from_str(CENTRAL_RESTORE_IDENTIFIER);
+    let value = NSString::from_str(identifier);
     let value_ref: &NSString = &value;
     let value_obj: &AnyObject = value_ref;
     NSDictionary::from_slices(&[key], &[value_obj])
 }
 
 #[cfg(target_os = "ios")]
-fn peripheral_manager_options() -> Retained<NSDictionary<NSString, AnyObject>> {
+fn peripheral_manager_options(identifier: &str) -> Retained<NSDictionary<NSString, AnyObject>> {
     use objc2_core_bluetooth::CBPeripheralManagerOptionRestoreIdentifierKey;
     // SAFETY: CoreBluetooth exports this NSString constant with process lifetime.
     let key: &NSString = unsafe { CBPeripheralManagerOptionRestoreIdentifierKey };
-    let value = NSString::from_str(PERIPHERAL_RESTORE_IDENTIFIER);
+    let value = NSString::from_str(identifier);
     let value_ref: &NSString = &value;
     let value_obj: &AnyObject = value_ref;
     NSDictionary::from_slices(&[key], &[value_obj])
@@ -167,6 +283,7 @@ struct SendPeripheralManager(Retained<CBPeripheralManager>);
 // retained Objective-C object is never concurrently messaged by Prns.
 unsafe impl Send for SendPeripheralManager {}
 
+#[derive(Clone)]
 struct SendPeripheral(Retained<CBPeripheral>);
 // SAFETY: this wrapper is only transferred into jobs on the central manager's serial dispatch
 // queue; Prns does not concurrently message the retained peripheral.
@@ -199,24 +316,96 @@ impl SendPeripheralDelegate {
     }
 }
 
-enum Event {
-    CentralPowered,
-    GattServicePublished,
-    GattServicePublishFailed,
-    L2capPublished {
-        psm: u16,
-    },
-    L2capPublishFailed,
-    Sighting {
-        address: BleAddress,
-        rssi: Option<i8>,
-    },
-    Inbound(GattLink),
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum PublicationState {
+    #[default]
+    Waiting,
+    Published,
+    Failed,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum L2capPublicationState {
+    #[default]
+    Waiting,
+    Published(u16),
+    Failed,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct ManagerSignals {
+    central_powered_generation: u64,
+    gatt: PublicationState,
+    l2cap: L2capPublicationState,
+}
+
+#[derive(Clone)]
+struct ManagerSignalSender(watch::Sender<ManagerSignals>);
+
+impl ManagerSignalSender {
+    fn central_powered(&self) {
+        self.0.send_modify(|signals| {
+            signals.central_powered_generation = signals.central_powered_generation.wrapping_add(1);
+        });
+    }
+
+    fn gatt_service_published(&self) {
+        self.0.send_modify(|signals| {
+            if signals.gatt != PublicationState::Failed {
+                signals.gatt = PublicationState::Published;
+            }
+        });
+    }
+
+    fn gatt_service_publish_failed(&self) {
+        self.0
+            .send_modify(|signals| signals.gatt = PublicationState::Failed);
+    }
+
+    fn l2cap_published(&self, psm: u16) {
+        self.0.send_modify(|signals| {
+            if signals.l2cap != L2capPublicationState::Failed {
+                signals.l2cap = L2capPublicationState::Published(psm);
+            }
+        });
+    }
+
+    fn l2cap_publish_failed(&self) {
+        self.0
+            .send_modify(|signals| signals.l2cap = L2capPublicationState::Failed);
+    }
+}
+
+fn manager_signal_channel() -> (ManagerSignalSender, watch::Receiver<ManagerSignals>) {
+    let (sender, receiver) = watch::channel(ManagerSignals::default());
+    (ManagerSignalSender(sender), receiver)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Sighting {
+    address: BleAddress,
+    rssi: Option<i8>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum BoundedIngress<T> {
+    Accepted,
+    Full(T),
+    Closed(T),
+}
+
+fn try_bounded_ingress<T>(sender: &tokio_mpsc::Sender<T>, value: T) -> BoundedIngress<T> {
+    match sender.try_send(value) {
+        Ok(()) => BoundedIngress::Accepted,
+        Err(tokio_mpsc::error::TrySendError::Full(value)) => BoundedIngress::Full(value),
+        Err(tokio_mpsc::error::TrySendError::Closed(value)) => BoundedIngress::Closed(value),
+    }
 }
 
 #[derive(Debug)]
 pub enum MacosBleError {
     PowerOnTimeout,
+    RadioTransitionTimeout,
     Closed,
     ControlTooLarge,
     NotifyFailed,
