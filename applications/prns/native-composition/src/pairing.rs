@@ -195,11 +195,20 @@ pub fn apply_event(
                     .permissions()
                     .permitted_requests(),
             );
+            let authority = match confirmation.confirmation().permissions().authority() {
+                personal_rns::remote_control::RemoteControlControllerAuthority::Operator => {
+                    crate::contract::RemoteControlControllerAuthority::Operator
+                }
+                personal_rns::remote_control::RemoteControlControllerAuthority::Administrator => {
+                    crate::contract::RemoteControlControllerAuthority::Administrator
+                }
+            };
             snapshots.update(|snapshot| {
                 snapshot.pairing = RemoteControlPairingState::ConfirmationRequired {
                     attempt_id: observed_attempt_id,
                     confirmation_code,
                     target_identity_fingerprint,
+                    authority,
                     permissions,
                 };
             });
@@ -621,15 +630,48 @@ pub fn bytes_hex(bytes: &[u8]) -> String {
 
 #[must_use]
 pub fn request_kinds(requests: &RemoteControlRequestSet) -> Vec<RemoteControlRequestKind> {
+    use personal_rns::remote_control::RemoteControlRequestKind as CoreRequest;
     requests
         .iter()
         .map(|kind| match kind {
-            personal_rns::remote_control::RemoteControlRequestKind::Describe => {
-                RemoteControlRequestKind::Describe
+            CoreRequest::Describe => RemoteControlRequestKind::Describe,
+            CoreRequest::AnnounceSelf => RemoteControlRequestKind::AnnounceSelf,
+            CoreRequest::InventoryInterfaces => RemoteControlRequestKind::InventoryInterfaces,
+            CoreRequest::SetInterfacePower => RemoteControlRequestKind::SetInterfacePower,
+            CoreRequest::SleepRadios => RemoteControlRequestKind::SleepRadios,
+            CoreRequest::WakeRadios => RemoteControlRequestKind::WakeRadios,
+            CoreRequest::SetInterfaceMode => RemoteControlRequestKind::SetInterfaceMode,
+            CoreRequest::SetInterfaceGroup => RemoteControlRequestKind::SetInterfaceGroup,
+            CoreRequest::InventoryInterfacePeers => {
+                RemoteControlRequestKind::InventoryInterfacePeers
             }
-            personal_rns::remote_control::RemoteControlRequestKind::AnnounceSelf => {
-                RemoteControlRequestKind::AnnounceSelf
+            CoreRequest::InventoryInterfaceConfig => {
+                RemoteControlRequestKind::InventoryInterfaceConfig
             }
+            CoreRequest::SetInterfaceLoRaProfile => {
+                RemoteControlRequestKind::SetInterfaceLoRaProfile
+            }
+            CoreRequest::DescribeBuild => RemoteControlRequestKind::DescribeBuild,
+            CoreRequest::SetInterfaceWifiStation => {
+                RemoteControlRequestKind::SetInterfaceWifiStation
+            }
+            CoreRequest::InventoryControllers => RemoteControlRequestKind::InventoryControllers,
+            CoreRequest::AuthorizeController => RemoteControlRequestKind::AuthorizeController,
+            CoreRequest::RevokeController => RemoteControlRequestKind::RevokeController,
+            CoreRequest::DescribePower => RemoteControlRequestKind::DescribePower,
+            CoreRequest::SetSystemPower => RemoteControlRequestKind::SetSystemPower,
+            CoreRequest::SetGnssPower => RemoteControlRequestKind::SetGnssPower,
+            CoreRequest::SetDisplayVisibility => RemoteControlRequestKind::SetDisplayVisibility,
+            CoreRequest::SetDisplayAutoOff => RemoteControlRequestKind::SetDisplayAutoOff,
+            CoreRequest::SetStationUplink => RemoteControlRequestKind::SetStationUplink,
+            CoreRequest::SetEspRadioMode => RemoteControlRequestKind::SetEspRadioMode,
+            CoreRequest::StageWifiCredentials => RemoteControlRequestKind::StageWifiCredentials,
+            CoreRequest::ActivateWifiCredentials => {
+                RemoteControlRequestKind::ActivateWifiCredentials
+            }
+            CoreRequest::ConfirmWifiCredentials => RemoteControlRequestKind::ConfirmWifiCredentials,
+            CoreRequest::CancelWifiCredentials => RemoteControlRequestKind::CancelWifiCredentials,
+            CoreRequest::InspectWifiTransaction => RemoteControlRequestKind::InspectWifiTransaction,
         })
         .collect()
 }
@@ -649,7 +691,33 @@ mod tests {
             request_kinds(&RemoteControlRequestSet::all()),
             vec![
                 RemoteControlRequestKind::Describe,
-                RemoteControlRequestKind::AnnounceSelf
+                RemoteControlRequestKind::AnnounceSelf,
+                RemoteControlRequestKind::InventoryInterfaces,
+                RemoteControlRequestKind::SetInterfacePower,
+                RemoteControlRequestKind::SleepRadios,
+                RemoteControlRequestKind::WakeRadios,
+                RemoteControlRequestKind::SetInterfaceMode,
+                RemoteControlRequestKind::SetInterfaceGroup,
+                RemoteControlRequestKind::InventoryInterfacePeers,
+                RemoteControlRequestKind::InventoryInterfaceConfig,
+                RemoteControlRequestKind::SetInterfaceLoRaProfile,
+                RemoteControlRequestKind::DescribeBuild,
+                RemoteControlRequestKind::SetInterfaceWifiStation,
+                RemoteControlRequestKind::InventoryControllers,
+                RemoteControlRequestKind::AuthorizeController,
+                RemoteControlRequestKind::RevokeController,
+                RemoteControlRequestKind::DescribePower,
+                RemoteControlRequestKind::SetSystemPower,
+                RemoteControlRequestKind::SetGnssPower,
+                RemoteControlRequestKind::SetDisplayVisibility,
+                RemoteControlRequestKind::SetDisplayAutoOff,
+                RemoteControlRequestKind::SetStationUplink,
+                RemoteControlRequestKind::SetEspRadioMode,
+                RemoteControlRequestKind::StageWifiCredentials,
+                RemoteControlRequestKind::ActivateWifiCredentials,
+                RemoteControlRequestKind::ConfirmWifiCredentials,
+                RemoteControlRequestKind::CancelWifiCredentials,
+                RemoteControlRequestKind::InspectWifiTransaction,
             ]
         );
     }
@@ -1165,11 +1233,14 @@ mod tests {
             &target_signer,
             context,
             &begin,
-            RemoteControlPairingPermissions::try_from(RemoteControlRequestSet::all())
-                .expect("nonempty permissions"),
+            RemoteControlPairingPermissions::try_from(RemoteControlRequestSet::only(
+                personal_rns::remote_control::RemoteControlRequestKind::Describe,
+            ))
+            .expect("nonempty permissions"),
             RemoteControlPairingAttemptTimeout::try_from(DurationMillis(5_000))
                 .expect("valid attempt timeout"),
-        );
+        )
+        .expect("operator pairing offer");
         RemoteControlPairingAttemptId::from(prepared.transcript())
     }
 }

@@ -27,6 +27,18 @@ struct HeldDescribeState {
     received: Arc<Notify>,
 }
 
+impl personal_rns::runtime::RemoteControlHostControls for HeldDescribeState {
+    async fn execute_remote_control(
+        &self,
+        _command: personal_rns::runtime::RemoteControlHostCommand,
+    ) -> Result<
+        personal_rns::runtime::RemoteControlHostResponse,
+        personal_rns::runtime::RemoteControlHostCommandError,
+    > {
+        Err(personal_rns::runtime::RemoteControlHostCommandError::Unsupported)
+    }
+}
+
 struct HeldDescribe;
 
 impl RequestEndpoint<HeldDescribeState> for HeldDescribe {
@@ -103,7 +115,7 @@ async fn cancelling_a_connected_describe_retires_both_tcp_links() {
                     RemoteControlSelfAnnouncement::Unavailable,
                 ),
                 pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
-                app_state: (),
+                app_state: personal_rns::runtime::NoRemoteControlHostControls,
                 storage: GrowableHeap,
                 request_endpoints: request_endpoints![],
                 on_event: |_event, _state| {},
@@ -119,6 +131,7 @@ async fn cancelling_a_connected_describe_retires_both_tcp_links() {
                     .set_remote_control_target_access(
                         RemoteControlTargetAccess::new(
                             RemoteControlTargetIdentity::new(*target_identity.public_keys()),
+                            personal_rns::remote_control::RemoteControlControllerAuthority::Operator,
                             RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
                         )
                         .expect("nonempty target permission"),

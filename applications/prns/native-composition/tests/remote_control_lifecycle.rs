@@ -111,7 +111,7 @@ impl TargetHarness {
                 service(identity_secrets)
             },
             pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
-            app_state: (),
+            app_state: personal_rns::runtime::NoRemoteControlHostControls,
             storage: GrowableHeap,
             request_endpoints: request_endpoints![],
             on_event: move |event, _state| {
@@ -277,7 +277,7 @@ async fn controlled_tcp_remote_control_matrix_uses_the_public_lifecycle() {
             permission_refusal().await;
             durable_restart_describe_and_unavailable_target().await;
             authorized_announcement_and_retained_result().await;
-            persistence_failure().await;
+            persistent_rollback_failure_stops_the_controller().await;
         })
         .await;
 }
@@ -291,7 +291,7 @@ async fn rejection_expiry_and_stale_decisions() {
 
     let first = begin_pairing(
         &mut target,
-        RemoteControlRequestSet::all(),
+        RemoteControlRequestSet::all_operator(),
         NORMAL_PAIRING_WINDOW,
         NORMAL_ATTEMPT_TIMEOUT,
     )
@@ -323,7 +323,7 @@ async fn rejection_expiry_and_stale_decisions() {
 
     let second = begin_pairing(
         &mut target,
-        RemoteControlRequestSet::all(),
+        RemoteControlRequestSet::all_operator(),
         NORMAL_PAIRING_WINDOW,
         NORMAL_ATTEMPT_TIMEOUT,
     )
@@ -367,7 +367,7 @@ async fn rejection_expiry_and_stale_decisions() {
     target.wait_for_connection().await;
     let expired = begin_pairing(
         &mut target,
-        RemoteControlRequestSet::all(),
+        RemoteControlRequestSet::all_operator(),
         DurationMillis(5_000),
         DurationMillis(1_000),
     )
@@ -441,7 +441,7 @@ async fn durable_restart_describe_and_unavailable_target() {
     target.wait_for_connection().await;
     let attempt = begin_pairing(
         &mut target,
-        RemoteControlRequestSet::all(),
+        RemoteControlRequestSet::all_operator(),
         NORMAL_PAIRING_WINDOW,
         NORMAL_ATTEMPT_TIMEOUT,
     )
@@ -531,7 +531,7 @@ async fn authorized_announcement_and_retained_result() {
     target.wait_for_connection().await;
     let attempt = begin_pairing(
         &mut target,
-        RemoteControlRequestSet::all(),
+        RemoteControlRequestSet::all_operator(),
         NORMAL_PAIRING_WINDOW,
         NORMAL_ATTEMPT_TIMEOUT,
     )
@@ -599,7 +599,7 @@ async fn authorized_announcement_and_retained_result() {
     stop_controller().await;
 }
 
-async fn persistence_failure() {
+async fn persistent_rollback_failure_stops_the_controller() {
     let storage = AppStorage::new();
     let mut target = TargetHarness::start().await;
     create_identity(&storage.root).await;
@@ -607,7 +607,7 @@ async fn persistence_failure() {
     target.wait_for_connection().await;
     let attempt = begin_pairing(
         &mut target,
-        RemoteControlRequestSet::all(),
+        RemoteControlRequestSet::all_operator(),
         NORMAL_PAIRING_WINDOW,
         NORMAL_ATTEMPT_TIMEOUT,
     )
@@ -633,11 +633,37 @@ async fn persistence_failure() {
         },
     )
     .await;
-    assert_eq!(failed.runtime, DevelopmentNodeRuntime::Running);
+    // This fixture blocks both the new authorization and its durable rollback.
+    // Upstream now fails closed when it cannot restore the prior durable image;
+    // continuing to run would misrepresent authorization state after a restart.
+    assert_eq!(failed.runtime, DevelopmentNodeRuntime::Failed);
+    let failure = failed
+        .failure
+        .as_ref()
+        .expect("terminal persistence failure");
+    assert_eq!(
+        failure.stage,
+        prns_app::contract::DevelopmentNodeFailureStage::PersistenceRestore
+    );
+    assert!(failure.detail.contains("rollback"), "{failure:?}");
+    assert!(matches!(failed.local_host, LocalHostState::Stopped { .. }));
     assert!(failed.active_operation.is_none());
-    assert_links_retired(&target).await;
+    assert!(failed.paired_targets.is_empty());
+    tokio::time::timeout(EXCHANGE_TIMEOUT, async {
+        while target.handle.link_count().await != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("failed controller retires its peer Link");
     storage.unblock_network_persistence();
-    stop_controller().await;
+    assert!(matches!(
+        run_blocking(app::stop).await,
+        DevelopmentNodeStopOutcome::Failed {
+            stage: prns_app::contract::DevelopmentNodeStopStage::Persistence,
+            detail,
+        } if detail.contains("rollback")
+    ));
     target.stop().await;
 }
 

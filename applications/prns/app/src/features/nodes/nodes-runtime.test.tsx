@@ -1785,6 +1785,7 @@ describe("Foundation 1 Nodes runtime binding", () => {
       ],
       [
         Bindings.RemoteControlPairingState.ConfirmationRequired.new({
+          authority: Bindings.RemoteControlControllerAuthority.Operator,
           attemptId: "attempt-1",
           confirmationCode: "123456",
           targetIdentityFingerprint: observedIdentity,
@@ -1844,6 +1845,12 @@ describe("Foundation 1 Nodes runtime binding", () => {
       await waitFor(() => expect(view.getByText(expectedCopy)).toBeTruthy());
       if (pairing.tag === Bindings.RemoteControlPairingState_Tags.ConfirmationRequired) {
         expect(view.getByText("44".repeat(16))).toBeTruthy();
+        expect(view.getByText("Operator")).toBeTruthy();
+        expect(
+          view.queryByText(
+            "This pairing also allows this device to manage other controllers' access.",
+          ),
+        ).toBeNull();
       }
       expect(JSON.stringify(view.toJSON())).not.toMatch(
         /E290|signed availability|upstream RemoteControl/iu,
@@ -1851,6 +1858,30 @@ describe("Foundation 1 Nodes runtime binding", () => {
       view.unmount();
       await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
     }
+  });
+  it("discloses administrator access before pairing approval", async () => {
+    const stop = jest.fn();
+    const pairing = Bindings.RemoteControlPairingState.ConfirmationRequired.new({
+      authority: Bindings.RemoteControlControllerAuthority.Administrator,
+      attemptId: "admin-attempt",
+      confirmationCode: "123456",
+      targetIdentityFingerprint: observedIdentity,
+      permissions: [Bindings.RemoteControlRequestKind.Describe],
+    });
+    const view = render(
+      <DevelopmentRuntimeProvider
+        provider={fakeProvider(stop, {}, false, pairing)}
+        refreshIntervalMillis={50}
+      >
+        <PairNodeScreen selectedCandidateId={undefined} />
+      </DevelopmentRuntimeProvider>,
+    );
+    await waitFor(() => expect(view.getByText("Administrator")).toBeTruthy());
+    expect(
+      view.getByText("This pairing also allows this device to manage other controllers' access."),
+    ).toBeTruthy();
+    view.unmount();
+    await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
   });
   it("gives a distinct user remedy for every pairing failure stage", async () => {
     const failures = [

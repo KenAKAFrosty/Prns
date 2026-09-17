@@ -5330,6 +5330,73 @@ public func FfiConverterTypeRemoteControlAnnounceUnknownReason_lower(_ value: Re
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
+public enum RemoteControlControllerAuthority: Equatable, Hashable {
+
+    case `operator`
+    case administrator
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteControlControllerAuthority: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteControlControllerAuthority: FfiConverterRustBuffer {
+    typealias SwiftType = RemoteControlControllerAuthority
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteControlControllerAuthority {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .`operator`
+
+        case 2: return .administrator
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RemoteControlControllerAuthority, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .`operator`:
+            writeInt(&buf, Int32(1))
+
+
+        case .administrator:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteControlControllerAuthority_lift(_ buf: RustBuffer) throws -> RemoteControlControllerAuthority {
+    return try FfiConverterTypeRemoteControlControllerAuthority.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteControlControllerAuthority_lower(_ value: RemoteControlControllerAuthority) -> RustBuffer {
+    return FfiConverterTypeRemoteControlControllerAuthority.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 public enum RemoteControlDescribeFailureStage: Equatable, Hashable {
 
     case input
@@ -5747,7 +5814,7 @@ public enum RemoteControlPairingState: Equatable, Hashable {
     case searching
     case invitationSubmitted(candidateId: String
     )
-    case confirmationRequired(attemptId: String, confirmationCode: String, targetIdentityFingerprint: Data, permissions: [RemoteControlRequestKind]
+    case confirmationRequired(attemptId: String, confirmationCode: String, targetIdentityFingerprint: Data, authority: RemoteControlControllerAuthority, permissions: [RemoteControlRequestKind]
     )
     case awaitingTargetApproval(attemptId: String
     )
@@ -5790,7 +5857,7 @@ public struct FfiConverterTypeRemoteControlPairingState: FfiConverterRustBuffer 
         case 3: return .invitationSubmitted(candidateId: try FfiConverterString.read(from: &buf)
         )
 
-        case 4: return .confirmationRequired(attemptId: try FfiConverterString.read(from: &buf), confirmationCode: try FfiConverterString.read(from: &buf), targetIdentityFingerprint: try FfiConverterData.read(from: &buf), permissions: try FfiConverterSequenceTypeRemoteControlRequestKind.read(from: &buf)
+        case 4: return .confirmationRequired(attemptId: try FfiConverterString.read(from: &buf), confirmationCode: try FfiConverterString.read(from: &buf), targetIdentityFingerprint: try FfiConverterData.read(from: &buf), authority: try FfiConverterTypeRemoteControlControllerAuthority.read(from: &buf), permissions: try FfiConverterSequenceTypeRemoteControlRequestKind.read(from: &buf)
         )
 
         case 5: return .awaitingTargetApproval(attemptId: try FfiConverterString.read(from: &buf)
@@ -5834,11 +5901,12 @@ public struct FfiConverterTypeRemoteControlPairingState: FfiConverterRustBuffer 
             FfiConverterString.write(candidateId, into: &buf)
 
 
-        case let .confirmationRequired(attemptId,confirmationCode,targetIdentityFingerprint,permissions):
+        case let .confirmationRequired(attemptId,confirmationCode,targetIdentityFingerprint,authority,permissions):
             writeInt(&buf, Int32(4))
             FfiConverterString.write(attemptId, into: &buf)
             FfiConverterString.write(confirmationCode, into: &buf)
             FfiConverterData.write(targetIdentityFingerprint, into: &buf)
+            FfiConverterTypeRemoteControlControllerAuthority.write(authority, into: &buf)
             FfiConverterSequenceTypeRemoteControlRequestKind.write(permissions, into: &buf)
 
 
@@ -5903,6 +5971,32 @@ public enum RemoteControlRequestKind: Equatable, Hashable {
 
     case describe
     case announceSelf
+    case inventoryInterfaces
+    case setInterfacePower
+    case sleepRadios
+    case wakeRadios
+    case setInterfaceMode
+    case setInterfaceGroup
+    case inventoryInterfacePeers
+    case inventoryInterfaceConfig
+    case setInterfaceLoRaProfile
+    case describeBuild
+    case setInterfaceWifiStation
+    case inventoryControllers
+    case authorizeController
+    case revokeController
+    case describePower
+    case setSystemPower
+    case setGnssPower
+    case setDisplayVisibility
+    case setDisplayAutoOff
+    case setStationUplink
+    case setEspRadioMode
+    case stageWifiCredentials
+    case activateWifiCredentials
+    case confirmWifiCredentials
+    case cancelWifiCredentials
+    case inspectWifiTransaction
 
 
 
@@ -5928,6 +6022,58 @@ public struct FfiConverterTypeRemoteControlRequestKind: FfiConverterRustBuffer {
 
         case 2: return .announceSelf
 
+        case 3: return .inventoryInterfaces
+
+        case 4: return .setInterfacePower
+
+        case 5: return .sleepRadios
+
+        case 6: return .wakeRadios
+
+        case 7: return .setInterfaceMode
+
+        case 8: return .setInterfaceGroup
+
+        case 9: return .inventoryInterfacePeers
+
+        case 10: return .inventoryInterfaceConfig
+
+        case 11: return .setInterfaceLoRaProfile
+
+        case 12: return .describeBuild
+
+        case 13: return .setInterfaceWifiStation
+
+        case 14: return .inventoryControllers
+
+        case 15: return .authorizeController
+
+        case 16: return .revokeController
+
+        case 17: return .describePower
+
+        case 18: return .setSystemPower
+
+        case 19: return .setGnssPower
+
+        case 20: return .setDisplayVisibility
+
+        case 21: return .setDisplayAutoOff
+
+        case 22: return .setStationUplink
+
+        case 23: return .setEspRadioMode
+
+        case 24: return .stageWifiCredentials
+
+        case 25: return .activateWifiCredentials
+
+        case 26: return .confirmWifiCredentials
+
+        case 27: return .cancelWifiCredentials
+
+        case 28: return .inspectWifiTransaction
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -5942,6 +6088,110 @@ public struct FfiConverterTypeRemoteControlRequestKind: FfiConverterRustBuffer {
 
         case .announceSelf:
             writeInt(&buf, Int32(2))
+
+
+        case .inventoryInterfaces:
+            writeInt(&buf, Int32(3))
+
+
+        case .setInterfacePower:
+            writeInt(&buf, Int32(4))
+
+
+        case .sleepRadios:
+            writeInt(&buf, Int32(5))
+
+
+        case .wakeRadios:
+            writeInt(&buf, Int32(6))
+
+
+        case .setInterfaceMode:
+            writeInt(&buf, Int32(7))
+
+
+        case .setInterfaceGroup:
+            writeInt(&buf, Int32(8))
+
+
+        case .inventoryInterfacePeers:
+            writeInt(&buf, Int32(9))
+
+
+        case .inventoryInterfaceConfig:
+            writeInt(&buf, Int32(10))
+
+
+        case .setInterfaceLoRaProfile:
+            writeInt(&buf, Int32(11))
+
+
+        case .describeBuild:
+            writeInt(&buf, Int32(12))
+
+
+        case .setInterfaceWifiStation:
+            writeInt(&buf, Int32(13))
+
+
+        case .inventoryControllers:
+            writeInt(&buf, Int32(14))
+
+
+        case .authorizeController:
+            writeInt(&buf, Int32(15))
+
+
+        case .revokeController:
+            writeInt(&buf, Int32(16))
+
+
+        case .describePower:
+            writeInt(&buf, Int32(17))
+
+
+        case .setSystemPower:
+            writeInt(&buf, Int32(18))
+
+
+        case .setGnssPower:
+            writeInt(&buf, Int32(19))
+
+
+        case .setDisplayVisibility:
+            writeInt(&buf, Int32(20))
+
+
+        case .setDisplayAutoOff:
+            writeInt(&buf, Int32(21))
+
+
+        case .setStationUplink:
+            writeInt(&buf, Int32(22))
+
+
+        case .setEspRadioMode:
+            writeInt(&buf, Int32(23))
+
+
+        case .stageWifiCredentials:
+            writeInt(&buf, Int32(24))
+
+
+        case .activateWifiCredentials:
+            writeInt(&buf, Int32(25))
+
+
+        case .confirmWifiCredentials:
+            writeInt(&buf, Int32(26))
+
+
+        case .cancelWifiCredentials:
+            writeInt(&buf, Int32(27))
+
+
+        case .inspectWifiTransaction:
+            writeInt(&buf, Int32(28))
 
         }
     }

@@ -1338,7 +1338,7 @@ pub(crate) mod tests {
                 transport_identity: None,
                 remote_control: service(target_identity_secrets),
                 pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
-                app_state: (),
+                app_state: personal_rns::runtime::NoRemoteControlHostControls,
                 storage: GrowableHeap,
                 request_endpoints: request_endpoints![],
                 on_event: move |event, _state| match event {
@@ -1377,7 +1377,7 @@ pub(crate) mod tests {
                 transport_identity: None,
                 remote_control: service(controller_identity_secrets),
                 pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
-                app_state: (),
+                app_state: personal_rns::runtime::NoRemoteControlHostControls,
                 storage: GrowableHeap,
                 request_endpoints: request_endpoints![],
                 on_event: move |event, _state| match event {
@@ -1420,7 +1420,7 @@ pub(crate) mod tests {
                         )
                         .expect("attempt timeout is valid"),
                         permissions: RemoteControlPairingPermissions::try_from(
-                            RemoteControlRequestSet::all(),
+                            RemoteControlRequestSet::all_operator(),
                         )
                         .expect("permissions are not empty"),
                         public_app_data: RemoteControlPairingPublicAppDataBytes::try_from(
@@ -1507,7 +1507,7 @@ pub(crate) mod tests {
                 transport_identity: None,
                 remote_control: service(target_identity_secrets),
                 pre_configured_destinations: [self_destination],
-                app_state: (),
+                app_state: personal_rns::runtime::NoRemoteControlHostControls,
                 storage: GrowableHeap,
                 request_endpoints: request_endpoints![],
                 on_event: move |event, _state| {
@@ -1540,7 +1540,7 @@ pub(crate) mod tests {
                 transport_identity: None,
                 remote_control: service(controller_identity_secrets),
                 pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
-                app_state: (),
+                app_state: personal_rns::runtime::NoRemoteControlHostControls,
                 storage: GrowableHeap,
                 request_endpoints: request_endpoints![],
                 on_event: move |event, _state| match event {

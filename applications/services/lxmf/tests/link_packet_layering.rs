@@ -301,12 +301,12 @@ async fn run_link_proof_packet_replay_and_lxmf_dedup_are_layered() {
         transport_identity: None,
         remote_control: RemoteControlService::Unavailable,
         pre_configured_destinations: [receiver_destination],
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: personal_rns::request_endpoints![],
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
-        on_event: move |event, _state: &()| {
+        on_event: move |event, _state: &personal_rns::runtime::NoRemoteControlHostControls| {
             let _outcome = event_callbacks.on_prns_event(&event);
             if matches!(
                 event,
@@ -321,12 +321,12 @@ async fn run_link_proof_packet_replay_and_lxmf_dedup_are_layered() {
         transport_identity: None,
         remote_control: RemoteControlService::Unavailable,
         pre_configured_destinations: [sender_destination],
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: personal_rns::request_endpoints![],
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
-        on_event: |_event, _state: &()| {},
+        on_event: |_event, _state: &personal_rns::runtime::NoRemoteControlHostControls| {},
     });
     let receiver_handle = receiver_node.handle();
     let sender_handle = sender_node.handle();

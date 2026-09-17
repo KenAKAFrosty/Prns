@@ -390,6 +390,7 @@ pub enum RemoteControlPairingState {
         attempt_id: String,
         confirmation_code: String,
         target_identity_fingerprint: Vec<u8>,
+        authority: RemoteControlControllerAuthority,
         permissions: Vec<RemoteControlRequestKind>,
     },
     AwaitingTargetApproval {
@@ -429,6 +430,39 @@ pub struct RemoteControlPairingCandidate {
 pub enum RemoteControlRequestKind {
     Describe,
     AnnounceSelf,
+    InventoryInterfaces,
+    SetInterfacePower,
+    SleepRadios,
+    WakeRadios,
+    SetInterfaceMode,
+    SetInterfaceGroup,
+    InventoryInterfacePeers,
+    InventoryInterfaceConfig,
+    SetInterfaceLoRaProfile,
+    DescribeBuild,
+    SetInterfaceWifiStation,
+    InventoryControllers,
+    AuthorizeController,
+    RevokeController,
+    DescribePower,
+    SetSystemPower,
+    SetGnssPower,
+    SetDisplayVisibility,
+    SetDisplayAutoOff,
+    SetStationUplink,
+    SetEspRadioMode,
+    StageWifiCredentials,
+    ActivateWifiCredentials,
+    ConfirmWifiCredentials,
+    CancelWifiCredentials,
+    InspectWifiTransaction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
+pub enum RemoteControlControllerAuthority {
+    Operator,
+    Administrator,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

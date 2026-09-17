@@ -1079,11 +1079,14 @@ fn pairing_attempt_fixture(
         &target_signer,
         context,
         &begin,
-        RemoteControlPairingPermissions::try_from(RemoteControlRequestSet::all())
-            .expect("nonempty permissions"),
+        RemoteControlPairingPermissions::try_from(RemoteControlRequestSet::only(
+            personal_rns::remote_control::RemoteControlRequestKind::Describe,
+        ))
+        .expect("nonempty permissions"),
         RemoteControlPairingAttemptTimeout::try_from(DurationMillis(5_000))
             .expect("valid attempt timeout"),
-    );
+    )
+    .expect("operator pairing offer");
     (
         RemoteControlPairingAttemptId::from(prepared.transcript()),
         context,
@@ -2363,6 +2366,7 @@ fn non_persistence_worker_failure_is_terminal_without_rewriting_pairing() {
         attempt_id: "attempt".to_owned(),
         confirmation_code: "123456".to_owned(),
         target_identity_fingerprint: vec![0x42; 16],
+        authority: crate::contract::RemoteControlControllerAuthority::Operator,
         permissions: vec![crate::contract::RemoteControlRequestKind::Describe],
     };
     seed_active_pairing(&snapshots, pairing.clone());
