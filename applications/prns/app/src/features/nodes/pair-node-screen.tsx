@@ -22,7 +22,7 @@ import {
 } from "@/ui/primitives";
 import { TextField } from "@/ui/text-field";
 import { useAppPalette } from "@/ui/theme";
-import { formatBytes, formatRequestKind } from "./format";
+import { formatBytes, formatControllerAuthority, formatRequestKind } from "./format";
 import { AndroidBluetoothCard } from "./android-bluetooth-card";
 
 type RemoteControlPairingState = DevelopmentNodeSnapshot["pairing"];
@@ -413,6 +413,15 @@ function PairingStateCard({
           <Badge tone="warning">Compare both devices</Badge>
           <KeyValue label="Confirmation code" value={pairing.inner.confirmationCode} />
           <KeyValue label="Node ID" value={formatBytes(pairing.inner.targetIdentityFingerprint)} />
+          <KeyValue
+            label="Access level"
+            value={formatControllerAuthority(pairing.inner.authority)}
+          />
+          {pairing.inner.authority === Bindings.RemoteControlControllerAuthority.Administrator ? (
+            <BodyText>
+              This pairing also allows this device to manage other controllers&apos; access.
+            </BodyText>
+          ) : null}
           <KeyValue
             label="Access requested"
             value={

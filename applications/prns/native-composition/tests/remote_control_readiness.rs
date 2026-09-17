@@ -38,6 +38,7 @@ async fn describe_waits_for_the_retained_route_interface_to_return() {
             );
             let grants = [RemoteControlControllerGrant::new(
                 *controller_secrets.identities().controller(),
+                personal_rns::remote_control::RemoteControlControllerAuthority::Operator,
                 permissions,
             )
             .expect("nonempty target grant")];
@@ -54,7 +55,7 @@ async fn describe_waits_for_the_retained_route_interface_to_return() {
                     RemoteControlSelfAnnouncement::Unavailable,
                 ),
                 pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
-                app_state: (),
+                app_state: personal_rns::runtime::NoRemoteControlHostControls,
                 storage: GrowableHeap,
                 request_endpoints: request_endpoints![],
                 on_event: move |event, _state| {
@@ -81,7 +82,7 @@ async fn describe_waits_for_the_retained_route_interface_to_return() {
                     RemoteControlSelfAnnouncement::Unavailable,
                 ),
                 pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
-                app_state: (),
+                app_state: personal_rns::runtime::NoRemoteControlHostControls,
                 storage: GrowableHeap,
                 request_endpoints: request_endpoints![],
                 on_event: |_event, _state| {},
@@ -98,6 +99,7 @@ async fn describe_waits_for_the_retained_route_interface_to_return() {
                     .set_remote_control_target_access(
                         RemoteControlTargetAccess::new(
                             RemoteControlTargetIdentity::new(*target_identity.public_keys()),
+                            personal_rns::remote_control::RemoteControlControllerAuthority::Operator,
                             permissions,
                         )
                             .expect("nonempty controller access"),

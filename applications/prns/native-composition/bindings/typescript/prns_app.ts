@@ -2917,9 +2917,63 @@ const FfiConverterTypeLxmfHealth = (() => {
     return new FFIConverter();
 })();
 
+export enum RemoteControlControllerAuthority {
+    Operator,
+    Administrator
+}
+
+const FfiConverterTypeRemoteControlControllerAuthority = (() => {
+    type TypeName = RemoteControlControllerAuthority;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            switch (c.readI32()) {
+                case 1: return RemoteControlControllerAuthority.Operator;
+                case 2: return RemoteControlControllerAuthority.Administrator;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            switch (value) {
+                case RemoteControlControllerAuthority.Operator: return c.writeI32(1);
+                case RemoteControlControllerAuthority.Administrator: return c.writeI32(2);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return 4;
+        }
+    }
+    return new FFIConverter();
+})();
+
 export enum RemoteControlRequestKind {
     Describe,
-    AnnounceSelf
+    AnnounceSelf,
+    InventoryInterfaces,
+    SetInterfacePower,
+    SleepRadios,
+    WakeRadios,
+    SetInterfaceMode,
+    SetInterfaceGroup,
+    InventoryInterfacePeers,
+    InventoryInterfaceConfig,
+    SetInterfaceLoRaProfile,
+    DescribeBuild,
+    SetInterfaceWifiStation,
+    InventoryControllers,
+    AuthorizeController,
+    RevokeController,
+    DescribePower,
+    SetSystemPower,
+    SetGnssPower,
+    SetDisplayVisibility,
+    SetDisplayAutoOff,
+    SetStationUplink,
+    SetEspRadioMode,
+    StageWifiCredentials,
+    ActivateWifiCredentials,
+    ConfirmWifiCredentials,
+    CancelWifiCredentials,
+    InspectWifiTransaction
 }
 
 const FfiConverterTypeRemoteControlRequestKind = (() => {
@@ -2929,6 +2983,32 @@ const FfiConverterTypeRemoteControlRequestKind = (() => {
             switch (c.readI32()) {
                 case 1: return RemoteControlRequestKind.Describe;
                 case 2: return RemoteControlRequestKind.AnnounceSelf;
+                case 3: return RemoteControlRequestKind.InventoryInterfaces;
+                case 4: return RemoteControlRequestKind.SetInterfacePower;
+                case 5: return RemoteControlRequestKind.SleepRadios;
+                case 6: return RemoteControlRequestKind.WakeRadios;
+                case 7: return RemoteControlRequestKind.SetInterfaceMode;
+                case 8: return RemoteControlRequestKind.SetInterfaceGroup;
+                case 9: return RemoteControlRequestKind.InventoryInterfacePeers;
+                case 10: return RemoteControlRequestKind.InventoryInterfaceConfig;
+                case 11: return RemoteControlRequestKind.SetInterfaceLoRaProfile;
+                case 12: return RemoteControlRequestKind.DescribeBuild;
+                case 13: return RemoteControlRequestKind.SetInterfaceWifiStation;
+                case 14: return RemoteControlRequestKind.InventoryControllers;
+                case 15: return RemoteControlRequestKind.AuthorizeController;
+                case 16: return RemoteControlRequestKind.RevokeController;
+                case 17: return RemoteControlRequestKind.DescribePower;
+                case 18: return RemoteControlRequestKind.SetSystemPower;
+                case 19: return RemoteControlRequestKind.SetGnssPower;
+                case 20: return RemoteControlRequestKind.SetDisplayVisibility;
+                case 21: return RemoteControlRequestKind.SetDisplayAutoOff;
+                case 22: return RemoteControlRequestKind.SetStationUplink;
+                case 23: return RemoteControlRequestKind.SetEspRadioMode;
+                case 24: return RemoteControlRequestKind.StageWifiCredentials;
+                case 25: return RemoteControlRequestKind.ActivateWifiCredentials;
+                case 26: return RemoteControlRequestKind.ConfirmWifiCredentials;
+                case 27: return RemoteControlRequestKind.CancelWifiCredentials;
+                case 28: return RemoteControlRequestKind.InspectWifiTransaction;
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -2936,6 +3016,32 @@ const FfiConverterTypeRemoteControlRequestKind = (() => {
             switch (value) {
                 case RemoteControlRequestKind.Describe: return c.writeI32(1);
                 case RemoteControlRequestKind.AnnounceSelf: return c.writeI32(2);
+                case RemoteControlRequestKind.InventoryInterfaces: return c.writeI32(3);
+                case RemoteControlRequestKind.SetInterfacePower: return c.writeI32(4);
+                case RemoteControlRequestKind.SleepRadios: return c.writeI32(5);
+                case RemoteControlRequestKind.WakeRadios: return c.writeI32(6);
+                case RemoteControlRequestKind.SetInterfaceMode: return c.writeI32(7);
+                case RemoteControlRequestKind.SetInterfaceGroup: return c.writeI32(8);
+                case RemoteControlRequestKind.InventoryInterfacePeers: return c.writeI32(9);
+                case RemoteControlRequestKind.InventoryInterfaceConfig: return c.writeI32(10);
+                case RemoteControlRequestKind.SetInterfaceLoRaProfile: return c.writeI32(11);
+                case RemoteControlRequestKind.DescribeBuild: return c.writeI32(12);
+                case RemoteControlRequestKind.SetInterfaceWifiStation: return c.writeI32(13);
+                case RemoteControlRequestKind.InventoryControllers: return c.writeI32(14);
+                case RemoteControlRequestKind.AuthorizeController: return c.writeI32(15);
+                case RemoteControlRequestKind.RevokeController: return c.writeI32(16);
+                case RemoteControlRequestKind.DescribePower: return c.writeI32(17);
+                case RemoteControlRequestKind.SetSystemPower: return c.writeI32(18);
+                case RemoteControlRequestKind.SetGnssPower: return c.writeI32(19);
+                case RemoteControlRequestKind.SetDisplayVisibility: return c.writeI32(20);
+                case RemoteControlRequestKind.SetDisplayAutoOff: return c.writeI32(21);
+                case RemoteControlRequestKind.SetStationUplink: return c.writeI32(22);
+                case RemoteControlRequestKind.SetEspRadioMode: return c.writeI32(23);
+                case RemoteControlRequestKind.StageWifiCredentials: return c.writeI32(24);
+                case RemoteControlRequestKind.ActivateWifiCredentials: return c.writeI32(25);
+                case RemoteControlRequestKind.ConfirmWifiCredentials: return c.writeI32(26);
+                case RemoteControlRequestKind.CancelWifiCredentials: return c.writeI32(27);
+                case RemoteControlRequestKind.InspectWifiTransaction: return c.writeI32(28);
             }
         }
         allocationSize(value: TypeName): number {
@@ -3099,7 +3205,7 @@ inner: {candidateId: string }): InvitationSubmitted_ {
     type ConfirmationRequired__interface = {
         tag: RemoteControlPairingState_Tags.ConfirmationRequired;
         inner:
-Readonly<{attemptId: string; confirmationCode: string; targetIdentityFingerprint: Uint8Array; permissions: Array<RemoteControlRequestKind>}>
+Readonly<{attemptId: string; confirmationCode: string; targetIdentityFingerprint: Uint8Array; authority: RemoteControlControllerAuthority; permissions: Array<RemoteControlRequestKind>}>
     };
     class ConfirmationRequired_ extends UniffiEnum implements ConfirmationRequired__interface {
         /**
@@ -3109,15 +3215,15 @@ Readonly<{attemptId: string; confirmationCode: string; targetIdentityFingerprint
         readonly [uniffiTypeNameSymbol] = "RemoteControlPairingState";
         readonly tag = RemoteControlPairingState_Tags.ConfirmationRequired;
         readonly inner:
-Readonly<{attemptId: string; confirmationCode: string; targetIdentityFingerprint: Uint8Array; permissions: Array<RemoteControlRequestKind>}>;
+Readonly<{attemptId: string; confirmationCode: string; targetIdentityFingerprint: Uint8Array; authority: RemoteControlControllerAuthority; permissions: Array<RemoteControlRequestKind>}>;
         constructor(
-inner: {attemptId: string; confirmationCode: string; targetIdentityFingerprint: Uint8Array; permissions: Array<RemoteControlRequestKind> }) {
+inner: {attemptId: string; confirmationCode: string; targetIdentityFingerprint: Uint8Array; authority: RemoteControlControllerAuthority; permissions: Array<RemoteControlRequestKind> }) {
             super("RemoteControlPairingState", "ConfirmationRequired");
 
             this.inner = Object.freeze(inner);
         }
         static new(
-inner: {attemptId: string; confirmationCode: string; targetIdentityFingerprint: Uint8Array; permissions: Array<RemoteControlRequestKind> }): ConfirmationRequired_ {
+inner: {attemptId: string; confirmationCode: string; targetIdentityFingerprint: Uint8Array; authority: RemoteControlControllerAuthority; permissions: Array<RemoteControlRequestKind> }): ConfirmationRequired_ {
             return new ConfirmationRequired_(inner);
         }
 
@@ -3370,7 +3476,7 @@ const FfiConverterTypeRemoteControlPairingState = (() => {
                 case 1: return new RemoteControlPairingState.BluetoothUnavailable();
                 case 2: return new RemoteControlPairingState.Searching();
                 case 3: return new RemoteControlPairingState.InvitationSubmitted({candidateId: FfiConverterString.readFromCursor(c) });
-                case 4: return new RemoteControlPairingState.ConfirmationRequired({attemptId: FfiConverterString.readFromCursor(c), confirmationCode: FfiConverterString.readFromCursor(c), targetIdentityFingerprint: FfiConverterUint8Array.readFromCursor(c), permissions: FfiConverterSequenceTypeRemoteControlRequestKind.readFromCursor(c) });
+                case 4: return new RemoteControlPairingState.ConfirmationRequired({attemptId: FfiConverterString.readFromCursor(c), confirmationCode: FfiConverterString.readFromCursor(c), targetIdentityFingerprint: FfiConverterUint8Array.readFromCursor(c), authority: FfiConverterTypeRemoteControlControllerAuthority.readFromCursor(c), permissions: FfiConverterSequenceTypeRemoteControlRequestKind.readFromCursor(c) });
                 case 5: return new RemoteControlPairingState.AwaitingTargetApproval({attemptId: FfiConverterString.readFromCursor(c) });
                 case 6: return new RemoteControlPairingState.Persisting({attemptId: FfiConverterString.readFromCursor(c) });
                 case 7: return new RemoteControlPairingState.Paired({attemptId: FfiConverterString.readFromCursor(c) });
@@ -3403,6 +3509,7 @@ const FfiConverterTypeRemoteControlPairingState = (() => {
                     FfiConverterString.writeIntoCursor(inner.attemptId, c);
                     FfiConverterString.writeIntoCursor(inner.confirmationCode, c);
                     FfiConverterUint8Array.writeIntoCursor(inner.targetIdentityFingerprint, c);
+                    FfiConverterTypeRemoteControlControllerAuthority.writeIntoCursor(inner.authority, c);
                     FfiConverterSequenceTypeRemoteControlRequestKind.writeIntoCursor(inner.permissions, c);
                     return;
                 }
@@ -3472,6 +3579,7 @@ const FfiConverterTypeRemoteControlPairingState = (() => {
                     size += FfiConverterString.allocationSize(inner.attemptId);
                     size += FfiConverterString.allocationSize(inner.confirmationCode);
                     size += FfiConverterUint8Array.allocationSize(inner.targetIdentityFingerprint);
+                    size += FfiConverterTypeRemoteControlControllerAuthority.allocationSize(inner.authority);
                     size += FfiConverterSequenceTypeRemoteControlRequestKind.allocationSize(inner.permissions);
                     return size;
                 }
@@ -9714,6 +9822,7 @@ export default Object.freeze({
     FfiConverterTypeRemoteControlAnnounceOutcome,
     FfiConverterTypeRemoteControlAnnounceStatus,
     FfiConverterTypeRemoteControlAnnounceUnknownReason,
+    FfiConverterTypeRemoteControlControllerAuthority,
     FfiConverterTypeRemoteControlDescribeFailureStage,
     FfiConverterTypeRemoteControlDescribeOutcome,
     FfiConverterTypeRemoteControlPairingCandidate,

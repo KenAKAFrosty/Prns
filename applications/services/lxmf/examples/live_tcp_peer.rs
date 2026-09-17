@@ -138,12 +138,12 @@ async fn run() -> Result<(), Failure> {
         remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: None,
         pre_configured_destinations: [destination],
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
-        on_event: move |event, _state: &()| {
+        on_event: move |event, _state: &personal_rns::runtime::NoRemoteControlHostControls| {
             let _outcome = event_callbacks.on_prns_event(&event);
         },
     })

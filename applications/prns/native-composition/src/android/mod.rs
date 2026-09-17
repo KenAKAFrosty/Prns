@@ -185,13 +185,13 @@ mod tests {
         let node = PrnsNode::new(PrnsNodeRecipe {
             transport_identity: None,
             pre_configured_destinations: std::iter::empty::<PreConfiguredDestination<'static>>(),
-            app_state: (),
+            app_state: personal_rns::runtime::NoRemoteControlHostControls,
             storage: GrowableHeap,
             request_endpoints: personal_rns::request_endpoints![],
             remote_control: RemoteControlService::Unavailable,
             interfaces: ManuallyAttached,
             persistence: NoPersistence,
-            on_event: |_event, _state: &()| {},
+            on_event: |_event, _state: &personal_rns::runtime::NoRemoteControlHostControls| {},
         });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await

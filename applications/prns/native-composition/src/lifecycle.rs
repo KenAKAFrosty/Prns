@@ -1819,12 +1819,12 @@ async fn run_generation(
         transport_identity: None,
         remote_control,
         pre_configured_destinations: [lxmf_destination],
-        app_state: (),
+        app_state: personal_rns::runtime::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: personal_rns::request_endpoints![],
         interfaces: ManuallyAttached,
         persistence,
-        on_event: move |event, _state: &()| {
+        on_event: move |event, _state: &personal_rns::runtime::NoRemoteControlHostControls| {
             let _lxmf_outcome = lxmf_events.on_prns_event(&event);
             send_event(&event_tx, &event_overflowed, event);
         },

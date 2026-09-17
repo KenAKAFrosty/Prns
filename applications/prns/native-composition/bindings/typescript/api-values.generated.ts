@@ -69,6 +69,7 @@ export {
   RemoteControlAnnounceStatus,
   RemoteControlAnnounceStatus_Tags,
   RemoteControlAnnounceUnknownReason,
+  RemoteControlControllerAuthority,
   RemoteControlDescribeFailureStage,
   RemoteControlDescribeOutcome,
   RemoteControlDescribeOutcome_Tags,

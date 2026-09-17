@@ -5698,6 +5698,40 @@ public object FfiConverterTypeRemoteControlAnnounceUnknownReason: FfiConverterRu
 
 
 
+enum class RemoteControlControllerAuthority {
+
+    OPERATOR,
+    ADMINISTRATOR;
+
+
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteControlControllerAuthority: FfiConverterRustBuffer<RemoteControlControllerAuthority> {
+    override fun read(buf: ByteBuffer) = try {
+        RemoteControlControllerAuthority.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: RemoteControlControllerAuthority) = 4UL
+
+    override fun write(value: RemoteControlControllerAuthority, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+
 enum class RemoteControlDescribeFailureStage {
 
     INPUT,
@@ -6016,6 +6050,7 @@ sealed class RemoteControlPairingState {
         val `attemptId`: kotlin.String,
         val `confirmationCode`: kotlin.String,
         val `targetIdentityFingerprint`: kotlin.ByteArray,
+        val `authority`: rs.reticulum.prns.app.bindings.RemoteControlControllerAuthority,
         val `permissions`: List<rs.reticulum.prns.app.bindings.RemoteControlRequestKind>) : RemoteControlPairingState()
 
     {
@@ -6107,6 +6142,7 @@ public object FfiConverterTypeRemoteControlPairingState : FfiConverterRustBuffer
                 FfiConverterString.read(buf),
                 FfiConverterString.read(buf),
                 FfiConverterByteArray.read(buf),
+                FfiConverterTypeRemoteControlControllerAuthority.read(buf),
                 FfiConverterSequenceTypeRemoteControlRequestKind.read(buf),
                 )
             5 -> RemoteControlPairingState.AwaitingTargetApproval(
@@ -6160,6 +6196,7 @@ public object FfiConverterTypeRemoteControlPairingState : FfiConverterRustBuffer
                 + FfiConverterString.allocationSize(value.`attemptId`)
                 + FfiConverterString.allocationSize(value.`confirmationCode`)
                 + FfiConverterByteArray.allocationSize(value.`targetIdentityFingerprint`)
+                + FfiConverterTypeRemoteControlControllerAuthority.allocationSize(value.`authority`)
                 + FfiConverterSequenceTypeRemoteControlRequestKind.allocationSize(value.`permissions`)
             )
         }
@@ -6234,6 +6271,7 @@ public object FfiConverterTypeRemoteControlPairingState : FfiConverterRustBuffer
                 FfiConverterString.write(value.`attemptId`, buf)
                 FfiConverterString.write(value.`confirmationCode`, buf)
                 FfiConverterByteArray.write(value.`targetIdentityFingerprint`, buf)
+                FfiConverterTypeRemoteControlControllerAuthority.write(value.`authority`, buf)
                 FfiConverterSequenceTypeRemoteControlRequestKind.write(value.`permissions`, buf)
                 Unit
             }
@@ -6284,7 +6322,33 @@ public object FfiConverterTypeRemoteControlPairingState : FfiConverterRustBuffer
 enum class RemoteControlRequestKind {
 
     DESCRIBE,
-    ANNOUNCE_SELF;
+    ANNOUNCE_SELF,
+    INVENTORY_INTERFACES,
+    SET_INTERFACE_POWER,
+    SLEEP_RADIOS,
+    WAKE_RADIOS,
+    SET_INTERFACE_MODE,
+    SET_INTERFACE_GROUP,
+    INVENTORY_INTERFACE_PEERS,
+    INVENTORY_INTERFACE_CONFIG,
+    SET_INTERFACE_LO_RA_PROFILE,
+    DESCRIBE_BUILD,
+    SET_INTERFACE_WIFI_STATION,
+    INVENTORY_CONTROLLERS,
+    AUTHORIZE_CONTROLLER,
+    REVOKE_CONTROLLER,
+    DESCRIBE_POWER,
+    SET_SYSTEM_POWER,
+    SET_GNSS_POWER,
+    SET_DISPLAY_VISIBILITY,
+    SET_DISPLAY_AUTO_OFF,
+    SET_STATION_UPLINK,
+    SET_ESP_RADIO_MODE,
+    STAGE_WIFI_CREDENTIALS,
+    ACTIVATE_WIFI_CREDENTIALS,
+    CONFIRM_WIFI_CREDENTIALS,
+    CANCEL_WIFI_CREDENTIALS,
+    INSPECT_WIFI_TRANSACTION;
 
 
 

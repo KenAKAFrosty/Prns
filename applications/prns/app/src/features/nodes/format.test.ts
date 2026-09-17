@@ -1,5 +1,5 @@
 import * as Bindings from "@prns-internal/expo";
-import { formatBytes, formatRequestKind, formatRuntime } from "./format";
+import { formatBytes, formatControllerAuthority, formatRequestKind, formatRuntime } from "./format";
 describe("Nodes presentation formatting", () => {
   it("renders exact byte values without inventing a text identity", () => {
     expect(formatBytes(Uint8Array.from([0, 15, 16, 255]))).toBe("000f10ff");
@@ -12,5 +12,18 @@ describe("Nodes presentation formatting", () => {
       "View node information",
     );
     expect(formatRuntime(Bindings.DevelopmentNodeRuntime.Stopping)).toBe("Stopping");
+  });
+  it("labels every supported permission and both access levels", () => {
+    const kinds = Object.values(Bindings.RemoteControlRequestKind).filter(
+      (value): value is Bindings.RemoteControlRequestKind => typeof value === "number",
+    );
+    expect(kinds).toHaveLength(28);
+    for (const kind of kinds) expect(formatRequestKind(kind)).toMatch(/\S/);
+    expect(formatControllerAuthority(Bindings.RemoteControlControllerAuthority.Operator)).toBe(
+      "Operator",
+    );
+    expect(formatControllerAuthority(Bindings.RemoteControlControllerAuthority.Administrator)).toBe(
+      "Administrator",
+    );
   });
 });
