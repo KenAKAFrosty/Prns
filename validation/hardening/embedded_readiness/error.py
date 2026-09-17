@@ -1,0 +1,2 @@
+class ReadinessError(RuntimeError):
+    pass

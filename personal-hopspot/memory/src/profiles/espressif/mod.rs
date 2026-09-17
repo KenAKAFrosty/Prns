@@ -9,6 +9,9 @@ use crate::{
     ReservationId, ReservationPoolId, RuntimeReservation,
 };
 
+#[cfg(feature = "linker-addresses")]
+pub(super) mod linker;
+
 const IRAM: AddressSpaceId = AddressSpaceId("instruction-ram");
 const DRAM: AddressSpaceId = AddressSpaceId("data-ram");
 const RECLAIMED_RAM: AddressSpaceId = AddressSpaceId("reclaimed-ram");
@@ -207,7 +210,7 @@ const ESP_COMMON_PREFIX: [MemoryRegion; 7] = [
     ),
 ];
 
-const ESP_16_MIB_REGIONS: [MemoryRegion; 11] = [
+const ESP_16_MIB_REGIONS: [MemoryRegion; 12] = [
     ESP_COMMON_PREFIX[0],
     ESP_COMMON_PREFIX[1],
     ESP_COMMON_PREFIX[2],
@@ -246,14 +249,23 @@ const ESP_16_MIB_REGIONS: [MemoryRegion; 11] = [
         "journal",
         FLASH,
         0xE80000,
+        0xFFE000,
+        RegionOwner::LearnedState,
+        RegionRetention::PreserveAcrossFirmwareUpdate,
+        RegionRole::Journal,
+    ),
+    region(
+        "wifi_cfg",
+        FLASH,
+        0xFFE000,
         0x1000000,
-        RegionOwner::LearnedState,
+        RegionOwner::Provisioning,
         RegionRetention::PreserveAcrossFirmwareUpdate,
-        RegionRole::Journal,
+        RegionRole::WifiConfiguration,
     ),
 ];
 
-const ESP_8_MIB_REGIONS: [MemoryRegion; 11] = [
+const ESP_8_MIB_REGIONS: [MemoryRegion; 12] = [
     ESP_COMMON_PREFIX[0],
     ESP_COMMON_PREFIX[1],
     ESP_COMMON_PREFIX[2],
@@ -292,14 +304,23 @@ const ESP_8_MIB_REGIONS: [MemoryRegion; 11] = [
         "journal",
         FLASH,
         0x680000,
-        0x800000,
+        0x7FE000,
         RegionOwner::LearnedState,
         RegionRetention::PreserveAcrossFirmwareUpdate,
         RegionRole::Journal,
     ),
+    region(
+        "wifi_cfg",
+        FLASH,
+        0x7FE000,
+        0x800000,
+        RegionOwner::Provisioning,
+        RegionRetention::PreserveAcrossFirmwareUpdate,
+        RegionRole::WifiConfiguration,
+    ),
 ];
 
-const ESP_4_MIB_REGIONS: [MemoryRegion; 10] = [
+const ESP_4_MIB_REGIONS: [MemoryRegion; 11] = [
     ESP_COMMON_PREFIX[0],
     ESP_COMMON_PREFIX[1],
     ESP_COMMON_PREFIX[2],
@@ -329,19 +350,28 @@ const ESP_4_MIB_REGIONS: [MemoryRegion; 10] = [
         "journal",
         FLASH,
         0x3E0000,
-        0x400000,
+        0x3FE000,
         RegionOwner::LearnedState,
         RegionRetention::PreserveAcrossFirmwareUpdate,
         RegionRole::Journal,
+    ),
+    region(
+        "wifi_cfg",
+        FLASH,
+        0x3FE000,
+        0x400000,
+        RegionOwner::Provisioning,
+        RegionRetention::PreserveAcrossFirmwareUpdate,
+        RegionRole::WifiConfiguration,
     ),
 ];
 
 const ESP_16_MIB_JOURNALS: [JournalLayout; 1] =
-    [journal(0xE80000, 0xE81000, 0xE82000, 0xF41000, 0x1000000)];
+    [journal(0xE80000, 0xE81000, 0xE82000, 0xF40000, 0xFFE000)];
 const ESP_8_MIB_JOURNALS: [JournalLayout; 1] =
-    [journal(0x680000, 0x681000, 0x682000, 0x741000, 0x800000)];
+    [journal(0x680000, 0x681000, 0x682000, 0x740000, 0x7FE000)];
 const ESP_4_MIB_JOURNALS: [JournalLayout; 1] =
-    [journal(0x3E0000, 0x3E1000, 0x3E2000, 0x3F1000, 0x400000)];
+    [journal(0x3E0000, 0x3E1000, 0x3E2000, 0x3F0000, 0x3FE000)];
 
 const S3_RUNTIME_RESERVATIONS: [RuntimeReservation; 4] = [
     RuntimeReservation {
@@ -490,7 +520,7 @@ const ESP_COMMON_PARTITIONS: [EspPartitionBinding; 5] = [
     esp_binding("phy_init", "phy_init", EspPartitionKind::PhyData),
 ];
 
-const ESP_16_MIB_PARTITIONS: [EspPartitionBinding; 9] = [
+const ESP_16_MIB_PARTITIONS: [EspPartitionBinding; 10] = [
     ESP_COMMON_PARTITIONS[0],
     ESP_COMMON_PARTITIONS[1],
     ESP_COMMON_PARTITIONS[2],
@@ -521,11 +551,19 @@ const ESP_16_MIB_PARTITIONS: [EspPartitionBinding; 9] = [
             subtype: 0x00,
         },
     ),
+    esp_binding(
+        "wifi_cfg",
+        "wifi_cfg",
+        EspPartitionKind::Custom {
+            partition_type: 0x46,
+            subtype: 0x00,
+        },
+    ),
 ];
 
-const ESP_8_MIB_PARTITIONS: [EspPartitionBinding; 9] = ESP_16_MIB_PARTITIONS;
+const ESP_8_MIB_PARTITIONS: [EspPartitionBinding; 10] = ESP_16_MIB_PARTITIONS;
 
-const ESP_4_MIB_PARTITIONS: [EspPartitionBinding; 8] = [
+const ESP_4_MIB_PARTITIONS: [EspPartitionBinding; 9] = [
     ESP_COMMON_PARTITIONS[0],
     ESP_COMMON_PARTITIONS[1],
     ESP_COMMON_PARTITIONS[2],
@@ -534,6 +572,7 @@ const ESP_4_MIB_PARTITIONS: [EspPartitionBinding; 8] = [
     ESP_16_MIB_PARTITIONS[5],
     ESP_16_MIB_PARTITIONS[6],
     ESP_16_MIB_PARTITIONS[8],
+    ESP_16_MIB_PARTITIONS[9],
 ];
 
 const ESP_16_MIB_PROFILES: [MemoryProfileId; 3] = [HELTEC_V4.id, HELTEC_V4_R8.id, HELTEC_E290.id];

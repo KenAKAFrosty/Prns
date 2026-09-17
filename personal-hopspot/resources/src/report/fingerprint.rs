@@ -4,8 +4,19 @@ use prns_flash_manifest::Sha256Digest;
 use serde::de::Error;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-#[derive(Debug, PartialEq, Eq)]
-pub(super) struct Fingerprint(String);
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Fingerprint(String);
+
+impl Fingerprint {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub(super) fn parse(value: String) -> Result<Self, prns_flash_manifest::DomainValueError> {
+        Sha256Digest::parse(value).map(|digest| Self(digest.as_str().to_string()))
+    }
+}
 
 impl Serialize for Fingerprint {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>

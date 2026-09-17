@@ -14,6 +14,7 @@ pub(crate) struct BuildEvidence {
 pub(crate) struct ArtifactEvidence {
     path: String,
     bytes: u64,
+    fingerprint: String,
 }
 
 impl Target<'_> {
@@ -29,6 +30,7 @@ impl Target<'_> {
                         .map(|part| ArtifactEvidence {
                             path: part.descriptor().path.clone(),
                             bytes: part.descriptor().size,
+                            fingerprint: part.descriptor().sha256.clone(),
                         })
                         .collect(),
                 })
@@ -44,6 +46,7 @@ impl Target<'_> {
                     artifacts: vec![ArtifactEvidence {
                         path: output.descriptor().path.clone(),
                         bytes: output.descriptor().size,
+                        fingerprint: output.descriptor().sha256.clone(),
                     }],
                 })
             }
@@ -62,6 +65,7 @@ impl Target<'_> {
                         .map(|part| ArtifactEvidence {
                             path: part.path.clone(),
                             bytes: part.size,
+                            fingerprint: part.sha256.clone(),
                         })
                         .collect(),
                     }
@@ -119,5 +123,9 @@ impl ArtifactEvidence {
 
     pub(crate) const fn bytes(&self) -> u64 {
         self.bytes
+    }
+
+    pub(crate) fn fingerprint(&self) -> &str {
+        &self.fingerprint
     }
 }

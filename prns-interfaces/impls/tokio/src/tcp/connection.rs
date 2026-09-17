@@ -10,8 +10,13 @@ use socket2::{SockRef, TcpKeepalive};
 use tokio::net::TcpStream;
 
 #[cfg(feature = "tcp")]
+use crate::byte_stream::framing::WriteProgressTimeout;
+
+#[cfg(feature = "tcp")]
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
-/// Match the reference keepalive discipline: probe after 5 seconds idle and every 2 seconds thereafter, with 12 missed probes or 24 seconds of unacknowledged writes declaring the peer dead.
+/// Match the reference keepalive discipline: probe after 5 seconds idle and every 2 seconds
+/// thereafter. The byte-stream driver independently enforces the same 24-second write-progress
+/// deadline on every host.
 #[cfg(feature = "tcp")]
 const TCP_PROBE_AFTER: Duration = Duration::from_secs(5);
 #[cfg(feature = "tcp")]
@@ -24,6 +29,16 @@ const I2P_PROBE_AFTER: Duration = Duration::from_secs(10);
 const I2P_PROBE_INTERVAL: Duration = Duration::from_secs(9);
 const I2P_PROBES: u32 = 5;
 const I2P_USER_TIMEOUT: Duration = Duration::from_secs(45);
+
+#[cfg(feature = "tcp")]
+pub(crate) const fn write_progress_timeout(tunnel: TcpTunnelMode) -> WriteProgressTimeout {
+    let timeout = match tunnel {
+        #[cfg(feature = "tcp")]
+        TcpTunnelMode::Direct => TCP_USER_TIMEOUT,
+        TcpTunnelMode::I2p => I2P_USER_TIMEOUT,
+    };
+    WriteProgressTimeout::after(timeout)
+}
 
 #[cfg(feature = "tcp")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -179,5 +194,17 @@ mod tests {
         assert!(ReconnectLimit::Attempts(0).exhausted(0));
         assert!(!ReconnectLimit::Attempts(2).exhausted(1));
         assert!(ReconnectLimit::Attempts(2).exhausted(2));
+    }
+
+    #[test]
+    fn write_progress_deadlines_follow_the_tunnel_liveness_policy() {
+        assert_eq!(
+            write_progress_timeout(TcpTunnelMode::Direct),
+            WriteProgressTimeout::after(Duration::from_secs(24))
+        );
+        assert_eq!(
+            write_progress_timeout(TcpTunnelMode::I2p),
+            WriteProgressTimeout::after(Duration::from_secs(45))
+        );
     }
 }

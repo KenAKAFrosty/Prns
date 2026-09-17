@@ -12,7 +12,9 @@ use crate::node_pages;
 
 const DELIVERY_APP_NAME: &str = "lxmf";
 const DELIVERY_ASPECTS: &[&str] = &["delivery"];
-pub const HOPSPOT_DESTINATION_COUNT: usize = 2;
+const TRANSPORT_PROBE_APP_NAME: &str = "rnstransport";
+const TRANSPORT_PROBE_ASPECTS: &[&str] = &["probe"];
+pub const HOPSPOT_DESTINATION_COUNT: usize = 3;
 pub const HOPSPOT_IDENTITY_COUNT: usize = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,7 +67,7 @@ impl<'a> HopspotDestinationSet<'a> {
             PreConfiguredDestination::Single {
                 app_name: node_pages::NODE_APP_NAME,
                 aspects: node_pages::NODE_ASPECTS,
-                identity: self.identity,
+                identity: self.identity.clone(),
                 announce_app_data: self.node_announce_app_data,
                 proof: ProofStrategy::ProveNone,
                 link_requests: LinkRequestPolicy::AcceptAll,
@@ -74,11 +76,31 @@ impl<'a> HopspotDestinationSet<'a> {
                 maximum_request_bytes: Default::default(),
                 request_endpoints: ServeMyRequestEndpoints::Yes,
             },
+            transport_probe_destination(self.identity),
         ]
     }
 }
 
-/// Derives the two built-in Hopspot destination addresses from the persisted identity.
+fn transport_probe_destination(
+    identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
+) -> PreConfiguredDestination<'static> {
+    PreConfiguredDestination::Single {
+        app_name: TRANSPORT_PROBE_APP_NAME,
+        aspects: TRANSPORT_PROBE_ASPECTS,
+        identity,
+        announce_app_data: &[],
+        proof: ProofStrategy::ProveAll,
+        link_requests: LinkRequestPolicy::AcceptNone,
+        ratchet: RatchetPolicy::NoRatchets,
+        resource_strategy: ResourceStrategy::AcceptNone,
+        maximum_request_bytes: Default::default(),
+        request_endpoints: ServeMyRequestEndpoints::No,
+    }
+}
+
+/// Derives the built-in Hopspot destination addresses (delivery + node page) from the persisted
+/// identity. The transport probe destination shares that identity but is derived separately when
+/// materializing the preconfigured set.
 ///
 /// This is independent of announce app-data, so boot targets that need a dedicated crypto stack
 /// can derive the addresses before constructing their destination set.
@@ -126,7 +148,7 @@ mod tests {
     #[test]
     fn hashes_match_the_materialized_destinations() {
         let expected = destinations().destination_hashes().unwrap();
-        let [delivery, node_page] = destinations().into_preconfigured_destinations();
+        let [delivery, node_page, _probe] = destinations().into_preconfigured_destinations();
         assert_eq!(
             HopspotDestinationHashes {
                 delivery: delivery.destination_hash().unwrap(),
@@ -137,8 +159,22 @@ mod tests {
     }
 
     #[test]
+    fn transport_probe_destination_matches_stock_rnstransport_probe() {
+        let identity = Zeroizing::new([7; IDENTITY_SECRET_KEY_LEN]);
+        let signer = InMemoryNodeIdentity::from_secret_key_bytes(&identity);
+        let expected = derive_single_destination_hash(
+            &signer.identity_hash(),
+            TRANSPORT_PROBE_APP_NAME,
+            TRANSPORT_PROBE_ASPECTS,
+        )
+        .unwrap();
+        let [_delivery, _node_page, probe] = destinations().into_preconfigured_destinations();
+        assert_eq!(probe.destination_hash().unwrap(), expected);
+    }
+
+    #[test]
     fn destination_policies_are_owned_as_one_set() {
-        let [delivery, node_page] = destinations().into_preconfigured_destinations();
+        let [delivery, node_page, probe] = destinations().into_preconfigured_destinations();
         assert!(matches!(
             delivery,
             PreConfiguredDestination::Single {
@@ -164,6 +200,20 @@ mod tests {
                 ratchet: RatchetPolicy::NoRatchets,
                 resource_strategy: ResourceStrategy::AcceptNone,
                 request_endpoints: ServeMyRequestEndpoints::Yes,
+                ..
+            }
+        ));
+        assert!(matches!(
+            probe,
+            PreConfiguredDestination::Single {
+                app_name: TRANSPORT_PROBE_APP_NAME,
+                aspects: TRANSPORT_PROBE_ASPECTS,
+                announce_app_data: &[],
+                proof: ProofStrategy::ProveAll,
+                link_requests: LinkRequestPolicy::AcceptNone,
+                ratchet: RatchetPolicy::NoRatchets,
+                resource_strategy: ResourceStrategy::AcceptNone,
+                request_endpoints: ServeMyRequestEndpoints::No,
                 ..
             }
         ));
