@@ -1193,6 +1193,16 @@ mod tests {
                     "Pairing(BeginInvalidInvitationProof)",
                 ),
                 (
+                    RemoteControlPairingRequestOutcome::BeginRejected {
+                        rejected,
+                        reason: RemoteControlTargetPairingBeginRejection::AuthorityUnsupported {
+                            version: crate::remote_control::RemoteControlPairingProtocolVersion::V2,
+                            authority: crate::remote_control::RemoteControlControllerAuthority::Administrator,
+                        },
+                    },
+                    "Pairing(BeginAuthorityUnsupported)",
+                ),
+                (
                     RemoteControlPairingRequestOutcome::MalformedEnvelope(
                         PackedBinaryParseError::LengthOutOfRange {
                             declared: u32::from(byte),
