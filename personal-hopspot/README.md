@@ -72,6 +72,7 @@ ESP32 firmware, from `embedded/esp32/` with the board on USB:
     cargo heltec-v4-flash
     cargo heltec-v4-r8-flash
     cargo tbeam-supreme-flash
+    cargo xiao-s3-wio-flash
     cargo c6-flash
 
 

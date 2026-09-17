@@ -6,6 +6,13 @@ Embedded Prns is the same protocol engine and node-recipe API used by native app
 
 The XIAO ESP32-C6 is the smallest complete reference path. It is headless and uses USB, ESP-NOW, and Bluetooth, so this example punctuates the fact that an embedded node does not need a display or Wi-Fi LAN.
 
+The Seeed XIAO ESP32S3 with its Wio-SX1262 B2B baseboard is the compact headless LoRa path. It runs the complete ESP32-S3 Hopspot interface set and starts with the EU868 profile; persisted radio settings take precedence after first boot. Build it without flashing from the ESP32 workspace:
+
+```console
+cd personal-hopspot/embedded/esp32
+cargo xiao-s3-wio --locked
+```
+
 Install the repository's ESP Rust toolchain once:
 
 ```console

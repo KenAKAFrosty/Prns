@@ -33,6 +33,7 @@ graphs=(
     "esp32-s3-heltec|personal-hopspot/embedded/esp32/boards/heltec-v4/Cargo.toml|xtensa-esp32s3-none-elf"
     "esp32-s3-heltec-r8|personal-hopspot/embedded/esp32/boards/heltec-v4-r8/Cargo.toml|xtensa-esp32s3-none-elf"
     "esp32-s3-tbeam|personal-hopspot/embedded/esp32/boards/t-beam-supreme/Cargo.toml|xtensa-esp32s3-none-elf"
+    "esp32-s3-xiao-wio|personal-hopspot/embedded/esp32/boards/xiao-esp32s3-wio-sx1262/Cargo.toml|xtensa-esp32s3-none-elf"
     "wasm|prns-wasm/Cargo.toml|wasm32-unknown-unknown"
     "nrf-dfu-browser|prns-nrf-dfu-wasm/Cargo.toml|wasm32-unknown-unknown"
     "website-rust|docs/website/Cargo.toml|wasm32-unknown-unknown"

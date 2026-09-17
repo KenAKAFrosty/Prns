@@ -3,6 +3,7 @@
 #   cargo heltec-e290      / -flash   the Heltec Vision Master E290-HF
 #   cargo heltec-v4-r8     / -flash   the Heltec V4-R8 (S3R8 / Octal PSRAM)
 #   cargo tbeam-supreme    / -flash   the LilyGO T-Beam S3 Supreme
+#   cargo xiao-s3-wio      / -flash   the XIAO ESP32S3 + Wio-SX1262
 #   cargo c6               / -flash   the headless XIAO ESP32-C6
 
 [target.xtensa-esp32s3-none-elf]
@@ -35,6 +36,8 @@ heltec-v4-r8 = "build --release -p hopspot-heltec-v4-r8 --target xtensa-esp32s3-
 heltec-v4-r8-flash = "run --release -p hopspot-heltec-v4-r8 --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc"
 tbeam-supreme = "build --release -p hopspot-t-beam-supreme --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc"
 tbeam-supreme-flash = "run --release -p hopspot-t-beam-supreme --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc"
+xiao-s3-wio = "build --release -p hopspot-xiao-esp32s3-wio-sx1262 --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc"
+xiao-s3-wio-flash = "run --release -p hopspot-xiao-esp32s3-wio-sx1262 --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc"
 # Seeed XIAO ESP32-C6 Hopspot: USB-auto + ESP-NOW + BLE on the headless board. ESP-NOW uses
 # Espressif's WiFi radio driver internally, but this build exposes no WiFi-LAN or SoftAP interface.
 c6 = "build --release -p hopspot-xiao-esp32-c6 --target riscv32imac-unknown-none-elf -Zbuild-std=core,alloc"
