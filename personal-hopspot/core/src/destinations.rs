@@ -12,9 +12,10 @@ use crate::node_pages;
 
 const DELIVERY_APP_NAME: &str = "lxmf";
 const DELIVERY_ASPECTS: &[&str] = &["delivery"];
-const TRANSPORT_PROBE_APP_NAME: &str = "rnstransport";
+const TRANSPORT_APP_NAME: &str = "rnstransport";
 const TRANSPORT_PROBE_ASPECTS: &[&str] = &["probe"];
-pub const HOPSPOT_DESTINATION_COUNT: usize = 3;
+const TRANSPORT_MANAGEMENT_ASPECTS: &[&str] = &["remote", "management"];
+pub const HOPSPOT_DESTINATION_COUNT: usize = 4;
 pub const HOPSPOT_IDENTITY_COUNT: usize = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,8 +77,26 @@ impl<'a> HopspotDestinationSet<'a> {
                 maximum_request_bytes: Default::default(),
                 request_endpoints: ServeMyRequestEndpoints::Selected(node_pages::NODE_PAGE_PATHS),
             },
+            transport_management_destination(self.identity.clone()),
             transport_probe_destination(self.identity),
         ]
+    }
+}
+
+fn transport_management_destination(
+    identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
+) -> PreConfiguredDestination<'static> {
+    PreConfiguredDestination::Single {
+        app_name: TRANSPORT_APP_NAME,
+        aspects: TRANSPORT_MANAGEMENT_ASPECTS,
+        identity,
+        announce_app_data: &[],
+        proof: ProofStrategy::ProveNone,
+        link_requests: LinkRequestPolicy::AcceptAll,
+        ratchet: RatchetPolicy::NoRatchets,
+        resource_strategy: ResourceStrategy::AcceptNone,
+        maximum_request_bytes: Default::default(),
+        request_endpoints: ServeMyRequestEndpoints::Selected(&[node_pages::RNS_PATH_PATH]),
     }
 }
 
@@ -85,7 +104,7 @@ fn transport_probe_destination(
     identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
 ) -> PreConfiguredDestination<'static> {
     PreConfiguredDestination::Single {
-        app_name: TRANSPORT_PROBE_APP_NAME,
+        app_name: TRANSPORT_APP_NAME,
         aspects: TRANSPORT_PROBE_ASPECTS,
         identity,
         announce_app_data: &[],
@@ -148,7 +167,8 @@ mod tests {
     #[test]
     fn hashes_match_the_materialized_destinations() {
         let expected = destinations().destination_hashes().unwrap();
-        let [delivery, node_page, _probe] = destinations().into_preconfigured_destinations();
+        let [delivery, node_page, _management, _probe] =
+            destinations().into_preconfigured_destinations();
         assert_eq!(
             HopspotDestinationHashes {
                 delivery: delivery.destination_hash().unwrap(),
@@ -159,22 +179,39 @@ mod tests {
     }
 
     #[test]
+    fn transport_management_destination_matches_stock_rnstransport_remote_management() {
+        let identity = Zeroizing::new([7; IDENTITY_SECRET_KEY_LEN]);
+        let signer = InMemoryNodeIdentity::from_secret_key_bytes(&identity);
+        let expected = derive_single_destination_hash(
+            &signer.identity_hash(),
+            TRANSPORT_APP_NAME,
+            TRANSPORT_MANAGEMENT_ASPECTS,
+        )
+        .unwrap();
+        let [_delivery, _node_page, management, _probe] =
+            destinations().into_preconfigured_destinations();
+        assert_eq!(management.destination_hash().unwrap(), expected);
+    }
+
+    #[test]
     fn transport_probe_destination_matches_stock_rnstransport_probe() {
         let identity = Zeroizing::new([7; IDENTITY_SECRET_KEY_LEN]);
         let signer = InMemoryNodeIdentity::from_secret_key_bytes(&identity);
         let expected = derive_single_destination_hash(
             &signer.identity_hash(),
-            TRANSPORT_PROBE_APP_NAME,
+            TRANSPORT_APP_NAME,
             TRANSPORT_PROBE_ASPECTS,
         )
         .unwrap();
-        let [_delivery, _node_page, probe] = destinations().into_preconfigured_destinations();
+        let [_delivery, _node_page, _management, probe] =
+            destinations().into_preconfigured_destinations();
         assert_eq!(probe.destination_hash().unwrap(), expected);
     }
 
     #[test]
     fn destination_policies_are_owned_as_one_set() {
-        let [delivery, node_page, probe] = destinations().into_preconfigured_destinations();
+        let [delivery, node_page, management, probe] =
+            destinations().into_preconfigured_destinations();
         assert!(matches!(
             delivery,
             PreConfiguredDestination::Single {
@@ -204,9 +241,23 @@ mod tests {
             } if paths == node_pages::NODE_PAGE_PATHS
         ));
         assert!(matches!(
+            management,
+            PreConfiguredDestination::Single {
+                app_name: TRANSPORT_APP_NAME,
+                aspects: TRANSPORT_MANAGEMENT_ASPECTS,
+                announce_app_data: &[],
+                proof: ProofStrategy::ProveNone,
+                link_requests: LinkRequestPolicy::AcceptAll,
+                ratchet: RatchetPolicy::NoRatchets,
+                resource_strategy: ResourceStrategy::AcceptNone,
+                request_endpoints: ServeMyRequestEndpoints::Selected(&[node_pages::RNS_PATH_PATH]),
+                ..
+            }
+        ));
+        assert!(matches!(
             probe,
             PreConfiguredDestination::Single {
-                app_name: TRANSPORT_PROBE_APP_NAME,
+                app_name: TRANSPORT_APP_NAME,
                 aspects: TRANSPORT_PROBE_ASPECTS,
                 announce_app_data: &[],
                 proof: ProofStrategy::ProveAll,
