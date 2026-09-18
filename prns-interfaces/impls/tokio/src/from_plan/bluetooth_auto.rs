@@ -19,7 +19,7 @@ pub(super) fn stand_up(
     let interface = AutoBle::with_policy_and_discovery_groups(
         identity,
         construction.interface.policy,
-        plan.group_ids().clone(),
+        *plan.group_ids(),
     );
     let attached = construction.attach(interface);
     Ok(attached.id())

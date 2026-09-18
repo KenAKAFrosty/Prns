@@ -34,7 +34,7 @@ fn auto_wifi_settings(
     auto_interface_plan: &AutoInterfacePlan,
 ) -> Result<AutoWifiSettings, crate::wifi_auto::AutoWifiSettingsError> {
     AutoWifiSettings::with_discovery_groups(
-        auto_interface_plan.group_ids().clone(),
+        *auto_interface_plan.group_ids(),
         auto_interface_plan.discovery_scope(),
         auto_interface_plan.multicast_address_type(),
         auto_interface_plan.discovery_port().get(),

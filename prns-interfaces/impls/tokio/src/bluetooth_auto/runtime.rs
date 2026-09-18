@@ -309,7 +309,7 @@ impl BluetoothAutoStatus {
 
     pub(crate) fn new_with_discovery_groups(discovery_groups: DiscoveryGroupSet) -> Self {
         let (enabled, _) = watch::channel(true);
-        let (groups, _) = watch::channel(discovery_groups.clone());
+        let (groups, _) = watch::channel(discovery_groups);
         let (applied_groups, _) = watch::channel(discovery_groups);
         Self {
             shared: Arc::new(BluetoothAutoShared {
@@ -363,7 +363,7 @@ impl BluetoothAutoStatus {
 
     #[must_use]
     pub fn discovery_groups(&self) -> DiscoveryGroupSet {
-        self.shared.discovery_groups.borrow().clone()
+        *self.shared.discovery_groups.borrow()
     }
 
     /// Requests an atomic replacement. The running supervisor acknowledges it only after all old
@@ -377,7 +377,7 @@ impl BluetoothAutoStatus {
             return DiscoveryGroupApplyOutcome::Unchanged;
         }
         let mut applied = self.shared.applied_discovery_groups.subscribe();
-        self.shared.discovery_groups.send_replace(groups.clone());
+        self.shared.discovery_groups.send_replace(groups);
         if !self.is_enabled() || !self.shared.up.load(Ordering::Acquire) {
             self.shared.applied_discovery_groups.send_replace(groups);
             return DiscoveryGroupApplyOutcome::Applied;
@@ -398,7 +398,7 @@ impl BluetoothAutoStatus {
     ) -> DiscoveryGroupSet {
         let mut changed = self.shared.discovery_groups.subscribe();
         loop {
-            let candidate = changed.borrow_and_update().clone();
+            let candidate = *changed.borrow_and_update();
             if &candidate != current {
                 return candidate;
             }
@@ -597,7 +597,7 @@ where
                     handshakes = FuturesUnordered::new();
                     pending.clear();
                     status.set_members(std::vec::Vec::new());
-                    discovery_groups = groups.clone();
+                    discovery_groups = groups;
                     local.discovery_groups = groups.hashes();
                     manager = ConnectionPolicy::<MAX_PEERS, DIAL_TRACK>::new(local);
                     manager.start(&mut |action| pending.push(action));
@@ -1520,19 +1520,17 @@ mod tests {
         let second = groups("bravo");
         let first_task = {
             let status = status.clone();
-            let first = first.clone();
             tokio::spawn(async move { status.replace_discovery_groups(first).await })
         };
         tokio::task::yield_now().await;
         let second_task = {
             let status = status.clone();
-            let second = second.clone();
             tokio::spawn(async move { status.replace_discovery_groups(second).await })
         };
 
         let first_requested = status.wait_for_discovery_groups_change(&initial).await;
         assert_eq!(first_requested, first);
-        status.acknowledge_discovery_groups(first_requested.clone());
+        status.acknowledge_discovery_groups(first_requested);
         let second_requested = status
             .wait_for_discovery_groups_change(&first_requested)
             .await;

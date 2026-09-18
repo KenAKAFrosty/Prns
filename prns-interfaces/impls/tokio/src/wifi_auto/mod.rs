@@ -563,7 +563,7 @@ impl AutoWifi {
         settings: AutoWifiSettings,
     ) -> Self {
         let id = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, &settings.instance_tag);
-        let discovery_groups = settings.discovery_groups.clone();
+        let discovery_groups = settings.discovery_groups;
         Self {
             policy,
             settings,
@@ -671,7 +671,7 @@ impl AutoWifiStatus {
         let (enabled, _) = watch::channel(true);
         let (member_updates, _) = watch::channel(std::vec::Vec::new());
         let (applied_discovery_groups, _) = watch::channel(DiscoveryGroupSettlement {
-            groups: discovery_groups.clone(),
+            groups: discovery_groups,
             outcome: DiscoveryGroupApplyOutcome::Applied,
         });
         let (discovery_groups, _) = watch::channel(discovery_groups);
@@ -708,7 +708,7 @@ impl AutoWifiStatus {
             if current == &groups {
                 return false;
             }
-            *current = groups.clone();
+            *current = groups;
             true
         });
         if changed && (!self.is_enabled() || self.shared.discovery_groups.receiver_count() == 0) {
@@ -727,7 +727,7 @@ impl AutoWifiStatus {
             return DiscoveryGroupApplyOutcome::Unchanged;
         }
         let mut applied = self.shared.applied_discovery_groups.subscribe();
-        self.replace_discovery_groups(groups.clone());
+        self.replace_discovery_groups(groups);
         loop {
             let settlement = applied.borrow_and_update().clone();
             if settlement.groups == groups {
@@ -741,7 +741,7 @@ impl AutoWifiStatus {
 
     #[must_use]
     pub fn discovery_groups(&self) -> DiscoveryGroupSet {
-        self.shared.discovery_groups.borrow().clone()
+        *self.shared.discovery_groups.borrow()
     }
 
     fn subscribe_group(&self) -> watch::Receiver<DiscoveryGroupSet> {
@@ -1043,11 +1043,11 @@ impl InterfaceSupervisor for AutoWifi {
             tokio::select! {
                 changed = group_rx.changed() => {
                     if changed.is_ok() {
-                        let group = group_rx.borrow_and_update().clone();
+                        let group = *group_rx.borrow_and_update();
                         let mut outcome = DiscoveryGroupApplyOutcome::Applied;
                         if supervisor.settings.discovery_groups != group {
                             supervisor.begin_discovery_group_replacement(
-                                group.clone(),
+                                group,
                                 &mut nics,
                                 &mut sockets,
                             );
@@ -3306,12 +3306,10 @@ mod tests {
         .expect("valid set");
 
         assert_eq!(
-            status
-                .replace_discovery_groups_and_wait(replacement.clone())
-                .await,
+            status.replace_discovery_groups_and_wait(replacement).await,
             DiscoveryGroupApplyOutcome::Applied
         );
-        assert_eq!(status.discovery_groups(), replacement.clone());
+        assert_eq!(status.discovery_groups(), replacement);
         assert_eq!(
             status.replace_discovery_groups_and_wait(replacement).await,
             DiscoveryGroupApplyOutcome::Unchanged
@@ -3333,19 +3331,17 @@ mod tests {
         let second = groups("bravo");
         let first_task = {
             let status = status.clone();
-            let first = first.clone();
             tokio::spawn(async move { status.replace_discovery_groups_and_wait(first).await })
         };
         tokio::task::yield_now().await;
         let second_task = {
             let status = status.clone();
-            let second = second.clone();
             tokio::spawn(async move { status.replace_discovery_groups_and_wait(second).await })
         };
 
         requested.changed().await.expect("first request");
         assert_eq!(*requested.borrow_and_update(), first);
-        status.acknowledge_discovery_groups(first.clone(), DiscoveryGroupApplyOutcome::Applied);
+        status.acknowledge_discovery_groups(first, DiscoveryGroupApplyOutcome::Applied);
         requested.changed().await.expect("second request");
         assert_eq!(*requested.borrow_and_update(), second);
         status.acknowledge_discovery_groups(second, DiscoveryGroupApplyOutcome::Applied);
@@ -3370,7 +3366,6 @@ mod tests {
                 .expect("valid set");
         let replacement = {
             let status = status.clone();
-            let desired = desired.clone();
             tokio::spawn(async move { status.replace_discovery_groups_and_wait(desired).await })
         };
 
@@ -3402,7 +3397,7 @@ mod tests {
             data: Some(Arc::new(UdpSocket::from_std(data).expect("into tokio"))),
             policy: contract::configured_policy(Default::default()),
             settings: settings.clone(),
-            status: AutoWifiStatus::new(id, settings.discovery_groups.clone()),
+            status: AutoWifiStatus::new(id, settings.discovery_groups),
             completed: CompletedTraffic::default(),
             host_lan: HostLanInventory::default(),
         };
