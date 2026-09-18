@@ -413,10 +413,13 @@ fn trigger_local_network_privacy_alert() {
         for byte in &mut sin6.sin6_addr.s6_addr[8..] {
             *byte = rand_u8();
         }
+        // SAFETY: AF_INET6 SOCK_DGRAM creates an unbound datagram socket; no prior state.
         let fd = unsafe { libc::socket(libc::AF_INET6, libc::SOCK_DGRAM, 0) };
         if fd < 0 {
             continue;
         }
+        // SAFETY: `fd` is an open AF_INET6 datagram socket; `sin6` is a stack sockaddr_in6
+        // whose length matches socklen_t below (TN3179 best-effort privacy trigger).
         let _ = unsafe {
             libc::connect(
                 fd,
@@ -424,6 +427,7 @@ fn trigger_local_network_privacy_alert() {
                 libc::socklen_t::try_from(std::mem::size_of::<libc::sockaddr_in6>()).unwrap_or(0),
             )
         };
+        // SAFETY: `fd` was opened above and is not used after this close.
         unsafe { libc::close(fd) };
     }
     // SAFETY: pairs with successful getifaddrs above.
