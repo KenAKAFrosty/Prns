@@ -1,8 +1,6 @@
-use rmp::Marker;
-
 use crate::wire::DestinationHash;
 
-use super::super::message_pack::{MessagePackInteger, MessagePackReader};
+use super::super::message_pack::{Marker, MessagePackInteger, MessagePackReader};
 use super::super::wire_names::remote_path;
 #[cfg(feature = "shared-instance-rpc")]
 use super::super::{MessagePackEncoder, RnsManagementEncodeError};

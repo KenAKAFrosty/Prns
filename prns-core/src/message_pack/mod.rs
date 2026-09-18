@@ -4,7 +4,7 @@ mod encoder;
 #[cfg(feature = "alloc")]
 mod owned;
 
-pub(crate) use decoder::{MessagePackInteger, MessagePackReader};
+pub(crate) use decoder::{Marker, MessagePackInteger, MessagePackReader};
 #[cfg(feature = "alloc")]
 pub(crate) use encoder::MessagePackEncoder;
 #[cfg(feature = "alloc")]

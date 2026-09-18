@@ -5,9 +5,9 @@ use alloc::vec::Vec;
 #[cfg(feature = "shared-instance-rpc")]
 use core::fmt;
 
-use rmp::encode;
 #[cfg(feature = "shared-instance-rpc")]
-use rmp::Marker;
+use super::message_pack::Marker;
+use rmp::encode;
 
 use crate::engine::RouteSnapshot;
 use crate::units::InstantMillis;
