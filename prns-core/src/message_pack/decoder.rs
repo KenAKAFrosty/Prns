@@ -1,4 +1,3 @@
-#[cfg(feature = "alloc")]
 use core::str;
 
 use rmp::decode::{read_marker, Bytes, RmpRead};
@@ -56,7 +55,6 @@ impl<'a> MessagePackReader<'a> {
         }
     }
 
-    #[cfg(feature = "alloc")]
     pub(crate) const fn is_string(marker: Marker) -> bool {
         matches!(
             marker,
@@ -64,7 +62,6 @@ impl<'a> MessagePackReader<'a> {
         )
     }
 
-    #[cfg(feature = "alloc")]
     pub(crate) fn string(
         &mut self,
         marker: Marker,
@@ -132,6 +129,7 @@ impl<'a> MessagePackReader<'a> {
         Ok(Some(integer))
     }
 
+    #[cfg(feature = "alloc")]
     pub(crate) fn float(&mut self, marker: Marker) -> Result<Option<f64>, MessagePackDecodeError> {
         match marker {
             Marker::F32 => Ok(Some(f64::from(f32::from_bits(self.u32()?)))),
@@ -140,7 +138,7 @@ impl<'a> MessagePackReader<'a> {
         }
     }
 
-    #[cfg(feature = "shared-instance-rpc")]
+    #[cfg(feature = "rns-management-wire")]
     pub(crate) fn skip_value(
         &mut self,
         marker: Marker,
@@ -226,7 +224,7 @@ impl<'a> MessagePackReader<'a> {
         Ok(())
     }
 
-    #[cfg(feature = "shared-instance-rpc")]
+    #[cfg(feature = "rns-management-wire")]
     fn skip_sequence(
         &mut self,
         length: usize,
@@ -253,7 +251,7 @@ impl<'a> MessagePackReader<'a> {
         Ok(value)
     }
 
-    #[cfg(feature = "shared-instance-rpc")]
+    #[cfg(feature = "rns-management-wire")]
     fn skip(&mut self, length: usize) -> Result<(), MessagePackDecodeError> {
         self.bytes(length).map(|_| ())
     }

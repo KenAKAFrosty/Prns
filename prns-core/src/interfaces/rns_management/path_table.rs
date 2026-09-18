@@ -1,20 +1,27 @@
+#[cfg(feature = "shared-instance-rpc")]
 use alloc::string::{String, ToString};
+#[cfg(feature = "shared-instance-rpc")]
 use alloc::vec::Vec;
+#[cfg(feature = "shared-instance-rpc")]
 use core::fmt;
 
-use rmp::{encode, Marker};
+use rmp::encode;
+#[cfg(feature = "shared-instance-rpc")]
+use rmp::Marker;
 
 use crate::engine::RouteSnapshot;
 use crate::units::InstantMillis;
+#[cfg(feature = "shared-instance-rpc")]
 use crate::wire::{DestinationHash, TransportId};
 
+#[cfg(feature = "shared-instance-rpc")]
 use super::message_pack::{MessagePackInteger, MessagePackReader};
 use super::wire_names::{common, path};
-use super::{
-    interface_name, next_hop_bytes, rns_timestamp, write_interface_name, MessagePackEncoder,
-    RnsManagementEncodeError,
-};
+#[cfg(feature = "shared-instance-rpc")]
+use super::{interface_name, MessagePackEncoder, RnsManagementEncodeError};
+use super::{next_hop_bytes, rns_timestamp, write_interface_name};
 
+#[cfg(feature = "shared-instance-rpc")]
 const MAXIMUM_DEPTH: usize = 4;
 const INTERFACE_NAME_CAPACITY: usize = 32;
 
@@ -77,6 +84,7 @@ fn write_binary(output: &mut &mut [u8], value: &[u8]) -> Result<(), RnsPathTable
     wrote(encode::write_bin(output, value))
 }
 
+#[cfg(feature = "shared-instance-rpc")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RnsPathTableField {
     Hash,
@@ -87,6 +95,7 @@ pub enum RnsPathTableField {
     Interface,
 }
 
+#[cfg(feature = "shared-instance-rpc")]
 impl fmt::Display for RnsPathTableField {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
@@ -100,6 +109,7 @@ impl fmt::Display for RnsPathTableField {
     }
 }
 
+#[cfg(feature = "shared-instance-rpc")]
 #[derive(Debug, Clone, PartialEq)]
 pub struct RnsPathTableEntry {
     destination: DestinationHash,
@@ -110,6 +120,7 @@ pub struct RnsPathTableEntry {
     interface: String,
 }
 
+#[cfg(feature = "shared-instance-rpc")]
 impl RnsPathTableEntry {
     pub const fn destination(&self) -> DestinationHash {
         self.destination
@@ -136,6 +147,7 @@ impl RnsPathTableEntry {
     }
 }
 
+#[cfg(feature = "shared-instance-rpc")]
 impl From<RouteSnapshot> for RnsPathTableEntry {
     fn from(entry: RouteSnapshot) -> Self {
         Self {
@@ -151,11 +163,13 @@ impl From<RouteSnapshot> for RnsPathTableEntry {
     }
 }
 
+#[cfg(feature = "shared-instance-rpc")]
 #[derive(Debug, Clone, PartialEq)]
 pub struct RnsPathTable {
     entries: Vec<RnsPathTableEntry>,
 }
 
+#[cfg(feature = "shared-instance-rpc")]
 impl RnsPathTable {
     pub fn new(entries: Vec<RouteSnapshot>) -> Self {
         Self {
@@ -207,6 +221,7 @@ impl RnsPathTable {
     }
 }
 
+#[cfg(feature = "shared-instance-rpc")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RnsPathTableDecodeError {
     InvalidMessagePack,
@@ -240,6 +255,7 @@ pub enum RnsPathTableDecodeError {
     TrailingData,
 }
 
+#[cfg(feature = "shared-instance-rpc")]
 impl fmt::Display for RnsPathTableDecodeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -285,9 +301,10 @@ impl fmt::Display for RnsPathTableDecodeError {
     }
 }
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "shared-instance-rpc", feature = "std"))]
 impl std::error::Error for RnsPathTableDecodeError {}
 
+#[cfg(feature = "shared-instance-rpc")]
 #[derive(Default)]
 struct EntryBuilder {
     destination: Option<DestinationHash>,
@@ -298,6 +315,7 @@ struct EntryBuilder {
     interface: Option<String>,
 }
 
+#[cfg(feature = "shared-instance-rpc")]
 impl EntryBuilder {
     fn finish(self, index: usize) -> Result<RnsPathTableEntry, RnsPathTableDecodeError> {
         Ok(RnsPathTableEntry {
@@ -319,6 +337,7 @@ impl EntryBuilder {
     }
 }
 
+#[cfg(feature = "shared-instance-rpc")]
 fn decode(bytes: &[u8]) -> Result<Vec<RnsPathTableEntry>, RnsPathTableDecodeError> {
     let mut reader = MessagePackReader::new(bytes);
     let marker = reader.marker().map_err(message_pack)?;
@@ -339,6 +358,7 @@ fn decode(bytes: &[u8]) -> Result<Vec<RnsPathTableEntry>, RnsPathTableDecodeErro
     Ok(entries)
 }
 
+#[cfg(feature = "shared-instance-rpc")]
 fn decode_entry(
     reader: &mut MessagePackReader<'_>,
     index: usize,
@@ -406,6 +426,7 @@ fn decode_entry(
     builder.finish(index)
 }
 
+#[cfg(feature = "shared-instance-rpc")]
 fn decode_hash(
     reader: &mut MessagePackReader<'_>,
     marker: Marker,
@@ -425,6 +446,7 @@ fn decode_hash(
         })
 }
 
+#[cfg(feature = "shared-instance-rpc")]
 fn decode_nonnegative(
     reader: &mut MessagePackReader<'_>,
     marker: Marker,
@@ -435,6 +457,7 @@ fn decode_nonnegative(
     })
 }
 
+#[cfg(feature = "shared-instance-rpc")]
 fn decode_number(
     reader: &mut MessagePackReader<'_>,
     marker: Marker,
@@ -446,6 +469,7 @@ fn decode_number(
     })
 }
 
+#[cfg(feature = "shared-instance-rpc")]
 fn set<T>(
     slot: &mut Option<T>,
     value: Option<T>,
@@ -462,6 +486,7 @@ fn set<T>(
     Ok(())
 }
 
+#[cfg(feature = "shared-instance-rpc")]
 fn required<T>(
     value: Option<T>,
     index: usize,
@@ -470,11 +495,12 @@ fn required<T>(
     value.ok_or(RnsPathTableDecodeError::MissingField { index, field })
 }
 
+#[cfg(feature = "shared-instance-rpc")]
 fn message_pack(_: super::message_pack::MessagePackDecodeError) -> RnsPathTableDecodeError {
     RnsPathTableDecodeError::InvalidMessagePack
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "shared-instance-rpc"))]
 mod tests {
     use super::*;
     use crate::interfaces::{InterfaceId, InterfaceKind};

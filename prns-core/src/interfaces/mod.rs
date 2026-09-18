@@ -18,7 +18,7 @@ pub mod local_network;
 pub mod lora;
 pub mod pipe;
 pub mod rnode;
-#[cfg(feature = "shared-instance-rpc")]
+#[cfg(feature = "rns-management-wire")]
 pub mod rns_management;
 pub mod serial;
 pub mod shared_instance;
