@@ -280,6 +280,53 @@ fn scripted_commands_cover_the_complete_editing_lifecycle() {
 }
 
 #[test]
+fn scripted_add_accepts_canonical_multi_group_configuration() {
+    let directory = TestDirectory::new("multi-groups");
+    let source = "[reticulum]\n  share_instance = No\n[interfaces]\n";
+    fs::write(directory.path().join("config"), source).unwrap_or_else(|error| panic!("{error}"));
+
+    let wifi = run(
+        &directory,
+        &[
+            "add",
+            "auto-wifi",
+            "--name",
+            "WiFi",
+            "--group-ids",
+            "relay,field",
+        ],
+    );
+    assert!(
+        wifi.status.success(),
+        "{}",
+        String::from_utf8_lossy(&wifi.stderr)
+    );
+
+    let ble = run(
+        &directory,
+        &[
+            "add",
+            "BLE",
+            "--name",
+            "Nearby",
+            "--group-ids",
+            "reticulum,field",
+        ],
+    );
+    assert!(
+        ble.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ble.stderr)
+    );
+
+    let changed = fs::read_to_string(directory.path().join("config"))
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert!(changed.contains("group_ids = relay, field"));
+    assert!(changed.contains("group_ids = reticulum, field"));
+    assert!(run(&directory, &["check"]).status.success());
+}
+
+#[test]
 fn apply_without_a_managed_daemon_uses_exit_status_three() {
     let directory = TestDirectory::new("apply-stopped");
     fs::write(

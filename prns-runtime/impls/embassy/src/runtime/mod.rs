@@ -13,9 +13,12 @@ mod shared_flash;
 pub use prns_runtime::runtime::*;
 
 pub use embedded_persistence::{
-    EmbeddedCompactionPolicy, EmbeddedFlashPersistence, EmbeddedPersistenceDiagnostic,
-    EmbeddedPersistenceFailure, EmbeddedPersistencePolicy, EmbeddedPersistenceRestoreReport,
-    EmbeddedPersistenceTarget, FixedRouteSnapshotKeys, RouteSnapshotKeyError, RouteSnapshotKeys,
+    restored_discovery_group_configuration, restored_discovery_group_configuration_now,
+    restored_discovery_groups, restored_discovery_groups_now, store_discovery_group_configuration,
+    DiscoveryGroupConfigurationChange, EmbeddedCompactionPolicy, EmbeddedFlashPersistence,
+    EmbeddedPersistenceDiagnostic, EmbeddedPersistenceFailure, EmbeddedPersistencePolicy,
+    EmbeddedPersistenceRestoreReport, EmbeddedPersistenceTarget, FixedRouteSnapshotKeys,
+    RouteSnapshotKeyError, RouteSnapshotKeys,
 };
 pub(crate) use embedded_persistence::{ManifoldPersistence, NoManifoldPersistence};
 #[cfg(test)]

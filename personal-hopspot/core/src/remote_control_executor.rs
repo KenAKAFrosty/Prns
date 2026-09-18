@@ -1,17 +1,62 @@
+use core::cell::RefCell;
 use core::future::Future;
 use core::pin::{pin, Pin};
 use core::sync::atomic::{AtomicU32, Ordering};
 use core::task::{Context, Poll};
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::channel::Channel;
+use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use embassy_sync::mutex::{Mutex, MutexGuard};
 use embassy_sync::signal::Signal;
+use personal_rns::interfaces::{DiscoveryGroupSet, InterfaceId};
 use personal_rns::remote_control::{RemoteControlWifiCredentialRevision, RemoteControlWifiStation};
 use personal_rns::runtime::{
-    RemoteControlHostCommand, RemoteControlHostCommandError, RemoteControlHostControls,
-    RemoteControlHostResponse,
+    restored_discovery_groups_now, store_discovery_group_configuration,
+    DiscoveryGroupConfigurationChange, RemoteControlHostCommand, RemoteControlHostCommandError,
+    RemoteControlHostControls, RemoteControlHostResponse,
 };
+
+pub struct PreparedDiscoveryGroupReplacement {
+    interface_id: InterfaceId,
+    previous: DiscoveryGroupSet,
+}
+
+impl PreparedDiscoveryGroupReplacement {
+    #[must_use]
+    pub fn runtime_rollback_groups(&self) -> DiscoveryGroupSet {
+        self.previous
+    }
+}
+
+pub async fn persist_discovery_group_replacement(
+    interface_id: InterfaceId,
+    groups: &DiscoveryGroupSet,
+) -> Result<PreparedDiscoveryGroupReplacement, RemoteControlHostCommandError> {
+    let previous = restored_discovery_groups_now(interface_id)
+        .ok_or(RemoteControlHostCommandError::PersistenceFailed)?
+        .unwrap_or_else(DiscoveryGroupSet::reticulum);
+    let prepared = PreparedDiscoveryGroupReplacement {
+        interface_id,
+        previous,
+    };
+    store_discovery_group_configuration(DiscoveryGroupConfigurationChange::upsert(
+        interface_id,
+        *groups,
+    ))
+    .await
+    .map_err(|_| RemoteControlHostCommandError::PersistenceFailed)?;
+    Ok(prepared)
+}
+
+pub async fn rollback_discovery_group_replacement(
+    prepared: &PreparedDiscoveryGroupReplacement,
+) -> Result<(), RemoteControlHostCommandError> {
+    let change =
+        DiscoveryGroupConfigurationChange::upsert(prepared.interface_id, prepared.previous);
+    store_discovery_group_configuration(change)
+        .await
+        .map_err(|_| RemoteControlHostCommandError::RollbackFailed)
+}
 
 pub struct HopspotWifiCredentialUpdate {
     pub revision: Option<RemoteControlWifiCredentialRevision>,
@@ -78,9 +123,23 @@ struct HopspotCommandCompletion {
     result: Result<RemoteControlHostResponse, RemoteControlHostCommandError>,
 }
 
+enum HopspotCommandExchange {
+    Empty,
+    Queued {
+        pending: PendingHopspotCommand,
+        abandoned: bool,
+    },
+    Executing {
+        sequence: u32,
+        abandoned: bool,
+    },
+    Completed(HopspotCommandCompletion),
+}
+
 pub struct HopspotCommandMailbox<const DEPTH: usize> {
-    commands: Channel<CriticalSectionRawMutex, PendingHopspotCommand, DEPTH>,
-    completion: Signal<CriticalSectionRawMutex, HopspotCommandCompletion>,
+    exchange: BlockingMutex<CriticalSectionRawMutex, RefCell<HopspotCommandExchange>>,
+    command_ready: Signal<CriticalSectionRawMutex, ()>,
+    completion_ready: Signal<CriticalSectionRawMutex, ()>,
     live_caller: Mutex<CriticalSectionRawMutex, ()>,
     next_sequence: AtomicU32,
 }
@@ -88,9 +147,14 @@ pub struct HopspotCommandMailbox<const DEPTH: usize> {
 impl<const DEPTH: usize> HopspotCommandMailbox<DEPTH> {
     #[must_use]
     pub const fn new() -> Self {
+        assert!(
+            DEPTH == 1,
+            "the Hopspot command executor has exactly one bounded slot"
+        );
         Self {
-            commands: Channel::new(),
-            completion: Signal::new(),
+            exchange: BlockingMutex::new(RefCell::new(HopspotCommandExchange::Empty)),
+            command_ready: Signal::new(),
+            completion_ready: Signal::new(),
             live_caller: Mutex::new(()),
             next_sequence: AtomicU32::new(1),
         }
@@ -106,7 +170,28 @@ impl<const DEPTH: usize> HopspotCommandMailbox<DEPTH> {
     }
 
     pub async fn receive(&'static self) -> PendingHopspotCommand {
-        self.commands.receive().await
+        loop {
+            let pending = self.exchange.lock(|exchange| {
+                let mut exchange = exchange.borrow_mut();
+                match core::mem::replace(&mut *exchange, HopspotCommandExchange::Empty) {
+                    HopspotCommandExchange::Queued { pending, abandoned } => {
+                        *exchange = HopspotCommandExchange::Executing {
+                            sequence: pending.sequence,
+                            abandoned,
+                        };
+                        Some(pending)
+                    }
+                    current => {
+                        *exchange = current;
+                        None
+                    }
+                }
+            });
+            if let Some(pending) = pending {
+                return pending;
+            }
+            self.command_ready.wait().await;
+        }
     }
 
     pub fn complete(
@@ -114,10 +199,30 @@ impl<const DEPTH: usize> HopspotCommandMailbox<DEPTH> {
         token: HopspotCommandToken,
         result: Result<RemoteControlHostResponse, RemoteControlHostCommandError>,
     ) {
-        self.completion.signal(HopspotCommandCompletion {
-            sequence: token.0,
-            result,
+        let completed = self.exchange.lock(|exchange| {
+            let mut exchange = exchange.borrow_mut();
+            match &*exchange {
+                HopspotCommandExchange::Executing {
+                    sequence,
+                    abandoned,
+                } if *sequence == token.0 => {
+                    if *abandoned {
+                        *exchange = HopspotCommandExchange::Empty;
+                        false
+                    } else {
+                        *exchange = HopspotCommandExchange::Completed(HopspotCommandCompletion {
+                            sequence: token.0,
+                            result,
+                        });
+                        true
+                    }
+                }
+                _ => false,
+            }
         });
+        if completed {
+            self.completion_ready.signal(());
+        }
     }
 }
 
@@ -164,13 +269,23 @@ impl<const DEPTH: usize> HopspotCommandFuture<DEPTH> {
                 completed: false,
             };
         };
-        let _ = mailbox.completion.try_take();
         let sequence = mailbox.next_sequence.fetch_add(1, Ordering::Relaxed);
-        let immediate_failure = mailbox
-            .commands
-            .try_send(PendingHopspotCommand { sequence, command })
-            .err()
-            .map(|_| RemoteControlHostCommandError::Busy);
+        let queued = mailbox.exchange.lock(|exchange| {
+            let mut exchange = exchange.borrow_mut();
+            if matches!(*exchange, HopspotCommandExchange::Empty) {
+                *exchange = HopspotCommandExchange::Queued {
+                    pending: PendingHopspotCommand { sequence, command },
+                    abandoned: false,
+                };
+                true
+            } else {
+                false
+            }
+        });
+        if queued {
+            mailbox.command_ready.signal(());
+        }
+        let immediate_failure = (!queued).then_some(RemoteControlHostCommandError::Busy);
         Self {
             mailbox,
             caller: immediate_failure.is_none().then_some(caller),
@@ -194,17 +309,60 @@ impl<const DEPTH: usize> Future for HopspotCommandFuture<DEPTH> {
             return Poll::Pending;
         }
         loop {
-            let mut completion = pin!(self.mailbox.completion.wait());
-            match completion.as_mut().poll(context) {
-                Poll::Ready(completion) if completion.sequence == self.sequence => {
-                    self.caller = None;
-                    self.completed = true;
-                    return Poll::Ready(completion.result);
+            let completion = self.mailbox.exchange.lock(|exchange| {
+                let mut exchange = exchange.borrow_mut();
+                let matches = matches!(
+                    &*exchange,
+                    HopspotCommandExchange::Completed(completion)
+                        if completion.sequence == self.sequence
+                );
+                if !matches {
+                    return None;
                 }
-                Poll::Ready(_) => {}
+                match core::mem::replace(&mut *exchange, HopspotCommandExchange::Empty) {
+                    HopspotCommandExchange::Completed(completion) => Some(completion.result),
+                    _ => None,
+                }
+            });
+            if let Some(result) = completion {
+                self.caller = None;
+                self.completed = true;
+                return Poll::Ready(result);
+            }
+            let mut ready = pin!(self.mailbox.completion_ready.wait());
+            match ready.as_mut().poll(context) {
+                Poll::Ready(()) => {}
                 Poll::Pending => return Poll::Pending,
             }
         }
+    }
+}
+
+impl<const DEPTH: usize> Drop for HopspotCommandFuture<DEPTH> {
+    fn drop(&mut self) {
+        if self.completed || self.sequence == 0 {
+            return;
+        }
+        self.mailbox.exchange.lock(|exchange| {
+            let mut exchange = exchange.borrow_mut();
+            match &mut *exchange {
+                HopspotCommandExchange::Queued { pending, abandoned }
+                    if pending.sequence == self.sequence =>
+                {
+                    *abandoned = true
+                }
+                HopspotCommandExchange::Executing {
+                    sequence,
+                    abandoned,
+                } if *sequence == self.sequence => *abandoned = true,
+                HopspotCommandExchange::Completed(completion)
+                    if completion.sequence == self.sequence =>
+                {
+                    *exchange = HopspotCommandExchange::Empty;
+                }
+                _ => {}
+            }
+        });
     }
 }
 
@@ -292,5 +450,36 @@ mod tests {
             poll(second.as_mut()),
             Poll::Ready(Err(RemoteControlHostCommandError::Busy))
         );
+    }
+
+    #[test]
+    fn an_abandoned_command_releases_the_slot_after_exact_executor_completion() {
+        let mailbox = Box::leak(Box::new(HopspotCommandMailbox::<1>::new()));
+        let handle = mailbox.handle();
+        let mut abandoned = Box::pin(handle.execute(RemoteControlHostCommand::DescribeBuild));
+        assert!(poll(abandoned.as_mut()).is_pending());
+        drop(abandoned);
+
+        let mut blocked = pin!(handle.execute(RemoteControlHostCommand::DescribePower));
+        assert_eq!(
+            poll(blocked.as_mut()),
+            Poll::Ready(Err(RemoteControlHostCommandError::Busy))
+        );
+
+        let mut receive = pin!(mailbox.receive());
+        let Poll::Ready(pending) = poll(receive.as_mut()) else {
+            panic!("the abandoned command remains executor-owned");
+        };
+        let (token, command) = pending.into_parts();
+        assert!(matches!(command, RemoteControlHostCommand::DescribeBuild));
+        mailbox.complete(
+            token,
+            Ok(RemoteControlHostResponse::DescribeBuild(
+                RemoteControlBuildVersion::empty(),
+            )),
+        );
+
+        let mut recovered = pin!(handle.execute(RemoteControlHostCommand::DescribePower));
+        assert!(poll(recovered.as_mut()).is_pending());
     }
 }

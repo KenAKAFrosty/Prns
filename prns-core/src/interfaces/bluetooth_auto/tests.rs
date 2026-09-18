@@ -15,6 +15,24 @@ fn caps(l2cap: Option<u16>) -> LinkCapabilities {
     }
 }
 
+fn groups() -> DiscoveryGroupHashSet {
+    DiscoveryGroupSet::reticulum().hashes()
+}
+
+fn explicit_groups() -> PeerDiscoveryGroups {
+    PeerDiscoveryGroups::Explicit(groups())
+}
+
+fn named_groups(names: &[&str]) -> DiscoveryGroupHashSet {
+    let ids: std::vec::Vec<_> = names
+        .iter()
+        .map(|name| DiscoveryGroupId::parse(name).expect("valid test group"))
+        .collect();
+    DiscoveryGroupSet::try_from_slice(&ids)
+        .expect("valid test group set")
+        .hashes()
+}
+
 fn mac() -> Endpoint {
     Endpoint::CoreBluetooth(AppleHost::MacOs)
 }
@@ -640,19 +658,21 @@ fn a_dialer_and_listener_settle_exchanging_endpoints_and_caps() {
         identity: identity(1),
         endpoint: mac(),
         capabilities: caps(Some(0x00c0)),
+        discovery_groups: groups(),
     };
     let listener_local = LocalPeer {
         identity: identity(2),
         endpoint: android(),
         capabilities: caps(Some(0x0080)),
+        discovery_groups: groups(),
     };
     let (mut dialer, opening) = Handshake::begin(HandshakeRole::Dialer, dialer_local, Some(-40));
     let (mut listener, silent) =
         Handshake::begin(HandshakeRole::Listener, listener_local, Some(-55));
     assert!(silent.is_none());
 
-    let listener_reaction = listener.absorb(opening.unwrap());
-    let dialer_reaction = dialer.absorb(listener_reaction.reply.unwrap());
+    let listener_reaction = listener.absorb(listener_local, opening.unwrap());
+    let dialer_reaction = dialer.absorb(dialer_local, listener_reaction.reply.unwrap());
 
     if let (HandshakeOutcome::Settled(at_listener), HandshakeOutcome::Settled(at_dialer)) =
         (listener_reaction.outcome, dialer_reaction.outcome)
@@ -690,14 +710,19 @@ fn a_self_connection_aborts_and_closes() {
         identity: identity(5),
         endpoint: mac(),
         capabilities: caps(Some(0x0090)),
+        discovery_groups: groups(),
     };
     let (mut listener, _) = Handshake::begin(HandshakeRole::Listener, local, None);
-    let reaction = listener.absorb(Control::Hello {
-        identity: identity(5),
-        endpoint: mac(),
-        capabilities: caps(Some(0x0090)),
-        peer_rssi: None,
-    });
+    let reaction = listener.absorb(
+        local,
+        Control::Hello {
+            identity: identity(5),
+            endpoint: mac(),
+            capabilities: caps(Some(0x0090)),
+            peer_rssi: None,
+            discovery_groups: explicit_groups(),
+        },
+    );
     assert_eq!(
         reaction.outcome,
         HandshakeOutcome::Aborted(CloseReason::SelfConnection)
@@ -708,6 +733,81 @@ fn a_self_connection_aborts_and_closes() {
             reason: CloseReason::SelfConnection
         })
     );
+}
+
+#[test]
+fn handshakes_require_at_least_one_shared_group() {
+    let local = LocalPeer {
+        identity: identity(5),
+        endpoint: mac(),
+        capabilities: caps(None),
+        discovery_groups: named_groups(&["alpha", "crossover"]),
+    };
+    let (mut listener, _) = Handshake::begin(HandshakeRole::Listener, local, None);
+    let accepted = listener.absorb(
+        local,
+        Control::Hello {
+            identity: identity(6),
+            endpoint: linux(),
+            capabilities: caps(None),
+            peer_rssi: None,
+            discovery_groups: PeerDiscoveryGroups::Explicit(named_groups(&["crossover", "zulu"])),
+        },
+    );
+    assert!(matches!(accepted.outcome, HandshakeOutcome::Settled(_)));
+
+    let (mut listener, _) = Handshake::begin(HandshakeRole::Listener, local, None);
+    let rejected = listener.absorb(
+        local,
+        Control::Hello {
+            identity: identity(7),
+            endpoint: linux(),
+            capabilities: caps(None),
+            peer_rssi: None,
+            discovery_groups: PeerDiscoveryGroups::Explicit(named_groups(&["bravo"])),
+        },
+    );
+    assert_eq!(
+        rejected,
+        HandshakeReaction {
+            reply: Some(Control::Close {
+                reason: CloseReason::Incompatible,
+            }),
+            outcome: HandshakeOutcome::Aborted(CloseReason::Incompatible),
+        }
+    );
+}
+
+#[test]
+fn a_legacy_peer_maps_only_to_the_reticulum_group() {
+    let custom_local = LocalPeer {
+        identity: identity(5),
+        endpoint: mac(),
+        capabilities: caps(None),
+        discovery_groups: named_groups(&["field-mesh"]),
+    };
+    let (mut custom_listener, _) = Handshake::begin(HandshakeRole::Listener, custom_local, None);
+    let legacy = Control::Hello {
+        identity: identity(6),
+        endpoint: linux(),
+        capabilities: caps(None),
+        peer_rssi: None,
+        discovery_groups: PeerDiscoveryGroups::LegacyReticulum,
+    };
+    assert_eq!(
+        custom_listener.absorb(custom_local, legacy).outcome,
+        HandshakeOutcome::Aborted(CloseReason::Incompatible)
+    );
+
+    let default_local = LocalPeer {
+        discovery_groups: groups(),
+        ..custom_local
+    };
+    let (mut default_listener, _) = Handshake::begin(HandshakeRole::Listener, default_local, None);
+    assert!(matches!(
+        default_listener.absorb(default_local, legacy).outcome,
+        HandshakeOutcome::Settled(_)
+    ));
 }
 
 #[test]
@@ -743,6 +843,7 @@ fn a_hello_round_trips_through_the_control_codec() {
         endpoint: android(),
         capabilities: caps(Some(0x0081)),
         peer_rssi: Some(-63),
+        discovery_groups: explicit_groups(),
     };
     let mut buf = [0u8; CONTROL_MAX_LEN];
     let len = hello.encode(&mut buf).unwrap();
@@ -765,6 +866,7 @@ fn every_endpoint_round_trips_through_the_greeting() {
             endpoint,
             capabilities: caps(None),
             peer_rssi: None,
+            discovery_groups: explicit_groups(),
         };
         let mut buf = [0u8; CONTROL_MAX_LEN];
         let len = hello.encode(&mut buf).unwrap();
@@ -784,6 +886,7 @@ fn a_greeting_without_the_trailing_rssi_byte_still_decodes() {
         endpoint: mac(),
         capabilities: caps(Some(0x0081)),
         peer_rssi: Some(-63),
+        discovery_groups: PeerDiscoveryGroups::LegacyReticulum,
     };
     let mut buf = [0u8; CONTROL_MAX_LEN];
     let len = hello.encode(&mut buf).unwrap();
@@ -795,6 +898,7 @@ fn a_greeting_without_the_trailing_rssi_byte_still_decodes() {
             endpoint: mac(),
             capabilities: caps(Some(0x0081)),
             peer_rssi: None,
+            discovery_groups: PeerDiscoveryGroups::LegacyReticulum,
         }
     );
 }
@@ -809,6 +913,7 @@ fn a_gatt_only_welcome_round_trips_with_no_psm() {
             link_mtu: 23,
         },
         peer_rssi: None,
+        discovery_groups: explicit_groups(),
     };
     let mut buf = [0u8; CONTROL_MAX_LEN];
     let len = welcome.encode(&mut buf).unwrap();
@@ -839,6 +944,55 @@ fn the_control_codec_rejects_garbage() {
     assert_eq!(Control::decode(&[0xFF]), None);
     assert_eq!(Control::decode(&[CONTROL_HELLO, 0x00]), None);
     assert_eq!(Control::decode(&[CONTROL_CLOSE, 0x00]), None);
+    assert_eq!(Control::decode(&[CONTROL_CLOSE, 0x01, 0x00]), None);
+}
+
+#[test]
+fn extended_greetings_reject_noncanonical_group_lists() {
+    let hello = Control::Hello {
+        identity: identity(1),
+        endpoint: mac(),
+        capabilities: caps(None),
+        peer_rssi: None,
+        discovery_groups: PeerDiscoveryGroups::Explicit(named_groups(&["alpha", "bravo"])),
+    };
+    let mut bytes = [0u8; CONTROL_MAX_LEN];
+    let len = hello.encode(&mut bytes).unwrap();
+
+    let mut unknown_version = bytes;
+    unknown_version[23] = 2;
+    assert_eq!(
+        Control::try_decode(&unknown_version[..len]),
+        Err(ControlParseError::UnknownDiscoveryGroupVersion(2))
+    );
+
+    let mut invalid_count = bytes;
+    invalid_count[24] = 0;
+    assert_eq!(
+        Control::try_decode(&invalid_count[..len]),
+        Err(ControlParseError::InvalidDiscoveryGroupCount(0))
+    );
+
+    let mut unsorted = bytes;
+    let (first, second) = unsorted[25..25 + 64].split_at_mut(32);
+    first.swap_with_slice(second);
+    assert_eq!(
+        Control::try_decode(&unsorted[..len]),
+        Err(ControlParseError::InvalidDiscoveryGroups(
+            crate::interfaces::DiscoveryGroupHashSetError::Unsorted
+        ))
+    );
+
+    assert_eq!(
+        Control::try_decode(&bytes[..len - 1]),
+        Err(ControlParseError::InvalidLength)
+    );
+    let mut trailing = bytes[..len].to_vec();
+    trailing.push(0);
+    assert_eq!(
+        Control::try_decode(&trailing),
+        Err(ControlParseError::InvalidLength)
+    );
 }
 
 #[test]
@@ -848,6 +1002,7 @@ fn control_encode_refuses_a_short_buffer() {
         endpoint: mac(),
         capabilities: caps(Some(0x0090)),
         peer_rssi: None,
+        discovery_groups: explicit_groups(),
     };
     let mut tiny = [0u8; 4];
     assert_eq!(hello.encode(&mut tiny), None);
