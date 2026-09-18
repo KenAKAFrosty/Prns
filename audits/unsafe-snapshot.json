@@ -517,8 +517,7 @@
         "host-c-macos": [],
         "host-c-windows": [],
         "ios": [],
-        "nrf52840": [],
-        "wasm": []
+        "nrf52840": []
       },
       "name": "autocfg",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -13289,8 +13288,7 @@
         "nrf52840": [
           "default",
           "std"
-        ],
-        "wasm": []
+        ]
       },
       "name": "num-traits",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -15541,6 +15539,7 @@
           "host"
         ],
         "nrf52840": [
+          "compact-node-pages",
           "display",
           "embedded"
         ],
@@ -18957,18 +18956,9 @@
           "default",
           "std"
         ],
-        "esp32-c6": [],
-        "esp32-s3-heltec": [],
-        "esp32-s3-heltec-e290": [],
-        "esp32-s3-heltec-r8": [],
-        "esp32-s3-heltec-wireless-stick-lite-v3": [],
-        "esp32-s3-tbeam": [],
         "host-c-linux": [],
         "host-c-macos": [],
-        "host-c-windows": [],
-        "ios": [],
-        "nrf52840": [],
-        "wasm": []
+        "host-c-windows": []
       },
       "name": "rmp",
       "source": "registry+https://github.com/rust-lang/crates.io-index",

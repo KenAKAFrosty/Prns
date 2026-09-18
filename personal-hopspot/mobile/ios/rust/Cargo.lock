@@ -1496,7 +1496,6 @@ dependencies = [
  "prns-macros",
  "rand_core",
  "rayon",
- "rmp",
  "roaring",
  "sha2",
  "x25519-dalek",
@@ -1655,15 +1654,6 @@ checksum = "22e18b0f0062d30d4230b2e85ff77fdfe4326feb054b9783a3460d8435c8ab91"
 dependencies = [
  "crossbeam-deque",
  "crossbeam-utils",
-]
-
-[[package]]
-name = "rmp"
-version = "0.8.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ba8be72d372b2c9b35542551678538b562e7cf86c3315773cae48dfbfe7790c"
-dependencies = [
- "num-traits",
 ]
 
 [[package]]

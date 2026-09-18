@@ -1486,7 +1486,6 @@ dependencies = [
  "prns-macros",
  "rand_core",
  "rayon",
- "rmp",
  "roaring",
  "sha2 0.11.0",
  "x25519-dalek",
@@ -1697,15 +1696,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47b34b781b31e5d73e9fbc8689c70551fd1ade9a19e3e28cfec8580a79290cc4"
 dependencies = [
  "bytemuck",
-]
-
-[[package]]
-name = "rmp"
-version = "0.8.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ba8be72d372b2c9b35542551678538b562e7cf86c3315773cae48dfbfe7790c"
-dependencies = [
- "num-traits",
 ]
 
 [[package]]
