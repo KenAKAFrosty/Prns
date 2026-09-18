@@ -1,3 +1,4 @@
+pub(in crate::screen) mod groups;
 pub(in crate::screen) mod subg;
 
 use core::fmt::Write as _;
@@ -86,6 +87,34 @@ fn draw_menu_item<D: DrawTarget<Color = BinaryColor>>(
         Text::with_baseline(label, Point::new(MENU_TEXT_X, y), style, Baseline::Top).draw(display);
 }
 
+fn draw_menu_header<D: DrawTarget<Color = BinaryColor>>(
+    display: &mut D,
+    title: &str,
+    subtitle: &str,
+) {
+    let header_style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
+    let _ = Text::with_baseline(
+        title,
+        Point::new(NAME_TEXT_X, MENU_HEADER_Y),
+        header_style,
+        Baseline::Top,
+    )
+    .draw(display);
+    let subtitle_style = MonoTextStyle::new(&FONT_5X8, BinaryColor::On);
+    let _ = Text::with_baseline(
+        subtitle,
+        Point::new(NAME_TEXT_X, MENU_SUBTITLE_Y),
+        subtitle_style,
+        Baseline::Top,
+    )
+    .draw(display);
+    line(
+        display,
+        Point::new(0, MENU_DIVIDER_Y),
+        Point::new(WIDTH - 1, MENU_DIVIDER_Y),
+    );
+}
+
 fn draw_failure_reason<D: DrawTarget<Color = BinaryColor>>(
     display: &mut D,
     mut y: i32,
@@ -157,28 +186,7 @@ pub(super) fn draw_global_menu<D: DrawTarget<Color = BinaryColor>>(
     state: &UiState,
 ) {
     draw_global_icon(display, NAME_ICON_X, MENU_HEADER_Y, BinaryColor::On);
-    let header_style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
-    let _ = Text::with_baseline(
-        GLOBAL_LABEL,
-        Point::new(NAME_TEXT_X, MENU_HEADER_Y),
-        header_style,
-        Baseline::Top,
-    )
-    .draw(display);
-
-    let subtitle_style = MonoTextStyle::new(&FONT_5X8, BinaryColor::On);
-    let _ = Text::with_baseline(
-        "Global",
-        Point::new(NAME_TEXT_X, MENU_SUBTITLE_Y),
-        subtitle_style,
-        Baseline::Top,
-    )
-    .draw(display);
-    line(
-        display,
-        Point::new(0, MENU_DIVIDER_Y),
-        Point::new(WIDTH - 1, MENU_DIVIDER_Y),
-    );
+    draw_menu_header(display, GLOBAL_LABEL, "Global");
 
     const VISIBLE_ITEMS: usize = 6;
     let item_count = state.global_menu_items().count();
@@ -408,6 +416,7 @@ pub(in crate::screen) fn draw_interface_menu<D: DrawTarget<Color = BinaryColor>>
     card: &Card,
     selected_item: usize,
     shared_instance_config_export: SharedInstanceConfigExport,
+    discovery_groups: crate::screen::state::DiscoveryGroupEditorAvailability,
     details: &InterfaceMenuDetails,
 ) {
     draw_interface_icon(
@@ -417,30 +426,9 @@ pub(in crate::screen) fn draw_interface_menu<D: DrawTarget<Color = BinaryColor>>
         card.kind,
         BinaryColor::On,
     );
-    let header_style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
-    let _ = Text::with_baseline(
-        &card.label,
-        Point::new(NAME_TEXT_X, MENU_HEADER_Y),
-        header_style,
-        Baseline::Top,
-    )
-    .draw(display);
+    draw_menu_header(display, &card.label, "Menu");
 
-    let subtitle_style = MonoTextStyle::new(&FONT_5X8, BinaryColor::On);
-    let _ = Text::with_baseline(
-        "Menu",
-        Point::new(NAME_TEXT_X, MENU_SUBTITLE_Y),
-        subtitle_style,
-        Baseline::Top,
-    )
-    .draw(display);
-    line(
-        display,
-        Point::new(0, MENU_DIVIDER_Y),
-        Point::new(WIDTH - 1, MENU_DIVIDER_Y),
-    );
-
-    let items = interface_menu_items(card.kind, shared_instance_config_export);
+    let items = interface_menu_items(card.kind, shared_instance_config_export, discovery_groups);
     for (index, item) in items.iter().enumerate() {
         let label = if matches!(card.kind, CardKind::SubG(SubGCardState::Setup)) {
             item

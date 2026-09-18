@@ -409,12 +409,22 @@ impl Card {
 }
 
 pub(crate) fn sort_cards_for_display<const N: usize>(cards: &mut HVec<Card, N>) {
-    cards.sort_unstable_by(|a, b| {
-        card_display_rank(a.kind)
-            .cmp(&card_display_rank(b.kind))
-            .then_with(|| a.label.as_str().cmp(b.label.as_str()))
-            .then_with(|| a.id.cmp(&b.id))
-    });
+    // Hopspot screens have a single-digit card bound. Insertion sort avoids pulling the
+    // general-purpose slice sorter into constrained firmware and is faster at this scale.
+    for right in 1..cards.len() {
+        let mut index = right;
+        while index > 0 && card_display_order(&cards[index], &cards[index - 1]).is_lt() {
+            cards.swap(index, index - 1);
+            index -= 1;
+        }
+    }
+}
+
+fn card_display_order(left: &Card, right: &Card) -> core::cmp::Ordering {
+    card_display_rank(left.kind)
+        .cmp(&card_display_rank(right.kind))
+        .then_with(|| left.label.as_str().cmp(right.label.as_str()))
+        .then_with(|| left.id.cmp(&right.id))
 }
 
 const fn card_display_rank(kind: CardKind) -> u8 {

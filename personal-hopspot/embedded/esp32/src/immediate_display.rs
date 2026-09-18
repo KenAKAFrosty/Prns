@@ -371,6 +371,7 @@ mod tests {
             shared_instance_config_export:
                 personal_hopspot_core::SharedInstanceConfigExport::Unavailable,
             gnss: personal_hopspot_core::GnssAvailability::Unavailable,
+            discovery_groups: personal_hopspot_core::DiscoveryGroupEditorAvailability::Unavailable,
         })
     }
 

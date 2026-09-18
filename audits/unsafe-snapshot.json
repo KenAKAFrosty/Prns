@@ -15480,11 +15480,11 @@
       "name": "personal-hopspot-android",
       "source": "personal-hopspot/mobile/android/rust",
       "unsafe": {
-        "blocks": 20,
+        "blocks": 22,
         "externs": 0,
         "functions": 0,
         "impls": 0,
-        "tokens": 20
+        "tokens": 22
       },
       "version": "0.1.0"
     },
@@ -15679,11 +15679,11 @@
       "name": "personal-hopspot-ios",
       "source": "personal-hopspot/mobile/ios/rust",
       "unsafe": {
-        "blocks": 10,
-        "externs": 5,
+        "blocks": 12,
+        "externs": 7,
         "functions": 0,
         "impls": 0,
-        "tokens": 15
+        "tokens": 19
       },
       "version": "0.1.0"
     },
@@ -22346,11 +22346,11 @@
       "name": "t-echo",
       "source": "personal-hopspot/embedded/nrf52840",
       "unsafe": {
-        "blocks": 1477,
+        "blocks": 1481,
         "externs": 13,
-        "functions": 298,
-        "impls": 15,
-        "tokens": 1804
+        "functions": 299,
+        "impls": 17,
+        "tokens": 1811
       },
       "version": "0.1.0"
     },

@@ -482,13 +482,14 @@ async fn stand_up<'a>(
                 ))
             }
         }
-        PlannedMedium::PrnsBluetoothAuto => {
+        PlannedMedium::PrnsBluetoothAuto(planned) => {
             #[cfg(feature = "bluetooth-auto")]
             {
-                bluetooth_auto::stand_up(construction, context)
+                bluetooth_auto::stand_up(construction, context, planned)
             }
             #[cfg(not(feature = "bluetooth-auto"))]
             {
+                let _ = planned;
                 Err(PlanFailure::InterfaceNotBuilt(
                     PlannedInterfaceKind::PrnsBluetoothAuto,
                 ))
@@ -796,7 +797,7 @@ fn planned_medium_name(medium: &PlannedMedium) -> &'static str {
         PlannedMedium::I2p { .. } => "i2p",
         PlannedMedium::Weave { .. } => "weave",
         PlannedMedium::PrnsUsbAuto => "prns_usb_auto",
-        PlannedMedium::PrnsBluetoothAuto => "prns_bluetooth_auto",
+        PlannedMedium::PrnsBluetoothAuto(_) => "prns_bluetooth_auto",
         PlannedMedium::PrnsWebSocketClient { .. } => "prns_websocket_client",
         PlannedMedium::PrnsWebSocketServer { .. } => "prns_websocket_server",
     }

@@ -371,10 +371,7 @@ struct ReadyVerifiedControllerGrant {
 
 enum VerifiedControllerGrantStart {
     Pending,
-    Dispatch {
-        request: RunnerRequest<0>,
-        verified: VerifiedAdmittedRemoteControlRequest,
-    },
+    Dispatch,
     Respond(ReadyVerifiedControllerGrant),
 }
 
@@ -1005,8 +1002,8 @@ fn begin_verified_controller_grant_persistence<M: RawMutex>(
     progress: &mut ControllerGrantPersistenceProgress,
     remote_control: &mut AssembledRemoteControl,
     stores: Option<&RemoteControlAuthorizationStoreExchange<M>>,
-    request: RunnerRequest<0>,
-    verified: VerifiedAdmittedRemoteControlRequest,
+    request: &RunnerRequest<0>,
+    verified: &VerifiedAdmittedRemoteControlRequest,
 ) -> VerifiedControllerGrantStart {
     let responder = request.respond_token();
     let (prepared, completion) = if let Some(grant) = verified.authorize_controller_grant() {
@@ -1057,7 +1054,7 @@ fn begin_verified_controller_grant_persistence<M: RawMutex>(
             VerifiedControllerGrantCompletion::Revoke(completion),
         )
     } else {
-        return VerifiedControllerGrantStart::Dispatch { request, verified };
+        return VerifiedControllerGrantStart::Dispatch;
     };
 
     if prepared.is_unchanged() {
@@ -1228,8 +1225,8 @@ pub(super) async fn run_router<
                             &mut controller_grant_persistence,
                             remote_control,
                             authorization_stores,
-                            request,
-                            verified,
+                            &request,
+                            &verified,
                         ) {
                             VerifiedControllerGrantStart::Pending => {
                                 authorization_persistence =
@@ -1240,7 +1237,7 @@ pub(super) async fn run_router<
                             VerifiedControllerGrantStart::Respond(ready) => {
                                 let _responded = respond_verified_controller_grant(commands, ready);
                             }
-                            VerifiedControllerGrantStart::Dispatch { request, verified } => {
+                            VerifiedControllerGrantStart::Dispatch => {
                                 dispatch_prepared::<
                                     St,
                                     R,

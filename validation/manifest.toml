@@ -1791,6 +1791,12 @@ group = "remote-control"
 tiers = ["release", "scheduled"]
 
 [[fuzz_target]]
+name = "bluetooth_auto_control_parse"
+path = "fuzz_targets/bluetooth_auto_control_parse.rs"
+group = "bluetooth-auto"
+tiers = ["release", "scheduled"]
+
+[[fuzz_target]]
 name = "remote_control_pairing_messages_parse"
 path = "fuzz_targets/remote_control_pairing_messages_parse.rs"
 group = "remote-control"
@@ -1812,6 +1818,18 @@ tiers = ["release", "scheduled"]
 name = "subghz_configuration"
 path = "fuzz_targets/subghz_configuration.rs"
 group = "subghz"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "control_parser_handles_every_legacy_greeting_shape"
+source = "prns-core/src/interfaces/bluetooth_auto/handshake.rs"
+group = "bluetooth-auto"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "control_parser_accepts_every_single_group_extension_shape"
+source = "prns-core/src/interfaces/bluetooth_auto/handshake.rs"
+group = "bluetooth-auto"
 tiers = ["release", "scheduled"]
 
 [[kani]]
@@ -2031,6 +2049,18 @@ group = "remote-control"
 tiers = ["release", "scheduled"]
 
 [[kani]]
+name = "request_parser_handles_discovery_group_inventory"
+source = "prns-core/src/remote_control/message.rs"
+group = "remote-control"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "request_parser_accepts_maximum_discovery_group_count"
+source = "prns-core/src/remote_control/message.rs"
+group = "remote-control"
+tiers = ["release", "scheduled"]
+
+[[kani]]
 name = "request_parser_handles_desired_state_and_wifi_transaction_family"
 source = "prns-core/src/remote_control/message.rs"
 group = "remote-control"
@@ -2044,6 +2074,12 @@ tiers = ["release", "scheduled"]
 
 [[kani]]
 name = "response_parser_handles_interface_configuration_family"
+source = "prns-core/src/remote_control/message.rs"
+group = "remote-control"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "response_parser_handles_discovery_group_replacement"
 source = "prns-core/src/remote_control/message.rs"
 group = "remote-control"
 tiers = ["release", "scheduled"]
