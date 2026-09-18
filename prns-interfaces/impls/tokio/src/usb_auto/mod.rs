@@ -637,7 +637,7 @@ impl<Scan, Open> prns_core::interfaces::ReportsStatus for UsbAutoHost<Scan, Open
 mod tests {
     use super::*;
     use prns_core::interfaces::InterfaceStatus;
-    use prns_runtime::manifold::driver::{manifold_wake, TokioInterfaceSeam};
+    use prns_runtime::manifold::driver::{manifold_wake, ManifoldWakeReceiver, TokioInterfaceSeam};
     use std::collections::VecDeque;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
@@ -747,16 +747,11 @@ mod tests {
             .write_framed(&mut frame)
             .expect("frames the data");
         device.write_all(&frame[..n]).await.expect("the host reads");
-        tokio::time::timeout(Duration::from_secs(2), async {
-            while in_rx.try_peek().is_none() {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("the inbound frame funnels within the window");
-        let received = in_rx
-            .try_peek()
-            .expect("the announced frame is in the lane");
+        // The manifold wake is coalesced, not an interface-ID notification.
+        // Observe this interface's grant lane directly for bounded delivery.
+        let received = tokio::time::timeout(Duration::from_secs(2), in_rx.peek())
+            .await
+            .expect("the inbound frame funnels within the window");
         assert_eq!(received.frame(), &inbound_packet);
         in_rx.release();
 
@@ -860,7 +855,7 @@ mod tests {
         while wire.read(&mut sink).await.is_ok_and(|n| n > 0) {}
     }
 
-    type HostPeers = (TokioGrantConsumer, TokioGrantProducer);
+    type HostPeers = (ManifoldWakeReceiver, TokioGrantConsumer, TokioGrantProducer);
 
     fn spawn_host<Scan, Open, Fut, S>(scan: Scan, open: Open) -> HostPeers
     where
@@ -870,12 +865,12 @@ mod tests {
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
         let host = UsbAutoHost::new(host_id(), scan, open, Arc::new(Notify::new()));
-        let (wake_tx, _wake_rx) = manifold_wake();
+        let (wake_tx, wake_rx) = manifold_wake();
         let (in_tx, in_rx) = tokio_grant_lane(contract::MAX_FRAMED_BYTES, PORT_LANE_DEPTH);
         let (out_tx, out_rx) = tokio_grant_lane(contract::MAX_FRAMED_BYTES, PORT_LANE_DEPTH);
         let seam = TokioInterfaceSeam::new(host_id(), in_tx, wake_tx, out_rx);
         tokio::spawn(host.run(seam));
-        (in_rx, out_tx)
+        (wake_rx, in_rx, out_tx)
     }
 
     #[tokio::test(start_paused = true)]

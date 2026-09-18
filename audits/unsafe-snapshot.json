@@ -11027,7 +11027,8 @@
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
         "host-c-macos": [],
-        "host-c-windows": []
+        "host-c-windows": [],
+        "wasm": []
       },
       "name": "itoa",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -15508,31 +15509,38 @@
         ],
         "engine": [
           "default",
-          "display"
+          "display",
+          "remote-control-pairing"
         ],
         "esp32-c6": [
           "display",
-          "embedded"
+          "embedded",
+          "remote-control-pairing"
         ],
         "esp32-s3-heltec": [
           "display",
-          "embedded"
+          "embedded",
+          "remote-control-pairing"
         ],
         "esp32-s3-heltec-e290": [
           "display",
-          "embedded"
+          "embedded",
+          "remote-control-pairing"
         ],
         "esp32-s3-heltec-r8": [
           "display",
-          "embedded"
+          "embedded",
+          "remote-control-pairing"
         ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "display",
-          "embedded"
+          "embedded",
+          "remote-control-pairing"
         ],
         "esp32-s3-tbeam": [
           "display",
-          "embedded"
+          "embedded",
+          "remote-control-pairing"
         ],
         "ios": [
           "display",
@@ -15588,6 +15596,7 @@
           "esp32s3fn8",
           "jtag-logging",
           "lora",
+          "remote-control-pairing",
           "silent-logging",
           "tcp",
           "usb",
@@ -15601,6 +15610,7 @@
           "esp32s3fn8",
           "jtag-logging",
           "lora",
+          "remote-control-pairing",
           "silent-logging",
           "tcp",
           "usb",
@@ -15614,6 +15624,7 @@
           "esp32s3fn8",
           "jtag-logging",
           "lora",
+          "remote-control-pairing",
           "silent-logging",
           "tcp",
           "usb",
@@ -15627,6 +15638,7 @@
           "esp32s3fn8",
           "jtag-logging",
           "lora",
+          "remote-control-pairing",
           "silent-logging",
           "tcp",
           "usb",
@@ -15640,6 +15652,7 @@
           "esp32s3fn8",
           "jtag-logging",
           "lora",
+          "remote-control-pairing",
           "silent-logging",
           "tcp",
           "usb",
@@ -15653,6 +15666,7 @@
           "esp32s3fn8",
           "jtag-logging",
           "lora",
+          "remote-control-pairing",
           "silent-logging",
           "tcp",
           "usb",
@@ -16845,11 +16859,11 @@
       "name": "prns-ffi",
       "source": "prns-ffi",
       "unsafe": {
-        "blocks": 138,
+        "blocks": 145,
         "externs": 7,
         "functions": 0,
         "impls": 21,
-        "tokens": 198
+        "tokens": 205
       },
       "version": "0.3.7"
     },
@@ -16911,6 +16925,23 @@
       },
       "name": "prns-host-native",
       "source": "prns-host/impls/native",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.3.7"
+    },
+    {
+      "graphs": {
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": []
+      },
+      "name": "prns-host-snapshot",
+      "source": "prns-host/impls/snapshot",
       "unsafe": {
         "blocks": 0,
         "externs": 0,
@@ -19868,6 +19899,9 @@
           "derive",
           "serde_derive",
           "std"
+        ],
+        "wasm": [
+          "alloc"
         ]
       },
       "name": "serde",
@@ -20029,6 +20063,10 @@
           "alloc",
           "result",
           "std"
+        ],
+        "wasm": [
+          "alloc",
+          "result"
         ]
       },
       "name": "serde_core",
@@ -20146,6 +20184,7 @@
           "std"
         ],
         "engine": [
+          "alloc",
           "default",
           "std"
         ]
@@ -20164,8 +20203,22 @@
     {
       "graphs": {
         "host-c-linux": [
+          "alloc",
           "default",
           "std"
+        ],
+        "host-c-macos": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "host-c-windows": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "wasm": [
+          "alloc"
         ]
       },
       "name": "serde_json",
@@ -26694,7 +26747,10 @@
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
-        "host-c-linux": []
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
+        "wasm": []
       },
       "name": "zmij",
       "source": "registry+https://github.com/rust-lang/crates.io-index",

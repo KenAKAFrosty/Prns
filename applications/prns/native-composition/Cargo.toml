@@ -1,0 +1,70 @@
+[package]
+name = "prns-app-native"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Application-owned native Prns composition with generated UniFFI bindings"
+build = "build.rs"
+
+[lib]
+name = "prns_app"
+crate-type = ["cdylib", "lib"]
+
+[[bin]]
+name = "export_contract_fingerprints"
+path = "src/bin/export_contract_fingerprints.rs"
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi_bindgen.rs"
+required-features = ["uniffi-bindgen"]
+
+[features]
+default = ["uniffi-bindings"]
+uniffi-bindings = ["dep:uniffi"]
+uniffi-bindgen = ["uniffi-bindings", "uniffi/cli", "uniffi/cargo-metadata"]
+apple = [
+    "dep:prns-interfaces-tokio",
+    "personal-rns/bluetooth-auto",
+    "personal-rns/tcp",
+    "prns-interfaces-tokio/bluetooth-auto",
+]
+host-test = ["personal-rns/tcp"]
+android = [
+    "dep:jni",
+    "dep:prns-ffi",
+    "personal-rns/bluetooth-auto",
+    "personal-rns/tcp",
+]
+ios-restoration-probe = ["apple", "dep:log", "prns-interfaces-tokio/log"]
+
+[dependencies]
+futures-timer = "=3.0.3"
+uniffi = { version = "=0.31.2", optional = true, default-features = false }
+personal-rns = { path = "../../../personal-rns", default-features = false, features = ["tokio-host"] }
+prns-lxmf = { path = "../../services/lxmf", default-features = false, features = ["redb-mailbox", "tokio-host"] }
+prns-core = { path = "../../../prns-core", default-features = false, features = ["std"] }
+prns-host = { path = "../../../prns-host/core" }
+prns-host-snapshot = { path = "../../../prns-host/impls/snapshot" }
+prns-interfaces-tokio = { path = "../../../prns-interfaces/impls/tokio", default-features = false, optional = true }
+log = { version = "0.4", default-features = false, optional = true }
+jni = { version = "0.21", default-features = false, optional = true }
+prns-ffi = { path = "../../../prns-ffi", default-features = false, optional = true }
+redb = "=4.2.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread", "sync", "time"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", default-features = false, features = ["test-util"] }
+
+[build-dependencies]
+serde_json = "1"
+
+[lints]
+workspace = true

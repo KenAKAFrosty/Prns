@@ -699,15 +699,26 @@ impl<S: StorageLayout> EngineState<S> {
                     fill_random,
                     sink,
                 );
-                if let Ok(RemoteControlTargetPairingFinalization::CompletionDispatched {
-                    attempt_id,
-                }) = &result
-                {
-                    sink(EngineReaction::Journaled(
+                match &result {
+                    Ok(RemoteControlTargetPairingFinalization::CompletionDispatched {
+                        attempt_id,
+                    }) => sink(EngineReaction::Journaled(
                         Journaled::RemoteControlTargetPairingAuthorizationPersisted {
                             attempt_id: *attempt_id,
                         },
-                    ));
+                    )),
+                    Ok(RemoteControlTargetPairingFinalization::AuthorizationRollbackRequired {
+                        attempt_id,
+                        ..
+                    }) => sink(EngineReaction::Journaled(
+                        Journaled::RemoteControlTargetPairingExpiredDuringAuthorization {
+                            attempt_id: *attempt_id,
+                        },
+                    )),
+                    Ok(RemoteControlTargetPairingFinalization::AuthorizationFailureRecorded {
+                        ..
+                    })
+                    | Err(_) => {}
                 }
                 settle(
                     sink,
@@ -777,16 +788,26 @@ impl<S: StorageLayout> EngineState<S> {
                     fill_random,
                     sink,
                 );
-                if let Ok(RemoteControlControllerPairingFinalization::Completed {
-                    attempt_id,
-                    ..
-                }) = &result
-                {
-                    sink(EngineReaction::Journaled(
+                match &result {
+                    Ok(RemoteControlControllerPairingFinalization::Completed {
+                        attempt_id,
+                        ..
+                    }) => sink(EngineReaction::Journaled(
                         Journaled::RemoteControlControllerPairingAuthorizationPersisted {
                             attempt_id: *attempt_id,
                         },
-                    ));
+                    )),
+                    Ok(
+                        RemoteControlControllerPairingFinalization::PersistenceFailureRecorded {
+                            attempt_id,
+                            ..
+                        },
+                    ) => sink(EngineReaction::Journaled(
+                        Journaled::RemoteControlControllerPairingAuthorizationPersistenceFailed {
+                            attempt_id: *attempt_id,
+                        },
+                    )),
+                    Err(_) => {}
                 }
                 settle(
                     sink,

@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "upstream": {
+    "repository": "https://github.com/jhugman/uniffi-bindgen-react-native.git",
+    "revision": "67af14f7a1b60758664cd3a4a50c235fa0b469c6",
+    "pullRequest": "https://github.com/jhugman/uniffi-bindgen-react-native/pull/460"
+  },
+  "patches": [
+    {
+      "file": "patches/0001-exact-optional-properties.patch",
+      "commit": "12d8dbe40a4375f78ab662137b5e6d7c96456f8a",
+      "sha256": "a57f804d3e2b131c43713e616f2e6c18a2c51b3e37e013ba5ea73d290e3b4443"
+    },
+    {
+      "file": "patches/0002-js-runtime-teardown.patch",
+      "commit": "ae975ea7b0bd8361b9c7439a3078a2caa3ab246c",
+      "sha256": "db88d59710d4603c223609ecb3dc8154700a1a3c643ddc4def9bd94e8237d5b9"
+    },
+    {
+      "file": "patches/0003-numeric-apple-framework-version.patch",
+      "description": "Normalize npm prerelease versions in Apple framework metadata and check the result.",
+      "sha256": "3dc8e9d4f32dfdd8aea25a2eba21c8a1e5c8e85a951938d2c4288b74d9b3df3d"
+    },
+    {
+      "file": "patches/0004-android-joined-js-queue-teardown.patch",
+      "commit": "18f0662f64d5de4e8577b390e0b060e591004a7c",
+      "parent": "ae975ea7b0bd8361b9c7439a3078a2caa3ab246c",
+      "sha256": "17453808194c01d70e988ce81212ff6a834f159d955656a0968af9c15955221e"
+    }
+  ],
+  "toolchain": {
+    "node": "24.18.0",
+    "npm": "11.16.0",
+    "rust": "1.98.1",
+    "cargoNdk": "4.1.2",
+    "androidNdk": "27.1.12297006",
+    "xcode": "26.6",
+    "xcodeBuild": "17F113"
+  },
+  "targets": [
+    "aarch64-apple-ios",
+    "aarch64-apple-ios-sim",
+    "x86_64-apple-ios",
+    "aarch64-linux-android",
+    "x86_64-linux-android"
+  ],
+  "packages": {
+    "@ubjs/core": "typescript",
+    "@ubjs/react-native": "runtimes/jsi"
+  }
+}

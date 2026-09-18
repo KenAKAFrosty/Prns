@@ -1,0 +1,15 @@
+/node_modules/
+/.expo/
+/android/
+/ios/
+/dist/
+/coverage/
+/expo-env.d.ts
+/.env
+/.env.*
+*.local
+*.xcworkspace
+*.xcuserstate
+*.apk
+*.aab
+*.ipa

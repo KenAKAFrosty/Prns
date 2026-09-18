@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "directories": [
+    "prns/native-composition/bindings/typescript",
+    "sdk/expo/ios/generated",
+    "sdk/expo/android/src/main/java/rs/reticulum/prns/app/bindings"
+  ],
+  "files": [
+    "prns/native-composition/src/bindings/host_generated.rs",
+    "prns/native-composition/uniffi.toml"
+  ],
+  "scaffolding": [
+    "prns/native-composition/bindings/index.ts",
+    "prns/native-composition/bindings/index.native.ts",
+    "prns/native-composition/bindings/NativeBindings.podspec",
+    "prns/native-composition/bindings/android/build.gradle",
+    "prns/native-composition/bindings/android/src/main/AndroidManifest.xml",
+    "prns/native-composition/bindings/android/src/main/java/com/prnsinternal/nativebindings/NativeBindingsPackage.java",
+    "prns/native-composition/bindings/package.json",
+    "prns/native-composition/bindings/ubrn.config.yaml"
+  ]
+}

@@ -2145,6 +2145,8 @@ name = "prns-host"
 version = "0.3.7"
 dependencies = [
  "prns-runtime",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2154,7 +2156,16 @@ dependencies = [
  "dbus",
  "personal-rns",
  "prns-host",
+ "prns-host-snapshot",
  "tokio",
+]
+
+[[package]]
+name = "prns-host-snapshot"
+version = "0.3.7"
+dependencies = [
+ "personal-rns",
+ "prns-host",
 ]
 
 [[package]]
