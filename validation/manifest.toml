@@ -1289,6 +1289,19 @@ inputs = ["validation/interop/cases/remote_management_interop_smoke.py", "valida
 artifacts = "validation-artifacts/results/interop-remote-management"
 
 [[suite]]
+id = "interop-hopspot-remote-path"
+domain = "interop"
+group = "essential"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+interpreter = "interop_rpc"
+timeout_seconds = 360
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.hopspot_remote_path_interop_smoke"]
+inputs = ["validation/interop/cases/hopspot_remote_path_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_protocol_evidence.py", "validation/interop/peers/rns_remote_management_client.py", "validation/integration/Cargo.toml", "validation/integration/examples/hopspot_remote_path.rs", "personal-hopspot/core/src"]
+artifacts = "validation-artifacts/results/interop-hopspot-remote-path"
+
+[[suite]]
 id = "interop-probe-responder"
 domain = "interop"
 group = "essential"
