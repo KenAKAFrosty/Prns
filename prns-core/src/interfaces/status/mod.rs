@@ -180,7 +180,13 @@ impl InterfaceVitals {
             tx_bytes: status.tx_bytes(),
             transfer_rates: status.transfer_rates(),
             frame_accounting: status.frame_accounting(),
-            radio: status.radio(),
+            radio: match status
+                .link_local()
+                .and_then(WifiIndication::from_link_local)
+            {
+                Some(link_local) => RadioIndication::Wifi(link_local),
+                None => status.radio(),
+            },
             details: status.details(),
         }
     }
@@ -287,5 +293,48 @@ impl<T: InterfaceStatus + ?Sized> InterfaceStatus for &T {
 
     fn details(&self) -> PeerDetails {
         (**self).details()
+    }
+}
+
+#[cfg(test)]
+mod vitals_tests {
+    use super::{InterfaceStatus, InterfaceVitals};
+    use crate::interfaces::{
+        wifi_auto::link_local_from_mac, ConnectionState, InterfaceId, InterfaceKind, MacAddress,
+    };
+
+    struct Peer {
+        address: Option<core::net::Ipv6Addr>,
+    }
+
+    impl InterfaceStatus for Peer {
+        fn id(&self) -> InterfaceId {
+            InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, b"peer")
+        }
+
+        fn connection(&self) -> ConnectionState {
+            ConnectionState::Connected
+        }
+
+        fn rx_bytes(&self) -> u64 {
+            0
+        }
+
+        fn tx_bytes(&self) -> u64 {
+            0
+        }
+
+        fn link_local(&self) -> Option<core::net::Ipv6Addr> {
+            self.address
+        }
+    }
+
+    #[test]
+    fn vitals_publish_eui64_link_local_in_the_existing_radio_field() {
+        let address = link_local_from_mac(MacAddress::new([0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]));
+        let vitals = InterfaceVitals::of(&Peer {
+            address: Some(address),
+        });
+        assert_eq!(vitals.radio.wifi_link_local(), Some(address));
     }
 }

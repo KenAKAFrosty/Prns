@@ -14,6 +14,7 @@ const TAG_BLUETOOTH_RSSI: u8 = 2;
 const TAG_WIFI_UNAVAILABLE: u8 = 3;
 const TAG_WIFI_PENDING: u8 = 4;
 const TAG_WIFI_RSSI: u8 = 5;
+const TAG_WIFI_LINK_LOCAL: u8 = 8;
 const TAG_LORA_PENDING: u8 = 6;
 const TAG_LORA_SAMPLE: u8 = 7;
 const LORA_FLAG_SNR: u8 = 0x01;
@@ -87,6 +88,12 @@ pub enum WifiIndication {
     Unavailable,
     Pending,
     Rssi(RssiDbm),
+    /// Station MAC packed out of an `fe80::/64` EUI-64 address.
+    ///
+    /// `RadioIndication` is 10 bytes. An 8-byte interface identifier grows it,
+    /// and Heltec T096 has no static RAM left for that. These boards publish
+    /// `link_local_from_mac`, so the 6-byte MAC round-trips the address.
+    LinkLocal([u8; 6]),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,8 +106,56 @@ pub enum LoRaIndication {
     },
 }
 
+impl WifiIndication {
+    /// Pack a unicast link-local only when it is `fe80::/64` plus an EUI-64
+    /// interface identifier. Privacy IIDs do not fit this slot.
+    #[must_use]
+    pub fn from_link_local(address: core::net::Ipv6Addr) -> Option<Self> {
+        let octets = address.octets();
+        if octets[0] != 0xfe || octets[1] != 0x80 || octets[2..8].iter().any(|byte| *byte != 0) {
+            return None;
+        }
+        if octets[11] != 0xff || octets[12] != 0xfe {
+            return None;
+        }
+        Some(Self::LinkLocal([
+            octets[8] ^ 0x02,
+            octets[9],
+            octets[10],
+            octets[13],
+            octets[14],
+            octets[15],
+        ]))
+    }
+
+    #[must_use]
+    pub fn link_local(self) -> Option<core::net::Ipv6Addr> {
+        let Self::LinkLocal(mac) = self else {
+            return None;
+        };
+        Some(core::net::Ipv6Addr::new(
+            0xfe80,
+            0,
+            0,
+            0,
+            (u16::from(mac[0] ^ 0x02) << 8) | u16::from(mac[1]),
+            (u16::from(mac[2]) << 8) | 0x00ff,
+            0xfe00 | u16::from(mac[3]),
+            (u16::from(mac[4]) << 8) | u16::from(mac[5]),
+        ))
+    }
+}
+
 impl RadioIndication {
     pub const MAX_ENCODED_LEN: usize = 8;
+
+    #[must_use]
+    pub fn wifi_link_local(self) -> Option<core::net::Ipv6Addr> {
+        match self {
+            Self::Wifi(indication) => indication.link_local(),
+            Self::NotRadio | Self::Bluetooth(_) | Self::LoRa(_) => None,
+        }
+    }
 
     #[must_use]
     pub const fn for_kind(kind: Option<InterfaceKind>) -> Self {
@@ -146,6 +201,7 @@ impl RadioIndication {
             Self::Bluetooth(BluetoothIndication::Rssi(_)) | Self::Wifi(WifiIndication::Rssi(_)) => {
                 3
             }
+            Self::Wifi(WifiIndication::LinkLocal(_)) => 7,
             Self::LoRa(LoRaIndication::Sample { snr, quality, .. }) => {
                 let mut len = 4usize;
                 if snr.is_some() {
@@ -185,6 +241,12 @@ impl RadioIndication {
             Self::Wifi(WifiIndication::Rssi(rssi)) => {
                 *tag_out = TAG_WIFI_RSSI;
                 write_i16(rest, rssi.get())
+            }
+            Self::Wifi(WifiIndication::LinkLocal(mac)) => {
+                *tag_out = TAG_WIFI_LINK_LOCAL;
+                let (slot, rest) = rest.split_at_mut_checked(6)?;
+                slot.copy_from_slice(&mac);
+                Some(rest)
             }
             Self::LoRa(LoRaIndication::Pending) => {
                 *tag_out = TAG_LORA_PENDING;
@@ -231,6 +293,12 @@ impl RadioIndication {
             TAG_WIFI_RSSI => {
                 let (rssi, rest) = parse_i16(rest)?;
                 Some((Self::Wifi(WifiIndication::Rssi(RssiDbm::new(rssi))), rest))
+            }
+            TAG_WIFI_LINK_LOCAL => {
+                let (mac, rest) = rest.split_at_checked(6)?;
+                let mut octets = [0u8; 6];
+                octets.copy_from_slice(mac);
+                Some((Self::Wifi(WifiIndication::LinkLocal(octets)), rest))
             }
             TAG_LORA_PENDING => Some((Self::LoRa(LoRaIndication::Pending), rest)),
             TAG_LORA_SAMPLE => {
@@ -292,6 +360,11 @@ mod tests {
     use super::*;
 
     #[test]
+    fn radio_indication_layout() {
+        assert_eq!(core::mem::size_of::<RadioIndication>(), 10);
+    }
+
+    #[test]
     fn kind_selects_the_family_without_inventing_a_sample() {
         assert_eq!(
             RadioIndication::for_kind(Some(InterfaceKind::TcpClient)),
@@ -345,5 +418,25 @@ mod tests {
                 Some((indication, [].as_slice()))
             );
         }
+    }
+
+    #[test]
+    fn eui64_link_local_round_trips_through_the_radio_slot() {
+        let address = crate::interfaces::wifi_auto::link_local_from_mac(
+            crate::interfaces::MacAddress::new([0x18, 0x62, 0xb4, 0x11, 0x22, 0x33]),
+        );
+        let indication =
+            RadioIndication::Wifi(WifiIndication::from_link_local(address).expect("eui-64 packs"));
+        let mut slot = [0u8; RadioIndication::MAX_ENCODED_LEN];
+        indication.write_into(&mut slot).expect("fits");
+        let (parsed, padding) = RadioIndication::parse(&slot).expect("slot parses");
+        assert!(padding.iter().all(|byte| *byte == 0));
+        assert_eq!(parsed.wifi_link_local(), Some(address));
+    }
+
+    #[test]
+    fn privacy_iid_does_not_fit_the_radio_slot() {
+        let address = core::net::Ipv6Addr::new(0xfe80, 0, 0, 0, 0x1111, 0x2222, 0x3333, 0x4444);
+        assert_eq!(WifiIndication::from_link_local(address), None);
     }
 }
