@@ -16,8 +16,9 @@ use objc2::runtime::ProtocolObject;
 use objc2::{define_class, msg_send, AllocAnyThread, DefinedClass, Message};
 use objc2_core_foundation::{kCFRunLoopDefaultMode, CFRunLoop};
 use objc2_foundation::{
-    NSArray, NSData, NSDictionary, NSNetService, NSNetServiceBrowser, NSNetServiceBrowserDelegate,
-    NSNetServiceDelegate, NSNumber, NSObject, NSObjectProtocol, NSString,
+    NSArray, NSBundle, NSData, NSDictionary, NSNetService, NSNetServiceBrowser,
+    NSNetServiceBrowserDelegate, NSNetServiceDelegate, NSNumber, NSObject, NSObjectProtocol,
+    NSString,
 };
 use tokio::sync::{oneshot, watch};
 
@@ -358,6 +359,93 @@ impl ApplePublication {
             service_name,
         })
     }
+}
+
+/// Logs whether `NSBundle.mainBundle` sees the Local Network / Bonjour Info.plist keys.
+///
+/// Sequoia returns `NSNetServicesMissingRequiredConfigurationError` (-72008) when these
+/// are missing from the *process* main bundle, even if `Contents/Info.plist` is correct on disk.
+fn log_main_bundle_privacy_keys() {
+    let bundle = NSBundle::mainBundle();
+    let path = bundle.bundlePath().to_string();
+    let lan = bundle
+        .objectForInfoDictionaryKey(&NSString::from_str("NSLocalNetworkUsageDescription"))
+        .map(|value| format!("{value:?}"))
+        .unwrap_or_else(|| "MISSING".into());
+    let bonjour = bundle
+        .objectForInfoDictionaryKey(&NSString::from_str("NSBonjourServices"))
+        .map(|value| format!("{value:?}"))
+        .unwrap_or_else(|| "MISSING".into());
+    crate::diagnostic_log::debug!(
+        "mdns: mainBundle={path} NSLocalNetworkUsageDescription={lan} NSBonjourServices={bonjour}"
+    );
+}
+
+/// Best-effort Local Network privacy alert trigger from TN3179 (UDP connect to link-local).
+fn trigger_local_network_privacy_alert() {
+    let mut ifaddrs_head: *mut libc::ifaddrs = std::ptr::null_mut();
+    // SAFETY: getifaddrs writes a linked list we free with freeifaddrs.
+    if unsafe { libc::getifaddrs(&mut ifaddrs_head) } != 0 || ifaddrs_head.is_null() {
+        return;
+    }
+    let mut cursor = ifaddrs_head;
+    while !cursor.is_null() {
+        // SAFETY: cursor is a live ifaddrs node from getifaddrs until freeifaddrs.
+        let ifa = unsafe { &*cursor };
+        cursor = ifa.ifa_next;
+        let addr = ifa.ifa_addr;
+        if addr.is_null() {
+            continue;
+        }
+        // SAFETY: addr is the interface address pointer from getifaddrs.
+        let family = unsafe { (*addr).sa_family as i32 };
+        if family != libc::AF_INET6 {
+            continue;
+        }
+        // SAFETY: family checked as AF_INET6; sockaddr_in6 is the matching layout.
+        let mut sin6 = unsafe { *(addr as *const libc::sockaddr_in6) };
+        let octets = sin6.sin6_addr.s6_addr;
+        // fe80::/10 link-local only.
+        if octets[0] != 0xfe || octets[1] & 0xc0 != 0x80 {
+            continue;
+        }
+        sin6.sin6_port = 9u16.to_be();
+        for byte in &mut sin6.sin6_addr.s6_addr[8..] {
+            *byte = rand_u8();
+        }
+        // SAFETY: AF_INET6 SOCK_DGRAM creates an unbound datagram socket; no prior state.
+        let fd = unsafe { libc::socket(libc::AF_INET6, libc::SOCK_DGRAM, 0) };
+        if fd < 0 {
+            continue;
+        }
+        // SAFETY: `fd` is an open AF_INET6 datagram socket; `sin6` is a stack sockaddr_in6
+        // whose length matches socklen_t below (TN3179 best-effort privacy trigger).
+        let _ = unsafe {
+            libc::connect(
+                fd,
+                &sin6 as *const libc::sockaddr_in6 as *const libc::sockaddr,
+                libc::socklen_t::try_from(std::mem::size_of::<libc::sockaddr_in6>()).unwrap_or(0),
+            )
+        };
+        // SAFETY: `fd` was opened above and is not used after this close.
+        unsafe { libc::close(fd) };
+    }
+    // SAFETY: pairs with successful getifaddrs above.
+    unsafe { libc::freeifaddrs(ifaddrs_head) };
+}
+
+fn rand_u8() -> u8 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let mut hasher = DefaultHasher::new();
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0)
+        .hash(&mut hasher);
+    std::thread::current().id().hash(&mut hasher);
+    (hasher.finish() & 0xff) as u8
 }
 
 fn apple_service_type(discovery_transport: DiscoveryTransport) -> String {
@@ -799,6 +887,8 @@ impl AppleServiceDiscoveryBackend {
         let join = thread::Builder::new()
             .name("hopspot-mdns".into())
             .spawn(move || {
+                log_main_bundle_privacy_keys();
+                trigger_local_network_privacy_alert();
                 let publisher = match dns_sd_ll::LinkLocalPublisher::advertise(
                     tcp_publication.instance_name.as_str(),
                     tcp_publication.instance_name.as_str(),
