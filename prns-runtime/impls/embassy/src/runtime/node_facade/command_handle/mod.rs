@@ -14,6 +14,7 @@ use crate::engine::{
     SetRegisteredAnnounceAppData, Settleable, Settlement,
 };
 use crate::identity::IdentityHash;
+use crate::interfaces::rns_management::RnsRemotePathTableRequest;
 use crate::remote_control::{
     ForgetRemoteControlTargetOutcome, RemoteControlControllerGrant,
     RemoteControlControllerIdentity, RemoteControlTargetAccess,
@@ -78,7 +79,13 @@ pub struct ResourceResponse<const N: usize> {
     pub(crate) id: CommandId,
     pub(crate) link_id: LinkId,
     pub(crate) request_id: RequestId,
-    pub(crate) data: heapless::Vec<u8, N>,
+    pub(crate) payload: ResourceResponsePayload<N>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ResourceResponsePayload<const N: usize> {
+    Ready(heapless::Vec<u8, N>),
+    RnsPathTable(RnsRemotePathTableRequest),
 }
 
 enum RemoteControlPairingSettlementState {
@@ -775,7 +782,25 @@ impl<
                 id: self.pool.mint(),
                 link_id: responder.link_id,
                 request_id: responder.request_id,
-                data,
+                payload: ResourceResponsePayload::Ready(data),
+            })
+            .await;
+        true
+    }
+
+    /// Defers an RNS-compatible path-table Resource response to the live manifold.
+    pub async fn respond_rns_path_table(
+        &self,
+        responder: RespondToken,
+        request: RnsRemotePathTableRequest,
+    ) -> bool {
+        self.pool
+            .resource_responses
+            .send(ResourceResponse {
+                id: self.pool.mint(),
+                link_id: responder.link_id,
+                request_id: responder.request_id,
+                payload: ResourceResponsePayload::RnsPathTable(request),
             })
             .await;
         true

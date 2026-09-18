@@ -8,6 +8,7 @@ use crate::engine::{
     ClassifiedInboundPacket, Departure, EngineState, IngestIo, IssuedCommand, Journaled,
     ProofRequest,
 };
+use crate::interfaces::rns_management::RnsPathTableWriter;
 use crate::interfaces::InterfaceIfac;
 use crate::interfaces::{
     AttachedInterfaces, IfacUnmaskError, InboundPacket, InterfaceDescriptor, InterfaceId,
@@ -17,11 +18,14 @@ use crate::manifold::interface_seam::{EMBEDDED_MAX_LINK_MTU, EMBEDDED_MAX_WIRE_F
 use crate::manifold::timers::{wait_for_due_reason, wait_for_pacer};
 use crate::manifold::wake_schedule::{fire_due_reason, merge_wake_schedules_delta};
 use crate::manifold::{AppDeciders, Host};
+use crate::routing::links::request::{response_envelope_prefix, RESPONSE_WIRE_OVERHEAD};
 use crate::routing::links::resources::ResourceOffer;
 use crate::routing::links::resources::{
     ResourceBody, ResourceCorrelation, ResourceMetadata, ResourceSend,
 };
-use crate::runtime::{InterfaceInspectionStore, ManifoldPersistence, ResourceResponse};
+use crate::runtime::{
+    InterfaceInspectionStore, ManifoldPersistence, ResourceResponse, ResourceResponsePayload,
+};
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
 
 use super::egress::{
@@ -73,6 +77,44 @@ fn inbound_source(
         lane_id
     } else {
         stamped_source
+    }
+}
+
+fn resource_response_data<S: StorageLayout, const N: usize>(
+    engine: &EngineState<S>,
+    descriptors: &[InterfaceDescriptor],
+    request_id: crate::routing::links::request::RequestId,
+    payload: ResourceResponsePayload<N>,
+) -> Option<HeaplessVec<u8, N>> {
+    match payload {
+        ResourceResponsePayload::Ready(data) => Some(data),
+        ResourceResponsePayload::RnsPathTable(selection) => {
+            let mut entry_count = 0usize;
+            engine.visit_route_snapshots(AttachedInterfaces::new(descriptors), |entry| {
+                if selection.includes(entry.destination, entry.hops) {
+                    entry_count = entry_count.saturating_add(1);
+                }
+            });
+            let mut data = HeaplessVec::new();
+            data.resize(N, 0).ok()?;
+            data.get_mut(..RESPONSE_WIRE_OVERHEAD)?
+                .copy_from_slice(&response_envelope_prefix(&request_id));
+            let mut writer =
+                RnsPathTableWriter::new(entry_count, data.get_mut(RESPONSE_WIRE_OVERHEAD..N)?)
+                    .ok()?;
+            let mut failed = false;
+            engine.visit_route_snapshots(AttachedInterfaces::new(descriptors), |entry| {
+                if !failed && selection.includes(entry.destination, entry.hops) {
+                    failed = writer.push(&entry).is_err();
+                }
+            });
+            if failed {
+                return None;
+            }
+            let written = writer.finish().ok()?;
+            data.truncate(RESPONSE_WIRE_OVERHEAD + written);
+            Some(data)
+        }
     }
 }
 
@@ -307,33 +349,43 @@ pub(crate) async fn run_pooled<
                             )
                         },
                     ),
-                    Either::Second(response) => engine.ingest_send_resource_into(
-                        &ResourceSend {
-                            id: response.id,
-                            link_id: response.link_id,
-                            body: ResourceBody {
-                                data: &response.data,
-                                compressed_candidate: None,
-                                metadata: ResourceMetadata::None,
-                            },
-                            correlation: ResourceCorrelation::Response(response.request_id),
-                        },
-                        now,
-                        &mut |entropy| host.fill_random(entropy),
-                        &mut |reaction| {
-                            route_reaction(
-                                reaction,
-                                &mut *egress,
-                                ifacs,
-                                &mut pacers,
-                                now,
-                                &mut |journaled| {
-                                    persistence.observe(&journaled, now);
-                                    on_journaled(journaled);
+                    Either::Second(response) => {
+                        let Some(data) = resource_response_data(
+                            engine,
+                            descriptors,
+                            response.request_id,
+                            response.payload,
+                        ) else {
+                            continue;
+                        };
+                        engine.ingest_send_resource_into(
+                            &ResourceSend {
+                                id: response.id,
+                                link_id: response.link_id,
+                                body: ResourceBody {
+                                    data: &data,
+                                    compressed_candidate: None,
+                                    metadata: ResourceMetadata::None,
                                 },
-                            )
-                        },
-                    ),
+                                correlation: ResourceCorrelation::Response(response.request_id),
+                            },
+                            now,
+                            &mut |entropy| host.fill_random(entropy),
+                            &mut |reaction| {
+                                route_reaction(
+                                    reaction,
+                                    &mut *egress,
+                                    ifacs,
+                                    &mut pacers,
+                                    now,
+                                    &mut |journaled| {
+                                        persistence.observe(&journaled, now);
+                                        on_journaled(journaled);
+                                    },
+                                )
+                            },
+                        )
+                    }
                 };
                 delta.merge(fulfill_owed_work_inline(
                     owed_work,

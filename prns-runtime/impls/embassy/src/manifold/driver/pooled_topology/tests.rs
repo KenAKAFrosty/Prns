@@ -13,20 +13,63 @@ use crate::engine::test_support::{
     bytes_from_hex, pin_transport_id, TestStorageLayout, RNS_1_4_2_ANNOUNCE, TEST_TRANSPORT_ID,
 };
 use crate::engine::{EngineState, InstantMillis, IssuedCommand, Journaled};
+use crate::interfaces::rns_management::RnsRemotePathTableRequest;
 use crate::interfaces::InterfaceIfac;
 use crate::interfaces::{InterfaceDescriptor, InterfaceId};
 use crate::manifold::grant::{GrantProducer, ManifoldLaneReader};
 use crate::manifold::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
-use crate::runtime::ResourceResponse;
+use crate::routing::links::request::{response_envelope_prefix, RequestId, RESPONSE_WIRE_OVERHEAD};
 use crate::runtime::{ManifoldPersistence, NoInterfaceInspectionStore, NoManifoldPersistence};
+use crate::runtime::{ResourceResponse, ResourceResponsePayload};
 use crate::storage::{GrowableHeap, StorageLayout};
 
 use super::super::test_support::{descriptor, WATCHDOG};
 use super::super::{leaked_grant_lane, EmbassyHost, PooledEgress};
-use super::{inbound_source, run_pooled, InterfaceLifecycle, PooledWiring};
+use super::{inbound_source, resource_response_data, run_pooled, InterfaceLifecycle, PooledWiring};
 
 struct AlwaysDuePersistence {
     progress: Rc<Cell<usize>>,
+}
+
+#[test]
+fn path_table_response_materializes_inside_the_manifold() {
+    const RESPONSE_BYTES: usize = RESPONSE_WIRE_OVERHEAD + 1;
+    let engine = EngineState::<GrowableHeap>::default();
+    let request_id = RequestId([0x42; 16]);
+    let selection = RnsRemotePathTableRequest::new(None, None);
+    let mut ready = HeaplessVec::<u8, RESPONSE_BYTES>::new();
+    ready.extend_from_slice(b"ready").unwrap();
+
+    assert_eq!(
+        resource_response_data(
+            &engine,
+            &[],
+            request_id,
+            ResourceResponsePayload::Ready(ready.clone())
+        ),
+        Some(ready)
+    );
+
+    let data = resource_response_data::<_, RESPONSE_BYTES>(
+        &engine,
+        &[],
+        request_id,
+        ResourceResponsePayload::RnsPathTable(selection),
+    )
+    .unwrap();
+
+    assert_eq!(
+        &data[..RESPONSE_WIRE_OVERHEAD],
+        &response_envelope_prefix(&request_id)
+    );
+    assert_eq!(data[RESPONSE_WIRE_OVERHEAD], 0x90);
+    assert!(resource_response_data::<_, RESPONSE_WIRE_OVERHEAD>(
+        &engine,
+        &[],
+        request_id,
+        ResourceResponsePayload::RnsPathTable(selection),
+    )
+    .is_none());
 }
 
 #[test]
