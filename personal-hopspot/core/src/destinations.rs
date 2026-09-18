@@ -74,7 +74,7 @@ impl<'a> HopspotDestinationSet<'a> {
                 ratchet: RatchetPolicy::NoRatchets,
                 resource_strategy: ResourceStrategy::AcceptNone,
                 maximum_request_bytes: Default::default(),
-                request_endpoints: ServeMyRequestEndpoints::Yes,
+                request_endpoints: ServeMyRequestEndpoints::Selected(node_pages::NODE_PAGE_PATHS),
             },
             transport_probe_destination(self.identity),
         ]
@@ -199,9 +199,9 @@ mod tests {
                 link_requests: LinkRequestPolicy::AcceptAll,
                 ratchet: RatchetPolicy::NoRatchets,
                 resource_strategy: ResourceStrategy::AcceptNone,
-                request_endpoints: ServeMyRequestEndpoints::Yes,
+                request_endpoints: ServeMyRequestEndpoints::Selected(paths),
                 ..
-            }
+            } if paths == node_pages::NODE_PAGE_PATHS
         ));
         assert!(matches!(
             probe,

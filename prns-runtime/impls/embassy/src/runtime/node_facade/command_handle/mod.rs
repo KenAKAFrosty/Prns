@@ -1493,6 +1493,14 @@ impl<
         self.respond_packed(responder, packed)
     }
 
+    async fn respond_rns_path_table(
+        &self,
+        responder: RespondToken,
+        request: RnsRemotePathTableRequest,
+    ) -> bool {
+        self.respond_rns_path_table(responder, request).await
+    }
+
     fn close_link(&self, link_id: LinkId) -> bool {
         self.close_link(link_id)
     }

@@ -15,6 +15,7 @@ pub enum RequestEndpointPolicy {
     AllowNone,
     AllowAll,
     RequireIdentified,
+    AllowRemoteControlControllers,
     AllowList(&'static [IdentityHash]),
 }
 
@@ -24,7 +25,10 @@ impl RequestEndpointPolicy {
         match self {
             RequestEndpointPolicy::AllowNone => RequestPolicy::AllowNone,
             RequestEndpointPolicy::AllowAll => RequestPolicy::AllowAll,
-            RequestEndpointPolicy::RequireIdentified => RequestPolicy::RequireIdentified,
+            RequestEndpointPolicy::RequireIdentified
+            | RequestEndpointPolicy::AllowRemoteControlControllers => {
+                RequestPolicy::RequireIdentified
+            }
             RequestEndpointPolicy::AllowList(_) => RequestPolicy::AllowList,
         }
     }

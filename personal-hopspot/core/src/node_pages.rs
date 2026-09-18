@@ -5,6 +5,7 @@ use personal_rns::runtime::request_endpoints::{
     Decline, RequestContext, RequestEndpoint, RequestEndpointPolicy, RequestEndpointSet,
 };
 use personal_rns::runtime::PrnsNodeApi;
+use prns_core::interfaces::rns_management::{decode_remote_path_request, RnsRemotePathRequest};
 
 include!(concat!(env!("OUT_DIR"), "/node_pages_generated.rs"));
 
@@ -16,6 +17,23 @@ pub const COMING_FROM_RNS_PATH: &str = "/page/coming-from-rns.mu";
 pub const SOURCE_PAGE_PATH: &str = "/page/source.mu";
 pub const SOURCE_ARCHIVE_PATH: &str = "/file/source.zip";
 pub const SOURCE_CHECKSUM_PATH: &str = "/file/source.zip.sha256";
+pub const RNS_PATH_PATH: &str = "/path";
+#[cfg(feature = "source-archive")]
+pub const NODE_PAGE_PATHS: &[&str] = &[
+    INDEX_PATH,
+    QUICKSTART_PATH,
+    COMING_FROM_RNS_PATH,
+    SOURCE_PAGE_PATH,
+    SOURCE_ARCHIVE_PATH,
+    SOURCE_CHECKSUM_PATH,
+];
+#[cfg(not(feature = "source-archive"))]
+pub const NODE_PAGE_PATHS: &[&str] = &[
+    INDEX_PATH,
+    QUICKSTART_PATH,
+    COMING_FROM_RNS_PATH,
+    SOURCE_PAGE_PATH,
+];
 pub const QUICKSTART_PAGE: &[u8] = include_bytes!("node_pages/quickstart.mu");
 pub const COMING_FROM_RNS_PAGE: &[u8] =
     include_bytes!("../../../assets/nnpages/coming_from_rns.mu");
@@ -142,20 +160,41 @@ impl<S> RequestEndpoint<S> for SourceChecksumFile {
 
 pub struct NoSourceNodePageRoutes;
 
+async fn dispatch_rns_path<S>(
+    context: RequestContext<'_, S>,
+    node: &impl PrnsNodeApi,
+) -> Result<(), Decline> {
+    let RnsRemotePathRequest::Table(request) =
+        decode_remote_path_request(context.data).map_err(|_| Decline::Ignore)?
+    else {
+        return Err(Decline::Ignore);
+    };
+    let _queued = node
+        .respond_rns_path_table(context.respond_token(), request)
+        .await;
+    Err(Decline::Ignore)
+}
+
 impl<S> RequestEndpointSet<S> for NoSourceNodePageRoutes {
     const REGISTRATIONS: &'static [(&'static str, RequestEndpointPolicy)] = &[
         (INDEX_PATH, RequestEndpointPolicy::AllowAll),
         (QUICKSTART_PATH, RequestEndpointPolicy::AllowAll),
         (COMING_FROM_RNS_PATH, RequestEndpointPolicy::AllowAll),
         (SOURCE_PAGE_PATH, RequestEndpointPolicy::AllowAll),
+        (
+            RNS_PATH_PATH,
+            RequestEndpointPolicy::AllowRemoteControlControllers,
+        ),
     ];
 
     async fn dispatch(
         mut context: RequestContext<'_, S>,
-        _node: &impl PrnsNodeApi,
+        node: &impl PrnsNodeApi,
         path_hash: RequestPathHash,
     ) -> Result<(), Decline> {
-        if path_hash == RequestPathHash::of(INDEX_PATH) {
+        if path_hash == RequestPathHash::of(RNS_PATH_PATH) {
+            dispatch_rns_path(context, node).await
+        } else if path_hash == RequestPathHash::of(INDEX_PATH) {
             context.respond_static_messagepack_bytes(HOPSPOT_INDEX_PAGE_NO_SOURCE)
         } else if path_hash == RequestPathHash::of(QUICKSTART_PATH) {
             context.respond_static_messagepack_bytes(QUICKSTART_PAGE)
@@ -181,14 +220,20 @@ impl<S> RequestEndpointSet<S> for SourceNodePageRoutes {
         (SOURCE_PAGE_PATH, RequestEndpointPolicy::AllowAll),
         (SOURCE_ARCHIVE_PATH, RequestEndpointPolicy::AllowAll),
         (SOURCE_CHECKSUM_PATH, RequestEndpointPolicy::AllowAll),
+        (
+            RNS_PATH_PATH,
+            RequestEndpointPolicy::AllowRemoteControlControllers,
+        ),
     ];
 
     async fn dispatch(
         mut context: RequestContext<'_, S>,
-        _node: &impl PrnsNodeApi,
+        node: &impl PrnsNodeApi,
         path_hash: RequestPathHash,
     ) -> Result<(), Decline> {
-        if path_hash == RequestPathHash::of(INDEX_PATH) {
+        if path_hash == RequestPathHash::of(RNS_PATH_PATH) {
+            dispatch_rns_path(context, node).await
+        } else if path_hash == RequestPathHash::of(INDEX_PATH) {
             context.respond_static_messagepack_bytes(HOPSPOT_INDEX_PAGE_WITH_SOURCE)
         } else if path_hash == RequestPathHash::of(QUICKSTART_PATH) {
             context.respond_static_messagepack_bytes(QUICKSTART_PAGE)
@@ -348,6 +393,10 @@ mod tests {
         assert!(routes.iter().any(|(path, _)| *path == QUICKSTART_PATH));
         assert!(routes.iter().any(|(path, _)| *path == COMING_FROM_RNS_PATH));
         assert!(routes.iter().any(|(path, _)| *path == SOURCE_PAGE_PATH));
+        assert!(routes.iter().any(|(path, policy)| {
+            *path == RNS_PATH_PATH
+                && *policy == RequestEndpointPolicy::AllowRemoteControlControllers
+        }));
         assert!(page.contains("`[Coming from RNS?`:/page/coming-from-rns.mu]"));
         assert!(page.contains("`[Download the source`:/page/source.mu]"));
         assert!(!page.contains("Offline quickstart"));
