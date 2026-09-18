@@ -517,7 +517,8 @@
         "host-c-macos": [],
         "host-c-windows": [],
         "ios": [],
-        "nrf52840": []
+        "nrf52840": [],
+        "wasm": []
       },
       "name": "autocfg",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -13288,7 +13289,8 @@
         "nrf52840": [
           "default",
           "std"
-        ]
+        ],
+        "wasm": []
       },
       "name": "num-traits",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -16564,6 +16566,7 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
+          "rns-management-wire",
           "shared-instance-rpc",
           "std",
           "tokio-host"
@@ -16580,6 +16583,7 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
+          "rns-management-wire",
           "rnx",
           "shared-instance-rpc",
           "signed-artifact",
@@ -16598,6 +16602,7 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
+          "rns-management-wire",
           "rnx",
           "shared-instance-rpc",
           "signed-artifact",
@@ -16616,6 +16621,7 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
+          "rns-management-wire",
           "rnx",
           "shared-instance-rpc",
           "signed-artifact",
@@ -16631,6 +16637,7 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
+          "rns-management-wire",
           "shared-instance-rpc",
           "std",
           "tokio-host"
@@ -16644,6 +16651,7 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
+          "rns-management-wire",
           "shared-instance-rpc",
           "std",
           "tokio-host"
@@ -16657,6 +16665,7 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
+          "rns-management-wire",
           "shared-instance-rpc",
           "std",
           "tokio-host"
@@ -16667,6 +16676,7 @@
           "embassy-host",
           "flash",
           "resource-work-offload",
+          "rns-management-wire",
           "std",
           "std-sync-host",
           "test-support"
@@ -16679,6 +16689,7 @@
           "flash",
           "movable-frame-forwarding",
           "resource-work-offload",
+          "rns-management-wire",
           "std",
           "tokio-host"
         ],
@@ -16690,6 +16701,7 @@
           "flash",
           "movable-frame-forwarding",
           "resource-work-offload",
+          "rns-management-wire",
           "std",
           "tokio-host"
         ],
@@ -16701,6 +16713,7 @@
           "flash",
           "movable-frame-forwarding",
           "resource-work-offload",
+          "rns-management-wire",
           "std",
           "tokio-host"
         ],
@@ -16712,6 +16725,7 @@
           "flash",
           "movable-frame-forwarding",
           "resource-work-offload",
+          "rns-management-wire",
           "std",
           "tokio-host"
         ],
@@ -16723,6 +16737,7 @@
           "flash",
           "movable-frame-forwarding",
           "resource-work-offload",
+          "rns-management-wire",
           "std",
           "tokio-host"
         ],
@@ -16734,6 +16749,7 @@
           "flash",
           "movable-frame-forwarding",
           "resource-work-offload",
+          "rns-management-wire",
           "std",
           "tokio-host"
         ],
@@ -16748,6 +16764,7 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
+          "rns-management-wire",
           "std",
           "tokio-host"
         ],
@@ -16762,6 +16779,7 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
+          "rns-management-wire",
           "std",
           "tokio-host"
         ],
@@ -16776,6 +16794,7 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
+          "rns-management-wire",
           "std",
           "tokio-host"
         ],
@@ -16788,6 +16807,7 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
+          "rns-management-wire",
           "std",
           "tokio-host"
         ],
@@ -16798,6 +16818,7 @@
           "flash",
           "movable-frame-forwarding",
           "resource-work-offload",
+          "rns-management-wire",
           "std",
           "tokio-host"
         ],
@@ -16805,6 +16826,7 @@
           "alloc",
           "flash",
           "resource-work-offload",
+          "rns-management-wire",
           "std"
         ]
       },
@@ -18935,9 +18957,18 @@
           "default",
           "std"
         ],
+        "esp32-c6": [],
+        "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
+        "esp32-s3-heltec-r8": [],
+        "esp32-s3-heltec-wireless-stick-lite-v3": [],
+        "esp32-s3-tbeam": [],
         "host-c-linux": [],
         "host-c-macos": [],
-        "host-c-windows": []
+        "host-c-windows": [],
+        "ios": [],
+        "nrf52840": [],
+        "wasm": []
       },
       "name": "rmp",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
