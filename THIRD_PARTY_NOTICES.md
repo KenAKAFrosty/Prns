@@ -2,7 +2,7 @@
 
 This checked bundle covers the shipped and qualification Rust, JavaScript, and Android product graphs.
 It was generated with `cargo-about 0.9.1` by `./tools/prns repo notices generate`.
-Notice input fingerprint: `sha256:1ae5064502abacc6e458693e2b215c05a3eefaf4dec57c97cc9d2b358b7e18aa`.
+Notice input fingerprint: `sha256:f792babcef41b9618905a49f99a6a3b112b97a85289fc99df9f98563904bf327`.
 Each locked Rust manifest closure is fetched into a fresh isolated Cargo home before cargo-about reads its target-filtered packaged license material offline.
 Entries are deduplicated by SPDX identifier and canonical notice text; line endings, trailing space, and repeated blank lines are normalized without changing legal words.
 
@@ -3084,7 +3084,7 @@ License: MIT License
 
 Used by: `bitflags 1.3.2`, `bitflags 2.11.1`, `bitflags 2.12.1`, `bitflags 2.13.0`, `bitflags 2.13.1`, `log 0.4.30`, `log 0.4.31`, `log 0.4.32`, `log 0.4.33`, `num-bigint 0.4.8`, `num-derive 0.4.2`, `num-integer 0.1.46`, `num-traits 0.2.19`, `regex 1.13.1`, `regex-automata 0.4.14`, `regex-automata 0.4.15`, `regex-automata 0.4.16`, `regex-syntax 0.8.10`, `regex-syntax 0.8.11`, `semver 0.9.0`, `serde-pickle 1.2.0`, `serde_plain 1.0.2`
 
-Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec E290, ESP32-S3 Heltec R8, ESP32-S3 Heltec Wireless Stick Lite V3, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
+Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec E290, ESP32-S3 Heltec R8, ESP32-S3 Heltec Wireless Stick Lite V3, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
 
 ```text
 Copyright (c) 2014 The Rust Project Developers
@@ -3272,7 +3272,7 @@ License: MIT License
 
 Used by: `rmp 0.8.15`
 
-Release graphs: Android, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS
+Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec E290, ESP32-S3 Heltec R8, ESP32-S3 Heltec Wireless Stick Lite V3, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, iOS
 
 ```text
 MIT License
@@ -7422,7 +7422,7 @@ License: MIT License
 
 Used by: `autocfg 1.5.1`
 
-Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec E290, ESP32-S3 Heltec R8, ESP32-S3 Heltec Wireless Stick Lite V3, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
+Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec E290, ESP32-S3 Heltec R8, ESP32-S3 Heltec Wireless Stick Lite V3, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
 
 ```text
 Copyright (c) 2018 Josh Stone
