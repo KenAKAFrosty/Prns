@@ -122,7 +122,11 @@ impl<'a> MessagePackReader<'a> {
         }
     }
 
-    #[cfg(feature = "alloc")]
+    #[cfg(any(
+        feature = "rnx",
+        feature = "shared-instance-rpc",
+        feature = "signed-artifact"
+    ))]
     pub(crate) fn map_length(
         &mut self,
         marker: Marker,
@@ -209,7 +213,11 @@ impl<'a> MessagePackReader<'a> {
         Ok(Some(integer))
     }
 
-    #[cfg(feature = "alloc")]
+    #[cfg(any(
+        feature = "rnx",
+        feature = "shared-instance-rpc",
+        feature = "signed-artifact"
+    ))]
     pub(crate) fn float(&mut self, marker: Marker) -> Result<Option<f64>, MessagePackDecodeError> {
         match marker {
             Marker::F32 => Ok(Some(f64::from(f32::from_bits(self.u32()?)))),

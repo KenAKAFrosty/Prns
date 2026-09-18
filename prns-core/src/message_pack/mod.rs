@@ -5,7 +5,11 @@ mod decoder;
     feature = "signed-artifact"
 ))]
 mod encoder;
-#[cfg(any(feature = "rnx", feature = "signed-artifact"))]
+#[cfg(any(
+    feature = "rnx",
+    feature = "shared-instance-rpc",
+    feature = "signed-artifact"
+))]
 mod owned;
 
 pub(crate) use decoder::{Marker, MessagePackInteger, MessagePackReader};
@@ -15,7 +19,11 @@ pub(crate) use decoder::{Marker, MessagePackInteger, MessagePackReader};
     feature = "signed-artifact"
 ))]
 pub(crate) use encoder::MessagePackEncoder;
-#[cfg(any(feature = "rnx", feature = "signed-artifact"))]
+#[cfg(any(
+    feature = "rnx",
+    feature = "shared-instance-rpc",
+    feature = "signed-artifact"
+))]
 pub use owned::{
     decode_owned, encode_owned, MessagePackDecodeLimits, MessagePackOwnedError, MessagePackValue,
 };
