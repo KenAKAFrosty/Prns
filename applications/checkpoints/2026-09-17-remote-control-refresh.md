@@ -1,5 +1,9 @@
 # September 17: upstream remote-control integration
 
+The later [app license follow-up](2026-09-17-app-license-publication.md) records
+approval and correction of the app publication blocker described below. Earlier
+failed and pending results in this checkpoint retain their original scope.
+
 ## Source and scope
 
 Rebase the app and remaining contribution branches on upstream
