@@ -8,7 +8,7 @@ use crate::engine::{
     ClassifiedInboundPacket, Departure, EngineState, IngestIo, IssuedCommand, Journaled,
     ProofRequest,
 };
-use crate::interfaces::rns_management::RnsPathTableWriter;
+use crate::interfaces::rns_management::write_route_snapshots;
 use crate::interfaces::InterfaceIfac;
 use crate::interfaces::{
     AttachedInterfaces, IfacUnmaskError, InboundPacket, InterfaceDescriptor, InterfaceId,
@@ -38,6 +38,9 @@ use super::inline_work::{
 use super::interface_status::account_protocol_violation;
 use super::packet_phy::retain_packet_phy;
 use super::EmbassyInterfaceStatus;
+
+const RNS_PATH_TABLE_MAX_ENTRIES: usize = 8;
+const RNS_PATH_TABLE_RESPONSE_BYTES: usize = 1_504;
 
 /// Changes the live descriptor set without reallocating the fixed lane pool.
 #[repr(C)]
@@ -80,40 +83,45 @@ fn inbound_source(
     }
 }
 
+enum MaterializedResourceResponse<const N: usize> {
+    Ready(HeaplessVec<u8, N>),
+    RnsPathTable(HeaplessVec<u8, RNS_PATH_TABLE_RESPONSE_BYTES>),
+}
+
+impl<const N: usize> MaterializedResourceResponse<N> {
+    fn as_slice(&self) -> &[u8] {
+        match self {
+            Self::Ready(data) => data,
+            Self::RnsPathTable(data) => data,
+        }
+    }
+}
+
+#[inline(never)]
 fn resource_response_data<S: StorageLayout, const N: usize>(
     engine: &EngineState<S>,
     descriptors: &[InterfaceDescriptor],
     request_id: crate::routing::links::request::RequestId,
     payload: ResourceResponsePayload<N>,
-) -> Option<HeaplessVec<u8, N>> {
+) -> Option<MaterializedResourceResponse<N>> {
     match payload {
-        ResourceResponsePayload::Ready(data) => Some(data),
+        ResourceResponsePayload::Ready(data) => Some(MaterializedResourceResponse::Ready(data)),
         ResourceResponsePayload::RnsPathTable(selection) => {
-            let mut entry_count = 0usize;
-            engine.visit_route_snapshots(AttachedInterfaces::new(descriptors), |entry| {
-                if selection.includes(entry.destination, entry.hops) {
-                    entry_count = entry_count.saturating_add(1);
-                }
-            });
+            let entries = engine.bounded_route_snapshots::<RNS_PATH_TABLE_MAX_ENTRIES>(
+                AttachedInterfaces::new(descriptors),
+                |entry| selection.includes(entry.destination, entry.hops),
+            );
             let mut data = HeaplessVec::new();
-            data.resize(N, 0).ok()?;
+            data.resize(RNS_PATH_TABLE_RESPONSE_BYTES, 0).ok()?;
             data.get_mut(..RESPONSE_WIRE_OVERHEAD)?
                 .copy_from_slice(&response_envelope_prefix(&request_id));
-            let mut writer =
-                RnsPathTableWriter::new(entry_count, data.get_mut(RESPONSE_WIRE_OVERHEAD..N)?)
-                    .ok()?;
-            let mut failed = false;
-            engine.visit_route_snapshots(AttachedInterfaces::new(descriptors), |entry| {
-                if !failed && selection.includes(entry.destination, entry.hops) {
-                    failed = writer.push(&entry).is_err();
-                }
-            });
-            if failed {
-                return None;
-            }
-            let written = writer.finish().ok()?;
+            let written = write_route_snapshots(
+                entries.entries(),
+                data.get_mut(RESPONSE_WIRE_OVERHEAD..RNS_PATH_TABLE_RESPONSE_BYTES)?,
+            )
+            .ok()?;
             data.truncate(RESPONSE_WIRE_OVERHEAD + written);
-            Some(data)
+            Some(MaterializedResourceResponse::RnsPathTable(data))
         }
     }
 }
@@ -363,7 +371,7 @@ pub(crate) async fn run_pooled<
                                 id: response.id,
                                 link_id: response.link_id,
                                 body: ResourceBody {
-                                    data: &data,
+                                    data: data.as_slice(),
                                     compressed_candidate: None,
                                     metadata: ResourceMetadata::None,
                                 },

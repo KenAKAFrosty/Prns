@@ -61,6 +61,7 @@ impl RnsRemotePathTableRequest {
         }
     }
 
+    #[inline(never)]
     pub fn includes(&self, destination: DestinationHash, hops: u8) -> bool {
         self.destination.includes(destination) && self.hops.includes(hops)
     }
@@ -142,6 +143,7 @@ enum Command {
     InvalidShape,
 }
 
+#[inline(never)]
 pub fn decode_remote_path_request(
     bytes: &[u8],
 ) -> Result<RnsRemotePathRequest, RnsRemoteRequestDecodeError> {

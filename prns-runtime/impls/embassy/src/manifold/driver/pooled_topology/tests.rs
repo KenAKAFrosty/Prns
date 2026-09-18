@@ -40,15 +40,14 @@ fn path_table_response_materializes_inside_the_manifold() {
     let mut ready = HeaplessVec::<u8, RESPONSE_BYTES>::new();
     ready.extend_from_slice(b"ready").unwrap();
 
-    assert_eq!(
-        resource_response_data(
-            &engine,
-            &[],
-            request_id,
-            ResourceResponsePayload::Ready(ready.clone())
-        ),
-        Some(ready)
-    );
+    let materialized = resource_response_data(
+        &engine,
+        &[],
+        request_id,
+        ResourceResponsePayload::Ready(ready.clone()),
+    )
+    .unwrap();
+    assert_eq!(materialized.as_slice(), ready.as_slice());
 
     let data = resource_response_data::<_, RESPONSE_BYTES>(
         &engine,
@@ -59,17 +58,17 @@ fn path_table_response_materializes_inside_the_manifold() {
     .unwrap();
 
     assert_eq!(
-        &data[..RESPONSE_WIRE_OVERHEAD],
+        &data.as_slice()[..RESPONSE_WIRE_OVERHEAD],
         &response_envelope_prefix(&request_id)
     );
-    assert_eq!(data[RESPONSE_WIRE_OVERHEAD], 0x90);
-    assert!(resource_response_data::<_, RESPONSE_WIRE_OVERHEAD>(
+    assert_eq!(data.as_slice()[RESPONSE_WIRE_OVERHEAD], 0x90);
+    assert!(resource_response_data::<_, 0>(
         &engine,
         &[],
         request_id,
         ResourceResponsePayload::RnsPathTable(selection),
     )
-    .is_none());
+    .is_some());
 }
 
 #[test]

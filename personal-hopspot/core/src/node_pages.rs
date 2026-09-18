@@ -35,8 +35,16 @@ pub const NODE_PAGE_PATHS: &[&str] = &[
     SOURCE_PAGE_PATH,
 ];
 pub const QUICKSTART_PAGE: &[u8] = include_bytes!("node_pages/quickstart.mu");
+#[cfg(not(feature = "compact-node-pages"))]
 pub const COMING_FROM_RNS_PAGE: &[u8] =
     include_bytes!("../../../assets/nnpages/coming_from_rns.mu");
+#[cfg(feature = "compact-node-pages")]
+pub const COMING_FROM_RNS_PAGE: &[u8] = b">Coming from RNS
+
+Your config, your identity file, and your apps remain yours. This flash-constrained Hopspot keeps the offline quickstart and live RNS management tools instead of embedding the full migration guide.
+
+`[Back to index`:/page/index.mu]
+";
 
 #[cfg(feature = "source-archive")]
 pub const SERVES_SOURCE_ARCHIVE: bool = true;
@@ -360,7 +368,10 @@ mod tests {
         assert!(LARGEST_SINGLE_WINDOW_PAGE_LEN >= BROWSER_INDEX_PAGE.len());
         assert!(LARGEST_SINGLE_WINDOW_PAGE_LEN >= QUICKSTART_PAGE.len());
         assert!(LARGEST_SINGLE_WINDOW_PAGE_LEN >= SOURCE_PAGE.len());
+        #[cfg(not(feature = "compact-node-pages"))]
         assert!(COMING_FROM_RNS_PAGE.len() > LARGEST_SINGLE_WINDOW_PAGE_LEN);
+        #[cfg(feature = "compact-node-pages")]
+        assert!(COMING_FROM_RNS_PAGE.len() < LARGEST_SINGLE_WINDOW_PAGE_LEN);
         assert_eq!(
             PAGE_PACKED_RESPONSE_LEN,
             packed_binary_len(LARGEST_SINGLE_WINDOW_PAGE_LEN).unwrap()

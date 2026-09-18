@@ -39,6 +39,7 @@ pub struct RnsPathTableWriter<'a> {
 }
 
 impl<'a> RnsPathTableWriter<'a> {
+    #[inline(never)]
     pub fn new(
         entry_count: usize,
         mut output: &'a mut [u8],
@@ -54,6 +55,7 @@ impl<'a> RnsPathTableWriter<'a> {
         })
     }
 
+    #[inline(never)]
     pub fn push(&mut self, entry: &RouteSnapshot) -> Result<(), RnsPathTableWriteError> {
         if self.remaining_entries == 0 {
             return Err(RnsPathTableWriteError::TooManyEntries);
@@ -63,6 +65,7 @@ impl<'a> RnsPathTableWriter<'a> {
         Ok(())
     }
 
+    #[inline(never)]
     pub fn finish(self) -> Result<usize, RnsPathTableWriteError> {
         if self.remaining_entries != 0 {
             return Err(RnsPathTableWriteError::EntryCountMismatch);
