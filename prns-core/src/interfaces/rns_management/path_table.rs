@@ -28,46 +28,86 @@ const INTERFACE_NAME_CAPACITY: usize = 32;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RnsPathTableWriteError {
     TooManyEntries,
+    EntryCountMismatch,
     BufferTooShort,
     InterfaceNameTooLong,
+}
+
+pub struct RnsPathTableWriter<'a> {
+    output: &'a mut [u8],
+    capacity: usize,
+    remaining_entries: usize,
+}
+
+impl<'a> RnsPathTableWriter<'a> {
+    pub fn new(
+        entry_count: usize,
+        mut output: &'a mut [u8],
+    ) -> Result<Self, RnsPathTableWriteError> {
+        let encoded_count =
+            u32::try_from(entry_count).map_err(|_| RnsPathTableWriteError::TooManyEntries)?;
+        let capacity = output.len();
+        wrote(encode::write_array_len(&mut output, encoded_count))?;
+        Ok(Self {
+            output,
+            capacity,
+            remaining_entries: entry_count,
+        })
+    }
+
+    pub fn push(&mut self, entry: &RouteSnapshot) -> Result<(), RnsPathTableWriteError> {
+        if self.remaining_entries == 0 {
+            return Err(RnsPathTableWriteError::TooManyEntries);
+        }
+        write_route_snapshot(&mut self.output, entry)?;
+        self.remaining_entries -= 1;
+        Ok(())
+    }
+
+    pub fn finish(self) -> Result<usize, RnsPathTableWriteError> {
+        if self.remaining_entries != 0 {
+            return Err(RnsPathTableWriteError::EntryCountMismatch);
+        }
+        Ok(self.capacity - self.output.len())
+    }
 }
 
 pub fn write_route_snapshots(
     entries: &[RouteSnapshot],
     output: &mut [u8],
 ) -> Result<usize, RnsPathTableWriteError> {
-    let entry_count =
-        u32::try_from(entries.len()).map_err(|_| RnsPathTableWriteError::TooManyEntries)?;
-    let capacity = output.len();
-    let mut output = output;
-    wrote(encode::write_array_len(&mut output, entry_count))?;
+    let mut writer = RnsPathTableWriter::new(entries.len(), output)?;
     for entry in entries {
-        wrote(encode::write_map_len(&mut output, 6))?;
-        write_string(&mut output, common::HASH)?;
-        write_binary(&mut output, entry.destination.as_bytes())?;
-        write_string(&mut output, path::TIMESTAMP)?;
-        wrote(encode::write_f64(
-            &mut output,
-            rns_timestamp(InstantMillis(
-                entry.learned_at.0.max(entry.last_route_activity_at.0),
-            )),
-        ))?;
-        write_string(&mut output, path::VIA)?;
-        write_binary(&mut output, &next_hop_bytes(entry))?;
-        write_string(&mut output, path::HOPS)?;
-        wrote(encode::write_uint(&mut output, u64::from(entry.hops)))?;
-        write_string(&mut output, path::EXPIRES)?;
-        wrote(encode::write_f64(
-            &mut output,
-            rns_timestamp(entry.expires_at),
-        ))?;
-        write_string(&mut output, path::INTERFACE)?;
-        let mut interface = heapless::String::<INTERFACE_NAME_CAPACITY>::new();
-        write_interface_name(&mut interface, entry.interface)
-            .map_err(|_| RnsPathTableWriteError::InterfaceNameTooLong)?;
-        write_string(&mut output, &interface)?;
+        writer.push(entry)?;
     }
-    Ok(capacity - output.len())
+    writer.finish()
+}
+
+fn write_route_snapshot(
+    output: &mut &mut [u8],
+    entry: &RouteSnapshot,
+) -> Result<(), RnsPathTableWriteError> {
+    wrote(encode::write_map_len(output, 6))?;
+    write_string(output, common::HASH)?;
+    write_binary(output, entry.destination.as_bytes())?;
+    write_string(output, path::TIMESTAMP)?;
+    wrote(encode::write_f64(
+        output,
+        rns_timestamp(InstantMillis(
+            entry.learned_at.0.max(entry.last_route_activity_at.0),
+        )),
+    ))?;
+    write_string(output, path::VIA)?;
+    write_binary(output, &next_hop_bytes(entry))?;
+    write_string(output, path::HOPS)?;
+    wrote(encode::write_uint(output, u64::from(entry.hops)))?;
+    write_string(output, path::EXPIRES)?;
+    wrote(encode::write_f64(output, rns_timestamp(entry.expires_at)))?;
+    write_string(output, path::INTERFACE)?;
+    let mut interface = heapless::String::<INTERFACE_NAME_CAPACITY>::new();
+    write_interface_name(&mut interface, entry.interface)
+        .map_err(|_| RnsPathTableWriteError::InterfaceNameTooLong)?;
+    write_string(output, &interface)
 }
 
 fn wrote<T, E>(result: Result<T, E>) -> Result<(), RnsPathTableWriteError> {
