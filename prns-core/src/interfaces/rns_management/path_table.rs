@@ -7,7 +7,6 @@ use core::fmt;
 
 #[cfg(feature = "shared-instance-rpc")]
 use super::message_pack::Marker;
-use rmp::encode;
 
 use crate::engine::RouteSnapshot;
 use crate::units::InstantMillis;
@@ -47,7 +46,7 @@ impl<'a> RnsPathTableWriter<'a> {
         let encoded_count =
             u32::try_from(entry_count).map_err(|_| RnsPathTableWriteError::TooManyEntries)?;
         let capacity = output.len();
-        wrote(encode::write_array_len(&mut output, encoded_count))?;
+        write_array_length(&mut output, encoded_count)?;
         Ok(Self {
             output,
             capacity,
@@ -87,22 +86,22 @@ fn write_route_snapshot(
     output: &mut &mut [u8],
     entry: &RouteSnapshot,
 ) -> Result<(), RnsPathTableWriteError> {
-    wrote(encode::write_map_len(output, 6))?;
+    write_bytes(output, &[0x86])?;
     write_string(output, common::HASH)?;
     write_binary(output, entry.destination.as_bytes())?;
     write_string(output, path::TIMESTAMP)?;
-    wrote(encode::write_f64(
+    write_f64(
         output,
         rns_timestamp(InstantMillis(
             entry.learned_at.0.max(entry.last_route_activity_at.0),
         )),
-    ))?;
+    )?;
     write_string(output, path::VIA)?;
     write_binary(output, &next_hop_bytes(entry))?;
     write_string(output, path::HOPS)?;
-    wrote(encode::write_uint(output, u64::from(entry.hops)))?;
+    write_unsigned(output, u64::from(entry.hops))?;
     write_string(output, path::EXPIRES)?;
-    wrote(encode::write_f64(output, rns_timestamp(entry.expires_at)))?;
+    write_f64(output, rns_timestamp(entry.expires_at))?;
     write_string(output, path::INTERFACE)?;
     let mut interface = heapless::String::<INTERFACE_NAME_CAPACITY>::new();
     write_interface_name(&mut interface, entry.interface)
@@ -110,18 +109,82 @@ fn write_route_snapshot(
     write_string(output, &interface)
 }
 
-fn wrote<T, E>(result: Result<T, E>) -> Result<(), RnsPathTableWriteError> {
-    result
-        .map(drop)
-        .map_err(|_| RnsPathTableWriteError::BufferTooShort)
+fn write_array_length(output: &mut &mut [u8], length: u32) -> Result<(), RnsPathTableWriteError> {
+    if length <= 15 {
+        write_bytes(output, &[0x90 | length as u8])
+    } else if let Ok(length) = u16::try_from(length) {
+        write_bytes(output, &[0xdc])?;
+        write_bytes(output, &length.to_be_bytes())
+    } else {
+        write_bytes(output, &[0xdd])?;
+        write_bytes(output, &length.to_be_bytes())
+    }
 }
 
 fn write_string(output: &mut &mut [u8], value: &str) -> Result<(), RnsPathTableWriteError> {
-    wrote(encode::write_str(output, value))
+    write_blob_length(output, value.len(), Some((31, 0xa0)), 0xd9, 0xda, 0xdb)?;
+    write_bytes(output, value.as_bytes())
 }
 
 fn write_binary(output: &mut &mut [u8], value: &[u8]) -> Result<(), RnsPathTableWriteError> {
-    wrote(encode::write_bin(output, value))
+    write_blob_length(output, value.len(), None, 0xc4, 0xc5, 0xc6)?;
+    write_bytes(output, value)
+}
+
+fn write_blob_length(
+    output: &mut &mut [u8],
+    length: usize,
+    fixed: Option<(usize, u8)>,
+    marker8: u8,
+    marker16: u8,
+    marker32: u8,
+) -> Result<(), RnsPathTableWriteError> {
+    if let Some((_, base)) = fixed.filter(|(maximum, _)| length <= *maximum) {
+        return write_bytes(output, &[base | length as u8]);
+    }
+    if let Ok(length) = u8::try_from(length) {
+        write_bytes(output, &[marker8, length])
+    } else if let Ok(length) = u16::try_from(length) {
+        write_bytes(output, &[marker16])?;
+        write_bytes(output, &length.to_be_bytes())
+    } else {
+        let length = u32::try_from(length).map_err(|_| RnsPathTableWriteError::BufferTooShort)?;
+        write_bytes(output, &[marker32])?;
+        write_bytes(output, &length.to_be_bytes())
+    }
+}
+
+fn write_unsigned(output: &mut &mut [u8], value: u64) -> Result<(), RnsPathTableWriteError> {
+    if value <= 0x7f {
+        write_bytes(output, &[value as u8])
+    } else if let Ok(value) = u8::try_from(value) {
+        write_bytes(output, &[0xcc, value])
+    } else if let Ok(value) = u16::try_from(value) {
+        write_bytes(output, &[0xcd])?;
+        write_bytes(output, &value.to_be_bytes())
+    } else if let Ok(value) = u32::try_from(value) {
+        write_bytes(output, &[0xce])?;
+        write_bytes(output, &value.to_be_bytes())
+    } else {
+        write_bytes(output, &[0xcf])?;
+        write_bytes(output, &value.to_be_bytes())
+    }
+}
+
+fn write_f64(output: &mut &mut [u8], value: f64) -> Result<(), RnsPathTableWriteError> {
+    write_bytes(output, &[0xcb])?;
+    write_bytes(output, &value.to_bits().to_be_bytes())
+}
+
+fn write_bytes(output: &mut &mut [u8], value: &[u8]) -> Result<(), RnsPathTableWriteError> {
+    if output.len() < value.len() {
+        return Err(RnsPathTableWriteError::BufferTooShort);
+    }
+    let current = core::mem::take(output);
+    let (destination, after) = current.split_at_mut(value.len());
+    destination.copy_from_slice(value);
+    *output = after;
+    Ok(())
 }
 
 #[cfg(feature = "shared-instance-rpc")]
@@ -587,18 +650,20 @@ mod tests {
             interface: InterfaceId::from_channel_tag(InterfaceKind::TcpClient, b"remote"),
             retention: RouteRetention::Network,
         };
-        let expected = RnsPathTable::new(vec![entry.clone()])
-            .encode_message_pack()
-            .unwrap();
-        let mut output = [0u8; 256];
+        for count in [0, 1, 15, 16] {
+            let entries = vec![entry.clone(); count];
+            let expected = RnsPathTable::new(entries.clone())
+                .encode_message_pack()
+                .unwrap();
+            let mut output = vec![0u8; expected.len()];
+            let written = write_route_snapshots(&entries, &mut output).unwrap();
 
-        let written = write_route_snapshots(core::slice::from_ref(&entry), &mut output).unwrap();
-
-        assert_eq!(&output[..written], expected);
-        assert_eq!(
-            write_route_snapshots(core::slice::from_ref(&entry), &mut output[..written - 1]),
-            Err(RnsPathTableWriteError::BufferTooShort)
-        );
+            assert_eq!(&output[..written], expected);
+            assert_eq!(
+                write_route_snapshots(&entries, &mut output[..written - 1]),
+                Err(RnsPathTableWriteError::BufferTooShort)
+            );
+        }
     }
 
     fn bytes_from_hex(value: &str) -> Vec<u8> {
