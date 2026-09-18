@@ -467,7 +467,7 @@ impl<const MEMBERS: usize> AutoWifiStatus<MEMBERS> {
     pub fn discovery_groups(&self) -> DiscoveryGroupSet {
         self.shared
             .discovery_groups
-            .lock(|groups| groups.borrow().clone())
+            .lock(|groups| *groups.borrow())
             .unwrap_or_else(DiscoveryGroupSet::reticulum)
     }
 
@@ -2144,7 +2144,7 @@ mod tests {
         .expect("valid set");
 
         block_on(async {
-            let apply = status.replace_discovery_groups(desired.clone());
+            let apply = status.replace_discovery_groups(desired);
             let settle = async {
                 let revision = status.wait_for_discovery_groups_change(0).await;
                 assert_eq!(status.discovery_groups(), desired);

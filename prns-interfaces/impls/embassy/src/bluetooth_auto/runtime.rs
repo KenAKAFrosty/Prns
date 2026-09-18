@@ -322,7 +322,7 @@ impl<const MEMBERS: usize> BluetoothAutoStatus<MEMBERS> {
     pub fn discovery_groups(&self) -> DiscoveryGroupSet {
         self.shared
             .discovery_groups
-            .lock(|groups| groups.borrow().clone())
+            .lock(|groups| *groups.borrow())
             .unwrap_or_else(DiscoveryGroupSet::reticulum)
     }
 
@@ -363,7 +363,7 @@ impl<const MEMBERS: usize> BluetoothAutoStatus<MEMBERS> {
             return DiscoveryGroupApplyOutcome::Failed;
         }
         self.shared.discovery_groups.lock(|configured| {
-            *configured.borrow_mut() = Some(groups.clone());
+            *configured.borrow_mut() = Some(*groups);
         });
         let revision = self
             .shared
@@ -738,7 +738,7 @@ where
         discovery_groups: DiscoveryGroupSet,
     ) -> Self {
         let status = BluetoothAutoStatus::new(shared);
-        status.configure_initial_discovery_groups(discovery_groups.clone());
+        status.configure_initial_discovery_groups(discovery_groups);
         Self {
             backend,
             local: LocalPeer {
