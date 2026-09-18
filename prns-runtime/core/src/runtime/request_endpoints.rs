@@ -52,6 +52,10 @@ pub enum Decline {
 pub trait ResponseSink {
     fn put_packed(&mut self, bytes: &[u8]) -> Result<(), ResponseCapacityExceeded>;
 
+    fn put_resource(&mut self, bytes: &[u8]) -> Result<(), ResponseCapacityExceeded> {
+        self.put_packed(bytes)
+    }
+
     fn put_bytes(&mut self, bytes: &[u8]) -> Result<(), ResponseCapacityExceeded>;
 
     fn put_static_bytes(&mut self, bytes: &'static [u8]) -> Result<(), ResponseCapacityExceeded> {
@@ -218,6 +222,13 @@ impl<S> RequestContext<'_, S> {
     pub fn respond(&mut self, data: impl AsRef<[u8]>) -> Result<(), Decline> {
         self.sink
             .put_packed(data.as_ref())
+            .map_err(|_| Decline::ResponseTooLarge)
+    }
+
+    /// Send a dynamic response through a Resource-capable lane, inline when it fits.
+    pub fn respond_resource(&mut self, data: impl AsRef<[u8]>) -> Result<(), Decline> {
+        self.sink
+            .put_resource(data.as_ref())
             .map_err(|_| Decline::ResponseTooLarge)
     }
 

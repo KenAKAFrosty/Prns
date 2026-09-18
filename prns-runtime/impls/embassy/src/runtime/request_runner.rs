@@ -10,6 +10,7 @@ use crate::remote_control::{
     RemoteControlRevokeControllerOutcome,
 };
 use crate::routing::links::request::RequestId;
+use crate::routing::links::request::RESPONSE_WIRE_OVERHEAD;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::units::RttMillis;
@@ -46,8 +47,9 @@ use super::request_endpoints::{
 use super::AssembledRemoteControl;
 
 #[allow(clippy::large_enum_variant)]
-enum RunnerResponse {
+enum RunnerResponse<const N: usize> {
     Buffered(RespondData),
+    Resource(HeaplessVec<u8, N>),
     StaticBytes(&'static [u8]),
     #[cfg(feature = "large-static-responses")]
     StaticFile {
@@ -62,21 +64,44 @@ enum PreparedRunnerRequest {
     Declined(Decline),
 }
 
-impl ResponseSink for RunnerResponse {
+impl<const N: usize> ResponseSink for RunnerResponse<N> {
     fn put_packed(&mut self, bytes: &[u8]) -> Result<(), ResponseCapacityExceeded> {
         match self {
             RunnerResponse::Buffered(body) => body
                 .extend_from_slice(bytes)
                 .map_err(|()| ResponseCapacityExceeded),
+            RunnerResponse::Resource(_) => Err(ResponseCapacityExceeded),
             RunnerResponse::StaticBytes(_) => Err(ResponseCapacityExceeded),
             #[cfg(feature = "large-static-responses")]
             RunnerResponse::StaticFile { .. } => Err(ResponseCapacityExceeded),
         }
     }
 
+    fn put_resource(&mut self, bytes: &[u8]) -> Result<(), ResponseCapacityExceeded> {
+        match self {
+            RunnerResponse::Buffered(body) if body.is_empty() => {
+                let mut resource = HeaplessVec::new();
+                resource
+                    .resize(RESPONSE_WIRE_OVERHEAD, 0)
+                    .map_err(|()| ResponseCapacityExceeded)?;
+                if bytes.is_empty() {
+                    resource.push(0xc0).map_err(|_| ResponseCapacityExceeded)?;
+                } else {
+                    resource
+                        .extend_from_slice(bytes)
+                        .map_err(|()| ResponseCapacityExceeded)?;
+                }
+                *self = RunnerResponse::Resource(resource);
+                Ok(())
+            }
+            _ => Err(ResponseCapacityExceeded),
+        }
+    }
+
     fn put_bytes(&mut self, bytes: &[u8]) -> Result<(), ResponseCapacityExceeded> {
         match self {
             RunnerResponse::Buffered(body) => ResponseSink::put_bytes(body, bytes),
+            RunnerResponse::Resource(_) => Err(ResponseCapacityExceeded),
             RunnerResponse::StaticBytes(_) => Err(ResponseCapacityExceeded),
             #[cfg(feature = "large-static-responses")]
             RunnerResponse::StaticFile { .. } => Err(ResponseCapacityExceeded),
@@ -1377,7 +1402,7 @@ async fn dispatch_prepared<
         &request.data,
     );
     let responder = inbound.respond_token();
-    let mut body = RunnerResponse::Buffered(RespondData::new());
+    let mut body = RunnerResponse::<RESPONSE_BYTES>::Buffered(RespondData::new());
     #[cfg_attr(not(feature = "log"), allow(unused_variables))]
     let kind = request.data.get(1).copied();
     let dispatched = match prepared {
@@ -1420,6 +1445,7 @@ async fn dispatch_prepared<
             #[cfg_attr(not(feature = "log"), allow(unused_variables))]
             let reply_len = match &body {
                 RunnerResponse::Buffered(body) => body.len(),
+                RunnerResponse::Resource(body) => body.len().saturating_sub(RESPONSE_WIRE_OVERHEAD),
                 RunnerResponse::StaticBytes(bytes) => bytes.len(),
                 #[cfg(feature = "large-static-responses")]
                 RunnerResponse::StaticFile { bytes, .. } => bytes.len(),
@@ -1432,6 +1458,9 @@ async fn dispatch_prepared<
             match body {
                 RunnerResponse::Buffered(body) => {
                     commands.respond_owned_packed(responder, body);
+                }
+                RunnerResponse::Resource(body) => {
+                    commands.respond_owned_resource(responder, body).await;
                 }
                 RunnerResponse::StaticBytes(bytes) => {
                     commands.respond_static_bytes(responder, bytes);
@@ -1632,7 +1661,7 @@ mod tests {
     #[cfg(feature = "large-static-responses")]
     #[test]
     fn static_file_sink_preserves_filename_and_borrowed_bytes() {
-        let mut response = RunnerResponse::Buffered(RespondData::new());
+        let mut response = RunnerResponse::<0>::Buffered(RespondData::new());
         ResponseSink::put_static_file(&mut response, "source.zip", &PAGE).unwrap();
         let RunnerResponse::StaticFile { name, bytes } = response else {
             panic!("static file response");

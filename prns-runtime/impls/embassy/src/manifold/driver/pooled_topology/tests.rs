@@ -17,6 +17,7 @@ use crate::interfaces::InterfaceIfac;
 use crate::interfaces::{InterfaceDescriptor, InterfaceId};
 use crate::manifold::grant::{GrantProducer, ManifoldLaneReader};
 use crate::manifold::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
+use crate::runtime::ResourceResponse;
 use crate::runtime::{ManifoldPersistence, NoInterfaceInspectionStore, NoManifoldPersistence};
 use crate::storage::{GrowableHeap, StorageLayout};
 
@@ -88,6 +89,7 @@ fn continuously_due_persistence_yields_to_sibling_tasks() {
         let mut host = EmbassyHost::new(crate::manifold::driver::test_support::entropy_handle());
         let notify: Channel<CriticalSectionRawMutex, InterfaceId, 1> = Channel::new();
         let commands: Channel<CriticalSectionRawMutex, IssuedCommand, 1> = Channel::new();
+        let responses: Channel<CriticalSectionRawMutex, ResourceResponse<0>, 1> = Channel::new();
         let lifecycle: Channel<CriticalSectionRawMutex, InterfaceLifecycle, 1> = Channel::new();
         let mut descriptors: HeaplessVec<InterfaceDescriptor, 1> = HeaplessVec::new();
         let mut ifacs: HeaplessVec<InterfaceIfac, 1> = HeaplessVec::new();
@@ -106,6 +108,7 @@ fn continuously_due_persistence_yields_to_sibling_tasks() {
                 egress: &mut egress,
                 notify: notify.receiver(),
                 commands: commands.receiver(),
+                resource_responses: responses.receiver(),
                 lifecycle: lifecycle.receiver(),
             },
             |_| {},
@@ -138,6 +141,7 @@ fn a_pooled_ifac_slot_added_at_runtime_opens_inbound_then_frees_on_remove() {
 
     let notify: Channel<CriticalSectionRawMutex, InterfaceId, 4> = Channel::new();
     let commands: Channel<CriticalSectionRawMutex, IssuedCommand, 2> = Channel::new();
+    let responses: Channel<CriticalSectionRawMutex, ResourceResponse<0>, 1> = Channel::new();
     let lifecycle: Channel<CriticalSectionRawMutex, InterfaceLifecycle, 2> = Channel::new();
 
     const FRAME: usize = EMBEDDED_MAX_WIRE_FRAME_LEN;
@@ -222,6 +226,7 @@ fn a_pooled_ifac_slot_added_at_runtime_opens_inbound_then_frees_on_remove() {
                 egress: &mut egress,
                 notify: notify.receiver(),
                 commands: commands.receiver(),
+                resource_responses: responses.receiver(),
                 lifecycle: lifecycle.receiver(),
                 ifacs: &mut ifacs,
             },
@@ -282,6 +287,7 @@ fn a_pooled_slot_retagged_at_runtime_carries_traffic_under_the_new_id() {
 
     let notify: Channel<CriticalSectionRawMutex, InterfaceId, 4> = Channel::new();
     let commands: Channel<CriticalSectionRawMutex, IssuedCommand, 2> = Channel::new();
+    let responses: Channel<CriticalSectionRawMutex, ResourceResponse<0>, 1> = Channel::new();
     let lifecycle: Channel<CriticalSectionRawMutex, InterfaceLifecycle, 2> = Channel::new();
 
     const FRAME: usize = EMBEDDED_MAX_WIRE_FRAME_LEN;
@@ -360,6 +366,7 @@ fn a_pooled_slot_retagged_at_runtime_carries_traffic_under_the_new_id() {
                 egress: &mut egress,
                 notify: notify.receiver(),
                 commands: commands.receiver(),
+                resource_responses: responses.receiver(),
                 lifecycle: lifecycle.receiver(),
                 ifacs: &mut ifacs,
             },

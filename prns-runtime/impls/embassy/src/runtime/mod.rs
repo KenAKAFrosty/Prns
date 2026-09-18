@@ -30,6 +30,7 @@ pub use entropy::{EntropyHandle, SharedRuntimeEntropy};
 pub use interface_store::{minimum_interface_store_capacity, EmbassyInterfaceStore};
 pub(crate) use interface_store::{InterfaceInspectionStore, NoInterfaceInspectionStore};
 pub use node_facade::Fleet as EmbassyFleet;
+pub use node_facade::ResourceResponse;
 pub use node_facade::{
     minimum_manifold_notification_capacity, CompletionPool, Fleet, InboundDeliveryError,
     InterfaceLane, LaneClaimError, ManifoldLaneSet, ManifoldWiring, OutboundFrame, PrnsNode,

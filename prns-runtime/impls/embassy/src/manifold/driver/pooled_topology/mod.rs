@@ -1,4 +1,4 @@
-use embassy_futures::select::{select, select6, Either6};
+use embassy_futures::select::{select, select6, Either, Either6};
 use embassy_futures::yield_now;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::Receiver;
@@ -18,7 +18,10 @@ use crate::manifold::timers::{wait_for_due_reason, wait_for_pacer};
 use crate::manifold::wake_schedule::{fire_due_reason, merge_wake_schedules_delta};
 use crate::manifold::{AppDeciders, Host};
 use crate::routing::links::resources::ResourceOffer;
-use crate::runtime::{InterfaceInspectionStore, ManifoldPersistence};
+use crate::routing::links::resources::{
+    ResourceBody, ResourceCorrelation, ResourceMetadata, ResourceSend,
+};
+use crate::runtime::{InterfaceInspectionStore, ManifoldPersistence, ResourceResponse};
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
 
 use super::egress::{
@@ -81,6 +84,7 @@ pub struct PooledWiring<
     const INTERFACE_CAPACITY: usize,
     const NOTIFY: usize,
     const COMMANDS: usize,
+    const RESPONSE_BYTES: usize,
     const LIFECYCLE: usize,
 > {
     pub descriptors: &'run mut HeaplessVec<InterfaceDescriptor, INTERFACE_CAPACITY>,
@@ -91,6 +95,7 @@ pub struct PooledWiring<
     pub egress: &'run mut PooledEgress<LANE_COUNT>,
     pub notify: Receiver<'run, M, InterfaceId, NOTIFY>,
     pub commands: Receiver<'run, M, IssuedCommand, COMMANDS>,
+    pub resource_responses: Receiver<'run, M, ResourceResponse<RESPONSE_BYTES>, 1>,
     pub lifecycle: Receiver<'run, M, InterfaceLifecycle, LIFECYCLE>,
 }
 
@@ -104,11 +109,21 @@ pub(crate) async fn run_pooled<
     const INTERFACE_CAPACITY: usize,
     const NOTIFY: usize,
     const COMMANDS: usize,
+    const RESPONSE_BYTES: usize,
     const LIFECYCLE: usize,
 >(
     engine: &mut EngineState<S>,
     host: &mut H,
-    wiring: PooledWiring<'_, M, LANE_COUNT, INTERFACE_CAPACITY, NOTIFY, COMMANDS, LIFECYCLE>,
+    wiring: PooledWiring<
+        '_,
+        M,
+        LANE_COUNT,
+        INTERFACE_CAPACITY,
+        NOTIFY,
+        COMMANDS,
+        RESPONSE_BYTES,
+        LIFECYCLE,
+    >,
     mut on_journaled: impl FnMut(Journaled<'_>),
     deciders: AppDeciders<impl FnMut(&ProofRequest) -> bool, impl FnMut(&ResourceOffer) -> bool>,
     store: &Store,
@@ -132,6 +147,7 @@ pub(crate) async fn run_pooled<
         egress,
         notify,
         commands,
+        resource_responses,
         lifecycle,
     } = wiring;
     let mut pacers: HeaplessVec<InterfacePacer, LANE_COUNT> = HeaplessVec::new();
@@ -152,7 +168,7 @@ pub(crate) async fn run_pooled<
         let persistence_deadline = persistence.deadline(host.now());
         match select6(
             notify.receive(),
-            commands.receive(),
+            select(commands.receive(), resource_responses.receive()),
             wait_for_due_reason(&*host, wake),
             wait_for_pacer(&*host, pacer_wake),
             lifecycle.receive(),
@@ -267,29 +283,58 @@ pub(crate) async fn run_pooled<
                     }
                 }
             }
-            Either6::Second(issued) => {
+            Either6::Second(input) => {
                 let now = host.now();
                 let mut owed_work = InlineOwedWorkQueue::new();
-                let mut delta = engine.ingest_command_into_with_work(
-                    issued,
-                    AttachedInterfaces::new(&*descriptors),
-                    now,
-                    &mut |entropy| host.fill_random(entropy),
-                    &mut |reaction| {
-                        route_and_capture_owed_work(
-                            reaction,
-                            &mut *egress,
-                            ifacs,
-                            &mut pacers,
-                            now,
-                            &mut |journaled| {
-                                persistence.observe(&journaled, now);
-                                on_journaled(journaled);
+                let mut delta = match input {
+                    Either::First(issued) => engine.ingest_command_into_with_work(
+                        issued,
+                        AttachedInterfaces::new(&*descriptors),
+                        now,
+                        &mut |entropy| host.fill_random(entropy),
+                        &mut |reaction| {
+                            route_and_capture_owed_work(
+                                reaction,
+                                &mut *egress,
+                                ifacs,
+                                &mut pacers,
+                                now,
+                                &mut |journaled| {
+                                    persistence.observe(&journaled, now);
+                                    on_journaled(journaled);
+                                },
+                                &mut owed_work,
+                            )
+                        },
+                    ),
+                    Either::Second(response) => engine.ingest_send_resource_into(
+                        &ResourceSend {
+                            id: response.id,
+                            link_id: response.link_id,
+                            body: ResourceBody {
+                                data: &response.data,
+                                compressed_candidate: None,
+                                metadata: ResourceMetadata::None,
                             },
-                            &mut owed_work,
-                        )
-                    },
-                );
+                            correlation: ResourceCorrelation::Response(response.request_id),
+                        },
+                        now,
+                        &mut |entropy| host.fill_random(entropy),
+                        &mut |reaction| {
+                            route_reaction(
+                                reaction,
+                                &mut *egress,
+                                ifacs,
+                                &mut pacers,
+                                now,
+                                &mut |journaled| {
+                                    persistence.observe(&journaled, now);
+                                    on_journaled(journaled);
+                                },
+                            )
+                        },
+                    ),
+                };
                 delta.merge(fulfill_owed_work_inline(
                     owed_work,
                     &mut *engine,

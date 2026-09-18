@@ -4,6 +4,7 @@ mod manifold_lanes;
 mod node_lifecycle;
 mod remote_control;
 
+pub use command_handle::ResourceResponse;
 pub use command_handle::{CompletionPool, PrnsNodeHandle, RequestResponseData};
 pub use interface_lifecycle::{Fleet, InboundDeliveryError, OutboundFrame};
 pub use manifold_lanes::{
