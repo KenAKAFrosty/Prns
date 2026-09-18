@@ -1,5 +1,5 @@
-use alloc::format;
 use alloc::string::String;
+use core::fmt::{self, Write};
 
 use crate::engine::RouteSnapshot;
 use crate::interfaces::{InterfaceId, InterfaceKind};
@@ -20,7 +20,10 @@ pub use interface_stats::{
     RnsInterfaceAccessCode, RnsInterfaceStats, RnsInterfaceStatsEntry, RnsTransportStatus,
 };
 pub(crate) use message_pack::MessagePackEncoder;
-pub use path_table::{RnsPathTable, RnsPathTableDecodeError, RnsPathTableEntry, RnsPathTableField};
+pub use path_table::{
+    write_route_snapshots, RnsPathTable, RnsPathTableDecodeError, RnsPathTableEntry,
+    RnsPathTableField, RnsPathTableWriteError,
+};
 pub use rate_table::{
     RnsAnnounceRateEntry, RnsAnnounceRateField, RnsAnnounceRateTable,
     RnsAnnounceRateTableDecodeError,
@@ -62,17 +65,22 @@ pub(crate) fn next_hop_bytes(entry: &RouteSnapshot) -> [u8; 16] {
 }
 
 pub(crate) fn interface_name(id: InterfaceId) -> String {
-    let mut name = match id.kind() {
-        Some(InterfaceKind::LocalServer) => String::from("Shared Instance["),
-        Some(InterfaceKind::LocalClient) => String::from("LocalInterface["),
-        Some(kind) => format!("{kind:?}["),
-        None => String::from("Interface["),
-    };
-    for byte in id.as_bytes().iter().take(4) {
-        name.push_str(&format!("{byte:02x}"));
-    }
-    name.push(']');
+    let mut name = String::new();
+    let _ = write_interface_name(&mut name, id);
     name
+}
+
+pub(crate) fn write_interface_name(output: &mut impl Write, id: InterfaceId) -> fmt::Result {
+    match id.kind() {
+        Some(InterfaceKind::LocalServer) => output.write_str("Shared Instance[")?,
+        Some(InterfaceKind::LocalClient) => output.write_str("LocalInterface[")?,
+        Some(kind) => write!(output, "{kind:?}[")?,
+        None => output.write_str("Interface[")?,
+    }
+    for byte in id.as_bytes().iter().take(4) {
+        write!(output, "{byte:02x}")?;
+    }
+    output.write_char(']')
 }
 
 pub(super) fn rns_timestamp(timestamp: InstantMillis) -> f64 {

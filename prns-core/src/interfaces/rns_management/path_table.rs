@@ -2,7 +2,7 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::fmt;
 
-use rmp::Marker;
+use rmp::{encode, Marker};
 
 use crate::engine::RouteSnapshot;
 use crate::units::InstantMillis;
@@ -11,10 +11,71 @@ use crate::wire::{DestinationHash, TransportId};
 use super::message_pack::{MessagePackInteger, MessagePackReader};
 use super::wire_names::{common, path};
 use super::{
-    interface_name, next_hop_bytes, rns_timestamp, MessagePackEncoder, RnsManagementEncodeError,
+    interface_name, next_hop_bytes, rns_timestamp, write_interface_name, MessagePackEncoder,
+    RnsManagementEncodeError,
 };
 
 const MAXIMUM_DEPTH: usize = 4;
+const INTERFACE_NAME_CAPACITY: usize = 32;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RnsPathTableWriteError {
+    TooManyEntries,
+    BufferTooShort,
+    InterfaceNameTooLong,
+}
+
+pub fn write_route_snapshots(
+    entries: &[RouteSnapshot],
+    output: &mut [u8],
+) -> Result<usize, RnsPathTableWriteError> {
+    let entry_count =
+        u32::try_from(entries.len()).map_err(|_| RnsPathTableWriteError::TooManyEntries)?;
+    let capacity = output.len();
+    let mut output = output;
+    wrote(encode::write_array_len(&mut output, entry_count))?;
+    for entry in entries {
+        wrote(encode::write_map_len(&mut output, 6))?;
+        write_string(&mut output, common::HASH)?;
+        write_binary(&mut output, entry.destination.as_bytes())?;
+        write_string(&mut output, path::TIMESTAMP)?;
+        wrote(encode::write_f64(
+            &mut output,
+            rns_timestamp(InstantMillis(
+                entry.learned_at.0.max(entry.last_route_activity_at.0),
+            )),
+        ))?;
+        write_string(&mut output, path::VIA)?;
+        write_binary(&mut output, &next_hop_bytes(entry))?;
+        write_string(&mut output, path::HOPS)?;
+        wrote(encode::write_uint(&mut output, u64::from(entry.hops)))?;
+        write_string(&mut output, path::EXPIRES)?;
+        wrote(encode::write_f64(
+            &mut output,
+            rns_timestamp(entry.expires_at),
+        ))?;
+        write_string(&mut output, path::INTERFACE)?;
+        let mut interface = heapless::String::<INTERFACE_NAME_CAPACITY>::new();
+        write_interface_name(&mut interface, entry.interface)
+            .map_err(|_| RnsPathTableWriteError::InterfaceNameTooLong)?;
+        write_string(&mut output, &interface)?;
+    }
+    Ok(capacity - output.len())
+}
+
+fn wrote<T, E>(result: Result<T, E>) -> Result<(), RnsPathTableWriteError> {
+    result
+        .map(drop)
+        .map_err(|_| RnsPathTableWriteError::BufferTooShort)
+}
+
+fn write_string(output: &mut &mut [u8], value: &str) -> Result<(), RnsPathTableWriteError> {
+    wrote(encode::write_str(output, value))
+}
+
+fn write_binary(output: &mut &mut [u8], value: &[u8]) -> Result<(), RnsPathTableWriteError> {
+    wrote(encode::write_bin(output, value))
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RnsPathTableField {
@@ -416,6 +477,8 @@ fn message_pack(_: super::message_pack::MessagePackDecodeError) -> RnsPathTableD
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::interfaces::{InterfaceId, InterfaceKind};
+    use crate::routing::{NextHop, RouteRetention};
 
     const RNS_1_4_2_PATH_TABLE: &str = "9186a468617368c41011111111111111111111111111111111a974696d657374616d70cb41d954fc40080000a3766961c41022222222222222222222222222222222a4686f707302a765787069726573cb41d954fc59200000a9696e74657266616365ba544350436c69656e74496e746572666163655b6f7261636c655d";
 
@@ -443,6 +506,32 @@ mod tests {
         assert_eq!(
             RnsPathTable::decode_message_pack(&[0x90, 0x00]),
             Err(RnsPathTableDecodeError::TrailingData)
+        );
+    }
+
+    #[test]
+    fn bounded_writer_matches_the_owned_stock_projection() {
+        let entry = RouteSnapshot {
+            destination: DestinationHash::new([0x42; 16]),
+            hops: 2,
+            via: NextHop::Direct,
+            learned_at: InstantMillis(1_000),
+            last_route_activity_at: InstantMillis(1_500),
+            expires_at: InstantMillis(2_000),
+            interface: InterfaceId::from_channel_tag(InterfaceKind::TcpClient, b"remote"),
+            retention: RouteRetention::Network,
+        };
+        let expected = RnsPathTable::new(vec![entry.clone()])
+            .encode_message_pack()
+            .unwrap();
+        let mut output = [0u8; 256];
+
+        let written = write_route_snapshots(core::slice::from_ref(&entry), &mut output).unwrap();
+
+        assert_eq!(&output[..written], expected);
+        assert_eq!(
+            write_route_snapshots(core::slice::from_ref(&entry), &mut output[..written - 1]),
+            Err(RnsPathTableWriteError::BufferTooShort)
         );
     }
 
