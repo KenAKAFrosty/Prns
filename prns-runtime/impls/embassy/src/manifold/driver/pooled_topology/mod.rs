@@ -87,6 +87,8 @@ fn inbound_source(
     }
 }
 
+// Both variants stay inline because embedded runtimes cannot rely on heap indirection.
+#[allow(clippy::large_enum_variant)]
 enum MaterializedResourceResponse<const N: usize> {
     Ready(HeaplessVec<u8, N>),
     RnsPathTable(HeaplessVec<u8, RNS_PATH_TABLE_RESPONSE_BYTES>),
