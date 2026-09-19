@@ -92,6 +92,11 @@
       "target": "xtensa-esp32s3-none-elf"
     },
     {
+      "manifest": "personal-hopspot/embedded/esp32/boards/xiao-esp32s3-wio-sx1262/Cargo.toml",
+      "name": "ESP32-S3 XIAO Wio-SX1262",
+      "target": "xtensa-esp32s3-none-elf"
+    },
+    {
       "manifest": "prns-wasm/Cargo.toml",
       "name": "wasm",
       "target": "wasm32-unknown-unknown"
@@ -138,6 +143,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -248,6 +254,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "alloc"
+        ],
         "esp32-c6": [
           "alloc"
         ],
@@ -490,6 +499,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -522,6 +532,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "desktop-linux": [],
         "desktop-macos": [],
@@ -565,6 +576,10 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "default",
+          "std"
+        ],
         "esp32-c6": [
           "default",
           "std"
@@ -658,6 +673,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "alloc"
+        ],
         "android": [
           "alloc"
         ],
@@ -804,6 +822,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -823,6 +842,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -842,6 +862,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [
           "default"
@@ -903,6 +924,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "std"
+        ],
         "daemon-linux": [
           "serde",
           "serde_core",
@@ -1008,6 +1032,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -1033,6 +1058,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "zeroize"
+        ],
         "android": [
           "zeroize"
         ],
@@ -1104,6 +1132,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -1279,6 +1308,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "uuid"
+        ],
         "esp32-c6": [
           "uuid"
         ],
@@ -1363,6 +1395,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "uuid"
+        ],
         "android": [
           "uuid"
         ],
@@ -1433,6 +1468,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
@@ -1451,6 +1487,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "desktop-linux": [
           "extern_crate_alloc"
         ],
@@ -1480,6 +1517,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [
           "default",
           "std"
@@ -1594,6 +1632,10 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "default",
+          "std"
+        ],
         "desktop-linux": [
           "default",
           "std"
@@ -1670,6 +1712,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "default"
+        ],
         "android": [
           "default"
         ],
@@ -1738,6 +1783,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "block-padding"
+        ],
         "android": [
           "block-padding"
         ],
@@ -1881,6 +1929,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -1948,6 +1997,10 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "rng",
+          "zeroize"
+        ],
         "android": [
           "rng",
           "zeroize"
@@ -2038,6 +2091,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "block-padding"
+        ],
         "android": [
           "block-padding"
         ],
@@ -2248,6 +2304,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -2339,6 +2396,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -2358,6 +2416,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -2390,6 +2449,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -2416,6 +2476,10 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "default",
+          "no-cache-pad"
+        ],
         "esp32-c6": [
           "default",
           "no-cache-pad"
@@ -2660,6 +2724,10 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "default",
+          "std"
+        ],
         "android": [
           "default",
           "std"
@@ -2750,6 +2818,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "restore-state-u32"
+        ],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -3025,6 +3096,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [
           "std"
         ],
@@ -3074,6 +3146,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "rand_core"
+        ],
         "android": [
           "rand_core"
         ],
@@ -3141,6 +3216,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -3198,6 +3274,13 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "alloc",
+          "digest",
+          "precomputed-tables",
+          "rand_core",
+          "zeroize"
+        ],
         "android": [
           "alloc",
           "digest",
@@ -3414,6 +3497,10 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "default",
+          "suggestions"
+        ],
         "android": [
           "default",
           "suggestions"
@@ -3484,6 +3571,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -3503,6 +3591,10 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "default",
+          "suggestions"
+        ],
         "esp32-c6": [
           "default",
           "suggestions"
@@ -3555,6 +3647,10 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "strsim",
+          "suggestions"
+        ],
         "android": [
           "strsim",
           "suggestions"
@@ -3625,6 +3721,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -3644,6 +3741,10 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "strsim",
+          "suggestions"
+        ],
         "esp32-c6": [
           "strsim",
           "suggestions"
@@ -3693,6 +3794,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -3721,6 +3823,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -3740,6 +3843,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -3902,6 +4006,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -3921,6 +4026,11 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "alloc",
+          "oid",
+          "zeroize"
+        ],
         "android": [
           "alloc",
           "oid",
@@ -4049,6 +4159,10 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "block-buffer",
+          "core-api"
+        ],
         "daemon-linux": [
           "alloc",
           "block-buffer",
@@ -4125,6 +4239,13 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "block-api",
+          "default",
+          "mac",
+          "rand_core",
+          "zeroize"
+        ],
         "android": [
           "block-api",
           "default",
@@ -4333,6 +4454,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "default"
+        ],
         "esp32-s3-heltec": [
           "default"
         ],
@@ -4359,6 +4483,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
@@ -4377,6 +4502,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
@@ -4444,6 +4570,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -4463,6 +4590,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -4482,6 +4610,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "default"
+        ],
         "android": [
           "default"
         ],
@@ -4577,6 +4708,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "alloc"
+        ],
         "android": [
           "alloc"
         ],
@@ -4644,6 +4778,15 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "alloc",
+          "batch",
+          "fast",
+          "rand_core",
+          "signature",
+          "strobe-rs",
+          "zeroize"
+        ],
         "android": [
           "alloc",
           "batch",
@@ -4876,6 +5019,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -4898,6 +5042,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -4922,6 +5067,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -4942,6 +5088,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "timer-item-size-6-words"
+        ],
         "esp32-c6": [
           "timer-item-size-6-words"
         ],
@@ -4974,6 +5123,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -5006,6 +5156,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -5044,6 +5195,16 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "dhcpv4",
+          "dns",
+          "medium-ethernet",
+          "multicast",
+          "proto-ipv4",
+          "proto-ipv6",
+          "tcp",
+          "udp"
+        ],
         "android": [
           "medium-ethernet",
           "multicast",
@@ -5196,6 +5357,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -5227,6 +5389,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -5283,6 +5446,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -5302,6 +5466,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -5328,6 +5493,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -5359,6 +5525,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -5390,6 +5557,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "tick-hz-1_000_000"
+        ],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -5433,6 +5603,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -5453,6 +5624,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -5486,6 +5658,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -5516,6 +5689,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "default"
+        ],
         "esp32-c6": [
           "default"
         ],
@@ -5545,6 +5721,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -5564,6 +5741,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "default"
+        ],
         "android": [
           "default"
         ],
@@ -5614,6 +5794,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "default"
+        ],
         "android": [
           "default"
         ],
@@ -5696,6 +5879,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "unproven"
+        ],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -5739,6 +5925,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -5770,6 +5957,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -5801,6 +5989,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "async"
+        ],
         "esp32-s3-heltec": [
           "async"
         ],
@@ -5830,6 +6021,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -5860,6 +6052,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -5891,6 +6084,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -5921,6 +6115,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -5952,6 +6147,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -5982,6 +6178,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -6012,6 +6209,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -6045,6 +6243,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -6151,6 +6350,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -6170,6 +6370,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -6225,6 +6426,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -6298,6 +6500,12 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "compat",
+          "default",
+          "global-allocator",
+          "internal-heap-stats"
+        ],
         "esp32-c6": [
           "compat",
           "default",
@@ -6342,6 +6550,13 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "esp32c6",
+          "esp32s3",
+          "panic-handler",
+          "print-float-registers",
+          "println"
+        ],
         "esp32-c6": [
           "esp32c6",
           "esp32s3",
@@ -6391,6 +6606,13 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "default",
+          "esp-rom-sys",
+          "esp32c6",
+          "esp32s3",
+          "validation"
+        ],
         "esp32-c6": [
           "default",
           "esp-rom-sys",
@@ -6440,6 +6662,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "build"
+        ],
         "esp32-c6": [
           "build"
         ],
@@ -6469,6 +6694,19 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "__bluetooth",
+          "__usb_otg",
+          "critical-section",
+          "default",
+          "esp32c6",
+          "esp32s3",
+          "exception-handler",
+          "float-save-restore",
+          "requires-unstable",
+          "rt",
+          "unstable"
+        ],
         "esp32-c6": [
           "__bluetooth",
           "__usb_otg",
@@ -6548,6 +6786,13 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "__esp_idf_bootloader",
+          "has-lp-core",
+          "has-ulp-core",
+          "rtc-fast",
+          "rtc-slow"
+        ],
         "esp32-c6": [
           "__esp_idf_bootloader",
           "has-lp-core",
@@ -6597,6 +6842,12 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "_device-selected",
+          "build-script",
+          "esp32c6",
+          "esp32s3"
+        ],
         "esp32-c6": [
           "_device-selected",
           "build-script",
@@ -6641,6 +6892,10 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "esp32c6",
+          "esp32s3"
+        ],
         "esp32-c6": [
           "esp32c6",
           "esp32s3"
@@ -6675,6 +6930,12 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "esp32c6",
+          "esp32s3",
+          "jtag-serial",
+          "log-04"
+        ],
         "esp32-c6": [
           "esp32c6",
           "esp32s3",
@@ -6719,6 +6980,18 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "__has_unstable_feature_enabled",
+          "ble",
+          "coex",
+          "esp-alloc",
+          "esp-now",
+          "esp32c6",
+          "esp32s3",
+          "unstable",
+          "wifi",
+          "xtensa-lx-rt"
+        ],
         "esp32-c6": [
           "__has_unstable_feature_enabled",
           "ble",
@@ -6793,6 +7066,12 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "esp-sync",
+          "esp32c6",
+          "esp32s3",
+          "ipc-implementations"
+        ],
         "esp32-c6": [
           "esp-sync",
           "esp32c6",
@@ -6854,6 +7133,10 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "esp32c6",
+          "esp32s3"
+        ],
         "esp32-c6": [
           "esp32c6",
           "esp32s3"
@@ -6888,6 +7171,14 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "alloc",
+          "default",
+          "embassy",
+          "esp-radio",
+          "esp32c6",
+          "esp32s3"
+        ],
         "esp32-c6": [
           "alloc",
           "default",
@@ -6942,6 +7233,10 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "esp32c6",
+          "esp32s3"
+        ],
         "esp32-c6": [
           "esp32c6",
           "esp32s3"
@@ -6976,6 +7271,10 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "esp32sx",
+          "fs"
+        ],
         "esp32-c6": [
           "esp32sx",
           "fs"
@@ -7010,6 +7309,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "default"
+        ],
         "esp32-c6": [
           "default"
         ],
@@ -7039,6 +7341,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "default"
+        ],
         "esp32-c6": [
           "default"
         ],
@@ -7068,6 +7373,11 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "critical-section",
+          "default",
+          "rt"
+        ],
         "esp32-c6": [
           "critical-section",
           "default",
@@ -7107,6 +7417,11 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "critical-section",
+          "default",
+          "rt"
+        ],
         "esp32-c6": [
           "critical-section",
           "default",
@@ -7146,6 +7461,11 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "critical-section",
+          "default",
+          "rt"
+        ],
         "esp32-c6": [
           "critical-section",
           "default",
@@ -7185,6 +7505,11 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "critical-section",
+          "default",
+          "rt"
+        ],
         "esp32-c6": [
           "critical-section",
           "default",
@@ -7224,6 +7549,11 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "critical-section",
+          "default",
+          "rt"
+        ],
         "esp32-c6": [
           "critical-section",
           "default",
@@ -7263,6 +7593,11 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "critical-section",
+          "default",
+          "rt"
+        ],
         "esp32-c6": [
           "critical-section",
           "default",
@@ -7302,6 +7637,11 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "critical-section",
+          "default",
+          "rt"
+        ],
         "esp32-c6": [
           "critical-section",
           "default",
@@ -7554,6 +7894,11 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "default",
+          "num-traits",
+          "ratio"
+        ],
         "android": [
           "default",
           "num-traits",
@@ -7657,6 +8002,10 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "default",
+          "std"
+        ],
         "android": [
           "default",
           "std"
@@ -7807,6 +8156,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "default"
+        ],
         "esp32-c6": [
           "default"
         ],
@@ -7836,6 +8188,14 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "alloc",
+          "async-await",
+          "default",
+          "executor",
+          "futures-executor",
+          "std"
+        ],
         "android": [
           "alloc",
           "async-await",
@@ -7992,6 +8352,13 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "alloc",
+          "default",
+          "futures-sink",
+          "sink",
+          "std"
+        ],
         "android": [
           "alloc",
           "default",
@@ -8139,6 +8506,11 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "android": [
           "alloc",
           "default",
@@ -8261,6 +8633,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "std"
+        ],
         "android": [
           "std"
         ],
@@ -8341,6 +8716,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -8367,6 +8743,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "std"
+        ],
         "android": [
           "default",
           "std"
@@ -8484,6 +8863,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -8530,6 +8910,10 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "alloc",
+          "std"
+        ],
         "android": [
           "alloc",
           "default",
@@ -8634,6 +9018,10 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "alloc",
+          "std"
+        ],
         "android": [
           "alloc",
           "std"
@@ -8756,6 +9144,21 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "alloc",
+          "async-await",
+          "async-await-macro",
+          "channel",
+          "futures-channel",
+          "futures-io",
+          "futures-macro",
+          "futures-sink",
+          "io",
+          "memchr",
+          "sink",
+          "slab",
+          "std"
+        ],
         "android": [
           "alloc",
           "async-await",
@@ -9058,6 +9461,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -9077,6 +9481,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "more_lengths"
+        ],
         "android": [
           "more_lengths"
         ],
@@ -9148,6 +9555,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [
           "std"
         ],
@@ -9243,6 +9651,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [
           "std"
@@ -9295,6 +9704,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -9379,6 +9789,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -9404,6 +9815,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -9437,6 +9849,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -9491,6 +9904,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -9544,6 +9958,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -9577,6 +9992,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "zeroize"
+        ],
         "android": [
           "zeroize"
         ],
@@ -9751,6 +10169,23 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "default"
+        ]
+      },
+      "name": "hopspot-xiao-esp32s3-wio-sx1262",
+      "source": "personal-hopspot/embedded/esp32/boards/xiao-esp32s3-wio-sx1262",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.1.0"
+    },
+    {
+      "graphs": {
         "daemon-linux": [
           "default",
           "std"
@@ -9841,6 +10276,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "zeroize"
+        ],
         "android": [
           "zeroize"
         ],
@@ -10069,6 +10507,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -10149,6 +10588,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -10225,6 +10665,10 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "default",
+          "std"
+        ],
         "daemon-linux": [
           "default",
           "std"
@@ -10283,6 +10727,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -10302,6 +10747,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "block-padding"
+        ],
         "android": [
           "block-padding"
         ],
@@ -10373,6 +10821,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -10409,6 +10858,10 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "default",
+          "std"
+        ],
         "android": [
           "default",
           "std"
@@ -10551,6 +11004,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
@@ -10578,6 +11032,10 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "alloc",
+          "std"
+        ],
         "esp32-c6": [
           "alloc",
           "std"
@@ -10712,6 +11170,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -10823,6 +11282,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "rust-allocator"
+        ],
         "android": [
           "rust-allocator"
         ],
@@ -10891,6 +11353,11 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "default",
+          "extra_traits",
+          "std"
+        ],
         "android": [
           "default",
           "extra_traits",
@@ -11039,6 +11506,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "const_mut_refs"
+        ],
         "esp32-c6": [
           "const_mut_refs"
         ],
@@ -11157,6 +11627,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -11188,6 +11659,10 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "atomic_usize",
+          "default"
+        ],
         "android": [
           "atomic_usize",
           "default"
@@ -11262,6 +11737,10 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "release_max_level_info",
+          "std"
+        ],
         "esp32-c6": [
           "release_max_level_info",
           "std"
@@ -11357,6 +11836,10 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "default",
+          "std"
+        ],
         "android": [
           "default",
           "std"
@@ -11480,6 +11963,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "map"
+        ],
         "android": [
           "map"
         ],
@@ -11542,6 +12028,13 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "default",
+          "macros",
+          "syn",
+          "syn1",
+          "syn2"
+        ],
         "esp32-s3-heltec": [
           "default",
           "macros",
@@ -11584,6 +12077,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
@@ -11622,6 +12116,11 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "default",
+          "doctests",
+          "pulldown-cmark"
+        ],
         "esp32-s3-heltec": [
           "default",
           "doctests",
@@ -11728,6 +12227,11 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "android": [
           "alloc",
           "default",
@@ -11855,6 +12359,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "desktop-linux": [],
         "desktop-macos": [],
@@ -11919,6 +12424,11 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "net",
+          "os-ext",
+          "os-poll"
+        ],
         "android": [
           "net",
           "os-ext",
@@ -12118,6 +12628,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "unstable"
+        ],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -12161,6 +12674,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -12207,6 +12721,12 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "android-extra",
+          "apple-system-configuration-extra",
+          "default",
+          "gateway"
+        ],
         "android": [
           "android-extra",
           "apple-system-configuration-extra",
@@ -12597,6 +13117,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "daemon-linux": [],
         "desktop-linux": [],
         "esp32-c6": [],
@@ -12661,6 +13182,10 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "default",
+          "std"
+        ],
         "android": [
           "default",
           "i128",
@@ -14578,6 +15103,10 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "elf",
+          "read_core"
+        ],
         "esp32-c6": [
           "elf",
           "read_core"
@@ -14854,6 +15383,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "desktop-linux": [],
@@ -14936,6 +15466,10 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "display",
+          "embedded"
+        ],
         "android": [
           "display",
           "host"
@@ -15022,6 +15556,16 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "bluetooth-auto",
+          "default",
+          "display",
+          "esp-now",
+          "lora",
+          "tcp",
+          "usb",
+          "wifi-auto"
+        ],
         "esp32-c6": [
           "bluetooth-auto",
           "default",
@@ -15103,6 +15647,20 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "alloc",
+          "bluetooth-auto",
+          "embassy-host",
+          "esp-now",
+          "external-alloc",
+          "flash",
+          "log",
+          "lora",
+          "tcp",
+          "tcp-dns",
+          "usb",
+          "wifi-auto"
+        ],
         "android": [
           "alloc",
           "bluetooth-auto",
@@ -15481,6 +16039,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -15514,6 +16073,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "alloc"
+        ],
         "android": [
           "alloc"
         ],
@@ -15642,6 +16204,13 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "critical-section",
+          "default",
+          "fallback",
+          "require-cas",
+          "unsafe-assume-single-core"
+        ],
         "android": [
           "critical-section",
           "default",
@@ -15765,6 +16334,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "portable-atomic"
+        ],
         "esp32-c6": [
           "portable-atomic"
         ],
@@ -15794,6 +16366,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -15917,6 +16490,15 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "alloc",
+          "ed25519-batch",
+          "embassy-host",
+          "external-alloc",
+          "flash",
+          "std",
+          "tokio-host"
+        ],
         "android": [
           "alloc",
           "ed25519-batch",
@@ -16236,6 +16818,17 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "bluetooth-auto",
+          "bluetooth-auto-trouble",
+          "esp-now",
+          "log",
+          "lora",
+          "tcp",
+          "tcp-dns",
+          "usb",
+          "wifi-auto"
+        ],
         "android": [
           "bluetooth-auto",
           "log",
@@ -16381,6 +16974,15 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "bluetooth-auto",
+          "log",
+          "network-device-selection",
+          "serial",
+          "tcp",
+          "usb",
+          "wifi-auto"
+        ],
         "android": [
           "bluetooth-auto",
           "log",
@@ -16630,6 +17232,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -16693,6 +17296,12 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "alloc",
+          "external-alloc",
+          "resource-bzip2",
+          "std"
+        ],
         "android": [
           "alloc",
           "resource-bzip2",
@@ -16826,6 +17435,10 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "alloc",
+          "log"
+        ],
         "android": [
           "log"
         ],
@@ -16892,6 +17505,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [
           "parallel-persistence",
           "rns-management"
@@ -17042,6 +17656,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "daemon-linux": [],
         "desktop-linux": [],
         "esp32-c6": [],
@@ -17063,6 +17678,14 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "default",
+          "parser",
+          "proc-macro",
+          "proc-macro2",
+          "quote",
+          "smallvec"
+        ],
         "esp32-s3-heltec": [
           "default",
           "parser",
@@ -17109,6 +17732,10 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "default",
+          "proc-macro"
+        ],
         "android": [
           "default",
           "proc-macro"
@@ -17270,6 +17897,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
@@ -17343,6 +17971,10 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "default",
+          "proc-macro"
+        ],
         "android": [
           "default",
           "proc-macro"
@@ -17465,6 +18097,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -17606,6 +18239,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -17639,6 +18273,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [
           "alloc",
           "getrandom",
@@ -17670,6 +18305,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "daemon-linux": [
           "os_rng",
           "std"
@@ -18106,6 +18742,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "unstable"
+        ],
         "esp32-c6": [
           "unstable"
         ],
@@ -18178,6 +18817,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -18211,6 +18851,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -18257,6 +18898,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -18549,6 +19191,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "daemon-linux": [],
         "desktop-linux": [],
         "esp32-c6": [],
@@ -18592,6 +19235,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -18642,6 +19286,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -18783,6 +19428,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "openocd-semihosting"
+        ],
         "esp32-c6": [
           "openocd-semihosting"
         ],
@@ -18829,6 +19477,10 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "default",
+          "std"
+        ],
         "android": [
           "default",
           "std"
@@ -18934,6 +19586,13 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "alloc",
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
+        ],
         "android": [
           "alloc",
           "default",
@@ -19125,6 +19784,11 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "alloc",
+          "result",
+          "std"
+        ],
         "android": [
           "alloc",
           "result",
@@ -19244,6 +19908,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "default"
+        ],
         "android": [
           "default"
         ],
@@ -19423,6 +20090,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -19442,6 +20110,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -19472,6 +20141,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -19566,6 +20236,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "zeroize"
+        ],
         "android": [
           "zeroize"
         ],
@@ -19769,6 +20442,10 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "alloc",
+          "rand_core"
+        ],
         "android": [
           "alloc",
           "rand_core"
@@ -19901,6 +20578,10 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "default",
+          "std"
+        ],
         "android": [
           "default",
           "std"
@@ -19989,6 +20670,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "const_generics"
+        ],
         "esp32-s3-heltec": [
           "const_generics"
         ],
@@ -20063,6 +20747,20 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "async",
+          "medium-ethernet",
+          "multicast",
+          "proto-dhcpv4",
+          "proto-dns",
+          "proto-ipv4",
+          "proto-ipv6",
+          "socket",
+          "socket-dhcpv4",
+          "socket-dns",
+          "socket-tcp",
+          "socket-udp"
+        ],
         "android": [
           "async",
           "medium-ethernet",
@@ -20274,6 +20972,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "all"
+        ],
         "android": [
           "all"
         ],
@@ -20353,6 +21054,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -20372,6 +21074,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -20438,6 +21141,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "alloc"
+        ],
         "android": [
           "alloc"
         ],
@@ -20503,6 +21209,11 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "default",
+          "embedded-graphics-core",
+          "graphics"
+        ],
         "esp32-s3-heltec": [
           "default",
           "embedded-graphics-core",
@@ -20552,6 +21263,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -20612,6 +21324,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -20643,6 +21356,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "default"
+        ],
         "android": [
           "default"
         ],
@@ -20723,6 +21439,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -20783,6 +21500,10 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "derive",
+          "strum_macros"
+        ],
         "esp32-c6": [
           "derive",
           "strum_macros"
@@ -20834,6 +21555,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -20853,6 +21575,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "const-generics"
+        ],
         "android": [
           "const-generics"
         ],
@@ -20924,6 +21649,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "default"
+        ],
         "esp32-c6": [
           "default"
         ],
@@ -20953,6 +21681,18 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "quote",
+          "visit-mut"
+        ],
         "esp32-c6": [
           "clone-impls",
           "default",
@@ -21038,6 +21778,18 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit",
+          "visit-mut"
+        ],
         "android": [
           "clone-impls",
           "default",
@@ -21514,6 +22266,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -21868,6 +22621,22 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "bytes",
+          "default",
+          "fs",
+          "io-util",
+          "libc",
+          "macros",
+          "mio",
+          "net",
+          "rt",
+          "socket2",
+          "sync",
+          "time",
+          "tokio-macros",
+          "windows-sys"
+        ],
         "android": [
           "bytes",
           "default",
@@ -22220,6 +22989,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -22530,6 +23300,11 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "daemon-linux": [
           "alloc",
           "default",
@@ -22592,6 +23367,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "parse"
+        ],
         "daemon-linux": [
           "parse"
         ],
@@ -22627,6 +23405,11 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "desktop-linux": [
           "alloc",
           "default",
@@ -23029,6 +23812,19 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "central",
+          "default-packet-pool",
+          "default-packet-pool-mtu-512",
+          "default-packet-pool-size-32",
+          "default-packet-pool-size-8",
+          "derive",
+          "gatt",
+          "log",
+          "peripheral",
+          "scan",
+          "trouble-host-macros"
+        ],
         "esp32-c6": [
           "central",
           "default-packet-pool",
@@ -23199,6 +23995,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -23316,6 +24113,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "const-generics"
+        ],
         "android": [
           "const-generics"
         ],
@@ -23399,6 +24199,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -23433,6 +24234,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
@@ -23451,6 +24253,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -23485,6 +24288,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -23511,6 +24315,10 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "cjk",
+          "default"
+        ],
         "esp32-c6": [
           "cjk",
           "default"
@@ -23545,6 +24353,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -23610,6 +24419,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -23735,6 +24545,12 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "default",
+          "rng",
+          "std",
+          "v4"
+        ],
         "esp32-c6": [
           "default",
           "rng",
@@ -23893,6 +24709,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -23930,6 +24747,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -23963,6 +24781,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
@@ -24866,6 +25685,14 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "alloc",
+          "ascii",
+          "binary",
+          "default",
+          "parser",
+          "std"
+        ],
         "esp32-c6": [
           "alloc",
           "ascii",
@@ -24983,6 +25810,10 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "precomputed-tables",
+          "static_secrets"
+        ],
         "android": [
           "precomputed-tables",
           "static_secrets"
@@ -25089,6 +25920,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -25108,6 +25940,9 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "float-save-restore"
+        ],
         "esp32-c6": [
           "float-save-restore"
         ],
@@ -25137,6 +25972,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -25306,6 +26142,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [
           "simd"
         ],
@@ -25432,6 +26269,12 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [
+          "alloc",
+          "default",
+          "derive",
+          "zeroize_derive"
+        ],
         "android": [
           "alloc",
           "default",
@@ -25573,6 +26416,7 @@
     },
     {
       "graphs": {
+        "ESP32-S3 XIAO Wio-SX1262": [],
         "android": [],
         "daemon-linux": [],
         "daemon-macos": [],

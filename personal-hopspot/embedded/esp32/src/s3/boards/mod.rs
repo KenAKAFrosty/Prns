@@ -8,6 +8,10 @@ pub mod heltec_v4;
 pub mod heltec_v4_r8;
 #[cfg(feature = "lora")]
 pub mod t_beam_supreme;
+#[cfg(feature = "lora")]
+pub mod xiao_esp32s3_wio_sx1262;
 
 #[cfg(feature = "lora")]
 mod heltec_frontend;
+#[cfg(feature = "lora")]
+mod wio_sx1262_frontend;

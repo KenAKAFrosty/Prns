@@ -2,6 +2,8 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
+use crate::radio_profile::RadioProfileArgs;
+
 const CLI_VERSION: &str = match option_env!("PRNS_FLASH_VERSION") {
     Some(version) => version,
     None => env!("CARGO_PKG_VERSION"),
@@ -42,6 +44,23 @@ pub(crate) enum CommandMode {
     Cache {
         #[command(subcommand)]
         command: CacheCommand,
+    },
+    /// Update the persistent LoRa profile without rewriting firmware.
+    Configure {
+        /// Stable board slug.
+        board: String,
+        /// Explicit serial port for serial boards.
+        #[arg(long, value_name = "PORT")]
+        port: Option<String>,
+        /// Confirm the exact board noninteractively.
+        #[arg(long)]
+        yes: bool,
+        /// Emit newline-delimited schema-1 events and never prompt.
+        #[arg(long)]
+        json: bool,
+        /// Persistent LoRa profile to write.
+        #[command(flatten)]
+        radio: RadioProfileArgs,
     },
     /// Download, verify, and flash published Hopspot firmware.
     Flash {
@@ -100,6 +119,9 @@ pub(crate) enum CommandMode {
             conflicts_with_all = ["version", "offline", "local_build"]
         )]
         candidate: Option<PathBuf>,
+        /// Provision a persistent LoRa profile while flashing a supported headless board.
+        #[command(flatten)]
+        radio: RadioProfileArgs,
         /// Explicit mounted UF2 bootloader directory.
         #[arg(long, value_name = "DIR", hide = true)]
         mount: Option<PathBuf>,
@@ -153,6 +175,7 @@ impl Cli {
         match &self.command {
             Some(CommandMode::List { json })
             | Some(CommandMode::Doctor { json, .. })
+            | Some(CommandMode::Configure { json, .. })
             | Some(CommandMode::Flash { json, .. })
             | Some(CommandMode::Cache {
                 command: CacheCommand::Import { json, .. },
@@ -183,6 +206,47 @@ mod tests {
     use clap::{error::ErrorKind, Parser};
 
     use super::{Cli, CommandMode};
+
+    #[test]
+    fn configure_command_accepts_a_complete_radio_profile() {
+        let cli = Cli::try_parse_from([
+            "hopspot-flash",
+            "configure",
+            "xiao-esp32s3-wio-sx1262",
+            "--region",
+            "eu869",
+            "--frequency-hz",
+            "869527000",
+            "--spreading-factor",
+            "9",
+            "--tx-power-dbm",
+            "14",
+            "--bandwidth-khz",
+            "250",
+            "--coding-rate",
+            "4/5",
+            "--announce-mm",
+            "15",
+            "--yes",
+        ])
+        .expect("configure command should parse");
+
+        match cli.command {
+            Some(CommandMode::Configure {
+                board,
+                yes,
+                json,
+                radio,
+                ..
+            }) => {
+                assert_eq!(board, "xiao-esp32s3-wio-sx1262");
+                assert!(yes);
+                assert!(!json);
+                assert_eq!(radio.announce_minutes, Some(15));
+            }
+            _ => panic!("configure command should be selected"),
+        }
+    }
 
     #[test]
     fn json_and_monitor_are_rejected_with_usage_exit_code() {

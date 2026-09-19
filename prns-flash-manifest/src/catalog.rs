@@ -1012,6 +1012,11 @@ mod tests {
                     Some(4_194_304),
                     Some(("partitions-hopspot-4mb.csv", "4mb"))
                 ),
+                (
+                    "xiao-esp32s3-wio-sx1262",
+                    Some(8_388_608),
+                    Some(("partitions-hopspot-8mb.csv", "8mb"))
+                ),
                 ("t-echo", None, None),
                 ("t114", None, None),
                 ("t096", None, None),
@@ -1276,7 +1281,13 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             capable,
-            ["heltec-v4", "heltec-v4-r8", "heltec-e290", "t-beam-supreme"]
+            [
+                "heltec-v4",
+                "heltec-v4-r8",
+                "heltec-e290",
+                "t-beam-supreme",
+                "xiao-esp32s3-wio-sx1262"
+            ]
         );
         Ok(())
     }

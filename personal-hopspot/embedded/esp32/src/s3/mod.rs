@@ -64,7 +64,9 @@ use personal_rns::interfaces::esp_now::{
     self as espnow_core, Channel as EspNowChannel, ChannelPolicy, ESP_NOW_V2_AIR_MTU,
 };
 #[cfg(feature = "lora")]
-use personal_rns::interfaces::lora::{AirtimePolicy, DEFAULT_915_PROFILE, LORA_MAX_PAYLOAD};
+use personal_rns::interfaces::lora::{
+    AirtimePolicy, RadioProfile, DEFAULT_915_PROFILE, LORA_MAX_PAYLOAD,
+};
 use personal_rns::interfaces::usb_auto::device_descriptor;
 use personal_rns::interfaces::wifi_auto as wifi_auto_contract;
 use personal_rns::interfaces::BitrateBps;
@@ -115,8 +117,8 @@ use crate::storage::EngineStorageType;
 use personal_hopspot_core as screen;
 
 pub(crate) use crate::display_runtime::{
-    ImmediateBoardDisplay, RetainedBoardDisplay, RetainedDisplayDevice, S3BoardDisplay,
-    S3DisplayRuntime, S3Presentation,
+    HeadlessBoardDisplay, ImmediateBoardDisplay, RetainedBoardDisplay, RetainedDisplayDevice,
+    S3BoardDisplay, S3DisplayRuntime, S3Presentation,
 };
 pub(crate) use crate::immediate_display::ImmediateDisplayDevice;
 #[cfg(feature = "lora")]

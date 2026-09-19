@@ -1,7 +1,7 @@
 use embedded_storage_async::nor_flash::NorFlash;
 use personal_rns::interfaces::lora::{
-    CodingRate, Frequency, LoraBandwidth, Modulation, PreambleSymbols, RadioProfile, Region,
-    SpreadingFactor, TxPower,
+    CodingRate, Frequency, LoraBandwidth, Modulation, PreambleSymbols, RadioProfile,
+    RadioProfileError, Region, SpreadingFactor, TxPower,
 };
 
 const MAGIC: [u8; 4] = *b"HSLP";
@@ -14,6 +14,96 @@ const PROFILE_PAYLOAD_LEN: usize = 12;
 const CHECKSUM_OFFSET: usize = 20;
 const COMMIT_OFFSET: usize = 28;
 const PAYLOAD_OFFSET: usize = 32;
+/// Offset of the optional headless auto-announce extension in each profile page.
+pub const AUTO_ANNOUNCE_EXTENSION_OFFSET: usize = 64;
+/// Length of the headless auto-announce extension record.
+pub const AUTO_ANNOUNCE_EXTENSION_LEN: usize = 8;
+const AUTO_ANNOUNCE_MAGIC: [u8; 4] = *b"HSAN";
+/// Offset of the optional public `nomadnetwork.node` display-name record.
+pub const NODE_ANNOUNCE_NAME_EXTENSION_OFFSET: usize = 80;
+/// Maximum UTF-8 byte length of the public node display name.
+pub const NODE_ANNOUNCE_NAME_MAX_LEN: usize = 64;
+/// Length of the public node display-name record, including its header.
+pub const NODE_ANNOUNCE_NAME_EXTENSION_LEN: usize = 8 + NODE_ANNOUNCE_NAME_MAX_LEN;
+const NODE_ANNOUNCE_NAME_MAGIC: [u8; 4] = *b"HSNN";
+
+/// Length of one persisted LoRa radio-profile record.
+pub const RADIO_PROFILE_RECORD_LEN: usize = RECORD_LEN;
+
+/// Encode a validated, committed profile record for host-side provisioning.
+///
+/// The returned bytes are identical to a record committed by [`RadioProfileStore`]
+/// with generation zero. A flasher can write the record into an erased profile
+/// page before the firmware starts for the first time.
+pub fn encode_provisioned_radio_profile(
+    profile: RadioProfile,
+) -> Result<[u8; RADIO_PROFILE_RECORD_LEN], RadioProfileError> {
+    profile.validate()?;
+    let mut record = encode_record(0, StoredValue::Profile(profile));
+    record[COMMIT_OFFSET..COMMIT_OFFSET + 4].copy_from_slice(&COMMIT_WORD.to_le_bytes());
+    Ok(record)
+}
+
+/// Encode the optional headless auto-announce setting stored beside a profile.
+pub fn encode_provisioned_auto_announce(minutes: Option<u32>) -> [u8; AUTO_ANNOUNCE_EXTENSION_LEN] {
+    let mut record = [0xff; AUTO_ANNOUNCE_EXTENSION_LEN];
+    if let Some(minutes) = minutes {
+        record[..AUTO_ANNOUNCE_MAGIC.len()].copy_from_slice(&AUTO_ANNOUNCE_MAGIC);
+        record[4..].copy_from_slice(&minutes.to_le_bytes());
+    }
+    record
+}
+
+/// A validated public display name for the built-in `nomadnetwork.node` destination.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NodeAnnounceName {
+    bytes: [u8; NODE_ANNOUNCE_NAME_MAX_LEN],
+    len: u8,
+}
+
+impl NodeAnnounceName {
+    pub fn new(value: &str) -> Result<Self, NodeAnnounceNameError> {
+        let bytes = value.as_bytes();
+        if bytes.is_empty() {
+            return Err(NodeAnnounceNameError::Empty);
+        }
+        if bytes.len() > NODE_ANNOUNCE_NAME_MAX_LEN {
+            return Err(NodeAnnounceNameError::TooLong {
+                actual: bytes.len(),
+            });
+        }
+        let mut stored = [0_u8; NODE_ANNOUNCE_NAME_MAX_LEN];
+        stored[..bytes.len()].copy_from_slice(bytes);
+        Ok(Self {
+            bytes: stored,
+            len: bytes.len() as u8,
+        })
+    }
+
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes[..usize::from(self.len)]
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeAnnounceNameError {
+    Empty,
+    TooLong { actual: usize },
+}
+
+/// Encode a public node name stored beside the radio profile.
+pub fn encode_provisioned_node_announce_name(
+    name: Option<NodeAnnounceName>,
+) -> [u8; NODE_ANNOUNCE_NAME_EXTENSION_LEN] {
+    let mut record = [0xff; NODE_ANNOUNCE_NAME_EXTENSION_LEN];
+    if let Some(name) = name {
+        record[..NODE_ANNOUNCE_NAME_MAGIC.len()].copy_from_slice(&NODE_ANNOUNCE_NAME_MAGIC);
+        record[4] = name.len;
+        record[8..8 + name.as_bytes().len()].copy_from_slice(name.as_bytes());
+    }
+    record
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RadioProfileLoadNotice {
@@ -100,6 +190,31 @@ where
         self.commit(StoredValue::Profile(profile)).await
     }
 
+    /// Load the persisted headless auto-announce interval, if present.
+    pub async fn load_auto_announce_minutes(
+        &mut self,
+    ) -> Result<Option<u32>, RadioProfileStoreError<F::Error>> {
+        self.validate_layout()?;
+        let slots = self.read_slots().await?;
+        let Some(active) = select_active(&slots) else {
+            return Ok(None);
+        };
+        self.read_auto_announce_from_page(self.pages[active]).await
+    }
+
+    /// Load the optional public `nomadnetwork.node` display name.
+    pub async fn load_node_announce_name(
+        &mut self,
+    ) -> Result<Option<NodeAnnounceName>, RadioProfileStoreError<F::Error>> {
+        self.validate_layout()?;
+        let slots = self.read_slots().await?;
+        let Some(active) = select_active(&slots) else {
+            return Ok(None);
+        };
+        self.read_node_announce_name_from_page(self.pages[active])
+            .await
+    }
+
     pub async fn reset(&mut self) -> Result<(), RadioProfileStoreError<F::Error>> {
         self.commit(StoredValue::Default).await
     }
@@ -111,6 +226,8 @@ where
     async fn commit(&mut self, value: StoredValue) -> Result<(), RadioProfileStoreError<F::Error>> {
         self.validate_layout()?;
         let slots = self.read_slots().await?;
+        let auto_announce = self.load_auto_announce_from_slots(&slots).await?;
+        let node_announce_name = self.load_node_announce_name_from_slots(&slots).await?;
         let active = select_active(&slots);
         let target = active.map_or(0, |index| 1 - index);
         let generation = active
@@ -137,6 +254,23 @@ where
             .write(page + COMMIT_OFFSET as u32, &COMMIT_WORD.to_le_bytes())
             .await
             .map_err(RadioProfileStoreError::Flash)?;
+        if let Some(minutes) = auto_announce {
+            let extension = encode_provisioned_auto_announce(Some(minutes));
+            self.flash
+                .write(page + AUTO_ANNOUNCE_EXTENSION_OFFSET as u32, &extension)
+                .await
+                .map_err(RadioProfileStoreError::Flash)?;
+        }
+        if let Some(name) = node_announce_name {
+            let extension = encode_provisioned_node_announce_name(Some(name));
+            self.flash
+                .write(
+                    page + NODE_ANNOUNCE_NAME_EXTENSION_OFFSET as u32,
+                    &extension,
+                )
+                .await
+                .map_err(RadioProfileStoreError::Flash)?;
+        }
 
         let mut verified = [0u8; RECORD_LEN];
         self.flash
@@ -155,6 +289,74 @@ where
             return Err(RadioProfileStoreError::VerificationFailed);
         }
         Ok(())
+    }
+
+    async fn load_auto_announce_from_slots(
+        &mut self,
+        slots: &[Slot; 2],
+    ) -> Result<Option<u32>, RadioProfileStoreError<F::Error>> {
+        let Some(active) = select_active(slots) else {
+            return Ok(None);
+        };
+        self.read_auto_announce_from_page(self.pages[active]).await
+    }
+
+    async fn load_node_announce_name_from_slots(
+        &mut self,
+        slots: &[Slot; 2],
+    ) -> Result<Option<NodeAnnounceName>, RadioProfileStoreError<F::Error>> {
+        let Some(active) = select_active(slots) else {
+            return Ok(None);
+        };
+        self.read_node_announce_name_from_page(self.pages[active])
+            .await
+    }
+
+    async fn read_auto_announce_from_page(
+        &mut self,
+        page: u32,
+    ) -> Result<Option<u32>, RadioProfileStoreError<F::Error>> {
+        let mut extension = [0u8; AUTO_ANNOUNCE_EXTENSION_LEN];
+        self.flash
+            .read(page + AUTO_ANNOUNCE_EXTENSION_OFFSET as u32, &mut extension)
+            .await
+            .map_err(RadioProfileStoreError::Flash)?;
+        if extension[..AUTO_ANNOUNCE_MAGIC.len()] != AUTO_ANNOUNCE_MAGIC {
+            return Ok(None);
+        }
+        let minutes = u32::from_le_bytes(
+            extension[4..]
+                .try_into()
+                .map_err(|_| RadioProfileStoreError::InvalidProfile)?,
+        );
+        Ok((minutes != 0).then_some(minutes))
+    }
+
+    async fn read_node_announce_name_from_page(
+        &mut self,
+        page: u32,
+    ) -> Result<Option<NodeAnnounceName>, RadioProfileStoreError<F::Error>> {
+        let mut extension = [0_u8; NODE_ANNOUNCE_NAME_EXTENSION_LEN];
+        self.flash
+            .read(
+                page + NODE_ANNOUNCE_NAME_EXTENSION_OFFSET as u32,
+                &mut extension,
+            )
+            .await
+            .map_err(RadioProfileStoreError::Flash)?;
+        if extension[..NODE_ANNOUNCE_NAME_MAGIC.len()] != NODE_ANNOUNCE_NAME_MAGIC {
+            return Ok(None);
+        }
+        let len = usize::from(extension[4]);
+        if len == 0 || len > NODE_ANNOUNCE_NAME_MAX_LEN {
+            return Ok(None);
+        }
+        let Ok(value) = core::str::from_utf8(&extension[8..8 + len]) else {
+            return Ok(None);
+        };
+        NodeAnnounceName::new(value)
+            .map(Some)
+            .map_err(|_| RadioProfileStoreError::InvalidProfile)
     }
 
     async fn read_slots(&mut self) -> Result<[Slot; 2], RadioProfileStoreError<F::Error>> {
@@ -453,6 +655,30 @@ mod tests {
     };
     use personal_rns::interfaces::lora::DEFAULT_915_PROFILE;
     use std::boxed::Box;
+
+    #[test]
+    fn host_provisioned_record_is_committed_and_decodable() {
+        let record = encode_provisioned_radio_profile(DEFAULT_915_PROFILE).expect("valid profile");
+        assert_eq!(
+            decode_record(&record),
+            Some(StoredRecord {
+                generation: 0,
+                value: StoredValue::Profile(DEFAULT_915_PROFILE),
+            })
+        );
+    }
+
+    #[test]
+    fn auto_announce_extension_is_optional_and_little_endian() {
+        assert_eq!(
+            encode_provisioned_auto_announce(None),
+            [0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]
+        );
+        assert_eq!(
+            encode_provisioned_auto_announce(Some(15)),
+            [b'H', b'S', b'A', b'N', 15, 0, 0, 0]
+        );
+    }
     use std::task::Waker;
 
     const CAPACITY: usize = 2 * 4096;

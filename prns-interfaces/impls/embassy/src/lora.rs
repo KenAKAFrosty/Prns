@@ -629,12 +629,13 @@ async fn transmit_packet<R: LoRaRadio>(
             }
         };
         if let Err(e) = radio.transmit(&tx_frame[..n]).await {
-            crate::diagnostic_log::debug!("RNS_LORA tx failed: {e:?}");
+            crate::diagnostic_log::warn!("RNS_LORA tx failed: {e:?}");
             *seq = seq.wrapping_add(0x10);
             return Err(LoRaTransmitError::Radio(e));
         }
         let completed_at = InstantMillis(started.elapsed().as_millis());
         status.add_tx(n as u64);
+        crate::diagnostic_log::info!("RNS_LORA tx completed bytes={n}");
         throughput.record_tx(completed_at, n as u64);
         status.set_transfer_rates(throughput.rates());
         status.set_airtime(airtime.record_tx(completed_at, profile.time_on_air_us(n)));

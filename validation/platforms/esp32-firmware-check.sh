@@ -18,6 +18,7 @@ cd "$root"
         -p hopspot-heltec-v4 \
         -p hopspot-heltec-v4-r8 \
         -p hopspot-t-beam-supreme \
+        -p hopspot-xiao-esp32s3-wio-sx1262 \
         --target xtensa-esp32s3-none-elf \
         -Zbuild-std=core,alloc
 

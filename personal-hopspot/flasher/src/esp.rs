@@ -10,6 +10,7 @@ use serialport::{SerialPortInfo, SerialPortType};
 
 use crate::error::AppError;
 use crate::events::{Phase, Reporter};
+use crate::radio_profile::ProvisionedRadioProfile;
 use crate::release::PreparedEspTarget;
 
 mod session;
@@ -47,13 +48,26 @@ pub(crate) fn flash(
     board: &BoardCatalogEntry,
     target: &PreparedEspTarget,
     provisioning: &ProvisioningAction,
+    radio_profile: Option<&ProvisionedRadioProfile>,
     port_name: Option<&str>,
     monitor: bool,
     reporter: Reporter,
 ) -> Result<(), AppError> {
     let selected = select_port(port_name)?;
     let expected = expected_device(board)?;
-    let plan = sparse_plan(board, target, provisioning)?;
+    let mut plan = sparse_plan(board, target, provisioning)?;
+    if let Some(profile) = radio_profile {
+        reporter.phase(
+            Phase::Ready,
+            Some(&board.slug),
+            &format!("Provisioning LoRa profile {}.", profile.summary),
+        );
+        plan.push(SparsePart {
+            offset: profile.offset,
+            bytes: profile.bytes.clone(),
+        });
+        plan.sort_by_key(|part| part.offset);
+    }
     let total = plan.iter().map(|part| part.bytes.len() as u64).sum::<u64>();
 
     reporter.phase(
@@ -78,6 +92,50 @@ pub(crate) fn flash(
         ),
     );
     Ok(())
+}
+
+pub(crate) fn configure_radio(
+    board: &BoardCatalogEntry,
+    profile: &ProvisionedRadioProfile,
+    port_name: Option<&str>,
+    reporter: Reporter,
+) -> Result<(), AppError> {
+    let selected = select_port(port_name)?;
+    let expected = expected_device(board)?;
+    let plan = radio_profile_plan(profile);
+    let total = plan.iter().map(|part| part.bytes.len() as u64).sum::<u64>();
+
+    reporter.phase(
+        Phase::RequestingPort,
+        Some(&board.slug),
+        &format!("Opening {}…", selected.port_name),
+    );
+    reporter.phase(
+        Phase::Ready,
+        Some(&board.slug),
+        &format!("Writing LoRa profile {}.", profile.summary),
+    );
+    let mut session = real_session(board, selected, SessionMode::Flash)?;
+    run_flash_session(&mut session, expected, &plan, reporter, &cancelled)?;
+
+    if cancelled() {
+        return Err(AppError::Cancelled);
+    }
+    reporter.success(
+        &board.slug,
+        &format!(
+            "Verified LoRa profile update for {} ({total} bytes; firmware preserved).",
+            board.display_name
+        ),
+    );
+    Ok(())
+}
+
+fn radio_profile_plan(profile: &ProvisionedRadioProfile) -> Vec<SparsePart> {
+    vec![SparsePart {
+        offset: profile.offset,
+        bytes: profile.bytes.clone(),
+    }]
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -537,7 +595,29 @@ mod port_tests {
     use std::cell::Cell;
     use std::rc::Rc;
 
+    use personal_hopspot_core::{HOPSPOT_FLASH_PAGE_BYTES, S3_8_MIB_FLASH_LAYOUT};
+
     use super::*;
+
+    #[test]
+    fn configure_plan_contains_only_the_two_radio_profile_pages() {
+        let pages = S3_8_MIB_FLASH_LAYOUT.radio_profile_pages;
+        let profile = ProvisionedRadioProfile {
+            offset: pages[0],
+            bytes: vec![0xFF; 2 * HOPSPOT_FLASH_PAGE_BYTES],
+            summary: "test profile".to_string(),
+        };
+
+        let plan = radio_profile_plan(&profile);
+
+        assert_eq!(plan.len(), 1);
+        assert_eq!(plan[0].offset, pages[0]);
+        assert_eq!(plan[0].bytes, profile.bytes);
+        assert_eq!(
+            plan[0].offset + u32::try_from(plan[0].bytes.len()).expect("profile size fits u32"),
+            pages[1] + HOPSPOT_FLASH_PAGE_BYTES as u32
+        );
+    }
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     enum InjectFailure {

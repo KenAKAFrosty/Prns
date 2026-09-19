@@ -17,6 +17,8 @@ espflash = { version = "=4.5.0", default-features = false, features = ["serialpo
 nusb = "=0.2.4"
 prns-flash-manifest = { path = "../../prns-flash-manifest" }
 prns-nrf-dfu = { path = "../../prns-nrf-dfu" }
+personal-hopspot-core = { path = "../core" }
+personal-rns = { path = "../../personal-rns", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serialport = { version = "4.7", default-features = false }

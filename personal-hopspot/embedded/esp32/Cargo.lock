@@ -1802,6 +1802,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "hopspot-xiao-esp32s3-wio-sx1262"
+version = "0.1.0"
+dependencies = [
+ "embassy-executor",
+ "esp-hal",
+ "esp-rtos",
+ "personal-hopspot-esp32",
+]
+
+[[package]]
 name = "hybrid-array"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"

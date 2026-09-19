@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 publish = false
-description = "Personal Hopspot ESP32 firmware: the Heltec V4 / V4-R8 and T-Beam Supreme (ESP32-S3) and the headless XIAO (ESP32-C6) faces."
+description = "Personal Hopspot firmware for ESP32-S3 and ESP32-C6 radio boards."
 
 [workspace]
 members = [
@@ -12,6 +12,7 @@ members = [
     "boards/heltec-v4",
     "boards/heltec-v4-r8",
     "boards/t-beam-supreme",
+    "boards/xiao-esp32s3-wio-sx1262",
     "boards/xiao-esp32-c6",
 ]
 resolver = "2"
