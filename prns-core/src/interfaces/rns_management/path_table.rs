@@ -23,6 +23,10 @@ use super::{next_hop_bytes, rns_timestamp, write_interface_name};
 #[cfg(feature = "shared-instance-rpc")]
 const MAXIMUM_DEPTH: usize = 4;
 const INTERFACE_NAME_CAPACITY: usize = 32;
+/// One fixed-map entry with six keys, two 16-byte hashes, two f64 values, a u8 hop
+/// count, and the longest interface name this writer can retain.
+pub const RNS_PATH_TABLE_MAX_ENCODED_ENTRY_BYTES: usize =
+    1 + 5 + 18 + 10 + 9 + 4 + 18 + 5 + 2 + 8 + 9 + 10 + 2 + INTERFACE_NAME_CAPACITY;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RnsPathTableWriteError {

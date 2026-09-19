@@ -27,7 +27,7 @@ use personal_rns::routing::links::resources::table::{
     FixedResourceTable, IncomingResourceState, OutgoingResourceState,
 };
 use personal_rns::routing::links::resources::{
-    max_outgoing_resource_reaction_frames, max_part_count,
+    max_outgoing_resource_reaction_frames, max_part_count, sealed_transfer_bytes,
 };
 use personal_rns::routing::links::table::FixedLinkTable;
 use personal_rns::routing::links::transported::FixedTransportedLinkTable;
@@ -103,7 +103,9 @@ impl Nrf52840Storage {
             0,
             Self::JOURNAL_WRITE_ALIGNMENT_BYTES,
         );
-    const RESOURCE_TRANSFER_BYTES: usize = 1504;
+    const RESOURCE_TRANSFER_BYTES: usize = sealed_transfer_bytes(
+        personal_rns::manifold::embassy::RNS_PATH_TABLE_RESPONSE_BYTES,
+    );
     pub const MAX_OUTGOING_RESOURCE_REACTION_FRAMES: usize =
         max_outgoing_resource_reaction_frames(Self::RESOURCE_TRANSFER_BYTES);
     const CHANNEL_REORDER_DEPTH: usize = 2;

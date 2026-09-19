@@ -28,7 +28,10 @@ pub use interface_stats::{
 };
 #[cfg(feature = "shared-instance-rpc")]
 pub(crate) use message_pack::MessagePackEncoder;
-pub use path_table::{write_route_snapshots, RnsPathTableWriteError, RnsPathTableWriter};
+pub use path_table::{
+    write_route_snapshots, RnsPathTableWriteError, RnsPathTableWriter,
+    RNS_PATH_TABLE_MAX_ENCODED_ENTRY_BYTES,
+};
 #[cfg(feature = "shared-instance-rpc")]
 pub use path_table::{RnsPathTable, RnsPathTableDecodeError, RnsPathTableEntry, RnsPathTableField};
 #[cfg(feature = "shared-instance-rpc")]

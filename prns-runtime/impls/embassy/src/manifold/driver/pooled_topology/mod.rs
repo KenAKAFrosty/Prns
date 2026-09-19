@@ -8,7 +8,9 @@ use crate::engine::{
     ClassifiedInboundPacket, Departure, EngineState, IngestIo, IssuedCommand, Journaled,
     ProofRequest,
 };
-use crate::interfaces::rns_management::write_route_snapshots;
+use crate::interfaces::rns_management::{
+    write_route_snapshots, RNS_PATH_TABLE_MAX_ENCODED_ENTRY_BYTES,
+};
 use crate::interfaces::InterfaceIfac;
 use crate::interfaces::{
     AttachedInterfaces, IfacUnmaskError, InboundPacket, InterfaceDescriptor, InterfaceId,
@@ -40,7 +42,9 @@ use super::packet_phy::retain_packet_phy;
 use super::EmbassyInterfaceStatus;
 
 const RNS_PATH_TABLE_MAX_ENTRIES: usize = 8;
-const RNS_PATH_TABLE_RESPONSE_BYTES: usize = 1_504;
+pub const RNS_PATH_TABLE_RESPONSE_BYTES: usize = RESPONSE_WIRE_OVERHEAD
+    + 1
+    + RNS_PATH_TABLE_MAX_ENTRIES * RNS_PATH_TABLE_MAX_ENCODED_ENTRY_BYTES;
 
 /// Changes the live descriptor set without reallocating the fixed lane pool.
 #[repr(C)]
