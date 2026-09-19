@@ -1878,6 +1878,8 @@ dependencies = [
  "dialoguer",
  "espflash",
  "nusb",
+ "personal-hopspot-core",
+ "personal-rns",
  "prns-flash-manifest",
  "prns-nrf-dfu",
  "serde",

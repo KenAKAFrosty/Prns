@@ -20,5 +20,6 @@ rustflags = ["-C", "link-arg=/STACK:268435456"]
 # bootstrap-safe and CI-stable entrypoint remains ./tools/prns.
 tools = "run --quiet -p prns-tools-command --"
 prnsd = "run --quiet --manifest-path prnsd/Cargo.toml -p prnsd-command --"
+prns-esp32-flasher = "run --quiet -p hopspot-flash --"
 observability = "run --quiet --manifest-path prnsd/Cargo.toml -p prns-observability-runner --"
 benchmark = "run --quiet --release --manifest-path benchmarks/Cargo.toml --bin benchmark_cli --"

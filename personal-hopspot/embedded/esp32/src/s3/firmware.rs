@@ -18,7 +18,6 @@ const STARTUP_NOTICE_DURATION: DisplayDuration = match DisplayDuration::from_mil
     Ok(duration) => duration,
     Err(_) => panic!("the startup notice duration is nonzero"),
 };
-
 fn show_notice(
     state: &mut screen::UiState,
     timer: &mut screen::PresentedNoticeTimer,
@@ -120,6 +119,23 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let mut lora_profile_store =
         screen::RadioProfileStore::new(shared_flash, B::FLASH_LAYOUT.radio_profile_pages);
     #[cfg(feature = "lora")]
+    let auto_announce_minutes = match lora_profile_store.load_auto_announce_minutes().await {
+        Ok(minutes) => minutes,
+        Err(error) => {
+            log::warn!("headless auto-announce setting unavailable: {error:?}");
+            None
+        }
+    };
+    #[cfg(feature = "lora")]
+    let node_announce_app_data: &'static [u8] = match lora_profile_store.load_node_announce_name().await {
+        Ok(Some(name)) => mk_static!(personal_hopspot_core::NodeAnnounceName, name).as_bytes(),
+        Ok(None) => B::NODE_ANNOUNCE_APP_DATA,
+        Err(error) => {
+            log::warn!("headless node display name unavailable: {error:?}");
+            B::NODE_ANNOUNCE_APP_DATA
+        }
+    };
+    #[cfg(feature = "lora")]
     let loaded_lora_profile = match lora_profile_store.load(B::DEFAULT_LORA_PROFILE).await {
         Ok(loaded) => loaded,
         Err(error) => {
@@ -220,7 +236,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let destinations = personal_hopspot_core::HopspotDestinationSet::new(
         destination_secret,
         B::ANNOUNCE_APP_DATA,
-        B::NODE_ANNOUNCE_APP_DATA,
+        node_announce_app_data,
     );
     let node_page_destination = destination_hashes.node_page;
     let ble_identity = Some(ble_bootstrap.into_identity());
@@ -345,6 +361,8 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     });
 
     let handle: Handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
+    #[cfg(feature = "lora")]
+    let auto_announce_handle = handle.clone();
     let manifold_wiring = manifold_lanes.into_manifold_wiring(
         NOTIFY.receiver(),
         COMMANDS.receiver(),
@@ -374,6 +392,18 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                     // SAFETY: `allocate_psram` leaks this allocation, so it cannot move or be freed.
                     unsafe { core::pin::Pin::new_unchecked(run) };
                 spawner.spawn(manifold_task(run).expect("manifold task fits"));
+                #[cfg(feature = "lora")]
+                if let Some(minutes) = auto_announce_minutes {
+                    spawner.spawn(
+                        auto_announce_task(
+                            auto_announce_handle,
+                            node_page_destination,
+                            lora_status,
+                            minutes,
+                        )
+                        .expect("auto-announce task fits"),
+                    );
+                }
                 spawner.spawn(core_one_liveness_task().expect("core-one liveness task fits"));
             })
     });
@@ -1063,6 +1093,35 @@ async fn gnss_task(run: core::pin::Pin<&'static mut dyn core::future::Future<Out
 #[embassy_executor::task]
 async fn manifold_task(run: core::pin::Pin<&'static mut dyn core::future::Future<Output = ()>>) {
     run.await
+}
+
+#[cfg(feature = "lora")]
+#[embassy_executor::task]
+async fn auto_announce_task(
+    handle: Handle,
+    node_page_destination: personal_rns::wire::DestinationHash,
+    lora_status: &'static EmbassyInterfaceStatus,
+    minutes: u32,
+) {
+    let interval = Duration::from_secs(u64::from(minutes).saturating_mul(60));
+    while lora_status.connection() != ConnectionState::Connected {
+        Timer::after(Duration::from_millis(100)).await;
+    }
+    loop {
+        let node_result = handle
+            .announce_now(AnnounceNow {
+                destination: node_page_destination,
+                target: AnnounceTarget::AllInterfaces,
+                app_data: AnnounceAppData::Registered,
+            })
+            .await;
+        log::info!(
+            "announce-auto minutes={} node_result={:?}",
+            minutes,
+            node_result
+        );
+        Timer::after(interval).await;
+    }
 }
 
 async fn manifold_run(

@@ -33,9 +33,10 @@ the daemon and browser node, including the complete Coming-from-RNS page. Large 
 in flash and are served through bounded Resource windows instead of requiring one response-sized
 RAM allocation. The self-contained quickstart remains directly available for existing links. The
 source page links to the on-node archive when the build carries one and points compact builds to
-the public source otherwise. Pressing Announce on a hopspot announces only this node destination;
-the hopspot's private `lxmf.delivery` destination remains available without advertising itself as
-an LXMF peer.
+the public source otherwise. Pressing Announce on a display-equipped Hopspot announces only its
+node destination; the private `lxmf.delivery` destination remains available without advertising
+itself as an LXMF peer. ESP32-S3 auto-announce configured with `--announce-mm` emits only
+the node page destination for Hopspot/NomadNet discovery.
 
 The platform-specific welcome and navigation fragments live in `core/src/node_pages/`; the common
 masthead, project summary, license, quote, and credits live in `assets/nnpages/` and are shared with
