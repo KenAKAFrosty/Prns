@@ -238,7 +238,7 @@ pub const UPCOMING_BOARD_TARGETS: &[BoardTarget] = &[
         name: "Heltec V3/V3.1",
         slug: "heltec-v3",
         silicon: "ESP32-S3 + SX1262",
-        tier: Tier::Roadmap,
+        tier: Tier::BringUp,
         interfaces: &[],
         icon: Some("espressif"),
         preparation_profile: None,
@@ -705,6 +705,7 @@ mod tests {
                 "muzi.works Base Duo",
                 "Heltec Wireless Stick Lite V3",
                 "Raspberry Pi Zero 2 W",
+                "Heltec V3/V3.1",
                 "RAK WisBlock Starter Kit",
             ]
         );

@@ -15,6 +15,7 @@ cd "$root"
 
     cargo +esp check --release --locked \
         -p hopspot-heltec-e290 \
+        -p hopspot-heltec-v3 \
         -p hopspot-heltec-v4 \
         -p hopspot-heltec-v4-r8 \
         -p hopspot-t-beam-supreme \

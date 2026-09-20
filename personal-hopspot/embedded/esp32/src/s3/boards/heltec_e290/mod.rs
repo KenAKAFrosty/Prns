@@ -20,7 +20,7 @@ use personal_rns::{
 
 use crate::s3::{
     self, BoardFace, Esp32S3Board, NoGnss, RetainedBoardDisplay, S3BoardHardware,
-    S3InterfaceHardware, S3ManifoldHardware,
+    S3InterfaceHardware, S3ManifoldHardware, S3UsbHardware,
 };
 
 use self::display::{retained_policy, DisplaySpi, E290Display};
@@ -132,7 +132,7 @@ impl Esp32S3Board for HeltecE290Board {
             },
             gnss: NoGnss,
             interface_hardware: S3InterfaceHardware {
-                usb_device: p.USB_DEVICE,
+                usb: S3UsbHardware::SerialJtag(p.USB_DEVICE),
                 lora_radio,
                 wifi: p.WIFI,
                 bluetooth: p.BT,

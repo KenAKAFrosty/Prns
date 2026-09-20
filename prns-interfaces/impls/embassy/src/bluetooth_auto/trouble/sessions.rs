@@ -177,7 +177,7 @@ async fn queue_inbound_frame(
 
 fn note_inbound_admission(hub: &BleHub, result: Result<InboundFrameAdmission, FramePoolError>) {
     match result {
-        Ok(InboundFrameAdmission::Queued) => {}
+        Ok(InboundFrameAdmission::Queued) => hub.note_successful_admission(),
         Ok(InboundFrameAdmission::PoolFull | InboundFrameAdmission::QueueFull) => {
             hub.note_ingress_pressure();
         }
@@ -453,8 +453,10 @@ pub(super) async fn serve_peripheral<T: TroubleTransport>(
                                         {
                                             hub.note_ingress_pressure();
                                             crate::diagnostic_log::warn!(
-                                                "ble acknowledged frame admission failed: {error:?}"
-                                            );
+                                        "ble acknowledged frame admission failed: {error:?}"
+                                    );
+                                        } else {
+                                            hub.note_successful_admission();
                                         }
                                     } else {
                                         note_inbound_admission(
@@ -1103,5 +1105,19 @@ mod tests {
         note_inbound_admission(&hub, Ok(InboundFrameAdmission::QueueFull));
 
         assert_eq!(status.ingress_pressure_events(), 1);
+    }
+
+    #[test]
+    fn successful_admission_clears_ingress_pressure() {
+        static SHARED: BluetoothAutoShared<PEER_CAPACITY> =
+            BluetoothAutoShared::new(InterfaceId::new([0x56; 8]));
+        let status = BluetoothAutoStatus::new(&SHARED);
+        let hub = BleHub::new(status);
+
+        hub.note_ingress_pressure();
+        assert!(status.recovery_reason().is_some());
+
+        note_inbound_admission(&hub, Ok(InboundFrameAdmission::Queued));
+        assert!(status.recovery_reason().is_none());
     }
 }

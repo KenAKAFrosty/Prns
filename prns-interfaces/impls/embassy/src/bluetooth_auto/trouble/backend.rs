@@ -294,6 +294,10 @@ impl BleHub {
         self.status.note_ingress_pressure();
     }
 
+    pub(super) fn note_successful_admission(&self) {
+        self.status.note_successful_admission();
+    }
+
     pub(super) fn track_live_link(&self) -> LiveLinkGuard<'_> {
         self.discovery.track_live_link()
     }

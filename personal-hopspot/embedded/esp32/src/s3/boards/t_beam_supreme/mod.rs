@@ -22,7 +22,7 @@ use static_cell::StaticCell;
 
 use crate::s3::{
     self, BoardFace, Esp32S3Board, ImmediateBoardDisplay, ImmediateDisplayDevice, S3BoardHardware,
-    S3InterfaceHardware, S3ManifoldHardware,
+    S3InterfaceHardware, S3ManifoldHardware, S3UsbHardware,
 };
 
 mod gnss;
@@ -460,7 +460,7 @@ impl Esp32S3Board for TBeamSupremeBoard {
             },
             gnss,
             interface_hardware: S3InterfaceHardware {
-                usb_device: p.USB_DEVICE,
+                usb: S3UsbHardware::SerialJtag(p.USB_DEVICE),
                 lora_radio,
                 wifi: p.WIFI,
                 bluetooth: p.BT,

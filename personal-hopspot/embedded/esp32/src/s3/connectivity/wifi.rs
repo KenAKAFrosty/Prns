@@ -131,11 +131,22 @@ pub(in crate::s3) fn build_wifi(
     mac: [u8; 6],
     config: &HopspotWifiConfig,
     ap_enabled: bool,
+    enabled: bool,
 ) -> (
     Option<AutoWifi<'static, MEMBERS>>,
     Option<Stack<'static>>,
     Option<EspNow<'static>>,
 ) {
+    if !enabled {
+        // Wi-Fi normally consumes this hand-off while it creates the radio
+        // runtime. The SRAM-only V3 skips that runtime, so it must install the
+        // already-seeded service before the node on core 1 requests entropy.
+        super::super::entropy::install(boot_entropy);
+        let _ = (spawner, wifi, mac, config, ap_enabled);
+        log::info!("network runtime disabled for SRAM-only board");
+        return (None, None, None);
+    }
+
     let wifi_config = ControllerConfig::default()
         .with_static_rx_buf_num(WIFI_STATIC_RX_BUFFERS)
         .with_dynamic_rx_buf_num(WIFI_DYNAMIC_RX_BUFFERS)
