@@ -22,8 +22,8 @@ import {
 } from "@/ui/primitives";
 import { TextField } from "@/ui/text-field";
 import { useAppPalette } from "@/ui/theme";
-import { formatBytes, formatControllerAuthority, formatRequestKind } from "./format";
 import { AndroidBluetoothCard } from "./android-bluetooth-card";
+import { PairingConfirmationCard } from "./pairing-confirmation-card";
 
 type RemoteControlPairingState = DevelopmentNodeSnapshot["pairing"];
 type RemoteControlPairingCandidate = DevelopmentNodeSnapshot["pairingCandidates"][number];
@@ -42,6 +42,7 @@ export function PairNodeScreen({
   const [commandFailure, setCommandFailure] = useState<string | null>(null);
   const [candidateId, setCandidateId] = useState<string | undefined>(selectedCandidateId);
   const pairing = runtime.snapshot?.pairing;
+  const confirming = pairing?.tag === Bindings.RemoteControlPairingState_Tags.ConfirmationRequired;
   const candidates = runtime.snapshot?.pairingCandidates ?? [];
   const selectedCandidateIsPresent = candidates.some(
     (candidate) => candidate.candidateId === candidateId,
@@ -129,14 +130,18 @@ export function PairNodeScreen({
     <Screen>
       <Badge>Secure pairing</Badge>
       <ScreenHeading>Pair a node</ScreenHeading>
-      <BodyText>
-        {runtime.availability.platform === "android"
-          ? "Open secure pairing on the node you want to manage. When it appears below, enter its invitation and compare the confirmation code on both devices."
-          : "First choose a nearby Bluetooth node. Then open secure pairing on the node you want to manage, enter its invitation, and compare the confirmation code on both devices."}
-      </BodyText>
+      {confirming ? null : (
+        <BodyText>
+          {runtime.availability.platform === "android"
+            ? "Open secure pairing on the node you want to manage. When it appears below, enter its invitation and compare the confirmation code on both devices."
+            : "First choose a nearby Bluetooth node. Then open secure pairing on the node you want to manage, enter its invitation, and compare the confirmation code on both devices."}
+        </BodyText>
+      )}
 
-      <AndroidBluetoothCard />
-      {runtime.availability.type === "available" && runtime.availability.platform === "ios" ? (
+      {confirming ? null : <AndroidBluetoothCard />}
+      {!confirming &&
+      runtime.availability.type === "available" &&
+      runtime.availability.platform === "ios" ? (
         <AccessorySetupCard
           feedback={setupFeedback}
           onShow={() => void showAccessorySetup()}
@@ -408,51 +413,14 @@ function PairingStateCard({
       );
     case Bindings.RemoteControlPairingState_Tags.ConfirmationRequired:
       return (
-        <Card>
-          <Subheading>Confirmation required</Subheading>
-          <Badge tone="warning">Compare both devices</Badge>
-          <KeyValue label="Confirmation code" value={pairing.inner.confirmationCode} />
-          <KeyValue label="Node ID" value={formatBytes(pairing.inner.targetIdentityFingerprint)} />
-          <KeyValue
-            label="Access level"
-            value={formatControllerAuthority(pairing.inner.authority)}
-          />
-          <BodyText>
-            Review the controls below before allowing this device to read information or change
-            settings.
-          </BodyText>
-          {pairing.inner.authority === Bindings.RemoteControlControllerAuthority.Administrator ? (
-            <BodyText>
-              Administrator access also allows this device to grant or remove other
-              controllers&apos; access.
-            </BodyText>
-          ) : null}
-          <KeyValue
-            label="Access requested"
-            value={
-              pairing.inner.permissions.length === 0
-                ? "None"
-                : pairing.inner.permissions.map(formatRequestKind).join(", ")
-            }
-          />
-          <BodyText>
-            If the codes match, approve on the node first, then approve here. Otherwise, reject
-            pairing.
-          </BodyText>
-          <CardStack>
-            <Button disabled={pending !== null} onPress={() => onApprove(pairing)}>
-              {pending === "approve" ? "Approving…" : "Codes match — approve"}
-            </Button>
-            <Button
-              disabled={pending !== null}
-              onPress={() => onReject(pairing)}
-              tone="destructive"
-            >
-              {pending === "reject" ? "Rejecting…" : "Reject pairing"}
-            </Button>
-          </CardStack>
-          {feedback}
-        </Card>
+        <PairingConfirmationCard
+          key={pairing.inner.attemptId}
+          commandFailure={commandFailure}
+          onApprove={onApprove}
+          onReject={onReject}
+          pairing={pairing}
+          pending={pending}
+        />
       );
     case Bindings.RemoteControlPairingState_Tags.AwaitingTargetApproval:
       return (

@@ -1850,12 +1850,10 @@ describe("Foundation 1 Nodes runtime binding", () => {
       );
       await waitFor(() => expect(view.getByText(expectedCopy)).toBeTruthy());
       if (pairing.tag === Bindings.RemoteControlPairingState_Tags.ConfirmationRequired) {
-        expect(view.getByText("44".repeat(16))).toBeTruthy();
+        expect(view.queryByText("44".repeat(16))).toBeNull();
         expect(view.getByText("Operator")).toBeTruthy();
         expect(
-          view.queryByText(
-            "Administrator access also allows this device to grant or remove other controllers' access.",
-          ),
+          view.queryByText("This device can also grant or remove access for other devices."),
         ).toBeNull();
       }
       expect(JSON.stringify(view.toJSON())).not.toMatch(
@@ -1884,11 +1882,10 @@ describe("Foundation 1 Nodes runtime binding", () => {
     );
     await waitFor(() => expect(view.getByText("Administrator")).toBeTruthy());
     expect(
-      view.getByText(
-        "Administrator access also allows this device to grant or remove other controllers' access.",
-      ),
+      view.getByText("This device can also grant or remove access for other devices."),
     ).toBeTruthy();
-    expect(view.getByText("View node information")).toBeTruthy();
+    expect(view.getByText("View node information.")).toBeTruthy();
+    expect(view.queryByText("Change node settings.")).toBeNull();
     expect(view.queryByText("Full control")).toBeNull();
     expect(view.getByText("Codes match — approve")).toBeTruthy();
     view.unmount();
