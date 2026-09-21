@@ -129,11 +129,41 @@ during packaging.
 - Reports: `target/flash-artifacts/resources/configured/reports/` (external
   build cache, not committed application source).
 
-No phone installation, board flash, fresh owner pairing or physical setting
-change has yet qualified this slice. Earlier device/background evidence belongs
-to earlier binaries. The board-menu freeze remains a separate unresolved issue.
-Hardware acceptance and the guided Wi-Fi/controller workflows are next; see the
+At the initial checkpoint, no phone installation, board flash, fresh owner
+pairing or physical setting change had qualified this slice. Earlier
+device/background evidence belongs to earlier binaries. The board-menu freeze
+remains a separate unresolved issue. Hardware acceptance and the guided
+Wi-Fi/controller workflows are next; see the
 [current expansion plan](../docs/remote-control-expansion.md).
 
 Local logs for this pass are under `scratch/prns-app/2026-09-21/`.
 The final upstream check still resolved to `8c211827b`; nothing was pushed.
+
+## Same-day device installation
+
+Both packages were rebuilt from `0d00c25f35136c33f1c587063bf3e2e0d039259c`
+(only documentation differs from the resource-qualified firmware source).
+
+- The standalone, bundled-JavaScript Android APK was installed over the existing
+  app on the USB-connected Galaxy S9+ (SM-G965U, Android 10), preserving app data.
+  The cold launch succeeded, the Nodes screen rendered, Bluetooth reported ready,
+  and the previous pairing remained visible. No startup crash appeared in the
+  captured process log. This is startup evidence, not new remote-command or
+  background-lifecycle acceptance.
+- Installed APK SHA256:
+  `b2ed4ff5a4a13890de4241cd2144aa205ebe6153fac08ee9222df4b3a53b7bdb`.
+  Build log: `scratch/prns-app/2026-09-21/android-install-build.log`.
+- The newly connected E290 was identified on `/dev/cu.usbmodem101` as ESP32-S3
+  with 16 MiB flash. The other serial device was not touched. The canonical local
+  firmware build wrote and verified all three sparse parts (2,347,312 bytes),
+  then issued the board's reset. No full-chip erase or provisioning change was
+  requested; the existing settings partitions were left intact.
+- Flashed application: 2,323,184 bytes, SHA256
+  `29bbd93aea9ae593acf4eeb59db405c5d695bb4c33b9b82e4aab2ced81fd0e0d`.
+  This is the newly staged local-flash artifact, not a reused resource-cache
+  artifact. Receipts: `scratch/prns-app/2026-09-21/e290-preflight.jsonl` and
+  `scratch/prns-app/2026-09-21/e290-flash.jsonl`.
+
+Fresh full-control pairing, post-flash board behavior, and physical read/write
+acceptance are still pending. The Galaxy is on the pairing screen awaiting a
+new board invitation. No branch was pushed during installation.
