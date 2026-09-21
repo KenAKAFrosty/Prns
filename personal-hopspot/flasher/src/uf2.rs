@@ -950,8 +950,13 @@ mod tests {
         let board = cataloged_uf2(&entry);
         let ghost = temporary_mount("ghost");
         fs::create_dir(&ghost).expect("create ghost mount");
-        wait_for_reboot(&ghost, &board, Duration::from_millis(50), Duration::from_millis(1))
-            .expect("empty leftover mount is already rebooted");
+        wait_for_reboot(
+            &ghost,
+            &board,
+            Duration::from_millis(50),
+            Duration::from_millis(1),
+        )
+        .expect("empty leftover mount is already rebooted");
         fs::remove_dir(ghost).expect("remove ghost mount");
     }
 
@@ -961,8 +966,11 @@ mod tests {
         let board = cataloged_uf2(&entry);
         let disappearing = temporary_mount("disappearing");
         fs::create_dir(&disappearing).expect("create disappearing mount");
-        fs::write(disappearing.join("INFO_UF2.TXT"), "Board-ID: nRF52840-TEcho-v1\n")
-            .expect("seed INFO_UF2");
+        fs::write(
+            disappearing.join("INFO_UF2.TXT"),
+            "Board-ID: nRF52840-TEcho-v1\n",
+        )
+        .expect("seed INFO_UF2");
         let remover = disappearing.clone();
         let thread = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(5));
@@ -997,8 +1005,11 @@ mod tests {
         let board = cataloged_uf2(&entry);
         let disappearing = temporary_mount("sync-interrupted-disappearing");
         fs::create_dir(&disappearing).expect("create disappearing mount");
-        fs::write(disappearing.join("INFO_UF2.TXT"), "Board-ID: nRF52840-TEcho-v1\n")
-            .expect("seed INFO_UF2");
+        fs::write(
+            disappearing.join("INFO_UF2.TXT"),
+            "Board-ID: nRF52840-TEcho-v1\n",
+        )
+        .expect("seed INFO_UF2");
         let remover = disappearing.clone();
         let thread = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(5));
