@@ -297,8 +297,8 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     );
     #[cfg(feature = "remote-control-pairing")]
     let remote_control_pairing_permissions =
-        screen::limited_remote_control_pairing_permissions(&remote_control.available_requests())
-            .expect("RemoteControl supports the existing pairing requests");
+        screen::full_remote_control_pairing_permissions(&remote_control.available_requests())
+            .expect("RemoteControl supports at least Describe");
     #[cfg(feature = "remote-control-pairing")]
     let remote_control_pairing_public_app_data =
         RemoteControlPairingPublicAppDataBytes::try_from(B::NODE_ANNOUNCE_APP_DATA)

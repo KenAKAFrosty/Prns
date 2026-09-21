@@ -298,6 +298,44 @@ fn paired_status_lines_fit_the_narrow_display() {
 
 #[test]
 #[cfg(feature = "remote-control-pairing")]
+fn pairing_confirmation_discloses_full_control_before_approval() {
+    use embedded_graphics::mono_font::iso_8859_1::FONT_4X6;
+    use embedded_graphics::mono_font::MonoTextStyle;
+    use embedded_graphics::text::{Baseline, Text};
+    use personal_rns::units::InstantMillis;
+
+    let mut pairing = crate::RemoteControlTargetPairingState::<u8>::new();
+    pairing.confirmation_required(1, 123_456, InstantMillis(60_000));
+    let top = MENU_ITEM_TOP + 20;
+    let mut expected = PanelDisplay::new();
+    Text::with_baseline(
+        "Full control",
+        Point::new(2, top),
+        MonoTextStyle::new(&FONT_4X6, BinaryColor::On),
+        Baseline::Top,
+    )
+    .draw(&mut expected)
+    .unwrap();
+
+    for approve_selected in [false, true] {
+        let mut display = PanelDisplay::new();
+        draw_remote_control_pairing_content(
+            &mut display,
+            pairing,
+            InstantMillis(0),
+            approve_selected,
+        );
+        for y in top..top + 6 {
+            for x in 0..WIDTH {
+                let point = Point::new(x, y);
+                assert_eq!(display.get_pixel(point), expected.get_pixel(point));
+            }
+        }
+    }
+}
+
+#[test]
+#[cfg(feature = "remote-control-pairing")]
 fn every_pairing_screen_draws_inside_the_narrow_display() {
     use crate::{RemoteControlTargetPairingFailure, RemoteControlTargetPairingState};
     use personal_rns::remote_control::MAX_REMOTE_CONTROL_PAIRING_EXPIRES_AFTER;

@@ -373,6 +373,7 @@ pub(in crate::screen) fn draw_remote_control_pairing_content<
             let mut code: HString<12> = HString::new();
             let _ = write!(code, "{:06}", pairing.confirmation_code().unwrap_or(0));
             draw_body(display, MENU_ITEM_TOP + 10, &code);
+            draw_small(display, MENU_ITEM_TOP + 20, "Full control");
             draw_menu_item(display, MENU_ITEM_TOP + 28, "Reject", !approve_selected);
             draw_menu_item(display, MENU_ITEM_TOP + 41, "Approve", approve_selected);
         }
