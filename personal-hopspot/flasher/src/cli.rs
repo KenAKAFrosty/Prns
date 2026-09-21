@@ -97,9 +97,17 @@ pub(crate) enum CommandMode {
             long,
             value_name = "DIR",
             hide = true,
-            conflicts_with_all = ["version", "offline", "local_build"]
+            conflicts_with_all = ["version", "offline", "local_build", "developer_artifacts"]
         )]
         candidate: Option<PathBuf>,
+        /// Use unsigned prebuilt board artifacts (`target.json` plus binaries) for BOARD.
+        #[arg(
+            long,
+            value_name = "DIR",
+            hide = true,
+            conflicts_with_all = ["version", "offline", "local_build", "candidate"]
+        )]
+        developer_artifacts: Option<PathBuf>,
         /// Explicit mounted UF2 bootloader directory.
         #[arg(long, value_name = "DIR", hide = true)]
         mount: Option<PathBuf>,
@@ -225,6 +233,57 @@ mod tests {
             "--json",
         ])
         .is_ok());
+    }
+
+    #[test]
+    fn flash_accepts_developer_artifacts_and_rejects_signed_source_flags() {
+        let parsed = Cli::try_parse_from([
+            "hopspot-flash",
+            "flash",
+            "t-echo",
+            "--yes",
+            "--json",
+            "--developer-artifacts",
+            "/tmp/firmware/t-echo",
+        ])
+        .expect("developer artifacts must parse");
+        let Some(CommandMode::Flash {
+            board,
+            developer_artifacts,
+            local_build,
+            candidate,
+            ..
+        }) = parsed.command
+        else {
+            panic!("expected flash command");
+        };
+        assert_eq!(board, "t-echo");
+        assert_eq!(
+            developer_artifacts.as_deref(),
+            Some(std::path::Path::new("/tmp/firmware/t-echo"))
+        );
+        assert!(!local_build);
+        assert!(candidate.is_none());
+
+        assert!(Cli::try_parse_from([
+            "hopspot-flash",
+            "flash",
+            "t-echo",
+            "--developer-artifacts",
+            "/tmp/firmware/t-echo",
+            "--local-build",
+        ])
+        .is_err());
+        assert!(Cli::try_parse_from([
+            "hopspot-flash",
+            "flash",
+            "t-echo",
+            "--developer-artifacts",
+            "/tmp/firmware/t-echo",
+            "--candidate",
+            "/tmp/signed-candidate",
+        ])
+        .is_err());
     }
 
     #[test]
