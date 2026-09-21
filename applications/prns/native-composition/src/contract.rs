@@ -1,3 +1,6 @@
+mod remote_management;
+pub use remote_management::*;
+
 pub const CONTRACT_FINGERPRINT: &str = env!("PRNS_APP_CONTRACT_FINGERPRINT");
 pub const HOST_CONTRACT_FINGERPRINT: &str = env!("PRNS_HOST_CONTRACT_FINGERPRINT");
 
@@ -25,6 +28,7 @@ pub struct DevelopmentNodeSnapshot {
     pub pairing_candidates: Vec<RemoteControlPairingCandidate>,
     pub paired_targets: Vec<RemoteControlTargetSnapshot>,
     pub last_announcement: Option<RemoteControlAnnounceOperation>,
+    pub last_remote_change: Option<RemoteChangeOperation>,
     pub active_operation: Option<DevelopmentNodeOperation>,
     pub failure: Option<DevelopmentNodeFailure>,
 }
@@ -456,6 +460,8 @@ pub enum RemoteControlRequestKind {
     ConfirmWifiCredentials,
     CancelWifiCredentials,
     InspectWifiTransaction,
+    InventoryInterfaceDiscoveryGroups,
+    ReplaceInterfaceDiscoveryGroups,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -484,6 +490,8 @@ pub struct DevelopmentNodeOperation {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Enum))]
 pub enum DevelopmentNodeOperationKind {
+    RemoteRead,
+    RemoteChange,
     Pairing,
     Describe,
     AnnounceSelf,
@@ -732,6 +740,7 @@ impl DevelopmentNodeSnapshot {
             pairing_candidates: Vec::new(),
             paired_targets: Vec::new(),
             last_announcement: None,
+            last_remote_change: None,
             active_operation: None,
             failure: None,
         }

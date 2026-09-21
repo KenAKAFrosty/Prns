@@ -17,7 +17,7 @@ describe("Nodes presentation formatting", () => {
     const kinds = Object.values(Bindings.RemoteControlRequestKind).filter(
       (value): value is Bindings.RemoteControlRequestKind => typeof value === "number",
     );
-    expect(kinds).toHaveLength(28);
+    expect(kinds).toHaveLength(30);
     for (const kind of kinds) expect(formatRequestKind(kind)).toMatch(/\S/);
     expect(formatControllerAuthority(Bindings.RemoteControlControllerAuthority.Operator)).toBe(
       "Operator",

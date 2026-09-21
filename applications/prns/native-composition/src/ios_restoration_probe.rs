@@ -545,6 +545,10 @@ mod enabled {
                             endpoint: Endpoint::CoreBluetooth(AppleHost::Ios),
                             capabilities,
                             peer_rssi: None,
+                            discovery_groups:
+                                prns_core::interfaces::bluetooth_auto::PeerDiscoveryGroups::Explicit(
+                                    prns_core::interfaces::DiscoveryGroupSet::reticulum().hashes(),
+                                ),
                         },
                         "->",
                         "gatt_control_hello_sent",
@@ -555,6 +559,10 @@ mod enabled {
                             endpoint: Endpoint::Esp32(Esp32Host::Esp32),
                             capabilities,
                             peer_rssi: Some(-47),
+                            discovery_groups:
+                                prns_core::interfaces::bluetooth_auto::PeerDiscoveryGroups::Explicit(
+                                    prns_core::interfaces::DiscoveryGroupSet::reticulum().hashes(),
+                                ),
                         },
                         "<-",
                         "gatt_control_welcome_received",

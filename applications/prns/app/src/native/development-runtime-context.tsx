@@ -1,5 +1,9 @@
 import * as Bindings from "@prns-internal/expo";
 import type {
+  ReadRemoteNodeInput,
+  ReadRemoteNodeOutcome,
+  ChangeRemoteNodeInput,
+  ChangeRemoteNodeOutcome,
   AnnounceRemoteControlTargetInput,
   RemoteControlAnnounceOutcome,
   AccessorySetupPickerOutcome,
@@ -51,6 +55,13 @@ export type RuntimeCommandResult<Outcome> =
     };
 
 export type DevelopmentRuntimeView = {
+  readonly readRemoteNode: (
+    input: ReadRemoteNodeInput,
+    signal?: AbortSignal,
+  ) => Promise<RuntimeCommandResult<ReadRemoteNodeOutcome>>;
+  readonly changeRemoteNode: (
+    input: ChangeRemoteNodeInput,
+  ) => Promise<RuntimeCommandResult<ChangeRemoteNodeOutcome>>;
   readonly announceTarget: (
     input: AnnounceRemoteControlTargetInput,
   ) => Promise<RuntimeCommandResult<RemoteControlAnnounceOutcome>>;
@@ -525,6 +536,17 @@ export function DevelopmentRuntimeProvider({
     [publishSnapshot, run],
   );
 
+  const readRemoteNode = useCallback(
+    (input: ReadRemoteNodeInput, signal?: AbortSignal) =>
+      runRead((active) => active.runtime.readRemoteNode(input), signal),
+    [runRead],
+  );
+
+  const changeRemoteNode = useCallback(
+    (input: ChangeRemoteNodeInput) => run((active) => active.runtime.changeRemoteNode(input)),
+    [run],
+  );
+
   const saveObservedDestination = useCallback(
     async (destination: DestinationHash): Promise<RuntimeCommandResult<ContactMutationOutcome>> => {
       if (!("runtime" in selectedProvider) || session.current === null) {
@@ -643,6 +665,8 @@ export function DevelopmentRuntimeProvider({
       rejectPairing,
       describeTarget,
       announceTarget,
+      readRemoteNode,
+      changeRemoteNode,
       saveObservedDestination,
       listLxmfPeers,
       listLxmfMessages,
@@ -667,6 +691,8 @@ export function DevelopmentRuntimeProvider({
       stopNode,
       describeTarget,
       announceTarget,
+      readRemoteNode,
+      changeRemoteNode,
       initiatePairing,
       lifecycleFailure,
       phase,

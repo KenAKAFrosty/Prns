@@ -281,7 +281,7 @@ test("passes optional fields, bytes, exact integers, and results unchanged", asy
   expect(native.prepareOutbound).toHaveBeenCalledTimes(1);
 });
 
-test("performs preflight for exactly the six outbound calls and never repeats a failed submission", async () => {
+test("performs preflight for exactly the eight outbound calls and never repeats a failed submission", async () => {
   const failure = new Error("submission interrupted");
   const submitted = jest.fn(async () => {
     throw failure;
@@ -290,6 +290,8 @@ test("performs preflight for exactly the six outbound calls and never repeats a 
     initiatePairing: submitted,
     describeTarget: submitted,
     announceTarget: submitted,
+    readRemoteNode: submitted,
+    changeRemoteNode: submitted,
     retryLxmfMessage: submitted,
     announceLxmf: submitted,
     sendDirectText: submitted,
@@ -303,6 +305,16 @@ test("performs preflight for exactly the six outbound calls and never repeats a 
       }),
     () => runtime.describeRemoteControlTarget({ targetIdentityFingerprint }),
     () => runtime.announceRemoteControlTarget({ targetIdentityFingerprint }),
+    () =>
+      runtime.readRemoteNode({
+        targetIdentityFingerprint,
+        query: Bindings.RemoteNodeQuery.Overview.new(),
+      }),
+    () =>
+      runtime.changeRemoteNode({
+        targetIdentityFingerprint,
+        change: Bindings.RemoteNodeChange.DisplayVisibility.new({ visible: true }),
+      }),
     () => runtime.retryLxmfMessage(1n),
     () => runtime.announceLxmf(),
     () =>
@@ -313,8 +325,32 @@ test("performs preflight for exactly the six outbound calls and never repeats a 
       }),
   ])
     await expect(run()).rejects.toBe(failure);
-  expect(submitted).toHaveBeenCalledTimes(6);
-  expect(native.prepareOutbound).toHaveBeenCalledTimes(6);
+  expect(submitted).toHaveBeenCalledTimes(8);
+  expect(native.prepareOutbound).toHaveBeenCalledTimes(8);
+});
+
+test("remote management uses generated typed inputs and forwards read cancellation", async () => {
+  const controller = new AbortController();
+  const readOutcome = Bindings.ReadRemoteNodeOutcome.Read.new({
+    availableRequests: [Bindings.RemoteControlRequestKind.Describe],
+    data: Bindings.RemoteNodeData.Overview.new({
+      overview: { firmware: "test", power: undefined, interfaces: undefined },
+    }),
+    rttMillis: 3n,
+  });
+  const readRemoteNode = jest.fn(async () => readOutcome);
+  const changeRemoteNode = jest.fn(async () => Bindings.ChangeRemoteNodeOutcome.Busy.new());
+  const { runtime } = setup({ readRemoteNode, changeRemoteNode });
+  const targetIdentityFingerprint = new Uint8Array(16).fill(9);
+  const readInput = { targetIdentityFingerprint, query: Bindings.RemoteNodeQuery.Overview.new() };
+  expect(await runtime.readRemoteNode(readInput, controller.signal)).toBe(readOutcome);
+  expect(readRemoteNode).toHaveBeenCalledWith(readInput, { signal: controller.signal });
+  const changeInput = {
+    targetIdentityFingerprint,
+    change: Bindings.RemoteNodeChange.GnssPower.new({ enabled: true }),
+  };
+  await runtime.changeRemoteNode(changeInput);
+  expect(changeRemoteNode).toHaveBeenCalledWith(changeInput, undefined);
 });
 
 test("passes cancellation into generated futures and skips a cancelled preflight submission", async () => {

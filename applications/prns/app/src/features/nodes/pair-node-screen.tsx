@@ -417,9 +417,14 @@ function PairingStateCard({
             label="Access level"
             value={formatControllerAuthority(pairing.inner.authority)}
           />
+          <BodyText>
+            Review the controls below before allowing this device to read information or change
+            settings.
+          </BodyText>
           {pairing.inner.authority === Bindings.RemoteControlControllerAuthority.Administrator ? (
             <BodyText>
-              This pairing also allows this device to manage other controllers&apos; access.
+              Administrator access also allows this device to grant or remove other
+              controllers&apos; access.
             </BodyText>
           ) : null}
           <KeyValue

@@ -32,7 +32,9 @@ pub(super) fn prepare_native_storage_with_supervisor(
     }
 }
 
-fn try_state(supervisor: &Supervisor) -> Result<MutexGuard<'_, SupervisorState>, &'static str> {
+pub(super) fn try_state(
+    supervisor: &Supervisor,
+) -> Result<MutexGuard<'_, SupervisorState>, &'static str> {
     match supervisor.state.try_lock() {
         Ok(state) => Ok(state),
         Err(std::sync::TryLockError::Poisoned(error)) => Ok(error.into_inner()),
@@ -40,7 +42,7 @@ fn try_state(supervisor: &Supervisor) -> Result<MutexGuard<'_, SupervisorState>,
     }
 }
 
-fn running_worker<'a>(
+pub(super) fn running_worker<'a>(
     supervisor: &Supervisor,
     state: &'a SupervisorState,
 ) -> Result<&'a Worker, &'static str> {
@@ -75,7 +77,7 @@ fn admit_running<T>(
 
 /// This timer has no executor or node authority. In particular it remains usable
 /// for offline database reads when the native Tokio node runtime does not exist.
-async fn bounded_reply<T>(
+pub(super) async fn bounded_reply<T>(
     receiver: oneshot::Receiver<T>,
     timeout: Duration,
 ) -> Result<T, &'static str> {
@@ -215,6 +217,14 @@ pub async fn announce_target(
     input: AnnounceRemoteControlTargetInput,
 ) -> RemoteControlAnnounceOutcome {
     announce_target_with_supervisor(supervisor(), input).await
+}
+
+pub async fn read_remote_node(input: ReadRemoteNodeInput) -> ReadRemoteNodeOutcome {
+    super::management::admit_read(supervisor(), input).await
+}
+
+pub async fn change_remote_node(input: ChangeRemoteNodeInput) -> ChangeRemoteNodeOutcome {
+    super::management::admit_change(supervisor(), input)
 }
 
 pub(super) async fn announce_target_with_supervisor(

@@ -34,6 +34,7 @@ const mockSnapshot: DevelopmentNodeSnapshot = {
   pairedTargets: [target],
   activeOperation: undefined,
   lastAnnouncement: undefined,
+  lastRemoteChange: undefined,
   failure: undefined,
 };
 const mockDescribe = jest.fn<

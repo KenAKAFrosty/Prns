@@ -435,6 +435,22 @@ fileprivate struct FfiConverterUInt8: FfiConverterPrimitive {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterInt8: FfiConverterPrimitive {
+    typealias FfiType = Int8
+    typealias SwiftType = Int8
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Int8 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: Int8, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterUInt16: FfiConverterPrimitive {
     typealias FfiType = UInt16
     typealias SwiftType = UInt16
@@ -444,6 +460,22 @@ fileprivate struct FfiConverterUInt16: FfiConverterPrimitive {
     }
 
     public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterInt16: FfiConverterPrimitive {
+    typealias FfiType = Int16
+    typealias SwiftType = Int16
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Int16 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: Int16, into buf: inout [UInt8]) {
         writeInt(&buf, lower(value))
     }
 }
@@ -781,6 +813,60 @@ public func FfiConverterTypeCancelLxmfMessageInput_lift(_ buf: RustBuffer) throw
 #endif
 public func FfiConverterTypeCancelLxmfMessageInput_lower(_ value: CancelLxmfMessageInput) -> RustBuffer {
     return FfiConverterTypeCancelLxmfMessageInput.lower(value)
+}
+
+
+public struct ChangeRemoteNodeInput: Equatable, Hashable {
+    public var targetIdentityFingerprint: Data
+    public var change: RemoteNodeChange
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(targetIdentityFingerprint: Data, change: RemoteNodeChange) {
+        self.targetIdentityFingerprint = targetIdentityFingerprint
+        self.change = change
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ChangeRemoteNodeInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeChangeRemoteNodeInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ChangeRemoteNodeInput {
+        return
+            try ChangeRemoteNodeInput(
+                targetIdentityFingerprint: FfiConverterData.read(from: &buf),
+                change: FfiConverterTypeRemoteNodeChange.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ChangeRemoteNodeInput, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.targetIdentityFingerprint, into: &buf)
+        FfiConverterTypeRemoteNodeChange.write(value.change, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeChangeRemoteNodeInput_lift(_ buf: RustBuffer) throws -> ChangeRemoteNodeInput {
+    return try FfiConverterTypeChangeRemoteNodeInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeChangeRemoteNodeInput_lower(_ value: ChangeRemoteNodeInput) -> RustBuffer {
+    return FfiConverterTypeChangeRemoteNodeInput.lower(value)
 }
 
 
@@ -1179,12 +1265,13 @@ public struct DevelopmentNodeSnapshot: Equatable, Hashable {
     public var pairingCandidates: [RemoteControlPairingCandidate]
     public var pairedTargets: [RemoteControlTargetSnapshot]
     public var lastAnnouncement: RemoteControlAnnounceOperation?
+    public var lastRemoteChange: RemoteChangeOperation?
     public var activeOperation: DevelopmentNodeOperation?
     public var failure: DevelopmentNodeFailure?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(contractFingerprint: String, revision: UInt64, generationId: UInt64, runtime: DevelopmentNodeRuntime, primaryIdentity: PrimaryIdentityState, localHost: LocalHostState, lxmf: LxmfHealth, controllerIdentityFingerprint: Data?, pairing: RemoteControlPairingState, pairingCandidates: [RemoteControlPairingCandidate], pairedTargets: [RemoteControlTargetSnapshot], lastAnnouncement: RemoteControlAnnounceOperation?, activeOperation: DevelopmentNodeOperation?, failure: DevelopmentNodeFailure?) {
+    public init(contractFingerprint: String, revision: UInt64, generationId: UInt64, runtime: DevelopmentNodeRuntime, primaryIdentity: PrimaryIdentityState, localHost: LocalHostState, lxmf: LxmfHealth, controllerIdentityFingerprint: Data?, pairing: RemoteControlPairingState, pairingCandidates: [RemoteControlPairingCandidate], pairedTargets: [RemoteControlTargetSnapshot], lastAnnouncement: RemoteControlAnnounceOperation?, lastRemoteChange: RemoteChangeOperation?, activeOperation: DevelopmentNodeOperation?, failure: DevelopmentNodeFailure?) {
         self.contractFingerprint = contractFingerprint
         self.revision = revision
         self.generationId = generationId
@@ -1197,6 +1284,7 @@ public struct DevelopmentNodeSnapshot: Equatable, Hashable {
         self.pairingCandidates = pairingCandidates
         self.pairedTargets = pairedTargets
         self.lastAnnouncement = lastAnnouncement
+        self.lastRemoteChange = lastRemoteChange
         self.activeOperation = activeOperation
         self.failure = failure
     }
@@ -1229,6 +1317,7 @@ public struct FfiConverterTypeDevelopmentNodeSnapshot: FfiConverterRustBuffer {
                 pairingCandidates: FfiConverterSequenceTypeRemoteControlPairingCandidate.read(from: &buf),
                 pairedTargets: FfiConverterSequenceTypeRemoteControlTargetSnapshot.read(from: &buf),
                 lastAnnouncement: FfiConverterOptionTypeRemoteControlAnnounceOperation.read(from: &buf),
+                lastRemoteChange: FfiConverterOptionTypeRemoteChangeOperation.read(from: &buf),
                 activeOperation: FfiConverterOptionTypeDevelopmentNodeOperation.read(from: &buf),
                 failure: FfiConverterOptionTypeDevelopmentNodeFailure.read(from: &buf)
         )
@@ -1247,6 +1336,7 @@ public struct FfiConverterTypeDevelopmentNodeSnapshot: FfiConverterRustBuffer {
         FfiConverterSequenceTypeRemoteControlPairingCandidate.write(value.pairingCandidates, into: &buf)
         FfiConverterSequenceTypeRemoteControlTargetSnapshot.write(value.pairedTargets, into: &buf)
         FfiConverterOptionTypeRemoteControlAnnounceOperation.write(value.lastAnnouncement, into: &buf)
+        FfiConverterOptionTypeRemoteChangeOperation.write(value.lastRemoteChange, into: &buf)
         FfiConverterOptionTypeDevelopmentNodeOperation.write(value.activeOperation, into: &buf)
         FfiConverterOptionTypeDevelopmentNodeFailure.write(value.failure, into: &buf)
     }
@@ -1920,6 +2010,126 @@ public func FfiConverterTypePersistenceSnapshotTransport_lower(_ value: Persiste
 }
 
 
+public struct ReadRemoteNodeInput: Equatable, Hashable {
+    public var targetIdentityFingerprint: Data
+    public var query: RemoteNodeQuery
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(targetIdentityFingerprint: Data, query: RemoteNodeQuery) {
+        self.targetIdentityFingerprint = targetIdentityFingerprint
+        self.query = query
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ReadRemoteNodeInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeReadRemoteNodeInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ReadRemoteNodeInput {
+        return
+            try ReadRemoteNodeInput(
+                targetIdentityFingerprint: FfiConverterData.read(from: &buf),
+                query: FfiConverterTypeRemoteNodeQuery.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ReadRemoteNodeInput, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.targetIdentityFingerprint, into: &buf)
+        FfiConverterTypeRemoteNodeQuery.write(value.query, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeReadRemoteNodeInput_lift(_ buf: RustBuffer) throws -> ReadRemoteNodeInput {
+    return try FfiConverterTypeReadRemoteNodeInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeReadRemoteNodeInput_lower(_ value: ReadRemoteNodeInput) -> RustBuffer {
+    return FfiConverterTypeReadRemoteNodeInput.lower(value)
+}
+
+
+public struct RemoteChangeOperation: Equatable, Hashable {
+    public var operationId: UInt64
+    public var generationId: UInt64
+    public var targetIdentityFingerprint: Data
+    public var change: RemoteNodeChange
+    public var status: RemoteChangeStatus
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(operationId: UInt64, generationId: UInt64, targetIdentityFingerprint: Data, change: RemoteNodeChange, status: RemoteChangeStatus) {
+        self.operationId = operationId
+        self.generationId = generationId
+        self.targetIdentityFingerprint = targetIdentityFingerprint
+        self.change = change
+        self.status = status
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteChangeOperation: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteChangeOperation: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteChangeOperation {
+        return
+            try RemoteChangeOperation(
+                operationId: FfiConverterUInt64.read(from: &buf),
+                generationId: FfiConverterUInt64.read(from: &buf),
+                targetIdentityFingerprint: FfiConverterData.read(from: &buf),
+                change: FfiConverterTypeRemoteNodeChange.read(from: &buf),
+                status: FfiConverterTypeRemoteChangeStatus.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RemoteChangeOperation, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.operationId, into: &buf)
+        FfiConverterUInt64.write(value.generationId, into: &buf)
+        FfiConverterData.write(value.targetIdentityFingerprint, into: &buf)
+        FfiConverterTypeRemoteNodeChange.write(value.change, into: &buf)
+        FfiConverterTypeRemoteChangeStatus.write(value.status, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteChangeOperation_lift(_ buf: RustBuffer) throws -> RemoteChangeOperation {
+    return try FfiConverterTypeRemoteChangeOperation.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteChangeOperation_lower(_ value: RemoteChangeOperation) -> RustBuffer {
+    return FfiConverterTypeRemoteChangeOperation.lower(value)
+}
+
+
 /**
  * One process-local result, retained independently of a React subscription.
  */
@@ -2156,6 +2366,612 @@ public func FfiConverterTypeRemoteControlTargetSnapshot_lift(_ buf: RustBuffer) 
 #endif
 public func FfiConverterTypeRemoteControlTargetSnapshot_lower(_ value: RemoteControlTargetSnapshot) -> RustBuffer {
     return FfiConverterTypeRemoteControlTargetSnapshot.lower(value)
+}
+
+
+public struct RemoteInterfaceCard: Equatable, Hashable {
+    public var name: String
+    public var group: String
+    public var configuration: String
+    public var failure: String
+    public var destinations: UInt32
+    public var transportedLinks: UInt32
+    public var loraProfile: RemoteLoRaProfile?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(name: String, group: String, configuration: String, failure: String, destinations: UInt32, transportedLinks: UInt32, loraProfile: RemoteLoRaProfile?) {
+        self.name = name
+        self.group = group
+        self.configuration = configuration
+        self.failure = failure
+        self.destinations = destinations
+        self.transportedLinks = transportedLinks
+        self.loraProfile = loraProfile
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteInterfaceCard: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteInterfaceCard: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteInterfaceCard {
+        return
+            try RemoteInterfaceCard(
+                name: FfiConverterString.read(from: &buf),
+                group: FfiConverterString.read(from: &buf),
+                configuration: FfiConverterString.read(from: &buf),
+                failure: FfiConverterString.read(from: &buf),
+                destinations: FfiConverterUInt32.read(from: &buf),
+                transportedLinks: FfiConverterUInt32.read(from: &buf),
+                loraProfile: FfiConverterOptionTypeRemoteLoRaProfile.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RemoteInterfaceCard, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.group, into: &buf)
+        FfiConverterString.write(value.configuration, into: &buf)
+        FfiConverterString.write(value.failure, into: &buf)
+        FfiConverterUInt32.write(value.destinations, into: &buf)
+        FfiConverterUInt32.write(value.transportedLinks, into: &buf)
+        FfiConverterOptionTypeRemoteLoRaProfile.write(value.loraProfile, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteInterfaceCard_lift(_ buf: RustBuffer) throws -> RemoteInterfaceCard {
+    return try FfiConverterTypeRemoteInterfaceCard.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteInterfaceCard_lower(_ value: RemoteInterfaceCard) -> RustBuffer {
+    return FfiConverterTypeRemoteInterfaceCard.lower(value)
+}
+
+
+public struct RemoteInterfaceDetails: Equatable, Hashable {
+    public var interfaceId: Data
+    public var configuration: RemoteInterfaceConfiguration
+    public var discoveryGroups: RemoteDiscoveryGroups
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(interfaceId: Data, configuration: RemoteInterfaceConfiguration, discoveryGroups: RemoteDiscoveryGroups) {
+        self.interfaceId = interfaceId
+        self.configuration = configuration
+        self.discoveryGroups = discoveryGroups
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteInterfaceDetails: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteInterfaceDetails: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteInterfaceDetails {
+        return
+            try RemoteInterfaceDetails(
+                interfaceId: FfiConverterData.read(from: &buf),
+                configuration: FfiConverterTypeRemoteInterfaceConfiguration.read(from: &buf),
+                discoveryGroups: FfiConverterTypeRemoteDiscoveryGroups.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RemoteInterfaceDetails, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.interfaceId, into: &buf)
+        FfiConverterTypeRemoteInterfaceConfiguration.write(value.configuration, into: &buf)
+        FfiConverterTypeRemoteDiscoveryGroups.write(value.discoveryGroups, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteInterfaceDetails_lift(_ buf: RustBuffer) throws -> RemoteInterfaceDetails {
+    return try FfiConverterTypeRemoteInterfaceDetails.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteInterfaceDetails_lower(_ value: RemoteInterfaceDetails) -> RustBuffer {
+    return FfiConverterTypeRemoteInterfaceDetails.lower(value)
+}
+
+
+public struct RemoteInterfaceEntry: Equatable, Hashable {
+    public var interfaceId: Data
+    public var kind: String
+    public var mode: RemoteInterfaceMode
+    public var connection: RemoteConnectionState
+    public var enabled: Bool
+    public var txBytes: UInt64
+    public var rxBytes: UInt64
+    public var links: UInt32
+    public var rateBytesPerSec: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(interfaceId: Data, kind: String, mode: RemoteInterfaceMode, connection: RemoteConnectionState, enabled: Bool, txBytes: UInt64, rxBytes: UInt64, links: UInt32, rateBytesPerSec: UInt32) {
+        self.interfaceId = interfaceId
+        self.kind = kind
+        self.mode = mode
+        self.connection = connection
+        self.enabled = enabled
+        self.txBytes = txBytes
+        self.rxBytes = rxBytes
+        self.links = links
+        self.rateBytesPerSec = rateBytesPerSec
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteInterfaceEntry: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteInterfaceEntry: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteInterfaceEntry {
+        return
+            try RemoteInterfaceEntry(
+                interfaceId: FfiConverterData.read(from: &buf),
+                kind: FfiConverterString.read(from: &buf),
+                mode: FfiConverterTypeRemoteInterfaceMode.read(from: &buf),
+                connection: FfiConverterTypeRemoteConnectionState.read(from: &buf),
+                enabled: FfiConverterBool.read(from: &buf),
+                txBytes: FfiConverterUInt64.read(from: &buf),
+                rxBytes: FfiConverterUInt64.read(from: &buf),
+                links: FfiConverterUInt32.read(from: &buf),
+                rateBytesPerSec: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RemoteInterfaceEntry, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.interfaceId, into: &buf)
+        FfiConverterString.write(value.kind, into: &buf)
+        FfiConverterTypeRemoteInterfaceMode.write(value.mode, into: &buf)
+        FfiConverterTypeRemoteConnectionState.write(value.connection, into: &buf)
+        FfiConverterBool.write(value.enabled, into: &buf)
+        FfiConverterUInt64.write(value.txBytes, into: &buf)
+        FfiConverterUInt64.write(value.rxBytes, into: &buf)
+        FfiConverterUInt32.write(value.links, into: &buf)
+        FfiConverterUInt32.write(value.rateBytesPerSec, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteInterfaceEntry_lift(_ buf: RustBuffer) throws -> RemoteInterfaceEntry {
+    return try FfiConverterTypeRemoteInterfaceEntry.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteInterfaceEntry_lower(_ value: RemoteInterfaceEntry) -> RustBuffer {
+    return FfiConverterTypeRemoteInterfaceEntry.lower(value)
+}
+
+
+public struct RemoteInterfacePage: Equatable, Hashable {
+    public var entries: [RemoteInterfaceEntry]
+    public var next: Data?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(entries: [RemoteInterfaceEntry], next: Data?) {
+        self.entries = entries
+        self.next = next
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteInterfacePage: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteInterfacePage: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteInterfacePage {
+        return
+            try RemoteInterfacePage(
+                entries: FfiConverterSequenceTypeRemoteInterfaceEntry.read(from: &buf),
+                next: FfiConverterOptionData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RemoteInterfacePage, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeRemoteInterfaceEntry.write(value.entries, into: &buf)
+        FfiConverterOptionData.write(value.next, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteInterfacePage_lift(_ buf: RustBuffer) throws -> RemoteInterfacePage {
+    return try FfiConverterTypeRemoteInterfacePage.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteInterfacePage_lower(_ value: RemoteInterfacePage) -> RustBuffer {
+    return FfiConverterTypeRemoteInterfacePage.lower(value)
+}
+
+
+public struct RemoteLoRaProfile: Equatable, Hashable {
+    public var region: RemoteLoRaRegion
+    public var frequencyHz: UInt32
+    public var spreadingFactor: UInt8
+    public var bandwidthHz: UInt32
+    /**
+     * Denominator of the coding rate (5 means 4/5).
+     */
+    public var codingRate: UInt8
+    public var txPowerDbm: Int8
+    public var preambleSymbols: UInt16
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(region: RemoteLoRaRegion, frequencyHz: UInt32, spreadingFactor: UInt8, bandwidthHz: UInt32,
+        /**
+         * Denominator of the coding rate (5 means 4/5).
+         */codingRate: UInt8, txPowerDbm: Int8, preambleSymbols: UInt16) {
+        self.region = region
+        self.frequencyHz = frequencyHz
+        self.spreadingFactor = spreadingFactor
+        self.bandwidthHz = bandwidthHz
+        self.codingRate = codingRate
+        self.txPowerDbm = txPowerDbm
+        self.preambleSymbols = preambleSymbols
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteLoRaProfile: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteLoRaProfile: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteLoRaProfile {
+        return
+            try RemoteLoRaProfile(
+                region: FfiConverterTypeRemoteLoRaRegion.read(from: &buf),
+                frequencyHz: FfiConverterUInt32.read(from: &buf),
+                spreadingFactor: FfiConverterUInt8.read(from: &buf),
+                bandwidthHz: FfiConverterUInt32.read(from: &buf),
+                codingRate: FfiConverterUInt8.read(from: &buf),
+                txPowerDbm: FfiConverterInt8.read(from: &buf),
+                preambleSymbols: FfiConverterUInt16.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RemoteLoRaProfile, into buf: inout [UInt8]) {
+        FfiConverterTypeRemoteLoRaRegion.write(value.region, into: &buf)
+        FfiConverterUInt32.write(value.frequencyHz, into: &buf)
+        FfiConverterUInt8.write(value.spreadingFactor, into: &buf)
+        FfiConverterUInt32.write(value.bandwidthHz, into: &buf)
+        FfiConverterUInt8.write(value.codingRate, into: &buf)
+        FfiConverterInt8.write(value.txPowerDbm, into: &buf)
+        FfiConverterUInt16.write(value.preambleSymbols, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteLoRaProfile_lift(_ buf: RustBuffer) throws -> RemoteLoRaProfile {
+    return try FfiConverterTypeRemoteLoRaProfile.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteLoRaProfile_lower(_ value: RemoteLoRaProfile) -> RustBuffer {
+    return FfiConverterTypeRemoteLoRaProfile.lower(value)
+}
+
+
+public struct RemoteNodeOverview: Equatable, Hashable {
+    /**
+     * None means the live capability set does not offer this observation.
+     */
+    public var firmware: String?
+    public var power: RemoteNodePower?
+    public var interfaces: RemoteInterfacePage?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * None means the live capability set does not offer this observation.
+         */firmware: String?, power: RemoteNodePower?, interfaces: RemoteInterfacePage?) {
+        self.firmware = firmware
+        self.power = power
+        self.interfaces = interfaces
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteNodeOverview: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteNodeOverview: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteNodeOverview {
+        return
+            try RemoteNodeOverview(
+                firmware: FfiConverterOptionString.read(from: &buf),
+                power: FfiConverterOptionTypeRemoteNodePower.read(from: &buf),
+                interfaces: FfiConverterOptionTypeRemoteInterfacePage.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RemoteNodeOverview, into buf: inout [UInt8]) {
+        FfiConverterOptionString.write(value.firmware, into: &buf)
+        FfiConverterOptionTypeRemoteNodePower.write(value.power, into: &buf)
+        FfiConverterOptionTypeRemoteInterfacePage.write(value.interfaces, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteNodeOverview_lift(_ buf: RustBuffer) throws -> RemoteNodeOverview {
+    return try FfiConverterTypeRemoteNodeOverview.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteNodeOverview_lower(_ value: RemoteNodeOverview) -> RustBuffer {
+    return FfiConverterTypeRemoteNodeOverview.lower(value)
+}
+
+
+public struct RemoteNodePower: Equatable, Hashable {
+    public var batteryPercent: UInt8?
+    public var externalPower: RemoteExternalPower
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(batteryPercent: UInt8?, externalPower: RemoteExternalPower) {
+        self.batteryPercent = batteryPercent
+        self.externalPower = externalPower
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteNodePower: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteNodePower: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteNodePower {
+        return
+            try RemoteNodePower(
+                batteryPercent: FfiConverterOptionUInt8.read(from: &buf),
+                externalPower: FfiConverterTypeRemoteExternalPower.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RemoteNodePower, into buf: inout [UInt8]) {
+        FfiConverterOptionUInt8.write(value.batteryPercent, into: &buf)
+        FfiConverterTypeRemoteExternalPower.write(value.externalPower, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteNodePower_lift(_ buf: RustBuffer) throws -> RemoteNodePower {
+    return try FfiConverterTypeRemoteNodePower.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteNodePower_lower(_ value: RemoteNodePower) -> RustBuffer {
+    return FfiConverterTypeRemoteNodePower.lower(value)
+}
+
+
+public struct RemotePeerEntry: Equatable, Hashable {
+    public var peerId: Data
+    public var connection: RemoteConnectionState
+    public var txBytes: UInt64
+    public var rxBytes: UInt64
+    public var links: UInt32
+    public var destinations: UInt32
+    public var rateBytesPerSec: UInt32
+    public var radio: RemotePeerRadio
+    public var details: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(peerId: Data, connection: RemoteConnectionState, txBytes: UInt64, rxBytes: UInt64, links: UInt32, destinations: UInt32, rateBytesPerSec: UInt32, radio: RemotePeerRadio, details: String) {
+        self.peerId = peerId
+        self.connection = connection
+        self.txBytes = txBytes
+        self.rxBytes = rxBytes
+        self.links = links
+        self.destinations = destinations
+        self.rateBytesPerSec = rateBytesPerSec
+        self.radio = radio
+        self.details = details
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemotePeerEntry: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemotePeerEntry: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemotePeerEntry {
+        return
+            try RemotePeerEntry(
+                peerId: FfiConverterData.read(from: &buf),
+                connection: FfiConverterTypeRemoteConnectionState.read(from: &buf),
+                txBytes: FfiConverterUInt64.read(from: &buf),
+                rxBytes: FfiConverterUInt64.read(from: &buf),
+                links: FfiConverterUInt32.read(from: &buf),
+                destinations: FfiConverterUInt32.read(from: &buf),
+                rateBytesPerSec: FfiConverterUInt32.read(from: &buf),
+                radio: FfiConverterTypeRemotePeerRadio.read(from: &buf),
+                details: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RemotePeerEntry, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.peerId, into: &buf)
+        FfiConverterTypeRemoteConnectionState.write(value.connection, into: &buf)
+        FfiConverterUInt64.write(value.txBytes, into: &buf)
+        FfiConverterUInt64.write(value.rxBytes, into: &buf)
+        FfiConverterUInt32.write(value.links, into: &buf)
+        FfiConverterUInt32.write(value.destinations, into: &buf)
+        FfiConverterUInt32.write(value.rateBytesPerSec, into: &buf)
+        FfiConverterTypeRemotePeerRadio.write(value.radio, into: &buf)
+        FfiConverterString.write(value.details, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemotePeerEntry_lift(_ buf: RustBuffer) throws -> RemotePeerEntry {
+    return try FfiConverterTypeRemotePeerEntry.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemotePeerEntry_lower(_ value: RemotePeerEntry) -> RustBuffer {
+    return FfiConverterTypeRemotePeerEntry.lower(value)
+}
+
+
+public struct RemotePeerPage: Equatable, Hashable {
+    public var interfaceId: Data
+    public var entries: [RemotePeerEntry]
+    public var next: Data?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(interfaceId: Data, entries: [RemotePeerEntry], next: Data?) {
+        self.interfaceId = interfaceId
+        self.entries = entries
+        self.next = next
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemotePeerPage: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemotePeerPage: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemotePeerPage {
+        return
+            try RemotePeerPage(
+                interfaceId: FfiConverterData.read(from: &buf),
+                entries: FfiConverterSequenceTypeRemotePeerEntry.read(from: &buf),
+                next: FfiConverterOptionData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RemotePeerPage, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.interfaceId, into: &buf)
+        FfiConverterSequenceTypeRemotePeerEntry.write(value.entries, into: &buf)
+        FfiConverterOptionData.write(value.next, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemotePeerPage_lift(_ buf: RustBuffer) throws -> RemotePeerPage {
+    return try FfiConverterTypeRemotePeerPage.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemotePeerPage_lower(_ value: RemotePeerPage) -> RustBuffer {
+    return FfiConverterTypeRemotePeerPage.lower(value)
 }
 
 
@@ -2902,6 +3718,87 @@ public func FfiConverterTypeCancelLxmfMessageOutcome_lower(_ value: CancelLxmfMe
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
+public enum ChangeRemoteNodeOutcome: Equatable, Hashable {
+
+    case accepted(operation: RemoteChangeOperation
+    )
+    case busy
+    case failed(stage: RemoteManagementFailureStage, detail: String
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ChangeRemoteNodeOutcome: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeChangeRemoteNodeOutcome: FfiConverterRustBuffer {
+    typealias SwiftType = ChangeRemoteNodeOutcome
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ChangeRemoteNodeOutcome {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .accepted(operation: try FfiConverterTypeRemoteChangeOperation.read(from: &buf)
+        )
+
+        case 2: return .busy
+
+        case 3: return .failed(stage: try FfiConverterTypeRemoteManagementFailureStage.read(from: &buf), detail: try FfiConverterString.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ChangeRemoteNodeOutcome, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .accepted(operation):
+            writeInt(&buf, Int32(1))
+            FfiConverterTypeRemoteChangeOperation.write(operation, into: &buf)
+
+
+        case .busy:
+            writeInt(&buf, Int32(2))
+
+
+        case let .failed(stage,detail):
+            writeInt(&buf, Int32(3))
+            FfiConverterTypeRemoteManagementFailureStage.write(stage, into: &buf)
+            FfiConverterString.write(detail, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeChangeRemoteNodeOutcome_lift(_ buf: RustBuffer) throws -> ChangeRemoteNodeOutcome {
+    return try FfiConverterTypeChangeRemoteNodeOutcome.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeChangeRemoteNodeOutcome_lower(_ value: ChangeRemoteNodeOutcome) -> RustBuffer {
+    return FfiConverterTypeChangeRemoteNodeOutcome.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 public enum ContactListOutcome: Equatable, Hashable {
 
     case listed(contacts: [Contact]
@@ -3338,6 +4235,8 @@ public func FfiConverterTypeDevelopmentNodeFailureStage_lower(_ value: Developme
 
 public enum DevelopmentNodeOperationKind: Equatable, Hashable {
 
+    case remoteRead
+    case remoteChange
     case pairing
     case describe
     case announceSelf
@@ -3363,13 +4262,17 @@ public struct FfiConverterTypeDevelopmentNodeOperationKind: FfiConverterRustBuff
         let variant: Int32 = try readInt(&buf)
         switch variant {
 
-        case 1: return .pairing
+        case 1: return .remoteRead
 
-        case 2: return .describe
+        case 2: return .remoteChange
 
-        case 3: return .announceSelf
+        case 3: return .pairing
 
-        case 4: return .shutdown
+        case 4: return .describe
+
+        case 5: return .announceSelf
+
+        case 6: return .shutdown
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -3379,20 +4282,28 @@ public struct FfiConverterTypeDevelopmentNodeOperationKind: FfiConverterRustBuff
         switch value {
 
 
-        case .pairing:
+        case .remoteRead:
             writeInt(&buf, Int32(1))
 
 
-        case .describe:
+        case .remoteChange:
             writeInt(&buf, Int32(2))
 
 
-        case .announceSelf:
+        case .pairing:
             writeInt(&buf, Int32(3))
 
 
-        case .shutdown:
+        case .describe:
             writeInt(&buf, Int32(4))
+
+
+        case .announceSelf:
+            writeInt(&buf, Int32(5))
+
+
+        case .shutdown:
+            writeInt(&buf, Int32(6))
 
         }
     }
@@ -4934,6 +5845,300 @@ public func FfiConverterTypePrimaryIdentityState_lower(_ value: PrimaryIdentityS
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
+public enum ReadRemoteNodeOutcome: Equatable, Hashable {
+
+    case read(availableRequests: [RemoteControlRequestKind], data: RemoteNodeData, rttMillis: UInt64
+    )
+    case busy
+    case failed(stage: RemoteManagementFailureStage, detail: String
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ReadRemoteNodeOutcome: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeReadRemoteNodeOutcome: FfiConverterRustBuffer {
+    typealias SwiftType = ReadRemoteNodeOutcome
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ReadRemoteNodeOutcome {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .read(availableRequests: try FfiConverterSequenceTypeRemoteControlRequestKind.read(from: &buf), data: try FfiConverterTypeRemoteNodeData.read(from: &buf), rttMillis: try FfiConverterUInt64.read(from: &buf)
+        )
+
+        case 2: return .busy
+
+        case 3: return .failed(stage: try FfiConverterTypeRemoteManagementFailureStage.read(from: &buf), detail: try FfiConverterString.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ReadRemoteNodeOutcome, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .read(availableRequests,data,rttMillis):
+            writeInt(&buf, Int32(1))
+            FfiConverterSequenceTypeRemoteControlRequestKind.write(availableRequests, into: &buf)
+            FfiConverterTypeRemoteNodeData.write(data, into: &buf)
+            FfiConverterUInt64.write(rttMillis, into: &buf)
+
+
+        case .busy:
+            writeInt(&buf, Int32(2))
+
+
+        case let .failed(stage,detail):
+            writeInt(&buf, Int32(3))
+            FfiConverterTypeRemoteManagementFailureStage.write(stage, into: &buf)
+            FfiConverterString.write(detail, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeReadRemoteNodeOutcome_lift(_ buf: RustBuffer) throws -> ReadRemoteNodeOutcome {
+    return try FfiConverterTypeReadRemoteNodeOutcome.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeReadRemoteNodeOutcome_lower(_ value: ReadRemoteNodeOutcome) -> RustBuffer {
+    return FfiConverterTypeReadRemoteNodeOutcome.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum RemoteChangeStatus: Equatable, Hashable {
+
+    case pending
+    case applied
+    case unchanged
+    case scheduled
+    case failed(stage: RemoteManagementFailureStage, detail: String
+    )
+    case outcomeUnknown(reason: RemoteControlAnnounceUnknownReason
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteChangeStatus: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteChangeStatus: FfiConverterRustBuffer {
+    typealias SwiftType = RemoteChangeStatus
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteChangeStatus {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .pending
+
+        case 2: return .applied
+
+        case 3: return .unchanged
+
+        case 4: return .scheduled
+
+        case 5: return .failed(stage: try FfiConverterTypeRemoteManagementFailureStage.read(from: &buf), detail: try FfiConverterString.read(from: &buf)
+        )
+
+        case 6: return .outcomeUnknown(reason: try FfiConverterTypeRemoteControlAnnounceUnknownReason.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RemoteChangeStatus, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .pending:
+            writeInt(&buf, Int32(1))
+
+
+        case .applied:
+            writeInt(&buf, Int32(2))
+
+
+        case .unchanged:
+            writeInt(&buf, Int32(3))
+
+
+        case .scheduled:
+            writeInt(&buf, Int32(4))
+
+
+        case let .failed(stage,detail):
+            writeInt(&buf, Int32(5))
+            FfiConverterTypeRemoteManagementFailureStage.write(stage, into: &buf)
+            FfiConverterString.write(detail, into: &buf)
+
+
+        case let .outcomeUnknown(reason):
+            writeInt(&buf, Int32(6))
+            FfiConverterTypeRemoteControlAnnounceUnknownReason.write(reason, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteChangeStatus_lift(_ buf: RustBuffer) throws -> RemoteChangeStatus {
+    return try FfiConverterTypeRemoteChangeStatus.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteChangeStatus_lower(_ value: RemoteChangeStatus) -> RustBuffer {
+    return FfiConverterTypeRemoteChangeStatus.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum RemoteConnectionState: Equatable, Hashable {
+
+    case initializing
+    case connected
+    case degraded
+    case reconnecting
+    case failed
+    case disconnected
+    case disabled
+    case unknown
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteConnectionState: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteConnectionState: FfiConverterRustBuffer {
+    typealias SwiftType = RemoteConnectionState
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteConnectionState {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .initializing
+
+        case 2: return .connected
+
+        case 3: return .degraded
+
+        case 4: return .reconnecting
+
+        case 5: return .failed
+
+        case 6: return .disconnected
+
+        case 7: return .disabled
+
+        case 8: return .unknown
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RemoteConnectionState, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .initializing:
+            writeInt(&buf, Int32(1))
+
+
+        case .connected:
+            writeInt(&buf, Int32(2))
+
+
+        case .degraded:
+            writeInt(&buf, Int32(3))
+
+
+        case .reconnecting:
+            writeInt(&buf, Int32(4))
+
+
+        case .failed:
+            writeInt(&buf, Int32(5))
+
+
+        case .disconnected:
+            writeInt(&buf, Int32(6))
+
+
+        case .disabled:
+            writeInt(&buf, Int32(7))
+
+
+        case .unknown:
+            writeInt(&buf, Int32(8))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteConnectionState_lift(_ buf: RustBuffer) throws -> RemoteConnectionState {
+    return try FfiConverterTypeRemoteConnectionState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteConnectionState_lower(_ value: RemoteConnectionState) -> RustBuffer {
+    return FfiConverterTypeRemoteConnectionState.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 public enum RemoteControlAnnounceFailureStage: Equatable, Hashable {
 
     case busy
@@ -5997,6 +7202,8 @@ public enum RemoteControlRequestKind: Equatable, Hashable {
     case confirmWifiCredentials
     case cancelWifiCredentials
     case inspectWifiTransaction
+    case inventoryInterfaceDiscoveryGroups
+    case replaceInterfaceDiscoveryGroups
 
 
 
@@ -6073,6 +7280,10 @@ public struct FfiConverterTypeRemoteControlRequestKind: FfiConverterRustBuffer {
         case 27: return .cancelWifiCredentials
 
         case 28: return .inspectWifiTransaction
+
+        case 29: return .inventoryInterfaceDiscoveryGroups
+
+        case 30: return .replaceInterfaceDiscoveryGroups
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -6193,6 +7404,14 @@ public struct FfiConverterTypeRemoteControlRequestKind: FfiConverterRustBuffer {
         case .inspectWifiTransaction:
             writeInt(&buf, Int32(28))
 
+
+        case .inventoryInterfaceDiscoveryGroups:
+            writeInt(&buf, Int32(29))
+
+
+        case .replaceInterfaceDiscoveryGroups:
+            writeInt(&buf, Int32(30))
+
         }
     }
 }
@@ -6210,6 +7429,1246 @@ public func FfiConverterTypeRemoteControlRequestKind_lift(_ buf: RustBuffer) thr
 #endif
 public func FfiConverterTypeRemoteControlRequestKind_lower(_ value: RemoteControlRequestKind) -> RustBuffer {
     return FfiConverterTypeRemoteControlRequestKind.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum RemoteDiscoveryGroups: Equatable, Hashable {
+
+    case available(groups: [String]
+    )
+    case unavailable
+    case unknownInterface
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteDiscoveryGroups: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteDiscoveryGroups: FfiConverterRustBuffer {
+    typealias SwiftType = RemoteDiscoveryGroups
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteDiscoveryGroups {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .available(groups: try FfiConverterSequenceString.read(from: &buf)
+        )
+
+        case 2: return .unavailable
+
+        case 3: return .unknownInterface
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RemoteDiscoveryGroups, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .available(groups):
+            writeInt(&buf, Int32(1))
+            FfiConverterSequenceString.write(groups, into: &buf)
+
+
+        case .unavailable:
+            writeInt(&buf, Int32(2))
+
+
+        case .unknownInterface:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteDiscoveryGroups_lift(_ buf: RustBuffer) throws -> RemoteDiscoveryGroups {
+    return try FfiConverterTypeRemoteDiscoveryGroups.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteDiscoveryGroups_lower(_ value: RemoteDiscoveryGroups) -> RustBuffer {
+    return FfiConverterTypeRemoteDiscoveryGroups.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum RemoteExternalPower: Equatable, Hashable {
+
+    case unknown
+    case absent
+    case present
+    case charging
+    case idle
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteExternalPower: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteExternalPower: FfiConverterRustBuffer {
+    typealias SwiftType = RemoteExternalPower
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteExternalPower {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .unknown
+
+        case 2: return .absent
+
+        case 3: return .present
+
+        case 4: return .charging
+
+        case 5: return .idle
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RemoteExternalPower, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .unknown:
+            writeInt(&buf, Int32(1))
+
+
+        case .absent:
+            writeInt(&buf, Int32(2))
+
+
+        case .present:
+            writeInt(&buf, Int32(3))
+
+
+        case .charging:
+            writeInt(&buf, Int32(4))
+
+
+        case .idle:
+            writeInt(&buf, Int32(5))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteExternalPower_lift(_ buf: RustBuffer) throws -> RemoteExternalPower {
+    return try FfiConverterTypeRemoteExternalPower.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteExternalPower_lower(_ value: RemoteExternalPower) -> RustBuffer {
+    return FfiConverterTypeRemoteExternalPower.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum RemoteInterfaceConfiguration: Equatable, Hashable {
+
+    case available(card: RemoteInterfaceCard
+    )
+    case unavailable
+    case unknownInterface
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteInterfaceConfiguration: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteInterfaceConfiguration: FfiConverterRustBuffer {
+    typealias SwiftType = RemoteInterfaceConfiguration
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteInterfaceConfiguration {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .available(card: try FfiConverterTypeRemoteInterfaceCard.read(from: &buf)
+        )
+
+        case 2: return .unavailable
+
+        case 3: return .unknownInterface
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RemoteInterfaceConfiguration, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .available(card):
+            writeInt(&buf, Int32(1))
+            FfiConverterTypeRemoteInterfaceCard.write(card, into: &buf)
+
+
+        case .unavailable:
+            writeInt(&buf, Int32(2))
+
+
+        case .unknownInterface:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteInterfaceConfiguration_lift(_ buf: RustBuffer) throws -> RemoteInterfaceConfiguration {
+    return try FfiConverterTypeRemoteInterfaceConfiguration.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteInterfaceConfiguration_lower(_ value: RemoteInterfaceConfiguration) -> RustBuffer {
+    return FfiConverterTypeRemoteInterfaceConfiguration.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum RemoteInterfaceMode: Equatable, Hashable {
+
+    case full
+    case pointToPoint
+    case accessPoint
+    case roaming
+    case boundary
+    case gateway
+    case `internal`
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteInterfaceMode: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteInterfaceMode: FfiConverterRustBuffer {
+    typealias SwiftType = RemoteInterfaceMode
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteInterfaceMode {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .full
+
+        case 2: return .pointToPoint
+
+        case 3: return .accessPoint
+
+        case 4: return .roaming
+
+        case 5: return .boundary
+
+        case 6: return .gateway
+
+        case 7: return .`internal`
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RemoteInterfaceMode, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .full:
+            writeInt(&buf, Int32(1))
+
+
+        case .pointToPoint:
+            writeInt(&buf, Int32(2))
+
+
+        case .accessPoint:
+            writeInt(&buf, Int32(3))
+
+
+        case .roaming:
+            writeInt(&buf, Int32(4))
+
+
+        case .boundary:
+            writeInt(&buf, Int32(5))
+
+
+        case .gateway:
+            writeInt(&buf, Int32(6))
+
+
+        case .`internal`:
+            writeInt(&buf, Int32(7))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteInterfaceMode_lift(_ buf: RustBuffer) throws -> RemoteInterfaceMode {
+    return try FfiConverterTypeRemoteInterfaceMode.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteInterfaceMode_lower(_ value: RemoteInterfaceMode) -> RustBuffer {
+    return FfiConverterTypeRemoteInterfaceMode.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum RemoteLoRaRegion: Equatable, Hashable {
+
+    case us915
+    case au915
+    case eu433
+    case eu865
+    case eu868
+    case eu869
+    case as923
+    case in865
+    case cn470
+    case kr920
+    case jp920
+    case custom
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteLoRaRegion: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteLoRaRegion: FfiConverterRustBuffer {
+    typealias SwiftType = RemoteLoRaRegion
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteLoRaRegion {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .us915
+
+        case 2: return .au915
+
+        case 3: return .eu433
+
+        case 4: return .eu865
+
+        case 5: return .eu868
+
+        case 6: return .eu869
+
+        case 7: return .as923
+
+        case 8: return .in865
+
+        case 9: return .cn470
+
+        case 10: return .kr920
+
+        case 11: return .jp920
+
+        case 12: return .custom
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RemoteLoRaRegion, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .us915:
+            writeInt(&buf, Int32(1))
+
+
+        case .au915:
+            writeInt(&buf, Int32(2))
+
+
+        case .eu433:
+            writeInt(&buf, Int32(3))
+
+
+        case .eu865:
+            writeInt(&buf, Int32(4))
+
+
+        case .eu868:
+            writeInt(&buf, Int32(5))
+
+
+        case .eu869:
+            writeInt(&buf, Int32(6))
+
+
+        case .as923:
+            writeInt(&buf, Int32(7))
+
+
+        case .in865:
+            writeInt(&buf, Int32(8))
+
+
+        case .cn470:
+            writeInt(&buf, Int32(9))
+
+
+        case .kr920:
+            writeInt(&buf, Int32(10))
+
+
+        case .jp920:
+            writeInt(&buf, Int32(11))
+
+
+        case .custom:
+            writeInt(&buf, Int32(12))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteLoRaRegion_lift(_ buf: RustBuffer) throws -> RemoteLoRaRegion {
+    return try FfiConverterTypeRemoteLoRaRegion.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteLoRaRegion_lower(_ value: RemoteLoRaRegion) -> RustBuffer {
+    return FfiConverterTypeRemoteLoRaRegion.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum RemoteManagementFailureStage: Equatable, Hashable {
+
+    case input
+    case node
+    case inventory
+    case route
+    case link
+    case identification
+    case permission
+    case unsupported
+    case unknownInterface
+    case request
+    case timeout
+    case busy
+    case response
+    case persistence
+    case rollback
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteManagementFailureStage: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteManagementFailureStage: FfiConverterRustBuffer {
+    typealias SwiftType = RemoteManagementFailureStage
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteManagementFailureStage {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .input
+
+        case 2: return .node
+
+        case 3: return .inventory
+
+        case 4: return .route
+
+        case 5: return .link
+
+        case 6: return .identification
+
+        case 7: return .permission
+
+        case 8: return .unsupported
+
+        case 9: return .unknownInterface
+
+        case 10: return .request
+
+        case 11: return .timeout
+
+        case 12: return .busy
+
+        case 13: return .response
+
+        case 14: return .persistence
+
+        case 15: return .rollback
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RemoteManagementFailureStage, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .input:
+            writeInt(&buf, Int32(1))
+
+
+        case .node:
+            writeInt(&buf, Int32(2))
+
+
+        case .inventory:
+            writeInt(&buf, Int32(3))
+
+
+        case .route:
+            writeInt(&buf, Int32(4))
+
+
+        case .link:
+            writeInt(&buf, Int32(5))
+
+
+        case .identification:
+            writeInt(&buf, Int32(6))
+
+
+        case .permission:
+            writeInt(&buf, Int32(7))
+
+
+        case .unsupported:
+            writeInt(&buf, Int32(8))
+
+
+        case .unknownInterface:
+            writeInt(&buf, Int32(9))
+
+
+        case .request:
+            writeInt(&buf, Int32(10))
+
+
+        case .timeout:
+            writeInt(&buf, Int32(11))
+
+
+        case .busy:
+            writeInt(&buf, Int32(12))
+
+
+        case .response:
+            writeInt(&buf, Int32(13))
+
+
+        case .persistence:
+            writeInt(&buf, Int32(14))
+
+
+        case .rollback:
+            writeInt(&buf, Int32(15))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteManagementFailureStage_lift(_ buf: RustBuffer) throws -> RemoteManagementFailureStage {
+    return try FfiConverterTypeRemoteManagementFailureStage.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteManagementFailureStage_lower(_ value: RemoteManagementFailureStage) -> RustBuffer {
+    return FfiConverterTypeRemoteManagementFailureStage.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum RemoteNodeChange: Equatable, Hashable {
+
+    case interfacePower(interfaceId: Data, enabled: Bool
+    )
+    case interfaceMode(interfaceId: Data, mode: RemoteInterfaceMode
+    )
+    case interfaceGroup(interfaceId: Data, group: String
+    )
+    case interfaceLoRa(interfaceId: Data, profile: RemoteLoRaProfile
+    )
+    case discoveryGroups(interfaceId: Data, groups: [String]
+    )
+    case gnssPower(enabled: Bool
+    )
+    case displayVisibility(visible: Bool
+    )
+    case displayAutoOff(enabled: Bool
+    )
+    case systemPower(awake: Bool
+    )
+    case stationUplink(interfaceId: Data, enabled: Bool
+    )
+    case radioMode(mode: RemoteRadioMode
+    )
+    case sleepRadios
+    case wakeRadios
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteNodeChange: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteNodeChange: FfiConverterRustBuffer {
+    typealias SwiftType = RemoteNodeChange
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteNodeChange {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .interfacePower(interfaceId: try FfiConverterData.read(from: &buf), enabled: try FfiConverterBool.read(from: &buf)
+        )
+
+        case 2: return .interfaceMode(interfaceId: try FfiConverterData.read(from: &buf), mode: try FfiConverterTypeRemoteInterfaceMode.read(from: &buf)
+        )
+
+        case 3: return .interfaceGroup(interfaceId: try FfiConverterData.read(from: &buf), group: try FfiConverterString.read(from: &buf)
+        )
+
+        case 4: return .interfaceLoRa(interfaceId: try FfiConverterData.read(from: &buf), profile: try FfiConverterTypeRemoteLoRaProfile.read(from: &buf)
+        )
+
+        case 5: return .discoveryGroups(interfaceId: try FfiConverterData.read(from: &buf), groups: try FfiConverterSequenceString.read(from: &buf)
+        )
+
+        case 6: return .gnssPower(enabled: try FfiConverterBool.read(from: &buf)
+        )
+
+        case 7: return .displayVisibility(visible: try FfiConverterBool.read(from: &buf)
+        )
+
+        case 8: return .displayAutoOff(enabled: try FfiConverterBool.read(from: &buf)
+        )
+
+        case 9: return .systemPower(awake: try FfiConverterBool.read(from: &buf)
+        )
+
+        case 10: return .stationUplink(interfaceId: try FfiConverterData.read(from: &buf), enabled: try FfiConverterBool.read(from: &buf)
+        )
+
+        case 11: return .radioMode(mode: try FfiConverterTypeRemoteRadioMode.read(from: &buf)
+        )
+
+        case 12: return .sleepRadios
+
+        case 13: return .wakeRadios
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RemoteNodeChange, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .interfacePower(interfaceId,enabled):
+            writeInt(&buf, Int32(1))
+            FfiConverterData.write(interfaceId, into: &buf)
+            FfiConverterBool.write(enabled, into: &buf)
+
+
+        case let .interfaceMode(interfaceId,mode):
+            writeInt(&buf, Int32(2))
+            FfiConverterData.write(interfaceId, into: &buf)
+            FfiConverterTypeRemoteInterfaceMode.write(mode, into: &buf)
+
+
+        case let .interfaceGroup(interfaceId,group):
+            writeInt(&buf, Int32(3))
+            FfiConverterData.write(interfaceId, into: &buf)
+            FfiConverterString.write(group, into: &buf)
+
+
+        case let .interfaceLoRa(interfaceId,profile):
+            writeInt(&buf, Int32(4))
+            FfiConverterData.write(interfaceId, into: &buf)
+            FfiConverterTypeRemoteLoRaProfile.write(profile, into: &buf)
+
+
+        case let .discoveryGroups(interfaceId,groups):
+            writeInt(&buf, Int32(5))
+            FfiConverterData.write(interfaceId, into: &buf)
+            FfiConverterSequenceString.write(groups, into: &buf)
+
+
+        case let .gnssPower(enabled):
+            writeInt(&buf, Int32(6))
+            FfiConverterBool.write(enabled, into: &buf)
+
+
+        case let .displayVisibility(visible):
+            writeInt(&buf, Int32(7))
+            FfiConverterBool.write(visible, into: &buf)
+
+
+        case let .displayAutoOff(enabled):
+            writeInt(&buf, Int32(8))
+            FfiConverterBool.write(enabled, into: &buf)
+
+
+        case let .systemPower(awake):
+            writeInt(&buf, Int32(9))
+            FfiConverterBool.write(awake, into: &buf)
+
+
+        case let .stationUplink(interfaceId,enabled):
+            writeInt(&buf, Int32(10))
+            FfiConverterData.write(interfaceId, into: &buf)
+            FfiConverterBool.write(enabled, into: &buf)
+
+
+        case let .radioMode(mode):
+            writeInt(&buf, Int32(11))
+            FfiConverterTypeRemoteRadioMode.write(mode, into: &buf)
+
+
+        case .sleepRadios:
+            writeInt(&buf, Int32(12))
+
+
+        case .wakeRadios:
+            writeInt(&buf, Int32(13))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteNodeChange_lift(_ buf: RustBuffer) throws -> RemoteNodeChange {
+    return try FfiConverterTypeRemoteNodeChange.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteNodeChange_lower(_ value: RemoteNodeChange) -> RustBuffer {
+    return FfiConverterTypeRemoteNodeChange.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum RemoteNodeData: Equatable, Hashable {
+
+    case overview(overview: RemoteNodeOverview
+    )
+    case interfaces(page: RemoteInterfacePage
+    )
+    case interface(details: RemoteInterfaceDetails
+    )
+    case peers(page: RemotePeerPage
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteNodeData: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteNodeData: FfiConverterRustBuffer {
+    typealias SwiftType = RemoteNodeData
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteNodeData {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .overview(overview: try FfiConverterTypeRemoteNodeOverview.read(from: &buf)
+        )
+
+        case 2: return .interfaces(page: try FfiConverterTypeRemoteInterfacePage.read(from: &buf)
+        )
+
+        case 3: return .interface(details: try FfiConverterTypeRemoteInterfaceDetails.read(from: &buf)
+        )
+
+        case 4: return .peers(page: try FfiConverterTypeRemotePeerPage.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RemoteNodeData, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .overview(overview):
+            writeInt(&buf, Int32(1))
+            FfiConverterTypeRemoteNodeOverview.write(overview, into: &buf)
+
+
+        case let .interfaces(page):
+            writeInt(&buf, Int32(2))
+            FfiConverterTypeRemoteInterfacePage.write(page, into: &buf)
+
+
+        case let .interface(details):
+            writeInt(&buf, Int32(3))
+            FfiConverterTypeRemoteInterfaceDetails.write(details, into: &buf)
+
+
+        case let .peers(page):
+            writeInt(&buf, Int32(4))
+            FfiConverterTypeRemotePeerPage.write(page, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteNodeData_lift(_ buf: RustBuffer) throws -> RemoteNodeData {
+    return try FfiConverterTypeRemoteNodeData.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteNodeData_lower(_ value: RemoteNodeData) -> RustBuffer {
+    return FfiConverterTypeRemoteNodeData.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum RemoteNodeQuery: Equatable, Hashable {
+
+    case overview
+    case interfaces(after: Data?
+    )
+    case interface(interfaceId: Data
+    )
+    case peers(interfaceId: Data, after: Data?
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteNodeQuery: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteNodeQuery: FfiConverterRustBuffer {
+    typealias SwiftType = RemoteNodeQuery
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteNodeQuery {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .overview
+
+        case 2: return .interfaces(after: try FfiConverterOptionData.read(from: &buf)
+        )
+
+        case 3: return .interface(interfaceId: try FfiConverterData.read(from: &buf)
+        )
+
+        case 4: return .peers(interfaceId: try FfiConverterData.read(from: &buf), after: try FfiConverterOptionData.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RemoteNodeQuery, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .overview:
+            writeInt(&buf, Int32(1))
+
+
+        case let .interfaces(after):
+            writeInt(&buf, Int32(2))
+            FfiConverterOptionData.write(after, into: &buf)
+
+
+        case let .interface(interfaceId):
+            writeInt(&buf, Int32(3))
+            FfiConverterData.write(interfaceId, into: &buf)
+
+
+        case let .peers(interfaceId,after):
+            writeInt(&buf, Int32(4))
+            FfiConverterData.write(interfaceId, into: &buf)
+            FfiConverterOptionData.write(after, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteNodeQuery_lift(_ buf: RustBuffer) throws -> RemoteNodeQuery {
+    return try FfiConverterTypeRemoteNodeQuery.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteNodeQuery_lower(_ value: RemoteNodeQuery) -> RustBuffer {
+    return FfiConverterTypeRemoteNodeQuery.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum RemotePeerRadio: Equatable, Hashable {
+
+    case notRadio
+    case pending(family: RemoteRadioFamily
+    )
+    case unavailable(family: RemoteRadioFamily
+    )
+    case measured(family: RemoteRadioFamily, rssiDbm: Int16, snrQuarterDb: Int16?, qualityTenthsPercent: UInt16?
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemotePeerRadio: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemotePeerRadio: FfiConverterRustBuffer {
+    typealias SwiftType = RemotePeerRadio
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemotePeerRadio {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .notRadio
+
+        case 2: return .pending(family: try FfiConverterTypeRemoteRadioFamily.read(from: &buf)
+        )
+
+        case 3: return .unavailable(family: try FfiConverterTypeRemoteRadioFamily.read(from: &buf)
+        )
+
+        case 4: return .measured(family: try FfiConverterTypeRemoteRadioFamily.read(from: &buf), rssiDbm: try FfiConverterInt16.read(from: &buf), snrQuarterDb: try FfiConverterOptionInt16.read(from: &buf), qualityTenthsPercent: try FfiConverterOptionUInt16.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RemotePeerRadio, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .notRadio:
+            writeInt(&buf, Int32(1))
+
+
+        case let .pending(family):
+            writeInt(&buf, Int32(2))
+            FfiConverterTypeRemoteRadioFamily.write(family, into: &buf)
+
+
+        case let .unavailable(family):
+            writeInt(&buf, Int32(3))
+            FfiConverterTypeRemoteRadioFamily.write(family, into: &buf)
+
+
+        case let .measured(family,rssiDbm,snrQuarterDb,qualityTenthsPercent):
+            writeInt(&buf, Int32(4))
+            FfiConverterTypeRemoteRadioFamily.write(family, into: &buf)
+            FfiConverterInt16.write(rssiDbm, into: &buf)
+            FfiConverterOptionInt16.write(snrQuarterDb, into: &buf)
+            FfiConverterOptionUInt16.write(qualityTenthsPercent, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemotePeerRadio_lift(_ buf: RustBuffer) throws -> RemotePeerRadio {
+    return try FfiConverterTypeRemotePeerRadio.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemotePeerRadio_lower(_ value: RemotePeerRadio) -> RustBuffer {
+    return FfiConverterTypeRemotePeerRadio.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum RemoteRadioFamily: Equatable, Hashable {
+
+    case bluetooth
+    case wifi
+    case loRa
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteRadioFamily: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteRadioFamily: FfiConverterRustBuffer {
+    typealias SwiftType = RemoteRadioFamily
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteRadioFamily {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .bluetooth
+
+        case 2: return .wifi
+
+        case 3: return .loRa
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RemoteRadioFamily, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .bluetooth:
+            writeInt(&buf, Int32(1))
+
+
+        case .wifi:
+            writeInt(&buf, Int32(2))
+
+
+        case .loRa:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteRadioFamily_lift(_ buf: RustBuffer) throws -> RemoteRadioFamily {
+    return try FfiConverterTypeRemoteRadioFamily.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteRadioFamily_lower(_ value: RemoteRadioFamily) -> RustBuffer {
+    return FfiConverterTypeRemoteRadioFamily.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum RemoteRadioMode: Equatable, Hashable {
+
+    case bluetooth
+    case accessPoint
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteRadioMode: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteRadioMode: FfiConverterRustBuffer {
+    typealias SwiftType = RemoteRadioMode
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteRadioMode {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .bluetooth
+
+        case 2: return .accessPoint
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RemoteRadioMode, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .bluetooth:
+            writeInt(&buf, Int32(1))
+
+
+        case .accessPoint:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteRadioMode_lift(_ buf: RustBuffer) throws -> RemoteRadioMode {
+    return try FfiConverterTypeRemoteRadioMode.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteRadioMode_lower(_ value: RemoteRadioMode) -> RustBuffer {
+    return FfiConverterTypeRemoteRadioMode.lower(value)
 }
 
 
@@ -6426,6 +8885,78 @@ public func FfiConverterTypeSendDirectTextOutcome_lower(_ value: SendDirectTextO
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionUInt8: FfiConverterRustBuffer {
+    typealias SwiftType = UInt8?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterUInt8.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterUInt8.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionUInt16: FfiConverterRustBuffer {
+    typealias SwiftType = UInt16?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterUInt16.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterUInt16.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionInt16: FfiConverterRustBuffer {
+    typealias SwiftType = Int16?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterInt16.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterInt16.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionUInt64: FfiConverterRustBuffer {
     typealias SwiftType = UInt64?
 
@@ -6546,6 +9077,30 @@ fileprivate struct FfiConverterOptionTypeDevelopmentNodeOperation: FfiConverterR
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeRemoteChangeOperation: FfiConverterRustBuffer {
+    typealias SwiftType = RemoteChangeOperation?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeRemoteChangeOperation.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeRemoteChangeOperation.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeRemoteControlAnnounceOperation: FfiConverterRustBuffer {
     typealias SwiftType = RemoteControlAnnounceOperation?
 
@@ -6562,6 +9117,78 @@ fileprivate struct FfiConverterOptionTypeRemoteControlAnnounceOperation: FfiConv
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeRemoteControlAnnounceOperation.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeRemoteInterfacePage: FfiConverterRustBuffer {
+    typealias SwiftType = RemoteInterfacePage?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeRemoteInterfacePage.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeRemoteInterfacePage.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeRemoteLoRaProfile: FfiConverterRustBuffer {
+    typealias SwiftType = RemoteLoRaProfile?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeRemoteLoRaProfile.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeRemoteLoRaProfile.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeRemoteNodePower: FfiConverterRustBuffer {
+    typealias SwiftType = RemoteNodePower?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeRemoteNodePower.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeRemoteNodePower.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -6684,6 +9311,31 @@ fileprivate struct FfiConverterOptionTypeSafeUint: FfiConverterRustBuffer {
         case 1: return try FfiConverterTypeSafeUint.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
+    typealias SwiftType = [String]
+
+    public static func write(_ value: [String], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterString.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [String] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [String]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterString.read(from: &buf))
+        }
+        return seq
     }
 }
 
@@ -6857,6 +9509,56 @@ fileprivate struct FfiConverterSequenceTypeRemoteControlTargetSnapshot: FfiConve
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeRemoteControlTargetSnapshot.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeRemoteInterfaceEntry: FfiConverterRustBuffer {
+    typealias SwiftType = [RemoteInterfaceEntry]
+
+    public static func write(_ value: [RemoteInterfaceEntry], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeRemoteInterfaceEntry.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [RemoteInterfaceEntry] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [RemoteInterfaceEntry]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeRemoteInterfaceEntry.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeRemotePeerEntry: FfiConverterRustBuffer {
+    typealias SwiftType = [RemotePeerEntry]
+
+    public static func write(_ value: [RemotePeerEntry], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeRemotePeerEntry.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [RemotePeerEntry] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [RemotePeerEntry]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeRemotePeerEntry.read(from: &buf))
         }
         return seq
     }
@@ -7647,6 +10349,21 @@ public func cancelLxmfMessage(input: CancelLxmfMessageInput)async  -> CancelLxmf
 
         )
 }
+public func changeRemoteNode(input: ChangeRemoteNodeInput)async  -> ChangeRemoteNodeOutcome  {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_prns_app_fn_func_change_remote_node(FfiConverterTypeChangeRemoteNodeInput_lower(input)
+                )
+            },
+            pollFunc: ffi_prns_app_rust_future_poll_rust_buffer,
+            completeFunc: ffi_prns_app_rust_future_complete_rust_buffer,
+            freeFunc: ffi_prns_app_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeChangeRemoteNodeOutcome_lift,
+            errorHandler: nil
+
+        )
+}
 public func createManualContact(input: CreateManualContactInput)async  -> ContactMutationOutcome  {
     return
         try!  await uniffiRustCallAsync(
@@ -7887,6 +10604,21 @@ public func previewIdentityImport(identity: Data) -> IdentityImportPreviewOutcom
     )
 })
 }
+public func readRemoteNode(input: ReadRemoteNodeInput)async  -> ReadRemoteNodeOutcome  {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_prns_app_fn_func_read_remote_node(FfiConverterTypeReadRemoteNodeInput_lower(input)
+                )
+            },
+            pollFunc: ffi_prns_app_rust_future_poll_rust_buffer,
+            completeFunc: ffi_prns_app_rust_future_complete_rust_buffer,
+            freeFunc: ffi_prns_app_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeReadRemoteNodeOutcome_lift,
+            errorHandler: nil
+
+        )
+}
 /**
  * Refresh the full snapshot through the existing native actor.
  *
@@ -8029,6 +10761,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_prns_app_checksum_func_cancel_lxmf_message() != 17446) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_prns_app_checksum_func_change_remote_node() != 10229) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_prns_app_checksum_func_create_manual_contact() != 1882) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -8084,6 +10819,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_prns_app_checksum_func_preview_identity_import() != 31445) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_prns_app_checksum_func_read_remote_node() != 34426) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_prns_app_checksum_func_read_snapshot() != 29351) {

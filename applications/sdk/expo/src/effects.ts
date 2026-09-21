@@ -1,5 +1,9 @@
 import { Data, Effect, type Scope } from "effect";
 import type {
+  ReadRemoteNodeInput,
+  ReadRemoteNodeOutcome,
+  ChangeRemoteNodeInput,
+  ChangeRemoteNodeOutcome,
   AnnounceRemoteControlTargetInput,
   RemoteControlAnnounceOutcome,
   DescribeRemoteControlTargetInput,
@@ -18,6 +22,8 @@ export type DevelopmentRuntimeOperationName =
   | "approvePairing"
   | "describeTarget"
   | "announceTarget"
+  | "readRemoteNode"
+  | "changeRemoteNode"
   | "initiatePairing"
   | "rejectPairing"
   | "reset"
@@ -58,6 +64,12 @@ export type DevelopmentRuntimeFailure =
   | DevelopmentRuntimeStopError;
 
 export type EffectDevelopmentRuntime = {
+  readonly readRemoteNode: (
+    input: ReadRemoteNodeInput,
+  ) => Effect.Effect<ReadRemoteNodeOutcome, DevelopmentRuntimeOperationError>;
+  readonly changeRemoteNode: (
+    input: ChangeRemoteNodeInput,
+  ) => Effect.Effect<ChangeRemoteNodeOutcome, DevelopmentRuntimeOperationError>;
   readonly announceRemoteControlTarget: (
     input: AnnounceRemoteControlTargetInput,
   ) => Effect.Effect<RemoteControlAnnounceOutcome, DevelopmentRuntimeOperationError>;
@@ -112,6 +124,10 @@ export function makeEffectDevelopmentRuntime(
   runtime: DevelopmentRuntime,
 ): EffectDevelopmentRuntime {
   return {
+    readRemoteNode: (input) =>
+      runtimeCall("readRemoteNode", (signal) => runtime.readRemoteNode(input, signal)),
+    changeRemoteNode: (input) =>
+      runtimeCall("changeRemoteNode", (signal) => runtime.changeRemoteNode(input, signal)),
     startDevelopmentNode: (input) =>
       runtimeCall("start", () => runtime.startDevelopmentNode(input)),
     readDevelopmentNodeSnapshot: runtimeCall("snapshot", runtime.readDevelopmentNodeSnapshot),

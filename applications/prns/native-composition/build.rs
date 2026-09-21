@@ -1,9 +1,11 @@
 use std::path::PathBuf;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    const CONTRACT_SOURCE: &str = "src/contract.rs";
+    const CONTRACT_SOURCES: &[&str] = &["src/contract.rs", "src/contract/remote_management.rs"];
     const COMPATIBILITY_SOURCE: &str = "../../release/compatibility.json";
-    println!("cargo:rerun-if-changed={CONTRACT_SOURCE}");
+    for source in CONTRACT_SOURCES {
+        println!("cargo:rerun-if-changed={source}");
+    }
     println!("cargo:rerun-if-changed={COMPATIBILITY_SOURCE}");
 
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").ok_or_else(|| {
@@ -12,7 +14,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "Cargo did not provide CARGO_MANIFEST_DIR",
         )
     })?);
-    let app_fingerprint = fingerprint(&std::fs::read(manifest.join(CONTRACT_SOURCE))?);
+    let mut contract = Vec::new();
+    for source in CONTRACT_SOURCES {
+        contract.extend_from_slice(source.as_bytes());
+        contract.push(0);
+        contract.extend_from_slice(&std::fs::read(manifest.join(source))?);
+        contract.push(0);
+    }
+    let app_fingerprint = fingerprint(&contract);
     let compatibility: serde_json::Value =
         serde_json::from_slice(&std::fs::read(manifest.join(COMPATIBILITY_SOURCE))?)?;
     let host_fingerprint = compatibility

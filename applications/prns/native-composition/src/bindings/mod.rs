@@ -161,6 +161,16 @@ pub async fn announce_target(
 }
 
 #[uniffi::export]
+pub async fn read_remote_node(input: ReadRemoteNodeInput) -> ReadRemoteNodeOutcome {
+    crate::lifecycle::admission::read_remote_node(input).await
+}
+
+#[uniffi::export]
+pub async fn change_remote_node(input: ChangeRemoteNodeInput) -> ChangeRemoteNodeOutcome {
+    crate::lifecycle::admission::change_remote_node(input).await
+}
+
+#[uniffi::export]
 pub async fn save_observed_destination(input: ContactDestinationInput) -> ContactMutationOutcome {
     crate::lifecycle::admission::save_observed_destination(input).await
 }

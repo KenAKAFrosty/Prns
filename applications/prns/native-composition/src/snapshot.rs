@@ -4,7 +4,8 @@ use std::sync::{Mutex, MutexGuard};
 use crate::contract::{
     DevelopmentNodeFailure, DevelopmentNodeOperation, DevelopmentNodeOperationKind,
     DevelopmentNodeRuntime, DevelopmentNodeSnapshot, LocalHostState, LxmfHealth, LxmfHealthState,
-    PrimaryIdentityState, RemoteControlAnnounceOperation, RemoteControlAnnounceStatus,
+    PrimaryIdentityState, RemoteChangeOperation, RemoteChangeStatus,
+    RemoteControlAnnounceOperation, RemoteControlAnnounceStatus,
     RemoteControlAnnounceUnknownReason,
 };
 
@@ -113,6 +114,7 @@ impl SnapshotStore {
     pub fn fail(&self, failure: DevelopmentNodeFailure) {
         self.update(|snapshot| {
             interrupt_announcement(&mut snapshot.last_announcement);
+            interrupt_change(&mut snapshot.last_remote_change);
             let explicit_stop_in_progress = self.explicit_stop_in_progress.load(Ordering::Acquire);
             if !explicit_stop_in_progress {
                 snapshot.runtime = DevelopmentNodeRuntime::Failed;
@@ -135,6 +137,7 @@ impl SnapshotStore {
             .store(false, Ordering::Release);
         self.update(|snapshot| {
             interrupt_announcement(&mut snapshot.last_announcement);
+            interrupt_change(&mut snapshot.last_remote_change);
             snapshot.runtime = DevelopmentNodeRuntime::Failed;
             if !matches!(
                 &snapshot.local_host,
@@ -186,6 +189,8 @@ impl SnapshotStore {
             next.generation_id = snapshot.revision.saturating_add(1);
             next.last_announcement = snapshot.last_announcement.clone();
             interrupt_announcement(&mut next.last_announcement);
+            next.last_remote_change = snapshot.last_remote_change.clone();
+            interrupt_change(&mut next.last_remote_change);
             next.runtime = DevelopmentNodeRuntime::Starting;
             next.primary_identity = primary_identity;
             *snapshot = next;
@@ -200,10 +205,13 @@ impl SnapshotStore {
             let generation_id = snapshot.generation_id;
             let mut last_announcement = snapshot.last_announcement.clone();
             interrupt_announcement(&mut last_announcement);
+            let mut last_remote_change = snapshot.last_remote_change.clone();
+            interrupt_change(&mut last_remote_change);
             *snapshot = DevelopmentNodeSnapshot::stopped();
             snapshot.primary_identity = primary_identity;
             snapshot.generation_id = generation_id;
             snapshot.last_announcement = last_announcement;
+            snapshot.last_remote_change = last_remote_change;
         });
     }
 
@@ -213,8 +221,21 @@ impl SnapshotStore {
         self.update(|snapshot| *snapshot = DevelopmentNodeSnapshot::stopped());
     }
 
-    pub fn interrupt_announcement(&self) {
-        self.update(|snapshot| interrupt_announcement(&mut snapshot.last_announcement));
+    pub fn interrupt_pending_operations(&self) {
+        self.update(|snapshot| {
+            interrupt_announcement(&mut snapshot.last_announcement);
+            interrupt_change(&mut snapshot.last_remote_change);
+        });
+    }
+}
+
+fn interrupt_change(operation: &mut Option<RemoteChangeOperation>) {
+    if let Some(operation) = operation {
+        if operation.status == RemoteChangeStatus::Pending {
+            operation.status = RemoteChangeStatus::OutcomeUnknown {
+                reason: RemoteControlAnnounceUnknownReason::NodeStopped,
+            };
+        }
     }
 }
 
@@ -237,6 +258,63 @@ impl Default for SnapshotStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stopping_never_rewrites_a_settled_remote_change() {
+        for status in [
+            RemoteChangeStatus::Applied,
+            RemoteChangeStatus::Unchanged,
+            RemoteChangeStatus::Scheduled,
+            RemoteChangeStatus::Failed {
+                stage: crate::contract::RemoteManagementFailureStage::Persistence,
+                detail: "could not save".to_owned(),
+            },
+            RemoteChangeStatus::OutcomeUnknown {
+                reason: RemoteControlAnnounceUnknownReason::ConnectionLost,
+            },
+        ] {
+            let store = SnapshotStore::new();
+            store.update(|snapshot| {
+                snapshot.last_remote_change = Some(RemoteChangeOperation {
+                    operation_id: 10,
+                    generation_id: snapshot.generation_id,
+                    target_identity_fingerprint: vec![3; 16],
+                    change: crate::contract::RemoteNodeChange::WakeRadios,
+                    status: status.clone(),
+                })
+            });
+            store.interrupt_pending_operations();
+            store.stopped();
+            store.begin_generation(PrimaryIdentityState::Missing);
+            assert_eq!(store.read().last_remote_change.unwrap().status, status);
+        }
+    }
+
+    #[test]
+    fn change_result_survives_stop_and_restart_but_reset_clears_it() {
+        let store = SnapshotStore::new();
+        store.update(|snapshot| {
+            snapshot.last_remote_change = Some(RemoteChangeOperation {
+                operation_id: 9,
+                generation_id: snapshot.generation_id,
+                target_identity_fingerprint: vec![2; 16],
+                change: crate::contract::RemoteNodeChange::SleepRadios,
+                status: RemoteChangeStatus::Pending,
+            });
+        });
+        store.stopped();
+        let interrupted = store.read().last_remote_change;
+        assert!(matches!(
+            interrupted.as_ref().map(|operation| &operation.status),
+            Some(RemoteChangeStatus::OutcomeUnknown {
+                reason: RemoteControlAnnounceUnknownReason::NodeStopped
+            })
+        ));
+        store.begin_generation(PrimaryIdentityState::Missing);
+        assert_eq!(store.read().last_remote_change, interrupted);
+        store.reset();
+        assert_eq!(store.read().last_remote_change, None);
+    }
 
     #[test]
     fn generation_identity_changes_only_when_a_native_generation_begins() {

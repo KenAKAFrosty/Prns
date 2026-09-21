@@ -65,6 +65,10 @@ export function formatRequestKind(kind: RemoteControlRequestKind): string {
       return "Restore the previous Wi-Fi network";
     case RemoteControlRequestKind.InspectWifiTransaction:
       return "Check Wi-Fi setup";
+    case RemoteControlRequestKind.InventoryInterfaceDiscoveryGroups:
+      return "View discovery groups";
+    case RemoteControlRequestKind.ReplaceInterfaceDiscoveryGroups:
+      return "Change discovery groups";
   }
 }
 

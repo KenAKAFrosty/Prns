@@ -32,6 +32,7 @@ import * as developmentRuntimeContext from "@/native/development-runtime-context
 import { ManagedNodeScreen } from "./managed-node-screen";
 import { LocalNodeScreen, NodesScreen } from "./nodes-screen";
 import { PairNodeScreen } from "./pair-node-screen";
+import { appendPage, reconcileRemoteChange } from "./remote-management-panel";
 let mockRouteFocused = true;
 jest.mock("expo-router", () => ({
   Link: ({ children }: { readonly children: ReactNode }) => children,
@@ -139,6 +140,7 @@ function snapshot(
     pairingCandidates,
     pairedTargets,
     lastAnnouncement: undefined,
+    lastRemoteChange: undefined,
     generationId: 0n,
     activeOperation: undefined,
     failure: undefined,
@@ -170,6 +172,8 @@ function fakeProvider(
     rejectRemoteControlPairing: async () => Bindings.RemoteControlPairingCommandOutcome.Busy.new(),
     describeRemoteControlTarget: async () => Bindings.RemoteControlDescribeOutcome.Busy.new(),
     announceRemoteControlTarget: async () => Bindings.RemoteControlAnnounceOutcome.Busy.new(),
+    readRemoteNode: async () => Bindings.ReadRemoteNodeOutcome.Busy.new(),
+    changeRemoteNode: async () => Bindings.ChangeRemoteNodeOutcome.Busy.new(),
     saveObservedDestination: async () => Bindings.ContactMutationOutcome.NotObserved.new(),
     createManualContact: async () => Bindings.ContactMutationOutcome.NotFound.new(),
     setContactAlias: async () => Bindings.ContactMutationOutcome.NotFound.new(),
@@ -220,6 +224,8 @@ function fakeProvider(
       Bindings.makeEffectDevelopmentRuntime(runtime).describeRemoteControlTarget,
     announceRemoteControlTarget: (input) =>
       Effect.promise(() => runtime.announceRemoteControlTarget(input)),
+    readRemoteNode: Bindings.makeEffectDevelopmentRuntime(runtime).readRemoteNode,
+    changeRemoteNode: Bindings.makeEffectDevelopmentRuntime(runtime).changeRemoteNode,
     stopDevelopmentNode: Effect.promise(runtime.stopDevelopmentNode),
     resetDevelopmentData: Effect.promise(runtime.resetDevelopmentData),
   };
@@ -1848,7 +1854,7 @@ describe("Foundation 1 Nodes runtime binding", () => {
         expect(view.getByText("Operator")).toBeTruthy();
         expect(
           view.queryByText(
-            "This pairing also allows this device to manage other controllers' access.",
+            "Administrator access also allows this device to grant or remove other controllers' access.",
           ),
         ).toBeNull();
       }
@@ -1878,8 +1884,13 @@ describe("Foundation 1 Nodes runtime binding", () => {
     );
     await waitFor(() => expect(view.getByText("Administrator")).toBeTruthy());
     expect(
-      view.getByText("This pairing also allows this device to manage other controllers' access."),
+      view.getByText(
+        "Administrator access also allows this device to grant or remove other controllers' access.",
+      ),
     ).toBeTruthy();
+    expect(view.getByText("View node information")).toBeTruthy();
+    expect(view.queryByText("Full control")).toBeNull();
+    expect(view.getByText("Codes match — approve")).toBeTruthy();
     view.unmount();
     await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
   });
@@ -2267,5 +2278,160 @@ describe("Foundation 1 Nodes runtime binding", () => {
     expect(view.getByText("Open saved contact")).toBeTruthy();
     view.unmount();
     await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
+  });
+
+  it("reads a managed node and confirms a setting once before showing its native result", async () => {
+    const target = {
+      targetIdentityFingerprint: observedIdentity,
+      destination: observedDestination,
+      controllerIdentityFingerprint: identityHash(new Uint8Array(16).fill(0x55)),
+      permittedRequests: [
+        Bindings.RemoteControlRequestKind.Describe,
+        Bindings.RemoteControlRequestKind.SetSystemPower,
+      ],
+    };
+    const current = snapshot(3n, false, Bindings.RemoteControlPairingState.Searching.new(), [
+      target,
+    ]);
+    const readRemoteNode = jest.fn(async () =>
+      Bindings.ReadRemoteNodeOutcome.Read.new({
+        availableRequests: target.permittedRequests,
+        rttMillis: 12n,
+        data: Bindings.RemoteNodeData.Overview.new({
+          overview: { firmware: "Test firmware", power: undefined, interfaces: undefined },
+        }),
+      }),
+    );
+    const changeRemoteNode = jest.fn(async (input: Bindings.ChangeRemoteNodeInput) => {
+      current.lastRemoteChange = {
+        operationId: 1n,
+        generationId: 0n,
+        targetIdentityFingerprint: observedIdentity,
+        change: input.change,
+        status: Bindings.RemoteChangeStatus.Applied.new(),
+      };
+      return Bindings.ChangeRemoteNodeOutcome.Accepted.new({
+        operation: {
+          ...current.lastRemoteChange,
+          status: Bindings.RemoteChangeStatus.Pending.new(),
+        },
+      });
+    });
+    const provider = fakeProvider(
+      jest.fn(),
+      { readRemoteNode, changeRemoteNode, readDevelopmentNodeSnapshot: async () => current },
+      false,
+      Bindings.RemoteControlPairingState.Searching.new(),
+      [target],
+    );
+    const view = render(
+      <DevelopmentRuntimeProvider provider={provider} refreshIntervalMillis={60000}>
+        <ManagedNodeScreen />
+      </DevelopmentRuntimeProvider>,
+    );
+    fireEvent.press(await view.findByRole("button", { name: "Load node information" }));
+    expect(await view.findByText("Test firmware")).toBeTruthy();
+    fireEvent.press(view.getByRole("button", { name: "Sleep node" }));
+    expect(changeRemoteNode).not.toHaveBeenCalled();
+    fireEvent.press(view.getByRole("button", { name: "Put node to sleep" }));
+    await waitFor(() => expect(changeRemoteNode).toHaveBeenCalledTimes(1));
+    expect(changeRemoteNode.mock.calls[0]?.[0].change).toEqual(
+      Bindings.RemoteNodeChange.SystemPower.new({ awake: false }),
+    );
+    expect(
+      await view.findByText(
+        "The node applied the change. Refresh its details to see the latest information.",
+      ),
+    ).toBeTruthy();
+    expect(view.queryByRole("button", { name: "Sleep node" })).toBeNull();
+    view.unmount();
+  });
+
+  it("cancels a managed settings read on blur and ignores its stale result", async () => {
+    let signal: AbortSignal | undefined;
+    const readRemoteNode = jest.fn<
+      ReturnType<DevelopmentRuntime["readRemoteNode"]>,
+      Parameters<DevelopmentRuntime["readRemoteNode"]>
+    >((_input, caller) => {
+      signal = caller;
+      return new Promise(() => {});
+    });
+    const provider = fakeProvider(
+      jest.fn(),
+      { readRemoteNode },
+      false,
+      Bindings.RemoteControlPairingState.Searching.new(),
+      [
+        {
+          targetIdentityFingerprint: observedIdentity,
+          destination: observedDestination,
+          controllerIdentityFingerprint: identityHash(new Uint8Array(16).fill(0x55)),
+          permittedRequests: [Bindings.RemoteControlRequestKind.Describe],
+        },
+      ],
+    );
+    const page = () => (
+      <DevelopmentRuntimeProvider provider={provider} refreshIntervalMillis={60000}>
+        <ManagedNodeScreen />
+      </DevelopmentRuntimeProvider>
+    );
+    const view = render(page());
+    fireEvent.press(await view.findByRole("button", { name: "Load node information" }));
+    await waitFor(() => expect(signal).toBeDefined());
+    mockRouteFocused = false;
+    view.rerender(page());
+    await waitFor(() => expect(signal?.aborted).toBe(true));
+    mockRouteFocused = true;
+    view.rerender(page());
+    expect(view.getByRole("button", { name: "Load node information" })).toBeEnabled();
+    expect(
+      view.queryByText("The node could not be read. Check its connection and try again."),
+    ).toBeNull();
+    view.unmount();
+  });
+
+  it("bounds combined remote inventory and rejects duplicate or empty continuations", () => {
+    const id = (entry: Uint8Array) => entry;
+    const one = new Uint8Array([1]);
+    const two = new Uint8Array([2]);
+    expect(
+      appendPage({ entries: [one], next: one }, { entries: [two], next: undefined }, id).entries,
+    ).toHaveLength(2);
+    expect(() =>
+      appendPage({ entries: [one], next: one }, { entries: [one], next: two }, id),
+    ).toThrow();
+    expect(() =>
+      appendPage({ entries: [one], next: one }, { entries: [], next: two }, id),
+    ).toThrow();
+    expect(() =>
+      appendPage(
+        undefined,
+        {
+          entries: Array.from({ length: 129 }, (_, index) => new Uint8Array([index])),
+          next: undefined,
+        },
+        id,
+      ),
+    ).toThrow();
+  });
+  it("does not restore an old pending write after another node owns the latest change slot", () => {
+    const first: Bindings.RemoteChangeOperation = {
+      operationId: 1n,
+      generationId: 1n,
+      targetIdentityFingerprint: observedIdentity,
+      change: Bindings.RemoteNodeChange.WakeRadios.new(),
+      status: Bindings.RemoteChangeStatus.Pending.new(),
+    };
+    const second = {
+      ...first,
+      operationId: 2n,
+      targetIdentityFingerprint: new Uint8Array(16).fill(0x66),
+    };
+    expect(reconcileRemoteChange(first, second)?.status.tag).toBe(
+      Bindings.RemoteChangeStatus_Tags.OutcomeUnknown,
+    );
+    const completed = { ...first, status: Bindings.RemoteChangeStatus.Applied.new() };
+    expect(reconcileRemoteChange(completed, second)).toBe(completed);
+    expect(reconcileRemoteChange(first, undefined)).toBe(first);
   });
 });

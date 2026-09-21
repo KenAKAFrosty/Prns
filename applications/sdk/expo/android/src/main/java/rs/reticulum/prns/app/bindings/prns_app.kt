@@ -652,6 +652,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_prns_app_checksum_func_cancel_lxmf_message(
     ): Int
+    external fun uniffi_prns_app_checksum_func_change_remote_node(
+    ): Int
     external fun uniffi_prns_app_checksum_func_create_manual_contact(
     ): Int
     external fun uniffi_prns_app_checksum_func_delete_contact(
@@ -690,6 +692,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_prns_app_checksum_func_preview_identity_import(
     ): Int
+    external fun uniffi_prns_app_checksum_func_read_remote_node(
+    ): Int
     external fun uniffi_prns_app_checksum_func_read_snapshot(
     ): Int
     external fun uniffi_prns_app_checksum_func_reject_pairing(
@@ -726,6 +730,8 @@ internal object UniffiLib {
     external fun uniffi_prns_app_fn_func_binding_contract(uniffi_out_err: UniffiRustCallStatus,
     ): RustBuffer.ByValue
     external fun uniffi_prns_app_fn_func_cancel_lxmf_message(`input`: RustBuffer.ByValue,
+    ): Long
+    external fun uniffi_prns_app_fn_func_change_remote_node(`input`: RustBuffer.ByValue,
     ): Long
     external fun uniffi_prns_app_fn_func_create_manual_contact(`input`: RustBuffer.ByValue,
     ): Long
@@ -765,6 +771,8 @@ internal object UniffiLib {
     ): RustBuffer.ByValue
     external fun uniffi_prns_app_fn_func_preview_identity_import(`identity`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
     ): RustBuffer.ByValue
+    external fun uniffi_prns_app_fn_func_read_remote_node(`input`: RustBuffer.ByValue,
+    ): Long
     external fun uniffi_prns_app_fn_func_read_snapshot(
     ): Long
     external fun uniffi_prns_app_fn_func_reject_pairing(`input`: RustBuffer.ByValue,
@@ -913,6 +921,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_prns_app_checksum_func_cancel_lxmf_message() != 17446) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_prns_app_checksum_func_change_remote_node() != 10229) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_prns_app_checksum_func_create_manual_contact() != 1882) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -968,6 +979,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_prns_app_checksum_func_preview_identity_import() != 31445) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_prns_app_checksum_func_read_remote_node() != 34426) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_prns_app_checksum_func_read_snapshot() != 29351) {
@@ -1154,6 +1168,29 @@ public object FfiConverterUByte: FfiConverter<UByte, Byte> {
 /**
  * @suppress
  */
+public object FfiConverterByte: FfiConverter<Byte, Byte> {
+    override fun lift(value: Byte): Byte {
+        return value
+    }
+
+    override fun read(buf: ByteBuffer): Byte {
+        return buf.get()
+    }
+
+    override fun lower(value: Byte): Byte {
+        return value
+    }
+
+    override fun allocationSize(value: Byte) = 1UL
+
+    override fun write(value: Byte, buf: ByteBuffer) {
+        buf.put(value)
+    }
+}
+
+/**
+ * @suppress
+ */
 public object FfiConverterUShort: FfiConverter<UShort, Short> {
     override fun lift(value: Short): UShort {
         return value.toUShort()
@@ -1175,6 +1212,29 @@ public object FfiConverterUShort: FfiConverter<UShort, Short> {
 
     override fun write(value: UShort, buf: ByteBuffer) {
         buf.putShort(value.toShort())
+    }
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterShort: FfiConverter<Short, Short> {
+    override fun lift(value: Short): Short {
+        return value
+    }
+
+    override fun read(buf: ByteBuffer): Short {
+        return buf.getShort()
+    }
+
+    override fun lower(value: Short): Short {
+        return value
+    }
+
+    override fun allocationSize(value: Short) = 2UL
+
+    override fun write(value: Short, buf: ByteBuffer) {
+        buf.putShort(value)
     }
 }
 
@@ -1470,6 +1530,44 @@ public object FfiConverterTypeCancelLxmfMessageInput: FfiConverterRustBuffer<Can
 
     override fun write(value: CancelLxmfMessageInput, buf: ByteBuffer) {
             FfiConverterULong.write(value.`localRecordId`, buf)
+    }
+}
+
+
+
+data class ChangeRemoteNodeInput (
+    var `targetIdentityFingerprint`: kotlin.ByteArray
+    ,
+    var `change`: RemoteNodeChange
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeChangeRemoteNodeInput: FfiConverterRustBuffer<ChangeRemoteNodeInput> {
+    override fun read(buf: ByteBuffer): ChangeRemoteNodeInput {
+        return ChangeRemoteNodeInput(
+            FfiConverterByteArray.read(buf),
+            FfiConverterTypeRemoteNodeChange.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ChangeRemoteNodeInput) = (
+            FfiConverterByteArray.allocationSize(value.`targetIdentityFingerprint`) +
+            FfiConverterTypeRemoteNodeChange.allocationSize(value.`change`)
+    )
+
+    override fun write(value: ChangeRemoteNodeInput, buf: ByteBuffer) {
+            FfiConverterByteArray.write(value.`targetIdentityFingerprint`, buf)
+            FfiConverterTypeRemoteNodeChange.write(value.`change`, buf)
     }
 }
 
@@ -1771,6 +1869,8 @@ data class DevelopmentNodeSnapshot (
     ,
     var `lastAnnouncement`: RemoteControlAnnounceOperation?
     ,
+    var `lastRemoteChange`: RemoteChangeOperation?
+    ,
     var `activeOperation`: DevelopmentNodeOperation?
     ,
     var `failure`: DevelopmentNodeFailure?
@@ -1802,6 +1902,7 @@ public object FfiConverterTypeDevelopmentNodeSnapshot: FfiConverterRustBuffer<De
             FfiConverterSequenceTypeRemoteControlPairingCandidate.read(buf),
             FfiConverterSequenceTypeRemoteControlTargetSnapshot.read(buf),
             FfiConverterOptionalTypeRemoteControlAnnounceOperation.read(buf),
+            FfiConverterOptionalTypeRemoteChangeOperation.read(buf),
             FfiConverterOptionalTypeDevelopmentNodeOperation.read(buf),
             FfiConverterOptionalTypeDevelopmentNodeFailure.read(buf),
         )
@@ -1820,6 +1921,7 @@ public object FfiConverterTypeDevelopmentNodeSnapshot: FfiConverterRustBuffer<De
             FfiConverterSequenceTypeRemoteControlPairingCandidate.allocationSize(value.`pairingCandidates`) +
             FfiConverterSequenceTypeRemoteControlTargetSnapshot.allocationSize(value.`pairedTargets`) +
             FfiConverterOptionalTypeRemoteControlAnnounceOperation.allocationSize(value.`lastAnnouncement`) +
+            FfiConverterOptionalTypeRemoteChangeOperation.allocationSize(value.`lastRemoteChange`) +
             FfiConverterOptionalTypeDevelopmentNodeOperation.allocationSize(value.`activeOperation`) +
             FfiConverterOptionalTypeDevelopmentNodeFailure.allocationSize(value.`failure`)
     )
@@ -1837,6 +1939,7 @@ public object FfiConverterTypeDevelopmentNodeSnapshot: FfiConverterRustBuffer<De
             FfiConverterSequenceTypeRemoteControlPairingCandidate.write(value.`pairingCandidates`, buf)
             FfiConverterSequenceTypeRemoteControlTargetSnapshot.write(value.`pairedTargets`, buf)
             FfiConverterOptionalTypeRemoteControlAnnounceOperation.write(value.`lastAnnouncement`, buf)
+            FfiConverterOptionalTypeRemoteChangeOperation.write(value.`lastRemoteChange`, buf)
             FfiConverterOptionalTypeDevelopmentNodeOperation.write(value.`activeOperation`, buf)
             FfiConverterOptionalTypeDevelopmentNodeFailure.write(value.`failure`, buf)
     }
@@ -2364,6 +2467,97 @@ public object FfiConverterTypePersistenceSnapshotTransport: FfiConverterRustBuff
 
 
 
+data class ReadRemoteNodeInput (
+    var `targetIdentityFingerprint`: kotlin.ByteArray
+    ,
+    var `query`: RemoteNodeQuery
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeReadRemoteNodeInput: FfiConverterRustBuffer<ReadRemoteNodeInput> {
+    override fun read(buf: ByteBuffer): ReadRemoteNodeInput {
+        return ReadRemoteNodeInput(
+            FfiConverterByteArray.read(buf),
+            FfiConverterTypeRemoteNodeQuery.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ReadRemoteNodeInput) = (
+            FfiConverterByteArray.allocationSize(value.`targetIdentityFingerprint`) +
+            FfiConverterTypeRemoteNodeQuery.allocationSize(value.`query`)
+    )
+
+    override fun write(value: ReadRemoteNodeInput, buf: ByteBuffer) {
+            FfiConverterByteArray.write(value.`targetIdentityFingerprint`, buf)
+            FfiConverterTypeRemoteNodeQuery.write(value.`query`, buf)
+    }
+}
+
+
+
+data class RemoteChangeOperation (
+    var `operationId`: kotlin.ULong
+    ,
+    var `generationId`: kotlin.ULong
+    ,
+    var `targetIdentityFingerprint`: kotlin.ByteArray
+    ,
+    var `change`: RemoteNodeChange
+    ,
+    var `status`: RemoteChangeStatus
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteChangeOperation: FfiConverterRustBuffer<RemoteChangeOperation> {
+    override fun read(buf: ByteBuffer): RemoteChangeOperation {
+        return RemoteChangeOperation(
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterByteArray.read(buf),
+            FfiConverterTypeRemoteNodeChange.read(buf),
+            FfiConverterTypeRemoteChangeStatus.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: RemoteChangeOperation) = (
+            FfiConverterULong.allocationSize(value.`operationId`) +
+            FfiConverterULong.allocationSize(value.`generationId`) +
+            FfiConverterByteArray.allocationSize(value.`targetIdentityFingerprint`) +
+            FfiConverterTypeRemoteNodeChange.allocationSize(value.`change`) +
+            FfiConverterTypeRemoteChangeStatus.allocationSize(value.`status`)
+    )
+
+    override fun write(value: RemoteChangeOperation, buf: ByteBuffer) {
+            FfiConverterULong.write(value.`operationId`, buf)
+            FfiConverterULong.write(value.`generationId`, buf)
+            FfiConverterByteArray.write(value.`targetIdentityFingerprint`, buf)
+            FfiConverterTypeRemoteNodeChange.write(value.`change`, buf)
+            FfiConverterTypeRemoteChangeStatus.write(value.`status`, buf)
+    }
+}
+
+
+
 /**
  * One process-local result, retained independently of a React subscription.
  */
@@ -2539,6 +2733,489 @@ public object FfiConverterTypeRemoteControlTargetSnapshot: FfiConverterRustBuffe
             FfiConverterByteArray.write(value.`destination`, buf)
             FfiConverterByteArray.write(value.`controllerIdentityFingerprint`, buf)
             FfiConverterSequenceTypeRemoteControlRequestKind.write(value.`permittedRequests`, buf)
+    }
+}
+
+
+
+data class RemoteInterfaceCard (
+    var `name`: kotlin.String
+    ,
+    var `group`: kotlin.String
+    ,
+    var `configuration`: kotlin.String
+    ,
+    var `failure`: kotlin.String
+    ,
+    var `destinations`: kotlin.UInt
+    ,
+    var `transportedLinks`: kotlin.UInt
+    ,
+    var `loraProfile`: RemoteLoRaProfile?
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteInterfaceCard: FfiConverterRustBuffer<RemoteInterfaceCard> {
+    override fun read(buf: ByteBuffer): RemoteInterfaceCard {
+        return RemoteInterfaceCard(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterOptionalTypeRemoteLoRaProfile.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: RemoteInterfaceCard) = (
+            FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterString.allocationSize(value.`group`) +
+            FfiConverterString.allocationSize(value.`configuration`) +
+            FfiConverterString.allocationSize(value.`failure`) +
+            FfiConverterUInt.allocationSize(value.`destinations`) +
+            FfiConverterUInt.allocationSize(value.`transportedLinks`) +
+            FfiConverterOptionalTypeRemoteLoRaProfile.allocationSize(value.`loraProfile`)
+    )
+
+    override fun write(value: RemoteInterfaceCard, buf: ByteBuffer) {
+            FfiConverterString.write(value.`name`, buf)
+            FfiConverterString.write(value.`group`, buf)
+            FfiConverterString.write(value.`configuration`, buf)
+            FfiConverterString.write(value.`failure`, buf)
+            FfiConverterUInt.write(value.`destinations`, buf)
+            FfiConverterUInt.write(value.`transportedLinks`, buf)
+            FfiConverterOptionalTypeRemoteLoRaProfile.write(value.`loraProfile`, buf)
+    }
+}
+
+
+
+data class RemoteInterfaceDetails (
+    var `interfaceId`: kotlin.ByteArray
+    ,
+    var `configuration`: RemoteInterfaceConfiguration
+    ,
+    var `discoveryGroups`: RemoteDiscoveryGroups
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteInterfaceDetails: FfiConverterRustBuffer<RemoteInterfaceDetails> {
+    override fun read(buf: ByteBuffer): RemoteInterfaceDetails {
+        return RemoteInterfaceDetails(
+            FfiConverterByteArray.read(buf),
+            FfiConverterTypeRemoteInterfaceConfiguration.read(buf),
+            FfiConverterTypeRemoteDiscoveryGroups.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: RemoteInterfaceDetails) = (
+            FfiConverterByteArray.allocationSize(value.`interfaceId`) +
+            FfiConverterTypeRemoteInterfaceConfiguration.allocationSize(value.`configuration`) +
+            FfiConverterTypeRemoteDiscoveryGroups.allocationSize(value.`discoveryGroups`)
+    )
+
+    override fun write(value: RemoteInterfaceDetails, buf: ByteBuffer) {
+            FfiConverterByteArray.write(value.`interfaceId`, buf)
+            FfiConverterTypeRemoteInterfaceConfiguration.write(value.`configuration`, buf)
+            FfiConverterTypeRemoteDiscoveryGroups.write(value.`discoveryGroups`, buf)
+    }
+}
+
+
+
+data class RemoteInterfaceEntry (
+    var `interfaceId`: kotlin.ByteArray
+    ,
+    var `kind`: kotlin.String
+    ,
+    var `mode`: RemoteInterfaceMode
+    ,
+    var `connection`: RemoteConnectionState
+    ,
+    var `enabled`: kotlin.Boolean
+    ,
+    var `txBytes`: kotlin.ULong
+    ,
+    var `rxBytes`: kotlin.ULong
+    ,
+    var `links`: kotlin.UInt
+    ,
+    var `rateBytesPerSec`: kotlin.UInt
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteInterfaceEntry: FfiConverterRustBuffer<RemoteInterfaceEntry> {
+    override fun read(buf: ByteBuffer): RemoteInterfaceEntry {
+        return RemoteInterfaceEntry(
+            FfiConverterByteArray.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterTypeRemoteInterfaceMode.read(buf),
+            FfiConverterTypeRemoteConnectionState.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: RemoteInterfaceEntry) = (
+            FfiConverterByteArray.allocationSize(value.`interfaceId`) +
+            FfiConverterString.allocationSize(value.`kind`) +
+            FfiConverterTypeRemoteInterfaceMode.allocationSize(value.`mode`) +
+            FfiConverterTypeRemoteConnectionState.allocationSize(value.`connection`) +
+            FfiConverterBoolean.allocationSize(value.`enabled`) +
+            FfiConverterULong.allocationSize(value.`txBytes`) +
+            FfiConverterULong.allocationSize(value.`rxBytes`) +
+            FfiConverterUInt.allocationSize(value.`links`) +
+            FfiConverterUInt.allocationSize(value.`rateBytesPerSec`)
+    )
+
+    override fun write(value: RemoteInterfaceEntry, buf: ByteBuffer) {
+            FfiConverterByteArray.write(value.`interfaceId`, buf)
+            FfiConverterString.write(value.`kind`, buf)
+            FfiConverterTypeRemoteInterfaceMode.write(value.`mode`, buf)
+            FfiConverterTypeRemoteConnectionState.write(value.`connection`, buf)
+            FfiConverterBoolean.write(value.`enabled`, buf)
+            FfiConverterULong.write(value.`txBytes`, buf)
+            FfiConverterULong.write(value.`rxBytes`, buf)
+            FfiConverterUInt.write(value.`links`, buf)
+            FfiConverterUInt.write(value.`rateBytesPerSec`, buf)
+    }
+}
+
+
+
+data class RemoteInterfacePage (
+    var `entries`: List<RemoteInterfaceEntry>
+    ,
+    var `next`: kotlin.ByteArray?
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteInterfacePage: FfiConverterRustBuffer<RemoteInterfacePage> {
+    override fun read(buf: ByteBuffer): RemoteInterfacePage {
+        return RemoteInterfacePage(
+            FfiConverterSequenceTypeRemoteInterfaceEntry.read(buf),
+            FfiConverterOptionalByteArray.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: RemoteInterfacePage) = (
+            FfiConverterSequenceTypeRemoteInterfaceEntry.allocationSize(value.`entries`) +
+            FfiConverterOptionalByteArray.allocationSize(value.`next`)
+    )
+
+    override fun write(value: RemoteInterfacePage, buf: ByteBuffer) {
+            FfiConverterSequenceTypeRemoteInterfaceEntry.write(value.`entries`, buf)
+            FfiConverterOptionalByteArray.write(value.`next`, buf)
+    }
+}
+
+
+
+data class RemoteLoRaProfile (
+    var `region`: RemoteLoRaRegion
+    ,
+    var `frequencyHz`: kotlin.UInt
+    ,
+    var `spreadingFactor`: kotlin.UByte
+    ,
+    var `bandwidthHz`: kotlin.UInt
+    ,
+    /**
+     * Denominator of the coding rate (5 means 4/5).
+     */
+    var `codingRate`: kotlin.UByte
+    ,
+    var `txPowerDbm`: kotlin.Byte
+    ,
+    var `preambleSymbols`: kotlin.UShort
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteLoRaProfile: FfiConverterRustBuffer<RemoteLoRaProfile> {
+    override fun read(buf: ByteBuffer): RemoteLoRaProfile {
+        return RemoteLoRaProfile(
+            FfiConverterTypeRemoteLoRaRegion.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUByte.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUByte.read(buf),
+            FfiConverterByte.read(buf),
+            FfiConverterUShort.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: RemoteLoRaProfile) = (
+            FfiConverterTypeRemoteLoRaRegion.allocationSize(value.`region`) +
+            FfiConverterUInt.allocationSize(value.`frequencyHz`) +
+            FfiConverterUByte.allocationSize(value.`spreadingFactor`) +
+            FfiConverterUInt.allocationSize(value.`bandwidthHz`) +
+            FfiConverterUByte.allocationSize(value.`codingRate`) +
+            FfiConverterByte.allocationSize(value.`txPowerDbm`) +
+            FfiConverterUShort.allocationSize(value.`preambleSymbols`)
+    )
+
+    override fun write(value: RemoteLoRaProfile, buf: ByteBuffer) {
+            FfiConverterTypeRemoteLoRaRegion.write(value.`region`, buf)
+            FfiConverterUInt.write(value.`frequencyHz`, buf)
+            FfiConverterUByte.write(value.`spreadingFactor`, buf)
+            FfiConverterUInt.write(value.`bandwidthHz`, buf)
+            FfiConverterUByte.write(value.`codingRate`, buf)
+            FfiConverterByte.write(value.`txPowerDbm`, buf)
+            FfiConverterUShort.write(value.`preambleSymbols`, buf)
+    }
+}
+
+
+
+data class RemoteNodeOverview (
+    /**
+     * None means the live capability set does not offer this observation.
+     */
+    var `firmware`: kotlin.String?
+    ,
+    var `power`: RemoteNodePower?
+    ,
+    var `interfaces`: RemoteInterfacePage?
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteNodeOverview: FfiConverterRustBuffer<RemoteNodeOverview> {
+    override fun read(buf: ByteBuffer): RemoteNodeOverview {
+        return RemoteNodeOverview(
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalTypeRemoteNodePower.read(buf),
+            FfiConverterOptionalTypeRemoteInterfacePage.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: RemoteNodeOverview) = (
+            FfiConverterOptionalString.allocationSize(value.`firmware`) +
+            FfiConverterOptionalTypeRemoteNodePower.allocationSize(value.`power`) +
+            FfiConverterOptionalTypeRemoteInterfacePage.allocationSize(value.`interfaces`)
+    )
+
+    override fun write(value: RemoteNodeOverview, buf: ByteBuffer) {
+            FfiConverterOptionalString.write(value.`firmware`, buf)
+            FfiConverterOptionalTypeRemoteNodePower.write(value.`power`, buf)
+            FfiConverterOptionalTypeRemoteInterfacePage.write(value.`interfaces`, buf)
+    }
+}
+
+
+
+data class RemoteNodePower (
+    var `batteryPercent`: kotlin.UByte?
+    ,
+    var `externalPower`: RemoteExternalPower
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteNodePower: FfiConverterRustBuffer<RemoteNodePower> {
+    override fun read(buf: ByteBuffer): RemoteNodePower {
+        return RemoteNodePower(
+            FfiConverterOptionalUByte.read(buf),
+            FfiConverterTypeRemoteExternalPower.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: RemoteNodePower) = (
+            FfiConverterOptionalUByte.allocationSize(value.`batteryPercent`) +
+            FfiConverterTypeRemoteExternalPower.allocationSize(value.`externalPower`)
+    )
+
+    override fun write(value: RemoteNodePower, buf: ByteBuffer) {
+            FfiConverterOptionalUByte.write(value.`batteryPercent`, buf)
+            FfiConverterTypeRemoteExternalPower.write(value.`externalPower`, buf)
+    }
+}
+
+
+
+data class RemotePeerEntry (
+    var `peerId`: kotlin.ByteArray
+    ,
+    var `connection`: RemoteConnectionState
+    ,
+    var `txBytes`: kotlin.ULong
+    ,
+    var `rxBytes`: kotlin.ULong
+    ,
+    var `links`: kotlin.UInt
+    ,
+    var `destinations`: kotlin.UInt
+    ,
+    var `rateBytesPerSec`: kotlin.UInt
+    ,
+    var `radio`: RemotePeerRadio
+    ,
+    var `details`: kotlin.String
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemotePeerEntry: FfiConverterRustBuffer<RemotePeerEntry> {
+    override fun read(buf: ByteBuffer): RemotePeerEntry {
+        return RemotePeerEntry(
+            FfiConverterByteArray.read(buf),
+            FfiConverterTypeRemoteConnectionState.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterTypeRemotePeerRadio.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: RemotePeerEntry) = (
+            FfiConverterByteArray.allocationSize(value.`peerId`) +
+            FfiConverterTypeRemoteConnectionState.allocationSize(value.`connection`) +
+            FfiConverterULong.allocationSize(value.`txBytes`) +
+            FfiConverterULong.allocationSize(value.`rxBytes`) +
+            FfiConverterUInt.allocationSize(value.`links`) +
+            FfiConverterUInt.allocationSize(value.`destinations`) +
+            FfiConverterUInt.allocationSize(value.`rateBytesPerSec`) +
+            FfiConverterTypeRemotePeerRadio.allocationSize(value.`radio`) +
+            FfiConverterString.allocationSize(value.`details`)
+    )
+
+    override fun write(value: RemotePeerEntry, buf: ByteBuffer) {
+            FfiConverterByteArray.write(value.`peerId`, buf)
+            FfiConverterTypeRemoteConnectionState.write(value.`connection`, buf)
+            FfiConverterULong.write(value.`txBytes`, buf)
+            FfiConverterULong.write(value.`rxBytes`, buf)
+            FfiConverterUInt.write(value.`links`, buf)
+            FfiConverterUInt.write(value.`destinations`, buf)
+            FfiConverterUInt.write(value.`rateBytesPerSec`, buf)
+            FfiConverterTypeRemotePeerRadio.write(value.`radio`, buf)
+            FfiConverterString.write(value.`details`, buf)
+    }
+}
+
+
+
+data class RemotePeerPage (
+    var `interfaceId`: kotlin.ByteArray
+    ,
+    var `entries`: List<RemotePeerEntry>
+    ,
+    var `next`: kotlin.ByteArray?
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemotePeerPage: FfiConverterRustBuffer<RemotePeerPage> {
+    override fun read(buf: ByteBuffer): RemotePeerPage {
+        return RemotePeerPage(
+            FfiConverterByteArray.read(buf),
+            FfiConverterSequenceTypeRemotePeerEntry.read(buf),
+            FfiConverterOptionalByteArray.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: RemotePeerPage) = (
+            FfiConverterByteArray.allocationSize(value.`interfaceId`) +
+            FfiConverterSequenceTypeRemotePeerEntry.allocationSize(value.`entries`) +
+            FfiConverterOptionalByteArray.allocationSize(value.`next`)
+    )
+
+    override fun write(value: RemotePeerPage, buf: ByteBuffer) {
+            FfiConverterByteArray.write(value.`interfaceId`, buf)
+            FfiConverterSequenceTypeRemotePeerEntry.write(value.`entries`, buf)
+            FfiConverterOptionalByteArray.write(value.`next`, buf)
     }
 }
 
@@ -3192,6 +3869,107 @@ public object FfiConverterTypeCancelLxmfMessageOutcome : FfiConverterRustBuffer<
 
 
 
+sealed class ChangeRemoteNodeOutcome {
+
+    data class Accepted(
+        val `operation`: rs.reticulum.prns.app.bindings.RemoteChangeOperation) : ChangeRemoteNodeOutcome()
+
+    {
+
+
+        companion object
+    }
+
+    object Busy : ChangeRemoteNodeOutcome()
+
+
+    data class Failed(
+        val `stage`: rs.reticulum.prns.app.bindings.RemoteManagementFailureStage,
+        val `detail`: kotlin.String) : ChangeRemoteNodeOutcome()
+
+    {
+
+
+        companion object
+    }
+
+
+
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeChangeRemoteNodeOutcome : FfiConverterRustBuffer<ChangeRemoteNodeOutcome>{
+    override fun read(buf: ByteBuffer): ChangeRemoteNodeOutcome {
+        return when(buf.getInt()) {
+            1 -> ChangeRemoteNodeOutcome.Accepted(
+                FfiConverterTypeRemoteChangeOperation.read(buf),
+                )
+            2 -> ChangeRemoteNodeOutcome.Busy
+            3 -> ChangeRemoteNodeOutcome.Failed(
+                FfiConverterTypeRemoteManagementFailureStage.read(buf),
+                FfiConverterString.read(buf),
+                )
+            else -> throw RuntimeException("invalid enum value, something is very wrong!!")
+        }
+    }
+
+    override fun allocationSize(value: ChangeRemoteNodeOutcome) = when(value) {
+        is ChangeRemoteNodeOutcome.Accepted -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteChangeOperation.allocationSize(value.`operation`)
+            )
+        }
+        is ChangeRemoteNodeOutcome.Busy -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is ChangeRemoteNodeOutcome.Failed -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteManagementFailureStage.allocationSize(value.`stage`)
+                + FfiConverterString.allocationSize(value.`detail`)
+            )
+        }
+    }
+
+    override fun write(value: ChangeRemoteNodeOutcome, buf: ByteBuffer) {
+        when(value) {
+            is ChangeRemoteNodeOutcome.Accepted -> {
+                buf.putInt(1)
+                FfiConverterTypeRemoteChangeOperation.write(value.`operation`, buf)
+                Unit
+            }
+            is ChangeRemoteNodeOutcome.Busy -> {
+                buf.putInt(2)
+                Unit
+            }
+            is ChangeRemoteNodeOutcome.Failed -> {
+                buf.putInt(3)
+                FfiConverterTypeRemoteManagementFailureStage.write(value.`stage`, buf)
+                FfiConverterString.write(value.`detail`, buf)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
+    }
+}
+
+
+
+
+
 sealed class ContactListOutcome {
 
     data class Listed(
@@ -3739,6 +4517,8 @@ public object FfiConverterTypeDevelopmentNodeFailureStage: FfiConverterRustBuffe
 
 enum class DevelopmentNodeOperationKind {
 
+    REMOTE_READ,
+    REMOTE_CHANGE,
     PAIRING,
     DESCRIBE,
     ANNOUNCE_SELF,
@@ -5355,6 +6135,298 @@ public object FfiConverterTypePrimaryIdentityState : FfiConverterRustBuffer<Prim
 
 
 
+sealed class ReadRemoteNodeOutcome {
+
+    data class Read(
+        val `availableRequests`: List<rs.reticulum.prns.app.bindings.RemoteControlRequestKind>,
+        val `data`: rs.reticulum.prns.app.bindings.RemoteNodeData,
+        val `rttMillis`: kotlin.ULong) : ReadRemoteNodeOutcome()
+
+    {
+
+
+        companion object
+    }
+
+    object Busy : ReadRemoteNodeOutcome()
+
+
+    data class Failed(
+        val `stage`: rs.reticulum.prns.app.bindings.RemoteManagementFailureStage,
+        val `detail`: kotlin.String) : ReadRemoteNodeOutcome()
+
+    {
+
+
+        companion object
+    }
+
+
+
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeReadRemoteNodeOutcome : FfiConverterRustBuffer<ReadRemoteNodeOutcome>{
+    override fun read(buf: ByteBuffer): ReadRemoteNodeOutcome {
+        return when(buf.getInt()) {
+            1 -> ReadRemoteNodeOutcome.Read(
+                FfiConverterSequenceTypeRemoteControlRequestKind.read(buf),
+                FfiConverterTypeRemoteNodeData.read(buf),
+                FfiConverterULong.read(buf),
+                )
+            2 -> ReadRemoteNodeOutcome.Busy
+            3 -> ReadRemoteNodeOutcome.Failed(
+                FfiConverterTypeRemoteManagementFailureStage.read(buf),
+                FfiConverterString.read(buf),
+                )
+            else -> throw RuntimeException("invalid enum value, something is very wrong!!")
+        }
+    }
+
+    override fun allocationSize(value: ReadRemoteNodeOutcome) = when(value) {
+        is ReadRemoteNodeOutcome.Read -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterSequenceTypeRemoteControlRequestKind.allocationSize(value.`availableRequests`)
+                + FfiConverterTypeRemoteNodeData.allocationSize(value.`data`)
+                + FfiConverterULong.allocationSize(value.`rttMillis`)
+            )
+        }
+        is ReadRemoteNodeOutcome.Busy -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is ReadRemoteNodeOutcome.Failed -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteManagementFailureStage.allocationSize(value.`stage`)
+                + FfiConverterString.allocationSize(value.`detail`)
+            )
+        }
+    }
+
+    override fun write(value: ReadRemoteNodeOutcome, buf: ByteBuffer) {
+        when(value) {
+            is ReadRemoteNodeOutcome.Read -> {
+                buf.putInt(1)
+                FfiConverterSequenceTypeRemoteControlRequestKind.write(value.`availableRequests`, buf)
+                FfiConverterTypeRemoteNodeData.write(value.`data`, buf)
+                FfiConverterULong.write(value.`rttMillis`, buf)
+                Unit
+            }
+            is ReadRemoteNodeOutcome.Busy -> {
+                buf.putInt(2)
+                Unit
+            }
+            is ReadRemoteNodeOutcome.Failed -> {
+                buf.putInt(3)
+                FfiConverterTypeRemoteManagementFailureStage.write(value.`stage`, buf)
+                FfiConverterString.write(value.`detail`, buf)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
+    }
+}
+
+
+
+
+
+sealed class RemoteChangeStatus {
+
+    object Pending : RemoteChangeStatus()
+
+
+    object Applied : RemoteChangeStatus()
+
+
+    object Unchanged : RemoteChangeStatus()
+
+
+    object Scheduled : RemoteChangeStatus()
+
+
+    data class Failed(
+        val `stage`: rs.reticulum.prns.app.bindings.RemoteManagementFailureStage,
+        val `detail`: kotlin.String) : RemoteChangeStatus()
+
+    {
+
+
+        companion object
+    }
+
+    data class OutcomeUnknown(
+        val `reason`: rs.reticulum.prns.app.bindings.RemoteControlAnnounceUnknownReason) : RemoteChangeStatus()
+
+    {
+
+
+        companion object
+    }
+
+
+
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteChangeStatus : FfiConverterRustBuffer<RemoteChangeStatus>{
+    override fun read(buf: ByteBuffer): RemoteChangeStatus {
+        return when(buf.getInt()) {
+            1 -> RemoteChangeStatus.Pending
+            2 -> RemoteChangeStatus.Applied
+            3 -> RemoteChangeStatus.Unchanged
+            4 -> RemoteChangeStatus.Scheduled
+            5 -> RemoteChangeStatus.Failed(
+                FfiConverterTypeRemoteManagementFailureStage.read(buf),
+                FfiConverterString.read(buf),
+                )
+            6 -> RemoteChangeStatus.OutcomeUnknown(
+                FfiConverterTypeRemoteControlAnnounceUnknownReason.read(buf),
+                )
+            else -> throw RuntimeException("invalid enum value, something is very wrong!!")
+        }
+    }
+
+    override fun allocationSize(value: RemoteChangeStatus) = when(value) {
+        is RemoteChangeStatus.Pending -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is RemoteChangeStatus.Applied -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is RemoteChangeStatus.Unchanged -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is RemoteChangeStatus.Scheduled -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is RemoteChangeStatus.Failed -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteManagementFailureStage.allocationSize(value.`stage`)
+                + FfiConverterString.allocationSize(value.`detail`)
+            )
+        }
+        is RemoteChangeStatus.OutcomeUnknown -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteControlAnnounceUnknownReason.allocationSize(value.`reason`)
+            )
+        }
+    }
+
+    override fun write(value: RemoteChangeStatus, buf: ByteBuffer) {
+        when(value) {
+            is RemoteChangeStatus.Pending -> {
+                buf.putInt(1)
+                Unit
+            }
+            is RemoteChangeStatus.Applied -> {
+                buf.putInt(2)
+                Unit
+            }
+            is RemoteChangeStatus.Unchanged -> {
+                buf.putInt(3)
+                Unit
+            }
+            is RemoteChangeStatus.Scheduled -> {
+                buf.putInt(4)
+                Unit
+            }
+            is RemoteChangeStatus.Failed -> {
+                buf.putInt(5)
+                FfiConverterTypeRemoteManagementFailureStage.write(value.`stage`, buf)
+                FfiConverterString.write(value.`detail`, buf)
+                Unit
+            }
+            is RemoteChangeStatus.OutcomeUnknown -> {
+                buf.putInt(6)
+                FfiConverterTypeRemoteControlAnnounceUnknownReason.write(value.`reason`, buf)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
+    }
+}
+
+
+
+
+
+
+enum class RemoteConnectionState {
+
+    INITIALIZING,
+    CONNECTED,
+    DEGRADED,
+    RECONNECTING,
+    FAILED,
+    DISCONNECTED,
+    DISABLED,
+    UNKNOWN;
+
+
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteConnectionState: FfiConverterRustBuffer<RemoteConnectionState> {
+    override fun read(buf: ByteBuffer) = try {
+        RemoteConnectionState.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: RemoteConnectionState) = 4UL
+
+    override fun write(value: RemoteConnectionState, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
 
 enum class RemoteControlAnnounceFailureStage {
 
@@ -6348,7 +7420,9 @@ enum class RemoteControlRequestKind {
     ACTIVATE_WIFI_CREDENTIALS,
     CONFIRM_WIFI_CREDENTIALS,
     CANCEL_WIFI_CREDENTIALS,
-    INSPECT_WIFI_TRANSACTION;
+    INSPECT_WIFI_TRANSACTION,
+    INVENTORY_INTERFACE_DISCOVERY_GROUPS,
+    REPLACE_INTERFACE_DISCOVERY_GROUPS;
 
 
 
@@ -6370,6 +7444,1156 @@ public object FfiConverterTypeRemoteControlRequestKind: FfiConverterRustBuffer<R
     override fun allocationSize(value: RemoteControlRequestKind) = 4UL
 
     override fun write(value: RemoteControlRequestKind, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+sealed class RemoteDiscoveryGroups {
+
+    data class Available(
+        val `groups`: List<kotlin.String>) : RemoteDiscoveryGroups()
+
+    {
+
+
+        companion object
+    }
+
+    object Unavailable : RemoteDiscoveryGroups()
+
+
+    object UnknownInterface : RemoteDiscoveryGroups()
+
+
+
+
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteDiscoveryGroups : FfiConverterRustBuffer<RemoteDiscoveryGroups>{
+    override fun read(buf: ByteBuffer): RemoteDiscoveryGroups {
+        return when(buf.getInt()) {
+            1 -> RemoteDiscoveryGroups.Available(
+                FfiConverterSequenceString.read(buf),
+                )
+            2 -> RemoteDiscoveryGroups.Unavailable
+            3 -> RemoteDiscoveryGroups.UnknownInterface
+            else -> throw RuntimeException("invalid enum value, something is very wrong!!")
+        }
+    }
+
+    override fun allocationSize(value: RemoteDiscoveryGroups) = when(value) {
+        is RemoteDiscoveryGroups.Available -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterSequenceString.allocationSize(value.`groups`)
+            )
+        }
+        is RemoteDiscoveryGroups.Unavailable -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is RemoteDiscoveryGroups.UnknownInterface -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+    }
+
+    override fun write(value: RemoteDiscoveryGroups, buf: ByteBuffer) {
+        when(value) {
+            is RemoteDiscoveryGroups.Available -> {
+                buf.putInt(1)
+                FfiConverterSequenceString.write(value.`groups`, buf)
+                Unit
+            }
+            is RemoteDiscoveryGroups.Unavailable -> {
+                buf.putInt(2)
+                Unit
+            }
+            is RemoteDiscoveryGroups.UnknownInterface -> {
+                buf.putInt(3)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
+    }
+}
+
+
+
+
+
+
+enum class RemoteExternalPower {
+
+    UNKNOWN,
+    ABSENT,
+    PRESENT,
+    CHARGING,
+    IDLE;
+
+
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteExternalPower: FfiConverterRustBuffer<RemoteExternalPower> {
+    override fun read(buf: ByteBuffer) = try {
+        RemoteExternalPower.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: RemoteExternalPower) = 4UL
+
+    override fun write(value: RemoteExternalPower, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+sealed class RemoteInterfaceConfiguration {
+
+    data class Available(
+        val `card`: rs.reticulum.prns.app.bindings.RemoteInterfaceCard) : RemoteInterfaceConfiguration()
+
+    {
+
+
+        companion object
+    }
+
+    object Unavailable : RemoteInterfaceConfiguration()
+
+
+    object UnknownInterface : RemoteInterfaceConfiguration()
+
+
+
+
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteInterfaceConfiguration : FfiConverterRustBuffer<RemoteInterfaceConfiguration>{
+    override fun read(buf: ByteBuffer): RemoteInterfaceConfiguration {
+        return when(buf.getInt()) {
+            1 -> RemoteInterfaceConfiguration.Available(
+                FfiConverterTypeRemoteInterfaceCard.read(buf),
+                )
+            2 -> RemoteInterfaceConfiguration.Unavailable
+            3 -> RemoteInterfaceConfiguration.UnknownInterface
+            else -> throw RuntimeException("invalid enum value, something is very wrong!!")
+        }
+    }
+
+    override fun allocationSize(value: RemoteInterfaceConfiguration) = when(value) {
+        is RemoteInterfaceConfiguration.Available -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteInterfaceCard.allocationSize(value.`card`)
+            )
+        }
+        is RemoteInterfaceConfiguration.Unavailable -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is RemoteInterfaceConfiguration.UnknownInterface -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+    }
+
+    override fun write(value: RemoteInterfaceConfiguration, buf: ByteBuffer) {
+        when(value) {
+            is RemoteInterfaceConfiguration.Available -> {
+                buf.putInt(1)
+                FfiConverterTypeRemoteInterfaceCard.write(value.`card`, buf)
+                Unit
+            }
+            is RemoteInterfaceConfiguration.Unavailable -> {
+                buf.putInt(2)
+                Unit
+            }
+            is RemoteInterfaceConfiguration.UnknownInterface -> {
+                buf.putInt(3)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
+    }
+}
+
+
+
+
+
+
+enum class RemoteInterfaceMode {
+
+    FULL,
+    POINT_TO_POINT,
+    ACCESS_POINT,
+    ROAMING,
+    BOUNDARY,
+    GATEWAY,
+    INTERNAL;
+
+
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteInterfaceMode: FfiConverterRustBuffer<RemoteInterfaceMode> {
+    override fun read(buf: ByteBuffer) = try {
+        RemoteInterfaceMode.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: RemoteInterfaceMode) = 4UL
+
+    override fun write(value: RemoteInterfaceMode, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+
+enum class RemoteLoRaRegion {
+
+    US915,
+    AU915,
+    EU433,
+    EU865,
+    EU868,
+    EU869,
+    AS923,
+    IN865,
+    CN470,
+    KR920,
+    JP920,
+    CUSTOM;
+
+
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteLoRaRegion: FfiConverterRustBuffer<RemoteLoRaRegion> {
+    override fun read(buf: ByteBuffer) = try {
+        RemoteLoRaRegion.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: RemoteLoRaRegion) = 4UL
+
+    override fun write(value: RemoteLoRaRegion, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+
+enum class RemoteManagementFailureStage {
+
+    INPUT,
+    NODE,
+    INVENTORY,
+    ROUTE,
+    LINK,
+    IDENTIFICATION,
+    PERMISSION,
+    UNSUPPORTED,
+    UNKNOWN_INTERFACE,
+    REQUEST,
+    TIMEOUT,
+    BUSY,
+    RESPONSE,
+    PERSISTENCE,
+    ROLLBACK;
+
+
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteManagementFailureStage: FfiConverterRustBuffer<RemoteManagementFailureStage> {
+    override fun read(buf: ByteBuffer) = try {
+        RemoteManagementFailureStage.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: RemoteManagementFailureStage) = 4UL
+
+    override fun write(value: RemoteManagementFailureStage, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+sealed class RemoteNodeChange {
+
+    data class InterfacePower(
+        val `interfaceId`: kotlin.ByteArray,
+        val `enabled`: kotlin.Boolean) : RemoteNodeChange()
+
+    {
+
+
+        companion object
+    }
+
+    data class InterfaceMode(
+        val `interfaceId`: kotlin.ByteArray,
+        val `mode`: rs.reticulum.prns.app.bindings.RemoteInterfaceMode) : RemoteNodeChange()
+
+    {
+
+
+        companion object
+    }
+
+    data class InterfaceGroup(
+        val `interfaceId`: kotlin.ByteArray,
+        val `group`: kotlin.String) : RemoteNodeChange()
+
+    {
+
+
+        companion object
+    }
+
+    data class InterfaceLoRa(
+        val `interfaceId`: kotlin.ByteArray,
+        val `profile`: rs.reticulum.prns.app.bindings.RemoteLoRaProfile) : RemoteNodeChange()
+
+    {
+
+
+        companion object
+    }
+
+    data class DiscoveryGroups(
+        val `interfaceId`: kotlin.ByteArray,
+        val `groups`: List<kotlin.String>) : RemoteNodeChange()
+
+    {
+
+
+        companion object
+    }
+
+    data class GnssPower(
+        val `enabled`: kotlin.Boolean) : RemoteNodeChange()
+
+    {
+
+
+        companion object
+    }
+
+    data class DisplayVisibility(
+        val `visible`: kotlin.Boolean) : RemoteNodeChange()
+
+    {
+
+
+        companion object
+    }
+
+    data class DisplayAutoOff(
+        val `enabled`: kotlin.Boolean) : RemoteNodeChange()
+
+    {
+
+
+        companion object
+    }
+
+    data class SystemPower(
+        val `awake`: kotlin.Boolean) : RemoteNodeChange()
+
+    {
+
+
+        companion object
+    }
+
+    data class StationUplink(
+        val `interfaceId`: kotlin.ByteArray,
+        val `enabled`: kotlin.Boolean) : RemoteNodeChange()
+
+    {
+
+
+        companion object
+    }
+
+    data class RadioMode(
+        val `mode`: rs.reticulum.prns.app.bindings.RemoteRadioMode) : RemoteNodeChange()
+
+    {
+
+
+        companion object
+    }
+
+    object SleepRadios : RemoteNodeChange()
+
+
+    object WakeRadios : RemoteNodeChange()
+
+
+
+
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteNodeChange : FfiConverterRustBuffer<RemoteNodeChange>{
+    override fun read(buf: ByteBuffer): RemoteNodeChange {
+        return when(buf.getInt()) {
+            1 -> RemoteNodeChange.InterfacePower(
+                FfiConverterByteArray.read(buf),
+                FfiConverterBoolean.read(buf),
+                )
+            2 -> RemoteNodeChange.InterfaceMode(
+                FfiConverterByteArray.read(buf),
+                FfiConverterTypeRemoteInterfaceMode.read(buf),
+                )
+            3 -> RemoteNodeChange.InterfaceGroup(
+                FfiConverterByteArray.read(buf),
+                FfiConverterString.read(buf),
+                )
+            4 -> RemoteNodeChange.InterfaceLoRa(
+                FfiConverterByteArray.read(buf),
+                FfiConverterTypeRemoteLoRaProfile.read(buf),
+                )
+            5 -> RemoteNodeChange.DiscoveryGroups(
+                FfiConverterByteArray.read(buf),
+                FfiConverterSequenceString.read(buf),
+                )
+            6 -> RemoteNodeChange.GnssPower(
+                FfiConverterBoolean.read(buf),
+                )
+            7 -> RemoteNodeChange.DisplayVisibility(
+                FfiConverterBoolean.read(buf),
+                )
+            8 -> RemoteNodeChange.DisplayAutoOff(
+                FfiConverterBoolean.read(buf),
+                )
+            9 -> RemoteNodeChange.SystemPower(
+                FfiConverterBoolean.read(buf),
+                )
+            10 -> RemoteNodeChange.StationUplink(
+                FfiConverterByteArray.read(buf),
+                FfiConverterBoolean.read(buf),
+                )
+            11 -> RemoteNodeChange.RadioMode(
+                FfiConverterTypeRemoteRadioMode.read(buf),
+                )
+            12 -> RemoteNodeChange.SleepRadios
+            13 -> RemoteNodeChange.WakeRadios
+            else -> throw RuntimeException("invalid enum value, something is very wrong!!")
+        }
+    }
+
+    override fun allocationSize(value: RemoteNodeChange) = when(value) {
+        is RemoteNodeChange.InterfacePower -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterByteArray.allocationSize(value.`interfaceId`)
+                + FfiConverterBoolean.allocationSize(value.`enabled`)
+            )
+        }
+        is RemoteNodeChange.InterfaceMode -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterByteArray.allocationSize(value.`interfaceId`)
+                + FfiConverterTypeRemoteInterfaceMode.allocationSize(value.`mode`)
+            )
+        }
+        is RemoteNodeChange.InterfaceGroup -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterByteArray.allocationSize(value.`interfaceId`)
+                + FfiConverterString.allocationSize(value.`group`)
+            )
+        }
+        is RemoteNodeChange.InterfaceLoRa -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterByteArray.allocationSize(value.`interfaceId`)
+                + FfiConverterTypeRemoteLoRaProfile.allocationSize(value.`profile`)
+            )
+        }
+        is RemoteNodeChange.DiscoveryGroups -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterByteArray.allocationSize(value.`interfaceId`)
+                + FfiConverterSequenceString.allocationSize(value.`groups`)
+            )
+        }
+        is RemoteNodeChange.GnssPower -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterBoolean.allocationSize(value.`enabled`)
+            )
+        }
+        is RemoteNodeChange.DisplayVisibility -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterBoolean.allocationSize(value.`visible`)
+            )
+        }
+        is RemoteNodeChange.DisplayAutoOff -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterBoolean.allocationSize(value.`enabled`)
+            )
+        }
+        is RemoteNodeChange.SystemPower -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterBoolean.allocationSize(value.`awake`)
+            )
+        }
+        is RemoteNodeChange.StationUplink -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterByteArray.allocationSize(value.`interfaceId`)
+                + FfiConverterBoolean.allocationSize(value.`enabled`)
+            )
+        }
+        is RemoteNodeChange.RadioMode -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteRadioMode.allocationSize(value.`mode`)
+            )
+        }
+        is RemoteNodeChange.SleepRadios -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is RemoteNodeChange.WakeRadios -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+    }
+
+    override fun write(value: RemoteNodeChange, buf: ByteBuffer) {
+        when(value) {
+            is RemoteNodeChange.InterfacePower -> {
+                buf.putInt(1)
+                FfiConverterByteArray.write(value.`interfaceId`, buf)
+                FfiConverterBoolean.write(value.`enabled`, buf)
+                Unit
+            }
+            is RemoteNodeChange.InterfaceMode -> {
+                buf.putInt(2)
+                FfiConverterByteArray.write(value.`interfaceId`, buf)
+                FfiConverterTypeRemoteInterfaceMode.write(value.`mode`, buf)
+                Unit
+            }
+            is RemoteNodeChange.InterfaceGroup -> {
+                buf.putInt(3)
+                FfiConverterByteArray.write(value.`interfaceId`, buf)
+                FfiConverterString.write(value.`group`, buf)
+                Unit
+            }
+            is RemoteNodeChange.InterfaceLoRa -> {
+                buf.putInt(4)
+                FfiConverterByteArray.write(value.`interfaceId`, buf)
+                FfiConverterTypeRemoteLoRaProfile.write(value.`profile`, buf)
+                Unit
+            }
+            is RemoteNodeChange.DiscoveryGroups -> {
+                buf.putInt(5)
+                FfiConverterByteArray.write(value.`interfaceId`, buf)
+                FfiConverterSequenceString.write(value.`groups`, buf)
+                Unit
+            }
+            is RemoteNodeChange.GnssPower -> {
+                buf.putInt(6)
+                FfiConverterBoolean.write(value.`enabled`, buf)
+                Unit
+            }
+            is RemoteNodeChange.DisplayVisibility -> {
+                buf.putInt(7)
+                FfiConverterBoolean.write(value.`visible`, buf)
+                Unit
+            }
+            is RemoteNodeChange.DisplayAutoOff -> {
+                buf.putInt(8)
+                FfiConverterBoolean.write(value.`enabled`, buf)
+                Unit
+            }
+            is RemoteNodeChange.SystemPower -> {
+                buf.putInt(9)
+                FfiConverterBoolean.write(value.`awake`, buf)
+                Unit
+            }
+            is RemoteNodeChange.StationUplink -> {
+                buf.putInt(10)
+                FfiConverterByteArray.write(value.`interfaceId`, buf)
+                FfiConverterBoolean.write(value.`enabled`, buf)
+                Unit
+            }
+            is RemoteNodeChange.RadioMode -> {
+                buf.putInt(11)
+                FfiConverterTypeRemoteRadioMode.write(value.`mode`, buf)
+                Unit
+            }
+            is RemoteNodeChange.SleepRadios -> {
+                buf.putInt(12)
+                Unit
+            }
+            is RemoteNodeChange.WakeRadios -> {
+                buf.putInt(13)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
+    }
+}
+
+
+
+
+
+sealed class RemoteNodeData {
+
+    data class Overview(
+        val `overview`: rs.reticulum.prns.app.bindings.RemoteNodeOverview) : RemoteNodeData()
+
+    {
+
+
+        companion object
+    }
+
+    data class Interfaces(
+        val `page`: rs.reticulum.prns.app.bindings.RemoteInterfacePage) : RemoteNodeData()
+
+    {
+
+
+        companion object
+    }
+
+    data class Interface(
+        val `details`: rs.reticulum.prns.app.bindings.RemoteInterfaceDetails) : RemoteNodeData()
+
+    {
+
+
+        companion object
+    }
+
+    data class Peers(
+        val `page`: rs.reticulum.prns.app.bindings.RemotePeerPage) : RemoteNodeData()
+
+    {
+
+
+        companion object
+    }
+
+
+
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteNodeData : FfiConverterRustBuffer<RemoteNodeData>{
+    override fun read(buf: ByteBuffer): RemoteNodeData {
+        return when(buf.getInt()) {
+            1 -> RemoteNodeData.Overview(
+                FfiConverterTypeRemoteNodeOverview.read(buf),
+                )
+            2 -> RemoteNodeData.Interfaces(
+                FfiConverterTypeRemoteInterfacePage.read(buf),
+                )
+            3 -> RemoteNodeData.Interface(
+                FfiConverterTypeRemoteInterfaceDetails.read(buf),
+                )
+            4 -> RemoteNodeData.Peers(
+                FfiConverterTypeRemotePeerPage.read(buf),
+                )
+            else -> throw RuntimeException("invalid enum value, something is very wrong!!")
+        }
+    }
+
+    override fun allocationSize(value: RemoteNodeData) = when(value) {
+        is RemoteNodeData.Overview -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteNodeOverview.allocationSize(value.`overview`)
+            )
+        }
+        is RemoteNodeData.Interfaces -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteInterfacePage.allocationSize(value.`page`)
+            )
+        }
+        is RemoteNodeData.Interface -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteInterfaceDetails.allocationSize(value.`details`)
+            )
+        }
+        is RemoteNodeData.Peers -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemotePeerPage.allocationSize(value.`page`)
+            )
+        }
+    }
+
+    override fun write(value: RemoteNodeData, buf: ByteBuffer) {
+        when(value) {
+            is RemoteNodeData.Overview -> {
+                buf.putInt(1)
+                FfiConverterTypeRemoteNodeOverview.write(value.`overview`, buf)
+                Unit
+            }
+            is RemoteNodeData.Interfaces -> {
+                buf.putInt(2)
+                FfiConverterTypeRemoteInterfacePage.write(value.`page`, buf)
+                Unit
+            }
+            is RemoteNodeData.Interface -> {
+                buf.putInt(3)
+                FfiConverterTypeRemoteInterfaceDetails.write(value.`details`, buf)
+                Unit
+            }
+            is RemoteNodeData.Peers -> {
+                buf.putInt(4)
+                FfiConverterTypeRemotePeerPage.write(value.`page`, buf)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
+    }
+}
+
+
+
+
+
+sealed class RemoteNodeQuery {
+
+    object Overview : RemoteNodeQuery()
+
+
+    data class Interfaces(
+        val `after`: kotlin.ByteArray?) : RemoteNodeQuery()
+
+    {
+
+
+        companion object
+    }
+
+    data class Interface(
+        val `interfaceId`: kotlin.ByteArray) : RemoteNodeQuery()
+
+    {
+
+
+        companion object
+    }
+
+    data class Peers(
+        val `interfaceId`: kotlin.ByteArray,
+        val `after`: kotlin.ByteArray?) : RemoteNodeQuery()
+
+    {
+
+
+        companion object
+    }
+
+
+
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteNodeQuery : FfiConverterRustBuffer<RemoteNodeQuery>{
+    override fun read(buf: ByteBuffer): RemoteNodeQuery {
+        return when(buf.getInt()) {
+            1 -> RemoteNodeQuery.Overview
+            2 -> RemoteNodeQuery.Interfaces(
+                FfiConverterOptionalByteArray.read(buf),
+                )
+            3 -> RemoteNodeQuery.Interface(
+                FfiConverterByteArray.read(buf),
+                )
+            4 -> RemoteNodeQuery.Peers(
+                FfiConverterByteArray.read(buf),
+                FfiConverterOptionalByteArray.read(buf),
+                )
+            else -> throw RuntimeException("invalid enum value, something is very wrong!!")
+        }
+    }
+
+    override fun allocationSize(value: RemoteNodeQuery) = when(value) {
+        is RemoteNodeQuery.Overview -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is RemoteNodeQuery.Interfaces -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterOptionalByteArray.allocationSize(value.`after`)
+            )
+        }
+        is RemoteNodeQuery.Interface -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterByteArray.allocationSize(value.`interfaceId`)
+            )
+        }
+        is RemoteNodeQuery.Peers -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterByteArray.allocationSize(value.`interfaceId`)
+                + FfiConverterOptionalByteArray.allocationSize(value.`after`)
+            )
+        }
+    }
+
+    override fun write(value: RemoteNodeQuery, buf: ByteBuffer) {
+        when(value) {
+            is RemoteNodeQuery.Overview -> {
+                buf.putInt(1)
+                Unit
+            }
+            is RemoteNodeQuery.Interfaces -> {
+                buf.putInt(2)
+                FfiConverterOptionalByteArray.write(value.`after`, buf)
+                Unit
+            }
+            is RemoteNodeQuery.Interface -> {
+                buf.putInt(3)
+                FfiConverterByteArray.write(value.`interfaceId`, buf)
+                Unit
+            }
+            is RemoteNodeQuery.Peers -> {
+                buf.putInt(4)
+                FfiConverterByteArray.write(value.`interfaceId`, buf)
+                FfiConverterOptionalByteArray.write(value.`after`, buf)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
+    }
+}
+
+
+
+
+
+sealed class RemotePeerRadio {
+
+    object NotRadio : RemotePeerRadio()
+
+
+    data class Pending(
+        val `family`: rs.reticulum.prns.app.bindings.RemoteRadioFamily) : RemotePeerRadio()
+
+    {
+
+
+        companion object
+    }
+
+    data class Unavailable(
+        val `family`: rs.reticulum.prns.app.bindings.RemoteRadioFamily) : RemotePeerRadio()
+
+    {
+
+
+        companion object
+    }
+
+    data class Measured(
+        val `family`: rs.reticulum.prns.app.bindings.RemoteRadioFamily,
+        val `rssiDbm`: kotlin.Short,
+        val `snrQuarterDb`: kotlin.Short?,
+        val `qualityTenthsPercent`: kotlin.UShort?) : RemotePeerRadio()
+
+    {
+
+
+        companion object
+    }
+
+
+
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemotePeerRadio : FfiConverterRustBuffer<RemotePeerRadio>{
+    override fun read(buf: ByteBuffer): RemotePeerRadio {
+        return when(buf.getInt()) {
+            1 -> RemotePeerRadio.NotRadio
+            2 -> RemotePeerRadio.Pending(
+                FfiConverterTypeRemoteRadioFamily.read(buf),
+                )
+            3 -> RemotePeerRadio.Unavailable(
+                FfiConverterTypeRemoteRadioFamily.read(buf),
+                )
+            4 -> RemotePeerRadio.Measured(
+                FfiConverterTypeRemoteRadioFamily.read(buf),
+                FfiConverterShort.read(buf),
+                FfiConverterOptionalShort.read(buf),
+                FfiConverterOptionalUShort.read(buf),
+                )
+            else -> throw RuntimeException("invalid enum value, something is very wrong!!")
+        }
+    }
+
+    override fun allocationSize(value: RemotePeerRadio) = when(value) {
+        is RemotePeerRadio.NotRadio -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is RemotePeerRadio.Pending -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteRadioFamily.allocationSize(value.`family`)
+            )
+        }
+        is RemotePeerRadio.Unavailable -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteRadioFamily.allocationSize(value.`family`)
+            )
+        }
+        is RemotePeerRadio.Measured -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteRadioFamily.allocationSize(value.`family`)
+                + FfiConverterShort.allocationSize(value.`rssiDbm`)
+                + FfiConverterOptionalShort.allocationSize(value.`snrQuarterDb`)
+                + FfiConverterOptionalUShort.allocationSize(value.`qualityTenthsPercent`)
+            )
+        }
+    }
+
+    override fun write(value: RemotePeerRadio, buf: ByteBuffer) {
+        when(value) {
+            is RemotePeerRadio.NotRadio -> {
+                buf.putInt(1)
+                Unit
+            }
+            is RemotePeerRadio.Pending -> {
+                buf.putInt(2)
+                FfiConverterTypeRemoteRadioFamily.write(value.`family`, buf)
+                Unit
+            }
+            is RemotePeerRadio.Unavailable -> {
+                buf.putInt(3)
+                FfiConverterTypeRemoteRadioFamily.write(value.`family`, buf)
+                Unit
+            }
+            is RemotePeerRadio.Measured -> {
+                buf.putInt(4)
+                FfiConverterTypeRemoteRadioFamily.write(value.`family`, buf)
+                FfiConverterShort.write(value.`rssiDbm`, buf)
+                FfiConverterOptionalShort.write(value.`snrQuarterDb`, buf)
+                FfiConverterOptionalUShort.write(value.`qualityTenthsPercent`, buf)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
+    }
+}
+
+
+
+
+
+
+enum class RemoteRadioFamily {
+
+    BLUETOOTH,
+    WIFI,
+    LO_RA;
+
+
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteRadioFamily: FfiConverterRustBuffer<RemoteRadioFamily> {
+    override fun read(buf: ByteBuffer) = try {
+        RemoteRadioFamily.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: RemoteRadioFamily) = 4UL
+
+    override fun write(value: RemoteRadioFamily, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+
+enum class RemoteRadioMode {
+
+    BLUETOOTH,
+    ACCESS_POINT;
+
+
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteRadioMode: FfiConverterRustBuffer<RemoteRadioMode> {
+    override fun read(buf: ByteBuffer) = try {
+        RemoteRadioMode.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: RemoteRadioMode) = 4UL
+
+    override fun write(value: RemoteRadioMode, buf: ByteBuffer) {
         buf.putInt(value.ordinal + 1)
     }
 }
@@ -6696,6 +8920,102 @@ public object FfiConverterTypeSendDirectTextOutcome : FfiConverterRustBuffer<Sen
 /**
  * @suppress
  */
+public object FfiConverterOptionalUByte: FfiConverterRustBuffer<kotlin.UByte?> {
+    override fun read(buf: ByteBuffer): kotlin.UByte? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterUByte.read(buf)
+    }
+
+    override fun allocationSize(value: kotlin.UByte?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterUByte.allocationSize(value)
+        }
+    }
+
+    override fun write(value: kotlin.UByte?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterUByte.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalUShort: FfiConverterRustBuffer<kotlin.UShort?> {
+    override fun read(buf: ByteBuffer): kotlin.UShort? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterUShort.read(buf)
+    }
+
+    override fun allocationSize(value: kotlin.UShort?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterUShort.allocationSize(value)
+        }
+    }
+
+    override fun write(value: kotlin.UShort?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterUShort.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalShort: FfiConverterRustBuffer<kotlin.Short?> {
+    override fun read(buf: ByteBuffer): kotlin.Short? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterShort.read(buf)
+    }
+
+    override fun allocationSize(value: kotlin.Short?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterShort.allocationSize(value)
+        }
+    }
+
+    override fun write(value: kotlin.Short?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterShort.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterOptionalULong: FfiConverterRustBuffer<kotlin.ULong?> {
     override fun read(buf: ByteBuffer): kotlin.ULong? {
         if (buf.get().toInt() == 0) {
@@ -6856,6 +9176,38 @@ public object FfiConverterOptionalTypeDevelopmentNodeOperation: FfiConverterRust
 /**
  * @suppress
  */
+public object FfiConverterOptionalTypeRemoteChangeOperation: FfiConverterRustBuffer<RemoteChangeOperation?> {
+    override fun read(buf: ByteBuffer): RemoteChangeOperation? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeRemoteChangeOperation.read(buf)
+    }
+
+    override fun allocationSize(value: RemoteChangeOperation?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeRemoteChangeOperation.allocationSize(value)
+        }
+    }
+
+    override fun write(value: RemoteChangeOperation?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeRemoteChangeOperation.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterOptionalTypeRemoteControlAnnounceOperation: FfiConverterRustBuffer<RemoteControlAnnounceOperation?> {
     override fun read(buf: ByteBuffer): RemoteControlAnnounceOperation? {
         if (buf.get().toInt() == 0) {
@@ -6878,6 +9230,102 @@ public object FfiConverterOptionalTypeRemoteControlAnnounceOperation: FfiConvert
         } else {
             buf.put(1)
             FfiConverterTypeRemoteControlAnnounceOperation.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeRemoteInterfacePage: FfiConverterRustBuffer<RemoteInterfacePage?> {
+    override fun read(buf: ByteBuffer): RemoteInterfacePage? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeRemoteInterfacePage.read(buf)
+    }
+
+    override fun allocationSize(value: RemoteInterfacePage?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeRemoteInterfacePage.allocationSize(value)
+        }
+    }
+
+    override fun write(value: RemoteInterfacePage?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeRemoteInterfacePage.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeRemoteLoRaProfile: FfiConverterRustBuffer<RemoteLoRaProfile?> {
+    override fun read(buf: ByteBuffer): RemoteLoRaProfile? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeRemoteLoRaProfile.read(buf)
+    }
+
+    override fun allocationSize(value: RemoteLoRaProfile?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeRemoteLoRaProfile.allocationSize(value)
+        }
+    }
+
+    override fun write(value: RemoteLoRaProfile?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeRemoteLoRaProfile.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeRemoteNodePower: FfiConverterRustBuffer<RemoteNodePower?> {
+    override fun read(buf: ByteBuffer): RemoteNodePower? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeRemoteNodePower.read(buf)
+    }
+
+    override fun allocationSize(value: RemoteNodePower?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeRemoteNodePower.allocationSize(value)
+        }
+    }
+
+    override fun write(value: RemoteNodePower?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeRemoteNodePower.write(value, buf)
         }
     }
 }
@@ -7038,6 +9486,34 @@ public object FfiConverterOptionalTypeSafeUint: FfiConverterRustBuffer<SafeUint?
         } else {
             buf.put(1)
             FfiConverterTypeSafeUint.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceString: FfiConverterRustBuffer<List<kotlin.String>> {
+    override fun read(buf: ByteBuffer): List<kotlin.String> {
+        val len = buf.getInt()
+        return List<kotlin.String>(len) {
+            FfiConverterString.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<kotlin.String>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterString.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<kotlin.String>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterString.write(it, buf)
         }
     }
 }
@@ -7234,6 +9710,62 @@ public object FfiConverterSequenceTypeRemoteControlTargetSnapshot: FfiConverterR
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeRemoteControlTargetSnapshot.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeRemoteInterfaceEntry: FfiConverterRustBuffer<List<RemoteInterfaceEntry>> {
+    override fun read(buf: ByteBuffer): List<RemoteInterfaceEntry> {
+        val len = buf.getInt()
+        return List<RemoteInterfaceEntry>(len) {
+            FfiConverterTypeRemoteInterfaceEntry.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<RemoteInterfaceEntry>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeRemoteInterfaceEntry.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<RemoteInterfaceEntry>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeRemoteInterfaceEntry.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeRemotePeerEntry: FfiConverterRustBuffer<List<RemotePeerEntry>> {
+    override fun read(buf: ByteBuffer): List<RemotePeerEntry> {
+        val len = buf.getInt()
+        return List<RemotePeerEntry>(len) {
+            FfiConverterTypeRemotePeerEntry.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<RemotePeerEntry>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeRemotePeerEntry.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<RemotePeerEntry>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeRemotePeerEntry.write(it, buf)
         }
     }
 }
@@ -7554,6 +10086,20 @@ public typealias FfiConverterTypeSnapshotBox = FfiConverterTypeDevelopmentNodeSn
     }
 
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+     suspend fun `changeRemoteNode`(`input`: ChangeRemoteNodeInput) : ChangeRemoteNodeOutcome {
+        return uniffiRustCallAsync(
+        UniffiLib.uniffi_prns_app_fn_func_change_remote_node(FfiConverterTypeChangeRemoteNodeInput.lower(`input`),),
+        { future, callback, continuation -> UniffiLib.ffi_prns_app_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_prns_app_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_prns_app_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeChangeRemoteNodeOutcome.lift(it) },
+        // Error FFI converter
+        UniffiNullRustCallStatusErrorHandler,
+    )
+    }
+
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
      suspend fun `createManualContact`(`input`: CreateManualContactInput) : ContactMutationOutcome {
         return uniffiRustCallAsync(
         UniffiLib.uniffi_prns_app_fn_func_create_manual_contact(FfiConverterTypeCreateManualContactInput.lower(`input`),),
@@ -7809,6 +10355,20 @@ public typealias FfiConverterTypeSnapshotBox = FfiConverterTypeDevelopmentNodeSn
     )
     }
 
+
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+     suspend fun `readRemoteNode`(`input`: ReadRemoteNodeInput) : ReadRemoteNodeOutcome {
+        return uniffiRustCallAsync(
+        UniffiLib.uniffi_prns_app_fn_func_read_remote_node(FfiConverterTypeReadRemoteNodeInput.lower(`input`),),
+        { future, callback, continuation -> UniffiLib.ffi_prns_app_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_prns_app_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_prns_app_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeReadRemoteNodeOutcome.lift(it) },
+        // Error FFI converter
+        UniffiNullRustCallStatusErrorHandler,
+    )
+    }
 
         /**
          * Refresh the full snapshot through the existing native actor.

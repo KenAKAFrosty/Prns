@@ -284,6 +284,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_prns_app_fn_func_change_remote_node": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_prns_app_fn_func_create_manual_contact": {
       args: [FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -379,6 +384,11 @@ const DEFINITIONS = {
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
+    "uniffi_prns_app_fn_func_read_remote_node": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_prns_app_fn_func_read_snapshot": {
       args: [],
       ret: FfiType.Handle,
@@ -440,6 +450,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_prns_app_checksum_func_cancel_lxmf_message": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_checksum_func_change_remote_node": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -535,6 +550,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_prns_app_checksum_func_preview_identity_import": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_checksum_func_read_remote_node": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -653,6 +673,7 @@ interface NativeModuleInterface {
     uniffi_prns_app_fn_func_approve_pairing(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_binding_contract(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_prns_app_fn_func_cancel_lxmf_message(input: Uint8Array): bigint;
+    uniffi_prns_app_fn_func_change_remote_node(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_create_manual_contact(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_delete_contact(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_describe_target(input: Uint8Array): bigint;
@@ -672,6 +693,7 @@ interface NativeModuleInterface {
     uniffi_prns_app_fn_func_native_start_with_apple_bluetooth_central_restoration(storageRoot: Uint8Array, input: Uint8Array, centralIdentifier: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_prns_app_fn_func_native_stop(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_prns_app_fn_func_preview_identity_import(identity: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_prns_app_fn_func_read_remote_node(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_read_snapshot(): bigint;
     uniffi_prns_app_fn_func_reject_pairing(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_retry_lxmf_message(input: Uint8Array): bigint;
@@ -685,6 +707,7 @@ interface NativeModuleInterface {
     uniffi_prns_app_checksum_func_approve_pairing(): number;
     uniffi_prns_app_checksum_func_binding_contract(): number;
     uniffi_prns_app_checksum_func_cancel_lxmf_message(): number;
+    uniffi_prns_app_checksum_func_change_remote_node(): number;
     uniffi_prns_app_checksum_func_create_manual_contact(): number;
     uniffi_prns_app_checksum_func_delete_contact(): number;
     uniffi_prns_app_checksum_func_describe_target(): number;
@@ -704,6 +727,7 @@ interface NativeModuleInterface {
     uniffi_prns_app_checksum_func_native_start_with_apple_bluetooth_central_restoration(): number;
     uniffi_prns_app_checksum_func_native_stop(): number;
     uniffi_prns_app_checksum_func_preview_identity_import(): number;
+    uniffi_prns_app_checksum_func_read_remote_node(): number;
     uniffi_prns_app_checksum_func_read_snapshot(): number;
     uniffi_prns_app_checksum_func_reject_pairing(): number;
     uniffi_prns_app_checksum_func_retry_lxmf_message(): number;

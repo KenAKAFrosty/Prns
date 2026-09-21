@@ -24,6 +24,7 @@ function snapshot(revision: bigint): DevelopmentNodeSnapshot {
     pairingCandidates: [],
     pairedTargets: [],
     lastAnnouncement: undefined,
+    lastRemoteChange: undefined,
     generationId: 0n,
     activeOperation: undefined,
     failure: undefined,
@@ -62,6 +63,8 @@ function fakeRuntime(overrides: Partial<DevelopmentRuntime> = {}): DevelopmentRu
     announceRemoteControlTarget: jest.fn(async () =>
       Bindings.RemoteControlAnnounceOutcome.Busy.new(),
     ),
+    readRemoteNode: jest.fn(async () => Bindings.ReadRemoteNodeOutcome.Busy.new()),
+    changeRemoteNode: jest.fn(async () => Bindings.ChangeRemoteNodeOutcome.Busy.new()),
     saveObservedDestination: jest.fn(async () => Bindings.ContactMutationOutcome.NotObserved.new()),
     createManualContact: jest.fn(async () => Bindings.ContactMutationOutcome.NotFound.new()),
     setContactAlias: jest.fn(async () => Bindings.ContactMutationOutcome.NotFound.new()),

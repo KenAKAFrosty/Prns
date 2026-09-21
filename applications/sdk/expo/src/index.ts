@@ -60,6 +60,8 @@ export const {
   measureLxmfText,
   previewIdentityImport,
   readDevelopmentNodeSnapshot,
+  readRemoteNode,
+  changeRemoteNode,
   rejectRemoteControlPairing,
   retryLxmfMessage,
   resetDevelopmentData,

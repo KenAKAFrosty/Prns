@@ -96,6 +96,7 @@ const mockSnapshot: DevelopmentNodeSnapshot = {
   pairingCandidates: [],
   pairedTargets: [],
   lastAnnouncement: undefined,
+  lastRemoteChange: undefined,
   generationId: 0n,
   activeOperation: undefined,
   failure: undefined,

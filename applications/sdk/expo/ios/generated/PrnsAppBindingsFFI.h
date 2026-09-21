@@ -270,6 +270,11 @@ RustBuffer uniffi_prns_app_fn_func_binding_contract(RustCallStatus *_Nonnull out
 uint64_t uniffi_prns_app_fn_func_cancel_lxmf_message(RustBuffer input
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_CHANGE_REMOTE_NODE
+#define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_CHANGE_REMOTE_NODE
+uint64_t uniffi_prns_app_fn_func_change_remote_node(RustBuffer input
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_CREATE_MANUAL_CONTACT
 #define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_CREATE_MANUAL_CONTACT
 uint64_t uniffi_prns_app_fn_func_create_manual_contact(RustBuffer input
@@ -366,6 +371,11 @@ RustBuffer uniffi_prns_app_fn_func_native_stop(RustCallStatus *_Nonnull out_stat
 #ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_PREVIEW_IDENTITY_IMPORT
 #define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_PREVIEW_IDENTITY_IMPORT
 RustBuffer uniffi_prns_app_fn_func_preview_identity_import(RustBuffer identity, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_READ_REMOTE_NODE
+#define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_READ_REMOTE_NODE
+uint64_t uniffi_prns_app_fn_func_read_remote_node(RustBuffer input
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_READ_SNAPSHOT
@@ -694,6 +704,12 @@ uint16_t uniffi_prns_app_checksum_func_cancel_lxmf_message(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_CHANGE_REMOTE_NODE
+#define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_CHANGE_REMOTE_NODE
+uint16_t uniffi_prns_app_checksum_func_change_remote_node(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_CREATE_MANUAL_CONTACT
 #define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_CREATE_MANUAL_CONTACT
 uint16_t uniffi_prns_app_checksum_func_create_manual_contact(void
@@ -805,6 +821,12 @@ uint16_t uniffi_prns_app_checksum_func_native_stop(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_PREVIEW_IDENTITY_IMPORT
 #define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_PREVIEW_IDENTITY_IMPORT
 uint16_t uniffi_prns_app_checksum_func_preview_identity_import(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_READ_REMOTE_NODE
+#define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_READ_REMOTE_NODE
+uint16_t uniffi_prns_app_checksum_func_read_remote_node(void
 
 );
 #endif

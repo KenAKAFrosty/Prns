@@ -168,6 +168,8 @@ impl ShutdownSignal {
 type Reply<T> = oneshot::Sender<T>;
 
 enum Command {
+    RemoteRead(management::ReadCommand),
+    RemoteChange(RemoteChangeOperation, tokio::time::Instant),
     AnnounceSelf(RemoteControlAnnounceOperation),
     Snapshot(oneshot::Sender<DevelopmentNodeSnapshot>),
     Initiate(
@@ -990,6 +992,13 @@ async fn snapshot_async_with_supervisor(supervisor: &Supervisor) -> DevelopmentN
         };
         let current = supervisor.snapshots.read();
         if current.runtime != DevelopmentNodeRuntime::Running
+            || current.active_operation.as_ref().is_some_and(|operation| {
+                matches!(
+                    operation.kind,
+                    DevelopmentNodeOperationKind::RemoteRead
+                        | DevelopmentNodeOperationKind::RemoteChange
+                )
+            })
             || current
                 .last_announcement
                 .as_ref()
@@ -1993,7 +2002,7 @@ fn settle_worker_result(
     } else if !snapshots.is_explicit_stop_in_progress() {
         snapshots.stopped();
     }
-    snapshots.interrupt_announcement();
+    snapshots.interrupt_pending_operations();
 }
 
 const fn failure_stage_for_stop(stage: DevelopmentNodeStopStage) -> DevelopmentNodeFailureStage {
@@ -2354,6 +2363,33 @@ async fn run_actor_loop(
                         },
                     ).await;
                     if stop {
+                        commands.close();
+                        snapshots.set_runtime(DevelopmentNodeRuntime::Stopping);
+                        return Ok(());
+                    }
+                }
+                Some(Command::RemoteRead(command)) => {
+                    let pairing = controls.pairing_in_progress();
+                    if management::run_read(
+                        command, snapshots, operation_admitted, &mut shutdown_rx,
+                        |input, deadline| async move {
+                            if pairing {
+                                ReadRemoteNodeOutcome::Busy
+                            } else {
+                                crate::remote_control::management::read(handle, input, deadline).await
+                            }
+                        },
+                    ).await {
+                        commands.close();
+                        snapshots.set_runtime(DevelopmentNodeRuntime::Stopping);
+                        return Ok(());
+                    }
+                }
+                Some(Command::RemoteChange(operation, deadline)) => {
+                    if management::run_change(
+                        operation, deadline, snapshots, operation_admitted,
+                        &mut shutdown_rx, handle, controls.pairing_in_progress(),
+                    ).await {
                         commands.close();
                         snapshots.set_runtime(DevelopmentNodeRuntime::Stopping);
                         return Ok(());
@@ -3131,3 +3167,5 @@ fn wall_clock_millis() -> u64 {
 
 #[cfg(test)]
 mod tests;
+
+mod management;

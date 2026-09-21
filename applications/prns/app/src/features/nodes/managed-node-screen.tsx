@@ -23,6 +23,7 @@ import {
 } from "@/ui/primitives";
 import { NotFoundScreen } from "../placeholder-screen";
 import { formatBytes, formatRequestKind } from "./format";
+import { RemoteManagementPanel } from "./remote-management-panel";
 
 export function ManagedNodeScreen() {
   const entry = screenById("nodes.managed");
@@ -252,6 +253,13 @@ export function ManagedNodeScreen() {
       </Card>
 
       {result === null ? null : <DescribeResult result={result} />}
+      {allowsDescribe ? (
+        <RemoteManagementPanel
+          key={`${nodeId}:${runtime.snapshot.generationId}`}
+          target={target.targetIdentityFingerprint}
+          runtime={runtime}
+        />
+      ) : null}
       {canAnnounce ? (
         <Card>
           <Subheading>Share node address</Subheading>

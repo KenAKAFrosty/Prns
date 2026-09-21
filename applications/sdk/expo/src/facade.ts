@@ -162,6 +162,10 @@ export function createDevelopmentRuntime(
       input: Bindings.AnnounceRemoteControlTargetInput,
       signal?: AbortSignal,
     ) => call((api) => api.announceTarget(input, asyncOptions(signal)), signal, "outbound"),
+    readRemoteNode: (input: Bindings.ReadRemoteNodeInput, signal?: AbortSignal) =>
+      call((api) => api.readRemoteNode(input, asyncOptions(signal)), signal, "outbound"),
+    changeRemoteNode: (input: Bindings.ChangeRemoteNodeInput, signal?: AbortSignal) =>
+      call((api) => api.changeRemoteNode(input, asyncOptions(signal)), signal, "outbound"),
     saveObservedDestination: (destination: Uint8Array, signal?: AbortSignal) =>
       call(
         (api) => api.saveObservedDestination({ destination }, asyncOptions(signal)),

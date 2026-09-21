@@ -672,6 +672,12 @@ pub fn request_kinds(requests: &RemoteControlRequestSet) -> Vec<RemoteControlReq
             CoreRequest::ConfirmWifiCredentials => RemoteControlRequestKind::ConfirmWifiCredentials,
             CoreRequest::CancelWifiCredentials => RemoteControlRequestKind::CancelWifiCredentials,
             CoreRequest::InspectWifiTransaction => RemoteControlRequestKind::InspectWifiTransaction,
+            CoreRequest::InventoryInterfaceDiscoveryGroups => {
+                RemoteControlRequestKind::InventoryInterfaceDiscoveryGroups
+            }
+            CoreRequest::ReplaceInterfaceDiscoveryGroups => {
+                RemoteControlRequestKind::ReplaceInterfaceDiscoveryGroups
+            }
         })
         .collect()
 }
@@ -718,6 +724,8 @@ mod tests {
                 RemoteControlRequestKind::ConfirmWifiCredentials,
                 RemoteControlRequestKind::CancelWifiCredentials,
                 RemoteControlRequestKind::InspectWifiTransaction,
+                RemoteControlRequestKind::InventoryInterfaceDiscoveryGroups,
+                RemoteControlRequestKind::ReplaceInterfaceDiscoveryGroups,
             ]
         );
     }
