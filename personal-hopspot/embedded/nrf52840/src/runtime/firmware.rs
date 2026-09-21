@@ -19,7 +19,9 @@ use personal_rns::interfaces::{ConnectionState, InterfaceStatus};
 use personal_rns::lora::{LoRaControl, LoRaInterface, LoRaInterfaceInput, LoRaSpectrumStatus};
 use personal_rns::manifold::embassy::{EmbassyHost, EmbassyInterfaceStatus};
 use personal_rns::manifold::interface_seam::Interface;
-use personal_rns::remote_control::{RemoteControlSelfAnnouncement, RemoteControlService};
+use personal_rns::remote_control::{
+    RemoteControlControllerGrant, RemoteControlSelfAnnouncement, RemoteControlService,
+};
 use personal_rns::runtime::{Fleet, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe};
 use personal_rns::storage::StorageLayout;
 use personal_rns::usb_auto::{ProtocolHostPresence, UsbAutoDevice, UsbAutoDeviceInput};
@@ -217,9 +219,11 @@ pub async fn run(spawner: Spawner) -> ! {
     .destination_hashes()
     .expect("the hopspot destination names are valid");
     let node_page_destination = destination_hashes.node_page;
-    let mut factory_grant_storage = None;
+    static FACTORY_GRANT_STORAGE: StaticCell<Option<[RemoteControlControllerGrant; 1]>> =
+        StaticCell::new();
+    let factory_grant_storage = FACTORY_GRANT_STORAGE.init(None);
     let initial_controller_grants =
-        crate::boards::initial_controller_grants(factory_grant, &mut factory_grant_storage);
+        crate::boards::initial_controller_grants(factory_grant, factory_grant_storage);
     let remote_control = RemoteControlService::with_capabilities(
         remote_control_identity_secrets,
         initial_controller_grants,

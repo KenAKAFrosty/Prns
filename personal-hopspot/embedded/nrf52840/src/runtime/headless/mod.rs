@@ -18,7 +18,9 @@ use personal_rns::interfaces::{ConnectionState, InterfaceId};
 use personal_rns::lora::{LoRaControl, LoRaInterface, LoRaInterfaceInput, LoRaSpectrumStatus};
 use personal_rns::manifold::embassy::{EmbassyHost, EmbassyInterfaceStatus, InterfaceLifecycle};
 use personal_rns::manifold::interface_seam::{Interface, EMBEDDED_MAX_WIRE_FRAME_LEN};
-use personal_rns::remote_control::{RemoteControlSelfAnnouncement, RemoteControlService};
+use personal_rns::remote_control::{
+    RemoteControlControllerGrant, RemoteControlSelfAnnouncement, RemoteControlService,
+};
 use personal_rns::runtime::{
     minimum_interface_store_capacity, minimum_manifold_notification_capacity, CompletionPool,
     EmbassyInterfaceStore, ManifoldLaneSet, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
@@ -323,12 +325,7 @@ pub async fn run(spawner: Spawner) -> ! {
     // schedule them until this task awaits. T096/T114 get that yield from radio
     // profile flash; RAK/MeshTower skip it and would otherwise keep USB VBUS SoC
     // events and BLE setup queued through node init.
-    #[cfg(any(
-        feature = "board-t096",
-        feature = "board-t114",
-        feature = "board-mesh-tower-v2",
-        feature = "board-rak4631"
-    ))]
+    #[cfg(any(feature = "board-mesh-tower-v2", feature = "board-rak4631"))]
     Timer::after_millis(100).await;
     #[cfg(any(
         feature = "board-t096",
@@ -360,9 +357,11 @@ pub async fn run(spawner: Spawner) -> ! {
     .expect("the hopspot destination names are valid")
     .node_page;
     let self_announcement = RemoteControlSelfAnnouncement::Destination(node_page_destination);
-    let mut factory_grant_storage = None;
+    static FACTORY_GRANT_STORAGE: StaticCell<Option<[RemoteControlControllerGrant; 1]>> =
+        StaticCell::new();
+    let factory_grant_storage = FACTORY_GRANT_STORAGE.init(None);
     let initial_controller_grants =
-        crate::boards::initial_controller_grants(factory_grant, &mut factory_grant_storage);
+        crate::boards::initial_controller_grants(factory_grant, factory_grant_storage);
     let remote_control = RemoteControlService::with_capabilities(
         remote_control_identity_secrets,
         initial_controller_grants,
