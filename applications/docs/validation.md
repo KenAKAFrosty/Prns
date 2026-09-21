@@ -5,11 +5,19 @@ mobile implementation uses generated UniFFI bindings and one shared Rust image;
 see the [binding boundary](../prns/native-composition/bindings/README.md).
 Browser and Tauri runtime providers are not implemented.
 
-The [September 17 upstream refresh](../checkpoints/2026-09-17-remote-control-refresh.md)
-changes the native core and pairing contract.
-Earlier phone, firmware-size and background observations below do not qualify
-that rebase. New remote-control screens remain [planned](remote-control-expansion.md),
-not implemented or physically tested.
+The [September 21 integration](../checkpoints/2026-09-21-remote-control-management.md)
+rebases the app on upstream `8c211827b` and implements the first expanded
+[remote-control read/write slice](remote-control-expansion.md): overview,
+interfaces/configuration/peers, discovery groups and 13 typed changes. New board
+pairings grant Administrator authority plus the board's exact supported request
+set, with full-control disclosure. All 30 upstream request kinds are represented;
+guided Wi-Fi and controller-management flows remain unimplemented.
+
+These new screens and pairing behavior are not physically qualified. Earlier
+phone, firmware-size and background observations below do not qualify this
+rebase. The new checkpoint records its own checks and limits; source/UI test
+coverage is not device acceptance. No deployed-pairing migration is required for
+these disposable development devices.
 
 ## What the evidence covers
 
@@ -198,6 +206,12 @@ failures; these are different commands, neither silently waived.
 
 ## Qualification still required
 
+- Rebuild both native apps and matching board firmware, reset/re-pair test
+  devices as needed, and exercise the full-control disclosure and the new read/
+  write screens. Check differing capabilities, pagination, denied or busy
+  operations, navigation/Stop cancellation, disconnection and uncertain write
+  outcomes. Qualify Android and iOS separately; no current physical acceptance
+  is claimed for this expansion.
 - Complete the exact-build physical journeys in the follow-up checkpoint.
   The September 15 Android build now passes fresh pairing, authenticated checks,
   bounded pending-read route-exit/retry recovery, three repeated radio cycles and

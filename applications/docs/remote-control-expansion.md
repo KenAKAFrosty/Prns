@@ -1,11 +1,15 @@
 # Expanded node management
 
-Implementation plan against upstream `c4fd54dfd`, following
-[PR #232](https://github.com/KenAKAFrosty/Prns/pull/232). This is a plan, not a
-claim that the app already implements these controls. The current app supports
-pairing, authenticated node checks and node-address sharing. The compatibility
-refresh names all 28 request kinds and discloses Operator or Administrator
-authority at pairing confirmation; it does not grant additional permissions.
+Implementation status and remaining plan against upstream `8c211827b`, including
+[PR #232](https://github.com/KenAKAFrosty/Prns/pull/232) and discovery-group
+read/write support. The app names all 30 request kinds and implements its first
+expanded read/write slice: node overview, interfaces, configuration, peers,
+discovery groups and 13 typed ordinary/disruptive changes. Guided Wi-Fi setup
+and controller management remain planned.
+
+The [September 21 checkpoint](../checkpoints/2026-09-21-remote-control-management.md)
+records validation of this source. These new controls and the broader pairing
+preset are not yet qualified on physical phones or boards.
 
 ## Ownership and product rules
 
@@ -16,56 +20,60 @@ data; React Native owns presentation and platform interaction. Do not add a
 generic RPC escape hatch, another transport, or a JavaScript command queue.
 
 Show features from the live intersection of board capabilities and the paired
-controller's permissions, not from board model names. Older two-operation nodes
-must retain the existing useful screen. Unsupported controls are absent or
-clearly unavailable, never silently simulated. Keep user-facing wording free of
-protocol details. Recheck authorization and capabilities before a write.
+controller's permissions, not from board model names. Unsupported controls are
+absent or clearly unavailable, never silently simulated. Keep user-facing wording
+free of protocol details. Recheck authorization and capabilities before a write.
 
-Operator and Administrator are separate authority levels, not a request-bit
-convention. Existing Operator grants remain Operator. Administrator authority permits
-access management, but does not imply permission for every ordinary setting.
-Our board pairing UI retains its existing Describe/AnnounceSelf Operator policy
-until a deliberate permission-selection design is implemented and tested.
+Upstream enforces both authority and an allowed request set. Administrator
+authority permits access management; ordinary settings still require their
+request permissions. The board pairing preset now grants Administrator authority
+and the exact request set supported by that board, with full-control disclosure
+before approval. This is one preset, not a granular permissions editor.
+
+No deployed users or retained-pairing migration project are in scope. Development
+devices can be reset and paired again. Live capability and authorization checks
+remain necessary for different boards and changing access, not for preserving
+older development pairings.
 
 ## Delivery sequence
 
-### 1. Compatibility and explicit access
+### 1. Upstream integration and full-control pairing — implemented
 
-- Finish and qualify the new request/authority projections and generated
-  bindings on both phones. Show the granted access level before approval.
-- Implement and test explicit board-side permission selection before physical
-  acceptance of the expanded screens. A reviewed read-only permission preset can
-  unlock the inventory slice before settings and administrator enrollment are
-  added. Existing pairings retain their grants; additional access requires
-  explicit re-enrollment or an authorized grant change. Keep this reusable
-  firmware work separate from app presentation. Provisioned test grants and UI
-  fixtures do not replace a usable enrollment flow.
-- Upstream currently drops authority when projecting a resolved target to the
-  controller. Propose a narrow public authority projection before showing a
-  persistent role badge; do not guess it from effective request bits.
+The app branch is rebased on upstream `8c211827b`. New board pairing uses the
+Administrator/full-supported-control preset, and confirmation explains the
+access being granted. The app consumes generated request and authority types;
+it does not duplicate upstream authorization.
 
-### 2. Read-only node management
+Physical acceptance must use newly paired test devices and matching firmware.
+Do not infer a saved controller's authority from request bits: upstream's
+resolved-target projection does not currently carry that authority.
 
-Add Overview, Interfaces and per-interface details/Peers, with firmware/build and
-battery/power information. Keep Check and Share address available where allowed.
-Fetch details on demand, not continuously in a global snapshot.
+### 2. Read-only node management — implemented
 
-Inventory pages contain up to four entries and use typed keyset cursors. Bound
-the total work and detect repeated/non-progressing cursors. Pages are not an
-atomic snapshot: refresh resets the traversal, and disappearing entries must not
+The managed-node screen offers Overview, Interfaces and per-interface settings,
+discovery groups and Peers, with firmware/build and battery/power information.
+Check and Share address remain available where allowed. Details are fetched on
+demand, not continuously in the global snapshot.
+
+Inventory pages contain up to four entries and use typed keyset cursors. Explicit
+Load more actions are bounded to 128 interfaces or peers and reject overlapping
+or non-progressing pages. Pages are not an atomic snapshot: refresh resets the
+traversal, and disappearing entries must not
 be presented as authoritative current state. Scope reads to target, screen and
 runtime generation; retain deadlines, readiness waiting and cancellation/link
 cleanup already used by node checks.
 
-Acceptance: old minimal nodes, zero and more-than-four interfaces/peers, changing
-inventories, unavailable permissions, route exit, Bluetooth loss and stale
-results from an earlier runtime all behave honestly.
+Remaining physical acceptance covers differing board capabilities, zero and
+more-than-four interfaces/peers, changing inventories, denied permissions,
+route exit, Bluetooth loss and stale results from an earlier runtime.
 
-### 3. Ordinary configuration
+### 3. Ordinary configuration — implemented
 
-Add interface power and LoRa profile editing, GNSS and display actions, plus
-interface mode/group where advertised. Validate with Rust protocol/domain types;
-do not maintain a separate permissive JavaScript validation model.
+The app exposes interface power, typed LoRa profile editing, interface mode/group,
+discovery-group replacement, GNSS and display actions where advertised. Rust
+protocol/domain types validate changes. JavaScript checks only that numeric form
+values can cross the generated bridge without truncation; it does not serialize
+LoRa protocol strings or duplicate regional validation.
 
 Use actor-owned operation IDs and observable status, as for the existing
 announcement command. Serialize target changes: embedded command admission is
@@ -81,18 +89,19 @@ invented authoritative switches. DescribePower describes battery/external power
 and charging, not those configuration states. Respect advertised persistence:
 some values are session-only and LoRa persistence is not universal across boards.
 
-### 4. Disruptive connectivity and power changes
+### 4. Disruptive connectivity and power changes — implemented
 
-Add station uplink, Bluetooth/hotspot mode, radio sleep/wake and system sleep/wake
-where supported. Before applying, explain the likely disconnect and the physical
-or alternate-route recovery. A sleeping/offline radio cannot receive a wake
-request over that same disconnected route.
+Station uplink, Bluetooth/hotspot mode, radio sleep/wake and system sleep/wake
+are available where supported. Inline confirmation explains the likely
+disconnect and physical or alternate-route recovery before disruptive changes.
+Station uplink targets its Wi-Fi interface. A sleeping/offline radio cannot
+receive a wake request over that same disconnected route.
 
 Scheduled effects have a 250 ms target response grace period, not a delivery
 guarantee. Preserve uncertain outcomes until an appropriate read/reconnection
 can reconcile them; do not display success just because the link disappeared.
 
-### 5. Transactional Wi-Fi setup
+### 5. Transactional Wi-Fi setup — next, not implemented
 
 User flow: enter network → try connection → keep network or restore previous.
 Implement a typed Rust workflow around Stage, Activate, Inspect, Confirm and
@@ -117,7 +126,7 @@ Acceptance requires fault injection at each transition: lost request/reply,
 incorrect credentials, timeout, app restart, target reboot, concurrent controller,
 persistence failure and explicit rollback. Then test the full flow physically.
 
-### 6. Administrator access management
+### 6. Administrator access management — planned, not implemented
 
 Provide controller inventory and protected grant/revoke actions. Separate local
 Forget from revoking access on the node. Confirm destructive access changes and
@@ -134,7 +143,7 @@ recipient import/pairing flow before advertising “Add another phone.”
 ### 7. Qualification and documentation
 
 Each slice includes Rust workflow tests, generated-binding checks and UI tests.
-Exercise the capability matrix (old minimal, ESP, Nordic and custom targets),
+Exercise the capability matrix (ESP, Nordic and custom targets),
 pagination, refusal/Busy, cancellation, generation changes and lost replies.
 Rebuild and test Android/Galaxy S9+ and iOS/MetalbeardMobile separately; old binary
 evidence does not qualify this rebase. Run the configured firmware/resource
@@ -146,21 +155,23 @@ separate unresolved issue, not an assumed consequence or fix of this expansion.
 
 ## Complete command coverage
 
-| App surface | Upstream requests | Slice |
+| App surface | Upstream requests | Status |
 | --- | --- | --- |
 | Existing checks and address sharing | Describe, AnnounceSelf | Existing |
-| Interfaces, settings and peers | InventoryInterfaces, InventoryInterfaceConfig, InventoryInterfacePeers | 2 |
-| Firmware and power information | DescribeBuild, DescribePower | 2 |
-| Interface configuration | SetInterfacePower, SetInterfaceMode, SetInterfaceGroup, SetInterfaceLoRaProfile | 3 |
-| Positioning and display | SetGnssPower, SetDisplayVisibility, SetDisplayAutoOff | 3 |
-| Connection and power actions | SetStationUplink, SetEspRadioMode, SetSystemPower, SleepRadios, WakeRadios | 4 |
-| Wi-Fi change with rollback | StageWifiCredentials, ActivateWifiCredentials, ConfirmWifiCredentials, CancelWifiCredentials, InspectWifiTransaction | 5 |
-| Legacy Wi-Fi control | SetInterfaceWifiStation | 5, only if advertised; explain its distinct guarantees |
-| Controller access | InventoryControllers, AuthorizeController, RevokeController | 6 |
+| Interfaces, settings and peers | InventoryInterfaces, InventoryInterfaceConfig, InventoryInterfacePeers | Implemented |
+| Firmware and power information | DescribeBuild, DescribePower | Implemented |
+| Interface configuration | SetInterfacePower, SetInterfaceMode, SetInterfaceGroup, SetInterfaceLoRaProfile | Implemented |
+| Discovery groups | InventoryInterfaceDiscoveryGroups, ReplaceInterfaceDiscoveryGroups | Implemented |
+| Positioning and display | SetGnssPower, SetDisplayVisibility, SetDisplayAutoOff | Implemented |
+| Connection and power actions | SetStationUplink, SetEspRadioMode, SetSystemPower, SleepRadios, WakeRadios | Implemented |
+| Wi-Fi change with rollback | StageWifiCredentials, ActivateWifiCredentials, ConfirmWifiCredentials, CancelWifiCredentials, InspectWifiTransaction | Next |
+| Legacy Wi-Fi control | SetInterfaceWifiStation | Planned only if advertised; explain its distinct guarantees |
+| Controller access | InventoryControllers, AuthorizeController, RevokeController | Planned |
 
-Some framework operations, including the legacy Wi-Fi setter, mode/group and
+Some framework operations, including the legacy Wi-Fi setter, interface mode and
 SleepRadios/WakeRadios, are not advertised by the audited embedded targets.
-Retain typed support but do not show controls merely because the enum exists.
+Do not show controls merely because the enum exists. Implemented source support
+does not establish physical support or successful operation on every board.
 
 ## Source contracts
 

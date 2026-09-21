@@ -12,6 +12,10 @@ generated API and native lifecycle boundary.
   through generated bindings with native platform admission.
 - Identity creation and one-time import, local node/route inspection, contacts,
   RemoteControl pairing, authenticated checks and node-address sharing.
+- Expanded node overview, interfaces, settings, peers and discovery groups,
+  plus typed ordinary/disruptive changes driven by live capabilities and access.
+  The new board pairing preset grants Administrator authority and the board's
+  exact supported request set after full-control disclosure.
 - Small direct LXMF messages, a resettable persistent mailbox, manual retry and
   local cancellation. Resources, opportunistic delivery and propagation are not
   part of this messaging implementation.
@@ -23,20 +27,24 @@ records completed cold Retry admission, iOS preparation-queue and connection-che
 lifetime fixes, plus the constrained firmware footprint correction. Physical
 observations remain tied to their recorded builds.
 
-## Current priority: upstream refresh and expanded node management
+## Current priority: qualify read/write controls, then guided Wi-Fi
 
-The [September 17 refresh](../checkpoints/2026-09-17-remote-control-refresh.md)
-integrates upstream `c4fd54dfd`, including expanded
-board remote control from PR #232. The [implementation plan](remote-control-expansion.md)
-defines the next sequence: explicit authority/capabilities, read-only inventories,
-ordinary controls, disruptive connectivity/power actions, transactional Wi-Fi,
-then administrator access management. It preserves existing app/core ownership
-and requires capability-driven UI rather than board-specific screens.
+The [September 21 integration](../checkpoints/2026-09-21-remote-control-management.md)
+rebases the app on upstream `8c211827b` and names all 30 RemoteControl request
+kinds. The first [read/write slice](remote-control-expansion.md) is implemented:
+Overview, interfaces/configuration/peers, discovery groups and 13 typed changes
+cover ordinary settings and disruptive connection/power actions. Rust retains
+workflow and validation ownership; generated bindings feed capability-driven UI.
 
-These controls are planned, not implemented. The compatibility refresh discloses
-pairing authority and names the new permissions without widening existing board
-pairing grants. Earlier physical and firmware evidence below belongs to its
-recorded source/binaries and does not qualify the rebased application.
+Next, qualify the broader pairing preset and new controls on Galaxy S9+,
+MetalbeardMobile and matching test-board firmware, then implement guided
+transactional Wi-Fi setup and controller access management. Neither of those
+later flows is implemented. There is no deployed-pairing migration project or
+granular permissions picker: development devices can be reset and paired again.
+Live upstream capability and authority checks remain mandatory.
+
+Earlier physical and firmware evidence below belongs to its recorded
+source/binaries and does not qualify this rebase or the new screens.
 
 ## Remaining qualification from the previous transition
 

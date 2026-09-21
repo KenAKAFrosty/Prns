@@ -10,7 +10,8 @@ current source behavior from build-specific device evidence.
 
 The native iOS and Android providers support identity creation/import, local
 node inspection, contacts, RemoteControl pairing and connection checks, node
-address sharing, and a persistent mailbox for small direct LXMF messages.
+address sharing, expanded node read/write controls, and a persistent mailbox for
+small direct LXMF messages.
 Android also exposes service-owned Stop/Start and connection-notification
 controls. Web renders the shell with an explicitly unavailable native runtime;
 there is no browser or Tauri application provider.
@@ -18,6 +19,16 @@ there is no browser or Tauri application provider.
 Pairing is authorization, not a live connection. Contacts and mailbox rows are
 local application records, not proof that their peer is reachable. Development
 data is resettable and is not promised to survive incompatible upgrades.
+
+The current integration is based on upstream `8c211827b` and represents all 30
+RemoteControl request kinds. New board pairings grant Administrator authority
+and the board's exact supported request set, with full-control disclosure before
+approval. This is a single preset, not a permissions picker. Test devices may be
+reset and paired again; no deployed-pairing migration is needed.
+
+The expanded controls are implemented but not yet physically qualified on
+either phone platform. See the [September 21 checkpoint](../../checkpoints/2026-09-21-remote-control-management.md)
+for the checks actually performed on this source.
 
 ## Route parameters
 
@@ -54,7 +65,7 @@ Earlier upstream establishment/identification may already have issued work
 before the handle exists. Neither discovery nor the remote command is replayed
 automatically.
 
-The managed-node screen cancels its pending connection check on navigation,
+The managed-node screen cancels pending connection and management reads on navigation,
 target changes and native lifetime changes. Provider release and explicit Stop
 also cancel caller-owned reads. The SDK forwards `AbortSignal`, including Effect
 interruption. Discarding a Promise is not cancellation, and cancellation cannot undo an accepted durable
@@ -73,6 +84,32 @@ latest result across screen remounts and native Stop/Start in the same process.
 It is not durable history: process termination or development reset clears it.
 If confirmation is lost, the UI reports an unknown outcome and never
 automatically repeats the request; the target may already have announced.
+
+## Reading and changing a paired node
+
+Open a paired node and select **Load node information**. Overview shows the
+firmware and battery/power information the node provides. Interface cards expose
+current status, traffic, settings and discovery groups; peer lists load on
+request, with explicit bounded pagination. Refresh reads the node again rather
+than treating earlier observations as live state.
+
+Controls appear only when the node advertises them and the pairing permits
+them. The first slice includes interface power/mode/group, typed LoRa settings,
+discovery-group replacement, positioning, display visibility/auto-off, system
+sleep/wake, station uplink, Bluetooth/hotspot mode and radio sleep/wake. Setters
+without current-state getters are actions rather than switches with guessed
+values. The existing keyboard-aware screen and fields are shared by these forms.
+
+Rust validates and admits each change, rechecking live access and capabilities.
+Native operation IDs and status distinguish applied, unchanged, scheduled,
+failed and uncertain results. A lost response does not automatically replay a
+write; leaving the screen does not undo an accepted change. Disruptive actions
+require confirmation and explain how the connection may be lost. A wake request
+cannot reach a radio over a connection that has already gone offline.
+
+Guided Wi-Fi credential changes and controller-management flows are still
+[planned](../../docs/remote-control-expansion.md). Administrator enrollment does
+not imply that their app screens already exist.
 
 ## Platform behavior and next work
 
