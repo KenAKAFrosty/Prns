@@ -63,7 +63,7 @@ pub use prns_core::capabilities::power::{
     PowerSnapshot,
 };
 pub use remote_control::{
-    limited_remote_control_pairing_permissions, RemoteControlEventHandoff,
+    full_remote_control_pairing_permissions, RemoteControlEventHandoff,
     RemoteControlPairingAvailability, RemoteControlTargetPairingFailure,
     RemoteControlTargetPairingPhase, RemoteControlTargetPairingState,
     RemoteControlTargetPairingUpdate, StableTargetAnnouncementAction,
