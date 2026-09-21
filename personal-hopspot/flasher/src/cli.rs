@@ -111,6 +111,12 @@ pub(crate) enum CommandMode {
         /// Explicit mounted UF2 bootloader directory.
         #[arg(long, value_name = "DIR", hide = true)]
         mount: Option<PathBuf>,
+        /// Remote Control identity vault page (4096 bytes) for ESP sparse flash.
+        #[arg(long, value_name = "FILE", hide = true, requires = "rc_vault_offset")]
+        rc_vault: Option<PathBuf>,
+        /// Flash offset for `--rc-vault` (decimal or `0x`-prefixed hex).
+        #[arg(long, value_name = "OFFSET", hide = true, requires = "rc_vault")]
+        rc_vault_offset: Option<String>,
     },
     /// Build sparse developer artifacts for one board.
     #[command(hide = true)]
@@ -221,6 +227,48 @@ mod tests {
             ["hopspot-flash", "flash", "heltec-v4", "--yes", "--monitor",]
         )
         .is_ok());
+    }
+
+    #[test]
+    fn rc_vault_requires_offset_and_parses_together() {
+        let missing = Cli::try_parse_from([
+            "hopspot-flash",
+            "flash",
+            "heltec-v4",
+            "--yes",
+            "--json",
+            "--rc-vault",
+            "/tmp/vault.bin",
+        ]);
+        assert!(missing.is_err());
+
+        let parsed = Cli::try_parse_from([
+            "hopspot-flash",
+            "flash",
+            "heltec-v4",
+            "--yes",
+            "--json",
+            "--local-build",
+            "--rc-vault",
+            "/tmp/vault.bin",
+            "--rc-vault-offset",
+            "0xe7d000",
+        ])
+        .expect("rc-vault pair must parse");
+        match parsed.command {
+            Some(CommandMode::Flash {
+                rc_vault,
+                rc_vault_offset,
+                ..
+            }) => {
+                assert_eq!(
+                    rc_vault.as_deref(),
+                    Some(std::path::Path::new("/tmp/vault.bin"))
+                );
+                assert_eq!(rc_vault_offset.as_deref(), Some("0xe7d000"));
+            }
+            _ => panic!("flash command was not parsed"),
+        }
     }
 
     #[test]

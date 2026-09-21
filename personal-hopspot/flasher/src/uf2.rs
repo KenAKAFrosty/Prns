@@ -16,10 +16,103 @@ use crate::events::{Phase, Reporter};
 use crate::release::PreparedUf2Target;
 
 const REBOOT_TIMEOUT: Duration = Duration::from_secs(20);
-const APPLICATION_ENUMERATION_TIMEOUT: Duration = Duration::from_secs(20);
+const APPLICATION_AFTER_WRITE_TIMEOUT: Duration = Duration::from_secs(40);
 const PRNS_USB_VENDOR_ID: u16 = 0x1209;
 const PRNS_USB_PRODUCT_ID: u16 = 0x0001;
 const INFO_UF2_READ_LIMIT: u64 = 4097;
+const UF2_MAGIC_START0: u32 = 0x0A32_4655;
+const UF2_MAGIC_START1: u32 = 0x9E5D_5157;
+const UF2_MAGIC_END: u32 = 0x0AB1_6F30;
+const UF2_FLAG_FAMILY_ID: u32 = 0x0000_2000;
+const UF2_PAYLOAD: usize = 256;
+const UF2_BLOCK: usize = 512;
+
+fn encode_uf2_payload(data: &[u8], base: u32, family_id: u32) -> Vec<u8> {
+    let mut payload = data.to_vec();
+    let remainder = payload.len() % UF2_PAYLOAD;
+    if remainder != 0 {
+        payload.resize(payload.len() + (UF2_PAYLOAD - remainder), 0);
+    }
+    let blocks = payload.len() / UF2_PAYLOAD;
+    let mut out = Vec::with_capacity(blocks * UF2_BLOCK);
+    for index in 0..blocks {
+        let mut block = [0u8; UF2_BLOCK];
+        let header = [
+            UF2_MAGIC_START0,
+            UF2_MAGIC_START1,
+            UF2_FLAG_FAMILY_ID,
+            base.saturating_add((index * UF2_PAYLOAD) as u32),
+            UF2_PAYLOAD as u32,
+            index as u32,
+            blocks as u32,
+            family_id,
+        ];
+        for (slot, value) in header.into_iter().enumerate() {
+            let at = slot * 4;
+            block[at..at + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        let start = index * UF2_PAYLOAD;
+        block[32..32 + UF2_PAYLOAD].copy_from_slice(&payload[start..start + UF2_PAYLOAD]);
+        block[UF2_BLOCK - 4..].copy_from_slice(&UF2_MAGIC_END.to_le_bytes());
+        out.extend_from_slice(&block);
+    }
+    out
+}
+
+fn extend_uf2_with_region(
+    existing: &[u8],
+    data: &[u8],
+    base: u32,
+    family_id: u32,
+) -> Result<Vec<u8>, AppError> {
+    if existing.is_empty() || !existing.len().is_multiple_of(UF2_BLOCK) {
+        return Err(AppError::uf2_delivery(
+            "prepared UF2 is not a whole number of 512-byte blocks",
+        ));
+    }
+    let extra = encode_uf2_payload(data, base, family_id);
+    let mut combined = existing.to_vec();
+    combined.extend(extra);
+    renumber_uf2_transfer(&mut combined)?;
+    Ok(combined)
+}
+
+fn renumber_uf2_transfer(bytes: &mut [u8]) -> Result<(), AppError> {
+    let blocks = bytes.len() / UF2_BLOCK;
+    let total = u32::try_from(blocks).map_err(|_| {
+        AppError::uf2_delivery("UF2 transfer has more blocks than a UF2 header can count")
+    })?;
+    for (index, block) in bytes.chunks_exact_mut(UF2_BLOCK).enumerate() {
+        if uf2_word(block, 0) != UF2_MAGIC_START0
+            || uf2_word(block, 4) != UF2_MAGIC_START1
+            || uf2_word(block, UF2_BLOCK - 4) != UF2_MAGIC_END
+        {
+            return Err(AppError::uf2_delivery(format!(
+                "UF2 block {index} is missing magic"
+            )));
+        }
+        let number = u32::try_from(index).map_err(|_| {
+            AppError::uf2_delivery("UF2 transfer has more blocks than a UF2 header can count")
+        })?;
+        block[20..24].copy_from_slice(&number.to_le_bytes());
+        block[24..28].copy_from_slice(&total.to_le_bytes());
+    }
+    Ok(())
+}
+
+fn uf2_word(block: &[u8], offset: usize) -> u32 {
+    let mut word = [0u8; 4];
+    word.copy_from_slice(&block[offset..offset + 4]);
+    u32::from_le_bytes(word)
+}
+
+#[cfg(test)]
+fn uf2_transfer_totals(bytes: &[u8]) -> Vec<u32> {
+    bytes
+        .chunks_exact(UF2_BLOCK)
+        .map(|block| uf2_word(block, 24))
+        .collect()
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct DetectedUf2Device {
@@ -101,6 +194,7 @@ pub(crate) fn flash(
     entry: &BoardCatalogEntry,
     target: &PreparedUf2Target,
     device: DetectedUf2Device,
+    rc_vault: Option<&crate::esp::RcVaultWrite>,
     reporter: Reporter,
 ) -> Result<(), AppError> {
     let board = CatalogedUf2Board::try_from_entry(entry)?;
@@ -118,32 +212,35 @@ pub(crate) fn flash(
         Some(board.slug()),
         &format!("Copying verified UF2 to {}…", destination.display()),
     );
-    let copy_outcome = copy_uf2(
-        &destination,
-        &mount,
-        target.part().bytes(),
-        &board,
-        reporter,
-    )?;
+    let firmware = match rc_vault {
+        Some(vault) => extend_uf2_with_region(
+            target.part().bytes(),
+            &vault.bytes,
+            vault.offset,
+            target.compatibility().family_id(),
+        )?,
+        None => target.part().bytes().to_vec(),
+    };
+    let copy_outcome = copy_uf2(&destination, &mount, &firmware, &board, reporter)?;
 
     if matches!(copy_outcome, Uf2CopyOutcome::Synchronized) {
         reporter.phase(
             Phase::Resetting,
             Some(board.slug()),
             &format!(
-                "Waiting for {} to disappear as the device reboots…",
+                "Waiting for {} to reboot and Personal Hopspot USB to enumerate…",
                 board.mount_label()
             ),
         );
-        wait_for_reboot(&mount, &board, REBOOT_TIMEOUT, Duration::from_millis(200))?;
     }
     if crate::esp::cancelled() {
         return Err(AppError::Cancelled);
     }
     wait_for_application_usb(
+        &mount,
         &board,
         &baseline_usb,
-        APPLICATION_ENUMERATION_TIMEOUT,
+        APPLICATION_AFTER_WRITE_TIMEOUT,
         Duration::from_millis(200),
     )?;
     reporter.success(
@@ -294,19 +391,47 @@ fn wait_for_reboot(
     poll: Duration,
 ) -> Result<(), AppError> {
     let deadline = Instant::now() + timeout;
-    while mount.exists() && Instant::now() < deadline {
+    while uf2_bootloader_present(mount) && Instant::now() < deadline {
         if crate::esp::cancelled() {
             return Err(AppError::Cancelled);
         }
         std::thread::sleep(poll);
     }
-    if mount.exists() {
+    if uf2_bootloader_present(mount) {
         return Err(AppError::uf2_delivery(format!(
             "UF2 was synchronized, but {} did not disappear within {timeout:?}",
             board.mount_label(),
         )));
     }
     Ok(())
+}
+
+/// True while the bootloader volume is still live. A leftover empty mount directory after an
+/// awkward eject (common on macOS) must not count as the drive still being present.
+fn uf2_bootloader_present(mount: &Path) -> bool {
+    mount.join("INFO_UF2.TXT").is_file()
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ApplicationUsbStatus {
+    Ready,
+    Ambiguous,
+    Waiting,
+}
+
+fn application_usb_status(
+    newly_enumerated: usize,
+    current: usize,
+    bootloader_mounted: bool,
+) -> ApplicationUsbStatus {
+    match (newly_enumerated, current, bootloader_mounted) {
+        (1, 1, _) => ApplicationUsbStatus::Ready,
+        (1.., 2.., _) => ApplicationUsbStatus::Ambiguous,
+        // Same host DeviceId can survive a reboot; once the bootloader volume is gone and
+        // exactly one matching application USB remains, treat delivery as verified.
+        (0, 1, false) => ApplicationUsbStatus::Ready,
+        _ => ApplicationUsbStatus::Waiting,
+    }
 }
 
 fn matching_prns_application_usb_ids(
@@ -332,6 +457,7 @@ fn matching_prns_application_usb_ids(
 }
 
 fn wait_for_application_usb(
+    mount: &Path,
     board: &CatalogedUf2Board<'_>,
     baseline: &HashSet<DeviceId>,
     timeout: Duration,
@@ -345,26 +471,59 @@ fn wait_for_application_usb(
         let current =
             matching_prns_application_usb_ids(board.application_usb).map_err(|error| {
                 AppError::verify(format!(
-                "UF2 delivery completed, but application USB verification is incomplete: {error}"
-            ))
+                    "could not enumerate USB after writing {}: {error}",
+                    board.mount_label()
+                ))
             })?;
         let newly_enumerated = current.difference(baseline).count();
-        match (newly_enumerated, current.len()) {
-            (1, 1) => return Ok(()),
-            (1.., 2..) => {
+        let bootloader_mounted = uf2_bootloader_present(mount);
+        match application_usb_status(newly_enumerated, current.len(), bootloader_mounted) {
+            ApplicationUsbStatus::Ready => return Ok(()),
+            ApplicationUsbStatus::Ambiguous => {
                 return Err(AppError::verify(format!(
-                    "UF2 delivery completed, but multiple indistinguishable {:?} USB devices enumerated; application verification is incomplete",
+                    "multiple indistinguishable {:?} USB devices enumerated; application verification is incomplete",
                     board.application_usb.product
                 )));
             }
-            _ if Instant::now() >= deadline => {
-                return Err(AppError::verify(format!(
-                    "UF2 delivery completed, but no newly enumerated {:?} USB identity appeared within {timeout:?}; application verification is incomplete",
-                    board.application_usb.product
+            ApplicationUsbStatus::Waiting if Instant::now() >= deadline => {
+                return Err(AppError::verify(application_usb_timeout_detail(
+                    board,
+                    current.len(),
+                    bootloader_mounted,
+                    timeout,
                 )));
             }
-            _ => std::thread::sleep(poll),
+            ApplicationUsbStatus::Waiting => std::thread::sleep(poll),
         }
+    }
+}
+
+fn application_usb_timeout_detail(
+    board: &CatalogedUf2Board<'_>,
+    matching: usize,
+    bootloader_mounted: bool,
+    timeout: Duration,
+) -> String {
+    match (matching, bootloader_mounted) {
+        (0, true) => format!(
+            "{} stayed mounted and {:?} USB did not appear within {timeout:?}",
+            board.mount_label(),
+            board.application_usb.product
+        ),
+        (0, false) => format!(
+            "{} left, but {:?} USB did not appear within {timeout:?}",
+            board.mount_label(),
+            board.application_usb.product
+        ),
+        (_, true) => format!(
+            "{} stayed mounted; {:?} USB was already present and no new identity appeared within {timeout:?}",
+            board.mount_label(),
+            board.application_usb.product
+        ),
+        (_, false) => format!(
+            "{:?} USB was already present and no new identity appeared within {timeout:?}",
+            board.application_usb.product
+        ),
     }
 }
 
@@ -714,6 +873,32 @@ mod tests {
     }
 
     #[test]
+    fn enrollment_vault_joins_the_firmware_uf2_as_one_transfer() {
+        let firmware = encode_uf2_payload(&[0x11; 512], 0x0002_6000, 0xada5_2840);
+        let glued = {
+            let mut bytes = firmware.clone();
+            bytes.extend(encode_uf2_payload(&[0x22; 256], 0x000e_2000, 0xada5_2840));
+            bytes
+        };
+        assert_eq!(
+            uf2_transfer_totals(&glued)
+                .into_iter()
+                .collect::<HashSet<_>>()
+                .len(),
+            2,
+            "concatenated vault UF2s keep two block counts"
+        );
+        let merged = extend_uf2_with_region(&firmware, &[0x22; 256], 0x000e_2000, 0xada5_2840)
+            .expect("merge");
+        let totals = uf2_transfer_totals(&merged);
+        assert_eq!(totals.len(), 3);
+        assert!(totals.iter().all(|total| *total == 3));
+        assert_eq!(uf2_word(&merged[0..UF2_BLOCK], 20), 0);
+        assert_eq!(uf2_word(&merged[UF2_BLOCK * 2..], 20), 2);
+        assert_eq!(uf2_word(&merged[UF2_BLOCK * 2..], 12), 0x000e_2000);
+    }
+
+    #[test]
     fn fake_uf2_copy_is_written_and_synchronized() {
         let entry = t_echo_board();
         let board = cataloged_uf2(&entry);
@@ -736,15 +921,52 @@ mod tests {
     }
 
     #[test]
+    fn application_usb_is_ready_when_the_same_device_returns_after_dfu() {
+        assert_eq!(
+            application_usb_status(1, 1, true),
+            ApplicationUsbStatus::Ready
+        );
+        assert_eq!(
+            application_usb_status(0, 1, false),
+            ApplicationUsbStatus::Ready
+        );
+        assert_eq!(
+            application_usb_status(0, 1, true),
+            ApplicationUsbStatus::Waiting
+        );
+        assert_eq!(
+            application_usb_status(0, 0, false),
+            ApplicationUsbStatus::Waiting
+        );
+        assert_eq!(
+            application_usb_status(2, 2, false),
+            ApplicationUsbStatus::Ambiguous
+        );
+    }
+
+    #[test]
+    fn ghost_mount_without_info_uf2_counts_as_reboot() {
+        let entry = t_echo_board();
+        let board = cataloged_uf2(&entry);
+        let ghost = temporary_mount("ghost");
+        fs::create_dir(&ghost).expect("create ghost mount");
+        wait_for_reboot(&ghost, &board, Duration::from_millis(50), Duration::from_millis(1))
+            .expect("empty leftover mount is already rebooted");
+        fs::remove_dir(ghost).expect("remove ghost mount");
+    }
+
+    #[test]
     fn fake_reboot_disappearance_and_timeout_are_distinct() {
         let entry = t_echo_board();
         let board = cataloged_uf2(&entry);
         let disappearing = temporary_mount("disappearing");
         fs::create_dir(&disappearing).expect("create disappearing mount");
+        fs::write(disappearing.join("INFO_UF2.TXT"), "Board-ID: nRF52840-TEcho-v1\n")
+            .expect("seed INFO_UF2");
         let remover = disappearing.clone();
         let thread = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(5));
-            fs::remove_dir(remover).expect("remove disappearing mount");
+            fs::remove_dir_all(remover).expect("remove disappearing mount");
         });
         wait_for_reboot(
             &disappearing,
@@ -757,6 +979,8 @@ mod tests {
 
         let stuck = temporary_mount("stuck");
         fs::create_dir(&stuck).expect("create stuck mount");
+        fs::write(stuck.join("INFO_UF2.TXT"), "Board-ID: nRF52840-TEcho-v1\n")
+            .expect("seed INFO_UF2");
         let error = wait_for_reboot(&stuck, &board, Duration::ZERO, Duration::from_millis(1))
             .expect_err("persistent mount must time out");
         assert!(matches!(&error, AppError::WriteVerifyReset(_)));
@@ -764,7 +988,7 @@ mod tests {
             error.to_string(),
             "UF2 was synchronized, but TECHOBOOT did not disappear within 0ns"
         );
-        fs::remove_dir(stuck).expect("remove stuck mount");
+        fs::remove_dir_all(stuck).expect("remove stuck mount");
     }
 
     #[test]
@@ -773,10 +997,12 @@ mod tests {
         let board = cataloged_uf2(&entry);
         let disappearing = temporary_mount("sync-interrupted-disappearing");
         fs::create_dir(&disappearing).expect("create disappearing mount");
+        fs::write(disappearing.join("INFO_UF2.TXT"), "Board-ID: nRF52840-TEcho-v1\n")
+            .expect("seed INFO_UF2");
         let remover = disappearing.clone();
         let thread = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(5));
-            fs::remove_dir(remover).expect("remove disappearing mount");
+            fs::remove_dir_all(remover).expect("remove disappearing mount");
         });
         let outcome = confirm_reboot_after_synchronization_interruption(
             &disappearing,
@@ -793,6 +1019,8 @@ mod tests {
 
         let stuck = temporary_mount("sync-interrupted-stuck");
         fs::create_dir(&stuck).expect("create stuck mount");
+        fs::write(stuck.join("INFO_UF2.TXT"), "Board-ID: nRF52840-TEcho-v1\n")
+            .expect("seed INFO_UF2");
         let result = confirm_reboot_after_synchronization_interruption(
             &stuck,
             &board,
@@ -807,6 +1035,6 @@ mod tests {
             Ok(_) => panic!("persistent mount does not prove reboot"),
         };
         assert!(error.to_string().contains("storage failure"));
-        fs::remove_dir(stuck).expect("remove stuck mount");
+        fs::remove_dir_all(stuck).expect("remove stuck mount");
     }
 }
