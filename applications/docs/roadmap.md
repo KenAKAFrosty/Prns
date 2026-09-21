@@ -48,6 +48,11 @@ source/binaries and does not qualify this rebase or the new screens.
 
 ## Remaining qualification from the previous transition
 
+The September 21 source now passes all 14 configured firmware profiles and
+builds a standalone Android 10+ development APK. Fresh phone/board pairing and
+read/write acceptance remain untested; the earlier observations below keep
+their original build-specific scope.
+
 The [September 15 checkpoint](../checkpoints/2026-09-15-upstream-integration.md)
 integrates reviewed upstream trunk `35859bb89`. A new standalone Android build
 and matching E290 firmware are installed. The final patched Galaxy build passes

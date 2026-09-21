@@ -103,8 +103,31 @@ independently; do not report the broad gate as green.
 
 An initial T-Echo resource attempt compiled firmware but correctly refused an
 evidence report because source changed during the build. It is not a passing
-resource gate. Fresh stable-source firmware results and Android packaging are
-recorded below when complete.
+resource gate. The subsequent stable-source matrix passes **all 14 configured
+profiles** at `e805c32495c6e79677882db770be7660e50e8590`. Every report names
+that source head; the existing unrelated untracked files were preserved.
+This is main-branch firmware qualification, not a rerun of each isolated PR's
+full publication gate.
+
+| Profile | Firmware image | FLASH headroom |
+| --- | ---: | ---: |
+| T-Echo S140 v7 | 619,628 bytes | 2,964 bytes |
+| T-Echo S140 v6 | 619,508 bytes | 7,180 bytes |
+| E290 | 2,323,184 bytes | 12,803,344 bytes |
+
+The Android standalone development APK builds successfully and passes all 43
+Android adapter unit tests. Its bundled JavaScript includes this slice; the APK
+contains the arm64 Rust library, retains Android 10 as the minimum (API 29),
+and passes signing/alignment checks. It is locally development-signed, not a
+production release. No package versions, lockfile or generated source changed
+during packaging.
+
+- APK: `prns/app/android/app/build/outputs/apk/release/app-release.apk`.
+- SHA256: `7153a0a24bfd8ca1780b1f50a8a5a401752470bf11a97df159ea7146e4cf1cd1`.
+- Build log: `scratch/prns-app/2026-09-21/android-build.log`.
+- Firmware log: `scratch/prns-app/2026-09-21/firmware-matrix.log`.
+- Reports: `target/flash-artifacts/resources/configured/reports/` (external
+  build cache, not committed application source).
 
 No phone installation, board flash, fresh owner pairing or physical setting
 change has yet qualified this slice. Earlier device/background evidence belongs
@@ -113,3 +136,4 @@ Hardware acceptance and the guided Wi-Fi/controller workflows are next; see the
 [current expansion plan](../docs/remote-control-expansion.md).
 
 Local logs for this pass are under `scratch/prns-app/2026-09-21/`.
+The final upstream check still resolved to `8c211827b`; nothing was pushed.
