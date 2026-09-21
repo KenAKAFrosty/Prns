@@ -91,6 +91,8 @@ pub enum PreparationProfile {
     #[cfg_attr(not(feature = "local-dev-flasher"), allow(dead_code))]
     MeshPocketUf2,
     T096Uf2,
+    #[cfg_attr(not(feature = "local-dev-flasher"), allow(dead_code))]
+    Rak4631Uf2,
     T1000eNrfSerialDfu,
 }
 
@@ -256,16 +258,6 @@ pub const UPCOMING_BOARD_TARGETS: &[BoardTarget] = &[
         tier: Tier::Roadmap,
         interfaces: &[],
         icon: Some("espressif"),
-        preparation_profile: None,
-        flash_target: None,
-    },
-    BoardTarget {
-        name: "RAK WisBlock Starter Kit",
-        slug: "rak-wisblock-starter-kit",
-        silicon: "RAK19007 + RAK4631, nRF52840 + SX1262",
-        tier: Tier::BringUp,
-        interfaces: &[],
-        icon: Some("nordicsemiconductor"),
         preparation_profile: None,
         flash_target: None,
     },
@@ -716,11 +708,7 @@ mod tests {
 
         assert_eq!(
             bring_up,
-            vec![
-                "muzi.works Base Duo",
-                "Raspberry Pi Zero 2 W",
-                "RAK WisBlock Starter Kit",
-            ]
+            vec!["muzi.works Base Duo", "Raspberry Pi Zero 2 W",]
         );
         assert!(
             UPCOMING_BOARD_TARGETS

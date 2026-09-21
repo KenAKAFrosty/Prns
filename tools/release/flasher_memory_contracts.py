@@ -80,6 +80,11 @@ UF2_MEMORY_CONTRACTS = {
         "firmware_owned": (0x00026000, 0x000e1000),
         "transport_envelope": (0x00026000, 0x000e8000),
     },
+    ("rak4631", "s140", "6.1.1", "0x00b6", 0x00026000, "0xada52840"): {
+        "profile": "rak4631",
+        "firmware_owned": (0x00026000, 0x000e2000),
+        "transport_envelope": (0x00026000, 0x000e2000),
+    },
 }
 
 NRF_SERIAL_DFU_MEMORY_CONTRACTS = {

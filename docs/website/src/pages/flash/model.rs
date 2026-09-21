@@ -214,11 +214,11 @@ pub(super) fn preparation_guide(
                 "If automatic connection fails, hold BOOT, tap RESET, release BOOT, then restart the complete connect-and-flash step.".to_string(),
             ],
         },
-        PreparationProfile::TechoUf2 | PreparationProfile::T114Uf2 => {
-            uf2_preparation_guide(target)
-        }
+        PreparationProfile::TechoUf2
+        | PreparationProfile::T114Uf2
+        | PreparationProfile::T096Uf2
+        | PreparationProfile::Rak4631Uf2 => uf2_preparation_guide(target),
         PreparationProfile::MeshPocketUf2 => mesh_pocket_preparation_guide(target),
-        PreparationProfile::T096Uf2 => uf2_preparation_guide(target),
         PreparationProfile::T1000eNrfSerialDfu => {
             t1000e_preparation_guide(target, nrf_recovery)
         }

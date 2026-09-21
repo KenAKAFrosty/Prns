@@ -19,9 +19,7 @@ use personal_rns::interfaces::{ConnectionState, InterfaceStatus};
 use personal_rns::lora::{LoRaControl, LoRaInterface, LoRaInterfaceInput, LoRaSpectrumStatus};
 use personal_rns::manifold::embassy::{EmbassyHost, EmbassyInterfaceStatus};
 use personal_rns::manifold::interface_seam::Interface;
-use personal_rns::remote_control::{
-    RemoteControlInitialControllerGrants, RemoteControlSelfAnnouncement, RemoteControlService,
-};
+use personal_rns::remote_control::{RemoteControlSelfAnnouncement, RemoteControlService};
 use personal_rns::runtime::{Fleet, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe};
 use personal_rns::storage::StorageLayout;
 use personal_rns::usb_auto::{ProtocolHostPresence, UsbAutoDevice, UsbAutoDeviceInput};
@@ -102,21 +100,24 @@ async fn manifold_task(
 
 #[allow(clippy::too_many_lines)]
 pub async fn run(spawner: Spawner) -> ! {
-    let ((node_bootstrap, remote_control_bootstrap, ble_bootstrap, entropy), early_hardware) =
-        Board::initialize_identities(|nvmc, rng| {
-            let mut entropy = seed_from_hal(rng);
-            let node_bootstrap = board::bootstrap_node_identity(nvmc, &mut entropy);
-            let remote_control_bootstrap = board::REMOTE_CONTROL_IDENTITY_FLASH
-                .load_or_generate(nvmc, &mut entropy)
-                .expect("RemoteControl identity bootstrap failed");
-            let ble_bootstrap = board::bootstrap_ble_identity(nvmc, &mut entropy);
-            (
-                node_bootstrap,
-                remote_control_bootstrap,
-                ble_bootstrap,
-                entropy,
-            )
-        });
+    let (
+        (node_bootstrap, remote_control_bootstrap, factory_grant, ble_bootstrap, entropy),
+        early_hardware,
+    ) = Board::initialize_identities(|nvmc, rng| {
+        let mut entropy = seed_from_hal(rng);
+        let node_bootstrap = board::bootstrap_node_identity(nvmc, &mut entropy);
+        let loaded = board::REMOTE_CONTROL_IDENTITY_FLASH
+            .load_or_generate(nvmc, &mut entropy)
+            .expect("RemoteControl identity bootstrap failed");
+        let ble_bootstrap = board::bootstrap_ble_identity(nvmc, &mut entropy);
+        (
+            node_bootstrap,
+            loaded.bootstrap,
+            loaded.factory_grant,
+            ble_bootstrap,
+            entropy,
+        )
+    });
     let identity_startup_notice =
         board::identity_startup_notice(node_bootstrap.persistence(), ble_bootstrap.persistence());
     let node_identity = node_bootstrap.into_identity();
@@ -216,9 +217,12 @@ pub async fn run(spawner: Spawner) -> ! {
     .destination_hashes()
     .expect("the hopspot destination names are valid");
     let node_page_destination = destination_hashes.node_page;
+    let mut factory_grant_storage = None;
+    let initial_controller_grants =
+        crate::boards::initial_controller_grants(factory_grant, &mut factory_grant_storage);
     let remote_control = RemoteControlService::with_capabilities(
         remote_control_identity_secrets,
-        RemoteControlInitialControllerGrants::Nobody,
+        initial_controller_grants,
         RemoteControlSelfAnnouncement::Destination(node_page_destination),
         super::remote_control::capabilities(),
     );
