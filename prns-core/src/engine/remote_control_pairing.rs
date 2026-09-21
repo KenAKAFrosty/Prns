@@ -162,6 +162,7 @@ pub enum RemoteControlPairingRequestDiagnostic {
     BeginIdentityMismatch,
     BeginInvalidInvitationProof,
     BeginAuthorityUnsupported,
+    BeginRequestUnsupportedForVersion,
     OfferDispatched,
     OfferDispatchFailed(RemoteControlPairingDispatchDiagnostic),
     CommitAwaitingTargetApproval,
@@ -219,6 +220,9 @@ impl RemoteControlPairingRequestOutcome {
                 RemoteControlTargetPairingBeginRejection::AuthorityUnsupported { .. } => {
                     Diagnostic::BeginAuthorityUnsupported
                 }
+                RemoteControlTargetPairingBeginRejection::RequestUnsupportedForVersion {
+                    ..
+                } => Diagnostic::BeginRequestUnsupportedForVersion,
             },
             Self::OfferDispatched { .. } => Diagnostic::OfferDispatched,
             Self::OfferDispatchFailed { failure, .. } => {
@@ -1201,6 +1205,16 @@ mod tests {
                         },
                     },
                     "Pairing(BeginAuthorityUnsupported)",
+                ),
+                (
+                    RemoteControlPairingRequestOutcome::BeginRejected {
+                        rejected,
+                        reason: RemoteControlTargetPairingBeginRejection::RequestUnsupportedForVersion {
+                            version: crate::remote_control::RemoteControlPairingProtocolVersion::V2,
+                            request: RemoteControlRequestKind::InventoryInterfaceDiscoveryGroups,
+                        },
+                    },
+                    "Pairing(BeginRequestUnsupportedForVersion)",
                 ),
                 (
                     RemoteControlPairingRequestOutcome::MalformedEnvelope(
