@@ -17,7 +17,7 @@ import type {
 import type { Href } from "expo-router";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { StyleSheet, View } from "react-native";
+import { Text } from "react-native";
 
 import { formatContactHash, parseDestinationHash } from "@/features/contacts/format";
 import { useContactRuntime } from "@/native/contact-runtime-context";
@@ -28,16 +28,18 @@ import {
 import { NavigationLink } from "@/ui/navigation-link";
 import {
   Badge,
+  ActionRow,
   BodyText,
   Button,
   Card,
+  CardHeader,
+  CardSection,
   KeyValue,
   Screen,
   ScreenHeading,
   Subheading,
 } from "@/ui/primitives";
 import { TextField } from "@/ui/text-field";
-import { space } from "@/ui/theme";
 import {
   deliveryLabel,
   messagePeer,
@@ -143,6 +145,7 @@ export function InboxScreen() {
   const data = useLxmfData(null);
   const [command, setCommand] = useState<string | null>(null);
   const [announcing, setAnnouncing] = useState(false);
+  const [showMessagingOptions, setShowMessagingOptions] = useState(false);
   const nodeRunning =
     development.phase === "ready" &&
     development.snapshot?.runtime === Bindings.DevelopmentNodeRuntime.Running;
@@ -169,7 +172,6 @@ export function InboxScreen() {
     <Screen>
       <Badge>Messages</Badge>
       <ScreenHeading>Inbox</ScreenHeading>
-      <BodyText>Your messages are saved on this device, including while offline.</BodyText>
       <BodyText muted>Keep prns open for reliable message delivery.</BodyText>
       <LxmfHealthCard />
       {development.availability.type !== "available" ? (
@@ -177,25 +179,37 @@ export function InboxScreen() {
       ) : (
         <>
           {nodeRunning ? null : <MessagingOfflineCard />}
-          <View style={styles.actions}>
+          <ActionRow>
             {nodeRunning ? (
               <NavigationLink href="/inbox/compose">New message</NavigationLink>
-            ) : null}
-            {nodeRunning ? (
-              <>
-                <BodyText muted>
-                  Before exchanging messages with a new contact, share this device&apos;s messaging
-                  address.
-                </BodyText>
-                <Button disabled={announcing} onPress={() => void announce()}>
-                  {announcing ? "Sharing…" : "Share messaging address"}
-                </Button>
-              </>
             ) : null}
             <Button disabled={data.pending} onPress={() => void data.refresh()} tone="secondary">
               {data.pending ? "Refreshing…" : "Refresh Inbox"}
             </Button>
-          </View>
+          </ActionRow>
+          {nodeRunning ? (
+            <>
+              <Button
+                accessibilityState={{ expanded: showMessagingOptions }}
+                onPress={() => setShowMessagingOptions((current) => !current)}
+                tone="secondary"
+              >
+                {showMessagingOptions ? "Hide messaging options" : "Messaging options"}
+              </Button>
+              {showMessagingOptions ? (
+                <Card>
+                  <Subheading>Your messaging address</Subheading>
+                  <BodyText muted>
+                    Share this device&apos;s messaging address before exchanging messages with a new
+                    contact. Your messages stay saved on this device, including while offline.
+                  </BodyText>
+                  <Button disabled={announcing} onPress={() => void announce()} tone="secondary">
+                    {announcing ? "Sharing…" : "Share messaging address"}
+                  </Button>
+                </Card>
+              ) : null}
+            </>
+          ) : null}
           {command === null ? null : (
             <Card>
               <BodyText>{command}</BodyText>
@@ -557,28 +571,51 @@ function MessageCard({
   const title = textPresentation(message.title);
   const content = textPresentation(message.content);
   const unverified = message.verification !== Bindings.LxmfVerification.Verified;
+  const [showDetails, setShowDetails] = useState(false);
+  const direction = message.direction === Bindings.LxmfDirection.Inbound ? "Received" : "Sent";
+  const detailsLabel = title.text.length === 0 ? timestampLabel(message.timestamp) : title.text;
+  const directionBadge = (
+    <Badge tone={!title.validUtf8 || !content.validUtf8 ? "warning" : "neutral"}>{direction}</Badge>
+  );
 
   return (
     <Card>
-      <Badge tone={unverified || !title.validUtf8 || !content.validUtf8 ? "warning" : "neutral"}>
-        {message.direction === Bindings.LxmfDirection.Inbound ? "Received" : "Sent"}
-      </Badge>
-      <Subheading>{title.text.length === 0 ? "Untitled" : title.text}</Subheading>
+      {title.text.length === 0 ? (
+        directionBadge
+      ) : (
+        <CardHeader title={title.text}>{directionBadge}</CardHeader>
+      )}
       <BodyText>{content.text}</BodyText>
-      <KeyValue label="Time" value={timestampLabel(message.timestamp)} />
-      <KeyValue label="Verification" value={verificationLabel(message)} />
-      <KeyValue label="Delivery" value={deliveryLabel(message)} />
-      <KeyValue label="Message ID" value={formatContactHash(message.messageId)} />
-      {onRetry === undefined ? null : (
-        <Button disabled={pending} onPress={() => void onRetry()} tone="secondary">
-          {pending ? "Retrying…" : "Retry message"}
+      <BodyText muted>
+        {timestampLabel(message.timestamp)} · <Text>{deliveryLabel(message)}</Text>
+      </BodyText>
+      {unverified ? <Badge tone="warning">{verificationLabel(message)}</Badge> : null}
+      <ActionRow>
+        {onRetry === undefined ? null : (
+          <Button disabled={pending} onPress={() => void onRetry()} tone="secondary">
+            {pending ? "Retrying…" : "Retry message"}
+          </Button>
+        )}
+        {onCancel === undefined ? null : (
+          <Button disabled={pending} onPress={() => void onCancel()} tone="secondary">
+            {pending ? "Cancelling…" : "Cancel queued message"}
+          </Button>
+        )}
+        <Button
+          accessibilityLabel={`${showDetails ? "Hide" : "Show"} details for message ${detailsLabel}`}
+          accessibilityState={{ expanded: showDetails }}
+          onPress={() => setShowDetails((current) => !current)}
+          tone="secondary"
+        >
+          {showDetails ? "Hide details" : "Message details"}
         </Button>
-      )}
-      {onCancel === undefined ? null : (
-        <Button disabled={pending} onPress={() => void onCancel()} tone="secondary">
-          {pending ? "Cancelling…" : "Cancel queued message"}
-        </Button>
-      )}
+      </ActionRow>
+      {showDetails ? (
+        <CardSection>
+          {unverified ? null : <KeyValue label="Verification" value={verificationLabel(message)} />}
+          <KeyValue label="Message ID" value={formatContactHash(message.messageId)} />
+        </CardSection>
+      ) : null}
     </Card>
   );
 }
@@ -833,7 +870,3 @@ function FailureCard({
     </Card>
   );
 }
-
-const styles = StyleSheet.create({
-  actions: { gap: space.sm },
-});

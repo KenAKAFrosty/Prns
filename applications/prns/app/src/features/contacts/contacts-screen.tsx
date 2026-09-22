@@ -16,9 +16,11 @@ import { useContactRuntime } from "@/native/contact-runtime-context";
 import { NavigationLink } from "@/ui/navigation-link";
 import {
   Badge,
+  ActionRow,
   BodyText,
   Button,
   Card,
+  CardHeader,
   KeyValue,
   Screen,
   ScreenHeading,
@@ -60,22 +62,20 @@ export function ContactsScreen() {
 
   return (
     <Screen>
-      <Badge>On this device</Badge>
       <ScreenHeading>Contacts</ScreenHeading>
-      <BodyText>
-        Contacts stay on this device. Nodes discovered on the network are added only when you choose
-        to save them.
-      </BodyText>
+      <BodyText muted>People and nodes you&apos;ve saved on this device.</BodyText>
       {contactRuntime.runtime === null ? (
         <NativeContactsUnavailable platform={contactRuntime.availability.platform} />
       ) : (
         <>
-          <Button disabled={pending} onPress={() => void load()} tone="secondary">
-            {pending ? "Loading contacts…" : "Refresh contacts"}
-          </Button>
+          <ActionRow>
+            <NavigationLink href="/contacts/add">Add contact</NavigationLink>
+            <Button disabled={pending} onPress={() => void load()} tone="secondary">
+              {pending ? "Loading contacts…" : "Refresh contacts"}
+            </Button>
+          </ActionRow>
           {failure === null ? null : <FailureCard detail={failure} />}
           {failure === null ? <ContactListResult outcome={outcome} /> : null}
-          <NavigationLink href="/contacts/add">Add contact</NavigationLink>
         </>
       )}
     </Screen>
@@ -115,15 +115,10 @@ function ContactListResult({ outcome }: { readonly outcome: ContactListOutcome |
         };
         return (
           <Card key={destination}>
-            <Subheading>{contact.alias ?? destination}</Subheading>
-            <Badge>{contact.pinned ? "Pinned" : "Saved"}</Badge>
-            <KeyValue label="Destination" value={destination} />
-            <KeyValue
-              label="Identity"
-              value={
-                contact.identity === undefined ? "Not known" : formatContactHash(contact.identity)
-              }
-            />
+            <CardHeader title={contact.alias ?? destination}>
+              {contact.pinned ? <Badge>Pinned</Badge> : null}
+            </CardHeader>
+            {contact.alias === undefined ? null : <BodyText muted>{destination}</BodyText>}
             <NavigationLink href={href}>Open contact</NavigationLink>
           </Card>
         );

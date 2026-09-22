@@ -239,11 +239,21 @@ describe("durable LXMF screens", () => {
     const screen = render(<InboxScreen />);
     expect(await screen.findByText("Saved alias")).toBeTruthy();
     expect(screen.getByText("Keep prns open for reliable message delivery.")).toBeTruthy();
+    expect(screen.queryByText("Share messaging address")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Messaging options" }).props.accessibilityState.expanded,
+    ).toBe(false);
+    fireEvent.press(screen.getByRole("button", { name: "Messaging options" }));
     expect(
       screen.getByText(
-        "Before exchanging messages with a new contact, share this device's messaging address.",
+        /Share this device's messaging address before exchanging messages with a new contact/u,
       ),
     ).toBeTruthy();
+    expect(mockAnnounceLxmf).not.toHaveBeenCalled();
+    fireEvent.press(screen.getByRole("button", { name: "Share messaging address" }));
+    await waitFor(() => expect(mockAnnounceLxmf).toHaveBeenCalledTimes(1));
+    fireEvent.press(screen.getByRole("button", { name: "Hide messaging options" }));
+    expect(screen.queryByText("Share messaging address")).toBeNull();
   });
   test("describes degraded messaging health without implementation details", async () => {
     mockActiveSnapshot = {
@@ -299,6 +309,18 @@ describe("durable LXMF screens", () => {
     });
     expect(screen.getByText("Unverified — invalid signature")).toBeTruthy();
     expect(screen.getAllByText("Received")).toHaveLength(2);
+    expect(screen.getByText(/ · Received$/u)).toBeTruthy();
+    expect(screen.queryByText("Message ID")).toBeNull();
+    fireEvent.press(
+      screen.getByRole("button", { name: "Show details for message Questionable message" }),
+    );
+    expect(screen.getByText("Message ID")).toBeTruthy();
+    expect(screen.getByText("Unverified — invalid signature")).toBeTruthy();
+    fireEvent.press(
+      screen.getByRole("button", { name: "Hide details for message Questionable message" }),
+    );
+    expect(screen.queryByText("Message ID")).toBeNull();
+    expect(screen.getByText("Unverified — invalid signature")).toBeTruthy();
     fireEvent.changeText(screen.getByLabelText("Title (optional)"), "Hello");
     fireEvent.changeText(screen.getByLabelText("Message"), "Proof please");
     await waitFor(() => {
@@ -331,6 +353,32 @@ describe("durable LXMF screens", () => {
       expect.objectContaining({ disabled: true }),
     );
     expect(mockSendDirectText).not.toHaveBeenCalled();
+  });
+  test("keeps untitled verified messages compact with details available on demand", async () => {
+    mockListLxmfMessages.mockResolvedValue({
+      type: "outcome",
+      outcome: Bindings.LxmfMessageListOutcome.Listed.new({
+        messages: [
+          {
+            ...mockMessage,
+            title: Bindings.LxmfText.Utf8.new({ value: "" }),
+            content: Bindings.LxmfText.Utf8.new({ value: "A short note" }),
+            verification: Bindings.LxmfVerification.Verified,
+          },
+        ],
+      }),
+    });
+    const screen = render(<ConversationScreen destination={mockDestination} />);
+    expect(await screen.findByText("A short note")).toBeTruthy();
+    expect(screen.queryByText("Untitled")).toBeNull();
+    expect(screen.queryByText("Verified source")).toBeNull();
+    expect(screen.queryByText("Message ID")).toBeNull();
+    fireEvent.press(screen.getByRole("button", { name: /^Show details for message /u }));
+    expect(screen.getByText("Verified source")).toBeTruthy();
+    expect(screen.getByText("Message ID")).toBeTruthy();
+    expect(mockSendDirectText).not.toHaveBeenCalled();
+    expect(mockRetryLxmfMessage).not.toHaveBeenCalled();
+    expect(mockCancelLxmfMessage).not.toHaveBeenCalled();
   });
   test("navigates from compose only after native durably accepts a visible record", async () => {
     const destination = Array.from(mockDestination, (byte) =>

@@ -117,7 +117,23 @@ describe("contact screens", () => {
     await waitFor(() => expect(view.getByText("Alice")).toBeTruthy());
     expect(view.getByText("000102030405060708090a0b0c0d0e0f")).toBeTruthy();
     expect(view.getByText("Pinned")).toBeTruthy();
+    expect(view.queryByText("Identity")).toBeNull();
+    expect(view.queryByText("101112131415161718191a1b1c1d1e1f")).toBeNull();
+    const labels = JSON.stringify(view.toJSON());
+    expect(labels.indexOf("Add contact")).toBeLessThan(labels.indexOf("Alice"));
     expect(listContacts).toHaveBeenCalledTimes(1);
+  });
+  it("shows an unnamed contact's destination once without redundant saved labels", async () => {
+    const listContacts = jest.fn(async () =>
+      Bindings.ContactListOutcome.Listed.new({
+        contacts: [{ destination, identity, alias: undefined, pinned: false }],
+      }),
+    );
+    const view = withRuntime(fakeRuntime({ listContacts }), <ContactsScreen />);
+    expect(await view.findByText("000102030405060708090a0b0c0d0e0f")).toBeTruthy();
+    expect(view.getAllByText("000102030405060708090a0b0c0d0e0f")).toHaveLength(1);
+    expect(view.queryByText("Saved")).toBeNull();
+    expect(view.getByRole("link", { name: "Open contact" })).toBeTruthy();
   });
   it("does not expose native contact-list failure details", async () => {
     const listContacts = jest.fn(async () =>

@@ -53,8 +53,15 @@ describe("preview capability copy", () => {
       help.getByText(/pair and check nearby nodes, save contacts, exchange direct messages/u),
     ).toBeTruthy();
     expect(
-      help.getByText(/Message details, contact merging, identity and connection management/u),
+      help.getByText(
+        /Contact merging, identity and connection management, inviting other devices/u,
+      ),
     ).toBeTruthy();
+    expect(
+      help.getByText(/change a paired node's supported settings, set up its Wi-Fi/u),
+    ).toBeTruthy();
+    expect(help.getByText(/review and remove other devices' access/u)).toBeTruthy();
+    expect(help.queryByText(/remote-access controls/u)).toBeNull();
     expect(JSON.stringify(help.toJSON())).not.toMatch(
       /E290|signed availability|upstream RemoteControl/iu,
     );
