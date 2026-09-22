@@ -395,6 +395,9 @@ test("LoRa fields submit a typed profile and do not parse a protocol string", ()
   fireEvent.changeText(view.getByLabelText("Frequency (Hz)"), "916000000");
   fireEvent.press(view.getByRole("button", { name: "Save LoRa settings" }));
   expect(onSave).not.toHaveBeenCalled();
+  expect(
+    view.getByText(/saves a custom radio profile and may replace automatic radio selection/u),
+  ).toBeTruthy();
   fireEvent.press(view.getByRole("button", { name: "Apply change" }));
   expect(onSave).toHaveBeenCalledWith({ ...profile, frequencyHz: 916000000 });
 });

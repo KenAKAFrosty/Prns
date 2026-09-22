@@ -281,7 +281,7 @@ test("passes optional fields, bytes, exact integers, and results unchanged", asy
   expect(native.prepareOutbound).toHaveBeenCalledTimes(1);
 });
 
-test("performs preflight for exactly the eight outbound calls and never repeats a failed submission", async () => {
+test("performs preflight for all outbound calls and never repeats a failed submission", async () => {
   const failure = new Error("submission interrupted");
   const submitted = jest.fn(async () => {
     throw failure;
@@ -292,6 +292,9 @@ test("performs preflight for exactly the eight outbound calls and never repeats 
     announceTarget: submitted,
     readRemoteNode: submitted,
     changeRemoteNode: submitted,
+    startRemoteWifiTrial: submitted,
+    inspectRemoteWifiTrial: submitted,
+    finishRemoteWifiTrial: submitted,
     retryLxmfMessage: submitted,
     announceLxmf: submitted,
     sendDirectText: submitted,
@@ -316,6 +319,19 @@ test("performs preflight for exactly the eight outbound calls and never repeats 
         change: Bindings.RemoteNodeChange.DisplayVisibility.new({ visible: true }),
       }),
     () => runtime.retryLxmfMessage(1n),
+    () =>
+      runtime.startRemoteWifiTrial({
+        targetIdentityFingerprint,
+        ssid: "Test network",
+        password: "test-only",
+      }),
+    () => runtime.inspectRemoteWifiTrial({ targetIdentityFingerprint }),
+    () =>
+      runtime.finishRemoteWifiTrial({
+        targetIdentityFingerprint,
+        revision: 1,
+        decision: Bindings.RemoteWifiDecision.Restore,
+      }),
     () => runtime.announceLxmf(),
     () =>
       runtime.sendDirectText({
@@ -325,8 +341,34 @@ test("performs preflight for exactly the eight outbound calls and never repeats 
       }),
   ])
     await expect(run()).rejects.toBe(failure);
-  expect(submitted).toHaveBeenCalledTimes(8);
-  expect(native.prepareOutbound).toHaveBeenCalledTimes(8);
+  expect(submitted).toHaveBeenCalledTimes(11);
+  expect(native.prepareOutbound).toHaveBeenCalledTimes(11);
+});
+
+test("Wi-Fi workflow forwards generated inputs once without changing credentials", async () => {
+  const outcome = Bindings.RemoteWifiCommandOutcome.Busy.new();
+  const startRemoteWifiTrial = jest.fn(async () => outcome);
+  const inspectRemoteWifiTrial = jest.fn(async () => outcome);
+  const finishRemoteWifiTrial = jest.fn(async () => outcome);
+  const { runtime } = setup({
+    startRemoteWifiTrial,
+    inspectRemoteWifiTrial,
+    finishRemoteWifiTrial,
+  });
+  const targetIdentityFingerprint = new Uint8Array(16).fill(9);
+  const input = { targetIdentityFingerprint, ssid: " test network ", password: " spaces matter " };
+  expect(await runtime.startRemoteWifiTrial(input)).toBe(outcome);
+  expect(startRemoteWifiTrial).toHaveBeenCalledWith(input, undefined);
+  expect(startRemoteWifiTrial).toHaveBeenCalledTimes(1);
+  await runtime.inspectRemoteWifiTrial({ targetIdentityFingerprint });
+  expect(inspectRemoteWifiTrial).toHaveBeenCalledWith({ targetIdentityFingerprint }, undefined);
+  const decision = {
+    targetIdentityFingerprint,
+    revision: 42,
+    decision: Bindings.RemoteWifiDecision.Keep,
+  };
+  await runtime.finishRemoteWifiTrial(decision);
+  expect(finishRemoteWifiTrial).toHaveBeenCalledWith(decision, undefined);
 });
 
 test("remote management uses generated typed inputs and forwards read cancellation", async () => {

@@ -166,6 +166,12 @@ export function createDevelopmentRuntime(
       call((api) => api.readRemoteNode(input, asyncOptions(signal)), signal, "outbound"),
     changeRemoteNode: (input: Bindings.ChangeRemoteNodeInput, signal?: AbortSignal) =>
       call((api) => api.changeRemoteNode(input, asyncOptions(signal)), signal, "outbound"),
+    startRemoteWifiTrial: (input: Bindings.StartRemoteWifiTrialInput, signal?: AbortSignal) =>
+      call((api) => api.startRemoteWifiTrial(input, asyncOptions(signal)), signal, "outbound"),
+    inspectRemoteWifiTrial: (input: Bindings.InspectRemoteWifiTrialInput, signal?: AbortSignal) =>
+      call((api) => api.inspectRemoteWifiTrial(input, asyncOptions(signal)), signal, "outbound"),
+    finishRemoteWifiTrial: (input: Bindings.FinishRemoteWifiTrialInput, signal?: AbortSignal) =>
+      call((api) => api.finishRemoteWifiTrial(input, asyncOptions(signal)), signal, "outbound"),
     saveObservedDestination: (destination: Uint8Array, signal?: AbortSignal) =>
       call(
         (api) => api.saveObservedDestination({ destination }, asyncOptions(signal)),

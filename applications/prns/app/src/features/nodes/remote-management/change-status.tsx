@@ -10,8 +10,8 @@ export function RemoteChangeStatusCard({
   return (
     <Card>
       <Subheading>Last change</Subheading>
-      <KeyValue label="Setting" value={remoteChangeLabel(operation.change)} />
-      <BodyText>{remoteChangeStatusMessage(operation.status)}</BodyText>
+      <KeyValue label="Action" value={remoteChangeLabel(operation.change)} />
+      <BodyText>{remoteChangeStatusMessage(operation.status, operation.change)}</BodyText>
     </Card>
   );
 }
@@ -46,10 +46,28 @@ function remoteChangeLabel(change: Bindings.RemoteNodeChange): string {
       return "Pause radios";
     case Bindings.RemoteNodeChange_Tags.WakeRadios:
       return "Resume radios";
+    case Bindings.RemoteNodeChange_Tags.RevokeController:
+      return "Remove device access";
   }
 }
 
-export function remoteChangeStatusMessage(status: Bindings.RemoteChangeStatus): string {
+export function remoteChangeStatusMessage(
+  status: Bindings.RemoteChangeStatus,
+  change?: Bindings.RemoteNodeChange,
+): string {
+  if (change?.tag === Bindings.RemoteNodeChange_Tags.RevokeController) {
+    if (status.tag === Bindings.RemoteChangeStatus_Tags.Applied)
+      return "The node removed this device's access. Refresh the device list to see the latest information.";
+    if (status.tag === Bindings.RemoteChangeStatus_Tags.Unchanged)
+      return "This device's access was already removed.";
+    if (
+      status.tag === Bindings.RemoteChangeStatus_Tags.Failed &&
+      status.inner.stage === Bindings.RemoteManagementFailureStage.Permission
+    )
+      return "This device's access cannot be removed remotely. It may have protected access, or this phone may not be allowed to remove it.";
+    if (status.tag === Bindings.RemoteChangeStatus_Tags.OutcomeUnknown)
+      return "Access may have been removed, but the result could not be confirmed. This request was not repeated. Reconnect and refresh the device list before trying again.";
+  }
   switch (status.tag) {
     case Bindings.RemoteChangeStatus_Tags.Pending:
       return "Waiting for the node to confirm the change…";

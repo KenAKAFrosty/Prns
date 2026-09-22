@@ -71,7 +71,7 @@ export function LoRaEditor({
       {region === undefined ? <BodyText>Choose a region before saving.</BodyText> : null}
       <ConfirmAction
         label="Save LoRa settings"
-        warning="Changing LoRa settings may disconnect other nodes. Keep another connection available so you can restore the previous settings."
+        warning="This saves a custom radio profile and may replace automatic radio selection. Other nodes may disconnect. Keep another connection available so you can adjust the settings again."
         disabled={busy || !complete || region === undefined}
         onConfirm={() => {
           if (!complete || region === undefined) return;

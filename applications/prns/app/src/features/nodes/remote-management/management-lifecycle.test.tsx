@@ -204,3 +204,81 @@ test("accepted changes leave prior information stale until an explicit fresh rea
   expect(readRemoteNode).toHaveBeenCalledTimes(2);
   expect(changeRemoteNode).toHaveBeenCalledTimes(1);
 });
+
+test("access inventory pages preserve identities and revoke once with refresh guidance", async () => {
+  const { runtime, snapshot, readRemoteNode, changeRemoteNode } = fixture();
+  const self = new Uint8Array(16).fill(3);
+  const other = new Uint8Array(16).fill(4);
+  const last = new Uint8Array(16).fill(5);
+  const permissions = [
+    Bindings.RemoteControlRequestKind.Describe,
+    Bindings.RemoteControlRequestKind.InventoryControllers,
+    Bindings.RemoteControlRequestKind.RevokeController,
+  ];
+  const accessRuntime = {
+    ...runtime,
+    snapshot: {
+      ...snapshot,
+      pairedTargets: [
+        {
+          targetIdentityFingerprint: target,
+          controllerIdentityFingerprint: self,
+          destination: new Uint8Array(16),
+          permittedRequests: permissions,
+        },
+      ],
+    },
+  };
+  readRemoteNode.mockResolvedValueOnce({
+    type: "outcome",
+    outcome: Bindings.ReadRemoteNodeOutcome.Read.new({
+      availableRequests: permissions,
+      rttMillis: 1n,
+      data: Bindings.RemoteNodeData.Overview.new({
+        overview: { firmware: undefined, power: undefined, interfaces: undefined },
+      }),
+    }),
+  });
+  const controllerPage = (identities: Uint8Array[], next?: Uint8Array): ReadResult => ({
+    type: "outcome",
+    outcome: Bindings.ReadRemoteNodeOutcome.Read.new({
+      availableRequests: permissions,
+      rttMillis: 1n,
+      data: Bindings.RemoteNodeData.Controllers.new({ page: { identities, next } }),
+    }),
+  });
+  readRemoteNode
+    .mockResolvedValueOnce(controllerPage([self, other], other))
+    .mockResolvedValueOnce(controllerPage([last]));
+  changeRemoteNode.mockResolvedValueOnce({
+    type: "outcome",
+    outcome: Bindings.ChangeRemoteNodeOutcome.Accepted.new({
+      operation: {
+        operationId: 1n,
+        generationId: 1n,
+        targetIdentityFingerprint: target,
+        change: Bindings.RemoteNodeChange.RevokeController.new({
+          controllerIdentityFingerprint: other,
+        }),
+        status: Bindings.RemoteChangeStatus.Applied.new(),
+      },
+    }),
+  });
+  const view = render(<RemoteManagementPanel target={target} runtime={accessRuntime} />);
+  fireEvent.press(await view.findByRole("tab", { name: "Access" }));
+  fireEvent.press(view.getByRole("button", { name: "Load devices" }));
+  fireEvent.press(await view.findByRole("button", { name: "Load more devices" }));
+  await view.findByText("Device 05050505");
+  expect(view.getByText("This phone")).toBeTruthy();
+  expect(readRemoteNode.mock.calls[2]?.[0].query).toEqual(
+    Bindings.RemoteNodeQuery.Controllers.new({ after: other }),
+  );
+  fireEvent.press(view.getByRole("button", { name: "Remove access for 04040404" }));
+  fireEvent.press(view.getByRole("button", { name: "Remove device access" }));
+  await view.findByText("Refresh the node information to check device access.");
+  expect(changeRemoteNode).toHaveBeenCalledTimes(1);
+  expect(changeRemoteNode.mock.calls[0]?.[0].change).toEqual(
+    Bindings.RemoteNodeChange.RevokeController.new({ controllerIdentityFingerprint: other }),
+  );
+  expect(view.getByRole("button", { name: "Refresh node information" })).toBeEnabled();
+});

@@ -1,5 +1,9 @@
 import * as Bindings from "@prns-internal/expo";
 import type {
+  StartRemoteWifiTrialInput,
+  InspectRemoteWifiTrialInput,
+  FinishRemoteWifiTrialInput,
+  RemoteWifiCommandOutcome,
   ReadRemoteNodeInput,
   ReadRemoteNodeOutcome,
   ChangeRemoteNodeInput,
@@ -55,6 +59,15 @@ export type RuntimeCommandResult<Outcome> =
     };
 
 export type DevelopmentRuntimeView = {
+  readonly startRemoteWifiTrial: (
+    input: StartRemoteWifiTrialInput,
+  ) => Promise<RuntimeCommandResult<RemoteWifiCommandOutcome>>;
+  readonly inspectRemoteWifiTrial: (
+    input: InspectRemoteWifiTrialInput,
+  ) => Promise<RuntimeCommandResult<RemoteWifiCommandOutcome>>;
+  readonly finishRemoteWifiTrial: (
+    input: FinishRemoteWifiTrialInput,
+  ) => Promise<RuntimeCommandResult<RemoteWifiCommandOutcome>>;
   readonly readRemoteNode: (
     input: ReadRemoteNodeInput,
     signal?: AbortSignal,
@@ -547,6 +560,22 @@ export function DevelopmentRuntimeProvider({
     [run],
   );
 
+  const startRemoteWifiTrial = useCallback(
+    (input: StartRemoteWifiTrialInput) =>
+      run((active) => active.runtime.startRemoteWifiTrial(input)),
+    [run],
+  );
+  const inspectRemoteWifiTrial = useCallback(
+    (input: InspectRemoteWifiTrialInput) =>
+      run((active) => active.runtime.inspectRemoteWifiTrial(input)),
+    [run],
+  );
+  const finishRemoteWifiTrial = useCallback(
+    (input: FinishRemoteWifiTrialInput) =>
+      run((active) => active.runtime.finishRemoteWifiTrial(input)),
+    [run],
+  );
+
   const saveObservedDestination = useCallback(
     async (destination: DestinationHash): Promise<RuntimeCommandResult<ContactMutationOutcome>> => {
       if (!("runtime" in selectedProvider) || session.current === null) {
@@ -667,6 +696,9 @@ export function DevelopmentRuntimeProvider({
       announceTarget,
       readRemoteNode,
       changeRemoteNode,
+      startRemoteWifiTrial,
+      inspectRemoteWifiTrial,
+      finishRemoteWifiTrial,
       saveObservedDestination,
       listLxmfPeers,
       listLxmfMessages,
@@ -693,6 +725,9 @@ export function DevelopmentRuntimeProvider({
       announceTarget,
       readRemoteNode,
       changeRemoteNode,
+      startRemoteWifiTrial,
+      inspectRemoteWifiTrial,
+      finishRemoteWifiTrial,
       initiatePairing,
       lifecycleFailure,
       phase,

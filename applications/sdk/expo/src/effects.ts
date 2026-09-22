@@ -1,5 +1,9 @@
 import { Data, Effect, type Scope } from "effect";
 import type {
+  StartRemoteWifiTrialInput,
+  InspectRemoteWifiTrialInput,
+  FinishRemoteWifiTrialInput,
+  RemoteWifiCommandOutcome,
   ReadRemoteNodeInput,
   ReadRemoteNodeOutcome,
   ChangeRemoteNodeInput,
@@ -24,6 +28,9 @@ export type DevelopmentRuntimeOperationName =
   | "announceTarget"
   | "readRemoteNode"
   | "changeRemoteNode"
+  | "startRemoteWifiTrial"
+  | "inspectRemoteWifiTrial"
+  | "finishRemoteWifiTrial"
   | "initiatePairing"
   | "rejectPairing"
   | "reset"
@@ -64,6 +71,15 @@ export type DevelopmentRuntimeFailure =
   | DevelopmentRuntimeStopError;
 
 export type EffectDevelopmentRuntime = {
+  readonly startRemoteWifiTrial: (
+    input: StartRemoteWifiTrialInput,
+  ) => Effect.Effect<RemoteWifiCommandOutcome, DevelopmentRuntimeOperationError>;
+  readonly inspectRemoteWifiTrial: (
+    input: InspectRemoteWifiTrialInput,
+  ) => Effect.Effect<RemoteWifiCommandOutcome, DevelopmentRuntimeOperationError>;
+  readonly finishRemoteWifiTrial: (
+    input: FinishRemoteWifiTrialInput,
+  ) => Effect.Effect<RemoteWifiCommandOutcome, DevelopmentRuntimeOperationError>;
   readonly readRemoteNode: (
     input: ReadRemoteNodeInput,
   ) => Effect.Effect<ReadRemoteNodeOutcome, DevelopmentRuntimeOperationError>;
@@ -128,6 +144,16 @@ export function makeEffectDevelopmentRuntime(
       runtimeCall("readRemoteNode", (signal) => runtime.readRemoteNode(input, signal)),
     changeRemoteNode: (input) =>
       runtimeCall("changeRemoteNode", (signal) => runtime.changeRemoteNode(input, signal)),
+    startRemoteWifiTrial: (input) =>
+      runtimeCall("startRemoteWifiTrial", (signal) => runtime.startRemoteWifiTrial(input, signal)),
+    inspectRemoteWifiTrial: (input) =>
+      runtimeCall("inspectRemoteWifiTrial", (signal) =>
+        runtime.inspectRemoteWifiTrial(input, signal),
+      ),
+    finishRemoteWifiTrial: (input) =>
+      runtimeCall("finishRemoteWifiTrial", (signal) =>
+        runtime.finishRemoteWifiTrial(input, signal),
+      ),
     startDevelopmentNode: (input) =>
       runtimeCall("start", () => runtime.startDevelopmentNode(input)),
     readDevelopmentNodeSnapshot: runtimeCall("snapshot", runtime.readDevelopmentNodeSnapshot),

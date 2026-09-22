@@ -14,6 +14,8 @@ import { NodeControls } from "./remote-management/node-controls";
 import { NodeOverviewCard } from "./remote-management/node-overview";
 import { ManagementTabs } from "./remote-management/management-tabs";
 import { interfaceKindLabel } from "./remote-management/interface-format";
+import { ControllerAccessCard } from "./remote-management/controller-access";
+import { WifiSetupCard, supportsWifiSetup } from "./remote-management/wifi-setup";
 
 const maximumEntries = 128;
 
@@ -29,6 +31,7 @@ export function RemoteManagementPanel({
   const [interfaces, setInterfaces] = useState<Bindings.RemoteInterfacePage>();
   const [details, setDetails] = useState<Record<string, Bindings.RemoteInterfaceDetails>>({});
   const [peers, setPeers] = useState<Record<string, Bindings.RemotePeerPage>>({});
+  const [controllers, setControllers] = useState<Bindings.RemoteControllerPage>();
   const [available, setAvailable] = useState<Bindings.RemoteControlRequestKind[]>([]);
   const [viewRevision, setViewRevision] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -144,6 +147,7 @@ export function RemoteManagementPanel({
           setInterfaces(data.inner.overview.interfaces);
           setDetails({});
           setPeers({});
+          setControllers(undefined);
           break;
         case Bindings.RemoteNodeData_Tags.Interfaces:
           try {
@@ -176,9 +180,30 @@ export function RemoteManagementPanel({
           }
           break;
         }
+        case Bindings.RemoteNodeData_Tags.Controllers: {
+          const page = data.inner.page;
+          const previous =
+            query.tag === Bindings.RemoteNodeQuery_Tags.Controllers &&
+            query.inner.after !== undefined
+              ? controllers
+              : undefined;
+          try {
+            const merged = appendPage(
+              previous === undefined
+                ? undefined
+                : { entries: previous.identities, next: previous.next },
+              { entries: page.identities, next: page.next },
+              (identity) => identity,
+            );
+            setControllers({ identities: merged.entries, next: merged.next });
+          } catch {
+            setFailure("The device list changed while loading. Refresh devices to start again.");
+          }
+          break;
+        }
       }
     },
-    [runtime, target, pending, admissionUncertain, interfaces, peers],
+    [runtime, target, pending, admissionUncertain, interfaces, peers, controllers],
   );
 
   useEffect(() => {
@@ -243,6 +268,9 @@ export function RemoteManagementPanel({
     interfaces?.entries.find((entry) => formatBytes(entry.interfaceId) === selectedInterface) ??
     interfaces?.entries[0];
   const visibleInterfaces = selected === undefined ? [] : [selected];
+  const controllerIdentity = runtime.snapshot?.pairedTargets?.find(
+    (candidate) => formatBytes(candidate.targetIdentityFingerprint) === targetId,
+  )?.controllerIdentityFingerprint;
 
   return (
     <>
@@ -291,6 +319,10 @@ export function RemoteManagementPanel({
             { value: "interfaces", label: "Interfaces" },
             { value: "device", label: "Device" },
             { value: "information", label: "Information" },
+            ...(available.includes(Bindings.RemoteControlRequestKind.InventoryControllers) ||
+            controllers !== undefined
+              ? [{ value: "access", label: "Access" }]
+              : []),
           ]}
           value={section}
           onChange={setSection}
@@ -373,11 +405,37 @@ export function RemoteManagementPanel({
         </>
       ) : null}
       {overview !== undefined && section === "device" ? (
-        <NodeControls
-          availableRequests={available}
-          busy={blocked}
-          onChange={(next) => void change(next)}
-        />
+        <>
+          {supportsWifiSetup(available) ? (
+            <WifiSetupCard target={target} runtime={runtime} busy={blocked} />
+          ) : null}
+          <NodeControls
+            availableRequests={available}
+            busy={blocked}
+            onChange={(next) => void change(next)}
+          />
+        </>
+      ) : null}
+      {overview !== undefined && section === "access" && controllerIdentity !== undefined ? (
+        <>
+          {available.includes(Bindings.RemoteControlRequestKind.InventoryControllers) ? null : (
+            <BodyText>Refresh the node information to check device access.</BodyText>
+          )}
+          <ControllerAccessCard
+            page={controllers}
+            controllerIdentityFingerprint={controllerIdentity}
+            availableRequests={available}
+            busy={blocked}
+            onLoad={() => void read(Bindings.RemoteNodeQuery.Controllers.new({ after: undefined }))}
+            onLoadMore={
+              controllers?.next === undefined || controllers.identities.length >= maximumEntries
+                ? undefined
+                : () =>
+                    void read(Bindings.RemoteNodeQuery.Controllers.new({ after: controllers.next }))
+            }
+            onChange={(next) => void change(next)}
+          />
+        </>
       ) : null}
     </>
   );
