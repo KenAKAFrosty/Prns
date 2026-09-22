@@ -1,3 +1,7 @@
+use core::cell::RefCell;
+
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::blocking_mutex::Mutex;
 use esp_hal::analog::adc::{Adc, AdcCalCurve, AdcConfig, AdcPin, Attenuation};
 use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig};
 use esp_hal::i2c::master::{Config as I2cConfig, I2c};
@@ -14,7 +18,9 @@ use ssd1306::{I2CDisplayInterface, Ssd1306};
 
 use personal_hopspot_core as screen;
 use personal_rns::interfaces::InterfaceId;
-use personal_rns::radios::sx126x::{BoardConfig, Sx126x, TcxoVoltage};
+use personal_rns::radios::sx126x::{
+    BoardConfig, RadioActivityControl, Sx126x, TcxoVoltage,
+};
 
 use super::heltec_frontend;
 use crate::s3::{
@@ -28,6 +34,27 @@ const NODE_ANNOUNCE_APP_DATA: &[u8] = b"Personal Hopspot HeltecV3";
 const VBAT_DIVIDER_NUM: u32 = 49;
 const VBAT_DIVIDER_DEN: u32 = 10;
 const CHARGE_RISE_MV: u32 = 16;
+
+static RADIO_ACTIVITY_LED: Mutex<
+    CriticalSectionRawMutex,
+    RefCell<Option<Output<'static>>>,
+> = Mutex::new(RefCell::new(None));
+
+fn set_radio_activity_led(active: bool) {
+    RADIO_ACTIVITY_LED.lock(|led| {
+        if let Some(led) = led.borrow_mut().as_mut() {
+            led.set_level(if active { Level::High } else { Level::Low });
+        }
+    });
+}
+
+fn radio_activity_started() {
+    set_radio_activity_led(true);
+}
+
+fn radio_activity_finished() {
+    set_radio_activity_led(false);
+}
 
 /// Heltec V3 exposes VBAT through a 49:10 divider on GPIO1. GPIO37 gates the
 /// divider; keeping it high while sampling matches the vendor schematic.
@@ -134,6 +161,14 @@ impl Esp32S3Board for HeltecV3Board {
     async fn bringup(
         mut p: esp_hal::peripherals::Peripherals,
     ) -> S3BoardHardware<Self::Display, Self::Battery, Self::Gnss> {
+        RADIO_ACTIVITY_LED.lock(|led| {
+            *led.borrow_mut() = Some(Output::new(
+                p.GPIO35,
+                Level::Low,
+                OutputConfig::default(),
+            ));
+        });
+
         let (sw_int1, timebase, rtc) = s3::boot_common!(p, Self::BOOT_BANNER, no_psram);
         s3::boot_stage(s3::BootPhase::DisplayHardwareBegin);
         // Vext is active-low. The V3 uses OLED reset GPIO21 and I2C0 GPIO17/18.
@@ -211,7 +246,13 @@ impl Esp32S3Board for HeltecV3Board {
                 external_power_amplifier: None,
                 frontend_control: lora_frontend.control(),
             },
-        );
+        )
+        .with_radio_activity_control(RadioActivityControl::TxRx {
+            enter_transmit: radio_activity_started,
+            leave_transmit: radio_activity_finished,
+            enter_receive: radio_activity_started,
+            leave_receive: radio_activity_finished,
+        });
 
         let adc_ctrl = Output::new(p.GPIO37, Level::High, OutputConfig::default());
         let mut adc_cfg = AdcConfig::new();
