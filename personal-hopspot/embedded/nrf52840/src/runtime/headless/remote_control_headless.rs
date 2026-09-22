@@ -1,7 +1,7 @@
 use embassy_futures::select::{select, Either};
 use embassy_time::{Duration, Instant, Timer};
 use personal_hopspot_core as hopspot;
-#[cfg(feature = "board-mesh-tower-v2")]
+#[cfg(any(feature = "board-mesh-tower-v2", feature = "board-muzi-base-duo"))]
 use personal_rns::bluetooth_auto::BluetoothAutoStatus;
 use personal_rns::interfaces::subghz::{
     ResolvedSubGMode, SubGConfiguration, SubGConfigurationState,
@@ -17,7 +17,7 @@ use personal_rns::remote_control::{
     RemoteControlLoRaOutcome, RemoteControlPowerOutcome, RemoteControlRequestKind,
     RemoteControlSystemPower,
 };
-#[cfg(feature = "board-mesh-tower-v2")]
+#[cfg(any(feature = "board-mesh-tower-v2", feature = "board-muzi-base-duo"))]
 use personal_rns::remote_control::{
     RemoteControlDiscoveryGroups, RemoteControlDiscoveryGroupsInventoryOutcome,
     RemoteControlDiscoveryGroupsReplaceOutcome, RemoteControlGroupOutcome,
@@ -29,16 +29,16 @@ use personal_rns::runtime::{
 #[cfg(feature = "board-t1000e")]
 use crate::boards::selected as board;
 
-#[cfg(feature = "board-mesh-tower-v2")]
+#[cfg(any(feature = "board-mesh-tower-v2", feature = "board-muzi-base-duo"))]
 use super::bluetooth::{BLE_SHARED, BLE_SUPERVISOR_ID, MEMBERS};
 use super::{INTERFACE_STORE, REMOTE_CONTROL_COMMANDS};
 
 const RESPONSE_GRACE_PERIOD: Duration = Duration::from_millis(250);
 const LORA_ENABLED: u8 = 1 << 0;
 const USB_ENABLED: u8 = 1 << 1;
-#[cfg(feature = "board-mesh-tower-v2")]
+#[cfg(any(feature = "board-mesh-tower-v2", feature = "board-muzi-base-duo"))]
 const BLUETOOTH_ENABLED: u8 = 1 << 2;
-#[cfg(feature = "board-mesh-tower-v2")]
+#[cfg(any(feature = "board-mesh-tower-v2", feature = "board-muzi-base-duo"))]
 const SNAPSHOT_CAPACITY: usize = MEMBERS + 3;
 #[cfg(feature = "board-t1000e")]
 const SNAPSHOT_CAPACITY: usize = 2;
@@ -91,7 +91,7 @@ pub(super) fn capabilities() -> RemoteControlCapabilities {
     ] {
         capabilities = capabilities.with_request(kind);
     }
-    #[cfg(feature = "board-mesh-tower-v2")]
+    #[cfg(any(feature = "board-mesh-tower-v2", feature = "board-muzi-base-duo"))]
     for kind in [
         RemoteControlRequestKind::SetInterfaceGroup,
         RemoteControlRequestKind::InventoryInterfaceDiscoveryGroups,
@@ -194,11 +194,11 @@ async fn execute(
                 }
                 SubGConfigurationState::Unconfigured => None,
             };
-            #[cfg(feature = "board-mesh-tower-v2")]
+            #[cfg(any(feature = "board-mesh-tower-v2", feature = "board-muzi-base-duo"))]
             let ble_groups = BluetoothAutoStatus::new(&BLE_SHARED).discovery_groups();
-            #[cfg(feature = "board-mesh-tower-v2")]
+            #[cfg(any(feature = "board-mesh-tower-v2", feature = "board-muzi-base-duo"))]
             let ble_group = hopspot::singleton_discovery_group(&ble_groups);
-            #[cfg(not(feature = "board-mesh-tower-v2"))]
+            #[cfg(not(any(feature = "board-mesh-tower-v2", feature = "board-muzi-base-duo")))]
             let ble_group = None;
             let outcome = hopspot::remote_control_interface_config_from_snapshots(
                 context.snapshots,
@@ -251,7 +251,7 @@ async fn execute(
             };
             Ok(RemoteControlHostResponse::SetInterfacePower(outcome))
         }
-        #[cfg(feature = "board-mesh-tower-v2")]
+        #[cfg(any(feature = "board-mesh-tower-v2", feature = "board-muzi-base-duo"))]
         RemoteControlHostCommand::SetInterfaceGroup { id, group } => {
             let groups = personal_rns::interfaces::DiscoveryGroupSet::from_singleton(group);
             let outcome = replace_bluetooth_discovery_groups(id, &groups).await?;
@@ -269,7 +269,7 @@ async fn execute(
             };
             Ok(RemoteControlHostResponse::SetInterfaceGroup(outcome))
         }
-        #[cfg(feature = "board-mesh-tower-v2")]
+        #[cfg(any(feature = "board-mesh-tower-v2", feature = "board-muzi-base-duo"))]
         RemoteControlHostCommand::InventoryInterfaceDiscoveryGroups { id } => {
             let outcome = if id == BLE_SUPERVISOR_ID {
                 RemoteControlDiscoveryGroupsInventoryOutcome::Groups(
@@ -282,7 +282,7 @@ async fn execute(
             };
             Ok(RemoteControlHostResponse::InventoryInterfaceDiscoveryGroups(outcome))
         }
-        #[cfg(feature = "board-mesh-tower-v2")]
+        #[cfg(any(feature = "board-mesh-tower-v2", feature = "board-muzi-base-duo"))]
         RemoteControlHostCommand::ReplaceInterfaceDiscoveryGroups { id, groups } => {
             let groups = groups.into_groups();
             Ok(RemoteControlHostResponse::ReplaceInterfaceDiscoveryGroups(
@@ -366,7 +366,7 @@ async fn execute(
     }
 }
 
-#[cfg(feature = "board-mesh-tower-v2")]
+#[cfg(any(feature = "board-mesh-tower-v2", feature = "board-muzi-base-duo"))]
 async fn replace_bluetooth_discovery_groups(
     id: InterfaceId,
     desired: &personal_rns::interfaces::DiscoveryGroupSet,
@@ -459,7 +459,7 @@ fn interface_bit(context: &Context<'_>, id: InterfaceId) -> Option<u8> {
     } else if context.usb_status.id() == id {
         Some(USB_ENABLED)
     } else {
-        #[cfg(feature = "board-mesh-tower-v2")]
+        #[cfg(any(feature = "board-mesh-tower-v2", feature = "board-muzi-base-duo"))]
         if id == BLE_SUPERVISOR_ID {
             return Some(BLUETOOTH_ENABLED);
         }
@@ -493,7 +493,7 @@ fn apply_interface_enabled(context: &Context<'_>, id: InterfaceId, enabled: bool
     } else if context.usb_status.id() == id {
         set_status(context.usb_status, enabled);
     } else {
-        #[cfg(feature = "board-mesh-tower-v2")]
+        #[cfg(any(feature = "board-mesh-tower-v2", feature = "board-muzi-base-duo"))]
         if id == BLE_SUPERVISOR_ID {
             let status = BluetoothAutoStatus::new(&BLE_SHARED);
             if enabled {
@@ -514,7 +514,7 @@ fn restore_desired_interfaces(context: &Context<'_>) {
         context.usb_status,
         *context.desired_interfaces & USB_ENABLED != 0,
     );
-    #[cfg(feature = "board-mesh-tower-v2")]
+    #[cfg(any(feature = "board-mesh-tower-v2", feature = "board-muzi-base-duo"))]
     {
         let bluetooth = BluetoothAutoStatus::new(&BLE_SHARED);
         if *context.desired_interfaces & BLUETOOTH_ENABLED != 0 {
@@ -529,12 +529,12 @@ fn interfaces_match_desired(context: &Context<'_>) -> bool {
     context.lora_status.is_enabled() == (*context.desired_interfaces & LORA_ENABLED != 0)
         && context.usb_status.is_enabled() == (*context.desired_interfaces & USB_ENABLED != 0)
         && {
-            #[cfg(feature = "board-mesh-tower-v2")]
+            #[cfg(any(feature = "board-mesh-tower-v2", feature = "board-muzi-base-duo"))]
             {
                 BluetoothAutoStatus::new(&BLE_SHARED).is_enabled()
                     == (*context.desired_interfaces & BLUETOOTH_ENABLED != 0)
             }
-            #[cfg(not(feature = "board-mesh-tower-v2"))]
+            #[cfg(not(any(feature = "board-mesh-tower-v2", feature = "board-muzi-base-duo")))]
             {
                 true
             }
@@ -552,7 +552,7 @@ fn enabled_interfaces(
     if usb_status.is_enabled() {
         enabled |= USB_ENABLED;
     }
-    #[cfg(feature = "board-mesh-tower-v2")]
+    #[cfg(any(feature = "board-mesh-tower-v2", feature = "board-muzi-base-duo"))]
     if BluetoothAutoStatus::new(&BLE_SHARED).is_enabled() {
         enabled |= BLUETOOTH_ENABLED;
     }
@@ -584,7 +584,7 @@ fn apply_scheduled(
             } else if usb_status.id() == id {
                 usb_status.disable();
             } else {
-                #[cfg(feature = "board-mesh-tower-v2")]
+                #[cfg(any(feature = "board-mesh-tower-v2", feature = "board-muzi-base-duo"))]
                 if id == BLE_SUPERVISOR_ID {
                     BluetoothAutoStatus::new(&BLE_SHARED).disable();
                 }
@@ -593,7 +593,7 @@ fn apply_scheduled(
         ScheduledAction::ReconcileInterfaces => {
             set_status(lora_status, desired_interfaces & LORA_ENABLED != 0);
             set_status(usb_status, desired_interfaces & USB_ENABLED != 0);
-            #[cfg(feature = "board-mesh-tower-v2")]
+            #[cfg(any(feature = "board-mesh-tower-v2", feature = "board-muzi-base-duo"))]
             if desired_interfaces & BLUETOOTH_ENABLED != 0 {
                 BluetoothAutoStatus::new(&BLE_SHARED).enable();
             } else {
@@ -603,7 +603,7 @@ fn apply_scheduled(
         ScheduledAction::SleepSystem => {
             lora_status.disable();
             usb_status.disable();
-            #[cfg(feature = "board-mesh-tower-v2")]
+            #[cfg(any(feature = "board-mesh-tower-v2", feature = "board-muzi-base-duo"))]
             BluetoothAutoStatus::new(&BLE_SHARED).disable();
             #[cfg(feature = "board-t1000e")]
             board::control_gnss(hopspot::GnssReceiverCommand::Disable);
@@ -616,7 +616,7 @@ fn snapshots(
     lora: &EmbassyInterfaceStatus,
     usb: &EmbassyInterfaceStatus,
 ) -> Result<heapless::Vec<InterfaceSnapshot, SNAPSHOT_CAPACITY>, RemoteControlHostCommandError> {
-    #[cfg(feature = "board-mesh-tower-v2")]
+    #[cfg(any(feature = "board-mesh-tower-v2", feature = "board-muzi-base-duo"))]
     let bluetooth = BluetoothAutoStatus::new(&BLE_SHARED);
     let mut entries: heapless::Vec<(&dyn InterfaceStatus, Membership), SNAPSHOT_CAPACITY> =
         heapless::Vec::new();
@@ -626,7 +626,7 @@ fn snapshots(
     entries
         .push((usb, Membership::Independent))
         .map_err(|_| RemoteControlHostCommandError::ApplyFailed)?;
-    #[cfg(feature = "board-mesh-tower-v2")]
+    #[cfg(any(feature = "board-mesh-tower-v2", feature = "board-muzi-base-duo"))]
     {
         let supervisor_id = bluetooth.id();
         entries
