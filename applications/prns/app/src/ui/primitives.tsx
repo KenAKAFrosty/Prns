@@ -1,10 +1,11 @@
-import { type PropsWithChildren, type ReactNode, useState } from "react";
+import { Children, type PropsWithChildren, type ReactNode, useState } from "react";
 import {
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
   type PressableProps,
   type StyleProp,
@@ -111,6 +112,50 @@ export function Card({
   );
 }
 
+/** A title and its status/actions share space, but wrap rather than truncate. */
+export function CardHeader({ title, children }: PropsWithChildren<{ readonly title: string }>) {
+  const palette = useAppPalette();
+  return (
+    <View style={styles.cardHeader}>
+      <Text
+        accessibilityRole="header"
+        aria-level={2}
+        style={[styles.subheading, styles.cardHeaderTitle, { color: palette.text }]}
+      >
+        {title}
+      </Text>
+      {children === undefined ? null : <View style={styles.headerActions}>{children}</View>}
+    </View>
+  );
+}
+
+/** Separate related groups inside a card without nesting another card. */
+export function CardSection({ title, children }: PropsWithChildren<{ readonly title?: string }>) {
+  const palette = useAppPalette();
+  return (
+    <View style={[styles.cardSection, { borderTopColor: palette.border }]}>
+      {title === undefined ? null : <Subheading>{title}</Subheading>}
+      {children}
+    </View>
+  );
+}
+
+/** Related controls share a row when there is room; large text stays full width. */
+export function ActionRow({ children }: PropsWithChildren) {
+  const { fontScale } = useWindowDimensions();
+  return (
+    <View style={styles.actionRow}>
+      {Children.map(children, (child) =>
+        child === null ? null : (
+          <View style={[styles.actionItem, fontScale >= 1.4 ? styles.actionItemStacked : null]}>
+            {child}
+          </View>
+        ),
+      )}
+    </View>
+  );
+}
+
 type ButtonProps = Pick<
   PressableProps,
   "accessibilityLabel" | "accessibilityState" | "disabled" | "onPress"
@@ -169,10 +214,17 @@ export function Button({
 
 export function KeyValue({ label, value }: { readonly label: string; readonly value: string }) {
   const palette = useAppPalette();
+  const { width, fontScale } = useWindowDimensions();
+  const stacked = width / fontScale < 360 || value.length > 28 || value.includes("\n");
   return (
-    <View style={styles.keyValue}>
-      <Text style={[styles.key, { color: palette.textMuted }]}>{label}</Text>
-      <Text selectable style={[styles.value, { color: palette.text }]}>
+    <View style={[styles.keyValue, stacked ? styles.keyValueStacked : null]}>
+      <Text style={[styles.key, stacked ? styles.stackedText : null, { color: palette.textMuted }]}>
+        {label}
+      </Text>
+      <Text
+        selectable
+        style={[styles.value, stacked ? styles.stackedText : null, { color: palette.text }]}
+      >
         {value}
       </Text>
     </View>
@@ -187,42 +239,61 @@ const styles = StyleSheet.create({
   screen: { flex: 1, minWidth: 0 },
   screenContent: {
     alignSelf: "center",
-    gap: space.md,
+    gap: 12,
     maxWidth: 880,
-    padding: space.lg,
+    padding: space.md,
     paddingBottom: space.xl,
     width: "100%",
   },
-  heading: { fontSize: 32, fontWeight: "700", lineHeight: 39 },
-  subheading: { fontSize: 21, fontWeight: "600", lineHeight: 28 },
-  body: { fontSize: 16, lineHeight: 24 },
+  heading: { fontSize: 26, fontWeight: "700", lineHeight: 32 },
+  subheading: { fontSize: 18, fontWeight: "600", lineHeight: 24 },
+  body: { fontSize: 16, lineHeight: 22 },
   badge: {
     alignSelf: "flex-start",
     maxWidth: "100%",
     borderRadius: radius.pill,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
   },
   badgeText: { fontSize: 13, fontWeight: "700", lineHeight: 18 },
   card: {
     borderRadius: radius.md,
     borderWidth: 1,
     gap: space.sm,
-    padding: space.md,
+    padding: 12,
     minWidth: 0,
   },
+  cardHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: space.sm,
+  },
+  cardHeaderTitle: { flexBasis: 120, flexGrow: 1, flexShrink: 1, minWidth: 0 },
+  headerActions: { flexDirection: "row", flexWrap: "wrap", gap: space.sm, maxWidth: "100%" },
+  cardSection: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    gap: space.sm,
+    marginTop: 4,
+    paddingTop: 12,
+  },
+  actionRow: { flexDirection: "row", flexWrap: "wrap", gap: space.sm, minWidth: 0 },
+  actionItem: { flexBasis: 144, flexGrow: 1, minWidth: 0 },
+  actionItemStacked: { flexBasis: "100%" },
   button: {
     alignItems: "center",
     borderRadius: radius.sm,
     borderWidth: 2,
     justifyContent: "center",
     minHeight: 48,
-    paddingHorizontal: space.md,
-    paddingVertical: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
   },
   buttonText: { fontSize: 16, fontWeight: "700", lineHeight: 22, textAlign: "center" },
-  keyValue: { gap: space.xs },
-  key: { fontSize: 13, fontWeight: "600", lineHeight: 18 },
-  value: { fontSize: 16, lineHeight: 24 },
-  stack: { gap: space.md },
+  keyValue: { alignItems: "flex-start", flexDirection: "row", gap: 12, paddingVertical: 3 },
+  keyValueStacked: { flexDirection: "column", gap: space.xs },
+  key: { flex: 1, minWidth: 0, fontSize: 13, fontWeight: "600", lineHeight: 20 },
+  value: { flex: 1.3, minWidth: 0, fontSize: 15, lineHeight: 20, textAlign: "right" },
+  stackedText: { flex: 0, textAlign: "left", alignSelf: "stretch" },
+  stack: { gap: 12 },
 });

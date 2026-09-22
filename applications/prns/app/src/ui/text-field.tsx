@@ -82,7 +82,7 @@ export function TextField({
 }
 
 const styles = StyleSheet.create({
-  field: { gap: space.sm, minWidth: 0, paddingVertical: space.xs },
+  field: { gap: space.xs, minWidth: 0, paddingVertical: 2 },
   label: { fontSize: 14, fontWeight: "600", lineHeight: 20 },
   input: {
     borderRadius: radius.sm,
@@ -90,8 +90,8 @@ const styles = StyleSheet.create({
     fontSize: 16,
     minHeight: 48,
     minWidth: 0,
-    paddingHorizontal: space.md,
-    paddingVertical: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
   },
   multiline: { minHeight: 128, textAlignVertical: "top" },
 });
