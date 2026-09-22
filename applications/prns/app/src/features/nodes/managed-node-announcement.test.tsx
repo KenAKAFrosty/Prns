@@ -112,6 +112,52 @@ beforeEach(() => {
     }),
   });
 });
+test("summarizes all saved and live controls without rendering a permission wall", async () => {
+  const permissions = Object.values(Bindings.RemoteControlRequestKind).filter(
+    (kind): kind is Bindings.RemoteControlRequestKind => typeof kind === "number",
+  );
+  const fullTarget = { ...target, permittedRequests: permissions };
+  mockRuntime.snapshot = { ...mockSnapshot, pairedTargets: [fullTarget] };
+  mockDescribe.mockResolvedValue({
+    type: "outcome",
+    outcome: Bindings.RemoteControlDescribeOutcome.Described.new({
+      target: fullTarget,
+      availableRequests: permissions,
+      rttMillis: 3n,
+      snapshot: mockRuntime.snapshot,
+    }),
+  });
+  const summary =
+    "View node information. Change node settings. Share the node address. Manage other devices’ access.";
+  const screen = render(<ManagedNodeScreen />);
+  expect(screen.getByText(summary)).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Check node connection" })).toBeEnabled();
+  expect(mockDescribe).not.toHaveBeenCalled();
+  fireEvent.press(screen.getByRole("button", { name: "Check node connection" }));
+  await screen.findByText("Node reached");
+  expect(screen.getAllByText(summary)).toHaveLength(2);
+  expect(screen.getAllByText("Available controls")).toHaveLength(2);
+  expect(screen.queryByText(/Change LoRa settings|Prepare a Wi-Fi network change/u)).toBeNull();
+});
+
+test.each([
+  [[], "None"],
+  [[Bindings.RemoteControlRequestKind.SetDisplayVisibility], "Change node settings."],
+] as const)(
+  "does not enable connection checks for a grant without Describe (%s)",
+  (permissions, summary) => {
+    mockRuntime.snapshot = {
+      ...mockSnapshot,
+      pairedTargets: [{ ...target, permittedRequests: [...permissions] }],
+    };
+    const screen = render(<ManagedNodeScreen />);
+    expect(screen.getByText(summary)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Check node connection" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Load node information" })).toBeNull();
+    expect(mockDescribe).not.toHaveBeenCalled();
+  },
+);
+
 test("ignores a late old check after blur and refocus even if its caller ignores cancellation", async () => {
   let finishOld: ((result: Awaited<ReturnType<typeof mockDescribe>>) => void) | undefined;
   mockDescribe.mockImplementationOnce(

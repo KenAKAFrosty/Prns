@@ -13,11 +13,13 @@ pairings grant Administrator authority plus the board's exact supported request
 set, with full-control disclosure. All 30 upstream request kinds are represented;
 guided Wi-Fi and controller-management flows remain unimplemented.
 
-These new screens and pairing behavior are not physically qualified. Earlier
-phone, firmware-size and background observations below do not qualify this
-rebase. The new checkpoint records its own checks and limits; source/UI test
-coverage is not device acceptance. No deployed-pairing migration is required for
-these disposable development devices.
+The expanded read/write screens are not yet physically qualified. Fresh Android
+pairing succeeded in a user-run trial against the separate E290 diagnostic
+firmware, after earlier intermittent freezes/reboots; that fault remains open.
+This is not production-firmware or iOS acceptance. Earlier phone, firmware-size
+and background observations below do not qualify this rebase. The new checkpoint
+records each build's checks and limits; source/UI tests are not device acceptance.
+No deployed-pairing migration is required for these disposable development devices.
 
 ## What the evidence covers
 

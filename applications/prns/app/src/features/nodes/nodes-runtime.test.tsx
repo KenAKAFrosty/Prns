@@ -1427,11 +1427,14 @@ describe("Foundation 1 Nodes runtime binding", () => {
     const describeRemoteControlTarget = jest.fn(async () =>
       Bindings.RemoteControlDescribeOutcome.Busy.new(),
     );
+    const permissions = Object.values(Bindings.RemoteControlRequestKind).filter(
+      (kind): kind is Bindings.RemoteControlRequestKind => typeof kind === "number",
+    );
     const target = {
       targetIdentityFingerprint: observedIdentity,
       destination: observedDestination,
       controllerIdentityFingerprint: identityHash(new Uint8Array(16).fill(0x55)),
-      permittedRequests: [Bindings.RemoteControlRequestKind.Describe],
+      permittedRequests: permissions,
     };
     const view = render(
       <DevelopmentRuntimeProvider
@@ -1448,6 +1451,13 @@ describe("Foundation 1 Nodes runtime binding", () => {
     );
     await waitFor(() => expect(view.getByText("Paired")).toBeTruthy());
     expect(view.getByText("Manage node")).toBeTruthy();
+    expect(view.getByText("Available controls")).toBeTruthy();
+    expect(
+      view.getByText(
+        "View node information. Change node settings. Share the node address. Manage other devices’ access.",
+      ),
+    ).toBeTruthy();
+    expect(view.queryByText(/Change LoRa settings|Prepare a Wi-Fi network change/u)).toBeNull();
     expect(view.queryByText("Ready")).toBeNull();
     expect(describeRemoteControlTarget).not.toHaveBeenCalled();
     view.unmount();

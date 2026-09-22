@@ -22,8 +22,10 @@ data is resettable and is not promised to survive incompatible upgrades.
 
 The current integration is based on upstream `8c211827b` and represents all 30
 RemoteControl request kinds. New board pairings grant Administrator authority
-and the board's exact supported request set, with full-control disclosure before
-approval. This is a single preset, not a permissions picker. Test devices may be
+and the board's exact supported request set. Confirmation shows a short access
+summary and keeps administrator powers visible; exact controls and the node ID
+are available under **Show pairing details**. This is a single preset, not a
+permissions picker. Test devices may be
 reset and paired again; no deployed-pairing migration is needed.
 
 The expanded controls are implemented but not yet physically qualified on

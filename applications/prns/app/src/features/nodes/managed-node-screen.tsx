@@ -22,7 +22,8 @@ import {
   Subheading,
 } from "@/ui/primitives";
 import { NotFoundScreen } from "../placeholder-screen";
-import { formatBytes, formatRequestKind } from "./format";
+import { formatBytes } from "./format";
+import { summarizePairingAccess } from "./pairing-access-summary";
 import { RemoteManagementPanel } from "./remote-management-panel";
 
 export function ManagedNodeScreen() {
@@ -221,11 +222,11 @@ export function ManagedNodeScreen() {
         <KeyValue label="Destination" value={formatBytes(target.destination)} />
         <KeyValue label="Controller" value={formatBytes(target.controllerIdentityFingerprint)} />
         <KeyValue
-          label="Available actions"
+          label="Available controls"
           value={
             target.permittedRequests.length === 0
               ? "None"
-              : target.permittedRequests.map(formatRequestKind).join(", ")
+              : summarizePairingAccess(target.permittedRequests)
           }
         />
       </Card>
@@ -365,11 +366,11 @@ function DescribeResult({
             value={`${result.outcome.inner.rttMillis.toString()} ms`}
           />
           <KeyValue
-            label="Available actions"
+            label="Available controls"
             value={
               result.outcome.inner.availableRequests.length === 0
                 ? "None"
-                : result.outcome.inner.availableRequests.map(formatRequestKind).join(", ")
+                : summarizePairingAccess(result.outcome.inner.availableRequests)
             }
           />
           <KeyValue

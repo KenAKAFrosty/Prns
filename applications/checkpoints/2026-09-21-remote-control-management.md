@@ -164,6 +164,36 @@ Both packages were rebuilt from `0d00c25f35136c33f1c587063bf3e2e0d039259c`
   artifact. Receipts: `scratch/prns-app/2026-09-21/e290-preflight.jsonl` and
   `scratch/prns-app/2026-09-21/e290-flash.jsonl`.
 
-Fresh full-control pairing, post-flash board behavior, and physical read/write
-acceptance are still pending. The Galaxy is on the pairing screen awaiting a
-new board invitation. No branch was pushed during installation.
+At this installation checkpoint, fresh full-control pairing, post-flash board
+behavior, and physical read/write acceptance were still pending. Later pairing
+evidence is recorded below. No branch was pushed during installation.
+
+## Later pairing trial and confirmation polish
+
+The user completed fresh pairing on the Galaxy after earlier board freezes and
+reboots. The phone was still running the APK above; the E290 was running
+`04b0be101bdd` from the isolated `codex/e290-ui-stall-diagnostics` branch. The
+phone's Paired screen was observed, and the node remained in its saved list after
+an app update and restart. This is diagnostic-firmware pairing evidence, not
+resolution of the intermittent fault or acceptance of every remote operation.
+
+The diagnostic trace captured one failed button attempt (all output stopped for
+about 15 seconds before USB loss) and one successful close after expiry. The
+original reset reason was obscured by the first capture helper's reattachment;
+the revised passive helper preserved uptime during a tested live reattachment.
+No pairing Close timeout, display recovery, or watchdog change was introduced.
+Diagnostic source and its detailed record remain on their separate branch;
+`prns-app` does not enable that firmware tracing.
+
+App confirmation now puts the code first, replaces the comma-separated control
+list with a short summary derived from the actual requests, and keeps the
+Administrator disclosure visible. **Show pairing details** reveals the exact
+controls one per line and the node ID. Disclosure resets for each attempt;
+approval/rejection behavior and the grant itself are unchanged. Redundant setup
+instructions and Bluetooth setup cards are hidden during code confirmation.
+The saved-node cards and live connection result reuse the same compact summary;
+their request availability and connection-check authorization are unchanged.
+
+The new confirmation component was also rendered in a local React Native Web
+fixture at phone width and checked collapsed and expanded. This validates that
+layout with fixture data, not an actual confirmation on either native platform.

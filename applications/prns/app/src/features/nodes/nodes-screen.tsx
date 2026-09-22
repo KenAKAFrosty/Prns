@@ -16,9 +16,10 @@ import {
   ScreenHeading,
   Subheading,
 } from "@/ui/primitives";
-import { formatBytes, formatRequestKind, formatRuntime } from "./format";
+import { formatBytes, formatRuntime } from "./format";
 import { AndroidBluetoothCard } from "./android-bluetooth-card";
 import { AndroidNodeControls } from "./android-node-controls";
+import { summarizePairingAccess } from "./pairing-access-summary";
 
 export function NodesScreen() {
   const runtime = useDevelopmentRuntime();
@@ -121,11 +122,11 @@ export function NodesScreen() {
                   <KeyValue label="Node ID" value={targetId} />
                   <KeyValue label="Destination" value={formatBytes(target.destination)} />
                   <KeyValue
-                    label="Available actions"
+                    label="Available controls"
                     value={
                       target.permittedRequests.length === 0
                         ? "None"
-                        : target.permittedRequests.map(formatRequestKind).join(", ")
+                        : summarizePairingAccess(target.permittedRequests)
                     }
                   />
                   <NavigationLink href={managedHref}>Manage node</NavigationLink>
