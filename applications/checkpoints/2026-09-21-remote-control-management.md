@@ -197,3 +197,25 @@ their request availability and connection-check authorization are unchanged.
 The new confirmation component was also rendered in a local React Native Web
 fixture at phone width and checked collapsed and expanded. This validates that
 layout with fixture data, not an actual confirmation on either native platform.
+
+Validation and installation for UI commits `4c57f0424` and `fd211f5e2`:
+
+- All 262 app tests in 31 suites pass, including restricted/empty grants,
+  the full 30-request set, disclosure visibility/reset, leading-zero code
+  accessibility, pending decisions and unchanged connection-check gating.
+  App formatting, lint and all three TypeScript projects pass.
+- The canonical standalone Android build from `fd211f5e2` succeeds and verifies
+  bundled JavaScript, application ID, Android 10 minimum and APK alignment.
+  APK SHA256: `b7beb6c2960798d3936de1dac726366b7c599f09cf01bcb7d98fbbd3aa45c6b0`.
+- Installed over the Galaxy's existing app at 20:05 EDT, preserving data. A cold
+  launch and on-device check confirm the saved node remains paired and its card
+  now shows the compact summary and accessible Manage node link. Android runtime
+  permissions are unchanged. No new pairing was required for this installation.
+- The revised confirmation itself has unit/UI-fixture coverage but has not yet
+  been exercised through a fresh native pairing. No iOS package was installed,
+  no board was reflashed, and no branch was pushed during this UI work.
+
+Logs: `scratch/prns-app/2026-09-21/pairing-ui-final-tests.log`,
+`pairing-ui-final-{typecheck,lint,format}.log`, and
+`pairing-ui-final-android-build.log` in the same directory. This is a development
+APK/startup check, not production release or complete remote read/write acceptance.
