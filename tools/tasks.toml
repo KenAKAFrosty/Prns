@@ -155,7 +155,18 @@ domain = "build"
 effect = "workspace-write"
 platforms = ["linux", "macos"]
 audience = ["developer", "ci"]
-entrypoint = ["bash", "tools/build/hopspot-mesh-tower-v2.sh"]
+entrypoint = ["bash", "tools/build/hopspot-build-only-uf2.sh", "mesh-tower-v2", "heltec-mesh-tower-v2", "MeshTower V2"]
+requires = ["bash", "cargo", "python3", "rustc"]
+setup = "Install Rust with rustup so the nRF52840 target and llvm-tools-preview component declared by the firmware workspace are available."
+
+[[task]]
+id = "build.hopspot.muzi-base-duo"
+summary = "Build the headless muzi Base Duo (nRF52840 + LR1121) firmware with S140 6.1.1 Bluetooth Auto and package its developer UF2 for the muzi-Base bootloader volume."
+domain = "build"
+effect = "workspace-write"
+platforms = ["linux", "macos"]
+audience = ["developer", "ci"]
+entrypoint = ["bash", "tools/build/hopspot-build-only-uf2.sh", "muzi-base-duo", "muzi-base-duo", "muzi Base Duo"]
 requires = ["bash", "cargo", "python3", "rustc"]
 setup = "Install Rust with rustup so the nRF52840 target and llvm-tools-preview component declared by the firmware workspace are available."
 

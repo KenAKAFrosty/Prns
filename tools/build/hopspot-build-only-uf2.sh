@@ -1,14 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if (( $# != 3 )); then
+    echo "usage: hopspot-build-only-uf2.sh <resource-target-id> <firmware-binary-name> <board-display-name>" >&2
+    exit 1
+fi
+
+target_id="$1"
+firmware_name="$2"
+board_name="$3"
+
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-output="$root/target/hopspot-mesh-tower-v2"
-resource_work="$root/target/flash-artifacts/resources/configured/work/mesh-tower-v2"
+output="$root/target/hopspot-$target_id"
+resource_work="$root/target/flash-artifacts/resources/configured/work/$target_id"
 resource_cache="$root/target/flash-artifacts/resources/configured/cargo-cache"
-elf="$resource_cache/thumbv7em-none-eabihf/release/heltec-mesh-tower-v2"
+elf="$resource_cache/thumbv7em-none-eabihf/release/$firmware_name"
 resource_binary="$resource_work/firmware.bin"
-binary="$output/heltec-mesh-tower-v2.bin"
-uf2="$output/heltec-mesh-tower-v2.uf2"
+binary="$output/$firmware_name.bin"
+uf2="$output/$firmware_name.uf2"
 nrf52840_uf2_family=0xADA52840
 
 rust_sysroot="$(rustc --print sysroot)"
@@ -32,7 +41,7 @@ if [[ ! -x "$llvm_objdump" ]]; then
 fi
 
 mkdir -p "$output"
-"$root/tools/prns" build embedded resources report --target mesh-tower-v2
+"$root/tools/prns" build embedded resources report --target "$target_id"
 
 application_base=""
 while read -r section_index section_name section_size section_vma section_rest; do
@@ -42,7 +51,7 @@ while read -r section_index section_name section_size section_vma section_rest; 
 done < <("$llvm_objdump" -h "$elf")
 
 if [[ -z "$application_base" ]]; then
-    echo "the MeshTower V2 ELF does not contain .vector_table" >&2
+    printf 'the %s ELF does not contain .vector_table\n' "$board_name" >&2
     exit 1
 fi
 
@@ -52,4 +61,4 @@ python3 "$root/tools/device/bin2uf2.py" \
     "$uf2" \
     "$application_base" \
     "$nrf52840_uf2_family"
-printf 'MeshTower V2 developer UF2: %s\n' "$uf2"
+printf '%s developer UF2: %s\n' "$board_name" "$uf2"

@@ -1,5 +1,5 @@
 mod build;
-mod mesh_tower_v2;
+mod build_only;
 mod recipe;
 #[cfg(test)]
 mod tests;
@@ -87,7 +87,7 @@ enum TargetRecipe<'a> {
         board: &'a BoardCatalogEntry,
         recipe: &'a NrfSerialDfuBuild,
     },
-    MeshTowerV2,
+    BuildOnly(&'static build_only::BuildOnlyTarget),
 }
 
 #[derive(Debug, Error)]
@@ -202,20 +202,22 @@ impl<'a> Matrix<'a> {
             }
         }
 
-        let profile = mesh_tower_v2::profile();
-        profile
-            .validate()
-            .map_err(|error| MatrixError::BuildOnlyProfile {
-                target: mesh_tower_v2::ID,
-                error,
-            })?;
-        targets.push(Target {
-            id: mesh_tower_v2::ID.to_string(),
-            display_name: mesh_tower_v2::DISPLAY_NAME.to_string(),
-            profile,
-            adapter: adapter_for(profile.architecture),
-            recipe: TargetRecipe::MeshTowerV2,
-        });
+        for target in &build_only::TARGETS {
+            target
+                .profile
+                .validate()
+                .map_err(|error| MatrixError::BuildOnlyProfile {
+                    target: target.id,
+                    error,
+                })?;
+            targets.push(Target {
+                id: target.id.to_string(),
+                display_name: target.display_name.to_string(),
+                profile: target.profile,
+                adapter: adapter_for(target.profile.architecture),
+                recipe: TargetRecipe::BuildOnly(target),
+            });
+        }
 
         let mut ids = BTreeSet::new();
         for target in &targets {
@@ -260,7 +262,7 @@ impl Target<'_> {
             TargetRecipe::Esp { .. } => TargetPlatform::Esp,
             TargetRecipe::Uf2 { .. }
             | TargetRecipe::SerialDfu { .. }
-            | TargetRecipe::MeshTowerV2 => TargetPlatform::Nrf52840,
+            | TargetRecipe::BuildOnly(_) => TargetPlatform::Nrf52840,
         }
     }
 
