@@ -118,6 +118,10 @@ test("puts paired nodes and their actions before local status and controls", () 
   expect(view.getByRole("link", { name: "Pair a node" })).toBeTruthy();
   expect(view.getByRole("link", { name: "Remote access" })).toBeTruthy();
   expect(view.getByRole("link", { name: "View this device" })).toBeTruthy();
+  expect(view.getByText("View device")).toBeTruthy();
+  expect(view.queryByText("View this device")).toBeNull();
+  expect(view.queryByText("Available controls")).toBeNull();
+  expect(view.queryByText("View node information.")).toBeNull();
   expect(view.getByRole("button", { name: "Stop node" })).toBeEnabled();
 });
 

@@ -1423,7 +1423,7 @@ describe("Foundation 1 Nodes runtime binding", () => {
       </DevelopmentRuntimeProvider>,
     );
     await waitFor(() => expect(view.getByText("No paired nodes")).toBeTruthy());
-    expect(view.getByText("View this device")).toBeTruthy();
+    expect(view.getByRole("link", { name: "View this device" })).toBeTruthy();
     expect(view.queryByText("Host runtime")).toBeNull();
     view.unmount();
     await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
@@ -1457,12 +1457,12 @@ describe("Foundation 1 Nodes runtime binding", () => {
     );
     await waitFor(() => expect(view.getByText("Paired")).toBeTruthy());
     expect(view.getByText("Manage node")).toBeTruthy();
-    expect(view.getByText("Available controls")).toBeTruthy();
+    expect(view.queryByText("Available controls")).toBeNull();
     expect(
-      view.getByText(
+      view.queryByText(
         "View node information. Change node settings. Share the node address. Manage other devices’ access.",
       ),
-    ).toBeTruthy();
+    ).toBeNull();
     expect(view.queryByText(/Change LoRa settings|Prepare a Wi-Fi network change/u)).toBeNull();
     expect(view.queryByText("Ready")).toBeNull();
     expect(describeRemoteControlTarget).not.toHaveBeenCalled();

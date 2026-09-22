@@ -170,7 +170,6 @@ export function InboxScreen() {
 
   return (
     <Screen>
-      <Badge>Messages</Badge>
       <ScreenHeading>Inbox</ScreenHeading>
       <BodyText muted>Keep prns open for reliable message delivery.</BodyText>
       <LxmfHealthCard />
@@ -249,7 +248,6 @@ export function InboxScreen() {
               return (
                 <Card key={encoded}>
                   <Subheading>{peerLabel(destination, data.peers, data.contacts)}</Subheading>
-                  <KeyValue label="Destination" value={encoded} />
                   <KeyValue
                     label="Last seen"
                     value={

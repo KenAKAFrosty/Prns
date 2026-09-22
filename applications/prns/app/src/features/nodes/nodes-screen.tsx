@@ -21,7 +21,6 @@ import {
 import { formatBytes, formatRuntime } from "./format";
 import { AndroidBluetoothCard } from "./android-bluetooth-card";
 import { AndroidNodeControls } from "./android-node-controls";
-import { summarizePairingAccess } from "./pairing-access-summary";
 
 export function NodesScreen() {
   const runtime = useDevelopmentRuntime();
@@ -73,14 +72,6 @@ export function NodesScreen() {
             return (
               <CardSection key={targetId}>
                 <KeyValue label="Node ID" value={targetId} />
-                <KeyValue
-                  label="Available controls"
-                  value={
-                    target.permittedRequests.length === 0
-                      ? "None"
-                      : summarizePairingAccess(target.permittedRequests)
-                  }
-                />
                 <ActionRow>
                   <NavigationLink href={managedHref}>Manage node</NavigationLink>
                 </ActionRow>
@@ -121,7 +112,9 @@ export function NodesScreen() {
               <Button disabled={refreshing} onPress={() => void refresh()} tone="secondary">
                 {refreshing ? "Refreshing…" : "Refresh now"}
               </Button>
-              <NavigationLink href="/nodes/local">View this device</NavigationLink>
+              <NavigationLink href="/nodes/local" accessibilityLabel="View this device">
+                View device
+              </NavigationLink>
             </ActionRow>
           </>
         )}

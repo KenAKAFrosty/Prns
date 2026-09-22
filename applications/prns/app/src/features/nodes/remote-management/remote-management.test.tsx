@@ -296,6 +296,7 @@ test("an unconfigured LoRa radio requires explicit region and numeric settings",
     fireEvent.changeText(view.getByLabelText(label), value);
   }
   expect(view.getByRole("button", { name: "Save LoRa settings" })).toBeDisabled();
+  fireEvent.press(view.getByRole("button", { name: "Choose region" }));
   fireEvent.press(view.getByRole("radio", { name: "US 915" }));
   expect(view.getByRole("button", { name: "Save LoRa settings" })).toBeEnabled();
   fireEvent.press(view.getByRole("button", { name: "Save LoRa settings" }));

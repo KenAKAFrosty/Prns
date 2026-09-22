@@ -286,6 +286,10 @@ describe("durable LXMF screens", () => {
     });
     expect(screen.queryByText("Announced peer")).toBeNull();
     expect(screen.getByText("Messaging ready")).toBeTruthy();
+    expect(screen.queryByText("Destination")).toBeNull();
+    expect(screen.queryByText("000102030405060708090a0b0c0d0e0f")).toBeNull();
+    // The conversation count keeps its label; Inbox no longer repeats a Messages badge.
+    expect(screen.getAllByText("Messages")).toHaveLength(1);
     expect(mockListLxmfMessages).toHaveBeenCalledWith({
       peer: undefined,
       before: undefined,
@@ -308,6 +312,8 @@ describe("durable LXMF screens", () => {
       expect(screen.getByText("Unreadable text")).toBeTruthy();
     });
     expect(screen.getByText("Unverified — invalid signature")).toBeTruthy();
+    expect(screen.getByText("Destination")).toBeTruthy();
+    expect(screen.getByText("000102030405060708090a0b0c0d0e0f")).toBeTruthy();
     expect(screen.getAllByText("Received")).toHaveLength(2);
     expect(screen.getByText(/ · Received$/u)).toBeTruthy();
     expect(screen.queryByText("Message ID")).toBeNull();

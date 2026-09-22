@@ -4,7 +4,11 @@ import { Pressable, StyleSheet, Text } from "react-native";
 
 import { radius, space, useAppPalette } from "./theme";
 
-export function NavigationLink({ children, href }: PropsWithChildren<{ readonly href: Href }>) {
+export function NavigationLink({
+  accessibilityLabel,
+  children,
+  href,
+}: PropsWithChildren<{ readonly href: Href; readonly accessibilityLabel?: string }>) {
   const palette = useAppPalette();
   const [pressed, setPressed] = useState(false);
   const [focused, setFocused] = useState(false);
@@ -12,6 +16,7 @@ export function NavigationLink({ children, href }: PropsWithChildren<{ readonly 
     <Link href={href} asChild>
       <Pressable
         accessibilityRole="link"
+        {...(accessibilityLabel === undefined ? {} : { accessibilityLabel })}
         onBlur={() => setFocused(false)}
         onFocus={() => setFocused(true)}
         onPressIn={() => setPressed(true)}

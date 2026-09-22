@@ -81,6 +81,8 @@ function BottomNavigation({
   readonly entries: readonly ScreenCatalogEntry[];
 }) {
   const palette = useAppPalette();
+  const { width, fontScale } = useWindowDimensions();
+  const wrapLabels = width / fontScale < 270;
   return (
     <View
       accessibilityLabel="Primary navigation"
@@ -94,6 +96,7 @@ function BottomNavigation({
         <ShellNavigationItem
           active={active?.id === entry.id}
           compact
+          wrapLabels={wrapLabels}
           entry={entry}
           key={entry.id}
         />
@@ -105,10 +108,12 @@ function BottomNavigation({
 function ShellNavigationItem({
   active,
   compact = false,
+  wrapLabels = false,
   entry,
 }: {
   readonly active: boolean;
   readonly compact?: boolean;
+  readonly wrapLabels?: boolean;
   readonly entry: ScreenCatalogEntry;
 }) {
   const palette = useAppPalette();
@@ -127,7 +132,13 @@ function ShellNavigationItem({
         onPressIn={() => setPressed(true)}
         onPressOut={() => setPressed(false)}
         role="link"
-        style={compact ? styles.compactNavigationPressable : styles.navigationPressable}
+        style={
+          compact
+            ? wrapLabels
+              ? styles.wrappingNavigationPressable
+              : styles.compactNavigationPressable
+            : styles.navigationPressable
+        }
       >
         <View
           style={[
@@ -187,12 +198,20 @@ const styles = StyleSheet.create({
   bottomNavigation: {
     borderTopWidth: 1,
     flexDirection: "row",
+    flexWrap: "wrap",
     minHeight: 56,
     paddingHorizontal: space.xs,
     paddingVertical: space.xs,
   },
   navigationPressable: { borderRadius: radius.sm, minHeight: 48, width: "100%" },
   compactNavigationPressable: { borderRadius: radius.sm, flex: 1, minHeight: 48, minWidth: 0 },
+  wrappingNavigationPressable: {
+    borderRadius: radius.sm,
+    flexBasis: "30%",
+    flexGrow: 1,
+    minHeight: 48,
+    minWidth: 0,
+  },
   navigationItem: {
     borderRadius: radius.sm,
     borderWidth: 2,
@@ -201,7 +220,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 9,
   },
-  compactNavigationItem: { alignItems: "center", flex: 1, minWidth: 0, paddingHorizontal: 4 },
+  compactNavigationItem: { alignItems: "center", flex: 1, minWidth: 0, paddingHorizontal: 2 },
   navigationLabel: { fontSize: 15, fontWeight: "600", lineHeight: 20 },
   compactNavigationLabel: { fontSize: 12, lineHeight: 16, textAlign: "center" },
 });
