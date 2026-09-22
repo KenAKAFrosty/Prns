@@ -145,9 +145,12 @@ test("all node actions are disabled while another operation owns the connection"
 
 test("interface readouts preserve exact traffic counts and hide unavailable actions", () => {
   const view = render(<RemoteInterfaceCard {...basicProps} />);
+  expect(view.queryByText("Interface ID")).toBeNull();
+  expect(view.queryByText("9007199254740993 / 3 bytes")).toBeNull();
+  fireEvent.press(view.getByRole("button", { name: "Show connection details" }));
   expect(view.getByText("9007199254740993 / 3 bytes")).toBeTruthy();
   expect(view.getByText("Bluetooth")).toBeTruthy();
-  expect(view.queryAllByRole("button")).toHaveLength(0);
+  expect(view.queryAllByRole("button")).toHaveLength(1);
 });
 
 test("interface shutdown confirms before submitting the exact interface id", () => {

@@ -32,6 +32,7 @@ export function ManagedNodeScreen() {
   const nodeId = params.nodeId;
   const runtime = useDevelopmentRuntime();
   const [pending, setPending] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
   const [announcing, setAnnouncing] = useState(false);
   const [unknownSubmission, setUnknownSubmission] = useState<{
     targetId: string;
@@ -215,91 +216,109 @@ export function ManagedNodeScreen() {
   return (
     <Screen>
       <Badge>Paired node</Badge>
-      <ScreenHeading>Manage node</ScreenHeading>
-      <Card>
-        <Subheading>Node details</Subheading>
-        <KeyValue label="Node ID" value={formatBytes(target.targetIdentityFingerprint)} />
-        <KeyValue label="Destination" value={formatBytes(target.destination)} />
-        <KeyValue label="Controller" value={formatBytes(target.controllerIdentityFingerprint)} />
-        <KeyValue
-          label="Available controls"
-          value={
-            target.permittedRequests.length === 0
-              ? "None"
-              : summarizePairingAccess(target.permittedRequests)
-          }
-        />
-      </Card>
-      <Card>
-        <Subheading>Connection</Subheading>
-        <KeyValue
-          label="Status"
-          value={
-            !nodeRunning
-              ? "This device is offline"
-              : describing
-                ? "Checking node…"
-                : "Ready to check"
-          }
-        />
-        {allowsDescribe ? null : (
-          <BodyText>This pairing does not allow the app to view node information.</BodyText>
-        )}
-        <Button
-          disabled={!canDescribe || pending || operationBusy || announcing}
-          onPress={() => void describe()}
-        >
-          {pending || describing ? "Checking…" : "Check node connection"}
-        </Button>
-      </Card>
-
-      {result === null ? null : <DescribeResult result={result} />}
+      <ScreenHeading>Node settings</ScreenHeading>
       {allowsDescribe ? (
         <RemoteManagementPanel
           key={`${nodeId}:${runtime.snapshot.generationId}`}
           target={target.targetIdentityFingerprint}
           runtime={runtime}
         />
-      ) : null}
-      {canAnnounce ? (
-        <Card>
-          <Subheading>Share node address</Subheading>
-          <BodyText>Ask this node to make itself discoverable on its network.</BodyText>
-          <Button
-            disabled={
-              announcing || pending || operationBusy || announcementPending || admissionUncertain
-            }
-            onPress={() => void announce()}
-          >
-            {announcing || announcementPending ? "Sharing…" : "Share node address"}
-          </Button>
-        </Card>
-      ) : null}
-      {targetAnnouncement === null ? null : (
-        <Card>
-          <Subheading>
-            {admissionUncertain ? "Previous address sharing" : "Address sharing"}
-          </Subheading>
-          <BodyText>{announcementStatusMessage(targetAnnouncement.status)}</BodyText>
-          {targetAnnouncement.status.tag === Bindings.RemoteControlAnnounceStatus_Tags.Announced ? (
-            <KeyValue
-              label="Response time"
-              value={`${targetAnnouncement.status.inner.rttMillis.toString()} ms`}
-            />
-          ) : null}
-        </Card>
+      ) : (
+        <BodyText>This pairing does not allow the app to view node information.</BodyText>
       )}
-      {admissionUncertain ? (
-        <BodyText>
-          The result could not be confirmed. The node may have shared its address. This request was
-          not repeated.
-        </BodyText>
-      ) : announceResult?.type === "outcome" &&
-        announceResult.outcome.tag === Bindings.RemoteControlAnnounceOutcome_Tags.Busy ? (
-        <BodyText>Another operation is in progress. Address sharing has not started.</BodyText>
-      ) : announceResult?.type === "outcome" &&
-        announceResult.outcome.tag === Bindings.RemoteControlAnnounceOutcome_Tags.Failed ? (
-        <BodyText>{announcementFailureMessage(announceResult.outcome.inner.stage)}</BodyText>
+      <Button
+        tone="secondary"
+        accessibilityState={{ expanded: showDetails }}
+        onPress={() => setShowDetails((previous) => !previous)}
+      >
+        {showDetails ? "Hide node details and diagnostics" : "Show node details and diagnostics"}
+      </Button>
+      {showDetails ? (
+        <>
+          <Card>
+            <Subheading>Node details</Subheading>
+            <KeyValue label="Node ID" value={formatBytes(target.targetIdentityFingerprint)} />
+            <KeyValue label="Destination" value={formatBytes(target.destination)} />
+            <KeyValue
+              label="Controller"
+              value={formatBytes(target.controllerIdentityFingerprint)}
+            />
+            <KeyValue
+              label="Available controls"
+              value={
+                target.permittedRequests.length === 0
+                  ? "None"
+                  : summarizePairingAccess(target.permittedRequests)
+              }
+            />
+          </Card>
+          <Card>
+            <Subheading>Connection</Subheading>
+            <KeyValue
+              label="Status"
+              value={
+                !nodeRunning
+                  ? "This device is offline"
+                  : describing
+                    ? "Checking node…"
+                    : "Ready to check"
+              }
+            />
+            <Button
+              disabled={!canDescribe || pending || operationBusy || announcing}
+              onPress={() => void describe()}
+            >
+              {pending || describing ? "Checking…" : "Check node connection"}
+            </Button>
+          </Card>
+
+          {result === null ? null : <DescribeResult result={result} />}
+          {canAnnounce ? (
+            <Card>
+              <Subheading>Share node address</Subheading>
+              <BodyText>Ask this node to make itself discoverable on its network.</BodyText>
+              <Button
+                disabled={
+                  announcing ||
+                  pending ||
+                  operationBusy ||
+                  announcementPending ||
+                  admissionUncertain
+                }
+                onPress={() => void announce()}
+              >
+                {announcing || announcementPending ? "Sharing…" : "Share node address"}
+              </Button>
+            </Card>
+          ) : null}
+          {targetAnnouncement === null ? null : (
+            <Card>
+              <Subheading>
+                {admissionUncertain ? "Previous address sharing" : "Address sharing"}
+              </Subheading>
+              <BodyText>{announcementStatusMessage(targetAnnouncement.status)}</BodyText>
+              {targetAnnouncement.status.tag ===
+              Bindings.RemoteControlAnnounceStatus_Tags.Announced ? (
+                <KeyValue
+                  label="Response time"
+                  value={`${targetAnnouncement.status.inner.rttMillis.toString()} ms`}
+                />
+              ) : null}
+            </Card>
+          )}
+          {admissionUncertain ? (
+            <BodyText>
+              The result could not be confirmed. The node may have shared its address. This request
+              was not repeated.
+            </BodyText>
+          ) : announceResult?.type === "outcome" &&
+            announceResult.outcome.tag === Bindings.RemoteControlAnnounceOutcome_Tags.Busy ? (
+            <BodyText>Another operation is in progress. Address sharing has not started.</BodyText>
+          ) : announceResult?.type === "outcome" &&
+            announceResult.outcome.tag === Bindings.RemoteControlAnnounceOutcome_Tags.Failed ? (
+            <BodyText>{announcementFailureMessage(announceResult.outcome.inner.stage)}</BodyText>
+          ) : null}
+        </>
       ) : null}
       <NavigationLink href="/nodes">Back to Nodes</NavigationLink>
     </Screen>

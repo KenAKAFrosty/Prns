@@ -40,6 +40,7 @@ export function RemoteInterfaceCard({
   onChange,
 }: RemoteInterfaceCardProps) {
   const [editing, setEditing] = useState(false);
+  const [showActivity, setShowActivity] = useState(false);
   const allows = (kind: Bindings.RemoteControlRequestKind) => availableRequests.includes(kind);
   const card =
     details?.configuration.tag === Bindings.RemoteInterfaceConfiguration_Tags.Available
@@ -75,18 +76,11 @@ export function RemoteInterfaceCard({
     <Card>
       <Subheading>{card?.name || interfaceKindLabel(entry.kind)}</Subheading>
       <Badge>{connectionLabel(entry.connection)}</Badge>
-      <KeyValue label="Interface ID" value={formatBytes(entry.interfaceId)} />
       <KeyValue label="Power" value={entry.enabled ? "On" : "Off"} />
       <KeyValue
         label="Mode"
         value={interfaceModes.find((item) => item.value === entry.mode)?.label ?? "Not reported"}
       />
-      <KeyValue
-        label="Data sent / received"
-        value={`${entry.txBytes.toString()} / ${entry.rxBytes.toString()} bytes`}
-      />
-      <KeyValue label="Active links" value={entry.links.toString()} />
-      <KeyValue label="Transfer rate" value={`${entry.rateBytesPerSec} bytes/s`} />
       {unknown ? (
         <BodyText>This interface is no longer available. Refresh the node's interfaces.</BodyText>
       ) : null}
@@ -193,6 +187,24 @@ export function RemoteInterfaceCard({
           busy={busy}
           onChange={change}
         />
+      ) : null}
+      <Button
+        tone="secondary"
+        accessibilityState={{ expanded: showActivity }}
+        onPress={() => setShowActivity((previous) => !previous)}
+      >
+        {showActivity ? "Hide connection details" : "Show connection details"}
+      </Button>
+      {showActivity ? (
+        <>
+          <KeyValue label="Interface ID" value={formatBytes(entry.interfaceId)} />
+          <KeyValue
+            label="Data sent / received"
+            value={`${entry.txBytes.toString()} / ${entry.rxBytes.toString()} bytes`}
+          />
+          <KeyValue label="Active links" value={entry.links.toString()} />
+          <KeyValue label="Transfer rate" value={`${entry.rateBytesPerSec} bytes/s`} />
+        </>
       ) : null}
     </Card>
   );

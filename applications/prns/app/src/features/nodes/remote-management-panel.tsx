@@ -12,6 +12,8 @@ import {
 import { RemoteInterfaceCard } from "./remote-management/interface-card";
 import { NodeControls } from "./remote-management/node-controls";
 import { NodeOverviewCard } from "./remote-management/node-overview";
+import { ManagementTabs } from "./remote-management/management-tabs";
+import { interfaceKindLabel } from "./remote-management/interface-format";
 
 const maximumEntries = 128;
 
@@ -30,25 +32,37 @@ export function RemoteManagementPanel({
   const [available, setAvailable] = useState<Bindings.RemoteControlRequestKind[]>([]);
   const [viewRevision, setViewRevision] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [fresh, setFresh] = useState(false);
+  const [focusRevision, setFocusRevision] = useState(0);
+  const [section, setSection] = useState("interfaces");
+  const [selectedInterface, setSelectedInterface] = useState<string>();
   const [failure, setFailure] = useState<string>();
   const [accepted, setAccepted] = useState<Bindings.RemoteChangeOperation>();
   const [uncertain, setUncertain] = useState<{ previousId: bigint | undefined }>();
   const request = useRef<AbortController | null>(null);
   const focused = useRef(false);
   const writeInFlight = useRef(false);
+  const autoReadPending = useRef(false);
+  const targetId = formatBytes(target);
 
   useFocusEffect(
+    // biome-ignore lint/correctness/useExhaustiveDependencies: target and native lifetime changes invalidate a focused read.
     useCallback(() => {
       focused.current = true;
       setBusy(false);
       // A fresh live read is required after returning to this screen.
       setAvailable([]);
+      setFresh(false);
+      setFailure(undefined);
+      autoReadPending.current = true;
+      setFocusRevision((revision) => revision + 1);
       return () => {
         focused.current = false;
+        autoReadPending.current = false;
         request.current?.abort();
         request.current = null;
       };
-    }, []),
+    }, [targetId, runtime.snapshot?.generationId]),
   );
 
   const stored = runtime.snapshot?.lastRemoteChange;
@@ -80,83 +94,108 @@ export function RemoteManagementPanel({
   const blocked =
     busy || pending || admissionUncertain || runtime.snapshot?.activeOperation !== undefined;
 
-  const read = async (query: Bindings.RemoteNodeQuery) => {
+  const read = useCallback(
+    async (query: Bindings.RemoteNodeQuery) => {
+      if (
+        !focused.current ||
+        runtime.snapshot?.runtime !== Bindings.DevelopmentNodeRuntime.Running ||
+        request.current !== null ||
+        writeInFlight.current ||
+        pending ||
+        admissionUncertain ||
+        runtime.snapshot?.activeOperation !== undefined
+      )
+        return;
+      const controller = new AbortController();
+      request.current = controller;
+      setBusy(true);
+      setFailure(undefined);
+      const result = await runtime.readRemoteNode(
+        { targetIdentityFingerprint: target, query },
+        controller.signal,
+      );
+      if (request.current !== controller || controller.signal.aborted || !focused.current) return;
+      request.current = null;
+      setBusy(false);
+      if (result.type === "operationFailure") {
+        setAvailable([]);
+        setFresh(false);
+        setFailure("The node could not be read. Check its connection and try again.");
+        return;
+      }
+      const outcome = result.outcome;
+      if (outcome.tag === Bindings.ReadRemoteNodeOutcome_Tags.Busy) {
+        setFailure("Another operation is in progress. Wait for it to finish, then try again.");
+        return;
+      }
+      if (outcome.tag === Bindings.ReadRemoteNodeOutcome_Tags.Failed) {
+        setAvailable([]);
+        setFresh(false);
+        setFailure(remoteManagementFailureMessage(outcome.inner.stage));
+        return;
+      }
+      setAvailable(outcome.inner.availableRequests);
+      const data = outcome.inner.data;
+      switch (data.tag) {
+        case Bindings.RemoteNodeData_Tags.Overview:
+          setFresh(true);
+          setViewRevision((revision) => revision + 1);
+          setOverview(data.inner.overview);
+          setInterfaces(data.inner.overview.interfaces);
+          setDetails({});
+          setPeers({});
+          break;
+        case Bindings.RemoteNodeData_Tags.Interfaces:
+          try {
+            setInterfaces(appendPage(interfaces, data.inner.page, (entry) => entry.interfaceId));
+          } catch {
+            setFailure(
+              "The interface list changed while loading. Refresh the node to start again.",
+            );
+          }
+          break;
+        case Bindings.RemoteNodeData_Tags.Interface:
+          setViewRevision((revision) => revision + 1);
+          setDetails((previous) => ({
+            ...previous,
+            [formatBytes(data.inner.details.interfaceId)]: data.inner.details,
+          }));
+          break;
+        case Bindings.RemoteNodeData_Tags.Peers: {
+          const page = data.inner.page;
+          const id = formatBytes(page.interfaceId);
+          const previous =
+            query.tag === Bindings.RemoteNodeQuery_Tags.Peers && query.inner.after !== undefined
+              ? peers[id]
+              : undefined;
+          try {
+            const merged = { ...page, ...appendPage(previous, page, (entry) => entry.peerId) };
+            setPeers((all) => ({ ...all, [id]: merged }));
+          } catch {
+            setFailure("The peer list changed while loading. Refresh peers to start again.");
+          }
+          break;
+        }
+      }
+    },
+    [runtime, target, pending, admissionUncertain, interfaces, peers],
+  );
+
+  useEffect(() => {
+    // Defer the single focus read while the actor is occupied. A failed read
+    // needs an explicit retry; a render or snapshot update is not a retry loop.
     if (
+      focusRevision === 0 ||
       !focused.current ||
-      runtime.snapshot?.runtime !== Bindings.DevelopmentNodeRuntime.Running ||
-      request.current !== null ||
+      !autoReadPending.current ||
+      blocked ||
       writeInFlight.current ||
-      pending ||
-      admissionUncertain
+      runtime.snapshot?.runtime !== Bindings.DevelopmentNodeRuntime.Running
     )
       return;
-    const controller = new AbortController();
-    request.current = controller;
-    setBusy(true);
-    setFailure(undefined);
-    const result = await runtime.readRemoteNode(
-      { targetIdentityFingerprint: target, query },
-      controller.signal,
-    );
-    if (request.current !== controller || controller.signal.aborted || !focused.current) return;
-    request.current = null;
-    setBusy(false);
-    if (result.type === "operationFailure") {
-      setAvailable([]);
-      setFailure("The node could not be read. Check its connection and try again.");
-      return;
-    }
-    const outcome = result.outcome;
-    if (outcome.tag === Bindings.ReadRemoteNodeOutcome_Tags.Busy) {
-      setFailure("Another operation is in progress. Wait for it to finish, then try again.");
-      return;
-    }
-    if (outcome.tag === Bindings.ReadRemoteNodeOutcome_Tags.Failed) {
-      setAvailable([]);
-      setFailure(remoteManagementFailureMessage(outcome.inner.stage));
-      return;
-    }
-    setAvailable(outcome.inner.availableRequests);
-    const data = outcome.inner.data;
-    switch (data.tag) {
-      case Bindings.RemoteNodeData_Tags.Overview:
-        setViewRevision((revision) => revision + 1);
-        setOverview(data.inner.overview);
-        setInterfaces(data.inner.overview.interfaces);
-        setDetails({});
-        setPeers({});
-        break;
-      case Bindings.RemoteNodeData_Tags.Interfaces:
-        try {
-          setInterfaces(appendPage(interfaces, data.inner.page, (entry) => entry.interfaceId));
-        } catch {
-          setFailure("The interface list changed while loading. Refresh the node to start again.");
-        }
-        break;
-      case Bindings.RemoteNodeData_Tags.Interface:
-        setViewRevision((revision) => revision + 1);
-        setDetails((previous) => ({
-          ...previous,
-          [formatBytes(data.inner.details.interfaceId)]: data.inner.details,
-        }));
-        break;
-      case Bindings.RemoteNodeData_Tags.Peers: {
-        const page = data.inner.page;
-        const id = formatBytes(page.interfaceId);
-        const previous =
-          query.tag === Bindings.RemoteNodeQuery_Tags.Peers && query.inner.after !== undefined
-            ? peers[id]
-            : undefined;
-        try {
-          const merged = { ...page, ...appendPage(previous, page, (entry) => entry.peerId) };
-          setPeers((all) => ({ ...all, [id]: merged }));
-        } catch {
-          setFailure("The peer list changed while loading. Refresh peers to start again.");
-        }
-        break;
-      }
-    }
-  };
+    autoReadPending.current = false;
+    void read(Bindings.RemoteNodeQuery.Overview.new());
+  }, [blocked, focusRevision, read, runtime.snapshot?.runtime]);
 
   const change = async (next: Bindings.RemoteNodeChange) => {
     if (
@@ -181,12 +220,15 @@ export function RemoteManagementPanel({
     if (result.type === "operationFailure") {
       // A lost admission reply is not evidence that a write was rejected.
       setUncertain({ previousId });
+      setAvailable([]);
+      setFresh(false);
       await runtime.refreshSnapshot();
     } else if (result.outcome.tag === Bindings.ChangeRemoteNodeOutcome_Tags.Accepted) {
       setAccepted(result.outcome.inner.operation);
       setUncertain(undefined);
       // Do not edit again from observations made before this write.
       setAvailable([]);
+      setFresh(false);
       await runtime.refreshSnapshot();
     } else {
       setFailure(
@@ -197,20 +239,36 @@ export function RemoteManagementPanel({
     }
   };
 
+  const selected =
+    interfaces?.entries.find((entry) => formatBytes(entry.interfaceId) === selectedInterface) ??
+    interfaces?.entries[0];
+  const visibleInterfaces = selected === undefined ? [] : [selected];
+
   return (
     <>
       <Card>
-        <Subheading>Node settings</Subheading>
-        <BodyText>Read the node's current information and change its settings.</BodyText>
+        <Subheading>Node status</Subheading>
+        <BodyText muted>
+          {busy
+            ? overview === undefined
+              ? "Loading node settings…"
+              : "Refreshing node information…"
+            : pending
+              ? "Waiting for the current change to finish…"
+              : runtime.snapshot?.activeOperation !== undefined
+                ? "Waiting for another operation to finish…"
+                : overview === undefined
+                  ? "Settings will appear when the node responds."
+                  : fresh
+                    ? "Information received from the node."
+                    : "Showing the last information received. Refresh before changing settings."}
+        </BodyText>
         <Button
           disabled={blocked}
+          tone="secondary"
           onPress={() => void read(Bindings.RemoteNodeQuery.Overview.new())}
         >
-          {busy
-            ? "Working…"
-            : overview === undefined
-              ? "Load node information"
-              : "Refresh node information"}
+          {busy ? "Loading…" : failure !== undefined ? "Try again" : "Refresh node information"}
         </Button>
         {failure === undefined ? null : <BodyText>{failure}</BodyText>}
         {admissionUncertain ? (
@@ -226,64 +284,101 @@ export function RemoteManagementPanel({
         ) : null}
       </Card>
       {operation === undefined ? null : <RemoteChangeStatusCard operation={operation} />}
-      {overview === undefined ? null : <NodeOverviewCard overview={overview} />}
-      {interfaces?.entries.map((entry) => {
-        const id = formatBytes(entry.interfaceId);
-        const peerPage = peers[id];
-        return (
-          <RemoteInterfaceCard
-            key={`${id}:${viewRevision}`}
-            entry={entry}
-            details={details[id]}
-            peers={peerPage}
-            availableRequests={available}
-            busy={blocked}
-            onLoadDetails={() =>
-              void read(Bindings.RemoteNodeQuery.Interface.new({ interfaceId: entry.interfaceId }))
-            }
-            onLoadPeers={() =>
-              void read(
-                Bindings.RemoteNodeQuery.Peers.new({
-                  interfaceId: entry.interfaceId,
-                  after: undefined,
-                }),
-              )
-            }
-            onLoadMorePeers={
-              peerPage?.next === undefined || peerPage.entries.length >= maximumEntries
-                ? undefined
-                : () =>
-                    void read(
-                      Bindings.RemoteNodeQuery.Peers.new({
-                        interfaceId: entry.interfaceId,
-                        after: peerPage.next,
-                      }),
-                    )
-            }
-            onChange={(next) => void change(next)}
-          />
-        );
-      })}
-      {interfaces?.next === undefined ? null : interfaces.entries.length >= maximumEntries ? (
-        <BodyText>
-          Showing the first {maximumEntries} interfaces. Refresh to reload this list.
-        </BodyText>
-      ) : (
-        <Button
-          tone="secondary"
-          disabled={blocked}
-          onPress={() =>
-            void read(Bindings.RemoteNodeQuery.Interfaces.new({ after: interfaces.next }))
-          }
-        >
-          Load more interfaces
-        </Button>
+      {overview === undefined ? null : (
+        <ManagementTabs
+          label="Node settings sections"
+          options={[
+            { value: "interfaces", label: "Interfaces" },
+            { value: "device", label: "Device" },
+            { value: "information", label: "Information" },
+          ]}
+          value={section}
+          onChange={setSection}
+        />
       )}
-      <NodeControls
-        availableRequests={available}
-        busy={blocked}
-        onChange={(next) => void change(next)}
-      />
+      {overview !== undefined && section === "information" ? (
+        <NodeOverviewCard overview={overview} />
+      ) : null}
+      {overview !== undefined && section === "interfaces" ? (
+        <>
+          {interfaces === undefined ? (
+            <BodyText>This node does not share its interfaces.</BodyText>
+          ) : interfaces.entries.length === 0 ? (
+            <BodyText>No interfaces were reported.</BodyText>
+          ) : (
+            <ManagementTabs
+              label="Node interfaces"
+              options={interfaces.entries.map((entry, index) => ({
+                value: formatBytes(entry.interfaceId),
+                label: `${interfaceKindLabel(entry.kind)}${interfaces.entries.filter((other) => other.kind === entry.kind).length > 1 ? ` ${index + 1}` : ""}`,
+              }))}
+              value={selected === undefined ? "" : formatBytes(selected.interfaceId)}
+              onChange={setSelectedInterface}
+            />
+          )}
+          {visibleInterfaces.map((entry) => {
+            const id = formatBytes(entry.interfaceId);
+            const peerPage = peers[id];
+            return (
+              <RemoteInterfaceCard
+                key={`${id}:${viewRevision}`}
+                entry={entry}
+                details={details[id]}
+                peers={peerPage}
+                availableRequests={available}
+                busy={blocked}
+                onLoadDetails={() =>
+                  void read(
+                    Bindings.RemoteNodeQuery.Interface.new({ interfaceId: entry.interfaceId }),
+                  )
+                }
+                onLoadPeers={() =>
+                  void read(
+                    Bindings.RemoteNodeQuery.Peers.new({
+                      interfaceId: entry.interfaceId,
+                      after: undefined,
+                    }),
+                  )
+                }
+                onLoadMorePeers={
+                  peerPage?.next === undefined || peerPage.entries.length >= maximumEntries
+                    ? undefined
+                    : () =>
+                        void read(
+                          Bindings.RemoteNodeQuery.Peers.new({
+                            interfaceId: entry.interfaceId,
+                            after: peerPage.next,
+                          }),
+                        )
+                }
+                onChange={(next) => void change(next)}
+              />
+            );
+          })}
+          {interfaces?.next === undefined ? null : interfaces.entries.length >= maximumEntries ? (
+            <BodyText>
+              Showing the first {maximumEntries} interfaces. Refresh to reload this list.
+            </BodyText>
+          ) : (
+            <Button
+              tone="secondary"
+              disabled={blocked}
+              onPress={() =>
+                void read(Bindings.RemoteNodeQuery.Interfaces.new({ after: interfaces.next }))
+              }
+            >
+              Load more interfaces
+            </Button>
+          )}
+        </>
+      ) : null}
+      {overview !== undefined && section === "device" ? (
+        <NodeControls
+          availableRequests={available}
+          busy={blocked}
+          onChange={(next) => void change(next)}
+        />
+      ) : null}
     </>
   );
 }

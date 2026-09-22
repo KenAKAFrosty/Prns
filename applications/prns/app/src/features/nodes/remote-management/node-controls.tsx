@@ -25,6 +25,17 @@ export function NodeControls({
 
   return (
     <>
+      {positioning ||
+      visibility ||
+      displayAutoOff ||
+      systemPower ||
+      radioMode ||
+      sleepRadios ||
+      wakeRadios ? null : (
+        <BodyText>
+          No device controls are available. Refresh the node information to check again.
+        </BodyText>
+      )}
       {positioning || visibility || displayAutoOff ? (
         <Card>
           <Subheading>Display and positioning</Subheading>

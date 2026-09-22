@@ -5,10 +5,20 @@ import type {
   RemoteControlAnnounceOutcome,
 } from "@prns-internal/expo";
 import type { RuntimeCommandResult } from "@/native/development-runtime-context";
-import { act, fireEvent, render, waitFor } from "@testing-library/react-native";
+import { act, fireEvent, render as renderScreen, waitFor } from "@testing-library/react-native";
 import { destinationHash, identityHash } from "personal-rns/contract";
 import type { EffectCallback, ReactNode } from "react";
 import { ManagedNodeScreen, announcementStatusMessage } from "./managed-node-screen";
+
+// These tests isolate the optional connection/address diagnostics. Settings
+// loading and read/write lifetimes are exercised by remote-management tests.
+jest.mock("./remote-management-panel", () => ({ RemoteManagementPanel: () => null }));
+const render: typeof renderScreen = (...args) => {
+  const view = renderScreen(...args);
+  const disclosure = view.queryByRole("button", { name: "Show node details and diagnostics" });
+  if (disclosure !== null) fireEvent.press(disclosure);
+  return view;
+};
 const target = {
   targetIdentityFingerprint: identityHash(new Uint8Array(16).fill(0x44)),
   destination: destinationHash(new Uint8Array(16).fill(0x45)),
@@ -111,6 +121,15 @@ beforeEach(() => {
       snapshot: mockSnapshot,
     }),
   });
+});
+test("keeps technical identity and connection diagnostics behind a disclosure", () => {
+  const screen = renderScreen(<ManagedNodeScreen />);
+  expect(screen.getByText("Node settings")).toBeTruthy();
+  expect(screen.queryByText("Node ID")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Check node connection" })).toBeNull();
+  fireEvent.press(screen.getByRole("button", { name: "Show node details and diagnostics" }));
+  expect(screen.getByText("Node ID")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Check node connection" })).toBeEnabled();
 });
 test("summarizes all saved and live controls without rendering a permission wall", async () => {
   const permissions = Object.values(Bindings.RemoteControlRequestKind).filter(

@@ -2005,9 +2005,7 @@ describe("Foundation 1 Nodes runtime binding", () => {
         <ManagedNodeScreen />
       </DevelopmentRuntimeProvider>,
     );
-    await waitFor(() =>
-      expect(view.getByRole("button", { name: "Check node connection" })).toBeTruthy(),
-    );
+    fireEvent.press(await view.findByRole("button", { name: "Show node details and diagnostics" }));
     fireEvent.press(view.getByRole("button", { name: "Check node connection" }));
     await waitFor(() => expect(view.getByText("Could not check node")).toBeTruthy());
     expect(view.getByText("The connection check could not complete. Try again.")).toBeTruthy();
@@ -2060,6 +2058,7 @@ describe("Foundation 1 Nodes runtime binding", () => {
       </DevelopmentRuntimeProvider>
     );
     const view = render(page());
+    fireEvent.press(await view.findByRole("button", { name: "Show node details and diagnostics" }));
     fireEvent.press(await view.findByRole("button", { name: "Check node connection" }));
     await waitFor(() => expect(signals).toHaveLength(1));
     mockRouteFocused = false;
@@ -2144,6 +2143,7 @@ describe("Foundation 1 Nodes runtime binding", () => {
         ]),
       ),
     );
+    fireEvent.press(view.getByRole("button", { name: "Show node details and diagnostics" }));
     fireEvent.press(view.getByRole("button", { name: "Check node connection" }));
     await waitFor(() => expect(signals).toHaveLength(1));
     await act(async () => publish.mock.calls.at(-1)?.[0].stopNode());
@@ -2178,6 +2178,7 @@ describe("Foundation 1 Nodes runtime binding", () => {
         snapshot(3n, false, Bindings.RemoteControlPairingState.Searching.new(), [target]),
       ),
     );
+    fireEvent.press(view.getByRole("button", { name: "Show node details and diagnostics" }));
     expect(view.getByRole("button", { name: "Check node connection" })).toBeTruthy();
     await act(async () =>
       fixture.emit({ ...stoppedSnapshot(4n), runtime: Bindings.DevelopmentNodeRuntime.Stopping }),
@@ -2336,8 +2337,9 @@ describe("Foundation 1 Nodes runtime binding", () => {
         <ManagedNodeScreen />
       </DevelopmentRuntimeProvider>,
     );
-    fireEvent.press(await view.findByRole("button", { name: "Load node information" }));
+    fireEvent.press(await view.findByRole("tab", { name: "Information" }));
     expect(await view.findByText("Test firmware")).toBeTruthy();
+    fireEvent.press(view.getByRole("tab", { name: "Device" }));
     fireEvent.press(view.getByRole("button", { name: "Sleep node" }));
     expect(changeRemoteNode).not.toHaveBeenCalled();
     fireEvent.press(view.getByRole("button", { name: "Put node to sleep" }));
@@ -2383,14 +2385,14 @@ describe("Foundation 1 Nodes runtime binding", () => {
       </DevelopmentRuntimeProvider>
     );
     const view = render(page());
-    fireEvent.press(await view.findByRole("button", { name: "Load node information" }));
     await waitFor(() => expect(signal).toBeDefined());
     mockRouteFocused = false;
     view.rerender(page());
     await waitFor(() => expect(signal?.aborted).toBe(true));
     mockRouteFocused = true;
     view.rerender(page());
-    expect(view.getByRole("button", { name: "Load node information" })).toBeEnabled();
+    await waitFor(() => expect(signal?.aborted).toBe(false));
+    expect(view.getByRole("button", { name: "Loading…" })).toBeDisabled();
     expect(
       view.queryByText("The node could not be read. Check its connection and try again."),
     ).toBeNull();
