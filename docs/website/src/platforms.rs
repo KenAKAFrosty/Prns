@@ -93,6 +93,8 @@ pub enum PreparationProfile {
     T096Uf2,
     #[cfg_attr(not(feature = "local-dev-flasher"), allow(dead_code))]
     Rak4631Uf2,
+    #[cfg_attr(not(feature = "local-dev-flasher"), allow(dead_code))]
+    Rak10724Uf2,
     T1000eNrfSerialDfu,
 }
 

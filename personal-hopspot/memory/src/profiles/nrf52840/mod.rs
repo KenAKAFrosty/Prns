@@ -530,7 +530,17 @@ pub const RAK4631: MemoryProfile = MemoryProfile {
     runtime_reservations: &NRF_RUNTIME_RESERVATIONS,
 };
 
-const NRF52840_MEMORY_X_PROFILES: [MemoryProfileId; 9] = [
+pub const RAK10724: MemoryProfile = MemoryProfile {
+    id: MemoryProfileId("rak10724"),
+    architecture: ProcessorArchitecture::ThumbV7em,
+    address_spaces: &NRF52840_S140_RAM_SPACES,
+    regions: &RAK4631_REGIONS,
+    firmware: firmware_placement(0x26000, 0xE2000, 0xE2000),
+    journals: &MESH_TOWER_JOURNALS,
+    runtime_reservations: &NRF_RUNTIME_RESERVATIONS,
+};
+
+const NRF52840_MEMORY_X_PROFILES: [MemoryProfileId; 10] = [
     T_ECHO_S140_V6.id,
     T_ECHO_S140_V7.id,
     T096.id,
@@ -540,6 +550,7 @@ const NRF52840_MEMORY_X_PROFILES: [MemoryProfileId; 9] = [
     T1000_E.id,
     MESH_TOWER_V2.id,
     RAK4631.id,
+    RAK10724.id,
 ];
 
 pub const NRF52840_MEMORY_X_BINDING: NrfMemoryXBinding = NrfMemoryXBinding {

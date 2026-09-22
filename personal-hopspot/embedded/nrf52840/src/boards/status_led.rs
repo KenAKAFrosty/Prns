@@ -4,7 +4,8 @@ enum Polarity {
     #[cfg(any(
         feature = "board-t096",
         feature = "board-t1000e",
-        feature = "board-rak4631"
+        feature = "board-rak4631",
+        feature = "board-rak10724"
     ))]
     ActiveHigh,
     #[cfg(any(feature = "board-t114", feature = "board-mesh-tower-v2"))]
@@ -20,7 +21,8 @@ impl StatusLed {
     #[cfg(any(
         feature = "board-t096",
         feature = "board-t1000e",
-        feature = "board-rak4631"
+        feature = "board-rak4631",
+        feature = "board-rak10724"
     ))]
     pub(crate) fn active_high(output: Output<'static>) -> Self {
         Self {
@@ -42,7 +44,8 @@ impl StatusLed {
             #[cfg(any(
                 feature = "board-t096",
                 feature = "board-t1000e",
-                feature = "board-rak4631"
+                feature = "board-rak4631",
+                feature = "board-rak10724"
             ))]
             Polarity::ActiveHigh => self.output.set_high(),
             #[cfg(any(feature = "board-t114", feature = "board-mesh-tower-v2"))]
@@ -55,7 +58,8 @@ impl StatusLed {
             #[cfg(any(
                 feature = "board-t096",
                 feature = "board-t1000e",
-                feature = "board-rak4631"
+                feature = "board-rak4631",
+                feature = "board-rak10724"
             ))]
             Polarity::ActiveHigh => self.output.set_low(),
             #[cfg(any(feature = "board-t114", feature = "board-mesh-tower-v2"))]
@@ -64,7 +68,7 @@ impl StatusLed {
     }
 
     /// Two short flashes so a headless board shows it reached the runtime, then heartbeat.
-    #[cfg(feature = "board-rak4631")]
+    #[cfg(any(feature = "board-rak4631", feature = "board-rak10724"))]
     pub(crate) async fn boot_splash(&mut self) {
         use embassy_time::Timer;
         for _ in 0..2 {

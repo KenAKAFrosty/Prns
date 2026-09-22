@@ -1,5 +1,5 @@
 use super::{
-    MESH_POCKET_10000, MESH_POCKET_5000, MESH_TOWER_V2, RAK4631, T096, T1000_E, T114,
+    MESH_POCKET_10000, MESH_POCKET_5000, MESH_TOWER_V2, RAK10724, RAK4631, T096, T1000_E, T114,
     T_ECHO_S140_V6, T_ECHO_S140_V7,
 };
 use crate::profiles::linker::{LinkerAddressProfile, LinkerAddressSpace};
@@ -26,8 +26,10 @@ const MESH_TOWER_V2_LINKER: LinkerAddressProfile =
     LinkerAddressProfile::new(MESH_TOWER_V2.id, &NRF52840_SPACES);
 const RAK4631_LINKER: LinkerAddressProfile =
     LinkerAddressProfile::new(RAK4631.id, &NRF52840_SPACES);
+const RAK10724_LINKER: LinkerAddressProfile =
+    LinkerAddressProfile::new(RAK10724.id, &NRF52840_SPACES);
 
-pub(in crate::profiles) const LINKER_ADDRESS_PROFILES: [&LinkerAddressProfile; 9] = [
+pub(in crate::profiles) const LINKER_ADDRESS_PROFILES: [&LinkerAddressProfile; 10] = [
     &T_ECHO_S140_V6_LINKER,
     &T_ECHO_S140_V7_LINKER,
     &T096_LINKER,
@@ -37,4 +39,5 @@ pub(in crate::profiles) const LINKER_ADDRESS_PROFILES: [&LinkerAddressProfile; 9
     &T1000_E_LINKER,
     &MESH_TOWER_V2_LINKER,
     &RAK4631_LINKER,
+    &RAK10724_LINKER,
 ];

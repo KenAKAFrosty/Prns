@@ -475,7 +475,7 @@
         "rust_target": "thumbv7em-none-eabihf",
         "mount_label": "RAK4631",
         "board_identity": {
-          "match": "exact",
+          "match": "exact-shared",
           "value": "wisblock-rak4631-board"
         },
         "application_usb": {
@@ -497,6 +497,52 @@
             "application_link": "softdevice-s140-v6",
             "target_directory": "target/rak4631",
             "filename": "rak4631-s140-6.1.1.uf2"
+          }
+        ]
+      }
+    },
+    {
+      "availability": "qualification",
+      "slug": "rak10724",
+      "display_name": "RAK WisMesh 1W Booster Kit",
+      "silicon": "nRF52840 + SX1262 1W",
+      "interfaces": ["BLE Auto", "LoRa", "USB Auto"],
+      "icon": "nordicsemiconductor",
+      "transport": "uf2-mass-storage",
+      "expected_chip": null,
+      "flash_size": null,
+      "preparation_profile": "rak10724-uf2",
+      "provisioning": null,
+      "build": {
+        "kind": "uf2",
+        "package": "t-echo",
+        "binary": "rak10724",
+        "board_feature": "board-rak10724",
+        "rust_target": "thumbv7em-none-eabihf",
+        "mount_label": "RAK4631",
+        "board_identity": {
+          "match": "exact-shared",
+          "value": "wisblock-rak4631-board"
+        },
+        "application_usb": {
+          "usb": {
+            "vendor_id": "0x1209",
+            "product_id": "0x0001"
+          },
+          "manufacturer": "Stay Personal",
+          "product": "Personal Hopspot (RAK WisMesh 1W)",
+          "serial_number": "PERSONAL-RNS-RAK10724-HOP"
+        },
+        "variants": [
+          {
+            "softdevice_family": "s140",
+            "softdevice_version": "6.1.1",
+            "fwid": "0x00b6",
+            "memory_profile": "rak10724",
+            "family_id": "0xada52840",
+            "application_link": "softdevice-s140-v6",
+            "target_directory": "target/rak10724",
+            "filename": "rak10724-s140-6.1.1.uf2"
           }
         ]
       }

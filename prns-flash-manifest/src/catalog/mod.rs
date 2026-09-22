@@ -751,6 +751,26 @@ const RAK4631_UF2_RECIPE: PinnedUf2Recipe = PinnedUf2Recipe {
     }],
 };
 
+const RAK10724_UF2_RECIPE: PinnedUf2Recipe = PinnedUf2Recipe {
+    preparation_profile: PreparationProfile::Rak10724Uf2,
+    package: "t-echo",
+    binary: "rak10724",
+    board_feature: "board-rak10724",
+    manufacturer: "Stay Personal",
+    product: "Personal Hopspot (RAK WisMesh 1W)",
+    serial_number: "PERSONAL-RNS-RAK10724-HOP",
+    variants: &[PinnedUf2Variant {
+        softdevice_family: "s140",
+        softdevice_version: "6.1.1",
+        fwid: "0x00b6",
+        memory_profile: "rak10724",
+        family_id: "0xada52840",
+        application_link: Uf2ApplicationLink::SoftdeviceS140V6,
+        target_directory: "target/rak10724",
+        filename: "rak10724-s140-6.1.1.uf2",
+    }],
+};
+
 fn pinned_uf2_recipe(slug: &str) -> Option<&'static PinnedUf2Recipe> {
     match slug {
         "t-echo" => Some(&T_ECHO_UF2_RECIPE),
@@ -759,6 +779,7 @@ fn pinned_uf2_recipe(slug: &str) -> Option<&'static PinnedUf2Recipe> {
         "t096" => Some(&T096_UF2_RECIPE),
         "t114" => Some(&T114_UF2_RECIPE),
         "rak4631" => Some(&RAK4631_UF2_RECIPE),
+        "rak10724" => Some(&RAK10724_UF2_RECIPE),
         _ => None,
     }
 }
@@ -1057,6 +1078,7 @@ mod tests {
                 ("mesh-pocket-10000", None, None),
                 ("t096", None, None),
                 ("rak4631", None, None),
+                ("rak10724", None, None),
                 ("t1000-e", None, None),
             ]
         );
@@ -1134,6 +1156,7 @@ mod tests {
                 ),
                 ("t096", "t096", "thumbv7em-none-eabihf"),
                 ("rak4631", "rak4631", "thumbv7em-none-eabihf"),
+                ("rak10724", "rak10724", "thumbv7em-none-eabihf"),
                 ("t1000-e", "t1000-e", "thumbv7em-none-eabihf"),
             ]
         );
@@ -1292,7 +1315,10 @@ mod tests {
         assert_eq!(build.board_feature, "board-rak4631");
         assert_eq!(build.rust_target, "thumbv7em-none-eabihf");
         assert_eq!(build.mount_label, "RAK4631");
-        assert_eq!(build.board_identity.match_kind, Uf2BoardIdMatchKind::Exact);
+        assert_eq!(
+            build.board_identity.match_kind,
+            Uf2BoardIdMatchKind::ExactShared
+        );
         assert_eq!(build.board_identity.value, "wisblock-rak4631-board");
         assert_eq!(build.application_usb.usb.vendor_id, "0x1209");
         assert_eq!(build.application_usb.usb.product_id, "0x0001");
@@ -1325,6 +1351,65 @@ mod tests {
         );
         assert_eq!(variant.target_directory, "target/rak4631");
         assert_eq!(variant.filename, "rak4631-s140-6.1.1.uf2");
+        Ok(())
+    }
+
+    #[test]
+    fn rak10724_qualification_contract_matches_the_hardware_receipt() -> Result<(), CatalogError> {
+        let catalog = board_catalog()?;
+        let board = catalog
+            .board("rak10724")
+            .ok_or_else(|| CatalogError::InvalidBoard {
+                board: "rak10724".to_string(),
+                message: "missing qualification target".to_string(),
+            })?;
+        let BoardBuild::Uf2(build) = &board.build else {
+            return Err(invalid(board, "expected a UF2 build"));
+        };
+
+        assert_eq!(board.availability, BoardAvailability::Qualification);
+        assert_eq!(board.preparation_profile, "rak10724-uf2");
+        assert_eq!(build.package, "t-echo");
+        assert_eq!(build.binary, "rak10724");
+        assert_eq!(build.board_feature, "board-rak10724");
+        assert_eq!(build.rust_target, "thumbv7em-none-eabihf");
+        assert_eq!(build.mount_label, "RAK4631");
+        assert_eq!(
+            build.board_identity.match_kind,
+            Uf2BoardIdMatchKind::ExactShared
+        );
+        assert_eq!(build.board_identity.value, "wisblock-rak4631-board");
+        assert_eq!(build.application_usb.usb.vendor_id, "0x1209");
+        assert_eq!(build.application_usb.usb.product_id, "0x0001");
+        assert_eq!(build.application_usb.manufacturer, "Stay Personal");
+        assert_eq!(
+            build.application_usb.product,
+            "Personal Hopspot (RAK WisMesh 1W)"
+        );
+        assert_eq!(
+            build.application_usb.serial_number,
+            "PERSONAL-RNS-RAK10724-HOP"
+        );
+        let [variant] = build.variants.as_slice() else {
+            return Err(invalid(board, "expected exactly one RAK10724 variant"));
+        };
+        assert_eq!(variant.softdevice_family, "s140");
+        assert_eq!(variant.softdevice_version, "6.1.1");
+        assert_eq!(variant.fwid, "0x00b6");
+        assert_eq!(variant.memory_profile.as_str(), "rak10724");
+        let application = variant
+            .memory_layout()
+            .expect("RAK10724 memory profile")
+            .transport_envelope();
+        assert_eq!(application.start(), 0x0002_6000);
+        assert_eq!(application.end_exclusive(), 0x000e_2000);
+        assert_eq!(variant.family_id, "0xada52840");
+        assert_eq!(
+            variant.application_link,
+            Uf2ApplicationLink::SoftdeviceS140V6
+        );
+        assert_eq!(variant.target_directory, "target/rak10724");
+        assert_eq!(variant.filename, "rak10724-s140-6.1.1.uf2");
         Ok(())
     }
 
