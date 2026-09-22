@@ -290,6 +290,11 @@ uint64_t uniffi_prns_app_fn_func_delete_contact(RustBuffer input
 uint64_t uniffi_prns_app_fn_func_describe_target(RustBuffer input
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_FINISH_REMOTE_WIFI_TRIAL
+#define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_FINISH_REMOTE_WIFI_TRIAL
+uint64_t uniffi_prns_app_fn_func_finish_remote_wifi_trial(RustBuffer input
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_GET_CONTACT
 #define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_GET_CONTACT
 uint64_t uniffi_prns_app_fn_func_get_contact(RustBuffer input
@@ -298,6 +303,11 @@ uint64_t uniffi_prns_app_fn_func_get_contact(RustBuffer input
 #ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_INITIATE_PAIRING
 #define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_INITIATE_PAIRING
 uint64_t uniffi_prns_app_fn_func_initiate_pairing(RustBuffer input
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_INSPECT_REMOTE_WIFI_TRIAL
+#define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_INSPECT_REMOTE_WIFI_TRIAL
+uint64_t uniffi_prns_app_fn_func_inspect_remote_wifi_trial(RustBuffer input
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_LIST_CONTACTS
@@ -412,6 +422,11 @@ uint64_t uniffi_prns_app_fn_func_set_contact_alias(RustBuffer input
 #ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_SET_CONTACT_PINNED
 #define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_SET_CONTACT_PINNED
 uint64_t uniffi_prns_app_fn_func_set_contact_pinned(RustBuffer input
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_START_REMOTE_WIFI_TRIAL
+#define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_FN_FUNC_START_REMOTE_WIFI_TRIAL
+uint64_t uniffi_prns_app_fn_func_start_remote_wifi_trial(RustBuffer input
 );
 #endif
 #ifndef UNIFFI_FFIDEF_FFI_PRNS_APP_RUSTBUFFER_ALLOC
@@ -728,6 +743,12 @@ uint16_t uniffi_prns_app_checksum_func_describe_target(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_FINISH_REMOTE_WIFI_TRIAL
+#define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_FINISH_REMOTE_WIFI_TRIAL
+uint16_t uniffi_prns_app_checksum_func_finish_remote_wifi_trial(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_GET_CONTACT
 #define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_GET_CONTACT
 uint16_t uniffi_prns_app_checksum_func_get_contact(void
@@ -737,6 +758,12 @@ uint16_t uniffi_prns_app_checksum_func_get_contact(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_INITIATE_PAIRING
 #define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_INITIATE_PAIRING
 uint16_t uniffi_prns_app_checksum_func_initiate_pairing(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_INSPECT_REMOTE_WIFI_TRIAL
+#define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_INSPECT_REMOTE_WIFI_TRIAL
+uint16_t uniffi_prns_app_checksum_func_inspect_remote_wifi_trial(void
 
 );
 #endif
@@ -869,6 +896,12 @@ uint16_t uniffi_prns_app_checksum_func_set_contact_alias(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_SET_CONTACT_PINNED
 #define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_SET_CONTACT_PINNED
 uint16_t uniffi_prns_app_checksum_func_set_contact_pinned(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_START_REMOTE_WIFI_TRIAL
+#define UNIFFI_FFIDEF_UNIFFI_PRNS_APP_CHECKSUM_FUNC_START_REMOTE_WIFI_TRIAL
+uint16_t uniffi_prns_app_checksum_func_start_remote_wifi_trial(void
 
 );
 #endif

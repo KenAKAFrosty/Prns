@@ -182,11 +182,11 @@ pub(super) fn admit_change(
     ChangeRemoteNodeOutcome::Accepted { operation }
 }
 
-struct Admission<'a> {
-    snapshots: &'a SnapshotStore,
-    admitted: &'a AtomicBool,
-    generation: u64,
-    kind: DevelopmentNodeOperationKind,
+pub(super) struct Admission<'a> {
+    pub(super) snapshots: &'a SnapshotStore,
+    pub(super) admitted: &'a AtomicBool,
+    pub(super) generation: u64,
+    pub(super) kind: DevelopmentNodeOperationKind,
 }
 
 impl Drop for Admission<'_> {
@@ -205,7 +205,7 @@ impl Drop for Admission<'_> {
     }
 }
 
-async fn stopping(shutdown: &mut watch::Receiver<bool>) {
+pub(super) async fn stopping(shutdown: &mut watch::Receiver<bool>) {
     loop {
         if *shutdown.borrow() || shutdown.changed().await.is_err() {
             return;

@@ -21,6 +21,9 @@ pub enum RemoteNodeQuery {
         interface_id: Vec<u8>,
         after: Option<Vec<u8>>,
     },
+    Controllers {
+        after: Option<Vec<u8>>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,6 +48,15 @@ pub enum RemoteNodeData {
     Interfaces { page: RemoteInterfacePage },
     Interface { details: RemoteInterfaceDetails },
     Peers { page: RemotePeerPage },
+    Controllers { page: RemoteControllerPage },
+}
+
+/// The node reports identities only, not names, authority or individual permissions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "uniffi-bindings", derive(uniffi::Record))]
+pub struct RemoteControllerPage {
+    pub identities: Vec<Vec<u8>>,
+    pub next: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -284,6 +296,9 @@ pub enum RemoteNodeChange {
     },
     SleepRadios,
     WakeRadios,
+    RevokeController {
+        controller_identity_fingerprint: Vec<u8>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

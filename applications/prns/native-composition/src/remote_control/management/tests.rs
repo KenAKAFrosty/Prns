@@ -13,6 +13,85 @@ fn id(byte: u8) -> InterfaceId {
     InterfaceId::new([byte; INTERFACE_ID_LEN])
 }
 
+#[test]
+fn controller_pages_preserve_hashes_and_reject_cross_page_regression() {
+    // A bounded upstream inventory body: two ordered hashes and its keyset continuation.
+    let mut body = vec![2];
+    body.extend_from_slice(&[2; 16]);
+    body.extend_from_slice(&[3; 16]);
+    body.push(1);
+    body.extend_from_slice(&[3; 16]);
+    let inventory = core::RemoteControlControllerInventory::parse_body(&body).expect("valid page");
+    let page = project_controllers(inventory.clone(), identity_hash(&[1; 16])).expect("progress");
+    assert_eq!(page.identities, vec![vec![2; 16], vec![3; 16]]);
+    assert_eq!(page.next, Some(vec![3; 16]));
+    for after in [2, 3, 4] {
+        assert_eq!(
+            project_controllers(inventory.clone(), identity_hash(&[after; 16]))
+                .unwrap_err()
+                .0,
+            RemoteManagementFailureStage::Response
+        );
+    }
+    assert_eq!(
+        project_controllers(
+            core::RemoteControlControllerInventory::empty(),
+            identity_hash(&[3; 16])
+        )
+        .expect("empty final page"),
+        RemoteControllerPage {
+            identities: vec![],
+            next: None
+        }
+    );
+}
+
+#[test]
+fn controller_queries_and_changes_validate_identity_length_and_capability() {
+    for invalid in [vec![], vec![1; 15], vec![1; 17]] {
+        assert!(prepare_query(RemoteNodeQuery::Controllers {
+            after: Some(invalid.clone())
+        })
+        .is_err());
+        assert!(prepare_change(&RemoteNodeChange::RevokeController {
+            controller_identity_fingerprint: invalid
+        })
+        .is_err());
+    }
+    assert!(prepare_query(RemoteNodeQuery::Controllers { after: None }).is_ok());
+    assert!(prepare_query(RemoteNodeQuery::Controllers {
+        after: Some(vec![1; 16])
+    })
+    .is_ok());
+    assert_eq!(
+        prepare_change(&RemoteNodeChange::RevokeController {
+            controller_identity_fingerprint: vec![1; 16]
+        })
+        .expect("valid identity")
+        .kind(),
+        core::RemoteControlRequestKind::RevokeController
+    );
+}
+
+#[test]
+fn controller_revoke_outcomes_preserve_refusal_and_busy() {
+    use self::core::RemoteControlRevokeControllerOutcome as Outcome;
+    assert_eq!(revoke_status(Outcome::Applied), RemoteChangeStatus::Applied);
+    assert_eq!(
+        revoke_status(Outcome::NotFound),
+        RemoteChangeStatus::Unchanged
+    );
+    for (outcome, expected) in [
+        (Outcome::Forbidden, RemoteManagementFailureStage::Permission),
+        (Outcome::Busy, RemoteManagementFailureStage::Busy),
+        (Outcome::Failed, RemoteManagementFailureStage::Request),
+    ] {
+        assert!(
+            matches!(revoke_status(outcome), RemoteChangeStatus::Failed { stage, .. } if stage == expected)
+        );
+    }
+}
+
 fn entry(byte: u8) -> core::RemoteControlInterfaceEntry {
     core::RemoteControlInterfaceEntry {
         id: id(byte),
@@ -383,6 +462,12 @@ fn every_change_requires_its_specific_live_capability() {
         (
             RemoteNodeChange::WakeRadios,
             core::RemoteControlRequestKind::WakeRadios,
+        ),
+        (
+            RemoteNodeChange::RevokeController {
+                controller_identity_fingerprint: vec![1; 16],
+            },
+            core::RemoteControlRequestKind::RevokeController,
         ),
     ];
     for (change, kind) in changes {

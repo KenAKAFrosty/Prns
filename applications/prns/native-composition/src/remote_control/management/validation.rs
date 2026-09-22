@@ -1,3 +1,4 @@
+use personal_rns::identity::IdentityHash;
 use personal_rns::interfaces::lora::{
     CodingRate, LoraBandwidth, Modulation, PreambleSymbols, RadioProfile, SpreadingFactor,
 };
@@ -14,6 +15,7 @@ pub(super) enum PreparedQuery {
     Interfaces(Option<InterfaceId>),
     Interface(InterfaceId),
     Peers(InterfaceId, Option<InterfaceId>),
+    Controllers(Option<IdentityHash>),
 }
 
 pub(super) fn interface_id(bytes: &[u8]) -> Result<InterfaceId, String> {
@@ -34,7 +36,14 @@ pub(super) fn prepare_query(query: RemoteNodeQuery) -> Result<PreparedQuery, Str
             interface_id: id,
             after,
         } => PreparedQuery::Peers(interface_id(&id)?, cursor(after)?),
+        RemoteNodeQuery::Controllers { after } => {
+            PreparedQuery::Controllers(after.as_deref().map(controller_identity).transpose()?)
+        }
     })
+}
+
+fn controller_identity(bytes: &[u8]) -> Result<IdentityHash, String> {
+    super::identity_hash(bytes).ok_or_else(|| "Choose a valid device identity.".to_owned())
 }
 
 pub(super) enum PreparedChange {
@@ -51,6 +60,7 @@ pub(super) enum PreparedChange {
     RadioMode(core::RemoteControlEspRadioMode),
     SleepRadios,
     WakeRadios,
+    RevokeController(IdentityHash),
 }
 
 impl PreparedChange {
@@ -70,6 +80,7 @@ impl PreparedChange {
             Self::RadioMode(..) => Kind::SetEspRadioMode,
             Self::SleepRadios => Kind::SleepRadios,
             Self::WakeRadios => Kind::WakeRadios,
+            Self::RevokeController(..) => Kind::RevokeController,
         }
     }
 }
@@ -77,6 +88,11 @@ impl PreparedChange {
 pub(super) fn prepare_change(change: &RemoteNodeChange) -> Result<PreparedChange, String> {
     use core::*;
     Ok(match change {
+        RemoteNodeChange::RevokeController {
+            controller_identity_fingerprint,
+        } => {
+            PreparedChange::RevokeController(controller_identity(controller_identity_fingerprint)?)
+        }
         RemoteNodeChange::InterfacePower {
             interface_id: id,
             enabled,

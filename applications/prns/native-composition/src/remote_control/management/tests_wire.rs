@@ -128,6 +128,86 @@ fn secrets(controller: u8, target: u8) -> core::RemoteControlNodeIdentitySecrets
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn controller_access_operations_respect_authority_and_protected_grants() {
+    for authority in [
+        core::RemoteControlControllerAuthority::Operator,
+        core::RemoteControlControllerAuthority::Administrator,
+    ] {
+        tokio::task::LocalSet::new().run_until(async {
+            let directory = tempfile::tempdir().expect("fixture persistence");
+            let target_secrets = secrets(0x93, 0x94);
+            let controller_secrets = secrets(0x95, 0x96);
+            let target_identity = core::RemoteControlTargetIdentity::new(*target_secrets.identities().target().public_keys());
+            let controller_identity = *controller_secrets.identities().controller();
+            let operator = *secrets(0x97, 0x98).identities().controller();
+            let administrator = *secrets(0x99, 0x9a).identities().controller();
+            let target_endpoint = target_identity.endpoint().destination_hash();
+            let mut available = core::RemoteControlRequestSet::only(core::RemoteControlRequestKind::Describe);
+            for kind in [core::RemoteControlRequestKind::InventoryControllers, core::RemoteControlRequestKind::RevokeController] { let _ = available.insert(kind); }
+            let grants = [(controller_identity, authority), (operator, core::RemoteControlControllerAuthority::Operator), (administrator, core::RemoteControlControllerAuthority::Administrator)].map(|(identity, authority)| core::RemoteControlControllerGrant::new(identity, authority, core::RemoteControlRequestSet::all_operator()).expect("fixture grant"));
+            let target = PrnsNode::new(PrnsNodeRecipe {
+                transport_identity: None,
+                remote_control: core::RemoteControlService::with_capabilities(target_secrets, core::RemoteControlInitialControllerGrants::Grants(core::RemoteControlControllerGrants::try_from(grants.as_slice()).expect("initial grants")), core::RemoteControlSelfAnnouncement::Unavailable, core::RemoteControlCapabilities::from_requests(available).expect("describe supported")),
+                pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
+                app_state: personal_rns::runtime::NoRemoteControlHostControls, storage: GrowableHeap,
+                request_endpoints: request_endpoints![], on_event: |_, _| {}, interfaces: ManuallyAttached,
+                persistence: NodePersistence::custom_dir(directory.path().join("target")).expect("target persistence"),
+            });
+            let target_handle = target.handle();
+            let server = TcpServer::bind("127.0.0.1:0").await.expect("server bind");
+            let address = server.local_addr().expect("server address").to_string();
+            let _server = target_handle.supervise(server);
+            let controller = PrnsNode::new(PrnsNodeRecipe {
+                transport_identity: None,
+                remote_control: core::RemoteControlService::new(controller_secrets, core::RemoteControlInitialControllerGrants::Nobody, core::RemoteControlSelfAnnouncement::Unavailable),
+                pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
+                app_state: personal_rns::runtime::NoRemoteControlHostControls, storage: GrowableHeap,
+                request_endpoints: request_endpoints![], on_event: |_, _| {}, interfaces: ManuallyAttached,
+                persistence: NodePersistence::custom_dir(directory.path().join("controller")).expect("controller persistence"),
+            });
+            let controller_handle = controller.handle();
+            let _client = controller_handle.attach(TcpClientInterface::new(address));
+            let target_bytes = target_identity.identity_hash().as_bytes().to_vec();
+            let scenario = async {
+                controller_handle.set_remote_control_target_access(core::RemoteControlTargetAccess::new(target_identity, authority, core::RemoteControlRequestSet::all_operator()).expect("fixture target access")).await.expect("access persisted");
+                while !controller_handle.interface_timing_inventory().iter().any(|interface| interface.connection.is_online()) || !target_handle.interface_timing_inventory().iter().any(|interface| interface.connection.is_online()) { tokio::task::yield_now().await; }
+                target_handle.announce_now(AnnounceNow { destination: target_endpoint, target: AnnounceTarget::AllInterfaces, app_data: AnnounceAppData::Registered }).await.expect("target announces");
+                while controller_handle.route(target_endpoint).await.is_none() { tokio::task::yield_now().await; }
+                let deadline = || Instant::now() + Duration::from_secs(3);
+                let query = || ReadRemoteNodeInput { target_identity_fingerprint: target_bytes.clone(), query: RemoteNodeQuery::Controllers { after: None } };
+                let revoke = |identity: core::RemoteControlControllerIdentity| ChangeRemoteNodeInput { target_identity_fingerprint: target_bytes.clone(), change: RemoteNodeChange::RevokeController { controller_identity_fingerprint: identity.identity_hash().as_bytes().to_vec() } };
+                let dispatched = AtomicBool::new(false);
+                let inventory = read(&controller_handle, query(), deadline()).await;
+                if authority == core::RemoteControlControllerAuthority::Operator {
+                    assert!(matches!(inventory, ReadRemoteNodeOutcome::Failed { stage: RemoteManagementFailureStage::Unsupported, .. }));
+                    assert!(matches!(change(&controller_handle, revoke(operator), deadline(), &dispatched).await, RemoteChangeStatus::Failed { stage: RemoteManagementFailureStage::Unsupported, .. }));
+                    assert!(!dispatched.load(Ordering::SeqCst), "operator denial must precede dispatch");
+                    return;
+                }
+                let ReadRemoteNodeOutcome::Read { data: RemoteNodeData::Controllers { page }, .. } = inventory else { panic!("administrator inventory failed: {inventory:?}"); };
+                assert_eq!(page.identities.len(), 3);
+                assert_eq!(page.next, None);
+                assert!(page.identities.contains(&controller_identity.identity_hash().as_bytes().to_vec()));
+                assert!(matches!(change(&controller_handle, revoke(controller_identity), deadline(), &dispatched).await, RemoteChangeStatus::Failed { stage: RemoteManagementFailureStage::Permission, .. }));
+                assert!(!dispatched.load(Ordering::SeqCst), "self removal must be rejected before dispatch");
+                assert!(matches!(change(&controller_handle, revoke(administrator), deadline(), &dispatched).await, RemoteChangeStatus::Failed { stage: RemoteManagementFailureStage::Permission, .. }));
+                assert!(dispatched.load(Ordering::SeqCst), "target enforces protected administrator access");
+                assert_eq!(change(&controller_handle, revoke(operator), deadline(), &dispatched).await, RemoteChangeStatus::Applied);
+                let ReadRemoteNodeOutcome::Read { data: RemoteNodeData::Controllers { page }, .. } = read(&controller_handle, query(), deadline()).await else { panic!("inventory after revoke failed"); };
+                assert_eq!(page.identities.len(), 2);
+                assert!(!page.identities.contains(&operator.identity_hash().as_bytes().to_vec()));
+                assert_eq!(change(&controller_handle, revoke(operator), deadline(), &dispatched).await, RemoteChangeStatus::Unchanged);
+            };
+            tokio::select! {
+                result = tokio::time::timeout(Duration::from_secs(15), scenario) => result.expect("controller access scenario finishes"),
+                result = target.run() => panic!("target stopped: {result:?}"),
+                result = controller.run() => panic!("controller stopped: {result:?}"),
+            }
+        }).await;
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn management_uses_authenticated_public_operations_and_preserves_ambiguous_writes() {
     tokio::task::LocalSet::new().run_until(async {
         let directory = tempfile::tempdir().expect("fixture persistence");

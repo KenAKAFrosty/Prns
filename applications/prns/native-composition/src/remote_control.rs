@@ -1,4 +1,5 @@
 pub(crate) mod management;
+pub(crate) mod wifi;
 
 use core::future::Future;
 use core::time::Duration;
@@ -481,7 +482,7 @@ fn target_snapshot(
     }
 }
 
-fn identity_hash(bytes: &[u8]) -> Option<IdentityHash> {
+pub(crate) fn identity_hash(bytes: &[u8]) -> Option<IdentityHash> {
     let value = <[u8; 16]>::try_from(bytes).ok()?;
     Some(IdentityHash::new(value))
 }

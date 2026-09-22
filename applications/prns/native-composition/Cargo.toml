@@ -57,9 +57,11 @@ prns-ffi = { path = "../../../prns-ffi", default-features = false, optional = tr
 redb = "=4.2.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+zeroize = "1"
 tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread", "sync", "time"] }
 
 [dev-dependencies]
+prns-runtime = { path = "../../../prns-runtime/core", default-features = false, features = ["remote-control-wifi-host"] }
 tempfile = "3"
 tokio = { version = "1", default-features = false, features = ["test-util"] }
 

@@ -171,6 +171,25 @@ pub async fn change_remote_node(input: ChangeRemoteNodeInput) -> ChangeRemoteNod
 }
 
 #[uniffi::export]
+pub async fn start_remote_wifi_trial(input: StartRemoteWifiTrialInput) -> RemoteWifiCommandOutcome {
+    crate::lifecycle::admission::start_remote_wifi_trial(input).await
+}
+
+#[uniffi::export]
+pub async fn inspect_remote_wifi_trial(
+    input: InspectRemoteWifiTrialInput,
+) -> RemoteWifiCommandOutcome {
+    crate::lifecycle::admission::inspect_remote_wifi_trial(input).await
+}
+
+#[uniffi::export]
+pub async fn finish_remote_wifi_trial(
+    input: FinishRemoteWifiTrialInput,
+) -> RemoteWifiCommandOutcome {
+    crate::lifecycle::admission::finish_remote_wifi_trial(input).await
+}
+
+#[uniffi::export]
 pub async fn save_observed_destination(input: ContactDestinationInput) -> ContactMutationOutcome {
     crate::lifecycle::admission::save_observed_destination(input).await
 }

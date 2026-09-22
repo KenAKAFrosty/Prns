@@ -1398,12 +1398,14 @@ dependencies = [
  "prns-host-snapshot",
  "prns-interfaces-tokio",
  "prns-lxmf",
+ "prns-runtime",
  "redb",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
  "uniffi",
+ "zeroize",
 ]
 
 [[package]]

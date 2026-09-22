@@ -355,6 +355,46 @@ export async function describeTarget(input: DescribeRemoteControlTargetInput, as
     }
     }
 
+export async function finishRemoteWifiTrial(input: FinishRemoteWifiTrialInput, asyncOpts_?: { signal: AbortSignal }): Promise<RemoteWifiCommandOutcome> {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_prns_app_fn_func_finish_remote_wifi_trial(FfiConverterTypeFinishRemoteWifiTrialInput.lower(input, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_prns_app_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_prns_app_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_prns_app_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_prns_app_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            // Borrowed view over foreign memory: the call site owns the free,
+            // as on the sync paths. Unconditional — a no-op where buffers are
+            // already JS-owned.
+            /*liftFunc:*/ (__rb) => {
+                try {
+                    return FfiConverterTypeRemoteWifiCommandOutcome.lift(__rb);
+                } finally {
+                    nativeModule().rustbuffer_free(__rb);
+                }
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error && __stack !== undefined) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
 export async function getContact(input: ContactDestinationInput, asyncOpts_?: { signal: AbortSignal }): Promise<ContactLookupOutcome> {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
     try {
@@ -419,6 +459,46 @@ export async function initiatePairing(input: InitiateRemoteControlPairingInput, 
             /*liftFunc:*/ (__rb) => {
                 try {
                     return FfiConverterTypeRemoteControlPairingCommandOutcome.lift(__rb);
+                } finally {
+                    nativeModule().rustbuffer_free(__rb);
+                }
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error && __stack !== undefined) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+export async function inspectRemoteWifiTrial(input: InspectRemoteWifiTrialInput, asyncOpts_?: { signal: AbortSignal }): Promise<RemoteWifiCommandOutcome> {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_prns_app_fn_func_inspect_remote_wifi_trial(FfiConverterTypeInspectRemoteWifiTrialInput.lower(input, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_prns_app_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_prns_app_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_prns_app_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_prns_app_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            // Borrowed view over foreign memory: the call site owns the free,
+            // as on the sync paths. Unconditional — a no-op where buffers are
+            // already JS-owned.
+            /*liftFunc:*/ (__rb) => {
+                try {
+                    return FfiConverterTypeRemoteWifiCommandOutcome.lift(__rb);
                 } finally {
                     nativeModule().rustbuffer_free(__rb);
                 }
@@ -1116,6 +1196,46 @@ export async function setContactPinned(input: SetContactPinnedInput, asyncOpts_?
     }
     }
 
+export async function startRemoteWifiTrial(input: StartRemoteWifiTrialInput, asyncOpts_?: { signal: AbortSignal }): Promise<RemoteWifiCommandOutcome> {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_prns_app_fn_func_start_remote_wifi_trial(FfiConverterTypeStartRemoteWifiTrialInput.lower(input, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_prns_app_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_prns_app_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_prns_app_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_prns_app_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            // Borrowed view over foreign memory: the call site owns the free,
+            // as on the sync paths. Unconditional — a no-op where buffers are
+            // already JS-owned.
+            /*liftFunc:*/ (__rb) => {
+                try {
+                    return FfiConverterTypeRemoteWifiCommandOutcome.lift(__rb);
+                } finally {
+                    nativeModule().rustbuffer_free(__rb);
+                }
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error && __stack !== undefined) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
 export type AnnounceRemoteControlTargetInput = {
     targetIdentityFingerprint: Uint8Array
 }
@@ -1660,7 +1780,8 @@ export enum RemoteNodeChange_Tags {
     StationUplink = "StationUplink",
     RadioMode = "RadioMode",
     SleepRadios = "SleepRadios",
-    WakeRadios = "WakeRadios"
+    WakeRadios = "WakeRadios",
+    RevokeController = "RevokeController"
 }
 export const RemoteNodeChange = (() => {
 
@@ -2053,6 +2174,37 @@ inner: {mode: RemoteRadioMode }): RadioMode_ {
 
     }
 
+    type RevokeController__interface = {
+        tag: RemoteNodeChange_Tags.RevokeController;
+        inner:
+Readonly<{controllerIdentityFingerprint: Uint8Array}>
+    };
+    class RevokeController_ extends UniffiEnum implements RevokeController__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteNodeChange";
+        readonly tag = RemoteNodeChange_Tags.RevokeController;
+        readonly inner:
+Readonly<{controllerIdentityFingerprint: Uint8Array}>;
+        constructor(
+inner: {controllerIdentityFingerprint: Uint8Array }) {
+            super("RemoteNodeChange", "RevokeController");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {controllerIdentityFingerprint: Uint8Array }): RevokeController_ {
+            return new RevokeController_(inner);
+        }
+
+        static instanceOf(obj: any): obj is RevokeController_ {
+            return obj.tag === RemoteNodeChange_Tags.RevokeController;
+        }
+
+    }
+
     function instanceOf(obj: any): obj is RemoteNodeChange {
         return obj[uniffiTypeNameSymbol] === "RemoteNodeChange";
     }
@@ -2071,12 +2223,13 @@ inner: {mode: RemoteRadioMode }): RadioMode_ {
   StationUplink: StationUplink_,
   RadioMode: RadioMode_,
   SleepRadios: SleepRadios_,
-  WakeRadios: WakeRadios_
+  WakeRadios: WakeRadios_,
+  RevokeController: RevokeController_
     });
 
 })();
 export type RemoteNodeChange = InstanceType<
-    typeof RemoteNodeChange['InterfacePower' | 'InterfaceMode' | 'InterfaceGroup' | 'InterfaceLoRa' | 'DiscoveryGroups' | 'GnssPower' | 'DisplayVisibility' | 'DisplayAutoOff' | 'SystemPower' | 'StationUplink' | 'RadioMode' | 'SleepRadios' | 'WakeRadios']
+    typeof RemoteNodeChange['InterfacePower' | 'InterfaceMode' | 'InterfaceGroup' | 'InterfaceLoRa' | 'DiscoveryGroups' | 'GnssPower' | 'DisplayVisibility' | 'DisplayAutoOff' | 'SystemPower' | 'StationUplink' | 'RadioMode' | 'SleepRadios' | 'WakeRadios' | 'RevokeController']
 >;
 
 // FfiConverter for enum RemoteNodeChange
@@ -2098,6 +2251,7 @@ const FfiConverterTypeRemoteNodeChange = (() => {
                 case 11: return new RemoteNodeChange.RadioMode({mode: FfiConverterTypeRemoteRadioMode.readFromCursor(c) });
                 case 12: return new RemoteNodeChange.SleepRadios();
                 case 13: return new RemoteNodeChange.WakeRadios();
+                case 14: return new RemoteNodeChange.RevokeController({controllerIdentityFingerprint: FfiConverterUint8Array.readFromCursor(c) });
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -2181,6 +2335,12 @@ const FfiConverterTypeRemoteNodeChange = (() => {
                 }
                 case RemoteNodeChange_Tags.WakeRadios: {
                     c.writeI32(13);
+                    return;
+                }
+                case RemoteNodeChange_Tags.RevokeController: {
+                    c.writeI32(14);
+                    const inner = value.inner;
+                    FfiConverterUint8Array.writeIntoCursor(inner.controllerIdentityFingerprint, c);
                     return;
                 }
                 default:
@@ -2267,6 +2427,12 @@ const FfiConverterTypeRemoteNodeChange = (() => {
                 }
                 case RemoteNodeChange_Tags.WakeRadios: {
                     return 4;
+                }
+                case RemoteNodeChange_Tags.RevokeController: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterUint8Array.allocationSize(inner.controllerIdentityFingerprint);
+                    return size;
                 }
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
@@ -2708,6 +2874,7 @@ const FfiConverterTypeDevelopmentNodeFailure = (() => {
 export enum DevelopmentNodeOperationKind {
     RemoteRead,
     RemoteChange,
+    RemoteWifi,
     Pairing,
     Describe,
     AnnounceSelf,
@@ -2721,10 +2888,11 @@ const FfiConverterTypeDevelopmentNodeOperationKind = (() => {
             switch (c.readI32()) {
                 case 1: return DevelopmentNodeOperationKind.RemoteRead;
                 case 2: return DevelopmentNodeOperationKind.RemoteChange;
-                case 3: return DevelopmentNodeOperationKind.Pairing;
-                case 4: return DevelopmentNodeOperationKind.Describe;
-                case 5: return DevelopmentNodeOperationKind.AnnounceSelf;
-                case 6: return DevelopmentNodeOperationKind.Shutdown;
+                case 3: return DevelopmentNodeOperationKind.RemoteWifi;
+                case 4: return DevelopmentNodeOperationKind.Pairing;
+                case 5: return DevelopmentNodeOperationKind.Describe;
+                case 6: return DevelopmentNodeOperationKind.AnnounceSelf;
+                case 7: return DevelopmentNodeOperationKind.Shutdown;
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -2732,10 +2900,11 @@ const FfiConverterTypeDevelopmentNodeOperationKind = (() => {
             switch (value) {
                 case DevelopmentNodeOperationKind.RemoteRead: return c.writeI32(1);
                 case DevelopmentNodeOperationKind.RemoteChange: return c.writeI32(2);
-                case DevelopmentNodeOperationKind.Pairing: return c.writeI32(3);
-                case DevelopmentNodeOperationKind.Describe: return c.writeI32(4);
-                case DevelopmentNodeOperationKind.AnnounceSelf: return c.writeI32(5);
-                case DevelopmentNodeOperationKind.Shutdown: return c.writeI32(6);
+                case DevelopmentNodeOperationKind.RemoteWifi: return c.writeI32(3);
+                case DevelopmentNodeOperationKind.Pairing: return c.writeI32(4);
+                case DevelopmentNodeOperationKind.Describe: return c.writeI32(5);
+                case DevelopmentNodeOperationKind.AnnounceSelf: return c.writeI32(6);
+                case DevelopmentNodeOperationKind.Shutdown: return c.writeI32(7);
             }
         }
         allocationSize(value: TypeName): number {
@@ -5546,6 +5715,592 @@ const FfiConverterTypeRemoteChangeOperation = (() => {
     return new FFIConverter();
 })();
 
+export enum RemoteWifiAction {
+    Start,
+    Inspect,
+    Keep,
+    Restore
+}
+
+const FfiConverterTypeRemoteWifiAction = (() => {
+    type TypeName = RemoteWifiAction;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            switch (c.readI32()) {
+                case 1: return RemoteWifiAction.Start;
+                case 2: return RemoteWifiAction.Inspect;
+                case 3: return RemoteWifiAction.Keep;
+                case 4: return RemoteWifiAction.Restore;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            switch (value) {
+                case RemoteWifiAction.Start: return c.writeI32(1);
+                case RemoteWifiAction.Inspect: return c.writeI32(2);
+                case RemoteWifiAction.Keep: return c.writeI32(3);
+                case RemoteWifiAction.Restore: return c.writeI32(4);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return 4;
+        }
+    }
+    return new FFIConverter();
+})();
+
+
+// Enum: RemoteWifiTransaction
+export enum RemoteWifiTransaction_Tags {
+    FactoryProvisioning = "FactoryProvisioning",
+    Confirmed = "Confirmed",
+    Staged = "Staged",
+    AwaitingConfirmation = "AwaitingConfirmation",
+    RollingBack = "RollingBack"
+}
+/**
+ * The node's observation, not a claim about which app attempt caused it.
+ * AwaitingConfirmation does not establish that the new network is connected.
+ */
+export const RemoteWifiTransaction = (() => {
+
+    type FactoryProvisioning__interface = {
+        tag: RemoteWifiTransaction_Tags.FactoryProvisioning
+    };
+    class FactoryProvisioning_ extends UniffiEnum implements FactoryProvisioning__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteWifiTransaction";
+        readonly tag = RemoteWifiTransaction_Tags.FactoryProvisioning;
+        constructor() {
+            super("RemoteWifiTransaction", "FactoryProvisioning");
+        }
+
+        static new(): FactoryProvisioning_ {
+            return new FactoryProvisioning_();
+        }
+
+        static instanceOf(obj: any): obj is FactoryProvisioning_ {
+            return obj.tag === RemoteWifiTransaction_Tags.FactoryProvisioning;
+        }
+
+    }
+
+    type Confirmed__interface = {
+        tag: RemoteWifiTransaction_Tags.Confirmed;
+        inner:
+Readonly<{revision: number}>
+    };
+    class Confirmed_ extends UniffiEnum implements Confirmed__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteWifiTransaction";
+        readonly tag = RemoteWifiTransaction_Tags.Confirmed;
+        readonly inner:
+Readonly<{revision: number}>;
+        constructor(
+inner: {revision: number }) {
+            super("RemoteWifiTransaction", "Confirmed");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {revision: number }): Confirmed_ {
+            return new Confirmed_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Confirmed_ {
+            return obj.tag === RemoteWifiTransaction_Tags.Confirmed;
+        }
+
+    }
+
+    type Staged__interface = {
+        tag: RemoteWifiTransaction_Tags.Staged;
+        inner:
+Readonly<{revision: number}>
+    };
+    class Staged_ extends UniffiEnum implements Staged__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteWifiTransaction";
+        readonly tag = RemoteWifiTransaction_Tags.Staged;
+        readonly inner:
+Readonly<{revision: number}>;
+        constructor(
+inner: {revision: number }) {
+            super("RemoteWifiTransaction", "Staged");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {revision: number }): Staged_ {
+            return new Staged_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Staged_ {
+            return obj.tag === RemoteWifiTransaction_Tags.Staged;
+        }
+
+    }
+
+    type AwaitingConfirmation__interface = {
+        tag: RemoteWifiTransaction_Tags.AwaitingConfirmation;
+        inner:
+Readonly<{revision: number; remainingSeconds: number}>
+    };
+    class AwaitingConfirmation_ extends UniffiEnum implements AwaitingConfirmation__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteWifiTransaction";
+        readonly tag = RemoteWifiTransaction_Tags.AwaitingConfirmation;
+        readonly inner:
+Readonly<{revision: number; remainingSeconds: number}>;
+        constructor(
+inner: {revision: number; remainingSeconds: number }) {
+            super("RemoteWifiTransaction", "AwaitingConfirmation");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {revision: number; remainingSeconds: number }): AwaitingConfirmation_ {
+            return new AwaitingConfirmation_(inner);
+        }
+
+        static instanceOf(obj: any): obj is AwaitingConfirmation_ {
+            return obj.tag === RemoteWifiTransaction_Tags.AwaitingConfirmation;
+        }
+
+    }
+
+    type RollingBack__interface = {
+        tag: RemoteWifiTransaction_Tags.RollingBack;
+        inner:
+Readonly<{rejectedRevision: number}>
+    };
+    class RollingBack_ extends UniffiEnum implements RollingBack__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteWifiTransaction";
+        readonly tag = RemoteWifiTransaction_Tags.RollingBack;
+        readonly inner:
+Readonly<{rejectedRevision: number}>;
+        constructor(
+inner: {rejectedRevision: number }) {
+            super("RemoteWifiTransaction", "RollingBack");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {rejectedRevision: number }): RollingBack_ {
+            return new RollingBack_(inner);
+        }
+
+        static instanceOf(obj: any): obj is RollingBack_ {
+            return obj.tag === RemoteWifiTransaction_Tags.RollingBack;
+        }
+
+    }
+
+    function instanceOf(obj: any): obj is RemoteWifiTransaction {
+        return obj[uniffiTypeNameSymbol] === "RemoteWifiTransaction";
+    }
+
+    return Object.freeze({
+        instanceOf,
+  FactoryProvisioning: FactoryProvisioning_,
+  Confirmed: Confirmed_,
+  Staged: Staged_,
+  AwaitingConfirmation: AwaitingConfirmation_,
+  RollingBack: RollingBack_
+    });
+
+})();
+/**
+ * The node's observation, not a claim about which app attempt caused it.
+ * AwaitingConfirmation does not establish that the new network is connected.
+ */
+export type RemoteWifiTransaction = InstanceType<
+    typeof RemoteWifiTransaction['FactoryProvisioning' | 'Confirmed' | 'Staged' | 'AwaitingConfirmation' | 'RollingBack']
+>;
+
+// FfiConverter for enum RemoteWifiTransaction
+const FfiConverterTypeRemoteWifiTransaction = (() => {
+    type TypeName = RemoteWifiTransaction;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            switch (c.readI32()) {
+                case 1: return new RemoteWifiTransaction.FactoryProvisioning();
+                case 2: return new RemoteWifiTransaction.Confirmed({revision: FfiConverterUInt32.readFromCursor(c) });
+                case 3: return new RemoteWifiTransaction.Staged({revision: FfiConverterUInt32.readFromCursor(c) });
+                case 4: return new RemoteWifiTransaction.AwaitingConfirmation({revision: FfiConverterUInt32.readFromCursor(c), remainingSeconds: FfiConverterUInt8.readFromCursor(c) });
+                case 5: return new RemoteWifiTransaction.RollingBack({rejectedRevision: FfiConverterUInt32.readFromCursor(c) });
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            switch (value.tag) {
+                case RemoteWifiTransaction_Tags.FactoryProvisioning: {
+                    c.writeI32(1);
+                    return;
+                }
+                case RemoteWifiTransaction_Tags.Confirmed: {
+                    c.writeI32(2);
+                    const inner = value.inner;
+                    FfiConverterUInt32.writeIntoCursor(inner.revision, c);
+                    return;
+                }
+                case RemoteWifiTransaction_Tags.Staged: {
+                    c.writeI32(3);
+                    const inner = value.inner;
+                    FfiConverterUInt32.writeIntoCursor(inner.revision, c);
+                    return;
+                }
+                case RemoteWifiTransaction_Tags.AwaitingConfirmation: {
+                    c.writeI32(4);
+                    const inner = value.inner;
+                    FfiConverterUInt32.writeIntoCursor(inner.revision, c);
+                    FfiConverterUInt8.writeIntoCursor(inner.remainingSeconds, c);
+                    return;
+                }
+                case RemoteWifiTransaction_Tags.RollingBack: {
+                    c.writeI32(5);
+                    const inner = value.inner;
+                    FfiConverterUInt32.writeIntoCursor(inner.rejectedRevision, c);
+                    return;
+                }
+                default:
+                    // Throwing from here means that RemoteWifiTransaction_Tags hasn't matched an ordinal.
+                    throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        allocationSize(value: TypeName): number {
+            switch (value.tag) {
+                case RemoteWifiTransaction_Tags.FactoryProvisioning: {
+                    return 4;
+                }
+                case RemoteWifiTransaction_Tags.Confirmed: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterUInt32.allocationSize(inner.revision);
+                    return size;
+                }
+                case RemoteWifiTransaction_Tags.Staged: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterUInt32.allocationSize(inner.revision);
+                    return size;
+                }
+                case RemoteWifiTransaction_Tags.AwaitingConfirmation: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterUInt32.allocationSize(inner.revision);
+                    size += FfiConverterUInt8.allocationSize(inner.remainingSeconds);
+                    return size;
+                }
+                case RemoteWifiTransaction_Tags.RollingBack: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterUInt32.allocationSize(inner.rejectedRevision);
+                    return size;
+                }
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+    }
+    return new FFIConverter();
+})();
+
+
+// Enum: RemoteWifiStatus
+export enum RemoteWifiStatus_Tags {
+    Pending = "Pending",
+    Observed = "Observed",
+    Failed = "Failed",
+    OutcomeUnknown = "OutcomeUnknown"
+}
+export const RemoteWifiStatus = (() => {
+
+    type Pending__interface = {
+        tag: RemoteWifiStatus_Tags.Pending
+    };
+    class Pending_ extends UniffiEnum implements Pending__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteWifiStatus";
+        readonly tag = RemoteWifiStatus_Tags.Pending;
+        constructor() {
+            super("RemoteWifiStatus", "Pending");
+        }
+
+        static new(): Pending_ {
+            return new Pending_();
+        }
+
+        static instanceOf(obj: any): obj is Pending_ {
+            return obj.tag === RemoteWifiStatus_Tags.Pending;
+        }
+
+    }
+
+    type Observed__interface = {
+        tag: RemoteWifiStatus_Tags.Observed;
+        inner:
+Readonly<{transaction: RemoteWifiTransaction}>
+    };
+    class Observed_ extends UniffiEnum implements Observed__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteWifiStatus";
+        readonly tag = RemoteWifiStatus_Tags.Observed;
+        readonly inner:
+Readonly<{transaction: RemoteWifiTransaction}>;
+        constructor(
+inner: {transaction: RemoteWifiTransaction }) {
+            super("RemoteWifiStatus", "Observed");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {transaction: RemoteWifiTransaction }): Observed_ {
+            return new Observed_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Observed_ {
+            return obj.tag === RemoteWifiStatus_Tags.Observed;
+        }
+
+    }
+
+    type Failed__interface = {
+        tag: RemoteWifiStatus_Tags.Failed;
+        inner:
+Readonly<{stage: RemoteManagementFailureStage; detail: string}>
+    };
+    class Failed_ extends UniffiEnum implements Failed__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteWifiStatus";
+        readonly tag = RemoteWifiStatus_Tags.Failed;
+        readonly inner:
+Readonly<{stage: RemoteManagementFailureStage; detail: string}>;
+        constructor(
+inner: {stage: RemoteManagementFailureStage; detail: string }) {
+            super("RemoteWifiStatus", "Failed");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {stage: RemoteManagementFailureStage; detail: string }): Failed_ {
+            return new Failed_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Failed_ {
+            return obj.tag === RemoteWifiStatus_Tags.Failed;
+        }
+
+    }
+
+    type OutcomeUnknown__interface = {
+        tag: RemoteWifiStatus_Tags.OutcomeUnknown;
+        inner:
+Readonly<{reason: RemoteControlAnnounceUnknownReason}>
+    };
+    class OutcomeUnknown_ extends UniffiEnum implements OutcomeUnknown__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteWifiStatus";
+        readonly tag = RemoteWifiStatus_Tags.OutcomeUnknown;
+        readonly inner:
+Readonly<{reason: RemoteControlAnnounceUnknownReason}>;
+        constructor(
+inner: {reason: RemoteControlAnnounceUnknownReason }) {
+            super("RemoteWifiStatus", "OutcomeUnknown");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {reason: RemoteControlAnnounceUnknownReason }): OutcomeUnknown_ {
+            return new OutcomeUnknown_(inner);
+        }
+
+        static instanceOf(obj: any): obj is OutcomeUnknown_ {
+            return obj.tag === RemoteWifiStatus_Tags.OutcomeUnknown;
+        }
+
+    }
+
+    function instanceOf(obj: any): obj is RemoteWifiStatus {
+        return obj[uniffiTypeNameSymbol] === "RemoteWifiStatus";
+    }
+
+    return Object.freeze({
+        instanceOf,
+  Pending: Pending_,
+  Observed: Observed_,
+  Failed: Failed_,
+  OutcomeUnknown: OutcomeUnknown_
+    });
+
+})();
+export type RemoteWifiStatus = InstanceType<
+    typeof RemoteWifiStatus['Pending' | 'Observed' | 'Failed' | 'OutcomeUnknown']
+>;
+
+// FfiConverter for enum RemoteWifiStatus
+const FfiConverterTypeRemoteWifiStatus = (() => {
+    type TypeName = RemoteWifiStatus;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            switch (c.readI32()) {
+                case 1: return new RemoteWifiStatus.Pending();
+                case 2: return new RemoteWifiStatus.Observed({transaction: FfiConverterTypeRemoteWifiTransaction.readFromCursor(c) });
+                case 3: return new RemoteWifiStatus.Failed({stage: FfiConverterTypeRemoteManagementFailureStage.readFromCursor(c), detail: FfiConverterString.readFromCursor(c) });
+                case 4: return new RemoteWifiStatus.OutcomeUnknown({reason: FfiConverterTypeRemoteControlAnnounceUnknownReason.readFromCursor(c) });
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            switch (value.tag) {
+                case RemoteWifiStatus_Tags.Pending: {
+                    c.writeI32(1);
+                    return;
+                }
+                case RemoteWifiStatus_Tags.Observed: {
+                    c.writeI32(2);
+                    const inner = value.inner;
+                    FfiConverterTypeRemoteWifiTransaction.writeIntoCursor(inner.transaction, c);
+                    return;
+                }
+                case RemoteWifiStatus_Tags.Failed: {
+                    c.writeI32(3);
+                    const inner = value.inner;
+                    FfiConverterTypeRemoteManagementFailureStage.writeIntoCursor(inner.stage, c);
+                    FfiConverterString.writeIntoCursor(inner.detail, c);
+                    return;
+                }
+                case RemoteWifiStatus_Tags.OutcomeUnknown: {
+                    c.writeI32(4);
+                    const inner = value.inner;
+                    FfiConverterTypeRemoteControlAnnounceUnknownReason.writeIntoCursor(inner.reason, c);
+                    return;
+                }
+                default:
+                    // Throwing from here means that RemoteWifiStatus_Tags hasn't matched an ordinal.
+                    throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        allocationSize(value: TypeName): number {
+            switch (value.tag) {
+                case RemoteWifiStatus_Tags.Pending: {
+                    return 4;
+                }
+                case RemoteWifiStatus_Tags.Observed: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterTypeRemoteWifiTransaction.allocationSize(inner.transaction);
+                    return size;
+                }
+                case RemoteWifiStatus_Tags.Failed: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterTypeRemoteManagementFailureStage.allocationSize(inner.stage);
+                    size += FfiConverterString.allocationSize(inner.detail);
+                    return size;
+                }
+                case RemoteWifiStatus_Tags.OutcomeUnknown: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterTypeRemoteControlAnnounceUnknownReason.allocationSize(inner.reason);
+                    return size;
+                }
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+    }
+    return new FFIConverter();
+})();
+
+export type RemoteWifiOperation = {
+    operationId: bigint,
+    generationId: bigint,
+    targetIdentityFingerprint: Uint8Array,
+    action: RemoteWifiAction,
+    /**
+     * Present after a successful Stage response, or for a revision-bound decision.
+     */
+    candidateRevision?: number | undefined,
+    status: RemoteWifiStatus
+}
+
+/**
+ * Generated factory for {@link RemoteWifiOperation} record objects.
+ */
+export const RemoteWifiOperation = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<RemoteWifiOperation, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<RemoteWifiOperation>,
+    });
+})();
+
+const FfiConverterTypeRemoteWifiOperation = (() => {
+    type TypeName = RemoteWifiOperation;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            return {
+                operationId: FfiConverterUInt64.readFromCursor(c),
+                generationId: FfiConverterUInt64.readFromCursor(c),
+                targetIdentityFingerprint: FfiConverterUint8Array.readFromCursor(c),
+                action: FfiConverterTypeRemoteWifiAction.readFromCursor(c),
+                candidateRevision: FfiConverterOptionalUInt32.readFromCursor(c),
+                status: FfiConverterTypeRemoteWifiStatus.readFromCursor(c)
+            };
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            FfiConverterUInt64.writeIntoCursor(value.operationId, c);
+            FfiConverterUInt64.writeIntoCursor(value.generationId, c);
+            FfiConverterUint8Array.writeIntoCursor(value.targetIdentityFingerprint, c);
+            FfiConverterTypeRemoteWifiAction.writeIntoCursor(value.action, c);
+            FfiConverterOptionalUInt32.writeIntoCursor(value.candidateRevision, c);
+            FfiConverterTypeRemoteWifiStatus.writeIntoCursor(value.status, c);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterUInt64.allocationSize(value.operationId) +
+             FfiConverterUInt64.allocationSize(value.generationId) +
+             FfiConverterUint8Array.allocationSize(value.targetIdentityFingerprint) +
+             FfiConverterTypeRemoteWifiAction.allocationSize(value.action) +
+             FfiConverterOptionalUInt32.allocationSize(value.candidateRevision) +
+             FfiConverterTypeRemoteWifiStatus.allocationSize(value.status);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type DevelopmentNodeSnapshot = {
     contractFingerprint: string,
     revision: bigint,
@@ -5560,6 +6315,7 @@ export type DevelopmentNodeSnapshot = {
     pairedTargets: Array<RemoteControlTargetSnapshot>,
     lastAnnouncement?: RemoteControlAnnounceOperation | undefined,
     lastRemoteChange?: RemoteChangeOperation | undefined,
+    lastRemoteWifi?: RemoteWifiOperation | undefined,
     activeOperation?: DevelopmentNodeOperation | undefined,
     failure?: DevelopmentNodeFailure | undefined
 }
@@ -5598,6 +6354,7 @@ const FfiConverterTypeDevelopmentNodeSnapshot = (() => {
                 pairedTargets: FfiConverterSequenceTypeRemoteControlTargetSnapshot.readFromCursor(c),
                 lastAnnouncement: FfiConverterOptionalTypeRemoteControlAnnounceOperation.readFromCursor(c),
                 lastRemoteChange: FfiConverterOptionalTypeRemoteChangeOperation.readFromCursor(c),
+                lastRemoteWifi: FfiConverterOptionalTypeRemoteWifiOperation.readFromCursor(c),
                 activeOperation: FfiConverterOptionalTypeDevelopmentNodeOperation.readFromCursor(c),
                 failure: FfiConverterOptionalTypeDevelopmentNodeFailure.readFromCursor(c)
             };
@@ -5616,6 +6373,7 @@ const FfiConverterTypeDevelopmentNodeSnapshot = (() => {
             FfiConverterSequenceTypeRemoteControlTargetSnapshot.writeIntoCursor(value.pairedTargets, c);
             FfiConverterOptionalTypeRemoteControlAnnounceOperation.writeIntoCursor(value.lastAnnouncement, c);
             FfiConverterOptionalTypeRemoteChangeOperation.writeIntoCursor(value.lastRemoteChange, c);
+            FfiConverterOptionalTypeRemoteWifiOperation.writeIntoCursor(value.lastRemoteWifi, c);
             FfiConverterOptionalTypeDevelopmentNodeOperation.writeIntoCursor(value.activeOperation, c);
             FfiConverterOptionalTypeDevelopmentNodeFailure.writeIntoCursor(value.failure, c);
         }
@@ -5633,6 +6391,7 @@ const FfiConverterTypeDevelopmentNodeSnapshot = (() => {
              FfiConverterSequenceTypeRemoteControlTargetSnapshot.allocationSize(value.pairedTargets) +
              FfiConverterOptionalTypeRemoteControlAnnounceOperation.allocationSize(value.lastAnnouncement) +
              FfiConverterOptionalTypeRemoteChangeOperation.allocationSize(value.lastRemoteChange) +
+             FfiConverterOptionalTypeRemoteWifiOperation.allocationSize(value.lastRemoteWifi) +
              FfiConverterOptionalTypeDevelopmentNodeOperation.allocationSize(value.activeOperation) +
              FfiConverterOptionalTypeDevelopmentNodeFailure.allocationSize(value.failure);
 
@@ -5680,6 +6439,81 @@ const FfiConverterTypeDevelopmentNodeStartInput = (() => {
     return new FFIConverter();
 })();
 
+export enum RemoteWifiDecision {
+    Keep,
+    Restore
+}
+
+const FfiConverterTypeRemoteWifiDecision = (() => {
+    type TypeName = RemoteWifiDecision;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            switch (c.readI32()) {
+                case 1: return RemoteWifiDecision.Keep;
+                case 2: return RemoteWifiDecision.Restore;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            switch (value) {
+                case RemoteWifiDecision.Keep: return c.writeI32(1);
+                case RemoteWifiDecision.Restore: return c.writeI32(2);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return 4;
+        }
+    }
+    return new FFIConverter();
+})();
+
+export type FinishRemoteWifiTrialInput = {
+    targetIdentityFingerprint: Uint8Array,
+    revision: number,
+    decision: RemoteWifiDecision
+}
+
+/**
+ * Generated factory for {@link FinishRemoteWifiTrialInput} record objects.
+ */
+export const FinishRemoteWifiTrialInput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<FinishRemoteWifiTrialInput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<FinishRemoteWifiTrialInput>,
+    });
+})();
+
+const FfiConverterTypeFinishRemoteWifiTrialInput = (() => {
+    type TypeName = FinishRemoteWifiTrialInput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            return {
+                targetIdentityFingerprint: FfiConverterUint8Array.readFromCursor(c),
+                revision: FfiConverterUInt32.readFromCursor(c),
+                decision: FfiConverterTypeRemoteWifiDecision.readFromCursor(c)
+            };
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            FfiConverterUint8Array.writeIntoCursor(value.targetIdentityFingerprint, c);
+            FfiConverterUInt32.writeIntoCursor(value.revision, c);
+            FfiConverterTypeRemoteWifiDecision.writeIntoCursor(value.decision, c);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterUint8Array.allocationSize(value.targetIdentityFingerprint) +
+             FfiConverterUInt32.allocationSize(value.revision) +
+             FfiConverterTypeRemoteWifiDecision.allocationSize(value.decision);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type InitiateRemoteControlPairingInput = {
     candidateId: string,
     invitationCode: string
@@ -5717,6 +6551,45 @@ const FfiConverterTypeInitiateRemoteControlPairingInput = (() => {
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.candidateId) +
              FfiConverterString.allocationSize(value.invitationCode);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type InspectRemoteWifiTrialInput = {
+    targetIdentityFingerprint: Uint8Array
+}
+
+/**
+ * Generated factory for {@link InspectRemoteWifiTrialInput} record objects.
+ */
+export const InspectRemoteWifiTrialInput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<InspectRemoteWifiTrialInput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<InspectRemoteWifiTrialInput>,
+    });
+})();
+
+const FfiConverterTypeInspectRemoteWifiTrialInput = (() => {
+    type TypeName = InspectRemoteWifiTrialInput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            return {
+                targetIdentityFingerprint: FfiConverterUint8Array.readFromCursor(c)
+            };
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            FfiConverterUint8Array.writeIntoCursor(value.targetIdentityFingerprint, c);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterUint8Array.allocationSize(value.targetIdentityFingerprint);
 
         }
     };
@@ -6494,7 +7367,8 @@ export enum RemoteNodeQuery_Tags {
     Overview = "Overview",
     Interfaces = "Interfaces",
     Interface = "Interface",
-    Peers = "Peers"
+    Peers = "Peers",
+    Controllers = "Controllers"
 }
 export const RemoteNodeQuery = (() => {
 
@@ -6615,6 +7489,37 @@ inner: {interfaceId: Uint8Array; after?: Uint8Array | undefined }): Peers_ {
 
     }
 
+    type Controllers__interface = {
+        tag: RemoteNodeQuery_Tags.Controllers;
+        inner:
+Readonly<{after?: Uint8Array | undefined}>
+    };
+    class Controllers_ extends UniffiEnum implements Controllers__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteNodeQuery";
+        readonly tag = RemoteNodeQuery_Tags.Controllers;
+        readonly inner:
+Readonly<{after?: Uint8Array | undefined}>;
+        constructor(
+inner: {after?: Uint8Array | undefined }) {
+            super("RemoteNodeQuery", "Controllers");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {after?: Uint8Array | undefined }): Controllers_ {
+            return new Controllers_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Controllers_ {
+            return obj.tag === RemoteNodeQuery_Tags.Controllers;
+        }
+
+    }
+
     function instanceOf(obj: any): obj is RemoteNodeQuery {
         return obj[uniffiTypeNameSymbol] === "RemoteNodeQuery";
     }
@@ -6624,12 +7529,13 @@ inner: {interfaceId: Uint8Array; after?: Uint8Array | undefined }): Peers_ {
   Overview: Overview_,
   Interfaces: Interfaces_,
   Interface: Interface_,
-  Peers: Peers_
+  Peers: Peers_,
+  Controllers: Controllers_
     });
 
 })();
 export type RemoteNodeQuery = InstanceType<
-    typeof RemoteNodeQuery['Overview' | 'Interfaces' | 'Interface' | 'Peers']
+    typeof RemoteNodeQuery['Overview' | 'Interfaces' | 'Interface' | 'Peers' | 'Controllers']
 >;
 
 // FfiConverter for enum RemoteNodeQuery
@@ -6642,6 +7548,7 @@ const FfiConverterTypeRemoteNodeQuery = (() => {
                 case 2: return new RemoteNodeQuery.Interfaces({after: FfiConverterOptionalBytes.readFromCursor(c) });
                 case 3: return new RemoteNodeQuery.Interface({interfaceId: FfiConverterUint8Array.readFromCursor(c) });
                 case 4: return new RemoteNodeQuery.Peers({interfaceId: FfiConverterUint8Array.readFromCursor(c), after: FfiConverterOptionalBytes.readFromCursor(c) });
+                case 5: return new RemoteNodeQuery.Controllers({after: FfiConverterOptionalBytes.readFromCursor(c) });
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -6667,6 +7574,12 @@ const FfiConverterTypeRemoteNodeQuery = (() => {
                     c.writeI32(4);
                     const inner = value.inner;
                     FfiConverterUint8Array.writeIntoCursor(inner.interfaceId, c);
+                    FfiConverterOptionalBytes.writeIntoCursor(inner.after, c);
+                    return;
+                }
+                case RemoteNodeQuery_Tags.Controllers: {
+                    c.writeI32(5);
+                    const inner = value.inner;
                     FfiConverterOptionalBytes.writeIntoCursor(inner.after, c);
                     return;
                 }
@@ -6696,6 +7609,12 @@ const FfiConverterTypeRemoteNodeQuery = (() => {
                     const inner = value.inner;
                     let size = 4;
                     size += FfiConverterUint8Array.allocationSize(inner.interfaceId);
+                    size += FfiConverterOptionalBytes.allocationSize(inner.after);
+                    return size;
+                }
+                case RemoteNodeQuery_Tags.Controllers: {
+                    const inner = value.inner;
+                    let size = 4;
                     size += FfiConverterOptionalBytes.allocationSize(inner.after);
                     return size;
                 }
@@ -6782,6 +7701,52 @@ const FfiConverterTypeRemoteControlPairingDecisionInput = (() => {
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.attemptId);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * The node reports identities only, not names, authority or individual permissions.
+ */
+export type RemoteControllerPage = {
+    identities: Array<Uint8Array>,
+    next?: Uint8Array | undefined
+}
+
+/**
+ * Generated factory for {@link RemoteControllerPage} record objects.
+ */
+export const RemoteControllerPage = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<RemoteControllerPage, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<RemoteControllerPage>,
+    });
+})();
+
+const FfiConverterTypeRemoteControllerPage = (() => {
+    type TypeName = RemoteControllerPage;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            return {
+                identities: FfiConverterSequenceBytes.readFromCursor(c),
+                next: FfiConverterOptionalBytes.readFromCursor(c)
+            };
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            FfiConverterSequenceBytes.writeIntoCursor(value.identities, c);
+            FfiConverterOptionalBytes.writeIntoCursor(value.next, c);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterSequenceBytes.allocationSize(value.identities) +
+             FfiConverterOptionalBytes.allocationSize(value.next);
 
         }
     };
@@ -8041,6 +9006,57 @@ const FfiConverterTypeSetContactPinnedInput = (() => {
         allocationSize(value: TypeName): number {
             return FfiConverterTypeBytes16.allocationSize(value.destination) +
              FfiConverterBool.allocationSize(value.pinned);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * Credentials cross the bridge once, then immediately enter zeroizing Rust storage.
+ * Deliberately neither Debug nor Clone: never retain this input in a snapshot.
+ */
+export type StartRemoteWifiTrialInput = {
+    targetIdentityFingerprint: Uint8Array,
+    ssid: string,
+    password: string
+}
+
+/**
+ * Generated factory for {@link StartRemoteWifiTrialInput} record objects.
+ */
+export const StartRemoteWifiTrialInput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<StartRemoteWifiTrialInput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<StartRemoteWifiTrialInput>,
+    });
+})();
+
+const FfiConverterTypeStartRemoteWifiTrialInput = (() => {
+    type TypeName = StartRemoteWifiTrialInput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            return {
+                targetIdentityFingerprint: FfiConverterUint8Array.readFromCursor(c),
+                ssid: FfiConverterString.readFromCursor(c),
+                password: FfiConverterString.readFromCursor(c)
+            };
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            FfiConverterUint8Array.writeIntoCursor(value.targetIdentityFingerprint, c);
+            FfiConverterString.writeIntoCursor(value.ssid, c);
+            FfiConverterString.writeIntoCursor(value.password, c);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterUint8Array.allocationSize(value.targetIdentityFingerprint) +
+             FfiConverterString.allocationSize(value.ssid) +
+             FfiConverterString.allocationSize(value.password);
 
         }
     };
@@ -11310,7 +12326,8 @@ export enum RemoteNodeData_Tags {
     Overview = "Overview",
     Interfaces = "Interfaces",
     Interface = "Interface",
-    Peers = "Peers"
+    Peers = "Peers",
+    Controllers = "Controllers"
 }
 export const RemoteNodeData = (() => {
 
@@ -11438,6 +12455,37 @@ inner: {page: RemotePeerPage }): Peers_ {
 
     }
 
+    type Controllers__interface = {
+        tag: RemoteNodeData_Tags.Controllers;
+        inner:
+Readonly<{page: RemoteControllerPage}>
+    };
+    class Controllers_ extends UniffiEnum implements Controllers__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteNodeData";
+        readonly tag = RemoteNodeData_Tags.Controllers;
+        readonly inner:
+Readonly<{page: RemoteControllerPage}>;
+        constructor(
+inner: {page: RemoteControllerPage }) {
+            super("RemoteNodeData", "Controllers");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {page: RemoteControllerPage }): Controllers_ {
+            return new Controllers_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Controllers_ {
+            return obj.tag === RemoteNodeData_Tags.Controllers;
+        }
+
+    }
+
     function instanceOf(obj: any): obj is RemoteNodeData {
         return obj[uniffiTypeNameSymbol] === "RemoteNodeData";
     }
@@ -11447,12 +12495,13 @@ inner: {page: RemotePeerPage }): Peers_ {
   Overview: Overview_,
   Interfaces: Interfaces_,
   Interface: Interface_,
-  Peers: Peers_
+  Peers: Peers_,
+  Controllers: Controllers_
     });
 
 })();
 export type RemoteNodeData = InstanceType<
-    typeof RemoteNodeData['Overview' | 'Interfaces' | 'Interface' | 'Peers']
+    typeof RemoteNodeData['Overview' | 'Interfaces' | 'Interface' | 'Peers' | 'Controllers']
 >;
 
 // FfiConverter for enum RemoteNodeData
@@ -11465,6 +12514,7 @@ const FfiConverterTypeRemoteNodeData = (() => {
                 case 2: return new RemoteNodeData.Interfaces({page: FfiConverterTypeRemoteInterfacePage.readFromCursor(c) });
                 case 3: return new RemoteNodeData.Interface({details: FfiConverterTypeRemoteInterfaceDetails.readFromCursor(c) });
                 case 4: return new RemoteNodeData.Peers({page: FfiConverterTypeRemotePeerPage.readFromCursor(c) });
+                case 5: return new RemoteNodeData.Controllers({page: FfiConverterTypeRemoteControllerPage.readFromCursor(c) });
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -11492,6 +12542,12 @@ const FfiConverterTypeRemoteNodeData = (() => {
                     c.writeI32(4);
                     const inner = value.inner;
                     FfiConverterTypeRemotePeerPage.writeIntoCursor(inner.page, c);
+                    return;
+                }
+                case RemoteNodeData_Tags.Controllers: {
+                    c.writeI32(5);
+                    const inner = value.inner;
+                    FfiConverterTypeRemoteControllerPage.writeIntoCursor(inner.page, c);
                     return;
                 }
                 default:
@@ -11523,6 +12579,12 @@ const FfiConverterTypeRemoteNodeData = (() => {
                     const inner = value.inner;
                     let size = 4;
                     size += FfiConverterTypeRemotePeerPage.allocationSize(inner.page);
+                    return size;
+                }
+                case RemoteNodeData_Tags.Controllers: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterTypeRemoteControllerPage.allocationSize(inner.page);
                     return size;
                 }
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
@@ -12288,6 +13350,178 @@ const FfiConverterTypeRemoteControlPairingCommandOutcome = (() => {
 })();
 
 
+// Enum: RemoteWifiCommandOutcome
+export enum RemoteWifiCommandOutcome_Tags {
+    Accepted = "Accepted",
+    Busy = "Busy",
+    Failed = "Failed"
+}
+export const RemoteWifiCommandOutcome = (() => {
+
+    type Accepted__interface = {
+        tag: RemoteWifiCommandOutcome_Tags.Accepted;
+        inner:
+Readonly<{operation: RemoteWifiOperation}>
+    };
+    class Accepted_ extends UniffiEnum implements Accepted__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteWifiCommandOutcome";
+        readonly tag = RemoteWifiCommandOutcome_Tags.Accepted;
+        readonly inner:
+Readonly<{operation: RemoteWifiOperation}>;
+        constructor(
+inner: {operation: RemoteWifiOperation }) {
+            super("RemoteWifiCommandOutcome", "Accepted");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {operation: RemoteWifiOperation }): Accepted_ {
+            return new Accepted_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Accepted_ {
+            return obj.tag === RemoteWifiCommandOutcome_Tags.Accepted;
+        }
+
+    }
+
+    type Busy__interface = {
+        tag: RemoteWifiCommandOutcome_Tags.Busy
+    };
+    class Busy_ extends UniffiEnum implements Busy__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteWifiCommandOutcome";
+        readonly tag = RemoteWifiCommandOutcome_Tags.Busy;
+        constructor() {
+            super("RemoteWifiCommandOutcome", "Busy");
+        }
+
+        static new(): Busy_ {
+            return new Busy_();
+        }
+
+        static instanceOf(obj: any): obj is Busy_ {
+            return obj.tag === RemoteWifiCommandOutcome_Tags.Busy;
+        }
+
+    }
+
+    type Failed__interface = {
+        tag: RemoteWifiCommandOutcome_Tags.Failed;
+        inner:
+Readonly<{stage: RemoteManagementFailureStage; detail: string}>
+    };
+    class Failed_ extends UniffiEnum implements Failed__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "RemoteWifiCommandOutcome";
+        readonly tag = RemoteWifiCommandOutcome_Tags.Failed;
+        readonly inner:
+Readonly<{stage: RemoteManagementFailureStage; detail: string}>;
+        constructor(
+inner: {stage: RemoteManagementFailureStage; detail: string }) {
+            super("RemoteWifiCommandOutcome", "Failed");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {stage: RemoteManagementFailureStage; detail: string }): Failed_ {
+            return new Failed_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Failed_ {
+            return obj.tag === RemoteWifiCommandOutcome_Tags.Failed;
+        }
+
+    }
+
+    function instanceOf(obj: any): obj is RemoteWifiCommandOutcome {
+        return obj[uniffiTypeNameSymbol] === "RemoteWifiCommandOutcome";
+    }
+
+    return Object.freeze({
+        instanceOf,
+  Accepted: Accepted_,
+  Busy: Busy_,
+  Failed: Failed_
+    });
+
+})();
+export type RemoteWifiCommandOutcome = InstanceType<
+    typeof RemoteWifiCommandOutcome['Accepted' | 'Busy' | 'Failed']
+>;
+
+// FfiConverter for enum RemoteWifiCommandOutcome
+const FfiConverterTypeRemoteWifiCommandOutcome = (() => {
+    type TypeName = RemoteWifiCommandOutcome;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            switch (c.readI32()) {
+                case 1: return new RemoteWifiCommandOutcome.Accepted({operation: FfiConverterTypeRemoteWifiOperation.readFromCursor(c) });
+                case 2: return new RemoteWifiCommandOutcome.Busy();
+                case 3: return new RemoteWifiCommandOutcome.Failed({stage: FfiConverterTypeRemoteManagementFailureStage.readFromCursor(c), detail: FfiConverterString.readFromCursor(c) });
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            switch (value.tag) {
+                case RemoteWifiCommandOutcome_Tags.Accepted: {
+                    c.writeI32(1);
+                    const inner = value.inner;
+                    FfiConverterTypeRemoteWifiOperation.writeIntoCursor(inner.operation, c);
+                    return;
+                }
+                case RemoteWifiCommandOutcome_Tags.Busy: {
+                    c.writeI32(2);
+                    return;
+                }
+                case RemoteWifiCommandOutcome_Tags.Failed: {
+                    c.writeI32(3);
+                    const inner = value.inner;
+                    FfiConverterTypeRemoteManagementFailureStage.writeIntoCursor(inner.stage, c);
+                    FfiConverterString.writeIntoCursor(inner.detail, c);
+                    return;
+                }
+                default:
+                    // Throwing from here means that RemoteWifiCommandOutcome_Tags hasn't matched an ordinal.
+                    throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        allocationSize(value: TypeName): number {
+            switch (value.tag) {
+                case RemoteWifiCommandOutcome_Tags.Accepted: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterTypeRemoteWifiOperation.allocationSize(inner.operation);
+                    return size;
+                }
+                case RemoteWifiCommandOutcome_Tags.Busy: {
+                    return 4;
+                }
+                case RemoteWifiCommandOutcome_Tags.Failed: {
+                    const inner = value.inner;
+                    let size = 4;
+                    size += FfiConverterTypeRemoteManagementFailureStage.allocationSize(inner.stage);
+                    size += FfiConverterString.allocationSize(inner.detail);
+                    return size;
+                }
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+    }
+    return new FFIConverter();
+})();
+
+
 // Enum: RetryLxmfMessageOutcome
 export enum RetryLxmfMessageOutcome_Tags {
     Accepted = "Accepted",
@@ -12911,6 +14145,12 @@ const FfiConverterOptionalTypeRemoteControlAnnounceOperation = new FfiConverterO
 // FfiConverter for RemoteChangeOperation | undefined
 const FfiConverterOptionalTypeRemoteChangeOperation = new FfiConverterOptional(FfiConverterTypeRemoteChangeOperation);
 
+// FfiConverter for number | undefined
+const FfiConverterOptionalUInt32 = new FfiConverterOptional(FfiConverterUInt32);
+
+// FfiConverter for RemoteWifiOperation | undefined
+const FfiConverterOptionalTypeRemoteWifiOperation = new FfiConverterOptional(FfiConverterTypeRemoteWifiOperation);
+
 // FfiConverter for DevelopmentNodeOperation | undefined
 const FfiConverterOptionalTypeDevelopmentNodeOperation = new FfiConverterOptional(FfiConverterTypeDevelopmentNodeOperation);
 
@@ -12919,6 +14159,9 @@ const FfiConverterOptionalTypeDevelopmentNodeFailure = new FfiConverterOptional(
 
 // FfiConverter for bigint | undefined
 const FfiConverterOptionalUInt64 = new FfiConverterOptional(FfiConverterUInt64);
+
+// FfiConverter for Array<Uint8Array>
+const FfiConverterSequenceBytes = new FfiConverterArray(FfiConverterUint8Array);
 
 // FfiConverter for RemoteLoRaProfile | undefined
 const FfiConverterOptionalTypeRemoteLoRaProfile = new FfiConverterOptional(FfiConverterTypeRemoteLoRaProfile);
@@ -12999,11 +14242,17 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_prns_app_checksum_func_describe_target() !== 49809) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_describe_target");
     }
+    if (nativeModule().uniffi_prns_app_checksum_func_finish_remote_wifi_trial() !== 11313) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_finish_remote_wifi_trial");
+    }
     if (nativeModule().uniffi_prns_app_checksum_func_get_contact() !== 18891) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_get_contact");
     }
     if (nativeModule().uniffi_prns_app_checksum_func_initiate_pairing() !== 58991) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_initiate_pairing");
+    }
+    if (nativeModule().uniffi_prns_app_checksum_func_inspect_remote_wifi_trial() !== 22782) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_inspect_remote_wifi_trial");
     }
     if (nativeModule().uniffi_prns_app_checksum_func_list_contacts() !== 57283) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_list_contacts");
@@ -13071,6 +14320,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_prns_app_checksum_func_set_contact_pinned() !== 4387) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_set_contact_pinned");
     }
+    if (nativeModule().uniffi_prns_app_checksum_func_start_remote_wifi_trial() !== 55182) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_start_remote_wifi_trial");
+    }
 
     }
 
@@ -13111,11 +14363,13 @@ export default Object.freeze({
     FfiConverterTypeDevelopmentNodeStartOutcome,
     FfiConverterTypeDevelopmentNodeStopOutcome,
     FfiConverterTypeDevelopmentNodeStopStage,
+    FfiConverterTypeFinishRemoteWifiTrialInput,
     FfiConverterTypeHostSnapshotTransport,
     FfiConverterTypeIdentityCreationOutcome,
     FfiConverterTypeIdentityHash,
     FfiConverterTypeIdentityImportPreviewOutcome,
     FfiConverterTypeInitiateRemoteControlPairingInput,
+    FfiConverterTypeInspectRemoteWifiTrialInput,
     FfiConverterTypeInterfaceHealth,
     FfiConverterTypeInterfaceId,
     FfiConverterTypeInterfaceKind,
@@ -13159,6 +14413,7 @@ export default Object.freeze({
     FfiConverterTypeRemoteControlPairingState,
     FfiConverterTypeRemoteControlRequestKind,
     FfiConverterTypeRemoteControlTargetSnapshot,
+    FfiConverterTypeRemoteControllerPage,
     FfiConverterTypeRemoteDiscoveryGroups,
     FfiConverterTypeRemoteExternalPower,
     FfiConverterTypeRemoteInterfaceCard,
@@ -13180,6 +14435,12 @@ export default Object.freeze({
     FfiConverterTypeRemotePeerRadio,
     FfiConverterTypeRemoteRadioFamily,
     FfiConverterTypeRemoteRadioMode,
+    FfiConverterTypeRemoteWifiAction,
+    FfiConverterTypeRemoteWifiCommandOutcome,
+    FfiConverterTypeRemoteWifiDecision,
+    FfiConverterTypeRemoteWifiOperation,
+    FfiConverterTypeRemoteWifiStatus,
+    FfiConverterTypeRemoteWifiTransaction,
     FfiConverterTypeRetryLxmfMessageInput,
     FfiConverterTypeRetryLxmfMessageOutcome,
     FfiConverterTypeRouteSnapshotTransport,
@@ -13190,5 +14451,6 @@ export default Object.freeze({
     FfiConverterTypeSetContactAliasInput,
     FfiConverterTypeSetContactPinnedInput,
     FfiConverterTypeSnapshotBox,
+    FfiConverterTypeStartRemoteWifiTrialInput,
   }
 });

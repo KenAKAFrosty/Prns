@@ -1,5 +1,6 @@
 use super::{invalid_response, unknown_interface, Failure};
 use crate::contract::*;
+use personal_rns::identity::IdentityHash;
 use personal_rns::interfaces::lora::{Modulation, RadioProfile};
 use personal_rns::interfaces::subghz::{RegulatoryRegion, SubGRegion};
 use personal_rns::interfaces::{
@@ -8,6 +9,34 @@ use personal_rns::interfaces::{
 };
 use personal_rns::remote_control as core;
 use prns_core::capabilities::power::{ChargingState, ExternalPowerState, PowerSnapshot};
+
+pub(super) fn project_controllers(
+    inventory: core::RemoteControlControllerInventory,
+    after: Option<IdentityHash>,
+) -> Result<RemoteControllerPage, Failure> {
+    if after.is_some_and(|after| {
+        inventory
+            .hashes()
+            .first()
+            .is_some_and(|first| first.as_bytes() <= after.as_bytes())
+    }) {
+        return Err(invalid_response());
+    }
+    let next = match inventory.continuation() {
+        core::RemoteControlControllerContinuation::Complete => None,
+        core::RemoteControlControllerContinuation::More(cursor) => {
+            Some(cursor.identity().as_bytes().to_vec())
+        }
+    };
+    Ok(RemoteControllerPage {
+        identities: inventory
+            .hashes()
+            .iter()
+            .map(|identity| identity.as_bytes().to_vec())
+            .collect(),
+        next,
+    })
+}
 
 pub(super) fn project_power(power: PowerSnapshot) -> RemoteNodePower {
     RemoteNodePower {

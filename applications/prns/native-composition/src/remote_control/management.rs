@@ -47,7 +47,7 @@ pub async fn read(
     }
 }
 
-async fn connect<'a>(
+pub(super) async fn connect<'a>(
     handle: &'a PrnsNodeHandle,
     target: &[u8],
     deadline: Instant,
@@ -211,6 +211,27 @@ async fn read_inner(
                 page: project_peers(peers, id, after)?,
             }
         }
+        PreparedQuery::Controllers(after) => {
+            require(
+                available,
+                core::RemoteControlRequestKind::InventoryControllers,
+            )?;
+            let page = after.map_or(core::RemoteControlControllerPage::First, |identity| {
+                core::RemoteControlControllerPage::After(
+                    core::RemoteControlControllerCursor::after(identity),
+                )
+            });
+            RemoteNodeData::Controllers {
+                page: project_controllers(
+                    connected
+                        .inventory_controllers_page(page)
+                        .await
+                        .map_err(read_failure)?
+                        .0,
+                    after,
+                )?,
+            }
+        }
     };
     Ok((crate::pairing::request_kinds(available), data, rtt.millis()))
 }
@@ -252,6 +273,26 @@ async fn change_inner(
         handle,
         id: connected.connection().link_id(),
     };
+    if let PreparedChange::RevokeController(controller) = &prepared {
+        let resolved = match handle
+            .resolve_remote_control_target(connected.connection().target())
+            .await
+        {
+            Ok(resolved) => resolved,
+            Err(_) => {
+                return failure_status((
+                    RemoteManagementFailureStage::Inventory,
+                    "This node is no longer paired.".to_owned(),
+                ));
+            }
+        };
+        if *controller == resolved.controller().identity_hash() {
+            return failure_status((
+                RemoteManagementFailureStage::Permission,
+                "This phone cannot remove its own access remotely.".to_owned(),
+            ));
+        }
+    }
     let description = match connected.describe().await {
         Ok((description, _)) => description,
         Err(error) => return failure_status(read_failure(error)),
@@ -330,7 +371,29 @@ async fn execute(
         PreparedChange::RadioMode(value) => apply_status(target.set_esp_radio_mode(value).await?.0),
         PreparedChange::SleepRadios => sleep_status(target.sleep_radios().await?.0),
         PreparedChange::WakeRadios => sleep_status(target.wake_radios().await?.0),
+        PreparedChange::RevokeController(controller) => {
+            revoke_status(target.revoke_controller(controller).await?.0)
+        }
     })
+}
+
+fn revoke_status(outcome: core::RemoteControlRevokeControllerOutcome) -> RemoteChangeStatus {
+    match outcome {
+        core::RemoteControlRevokeControllerOutcome::Applied => RemoteChangeStatus::Applied,
+        core::RemoteControlRevokeControllerOutcome::NotFound => RemoteChangeStatus::Unchanged,
+        core::RemoteControlRevokeControllerOutcome::Forbidden => failure_status((
+            RemoteManagementFailureStage::Permission,
+            "This device's access cannot be removed remotely.".to_owned(),
+        )),
+        core::RemoteControlRevokeControllerOutcome::Busy => failure_status((
+            RemoteManagementFailureStage::Busy,
+            "The node is busy. Try again shortly.".to_owned(),
+        )),
+        core::RemoteControlRevokeControllerOutcome::Failed => failure_status((
+            RemoteManagementFailureStage::Request,
+            "The node could not remove this device's access.".to_owned(),
+        )),
+    }
 }
 
 fn apply_status(outcome: core::RemoteControlApplyOutcome) -> RemoteChangeStatus {
@@ -380,7 +443,7 @@ fn invalid_response() -> Failure {
     )
 }
 
-fn require(
+pub(super) fn require(
     available: &core::RemoteControlRequestSet,
     kind: core::RemoteControlRequestKind,
 ) -> Result<(), Failure> {
@@ -413,23 +476,43 @@ fn announce_stage(stage: RemoteControlAnnounceFailureStage) -> RemoteManagementF
 fn protocol_failure(error: core::RemoteControlProtocolError) -> Failure {
     use core::RemoteControlProtocolError as Error;
     let (stage, detail) = match error {
-        Error::Busy { .. } => (RemoteManagementFailureStage::Busy, "The node is busy. Try again shortly."),
-        Error::UnsupportedRequest { .. } | Error::UnknownRequestKind { .. } | Error::UnsupportedVersion { .. } => (RemoteManagementFailureStage::Unsupported, "This control is not supported by the node."),
-        Error::PersistenceFailed { .. } => (RemoteManagementFailureStage::Persistence, "The node could not save the change."),
-        Error::RollbackFailed { .. } => (RemoteManagementFailureStage::Rollback, "The node could not restore its previous settings. Check the node before making another change."),
-        Error::ApplyFailed { .. } => (RemoteManagementFailureStage::Request, "The node could not apply the change."),
-        Error::MalformedRequest | Error::InternalFailure { .. } => (RemoteManagementFailureStage::Request, "The node could not complete the request."),
+        Error::Busy { .. } => (
+            RemoteManagementFailureStage::Busy,
+            "The node is busy. Try again shortly.",
+        ),
+        Error::UnsupportedRequest { .. }
+        | Error::UnknownRequestKind { .. }
+        | Error::UnsupportedVersion { .. } => (
+            RemoteManagementFailureStage::Unsupported,
+            "This control is not supported by the node.",
+        ),
+        Error::PersistenceFailed { .. } => (
+            RemoteManagementFailureStage::Persistence,
+            "The node could not save the change.",
+        ),
+        Error::RollbackFailed { .. } => (
+            RemoteManagementFailureStage::Rollback,
+            "The node could not restore its previous settings. Check the node before making another change.",
+        ),
+        Error::ApplyFailed { .. } => (
+            RemoteManagementFailureStage::Request,
+            "The node could not apply the change.",
+        ),
+        Error::MalformedRequest | Error::InternalFailure { .. } => (
+            RemoteManagementFailureStage::Request,
+            "The node could not complete the request.",
+        ),
     };
     (stage, detail.to_owned())
 }
 
-fn read_failure(error: RemoteControlTargetOperationError) -> Failure {
+pub(super) fn read_failure(error: RemoteControlTargetOperationError) -> Failure {
     let stage = match error {
         RemoteControlTargetOperationError::NotPermitted(_) => {
             RemoteManagementFailureStage::Permission
         }
         RemoteControlTargetOperationError::Exchange(RemoteControlError::Remote(error)) => {
-            return protocol_failure(error)
+            return protocol_failure(error);
         }
         RemoteControlTargetOperationError::Exchange(RemoteControlError::Request(
             SendError::Failed(failure),
@@ -455,7 +538,7 @@ fn read_failure(error: RemoteControlTargetOperationError) -> Failure {
     )
 }
 
-fn mutation_failure(error: RemoteControlTargetOperationError) -> RemoteChangeStatus {
+pub(super) fn mutation_failure(error: RemoteControlTargetOperationError) -> RemoteChangeStatus {
     if let RemoteControlTargetOperationError::Exchange(RemoteControlError::Remote(error)) = error {
         return failure_status(protocol_failure(error));
     }

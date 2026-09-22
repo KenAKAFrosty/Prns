@@ -227,6 +227,22 @@ pub async fn change_remote_node(input: ChangeRemoteNodeInput) -> ChangeRemoteNod
     super::management::admit_change(supervisor(), input)
 }
 
+pub async fn start_remote_wifi_trial(input: StartRemoteWifiTrialInput) -> RemoteWifiCommandOutcome {
+    super::wifi::start(supervisor(), input)
+}
+
+pub async fn inspect_remote_wifi_trial(
+    input: InspectRemoteWifiTrialInput,
+) -> RemoteWifiCommandOutcome {
+    super::wifi::inspect(supervisor(), input)
+}
+
+pub async fn finish_remote_wifi_trial(
+    input: FinishRemoteWifiTrialInput,
+) -> RemoteWifiCommandOutcome {
+    super::wifi::finish(supervisor(), input)
+}
+
 pub(super) async fn announce_target_with_supervisor(
     supervisor: &Supervisor,
     input: AnnounceRemoteControlTargetInput,
@@ -290,7 +306,7 @@ pub(super) async fn send_direct_text_with_supervisor(
                     }
                 }
                 .to_owned(),
-            }
+            };
         }
     };
     // No synthetic timeout after durable insertion admission. Dropping this
@@ -461,7 +477,7 @@ pub(super) async fn save_observed_destination_with_supervisor(
             Err(detail) => {
                 return ContactMutationOutcome::DevelopmentUnavailable {
                     detail: detail.to_owned(),
-                }
+                };
             }
         };
     let admitted = (|| {

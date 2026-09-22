@@ -1266,12 +1266,13 @@ public struct DevelopmentNodeSnapshot: Equatable, Hashable {
     public var pairedTargets: [RemoteControlTargetSnapshot]
     public var lastAnnouncement: RemoteControlAnnounceOperation?
     public var lastRemoteChange: RemoteChangeOperation?
+    public var lastRemoteWifi: RemoteWifiOperation?
     public var activeOperation: DevelopmentNodeOperation?
     public var failure: DevelopmentNodeFailure?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(contractFingerprint: String, revision: UInt64, generationId: UInt64, runtime: DevelopmentNodeRuntime, primaryIdentity: PrimaryIdentityState, localHost: LocalHostState, lxmf: LxmfHealth, controllerIdentityFingerprint: Data?, pairing: RemoteControlPairingState, pairingCandidates: [RemoteControlPairingCandidate], pairedTargets: [RemoteControlTargetSnapshot], lastAnnouncement: RemoteControlAnnounceOperation?, lastRemoteChange: RemoteChangeOperation?, activeOperation: DevelopmentNodeOperation?, failure: DevelopmentNodeFailure?) {
+    public init(contractFingerprint: String, revision: UInt64, generationId: UInt64, runtime: DevelopmentNodeRuntime, primaryIdentity: PrimaryIdentityState, localHost: LocalHostState, lxmf: LxmfHealth, controllerIdentityFingerprint: Data?, pairing: RemoteControlPairingState, pairingCandidates: [RemoteControlPairingCandidate], pairedTargets: [RemoteControlTargetSnapshot], lastAnnouncement: RemoteControlAnnounceOperation?, lastRemoteChange: RemoteChangeOperation?, lastRemoteWifi: RemoteWifiOperation?, activeOperation: DevelopmentNodeOperation?, failure: DevelopmentNodeFailure?) {
         self.contractFingerprint = contractFingerprint
         self.revision = revision
         self.generationId = generationId
@@ -1285,6 +1286,7 @@ public struct DevelopmentNodeSnapshot: Equatable, Hashable {
         self.pairedTargets = pairedTargets
         self.lastAnnouncement = lastAnnouncement
         self.lastRemoteChange = lastRemoteChange
+        self.lastRemoteWifi = lastRemoteWifi
         self.activeOperation = activeOperation
         self.failure = failure
     }
@@ -1318,6 +1320,7 @@ public struct FfiConverterTypeDevelopmentNodeSnapshot: FfiConverterRustBuffer {
                 pairedTargets: FfiConverterSequenceTypeRemoteControlTargetSnapshot.read(from: &buf),
                 lastAnnouncement: FfiConverterOptionTypeRemoteControlAnnounceOperation.read(from: &buf),
                 lastRemoteChange: FfiConverterOptionTypeRemoteChangeOperation.read(from: &buf),
+                lastRemoteWifi: FfiConverterOptionTypeRemoteWifiOperation.read(from: &buf),
                 activeOperation: FfiConverterOptionTypeDevelopmentNodeOperation.read(from: &buf),
                 failure: FfiConverterOptionTypeDevelopmentNodeFailure.read(from: &buf)
         )
@@ -1337,6 +1340,7 @@ public struct FfiConverterTypeDevelopmentNodeSnapshot: FfiConverterRustBuffer {
         FfiConverterSequenceTypeRemoteControlTargetSnapshot.write(value.pairedTargets, into: &buf)
         FfiConverterOptionTypeRemoteControlAnnounceOperation.write(value.lastAnnouncement, into: &buf)
         FfiConverterOptionTypeRemoteChangeOperation.write(value.lastRemoteChange, into: &buf)
+        FfiConverterOptionTypeRemoteWifiOperation.write(value.lastRemoteWifi, into: &buf)
         FfiConverterOptionTypeDevelopmentNodeOperation.write(value.activeOperation, into: &buf)
         FfiConverterOptionTypeDevelopmentNodeFailure.write(value.failure, into: &buf)
     }
@@ -1405,6 +1409,64 @@ public func FfiConverterTypeDevelopmentNodeStartInput_lift(_ buf: RustBuffer) th
 #endif
 public func FfiConverterTypeDevelopmentNodeStartInput_lower(_ value: DevelopmentNodeStartInput) -> RustBuffer {
     return FfiConverterTypeDevelopmentNodeStartInput.lower(value)
+}
+
+
+public struct FinishRemoteWifiTrialInput: Equatable, Hashable {
+    public var targetIdentityFingerprint: Data
+    public var revision: UInt32
+    public var decision: RemoteWifiDecision
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(targetIdentityFingerprint: Data, revision: UInt32, decision: RemoteWifiDecision) {
+        self.targetIdentityFingerprint = targetIdentityFingerprint
+        self.revision = revision
+        self.decision = decision
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FinishRemoteWifiTrialInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFinishRemoteWifiTrialInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FinishRemoteWifiTrialInput {
+        return
+            try FinishRemoteWifiTrialInput(
+                targetIdentityFingerprint: FfiConverterData.read(from: &buf),
+                revision: FfiConverterUInt32.read(from: &buf),
+                decision: FfiConverterTypeRemoteWifiDecision.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FinishRemoteWifiTrialInput, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.targetIdentityFingerprint, into: &buf)
+        FfiConverterUInt32.write(value.revision, into: &buf)
+        FfiConverterTypeRemoteWifiDecision.write(value.decision, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFinishRemoteWifiTrialInput_lift(_ buf: RustBuffer) throws -> FinishRemoteWifiTrialInput {
+    return try FfiConverterTypeFinishRemoteWifiTrialInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFinishRemoteWifiTrialInput_lower(_ value: FinishRemoteWifiTrialInput) -> RustBuffer {
+    return FfiConverterTypeFinishRemoteWifiTrialInput.lower(value)
 }
 
 
@@ -1537,6 +1599,56 @@ public func FfiConverterTypeInitiateRemoteControlPairingInput_lift(_ buf: RustBu
 #endif
 public func FfiConverterTypeInitiateRemoteControlPairingInput_lower(_ value: InitiateRemoteControlPairingInput) -> RustBuffer {
     return FfiConverterTypeInitiateRemoteControlPairingInput.lower(value)
+}
+
+
+public struct InspectRemoteWifiTrialInput: Equatable, Hashable {
+    public var targetIdentityFingerprint: Data
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(targetIdentityFingerprint: Data) {
+        self.targetIdentityFingerprint = targetIdentityFingerprint
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension InspectRemoteWifiTrialInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeInspectRemoteWifiTrialInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> InspectRemoteWifiTrialInput {
+        return
+            try InspectRemoteWifiTrialInput(
+                targetIdentityFingerprint: FfiConverterData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: InspectRemoteWifiTrialInput, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.targetIdentityFingerprint, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeInspectRemoteWifiTrialInput_lift(_ buf: RustBuffer) throws -> InspectRemoteWifiTrialInput {
+    return try FfiConverterTypeInspectRemoteWifiTrialInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeInspectRemoteWifiTrialInput_lower(_ value: InspectRemoteWifiTrialInput) -> RustBuffer {
+    return FfiConverterTypeInspectRemoteWifiTrialInput.lower(value)
 }
 
 
@@ -2369,6 +2481,63 @@ public func FfiConverterTypeRemoteControlTargetSnapshot_lower(_ value: RemoteCon
 }
 
 
+/**
+ * The node reports identities only, not names, authority or individual permissions.
+ */
+public struct RemoteControllerPage: Equatable, Hashable {
+    public var identities: [Data]
+    public var next: Data?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(identities: [Data], next: Data?) {
+        self.identities = identities
+        self.next = next
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteControllerPage: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteControllerPage: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteControllerPage {
+        return
+            try RemoteControllerPage(
+                identities: FfiConverterSequenceData.read(from: &buf),
+                next: FfiConverterOptionData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RemoteControllerPage, into buf: inout [UInt8]) {
+        FfiConverterSequenceData.write(value.identities, into: &buf)
+        FfiConverterOptionData.write(value.next, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteControllerPage_lift(_ buf: RustBuffer) throws -> RemoteControllerPage {
+    return try FfiConverterTypeRemoteControllerPage.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteControllerPage_lower(_ value: RemoteControllerPage) -> RustBuffer {
+    return FfiConverterTypeRemoteControllerPage.lower(value)
+}
+
+
 public struct RemoteInterfaceCard: Equatable, Hashable {
     public var name: String
     public var group: String
@@ -2975,6 +3144,82 @@ public func FfiConverterTypeRemotePeerPage_lower(_ value: RemotePeerPage) -> Rus
 }
 
 
+public struct RemoteWifiOperation: Equatable, Hashable {
+    public var operationId: UInt64
+    public var generationId: UInt64
+    public var targetIdentityFingerprint: Data
+    public var action: RemoteWifiAction
+    /**
+     * Present after a successful Stage response, or for a revision-bound decision.
+     */
+    public var candidateRevision: UInt32?
+    public var status: RemoteWifiStatus
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(operationId: UInt64, generationId: UInt64, targetIdentityFingerprint: Data, action: RemoteWifiAction,
+        /**
+         * Present after a successful Stage response, or for a revision-bound decision.
+         */candidateRevision: UInt32?, status: RemoteWifiStatus) {
+        self.operationId = operationId
+        self.generationId = generationId
+        self.targetIdentityFingerprint = targetIdentityFingerprint
+        self.action = action
+        self.candidateRevision = candidateRevision
+        self.status = status
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteWifiOperation: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteWifiOperation: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteWifiOperation {
+        return
+            try RemoteWifiOperation(
+                operationId: FfiConverterUInt64.read(from: &buf),
+                generationId: FfiConverterUInt64.read(from: &buf),
+                targetIdentityFingerprint: FfiConverterData.read(from: &buf),
+                action: FfiConverterTypeRemoteWifiAction.read(from: &buf),
+                candidateRevision: FfiConverterOptionUInt32.read(from: &buf),
+                status: FfiConverterTypeRemoteWifiStatus.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RemoteWifiOperation, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.operationId, into: &buf)
+        FfiConverterUInt64.write(value.generationId, into: &buf)
+        FfiConverterData.write(value.targetIdentityFingerprint, into: &buf)
+        FfiConverterTypeRemoteWifiAction.write(value.action, into: &buf)
+        FfiConverterOptionUInt32.write(value.candidateRevision, into: &buf)
+        FfiConverterTypeRemoteWifiStatus.write(value.status, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteWifiOperation_lift(_ buf: RustBuffer) throws -> RemoteWifiOperation {
+    return try FfiConverterTypeRemoteWifiOperation.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteWifiOperation_lower(_ value: RemoteWifiOperation) -> RustBuffer {
+    return FfiConverterTypeRemoteWifiOperation.lower(value)
+}
+
+
 public struct RetryLxmfMessageInput: Equatable, Hashable {
     public var localRecordId: UInt64
 
@@ -3352,6 +3597,68 @@ public func FfiConverterTypeSetContactPinnedInput_lift(_ buf: RustBuffer) throws
 #endif
 public func FfiConverterTypeSetContactPinnedInput_lower(_ value: SetContactPinnedInput) -> RustBuffer {
     return FfiConverterTypeSetContactPinnedInput.lower(value)
+}
+
+
+/**
+ * Credentials cross the bridge once, then immediately enter zeroizing Rust storage.
+ * Deliberately neither Debug nor Clone: never retain this input in a snapshot.
+ */
+public struct StartRemoteWifiTrialInput: Equatable, Hashable {
+    public var targetIdentityFingerprint: Data
+    public var ssid: String
+    public var password: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(targetIdentityFingerprint: Data, ssid: String, password: String) {
+        self.targetIdentityFingerprint = targetIdentityFingerprint
+        self.ssid = ssid
+        self.password = password
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension StartRemoteWifiTrialInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeStartRemoteWifiTrialInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> StartRemoteWifiTrialInput {
+        return
+            try StartRemoteWifiTrialInput(
+                targetIdentityFingerprint: FfiConverterData.read(from: &buf),
+                ssid: FfiConverterString.read(from: &buf),
+                password: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: StartRemoteWifiTrialInput, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.targetIdentityFingerprint, into: &buf)
+        FfiConverterString.write(value.ssid, into: &buf)
+        FfiConverterString.write(value.password, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeStartRemoteWifiTrialInput_lift(_ buf: RustBuffer) throws -> StartRemoteWifiTrialInput {
+    return try FfiConverterTypeStartRemoteWifiTrialInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeStartRemoteWifiTrialInput_lower(_ value: StartRemoteWifiTrialInput) -> RustBuffer {
+    return FfiConverterTypeStartRemoteWifiTrialInput.lower(value)
 }
 
 // Note that we don't yet support `indirect` for enums.
@@ -4237,6 +4544,7 @@ public enum DevelopmentNodeOperationKind: Equatable, Hashable {
 
     case remoteRead
     case remoteChange
+    case remoteWifi
     case pairing
     case describe
     case announceSelf
@@ -4266,13 +4574,15 @@ public struct FfiConverterTypeDevelopmentNodeOperationKind: FfiConverterRustBuff
 
         case 2: return .remoteChange
 
-        case 3: return .pairing
+        case 3: return .remoteWifi
 
-        case 4: return .describe
+        case 4: return .pairing
 
-        case 5: return .announceSelf
+        case 5: return .describe
 
-        case 6: return .shutdown
+        case 6: return .announceSelf
+
+        case 7: return .shutdown
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -4290,20 +4600,24 @@ public struct FfiConverterTypeDevelopmentNodeOperationKind: FfiConverterRustBuff
             writeInt(&buf, Int32(2))
 
 
-        case .pairing:
+        case .remoteWifi:
             writeInt(&buf, Int32(3))
 
 
-        case .describe:
+        case .pairing:
             writeInt(&buf, Int32(4))
 
 
-        case .announceSelf:
+        case .describe:
             writeInt(&buf, Int32(5))
 
 
-        case .shutdown:
+        case .announceSelf:
             writeInt(&buf, Int32(6))
+
+
+        case .shutdown:
+            writeInt(&buf, Int32(7))
 
         }
     }
@@ -8100,6 +8414,8 @@ public enum RemoteNodeChange: Equatable, Hashable {
     )
     case sleepRadios
     case wakeRadios
+    case revokeController(controllerIdentityFingerprint: Data
+    )
 
 
 
@@ -8157,6 +8473,9 @@ public struct FfiConverterTypeRemoteNodeChange: FfiConverterRustBuffer {
         case 12: return .sleepRadios
 
         case 13: return .wakeRadios
+
+        case 14: return .revokeController(controllerIdentityFingerprint: try FfiConverterData.read(from: &buf)
+        )
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -8234,6 +8553,11 @@ public struct FfiConverterTypeRemoteNodeChange: FfiConverterRustBuffer {
         case .wakeRadios:
             writeInt(&buf, Int32(13))
 
+
+        case let .revokeController(controllerIdentityFingerprint):
+            writeInt(&buf, Int32(14))
+            FfiConverterData.write(controllerIdentityFingerprint, into: &buf)
+
         }
     }
 }
@@ -8266,6 +8590,8 @@ public enum RemoteNodeData: Equatable, Hashable {
     case interface(details: RemoteInterfaceDetails
     )
     case peers(page: RemotePeerPage
+    )
+    case controllers(page: RemoteControllerPage
     )
 
 
@@ -8300,6 +8626,9 @@ public struct FfiConverterTypeRemoteNodeData: FfiConverterRustBuffer {
         case 4: return .peers(page: try FfiConverterTypeRemotePeerPage.read(from: &buf)
         )
 
+        case 5: return .controllers(page: try FfiConverterTypeRemoteControllerPage.read(from: &buf)
+        )
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -8326,6 +8655,11 @@ public struct FfiConverterTypeRemoteNodeData: FfiConverterRustBuffer {
         case let .peers(page):
             writeInt(&buf, Int32(4))
             FfiConverterTypeRemotePeerPage.write(page, into: &buf)
+
+
+        case let .controllers(page):
+            writeInt(&buf, Int32(5))
+            FfiConverterTypeRemoteControllerPage.write(page, into: &buf)
 
         }
     }
@@ -8359,6 +8693,8 @@ public enum RemoteNodeQuery: Equatable, Hashable {
     )
     case peers(interfaceId: Data, after: Data?
     )
+    case controllers(after: Data?
+    )
 
 
 
@@ -8391,6 +8727,9 @@ public struct FfiConverterTypeRemoteNodeQuery: FfiConverterRustBuffer {
         case 4: return .peers(interfaceId: try FfiConverterData.read(from: &buf), after: try FfiConverterOptionData.read(from: &buf)
         )
 
+        case 5: return .controllers(after: try FfiConverterOptionData.read(from: &buf)
+        )
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -8416,6 +8755,11 @@ public struct FfiConverterTypeRemoteNodeQuery: FfiConverterRustBuffer {
         case let .peers(interfaceId,after):
             writeInt(&buf, Int32(4))
             FfiConverterData.write(interfaceId, into: &buf)
+            FfiConverterOptionData.write(after, into: &buf)
+
+
+        case let .controllers(after):
+            writeInt(&buf, Int32(5))
             FfiConverterOptionData.write(after, into: &buf)
 
         }
@@ -8669,6 +9013,431 @@ public func FfiConverterTypeRemoteRadioMode_lift(_ buf: RustBuffer) throws -> Re
 #endif
 public func FfiConverterTypeRemoteRadioMode_lower(_ value: RemoteRadioMode) -> RustBuffer {
     return FfiConverterTypeRemoteRadioMode.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum RemoteWifiAction: Equatable, Hashable {
+
+    case start
+    case inspect
+    case keep
+    case restore
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteWifiAction: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteWifiAction: FfiConverterRustBuffer {
+    typealias SwiftType = RemoteWifiAction
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteWifiAction {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .start
+
+        case 2: return .inspect
+
+        case 3: return .keep
+
+        case 4: return .restore
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RemoteWifiAction, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .start:
+            writeInt(&buf, Int32(1))
+
+
+        case .inspect:
+            writeInt(&buf, Int32(2))
+
+
+        case .keep:
+            writeInt(&buf, Int32(3))
+
+
+        case .restore:
+            writeInt(&buf, Int32(4))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteWifiAction_lift(_ buf: RustBuffer) throws -> RemoteWifiAction {
+    return try FfiConverterTypeRemoteWifiAction.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteWifiAction_lower(_ value: RemoteWifiAction) -> RustBuffer {
+    return FfiConverterTypeRemoteWifiAction.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum RemoteWifiCommandOutcome: Equatable, Hashable {
+
+    case accepted(operation: RemoteWifiOperation
+    )
+    case busy
+    case failed(stage: RemoteManagementFailureStage, detail: String
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteWifiCommandOutcome: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteWifiCommandOutcome: FfiConverterRustBuffer {
+    typealias SwiftType = RemoteWifiCommandOutcome
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteWifiCommandOutcome {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .accepted(operation: try FfiConverterTypeRemoteWifiOperation.read(from: &buf)
+        )
+
+        case 2: return .busy
+
+        case 3: return .failed(stage: try FfiConverterTypeRemoteManagementFailureStage.read(from: &buf), detail: try FfiConverterString.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RemoteWifiCommandOutcome, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .accepted(operation):
+            writeInt(&buf, Int32(1))
+            FfiConverterTypeRemoteWifiOperation.write(operation, into: &buf)
+
+
+        case .busy:
+            writeInt(&buf, Int32(2))
+
+
+        case let .failed(stage,detail):
+            writeInt(&buf, Int32(3))
+            FfiConverterTypeRemoteManagementFailureStage.write(stage, into: &buf)
+            FfiConverterString.write(detail, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteWifiCommandOutcome_lift(_ buf: RustBuffer) throws -> RemoteWifiCommandOutcome {
+    return try FfiConverterTypeRemoteWifiCommandOutcome.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteWifiCommandOutcome_lower(_ value: RemoteWifiCommandOutcome) -> RustBuffer {
+    return FfiConverterTypeRemoteWifiCommandOutcome.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum RemoteWifiDecision: Equatable, Hashable {
+
+    case keep
+    case restore
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteWifiDecision: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteWifiDecision: FfiConverterRustBuffer {
+    typealias SwiftType = RemoteWifiDecision
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteWifiDecision {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .keep
+
+        case 2: return .restore
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RemoteWifiDecision, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .keep:
+            writeInt(&buf, Int32(1))
+
+
+        case .restore:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteWifiDecision_lift(_ buf: RustBuffer) throws -> RemoteWifiDecision {
+    return try FfiConverterTypeRemoteWifiDecision.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteWifiDecision_lower(_ value: RemoteWifiDecision) -> RustBuffer {
+    return FfiConverterTypeRemoteWifiDecision.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum RemoteWifiStatus: Equatable, Hashable {
+
+    case pending
+    case observed(transaction: RemoteWifiTransaction
+    )
+    case failed(stage: RemoteManagementFailureStage, detail: String
+    )
+    case outcomeUnknown(reason: RemoteControlAnnounceUnknownReason
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteWifiStatus: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteWifiStatus: FfiConverterRustBuffer {
+    typealias SwiftType = RemoteWifiStatus
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteWifiStatus {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .pending
+
+        case 2: return .observed(transaction: try FfiConverterTypeRemoteWifiTransaction.read(from: &buf)
+        )
+
+        case 3: return .failed(stage: try FfiConverterTypeRemoteManagementFailureStage.read(from: &buf), detail: try FfiConverterString.read(from: &buf)
+        )
+
+        case 4: return .outcomeUnknown(reason: try FfiConverterTypeRemoteControlAnnounceUnknownReason.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RemoteWifiStatus, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .pending:
+            writeInt(&buf, Int32(1))
+
+
+        case let .observed(transaction):
+            writeInt(&buf, Int32(2))
+            FfiConverterTypeRemoteWifiTransaction.write(transaction, into: &buf)
+
+
+        case let .failed(stage,detail):
+            writeInt(&buf, Int32(3))
+            FfiConverterTypeRemoteManagementFailureStage.write(stage, into: &buf)
+            FfiConverterString.write(detail, into: &buf)
+
+
+        case let .outcomeUnknown(reason):
+            writeInt(&buf, Int32(4))
+            FfiConverterTypeRemoteControlAnnounceUnknownReason.write(reason, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteWifiStatus_lift(_ buf: RustBuffer) throws -> RemoteWifiStatus {
+    return try FfiConverterTypeRemoteWifiStatus.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteWifiStatus_lower(_ value: RemoteWifiStatus) -> RustBuffer {
+    return FfiConverterTypeRemoteWifiStatus.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * The node's observation, not a claim about which app attempt caused it.
+ * AwaitingConfirmation does not establish that the new network is connected.
+ */
+
+public enum RemoteWifiTransaction: Equatable, Hashable {
+
+    case factoryProvisioning
+    case confirmed(revision: UInt32
+    )
+    case staged(revision: UInt32
+    )
+    case awaitingConfirmation(revision: UInt32, remainingSeconds: UInt8
+    )
+    case rollingBack(rejectedRevision: UInt32
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RemoteWifiTransaction: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRemoteWifiTransaction: FfiConverterRustBuffer {
+    typealias SwiftType = RemoteWifiTransaction
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RemoteWifiTransaction {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .factoryProvisioning
+
+        case 2: return .confirmed(revision: try FfiConverterUInt32.read(from: &buf)
+        )
+
+        case 3: return .staged(revision: try FfiConverterUInt32.read(from: &buf)
+        )
+
+        case 4: return .awaitingConfirmation(revision: try FfiConverterUInt32.read(from: &buf), remainingSeconds: try FfiConverterUInt8.read(from: &buf)
+        )
+
+        case 5: return .rollingBack(rejectedRevision: try FfiConverterUInt32.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RemoteWifiTransaction, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .factoryProvisioning:
+            writeInt(&buf, Int32(1))
+
+
+        case let .confirmed(revision):
+            writeInt(&buf, Int32(2))
+            FfiConverterUInt32.write(revision, into: &buf)
+
+
+        case let .staged(revision):
+            writeInt(&buf, Int32(3))
+            FfiConverterUInt32.write(revision, into: &buf)
+
+
+        case let .awaitingConfirmation(revision,remainingSeconds):
+            writeInt(&buf, Int32(4))
+            FfiConverterUInt32.write(revision, into: &buf)
+            FfiConverterUInt8.write(remainingSeconds, into: &buf)
+
+
+        case let .rollingBack(rejectedRevision):
+            writeInt(&buf, Int32(5))
+            FfiConverterUInt32.write(rejectedRevision, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteWifiTransaction_lift(_ buf: RustBuffer) throws -> RemoteWifiTransaction {
+    return try FfiConverterTypeRemoteWifiTransaction.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRemoteWifiTransaction_lower(_ value: RemoteWifiTransaction) -> RustBuffer {
+    return FfiConverterTypeRemoteWifiTransaction.lower(value)
 }
 
 
@@ -8957,6 +9726,30 @@ fileprivate struct FfiConverterOptionInt16: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionUInt32: FfiConverterRustBuffer {
+    typealias SwiftType = UInt32?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterUInt32.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterUInt32.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionUInt64: FfiConverterRustBuffer {
     typealias SwiftType = UInt64?
 
@@ -9197,6 +9990,30 @@ fileprivate struct FfiConverterOptionTypeRemoteNodePower: FfiConverterRustBuffer
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeRemoteWifiOperation: FfiConverterRustBuffer {
+    typealias SwiftType = RemoteWifiOperation?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeRemoteWifiOperation.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeRemoteWifiOperation.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeBytes16: FfiConverterRustBuffer {
     typealias SwiftType = Bytes16?
 
@@ -9334,6 +10151,31 @@ fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterString.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceData: FfiConverterRustBuffer {
+    typealias SwiftType = [Data]
+
+    public static func write(_ value: [Data], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterData.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [Data] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [Data]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterData.read(from: &buf))
         }
         return seq
     }
@@ -10409,6 +11251,21 @@ public func describeTarget(input: DescribeRemoteControlTargetInput)async  -> Rem
 
         )
 }
+public func finishRemoteWifiTrial(input: FinishRemoteWifiTrialInput)async  -> RemoteWifiCommandOutcome  {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_prns_app_fn_func_finish_remote_wifi_trial(FfiConverterTypeFinishRemoteWifiTrialInput_lower(input)
+                )
+            },
+            pollFunc: ffi_prns_app_rust_future_poll_rust_buffer,
+            completeFunc: ffi_prns_app_rust_future_complete_rust_buffer,
+            freeFunc: ffi_prns_app_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeRemoteWifiCommandOutcome_lift,
+            errorHandler: nil
+
+        )
+}
 public func getContact(input: ContactDestinationInput)async  -> ContactLookupOutcome  {
     return
         try!  await uniffiRustCallAsync(
@@ -10435,6 +11292,21 @@ public func initiatePairing(input: InitiateRemoteControlPairingInput)async  -> R
             completeFunc: ffi_prns_app_rust_future_complete_rust_buffer,
             freeFunc: ffi_prns_app_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeRemoteControlPairingCommandOutcome_lift,
+            errorHandler: nil
+
+        )
+}
+public func inspectRemoteWifiTrial(input: InspectRemoteWifiTrialInput)async  -> RemoteWifiCommandOutcome  {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_prns_app_fn_func_inspect_remote_wifi_trial(FfiConverterTypeInspectRemoteWifiTrialInput_lower(input)
+                )
+            },
+            pollFunc: ffi_prns_app_rust_future_poll_rust_buffer,
+            completeFunc: ffi_prns_app_rust_future_complete_rust_buffer,
+            freeFunc: ffi_prns_app_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeRemoteWifiCommandOutcome_lift,
             errorHandler: nil
 
         )
@@ -10730,6 +11602,21 @@ public func setContactPinned(input: SetContactPinnedInput)async  -> ContactMutat
 
         )
 }
+public func startRemoteWifiTrial(input: StartRemoteWifiTrialInput)async  -> RemoteWifiCommandOutcome  {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_prns_app_fn_func_start_remote_wifi_trial(FfiConverterTypeStartRemoteWifiTrialInput_lower(input)
+                )
+            },
+            pollFunc: ffi_prns_app_rust_future_poll_rust_buffer,
+            completeFunc: ffi_prns_app_rust_future_complete_rust_buffer,
+            freeFunc: ffi_prns_app_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeRemoteWifiCommandOutcome_lift,
+            errorHandler: nil
+
+        )
+}
 
 private enum InitializationResult {
     case ok
@@ -10773,10 +11660,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_prns_app_checksum_func_describe_target() != 49809) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_prns_app_checksum_func_finish_remote_wifi_trial() != 11313) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_prns_app_checksum_func_get_contact() != 18891) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_prns_app_checksum_func_initiate_pairing() != 58991) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_prns_app_checksum_func_inspect_remote_wifi_trial() != 22782) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_prns_app_checksum_func_list_contacts() != 57283) {
@@ -10843,6 +11736,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_prns_app_checksum_func_set_contact_pinned() != 4387) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_prns_app_checksum_func_start_remote_wifi_trial() != 55182) {
         return InitializationResult.apiChecksumMismatch
     }
 

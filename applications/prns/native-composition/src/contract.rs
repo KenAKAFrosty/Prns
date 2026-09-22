@@ -1,5 +1,7 @@
 mod remote_management;
 pub use remote_management::*;
+mod remote_wifi;
+pub use remote_wifi::*;
 
 pub const CONTRACT_FINGERPRINT: &str = env!("PRNS_APP_CONTRACT_FINGERPRINT");
 pub const HOST_CONTRACT_FINGERPRINT: &str = env!("PRNS_HOST_CONTRACT_FINGERPRINT");
@@ -29,6 +31,7 @@ pub struct DevelopmentNodeSnapshot {
     pub paired_targets: Vec<RemoteControlTargetSnapshot>,
     pub last_announcement: Option<RemoteControlAnnounceOperation>,
     pub last_remote_change: Option<RemoteChangeOperation>,
+    pub last_remote_wifi: Option<RemoteWifiOperation>,
     pub active_operation: Option<DevelopmentNodeOperation>,
     pub failure: Option<DevelopmentNodeFailure>,
 }
@@ -492,6 +495,7 @@ pub struct DevelopmentNodeOperation {
 pub enum DevelopmentNodeOperationKind {
     RemoteRead,
     RemoteChange,
+    RemoteWifi,
     Pairing,
     Describe,
     AnnounceSelf,
@@ -741,6 +745,7 @@ impl DevelopmentNodeSnapshot {
             paired_targets: Vec::new(),
             last_announcement: None,
             last_remote_change: None,
+            last_remote_wifi: None,
             active_operation: None,
             failure: None,
         }

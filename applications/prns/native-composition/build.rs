@@ -1,7 +1,11 @@
 use std::path::PathBuf;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    const CONTRACT_SOURCES: &[&str] = &["src/contract.rs", "src/contract/remote_management.rs"];
+    const CONTRACT_SOURCES: &[&str] = &[
+        "src/contract.rs",
+        "src/contract/remote_management.rs",
+        "src/contract/remote_wifi.rs",
+    ];
     const COMPATIBILITY_SOURCE: &str = "../../release/compatibility.json";
     for source in CONTRACT_SOURCES {
         println!("cargo:rerun-if-changed={source}");

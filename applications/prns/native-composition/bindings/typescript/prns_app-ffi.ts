@@ -304,12 +304,22 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_prns_app_fn_func_finish_remote_wifi_trial": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_prns_app_fn_func_get_contact": {
       args: [FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
     "uniffi_prns_app_fn_func_initiate_pairing": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_fn_func_inspect_remote_wifi_trial": {
       args: [FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
@@ -424,6 +434,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_prns_app_fn_func_start_remote_wifi_trial": {
+      args: [FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "ffi_prns_app_uniffi_contract_version": {
       args: [],
       ret: FfiType.UInt32,
@@ -474,12 +489,22 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_prns_app_checksum_func_finish_remote_wifi_trial": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_prns_app_checksum_func_get_contact": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
     "uniffi_prns_app_checksum_func_initiate_pairing": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_prns_app_checksum_func_inspect_remote_wifi_trial": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -594,6 +619,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_prns_app_checksum_func_start_remote_wifi_trial": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
   },
   callbacks: {
     "RustFutureContinuationCallback": {
@@ -677,8 +707,10 @@ interface NativeModuleInterface {
     uniffi_prns_app_fn_func_create_manual_contact(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_delete_contact(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_describe_target(input: Uint8Array): bigint;
+    uniffi_prns_app_fn_func_finish_remote_wifi_trial(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_get_contact(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_initiate_pairing(input: Uint8Array): bigint;
+    uniffi_prns_app_fn_func_inspect_remote_wifi_trial(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_list_contacts(): bigint;
     uniffi_prns_app_fn_func_list_lxmf_messages(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_list_lxmf_peers(): bigint;
@@ -701,6 +733,7 @@ interface NativeModuleInterface {
     uniffi_prns_app_fn_func_send_direct_text(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_set_contact_alias(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_set_contact_pinned(input: Uint8Array): bigint;
+    uniffi_prns_app_fn_func_start_remote_wifi_trial(input: Uint8Array): bigint;
     ffi_prns_app_uniffi_contract_version(): number;
     uniffi_prns_app_checksum_func_announce_lxmf(): number;
     uniffi_prns_app_checksum_func_announce_target(): number;
@@ -711,8 +744,10 @@ interface NativeModuleInterface {
     uniffi_prns_app_checksum_func_create_manual_contact(): number;
     uniffi_prns_app_checksum_func_delete_contact(): number;
     uniffi_prns_app_checksum_func_describe_target(): number;
+    uniffi_prns_app_checksum_func_finish_remote_wifi_trial(): number;
     uniffi_prns_app_checksum_func_get_contact(): number;
     uniffi_prns_app_checksum_func_initiate_pairing(): number;
+    uniffi_prns_app_checksum_func_inspect_remote_wifi_trial(): number;
     uniffi_prns_app_checksum_func_list_contacts(): number;
     uniffi_prns_app_checksum_func_list_lxmf_messages(): number;
     uniffi_prns_app_checksum_func_list_lxmf_peers(): number;
@@ -735,6 +770,7 @@ interface NativeModuleInterface {
     uniffi_prns_app_checksum_func_send_direct_text(): number;
     uniffi_prns_app_checksum_func_set_contact_alias(): number;
     uniffi_prns_app_checksum_func_set_contact_pinned(): number;
+    uniffi_prns_app_checksum_func_start_remote_wifi_trial(): number;
     // Codegen call sites use these via `nativeModule().rustbuffer_alloc(...)`
     // and `nativeModule().rustbuffer_free(...)`. The runtime's registered
     // module exposes them as method properties.

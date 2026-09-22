@@ -6,7 +6,7 @@ use crate::contract::{
     DevelopmentNodeRuntime, DevelopmentNodeSnapshot, LocalHostState, LxmfHealth, LxmfHealthState,
     PrimaryIdentityState, RemoteChangeOperation, RemoteChangeStatus,
     RemoteControlAnnounceOperation, RemoteControlAnnounceStatus,
-    RemoteControlAnnounceUnknownReason,
+    RemoteControlAnnounceUnknownReason, RemoteWifiOperation, RemoteWifiStatus,
 };
 
 pub struct SnapshotStore {
@@ -115,6 +115,7 @@ impl SnapshotStore {
         self.update(|snapshot| {
             interrupt_announcement(&mut snapshot.last_announcement);
             interrupt_change(&mut snapshot.last_remote_change);
+            interrupt_wifi(&mut snapshot.last_remote_wifi);
             let explicit_stop_in_progress = self.explicit_stop_in_progress.load(Ordering::Acquire);
             if !explicit_stop_in_progress {
                 snapshot.runtime = DevelopmentNodeRuntime::Failed;
@@ -138,6 +139,7 @@ impl SnapshotStore {
         self.update(|snapshot| {
             interrupt_announcement(&mut snapshot.last_announcement);
             interrupt_change(&mut snapshot.last_remote_change);
+            interrupt_wifi(&mut snapshot.last_remote_wifi);
             snapshot.runtime = DevelopmentNodeRuntime::Failed;
             if !matches!(
                 &snapshot.local_host,
@@ -191,6 +193,8 @@ impl SnapshotStore {
             interrupt_announcement(&mut next.last_announcement);
             next.last_remote_change = snapshot.last_remote_change.clone();
             interrupt_change(&mut next.last_remote_change);
+            next.last_remote_wifi = snapshot.last_remote_wifi.clone();
+            interrupt_wifi(&mut next.last_remote_wifi);
             next.runtime = DevelopmentNodeRuntime::Starting;
             next.primary_identity = primary_identity;
             *snapshot = next;
@@ -207,11 +211,14 @@ impl SnapshotStore {
             interrupt_announcement(&mut last_announcement);
             let mut last_remote_change = snapshot.last_remote_change.clone();
             interrupt_change(&mut last_remote_change);
+            let mut last_remote_wifi = snapshot.last_remote_wifi.clone();
+            interrupt_wifi(&mut last_remote_wifi);
             *snapshot = DevelopmentNodeSnapshot::stopped();
             snapshot.primary_identity = primary_identity;
             snapshot.generation_id = generation_id;
             snapshot.last_announcement = last_announcement;
             snapshot.last_remote_change = last_remote_change;
+            snapshot.last_remote_wifi = last_remote_wifi;
         });
     }
 
@@ -225,6 +232,7 @@ impl SnapshotStore {
         self.update(|snapshot| {
             interrupt_announcement(&mut snapshot.last_announcement);
             interrupt_change(&mut snapshot.last_remote_change);
+            interrupt_wifi(&mut snapshot.last_remote_wifi);
         });
     }
 }
@@ -233,6 +241,16 @@ fn interrupt_change(operation: &mut Option<RemoteChangeOperation>) {
     if let Some(operation) = operation {
         if operation.status == RemoteChangeStatus::Pending {
             operation.status = RemoteChangeStatus::OutcomeUnknown {
+                reason: RemoteControlAnnounceUnknownReason::NodeStopped,
+            };
+        }
+    }
+}
+
+fn interrupt_wifi(operation: &mut Option<RemoteWifiOperation>) {
+    if let Some(operation) = operation {
+        if operation.status == RemoteWifiStatus::Pending {
+            operation.status = RemoteWifiStatus::OutcomeUnknown {
                 reason: RemoteControlAnnounceUnknownReason::NodeStopped,
             };
         }

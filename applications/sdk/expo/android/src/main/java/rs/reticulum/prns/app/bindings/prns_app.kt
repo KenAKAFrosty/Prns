@@ -660,9 +660,13 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_prns_app_checksum_func_describe_target(
     ): Int
+    external fun uniffi_prns_app_checksum_func_finish_remote_wifi_trial(
+    ): Int
     external fun uniffi_prns_app_checksum_func_get_contact(
     ): Int
     external fun uniffi_prns_app_checksum_func_initiate_pairing(
+    ): Int
+    external fun uniffi_prns_app_checksum_func_inspect_remote_wifi_trial(
     ): Int
     external fun uniffi_prns_app_checksum_func_list_contacts(
     ): Int
@@ -708,6 +712,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_prns_app_checksum_func_set_contact_pinned(
     ): Int
+    external fun uniffi_prns_app_checksum_func_start_remote_wifi_trial(
+    ): Int
     external fun ffi_prns_app_uniffi_contract_version(
     ): Int
 
@@ -739,9 +745,13 @@ internal object UniffiLib {
     ): Long
     external fun uniffi_prns_app_fn_func_describe_target(`input`: RustBuffer.ByValue,
     ): Long
+    external fun uniffi_prns_app_fn_func_finish_remote_wifi_trial(`input`: RustBuffer.ByValue,
+    ): Long
     external fun uniffi_prns_app_fn_func_get_contact(`input`: RustBuffer.ByValue,
     ): Long
     external fun uniffi_prns_app_fn_func_initiate_pairing(`input`: RustBuffer.ByValue,
+    ): Long
+    external fun uniffi_prns_app_fn_func_inspect_remote_wifi_trial(`input`: RustBuffer.ByValue,
     ): Long
     external fun uniffi_prns_app_fn_func_list_contacts(
     ): Long
@@ -786,6 +796,8 @@ internal object UniffiLib {
     external fun uniffi_prns_app_fn_func_set_contact_alias(`input`: RustBuffer.ByValue,
     ): Long
     external fun uniffi_prns_app_fn_func_set_contact_pinned(`input`: RustBuffer.ByValue,
+    ): Long
+    external fun uniffi_prns_app_fn_func_start_remote_wifi_trial(`input`: RustBuffer.ByValue,
     ): Long
     external fun ffi_prns_app_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus,
     ): RustBuffer.ByValue
@@ -933,10 +945,16 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_prns_app_checksum_func_describe_target() != 49809) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_prns_app_checksum_func_finish_remote_wifi_trial() != 11313) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_prns_app_checksum_func_get_contact() != 18891) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_prns_app_checksum_func_initiate_pairing() != 58991) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_prns_app_checksum_func_inspect_remote_wifi_trial() != 22782) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_prns_app_checksum_func_list_contacts() != 57283) {
@@ -1003,6 +1021,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_prns_app_checksum_func_set_contact_pinned() != 4387) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_prns_app_checksum_func_start_remote_wifi_trial() != 55182) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
 }
@@ -1871,6 +1892,8 @@ data class DevelopmentNodeSnapshot (
     ,
     var `lastRemoteChange`: RemoteChangeOperation?
     ,
+    var `lastRemoteWifi`: RemoteWifiOperation?
+    ,
     var `activeOperation`: DevelopmentNodeOperation?
     ,
     var `failure`: DevelopmentNodeFailure?
@@ -1903,6 +1926,7 @@ public object FfiConverterTypeDevelopmentNodeSnapshot: FfiConverterRustBuffer<De
             FfiConverterSequenceTypeRemoteControlTargetSnapshot.read(buf),
             FfiConverterOptionalTypeRemoteControlAnnounceOperation.read(buf),
             FfiConverterOptionalTypeRemoteChangeOperation.read(buf),
+            FfiConverterOptionalTypeRemoteWifiOperation.read(buf),
             FfiConverterOptionalTypeDevelopmentNodeOperation.read(buf),
             FfiConverterOptionalTypeDevelopmentNodeFailure.read(buf),
         )
@@ -1922,6 +1946,7 @@ public object FfiConverterTypeDevelopmentNodeSnapshot: FfiConverterRustBuffer<De
             FfiConverterSequenceTypeRemoteControlTargetSnapshot.allocationSize(value.`pairedTargets`) +
             FfiConverterOptionalTypeRemoteControlAnnounceOperation.allocationSize(value.`lastAnnouncement`) +
             FfiConverterOptionalTypeRemoteChangeOperation.allocationSize(value.`lastRemoteChange`) +
+            FfiConverterOptionalTypeRemoteWifiOperation.allocationSize(value.`lastRemoteWifi`) +
             FfiConverterOptionalTypeDevelopmentNodeOperation.allocationSize(value.`activeOperation`) +
             FfiConverterOptionalTypeDevelopmentNodeFailure.allocationSize(value.`failure`)
     )
@@ -1940,6 +1965,7 @@ public object FfiConverterTypeDevelopmentNodeSnapshot: FfiConverterRustBuffer<De
             FfiConverterSequenceTypeRemoteControlTargetSnapshot.write(value.`pairedTargets`, buf)
             FfiConverterOptionalTypeRemoteControlAnnounceOperation.write(value.`lastAnnouncement`, buf)
             FfiConverterOptionalTypeRemoteChangeOperation.write(value.`lastRemoteChange`, buf)
+            FfiConverterOptionalTypeRemoteWifiOperation.write(value.`lastRemoteWifi`, buf)
             FfiConverterOptionalTypeDevelopmentNodeOperation.write(value.`activeOperation`, buf)
             FfiConverterOptionalTypeDevelopmentNodeFailure.write(value.`failure`, buf)
     }
@@ -1975,6 +2001,49 @@ public object FfiConverterTypeDevelopmentNodeStartInput: FfiConverterRustBuffer<
 
     override fun write(value: DevelopmentNodeStartInput, buf: ByteBuffer) {
             FfiConverterOptionalString.write(value.`developmentTcpTarget`, buf)
+    }
+}
+
+
+
+data class FinishRemoteWifiTrialInput (
+    var `targetIdentityFingerprint`: kotlin.ByteArray
+    ,
+    var `revision`: kotlin.UInt
+    ,
+    var `decision`: RemoteWifiDecision
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFinishRemoteWifiTrialInput: FfiConverterRustBuffer<FinishRemoteWifiTrialInput> {
+    override fun read(buf: ByteBuffer): FinishRemoteWifiTrialInput {
+        return FinishRemoteWifiTrialInput(
+            FfiConverterByteArray.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterTypeRemoteWifiDecision.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FinishRemoteWifiTrialInput) = (
+            FfiConverterByteArray.allocationSize(value.`targetIdentityFingerprint`) +
+            FfiConverterUInt.allocationSize(value.`revision`) +
+            FfiConverterTypeRemoteWifiDecision.allocationSize(value.`decision`)
+    )
+
+    override fun write(value: FinishRemoteWifiTrialInput, buf: ByteBuffer) {
+            FfiConverterByteArray.write(value.`targetIdentityFingerprint`, buf)
+            FfiConverterUInt.write(value.`revision`, buf)
+            FfiConverterTypeRemoteWifiDecision.write(value.`decision`, buf)
     }
 }
 
@@ -2081,6 +2150,39 @@ public object FfiConverterTypeInitiateRemoteControlPairingInput: FfiConverterRus
     override fun write(value: InitiateRemoteControlPairingInput, buf: ByteBuffer) {
             FfiConverterString.write(value.`candidateId`, buf)
             FfiConverterString.write(value.`invitationCode`, buf)
+    }
+}
+
+
+
+data class InspectRemoteWifiTrialInput (
+    var `targetIdentityFingerprint`: kotlin.ByteArray
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeInspectRemoteWifiTrialInput: FfiConverterRustBuffer<InspectRemoteWifiTrialInput> {
+    override fun read(buf: ByteBuffer): InspectRemoteWifiTrialInput {
+        return InspectRemoteWifiTrialInput(
+            FfiConverterByteArray.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: InspectRemoteWifiTrialInput) = (
+            FfiConverterByteArray.allocationSize(value.`targetIdentityFingerprint`)
+    )
+
+    override fun write(value: InspectRemoteWifiTrialInput, buf: ByteBuffer) {
+            FfiConverterByteArray.write(value.`targetIdentityFingerprint`, buf)
     }
 }
 
@@ -2738,6 +2840,47 @@ public object FfiConverterTypeRemoteControlTargetSnapshot: FfiConverterRustBuffe
 
 
 
+/**
+ * The node reports identities only, not names, authority or individual permissions.
+ */
+data class RemoteControllerPage (
+    var `identities`: List<kotlin.ByteArray>
+    ,
+    var `next`: kotlin.ByteArray?
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteControllerPage: FfiConverterRustBuffer<RemoteControllerPage> {
+    override fun read(buf: ByteBuffer): RemoteControllerPage {
+        return RemoteControllerPage(
+            FfiConverterSequenceByteArray.read(buf),
+            FfiConverterOptionalByteArray.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: RemoteControllerPage) = (
+            FfiConverterSequenceByteArray.allocationSize(value.`identities`) +
+            FfiConverterOptionalByteArray.allocationSize(value.`next`)
+    )
+
+    override fun write(value: RemoteControllerPage, buf: ByteBuffer) {
+            FfiConverterSequenceByteArray.write(value.`identities`, buf)
+            FfiConverterOptionalByteArray.write(value.`next`, buf)
+    }
+}
+
+
+
 data class RemoteInterfaceCard (
     var `name`: kotlin.String
     ,
@@ -3221,6 +3364,67 @@ public object FfiConverterTypeRemotePeerPage: FfiConverterRustBuffer<RemotePeerP
 
 
 
+data class RemoteWifiOperation (
+    var `operationId`: kotlin.ULong
+    ,
+    var `generationId`: kotlin.ULong
+    ,
+    var `targetIdentityFingerprint`: kotlin.ByteArray
+    ,
+    var `action`: RemoteWifiAction
+    ,
+    /**
+     * Present after a successful Stage response, or for a revision-bound decision.
+     */
+    var `candidateRevision`: kotlin.UInt?
+    ,
+    var `status`: RemoteWifiStatus
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteWifiOperation: FfiConverterRustBuffer<RemoteWifiOperation> {
+    override fun read(buf: ByteBuffer): RemoteWifiOperation {
+        return RemoteWifiOperation(
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterByteArray.read(buf),
+            FfiConverterTypeRemoteWifiAction.read(buf),
+            FfiConverterOptionalUInt.read(buf),
+            FfiConverterTypeRemoteWifiStatus.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: RemoteWifiOperation) = (
+            FfiConverterULong.allocationSize(value.`operationId`) +
+            FfiConverterULong.allocationSize(value.`generationId`) +
+            FfiConverterByteArray.allocationSize(value.`targetIdentityFingerprint`) +
+            FfiConverterTypeRemoteWifiAction.allocationSize(value.`action`) +
+            FfiConverterOptionalUInt.allocationSize(value.`candidateRevision`) +
+            FfiConverterTypeRemoteWifiStatus.allocationSize(value.`status`)
+    )
+
+    override fun write(value: RemoteWifiOperation, buf: ByteBuffer) {
+            FfiConverterULong.write(value.`operationId`, buf)
+            FfiConverterULong.write(value.`generationId`, buf)
+            FfiConverterByteArray.write(value.`targetIdentityFingerprint`, buf)
+            FfiConverterTypeRemoteWifiAction.write(value.`action`, buf)
+            FfiConverterOptionalUInt.write(value.`candidateRevision`, buf)
+            FfiConverterTypeRemoteWifiStatus.write(value.`status`, buf)
+    }
+}
+
+
+
 data class RetryLxmfMessageInput (
     var `localRecordId`: kotlin.ULong
 
@@ -3514,6 +3718,53 @@ public object FfiConverterTypeSetContactPinnedInput: FfiConverterRustBuffer<SetC
     override fun write(value: SetContactPinnedInput, buf: ByteBuffer) {
             FfiConverterTypeBytes16.write(value.`destination`, buf)
             FfiConverterBoolean.write(value.`pinned`, buf)
+    }
+}
+
+
+
+/**
+ * Credentials cross the bridge once, then immediately enter zeroizing Rust storage.
+ * Deliberately neither Debug nor Clone: never retain this input in a snapshot.
+ */
+data class StartRemoteWifiTrialInput (
+    var `targetIdentityFingerprint`: kotlin.ByteArray
+    ,
+    var `ssid`: kotlin.String
+    ,
+    var `password`: kotlin.String
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeStartRemoteWifiTrialInput: FfiConverterRustBuffer<StartRemoteWifiTrialInput> {
+    override fun read(buf: ByteBuffer): StartRemoteWifiTrialInput {
+        return StartRemoteWifiTrialInput(
+            FfiConverterByteArray.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: StartRemoteWifiTrialInput) = (
+            FfiConverterByteArray.allocationSize(value.`targetIdentityFingerprint`) +
+            FfiConverterString.allocationSize(value.`ssid`) +
+            FfiConverterString.allocationSize(value.`password`)
+    )
+
+    override fun write(value: StartRemoteWifiTrialInput, buf: ByteBuffer) {
+            FfiConverterByteArray.write(value.`targetIdentityFingerprint`, buf)
+            FfiConverterString.write(value.`ssid`, buf)
+            FfiConverterString.write(value.`password`, buf)
     }
 }
 
@@ -4519,6 +4770,7 @@ enum class DevelopmentNodeOperationKind {
 
     REMOTE_READ,
     REMOTE_CHANGE,
+    REMOTE_WIFI,
     PAIRING,
     DESCRIBE,
     ANNOUNCE_SELF,
@@ -7906,6 +8158,15 @@ sealed class RemoteNodeChange {
     object WakeRadios : RemoteNodeChange()
 
 
+    data class RevokeController(
+        val `controllerIdentityFingerprint`: kotlin.ByteArray) : RemoteNodeChange()
+
+    {
+
+
+        companion object
+    }
+
 
 
 
@@ -7963,6 +8224,9 @@ public object FfiConverterTypeRemoteNodeChange : FfiConverterRustBuffer<RemoteNo
                 )
             12 -> RemoteNodeChange.SleepRadios
             13 -> RemoteNodeChange.WakeRadios
+            14 -> RemoteNodeChange.RevokeController(
+                FfiConverterByteArray.read(buf),
+                )
             else -> throw RuntimeException("invalid enum value, something is very wrong!!")
         }
     }
@@ -8063,6 +8327,13 @@ public object FfiConverterTypeRemoteNodeChange : FfiConverterRustBuffer<RemoteNo
                 4UL
             )
         }
+        is RemoteNodeChange.RevokeController -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterByteArray.allocationSize(value.`controllerIdentityFingerprint`)
+            )
+        }
     }
 
     override fun write(value: RemoteNodeChange, buf: ByteBuffer) {
@@ -8136,6 +8407,11 @@ public object FfiConverterTypeRemoteNodeChange : FfiConverterRustBuffer<RemoteNo
                 buf.putInt(13)
                 Unit
             }
+            is RemoteNodeChange.RevokeController -> {
+                buf.putInt(14)
+                FfiConverterByteArray.write(value.`controllerIdentityFingerprint`, buf)
+                Unit
+            }
         }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
     }
 }
@@ -8182,6 +8458,15 @@ sealed class RemoteNodeData {
         companion object
     }
 
+    data class Controllers(
+        val `page`: rs.reticulum.prns.app.bindings.RemoteControllerPage) : RemoteNodeData()
+
+    {
+
+
+        companion object
+    }
+
 
 
 
@@ -8209,6 +8494,9 @@ public object FfiConverterTypeRemoteNodeData : FfiConverterRustBuffer<RemoteNode
                 )
             4 -> RemoteNodeData.Peers(
                 FfiConverterTypeRemotePeerPage.read(buf),
+                )
+            5 -> RemoteNodeData.Controllers(
+                FfiConverterTypeRemoteControllerPage.read(buf),
                 )
             else -> throw RuntimeException("invalid enum value, something is very wrong!!")
         }
@@ -8243,6 +8531,13 @@ public object FfiConverterTypeRemoteNodeData : FfiConverterRustBuffer<RemoteNode
                 + FfiConverterTypeRemotePeerPage.allocationSize(value.`page`)
             )
         }
+        is RemoteNodeData.Controllers -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteControllerPage.allocationSize(value.`page`)
+            )
+        }
     }
 
     override fun write(value: RemoteNodeData, buf: ByteBuffer) {
@@ -8265,6 +8560,11 @@ public object FfiConverterTypeRemoteNodeData : FfiConverterRustBuffer<RemoteNode
             is RemoteNodeData.Peers -> {
                 buf.putInt(4)
                 FfiConverterTypeRemotePeerPage.write(value.`page`, buf)
+                Unit
+            }
+            is RemoteNodeData.Controllers -> {
+                buf.putInt(5)
+                FfiConverterTypeRemoteControllerPage.write(value.`page`, buf)
                 Unit
             }
         }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
@@ -8308,6 +8608,15 @@ sealed class RemoteNodeQuery {
         companion object
     }
 
+    data class Controllers(
+        val `after`: kotlin.ByteArray?) : RemoteNodeQuery()
+
+    {
+
+
+        companion object
+    }
+
 
 
 
@@ -8333,6 +8642,9 @@ public object FfiConverterTypeRemoteNodeQuery : FfiConverterRustBuffer<RemoteNod
                 )
             4 -> RemoteNodeQuery.Peers(
                 FfiConverterByteArray.read(buf),
+                FfiConverterOptionalByteArray.read(buf),
+                )
+            5 -> RemoteNodeQuery.Controllers(
                 FfiConverterOptionalByteArray.read(buf),
                 )
             else -> throw RuntimeException("invalid enum value, something is very wrong!!")
@@ -8368,6 +8680,13 @@ public object FfiConverterTypeRemoteNodeQuery : FfiConverterRustBuffer<RemoteNod
                 + FfiConverterOptionalByteArray.allocationSize(value.`after`)
             )
         }
+        is RemoteNodeQuery.Controllers -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterOptionalByteArray.allocationSize(value.`after`)
+            )
+        }
     }
 
     override fun write(value: RemoteNodeQuery, buf: ByteBuffer) {
@@ -8389,6 +8708,11 @@ public object FfiConverterTypeRemoteNodeQuery : FfiConverterRustBuffer<RemoteNod
             is RemoteNodeQuery.Peers -> {
                 buf.putInt(4)
                 FfiConverterByteArray.write(value.`interfaceId`, buf)
+                FfiConverterOptionalByteArray.write(value.`after`, buf)
+                Unit
+            }
+            is RemoteNodeQuery.Controllers -> {
+                buf.putInt(5)
                 FfiConverterOptionalByteArray.write(value.`after`, buf)
                 Unit
             }
@@ -8595,6 +8919,455 @@ public object FfiConverterTypeRemoteRadioMode: FfiConverterRustBuffer<RemoteRadi
 
     override fun write(value: RemoteRadioMode, buf: ByteBuffer) {
         buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+
+enum class RemoteWifiAction {
+
+    START,
+    INSPECT,
+    KEEP,
+    RESTORE;
+
+
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteWifiAction: FfiConverterRustBuffer<RemoteWifiAction> {
+    override fun read(buf: ByteBuffer) = try {
+        RemoteWifiAction.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: RemoteWifiAction) = 4UL
+
+    override fun write(value: RemoteWifiAction, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+sealed class RemoteWifiCommandOutcome {
+
+    data class Accepted(
+        val `operation`: rs.reticulum.prns.app.bindings.RemoteWifiOperation) : RemoteWifiCommandOutcome()
+
+    {
+
+
+        companion object
+    }
+
+    object Busy : RemoteWifiCommandOutcome()
+
+
+    data class Failed(
+        val `stage`: rs.reticulum.prns.app.bindings.RemoteManagementFailureStage,
+        val `detail`: kotlin.String) : RemoteWifiCommandOutcome()
+
+    {
+
+
+        companion object
+    }
+
+
+
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteWifiCommandOutcome : FfiConverterRustBuffer<RemoteWifiCommandOutcome>{
+    override fun read(buf: ByteBuffer): RemoteWifiCommandOutcome {
+        return when(buf.getInt()) {
+            1 -> RemoteWifiCommandOutcome.Accepted(
+                FfiConverterTypeRemoteWifiOperation.read(buf),
+                )
+            2 -> RemoteWifiCommandOutcome.Busy
+            3 -> RemoteWifiCommandOutcome.Failed(
+                FfiConverterTypeRemoteManagementFailureStage.read(buf),
+                FfiConverterString.read(buf),
+                )
+            else -> throw RuntimeException("invalid enum value, something is very wrong!!")
+        }
+    }
+
+    override fun allocationSize(value: RemoteWifiCommandOutcome) = when(value) {
+        is RemoteWifiCommandOutcome.Accepted -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteWifiOperation.allocationSize(value.`operation`)
+            )
+        }
+        is RemoteWifiCommandOutcome.Busy -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is RemoteWifiCommandOutcome.Failed -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteManagementFailureStage.allocationSize(value.`stage`)
+                + FfiConverterString.allocationSize(value.`detail`)
+            )
+        }
+    }
+
+    override fun write(value: RemoteWifiCommandOutcome, buf: ByteBuffer) {
+        when(value) {
+            is RemoteWifiCommandOutcome.Accepted -> {
+                buf.putInt(1)
+                FfiConverterTypeRemoteWifiOperation.write(value.`operation`, buf)
+                Unit
+            }
+            is RemoteWifiCommandOutcome.Busy -> {
+                buf.putInt(2)
+                Unit
+            }
+            is RemoteWifiCommandOutcome.Failed -> {
+                buf.putInt(3)
+                FfiConverterTypeRemoteManagementFailureStage.write(value.`stage`, buf)
+                FfiConverterString.write(value.`detail`, buf)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
+    }
+}
+
+
+
+
+
+
+enum class RemoteWifiDecision {
+
+    KEEP,
+    RESTORE;
+
+
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteWifiDecision: FfiConverterRustBuffer<RemoteWifiDecision> {
+    override fun read(buf: ByteBuffer) = try {
+        RemoteWifiDecision.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: RemoteWifiDecision) = 4UL
+
+    override fun write(value: RemoteWifiDecision, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+sealed class RemoteWifiStatus {
+
+    object Pending : RemoteWifiStatus()
+
+
+    data class Observed(
+        val `transaction`: rs.reticulum.prns.app.bindings.RemoteWifiTransaction) : RemoteWifiStatus()
+
+    {
+
+
+        companion object
+    }
+
+    data class Failed(
+        val `stage`: rs.reticulum.prns.app.bindings.RemoteManagementFailureStage,
+        val `detail`: kotlin.String) : RemoteWifiStatus()
+
+    {
+
+
+        companion object
+    }
+
+    data class OutcomeUnknown(
+        val `reason`: rs.reticulum.prns.app.bindings.RemoteControlAnnounceUnknownReason) : RemoteWifiStatus()
+
+    {
+
+
+        companion object
+    }
+
+
+
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteWifiStatus : FfiConverterRustBuffer<RemoteWifiStatus>{
+    override fun read(buf: ByteBuffer): RemoteWifiStatus {
+        return when(buf.getInt()) {
+            1 -> RemoteWifiStatus.Pending
+            2 -> RemoteWifiStatus.Observed(
+                FfiConverterTypeRemoteWifiTransaction.read(buf),
+                )
+            3 -> RemoteWifiStatus.Failed(
+                FfiConverterTypeRemoteManagementFailureStage.read(buf),
+                FfiConverterString.read(buf),
+                )
+            4 -> RemoteWifiStatus.OutcomeUnknown(
+                FfiConverterTypeRemoteControlAnnounceUnknownReason.read(buf),
+                )
+            else -> throw RuntimeException("invalid enum value, something is very wrong!!")
+        }
+    }
+
+    override fun allocationSize(value: RemoteWifiStatus) = when(value) {
+        is RemoteWifiStatus.Pending -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is RemoteWifiStatus.Observed -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteWifiTransaction.allocationSize(value.`transaction`)
+            )
+        }
+        is RemoteWifiStatus.Failed -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteManagementFailureStage.allocationSize(value.`stage`)
+                + FfiConverterString.allocationSize(value.`detail`)
+            )
+        }
+        is RemoteWifiStatus.OutcomeUnknown -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterTypeRemoteControlAnnounceUnknownReason.allocationSize(value.`reason`)
+            )
+        }
+    }
+
+    override fun write(value: RemoteWifiStatus, buf: ByteBuffer) {
+        when(value) {
+            is RemoteWifiStatus.Pending -> {
+                buf.putInt(1)
+                Unit
+            }
+            is RemoteWifiStatus.Observed -> {
+                buf.putInt(2)
+                FfiConverterTypeRemoteWifiTransaction.write(value.`transaction`, buf)
+                Unit
+            }
+            is RemoteWifiStatus.Failed -> {
+                buf.putInt(3)
+                FfiConverterTypeRemoteManagementFailureStage.write(value.`stage`, buf)
+                FfiConverterString.write(value.`detail`, buf)
+                Unit
+            }
+            is RemoteWifiStatus.OutcomeUnknown -> {
+                buf.putInt(4)
+                FfiConverterTypeRemoteControlAnnounceUnknownReason.write(value.`reason`, buf)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
+    }
+}
+
+
+
+
+
+/**
+ * The node's observation, not a claim about which app attempt caused it.
+ * AwaitingConfirmation does not establish that the new network is connected.
+ */
+sealed class RemoteWifiTransaction {
+
+    object FactoryProvisioning : RemoteWifiTransaction()
+
+
+    data class Confirmed(
+        val `revision`: kotlin.UInt) : RemoteWifiTransaction()
+
+    {
+
+
+        companion object
+    }
+
+    data class Staged(
+        val `revision`: kotlin.UInt) : RemoteWifiTransaction()
+
+    {
+
+
+        companion object
+    }
+
+    data class AwaitingConfirmation(
+        val `revision`: kotlin.UInt,
+        val `remainingSeconds`: kotlin.UByte) : RemoteWifiTransaction()
+
+    {
+
+
+        companion object
+    }
+
+    data class RollingBack(
+        val `rejectedRevision`: kotlin.UInt) : RemoteWifiTransaction()
+
+    {
+
+
+        companion object
+    }
+
+
+
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteWifiTransaction : FfiConverterRustBuffer<RemoteWifiTransaction>{
+    override fun read(buf: ByteBuffer): RemoteWifiTransaction {
+        return when(buf.getInt()) {
+            1 -> RemoteWifiTransaction.FactoryProvisioning
+            2 -> RemoteWifiTransaction.Confirmed(
+                FfiConverterUInt.read(buf),
+                )
+            3 -> RemoteWifiTransaction.Staged(
+                FfiConverterUInt.read(buf),
+                )
+            4 -> RemoteWifiTransaction.AwaitingConfirmation(
+                FfiConverterUInt.read(buf),
+                FfiConverterUByte.read(buf),
+                )
+            5 -> RemoteWifiTransaction.RollingBack(
+                FfiConverterUInt.read(buf),
+                )
+            else -> throw RuntimeException("invalid enum value, something is very wrong!!")
+        }
+    }
+
+    override fun allocationSize(value: RemoteWifiTransaction) = when(value) {
+        is RemoteWifiTransaction.FactoryProvisioning -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+            )
+        }
+        is RemoteWifiTransaction.Confirmed -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterUInt.allocationSize(value.`revision`)
+            )
+        }
+        is RemoteWifiTransaction.Staged -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterUInt.allocationSize(value.`revision`)
+            )
+        }
+        is RemoteWifiTransaction.AwaitingConfirmation -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterUInt.allocationSize(value.`revision`)
+                + FfiConverterUByte.allocationSize(value.`remainingSeconds`)
+            )
+        }
+        is RemoteWifiTransaction.RollingBack -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterUInt.allocationSize(value.`rejectedRevision`)
+            )
+        }
+    }
+
+    override fun write(value: RemoteWifiTransaction, buf: ByteBuffer) {
+        when(value) {
+            is RemoteWifiTransaction.FactoryProvisioning -> {
+                buf.putInt(1)
+                Unit
+            }
+            is RemoteWifiTransaction.Confirmed -> {
+                buf.putInt(2)
+                FfiConverterUInt.write(value.`revision`, buf)
+                Unit
+            }
+            is RemoteWifiTransaction.Staged -> {
+                buf.putInt(3)
+                FfiConverterUInt.write(value.`revision`, buf)
+                Unit
+            }
+            is RemoteWifiTransaction.AwaitingConfirmation -> {
+                buf.putInt(4)
+                FfiConverterUInt.write(value.`revision`, buf)
+                FfiConverterUByte.write(value.`remainingSeconds`, buf)
+                Unit
+            }
+            is RemoteWifiTransaction.RollingBack -> {
+                buf.putInt(5)
+                FfiConverterUInt.write(value.`rejectedRevision`, buf)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
     }
 }
 
@@ -9016,6 +9789,38 @@ public object FfiConverterOptionalShort: FfiConverterRustBuffer<kotlin.Short?> {
 /**
  * @suppress
  */
+public object FfiConverterOptionalUInt: FfiConverterRustBuffer<kotlin.UInt?> {
+    override fun read(buf: ByteBuffer): kotlin.UInt? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterUInt.read(buf)
+    }
+
+    override fun allocationSize(value: kotlin.UInt?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterUInt.allocationSize(value)
+        }
+    }
+
+    override fun write(value: kotlin.UInt?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterUInt.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterOptionalULong: FfiConverterRustBuffer<kotlin.ULong?> {
     override fun read(buf: ByteBuffer): kotlin.ULong? {
         if (buf.get().toInt() == 0) {
@@ -9336,6 +10141,38 @@ public object FfiConverterOptionalTypeRemoteNodePower: FfiConverterRustBuffer<Re
 /**
  * @suppress
  */
+public object FfiConverterOptionalTypeRemoteWifiOperation: FfiConverterRustBuffer<RemoteWifiOperation?> {
+    override fun read(buf: ByteBuffer): RemoteWifiOperation? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeRemoteWifiOperation.read(buf)
+    }
+
+    override fun allocationSize(value: RemoteWifiOperation?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeRemoteWifiOperation.allocationSize(value)
+        }
+    }
+
+    override fun write(value: RemoteWifiOperation?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeRemoteWifiOperation.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterOptionalTypeBytes16: FfiConverterRustBuffer<Bytes16?> {
     override fun read(buf: ByteBuffer): Bytes16? {
         if (buf.get().toInt() == 0) {
@@ -9514,6 +10351,34 @@ public object FfiConverterSequenceString: FfiConverterRustBuffer<List<kotlin.Str
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterString.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceByteArray: FfiConverterRustBuffer<List<kotlin.ByteArray>> {
+    override fun read(buf: ByteBuffer): List<kotlin.ByteArray> {
+        val len = buf.getInt()
+        return List<kotlin.ByteArray>(len) {
+            FfiConverterByteArray.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<kotlin.ByteArray>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterByteArray.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<kotlin.ByteArray>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterByteArray.write(it, buf)
         }
     }
 }
@@ -10142,6 +11007,20 @@ public typealias FfiConverterTypeSnapshotBox = FfiConverterTypeDevelopmentNodeSn
     }
 
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+     suspend fun `finishRemoteWifiTrial`(`input`: FinishRemoteWifiTrialInput) : RemoteWifiCommandOutcome {
+        return uniffiRustCallAsync(
+        UniffiLib.uniffi_prns_app_fn_func_finish_remote_wifi_trial(FfiConverterTypeFinishRemoteWifiTrialInput.lower(`input`),),
+        { future, callback, continuation -> UniffiLib.ffi_prns_app_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_prns_app_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_prns_app_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeRemoteWifiCommandOutcome.lift(it) },
+        // Error FFI converter
+        UniffiNullRustCallStatusErrorHandler,
+    )
+    }
+
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
      suspend fun `getContact`(`input`: ContactDestinationInput) : ContactLookupOutcome {
         return uniffiRustCallAsync(
         UniffiLib.uniffi_prns_app_fn_func_get_contact(FfiConverterTypeContactDestinationInput.lower(`input`),),
@@ -10164,6 +11043,20 @@ public typealias FfiConverterTypeSnapshotBox = FfiConverterTypeDevelopmentNodeSn
         { future -> UniffiLib.ffi_prns_app_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypeRemoteControlPairingCommandOutcome.lift(it) },
+        // Error FFI converter
+        UniffiNullRustCallStatusErrorHandler,
+    )
+    }
+
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+     suspend fun `inspectRemoteWifiTrial`(`input`: InspectRemoteWifiTrialInput) : RemoteWifiCommandOutcome {
+        return uniffiRustCallAsync(
+        UniffiLib.uniffi_prns_app_fn_func_inspect_remote_wifi_trial(FfiConverterTypeInspectRemoteWifiTrialInput.lower(`input`),),
+        { future, callback, continuation -> UniffiLib.ffi_prns_app_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_prns_app_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_prns_app_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeRemoteWifiCommandOutcome.lift(it) },
         // Error FFI converter
         UniffiNullRustCallStatusErrorHandler,
     )
@@ -10469,6 +11362,20 @@ public typealias FfiConverterTypeSnapshotBox = FfiConverterTypeDevelopmentNodeSn
         { future -> UniffiLib.ffi_prns_app_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypeContactMutationOutcome.lift(it) },
+        // Error FFI converter
+        UniffiNullRustCallStatusErrorHandler,
+    )
+    }
+
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+     suspend fun `startRemoteWifiTrial`(`input`: StartRemoteWifiTrialInput) : RemoteWifiCommandOutcome {
+        return uniffiRustCallAsync(
+        UniffiLib.uniffi_prns_app_fn_func_start_remote_wifi_trial(FfiConverterTypeStartRemoteWifiTrialInput.lower(`input`),),
+        { future, callback, continuation -> UniffiLib.ffi_prns_app_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_prns_app_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_prns_app_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeRemoteWifiCommandOutcome.lift(it) },
         // Error FFI converter
         UniffiNullRustCallStatusErrorHandler,
     )

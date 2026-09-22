@@ -170,6 +170,7 @@ type Reply<T> = oneshot::Sender<T>;
 enum Command {
     RemoteRead(management::ReadCommand),
     RemoteChange(RemoteChangeOperation, tokio::time::Instant),
+    RemoteWifi(wifi::WifiCommand),
     AnnounceSelf(RemoteControlAnnounceOperation),
     Snapshot(oneshot::Sender<DevelopmentNodeSnapshot>),
     Initiate(
@@ -997,6 +998,7 @@ async fn snapshot_async_with_supervisor(supervisor: &Supervisor) -> DevelopmentN
                     operation.kind,
                     DevelopmentNodeOperationKind::RemoteRead
                         | DevelopmentNodeOperationKind::RemoteChange
+                        | DevelopmentNodeOperationKind::RemoteWifi
                 )
             })
             || current
@@ -2404,6 +2406,13 @@ async fn run_actor_loop(
                     crate::remote_control::complete_announcement(snapshots, &operation.operation_id, status);
                     operation_admitted.store(false, Ordering::Release);
                 }
+                Some(Command::RemoteWifi(command)) => {
+                    if wifi::run(command, snapshots, operation_admitted, &mut shutdown_rx, handle, controls.pairing_in_progress()).await {
+                        commands.close();
+                        snapshots.set_runtime(DevelopmentNodeRuntime::Stopping);
+                        return Ok(());
+                    }
+                }
                 Some(Command::ObservedIdentity(destination, response)) => {
                     let identity = tokio::time::timeout(
                         HOST_INSPECTION_TIMEOUT,
@@ -3169,3 +3178,4 @@ fn wall_clock_millis() -> u64 {
 mod tests;
 
 mod management;
+mod wifi;
