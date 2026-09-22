@@ -21,6 +21,12 @@ values after restart, access inventory, and failed-network trials with explicit
 rollback. A separate firmware retry-wake candidate restores scanning promptly
 after rollback. Successful new-network Keep and iOS qualification remain open.
 
+The [September 22 UI refinement](../checkpoints/2026-09-22-ui-density.md) adds
+compact grouped layouts without native-contract or firmware changes. Its 319 app
+tests pass, and the retained-data Galaxy installation was checked for node reads,
+keyboard visibility, message disclosures and 1.5x/2x text navigation. These are
+presentation checks, not additional remote-write or iOS qualification.
+
 The expanded read/write screens have limited Galaxy/E290 evidence, not full
 physical qualification. Fresh Android
 pairing succeeded in a user-run trial against the separate E290 diagnostic
