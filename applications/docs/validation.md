@@ -16,6 +16,11 @@ adds automatic reads/organized sections, guided Wi-Fi trials and controller
 inventory/removal. Granting another controller access and the legacy Wi-Fi setter
 remain unimplemented.
 
+The linked workflow checkpoint records Galaxy/E290 LoRa read/write and restored
+values after restart, access inventory, and failed-network trials with explicit
+rollback. A separate firmware retry-wake candidate restores scanning promptly
+after rollback. Successful new-network Keep and iOS qualification remain open.
+
 The expanded read/write screens have limited Galaxy/E290 evidence, not full
 physical qualification. Fresh Android
 pairing succeeded in a user-run trial against the separate E290 diagnostic

@@ -111,15 +111,57 @@ This exposed two issues:
   Restore was requested around 01:19:28 UTC; scan resumed at 01:20:40, association
   at 01:20:43 and IPv4 was observed at 01:20:53. Source permits retry waits up to
   300 seconds, longer than the 120-second trial. A persisted rollback result is
-  not proof that the radio worker has applied it. This needs a separate upstream
-  fix; its branch and later validation are recorded below when complete.
+  not proof that the radio worker has applied it. The separate upstream fix and
+  its validation are recorded below.
 
 Board reset receipt: `scratch/prns-app/2026-09-21/settings-board-reset.log`.
 Post-reset physical trace: `settings-after-reset-trace.log` in the same directory.
 
+## Retry-wake fix and final installation
+
+`codex/wifi-credential-retry-wake` contains the isolated upstream candidate
+`6ce5c9ff0`, based directly on fetched trunk `8c211827b`. It wakes the station
+worker's retry wait when replacement credentials or a clear command arrive,
+without consuming the latest-command mailbox in the wait. It changes two core
+files; no protocol, deadline, persistence or confirmation rule changes. The app
+branch includes it as `c81e78ebb`. The branch is local, not pushed, with no PR.
+
+The candidate passes 211 shared-core tests, 32 ESP32 host-policy tests,
+library-only strict Clippy and an exact-head E290 release build. New mailbox
+regressions cover registered wakeups, replacement/clear retention, cancellation
+and stale notifications. All-targets strict Clippy remains blocked by the
+unchanged upstream `drop(first)` test warning; it is not reported as passing.
+
+The final standalone Android build at `c81e78ebb` was installed over the existing
+Galaxy data at 21:32:06 EDT. APK SHA256:
+`89f82d19d9580cce7ed2af5d90e2490fdf5f6958778114939b3d65f52b19d24c`.
+The cold launch and automatic settings read passed with the existing pairing.
+Build log: `scratch/prns-app/2026-09-21/settings-final-android-build.log`.
+
+The E290 test integration is `codex/e290-wifi-trial-diagnostics` at `c5ff748ab`,
+the existing menu-freeze diagnostic branch plus this fix. Its sparse flash
+verified all 2,351,488 bytes and preserved provisioning and grants. Application
+image: 2,327,360 bytes, SHA256
+`4202f6c8e18a69289da04fe784af1bc10452b8b890a61a07915d2d2660216474`.
+This is not a hardware test of the isolated upstream branch alone. Flash receipt:
+`scratch/prns-app/2026-09-21/wifi-retry-wake-diagnostic-flash.jsonl`.
+
+The repeated missing-network trial on this installed pair initially displayed
+119 seconds remaining without a manual refresh, confirming the bounded
+read-only activation reconciliation. The phone remained reachable over Bluetooth.
+The station entered a 120-second retry wait at 01:40:50.989 UTC. Restore reached
+the target at 01:41:36.713; scanning resumed at 01:41:36.972 (259 ms later),
+association completed at 01:41:39.983, and IPv4 was observed at 01:41:42.135.
+The app returned to the factory baseline with cleared fields. A subsequent fresh
+LoRa read still reported 22 dBm. No additional reset or serial reattachment
+occurred during this exercise, and the passive capture was stopped afterward.
+These are host-observed serial timestamps, not precise radio event latency.
+Physical retry-wake evidence is recorded in
+`scratch/prns-app/2026-09-21/settings-wifi-wake-fixed-trace.log`.
+
 ## Remaining qualification
 
 Wi-Fi success needs an explicit test network; no saved workstation credentials
-are read. Physical rollback, restart recovery, access inventory and final APK
-evidence are recorded only when actually exercised. No iOS install, Nordic
-hardware test, all-parameters test or production-release claim is made here.
+are read. No controller grant was actually removed on the physical board; native
+authenticated fixture coverage is distinct from that acceptance. No iOS install,
+Nordic hardware test, all-parameters test or production-release claim is made here.

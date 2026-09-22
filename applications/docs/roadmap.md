@@ -41,9 +41,10 @@ workflow and validation ownership; generated bindings feed capability-driven UI.
 
 The [settings workflow checkpoint](../checkpoints/2026-09-21-remote-settings-workflows.md)
 adds automatic reads, organized sections, transactional Wi-Fi trials and access
-inventory/removal. Next, extend physical qualification on Galaxy S9+,
-MetalbeardMobile and matching firmware, including Wi-Fi success/rollback and
-recovery. Design verified recipient onboarding before exposing controller
+inventory/removal. Galaxy/E290 checks cover LoRa read/write and restored values
+after restart, plus failed Wi-Fi trials and prompt explicit rollback. Next,
+qualify successful new-network Keep and extend these checks to MetalbeardMobile.
+Design verified recipient onboarding before exposing controller
 authorization. There is no deployed-pairing migration project or granular
 permissions picker: development devices can be reset and paired again. Live
 upstream capability and authority checks remain mandatory.
