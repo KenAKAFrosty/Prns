@@ -90,6 +90,8 @@ pub enum PreparationProfile {
     T114Uf2,
     #[cfg_attr(not(feature = "local-dev-flasher"), allow(dead_code))]
     MeshPocketUf2,
+    #[cfg_attr(not(feature = "local-dev-flasher"), allow(dead_code))]
+    MuziBaseDuoUf2,
     T096Uf2,
     T1000eNrfSerialDfu,
 }
@@ -229,16 +231,6 @@ pub const GROUPS: &[Group] = &[
 ];
 
 pub const UPCOMING_BOARD_TARGETS: &[BoardTarget] = &[
-    BoardTarget {
-        name: "muzi.works Base Duo",
-        slug: "muzi-works-base-duo",
-        silicon: "nRF52840 + LR1121",
-        tier: Tier::BringUp,
-        interfaces: &[],
-        icon: Some("nordicsemiconductor"),
-        preparation_profile: None,
-        flash_target: None,
-    },
     BoardTarget {
         name: "Raspberry Pi Zero 2 W",
         slug: "raspberry-pi-zero-2-w",
@@ -716,11 +708,7 @@ mod tests {
 
         assert_eq!(
             bring_up,
-            vec![
-                "muzi.works Base Duo",
-                "Raspberry Pi Zero 2 W",
-                "RAK WisBlock Starter Kit",
-            ]
+            vec!["Raspberry Pi Zero 2 W", "RAK WisBlock Starter Kit"]
         );
         assert!(
             UPCOMING_BOARD_TARGETS

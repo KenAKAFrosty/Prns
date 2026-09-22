@@ -731,6 +731,26 @@ const T096_UF2_RECIPE: PinnedUf2Recipe = PinnedUf2Recipe {
     }],
 };
 
+const MUZI_BASE_DUO_UF2_RECIPE: PinnedUf2Recipe = PinnedUf2Recipe {
+    preparation_profile: PreparationProfile::MuziBaseDuoUf2,
+    package: "t-echo",
+    binary: "muzi-base-duo",
+    board_feature: "board-muzi-base-duo",
+    manufacturer: "Stay Personal",
+    product: "Personal Hopspot (muzi Base Duo)",
+    serial_number: "PERSONAL-RNS-MBDUO-HOP",
+    variants: &[PinnedUf2Variant {
+        softdevice_family: "s140",
+        softdevice_version: "6.1.1",
+        fwid: "0x00b6",
+        memory_profile: "muzi-base-duo",
+        family_id: "0xada52840",
+        application_link: Uf2ApplicationLink::SoftdeviceS140V6,
+        target_directory: "target/muzi-base-duo",
+        filename: "muzi-base-duo-s140-6.1.1.uf2",
+    }],
+};
+
 fn pinned_uf2_recipe(slug: &str) -> Option<&'static PinnedUf2Recipe> {
     match slug {
         "t-echo" => Some(&T_ECHO_UF2_RECIPE),
@@ -738,6 +758,7 @@ fn pinned_uf2_recipe(slug: &str) -> Option<&'static PinnedUf2Recipe> {
         "mesh-pocket-10000" => Some(&MESH_POCKET_10000_UF2_RECIPE),
         "t096" => Some(&T096_UF2_RECIPE),
         "t114" => Some(&T114_UF2_RECIPE),
+        "muzi-base-duo" => Some(&MUZI_BASE_DUO_UF2_RECIPE),
         _ => None,
     }
 }
@@ -1036,6 +1057,7 @@ mod tests {
                 ("mesh-pocket-10000", None, None),
                 ("t096", None, None),
                 ("t1000-e", None, None),
+                ("muzi-base-duo", None, None),
             ]
         );
         Ok(())
@@ -1112,6 +1134,7 @@ mod tests {
                 ),
                 ("t096", "t096", "thumbv7em-none-eabihf"),
                 ("t1000-e", "t1000-e", "thumbv7em-none-eabihf"),
+                ("muzi-base-duo", "muzi-base-duo", "thumbv7em-none-eabihf"),
             ]
         );
         Ok(())

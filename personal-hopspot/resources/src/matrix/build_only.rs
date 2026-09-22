@@ -38,3 +38,7 @@ pub(super) const TARGETS: [BuildOnlyTarget; 2] = [
         },
     },
 ];
+
+pub(super) fn is_build_only(target_id: &str) -> bool {
+    TARGETS.iter().any(|target| target.id == target_id)
+}

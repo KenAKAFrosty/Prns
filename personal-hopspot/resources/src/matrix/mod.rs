@@ -167,6 +167,9 @@ impl<'a> Matrix<'a> {
                                 source,
                             }
                         })?;
+                        if build_only::is_build_only(memory.id().0) {
+                            continue;
+                        }
                         targets.push(Target {
                             id: memory.id().0.to_string(),
                             display_name: format!(
