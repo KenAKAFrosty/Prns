@@ -1,5 +1,5 @@
 use personal_rns::radios::lr1110::{
-    BoardConfig, HighPowerSelection, PowerAmplifierConfig, PowerAmplifierDutyCycle,
+    BoardConfig, HighPowerSelection, Lr11xxPart, PowerAmplifierConfig, PowerAmplifierDutyCycle,
     PowerAmplifierSelection, PowerAmplifierSupply, PowerAmplifierTable, ReceiveGain,
     ReferenceClock, RegulatorMode, RfSwitchConfig, RfSwitchPins, TcxoStartupTime, TcxoVoltage,
     TransmitRampTime,
@@ -84,6 +84,7 @@ const fn high_power(duty_cycle: u8, high_power_selection: u8) -> PowerAmplifierC
 
 pub(super) fn board_config() -> BoardConfig {
     BoardConfig {
+        part: Lr11xxPart::Lr1110,
         reference_clock: ReferenceClock::Tcxo {
             voltage: TcxoVoltage::V1_6,
             startup_time: TcxoStartupTime::from_rtc_ticks(TCXO_STARTUP_RTC_TICKS),

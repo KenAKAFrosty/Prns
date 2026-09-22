@@ -6,10 +6,10 @@ use embedded_hal::spi::{ErrorType as SpiErrorType, Operation};
 use embedded_hal_async::spi::SpiDevice;
 use prns_core::interfaces::subghz::regions::us915::US915_AUTO_LORA_PROFILE;
 use prns_interfaces_embassy::radios::lr1110::{
-    BoardConfig, Error, HighPowerSelection, Lr1110, PowerAmplifierConfig, PowerAmplifierDutyCycle,
-    PowerAmplifierSelection, PowerAmplifierSupply, PowerAmplifierTable, ReceiveGain,
-    ReferenceClock, RegulatorMode, RfSwitchConfig, RfSwitchPins, TcxoStartupTime, TcxoVoltage,
-    TransmitRampTime,
+    BoardConfig, Error, HighPowerSelection, Lr1110, Lr11xxPart, PowerAmplifierConfig,
+    PowerAmplifierDutyCycle, PowerAmplifierSelection, PowerAmplifierSupply, PowerAmplifierTable,
+    ReceiveGain, ReferenceClock, RegulatorMode, RfSwitchConfig, RfSwitchPins, TcxoStartupTime,
+    TcxoVoltage, TransmitRampTime,
 };
 use prns_interfaces_embassy::radios::{LoRaRadio, RadioEvent, RadioRecovery};
 
@@ -206,6 +206,7 @@ type Radio<'a> =
 
 fn board() -> BoardConfig {
     BoardConfig {
+        part: Lr11xxPart::Lr1110,
         reference_clock: ReferenceClock::Tcxo {
             voltage: TcxoVoltage::V1_6,
             startup_time: TcxoStartupTime::from_rtc_ticks(164),
