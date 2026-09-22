@@ -290,10 +290,14 @@ export function WifiSetupCard({
       ) : null}
       {fresh && awaiting !== undefined ? (
         <>
-          <BodyText>
-            At the last check, about {awaiting.remainingSeconds} seconds remained to keep this
-            network. Check again for the latest status.
-          </BodyText>
+          {awaiting.remainingSeconds === 0 ? (
+            <BodyText>Check network status to see whether this trial can still be saved.</BodyText>
+          ) : (
+            <BodyText>
+              At the last check, about {awaiting.remainingSeconds} seconds remained to keep this
+              network. Check again for the latest status.
+            </BodyText>
+          )}
           <ConfirmAction
             key={`keep:${awaiting.revision}`}
             label="Keep this network"

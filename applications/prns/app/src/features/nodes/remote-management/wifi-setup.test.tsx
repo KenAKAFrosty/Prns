@@ -208,6 +208,20 @@ test("only keeps the exact observed revision after warning that Bluetooth is not
   );
 });
 
+test("a zero remaining observation neither declares expiry nor permits keeping the trial", async () => {
+  const { runtime, finishRemoteWifiTrial } = fixture(
+    Bindings.RemoteWifiTransaction.AwaitingConfirmation.new({ revision: 91, remainingSeconds: 0 }),
+  );
+  const view = render(<WifiSetupCard target={target} runtime={runtime} busy={false} />);
+  expect(await view.findByRole("button", { name: "Keep this network" })).toBeDisabled();
+  expect(
+    view.getByText("Check network status to see whether this trial can still be saved."),
+  ).toBeTruthy();
+  expect(view.queryByText(/0 seconds remained/)).toBeNull();
+  expect(view.getByRole("button", { name: "Restore previous network" })).not.toBeDisabled();
+  expect(finishRemoteWifiTrial).not.toHaveBeenCalled();
+});
+
 test("a staged transaction can only be restored, never resumed or kept", async () => {
   const { runtime, finishRemoteWifiTrial } = fixture(
     Bindings.RemoteWifiTransaction.Staged.new({ revision: 12 }),

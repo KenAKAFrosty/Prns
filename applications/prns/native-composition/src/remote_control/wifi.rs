@@ -136,7 +136,7 @@ pub(crate) async fn execute(
             return failed(stage, detail);
         }
     }
-    exchange(&connected, work, dispatched, publish_candidate).await
+    exchange_with_deadline(&connected, work, dispatched, publish_candidate, deadline).await
 }
 
 trait Exchange {
@@ -201,11 +201,12 @@ impl Exchange for RemoteControlTargetHandle<'_> {
     }
 }
 
-async fn exchange(
+async fn exchange_with_deadline(
     target: &impl Exchange,
     work: Work,
     dispatched: &AtomicBool,
     publish_candidate: impl Fn(u32),
+    deadline: Instant,
 ) -> RemoteWifiStatus {
     use core::RemoteControlWifiTransactionStatus as Transaction;
     let before = match target.inspect().await {
@@ -236,7 +237,7 @@ async fn exchange(
             };
             publish_candidate(revision.get());
             match target.activate(revision).await {
-                Ok(outcome) => outcome == core::RemoteControlApplyOutcome::Scheduled,
+                Ok(_) => return observe_activation(target, revision, deadline).await,
                 Err(error) => return write_error(error),
             }
         }
@@ -288,9 +289,8 @@ async fn exchange(
         }
     };
     if scheduled {
-        // The target gives its response 250 ms before activating/restoring. Before
-        // that effect runs, Inspect can report AwaitingConfirmation with zero time.
-        // Yield beyond that grace once; this is not a connectivity/success check.
+        // Restoration has the same 250 ms response grace. Yield beyond it once;
+        // subsequent observation, not the grace delay, determines the reported state.
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     }
     match target.inspect().await {
@@ -300,6 +300,50 @@ async fn exchange(
         Err(_) => RemoteWifiStatus::OutcomeUnknown {
             reason: RemoteControlAnnounceUnknownReason::DeliveryUnconfirmed,
         },
+    }
+}
+
+/// Activation can be persisted well before its scheduled radio effect executes.
+/// AwaitingConfirmation(0) is ambiguous during that interval: it is not evidence
+/// that the freshly started trial has expired. Reconcile with bounded reads only;
+/// a completed confirmation/rollback or changed revision must never be hidden.
+async fn observe_activation(
+    target: &impl Exchange,
+    revision: core::RemoteControlWifiCredentialRevision,
+    operation_deadline: Instant,
+) -> RemoteWifiStatus {
+    use core::RemoteControlWifiTransactionStatus as Transaction;
+    let deadline = operation_deadline.min(Instant::now() + std::time::Duration::from_secs(5));
+    loop {
+        let value = match tokio::time::timeout_at(deadline, target.inspect()).await {
+            Ok(Ok(value)) => value,
+            Ok(Err(_)) => {
+                return RemoteWifiStatus::OutcomeUnknown {
+                    reason: RemoteControlAnnounceUnknownReason::DeliveryUnconfirmed,
+                }
+            }
+            Err(_) => {
+                return RemoteWifiStatus::OutcomeUnknown {
+                    reason: RemoteControlAnnounceUnknownReason::Timeout,
+                }
+            }
+        };
+        if !matches!(value, Transaction::AwaitingConfirmation { revision: pending, remaining } if pending == revision && remaining.seconds() == 0)
+        {
+            return observed(value);
+        }
+        if Instant::now() >= deadline {
+            return observed(value);
+        }
+        tokio::time::sleep_until(
+            (Instant::now() + std::time::Duration::from_millis(500)).min(deadline),
+        )
+        .await;
+        if Instant::now() >= deadline {
+            // The last observation remains the only fact established. Do not
+            // manufacture either a running timer or successful rollback.
+            return observed(value);
+        }
     }
 }
 

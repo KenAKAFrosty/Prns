@@ -10,6 +10,7 @@ use std::collections::VecDeque;
 type Result<T> = std::result::Result<T, RemoteControlTargetOperationError>;
 enum Step {
     Inspect(Result<Transaction>),
+    HangInspect,
     Stage(Result<core::RemoteControlWifiStageOutcome>),
     Activate(Result<Apply>),
     Keep(Result<Apply>),
@@ -37,6 +38,7 @@ impl Exchange for Script {
     async fn inspect(&self) -> Result<Transaction> {
         match self.next() {
             Step::Inspect(result) => result,
+            Step::HangInspect => std::future::pending().await,
             _ => panic!("expected inspect"),
         }
     }
@@ -101,6 +103,155 @@ fn protocol(error: core::RemoteControlProtocolError) -> RemoteControlTargetOpera
     RemoteControlTargetOperationError::Exchange(RemoteControlError::Remote(error))
 }
 
+async fn exchange(
+    target: &impl Exchange,
+    work: Work,
+    dispatched: &AtomicBool,
+    publish_candidate: impl Fn(u32),
+) -> RemoteWifiStatus {
+    exchange_with_deadline(
+        target,
+        work,
+        dispatched,
+        publish_candidate,
+        Instant::now() + std::time::Duration::from_secs(30),
+    )
+    .await
+}
+
+#[tokio::test(start_paused = true)]
+async fn delayed_activation_reconciles_zero_timer_without_replaying_mutations() {
+    let mut steps = vec![
+        Step::Inspect(Ok(Transaction::FactoryProvisioning)),
+        Step::Stage(Ok(core::RemoteControlWifiStageOutcome::Staged(rev(2)))),
+        Step::Activate(Ok(Apply::Scheduled)),
+    ];
+    steps.extend((0..6).map(|_| Step::Inspect(Ok(waiting(0)))));
+    steps.push(Step::Inspect(Ok(waiting(120))));
+    let script = Script::new(steps);
+    let began = Instant::now();
+    assert_eq!(
+        exchange(&script, start(), &AtomicBool::new(false), |_| {}).await,
+        observed(waiting(120))
+    );
+    assert_eq!(began.elapsed(), std::time::Duration::from_secs(3));
+    script.done();
+}
+
+#[tokio::test(start_paused = true)]
+async fn activation_reconciliation_read_is_bounded_by_original_deadline() {
+    let script = Script::new([
+        Step::Inspect(Ok(Transaction::FactoryProvisioning)),
+        Step::Stage(Ok(core::RemoteControlWifiStageOutcome::Staged(rev(2)))),
+        Step::Activate(Ok(Apply::Scheduled)),
+        Step::HangInspect,
+    ]);
+    let began = Instant::now();
+    assert_eq!(
+        exchange_with_deadline(
+            &script,
+            start(),
+            &AtomicBool::new(false),
+            |_| {},
+            began + std::time::Duration::from_secs(2)
+        )
+        .await,
+        RemoteWifiStatus::OutcomeUnknown {
+            reason: RemoteControlAnnounceUnknownReason::Timeout
+        }
+    );
+    assert_eq!(began.elapsed(), std::time::Duration::from_secs(2));
+    script.done();
+}
+
+#[tokio::test(start_paused = true)]
+async fn ordinary_inspection_does_not_poll_or_reinterpret_a_zero_timer() {
+    let script = Script::new([Step::Inspect(Ok(waiting(0)))]);
+    let began = Instant::now();
+    assert_eq!(
+        exchange(&script, Work::Inspect, &AtomicBool::new(false), |_| {}).await,
+        observed(waiting(0))
+    );
+    assert_eq!(began.elapsed(), std::time::Duration::ZERO);
+    script.done();
+}
+
+#[tokio::test(start_paused = true)]
+async fn activation_observation_respects_shorter_original_deadline() {
+    let script = Script::new([
+        Step::Inspect(Ok(Transaction::FactoryProvisioning)),
+        Step::Stage(Ok(core::RemoteControlWifiStageOutcome::Staged(rev(2)))),
+        Step::Activate(Ok(Apply::Scheduled)),
+        Step::Inspect(Ok(waiting(0))),
+        Step::Inspect(Ok(waiting(0))),
+        Step::Inspect(Ok(waiting(0))),
+    ]);
+    let began = Instant::now();
+    assert_eq!(
+        exchange_with_deadline(
+            &script,
+            start(),
+            &AtomicBool::new(false),
+            |_| {},
+            began + std::time::Duration::from_millis(1200)
+        )
+        .await,
+        observed(waiting(0))
+    );
+    assert_eq!(began.elapsed(), std::time::Duration::from_millis(1200));
+    script.done();
+}
+
+#[tokio::test(start_paused = true)]
+async fn activation_observation_stops_after_five_seconds_even_when_timer_stays_zero() {
+    let mut steps = vec![
+        Step::Inspect(Ok(Transaction::FactoryProvisioning)),
+        Step::Stage(Ok(core::RemoteControlWifiStageOutcome::Staged(rev(2)))),
+        Step::Activate(Ok(Apply::Scheduled)),
+    ];
+    steps.extend((0..10).map(|_| Step::Inspect(Ok(waiting(0)))));
+    let script = Script::new(steps);
+    let began = Instant::now();
+    assert_eq!(
+        exchange(&script, start(), &AtomicBool::new(false), |_| {}).await,
+        observed(waiting(0))
+    );
+    assert_eq!(began.elapsed(), std::time::Duration::from_secs(5));
+    script.done();
+}
+
+#[tokio::test(start_paused = true)]
+async fn activation_reconciliation_preserves_revision_changes_and_lost_observations() {
+    let different = Transaction::AwaitingConfirmation {
+        revision: rev(3),
+        remaining: core::RemoteControlWifiConfirmationRemaining::new(0).expect("bounded"),
+    };
+    for next in [
+        Ok(different),
+        Ok(Transaction::Confirmed { revision: rev(1) }),
+        Err(lost()),
+    ] {
+        let expected = match next.as_ref() {
+            Ok(value) => observed(*value),
+            Err(_) => RemoteWifiStatus::OutcomeUnknown {
+                reason: RemoteControlAnnounceUnknownReason::DeliveryUnconfirmed,
+            },
+        };
+        let script = Script::new([
+            Step::Inspect(Ok(Transaction::FactoryProvisioning)),
+            Step::Stage(Ok(core::RemoteControlWifiStageOutcome::Staged(rev(2)))),
+            Step::Activate(Ok(Apply::Scheduled)),
+            Step::Inspect(Ok(waiting(0))),
+            Step::Inspect(next),
+        ]);
+        assert_eq!(
+            exchange(&script, start(), &AtomicBool::new(false), |_| {}).await,
+            expected
+        );
+        script.done();
+    }
+}
+
 #[test]
 fn credential_validation_uses_utf8_bytes_and_redacts_secrets() {
     let input = |ssid: String, password: String| StartRemoteWifiTrialInput {
@@ -145,6 +296,7 @@ async fn start_stages_once_activates_once_then_observes_not_confirms() {
 async fn existing_or_recovered_trial_is_never_overwritten_or_activated() {
     for before in [
         Transaction::Staged { revision: rev(2) },
+        waiting(0),
         waiting(70),
         Transaction::RollingBack {
             rejected_revision: rev(2),
