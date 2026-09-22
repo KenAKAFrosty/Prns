@@ -3,7 +3,7 @@ import { useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { DevelopmentRuntimeView } from "@/native/development-runtime-context";
-import { BodyText, Button, Card, Subheading } from "@/ui/primitives";
+import { BodyText, Button, Card, CardHeader } from "@/ui/primitives";
 import { formatBytes } from "./format";
 import {
   RemoteChangeStatusCard,
@@ -275,29 +275,33 @@ export function RemoteManagementPanel({
   return (
     <>
       <Card>
-        <Subheading>Node status</Subheading>
-        <BodyText muted>
-          {busy
-            ? overview === undefined
-              ? "Loading node settings…"
-              : "Refreshing node information…"
-            : pending
-              ? "Waiting for the current change to finish…"
-              : runtime.snapshot?.activeOperation !== undefined
-                ? "Waiting for another operation to finish…"
-                : overview === undefined
-                  ? "Settings will appear when the node responds."
-                  : fresh
-                    ? "Information received from the node."
+        <CardHeader title="Node information">
+          <Button
+            disabled={blocked}
+            tone="secondary"
+            accessibilityLabel={
+              busy ? "Loading…" : failure !== undefined ? "Try again" : "Refresh node information"
+            }
+            onPress={() => void read(Bindings.RemoteNodeQuery.Overview.new())}
+          >
+            {busy ? "Loading…" : failure !== undefined ? "Try again" : "Refresh"}
+          </Button>
+        </CardHeader>
+        {fresh && !blocked ? null : (
+          <BodyText muted>
+            {busy
+              ? overview === undefined
+                ? "Loading node settings…"
+                : "Refreshing node information…"
+              : pending
+                ? "Waiting for the current change to finish…"
+                : runtime.snapshot?.activeOperation !== undefined
+                  ? "Waiting for another operation to finish…"
+                  : overview === undefined
+                    ? "Settings will appear when the node responds."
                     : "Showing the last information received. Refresh before changing settings."}
-        </BodyText>
-        <Button
-          disabled={blocked}
-          tone="secondary"
-          onPress={() => void read(Bindings.RemoteNodeQuery.Overview.new())}
-        >
-          {busy ? "Loading…" : failure !== undefined ? "Try again" : "Refresh node information"}
-        </Button>
+          </BodyText>
+        )}
         {failure === undefined ? null : <BodyText>{failure}</BodyText>}
         {admissionUncertain ? (
           <>
@@ -318,7 +322,7 @@ export function RemoteManagementPanel({
           options={[
             { value: "interfaces", label: "Interfaces" },
             { value: "device", label: "Device" },
-            { value: "information", label: "Information" },
+            { value: "information", label: "Information", shortLabel: "Info" },
             ...(available.includes(Bindings.RemoteControlRequestKind.InventoryControllers) ||
             controllers !== undefined
               ? [{ value: "access", label: "Access" }]

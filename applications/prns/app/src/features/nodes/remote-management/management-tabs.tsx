@@ -1,4 +1,4 @@
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 
 import { radius, space, useAppPalette } from "@/ui/theme";
 
@@ -10,11 +10,16 @@ export function ManagementTabs({
   onChange,
 }: {
   readonly label: string;
-  readonly options: readonly { readonly value: string; readonly label: string }[];
+  readonly options: readonly {
+    readonly value: string;
+    readonly label: string;
+    readonly shortLabel?: string;
+  }[];
   readonly value: string;
   readonly onChange: (value: string) => void;
 }) {
   const palette = useAppPalette();
+  const { width, fontScale } = useWindowDimensions();
   return (
     <View accessibilityRole="tablist" accessibilityLabel={label} style={styles.tabs}>
       {options.map((option) => (
@@ -29,10 +34,14 @@ export function ManagementTabs({
             {
               backgroundColor: option.value === value ? palette.selected : palette.surface,
               borderColor: option.value === value ? palette.focus : palette.border,
+              minWidth: 64 * fontScale,
+              flexBasis: width / fontScale < 360 ? "45%" : 0,
             },
           ]}
         >
-          <Text style={[styles.label, { color: palette.text }]}>{option.label}</Text>
+          <Text style={[styles.label, { color: palette.text }]}>
+            {option.shortLabel ?? option.label}
+          </Text>
         </Pressable>
       ))}
     </View>
@@ -40,14 +49,16 @@ export function ManagementTabs({
 }
 
 const styles = StyleSheet.create({
-  tabs: { flexDirection: "row", flexWrap: "wrap", gap: space.sm },
+  tabs: { flexDirection: "row", flexWrap: "wrap", gap: space.xs },
   tab: {
-    borderWidth: 2,
+    borderWidth: 1,
     borderRadius: radius.sm,
+    flexBasis: 0,
+    flexGrow: 1,
     minHeight: 48,
     justifyContent: "center",
-    paddingHorizontal: space.md,
+    paddingHorizontal: 6,
     paddingVertical: space.sm,
   },
-  label: { fontSize: 16, fontWeight: "600", lineHeight: 24 },
+  label: { fontSize: 14, fontWeight: "600", lineHeight: 20, textAlign: "center" },
 });

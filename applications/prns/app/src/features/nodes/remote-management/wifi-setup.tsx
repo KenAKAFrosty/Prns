@@ -7,7 +7,7 @@ import type {
   DevelopmentRuntimeView,
   RuntimeCommandResult,
 } from "@/native/development-runtime-context";
-import { BodyText, Button, Card, Subheading } from "@/ui/primitives";
+import { BodyText, Button, Card, CardHeader, CardSection } from "@/ui/primitives";
 import { TextField } from "@/ui/text-field";
 import { formatBytes } from "../format";
 import { remoteManagementFailureMessage } from "./change-status";
@@ -226,11 +226,17 @@ export function WifiSetupCard({
 
   return (
     <Card>
-      <Subheading>Wi-Fi network</Subheading>
-      <BodyText>
-        Try a network before saving it. If you do not keep it in time, the node restores its
-        previous network.
-      </BodyText>
+      <CardHeader title="Wi-Fi network">
+        <Button
+          disabled={blocked}
+          tone="secondary"
+          accessibilityLabel="Check network status"
+          onPress={() => void inspect()}
+        >
+          Check status
+        </Button>
+      </CardHeader>
+      <BodyText muted>Unconfirmed trials automatically restore the previous network.</BodyText>
       {submitting || pending ? <BodyText>Waiting for the node…</BodyText> : null}
       {!fresh && !submitting && !pending ? (
         <BodyText muted>Check the node's network status before making a change.</BodyText>
@@ -242,14 +248,11 @@ export function WifiSetupCard({
           to continue.
         </BodyText>
       ) : null}
-      <Button disabled={blocked} tone="secondary" onPress={() => void inspect()}>
-        Check network status
-      </Button>
       {fresh && transaction !== undefined ? (
         <BodyText>{wifiTransactionMessage(transaction)}</BodyText>
       ) : null}
       {canEnterNetwork ? (
-        <>
+        <CardSection title="Try a network">
           <TextField
             label="Network name"
             value={ssid}
@@ -286,7 +289,7 @@ export function WifiSetupCard({
               )
             }
           />
-        </>
+        </CardSection>
       ) : null}
       {fresh && awaiting !== undefined ? (
         <>

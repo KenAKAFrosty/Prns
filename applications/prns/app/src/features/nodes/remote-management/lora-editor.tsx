@@ -1,7 +1,7 @@
 import type * as Bindings from "@prns-internal/expo";
 import { useState } from "react";
 
-import { BodyText, CardStack } from "@/ui/primitives";
+import { ActionRow, BodyText, CardStack } from "@/ui/primitives";
 import { TextField } from "@/ui/text-field";
 import { ChoiceField } from "./choice-field";
 import { ConfirmAction } from "./confirm-action";
@@ -29,7 +29,7 @@ export function LoRaEditor({
     ["frequencyHz", "Frequency (Hz)", 0, 0xffff_ffff],
     ["spreadingFactor", "Spreading factor", 0, 255],
     ["bandwidthHz", "Bandwidth (Hz)", 0, 0xffff_ffff],
-    ["codingRate", "Coding rate denominator (5 for 4/5)", 0, 255],
+    ["codingRate", "Coding rate (4/x)", 0, 255],
     ["txPowerDbm", "Transmit power (dBm)", -128, 127],
     ["preambleSymbols", "Preamble symbols", 0, 65535],
   ] as const;
@@ -53,16 +53,21 @@ export function LoRaEditor({
         onChange={setRegion}
         disabled={busy}
       />
-      {inputFields.map(([name, label]) => (
-        <TextField
-          key={name}
-          label={label}
-          value={fields[name]}
-          editable={!busy}
-          keyboardType={name === "txPowerDbm" ? "numbers-and-punctuation" : "number-pad"}
-          onChangeText={(text) => setFields((previous) => ({ ...previous, [name]: text }))}
-        />
-      ))}
+      <ActionRow>
+        {inputFields.map(([name, label]) => (
+          <TextField
+            key={name}
+            label={label}
+            accessibilityLabel={
+              name === "codingRate" ? "Coding rate denominator (5 for 4/5)" : label
+            }
+            value={fields[name]}
+            editable={!busy}
+            keyboardType={name === "txPowerDbm" ? "numbers-and-punctuation" : "number-pad"}
+            onChangeText={(text) => setFields((previous) => ({ ...previous, [name]: text }))}
+          />
+        ))}
+      </ActionRow>
       <BodyText muted>
         Use the same radio settings on the nodes you want to reach. The node checks whether these
         values are supported.

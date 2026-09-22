@@ -382,6 +382,8 @@ test("peer paging requests more explicitly without hiding the current entries", 
   const view = render(
     <RemoteInterfaceCard {...basicProps} peers={peers} onLoadMorePeers={onLoadMorePeers} />,
   );
+  expect(view.queryByText("-70 dBm · -1.25 dB signal-to-noise · 0% quality")).toBeNull();
+  fireEvent.press(view.getByRole("button", { name: "Show connection details" }));
   expect(view.getByText("Limited connection")).toBeTruthy();
   expect(view.getByText("-70 dBm · -1.25 dB signal-to-noise · 0% quality")).toBeTruthy();
   fireEvent.press(view.getByRole("button", { name: "Load more peers" }));

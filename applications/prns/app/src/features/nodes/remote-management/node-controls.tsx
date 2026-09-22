@@ -1,6 +1,6 @@
 import * as Bindings from "@prns-internal/expo";
 
-import { BodyText, Button, Card, CardStack, Subheading } from "@/ui/primitives";
+import { ActionRow, BodyText, Button, Card, CardSection, Subheading } from "@/ui/primitives";
 import { ConfirmAction } from "./confirm-action";
 
 export type RemoteChangeHandler = (change: Bindings.RemoteNodeChange) => void;
@@ -39,9 +39,7 @@ export function NodeControls({
       {positioning || visibility || displayAutoOff ? (
         <Card>
           <Subheading>Display and positioning</Subheading>
-          <BodyText muted>
-            These actions request a change; the node does not report their current settings.
-          </BodyText>
+          <BodyText muted>Current settings are not reported by this node.</BodyText>
           {positioning ? (
             <ActionPair
               title="Satellite positioning"
@@ -85,11 +83,8 @@ export function NodeControls({
       {systemPower || radioMode || sleepRadios || wakeRadios ? (
         <Card>
           <Subheading>Connections and power</Subheading>
-          <BodyText muted>
-            Changing a connection or putting the node to sleep may disconnect this app.
-          </BodyText>
           {systemPower ? (
-            <>
+            <CardSection title="Node power">
               <ConfirmAction
                 label="Sleep node"
                 warning="The node may stop responding. Make sure you can wake it using its controls or another working connection."
@@ -109,10 +104,10 @@ export function NodeControls({
               <BodyText muted>
                 Wake requests work only while a connection to the node is still available.
               </BodyText>
-            </>
+            </CardSection>
           ) : null}
           {radioMode ? (
-            <>
+            <CardSection title="Connection mode">
               <ConfirmAction
                 label="Use Bluetooth"
                 warning="Switching to Bluetooth may turn off the node's Wi-Fi hotspot. Make sure Bluetooth is available before continuing."
@@ -137,28 +132,34 @@ export function NodeControls({
                   )
                 }
               />
-            </>
+            </CardSection>
           ) : null}
-          {sleepRadios ? (
-            <ConfirmAction
-              label="Pause radios"
-              warning="Paused radios may disconnect the app. Make sure you can use the node's controls or another connection to resume them."
-              confirmationLabel="Pause node radios"
-              disabled={busy}
-              onConfirm={() => onChange(Bindings.RemoteNodeChange.SleepRadios.new())}
-            />
-          ) : null}
-          {wakeRadios ? (
-            <>
-              <Button
-                disabled={busy}
-                tone="secondary"
-                onPress={() => onChange(Bindings.RemoteNodeChange.WakeRadios.new())}
-              >
-                Resume radios
-              </Button>
-              <BodyText muted>The node must still be reachable to receive this request.</BodyText>
-            </>
+          {sleepRadios || wakeRadios ? (
+            <CardSection title="Radios">
+              {sleepRadios ? (
+                <ConfirmAction
+                  label="Pause radios"
+                  warning="Paused radios may disconnect the app. Make sure you can use the node's controls or another connection to resume them."
+                  confirmationLabel="Pause node radios"
+                  disabled={busy}
+                  onConfirm={() => onChange(Bindings.RemoteNodeChange.SleepRadios.new())}
+                />
+              ) : null}
+              {wakeRadios ? (
+                <>
+                  <Button
+                    disabled={busy}
+                    tone="secondary"
+                    onPress={() => onChange(Bindings.RemoteNodeChange.WakeRadios.new())}
+                  >
+                    Resume radios
+                  </Button>
+                  <BodyText muted>
+                    The node must still be reachable to receive this request.
+                  </BodyText>
+                </>
+              ) : null}
+            </CardSection>
           ) : null}
         </Card>
       ) : null}
@@ -182,14 +183,15 @@ function ActionPair({
   readonly onSecond: () => void;
 }) {
   return (
-    <CardStack>
-      <BodyText>{title}</BodyText>
-      <Button disabled={busy} onPress={onFirst} tone="secondary">
-        {first}
-      </Button>
-      <Button disabled={busy} onPress={onSecond} tone="secondary">
-        {second}
-      </Button>
-    </CardStack>
+    <CardSection title={title}>
+      <ActionRow>
+        <Button disabled={busy} onPress={onFirst} tone="secondary">
+          {first}
+        </Button>
+        <Button disabled={busy} onPress={onSecond} tone="secondary">
+          {second}
+        </Button>
+      </ActionRow>
+    </CardSection>
   );
 }

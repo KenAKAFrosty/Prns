@@ -1,6 +1,6 @@
 import * as Bindings from "@prns-internal/expo";
 
-import { Badge, BodyText, Button, Card, CardStack, KeyValue, Subheading } from "@/ui/primitives";
+import { Badge, BodyText, Button, Card, CardHeader, CardSection, KeyValue } from "@/ui/primitives";
 import { formatBytes } from "../format";
 import { ConfirmAction } from "./confirm-action";
 import type { RemoteChangeHandler } from "./node-controls";
@@ -35,26 +35,32 @@ export function ControllerAccessCard({
 
   return (
     <Card>
-      <Subheading>Devices with access</Subheading>
+      <CardHeader title="Devices with access">
+        <Button
+          disabled={busy}
+          onPress={onLoad}
+          tone="secondary"
+          accessibilityLabel={page === undefined ? "Load devices" : "Refresh devices"}
+        >
+          {page === undefined ? "Load" : "Refresh"}
+        </Button>
+      </CardHeader>
       <BodyText muted>
         The node identifies devices by their IDs. Some devices have protected access that cannot be
         removed remotely.
       </BodyText>
-      <Button disabled={busy} onPress={onLoad} tone="secondary">
-        {page === undefined ? "Load devices" : "Refresh devices"}
-      </Button>
       {page?.identities.length === 0 ? <BodyText>No devices were reported.</BodyText> : null}
       {page?.identities.map((identity) => {
         const formatted = formatBytes(identity);
         const isCurrent = formatted === currentIdentity;
         const label = isCurrent ? "This phone" : `Device ${formatted.slice(0, 8)}`;
         return (
-          <CardStack key={formatted}>
-            <Subheading>{label}</Subheading>
+          <CardSection key={formatted}>
+            <CardHeader title={label}>
+              {isCurrent ? <Badge>Current device</Badge> : null}
+            </CardHeader>
             <KeyValue label="Device ID" value={formatted} />
-            {isCurrent ? (
-              <Badge>Current device</Badge>
-            ) : canRemove ? (
+            {!isCurrent && canRemove ? (
               <ConfirmAction
                 label={`Remove access for ${formatted.slice(0, 8)}`}
                 warning={`Remove this device's access to the node? It will need to be authorized again to reconnect. Device ID: ${formatted}`}
@@ -69,7 +75,7 @@ export function ControllerAccessCard({
                 }
               />
             ) : null}
-          </CardStack>
+          </CardSection>
         );
       })}
       {page?.next !== undefined && onLoadMore !== undefined ? (

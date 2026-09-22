@@ -6,11 +6,13 @@ import { useState } from "react";
 import { useDevelopmentRuntime } from "@/native/development-runtime-context";
 import { NavigationLink } from "@/ui/navigation-link";
 import {
+  ActionRow,
   Badge,
   BodyText,
   Button,
   Card,
-  CardStack,
+  CardHeader,
+  CardSection,
   KeyValue,
   Screen,
   ScreenHeading,
@@ -38,9 +40,96 @@ export function NodesScreen() {
 
   return (
     <Screen>
-      <Badge>Your network</Badge>
       <ScreenHeading>Nodes</ScreenHeading>
-      <BodyText>Manage this device and the nodes paired with it.</BodyText>
+      <BodyText>Manage your paired nodes and this device.</BodyText>
+
+      <Card>
+        <CardHeader title="Paired nodes">
+          {runtime.snapshot?.runtime === Bindings.DevelopmentNodeRuntime.Running &&
+          runtime.snapshot.pairedTargets.length > 0 ? (
+            <Badge>Paired</Badge>
+          ) : null}
+        </CardHeader>
+        {runtime.snapshot === null ? null : runtime.snapshot.runtime !==
+          Bindings.DevelopmentNodeRuntime.Running ? (
+          <>
+            <Badge>Paired nodes unavailable</Badge>
+            <BodyText>
+              Your paired nodes will appear when this device&apos;s node is running.
+            </BodyText>
+          </>
+        ) : runtime.snapshot.pairedTargets.length === 0 ? (
+          <>
+            <Badge>No paired nodes</Badge>
+            <BodyText>Pair a node to manage it from this device.</BodyText>
+          </>
+        ) : (
+          runtime.snapshot.pairedTargets.map((target) => {
+            const targetId = formatBytes(target.targetIdentityFingerprint);
+            const managedHref: Href = {
+              pathname: "/nodes/managed/[nodeId]",
+              params: { nodeId: targetId },
+            };
+            return (
+              <CardSection key={targetId}>
+                <KeyValue label="Node ID" value={targetId} />
+                <KeyValue
+                  label="Available controls"
+                  value={
+                    target.permittedRequests.length === 0
+                      ? "None"
+                      : summarizePairingAccess(target.permittedRequests)
+                  }
+                />
+                <ActionRow>
+                  <NavigationLink href={managedHref}>Manage node</NavigationLink>
+                </ActionRow>
+              </CardSection>
+            );
+          })
+        )}
+        <CardSection>
+          <ActionRow>
+            <NavigationLink href="/nodes/pair">Pair a node</NavigationLink>
+          </ActionRow>
+        </CardSection>
+      </Card>
+
+      <NodeRecoveryCard showDiagnosticsLink />
+
+      <Card>
+        <CardHeader title="This device">
+          {runtime.snapshot === null ? null : (
+            <Badge
+              tone={
+                runtime.snapshot.runtime === Bindings.DevelopmentNodeRuntime.Failed
+                  ? "warning"
+                  : "neutral"
+              }
+            >
+              {formatRuntime(runtime.snapshot.runtime)}
+            </Badge>
+          )}
+        </CardHeader>
+        {runtime.snapshot === null ? null : (
+          <>
+            {runtime.backgroundFailure === null ? null : (
+              <BodyText>Automatic refresh failed. Try refreshing again.</BodyText>
+            )}
+            {refreshFailure === null ? null : <BodyText>Refresh failed. Try again.</BodyText>}
+            <ActionRow>
+              <Button disabled={refreshing} onPress={() => void refresh()} tone="secondary">
+                {refreshing ? "Refreshing…" : "Refresh now"}
+              </Button>
+              <NavigationLink href="/nodes/local">View this device</NavigationLink>
+            </ActionRow>
+          </>
+        )}
+        <CardSection>
+          <NavigationLink href="/nodes/local/grants">Remote access</NavigationLink>
+        </CardSection>
+      </Card>
+
       <AndroidBluetoothCard />
 
       {runtime.accessorySetup?.phase === "setupRequired" ? (
@@ -79,68 +168,7 @@ export function NodesScreen() {
         </Card>
       ) : null}
 
-      <NodeRecoveryCard showDiagnosticsLink />
       <AndroidNodeControls />
-
-      {runtime.snapshot === null ? null : (
-        <>
-          <Card>
-            {runtime.backgroundFailure === null ? null : (
-              <BodyText>Automatic refresh failed. Try refreshing again.</BodyText>
-            )}
-            {refreshFailure === null ? null : <BodyText>Refresh failed. Try again.</BodyText>}
-            <Button disabled={refreshing} onPress={() => void refresh()} tone="secondary">
-              {refreshing ? "Refreshing…" : "Refresh now"}
-            </Button>
-            <NavigationLink href="/nodes/local">View this device</NavigationLink>
-          </Card>
-
-          <Subheading>Paired nodes</Subheading>
-          {runtime.snapshot.runtime !== Bindings.DevelopmentNodeRuntime.Running ? (
-            <Card>
-              <Badge>Paired nodes unavailable</Badge>
-              <BodyText>
-                Your paired nodes will appear when this device&apos;s node is running.
-              </BodyText>
-            </Card>
-          ) : runtime.snapshot.pairedTargets.length === 0 ? (
-            <Card>
-              <Badge>No paired nodes</Badge>
-              <BodyText>Pair a node to manage it from this device.</BodyText>
-            </Card>
-          ) : (
-            runtime.snapshot.pairedTargets.map((target) => {
-              const targetId = formatBytes(target.targetIdentityFingerprint);
-              const managedHref: Href = {
-                pathname: "/nodes/managed/[nodeId]",
-                params: { nodeId: targetId },
-              };
-              return (
-                <Card key={targetId}>
-                  <Subheading>Paired node</Subheading>
-                  <Badge>Paired</Badge>
-                  <KeyValue label="Node ID" value={targetId} />
-                  <KeyValue label="Destination" value={formatBytes(target.destination)} />
-                  <KeyValue
-                    label="Available controls"
-                    value={
-                      target.permittedRequests.length === 0
-                        ? "None"
-                        : summarizePairingAccess(target.permittedRequests)
-                    }
-                  />
-                  <NavigationLink href={managedHref}>Manage node</NavigationLink>
-                </Card>
-              );
-            })
-          )}
-        </>
-      )}
-
-      <CardStack>
-        <NavigationLink href="/nodes/pair">Pair a node</NavigationLink>
-        <NavigationLink href="/nodes/local/grants">Remote access</NavigationLink>
-      </CardStack>
     </Screen>
   );
 }

@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import { BodyText, Button, CardStack } from "@/ui/primitives";
+import { ActionRow, BodyText, Button, CardSection, CardStack } from "@/ui/primitives";
 
 /** Confirmation is presentation only; the native owner still admits the change. */
 export function ConfirmAction({
@@ -24,22 +24,24 @@ export function ConfirmAction({
         {label}
       </Button>
       {confirming ? (
-        <>
+        <CardSection>
           <BodyText>{warning}</BodyText>
-          <Button
-            disabled={disabled}
-            onPress={() => {
-              setConfirming(false);
-              onConfirm();
-            }}
-            tone="destructive"
-          >
-            {confirmationLabel}
-          </Button>
-          <Button onPress={() => setConfirming(false)} tone="secondary">
-            Cancel
-          </Button>
-        </>
+          <ActionRow>
+            <Button
+              disabled={disabled}
+              onPress={() => {
+                setConfirming(false);
+                onConfirm();
+              }}
+              tone="destructive"
+            >
+              {confirmationLabel}
+            </Button>
+            <Button onPress={() => setConfirming(false)} tone="secondary">
+              Cancel
+            </Button>
+          </ActionRow>
+        </CardSection>
       ) : null}
     </CardStack>
   );

@@ -1,7 +1,18 @@
 import * as Bindings from "@prns-internal/expo";
 import { useState } from "react";
 
-import { Badge, BodyText, Button, Card, CardStack, KeyValue, Subheading } from "@/ui/primitives";
+import {
+  ActionRow,
+  Badge,
+  BodyText,
+  Button,
+  Card,
+  CardHeader,
+  CardSection,
+  CardStack,
+  KeyValue,
+  Subheading,
+} from "@/ui/primitives";
 import { TextField } from "@/ui/text-field";
 import { formatBytes } from "../format";
 import { ChoiceField } from "./choice-field";
@@ -74,8 +85,9 @@ export function RemoteInterfaceCard({
 
   return (
     <Card>
-      <Subheading>{card?.name || interfaceKindLabel(entry.kind)}</Subheading>
-      <Badge>{connectionLabel(entry.connection)}</Badge>
+      <CardHeader title={card?.name || interfaceKindLabel(entry.kind)}>
+        <Badge>{connectionLabel(entry.connection)}</Badge>
+      </CardHeader>
       <KeyValue label="Power" value={entry.enabled ? "On" : "Off"} />
       <KeyValue
         label="Mode"
@@ -84,109 +96,124 @@ export function RemoteInterfaceCard({
       {unknown ? (
         <BodyText>This interface is no longer available. Refresh the node's interfaces.</BodyText>
       ) : null}
-      {card === undefined ? null : <InterfaceDetails card={card} />}
-      {groups === undefined ? null : (
-        <KeyValue
-          label="Discovery groups"
-          value={groups.length === 0 ? "None" : groups.join(", ")}
-        />
-      )}
-      {canInspect ? (
-        <Button disabled={busy} tone="secondary" onPress={onLoadDetails}>
-          {details === undefined ? "Load interface settings" : "Refresh interface settings"}
-        </Button>
-      ) : null}
-      {allows(Bindings.RemoteControlRequestKind.InventoryInterfacePeers) ? (
-        <Button disabled={busy} tone="secondary" onPress={onLoadPeers}>
-          {peers === undefined ? "View connected peers" : "Refresh peers"}
-        </Button>
-      ) : null}
-      {peers === undefined ? null : (
-        <PeerList page={peers} busy={busy} onLoadMore={onLoadMorePeers} />
-      )}
-      {!unknown && allows(Bindings.RemoteControlRequestKind.SetInterfacePower) ? (
-        entry.enabled ? (
-          <ConfirmAction
-            label="Turn interface off"
-            warning="If this interface carries the app's connection, turning it off will disconnect you. Make sure you can use another connection or the node's controls to turn it back on."
-            confirmationLabel="Turn off"
-            disabled={busy}
-            onConfirm={() =>
-              change(
-                Bindings.RemoteNodeChange.InterfacePower.new({
-                  interfaceId: entry.interfaceId,
-                  enabled: false,
-                }),
-              )
-            }
-          />
-        ) : (
-          <Button
-            disabled={busy}
-            tone="secondary"
-            onPress={() =>
-              change(
-                Bindings.RemoteNodeChange.InterfacePower.new({
-                  interfaceId: entry.interfaceId,
-                  enabled: true,
-                }),
-              )
-            }
-          >
-            Turn interface on
-          </Button>
-        )
+      {card?.failure ? <BodyText>This interface needs attention: {card.failure}</BodyText> : null}
+      {card !== undefined || groups !== undefined || canInspect || (!unknown && canConfigure) ? (
+        <CardSection title="Settings">
+          {editing || card === undefined ? null : <InterfaceDetails card={card} />}
+          {editing || groups === undefined ? null : (
+            <KeyValue
+              label="Discovery groups"
+              value={groups.length === 0 ? "None" : groups.join(", ")}
+            />
+          )}
+          <ActionRow>
+            {canInspect ? (
+              <Button
+                disabled={busy}
+                tone="secondary"
+                onPress={onLoadDetails}
+                accessibilityLabel={
+                  details === undefined ? "Load interface settings" : "Refresh interface settings"
+                }
+              >
+                {details === undefined ? "Load settings" : "Refresh settings"}
+              </Button>
+            ) : null}
+            {!unknown && canConfigure ? (
+              <Button
+                disabled={busy}
+                tone="secondary"
+                accessibilityLabel={editing ? "Close settings editor" : "Edit interface settings"}
+                accessibilityState={{ expanded: editing }}
+                onPress={() => setEditing((previous) => !previous)}
+              >
+                {editing ? "Close editor" : "Edit settings"}
+              </Button>
+            ) : null}
+          </ActionRow>
+          {editing && !unknown ? (
+            <InterfaceEditor
+              entry={entry}
+              card={card}
+              groups={groups}
+              availableRequests={availableRequests}
+              busy={busy}
+              onChange={change}
+            />
+          ) : null}
+        </CardSection>
       ) : null}
       {!unknown &&
-      entry.kind === "auto-wifi" &&
-      allows(Bindings.RemoteControlRequestKind.SetStationUplink) ? (
-        <>
-          <ConfirmAction
-            label="Enable Wi-Fi connection"
-            warning="The node will try its saved Wi-Fi network. This may interrupt the current connection. Keep another way to reach it available."
-            disabled={busy}
-            onConfirm={() =>
-              change(
-                Bindings.RemoteNodeChange.StationUplink.new({
-                  interfaceId: entry.interfaceId,
-                  enabled: true,
-                }),
-              )
-            }
-          />
-          <ConfirmAction
-            label="Disable Wi-Fi connection"
-            warning="If the app reaches this node over Wi-Fi, it may disconnect. Use Bluetooth or another connection to turn Wi-Fi back on."
-            disabled={busy}
-            onConfirm={() =>
-              change(
-                Bindings.RemoteNodeChange.StationUplink.new({
-                  interfaceId: entry.interfaceId,
-                  enabled: false,
-                }),
-              )
-            }
-          />
-        </>
-      ) : null}
-      {!unknown && canConfigure ? (
-        <Button
-          disabled={busy}
-          tone="secondary"
-          onPress={() => setEditing((previous) => !previous)}
-        >
-          {editing ? "Close settings editor" : "Edit interface settings"}
-        </Button>
-      ) : null}
-      {editing && !unknown ? (
-        <InterfaceEditor
-          entry={entry}
-          card={card}
-          groups={groups}
-          availableRequests={availableRequests}
-          busy={busy}
-          onChange={change}
-        />
+      (allows(Bindings.RemoteControlRequestKind.SetInterfacePower) ||
+        (entry.kind === "auto-wifi" &&
+          allows(Bindings.RemoteControlRequestKind.SetStationUplink))) ? (
+        <CardSection title="Connection controls">
+          {!unknown && allows(Bindings.RemoteControlRequestKind.SetInterfacePower) ? (
+            entry.enabled ? (
+              <ConfirmAction
+                label="Turn interface off"
+                warning="If this interface carries the app's connection, turning it off will disconnect you. Make sure you can use another connection or the node's controls to turn it back on."
+                confirmationLabel="Turn off"
+                disabled={busy}
+                onConfirm={() =>
+                  change(
+                    Bindings.RemoteNodeChange.InterfacePower.new({
+                      interfaceId: entry.interfaceId,
+                      enabled: false,
+                    }),
+                  )
+                }
+              />
+            ) : (
+              <Button
+                disabled={busy}
+                tone="secondary"
+                onPress={() =>
+                  change(
+                    Bindings.RemoteNodeChange.InterfacePower.new({
+                      interfaceId: entry.interfaceId,
+                      enabled: true,
+                    }),
+                  )
+                }
+              >
+                Turn interface on
+              </Button>
+            )
+          ) : null}
+          {!unknown &&
+          entry.kind === "auto-wifi" &&
+          allows(Bindings.RemoteControlRequestKind.SetStationUplink) ? (
+            <>
+              <ConfirmAction
+                label="Enable Wi-Fi connection"
+                warning="The node will try its saved Wi-Fi network. This may interrupt the current connection. Keep another way to reach it available."
+                disabled={busy}
+                onConfirm={() =>
+                  change(
+                    Bindings.RemoteNodeChange.StationUplink.new({
+                      interfaceId: entry.interfaceId,
+                      enabled: true,
+                    }),
+                  )
+                }
+              />
+              <ConfirmAction
+                label="Disable Wi-Fi connection"
+                warning="If the app reaches this node over Wi-Fi, it may disconnect. Use Bluetooth or another connection to turn Wi-Fi back on."
+                disabled={busy}
+                onConfirm={() =>
+                  change(
+                    Bindings.RemoteNodeChange.StationUplink.new({
+                      interfaceId: entry.interfaceId,
+                      enabled: false,
+                    }),
+                  )
+                }
+              />
+            </>
+          ) : null}
+        </CardSection>
       ) : null}
       <Button
         tone="secondary"
@@ -196,7 +223,7 @@ export function RemoteInterfaceCard({
         {showActivity ? "Hide connection details" : "Show connection details"}
       </Button>
       {showActivity ? (
-        <>
+        <CardSection title="Connection details">
           <KeyValue label="Interface ID" value={formatBytes(entry.interfaceId)} />
           <KeyValue
             label="Data sent / received"
@@ -204,7 +231,21 @@ export function RemoteInterfaceCard({
           />
           <KeyValue label="Active links" value={entry.links.toString()} />
           <KeyValue label="Transfer rate" value={`${entry.rateBytesPerSec} bytes/s`} />
-        </>
+          {card === undefined ? null : (
+            <>
+              <KeyValue label="Known destinations" value={card.destinations.toString()} />
+              <KeyValue label="Forwarded links" value={card.transportedLinks.toString()} />
+            </>
+          )}
+          {allows(Bindings.RemoteControlRequestKind.InventoryInterfacePeers) ? (
+            <Button disabled={busy} tone="secondary" onPress={onLoadPeers}>
+              {peers === undefined ? "View connected peers" : "Refresh peers"}
+            </Button>
+          ) : null}
+          {peers === undefined ? null : (
+            <PeerList page={peers} busy={busy} onLoadMore={onLoadMorePeers} />
+          )}
+        </CardSection>
       ) : null}
     </Card>
   );
@@ -215,9 +256,6 @@ function InterfaceDetails({ card }: { readonly card: Bindings.RemoteInterfaceCar
   return (
     <>
       {card.group ? <KeyValue label="Interface group" value={card.group} /> : null}
-      {card.failure ? <BodyText>This interface needs attention: {card.failure}</BodyText> : null}
-      <KeyValue label="Known destinations" value={card.destinations.toString()} />
-      <KeyValue label="Forwarded links" value={card.transportedLinks.toString()} />
       {profile === undefined ? (
         card.configuration ? (
           <KeyValue label="Configuration" value={card.configuration} />
@@ -266,7 +304,7 @@ function InterfaceEditor({
   return (
     <CardStack>
       {allows(Bindings.RemoteControlRequestKind.SetInterfaceMode) ? (
-        <>
+        <CardSection>
           <ChoiceField
             label="Interface mode"
             options={interfaceModes}
@@ -287,12 +325,12 @@ function InterfaceEditor({
               )
             }
           />
-        </>
+        </CardSection>
       ) : null}
       {card !== undefined &&
       supportsInterfaceGroups(entry.kind, groups) &&
       allows(Bindings.RemoteControlRequestKind.SetInterfaceGroup) ? (
-        <>
+        <CardSection>
           <TextField
             label="Interface group"
             value={group}
@@ -314,11 +352,11 @@ function InterfaceEditor({
               )
             }
           />
-        </>
+        </CardSection>
       ) : null}
       {groups !== undefined &&
       allows(Bindings.RemoteControlRequestKind.ReplaceInterfaceDiscoveryGroups) ? (
-        <>
+        <CardSection>
           <TextField
             label="Discovery groups (one per line)"
             value={groupNames}
@@ -342,7 +380,7 @@ function InterfaceEditor({
               )
             }
           />
-        </>
+        </CardSection>
       ) : null}
       {(entry.kind === "lora" || card?.loraProfile !== undefined) &&
       allows(Bindings.RemoteControlRequestKind.SetInterfaceLoRaProfile) ? (

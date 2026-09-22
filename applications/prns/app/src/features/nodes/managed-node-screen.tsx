@@ -16,6 +16,8 @@ import {
   BodyText,
   Button,
   Card,
+  CardHeader,
+  CardSection,
   KeyValue,
   Screen,
   ScreenHeading,
@@ -215,7 +217,6 @@ export function ManagedNodeScreen() {
 
   return (
     <Screen>
-      <Badge>Paired node</Badge>
       <ScreenHeading>Node settings</ScreenHeading>
       {allowsDescribe ? (
         <RemoteManagementPanel
@@ -228,10 +229,13 @@ export function ManagedNodeScreen() {
       )}
       <Button
         tone="secondary"
+        accessibilityLabel={
+          showDetails ? "Hide node details and diagnostics" : "Show node details and diagnostics"
+        }
         accessibilityState={{ expanded: showDetails }}
         onPress={() => setShowDetails((previous) => !previous)}
       >
-        {showDetails ? "Hide node details and diagnostics" : "Show node details and diagnostics"}
+        {showDetails ? "Hide details & diagnostics" : "Node details & diagnostics"}
       </Button>
       {showDetails ? (
         <>
@@ -251,25 +255,17 @@ export function ManagedNodeScreen() {
                   : summarizePairingAccess(target.permittedRequests)
               }
             />
-          </Card>
-          <Card>
-            <Subheading>Connection</Subheading>
-            <KeyValue
-              label="Status"
-              value={
-                !nodeRunning
-                  ? "This device is offline"
-                  : describing
-                    ? "Checking node…"
-                    : "Ready to check"
-              }
-            />
-            <Button
-              disabled={!canDescribe || pending || operationBusy || announcing}
-              onPress={() => void describe()}
-            >
-              {pending || describing ? "Checking…" : "Check node connection"}
-            </Button>
+            <CardSection>
+              <CardHeader title="Connection">
+                <Button
+                  disabled={!canDescribe || pending || operationBusy || announcing}
+                  accessibilityLabel={pending || describing ? "Checking…" : "Check node connection"}
+                  onPress={() => void describe()}
+                >
+                  {pending || describing ? "Checking…" : "Check connection"}
+                </Button>
+              </CardHeader>
+            </CardSection>
           </Card>
 
           {result === null ? null : <DescribeResult result={result} />}

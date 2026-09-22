@@ -124,7 +124,7 @@ export function CardHeader({ title, children }: PropsWithChildren<{ readonly tit
       >
         {title}
       </Text>
-      {children === undefined ? null : <View style={styles.headerActions}>{children}</View>}
+      {children == null ? null : <View style={styles.headerActions}>{children}</View>}
     </View>
   );
 }
