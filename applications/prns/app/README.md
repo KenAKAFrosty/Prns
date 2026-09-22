@@ -28,9 +28,10 @@ are available under **Show pairing details**. This is a single preset, not a
 permissions picker. Test devices may be
 reset and paired again; no deployed-pairing migration is needed.
 
-The expanded controls are implemented but not yet physically qualified on
-either phone platform. See the [September 21 checkpoint](../../checkpoints/2026-09-21-remote-control-management.md)
-for the checks actually performed on this source.
+The expanded controls have host tests and limited Galaxy/E290 read/write evidence,
+not complete physical qualification on either platform. See the
+[settings checkpoint](../../checkpoints/2026-09-21-remote-settings-workflows.md)
+for the exact builds, checks and remaining limits.
 
 ## Route parameters
 
@@ -89,10 +90,12 @@ automatically repeats the request; the target may already have announced.
 
 ## Reading and changing a paired node
 
-Open a paired node and select **Load node information**. Overview shows the
-firmware and battery/power information the node provides. Interface cards expose
-current status, traffic, settings and discovery groups; peer lists load on
-request, with explicit bounded pagination. Refresh reads the node again rather
+Open **Nodes → Manage node**. Settings load automatically. **Interfaces** selects
+a connection and exposes its settings and peers; **Device** contains Wi-Fi,
+display, positioning and power actions where supported; **Information** shows
+firmware and battery/power observations; **Access** lists devices with access.
+Technical IDs and connection checks are under **Show node details and diagnostics**.
+Lists load on request with bounded pagination. Refresh reads the node again rather
 than treating earlier observations as live state.
 
 Controls appear only when the node advertises them and the pairing permits
@@ -109,9 +112,18 @@ write; leaving the screen does not undo an accepted change. Disruptive actions
 require confirmation and explain how the connection may be lost. A wake request
 cannot reach a radio over a connection that has already gone offline.
 
-Guided Wi-Fi credential changes and controller-management flows are still
-[planned](../../docs/remote-control-expansion.md). Administrator enrollment does
-not imply that their app screens already exist.
+Wi-Fi setup offers **Try network**, then **Keep this network** or **Restore previous
+network**. The node owns the confirmation deadline and restores an unconfirmed
+trial. Only the node can confirm Wi-Fi readiness; Bluetooth reachability is not
+proof. Lost replies require a status check, never automatic credential replay.
+Passwords are not stored in operation records or retry queues. Reopening the
+screen recovers the node's current state, not durable app-side trial history.
+
+Access inventory reports device IDs only. This phone cannot remove itself;
+protected administrators cannot be removed remotely. Adding another controller
+still needs verified identity exchange and recipient-side setup; it is not
+advertised as an implemented feature. See the
+[remaining expansion plan](../../docs/remote-control-expansion.md).
 
 ## Platform behavior and next work
 

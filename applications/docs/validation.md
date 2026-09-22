@@ -10,10 +10,14 @@ rebases the app on upstream `8c211827b` and implements the first expanded
 [remote-control read/write slice](remote-control-expansion.md): overview,
 interfaces/configuration/peers, discovery groups and 13 typed changes. New board
 pairings grant Administrator authority plus the board's exact supported request
-set, with full-control disclosure. All 30 upstream request kinds are represented;
-guided Wi-Fi and controller-management flows remain unimplemented.
+set, with full-control disclosure. All 30 upstream request kinds are represented.
+The subsequent [settings workflow slice](../checkpoints/2026-09-21-remote-settings-workflows.md)
+adds automatic reads/organized sections, guided Wi-Fi trials and controller
+inventory/removal. Granting another controller access and the legacy Wi-Fi setter
+remain unimplemented.
 
-The expanded read/write screens are not yet physically qualified. Fresh Android
+The expanded read/write screens have limited Galaxy/E290 evidence, not full
+physical qualification. Fresh Android
 pairing succeeded in a user-run trial against the separate E290 diagnostic
 firmware, after earlier intermittent freezes/reboots; that fault remains open.
 This is not production-firmware or iOS acceptance. Earlier phone, firmware-size

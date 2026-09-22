@@ -16,6 +16,9 @@ generated API and native lifecycle boundary.
   plus typed ordinary/disruptive changes driven by live capabilities and access.
   The new board pairing preset grants Administrator authority and the board's
   exact supported request set after full-control disclosure.
+- Guided Wi-Fi trials with explicit keep/restore and uncertain-outcome recovery,
+  plus controller inventory and protected access removal. Adding a controller
+  still requires recipient identity exchange and reciprocal setup.
 - Small direct LXMF messages, a resettable persistent mailbox, manual retry and
   local cancellation. Resources, opportunistic delivery and propagation are not
   part of this messaging implementation.
@@ -27,7 +30,7 @@ records completed cold Retry admission, iOS preparation-queue and connection-che
 lifetime fixes, plus the constrained firmware footprint correction. Physical
 observations remain tied to their recorded builds.
 
-## Current priority: qualify read/write controls, then guided Wi-Fi
+## Current priority: qualify remote settings and complete recipient onboarding
 
 The [September 21 integration](../checkpoints/2026-09-21-remote-control-management.md)
 rebases the app on upstream `8c211827b` and names all 30 RemoteControl request
@@ -36,12 +39,14 @@ Overview, interfaces/configuration/peers, discovery groups and 13 typed changes
 cover ordinary settings and disruptive connection/power actions. Rust retains
 workflow and validation ownership; generated bindings feed capability-driven UI.
 
-Next, qualify the broader pairing preset and new controls on Galaxy S9+,
-MetalbeardMobile and matching test-board firmware, then implement guided
-transactional Wi-Fi setup and controller access management. Neither of those
-later flows is implemented. There is no deployed-pairing migration project or
-granular permissions picker: development devices can be reset and paired again.
-Live upstream capability and authority checks remain mandatory.
+The [settings workflow checkpoint](../checkpoints/2026-09-21-remote-settings-workflows.md)
+adds automatic reads, organized sections, transactional Wi-Fi trials and access
+inventory/removal. Next, extend physical qualification on Galaxy S9+,
+MetalbeardMobile and matching firmware, including Wi-Fi success/rollback and
+recovery. Design verified recipient onboarding before exposing controller
+authorization. There is no deployed-pairing migration project or granular
+permissions picker: development devices can be reset and paired again. Live
+upstream capability and authority checks remain mandatory.
 
 Earlier physical and firmware evidence below belongs to its recorded
 source/binaries and does not qualify this rebase or the new screens.
@@ -49,9 +54,10 @@ source/binaries and does not qualify this rebase or the new screens.
 ## Remaining qualification from the previous transition
 
 The September 21 source now passes all 14 configured firmware profiles and
-builds a standalone Android 10+ development APK. Fresh phone/board pairing and
-read/write acceptance remain untested; the earlier observations below keep
-their original build-specific scope.
+builds a standalone Android 10+ development APK. Later fresh pairing and limited
+read/write trials on the Galaxy/E290 diagnostic build are recorded in the linked
+checkpoints; these are not full acceptance. Earlier observations below keep their
+original build-specific scope.
 
 The [September 15 checkpoint](../checkpoints/2026-09-15-upstream-integration.md)
 integrates reviewed upstream trunk `35859bb89`. A new standalone Android build

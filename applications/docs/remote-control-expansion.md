@@ -4,12 +4,15 @@ Implementation status and remaining plan against upstream `8c211827b`, including
 [PR #232](https://github.com/KenAKAFrosty/Prns/pull/232) and discovery-group
 read/write support. The app names all 30 request kinds and implements its first
 expanded read/write slice: node overview, interfaces, configuration, peers,
-discovery groups and 13 typed ordinary/disruptive changes. Guided Wi-Fi setup
-and controller management remain planned.
+discovery groups and 13 typed ordinary/disruptive changes. Guided Wi-Fi trials
+and controller inventory/removal are now implemented. Authorizing another
+controller and the separately advertised legacy Wi-Fi setter remain planned.
 
 The [September 21 checkpoint](../checkpoints/2026-09-21-remote-control-management.md)
-records validation of this source. These new controls and the broader pairing
-preset are not yet qualified on physical phones or boards.
+records the initial validation. The later
+[settings checkpoint](../checkpoints/2026-09-21-remote-settings-workflows.md)
+separates host checks from the actual Galaxy/E290 trials. That evidence does not
+qualify every control, firmware variant or iOS build.
 
 ## Ownership and product rules
 
@@ -50,10 +53,12 @@ resolved-target projection does not currently carry that authority.
 
 ### 2. Read-only node management — implemented
 
-The managed-node screen offers Overview, Interfaces and per-interface settings,
-discovery groups and Peers, with firmware/build and battery/power information.
-Check and Share address remain available where allowed. Details are fetched on
-demand, not continuously in the global snapshot.
+Opening a managed node reads its overview automatically and presents Interfaces,
+Device, Information and, when allowed, Access sections. Per-interface settings,
+discovery groups and peers are fetched on demand. Information contains
+firmware/build and battery/power observations. Identity and connection diagnostics
+are tucked into a disclosure; Check and Share address remain available where
+allowed. Failed reads require an explicit retry, not continuous polling.
 
 Inventory pages contain up to four entries and use typed keyset cursors. Explicit
 Load more actions are bounded to 128 interfaces or peers and reject overlapping
@@ -88,6 +93,10 @@ mode. Present explicit actions or label last-requested values; do not render
 invented authoritative switches. DescribePower describes battery/external power
 and charging, not those configuration states. Respect advertised persistence:
 some values are session-only and LoRa persistence is not universal across boards.
+Saving LoRa settings can replace automatic radio selection with an explicit
+profile. Inventory currently reports the resolved profile, not its original
+automatic/manual mode; restoring its numeric fields does not establish that the
+prior selection mode was restored.
 
 ### 4. Disruptive connectivity and power changes — implemented
 
@@ -101,11 +110,14 @@ Scheduled effects have a 250 ms target response grace period, not a delivery
 guarantee. Preserve uncertain outcomes until an appropriate read/reconnection
 can reconcile them; do not display success just because the link disappeared.
 
-### 5. Transactional Wi-Fi setup — next, not implemented
+### 5. Transactional Wi-Fi setup — implemented, qualification in progress
 
 User flow: enter network → try connection → keep network or restore previous.
-Implement a typed Rust workflow around Stage, Activate, Inspect, Confirm and
-Cancel; do not expose five unrelated buttons.
+The typed Rust workflow wraps Stage, Activate, Inspect, Confirm and Cancel.
+Each step is actor-owned and bounded to 30 seconds; the actor is not held during
+the user's decision window. Start inspects first and refuses to overwrite a
+pending trial, then stages and activates once. The screen inspects on entry and
+resume, and offers revision-bound Keep/Restore actions only from a fresh result.
 
 - Validate UTF-8 byte lengths (SSID 32, password 64), not character counts.
 - Stage returns a nonzero revision. Activation is scheduled; subsequent actions
@@ -118,20 +130,29 @@ Cancel; do not expose five unrelated buttons.
 - Use upstream zeroizing credential types. Never place passwords in snapshots,
   logs, analytics, persistent retry queues or operation metadata. Clear the form
   promptly without claiming JavaScript memory can be reliably zeroized.
-- Retain only nonsecret workflow metadata for resume. After a lost response,
-  inspect/reconcile rather than blindly staging again. Another controller's
-  transaction can be busy or inaccessible.
+- Only nonsecret operation metadata is retained in process. After process restart,
+  inspection recovers the node's current transaction but cannot attribute a
+  terminal result to a forgotten attempt. No durable trial history is claimed.
+  After a lost response, inspect rather than blindly staging again. Another
+  controller's transaction can be busy or inaccessible.
+- Inspect does not report network readiness. Awaiting confirmation is not proof
+  of successful Wi-Fi; Keep relies on the node's readiness check and can be
+  refused while it is still connecting. The UI labels remaining time as the
+  last observation, not a live guarantee or a locally manufactured rollback.
 
 Acceptance requires fault injection at each transition: lost request/reply,
 incorrect credentials, timeout, app restart, target reboot, concurrent controller,
 persistence failure and explicit rollback. Then test the full flow physically.
 
-### 6. Administrator access management — planned, not implemented
+### 6. Administrator access management — inventory/removal implemented
 
-Provide controller inventory and protected grant/revoke actions. Separate local
-Forget from revoking access on the node. Confirm destructive access changes and
-honor upstream restrictions: no self-revocation/modification and no modification
-or revocation of an existing Administrator through these operations.
+The Access section lists controller identities, labels this phone, and offers
+confirmed removal of other identities. Reads use bounded pagination. Native code
+rejects self-removal before dispatch; upstream also protects Administrator grants.
+Refusal, already-removed and uncertain results are distinct. An accepted removal
+does not optimistically erase a row; read again to observe the node. Local Forget
+is not the same operation. No physical removal of another test device is required
+to qualify the read-only list.
 
 The current inventory returns identity hashes only, not roles, public identities
 or per-controller permissions. Do not invent those details; richer inventory
@@ -164,9 +185,10 @@ separate unresolved issue, not an assumed consequence or fix of this expansion.
 | Discovery groups | InventoryInterfaceDiscoveryGroups, ReplaceInterfaceDiscoveryGroups | Implemented |
 | Positioning and display | SetGnssPower, SetDisplayVisibility, SetDisplayAutoOff | Implemented |
 | Connection and power actions | SetStationUplink, SetEspRadioMode, SetSystemPower, SleepRadios, WakeRadios | Implemented |
-| Wi-Fi change with rollback | StageWifiCredentials, ActivateWifiCredentials, ConfirmWifiCredentials, CancelWifiCredentials, InspectWifiTransaction | Next |
+| Wi-Fi change with rollback | StageWifiCredentials, ActivateWifiCredentials, ConfirmWifiCredentials, CancelWifiCredentials, InspectWifiTransaction | Implemented |
 | Legacy Wi-Fi control | SetInterfaceWifiStation | Planned only if advertised; explain its distinct guarantees |
-| Controller access | InventoryControllers, AuthorizeController, RevokeController | Planned |
+| Controller inventory/removal | InventoryControllers, RevokeController | Implemented |
+| Grant another controller access | AuthorizeController | Planned; requires recipient onboarding |
 
 Some framework operations, including the legacy Wi-Fi setter, interface mode and
 SleepRadios/WakeRadios, are not advertised by the audited embedded targets.
