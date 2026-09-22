@@ -6,6 +6,7 @@ pub mod lr1110 {
         PowerAmplifierDutyCycle, PowerAmplifierSelection, PowerAmplifierSupply,
         PowerAmplifierTable, ReceiveGain, ReceivedAirFrame, ReferenceClock, RegulatorMode,
         RfSwitchConfig, RfSwitchPins, TcxoStartupTime, TcxoVoltage, TransmitRampTime,
+        SEMTECH_SUB_GHZ_POWER_AMPLIFIER_TABLE,
     };
 }
 

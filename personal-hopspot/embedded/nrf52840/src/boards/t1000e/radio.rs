@@ -1,11 +1,9 @@
 use personal_rns::radios::lr1110::{
-    BoardConfig, HighPowerSelection, Lr11xxPart, PowerAmplifierConfig, PowerAmplifierDutyCycle,
-    PowerAmplifierSelection, PowerAmplifierSupply, PowerAmplifierTable, ReceiveGain,
-    ReferenceClock, RegulatorMode, RfSwitchConfig, RfSwitchPins, TcxoStartupTime, TcxoVoltage,
-    TransmitRampTime,
+    BoardConfig, Lr11xxPart, ReceiveGain, ReferenceClock, RegulatorMode, RfSwitchConfig,
+    RfSwitchPins, TcxoStartupTime, TcxoVoltage, TransmitRampTime,
+    SEMTECH_SUB_GHZ_POWER_AMPLIFIER_TABLE,
 };
 
-const MINIMUM_OUTPUT_POWER_DBM: i8 = -17;
 const TCXO_STARTUP_RTC_TICKS: u32 = 164;
 const EXTERNAL_RECEIVE_GAIN_DB: u8 = 0;
 
@@ -18,69 +16,6 @@ const ENABLED_SWITCHES: RfSwitchPins = RfSwitchPins::RFSW0
     .union(RfSwitchPins::RFSW1)
     .union(RfSwitchPins::RFSW2)
     .union(RfSwitchPins::RFSW3);
-
-const POWER_AMPLIFIER_CONFIGURATIONS: [PowerAmplifierConfig; 40] = [
-    low_power(-15, 0),
-    low_power(-14, 0),
-    low_power(-13, 0),
-    low_power(-12, 0),
-    low_power(-11, 0),
-    low_power(-9, 0),
-    low_power(-8, 0),
-    low_power(-7, 0),
-    low_power(-6, 0),
-    low_power(-5, 0),
-    low_power(-4, 0),
-    low_power(-3, 0),
-    low_power(-2, 0),
-    low_power(-1, 0),
-    low_power(0, 0),
-    low_power(1, 0),
-    low_power(2, 0),
-    low_power(3, 0),
-    low_power(3, 1),
-    low_power(4, 1),
-    low_power(7, 0),
-    low_power(8, 0),
-    low_power(9, 0),
-    low_power(10, 0),
-    low_power(12, 0),
-    low_power(13, 0),
-    low_power(14, 0),
-    low_power(13, 1),
-    low_power(13, 2),
-    low_power(14, 2),
-    low_power(14, 3),
-    low_power(14, 4),
-    low_power(14, 7),
-    high_power(1, 4),
-    high_power(2, 4),
-    high_power(1, 6),
-    high_power(3, 5),
-    high_power(4, 7),
-    high_power(5, 7),
-    high_power(6, 7),
-];
-
-const fn low_power(chip_output_power_dbm: i8, duty_cycle: u8) -> PowerAmplifierConfig {
-    PowerAmplifierConfig {
-        chip_output_power_dbm,
-        selection: PowerAmplifierSelection::LowPower,
-        supply: PowerAmplifierSupply::Regulator,
-        duty_cycle: PowerAmplifierDutyCycle::new(duty_cycle),
-        high_power_selection: HighPowerSelection::new(0),
-    }
-}
-
-const fn high_power(duty_cycle: u8, high_power_selection: u8) -> PowerAmplifierConfig {
-    PowerAmplifierConfig {
-        chip_output_power_dbm: 22,
-        selection: PowerAmplifierSelection::HighPower,
-        supply: PowerAmplifierSupply::Battery,
-        duty_cycle: PowerAmplifierDutyCycle::new(duty_cycle),
-        high_power_selection: HighPowerSelection::new(high_power_selection),
-    }
-}
 
 pub(super) fn board_config() -> BoardConfig {
     BoardConfig {
@@ -101,10 +36,7 @@ pub(super) fn board_config() -> BoardConfig {
             gnss: RfSwitchPins::RFSW2,
             wifi: RfSwitchPins::NONE,
         },
-        power_amplifier: PowerAmplifierTable::new(
-            MINIMUM_OUTPUT_POWER_DBM,
-            &POWER_AMPLIFIER_CONFIGURATIONS,
-        ),
+        power_amplifier: SEMTECH_SUB_GHZ_POWER_AMPLIFIER_TABLE,
         transmit_ramp_time: TransmitRampTime::Us48,
         external_receive_gain_db: EXTERNAL_RECEIVE_GAIN_DB,
     }

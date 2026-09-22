@@ -749,6 +749,48 @@ fn an_lr1121_board_initializes_and_sets_the_sync_word_on_early_firmware() {
 }
 
 #[test]
+fn semtech_sub_ghz_table_spans_the_lr11xx_output_range() {
+    assert_eq!(
+        SEMTECH_SUB_GHZ_POWER_AMPLIFIER_TABLE.minimum_output_power_dbm(),
+        -17
+    );
+    assert_eq!(
+        SEMTECH_SUB_GHZ_POWER_AMPLIFIER_TABLE.maximum_output_power_dbm(),
+        22
+    );
+    assert_eq!(
+        SEMTECH_SUB_GHZ_POWER_AMPLIFIER_TABLE.configuration(22),
+        Some(PowerAmplifierConfig {
+            chip_output_power_dbm: 22,
+            selection: PowerAmplifierSelection::HighPower,
+            supply: PowerAmplifierSupply::Battery,
+            duty_cycle: PowerAmplifierDutyCycle::new(4),
+            high_power_selection: HighPowerSelection::new(7),
+        })
+    );
+}
+
+#[test]
+fn semtech_high_power_rows_stay_within_the_duty_cycle_ceiling() {
+    const HIGH_POWER_DUTY_CYCLE_CEILING: u8 = 4;
+    for output_power_dbm in 16..=22 {
+        let config = SEMTECH_SUB_GHZ_POWER_AMPLIFIER_TABLE
+            .configuration(output_power_dbm)
+            .expect("high-power row");
+        assert_eq!(config.selection, PowerAmplifierSelection::HighPower);
+        assert_eq!(config.supply, PowerAmplifierSupply::Battery);
+        assert!(config.duty_cycle.value() <= HIGH_POWER_DUTY_CYCLE_CEILING);
+    }
+    for output_power_dbm in -17..=15 {
+        let config = SEMTECH_SUB_GHZ_POWER_AMPLIFIER_TABLE
+            .configuration(output_power_dbm)
+            .expect("low-power row");
+        assert_eq!(config.selection, PowerAmplifierSelection::LowPower);
+        assert_eq!(config.supply, PowerAmplifierSupply::Regulator);
+    }
+}
+
+#[test]
 fn initialization_rejects_a_radio_command_failure() {
     let (mut radio, state) = mock_radio();
     state.borrow_mut().command_status = COMMAND_STATUS_FAILED;

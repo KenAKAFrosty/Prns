@@ -1,5 +1,6 @@
 mod config;
 mod protocol;
+mod sub_ghz_power;
 
 use core::future::{poll_fn, Future};
 use core::task::Poll;
@@ -17,6 +18,7 @@ pub use config::{
     ReferenceClock, RegulatorMode, RfSwitchConfig, RfSwitchPins, TcxoStartupTime, TcxoVoltage,
     TransmitRampTime,
 };
+pub use sub_ghz_power::SEMTECH_SUB_GHZ_POWER_AMPLIFIER_TABLE;
 
 use super::{LoRaRadio, RadioRecovery};
 pub use super::{RadioEvent, ReceivedAirFrame};
