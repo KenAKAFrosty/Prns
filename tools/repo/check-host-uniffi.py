@@ -17,7 +17,8 @@ def run(*args):
 def main():
     run(sys.executable, ROOT / 'tools/repo/generate-host-contract.py', '--check')
     run('cargo', 'test', '--manifest-path', IMAGE.parent / 'Cargo.toml', '--test', 'transport')
-    run('cargo', 'build', '--manifest-path', IMAGE / 'Cargo.toml', '--lib', '--bin', 'uniffi-bindgen')
+    run('cargo', 'build', '--manifest-path', IMAGE / 'Cargo.toml',
+        '--features', 'uniffi-bindgen', '--lib', '--bin', 'uniffi-bindgen')
     extension = '.dylib' if sys.platform == 'darwin' else '.dll' if sys.platform == 'win32' else '.so'
     library = IMAGE / 'target/debug' / (('' if sys.platform == 'win32' else 'lib') + 'prns_host_mobile' + extension)
     bindgen = IMAGE / 'target/debug' / ('uniffi-bindgen.exe' if sys.platform == 'win32' else 'uniffi-bindgen')

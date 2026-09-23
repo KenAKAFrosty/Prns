@@ -103,7 +103,9 @@ not embed another SDK/default image through another package. SDK converters and
 the public JS API are shared between default and aggregate providers.
 
 Provider source paths resolve relative to the JSON file and are absent from the
-distributed `native-image.json`. The semantic fingerprint and UniFFI checksums
+distributed `native-image.json`. Provider `features` apply to native builds and
+binding generation; `generationFeatures` enable tools such as `uniffi-bindgen`
+only while generating bindings. The semantic fingerprint and UniFFI checksums
 are checked before host use. A changed contract/provider requires a native
 rebuild and the corresponding Expo update runtime-version change.
 

@@ -6,6 +6,7 @@
     "package": "prns-app-native",
     "libraryName": "prns_app",
     "crateDirectory": "..",
-    "features": ["host-test", "uniffi-bindgen"]
+    "features": ["host-test"],
+    "generationFeatures": ["uniffi-bindgen"]
   }]
 }

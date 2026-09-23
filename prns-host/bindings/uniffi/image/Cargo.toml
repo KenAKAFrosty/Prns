@@ -14,10 +14,14 @@ crate-type = ["cdylib", "lib"]
 [[bin]]
 name = "uniffi-bindgen"
 path = "src/bin/uniffi_bindgen.rs"
+required-features = ["uniffi-bindgen"]
+
+[features]
+uniffi-bindgen = ["uniffi/cli", "uniffi/cargo-metadata"]
 
 [dependencies]
 prns-host-uniffi = { path = ".." }
-uniffi = { version = "=0.31.2", features = ["cli", "cargo-metadata"] }
+uniffi = { version = "=0.31.2", default-features = false }
 
 [target.'cfg(target_os = "android")'.dependencies]
 prns-expo-android = { path = "../../../../prns-react-native/platform/android" }

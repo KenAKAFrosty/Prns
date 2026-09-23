@@ -28,8 +28,9 @@ def image_provider(path):
             raise ValueError(f'invalid image provider {key}')
     if not re.fullmatch(r'[a-z][a-z0-9_]*', provider['libraryName']):
         raise ValueError('image libraryName must be a Rust library identifier')
-    if not isinstance(provider.get('features', []), list) or not all(isinstance(value, str) for value in provider.get('features', [])):
-        raise ValueError('image features must be a list of strings')
+    for key in ('features', 'generationFeatures'):
+        if not isinstance(provider.get(key, []), list) or not all(isinstance(value, str) for value in provider.get(key, [])):
+            raise ValueError(f'image {key} must be a list of strings')
     for key in ('manifest', 'crateDirectory'):
         provider[key] = (path.parent / provider[key]).resolve()
         if not provider[key].exists():
@@ -57,7 +58,7 @@ def generate(provider, cli, env, check):
         library_name=provider['libraryName'], crate_dir=provider['crateDirectory'],
         typescript_dir=PACKAGE / 'src/generated', swift_dir=PACKAGE / 'ios/generated',
         kotlin_dir=PACKAGE / 'android/generated', uniffi_config=None,
-        features=tuple(provider.get('features', [])),
+        features=tuple([*provider.get('features', []), *provider.get('generationFeatures', [])]),
     )
     files = tooling.generated_files(recipe, cli, env)
     # Only the shared SDK namespace belongs in this package. An aggregate's
