@@ -247,11 +247,17 @@ async fn receive_l2cap_frames<E: core::fmt::Debug>(
             return L2capPumpExit::Inbound;
         }
         // absorb copied the SDU, so reuse its scratch buffer for each decoded frame.
-        while let Some(len) = deframer.next_frame(rx.as_mut()) {
-            if len > FRAME_CAP {
+        loop {
+            if deframer
+                .pending_frame_len()
+                .is_some_and(|len| len > FRAME_CAP)
+            {
                 crate::diagnostic_log::warn!("ble: L2CAP frame exceeds the interface MTU");
                 return L2capPumpExit::Inbound;
             }
+            let Some(len) = deframer.next_frame(rx.as_mut()) else {
+                break;
+            };
             let frame = match inbound_frames.lease().await {
                 Ok(frame) => frame,
                 Err(error) => {
@@ -1059,18 +1065,22 @@ mod tests {
     use super::*;
     use crate::bluetooth_auto::BluetoothAutoShared;
 
-    fn receive_chunks(chunks: &[&[u8]]) -> (L2capPumpExit, std::vec::Vec<std::vec::Vec<u8>>) {
+    fn receive_chunks(
+        chunks: &[&[u8]],
+    ) -> (L2capPumpExit, std::vec::Vec<std::vec::Vec<u8>>, usize) {
         static SHARED: BluetoothAutoShared<PEER_CAPACITY> =
             BluetoothAutoShared::new(InterfaceId::new([0x5a; 8]));
         let hub = BleHub::new(BluetoothAutoStatus::new(&SHARED));
         let pool = alloc::boxed::Box::leak(alloc::boxed::Box::new(BleFramePool::new()));
         let queue = alloc::boxed::Box::leak(alloc::boxed::Box::new(Channel::new()));
         let mut chunks = chunks.iter();
+        let reads = core::cell::Cell::new(0);
         let mut receive = pin!(receive_l2cap_frames(
             &hub,
             pool,
             queue.sender(),
             async |out| {
+                reads.set(reads.get() + 1);
                 let Some(chunk) = chunks.next() else {
                     return Err(trouble_host::Error::Disconnected);
                 };
@@ -1086,7 +1096,7 @@ mod tests {
                 frames.push(embassy_futures::block_on(frame.lock()).to_vec());
             }
             if let Poll::Ready(exit) = result {
-                return (exit, frames);
+                return (exit, frames, reads.get());
             }
         }
         panic!("bounded L2CAP receiver fixture did not finish");
@@ -1104,7 +1114,7 @@ mod tests {
         let second = [0xa4; 100];
         let mut wire = stream_frame(&first);
         wire.extend_from_slice(&stream_frame(&second));
-        let (exit, frames) = receive_chunks(&[&wire]);
+        let (exit, frames, _) = receive_chunks(&[&wire]);
         assert_eq!(exit, L2capPumpExit::Inbound);
         assert_eq!(frames, [first.to_vec(), second.to_vec()]);
     }
@@ -1113,7 +1123,7 @@ mod tests {
     fn l2cap_receiver_preserves_split_prefix() {
         let payload = [0x75; 100];
         let wire = stream_frame(&payload);
-        let (_, frames) = receive_chunks(&[&wire[..1], &wire[1..]]);
+        let (_, frames, _) = receive_chunks(&[&wire[..1], &wire[1..]]);
         assert_eq!(frames, [payload.to_vec()]);
     }
 
@@ -1121,7 +1131,7 @@ mod tests {
     fn l2cap_receiver_preserves_split_body() {
         let payload = [0x75; 100];
         let wire = stream_frame(&payload);
-        let (_, frames) = receive_chunks(&[&wire[..31], &wire[31..]]);
+        let (_, frames, _) = receive_chunks(&[&wire[..31], &wire[31..]]);
         assert_eq!(frames, [payload.to_vec()]);
     }
 
@@ -1130,7 +1140,7 @@ mod tests {
         let payload = [0x42; FRAME_CAP];
         let wire = stream_frame(&payload);
         for split in 1..wire.len() {
-            let (_, frames) = receive_chunks(&[&wire[..split], &wire[split..]]);
+            let (_, frames, _) = receive_chunks(&[&wire[..split], &wire[split..]]);
             assert_eq!(frames, [payload.to_vec()], "split at byte {split}");
         }
     }
@@ -1141,7 +1151,7 @@ mod tests {
         let second = [0x65; FRAME_CAP];
         let mut wire = stream_frame(&first);
         wire.extend_from_slice(&stream_frame(&second));
-        let (_, frames) = receive_chunks(&[
+        let (_, frames, _) = receive_chunks(&[
             &wire[..L2CAP_SDU_LEN - 1],
             &wire[L2CAP_SDU_LEN - 1..2 * L2CAP_SDU_LEN - 1],
             &wire[2 * L2CAP_SDU_LEN - 1..],
@@ -1156,7 +1166,7 @@ mod tests {
         for end in 0..second.len() {
             let mut wire = first.clone();
             wire.extend_from_slice(&second[..end]);
-            let (exit, frames) = receive_chunks(&[&wire]);
+            let (exit, frames, _) = receive_chunks(&[&wire]);
             assert_eq!(exit, L2capPumpExit::Inbound);
             assert_eq!(frames, [b"complete".to_vec()]);
         }
@@ -1166,17 +1176,21 @@ mod tests {
     fn l2cap_receiver_keeps_empty_sdu_and_empty_frame_semantics() {
         let mut wire = stream_frame(b"");
         wire.extend_from_slice(&stream_frame(b"next"));
-        let (_, frames) = receive_chunks(&[&[], &wire]);
+        let (_, frames, _) = receive_chunks(&[&[], &wire]);
         assert_eq!(frames, [b"".to_vec(), b"next".to_vec()]);
     }
 
     #[test]
     fn l2cap_receiver_rejects_a_frame_larger_than_the_pool_capacity() {
-        let mut wire = stream_frame(&[0x42; FRAME_CAP + 1]);
-        wire.extend_from_slice(&stream_frame(b"must not resynchronize"));
-        let (exit, frames) = receive_chunks(&[&wire[..L2CAP_SDU_LEN], &wire[L2CAP_SDU_LEN..]]);
+        let oversized = ((L2CAP_SDU_LEN + 1) as u16).to_be_bytes();
+        let valid = stream_frame(b"must not be read");
+        let (exit, frames, reads) = receive_chunks(&[&oversized, &valid]);
         assert_eq!(exit, L2capPumpExit::Inbound);
         assert!(frames.is_empty());
+        assert_eq!(
+            reads, 1,
+            "the length prefix is sufficient to reject the frame"
+        );
     }
 
     #[test]
@@ -1185,7 +1199,7 @@ mod tests {
         // bytes to be interpreted as a fresh frame after the buffer is exhausted.
         let malformed = [0xff; L2CAP_SDU_LEN];
         let valid = stream_frame(b"must not resynchronize");
-        let (exit, frames) = receive_chunks(&[&malformed, &malformed, &[0xff], &valid]);
+        let (exit, frames, _) = receive_chunks(&[&malformed, &malformed, &[0xff], &valid]);
         assert_eq!(exit, L2capPumpExit::Inbound);
         assert!(frames.is_empty());
     }
@@ -1252,7 +1266,7 @@ mod tests {
         }
         // The fixture polls the real receiver, then consumes the real queue. More
         // coalesced frames than queue slots must block, not disappear or overflow.
-        let (_, frames) = receive_chunks(&[&wire]);
+        let (_, frames, _) = receive_chunks(&[&wire]);
         assert_eq!(frames, expected);
     }
 
