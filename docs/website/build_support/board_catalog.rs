@@ -84,6 +84,8 @@ fn preparation_profile(board: &BoardCatalogEntry) -> &'static str {
         "t114-uf2" => "PreparationProfile::T114Uf2",
         "mesh-pocket-uf2" => "PreparationProfile::MeshPocketUf2",
         "t096-uf2" => "PreparationProfile::T096Uf2",
+        "rak4631-uf2" => "PreparationProfile::Rak4631Uf2",
+        "rak10724-uf2" => "PreparationProfile::Rak10724Uf2",
         "t1000e-nrf-dfu" => "PreparationProfile::T1000eNrfSerialDfu",
         value => panic!("unsupported website preparation profile {value:?}"),
     }

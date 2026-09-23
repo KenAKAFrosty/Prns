@@ -6,10 +6,12 @@
     feature = "board-t114",
     feature = "board-mesh-pocket",
     feature = "board-t1000e",
-    feature = "board-mesh-tower-v2"
+    feature = "board-mesh-tower-v2",
+    feature = "board-rak4631",
+    feature = "board-rak10724"
 )))]
 compile_error!(
-    "select exactly one nRF52840 board feature; available: board-t-echo, board-t096, board-t114, board-mesh-pocket, board-t1000e, board-mesh-tower-v2"
+    "select exactly one nRF52840 board feature; available: board-t-echo, board-t096, board-t114, board-mesh-pocket, board-t1000e, board-mesh-tower-v2, board-rak4631, board-rak10724"
 );
 
 #[cfg(any(
@@ -27,7 +29,20 @@ compile_error!(
     all(feature = "board-t114", feature = "board-mesh-pocket"),
     all(feature = "board-mesh-pocket", feature = "board-t1000e"),
     all(feature = "board-mesh-pocket", feature = "board-mesh-tower-v2"),
-    all(feature = "board-t1000e", feature = "board-mesh-tower-v2")
+    all(feature = "board-t1000e", feature = "board-mesh-tower-v2"),
+    all(feature = "board-t-echo", feature = "board-rak4631"),
+    all(feature = "board-t096", feature = "board-rak4631"),
+    all(feature = "board-t114", feature = "board-rak4631"),
+    all(feature = "board-mesh-pocket", feature = "board-rak4631"),
+    all(feature = "board-t1000e", feature = "board-rak4631"),
+    all(feature = "board-mesh-tower-v2", feature = "board-rak4631"),
+    all(feature = "board-t-echo", feature = "board-rak10724"),
+    all(feature = "board-t096", feature = "board-rak10724"),
+    all(feature = "board-t114", feature = "board-rak10724"),
+    all(feature = "board-mesh-pocket", feature = "board-rak10724"),
+    all(feature = "board-t1000e", feature = "board-rak10724"),
+    all(feature = "board-mesh-tower-v2", feature = "board-rak10724"),
+    all(feature = "board-rak4631", feature = "board-rak10724")
 ))]
 compile_error!("nRF52840 board features are mutually exclusive");
 
@@ -49,6 +64,12 @@ compile_error!("T114 requires softdevice-s140-v6; HT-n5262 ships S140 6.1.1");
 #[cfg(all(feature = "board-mesh-pocket", not(feature = "softdevice-s140-v6")))]
 compile_error!("MeshPocket requires softdevice-s140-v6; HT-n5262 ships S140 6.1.1");
 
+#[cfg(all(feature = "board-rak4631", not(feature = "softdevice-s140-v6")))]
+compile_error!("RAK4631 requires softdevice-s140-v6; Adafruit nRF52 bootloader ships S140 6.1.1");
+
+#[cfg(all(feature = "board-rak10724", not(feature = "softdevice-s140-v6")))]
+compile_error!("RAK10724 requires softdevice-s140-v6; Adafruit nRF52 bootloader ships S140 6.1.1");
+
 #[cfg(all(feature = "board-mesh-tower-v2", feature = "softdevice-s140-v7"))]
 compile_error!("MeshTower V2 does not support S140 7.x");
 
@@ -60,6 +81,12 @@ compile_error!("T114 does not support S140 7.x");
 
 #[cfg(all(feature = "board-mesh-pocket", feature = "softdevice-s140-v7"))]
 compile_error!("MeshPocket does not support S140 7.x");
+
+#[cfg(all(feature = "board-rak4631", feature = "softdevice-s140-v7"))]
+compile_error!("RAK4631 does not support S140 7.x");
+
+#[cfg(all(feature = "board-rak10724", feature = "softdevice-s140-v7"))]
+compile_error!("RAK10724 does not support S140 7.x");
 
 #[cfg(all(feature = "softdevice-s140-v6", feature = "softdevice-s140-v7"))]
 compile_error!("S140 compatibility features are mutually exclusive");
@@ -107,7 +134,9 @@ mod retained_display;
         not(feature = "board-t114"),
         not(feature = "board-mesh-pocket"),
         not(feature = "board-t1000e"),
-        not(feature = "board-mesh-tower-v2")
+        not(feature = "board-mesh-tower-v2"),
+        not(feature = "board-rak4631"),
+        not(feature = "board-rak10724")
     ),
     all(
         feature = "board-t096",
@@ -115,7 +144,9 @@ mod retained_display;
         not(feature = "board-t114"),
         not(feature = "board-mesh-pocket"),
         not(feature = "board-t1000e"),
-        not(feature = "board-mesh-tower-v2")
+        not(feature = "board-mesh-tower-v2"),
+        not(feature = "board-rak4631"),
+        not(feature = "board-rak10724")
     ),
     all(
         feature = "board-t114",
@@ -123,7 +154,9 @@ mod retained_display;
         not(feature = "board-t096"),
         not(feature = "board-mesh-pocket"),
         not(feature = "board-t1000e"),
-        not(feature = "board-mesh-tower-v2")
+        not(feature = "board-mesh-tower-v2"),
+        not(feature = "board-rak4631"),
+        not(feature = "board-rak10724")
     ),
     all(
         feature = "board-mesh-pocket",
@@ -131,7 +164,9 @@ mod retained_display;
         not(feature = "board-t096"),
         not(feature = "board-t114"),
         not(feature = "board-t1000e"),
-        not(feature = "board-mesh-tower-v2")
+        not(feature = "board-mesh-tower-v2"),
+        not(feature = "board-rak4631"),
+        not(feature = "board-rak10724")
     ),
     all(
         feature = "board-t1000e",
@@ -139,7 +174,9 @@ mod retained_display;
         not(feature = "board-t096"),
         not(feature = "board-t114"),
         not(feature = "board-mesh-pocket"),
-        not(feature = "board-mesh-tower-v2")
+        not(feature = "board-mesh-tower-v2"),
+        not(feature = "board-rak4631"),
+        not(feature = "board-rak10724")
     ),
     all(
         feature = "board-mesh-tower-v2",
@@ -147,7 +184,29 @@ mod retained_display;
         not(feature = "board-t096"),
         not(feature = "board-t114"),
         not(feature = "board-mesh-pocket"),
-        not(feature = "board-t1000e")
+        not(feature = "board-t1000e"),
+        not(feature = "board-rak4631"),
+        not(feature = "board-rak10724")
+    ),
+    all(
+        feature = "board-rak4631",
+        not(feature = "board-t-echo"),
+        not(feature = "board-t096"),
+        not(feature = "board-t114"),
+        not(feature = "board-mesh-pocket"),
+        not(feature = "board-t1000e"),
+        not(feature = "board-mesh-tower-v2"),
+        not(feature = "board-rak10724")
+    ),
+    all(
+        feature = "board-rak10724",
+        not(feature = "board-t-echo"),
+        not(feature = "board-t096"),
+        not(feature = "board-t114"),
+        not(feature = "board-mesh-pocket"),
+        not(feature = "board-t1000e"),
+        not(feature = "board-mesh-tower-v2"),
+        not(feature = "board-rak4631")
     )
 ))]
 mod runtime;
@@ -160,7 +219,9 @@ mod storage;
         not(feature = "board-t114"),
         not(feature = "board-mesh-pocket"),
         not(feature = "board-t1000e"),
-        not(feature = "board-mesh-tower-v2")
+        not(feature = "board-mesh-tower-v2"),
+        not(feature = "board-rak4631"),
+        not(feature = "board-rak10724")
     ),
     all(
         feature = "board-t096",
@@ -168,7 +229,9 @@ mod storage;
         not(feature = "board-t114"),
         not(feature = "board-mesh-pocket"),
         not(feature = "board-t1000e"),
-        not(feature = "board-mesh-tower-v2")
+        not(feature = "board-mesh-tower-v2"),
+        not(feature = "board-rak4631"),
+        not(feature = "board-rak10724")
     ),
     all(
         feature = "board-t114",
@@ -176,7 +239,9 @@ mod storage;
         not(feature = "board-t096"),
         not(feature = "board-mesh-pocket"),
         not(feature = "board-t1000e"),
-        not(feature = "board-mesh-tower-v2")
+        not(feature = "board-mesh-tower-v2"),
+        not(feature = "board-rak4631"),
+        not(feature = "board-rak10724")
     ),
     all(
         feature = "board-mesh-pocket",
@@ -184,7 +249,9 @@ mod storage;
         not(feature = "board-t096"),
         not(feature = "board-t114"),
         not(feature = "board-t1000e"),
-        not(feature = "board-mesh-tower-v2")
+        not(feature = "board-mesh-tower-v2"),
+        not(feature = "board-rak4631"),
+        not(feature = "board-rak10724")
     ),
     all(
         feature = "board-t1000e",
@@ -192,7 +259,9 @@ mod storage;
         not(feature = "board-t096"),
         not(feature = "board-t114"),
         not(feature = "board-mesh-pocket"),
-        not(feature = "board-mesh-tower-v2")
+        not(feature = "board-mesh-tower-v2"),
+        not(feature = "board-rak4631"),
+        not(feature = "board-rak10724")
     ),
     all(
         feature = "board-mesh-tower-v2",
@@ -200,7 +269,29 @@ mod storage;
         not(feature = "board-t096"),
         not(feature = "board-t114"),
         not(feature = "board-mesh-pocket"),
-        not(feature = "board-t1000e")
+        not(feature = "board-t1000e"),
+        not(feature = "board-rak4631"),
+        not(feature = "board-rak10724")
+    ),
+    all(
+        feature = "board-rak4631",
+        not(feature = "board-t-echo"),
+        not(feature = "board-t096"),
+        not(feature = "board-t114"),
+        not(feature = "board-mesh-pocket"),
+        not(feature = "board-t1000e"),
+        not(feature = "board-mesh-tower-v2"),
+        not(feature = "board-rak10724")
+    ),
+    all(
+        feature = "board-rak10724",
+        not(feature = "board-t-echo"),
+        not(feature = "board-t096"),
+        not(feature = "board-t114"),
+        not(feature = "board-mesh-pocket"),
+        not(feature = "board-t1000e"),
+        not(feature = "board-mesh-tower-v2"),
+        not(feature = "board-rak4631")
     )
 ))]
 pub use runtime::run;

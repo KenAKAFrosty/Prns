@@ -55,6 +55,8 @@ pub(super) const WEB_SERIAL_PROBE_ANDROID_BLUETOOTH_ONLY: &str = "android-blueto
 pub(super) const WEB_USB_PROBE_SUPPORTED: &str = "supported";
 const HT_N5262_SHARED_UF2_IDENTITY: &str = "ht-n5262";
 const HT_N5262_CONFIRMATION_DETAIL: &str = "INFO_UF2.TXT confirms only the shared HT-n5262 recovery family. It cannot distinguish T114 from MeshPocket or the two MeshPocket capacities; the printed product label and, for MeshPocket, enclosure capacity marking are the final identity check.";
+const WISBLOCK_RAK4631_SHARED_UF2_IDENTITY: &str = "wisblock-rak4631-board";
+const WISBLOCK_RAK4631_CONFIRMATION_DETAIL: &str = "INFO_UF2.TXT confirms only the shared WisBlock RAK4631 bootloader. It cannot distinguish the RAK4631 starter kit from the RAK10724 WisMesh 1W kit; the printed core and LoRa module labels are the final identity check.";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum WebSerialCapability {
@@ -214,11 +216,12 @@ pub(super) fn preparation_guide(
                 "If automatic connection fails, hold BOOT, tap RESET, release BOOT, then restart the complete connect-and-flash step.".to_string(),
             ],
         },
-        PreparationProfile::TechoUf2 | PreparationProfile::T114Uf2 => {
-            uf2_preparation_guide(target)
-        }
+        PreparationProfile::TechoUf2
+        | PreparationProfile::T114Uf2
+        | PreparationProfile::T096Uf2
+        | PreparationProfile::Rak4631Uf2
+        | PreparationProfile::Rak10724Uf2 => uf2_preparation_guide(target),
         PreparationProfile::MeshPocketUf2 => mesh_pocket_preparation_guide(target),
-        PreparationProfile::T096Uf2 => uf2_preparation_guide(target),
         PreparationProfile::T1000eNrfSerialDfu => {
             t1000e_preparation_guide(target, nrf_recovery)
         }
@@ -441,6 +444,7 @@ pub(super) fn board_identity_confirmation_detail(target: BoardFlashTarget) -> Op
     let shared_identity = target.shared_uf2_identity()?;
     match shared_identity {
         HT_N5262_SHARED_UF2_IDENTITY => Some(HT_N5262_CONFIRMATION_DETAIL),
+        WISBLOCK_RAK4631_SHARED_UF2_IDENTITY => Some(WISBLOCK_RAK4631_CONFIRMATION_DETAIL),
         _ => panic!("shared UF2 identity requires family-specific confirmation detail"),
     }
 }
@@ -492,6 +496,19 @@ mod tests {
         assert_eq!(
             board_identity_confirmation_detail(t114.flash_target.expect("flash target")),
             Some(HT_N5262_CONFIRMATION_DETAIL)
+        );
+        let wisblock_target = BoardFlashTarget::Uf2MassStorage {
+            mount_label: "RAK4631",
+            board_id_match_kind: prns_flash_manifest::Uf2BoardIdMatchKind::ExactShared,
+            board_id: "wisblock-rak4631-board",
+        };
+        assert_eq!(
+            wisblock_target.shared_uf2_identity(),
+            Some(WISBLOCK_RAK4631_SHARED_UF2_IDENTITY)
+        );
+        assert_eq!(
+            board_identity_confirmation_detail(wisblock_target),
+            Some(WISBLOCK_RAK4631_CONFIRMATION_DETAIL)
         );
         assert!(mesh_pocket.steps.iter().any(|step| step.contains("RST")));
         assert!(mesh_pocket
