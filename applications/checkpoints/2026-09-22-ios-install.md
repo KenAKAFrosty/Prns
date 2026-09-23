@@ -1,5 +1,10 @@
 # MetalbeardMobile installation and iOS 27 startup blocker
 
+Resolved later the same day by the [scene-lifecycle migration](2026-09-22-ios-scenes.md).
+This checkpoint preserves the earlier failed build and its evidence. The build
+output directory below was reused for the successful replacement; the hashes
+here identify the original binary, not the directory's current contents.
+
 ## Completed
 
 `25f31b4fe` changes all 14 Back-to links to a decorative left arrow before the
