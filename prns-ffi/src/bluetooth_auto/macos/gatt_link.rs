@@ -166,7 +166,7 @@ pub(super) enum ControlPlane {
         data_characteristic: Option<GattWriteTarget>,
         central_delegate: SendCentralDelegate,
         queue: DispatchRetained<DispatchQueue>,
-        peripheral_manager: Option<SendPeripheralDelegate>,
+        peripheral_manager: SendPeripheralDelegate,
     },
 }
 
@@ -177,23 +177,6 @@ impl ControlPlane {
             Self::Listener { .. } => FailurePolicy::EndInboundLink,
         }
     }
-}
-
-fn arm_central_l2cap(
-    peripheral_manager: Option<&SendPeripheralDelegate>,
-    peer_id: CoreBluetoothPeerId,
-    completion: oneshot::Sender<DataPlane>,
-) -> bool {
-    let Some(peripheral_manager) = peripheral_manager else {
-        crate::diagnostic_log::warn!(
-            "bluetooth: ignoring L2CAP accept without a local peripheral role; staying on the GATT floor"
-        );
-        return false;
-    };
-    peripheral_manager
-        .0
-        .arm_pending_channel(peer_id, completion);
-    true
 }
 
 enum GattWriter {
@@ -422,9 +405,7 @@ impl BleLink for GattLink {
                         peripheral_manager,
                         ..
                     } => {
-                        if !arm_central_l2cap(peripheral_manager.as_ref(), *peer_id, tx) {
-                            return Ok(());
-                        }
+                        peripheral_manager.0.arm_pending_channel(*peer_id, tx);
                     }
                     ControlPlane::Listener {
                         peer_id, delegate, ..
@@ -598,13 +579,6 @@ impl BleSink for GattSink {
 #[cfg(test)]
 mod source_lifecycle_tests {
     use super::*;
-
-    #[test]
-    fn central_only_link_rejects_a_local_l2cap_accept_plan() {
-        let (tx, rx) = oneshot::channel();
-        assert!(!arm_central_l2cap(None, CoreBluetoothPeerId([0; 16]), tx));
-        assert!(rx.blocking_recv().is_err());
-    }
 
     #[tokio::test]
     async fn inbound_l2cap_end_closes_source_while_gatt_floor_is_still_open() {
