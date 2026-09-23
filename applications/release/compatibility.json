@@ -10,8 +10,8 @@
     "rustTargets": ["thumbv7em-none-eabihf"]
   },
   "prns": {
-    "repository": "https://github.com/KenAKAFrosty/Prns.git",
-    "revision": "40ced6bbcaa59f305a23637df6346cbab089b847",
+    "repository": "https://github.com/evelant/Prns.git",
+    "revision": "798e947d7374d91eef57d497b2adad9b030f8b46",
     "hostContract": {
       "id": "prns-host/v1",
       "schemaPath": "prns-host/schema/host-contract-v1.json",
