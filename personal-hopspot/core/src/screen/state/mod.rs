@@ -1,3 +1,4 @@
+pub(in crate::screen) mod groups;
 pub(in crate::screen) mod subg;
 
 use core::future::Future;
@@ -7,12 +8,17 @@ use personal_rns::interfaces::subghz::regions::us915::US915_AUTO_LORA_PROFILE;
 use personal_rns::interfaces::subghz::{
     ResolvedSubGMode, SubGConfiguration, SubGConfigurationState,
 };
+use personal_rns::interfaces::{DiscoveryGroupSet, InterfaceId};
 use personal_rns::storage::DisplayedStorageLimits;
 
 use crate::PersistenceState;
 
 use super::limits::storage_limit_page_count;
 use super::model::{Card, CardKind, ScreenContent, SubGCardState};
+pub use groups::DiscoveryGroupReplacement;
+use groups::{
+    group_editor_hold, group_editor_tap, DiscoveryGroupEditor, DiscoveryGroupEditorOutcome,
+};
 use subg::{region_index, subg_editor_hold, subg_editor_tap, SubGEditorOutcome, SubGScreen};
 
 const INITIAL_VISIBLE_FOCUS_ITEMS: usize = 3;
@@ -54,6 +60,8 @@ pub(in crate::screen) const SLEEP_MENU_ITEM: usize = 4;
 pub(in crate::screen) const RADIO_MENU_ITEM_NO_DISPLAY: usize = 3;
 pub(in crate::screen) const POWER_MENU_ITEM: usize = 0;
 pub(in crate::screen) const POWER_ONLY_MENU_ITEMS: &[&str] = &["Power", "Back"];
+pub(in crate::screen) const DISCOVERY_GROUP_MENU_ITEMS: &[&str] = &["Power", "Groups", "Back"];
+pub(in crate::screen) const DISCOVERY_GROUPS_MENU_ITEM: usize = 1;
 pub(in crate::screen) const SHARED_INSTANCE_MENU_ITEMS: &[&str] = &["Power", "RNS Config", "Back"];
 pub(in crate::screen) const SHARED_INSTANCE_CONFIG_MENU_ITEM: usize = 1;
 pub(in crate::screen) const WIFI_MENU_ITEMS: &[&str] = &["Power", "Station", "Back"];
@@ -67,6 +75,7 @@ pub(in crate::screen) const SUBG_SETUP_CONFIGURE_MENU_ITEM: usize = 0;
 pub(in crate::screen) fn interface_menu_items(
     kind: CardKind,
     shared_instance_config_export: SharedInstanceConfigExport,
+    discovery_groups: DiscoveryGroupEditorAvailability,
 ) -> &'static [&'static str] {
     match kind {
         CardKind::SubG(SubGCardState::Setup) => SUBG_SETUP_MENU_ITEMS,
@@ -77,10 +86,14 @@ pub(in crate::screen) fn interface_menu_items(
         {
             SHARED_INSTANCE_MENU_ITEMS
         }
-        CardKind::Wifi
-        | CardKind::Peer
+        CardKind::Wifi | CardKind::Ble
+            if discovery_groups == DiscoveryGroupEditorAvailability::Available =>
+        {
+            DISCOVERY_GROUP_MENU_ITEMS
+        }
+        CardKind::Wifi | CardKind::Ble => POWER_ONLY_MENU_ITEMS,
+        CardKind::Peer
         | CardKind::Usb
-        | CardKind::Ble
         | CardKind::EspNow
         | CardKind::SharedInstance
         | CardKind::Tcp => POWER_ONLY_MENU_ITEMS,
@@ -106,6 +119,8 @@ pub enum UiAction {
     /// Flip the selected card's interface off or back on, keyed by the card's [`id`](crate::screen::Card::id).
     ToggleSelectedInterface,
     ToggleStationUplink,
+    OpenDiscoveryGroupsEditor(InterfaceId),
+    ReplaceDiscoveryGroups,
     OpenSubGEditor,
     SetSubGConfiguration(SubGConfiguration),
     ClearSubGConfiguration,
@@ -145,6 +160,11 @@ prns_macros::iterable_enum! {
         StateRecovered,
         SaveDeferred,
         SaveFailed,
+        GroupsInvalid,
+        GroupsBusy,
+        GroupsNotSaved,
+        GroupsApplyFailed,
+        GroupsRollbackFailed,
     }
     #[cfg(test)]
     pub(in crate::screen) const ALL;
@@ -270,6 +290,11 @@ impl UiNotice {
                 NoticeLines::three("Save deferred", "Flash cooldown", "Auto retry")
             }
             Self::SaveFailed => NoticeLines::three("Save failed", "Flash error", "Auto retry"),
+            Self::GroupsInvalid => NoticeLines::two("Groups", "Invalid"),
+            Self::GroupsBusy => NoticeLines::two("Groups", "Busy"),
+            Self::GroupsNotSaved => NoticeLines::two("Groups", "Not saved"),
+            Self::GroupsApplyFailed => NoticeLines::two("Groups", "Apply failed"),
+            Self::GroupsRollbackFailed => NoticeLines::two("Groups", "Rollback failed"),
         }
     }
 }
@@ -407,12 +432,19 @@ pub enum GnssAvailability {
     Available,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DiscoveryGroupEditorAvailability {
+    Unavailable,
+    Available,
+}
+
 pub struct UiConfiguration {
     pub storage_limits: DisplayedStorageLimits,
     pub user_blanking: UserBlanking,
     pub access_point: AccessPointState,
     pub shared_instance_config_export: SharedInstanceConfigExport,
     pub gnss: GnssAvailability,
+    pub discovery_groups: DiscoveryGroupEditorAvailability,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -424,6 +456,7 @@ pub struct UiState {
     pub(in crate::screen) access_point: AccessPointState,
     pub(in crate::screen) shared_instance_config_export: SharedInstanceConfigExport,
     pub(in crate::screen) gnss: GnssAvailability,
+    pub(in crate::screen) discovery_groups: DiscoveryGroupEditorAvailability,
     pub(in crate::screen) gnss_visible: bool,
     pub(in crate::screen) notice: Option<UiNotice>,
     pub(in crate::screen) storage_limits: DisplayedStorageLimits,
@@ -447,6 +480,8 @@ pub(in crate::screen) enum UiMode {
         screen: SubGScreen,
         profile: RadioProfile,
     },
+    DiscoveryGroupEditor(DiscoveryGroupEditor),
+    DiscoveryGroupCommit(DiscoveryGroupReplacement),
     ConfirmSubGClear {
         confirm: bool,
     },
@@ -465,6 +500,7 @@ impl UiState {
             access_point: configuration.access_point,
             shared_instance_config_export: configuration.shared_instance_config_export,
             gnss: configuration.gnss,
+            discovery_groups: configuration.discovery_groups,
             gnss_visible: false,
             notice: None,
             storage_limits: configuration.storage_limits,
@@ -521,6 +557,8 @@ impl UiState {
             | UiMode::Sleeping
             | UiMode::InterfaceMenu { .. }
             | UiMode::SubGEditor { .. }
+            | UiMode::DiscoveryGroupEditor(_)
+            | UiMode::DiscoveryGroupCommit(_)
             | UiMode::ConfirmSubGClear { .. }
             | UiMode::ConfirmRadioSwap { .. } => None,
         }
@@ -534,6 +572,8 @@ impl UiState {
             | UiMode::LimitsPage { .. }
             | UiMode::Sleeping
             | UiMode::SubGEditor { .. }
+            | UiMode::DiscoveryGroupEditor(_)
+            | UiMode::DiscoveryGroupCommit(_)
             | UiMode::ConfirmSubGClear { .. }
             | UiMode::ConfirmRadioSwap { .. } => None,
         }
@@ -553,6 +593,23 @@ impl UiState {
             },
             profile,
         };
+    }
+
+    pub fn open_discovery_groups_editor(
+        &mut self,
+        interface_id: InterfaceId,
+        groups: &DiscoveryGroupSet,
+    ) {
+        self.mode = UiMode::DiscoveryGroupEditor(DiscoveryGroupEditor::new(interface_id, groups));
+    }
+
+    /// Takes the validated group replacement produced by the most recent UI action.
+    pub fn take_discovery_group_replacement(&mut self) -> Option<DiscoveryGroupReplacement> {
+        let UiMode::DiscoveryGroupCommit(replacement) = self.mode else {
+            return None;
+        };
+        self.mode = UiMode::Cards;
+        Some(replacement)
     }
 
     #[must_use]
@@ -620,6 +677,8 @@ impl UiState {
             | UiMode::LimitsPage { .. }
             | UiMode::Sleeping
             | UiMode::SubGEditor { .. }
+            | UiMode::DiscoveryGroupEditor(_)
+            | UiMode::DiscoveryGroupCommit(_)
             | UiMode::ConfirmSubGClear { .. }
             | UiMode::ConfirmRadioSwap { .. } => {}
             UiMode::InterfaceMenu { .. } if self.selected_card(content.cards).is_none() => {
@@ -631,7 +690,13 @@ impl UiState {
             } => {
                 self.mode = UiMode::InterfaceMenu {
                     selected_item: selected_item.min(
-                        interface_menu_items(kind, self.shared_instance_config_export).len() - 1,
+                        interface_menu_items(
+                            kind,
+                            self.shared_instance_config_export,
+                            self.discovery_groups,
+                        )
+                        .len()
+                            - 1,
                     ),
                     kind,
                 };
@@ -775,7 +840,12 @@ impl UiState {
             ) => {
                 self.mode = UiMode::InterfaceMenu {
                     selected_item: (selected_item + 1)
-                        % interface_menu_items(kind, self.shared_instance_config_export).len(),
+                        % interface_menu_items(
+                            kind,
+                            self.shared_instance_config_export,
+                            self.discovery_groups,
+                        )
+                        .len(),
                     kind,
                 };
                 UiAction::None
@@ -800,6 +870,14 @@ impl UiState {
                     }
                     (CardKind::SubG(SubGCardState::Setup), _) => UiAction::None,
                     (_, POWER_MENU_ITEM) => UiAction::ToggleSelectedInterface,
+                    (CardKind::Wifi | CardKind::Ble, DISCOVERY_GROUPS_MENU_ITEM)
+                        if self.discovery_groups == DiscoveryGroupEditorAvailability::Available =>
+                    {
+                        self.selected_card(content.cards)
+                            .map_or(UiAction::None, |card| {
+                                UiAction::OpenDiscoveryGroupsEditor(card.id())
+                            })
+                    }
                     (
                         CardKind::WifiStation | CardKind::WifiStationDisabled,
                         STATION_UPLINK_MENU_ITEM,
@@ -832,6 +910,35 @@ impl UiState {
                         UiAction::None
                     }
                 }
+            }
+            (InputEvent::ShortPress, UiMode::DiscoveryGroupEditor(editor)) => {
+                self.mode = UiMode::DiscoveryGroupEditor(group_editor_tap(editor));
+                UiAction::None
+            }
+            (InputEvent::LongPress, UiMode::DiscoveryGroupEditor(editor)) => {
+                match group_editor_hold(editor) {
+                    DiscoveryGroupEditorOutcome::Stay(editor) => {
+                        self.mode = UiMode::DiscoveryGroupEditor(editor);
+                        UiAction::None
+                    }
+                    DiscoveryGroupEditorOutcome::Commit(replacement) => {
+                        self.mode = UiMode::DiscoveryGroupCommit(replacement);
+                        UiAction::ReplaceDiscoveryGroups
+                    }
+                    DiscoveryGroupEditorOutcome::Invalid(editor) => {
+                        self.mode = UiMode::DiscoveryGroupEditor(editor);
+                        self.notice = Some(UiNotice::GroupsInvalid);
+                        UiAction::None
+                    }
+                    DiscoveryGroupEditorOutcome::Cancel => {
+                        self.mode = UiMode::Cards;
+                        UiAction::None
+                    }
+                }
+            }
+            (InputEvent::ShortPress | InputEvent::LongPress, UiMode::DiscoveryGroupCommit(_)) => {
+                self.mode = UiMode::Cards;
+                UiAction::None
             }
         };
         self.sync(content);

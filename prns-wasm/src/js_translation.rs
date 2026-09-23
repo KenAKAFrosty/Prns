@@ -122,6 +122,7 @@ pub(crate) fn bluetooth_control_to_js(control: bluetooth_contract::Control) -> J
             endpoint,
             capabilities,
             peer_rssi,
+            discovery_groups: _,
         } => {
             set_str(&object, "type", "hello");
             set_bytes(&object, "identity", identity.as_bytes());
@@ -137,6 +138,7 @@ pub(crate) fn bluetooth_control_to_js(control: bluetooth_contract::Control) -> J
             endpoint,
             capabilities,
             peer_rssi,
+            discovery_groups: _,
         } => {
             set_str(&object, "type", "welcome");
             set_bytes(&object, "identity", identity.as_bytes());

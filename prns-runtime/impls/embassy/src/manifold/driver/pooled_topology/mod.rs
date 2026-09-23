@@ -1,4 +1,4 @@
-use embassy_futures::select::{select, select6, Either6};
+use embassy_futures::select::{select, select6, Either, Either6};
 use embassy_futures::yield_now;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::Receiver;
@@ -7,6 +7,9 @@ use heapless::Vec as HeaplessVec;
 use crate::engine::{
     ClassifiedInboundPacket, Departure, EngineState, IngestIo, IssuedCommand, Journaled,
     ProofRequest,
+};
+use crate::interfaces::rns_management::{
+    write_route_snapshots, RNS_PATH_TABLE_MAX_ENCODED_ENTRY_BYTES,
 };
 use crate::interfaces::InterfaceIfac;
 use crate::interfaces::{
@@ -17,8 +20,14 @@ use crate::manifold::interface_seam::{EMBEDDED_MAX_LINK_MTU, EMBEDDED_MAX_WIRE_F
 use crate::manifold::timers::{wait_for_due_reason, wait_for_pacer};
 use crate::manifold::wake_schedule::{fire_due_reason, merge_wake_schedules_delta};
 use crate::manifold::{AppDeciders, Host};
+use crate::routing::links::request::{response_envelope_prefix, RESPONSE_WIRE_OVERHEAD};
 use crate::routing::links::resources::ResourceOffer;
-use crate::runtime::{InterfaceInspectionStore, ManifoldPersistence};
+use crate::routing::links::resources::{
+    ResourceBody, ResourceCorrelation, ResourceMetadata, ResourceSend,
+};
+use crate::runtime::{
+    InterfaceInspectionStore, ManifoldPersistence, ResourceResponse, ResourceResponsePayload,
+};
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
 
 use super::egress::{
@@ -31,6 +40,11 @@ use super::inline_work::{
 use super::interface_status::account_protocol_violation;
 use super::packet_phy::retain_packet_phy;
 use super::EmbassyInterfaceStatus;
+
+const RNS_PATH_TABLE_MAX_ENTRIES: usize = 8;
+pub const RNS_PATH_TABLE_RESPONSE_BYTES: usize = RESPONSE_WIRE_OVERHEAD
+    + 1
+    + RNS_PATH_TABLE_MAX_ENTRIES * RNS_PATH_TABLE_MAX_ENCODED_ENTRY_BYTES;
 
 /// Changes the live descriptor set without reallocating the fixed lane pool.
 #[repr(C)]
@@ -73,6 +87,51 @@ fn inbound_source(
     }
 }
 
+// Both variants stay inline because embedded runtimes cannot rely on heap indirection.
+#[allow(clippy::large_enum_variant)]
+enum MaterializedResourceResponse<const N: usize> {
+    Ready(HeaplessVec<u8, N>),
+    RnsPathTable(HeaplessVec<u8, RNS_PATH_TABLE_RESPONSE_BYTES>),
+}
+
+impl<const N: usize> MaterializedResourceResponse<N> {
+    fn as_slice(&self) -> &[u8] {
+        match self {
+            Self::Ready(data) => data,
+            Self::RnsPathTable(data) => data,
+        }
+    }
+}
+
+#[inline(never)]
+fn resource_response_data<S: StorageLayout, const N: usize>(
+    engine: &EngineState<S>,
+    descriptors: &[InterfaceDescriptor],
+    request_id: crate::routing::links::request::RequestId,
+    payload: ResourceResponsePayload<N>,
+) -> Option<MaterializedResourceResponse<N>> {
+    match payload {
+        ResourceResponsePayload::Ready(data) => Some(MaterializedResourceResponse::Ready(data)),
+        ResourceResponsePayload::RnsPathTable(selection) => {
+            let entries = engine.bounded_route_snapshots::<RNS_PATH_TABLE_MAX_ENTRIES>(
+                AttachedInterfaces::new(descriptors),
+                |entry| selection.includes(entry.destination, entry.hops),
+            );
+            let mut data = HeaplessVec::new();
+            data.resize(RNS_PATH_TABLE_RESPONSE_BYTES, 0).ok()?;
+            data.get_mut(..RESPONSE_WIRE_OVERHEAD)?
+                .copy_from_slice(&response_envelope_prefix(&request_id));
+            let written = write_route_snapshots(
+                entries.entries(),
+                data.get_mut(RESPONSE_WIRE_OVERHEAD..RNS_PATH_TABLE_RESPONSE_BYTES)?,
+            )
+            .ok()?;
+            data.truncate(RESPONSE_WIRE_OVERHEAD + written);
+            Some(MaterializedResourceResponse::RnsPathTable(data))
+        }
+    }
+}
+
 /// Borrowed lanes and channels for one pooled-topology manifold run.
 pub struct PooledWiring<
     'run,
@@ -81,6 +140,7 @@ pub struct PooledWiring<
     const INTERFACE_CAPACITY: usize,
     const NOTIFY: usize,
     const COMMANDS: usize,
+    const RESPONSE_BYTES: usize,
     const LIFECYCLE: usize,
 > {
     pub descriptors: &'run mut HeaplessVec<InterfaceDescriptor, INTERFACE_CAPACITY>,
@@ -91,6 +151,7 @@ pub struct PooledWiring<
     pub egress: &'run mut PooledEgress<LANE_COUNT>,
     pub notify: Receiver<'run, M, InterfaceId, NOTIFY>,
     pub commands: Receiver<'run, M, IssuedCommand, COMMANDS>,
+    pub resource_responses: Receiver<'run, M, ResourceResponse<RESPONSE_BYTES>, 1>,
     pub lifecycle: Receiver<'run, M, InterfaceLifecycle, LIFECYCLE>,
 }
 
@@ -104,11 +165,21 @@ pub(crate) async fn run_pooled<
     const INTERFACE_CAPACITY: usize,
     const NOTIFY: usize,
     const COMMANDS: usize,
+    const RESPONSE_BYTES: usize,
     const LIFECYCLE: usize,
 >(
     engine: &mut EngineState<S>,
     host: &mut H,
-    wiring: PooledWiring<'_, M, LANE_COUNT, INTERFACE_CAPACITY, NOTIFY, COMMANDS, LIFECYCLE>,
+    wiring: PooledWiring<
+        '_,
+        M,
+        LANE_COUNT,
+        INTERFACE_CAPACITY,
+        NOTIFY,
+        COMMANDS,
+        RESPONSE_BYTES,
+        LIFECYCLE,
+    >,
     mut on_journaled: impl FnMut(Journaled<'_>),
     deciders: AppDeciders<impl FnMut(&ProofRequest) -> bool, impl FnMut(&ResourceOffer) -> bool>,
     store: &Store,
@@ -132,6 +203,7 @@ pub(crate) async fn run_pooled<
         egress,
         notify,
         commands,
+        resource_responses,
         lifecycle,
     } = wiring;
     let mut pacers: HeaplessVec<InterfacePacer, LANE_COUNT> = HeaplessVec::new();
@@ -152,7 +224,7 @@ pub(crate) async fn run_pooled<
         let persistence_deadline = persistence.deadline(host.now());
         match select6(
             notify.receive(),
-            commands.receive(),
+            select(commands.receive(), resource_responses.receive()),
             wait_for_due_reason(&*host, wake),
             wait_for_pacer(&*host, pacer_wake),
             lifecycle.receive(),
@@ -267,29 +339,68 @@ pub(crate) async fn run_pooled<
                     }
                 }
             }
-            Either6::Second(issued) => {
+            Either6::Second(input) => {
                 let now = host.now();
                 let mut owed_work = InlineOwedWorkQueue::new();
-                let mut delta = engine.ingest_command_into_with_work(
-                    issued,
-                    AttachedInterfaces::new(&*descriptors),
-                    now,
-                    &mut |entropy| host.fill_random(entropy),
-                    &mut |reaction| {
-                        route_and_capture_owed_work(
-                            reaction,
-                            &mut *egress,
-                            ifacs,
-                            &mut pacers,
-                            now,
-                            &mut |journaled| {
-                                persistence.observe(&journaled, now);
-                                on_journaled(journaled);
+                let mut delta = match input {
+                    Either::First(issued) => engine.ingest_command_into_with_work(
+                        issued,
+                        AttachedInterfaces::new(&*descriptors),
+                        now,
+                        &mut |entropy| host.fill_random(entropy),
+                        &mut |reaction| {
+                            route_and_capture_owed_work(
+                                reaction,
+                                &mut *egress,
+                                ifacs,
+                                &mut pacers,
+                                now,
+                                &mut |journaled| {
+                                    persistence.observe(&journaled, now);
+                                    on_journaled(journaled);
+                                },
+                                &mut owed_work,
+                            )
+                        },
+                    ),
+                    Either::Second(response) => {
+                        let Some(data) = resource_response_data(
+                            engine,
+                            descriptors,
+                            response.request_id,
+                            response.payload,
+                        ) else {
+                            continue;
+                        };
+                        engine.ingest_send_resource_into(
+                            &ResourceSend {
+                                id: response.id,
+                                link_id: response.link_id,
+                                body: ResourceBody {
+                                    data: data.as_slice(),
+                                    compressed_candidate: None,
+                                    metadata: ResourceMetadata::None,
+                                },
+                                correlation: ResourceCorrelation::Response(response.request_id),
                             },
-                            &mut owed_work,
+                            now,
+                            &mut |entropy| host.fill_random(entropy),
+                            &mut |reaction| {
+                                route_reaction(
+                                    reaction,
+                                    &mut *egress,
+                                    ifacs,
+                                    &mut pacers,
+                                    now,
+                                    &mut |journaled| {
+                                        persistence.observe(&journaled, now);
+                                        on_journaled(journaled);
+                                    },
+                                )
+                            },
                         )
-                    },
-                );
+                    }
+                };
                 delta.merge(fulfill_owed_work_inline(
                     owed_work,
                     &mut *engine,

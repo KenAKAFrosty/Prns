@@ -1,13 +1,11 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use rmp::Marker;
-
 use crate::identity::IdentityHash;
 use crate::routing::BlackholeExpiry;
 use crate::units::InstantMillis;
 
-use super::super::message_pack::{MessagePackInteger, MessagePackReader};
+use super::super::message_pack::{Marker, MessagePackInteger, MessagePackReader};
 use super::super::wire_names::{blackhole, common};
 use super::RnsBlackholeEntry;
 

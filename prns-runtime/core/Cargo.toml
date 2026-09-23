@@ -32,7 +32,7 @@ resource-bzip2 = ["std", "dep:bzip2"]
 remote-control-wifi-host = []
 
 [dependencies]
-prns-core = { version = "=0.3.7", path = "../../prns-core", default-features = false }
+prns-core = { version = "=0.3.7", path = "../../prns-core", default-features = false, features = ["rns-management-wire"] }
 prns-macros = { version = "=0.3.7", path = "../../prns-macros" }
 bzip2 = { version = "0.6", optional = true }
 cfg-if = "1.0"
