@@ -278,7 +278,9 @@ export function ContactDetailScreen({ destination }: { readonly destination: Des
       )}
       {failure === null ? null : <FailureCard detail={failure} />}
       <MutationResult outcome={mutation} />
-      <NavigationLink href="/contacts">Back to Contacts</NavigationLink>
+      <NavigationLink href="/contacts" direction="back">
+        Back to Contacts
+      </NavigationLink>
     </Screen>
   );
 }
@@ -386,7 +388,9 @@ export function AddContactScreen() {
       <BodyText muted>
         You can also save a verified destination from Nodes &gt; This device.
       </BodyText>
-      <NavigationLink href="/contacts">Back to Contacts</NavigationLink>
+      <NavigationLink href="/contacts" direction="back">
+        Back to Contacts
+      </NavigationLink>
     </Screen>
   );
 }

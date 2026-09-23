@@ -6,9 +6,13 @@ import { NavigationLink } from "./navigation-link";
 
 const label = "Manage a node with a long descriptive name";
 
-function renderLink() {
+function renderLink(direction: "forward" | "back" = "forward") {
   return renderRouter({
-    index: () => <NavigationLink href="/target">{label}</NavigationLink>,
+    index: () => (
+      <NavigationLink href="/target" direction={direction}>
+        {label}
+      </NavigationLink>
+    ),
     target: () => <Text>Destination screen</Text>,
   });
 }
@@ -27,6 +31,29 @@ describe("NavigationLink with real router composition", () => {
     expect(screen.getByText("→", { includeHiddenElements: true })).toHaveStyle({
       flexShrink: 0,
     });
+    expect(screen.UNSAFE_getAllByType(Text).map((text) => text.props.children)).toEqual([
+      label,
+      "→",
+    ]);
+  });
+
+  it("places a decorative left arrow before the back label and keeps the explicit destination", () => {
+    const view = renderLink("back");
+
+    expect(screen.UNSAFE_getAllByType(Text).map((text) => text.props.children)).toEqual([
+      "←",
+      label,
+    ]);
+    expect(screen.queryByText("←")).toBeNull();
+    expect(screen.queryByText("→", { includeHiddenElements: true })).toBeNull();
+    expect(screen.getByText("←", { includeHiddenElements: true })).toHaveStyle({ flexShrink: 0 });
+    expect(screen.getByRole("link", { name: label })).toHaveStyle({
+      flexDirection: "row",
+      minHeight: 48,
+    });
+    fireEvent.press(screen.getByRole("link", { name: label }));
+    expect(view.getPathname()).toBe("/target");
+    expect(screen.getByText("Destination screen")).toBeVisible();
   });
 
   it("keeps press feedback and a visible focus state after asChild merging", () => {

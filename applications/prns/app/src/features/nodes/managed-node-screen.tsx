@@ -75,7 +75,9 @@ export function ManagedNodeScreen() {
         <BodyText>
           Node management is not available on {runtime.availability.platform} yet.
         </BodyText>
-        <NavigationLink href="/nodes">Back to Nodes</NavigationLink>
+        <NavigationLink href="/nodes" direction="back">
+          Back to Nodes
+        </NavigationLink>
       </Screen>
     );
   }
@@ -86,7 +88,9 @@ export function ManagedNodeScreen() {
         <Badge>Getting ready</Badge>
         <ScreenHeading>Manage node</ScreenHeading>
         <BodyText>Loading node details…</BodyText>
-        <NavigationLink href="/nodes">Back to Nodes</NavigationLink>
+        <NavigationLink href="/nodes" direction="back">
+          Back to Nodes
+        </NavigationLink>
       </Screen>
     );
   }
@@ -99,7 +103,9 @@ export function ManagedNodeScreen() {
         <BodyText>
           This device&apos;s node could not start. Open its diagnostics for more details.
         </BodyText>
-        <NavigationLink href="/nodes">Back to Nodes</NavigationLink>
+        <NavigationLink href="/nodes" direction="back">
+          Back to Nodes
+        </NavigationLink>
       </Screen>
     );
   }
@@ -140,7 +146,9 @@ export function ManagedNodeScreen() {
         <Badge tone="warning">{guidance.title}</Badge>
         <ScreenHeading>Manage node</ScreenHeading>
         <BodyText>{guidance.detail}</BodyText>
-        <NavigationLink href="/nodes">Back to Nodes</NavigationLink>
+        <NavigationLink href="/nodes" direction="back">
+          Back to Nodes
+        </NavigationLink>
       </Screen>
     );
   }
@@ -316,7 +324,9 @@ export function ManagedNodeScreen() {
           ) : null}
         </>
       ) : null}
-      <NavigationLink href="/nodes">Back to Nodes</NavigationLink>
+      <NavigationLink href="/nodes" direction="back">
+        Back to Nodes
+      </NavigationLink>
     </Screen>
   );
 }

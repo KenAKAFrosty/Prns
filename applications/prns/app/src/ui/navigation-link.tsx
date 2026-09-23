@@ -7,11 +7,21 @@ import { radius, space, useAppPalette } from "./theme";
 export function NavigationLink({
   accessibilityLabel,
   children,
+  direction = "forward",
   href,
-}: PropsWithChildren<{ readonly href: Href; readonly accessibilityLabel?: string }>) {
+}: PropsWithChildren<{
+  readonly href: Href;
+  readonly accessibilityLabel?: string;
+  readonly direction?: "forward" | "back";
+}>) {
   const palette = useAppPalette();
   const [pressed, setPressed] = useState(false);
   const [focused, setFocused] = useState(false);
+  const arrow = (
+    <Text aria-hidden style={[styles.arrow, { color: palette.textMuted }]}>
+      {direction === "back" ? "←" : "→"}
+    </Text>
+  );
   return (
     <Link href={href} asChild>
       <Pressable
@@ -30,10 +40,9 @@ export function NavigationLink({
           },
         ])}
       >
+        {direction === "back" ? arrow : null}
         <Text style={[styles.label, { color: palette.text }]}>{children}</Text>
-        <Text aria-hidden style={[styles.arrow, { color: palette.textMuted }]}>
-          →
-        </Text>
+        {direction === "forward" ? arrow : null}
       </Pressable>
     </Link>
   );

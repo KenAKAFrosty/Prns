@@ -310,7 +310,9 @@ export function ConversationScreen({ destination }: { readonly destination: Uint
       <Screen>
         <ScreenHeading>Conversation</ScreenHeading>
         <UnavailableCard platform={development.availability.platform} />
-        <NavigationLink href="/inbox">Back to Inbox</NavigationLink>
+        <NavigationLink href="/inbox" direction="back">
+          Back to Inbox
+        </NavigationLink>
       </Screen>
     );
   }
@@ -373,7 +375,9 @@ export function ConversationScreen({ destination }: { readonly destination: Uint
           />
         ))
       )}
-      <NavigationLink href="/inbox">Back to Inbox</NavigationLink>
+      <NavigationLink href="/inbox" direction="back">
+        Back to Inbox
+      </NavigationLink>
     </Screen>
   );
 }
@@ -396,7 +400,9 @@ export function ComposeScreen({
       <Screen>
         <ScreenHeading>Compose</ScreenHeading>
         <UnavailableCard platform={development.availability.platform} />
-        <NavigationLink href="/inbox">Back to Inbox</NavigationLink>
+        <NavigationLink href="/inbox" direction="back">
+          Back to Inbox
+        </NavigationLink>
       </Screen>
     );
   }
@@ -405,7 +411,9 @@ export function ComposeScreen({
       <Screen>
         <ScreenHeading>Compose</ScreenHeading>
         <MessagingOfflineCard />
-        <NavigationLink href="/inbox">Back to Inbox</NavigationLink>
+        <NavigationLink href="/inbox" direction="back">
+          Back to Inbox
+        </NavigationLink>
       </Screen>
     );
   }
@@ -458,7 +466,9 @@ export function ComposeScreen({
           </NavigationLink>
         </>
       )}
-      <NavigationLink href="/inbox">Back to Inbox</NavigationLink>
+      <NavigationLink href="/inbox" direction="back">
+        Back to Inbox
+      </NavigationLink>
     </Screen>
   );
 }

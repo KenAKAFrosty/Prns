@@ -206,7 +206,9 @@ export function PairNodeScreen({
         />
       )}
 
-      <NavigationLink href="/nodes">Back to Nodes</NavigationLink>
+      <NavigationLink href="/nodes" direction="back">
+        Back to Nodes
+      </NavigationLink>
     </Screen>
   );
 }
