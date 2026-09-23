@@ -1,12 +1,10 @@
 use alloc::vec::Vec;
 use core::fmt;
 
-use rmp::Marker;
-
 use crate::units::InstantMillis;
 use crate::wire::DestinationHash;
 
-use super::message_pack::{MessagePackInteger, MessagePackReader};
+use super::message_pack::{Marker, MessagePackInteger, MessagePackReader};
 use super::wire_names::{common, rate};
 use super::{rns_timestamp, MessagePackEncoder, RnsManagementEncodeError};
 

@@ -75,7 +75,7 @@ pub fn encode_rate_table_response(
 mod tests {
     use super::*;
     use prns_core::interfaces::{InterfaceId, InterfaceKind};
-    use prns_core::routing::NextHop;
+    use prns_core::routing::{NextHop, RouteRetention};
     use prns_core::units::InstantMillis;
     use prns_core::wire::DestinationHash;
 
@@ -135,6 +135,7 @@ mod tests {
             last_route_activity_at: InstantMillis(1_500),
             expires_at: InstantMillis(2_000),
             interface: InterfaceId::from_channel_tag(InterfaceKind::TcpClient, b"remote"),
+            retention: RouteRetention::Network,
         }
     }
 
