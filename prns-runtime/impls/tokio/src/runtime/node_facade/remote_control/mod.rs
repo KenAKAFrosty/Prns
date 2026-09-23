@@ -14,7 +14,8 @@ use crate::runtime::{
     RemoteControlConfirmWifiCredentials, RemoteControlDescribe, RemoteControlDescribeBuild,
     RemoteControlDescribePower, RemoteControlError, RemoteControlInspectWifiTransaction,
     RemoteControlInventoryControllers, RemoteControlInventoryInterfaceConfig,
-    RemoteControlInventoryInterfacePeers, RemoteControlInventoryInterfaces,
+    RemoteControlInventoryInterfaceDiscoveryGroups, RemoteControlInventoryInterfacePeers,
+    RemoteControlInventoryInterfaces, RemoteControlReplaceInterfaceDiscoveryGroups,
     RemoteControlRevokeController, RemoteControlSetDisplayAutoOff,
     RemoteControlSetDisplayVisibility, RemoteControlSetEspRadioMode, RemoteControlSetGnssPower,
     RemoteControlSetInterfaceGroup, RemoteControlSetInterfaceLoRaProfile,
@@ -29,10 +30,11 @@ use prns_core::interfaces::{InterfaceId, InterfaceMode};
 use prns_core::remote_control::{
     RemoteControlApplyOutcome, RemoteControlAuthorizeControllerOutcome, RemoteControlBuildVersion,
     RemoteControlControllerIdentity, RemoteControlControllerInventory, RemoteControlControllerPage,
-    RemoteControlDescription, RemoteControlDisplayAutoOff, RemoteControlDisplayVisibility,
-    RemoteControlEspRadioMode, RemoteControlGnssPower, RemoteControlGroupOutcome,
-    RemoteControlInterfaceConfigOutcome, RemoteControlInterfaceGroup,
-    RemoteControlInterfaceInventory, RemoteControlInterfacePage,
+    RemoteControlDescription, RemoteControlDiscoveryGroups,
+    RemoteControlDiscoveryGroupsInventoryOutcome, RemoteControlDiscoveryGroupsReplaceOutcome,
+    RemoteControlDisplayAutoOff, RemoteControlDisplayVisibility, RemoteControlEspRadioMode,
+    RemoteControlGnssPower, RemoteControlGroupOutcome, RemoteControlInterfaceConfigOutcome,
+    RemoteControlInterfaceGroup, RemoteControlInterfaceInventory, RemoteControlInterfacePage,
     RemoteControlInterfacePeersOutcome, RemoteControlInterfacePower, RemoteControlLoRaOutcome,
     RemoteControlLoRaProfile, RemoteControlModeOutcome, RemoteControlPeerPage,
     RemoteControlPowerOutcome, RemoteControlRequest, RemoteControlRequestSet,
@@ -332,6 +334,66 @@ impl RemoteControlHandle<'_> {
             .await
             .map_err(RemoteControlError::Request)?;
         let outcome = RemoteControlSetInterfaceGroup::parse_response(response.as_slice())?;
+        Ok((outcome, rtt))
+    }
+
+    pub async fn inventory_interface_discovery_groups(
+        &self,
+        id: InterfaceId,
+    ) -> Result<(RemoteControlDiscoveryGroupsInventoryOutcome, RttMillis), RemoteControlError> {
+        let mut encoded = std::vec![0u8; RemoteControlRequest::MAX_ENCODED_LEN];
+        let encoded_len = RemoteControlInventoryInterfaceDiscoveryGroups::write_request(
+            id,
+            encoded.as_mut_slice(),
+        )?;
+        encoded.truncate(encoded_len);
+        let (response, rtt) = self
+            .node
+            .request_owned_with_options(
+                self.link_id,
+                RequestEndpointId::of(REMOTE_CONTROL_REQUEST_ENDPOINT_ID),
+                encoded,
+                RequestOptions {
+                    response_timeout: RequestResponseTimeout::LinkDefault,
+                    maximum_response_bytes:
+                        RemoteControlInventoryInterfaceDiscoveryGroups::MAXIMUM_RESPONSE_BYTES,
+                },
+            )
+            .await
+            .map_err(RemoteControlError::Request)?;
+        let outcome =
+            RemoteControlInventoryInterfaceDiscoveryGroups::parse_response(response.as_slice())?;
+        Ok((outcome, rtt))
+    }
+
+    pub async fn replace_interface_discovery_groups(
+        &self,
+        id: InterfaceId,
+        groups: RemoteControlDiscoveryGroups,
+    ) -> Result<(RemoteControlDiscoveryGroupsReplaceOutcome, RttMillis), RemoteControlError> {
+        let mut encoded = std::vec![0u8; RemoteControlRequest::MAX_ENCODED_LEN];
+        let encoded_len = RemoteControlReplaceInterfaceDiscoveryGroups::write_request(
+            id,
+            groups,
+            encoded.as_mut_slice(),
+        )?;
+        encoded.truncate(encoded_len);
+        let (response, rtt) = self
+            .node
+            .request_owned_with_options(
+                self.link_id,
+                RequestEndpointId::of(REMOTE_CONTROL_REQUEST_ENDPOINT_ID),
+                encoded,
+                RequestOptions {
+                    response_timeout: RequestResponseTimeout::LinkDefault,
+                    maximum_response_bytes:
+                        RemoteControlReplaceInterfaceDiscoveryGroups::MAXIMUM_RESPONSE_BYTES,
+                },
+            )
+            .await
+            .map_err(RemoteControlError::Request)?;
+        let outcome =
+            RemoteControlReplaceInterfaceDiscoveryGroups::parse_response(response.as_slice())?;
         Ok((outcome, rtt))
     }
 

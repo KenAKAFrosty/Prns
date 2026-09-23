@@ -113,17 +113,14 @@ fn request_completions_are_independently_bounded() {
 }
 
 #[test]
-fn response_capacity_costs_memory_only_when_request_slots_exist() {
+fn response_capacity_funds_one_resource_lane_plus_any_request_slots() {
     const RESPONSE_CAPACITY: usize = crate::runtime::RemoteControlDescribe::RESPONSE_CAPACITY;
     type NoRequests = CompletionPool<CriticalSectionRawMutex, 4, 0, 0>;
     type CapacityWithoutRequests = CompletionPool<CriticalSectionRawMutex, 4, 0, RESPONSE_CAPACITY>;
     type OneRequest = CompletionPool<CriticalSectionRawMutex, 4, 1, RESPONSE_CAPACITY>;
 
-    assert_eq!(
-        core::mem::size_of::<NoRequests>(),
-        core::mem::size_of::<CapacityWithoutRequests>(),
-    );
-    assert!(core::mem::size_of::<OneRequest>() > core::mem::size_of::<NoRequests>());
+    assert!(core::mem::size_of::<CapacityWithoutRequests>() > core::mem::size_of::<NoRequests>());
+    assert!(core::mem::size_of::<OneRequest>() > core::mem::size_of::<CapacityWithoutRequests>());
 }
 
 #[test]

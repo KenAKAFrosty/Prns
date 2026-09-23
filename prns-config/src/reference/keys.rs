@@ -108,6 +108,7 @@ pub(crate) mod interface {
     pub const ANNOUNCES_TO_INTERNAL: &str = "announces_to_internal";
     pub const IGNORE_CONFIG_WARNINGS: &str = "ignore_config_warnings";
     pub const GROUP_ID: &str = "group_id";
+    pub const GROUP_IDS: &str = "group_ids";
     pub const DISCOVERY_SCOPE: &str = "discovery_scope";
     pub const DISCOVERY_PORT: &str = "discovery_port";
     pub const DATA_PORT: &str = "data_port";
@@ -225,6 +226,7 @@ pub(crate) mod interface {
     ];
     pub const AUTO: &[&str] = &[
         GROUP_ID,
+        GROUP_IDS,
         DISCOVERY_SCOPE,
         DISCOVERY_PORT,
         DATA_PORT,
@@ -232,6 +234,7 @@ pub(crate) mod interface {
         IGNORED_DEVICES,
         MULTICAST_ADDRESS_TYPE,
     ];
+    pub const PRNS_BLUETOOTH_AUTO: &[&str] = &[GROUP_ID, GROUP_IDS];
     pub const TCP_CLIENT: &[&str] = &[
         TARGET_HOST,
         TARGET_PORT,

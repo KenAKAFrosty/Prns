@@ -384,6 +384,10 @@ pub enum RemoteControlTargetPairingBeginRejection {
         version: RemoteControlPairingProtocolVersion,
         authority: RemoteControlControllerAuthority,
     },
+    RequestUnsupportedForVersion {
+        version: RemoteControlPairingProtocolVersion,
+        request: crate::remote_control::RemoteControlRequestKind,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
