@@ -20,13 +20,13 @@ pub(super) static ADAPTER: Adapter = Adapter::new(
         configure_linker,
         linker_map_argument,
     ),
+    // One outliner pass. Further passes nest outlined calls, and the
+    // RAK10724 then fails to enumerate USB.
     &[
         "-C",
         "link-arg=--icf=all",
         "-C",
         "llvm-args=-enable-machine-outliner",
-        "-C",
-        "llvm-args=-machine-outliner-reruns=2",
         "--cfg",
         "sha2_backend_soft=\"compact\"",
     ],
