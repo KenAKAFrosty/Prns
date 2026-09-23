@@ -1059,3 +1059,13 @@ fn the_stream_deframer_reports_overflow() {
     assert!(deframer.absorb(&[1, 2, 3, 4]));
     assert!(!deframer.absorb(&[5]));
 }
+
+#[test]
+fn the_stream_deframer_exposes_a_declared_length_before_the_body_arrives() {
+    let mut deframer = StreamDeframer::<16>::new();
+    assert_eq!(deframer.pending_frame_len(), None);
+    assert!(deframer.absorb(&[0x01]));
+    assert_eq!(deframer.pending_frame_len(), None);
+    assert!(deframer.absorb(&[0xf7]));
+    assert_eq!(deframer.pending_frame_len(), Some(503));
+}
