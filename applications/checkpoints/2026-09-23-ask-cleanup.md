@@ -4,6 +4,7 @@ This follows the [ordinary CoreBluetooth migration and phone trial](2026-09-23-o
 The user approved cleanup, including retiring the central-only PR, and separately
 confirmed the exact scan-branch rewrite, rescue ref and publication lease. The app
 branch remains local; no new phone installation is part of this checkpoint.
+Cleanup publication is complete; see the [verified result](#publication-complete).
 
 ## Upstream checked before publication
 
@@ -125,3 +126,83 @@ No new binary was installed. The earlier physical proof remains evidence for
 - Next: confirm the revised rewrite base, rerun the normal publishing gate, and use
   an exact lease on the old #209 tip. Close #208 only after #209 no longer
   depends on it remotely; retain #208's branch. The app branch remains unpushed.
+
+## Approved publication follow-up
+
+The user approved pushing the revised PRs and updating descriptions. A fresh
+fetch found #207 advanced to `2f6420e8f5e17c7d2640165d1ec8e92fde6cde19` while trunk
+remained `45d477e7b` and #209 remained `a20dcfd15b`. The new #207 tree is exactly
+the approved base's tree (`a201554341f54ac355e2ec9d798326759cf7d1a9`); it introduces
+no missing code or different conflict resolution. Candidate `67f526e0a` remains
+frozen and content-current, with its original three-file own patch.
+
+Descriptions #207, #218 and #223 were updated and read back at unchanged heads.
+They now mark #202 merged, link the appropriate current change ranges and
+distinguish integrated/current validation from historical tests. Existing titles
+remain accurate and unchanged. No changes were pushed to those branches.
+
+After #207 landed, #218/#223 descriptions were updated again to mark it merged.
+The maintainer subsequently refreshed #218 to `9afaff5e3`. Its Apple code and
+own patch are unchanged; its own-change link now compares the refreshed branch
+with trunk `1d934b94a`. Its historical-validation disclaimer remains. Readback
+confirmed all three descriptions match the prepared text; no maintainer code
+or branch update was overwritten.
+
+The first atomic backup/#209 attempt stopped before changing any remote ref:
+firmware reproducibility rejects inherited `CARGO_INCREMENTAL`, profile and
+cross-target linker overrides. Preliminary gates, all 22 host-compatible Cargo
+workspaces, root Clippy and external-allocation tests had passed. The retry uses
+the expected build semantics, the Apple compiler through its toolchain path and
+existing pinned emulator/firmware tools. Missing pinned Rust/Miri tooling added
+about 1.4 GiB; no source or gate was changed to bypass validation.
+
+Before that retry, the maintainer merged #207 into trunk
+`1d934b94a2805031f5cd710f373ba09848dfb382`. Its entire tree matches the approved
+base. Publication tip `6ff1e0218f9d821367d15a4683917c87022af8cc` preserves the
+approved `67f526e0a` commit and adds this upstream merge, so the PR comparison
+contains only the scan work. Its entire tree matches the approved candidate
+(`eab7e28de8d0575d5925633a434941cf66d26ea7`), and its three-file delta against
+the new trunk retains the original patch ID. This content-identical integration
+was explained to the user before publication; no approved source was changed.
+
+## Publication complete
+
+The normal, unmodified publishing gate passed on `6ff1e0218`, including all
+22 host workspaces, 14 firmware resource profiles, strict Clippy,
+external-allocation and integration tests, embedded Miri, all three target-ISA
+suites, browser smoke, JavaScript/TypeScript contracts, JVM/Swift consumer checks
+and the locked-workspace dependency policies. No validation bypass was used.
+
+The atomic push and independent readback confirmed:
+
+- #209: `6ff1e0218f9d821367d15a4683917c87022af8cc`, open draft against trunk,
+  mergeable, exactly three files / 153 additions / one deletion. The description
+  records merged prerequisites, app rationale and exact validation scope.
+- Remote rescue `rescue/prns-app-corebluetooth-scan-startup-pre-ask-removal-20260923`:
+  `a20dcfd15b09f50a0d83fc66caf82cfc3fc3dd4d`. The exact old-tip lease protected
+  the rewrite. The canonical local scan branch now matches the remote.
+- #208: closed with an explanation after #209 was verified independent of it.
+  Its branch remains at `5750e224199e24f9f7536b65f287e284a91aa8d4`.
+- App remote: unchanged at `6d19ad623d4d1f81fdcf498430c147ad013f16c5`.
+
+The maintainer merged #218 into trunk `96aa91bd5` during publication and refreshed
+#223 to `76fb8117b`; those changes were preserved. #223's description was refreshed
+to mark all three prerequisites merged and link its current isolated changes.
+Titles, bases and draft states were otherwise retained.
+
+The maintainer then merged #223 at `06fad0413`. A fresh read-only merge preview
+with that trunk was clean, and GitHub still reported #209 mergeable with exactly
+its three-file own patch. No extra publication or claim of full validation of
+that newer combined tree is implied.
+
+Hosted CI remained pending at the initial post-push readback: 30 queued,
+six running, one successful and one neutral check. Passing the local hook does
+not establish completion of GitHub's full matrix or new physical-device evidence.
+
+The isolated publication checkout and its build outputs were removed after
+preserving compact evidence. Observed recovered space was 30.89 GiB (32.59 GiB
+allocated in that checkout). Only the main worktree remains; all Git refs,
+shared build tools and new pinned toolchains were retained. Approximately
+4.3 MiB of logs/resource/Miri/ISA evidence remains in the local scratch
+`2026-09-23/ask-cleanup-pr209` directory. Deleted build outputs can be regenerated
+from the preserved commits; no source changes or user data were removed.

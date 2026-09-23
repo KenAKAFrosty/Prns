@@ -14,6 +14,12 @@ send. Long idle, natural suspension, OS restoration and permission recovery rema
 unqualified. Do not transfer ASK-era acceptance to it; the checkpoint records
 exact binaries, transport evidence and limits separately.
 
+The [subsequent cleanup](../checkpoints/2026-09-23-ask-cleanup.md) removes unused
+central-only composition and updates dual-role diagnostics, with native/SDK and
+iOS checks recorded separately. Scan PR #209 was refreshed and passed the normal
+publishing gate; the obsolete central-only PR #208 was closed. No new phone
+binary was installed, and this does not extend the earlier physical evidence.
+
 The [September 21 integration](../checkpoints/2026-09-21-remote-control-management.md)
 rebases the app on upstream `8c211827b` and implements the first expanded
 [remote-control read/write slice](remote-control-expansion.md): overview,
