@@ -151,6 +151,7 @@ export function describeInterfaceCloseFailure(
     HostOperationFailed: ({ operation, detail }) => `${operation}: ${detail}`,
     CloseFailed: ({ causes }) =>
       causes.map(describeCleanupFailure).join("; "),
+    RuntimeRejected: ({ operation, detail }) => `${operation}: ${detail}`,
   });
 }
 

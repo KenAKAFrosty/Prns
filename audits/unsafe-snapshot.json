@@ -15508,31 +15508,38 @@
         ],
         "engine": [
           "default",
-          "display"
+          "display",
+          "remote-control-pairing"
         ],
         "esp32-c6": [
           "display",
-          "embedded"
+          "embedded",
+          "remote-control-pairing"
         ],
         "esp32-s3-heltec": [
           "display",
-          "embedded"
+          "embedded",
+          "remote-control-pairing"
         ],
         "esp32-s3-heltec-e290": [
           "display",
-          "embedded"
+          "embedded",
+          "remote-control-pairing"
         ],
         "esp32-s3-heltec-r8": [
           "display",
-          "embedded"
+          "embedded",
+          "remote-control-pairing"
         ],
         "esp32-s3-heltec-wireless-stick-lite-v3": [
           "display",
-          "embedded"
+          "embedded",
+          "remote-control-pairing"
         ],
         "esp32-s3-tbeam": [
           "display",
-          "embedded"
+          "embedded",
+          "remote-control-pairing"
         ],
         "ios": [
           "display",
@@ -15589,6 +15596,7 @@
           "esp32s3fn8",
           "jtag-logging",
           "lora",
+          "remote-control-pairing",
           "silent-logging",
           "tcp",
           "usb",
@@ -15602,6 +15610,7 @@
           "esp32s3fn8",
           "jtag-logging",
           "lora",
+          "remote-control-pairing",
           "silent-logging",
           "tcp",
           "usb",
@@ -15615,6 +15624,7 @@
           "esp32s3fn8",
           "jtag-logging",
           "lora",
+          "remote-control-pairing",
           "silent-logging",
           "tcp",
           "usb",
@@ -15628,6 +15638,7 @@
           "esp32s3fn8",
           "jtag-logging",
           "lora",
+          "remote-control-pairing",
           "silent-logging",
           "tcp",
           "usb",
@@ -15641,6 +15652,7 @@
           "esp32s3fn8",
           "jtag-logging",
           "lora",
+          "remote-control-pairing",
           "silent-logging",
           "tcp",
           "usb",
@@ -15654,6 +15666,7 @@
           "esp32s3fn8",
           "jtag-logging",
           "lora",
+          "remote-control-pairing",
           "silent-logging",
           "tcp",
           "usb",
@@ -16866,11 +16879,11 @@
       "name": "prns-ffi",
       "source": "prns-ffi",
       "unsafe": {
-        "blocks": 138,
+        "blocks": 153,
         "externs": 7,
         "functions": 0,
         "impls": 21,
-        "tokens": 198
+        "tokens": 213
       },
       "version": "0.3.7"
     },
@@ -16932,6 +16945,23 @@
       },
       "name": "prns-host-native",
       "source": "prns-host/impls/native",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.3.7"
+    },
+    {
+      "graphs": {
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": []
+      },
+      "name": "prns-host-snapshot",
+      "source": "prns-host/impls/snapshot",
       "unsafe": {
         "blocks": 0,
         "externs": 0,

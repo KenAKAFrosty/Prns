@@ -9,9 +9,18 @@ use personal_rns::interfaces::subghz::{
     ResolvedSubGMode, SubGConfiguration, SubGConfigurationState,
 };
 use personal_rns::interfaces::{DiscoveryGroupSet, InterfaceId};
+#[cfg(feature = "remote-control-pairing")]
+use personal_rns::remote_control::RemoteControlPairingAttemptId;
 use personal_rns::storage::DisplayedStorageLimits;
+#[cfg(feature = "remote-control-pairing")]
+use personal_rns::units::InstantMillis;
 
 use crate::PersistenceState;
+#[cfg(feature = "remote-control-pairing")]
+use crate::{
+    RemoteControlPairingAvailability, RemoteControlTargetPairingPhase,
+    RemoteControlTargetPairingState,
+};
 
 use super::limits::storage_limit_page_count;
 use super::model::{Card, CardKind, ScreenContent, SubGCardState};
@@ -28,6 +37,8 @@ const PERSISTENCE_NOTICE_MILLIS: u64 = 5_000;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::screen) enum GlobalMenuItem {
     Announce,
+    #[cfg(feature = "remote-control-pairing")]
+    PairRemoteControl,
     Limits,
     Gnss,
     BlankDisplay,
@@ -37,6 +48,20 @@ pub(in crate::screen) enum GlobalMenuItem {
     Back,
 }
 
+#[cfg(feature = "remote-control-pairing")]
+const GLOBAL_MENU_ORDER: [GlobalMenuItem; 9] = [
+    GlobalMenuItem::Announce,
+    GlobalMenuItem::PairRemoteControl,
+    GlobalMenuItem::Limits,
+    GlobalMenuItem::Gnss,
+    GlobalMenuItem::BlankDisplay,
+    GlobalMenuItem::DisplayAutoOff,
+    GlobalMenuItem::Sleep,
+    GlobalMenuItem::RadioMode,
+    GlobalMenuItem::Back,
+];
+
+#[cfg(not(feature = "remote-control-pairing"))]
 const GLOBAL_MENU_ORDER: [GlobalMenuItem; 8] = [
     GlobalMenuItem::Announce,
     GlobalMenuItem::Limits,
@@ -111,6 +136,14 @@ pub enum InputEvent {
 pub enum UiAction {
     None,
     Announce,
+    #[cfg(feature = "remote-control-pairing")]
+    OpenRemoteControlPairing,
+    #[cfg(feature = "remote-control-pairing")]
+    CloseRemoteControlPairing,
+    #[cfg(feature = "remote-control-pairing")]
+    ApproveRemoteControlTargetPairing(RemoteControlPairingAttemptId),
+    #[cfg(feature = "remote-control-pairing")]
+    RejectRemoteControlTargetPairing(RemoteControlPairingAttemptId),
     BlankDisplay,
     ToggleDisplayAutoOff,
     Sleep,
@@ -444,6 +477,8 @@ pub struct UiConfiguration {
     pub access_point: AccessPointState,
     pub shared_instance_config_export: SharedInstanceConfigExport,
     pub gnss: GnssAvailability,
+    #[cfg(feature = "remote-control-pairing")]
+    pub remote_control_pairing: RemoteControlPairingAvailability,
     pub discovery_groups: DiscoveryGroupEditorAvailability,
 }
 
@@ -460,6 +495,12 @@ pub struct UiState {
     pub(in crate::screen) gnss_visible: bool,
     pub(in crate::screen) notice: Option<UiNotice>,
     pub(in crate::screen) storage_limits: DisplayedStorageLimits,
+    #[cfg(feature = "remote-control-pairing")]
+    pub(in crate::screen) remote_control_pairing: RemoteControlPairingAvailability,
+    #[cfg(feature = "remote-control-pairing")]
+    pub(in crate::screen) remote_control_state: RemoteControlTargetPairingState,
+    #[cfg(feature = "remote-control-pairing")]
+    pub(in crate::screen) remote_control_now: InstantMillis,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -488,6 +529,10 @@ pub(in crate::screen) enum UiMode {
     ConfirmRadioSwap {
         confirm: bool,
     },
+    #[cfg(feature = "remote-control-pairing")]
+    RemoteControlPairing {
+        approve: bool,
+    },
 }
 
 impl UiState {
@@ -504,6 +549,12 @@ impl UiState {
             gnss_visible: false,
             notice: None,
             storage_limits: configuration.storage_limits,
+            #[cfg(feature = "remote-control-pairing")]
+            remote_control_pairing: configuration.remote_control_pairing,
+            #[cfg(feature = "remote-control-pairing")]
+            remote_control_state: RemoteControlTargetPairingState::new(),
+            #[cfg(feature = "remote-control-pairing")]
+            remote_control_now: InstantMillis(0),
         }
     }
 
@@ -561,6 +612,8 @@ impl UiState {
             | UiMode::DiscoveryGroupCommit(_)
             | UiMode::ConfirmSubGClear { .. }
             | UiMode::ConfirmRadioSwap { .. } => None,
+            #[cfg(feature = "remote-control-pairing")]
+            UiMode::RemoteControlPairing { .. } => None,
         }
     }
 
@@ -576,6 +629,8 @@ impl UiState {
             | UiMode::DiscoveryGroupCommit(_)
             | UiMode::ConfirmSubGClear { .. }
             | UiMode::ConfirmRadioSwap { .. } => None,
+            #[cfg(feature = "remote-control-pairing")]
+            UiMode::RemoteControlPairing { .. } => None,
         }
     }
 
@@ -617,6 +672,38 @@ impl UiState {
         self.gnss_visible
     }
 
+    #[cfg(feature = "remote-control-pairing")]
+    pub fn sync_remote_control(
+        &mut self,
+        state: RemoteControlTargetPairingState,
+        now: InstantMillis,
+    ) {
+        self.remote_control_state = state;
+        self.remote_control_now = now;
+    }
+
+    /// Restores pairing mode after an asynchronous close fails so the failure remains visible and
+    /// the user can retry it.
+    #[cfg(feature = "remote-control-pairing")]
+    pub fn remote_control_pairing_close_failed(&mut self) {
+        self.mode = UiMode::RemoteControlPairing { approve: false };
+    }
+
+    #[cfg(feature = "remote-control-pairing")]
+    pub(in crate::screen) const fn remote_control_state(&self) -> RemoteControlTargetPairingState {
+        self.remote_control_state
+    }
+
+    #[cfg(feature = "remote-control-pairing")]
+    pub(in crate::screen) const fn remote_control_now(&self) -> InstantMillis {
+        self.remote_control_now
+    }
+
+    #[cfg(feature = "remote-control-pairing")]
+    pub(in crate::screen) const fn remote_control_pairing_approval_selected(&self) -> bool {
+        matches!(self.mode, UiMode::RemoteControlPairing { approve: true })
+    }
+
     pub(in crate::screen) fn global_menu_items(&self) -> impl Iterator<Item = GlobalMenuItem> + '_ {
         GLOBAL_MENU_ORDER
             .into_iter()
@@ -630,6 +717,10 @@ impl UiState {
                 self.user_blanking.is_available()
             }
             GlobalMenuItem::RadioMode => self.access_point != AccessPointState::Unsupported,
+            #[cfg(feature = "remote-control-pairing")]
+            GlobalMenuItem::PairRemoteControl => {
+                self.remote_control_pairing == RemoteControlPairingAvailability::Available
+            }
             GlobalMenuItem::Announce
             | GlobalMenuItem::Limits
             | GlobalMenuItem::Sleep
@@ -651,6 +742,8 @@ impl UiState {
     ) -> &'static str {
         match item {
             GlobalMenuItem::Announce => "Announce",
+            #[cfg(feature = "remote-control-pairing")]
+            GlobalMenuItem::PairRemoteControl => "Pair remote",
             GlobalMenuItem::Limits => "Limits",
             GlobalMenuItem::Gnss if self.gnss_visible => "GPS Off",
             GlobalMenuItem::Gnss => "GPS On",
@@ -681,6 +774,8 @@ impl UiState {
             | UiMode::DiscoveryGroupCommit(_)
             | UiMode::ConfirmSubGClear { .. }
             | UiMode::ConfirmRadioSwap { .. } => {}
+            #[cfg(feature = "remote-control-pairing")]
+            UiMode::RemoteControlPairing { .. } => {}
             UiMode::InterfaceMenu { .. } if self.selected_card(content.cards).is_none() => {
                 self.mode = UiMode::Cards;
             }
@@ -772,6 +867,11 @@ impl UiState {
                         self.mode = UiMode::Cards;
                         UiAction::Announce
                     }
+                    #[cfg(feature = "remote-control-pairing")]
+                    Some(GlobalMenuItem::PairRemoteControl) => {
+                        self.mode = UiMode::RemoteControlPairing { approve: false };
+                        UiAction::OpenRemoteControlPairing
+                    }
                     Some(GlobalMenuItem::Limits) => {
                         self.mode = UiMode::LimitsPage { page: 0 };
                         UiAction::None
@@ -829,6 +929,35 @@ impl UiState {
                     UiAction::ClearSubGConfiguration
                 } else {
                     UiAction::None
+                }
+            }
+            #[cfg(feature = "remote-control-pairing")]
+            (InputEvent::ShortPress, UiMode::RemoteControlPairing { approve }) => {
+                if self.remote_control_state.phase()
+                    == RemoteControlTargetPairingPhase::Confirmation
+                {
+                    self.mode = UiMode::RemoteControlPairing { approve: !approve };
+                }
+                UiAction::None
+            }
+            #[cfg(feature = "remote-control-pairing")]
+            (InputEvent::LongPress, UiMode::RemoteControlPairing { approve }) => {
+                if self.remote_control_state.phase()
+                    == RemoteControlTargetPairingPhase::Confirmation
+                {
+                    if let Some(attempt_id) = self.remote_control_state.attempt_id() {
+                        if approve {
+                            UiAction::ApproveRemoteControlTargetPairing(attempt_id)
+                        } else {
+                            UiAction::RejectRemoteControlTargetPairing(attempt_id)
+                        }
+                    } else {
+                        self.mode = UiMode::Cards;
+                        UiAction::CloseRemoteControlPairing
+                    }
+                } else {
+                    self.mode = UiMode::Cards;
+                    UiAction::CloseRemoteControlPairing
                 }
             }
             (
