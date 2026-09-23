@@ -72,8 +72,8 @@ try {
   assert.deepEqual(
     probeLines,
     [
-      "PRNS_IOS_LIFECYCLE launch centralRestoration=true protectedData=false",
-      "PRNS_IOS_ASK phase=ready picker=idle authorized=1 nativeStart=running restoration=true",
+      "PRNS_IOS_LIFECYCLE launch restorationAttempt=true protectedData=false",
+      "PRNS_IOS_ASK phase=ready picker=idle authorized=1 nativeStart=running restorationAttempt=true",
       "PRNS_IOS_LIFECYCLE prepare outcome=prepared stage=none",
       "PRNS_IOS_LIFECYCLE start outcome=failed stage=runtime",
       "PRNS_IOS_LIFECYCLE prepare outcome=unknown stage=unknown",

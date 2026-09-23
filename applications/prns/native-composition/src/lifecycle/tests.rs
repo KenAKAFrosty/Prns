@@ -3301,6 +3301,116 @@ fn stop_reaps_a_disconnected_terminal_worker_and_preserves_its_failure() {
 }
 
 #[test]
+fn apple_restoration_gate_does_not_create_fresh_storage() {
+    let temporary = tempfile::tempdir().expect("temporary directory");
+    let storage = temporary.path().join("prns").join("development");
+    let mut state = SupervisorState::default();
+
+    assert!(matches!(
+        apple_bluetooth_restoration_storage(&mut state, &storage),
+        Err(AppleBluetoothRestorationPreparationOutcome::Failed {
+            stage: AppleBluetoothRestorationPreparationFailureStage::Identity,
+            ..
+        })
+    ));
+    assert!(!storage.exists());
+    assert!(!storage.parent().expect("storage parent").exists());
+    assert!(state.identity_owner.is_none());
+}
+
+#[test]
+fn apple_restoration_gate_requires_an_existing_primary_identity() {
+    let temporary = tempfile::tempdir().expect("temporary directory");
+    let storage = temporary.path().join("prns").join("development");
+    let paths = prepare_storage(&storage).expect("private storage");
+    let mut state = SupervisorState::default();
+
+    assert!(matches!(
+        apple_bluetooth_restoration_storage(&mut state, &storage),
+        Err(AppleBluetoothRestorationPreparationOutcome::Failed {
+            stage: AppleBluetoothRestorationPreparationFailureStage::Identity,
+            ..
+        })
+    ));
+    assert!(!paths.identities.join("primary").exists());
+    assert!(!paths.bluetooth_identity.exists());
+    assert!(!paths.application.exists());
+
+    std::fs::write(paths.identities.join("primary"), [0x42_u8; 64])
+        .expect("existing primary identity");
+    let admitted = apple_bluetooth_restoration_storage(&mut state, &storage)
+        .unwrap_or_else(|outcome| panic!("existing primary identity rejected: {outcome:?}"));
+    assert_eq!(admitted.root, paths.root);
+    assert!(!paths.bluetooth_identity.exists());
+    assert!(!paths.application.exists());
+}
+
+#[test]
+fn apple_restoration_gate_rejects_malformed_or_unavailable_identity() {
+    let temporary = tempfile::tempdir().expect("temporary directory");
+    let storage = temporary.path().join("prns").join("development");
+    let paths = prepare_storage(&storage).expect("private storage");
+    std::fs::write(paths.identities.join("primary"), [0_u8; 63])
+        .expect("malformed primary identity");
+    let mut state = SupervisorState::default();
+
+    assert!(matches!(
+        apple_bluetooth_restoration_storage(&mut state, &storage),
+        Err(AppleBluetoothRestorationPreparationOutcome::Failed {
+            stage: AppleBluetoothRestorationPreparationFailureStage::Identity,
+            detail,
+        }) if detail.contains("63 bytes instead of 64")
+    ));
+    assert!(!paths.bluetooth_identity.exists());
+    assert_eq!(
+        std::fs::read(paths.identities.join("primary"))
+            .unwrap()
+            .len(),
+        63
+    );
+
+    #[cfg(unix)]
+    {
+        let unavailable_storage = temporary
+            .path()
+            .join("unavailable")
+            .join("prns")
+            .join("development");
+        let unavailable_paths = prepare_storage(&unavailable_storage).expect("private storage");
+        std::os::unix::fs::symlink("primary", unavailable_paths.identities.join("primary"))
+            .expect("identity symlink loop");
+        let mut unavailable_state = SupervisorState::default();
+        assert!(matches!(
+            apple_bluetooth_restoration_storage(&mut unavailable_state, &unavailable_storage),
+            Err(AppleBluetoothRestorationPreparationOutcome::Failed {
+                stage: AppleBluetoothRestorationPreparationFailureStage::Identity,
+                ..
+            })
+        ));
+        assert!(!unavailable_paths.bluetooth_identity.exists());
+    }
+}
+
+#[test]
+fn apple_restoration_gate_reports_storage_failures_without_creating_identity() {
+    let temporary = tempfile::tempdir().expect("temporary directory");
+    let storage = temporary.path().join("prns").join("development");
+    std::fs::create_dir(storage.parent().expect("storage parent")).expect("storage parent");
+    std::fs::write(&storage, []).expect("unexpected file at storage root");
+    let mut state = SupervisorState::default();
+
+    assert!(matches!(
+        apple_bluetooth_restoration_storage(&mut state, &storage),
+        Err(AppleBluetoothRestorationPreparationOutcome::Failed {
+            stage: AppleBluetoothRestorationPreparationFailureStage::Storage,
+            ..
+        })
+    ));
+    assert!(state.identity_owner.is_none());
+    assert!(storage.is_file());
+}
+
+#[test]
 fn primary_vault_malformed_and_operational_failures_are_distinct() {
     let temporary = tempfile::tempdir().expect("temporary directory");
     let storage = temporary.path().join("prns").join("development");

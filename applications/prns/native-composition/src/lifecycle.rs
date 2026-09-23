@@ -498,6 +498,55 @@ pub(crate) fn prepare_apple_bluetooth_central_restoration(
     )
 }
 
+#[cfg(any(test, all(feature = "apple", target_os = "ios")))]
+fn apple_bluetooth_restoration_storage(
+    state: &mut SupervisorState,
+    storage_root: &Path,
+) -> Result<NodeStoragePaths, AppleBluetoothRestorationPreparationOutcome> {
+    // Process launch is also used to restore scene-based apps, where UIKit no
+    // longer supplies Bluetooth launch options. Only an existing installation
+    // identity may admit automatic restoration; onboarding remains explicit.
+    match std::fs::metadata(storage_root) {
+        Ok(metadata) if metadata.is_dir() => {}
+        Ok(_) => {
+            return Err(apple_bluetooth_preparation_failed(
+                AppleBluetoothRestorationPreparationFailureStage::Storage,
+                "The existing private application directory is not a directory.",
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(apple_bluetooth_preparation_failed(
+                AppleBluetoothRestorationPreparationFailureStage::Identity,
+                "Create or import a primary identity before restoring the local node.",
+            ));
+        }
+        Err(error) => {
+            return Err(apple_bluetooth_preparation_failed(
+                AppleBluetoothRestorationPreparationFailureStage::Storage,
+                format!("could not inspect the private application directory: {error}"),
+            ));
+        }
+    }
+    let paths = prepare_storage(storage_root).map_err(|detail| {
+        apple_bluetooth_preparation_failed(
+            AppleBluetoothRestorationPreparationFailureStage::Storage,
+            detail,
+        )
+    })?;
+    let detail = match inspect_identity_locked(state, storage_root) {
+        PrimaryIdentityState::Present { .. } => return Ok(paths),
+        PrimaryIdentityState::Missing => {
+            "Create or import a primary identity before restoring the local node.".to_owned()
+        }
+        PrimaryIdentityState::Unavailable { detail } => detail,
+        PrimaryIdentityState::DevelopmentResetRequired { reason } => reason,
+    };
+    Err(apple_bluetooth_preparation_failed(
+        AppleBluetoothRestorationPreparationFailureStage::Identity,
+        detail,
+    ))
+}
+
 #[cfg(all(feature = "apple", target_os = "ios"))]
 fn prepare_apple_bluetooth_central_restoration_with_supervisor(
     supervisor: &Supervisor,
@@ -507,14 +556,9 @@ fn prepare_apple_bluetooth_central_restoration_with_supervisor(
     let mut state = supervisor.lock_state();
     reap_completed_worker_locked(supervisor, &mut state);
 
-    let paths = match prepare_storage(storage_root) {
+    let paths = match apple_bluetooth_restoration_storage(&mut state, storage_root) {
         Ok(paths) => paths,
-        Err(detail) => {
-            return apple_bluetooth_preparation_failed(
-                AppleBluetoothRestorationPreparationFailureStage::Storage,
-                detail,
-            )
-        }
+        Err(outcome) => return outcome,
     };
     let identity = match personal_rns::load_or_create_ble_identity(&paths.bluetooth_identity) {
         Ok(identity) => identity,

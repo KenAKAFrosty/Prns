@@ -73,7 +73,7 @@ public final class PrnsAppModule: Module {
 
     AsyncFunction("start") { (inputBytes: [UInt8], promise: Promise) in
       do {
-        let input = try Self.decodeStartInput(inputBytes)
+        let input = try Self.validatedStartInput(Self.decodeStartInput(inputBytes))
         DispatchQueue.main.async {
           Self.startAuthorized(input) { result in
             switch result {
@@ -173,7 +173,24 @@ public final class PrnsAppModule: Module {
   }
 
   static func configuredStartInput() -> DevelopmentNodeStartInput {
+    #if DEBUG
+    let target = Bundle.main.object(forInfoDictionaryKey: "PRNSDevelopmentTcpTarget") as? String
+    return DevelopmentNodeStartInput(developmentTcpTarget: target)
+    #else
     DevelopmentNodeStartInput(developmentTcpTarget: nil)
+    #endif
+  }
+
+  private static func validatedStartInput(
+    _ input: DevelopmentNodeStartInput
+  ) throws -> DevelopmentNodeStartInput {
+    let configured = configuredStartInput()
+    if let requested = input.developmentTcpTarget,
+      requested != configured.developmentTcpTarget
+    {
+      throw PrnsAppException("The iOS test peer is set by the installed build. Rebuild the app to change it.")
+    }
+    return configured
   }
 
   static func startWithCentralRestoration(
@@ -229,7 +246,7 @@ public final class PrnsAppModule: Module {
   }
 
   private static func restorationStorageURL() throws -> URL {
-    try storageURL(create: true, migrateExistingContents: false)
+    try storageURL(create: false, migrateExistingContents: false)
   }
 
   private static func storageURL(

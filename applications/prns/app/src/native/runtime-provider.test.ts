@@ -46,18 +46,31 @@ describe("platform development runtime providers", () => {
   });
 });
 
-test("platform startup uses an absent generated option for an unset development target", () => {
+test("Android startup uses an absent generated option for an unset development target", () => {
   const saved = process.env.EXPO_PUBLIC_PRNS_LXMF_TCP_TARGET;
   delete process.env.EXPO_PUBLIC_PRNS_LXMF_TCP_TARGET;
   try {
-    for (const provider of [iosRuntimeProvider, androidRuntimeProvider]) {
-      if (!("acquire" in provider)) throw new Error("native provider is unavailable");
-      provider.acquire({ onSnapshot: jest.fn(), onBackgroundFailure: jest.fn() });
-      expect(scopedDevelopmentRuntime).toHaveBeenLastCalledWith(
-        provider.runtime,
-        expect.objectContaining({ developmentTcpTarget: undefined }),
-      );
-    }
+    if (!("acquire" in androidRuntimeProvider)) throw new Error("Android provider is unavailable");
+    androidRuntimeProvider.acquire({ onSnapshot: jest.fn(), onBackgroundFailure: jest.fn() });
+    expect(scopedDevelopmentRuntime).toHaveBeenLastCalledWith(
+      androidRuntimeProvider.runtime,
+      expect.objectContaining({ developmentTcpTarget: undefined }),
+    );
+  } finally {
+    if (saved === undefined) delete process.env.EXPO_PUBLIC_PRNS_LXMF_TCP_TARGET;
+    else process.env.EXPO_PUBLIC_PRNS_LXMF_TCP_TARGET = saved;
+  }
+});
+
+test("iOS leaves its compiled test peer with the native owner instead of reading Metro environment", () => {
+  const saved = process.env.EXPO_PUBLIC_PRNS_LXMF_TCP_TARGET;
+  process.env.EXPO_PUBLIC_PRNS_LXMF_TCP_TARGET = "192.0.2.1:4242";
+  try {
+    if (!("acquire" in iosRuntimeProvider)) throw new Error("iOS provider is unavailable");
+    iosRuntimeProvider.acquire({ onSnapshot: jest.fn(), onBackgroundFailure: jest.fn() });
+    const options = jest.mocked(scopedDevelopmentRuntime).mock.lastCall?.[1];
+    expect(options).toEqual(expect.objectContaining({ nativeLifetime: "process" }));
+    expect(options).not.toHaveProperty("developmentTcpTarget");
   } finally {
     if (saved === undefined) delete process.env.EXPO_PUBLIC_PRNS_LXMF_TCP_TARGET;
     else process.env.EXPO_PUBLIC_PRNS_LXMF_TCP_TARGET = saved;

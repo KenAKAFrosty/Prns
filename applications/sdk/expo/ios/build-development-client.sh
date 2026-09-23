@@ -7,6 +7,7 @@ APP_DIRECTORY="${APPLICATIONS_DIRECTORY}/prns/app"
 IOS_DIRECTORY="${APP_DIRECTORY}/ios"
 EXPO_EXECUTABLE="${APPLICATIONS_DIRECTORY}/node_modules/.bin/expo"
 INFO_PLIST="${IOS_DIRECTORY}/prnsdev/Info.plist"
+APP_DELEGATE="${IOS_DIRECTORY}/prnsdev/AppDelegate.swift"
 PODFILE_PROPERTIES="${IOS_DIRECTORY}/Podfile.properties.json"
 WORKSPACE="${IOS_DIRECTORY}/prnsdev.xcworkspace"
 SCHEME="prnsdev"
@@ -20,6 +21,32 @@ PRNS_BLUETOOTH_SERVICE="37145B00-442D-4A94-917F-8F42C5DA28E3"
 fail() {
   echo "build-development-client.sh: $*" >&2
   exit 1
+}
+
+assert_scene_metadata() {
+  local info_plist="$1"
+  plutil -extract UIApplicationSceneManifest json -o - "${info_plist}" |
+    node -e '
+      const assert = require("node:assert/strict");
+      const manifest = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+      assert.equal(manifest.UIApplicationSupportsMultipleScenes, false);
+      const configurations = manifest.UISceneConfigurations;
+      const role = "UIWindowSceneSessionRoleApplication";
+      assert.deepEqual(Object.keys(configurations), [role]);
+      assert.ok(Array.isArray(configurations[role]));
+      assert.equal(configurations[role].length, 1);
+      assert.equal(configurations[role][0].UISceneDelegateClassName, "EXExpoAppSceneDelegate");
+    ' || fail "${info_plist} must declare one Expo application scene"
+}
+
+assert_scene_app_delegate() {
+  node -e '
+    const assert = require("node:assert/strict");
+    const source = require("node:fs").readFileSync(process.argv[1], "utf8");
+    assert.match(source, /class AppDelegate:\s*ExpoAppDelegate,\s*ExpoReactNativeFactoryProvider\b/);
+    assert.doesNotMatch(source, /\bstartReactNative\s*\(/);
+    assert.doesNotMatch(source, /\bUIWindow\s*\(/);
+  ' "${APP_DELEGATE}" || fail "AppDelegate must provide its factory without starting the scene UI"
 }
 
 case "${1:-}" in
@@ -125,9 +152,8 @@ fi
 if plutil -extract PRNSCoreBluetoothPeripheralRestorationIdentifier raw "${INFO_PLIST}" >/dev/null 2>&1; then
   fail "clean CNG rendered a peripheral restoration identifier"
 fi
-if plutil -extract UIApplicationSceneManifest raw "${INFO_PLIST}" >/dev/null 2>&1; then
-  fail "clean CNG rendered a scene manifest; AppDelegate launch options must own restoration"
-fi
+assert_scene_metadata "${INFO_PLIST}"
+assert_scene_app_delegate
 [[ "$(plutil -extract NSAccessorySetupKitSupports.0 raw "${INFO_PLIST}")" == "Bluetooth" ]] ||
   fail "clean CNG did not render ASK Bluetooth support"
 [[ "$(plutil -extract NSAccessorySetupBluetoothServices.0 raw "${INFO_PLIST}")" == "${PRNS_BLUETOOTH_SERVICE}" ]] ||
@@ -169,9 +195,7 @@ assert_development_client_metadata() {
   if plutil -extract PRNSCoreBluetoothPeripheralRestorationIdentifier raw "${built_info_plist}" >/dev/null 2>&1; then
     fail "development client has a peripheral restoration identifier"
   fi
-  if plutil -extract UIApplicationSceneManifest raw "${built_info_plist}" >/dev/null 2>&1; then
-    fail "development client has a scene manifest; AppDelegate launch options must own restoration"
-  fi
+  assert_scene_metadata "${built_info_plist}"
   [[ "$(plutil -extract NSAccessorySetupKitSupports.0 raw "${built_info_plist}")" == "Bluetooth" ]] ||
     fail "development client is missing ASK Bluetooth support"
   [[ "$(plutil -extract NSAccessorySetupBluetoothServices.0 raw "${built_info_plist}")" == "${PRNS_BLUETOOTH_SERVICE}" ]] ||

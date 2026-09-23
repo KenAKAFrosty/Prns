@@ -4,14 +4,14 @@ import Foundation
 enum PrnsAppRestorationProbeTests {
   static func main() {
     PrnsIosDiagnostics.lifecycle(
-      .launch(centralRestoration: true, protectedData: false)
+      .launch(restorationAttempt: true, protectedData: false)
     )
     PrnsIosDiagnostics.accessorySetup(
       phase: .ready,
       picker: .idle,
       authorizedCount: 1,
       nativeStart: .running,
-      restoration: true
+      restorationAttempt: true
     )
     PrnsIosDiagnostics.lifecycle(
       .nativeOutcome(operation: .prepare, type: "prepared", stage: nil)

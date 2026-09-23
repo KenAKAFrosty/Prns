@@ -14,45 +14,33 @@ final class PrnsAppLifecycleCoordinator: NSObject {
     var errorDescription: String? { "Bluetooth restoration could not be prepared." }
   }
 
-  func launch(
-    application: UIApplication,
-    options: [UIApplication.LaunchOptionsKey: Any]?
-  ) {
+  func launch(application: UIApplication) {
     observeProtectedDataTransitions(application: application)
-    let centralRestoration: Bool
+    let restorationAttempt: Bool
     do {
-      let identifier = try PrnsAppModule.restorationIdentifier()
-      centralRestoration = Self.restorationLaunchIdentifiers(
-        options?[.bluetoothCentrals]
-      ).contains(identifier)
+      _ = try PrnsAppModule.restorationIdentifier()
+      // Scene-based launches provide no Bluetooth launch reason. Recreate the
+      // stable central owner on each eligible process launch, before any scene
+      // or JavaScript. Native preparation still requires an existing identity.
+      restorationAttempt = true
     } catch {
       Self.log(.configurationFailed)
-      centralRestoration = false
+      restorationAttempt = false
     }
     Self.log(
       .launch(
-        centralRestoration: centralRestoration,
+        restorationAttempt: restorationAttempt,
         protectedData: application.isProtectedDataAvailable
       )
     )
     PrnsAccessorySetupCoordinator.shared.activate(
-      restorationLaunchRequested: centralRestoration
+      restorationAttemptRequested: restorationAttempt
     ) { [weak self, weak application] in
       guard let self, let application else {
         return
       }
       self.prepareAndStartNativeRuntime(application: application)
     }
-  }
-
-  nonisolated private static func restorationLaunchIdentifiers(_ value: Any?) -> [String] {
-    if let identifiers = value as? [String] {
-      return identifiers
-    }
-    guard let identifiers = value as? NSArray else {
-      return []
-    }
-    return identifiers.compactMap { $0 as? String }
   }
 
   private func observeProtectedDataTransitions(application: UIApplication) {

@@ -30,7 +30,10 @@ function selectedVariant(value: string | undefined): AppVariant {
 }
 
 export default ({ config }: ConfigContext): ExpoConfig => {
-  const selection = variants[selectedVariant(process.env.PRNS_APP_VARIANT)];
+  const variant = selectedVariant(process.env.PRNS_APP_VARIANT);
+  const selection = variants[variant];
+  const developmentTcpTarget =
+    variant === "development" ? process.env.EXPO_PUBLIC_PRNS_LXMF_TCP_TARGET?.trim() : undefined;
   const bluetoothRestorationPrefix = `${selection.identifier}.bluetooth-auto`;
 
   return {
@@ -41,12 +44,18 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     version: "0.0.0",
     orientation: "default",
     userInterfaceStyle: "automatic",
-    plugins: ["expo-router", "./tools/with-ios-18", "./tools/with-android-runtime"],
+    plugins: [
+      "expo-router",
+      ["expo-build-properties", { ios: { enableSceneSupport: true } }],
+      "./tools/with-ios-18",
+      "./tools/with-android-runtime",
+    ],
     ios: {
       ...config.ios,
       bundleIdentifier: selection.identifier,
       infoPlist: {
         ...config.ios?.infoPlist,
+        ...(developmentTcpTarget ? { PRNSDevelopmentTcpTarget: developmentTcpTarget } : {}),
         NSBluetoothAlwaysUsageDescription:
           "prns uses Bluetooth to connect to nearby Reticulum nodes.",
         // Bluetooth Auto advertises its experimental role marker under company

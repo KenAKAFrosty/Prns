@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -77,6 +78,10 @@ const compatibility = JSON.parse(
   readFileSync(resolve(packageRoot, "../../release/compatibility.json"), "utf8"),
 );
 const appConfig = readFileSync(resolve(packageRoot, "../../prns/app/app.config.ts"), "utf8");
+const iosRuntimeProvider = readFileSync(
+  resolve(packageRoot, "../../prns/app/src/native/runtime-provider.ios.ts"),
+  "utf8",
+);
 const configCheck = readFileSync(
   resolve(packageRoot, "../../prns/app/tools/config-check.ts"),
   "utf8",
@@ -144,7 +149,7 @@ assert.match(
 );
 assert.match(
   coordinator,
-  /PrnsAccessorySetupCoordinator\.shared\.activate\([\s\S]*?restorationLaunchRequested: centralRestoration[\s\S]*?prepareAndStartNativeRuntime/,
+  /PrnsAccessorySetupCoordinator\.shared\.activate\([\s\S]*?restorationAttemptRequested: restorationAttempt[\s\S]*?prepareAndStartNativeRuntime/,
   "every launch must activate ASK before restoration creates a CoreBluetooth manager",
 );
 assert.match(
@@ -173,8 +178,28 @@ assert.doesNotMatch(
 );
 assert.match(
   coordinator,
-  /restorationLaunchIdentifiers[\s\S]*?as\? \[String\][\s\S]*?as\? NSArray[\s\S]*?compactMap/,
-  "restoration launch identifiers must accept native Swift arrays and bridged NSArray values",
+  /func launch\(application: UIApplication\)[\s\S]*?try PrnsAppModule\.restorationIdentifier\(\)[\s\S]*?restorationAttempt = true[\s\S]*?catch[\s\S]*?restorationAttempt = false/,
+  "every process launch must validate the stable central identifier before requesting restoration",
+);
+assert.match(
+  coordinator,
+  /\.launch\(\s*restorationAttempt: restorationAttempt/,
+  "launch diagnostics must describe an attempt, not a Bluetooth-proven launch reason",
+);
+assert.doesNotMatch(
+  coordinator,
+  /\.bluetoothCentrals|\.bluetoothPeripherals|restorationLaunchIdentifiers|UIApplication\.LaunchOptionsKey/,
+  "scene-based restoration must not depend on the absent UIKit launch-options dictionary",
+);
+assert.match(
+  nativeLifecycle,
+  /fn apple_bluetooth_restoration_storage\([\s\S]*?std::fs::metadata\(storage_root\)[\s\S]*?metadata\.is_dir\(\)[\s\S]*?ErrorKind::NotFound[\s\S]*?prepare_storage\(storage_root\)[\s\S]*?inspect_identity_locked\(state, storage_root\)[\s\S]*?PrimaryIdentityState::Present \{ \.\. \} => return Ok\(paths\)/,
+  "automatic preparation must require an existing private directory and primary identity",
+);
+assert.match(
+  nativeLifecycle,
+  /fn prepare_apple_bluetooth_central_restoration_with_supervisor\([\s\S]*?supervisor\.lock_state\(\)[\s\S]*?apple_bluetooth_restoration_storage\(&mut state, storage_root\)[\s\S]*?Err\(outcome\) => return outcome[\s\S]*?load_or_create_ble_identity[\s\S]*?AutoBle::prepare_central_only_with_restoration/,
+  "the existing-identity gate must run under lifecycle admission before creating a Bluetooth owner",
 );
 assert.match(
   coordinator,
@@ -218,15 +243,15 @@ assert.match(
 );
 assert.match(
   `${accessoryCoordinator}\n${restorationDispatch}`,
-  /restorationStartAuthorizationDidClose\(\)[\s\S]*?rearmAfterAuthorizationLoss\(\)[\s\S]*?claimIfAuthorized[\s\S]*?guard launchRequested, authorized, !claimed/,
+  /restorationStartAuthorizationDidClose\(\)[\s\S]*?rearmAfterAuthorizationLoss\(\)[\s\S]*?claimIfAuthorized[\s\S]*?guard attemptRequested, authorized, !claimed/,
   "authorization loss must re-arm exactly one later restoration dispatch",
 );
 assert.match(swift, /\.appendingPathComponent\("prns", isDirectory: true\)/);
 assert.match(swift, /\.appendingPathComponent\("development", isDirectory: true\)/);
 assert.match(
   swift,
-  /private static func restorationStorageURL\(\)[\s\S]*?migrateExistingContents: false/,
-  "early restoration must avoid recursively migrating the existing storage tree",
+  /private static func restorationStorageURL\(\)[\s\S]*?storageURL\(create: false, migrateExistingContents: false\)/,
+  "early restoration must neither create a fresh private root nor recursively migrate storage",
 );
 assert.match(
   swift,
@@ -238,9 +263,11 @@ assert.match(swift, /isExcludedFromBackup = true/);
 assert.match(swift, /isSymbolicLink == true[\s\S]*skipDescendants\(\)/);
 assert.deepEqual(moduleConfig.apple?.appDelegateSubscribers, ["PrnsAppDelegateSubscriber"]);
 assert.match(subscriber, /willFinishLaunchingWithOptions/);
-assert.match(coordinator, /\.bluetoothCentrals/);
-assert.doesNotMatch(coordinator, /\.bluetoothPeripherals/);
-assert.match(coordinator, /\.contains\(identifier\)/);
+assertOne(
+  subscriber,
+  /PrnsAppLifecycleCoordinator\.shared\.launch\(application: application\)/,
+  "the AppDelegate subscriber must dispatch one process-owned launch before any scene or JavaScript",
+);
 assert.doesNotMatch(`${swift}\n${coordinator}\n${accessoryCoordinator}`, /CBPeripheralManager/);
 assert.equal(
   accessoryCoordinator.match(/ASAccessorySession\(\)/g)?.length,
@@ -307,7 +334,26 @@ assert.match(
   "only a definitive stopped outcome may reopen native start admission",
 );
 assert.match(accessoryCoordinator, /statusRevision &\+= 1[\s\S]*?statusJSON\(\)/);
-assert.match(swift, /DevelopmentNodeStartInput\(developmentTcpTarget: nil\)/);
+assert.match(
+  swift,
+  /static func configuredStartInput\(\)[\s\S]*?#if DEBUG\s+let target = Bundle\.main\.object\(forInfoDictionaryKey: "PRNSDevelopmentTcpTarget"\) as\? String\s+return DevelopmentNodeStartInput\(developmentTcpTarget: target\)\s+#else\s+DevelopmentNodeStartInput\(developmentTcpTarget: nil\)\s+#endif/,
+  "native startup must use the compiled Debug peer and omit it in Release",
+);
+assert.match(
+  swift,
+  /AsyncFunction\("start"\)[\s\S]*?Self\.validatedStartInput\(Self\.decodeStartInput\(inputBytes\)\)[\s\S]*?Self\.startAuthorized\(input\)/,
+  "JavaScript starts must resolve the compiled input before native start admission",
+);
+assert.match(
+  swift,
+  /private static func validatedStartInput\([\s\S]*?let configured = configuredStartInput\(\)\s+if let requested = input\.developmentTcpTarget,\s+requested != configured\.developmentTcpTarget[\s\S]*?throw PrnsAppException[\s\S]*?return configured/,
+  "nil callers must use native configuration and conflicting explicit peers must be rejected",
+);
+assert.doesNotMatch(
+  iosRuntimeProvider,
+  /process\.env|EXPO_PUBLIC_PRNS_LXMF_TCP_TARGET/,
+  "iOS JavaScript must not select a test peer after process-owned native startup",
+);
 assert.doesNotMatch(
   `${coordinator}\n${subscriber}`,
   /applicationDidEnterBackground|applicationWillResignActive|prns_app_stop/,
@@ -348,7 +394,7 @@ assert.match(
 assert.match(iosDiagnostics, /enum LifecycleEvent \{[\s\S]*?case nativeOutcome\(/);
 assert.match(
   iosDiagnostics,
-  /static func accessorySetup\(\s*phase: AccessorySetupPhase,[\s\S]*?restoration: Bool/,
+  /static func accessorySetup\(\s*phase: AccessorySetupPhase,[\s\S]*?restorationAttempt: Bool/,
 );
 assert.match(
   iosDiagnostics,
@@ -512,18 +558,91 @@ assert.match(
 );
 assert.doesNotMatch(developmentClient, /NSAccessorySetupSupports\.0/);
 assert.match(
-  configCheck,
-  /if \("UIApplicationSceneManifest" in infoPlist\) \{\s*fail\(`\$\{variant\}\.ios\.infoPlist must not declare a scene manifest`\);\s*\}/,
-  "both rendered app variants must leave restoration launch options with AppDelegate",
+  appConfig,
+  /"expo-build-properties"[\s\S]*?enableSceneSupport: true/,
+  "the app must use Expo's supported scene lifecycle plugin",
 );
-assert.equal(
-  developmentClient.match(/plutil -extract UIApplicationSceneManifest raw/g)?.length,
-  2,
-  "clean CNG and the built app must both reject a scene manifest",
-);
+assert.doesNotMatch(configCheck, /must not declare a scene manifest/);
+for (const plist of ["INFO_PLIST", "built_info_plist"]) {
+  assert.ok(
+    developmentClient.includes(`assert_scene_metadata "\${${plist}}"`),
+    "clean CNG and the built app must both validate the single Expo scene",
+  );
+}
+const sceneMetadataValidator = developmentClient.match(
+  /assert_scene_metadata\(\) \{[\s\S]*?node -e '([\s\S]*?)'/,
+)?.[1];
+assert.ok(sceneMetadataValidator, "the build helper must validate the complete scene manifest");
+const sceneRole = "UIWindowSceneSessionRoleApplication";
+const sceneConfiguration = { UISceneDelegateClassName: "EXExpoAppSceneDelegate" };
+const validSceneManifest = {
+  UIApplicationSupportsMultipleScenes: false,
+  UISceneConfigurations: { [sceneRole]: [sceneConfiguration] },
+};
+for (const [name, manifest, valid] of [
+  ["one Expo scene", validSceneManifest, true],
+  ["missing scene metadata", {}, false],
+  [
+    "multiple scenes enabled",
+    { ...validSceneManifest, UIApplicationSupportsMultipleScenes: true },
+    false,
+  ],
+  [
+    "missing multiple-scenes policy",
+    { UISceneConfigurations: validSceneManifest.UISceneConfigurations },
+    false,
+  ],
+  ["missing application role", { ...validSceneManifest, UISceneConfigurations: {} }, false],
+  [
+    "an empty scene list",
+    { ...validSceneManifest, UISceneConfigurations: { [sceneRole]: [] } },
+    false,
+  ],
+  [
+    "two scene configurations",
+    {
+      ...validSceneManifest,
+      UISceneConfigurations: { [sceneRole]: [sceneConfiguration, sceneConfiguration] },
+    },
+    false,
+  ],
+  [
+    "another scene role",
+    {
+      ...validSceneManifest,
+      UISceneConfigurations: {
+        ...validSceneManifest.UISceneConfigurations,
+        UIWindowSceneSessionRoleExternalDisplay: [sceneConfiguration],
+      },
+    },
+    false,
+  ],
+  [
+    "a legacy scene delegate",
+    {
+      ...validSceneManifest,
+      UISceneConfigurations: { [sceneRole]: [{ UISceneDelegateClassName: "SceneDelegate" }] },
+    },
+    false,
+  ],
+]) {
+  const result = spawnSync(process.execPath, ["-e", sceneMetadataValidator], {
+    input: JSON.stringify(manifest),
+    encoding: "utf8",
+  });
+  assert.ifError(result.error);
+  assert.equal(result.status === 0, valid, `scene metadata guard: ${name}`);
+}
 assert.match(
   developmentClient,
-  /UIApplicationSceneManifest raw "\$\{INFO_PLIST\}"[\s\S]*?clean CNG rendered a scene manifest[\s\S]*?UIApplicationSceneManifest raw "\$\{built_info_plist\}"[\s\S]*?development client has a scene manifest/,
+  /assert_scene_app_delegate\(\)[\s\S]*?ExpoReactNativeFactoryProvider[\s\S]*?assert\.doesNotMatch\(source, \/\\bstartReactNative[\s\S]*?assert\.doesNotMatch\(source, \/\\bUIWindow/,
+  "AppDelegate must provide the factory while Expo's scene delegate owns UI startup",
+);
+assert.match(developmentClient, /assert_scene_app_delegate\n/);
+assert.match(
+  developmentClient,
+  /grep -Fc "PrnsAppDelegateSubscriber\.self"[\s\S]*?== "1"/,
+  "generated Expo modules must register the process-owned subscriber exactly once",
 );
 assert.match(developmentClient, /MinimumOSVersion[\s\S]*?18\.0/);
 assert.match(developmentClient, /PODFILE_PROPERTIES[\s\S]*?ios\.deploymentTarget[\s\S]*?18\.0/);

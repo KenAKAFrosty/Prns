@@ -48,10 +48,10 @@ final class PrnsAccessorySetupCoordinator {
   private init() {}
 
   func activate(
-    restorationLaunchRequested: Bool,
+    restorationAttemptRequested: Bool,
     restorationReady: @escaping () -> Void
   ) {
-    restorationDispatch.request(restorationLaunchRequested)
+    restorationDispatch.request(restorationAttemptRequested)
     self.restorationReady = restorationReady
     publish()
 
@@ -133,7 +133,7 @@ final class PrnsAccessorySetupCoordinator {
       "picker": pickerPhase.rawValue,
       "authorizedAccessoryCount": authorizedAccessoryCount,
       "nativeStart": nativeStartPhase.rawValue,
-      "restorationLaunchRequested": restorationDispatch.launchRequested,
+      "restorationAttemptRequested": restorationDispatch.attemptRequested,
       "revision": statusRevision,
     ]
     if let lastError {
@@ -145,7 +145,7 @@ final class PrnsAccessorySetupCoordinator {
       let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
       let json = String(data: data, encoding: .utf8)
     else {
-      return "{\"phase\":\"failed\",\"picker\":\"idle\",\"authorizedAccessoryCount\":0,\"nativeStart\":\"failed\",\"restorationLaunchRequested\":false,\"revision\":0,\"lastError\":{\"code\":\"encodingFailed\",\"detail\":\"Accessory setup status is unavailable.\"}}"
+      return "{\"phase\":\"failed\",\"picker\":\"idle\",\"authorizedAccessoryCount\":0,\"nativeStart\":\"failed\",\"restorationAttemptRequested\":false,\"revision\":0,\"lastError\":{\"code\":\"encodingFailed\",\"detail\":\"Accessory setup status is unavailable.\"}}"
     }
     return json
   }
@@ -350,7 +350,7 @@ final class PrnsAccessorySetupCoordinator {
       picker: pickerPhase,
       authorizedCount: authorizedAccessoryCount,
       nativeStart: nativeStartPhase,
-      restoration: restorationDispatch.launchRequested
+      restorationAttempt: restorationDispatch.attemptRequested
     )
   }
 

@@ -78,7 +78,7 @@ const waitingAccessorySetup: Bindings.AccessorySetupStatus = {
   picker: "idle",
   authorizedAccessoryCount: 0,
   nativeStart: "notRequested",
-  restorationLaunchRequested: false,
+  restorationAttemptRequested: false,
   revision: 1,
   lastError: null,
 };

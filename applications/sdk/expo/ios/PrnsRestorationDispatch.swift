@@ -1,13 +1,15 @@
+/// A process-launch attempt, not evidence that CoreBluetooth restored state.
+/// Scene connection, foregrounding and JavaScript reload must not request it.
 struct PrnsRestorationDispatch {
-  private(set) var launchRequested = false
+  private(set) var attemptRequested = false
   private var claimed = false
 
   mutating func request(_ requested: Bool) {
-    launchRequested = launchRequested || requested
+    attemptRequested = attemptRequested || requested
   }
 
   mutating func claimIfAuthorized(_ authorized: Bool) -> Bool {
-    guard launchRequested, authorized, !claimed else {
+    guard attemptRequested, authorized, !claimed else {
       return false
     }
     claimed = true
@@ -19,7 +21,7 @@ struct PrnsRestorationDispatch {
   }
 
   mutating func cancel() {
-    launchRequested = false
+    attemptRequested = false
     claimed = false
   }
 }

@@ -6,7 +6,7 @@ export type AccessorySetupStatus = {
   readonly picker: "idle" | "presented" | "presenting";
   readonly authorizedAccessoryCount: number;
   readonly nativeStart: "failed" | "notRequested" | "running" | "starting" | "stopping";
-  readonly restorationLaunchRequested: boolean;
+  readonly restorationAttemptRequested: boolean;
   readonly revision: number;
   readonly lastError: {
     readonly code: string;
@@ -88,7 +88,7 @@ function parseStatus(json: string): AccessorySetupStatus {
     picker,
     authorizedAccessoryCount,
     nativeStart,
-    restorationLaunchRequested,
+    restorationAttemptRequested,
     revision,
   } = value;
   if (typeof phase !== "string" || !phases.has(phase as AccessorySetupStatus["phase"])) {
@@ -109,10 +109,10 @@ function parseStatus(json: string): AccessorySetupStatus {
   ) {
     throw new NativePayloadError("$.nativeStart", "native start phase is invalid");
   }
-  if (typeof restorationLaunchRequested !== "boolean") {
+  if (typeof restorationAttemptRequested !== "boolean") {
     throw new NativePayloadError(
-      "$.restorationLaunchRequested",
-      "restoration launch marker is invalid",
+      "$.restorationAttemptRequested",
+      "restoration attempt marker is invalid",
     );
   }
   if (!Number.isSafeInteger(revision) || (revision as number) < 0) {
@@ -124,7 +124,7 @@ function parseStatus(json: string): AccessorySetupStatus {
     picker: picker as AccessorySetupStatus["picker"],
     authorizedAccessoryCount: authorizedAccessoryCount as number,
     nativeStart: nativeStart as AccessorySetupStatus["nativeStart"],
-    restorationLaunchRequested,
+    restorationAttemptRequested,
     revision: revision as number,
     lastError,
   };

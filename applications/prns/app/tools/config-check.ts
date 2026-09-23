@@ -24,11 +24,14 @@ function readRecord(value: unknown, owner: string): JsonRecord {
   return value;
 }
 
-function render(variant: "development" | "production"): JsonRecord {
+function render(
+  variant: "development" | "production",
+  environment: Readonly<Record<string, string>> = {},
+): JsonRecord {
   const output = execFileSync("expo", ["config", "--type", "public", "--json"], {
     cwd: appRoot,
     encoding: "utf8",
-    env: { ...process.env, PRNS_APP_VARIANT: variant },
+    env: { ...process.env, ...environment, PRNS_APP_VARIANT: variant },
   });
   const parsed: unknown = JSON.parse(output);
   return readRecord(parsed, `${variant} Expo config`);
@@ -74,8 +77,20 @@ function assertVariant(
   if ("PRNSCoreBluetoothPeripheralRestorationIdentifier" in infoPlist) {
     fail(`${variant}.ios.infoPlist must not declare a peripheral restoration identifier`);
   }
-  if ("UIApplicationSceneManifest" in infoPlist) {
-    fail(`${variant}.ios.infoPlist must not declare a scene manifest`);
+  const scenePlugins = Array.isArray(config.plugins)
+    ? config.plugins.filter(
+        (plugin) => Array.isArray(plugin) && plugin[0] === "expo-build-properties",
+      )
+    : [];
+  const scenePlugin = scenePlugins[0];
+  if (
+    scenePlugins.length !== 1 ||
+    !Array.isArray(scenePlugin) ||
+    !isRecord(scenePlugin[1]) ||
+    !isRecord(scenePlugin[1].ios) ||
+    scenePlugin[1].ios.enableSceneSupport !== true
+  ) {
+    fail(`${variant} must enable Expo's scene lifecycle support`);
   }
   if (
     !Array.isArray(infoPlist.NSAccessorySetupBluetoothCompanyIdentifiers) ||
@@ -124,6 +139,24 @@ assertVariant("production", {
   slug: "prns",
   identifier: "rs.reticulum.prns",
 });
+
+for (const variant of ["development", "production"] as const) {
+  const fixture = "127.0.0.1:4242";
+  const fixtureConfig = render(variant, { EXPO_PUBLIC_PRNS_LXMF_TCP_TARGET: fixture });
+  const ios = readRecord(fixtureConfig.ios, `${variant}.ios`);
+  const info = readRecord(ios.infoPlist, `${variant}.ios.infoPlist`);
+  if (info.PRNSDevelopmentTcpTarget !== (variant === "development" ? fixture : undefined)) {
+    fail(`${variant} must include the native TCP fixture only in the development variant`);
+  }
+}
+
+const noFixture = render("development", { EXPO_PUBLIC_PRNS_LXMF_TCP_TARGET: "" });
+if (
+  readRecord(readRecord(noFixture.ios, "development.ios").infoPlist, "development.ios.infoPlist")
+    .PRNSDevelopmentTcpTarget !== undefined
+) {
+  fail("an unset native TCP fixture must remain absent");
+}
 
 const invalid = spawnSync("expo", ["config", "--type", "public", "--json"], {
   cwd: appRoot,

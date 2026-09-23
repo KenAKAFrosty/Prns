@@ -12,7 +12,7 @@ export const runtimeProvider: RuntimeProvider = {
   acquire: (options) =>
     scopedDevelopmentRuntime(developmentRuntime, {
       ...options,
-      developmentTcpTarget: __DEV__ ? process.env.EXPO_PUBLIC_PRNS_LXMF_TCP_TARGET : undefined,
+      // Native process launch owns the compiled iOS test peer, before JavaScript.
       nativeLifetime: "process",
     }),
 };

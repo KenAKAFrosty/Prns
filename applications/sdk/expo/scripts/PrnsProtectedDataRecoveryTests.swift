@@ -77,8 +77,13 @@ struct PrnsProtectedDataRecoveryTests {
     )
 
     var restorationDispatch = PrnsRestorationDispatch()
+    restorationDispatch.request(false)
+    precondition(!restorationDispatch.claimIfAuthorized(true))
     restorationDispatch.request(true)
+    precondition(!restorationDispatch.claimIfAuthorized(false))
     precondition(restorationDispatch.claimIfAuthorized(true))
+    // A second caller or scene activation does not repeat process startup.
+    restorationDispatch.request(true)
     precondition(!restorationDispatch.claimIfAuthorized(true))
     restorationDispatch.rearmAfterAuthorizationLoss()
     precondition(!restorationDispatch.claimIfAuthorized(false))
@@ -91,7 +96,15 @@ struct PrnsProtectedDataRecoveryTests {
     cancelledRestorationDispatch.rearmAfterAuthorizationLoss()
     cancelledRestorationDispatch.cancel()
     precondition(!cancelledRestorationDispatch.claimIfAuthorized(true))
-    precondition(!cancelledRestorationDispatch.launchRequested)
+    precondition(!cancelledRestorationDispatch.attemptRequested)
+    cancelledRestorationDispatch.rearmAfterAuthorizationLoss()
+    precondition(!cancelledRestorationDispatch.claimIfAuthorized(true))
+
+    var cancelledBeforeAuthorization = PrnsRestorationDispatch()
+    cancelledBeforeAuthorization.request(true)
+    precondition(!cancelledBeforeAuthorization.claimIfAuthorized(false))
+    cancelledBeforeAuthorization.cancel()
+    precondition(!cancelledBeforeAuthorization.claimIfAuthorized(true))
   }
 
   private static func expect(

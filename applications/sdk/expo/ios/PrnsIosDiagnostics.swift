@@ -9,7 +9,7 @@ enum PrnsIosDiagnostics {
 
   enum LifecycleEvent {
     case configurationFailed
-    case launch(centralRestoration: Bool, protectedData: Bool)
+    case launch(restorationAttempt: Bool, protectedData: Bool)
     case protectedDataAvailableWhileObserverInstalled
     case startDeferredUntilProtectedDataAvailable
     case protectedDataAvailable
@@ -126,8 +126,8 @@ enum PrnsIosDiagnostics {
     switch event {
     case .configurationFailed:
       message = "configuration failed"
-    case .launch(let centralRestoration, let protectedData):
-      message = "launch centralRestoration=\(centralRestoration) protectedData=\(protectedData)"
+    case .launch(let restorationAttempt, let protectedData):
+      message = "launch restorationAttempt=\(restorationAttempt) protectedData=\(protectedData)"
     case .protectedDataAvailableWhileObserverInstalled:
       message = "protected data became available while the retry observer was installed"
     case .startDeferredUntilProtectedDataAvailable:
@@ -153,13 +153,13 @@ enum PrnsIosDiagnostics {
     picker: AccessoryPickerPhase,
     authorizedCount: Int,
     nativeStart: NativeStartPhase,
-    restoration: Bool
+    restorationAttempt: Bool
   ) {
     let nonnegativeAuthorizedCount = max(0, authorizedCount)
     emit(
       .accessorySetup,
       "phase=\(phase.rawValue) picker=\(picker.rawValue) authorized=\(nonnegativeAuthorizedCount) "
-        + "nativeStart=\(nativeStart.rawValue) restoration=\(restoration)"
+        + "nativeStart=\(nativeStart.rawValue) restorationAttempt=\(restorationAttempt)"
     )
   }
 

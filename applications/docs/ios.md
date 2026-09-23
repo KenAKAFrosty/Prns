@@ -3,9 +3,16 @@
 The iOS app uses the generated bindings and shared Rust image described in the
 [binding guide](../prns/native-composition/bindings/README.md). Start with
 [workspace setup](../README.md#setup). Historical observations and current-build
-trials have different scopes. The current framework has bounded foreground and
+trials have different scopes. Earlier frameworks have bounded foreground and
 restoration-requested relaunch evidence, not full lifecycle qualification; see
 [current validation and limits](validation.md).
+
+The app uses Expo's single-scene lifecycle, required when building with Xcode 27
+for iOS 27. On SDK 57 this is enabled through `expo-build-properties` with
+`ios.enableSceneSupport: true`; Expo 57.0.23 contains the scene runtime. Clean
+prebuild declares `EXExpoAppSceneDelegate` and makes AppDelegate provide the React
+factory without starting the window itself. Scene creation owns the UI only,
+not the native node. See [Expo's SDK 57 guidance](https://github.com/expo/fyi/blob/main/ios-scene-lifecycle.md#staying-on-sdk-57-with-xcode-27).
 
 ## iOS native lifetime and Bluetooth restoration
 
@@ -32,7 +39,7 @@ alive without periodic snapshot reads.
 
 The iOS app now has one process-wide `ASAccessorySession`, activated from the
 app-delegate launch path before it allows Prns to create CoreBluetooth state.
-Both an ordinary JavaScript start and a restoration-requested native start wait
+Both an ordinary JavaScript start and a process-launch restoration attempt wait
 until the session has activated and its canonical accessory roster contains at
 least one authorized Bluetooth accessory. The system accessory chooser opens
 only after an explicit user action while the app is in the foreground. That
@@ -55,19 +62,36 @@ peripheral restoration identifier, or claim the L2CAP capability. Existing
 Prns consumers keep the dual-role backend by default; the app deliberately
 selects the additive central-only role with restoration.
 
-On an eligible relaunch for the app's exact central identifier, the app delegate
-activates the accessory session early and records the restoration request. Once
-the authorized roster is ready, it admits startup and schedules restoration
-preparation on the native queue without waiting for React. Storage access and
-manager preparation do not block the main actor; authorization and startup
-generation are checked before preparation and again before the full native start.
-Unavailable protected storage defers recovery until the availability notification.
+Scene-based apps receive nil AppDelegate launch options, so `.bluetoothCentrals`
+cannot be used to decide whether to recreate the central manager. Each configured
+process launch requests one restoration attempt with the same stable identifier.
+The app delegate activates the accessory session early. Once the authorized
+roster is ready, it admits startup and schedules preparation on the native queue
+without waiting for a scene or React. Under the supervisor lock, automatic
+preparation first requires an existing storage directory and a valid primary
+identity; fresh onboarding, malformed identity and reset-required state cannot
+create a Bluetooth owner. Explicit user-driven Start remains unchanged.
+
+Storage access and manager preparation do not block the main actor; authorization
+and startup generation are checked before preparation and again before the full
+native start. Stop/reset cancels the queued process-launch request and any unlock
+retry. Unavailable protected storage can defer one recovery attempt until the
+availability notification; ordinary relock does not preemptively block readable
+storage. Scene disconnect, foregrounding and React reload do not request another
+native start. Diagnostic `restorationAttempt`/`restorationAttemptRequested` fields
+describe this attempt, not a confirmed Bluetooth wake or restored state.
+
 That start consumes only the prepared owner with the same storage root,
 restoration identifier, and Bluetooth identity instead of creating a duplicate
 manager or Host. Restored central-role peripherals attach their delegates
 immediately and retain bounded early callbacks while the Prns session is
-rebuilt. The development TCP fixture remains a normal launch input and is
-intentionally absent from a restoration start.
+rebuilt. An optional iOS Debug TCP fixture is embedded in the development
+variant's `PRNSDevelopmentTcpTarget` metadata from
+`EXPO_PUBLIC_PRNS_LXMF_TCP_TARGET` during prebuild. Rebuild the client to change
+it; changing Metro's environment alone cannot reconfigure the process-owned
+node. Native foreground and restoration attempts use the same target. Release
+builds ignore this fixture. Non-Bluetooth interfaces still receive no additional
+background execution entitlement.
 
 AccessorySetupKit requires iOS 18, so the Expo configuration plugin, Xcode
 project, and native module all use iOS 18.0 as the minimum deployment target.

@@ -18,6 +18,7 @@ const expectedDependencies = {
   "@ubjs/react-native": "file:../../vendor/ubrn/packages/ubjs-react-native-0.31.0-5.tgz",
   "@react-native-async-storage/async-storage": "2.2.0",
   expo: "~57.0.23",
+  "expo-build-properties": "~57.0.21",
   "expo-constants": "~57.0.18",
   "expo-document-picker": "~57.0.2",
   "expo-file-system": "~57.0.7",

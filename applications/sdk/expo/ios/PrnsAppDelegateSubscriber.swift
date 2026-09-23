@@ -9,7 +9,7 @@ public final class PrnsAppDelegateSubscriber: ExpoAppDelegateSubscriber {
     #if DEBUG
     PrnsAppRestorationProbe.install()
     #endif
-    PrnsAppLifecycleCoordinator.shared.launch(application: application, options: launchOptions)
+    PrnsAppLifecycleCoordinator.shared.launch(application: application)
     return true
   }
 }
