@@ -7,6 +7,12 @@ make the phone usable as its own node, without a board or per-peer authorization
 Control Center Bluetooth-toggle recovery is another documented ASK difference;
 physical results must record it separately from ordinary background operation.
 
+The [September 23 physical checkpoint](../checkpoints/2026-09-23-ordinary-corebluetooth.md#physical-continuation-direct-unpaired-ble-messaging)
+now proves automatic unpaired iPhone/Galaxy connection, reciprocal announcements,
+two-way proof-backed messages, one same-process off-screen iPhone receipt and its
+first resumed send. The transport choice is feasible; complete the UX below and
+qualify the remaining lifecycle cases. This is not full demo acceptance.
+
 ## Outcome
 
 Open prns on MetalbeardMobile and the Galaxy S9+, connect them, announce distinct
@@ -32,11 +38,11 @@ The existing foundation is useful; this is not a messaging-engine rewrite.
 
 | Area | What exists | Gap for the demo |
 | --- | --- | --- |
-| Local node | One process-owned Rust runtime and stable primary identity; ordinary iOS Bluetooth admission | New permission/start path needs retained-data and physical lifecycle qualification |
+| Local node | One process-owned Rust runtime and stable primary identity; ordinary iOS Bluetooth admission; retained-data install passed | Permission recovery, cold retention and full physical lifecycle qualification remain |
 | Announcing | Inbox → Messaging options → Share messaging address calls the real LXMF announce API | Hidden, ambiguous label; hardcoded name `prns`; no useful connection/outcome context |
 | Discovery | Authenticated LXMF announce observer and latest-per-destination peer cache | Peers appear as empty Inbox conversations; no dedicated discovered-contacts or announce view; cache lacks expiry/cap |
 | Contacts | Saved/manual contacts and Save as contact in local diagnostics | No direct discovery-to-contact-to-message journey; generic destinations are not necessarily messaging addresses |
-| Bluetooth | iOS now selects the existing dual-role backend; Android scans and advertises | New iOS path needs physical qualification; local connection controls and physical-peer views remain incomplete |
+| Bluetooth | Direct unpaired iPhone/Galaxy discovery, two-way messaging and bounded off-screen iPhone receipt passed | Recovery/long-idle qualification, local connection controls and physical-peer views remain incomplete |
 | TCP (deferred) | Optional developer TCP client fixture | Not part of this milestone |
 | Inspection | Logical interfaces, counters, routes and identity associations | Raw labels/IDs/times; physical peers are folded away; current route is not historical message evidence |
 
@@ -240,8 +246,8 @@ routes or counters.
 
 ## Ordered implementation slices
 
-1. **Pair-free connection feasibility and status (approved, in progress).**
-   qualify ordinary CoreBluetooth permissions and existing Prns AutoBLE roles
+1. **Pair-free connection feasibility and status (transport proven; remaining qualification/status in progress).**
+   Qualify ordinary CoreBluetooth permissions and existing Prns AutoBLE roles
    without ASK. Capture exact builds and show that neither phone needs a bond,
    per-peer chooser or RemoteControl grant. Include permission denial, readiness,
    interface enable/disable and truthful status. Keep native restoration support

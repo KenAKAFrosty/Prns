@@ -7,9 +7,12 @@ Browser and Tauri runtime providers are not implemented.
 
 The [September 23 ordinary CoreBluetooth feasibility](../checkpoints/2026-09-23-ordinary-corebluetooth.md)
 removes the iOS accessory requirement and selects dual-role AutoBLE while retaining
-native restoration. This is new behavior requiring its own physical qualification;
-do not transfer ASK-era acceptance to it. The checkpoint records tests, build and
-device availability separately.
+native restoration. Its retained-data MetalbeardMobile Release installation now
+has direct, unpaired BLE discovery and proof-backed messages both ways with the
+Galaxy S9+, plus one same-process off-screen iPhone receipt and first resumed
+send. Long idle, natural suspension, OS restoration and permission recovery remain
+unqualified. Do not transfer ASK-era acceptance to it; the checkpoint records
+exact binaries, transport evidence and limits separately.
 
 The [September 21 integration](../checkpoints/2026-09-21-remote-control-management.md)
 rebases the app on upstream `8c211827b` and implements the first expanded

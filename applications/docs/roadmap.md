@@ -37,15 +37,17 @@ Contacts/Discovered and interface-management requirements into one observable
 journey: connect MetalbeardMobile and Galaxy S9+, announce distinct messaging
 names, save contacts, exchange LXMF messages over automatic, pair-free BLE,
 and inspect how the network is communicating. Ordinary CoreBluetooth feasibility
-was approved September 23; the remaining UX/inspection slices are still planned.
+was approved September 23 and now has direct iPhone/Galaxy discovery and two-way
+message evidence; the remaining UX/inspection slices are still planned.
 
-Start with phone-to-phone Bluetooth feasibility without OS bonding or a per-peer
-accessory picker, and truthful connection states. Then finish announce/discovery/
+The first mixed-phone transport trial passed without OS bonding or a per-peer
+accessory picker. Finish truthful connection states, then announce/discovery/
 contact UX and bounded network inspection and device qualification. TCP is deferred.
 Preserve native background ownership; record foreground success separately from
 locked/background acceptance. The iOS composition now selects ordinary
 CoreBluetooth permission/dual-role operation instead of the per-accessory
-authorization model, without treating that change as already qualified. It records
+authorization model. A bounded off-screen iPhone receipt and first resumed send
+also passed; long idle, permission recovery and OS restoration remain open. It records
 the distinction between app-level Bluetooth permission, messaging discovery and remote
 board-control pairing.
 

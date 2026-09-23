@@ -89,7 +89,7 @@ SHA256 values:
 Local build logs and bundle-verification receipt are in
 `scratch/prns-app/2026-09-23/ordinary-corebluetooth/`.
 
-## Device status: not installed or physically qualified
+## Initial device availability
 
 Galaxy S9+ (`444a443651523098`) was reachable over USB, Android 10, with its existing
 Release app running. No Android installation was needed for the first peer test.
@@ -98,8 +98,83 @@ over the network and locked, but was not present in the USB inventory. Subsequen
 CoreDevice connections and iPhone Mirroring timed out. The user was asked to
 connect it by USB and unlock it.
 
-No new app has been installed on either phone in this checkpoint. No consent,
-automatic discovery, message exchange, retained-data install, locked receipt or
-OS restoration result is claimed. Install the verified standalone build when the
-iPhone is available, then run the physical sequence above. The old installed ASK
-build does not exercise this new code.
+At that initial stop, neither phone had received a new installation. The
+following continuation replaces that availability blocker with new-build evidence;
+the earlier ASK installation does not qualify this path.
+
+## Physical continuation: direct, unpaired BLE messaging
+
+On September 23, the verified Release above, source `f606a3f5c`, was installed on
+MetalbeardMobile over retained data and launched as PID 16324. Apple tools used
+their local-network tunnel despite the cable; libimobiledevice could not attach
+its logger. Installation and launch receipts are in the local evidence directory.
+The user confirmed normal startup, accepted the ordinary Bluetooth prompt and
+locked the phone for Mirroring. Saved pairing and the existing 13-message
+conversation remained visible. No accessory chooser, phone-to-phone OS pairing,
+RemoteControl pairing, identity reset or board operation was used.
+
+Galaxy retained its September 22 Release, source `cabb9fad1`, PID 11925, APK SHA256
+`3614ee7fee0419df0ceef7923eaa576619d3cd4b25f4fca96b4739b389dec49a`.
+Both apps use embedded JavaScript; no Metro or TCP test fixture carried messages.
+
+### Discovery and transport evidence
+
+- iPhone displayed Running, Native, Bluetooth-only capabilities and Connected
+  AutomaticBluetoothLe. Its initial packet counters and route count were zero.
+- Each phone's existing Share messaging address action caused the other phone
+  to show a newly heard `prns` peer. No address was copied or manually entered.
+- iPhone messaging destination: `ade5b79ac66f17d6b1b9685fe6ae57ae`.
+  Galaxy messaging destination: `549dfdc562189fd3b10a8523bf8ed8e7`.
+- iPhone's route to the Galaxy was one hop, Direct, through Bluetooth interface
+  `0cde82ef07008c6d`. Its verified identity association matched the Galaxy's own
+  primary identity, `5235c813b0219ff915bc86f8725b51f4`.
+- Galaxy's GATT system state showed one live peer, Android listener connection 4,
+  and no outgoing GATT clients throughout the exchanges. Its peer address was
+  absent from the bonded-device list. Initial role arbitration settled into
+  iPhone central / Android peripheral at 07:59:27 EDT, with no subsequent
+  disconnection or role change through the final 08:12:55 snapshot.
+- Android DATA frames correlate with all four exchanges below. At an iPhone
+  08:12 snapshot, host and sole Bluetooth-interface counters both reported
+  2,382 received / 2,350 sent bytes. These isolated-test observations establish
+  the BLE path; the app does not yet expose historical per-message paths.
+
+### Message results
+
+Times are EDT on September 23, 2026. Both receiving UIs were inspected. Delivered
+is the existing proof-backed result, not a read receipt.
+
+| Trial | Message | Sender result |
+| --- | --- | --- |
+| iPhone → Galaxy, foreground | `ble0808` | Sent 08:08:02; delivered 08:08:03, 211 ms |
+| Galaxy → iPhone, foreground | `BLE Galaxy to iPhone 0808` | Delivered 08:08:38, 84 ms |
+| Galaxy → off-screen iPhone | `BLE iPhone background 0810` | Delivered 08:10:22, 42 ms, before reopening Mirroring |
+| First iPhone send after resume | `resume0811` | Delivered 08:11:28, 181 ms |
+
+For the off-screen trial, the iPhone app was sent Home and Mirroring was quit
+around 08:09; Mirroring was confirmed absent at 08:09:36. The Galaxy submitted
+the message at 08:10:22. After reconnecting Mirroring, the iPhone showed that
+exact stored message with its 08:10:22 receipt time. PID 16324 remained unchanged
+before and after this trial. The connection carried periodic traffic throughout.
+
+This establishes a bounded, same-process background receipt on an existing link,
+not prolonged idle, natural suspension, independently verified continuous lock,
+or OS termination/restoration. No iOS lifecycle log was captured; the local
+`device-lifecycle.log` contains only the logger's waiting message. Android's
+nonclearing capture is `android-ble-live.log`, with focused system snapshots
+`android-gatt-after-background.txt` and `android-gatt-final.txt`. Both temporary
+host loggers were stopped; phone runtimes were left running.
+
+### Remaining qualification and product work
+
+The ordinary CoreBluetooth choice now has direct mixed-phone transport evidence.
+Permission denial/recovery, explicit interface controls, cold retention on this
+binary, out-of-range recovery, quiet/long idle and controlled process restoration
+remain separate trials. Two-iPhone operation and Android background receipt were
+not tested here. Incoming notifications are still unimplemented. Board-control
+compatibility needs its own new-build check.
+
+The existing UI can perform these tests but does not complete the demo: announcing
+is hidden, both names are hardcoded `prns`, and discovered peers appear as empty
+conversations. Continue with the planned name/announce/discovered-contact journey,
+truthful Bluetooth status and network inspection; do not rewrite the working
+messaging transport. No push or PR update was performed.

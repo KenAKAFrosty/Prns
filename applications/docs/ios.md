@@ -100,9 +100,12 @@ restoration-requested relaunch and its remaining UI, delivery and lifecycle
 limits. The full physical matrix remains open; source, simulator, build and
 ordinary foreground results do not establish it.
 
-The [BLE-only phone demo](phone-node-demo.md) starts by qualifying this ordinary
-CoreBluetooth path. New foreground, background and restoration evidence is
-required; earlier ASK results do not qualify the replacement.
+The [BLE-only phone demo](phone-node-demo.md) qualifies this ordinary
+CoreBluetooth path separately. The [September 23 checkpoint](../checkpoints/2026-09-23-ordinary-corebluetooth.md)
+records unpaired Galaxy discovery, two-way foreground messages, one same-process
+off-screen receipt and first resumed send on the retained-data Release install.
+Quiet/long idle and process restoration still require new evidence; earlier ASK
+results do not qualify the replacement.
 
 During an iOS-granted Bluetooth background window, the process-owned Host and
 Bluetooth interface can run without React. This is bounded, event-driven iOS
