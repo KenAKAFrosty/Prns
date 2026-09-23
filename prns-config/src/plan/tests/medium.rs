@@ -72,7 +72,7 @@ fn prns_owned_host_interfaces_reach_typed_plans() {
     ));
     assert!(matches!(
         named(&plan, "BLE").medium,
-        PlannedMedium::PrnsBluetoothAuto
+        PlannedMedium::PrnsBluetoothAuto(_)
     ));
     let PlannedMedium::PrnsWebSocketClient { target, framing } =
         &named(&plan, "WebSocket Client").medium
@@ -163,6 +163,91 @@ fn auto_interface_settings_and_bootstrap_lifecycle_are_fully_typed() {
         auto.multicast_address_type(),
         AutoInterfaceMulticastAddressType::Permanent,
     );
+}
+
+#[test]
+fn auto_wifi_and_bluetooth_groups_are_independent_canonical_sets() {
+    let plan = plan_of(
+        "[interfaces]\n\
+         [[LAN]]\ntype = AutoInterface\nenabled = Yes\ngroup_ids = zulu, alpha\n\
+         [[BLE]]\ntype = PrnsBluetoothAuto\nenabled = Yes\ngroup_ids = gamma, beta\n",
+    );
+    let PlannedMedium::AutoWifi(auto_wifi) = &named(&plan, "LAN").medium else {
+        panic!("AutoInterface medium expected")
+    };
+    assert_eq!(
+        auto_wifi
+            .group_ids()
+            .iter()
+            .map(prns_core::interfaces::DiscoveryGroupId::as_str)
+            .collect::<Vec<_>>(),
+        vec!["alpha", "zulu"],
+    );
+    let PlannedMedium::PrnsBluetoothAuto(bluetooth) = &named(&plan, "BLE").medium else {
+        panic!("PrnsBluetoothAuto medium expected")
+    };
+    assert_eq!(
+        bluetooth
+            .group_ids()
+            .iter()
+            .map(prns_core::interfaces::DiscoveryGroupId::as_str)
+            .collect::<Vec<_>>(),
+        vec!["beta", "gamma"],
+    );
+}
+
+#[test]
+fn singular_group_ids_remain_singleton_aliases_and_cannot_mix_with_plural_values() {
+    let plan = plan_of(
+        "[interfaces]\n\
+         [[LAN]]\ntype = AutoInterface\nenabled = Yes\ngroup_id = field-lan\n\
+         [[BLE]]\ntype = PrnsBluetoothAuto\nenabled = Yes\ngroup_id = field-ble\n",
+    );
+    let PlannedMedium::AutoWifi(auto_wifi) = &named(&plan, "LAN").medium else {
+        panic!("AutoInterface medium expected")
+    };
+    assert_eq!(
+        auto_wifi
+            .group_ids()
+            .iter()
+            .map(prns_core::interfaces::DiscoveryGroupId::as_str)
+            .collect::<Vec<_>>(),
+        vec!["field-lan"],
+    );
+    let PlannedMedium::PrnsBluetoothAuto(bluetooth) = &named(&plan, "BLE").medium else {
+        panic!("PrnsBluetoothAuto medium expected")
+    };
+    assert_eq!(
+        bluetooth
+            .group_ids()
+            .iter()
+            .map(prns_core::interfaces::DiscoveryGroupId::as_str)
+            .collect::<Vec<_>>(),
+        vec!["field-ble"],
+    );
+
+    for interface_type in ["AutoInterface", "PrnsBluetoothAuto"] {
+        let config = format!(
+            "[interfaces]\n[[Mixed]]\ntype = {interface_type}\nenabled = Yes\n\
+             group_id = alpha\ngroup_ids = alpha, beta\n"
+        );
+        assert!(parse_and_plan(&config).is_err());
+    }
+}
+
+#[test]
+fn plural_group_configuration_rejects_empty_duplicate_oversized_and_over_capacity_sets() {
+    for groups in [
+        "",
+        "alpha, alpha",
+        "abcdefghijklmnopqrstuvwxyz1234567",
+        "one, two, three, four, five",
+    ] {
+        let config = format!(
+            "[interfaces]\n[[LAN]]\ntype = AutoInterface\nenabled = Yes\ngroup_ids = {groups}\n"
+        );
+        assert!(parse_and_plan(&config).is_err(), "accepted {groups:?}");
+    }
 }
 
 #[test]

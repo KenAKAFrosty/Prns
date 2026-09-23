@@ -153,17 +153,18 @@ impl<const MEMBERS: usize> FanoutSender for UdpFanoutSender<'_, '_, MEMBERS> {
     }
 }
 
-pub(super) async fn send_beacon(socket: Option<&UdpSocket<'_>>, token: Option<&[u8; 32]>) -> bool {
-    let (Some(socket), Some(token)) = (socket, token) else {
+pub(super) async fn send_beacon(
+    socket: Option<&UdpSocket<'_>>,
+    target: Option<::core::net::Ipv6Addr>,
+    token: Option<&[u8; 32]>,
+) -> bool {
+    let (Some(socket), Some(target), Some(token)) = (socket, target, token) else {
         return false;
     };
     socket
         .send_to(
             token,
-            (
-                IpAddress::Ipv6(contract::DISCOVERY_GROUP),
-                contract::DEFAULT_DISCOVERY_PORT,
-            ),
+            (IpAddress::Ipv6(target), contract::DEFAULT_DISCOVERY_PORT),
         )
         .await
         .is_ok()

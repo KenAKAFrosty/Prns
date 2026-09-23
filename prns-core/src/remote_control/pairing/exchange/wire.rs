@@ -254,6 +254,15 @@ pub enum RemoteControlPairingMessageParseError {
     UnknownAuthority {
         found: u8,
     },
+    TooManyPermissionsForVersion {
+        version: RemoteControlPairingProtocolVersion,
+        actual: usize,
+        maximum: usize,
+    },
+    RequestUnsupportedForVersion {
+        version: RemoteControlPairingProtocolVersion,
+        request: RemoteControlRequestKind,
+    },
     NonCanonicalPermissions,
     InvalidPermissions(RemoteControlPairingPermissionsError),
     InvalidAttemptTimeout(RemoteControlPairingAttemptTimeoutError),
@@ -316,7 +325,7 @@ fn read_permissions(
 ) -> Result<RemoteControlPairingPermissions, RemoteControlPairingMessageParseError> {
     let authority = match protocol_version {
         RemoteControlPairingProtocolVersion::V2 => RemoteControlControllerAuthority::Operator,
-        RemoteControlPairingProtocolVersion::V3 => {
+        RemoteControlPairingProtocolVersion::V3 | RemoteControlPairingProtocolVersion::V4 => {
             let &[authority] = reader.take()?;
             RemoteControlControllerAuthority::from_wire(authority).ok_or(
                 RemoteControlPairingMessageParseError::UnknownAuthority { found: authority },
@@ -324,6 +333,19 @@ fn read_permissions(
         }
     };
     let &[count] = reader.take()?;
+    if matches!(
+        protocol_version,
+        RemoteControlPairingProtocolVersion::V2 | RemoteControlPairingProtocolVersion::V3
+    ) && usize::from(count) > super::V2_V3_REQUEST_KIND_CAP
+    {
+        return Err(
+            RemoteControlPairingMessageParseError::TooManyPermissionsForVersion {
+                version: protocol_version,
+                actual: usize::from(count),
+                maximum: super::V2_V3_REQUEST_KIND_CAP,
+            },
+        );
+    }
     let kinds = reader.take_slice(usize::from(count))?;
     let mut requests = RemoteControlRequestSet::empty();
     let mut previous = None;
@@ -333,6 +355,18 @@ fn read_permissions(
                 found: *wire_value,
             });
         };
+        if matches!(
+            protocol_version,
+            RemoteControlPairingProtocolVersion::V2 | RemoteControlPairingProtocolVersion::V3
+        ) && usize::from(kind.wire_value()) > super::V2_V3_REQUEST_KIND_CAP
+        {
+            return Err(
+                RemoteControlPairingMessageParseError::RequestUnsupportedForVersion {
+                    version: protocol_version,
+                    request: kind,
+                },
+            );
+        }
         if previous.is_some_and(|value| value >= *wire_value) || !requests.insert(kind) {
             return Err(RemoteControlPairingMessageParseError::NonCanonicalPermissions);
         }
@@ -347,7 +381,10 @@ fn write_permissions(
     protocol_version: RemoteControlPairingProtocolVersion,
     permissions: &RemoteControlPairingPermissions,
 ) -> Result<(), RemoteControlPairingMessageWriteError> {
-    if protocol_version == RemoteControlPairingProtocolVersion::V3 {
+    if matches!(
+        protocol_version,
+        RemoteControlPairingProtocolVersion::V3 | RemoteControlPairingProtocolVersion::V4
+    ) {
         writer.write(&[permissions.authority().wire_value()])?;
     }
     writer.write(&[permission_count(permissions)])?;

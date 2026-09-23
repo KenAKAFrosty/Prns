@@ -16,6 +16,7 @@ display = ["dep:embedded-graphics"]
 embedded = ["personal-rns/embassy-host", "dep:embassy-sync"]
 host = ["personal-rns/tokio-host"]
 source-archive = ["personal-rns/large-static-responses"]
+compact-node-pages = []
 
 [dependencies]
 personal-rns = { path = "../../personal-rns", default-features = false, features = ["flash"] }
