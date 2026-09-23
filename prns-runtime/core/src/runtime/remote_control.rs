@@ -3,17 +3,18 @@ use crate::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, InstantMillis, SendRequestFailure,
 };
 use crate::identity::IdentityHash;
-use crate::interfaces::{InterfaceId, InterfaceMode};
+use crate::interfaces::{DiscoveryGroupId, InterfaceId, InterfaceMode};
 use crate::remote_control::{
     RemoteControlAnnounceSelfOutcome, RemoteControlApplyOutcome,
     RemoteControlAuthorizeControllerOutcome, RemoteControlBuildVersion,
     RemoteControlControllerAuthority, RemoteControlControllerGrant,
     RemoteControlControllerGrantTable, RemoteControlControllerIdentity,
     RemoteControlControllerInventory, RemoteControlControllerPage, RemoteControlDescription,
-    RemoteControlDescriptionError, RemoteControlDisplayAutoOff, RemoteControlDisplayVisibility,
-    RemoteControlEspRadioMode, RemoteControlGnssPower, RemoteControlGroupOutcome,
-    RemoteControlInterfaceConfigOutcome, RemoteControlInterfaceGroup,
-    RemoteControlInterfaceInventory, RemoteControlInterfacePage,
+    RemoteControlDescriptionError, RemoteControlDiscoveryGroups,
+    RemoteControlDiscoveryGroupsInventoryOutcome, RemoteControlDiscoveryGroupsReplaceOutcome,
+    RemoteControlDisplayAutoOff, RemoteControlDisplayVisibility, RemoteControlEspRadioMode,
+    RemoteControlGnssPower, RemoteControlGroupOutcome, RemoteControlInterfaceConfigOutcome,
+    RemoteControlInterfaceGroup, RemoteControlInterfaceInventory, RemoteControlInterfacePage,
     RemoteControlInterfacePeersOutcome, RemoteControlInterfacePower, RemoteControlLoRaOutcome,
     RemoteControlLoRaProfile, RemoteControlMessageWriteError, RemoteControlModeOutcome,
     RemoteControlPeerPage, RemoteControlPowerOutcome, RemoteControlProtocolError,
@@ -178,7 +179,14 @@ pub enum RemoteControlHostCommand {
     },
     SetInterfaceGroup {
         id: InterfaceId,
-        group: RemoteControlInterfaceGroup,
+        group: DiscoveryGroupId,
+    },
+    InventoryInterfaceDiscoveryGroups {
+        id: InterfaceId,
+    },
+    ReplaceInterfaceDiscoveryGroups {
+        id: InterfaceId,
+        groups: RemoteControlDiscoveryGroups,
     },
     InventoryInterfacePeers {
         id: InterfaceId,
@@ -254,6 +262,12 @@ impl RemoteControlHostCommand {
             Self::SetInterfacePower { .. } => RemoteControlRequestKind::SetInterfacePower,
             Self::SetInterfaceMode { .. } => RemoteControlRequestKind::SetInterfaceMode,
             Self::SetInterfaceGroup { .. } => RemoteControlRequestKind::SetInterfaceGroup,
+            Self::InventoryInterfaceDiscoveryGroups { .. } => {
+                RemoteControlRequestKind::InventoryInterfaceDiscoveryGroups
+            }
+            Self::ReplaceInterfaceDiscoveryGroups { .. } => {
+                RemoteControlRequestKind::ReplaceInterfaceDiscoveryGroups
+            }
             Self::InventoryInterfacePeers { .. } => {
                 RemoteControlRequestKind::InventoryInterfacePeers
             }
@@ -301,6 +315,8 @@ pub enum RemoteControlHostResponse {
     SetInterfacePower(RemoteControlPowerOutcome),
     SetInterfaceMode(RemoteControlModeOutcome),
     SetInterfaceGroup(RemoteControlGroupOutcome),
+    InventoryInterfaceDiscoveryGroups(RemoteControlDiscoveryGroupsInventoryOutcome),
+    ReplaceInterfaceDiscoveryGroups(RemoteControlDiscoveryGroupsReplaceOutcome),
     InventoryInterfacePeers(RemoteControlInterfacePeersOutcome),
     InventoryInterfaceConfig(RemoteControlInterfaceConfigOutcome),
     SetInterfaceLoRaProfile(RemoteControlLoRaOutcome),
@@ -330,6 +346,12 @@ impl RemoteControlHostResponse {
             Self::SetInterfacePower(_) => RemoteControlRequestKind::SetInterfacePower,
             Self::SetInterfaceMode(_) => RemoteControlRequestKind::SetInterfaceMode,
             Self::SetInterfaceGroup(_) => RemoteControlRequestKind::SetInterfaceGroup,
+            Self::InventoryInterfaceDiscoveryGroups(_) => {
+                RemoteControlRequestKind::InventoryInterfaceDiscoveryGroups
+            }
+            Self::ReplaceInterfaceDiscoveryGroups(_) => {
+                RemoteControlRequestKind::ReplaceInterfaceDiscoveryGroups
+            }
             Self::InventoryInterfacePeers(_) => RemoteControlRequestKind::InventoryInterfacePeers,
             Self::InventoryInterfaceConfig(_) => RemoteControlRequestKind::InventoryInterfaceConfig,
             Self::SetInterfaceLoRaProfile(_) => RemoteControlRequestKind::SetInterfaceLoRaProfile,
@@ -360,6 +382,12 @@ impl RemoteControlHostResponse {
             Self::SetInterfacePower(outcome) => RemoteControlResponse::SetInterfacePower(outcome),
             Self::SetInterfaceMode(outcome) => RemoteControlResponse::SetInterfaceMode(outcome),
             Self::SetInterfaceGroup(outcome) => RemoteControlResponse::SetInterfaceGroup(outcome),
+            Self::InventoryInterfaceDiscoveryGroups(outcome) => {
+                RemoteControlResponse::InventoryInterfaceDiscoveryGroups(outcome)
+            }
+            Self::ReplaceInterfaceDiscoveryGroups(outcome) => {
+                RemoteControlResponse::ReplaceInterfaceDiscoveryGroups(outcome)
+            }
             Self::InventoryInterfacePeers(outcome) => {
                 RemoteControlResponse::InventoryInterfacePeers(outcome)
             }
@@ -588,6 +616,66 @@ impl RemoteControlSetInterfaceGroup {
             RemoteControlResponse::ProtocolError(error) => Err(RemoteControlError::Remote(error)),
             response => Err(RemoteControlError::UnexpectedResponse {
                 expected: RemoteControlResponseKind::SetInterfaceGroup,
+                found: response.kind(),
+            }),
+        }
+    }
+}
+
+pub struct RemoteControlInventoryInterfaceDiscoveryGroups;
+
+impl RemoteControlInventoryInterfaceDiscoveryGroups {
+    pub const RESPONSE_CAPACITY: usize =
+        RemoteControlRequestKind::InventoryInterfaceDiscoveryGroups.maximum_response_encoded_len();
+    pub const MAXIMUM_RESPONSE_BYTES: ByteLimit =
+        ByteLimit::Maximum(Self::RESPONSE_CAPACITY as u64);
+
+    pub fn write_request(id: InterfaceId, out: &mut [u8]) -> Result<usize, RemoteControlError> {
+        RemoteControlRequest::InventoryInterfaceDiscoveryGroups { id }
+            .write_into(out)
+            .map_err(RemoteControlError::Encode)
+    }
+
+    pub fn parse_response(
+        bytes: &[u8],
+    ) -> Result<RemoteControlDiscoveryGroupsInventoryOutcome, RemoteControlError> {
+        match RemoteControlResponse::parse(bytes).map_err(RemoteControlError::Response)? {
+            RemoteControlResponse::InventoryInterfaceDiscoveryGroups(outcome) => Ok(outcome),
+            RemoteControlResponse::ProtocolError(error) => Err(RemoteControlError::Remote(error)),
+            response => Err(RemoteControlError::UnexpectedResponse {
+                expected: RemoteControlResponseKind::InventoryInterfaceDiscoveryGroups,
+                found: response.kind(),
+            }),
+        }
+    }
+}
+
+pub struct RemoteControlReplaceInterfaceDiscoveryGroups;
+
+impl RemoteControlReplaceInterfaceDiscoveryGroups {
+    pub const RESPONSE_CAPACITY: usize =
+        RemoteControlRequestKind::ReplaceInterfaceDiscoveryGroups.maximum_response_encoded_len();
+    pub const MAXIMUM_RESPONSE_BYTES: ByteLimit =
+        ByteLimit::Maximum(Self::RESPONSE_CAPACITY as u64);
+
+    pub fn write_request(
+        id: InterfaceId,
+        groups: RemoteControlDiscoveryGroups,
+        out: &mut [u8],
+    ) -> Result<usize, RemoteControlError> {
+        RemoteControlRequest::ReplaceInterfaceDiscoveryGroups { id, groups }
+            .write_into(out)
+            .map_err(RemoteControlError::Encode)
+    }
+
+    pub fn parse_response(
+        bytes: &[u8],
+    ) -> Result<RemoteControlDiscoveryGroupsReplaceOutcome, RemoteControlError> {
+        match RemoteControlResponse::parse(bytes).map_err(RemoteControlError::Response)? {
+            RemoteControlResponse::ReplaceInterfaceDiscoveryGroups(outcome) => Ok(outcome),
+            RemoteControlResponse::ProtocolError(error) => Err(RemoteControlError::Remote(error)),
+            response => Err(RemoteControlError::UnexpectedResponse {
+                expected: RemoteControlResponseKind::ReplaceInterfaceDiscoveryGroups,
                 found: response.kind(),
             }),
         }
@@ -1157,49 +1245,84 @@ impl RemoteControlRequestEndpoint {
                     available_requests,
                     RemoteControlRequestKind::InventoryInterfaces,
                 )?;
-                Ok(AdmittedRemoteControlOperation::InventoryInterfaces { page })
+                Ok(AdmittedRemoteControlOperation::Host(
+                    RemoteControlHostCommand::InventoryInterfaces { page },
+                ))
             }
             Ok(RemoteControlRequest::SetInterfacePower { id, power }) => {
                 require_available(
                     available_requests,
                     RemoteControlRequestKind::SetInterfacePower,
                 )?;
-                Ok(AdmittedRemoteControlOperation::SetInterfacePower { id, power })
+                Ok(AdmittedRemoteControlOperation::Host(
+                    RemoteControlHostCommand::SetInterfacePower { id, power },
+                ))
             }
             Ok(RemoteControlRequest::SetInterfaceMode { id, mode }) => {
                 require_available(
                     available_requests,
                     RemoteControlRequestKind::SetInterfaceMode,
                 )?;
-                Ok(AdmittedRemoteControlOperation::SetInterfaceMode { id, mode })
+                Ok(AdmittedRemoteControlOperation::Host(
+                    RemoteControlHostCommand::SetInterfaceMode { id, mode },
+                ))
             }
             Ok(RemoteControlRequest::SetInterfaceGroup { id, group }) => {
                 require_available(
                     available_requests,
                     RemoteControlRequestKind::SetInterfaceGroup,
                 )?;
-                Ok(AdmittedRemoteControlOperation::SetInterfaceGroup { id, group })
+                Ok(AdmittedRemoteControlOperation::Host(
+                    RemoteControlHostCommand::SetInterfaceGroup {
+                        id,
+                        group: group.into_discovery_group(),
+                    },
+                ))
+            }
+            Ok(RemoteControlRequest::InventoryInterfaceDiscoveryGroups { id }) => {
+                require_available(
+                    available_requests,
+                    RemoteControlRequestKind::InventoryInterfaceDiscoveryGroups,
+                )?;
+                Ok(AdmittedRemoteControlOperation::Host(
+                    RemoteControlHostCommand::InventoryInterfaceDiscoveryGroups { id },
+                ))
+            }
+            Ok(RemoteControlRequest::ReplaceInterfaceDiscoveryGroups { id, groups }) => {
+                require_available(
+                    available_requests,
+                    RemoteControlRequestKind::ReplaceInterfaceDiscoveryGroups,
+                )?;
+                Ok(AdmittedRemoteControlOperation::Host(
+                    RemoteControlHostCommand::ReplaceInterfaceDiscoveryGroups { id, groups },
+                ))
             }
             Ok(RemoteControlRequest::InventoryInterfacePeers { id, page }) => {
                 require_available(
                     available_requests,
                     RemoteControlRequestKind::InventoryInterfacePeers,
                 )?;
-                Ok(AdmittedRemoteControlOperation::InventoryInterfacePeers { id, page })
+                Ok(AdmittedRemoteControlOperation::Host(
+                    RemoteControlHostCommand::InventoryInterfacePeers { id, page },
+                ))
             }
             Ok(RemoteControlRequest::InventoryInterfaceConfig { id }) => {
                 require_available(
                     available_requests,
                     RemoteControlRequestKind::InventoryInterfaceConfig,
                 )?;
-                Ok(AdmittedRemoteControlOperation::InventoryInterfaceConfig { id })
+                Ok(AdmittedRemoteControlOperation::Host(
+                    RemoteControlHostCommand::InventoryInterfaceConfig { id },
+                ))
             }
             Ok(RemoteControlRequest::SetInterfaceLoRaProfile { id, profile }) => {
                 require_available(
                     available_requests,
                     RemoteControlRequestKind::SetInterfaceLoRaProfile,
                 )?;
-                Ok(AdmittedRemoteControlOperation::SetInterfaceLoRaProfile { id, profile })
+                Ok(AdmittedRemoteControlOperation::Host(
+                    RemoteControlHostCommand::SetInterfaceLoRaProfile { id, profile },
+                ))
             }
             #[cfg(feature = "remote-control-wifi-host")]
             Ok(RemoteControlRequest::SetInterfaceWifiStation { id, station }) => {
@@ -1207,7 +1330,9 @@ impl RemoteControlRequestEndpoint {
                     available_requests,
                     RemoteControlRequestKind::SetInterfaceWifiStation,
                 )?;
-                Ok(AdmittedRemoteControlOperation::SetInterfaceWifiStation { id, station })
+                Ok(AdmittedRemoteControlOperation::Host(
+                    RemoteControlHostCommand::SetInterfaceWifiStation { id, station },
+                ))
             }
             Ok(RemoteControlRequest::InventoryControllers { page }) => {
                 require_available(
@@ -1238,41 +1363,57 @@ impl RemoteControlRequestEndpoint {
             }
             Ok(RemoteControlRequest::DescribeBuild) => {
                 require_available(available_requests, RemoteControlRequestKind::DescribeBuild)?;
-                Ok(AdmittedRemoteControlOperation::DescribeBuild)
+                Ok(AdmittedRemoteControlOperation::Host(
+                    RemoteControlHostCommand::DescribeBuild,
+                ))
             }
             Ok(RemoteControlRequest::DescribePower) => {
                 require_available(available_requests, RemoteControlRequestKind::DescribePower)?;
-                Ok(AdmittedRemoteControlOperation::DescribePower)
+                Ok(AdmittedRemoteControlOperation::Host(
+                    RemoteControlHostCommand::DescribePower,
+                ))
             }
             Ok(RemoteControlRequest::SleepRadios) => {
                 require_available(available_requests, RemoteControlRequestKind::SleepRadios)?;
-                Ok(AdmittedRemoteControlOperation::SleepRadios)
+                Ok(AdmittedRemoteControlOperation::Host(
+                    RemoteControlHostCommand::SleepRadios,
+                ))
             }
             Ok(RemoteControlRequest::WakeRadios) => {
                 require_available(available_requests, RemoteControlRequestKind::WakeRadios)?;
-                Ok(AdmittedRemoteControlOperation::WakeRadios)
+                Ok(AdmittedRemoteControlOperation::Host(
+                    RemoteControlHostCommand::WakeRadios,
+                ))
             }
             Ok(RemoteControlRequest::SetSystemPower { power }) => {
                 require_available(available_requests, RemoteControlRequestKind::SetSystemPower)?;
-                Ok(AdmittedRemoteControlOperation::SetSystemPower { power })
+                Ok(AdmittedRemoteControlOperation::Host(
+                    RemoteControlHostCommand::SetSystemPower { power },
+                ))
             }
             Ok(RemoteControlRequest::SetGnssPower { power }) => {
                 require_available(available_requests, RemoteControlRequestKind::SetGnssPower)?;
-                Ok(AdmittedRemoteControlOperation::SetGnssPower { power })
+                Ok(AdmittedRemoteControlOperation::Host(
+                    RemoteControlHostCommand::SetGnssPower { power },
+                ))
             }
             Ok(RemoteControlRequest::SetDisplayVisibility { visibility }) => {
                 require_available(
                     available_requests,
                     RemoteControlRequestKind::SetDisplayVisibility,
                 )?;
-                Ok(AdmittedRemoteControlOperation::SetDisplayVisibility { visibility })
+                Ok(AdmittedRemoteControlOperation::Host(
+                    RemoteControlHostCommand::SetDisplayVisibility { visibility },
+                ))
             }
             Ok(RemoteControlRequest::SetDisplayAutoOff { auto_off }) => {
                 require_available(
                     available_requests,
                     RemoteControlRequestKind::SetDisplayAutoOff,
                 )?;
-                Ok(AdmittedRemoteControlOperation::SetDisplayAutoOff { auto_off })
+                Ok(AdmittedRemoteControlOperation::Host(
+                    RemoteControlHostCommand::SetDisplayAutoOff { auto_off },
+                ))
             }
             #[cfg(feature = "remote-control-wifi-host")]
             Ok(RemoteControlRequest::SetStationUplink { id, uplink }) => {
@@ -1280,14 +1421,18 @@ impl RemoteControlRequestEndpoint {
                     available_requests,
                     RemoteControlRequestKind::SetStationUplink,
                 )?;
-                Ok(AdmittedRemoteControlOperation::SetStationUplink { id, uplink })
+                Ok(AdmittedRemoteControlOperation::Host(
+                    RemoteControlHostCommand::SetStationUplink { id, uplink },
+                ))
             }
             Ok(RemoteControlRequest::SetEspRadioMode { mode }) => {
                 require_available(
                     available_requests,
                     RemoteControlRequestKind::SetEspRadioMode,
                 )?;
-                Ok(AdmittedRemoteControlOperation::SetEspRadioMode { mode })
+                Ok(AdmittedRemoteControlOperation::Host(
+                    RemoteControlHostCommand::SetEspRadioMode { mode },
+                ))
             }
             #[cfg(feature = "remote-control-wifi-host")]
             Ok(RemoteControlRequest::StageWifiCredentials { station }) => {
@@ -1447,6 +1592,7 @@ impl RemoteControlRequestEndpoint {
             AdmittedRemoteControlOperation::ProtocolError(error) => {
                 RemoteControlResponse::ProtocolError(error)
             }
+            #[cfg(feature = "remote-control-wifi-host")]
             _ => return Err(Decline::Ignore),
         };
         let mut out = [0u8; RemoteControlResponse::MAX_ENCODED_LEN];
@@ -1484,37 +1630,6 @@ enum AdmittedRemoteControlOperation {
     AnnounceSelf {
         destination: DestinationHash,
     },
-    InventoryInterfaces {
-        page: RemoteControlInterfacePage,
-    },
-    SetInterfacePower {
-        id: InterfaceId,
-        power: RemoteControlInterfacePower,
-    },
-    SetInterfaceMode {
-        id: InterfaceId,
-        mode: InterfaceMode,
-    },
-    SetInterfaceGroup {
-        id: InterfaceId,
-        group: RemoteControlInterfaceGroup,
-    },
-    InventoryInterfacePeers {
-        id: InterfaceId,
-        page: RemoteControlPeerPage,
-    },
-    InventoryInterfaceConfig {
-        id: InterfaceId,
-    },
-    SetInterfaceLoRaProfile {
-        id: InterfaceId,
-        profile: RemoteControlLoRaProfile,
-    },
-    #[cfg(feature = "remote-control-wifi-host")]
-    SetInterfaceWifiStation {
-        id: InterfaceId,
-        station: RemoteControlWifiStation,
-    },
     InventoryControllers {
         page: RemoteControlControllerPage,
     },
@@ -1534,30 +1649,6 @@ enum AdmittedRemoteControlOperation {
     InventoryControllersReady(RemoteControlControllerInventory),
     AuthorizeControllerReady(RemoteControlAuthorizeControllerOutcome),
     RevokeControllerReady(RemoteControlRevokeControllerOutcome),
-    DescribeBuild,
-    DescribePower,
-    SleepRadios,
-    WakeRadios,
-    SetSystemPower {
-        power: RemoteControlSystemPower,
-    },
-    SetGnssPower {
-        power: RemoteControlGnssPower,
-    },
-    SetDisplayVisibility {
-        visibility: RemoteControlDisplayVisibility,
-    },
-    SetDisplayAutoOff {
-        auto_off: RemoteControlDisplayAutoOff,
-    },
-    #[cfg(feature = "remote-control-wifi-host")]
-    SetStationUplink {
-        id: InterfaceId,
-        uplink: RemoteControlStationUplink,
-    },
-    SetEspRadioMode {
-        mode: RemoteControlEspRadioMode,
-    },
     #[cfg(feature = "remote-control-wifi-host")]
     StageWifiCredentials {
         station: RemoteControlWifiStation,
@@ -1582,85 +1673,44 @@ enum AdmittedRemoteControlOperation {
 impl AdmittedRemoteControlOperation {
     fn prepare_host(self, controller: IdentityHash) -> Self {
         #[cfg(not(feature = "remote-control-wifi-host"))]
-        let _ = controller;
-        let command = match self {
-            Self::InventoryInterfaces { page } => {
-                RemoteControlHostCommand::InventoryInterfaces { page }
-            }
-            Self::SetInterfacePower { id, power } => {
-                RemoteControlHostCommand::SetInterfacePower { id, power }
-            }
-            Self::SetInterfaceMode { id, mode } => {
-                RemoteControlHostCommand::SetInterfaceMode { id, mode }
-            }
-            Self::SetInterfaceGroup { id, group } => {
-                RemoteControlHostCommand::SetInterfaceGroup { id, group }
-            }
-            Self::InventoryInterfacePeers { id, page } => {
-                RemoteControlHostCommand::InventoryInterfacePeers { id, page }
-            }
-            Self::InventoryInterfaceConfig { id } => {
-                RemoteControlHostCommand::InventoryInterfaceConfig { id }
-            }
-            Self::SetInterfaceLoRaProfile { id, profile } => {
-                RemoteControlHostCommand::SetInterfaceLoRaProfile { id, profile }
-            }
-            #[cfg(feature = "remote-control-wifi-host")]
-            Self::SetInterfaceWifiStation { id, station } => {
-                RemoteControlHostCommand::SetInterfaceWifiStation { id, station }
-            }
-            Self::DescribeBuild => RemoteControlHostCommand::DescribeBuild,
-            Self::DescribePower => RemoteControlHostCommand::DescribePower,
-            Self::SleepRadios => RemoteControlHostCommand::SleepRadios,
-            Self::WakeRadios => RemoteControlHostCommand::WakeRadios,
-            Self::SetSystemPower { power } => RemoteControlHostCommand::SetSystemPower { power },
-            Self::SetGnssPower { power } => RemoteControlHostCommand::SetGnssPower { power },
-            Self::SetDisplayVisibility { visibility } => {
-                RemoteControlHostCommand::SetDisplayVisibility { visibility }
-            }
-            Self::SetDisplayAutoOff { auto_off } => {
-                RemoteControlHostCommand::SetDisplayAutoOff { auto_off }
-            }
-            #[cfg(feature = "remote-control-wifi-host")]
-            Self::SetStationUplink { id, uplink } => {
-                RemoteControlHostCommand::SetStationUplink { id, uplink }
-            }
-            Self::SetEspRadioMode { mode } => RemoteControlHostCommand::SetEspRadioMode { mode },
-            #[cfg(feature = "remote-control-wifi-host")]
-            Self::StageWifiCredentials { station } => {
-                RemoteControlHostCommand::StageWifiCredentials {
-                    controller,
-                    station,
+        {
+            let _ = controller;
+            self
+        }
+        #[cfg(feature = "remote-control-wifi-host")]
+        {
+            let command = match self {
+                Self::StageWifiCredentials { station } => {
+                    RemoteControlHostCommand::StageWifiCredentials {
+                        controller,
+                        station,
+                    }
                 }
-            }
-            #[cfg(feature = "remote-control-wifi-host")]
-            Self::ActivateWifiCredentials { revision } => {
-                RemoteControlHostCommand::ActivateWifiCredentials {
-                    controller,
-                    revision,
+                Self::ActivateWifiCredentials { revision } => {
+                    RemoteControlHostCommand::ActivateWifiCredentials {
+                        controller,
+                        revision,
+                    }
                 }
-            }
-            #[cfg(feature = "remote-control-wifi-host")]
-            Self::ConfirmWifiCredentials { revision } => {
-                RemoteControlHostCommand::ConfirmWifiCredentials {
-                    controller,
-                    revision,
+                Self::ConfirmWifiCredentials { revision } => {
+                    RemoteControlHostCommand::ConfirmWifiCredentials {
+                        controller,
+                        revision,
+                    }
                 }
-            }
-            #[cfg(feature = "remote-control-wifi-host")]
-            Self::CancelWifiCredentials { revision } => {
-                RemoteControlHostCommand::CancelWifiCredentials {
-                    controller,
-                    revision,
+                Self::CancelWifiCredentials { revision } => {
+                    RemoteControlHostCommand::CancelWifiCredentials {
+                        controller,
+                        revision,
+                    }
                 }
-            }
-            #[cfg(feature = "remote-control-wifi-host")]
-            Self::InspectWifiTransaction => {
-                RemoteControlHostCommand::InspectWifiTransaction { controller }
-            }
-            operation => return operation,
-        };
-        Self::Host(command)
+                Self::InspectWifiTransaction => {
+                    RemoteControlHostCommand::InspectWifiTransaction { controller }
+                }
+                operation => return operation,
+            };
+            Self::Host(command)
+        }
     }
 }
 
@@ -2456,6 +2506,44 @@ mod tests {
             assert_eq!(
                 RemoteControlResponse::parse(response.as_slice()),
                 Ok(RemoteControlResponse::Describe(description)),
+            );
+        });
+    }
+
+    #[test]
+    fn describe_reports_only_the_board_and_grant_capability_intersection() {
+        futures_executor::block_on(async {
+            let allowed = identity(0x36);
+            let mut supported = RemoteControlRequestSet::empty();
+            assert!(supported.insert(RemoteControlRequestKind::Describe));
+            assert!(supported.insert(RemoteControlRequestKind::ReplaceInterfaceDiscoveryGroups,));
+            let mut permitted = RemoteControlRequestSet::empty();
+            assert!(permitted.insert(RemoteControlRequestKind::Describe));
+            assert!(permitted.insert(RemoteControlRequestKind::InventoryInterfaceDiscoveryGroups,));
+            let mut controller_grants = controller_grants_permitting(allowed, permitted);
+            let mut response =
+                heapless::Vec::<u8, { RemoteControlResponse::MAX_ENCODED_LEN }>::new();
+
+            assert_eq!(
+                dispatch_with_configuration(
+                    &mut controller_grants,
+                    supported,
+                    RemoteControlSelfAnnouncement::Unavailable,
+                    &(),
+                    Some(allowed.identity_hash()),
+                    &describe_request(),
+                    &mut response,
+                )
+                .await,
+                Ok(()),
+            );
+            let expected = RemoteControlDescription::try_from(RemoteControlRequestSet::only(
+                RemoteControlRequestKind::Describe,
+            ))
+            .unwrap();
+            assert_eq!(
+                RemoteControlResponse::parse(response.as_slice()),
+                Ok(RemoteControlResponse::Describe(expected)),
             );
         });
     }

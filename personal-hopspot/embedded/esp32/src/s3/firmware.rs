@@ -514,6 +514,16 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         use personal_rns::interfaces::InterfaceStatus;
         status.id()
     });
+    if let Some(groups) = personal_rns::runtime::restored_discovery_groups(BLE_SUPERVISOR_ID).await
+    {
+        let _ = personal_rns::bluetooth_auto::BluetoothAutoStatus::new(&BLE_SHARED)
+            .restore_discovery_groups_before_start(groups);
+    }
+    if let Some(status) = wifi_status.as_ref() {
+        if let Some(groups) = personal_rns::runtime::restored_discovery_groups(status.id()).await {
+            let _ = status.restore_discovery_groups_before_start(groups);
+        }
+    }
     if let Some((interface, fleet)) = wifi {
         let data_buf: &'static mut [u8] = alloc::vec![0u8; wifi_auto_contract::HARDWARE_MTU].leak();
         let secondary_data_buf: &'static mut [u8] =
@@ -545,6 +555,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             access_point,
             shared_instance_config_export: screen::SharedInstanceConfigExport::Unavailable,
             gnss: B::Gnss::AVAILABILITY,
+            discovery_groups: screen::DiscoveryGroupEditorAvailability::Available,
             #[cfg(feature = "remote-control-pairing")]
             remote_control_pairing: if B::REMOTE_CONTROL_PAIRING {
                 screen::RemoteControlPairingAvailability::Available
@@ -1214,6 +1225,61 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                             log::error!("station uplink apply failed: {error:?}");
                                         }
                                     }
+                                }
+                                screen::UiAction::OpenDiscoveryGroupsEditor(id) => {
+                                    let groups = if id == BLE_SUPERVISOR_ID {
+                                        Some(
+                                            personal_rns::bluetooth_auto::BluetoothAutoStatus::new(
+                                                &BLE_SHARED,
+                                            )
+                                            .discovery_groups(),
+                                        )
+                                    } else {
+                                        wifi_status
+                                            .as_ref()
+                                            .filter(|status| status.id() == id)
+                                            .map(|status| status.discovery_groups())
+                                    };
+                                    if let Some(groups) = groups {
+                                        ui_state.open_discovery_groups_editor(id, &groups);
+                                    }
+                                }
+                                screen::UiAction::ReplaceDiscoveryGroups => {
+                                    let Some(replacement) =
+                                        ui_state.take_discovery_group_replacement()
+                                    else {
+                                        continue;
+                                    };
+                                    let id = replacement.interface_id();
+                                    let groups = replacement.into_groups();
+                                    let result = execute_hopspot_command!(snapshots,
+                                        personal_rns::runtime::RemoteControlHostCommand::ReplaceInterfaceDiscoveryGroups {
+                                            id,
+                                            groups: personal_rns::remote_control::RemoteControlDiscoveryGroups::new(groups),
+                                        }
+                                    );
+                                    let notice = match result {
+                                        Ok(personal_rns::runtime::RemoteControlHostResponse::ReplaceInterfaceDiscoveryGroups(
+                                            personal_rns::remote_control::RemoteControlDiscoveryGroupsReplaceOutcome::Applied
+                                            | personal_rns::remote_control::RemoteControlDiscoveryGroupsReplaceOutcome::Unchanged,
+                                        )) => screen::UiNotice::Saved,
+                                        Err(personal_rns::runtime::RemoteControlHostCommandError::Busy) => {
+                                            screen::UiNotice::GroupsBusy
+                                        }
+                                        Err(personal_rns::runtime::RemoteControlHostCommandError::PersistenceFailed) => {
+                                            screen::UiNotice::GroupsNotSaved
+                                        }
+                                        Err(personal_rns::runtime::RemoteControlHostCommandError::RollbackFailed) => {
+                                            screen::UiNotice::GroupsRollbackFailed
+                                        }
+                                        _ => screen::UiNotice::GroupsApplyFailed,
+                                    };
+                                    show_notice(
+                                        &mut ui_state,
+                                        &mut notice_timer,
+                                        notice,
+                                        NOTICE_DURATION,
+                                    );
                                 }
                                 screen::UiAction::OpenSubGEditor => {
                                     #[cfg(feature = "lora")]

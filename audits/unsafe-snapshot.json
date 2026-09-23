@@ -15480,11 +15480,11 @@
       "name": "personal-hopspot-android",
       "source": "personal-hopspot/mobile/android/rust",
       "unsafe": {
-        "blocks": 20,
+        "blocks": 22,
         "externs": 0,
         "functions": 0,
         "impls": 0,
-        "tokens": 20
+        "tokens": 22
       },
       "version": "0.1.0"
     },
@@ -15546,6 +15546,7 @@
           "host"
         ],
         "nrf52840": [
+          "compact-node-pages",
           "display",
           "embedded"
         ],
@@ -15692,11 +15693,11 @@
       "name": "personal-hopspot-ios",
       "source": "personal-hopspot/mobile/ios/rust",
       "unsafe": {
-        "blocks": 10,
-        "externs": 5,
+        "blocks": 12,
+        "externs": 7,
         "functions": 0,
         "impls": 0,
-        "tokens": 15
+        "tokens": 19
       },
       "version": "0.1.0"
     },
@@ -16577,6 +16578,7 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
+          "rns-management-wire",
           "shared-instance-rpc",
           "std",
           "tokio-host"
@@ -16593,6 +16595,7 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
+          "rns-management-wire",
           "rnx",
           "shared-instance-rpc",
           "signed-artifact",
@@ -16611,6 +16614,7 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
+          "rns-management-wire",
           "rnx",
           "shared-instance-rpc",
           "signed-artifact",
@@ -16629,6 +16633,7 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
+          "rns-management-wire",
           "rnx",
           "shared-instance-rpc",
           "signed-artifact",
@@ -16644,6 +16649,7 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
+          "rns-management-wire",
           "shared-instance-rpc",
           "std",
           "tokio-host"
@@ -16657,6 +16663,7 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
+          "rns-management-wire",
           "shared-instance-rpc",
           "std",
           "tokio-host"
@@ -16670,6 +16677,7 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
+          "rns-management-wire",
           "shared-instance-rpc",
           "std",
           "tokio-host"
@@ -16680,6 +16688,7 @@
           "embassy-host",
           "flash",
           "resource-work-offload",
+          "rns-management-wire",
           "std",
           "std-sync-host",
           "test-support"
@@ -16692,6 +16701,7 @@
           "flash",
           "movable-frame-forwarding",
           "resource-work-offload",
+          "rns-management-wire",
           "std",
           "tokio-host"
         ],
@@ -16703,6 +16713,7 @@
           "flash",
           "movable-frame-forwarding",
           "resource-work-offload",
+          "rns-management-wire",
           "std",
           "tokio-host"
         ],
@@ -16714,6 +16725,7 @@
           "flash",
           "movable-frame-forwarding",
           "resource-work-offload",
+          "rns-management-wire",
           "std",
           "tokio-host"
         ],
@@ -16725,6 +16737,7 @@
           "flash",
           "movable-frame-forwarding",
           "resource-work-offload",
+          "rns-management-wire",
           "std",
           "tokio-host"
         ],
@@ -16736,6 +16749,7 @@
           "flash",
           "movable-frame-forwarding",
           "resource-work-offload",
+          "rns-management-wire",
           "std",
           "tokio-host"
         ],
@@ -16747,6 +16761,7 @@
           "flash",
           "movable-frame-forwarding",
           "resource-work-offload",
+          "rns-management-wire",
           "std",
           "tokio-host"
         ],
@@ -16761,6 +16776,7 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
+          "rns-management-wire",
           "std",
           "tokio-host"
         ],
@@ -16775,6 +16791,7 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
+          "rns-management-wire",
           "std",
           "tokio-host"
         ],
@@ -16789,6 +16806,7 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
+          "rns-management-wire",
           "std",
           "tokio-host"
         ],
@@ -16801,6 +16819,7 @@
           "parallel-persistence",
           "parallel-resource-hash",
           "resource-work-offload",
+          "rns-management-wire",
           "std",
           "tokio-host"
         ],
@@ -16811,6 +16830,7 @@
           "flash",
           "movable-frame-forwarding",
           "resource-work-offload",
+          "rns-management-wire",
           "std",
           "tokio-host"
         ],
@@ -16818,6 +16838,7 @@
           "alloc",
           "flash",
           "resource-work-offload",
+          "rns-management-wire",
           "std"
         ]
       },
@@ -16858,11 +16879,11 @@
       "name": "prns-ffi",
       "source": "prns-ffi",
       "unsafe": {
-        "blocks": 138,
+        "blocks": 145,
         "externs": 7,
         "functions": 0,
         "impls": 21,
-        "tokens": 198
+        "tokens": 205
       },
       "version": "0.3.7"
     },
@@ -22359,11 +22380,11 @@
       "name": "t-echo",
       "source": "personal-hopspot/embedded/nrf52840",
       "unsafe": {
-        "blocks": 1477,
+        "blocks": 1481,
         "externs": 13,
-        "functions": 298,
-        "impls": 15,
-        "tokens": 1804
+        "functions": 299,
+        "impls": 17,
+        "tokens": 1811
       },
       "version": "0.1.0"
     },

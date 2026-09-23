@@ -321,6 +321,7 @@ mod tests {
             #[cfg(feature = "remote-control-pairing")]
             remote_control_pairing:
                 personal_hopspot_core::RemoteControlPairingAvailability::Unavailable,
+            discovery_groups: personal_hopspot_core::DiscoveryGroupEditorAvailability::Unavailable,
         })
     }
 

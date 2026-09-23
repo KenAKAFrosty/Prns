@@ -197,6 +197,7 @@ fn test_ui_state() -> UiState {
         gnss: super::GnssAvailability::Unavailable,
         #[cfg(feature = "remote-control-pairing")]
         remote_control_pairing: crate::RemoteControlPairingAvailability::Unavailable,
+        discovery_groups: super::DiscoveryGroupEditorAvailability::Unavailable,
     })
 }
 
@@ -209,6 +210,7 @@ fn test_ui_state_with_display_power() -> UiState {
         gnss: super::GnssAvailability::Unavailable,
         #[cfg(feature = "remote-control-pairing")]
         remote_control_pairing: crate::RemoteControlPairingAvailability::Unavailable,
+        discovery_groups: super::DiscoveryGroupEditorAvailability::Unavailable,
     })
 }
 
@@ -221,6 +223,7 @@ fn test_ui_state_with_access_point(access_point: AccessPointState) -> UiState {
         gnss: super::GnssAvailability::Unavailable,
         #[cfg(feature = "remote-control-pairing")]
         remote_control_pairing: crate::RemoteControlPairingAvailability::Unavailable,
+        discovery_groups: super::DiscoveryGroupEditorAvailability::Unavailable,
     })
 }
 
@@ -233,6 +236,7 @@ fn test_ui_state_with_shared_instance_config() -> UiState {
         gnss: super::GnssAvailability::Unavailable,
         #[cfg(feature = "remote-control-pairing")]
         remote_control_pairing: crate::RemoteControlPairingAvailability::Unavailable,
+        discovery_groups: super::DiscoveryGroupEditorAvailability::Unavailable,
     })
 }
 
@@ -245,6 +249,7 @@ fn test_ui_state_with_gnss() -> UiState {
         gnss: GnssAvailability::Available,
         #[cfg(feature = "remote-control-pairing")]
         remote_control_pairing: crate::RemoteControlPairingAvailability::Unavailable,
+        discovery_groups: super::DiscoveryGroupEditorAvailability::Unavailable,
     })
 }
 
@@ -257,6 +262,7 @@ fn test_ui_state_with_remote_control_pairing() -> UiState {
         shared_instance_config_export: SharedInstanceConfigExport::Unavailable,
         gnss: GnssAvailability::Unavailable,
         remote_control_pairing: crate::RemoteControlPairingAvailability::Available,
+        discovery_groups: super::DiscoveryGroupEditorAvailability::Unavailable,
     })
 }
 
@@ -275,6 +281,7 @@ fn has_on_pixel(
     false
 }
 
+mod groups;
 mod limits;
 mod model;
 mod render;

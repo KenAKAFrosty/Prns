@@ -43,9 +43,12 @@ pub use identity::{
 };
 #[cfg(feature = "display")]
 pub use mobile::{
-    expand_face_rgba, InvalidMobileInputCode, MobileActionCode, MobileEngineFailure,
-    MobileEngineState, MobileInputCode, MOBILE_DARK_RGBA, MOBILE_LIT_RGBA, MOBILE_PANEL_HEIGHT,
-    MOBILE_PANEL_WIDTH, MOBILE_PIXEL_COUNT, MOBILE_RGBA_BYTES,
+    encode_mobile_discovery_groups, expand_face_rgba, parse_mobile_discovery_groups,
+    InvalidMobileDiscoveryInterface, InvalidMobileInputCode, MobileActionCode,
+    MobileDiscoveryGroupOutcome, MobileDiscoveryGroupsCodecError, MobileDiscoveryInterface,
+    MobileEngineFailure, MobileEngineState, MobileInputCode, MOBILE_DARK_RGBA,
+    MOBILE_DISCOVERY_GROUPS_WIRE_MAX_LEN, MOBILE_LIT_RGBA, MOBILE_PANEL_HEIGHT, MOBILE_PANEL_WIDTH,
+    MOBILE_PIXEL_COUNT, MOBILE_RGBA_BYTES,
 };
 pub use persistence::PersistenceState;
 pub use power_publish::{latest_power_snapshot, publish_power_snapshot};
@@ -68,20 +71,24 @@ pub use remote_control::{
 };
 #[cfg(feature = "embedded")]
 pub use remote_control_executor::{
+    persist_discovery_group_replacement, rollback_discovery_group_replacement,
     run_hopspot_command_executor, HopspotCommandExecutor, HopspotCommandHandle,
     HopspotCommandMailbox, HopspotCommandToken, HopspotWifiCredentialCommand,
     HopspotWifiCredentialMailbox, HopspotWifiCredentialUpdate, PendingHopspotCommand,
+    PreparedDiscoveryGroupReplacement,
 };
 pub use remote_control_inventory::{
     bluetooth_auto_interface_name, decorate_hopspot_remote_control_card,
     hopspot_remote_control_build_version, remote_control_interface_config_from_snapshots,
     remote_control_interface_peers_from_snapshots, remote_control_inventory_from_snapshots,
+    singleton_discovery_group,
 };
 #[cfg(feature = "display")]
 pub use screen::{
     apply_and_persist_subg_configuration, card_label, card_label_max_chars, subg_card,
     tcp_card_label, AccessPointState, ActiveSubGConfiguration, BluetoothRecoveryMenuDetails, Card,
-    CardActivityTracker, CardKind, CardLabel, GnssAvailability, InputEvent, InterfaceMenuDetails,
+    CardActivityTracker, CardKind, CardLabel, DiscoveryGroupEditorAvailability,
+    DiscoveryGroupReplacement, GnssAvailability, InputEvent, InterfaceMenuDetails,
     LoRaSpectrumMenuDetails, LocalDocsAccess, PersistenceNotice, PresentedNoticeTimer,
     ScreenContent, SharedInstanceConfigExport, SubGCardState, SubGConfigurationChangeResult,
     SubGConfigurationPersistenceOutcome, SubGConfigurationStepOutcome, UiAction, UiConfiguration,
