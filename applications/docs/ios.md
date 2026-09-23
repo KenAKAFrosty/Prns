@@ -37,37 +37,30 @@ Low-frequency development snapshot refresh runs only on `/nodes` and `/inbox`
 routes and their descendants. Other shell routes keep the node and event owner
 alive without periodic snapshot reads.
 
-The iOS app now has one process-wide `ASAccessorySession`, activated from the
-app-delegate launch path before it allows Prns to create CoreBluetooth state.
-Both an ordinary JavaScript start and a process-launch restoration attempt wait
-until the session has activated and its canonical accessory roster contains at
-least one authorized Bluetooth accessory. The system accessory chooser opens
-only after an explicit user action while the app is in the foreground. That
-system authorization is a separate step from the later secure Reticulum pairing
-flow; the UI does not expose raw accessory or Bluetooth identifiers.
+The app uses ordinary CoreBluetooth authorization, not AccessorySetupKit or a
+per-accessory chooser. Explicit foreground Start creates the existing Rust-owned
+Bluetooth managers and can trigger the normal app-level permission prompt. No
+external board, OS bond or RemoteControl grant is needed to run the phone's node.
+Permission denial and a powered-off radio do not prevent the local node from
+starting or hide saved Inbox/Contacts data; Bluetooth remains unavailable until
+the OS permits it. The native authorization status is refreshed on foreground.
 
-Waiting for accessory authorization does not block local storage. Inbox and
-Contacts remain readable, and saved-message Retry/Cancel can update the mailbox
-without admitting native networking. Inbox shows one access-needed action and
-does not claim that storage is empty before reading it successfully. A bounded
-[cold offline journey](../checkpoints/2026-09-09-offline-and-upstream-refresh.md)
-verified those actions, restart retention and subsequent access recovery on the
-unchanged native framework.
-
-The app's Apple Bluetooth Auto interface is central-only. Its tracked iOS
-configuration declares one stable, variant-specific central restoration
-identifier and only the `bluetooth-central` background mode. It does not create
-a `CBPeripheralManager`, advertise, accept inbound Bluetooth links, publish a
-peripheral restoration identifier, or claim the L2CAP capability. Existing
-Prns consumers keep the dual-role backend by default; the app deliberately
-selects the additive central-only role with restoration.
+The Apple Bluetooth Auto interface uses the public dual-role backend: it scans
+and connects as a central, and advertises and accepts connections as a peripheral.
+Configuration declares both `bluetooth-central` and `bluetooth-peripheral`
+background modes and stable, distinct, variant-specific restoration identifiers.
+The existing central identifier is retained. The same prepared manager owner is
+handed to the native runtime; permission observation does not create another
+manager or node. RemoteControl pairing remains a separate board-administration
+operation, not permission to join the network.
 
 Scene-based apps receive nil AppDelegate launch options, so `.bluetoothCentrals`
-cannot be used to decide whether to recreate the central manager. Each configured
-process launch requests one restoration attempt with the same stable identifier.
-The app delegate activates the accessory session early. Once the authorized
-roster is ready, it admits startup and schedules preparation on the native queue
-without waiting for a scene or React. Under the supervisor lock, automatic
+cannot be used to decide whether to recreate the managers. Each configured
+process launch requests one restoration attempt with the same stable identifiers.
+When Bluetooth permission is already allowed, the app delegate admits startup
+and schedules preparation on the native queue without waiting for a scene or
+React. Automatic startup never requests an undetermined permission in the
+background. Under the supervisor lock, automatic
 preparation first requires an existing storage directory and a valid primary
 identity; fresh onboarding, malformed identity and reset-required state cannot
 create a Bluetooth owner. Explicit user-driven Start remains unchanged.
@@ -93,29 +86,26 @@ node. Native foreground and restoration attempts use the same target. Release
 builds ignore this fixture. Non-Bluetooth interfaces still receive no additional
 background execution entitlement.
 
-AccessorySetupKit requires iOS 18, so the Expo configuration plugin, Xcode
-project, and native module all use iOS 18.0 as the minimum deployment target.
-The current app gates Bluetooth startup on AccessorySetupKit authorization.
-This is its chosen permission model, not an inherent requirement for BLE
-connections or all background operation. Apple's
+The minimum deployment target remains iOS 18.0; removing AccessorySetupKit does
+not lower or requalify it. Apple's
 [TN3115](https://developer.apple.com/documentation/technotes/tn3115-bluetooth-state-restoration-app-relaunch-rules)
 ties its iOS 26 AccessorySetupKit condition to specific relaunch cases; an
-[Apple engineering clarification](https://developer.apple.com/forums/thread/818370)
-distinguishes ordinary state restoration from relaunch after user force-quit.
-Do not interpret the current app's gate as proving that ordinary CoreBluetooth
-cannot restore without AccessorySetupKit. The
+[Apple engineering clarification](https://developer.apple.com/forums/thread/806013)
+limits the ASK-specific exception to user force-quit and Control Center Bluetooth
+toggle cases. Ordinary background event delivery and state restoration remain
+available without ASK. The app accepts losing those additional ASK recovery
+cases to support automatic, unpaired phone networking. The historical
 [current checkpoint](../checkpoints/2026-09-09-follow-up.md) records a bounded
 restoration-requested relaunch and its remaining UI, delivery and lifecycle
 limits. The full physical matrix remains open; source, simulator, build and
 ordinary foreground results do not establish it.
 
-The proposed [BLE-only phone demo](phone-node-demo.md) evaluates ordinary
-CoreBluetooth authorization and dual-role AutoBLE to remove per-peer setup.
-It changes no installed behavior yet; any replacement needs new foreground,
-background and restoration evidence rather than inheriting the ASK results.
+The [BLE-only phone demo](phone-node-demo.md) starts by qualifying this ordinary
+CoreBluetooth path. New foreground, background and restoration evidence is
+required; earlier ASK results do not qualify the replacement.
 
 During an iOS-granted Bluetooth background window, the process-owned Host and
-central interface can run without React. This is bounded, event-driven iOS
+Bluetooth interface can run without React. This is bounded, event-driven iOS
 background behavior, not a continuously scheduled daemon. iOS still decides
 when the process may run, suspend, wake, terminate, or relaunch, and a matching
 pending Bluetooth operation and corresponding event are required for
@@ -139,8 +129,8 @@ Scan events distinguish requests, queued work, state queries, decisions, and
 completed calls. An already-scanning decision records a framework state query,
 not fresh discovery progress. Sightings occur after admission, so these events
 do not prove that every raw discovery callback was observed. Greeting events
-distinguish a completed Hello write from a received Welcome. In the app's
-central-only role, Hello means the acknowledged GATT write completed; neither
+distinguish a completed Hello write from a received Welcome. In a central-role
+session, Hello means the acknowledged GATT write completed; neither
 event alone proves a validated, settled handshake. Closed-session reaping records
 the local cancellation path, not its cause or a measured handshake timeout.
 Only static event codes leave the probe; control fields are not exported.
@@ -174,10 +164,17 @@ observer effects.
 A historical signed probe remains important negative evidence: after a clean
 AccessorySetupKit activation, constructing the former dual-role backend's
 `CBPeripheralManager` reproducibly aborted the unlocked iOS 26.6.1 process.
-That result is why the app is central-only. It did not authorize an accessory
-or exercise the current central-only implementation, so it is not positive
-physical evidence for the architecture described above. This implementation
-uses one central restoration identifier, not a dual-role configuration.
+That result explained the previous central-only ASK composition; it does not
+apply as evidence against dual-role operation without ASK. Apple confirms that
+[declaring ASK changes the app-wide authorization model](https://developer.apple.com/forums/thread/797137)
+and prevents peripheral-manager authorization. All ASK adoption keys and imports
+are therefore removed, not merely bypassed at runtime.
+
+Peripheral service restoration is not a restored Prns peer session. The backend
+can recover its GATT service/characteristics, but a surviving central must
+reconnect or repeat the Prns handshake before sending session data. Qualify
+central-role and peripheral-role recovery separately; neither a restored service
+nor foreground connectivity proves process-death message delivery.
 
 The public [validation summary](validation.md) separates automated
 checks, historical device observations, and the remaining lifecycle work.

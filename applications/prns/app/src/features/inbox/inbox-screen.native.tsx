@@ -81,8 +81,8 @@ function useLxmfData(peer: Uint8Array | null): LxmfData {
     if (development.availability.type !== "available") {
       return;
     }
-    // Saved data is storage-owned, even before accessory authorization permits
-    // a network generation. The public facade prepares that owner independently.
+    // Saved data is storage-owned, even before network startup completes.
+    // The public facade prepares that owner independently of a generation.
     const selectedPeer = peerKey === null ? null : parseDestinationHash(peerKey);
     if (peerKey !== null && selectedPeer === null) {
       setFailure("The selected conversation destination is invalid.");
@@ -718,7 +718,9 @@ function mailboxMutationLabel(
 
 function MessagingOfflineCard() {
   const development = useDevelopmentRuntime();
-  const accessNeeded = development.accessorySetup?.phase === "setupRequired";
+  const accessNeeded =
+    development.bluetoothAuthorization?.authorization === "denied" ||
+    development.bluetoothAuthorization?.authorization === "restricted";
   return (
     <Card>
       <Badge tone="warning">
@@ -739,7 +741,11 @@ function MessagingOfflineCard() {
 function LxmfHealthCard() {
   const development = useDevelopmentRuntime();
   const health = development.snapshot?.lxmf;
-  if (health === undefined && development.accessorySetup?.phase === "setupRequired") {
+  if (
+    health === undefined &&
+    (development.bluetoothAuthorization?.authorization === "denied" ||
+      development.bluetoothAuthorization?.authorization === "restricted")
+  ) {
     return null;
   }
   if (health?.state === Bindings.LxmfHealthState.Ready) {

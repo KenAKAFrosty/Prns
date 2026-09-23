@@ -5,6 +5,12 @@ mobile implementation uses generated UniFFI bindings and one shared Rust image;
 see the [binding boundary](../prns/native-composition/bindings/README.md).
 Browser and Tauri runtime providers are not implemented.
 
+The [September 23 ordinary CoreBluetooth feasibility](../checkpoints/2026-09-23-ordinary-corebluetooth.md)
+removes the iOS accessory requirement and selects dual-role AutoBLE while retaining
+native restoration. This is new behavior requiring its own physical qualification;
+do not transfer ASK-era acceptance to it. The checkpoint records tests, build and
+device availability separately.
+
 The [September 21 integration](../checkpoints/2026-09-21-remote-control-management.md)
 rebases the app on upstream `8c211827b` and implements the first expanded
 [remote-control read/write slice](remote-control-expansion.md): overview,

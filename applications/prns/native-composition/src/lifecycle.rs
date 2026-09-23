@@ -8,7 +8,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 #[cfg(all(feature = "apple", target_os = "ios"))]
-use personal_rns::bluetooth_auto::{AutoBle, CoreBluetoothCentralRestorationIdentifier};
+use personal_rns::bluetooth_auto::{AutoBle, CoreBluetoothRestorationIdentifiers};
 #[cfg(any(test, all(feature = "apple", target_os = "ios")))]
 use personal_rns::interfaces::bluetooth_auto::BleIdentity;
 use personal_rns::node_introspection::DestinationIdentityQuery;
@@ -71,23 +71,32 @@ type WorkerResult = Result<(), (DevelopmentNodeStopStage, String)>;
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum AppleBluetoothPreparation {
     WithoutRestoration,
-    CentralOnlyRestoration { central: String },
+    Restoration { central: String, peripheral: String },
 }
 
 impl AppleBluetoothPreparation {
     fn validate(&self) -> Result<(), String> {
-        let Self::CentralOnlyRestoration { central } = self else {
+        let Self::Restoration {
+            central,
+            peripheral,
+        } = self
+        else {
             return Ok(());
         };
-        if central.is_empty() {
-            return Err(
-                "central CoreBluetooth restoration identifier must not be empty".to_owned(),
-            );
+        for (role, identifier) in [("central", central), ("peripheral", peripheral)] {
+            if identifier.is_empty() {
+                return Err(format!(
+                    "{role} CoreBluetooth restoration identifier must not be empty"
+                ));
+            }
+            if identifier.len() > crate::input::MAX_RESTORATION_IDENTIFIER_BYTES {
+                return Err(format!(
+                    "{role} CoreBluetooth restoration identifier exceeds 1024 bytes"
+                ));
+            }
         }
-        if central.len() > crate::input::MAX_RESTORATION_IDENTIFIER_BYTES {
-            return Err(
-                "central CoreBluetooth restoration identifier exceeds 1024 bytes".to_owned(),
-            );
+        if central == peripheral {
+            return Err("CoreBluetooth restoration identifiers must be distinct".to_owned());
         }
         Ok(())
     }
@@ -476,13 +485,15 @@ fn apple_bluetooth_preparation_failed(
     }
 }
 
-pub(crate) fn prepare_apple_bluetooth_central_restoration(
+pub(crate) fn prepare_apple_bluetooth_restoration(
     storage_root: &Path,
     central_identifier: String,
+    peripheral_identifier: String,
 ) -> AppleBluetoothRestorationPreparationOutcome {
     crate::ios_restoration_probe::install();
-    let preparation = AppleBluetoothPreparation::CentralOnlyRestoration {
+    let preparation = AppleBluetoothPreparation::Restoration {
         central: central_identifier,
+        peripheral: peripheral_identifier,
     };
     if let Err(detail) = preparation.validate() {
         return apple_bluetooth_preparation_failed(
@@ -491,11 +502,7 @@ pub(crate) fn prepare_apple_bluetooth_central_restoration(
         );
     }
 
-    prepare_apple_bluetooth_central_restoration_with_supervisor(
-        supervisor(),
-        storage_root,
-        preparation,
-    )
+    prepare_apple_bluetooth_restoration_with_supervisor(supervisor(), storage_root, preparation)
 }
 
 #[cfg(any(test, all(feature = "apple", target_os = "ios")))]
@@ -548,7 +555,7 @@ fn apple_bluetooth_restoration_storage(
 }
 
 #[cfg(all(feature = "apple", target_os = "ios"))]
-fn prepare_apple_bluetooth_central_restoration_with_supervisor(
+fn prepare_apple_bluetooth_restoration_with_supervisor(
     supervisor: &Supervisor,
     storage_root: &Path,
     preparation: AppleBluetoothPreparation,
@@ -596,13 +603,17 @@ fn prepare_apple_bluetooth_central_restoration_with_supervisor(
         };
     }
 
-    let AppleBluetoothPreparation::CentralOnlyRestoration { central } = preparation else {
+    let AppleBluetoothPreparation::Restoration {
+        central,
+        peripheral,
+    } = preparation
+    else {
         return apple_bluetooth_preparation_failed(
             AppleBluetoothRestorationPreparationFailureStage::Contract,
             "CoreBluetooth restoration preparation requires restoration identifiers.",
         );
     };
-    let identifier = match CoreBluetoothCentralRestorationIdentifier::new(central) {
+    let identifiers = match CoreBluetoothRestorationIdentifiers::new(central, peripheral) {
         Ok(identifier) => identifier,
         Err(error) => {
             return apple_bluetooth_preparation_failed(
@@ -623,9 +634,8 @@ fn prepare_apple_bluetooth_central_restoration_with_supervisor(
             )
         }
     };
-    let prepared = match runtime.block_on(AutoBle::prepare_central_only_with_restoration(
-        identity, identifier,
-    )) {
+    let prepared = match runtime.block_on(AutoBle::prepare_with_restoration(identity, identifiers))
+    {
         Ok(prepared) => prepared,
         Err(error) => {
             return apple_bluetooth_preparation_failed(
@@ -642,7 +652,7 @@ fn prepare_apple_bluetooth_central_restoration_with_supervisor(
 }
 
 #[cfg(not(all(feature = "apple", target_os = "ios")))]
-fn prepare_apple_bluetooth_central_restoration_with_supervisor(
+fn prepare_apple_bluetooth_restoration_with_supervisor(
     _supervisor: &Supervisor,
     _storage_root: &Path,
     _preparation: AppleBluetoothPreparation,
@@ -675,18 +685,20 @@ pub fn start_configured(
     )
 }
 
-pub(crate) fn start_configured_with_apple_bluetooth_central_restoration(
+pub(crate) fn start_configured_with_apple_bluetooth_restoration(
     storage_root: &Path,
     input: DevelopmentNodeStartInput,
     central_identifier: String,
+    peripheral_identifier: String,
 ) -> DevelopmentNodeStartOutcome {
     crate::ios_restoration_probe::install();
     start_configured_with_supervisor(
         supervisor(),
         storage_root,
         input,
-        AppleBluetoothPreparation::CentralOnlyRestoration {
+        AppleBluetoothPreparation::Restoration {
             central: central_identifier,
+            peripheral: peripheral_identifier,
         },
     )
 }
@@ -1780,16 +1792,17 @@ async fn run_generation(
         Some(prepared) => prepared,
         None => match bluetooth_preparation.preparation {
             AppleBluetoothPreparation::WithoutRestoration => {
-                match AutoBle::prepare_central_only_without_restoration(bluetooth_identity).await {
+                match AutoBle::prepare_without_restoration(bluetooth_identity).await {
                     Ok(prepared) => prepared,
-                    Err(_) => {
-                        AutoBle::unavailable_central_only_without_restoration(bluetooth_identity)
-                    }
+                    Err(_) => AutoBle::unavailable_without_restoration(bluetooth_identity),
                 }
             }
-            AppleBluetoothPreparation::CentralOnlyRestoration { central } => {
-                let restoration =
-                    CoreBluetoothCentralRestorationIdentifier::new(central).map_err(|error| {
+            AppleBluetoothPreparation::Restoration {
+                central,
+                peripheral,
+            } => {
+                let restoration = CoreBluetoothRestorationIdentifiers::new(central, peripheral)
+                    .map_err(|error| {
                         boot_failure(
                             &ready,
                             &snapshots,
@@ -1797,17 +1810,13 @@ async fn run_generation(
                             error.to_string(),
                         )
                     })?;
-                match AutoBle::prepare_central_only_with_restoration(
-                    bluetooth_identity,
-                    restoration.clone(),
-                )
-                .await
+                match AutoBle::prepare_with_restoration(bluetooth_identity, restoration.clone())
+                    .await
                 {
                     Ok(prepared) => prepared,
-                    Err(_) => AutoBle::unavailable_central_only_with_restoration(
-                        bluetooth_identity,
-                        restoration,
-                    ),
+                    Err(_) => {
+                        AutoBle::unavailable_with_restoration(bluetooth_identity, restoration)
+                    }
                 }
             }
         },

@@ -11405,11 +11405,12 @@ public func nativeInspectIdentity(storageRoot: String) -> PrimaryIdentityState  
 /**
  * Platform lifecycle queue only; does not start a JavaScript-owned node.
  */
-public func nativePrepareAppleBluetoothCentralRestoration(storageRoot: String, centralIdentifier: String) -> AppleBluetoothRestorationPreparationOutcome  {
+public func nativePrepareAppleBluetoothRestoration(storageRoot: String, centralIdentifier: String, peripheralIdentifier: String) -> AppleBluetoothRestorationPreparationOutcome  {
     return try!  FfiConverterTypeAppleBluetoothRestorationPreparationOutcome_lift(try! rustCall() {
-    uniffi_prns_app_fn_func_native_prepare_apple_bluetooth_central_restoration(
+    uniffi_prns_app_fn_func_native_prepare_apple_bluetooth_restoration(
         FfiConverterString.lower(storageRoot),
-        FfiConverterString.lower(centralIdentifier),$0
+        FfiConverterString.lower(centralIdentifier),
+        FfiConverterString.lower(peripheralIdentifier),$0
     )
 })
 }
@@ -11448,12 +11449,13 @@ public func nativeStart(storageRoot: String, input: DevelopmentNodeStartInput) -
 /**
  * Platform lifecycle queue only, preserving native-before-JavaScript restoration.
  */
-public func nativeStartWithAppleBluetoothCentralRestoration(storageRoot: String, input: DevelopmentNodeStartInput, centralIdentifier: String) -> DevelopmentNodeStartOutcome  {
+public func nativeStartWithAppleBluetoothRestoration(storageRoot: String, input: DevelopmentNodeStartInput, centralIdentifier: String, peripheralIdentifier: String) -> DevelopmentNodeStartOutcome  {
     return try!  FfiConverterTypeDevelopmentNodeStartOutcome_lift(try! rustCall() {
-    uniffi_prns_app_fn_func_native_start_with_apple_bluetooth_central_restoration(
+    uniffi_prns_app_fn_func_native_start_with_apple_bluetooth_restoration(
         FfiConverterString.lower(storageRoot),
         FfiConverterTypeDevelopmentNodeStartInput_lower(input),
-        FfiConverterString.lower(centralIdentifier),$0
+        FfiConverterString.lower(centralIdentifier),
+        FfiConverterString.lower(peripheralIdentifier),$0
     )
 })
 }
@@ -11693,7 +11695,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_prns_app_checksum_func_native_inspect_identity() != 53957) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_prns_app_checksum_func_native_prepare_apple_bluetooth_central_restoration() != 26457) {
+    if (uniffi_prns_app_checksum_func_native_prepare_apple_bluetooth_restoration() != 61093) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_prns_app_checksum_func_native_prepare_storage() != 45669) {
@@ -11705,7 +11707,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_prns_app_checksum_func_native_start() != 57447) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_prns_app_checksum_func_native_start_with_apple_bluetooth_central_restoration() != 30569) {
+    if (uniffi_prns_app_checksum_func_native_start_with_apple_bluetooth_restoration() != 54820) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_prns_app_checksum_func_native_stop() != 41536) {

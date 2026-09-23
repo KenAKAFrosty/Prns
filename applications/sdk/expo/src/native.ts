@@ -14,11 +14,10 @@ export type PrnsAppNativeModule = {
   readonly prepareOutbound: () => Promise<void>;
 };
 
-export type AppleAccessorySetupNativeModule = {
-  readonly accessorySetupStatus: () => Promise<string>;
-  readonly showAccessorySetupPicker: () => Promise<string>;
+export type AppleBluetoothNativeModule = {
+  readonly bluetoothAuthorizationStatus: () => Promise<string>;
   readonly addListener: (
-    eventName: "onAccessorySetupStatus",
+    eventName: "onBluetoothAuthorizationStatus",
     listener: (event: { readonly status: string }) => void,
   ) => EventSubscription;
 };
@@ -39,13 +38,11 @@ export function getNativePrnsApp(): PrnsAppNativeModule {
   return requireNativeModule<PrnsAppNativeModule>("PrnsApp");
 }
 
-export const nativeAccessorySetup: AppleAccessorySetupNativeModule = {
-  accessorySetupStatus: () =>
-    requireNativeModule<AppleAccessorySetupNativeModule>("PrnsApp").accessorySetupStatus(),
-  showAccessorySetupPicker: () =>
-    requireNativeModule<AppleAccessorySetupNativeModule>("PrnsApp").showAccessorySetupPicker(),
+export const nativeBluetoothAuthorization: AppleBluetoothNativeModule = {
+  bluetoothAuthorizationStatus: () =>
+    requireNativeModule<AppleBluetoothNativeModule>("PrnsApp").bluetoothAuthorizationStatus(),
   addListener: (event, listener) =>
-    requireNativeModule<AppleAccessorySetupNativeModule>("PrnsApp").addListener(event, listener),
+    requireNativeModule<AppleBluetoothNativeModule>("PrnsApp").addListener(event, listener),
 };
 export const nativeAndroidRuntime: AndroidRuntimeNativeModule = {
   androidRuntimeStatus: () =>

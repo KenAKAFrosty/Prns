@@ -20,7 +20,7 @@ Pod::Spec.new do |s|
 
   s.source_files = '**/*.{h,swift}'
   s.public_header_files = 'generated/PrnsAppBindingsFFI.h', 'PrnsNativeDiagnostics.h'
-  s.frameworks = 'AccessorySetupKit', 'CoreBluetooth', 'CoreFoundation', 'Foundation', 'UIKit'
+  s.frameworks = 'CoreBluetooth', 'CoreFoundation', 'Foundation', 'UIKit'
   s.libraries = 'iconv'
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',

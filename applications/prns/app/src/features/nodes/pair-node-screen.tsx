@@ -23,6 +23,7 @@ import {
 import { TextField } from "@/ui/text-field";
 import { useAppPalette } from "@/ui/theme";
 import { AndroidBluetoothCard } from "./android-bluetooth-card";
+import { IosBluetoothCard } from "./ios-bluetooth-card";
 import { PairingConfirmationCard } from "./pairing-confirmation-card";
 
 type RemoteControlPairingState = DevelopmentNodeSnapshot["pairing"];
@@ -37,8 +38,6 @@ export function PairNodeScreen({
   const palette = useAppPalette();
   const [invitationCode, setInvitationCode] = useState("");
   const [pending, setPending] = useState<"approve" | "initiate" | "reject" | null>(null);
-  const [setupPending, setSetupPending] = useState(false);
-  const [setupFeedback, setSetupFeedback] = useState<string | null>(null);
   const [commandFailure, setCommandFailure] = useState<string | null>(null);
   const [candidateId, setCandidateId] = useState<string | undefined>(selectedCandidateId);
   const pairing = runtime.snapshot?.pairing;
@@ -101,18 +100,6 @@ export function PairNodeScreen({
     setPending(null);
   };
 
-  const showAccessorySetup = async () => {
-    setSetupPending(true);
-    setSetupFeedback(null);
-    const result = await runtime.showAccessorySetupPicker();
-    if (result.type === "operationFailure") {
-      setSetupFeedback("The Bluetooth chooser could not open. Try again.");
-    } else {
-      setSetupFeedback(pickerOutcomeCopy(result.outcome.type));
-    }
-    setSetupPending(false);
-  };
-
   const decide = async (
     decision: "approve" | "reject",
     state: Extract<RemoteControlPairingState, { tag: "ConfirmationRequired" }>,
@@ -132,24 +119,13 @@ export function PairNodeScreen({
       <ScreenHeading>Pair a node</ScreenHeading>
       {confirming ? null : (
         <BodyText>
-          {runtime.availability.platform === "android"
-            ? "Open secure pairing on the node you want to manage. When it appears below, enter its invitation and compare the confirmation code on both devices."
-            : "First choose a nearby Bluetooth node. Then open secure pairing on the node you want to manage, enter its invitation, and compare the confirmation code on both devices."}
+          Open secure pairing on the node you want to manage. When it appears below, enter its
+          invitation and compare the confirmation code on both devices.
         </BodyText>
       )}
 
       {confirming ? null : <AndroidBluetoothCard />}
-      {!confirming &&
-      runtime.availability.type === "available" &&
-      runtime.availability.platform === "ios" ? (
-        <AccessorySetupCard
-          feedback={setupFeedback}
-          onShow={() => void showAccessorySetup()}
-          pending={setupPending}
-          setup={runtime.accessorySetup}
-          setupFailure={runtime.accessorySetupFailure}
-        />
-      ) : null}
+      {confirming ? null : <IosBluetoothCard />}
 
       {runtime.phase === "unavailable" ? (
         <Card>
@@ -159,8 +135,7 @@ export function PairNodeScreen({
         </Card>
       ) : null}
 
-      {runtime.phase === "starting" &&
-      (runtime.accessorySetup?.phase === "ready" || runtime.availability.platform === "android") ? (
+      {runtime.phase === "starting" ? (
         <Card>
           <Subheading>Getting ready</Subheading>
           <Badge>Starting</Badge>
@@ -168,9 +143,7 @@ export function PairNodeScreen({
         </Card>
       ) : null}
 
-      {runtime.phase === "failed" &&
-      runtime.accessorySetup?.phase !== "failed" &&
-      runtime.accessorySetupFailure === null ? (
+      {runtime.phase === "failed" ? (
         <Card>
           <Subheading>This device&apos;s node failed to start</Subheading>
           <Badge tone="warning">Pairing unavailable</Badge>
@@ -211,126 +184,6 @@ export function PairNodeScreen({
       </NavigationLink>
     </Screen>
   );
-}
-
-function AccessorySetupCard({
-  feedback,
-  onShow,
-  pending,
-  setup,
-  setupFailure,
-}: {
-  readonly feedback: string | null;
-  readonly onShow: () => void;
-  readonly pending: boolean;
-  readonly setup: ReturnType<typeof useDevelopmentRuntime>["accessorySetup"];
-  readonly setupFailure: string | null;
-}) {
-  if (setupFailure !== null) {
-    return (
-      <Card>
-        <Subheading>Bluetooth access unavailable</Subheading>
-        <Badge tone="warning">Status unavailable</Badge>
-        <BodyText>prns could not check Bluetooth access. Relaunch the app to try again.</BodyText>
-      </Card>
-    );
-  }
-  if (setup === null || setup.phase === "activating") {
-    return (
-      <Card>
-        <Subheading>Checking Bluetooth access</Subheading>
-        <Badge>Getting ready</Badge>
-        <BodyText muted>Checking Bluetooth access…</BodyText>
-      </Card>
-    );
-  }
-  if (setup.phase === "failed") {
-    return (
-      <Card>
-        <Subheading>Bluetooth access unavailable</Subheading>
-        <Badge tone="warning">Relaunch required</Badge>
-        <BodyText>
-          {setup.lastError?.detail ??
-            "Bluetooth access checking stopped. Relaunch the app to try again."}
-        </BodyText>
-      </Card>
-    );
-  }
-
-  const pickerOpen = setup.picker !== "idle" || pending;
-  const nativeStartBusy = setup.nativeStart === "starting" || setup.nativeStart === "stopping";
-  if (setup.phase === "setupRequired") {
-    return (
-      <Card>
-        <Subheading>Choose a nearby node</Subheading>
-        <Badge tone="warning">Bluetooth access needed</Badge>
-        <BodyText>
-          Use the Bluetooth chooser to allow prns to connect to a nearby Reticulum node. Secure
-          Reticulum pairing happens next.
-        </BodyText>
-        {setup.nativeStart === "running" ? (
-          <BodyText>
-            Bluetooth access was removed while this device stayed running. Authorize a node again to
-            reconnect.
-          </BodyText>
-        ) : null}
-        {setup.lastError === null || feedback !== null ? null : (
-          <BodyText>{setup.lastError.detail}</BodyText>
-        )}
-        {feedback === null ? null : <BodyText>{feedback}</BodyText>}
-        <Button disabled={pickerOpen || nativeStartBusy} onPress={onShow}>
-          {pickerOpen ? "Bluetooth chooser open…" : "Choose a Bluetooth node"}
-        </Button>
-      </Card>
-    );
-  }
-
-  return (
-    <Card>
-      <Subheading>Bluetooth access ready</Subheading>
-      <Badge>Bluetooth access granted</Badge>
-      <BodyText>
-        {setup.authorizedAccessoryCount === 1
-          ? "One Bluetooth node is available to prns. Continue with secure Reticulum pairing below."
-          : `${setup.authorizedAccessoryCount} Bluetooth nodes are available to prns. Continue with secure Reticulum pairing below.`}
-      </BodyText>
-      {setup.lastError === null || feedback !== null ? null : (
-        <BodyText>{setup.lastError.detail}</BodyText>
-      )}
-      {feedback === null ? null : <BodyText>{feedback}</BodyText>}
-      <Button disabled={pickerOpen || nativeStartBusy} onPress={onShow} tone="secondary">
-        {pickerOpen ? "Bluetooth chooser open…" : "Add another Bluetooth node"}
-      </Button>
-    </Card>
-  );
-}
-
-function pickerOutcomeCopy(
-  outcome:
-    | "alreadyActive"
-    | "cancelled"
-    | "completed"
-    | "failed"
-    | "notReady"
-    | "restricted"
-    | "timedOut",
-): string | null {
-  switch (outcome) {
-    case "completed":
-      return null;
-    case "cancelled":
-      return "The Bluetooth chooser was cancelled. No Bluetooth access changed.";
-    case "timedOut":
-      return "No matching Bluetooth node was found. Move it nearby and try again.";
-    case "restricted":
-      return "The Bluetooth chooser can only open while prns is in the foreground.";
-    case "alreadyActive":
-      return "The Bluetooth chooser is already open.";
-    case "notReady":
-      return "Bluetooth access is still getting ready.";
-    case "failed":
-      return "Bluetooth access could not be completed.";
-  }
 }
 
 function PairingStateCard({

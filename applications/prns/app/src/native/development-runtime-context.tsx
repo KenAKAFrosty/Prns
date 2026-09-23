@@ -10,8 +10,7 @@ import type {
   ChangeRemoteNodeOutcome,
   AnnounceRemoteControlTargetInput,
   RemoteControlAnnounceOutcome,
-  AccessorySetupPickerOutcome,
-  AccessorySetupStatus,
+  BluetoothAuthorizationStatus,
   AnnounceLxmfOutcome,
   ContactMutationOutcome,
   CancelLxmfMessageOutcome,
@@ -79,8 +78,8 @@ export type DevelopmentRuntimeView = {
     input: AnnounceRemoteControlTargetInput,
   ) => Promise<RuntimeCommandResult<RemoteControlAnnounceOutcome>>;
   readonly availability: RuntimeProvider["availability"];
-  readonly accessorySetup: AccessorySetupStatus | null;
-  readonly accessorySetupFailure: string | null;
+  readonly bluetoothAuthorization: BluetoothAuthorizationStatus | null;
+  readonly bluetoothAuthorizationFailure: string | null;
   readonly androidRuntime: AndroidRuntimeView | null;
   readonly phase: "unavailable" | "starting" | "ready" | "failed";
   readonly snapshot: DevelopmentNodeSnapshot | null;
@@ -92,9 +91,6 @@ export type DevelopmentRuntimeView = {
   readonly stoppingNode: boolean;
   readonly stopFailure: string | null;
   readonly stopNode: () => Promise<void>;
-  readonly showAccessorySetupPicker: () => Promise<
-    RuntimeCommandResult<AccessorySetupPickerOutcome>
-  >;
   readonly refreshSnapshot: () => Promise<RuntimeCommandResult<DevelopmentNodeSnapshot>>;
   readonly initiatePairing: (
     input: InitiateRemoteControlPairingInput,
@@ -155,8 +151,11 @@ export function DevelopmentRuntimeProvider({
   const [snapshot, setSnapshot] = useState<DevelopmentNodeSnapshot | null>(null);
   const [lifecycleFailure, setLifecycleFailure] = useState<string | null>(null);
   const [backgroundFailure, setBackgroundFailure] = useState<string | null>(null);
-  const [accessorySetup, setAccessorySetup] = useState<AccessorySetupStatus | null>(null);
-  const [accessorySetupFailure, setAccessorySetupFailure] = useState<string | null>(null);
+  const [bluetoothAuthorization, setBluetoothAuthorization] =
+    useState<BluetoothAuthorizationStatus | null>(null);
+  const [bluetoothAuthorizationFailure, setBluetoothAuthorizationFailure] = useState<string | null>(
+    null,
+  );
   const [startRequest, setStartRequest] = useState(0);
   const [stoppingNode, setStoppingNode] = useState(false);
   const [stopFailure, setStopFailure] = useState<string | null>(null);
@@ -176,13 +175,13 @@ export function DevelopmentRuntimeProvider({
   refreshActiveState.current = refreshActive;
   const canStartNode =
     selectedProvider.availability.type === "available" &&
-    selectedProvider.availability.platform === "android" &&
     !stoppingNode &&
     phase !== "starting" &&
     snapshot?.runtime !== Bindings.DevelopmentNodeRuntime.Starting &&
     snapshot?.runtime !== Bindings.DevelopmentNodeRuntime.Stopping &&
-    androidRuntime.status?.service !== "starting" &&
-    androidRuntime.status?.service !== "stopping" &&
+    (selectedProvider.availability.platform !== "android" ||
+      (androidRuntime.status?.service !== "starting" &&
+        androidRuntime.status?.service !== "stopping")) &&
     (phase === "failed" ||
       snapshot?.runtime === Bindings.DevelopmentNodeRuntime.Stopped ||
       snapshot?.runtime === Bindings.DevelopmentNodeRuntime.Failed);
@@ -207,15 +206,6 @@ export function DevelopmentRuntimeProvider({
     setPhase("starting");
     setStartRequest((request) => request + 1);
   }, []);
-  const accessorySetupAcquisitionState = availableProviderRequiresAccessorySetup(selectedProvider)
-    ? accessorySetupFailure !== null || accessorySetup?.phase === "failed"
-      ? "failed"
-      : accessorySetup?.phase === "ready" &&
-          (accessorySetup.nativeStart === "running" ||
-            (accessorySetup.picker === "idle" && accessorySetup.nativeStart !== "stopping"))
-        ? "ready"
-        : "waiting"
-    : "notRequired";
 
   const publishSnapshot = useCallback((next: DevelopmentNodeSnapshot) => {
     if (latestRevision.current !== null && next.revision <= latestRevision.current) {
@@ -278,32 +268,35 @@ export function DevelopmentRuntimeProvider({
   }, [androidRuntime.refresh, cancelReads, publishSnapshot, selectedProvider]);
 
   useEffect(() => {
-    setAccessorySetup(null);
-    setAccessorySetupFailure(null);
-    if (!("accessorySetup" in selectedProvider) || selectedProvider.accessorySetup === undefined) {
+    setBluetoothAuthorization(null);
+    setBluetoothAuthorizationFailure(null);
+    if (
+      !("bluetoothAuthorization" in selectedProvider) ||
+      selectedProvider.bluetoothAuthorization === undefined
+    ) {
       return;
     }
-    const setup = selectedProvider.accessorySetup;
+    const setup = selectedProvider.bluetoothAuthorization;
     let mounted = true;
     let latestStatusRevision: number | null = null;
-    const publishAccessorySetup = (next: AccessorySetupStatus) => {
+    const publishBluetoothAuthorization = (next: BluetoothAuthorizationStatus) => {
       if (!mounted || (latestStatusRevision !== null && next.revision <= latestStatusRevision)) {
         return;
       }
       latestStatusRevision = next.revision;
-      setAccessorySetup(next);
-      setAccessorySetupFailure(null);
+      setBluetoothAuthorization(next);
+      setBluetoothAuthorizationFailure(null);
     };
     const subscription = setup.addStatusListener((next) => {
-      publishAccessorySetup(next);
+      publishBluetoothAuthorization(next);
     });
     void setup.readStatus().then(
       (next) => {
-        publishAccessorySetup(next);
+        publishBluetoothAuthorization(next);
       },
       (failure: unknown) => {
         if (mounted && latestStatusRevision === null) {
-          setAccessorySetupFailure(formatFailure(failure));
+          setBluetoothAuthorizationFailure(formatFailure(failure));
         }
       },
     );
@@ -327,17 +320,9 @@ export function DevelopmentRuntimeProvider({
       return;
     }
 
-    if (availableProviderRequiresAccessorySetup(selectedProvider)) {
-      if (accessorySetupAcquisitionState === "failed") {
-        setPhase("failed");
-        return;
-      }
-      if (accessorySetupAcquisitionState !== "ready") {
-        setPhase("starting");
-        return;
-      }
-    }
-
+    // The local node does not depend on Bluetooth permission or nearby peers.
+    // Native startup creates the real manager and requests ordinary permission
+    // if needed; denied access only makes the Bluetooth interface unavailable.
     const availableProvider = selectedProvider;
     setPhase("starting");
     let mounted = true;
@@ -393,14 +378,7 @@ export function DevelopmentRuntimeProvider({
         Effect.runPromise(Scope.close(scope, Exit.void)),
       ]).then(() => undefined);
     };
-  }, [
-    accessorySetupAcquisitionState,
-    cancelReads,
-    publishSnapshot,
-    refreshIntervalMillis,
-    selectedProvider,
-    startRequest,
-  ]);
+  }, [cancelReads, publishSnapshot, refreshIntervalMillis, selectedProvider, startRequest]);
 
   const unavailableResult = useCallback(
     <Outcome,>(): RuntimeCommandResult<Outcome> => ({
@@ -657,25 +635,11 @@ export function DevelopmentRuntimeProvider({
     [runGenerationBound],
   );
 
-  const showAccessorySetupPicker = useCallback(async () => {
-    if (!("accessorySetup" in selectedProvider) || selectedProvider.accessorySetup === undefined) {
-      return unavailableResult<AccessorySetupPickerOutcome>();
-    }
-    try {
-      return {
-        type: "outcome" as const,
-        outcome: await selectedProvider.accessorySetup.showPicker(),
-      };
-    } catch (failure) {
-      return { type: "operationFailure" as const, detail: formatFailure(failure) };
-    }
-  }, [selectedProvider, unavailableResult]);
-
   const value = useMemo<DevelopmentRuntimeView>(
     () => ({
       availability: selectedProvider.availability,
-      accessorySetup,
-      accessorySetupFailure,
+      bluetoothAuthorization,
+      bluetoothAuthorizationFailure,
       androidRuntime: androidCapability === undefined ? null : androidRuntime,
       phase,
       snapshot,
@@ -687,7 +651,6 @@ export function DevelopmentRuntimeProvider({
       stoppingNode,
       stopFailure,
       stopNode,
-      showAccessorySetupPicker,
       refreshSnapshot,
       initiatePairing,
       approvePairing,
@@ -710,8 +673,8 @@ export function DevelopmentRuntimeProvider({
     }),
     [
       approvePairing,
-      accessorySetup,
-      accessorySetupFailure,
+      bluetoothAuthorization,
+      bluetoothAuthorizationFailure,
       androidRuntime,
       androidCapability,
       backgroundFailure,
@@ -741,7 +704,6 @@ export function DevelopmentRuntimeProvider({
       announceLxmf,
       measureLxmfText,
       sendDirectText,
-      showAccessorySetupPicker,
       selectedProvider.availability,
       snapshot,
     ],
@@ -802,18 +764,4 @@ function formatFailure(failure: DevelopmentRuntimeFailure | unknown): string {
     return failure.message.length > 0 ? failure.message : failure.name;
   }
   return String(failure);
-}
-
-function availableProviderRequiresAccessorySetup(provider: RuntimeProvider): provider is Extract<
-  RuntimeProvider,
-  { readonly availability: { readonly type: "available" } }
-> & {
-  readonly accessorySetup: NonNullable<
-    Extract<
-      RuntimeProvider,
-      { readonly availability: { readonly type: "available" } }
-    >["accessorySetup"]
-  >;
-} {
-  return "accessorySetup" in provider && provider.accessorySetup !== undefined;
 }

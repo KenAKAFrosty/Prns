@@ -359,8 +359,8 @@ const DEFINITIONS = {
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
-    "uniffi_prns_app_fn_func_native_prepare_apple_bluetooth_central_restoration": {
-      args: [FfiType.RustBuffer, FfiType.RustBuffer],
+    "uniffi_prns_app_fn_func_native_prepare_apple_bluetooth_restoration": {
+      args: [FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer],
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
@@ -379,8 +379,8 @@ const DEFINITIONS = {
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
-    "uniffi_prns_app_fn_func_native_start_with_apple_bluetooth_central_restoration": {
-      args: [FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer],
+    "uniffi_prns_app_fn_func_native_start_with_apple_bluetooth_restoration": {
+      args: [FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer],
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
@@ -544,7 +544,7 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
-    "uniffi_prns_app_checksum_func_native_prepare_apple_bluetooth_central_restoration": {
+    "uniffi_prns_app_checksum_func_native_prepare_apple_bluetooth_restoration": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -564,7 +564,7 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
-    "uniffi_prns_app_checksum_func_native_start_with_apple_bluetooth_central_restoration": {
+    "uniffi_prns_app_checksum_func_native_start_with_apple_bluetooth_restoration": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -718,11 +718,11 @@ interface NativeModuleInterface {
     uniffi_prns_app_fn_func_native_create_generated_identity(storageRoot: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_prns_app_fn_func_native_create_imported_identity(storageRoot: Uint8Array, identity: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_prns_app_fn_func_native_inspect_identity(storageRoot: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
-    uniffi_prns_app_fn_func_native_prepare_apple_bluetooth_central_restoration(storageRoot: Uint8Array, centralIdentifier: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_prns_app_fn_func_native_prepare_apple_bluetooth_restoration(storageRoot: Uint8Array, centralIdentifier: Uint8Array, peripheralIdentifier: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_prns_app_fn_func_native_prepare_storage(storageRoot: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_prns_app_fn_func_native_reset(storageRoot: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_prns_app_fn_func_native_start(storageRoot: Uint8Array, input: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
-    uniffi_prns_app_fn_func_native_start_with_apple_bluetooth_central_restoration(storageRoot: Uint8Array, input: Uint8Array, centralIdentifier: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_prns_app_fn_func_native_start_with_apple_bluetooth_restoration(storageRoot: Uint8Array, input: Uint8Array, centralIdentifier: Uint8Array, peripheralIdentifier: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_prns_app_fn_func_native_stop(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_prns_app_fn_func_preview_identity_import(identity: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_prns_app_fn_func_read_remote_node(input: Uint8Array): bigint;
@@ -755,11 +755,11 @@ interface NativeModuleInterface {
     uniffi_prns_app_checksum_func_native_create_generated_identity(): number;
     uniffi_prns_app_checksum_func_native_create_imported_identity(): number;
     uniffi_prns_app_checksum_func_native_inspect_identity(): number;
-    uniffi_prns_app_checksum_func_native_prepare_apple_bluetooth_central_restoration(): number;
+    uniffi_prns_app_checksum_func_native_prepare_apple_bluetooth_restoration(): number;
     uniffi_prns_app_checksum_func_native_prepare_storage(): number;
     uniffi_prns_app_checksum_func_native_reset(): number;
     uniffi_prns_app_checksum_func_native_start(): number;
-    uniffi_prns_app_checksum_func_native_start_with_apple_bluetooth_central_restoration(): number;
+    uniffi_prns_app_checksum_func_native_start_with_apple_bluetooth_restoration(): number;
     uniffi_prns_app_checksum_func_native_stop(): number;
     uniffi_prns_app_checksum_func_preview_identity_import(): number;
     uniffi_prns_app_checksum_func_read_remote_node(): number;

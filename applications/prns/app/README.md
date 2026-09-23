@@ -127,7 +127,7 @@ advertised as an implemented feature. See the
 
 ## Platform behavior and next work
 
-The [iOS guide](../../docs/ios.md) covers accessory authorization, process-owned
+The [iOS guide](../../docs/ios.md) covers Bluetooth authorization, process-owned
 lifetime, bounded background/restoration behavior, signing and Metro setup.
 The [Android guide](../../docs/android.md) covers service controls, permissions,
 builds and the physical acceptance procedure.

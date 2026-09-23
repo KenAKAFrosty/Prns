@@ -1,5 +1,5 @@
 import type {
-  AccessorySetupRuntime,
+  BluetoothAuthorizationRuntime,
   AndroidRuntime,
   DevelopmentRuntime,
   DevelopmentRuntimeScopeOptions,
@@ -12,7 +12,7 @@ export type RuntimeProvider =
         readonly type: "available";
         readonly platform: "ios" | "android";
       };
-      readonly accessorySetup?: AccessorySetupRuntime;
+      readonly bluetoothAuthorization?: BluetoothAuthorizationRuntime;
       readonly androidRuntime?: AndroidRuntime;
       readonly runtime: DevelopmentRuntime;
       readonly acquire: (

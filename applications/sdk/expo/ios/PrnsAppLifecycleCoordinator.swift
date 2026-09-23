@@ -18,9 +18,9 @@ final class PrnsAppLifecycleCoordinator: NSObject {
     observeProtectedDataTransitions(application: application)
     let restorationAttempt: Bool
     do {
-      _ = try PrnsAppModule.restorationIdentifier()
+      _ = try PrnsAppModule.restorationIdentifiers()
       // Scene-based launches provide no Bluetooth launch reason. Recreate the
-      // stable central owner on each eligible process launch, before any scene
+      // stable dual-role owner on each eligible process launch, before any scene
       // or JavaScript. Native preparation still requires an existing identity.
       restorationAttempt = true
     } catch {
@@ -33,7 +33,7 @@ final class PrnsAppLifecycleCoordinator: NSObject {
         protectedData: application.isProtectedDataAvailable
       )
     )
-    PrnsAccessorySetupCoordinator.shared.activate(
+    PrnsBluetoothCoordinator.shared.activate(
       restorationAttemptRequested: restorationAttempt
     ) { [weak self, weak application] in
       guard let self, let application else {
@@ -109,10 +109,10 @@ final class PrnsAppLifecycleCoordinator: NSObject {
 
   private func prepareAndStartNativeRuntime(application: UIApplication) {
     do {
-      try PrnsAccessorySetupCoordinator.shared.requireAuthorized()
+      try PrnsBluetoothCoordinator.shared.requireRestorationAuthorized()
     } catch {
       protectedDataRecovery.finishAttempt()
-      PrnsAccessorySetupCoordinator.shared.restorationStartAuthorizationDidClose()
+      PrnsBluetoothCoordinator.shared.restorationStartAuthorizationDidClose()
       Self.log(.restorationStartRearmedAfterAuthorizationClosed)
       return
     }
@@ -127,7 +127,7 @@ final class PrnsAppLifecycleCoordinator: NSObject {
   nonisolated private static func prepareRestoration() throws {
     let outcome: AppleBluetoothRestorationPreparationOutcome
     do {
-      outcome = try PrnsAppModule.prepareBluetoothCentralRestoration()
+      outcome = try PrnsAppModule.prepareBluetoothRestoration()
     } catch {
       Self.log(.prepareBridgeFailed)
       throw PreparationFailure(recovery: .bridge)
@@ -148,7 +148,11 @@ final class PrnsAppLifecycleCoordinator: NSObject {
   private func startNativeRuntime(application: UIApplication) {
     let input = PrnsAppModule.configuredStartInput()
 
-    PrnsAppModule.startAuthorized(input, prepareRestoration: Self.prepareRestoration) { result in
+    PrnsAppModule.startNative(
+      input,
+      restorationOnly: true,
+      prepareRestoration: Self.prepareRestoration
+    ) { result in
       switch result {
       case .success(let outcome):
         let summary = Self.outcomeSummary(outcome)
@@ -174,7 +178,7 @@ final class PrnsAppLifecycleCoordinator: NSObject {
         }
         Self.log(.startBridgeFailed)
         self.recoverAfterProtectedDataFailure(
-          error is PrnsNativeStartInterruption ? .cancelled : .bridge,
+          (error as? PrnsNativeStartInterruption)?.cancelsRestoration == true ? .cancelled : .bridge,
           application: application
         )
       }
@@ -190,10 +194,10 @@ final class PrnsAppLifecycleCoordinator: NSObject {
       return
     }
     do {
-      try PrnsAccessorySetupCoordinator.shared.requireAuthorized()
+      try PrnsBluetoothCoordinator.shared.requireRestorationAuthorized()
     } catch {
       protectedDataRecovery.finishAttempt()
-      PrnsAccessorySetupCoordinator.shared.restorationStartAuthorizationDidClose()
+      PrnsBluetoothCoordinator.shared.restorationStartAuthorizationDidClose()
       Self.log(.restorationStartRearmedAfterAuthorizationClosed)
       return
     }

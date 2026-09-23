@@ -92,26 +92,30 @@ pub fn native_start(
 }
 /// Platform lifecycle queue only, preserving native-before-JavaScript restoration.
 #[uniffi::export]
-pub fn native_start_with_apple_bluetooth_central_restoration(
+pub fn native_start_with_apple_bluetooth_restoration(
     storage_root: String,
     input: DevelopmentNodeStartInput,
     central_identifier: String,
+    peripheral_identifier: String,
 ) -> DevelopmentNodeStartOutcome {
-    crate::lifecycle::start_configured_with_apple_bluetooth_central_restoration(
+    crate::lifecycle::start_configured_with_apple_bluetooth_restoration(
         Path::new(&storage_root),
         input,
         central_identifier,
+        peripheral_identifier,
     )
 }
 /// Platform lifecycle queue only; does not start a JavaScript-owned node.
 #[uniffi::export]
-pub fn native_prepare_apple_bluetooth_central_restoration(
+pub fn native_prepare_apple_bluetooth_restoration(
     storage_root: String,
     central_identifier: String,
+    peripheral_identifier: String,
 ) -> AppleBluetoothRestorationPreparationOutcome {
-    crate::lifecycle::prepare_apple_bluetooth_central_restoration(
+    crate::lifecycle::prepare_apple_bluetooth_restoration(
         Path::new(&storage_root),
         central_identifier,
+        peripheral_identifier,
     )
 }
 /// Platform lifecycle queue only. The native owner retains failed-stop authority.

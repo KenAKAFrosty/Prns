@@ -6,10 +6,8 @@ enum PrnsAppRestorationProbeTests {
     PrnsIosDiagnostics.lifecycle(
       .launch(restorationAttempt: true, protectedData: false)
     )
-    PrnsIosDiagnostics.accessorySetup(
-      phase: .ready,
-      picker: .idle,
-      authorizedCount: 1,
+    PrnsIosDiagnostics.bluetoothAuthorization(
+      authorization: .allowedAlways,
       nativeStart: .running,
       restorationAttempt: true
     )

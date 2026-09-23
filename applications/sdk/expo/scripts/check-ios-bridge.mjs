@@ -22,8 +22,12 @@ const nativeStartDispatch = readFileSync(
   resolve(packageRoot, "ios/PrnsNativeStartDispatch.swift"),
   "utf8",
 );
-const accessoryCoordinator = readFileSync(
-  resolve(packageRoot, "ios/PrnsAccessorySetupCoordinator.swift"),
+const bluetoothCoordinator = readFileSync(
+  resolve(packageRoot, "ios/PrnsBluetoothCoordinator.swift"),
+  "utf8",
+);
+const bluetoothAuthorization = readFileSync(
+  resolve(packageRoot, "ios/PrnsBluetoothAuthorization.swift"),
   "utf8",
 );
 const subscriber = readFileSync(
@@ -92,12 +96,6 @@ function assertOne(source, pattern, message) {
   assert.equal([...source.matchAll(new RegExp(pattern.source, flags))].length, 1, message);
 }
 
-function captureOne(source, pattern, owner) {
-  const matches = [...source.matchAll(pattern)];
-  assert.equal(matches.length, 1, `${owner} must declare exactly one Bluetooth service UUID`);
-  return matches[0][1];
-}
-
 const bluetoothServiceUuid = compatibility.prns?.bluetoothAuto?.serviceUuid;
 assert.equal(
   typeof bluetoothServiceUuid,
@@ -109,23 +107,6 @@ assert.match(
   /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/,
   "compatibility Bluetooth Auto service UUID must be canonical uppercase",
 );
-for (const [owner, source, pattern] of [
-  ["app.config.ts", appConfig, /\bconst prnsBluetoothServiceUuid = "([^"]+)";/g],
-  ["config-check.ts", configCheck, /\bconst prnsBluetoothServiceUuid = "([^"]+)";/g],
-  [
-    "PrnsAccessorySetupCoordinator.swift",
-    accessoryCoordinator,
-    /\bCBUUID\(\s*string: "([^"]+)"\s*\)/g,
-  ],
-  ["build-development-client.sh", developmentClient, /^PRNS_BLUETOOTH_SERVICE="([^"]+)"$/gm],
-]) {
-  assert.equal(
-    captureOne(source, pattern, owner),
-    bluetoothServiceUuid,
-    `${owner} must match the recorded canonical Bluetooth Auto service UUID`,
-  );
-}
-
 assert.match(
   swift,
   /DispatchQueue\(\s*label: "rs\.reticulum\.prns\.app\.native",\s*attributes: \.concurrent\s*\)/,
@@ -149,13 +130,13 @@ assert.match(
 );
 assert.match(
   coordinator,
-  /PrnsAccessorySetupCoordinator\.shared\.activate\([\s\S]*?restorationAttemptRequested: restorationAttempt[\s\S]*?prepareAndStartNativeRuntime/,
-  "every launch must activate ASK before restoration creates a CoreBluetooth manager",
+  /PrnsBluetoothCoordinator\.shared\.activate\([\s\S]*?restorationAttemptRequested: restorationAttempt[\s\S]*?prepareAndStartNativeRuntime/,
+  "every launch must check app Bluetooth authorization before automatic restoration",
 );
 assert.match(
-  `${accessoryCoordinator}\n${coordinator}`,
-  /claimIfAuthorized\(nativeStartAuthorized\)[\s\S]*?restorationReady\(\)[\s\S]*?requireAuthorized\(\)[\s\S]*?startNativeRuntime\(application: application\)/,
-  "restoration must wait for ASK activation plus an authorized Bluetooth accessory",
+  `${bluetoothCoordinator}\n${coordinator}`,
+  /claimIfAuthorized\(authorization\.permitsAutomaticRestoration\)[\s\S]*?restorationReady\(\)[\s\S]*?requireRestorationAuthorized\(\)[\s\S]*?startNativeRuntime\(application: application\)/,
+  "automatic restoration must require an existing app-wide Bluetooth grant, not a paired accessory",
 );
 const iosPreparedBluetooth =
   nativeLifecycle.match(
@@ -168,18 +149,18 @@ assert.notEqual(
 );
 assert.match(
   iosPreparedBluetooth,
-  /AutoBle::prepare_central_only_without_restoration[\s\S]*?AutoBle::unavailable_central_only_without_restoration/,
-  "even an unprepared iOS start must remain central-only",
+  /AutoBle::prepare_without_restoration[\s\S]*?AutoBle::unavailable_without_restoration/,
+  "an unprepared iOS start must expose the ordinary dual-role backend with an offline fallback",
 );
 assert.doesNotMatch(
   iosPreparedBluetooth,
-  /AutoBle::(?:prepare|unavailable)_without_restoration/,
-  "the iOS path must never initialize the dual-role Bluetooth backend",
+  /central_only/,
+  "the iOS path must not retain the accessory-only central backend",
 );
 assert.match(
   coordinator,
-  /func launch\(application: UIApplication\)[\s\S]*?try PrnsAppModule\.restorationIdentifier\(\)[\s\S]*?restorationAttempt = true[\s\S]*?catch[\s\S]*?restorationAttempt = false/,
-  "every process launch must validate the stable central identifier before requesting restoration",
+  /func launch\(application: UIApplication\)[\s\S]*?try PrnsAppModule\.restorationIdentifiers\(\)[\s\S]*?restorationAttempt = true[\s\S]*?catch[\s\S]*?restorationAttempt = false/,
+  "every process launch must validate stable central and peripheral identifiers before restoration",
 );
 assert.match(
   coordinator,
@@ -198,7 +179,7 @@ assert.match(
 );
 assert.match(
   nativeLifecycle,
-  /fn prepare_apple_bluetooth_central_restoration_with_supervisor\([\s\S]*?supervisor\.lock_state\(\)[\s\S]*?apple_bluetooth_restoration_storage\(&mut state, storage_root\)[\s\S]*?Err\(outcome\) => return outcome[\s\S]*?load_or_create_ble_identity[\s\S]*?AutoBle::prepare_central_only_with_restoration/,
+  /fn prepare_apple_bluetooth_restoration_with_supervisor\([\s\S]*?supervisor\.lock_state\(\)[\s\S]*?apple_bluetooth_restoration_storage\(&mut state, storage_root\)[\s\S]*?Err\(outcome\) => return outcome[\s\S]*?load_or_create_ble_identity[\s\S]*?AutoBle::prepare_with_restoration/,
   "the existing-identity gate must run under lifecycle admission before creating a Bluetooth owner",
 );
 assert.match(
@@ -208,17 +189,17 @@ assert.match(
 );
 assert.match(
   coordinator,
-  /private func prepareAndStartNativeRuntime\(application: UIApplication\) \{\s+do \{\s+try PrnsAccessorySetupCoordinator\.shared\.requireAuthorized\(\)[\s\S]*?protectedDataRecovery\.beginAttempt\([\s\S]*?startNativeRuntime\(application: application\)/,
-  "every initial and resumed attempt must revalidate ASK before native startup admission",
+  /private func prepareAndStartNativeRuntime\(application: UIApplication\) \{\s+do \{\s+try PrnsBluetoothCoordinator\.shared\.requireRestorationAuthorized\(\)[\s\S]*?protectedDataRecovery\.beginAttempt\([\s\S]*?startNativeRuntime\(application: application\)/,
+  "every initial and resumed automatic attempt must revalidate app authorization before admission",
 );
 assert.match(
   coordinator,
-  /startAuthorized\(input, prepareRestoration: Self\.prepareRestoration\)/,
+  /startNative\(\s*input,\s*restorationOnly: true,\s*prepareRestoration: Self\.prepareRestoration/,
   "restoration preparation must use the generation-admitted native startup queue",
 );
 assert.match(
   swift,
-  /requestNativeStart[\s\S]*?PrnsNativeStartDispatch\.enqueue\([\s\S]*?prepare: prepareRestoration[\s\S]*?start: \{ try startWithCentralRestoration/,
+  /requestNativeStart[\s\S]*?PrnsNativeStartDispatch\.enqueue\([\s\S]*?prepare: prepareRestoration[\s\S]*?start: \{ try startWithBluetoothRestoration/,
   "restoration and ordinary startup must share one generation and native owner",
 );
 assert.doesNotMatch(
@@ -238,11 +219,11 @@ assert.match(
 );
 assert.match(
   coordinator,
-  /recoverAfterProtectedDataFailure\([\s\S]*?requireAuthorized\(\)[\s\S]*?restorationStartAuthorizationDidClose\(\)[\s\S]*?protectedDataRecovery\.action\(for: failure\)[\s\S]*?waitForProtectedData/,
-  "a recovery must revalidate ASK and enter the race-safe protected-data wait",
+  /recoverAfterProtectedDataFailure\([\s\S]*?requireRestorationAuthorized\(\)[\s\S]*?restorationStartAuthorizationDidClose\(\)[\s\S]*?protectedDataRecovery\.action\(for: failure\)[\s\S]*?waitForProtectedData/,
+  "a recovery must revalidate app authorization and enter the race-safe protected-data wait",
 );
 assert.match(
-  `${accessoryCoordinator}\n${restorationDispatch}`,
+  `${bluetoothCoordinator}\n${restorationDispatch}`,
   /restorationStartAuthorizationDidClose\(\)[\s\S]*?rearmAfterAuthorizationLoss\(\)[\s\S]*?claimIfAuthorized[\s\S]*?guard attemptRequested, authorized, !claimed/,
   "authorization loss must re-arm exactly one later restoration dispatch",
 );
@@ -255,8 +236,8 @@ assert.match(
 );
 assert.match(
   swift,
-  /static func prepareBluetoothCentralRestoration\(\)[\s\S]*?nativePrepareAppleBluetoothCentralRestoration/,
-  "the restoration hook must call the central-only preparation ABI",
+  /static func prepareBluetoothRestoration\(\)[\s\S]*?nativePrepareAppleBluetoothRestoration/,
+  "the restoration hook must call the dual-role preparation ABI",
 );
 assert.match(swift, /FileProtectionType\.completeUntilFirstUserAuthentication/);
 assert.match(swift, /isExcludedFromBackup = true/);
@@ -268,45 +249,40 @@ assertOne(
   /PrnsAppLifecycleCoordinator\.shared\.launch\(application: application\)/,
   "the AppDelegate subscriber must dispatch one process-owned launch before any scene or JavaScript",
 );
-assert.doesNotMatch(`${swift}\n${coordinator}\n${accessoryCoordinator}`, /CBPeripheralManager/);
-assert.equal(
-  accessoryCoordinator.match(/ASAccessorySession\(\)/g)?.length,
-  1,
-  "the app must own exactly one ASK session",
-);
-assert.match(accessoryCoordinator, /session\.activate\(on: \.main\)/);
-assert.match(
-  accessoryCoordinator,
-  /session\.accessories\.filter[\s\S]*?\.state == \.authorized && \$0\.bluetoothIdentifier != nil/,
-  "native startup must derive authorization from the activated ASK session",
-);
-assert.match(accessoryCoordinator, /UIApplication\.shared\.applicationState == \.active/);
-assert.match(accessoryCoordinator, /session\.showPicker\(for: \[Self\.pickerDisplayItem\]\)/);
-assert.match(
-  accessoryCoordinator,
-  /guard nativeStartPhase != \.starting, nativeStartPhase != \.stopping else \{\s+completion\(Self\.pickerOutcome\(type: "notReady"\)\)/,
-  "the native chooser must reject presentation while start or stop ownership is changing",
+assert.doesNotMatch(
+  `${swift}\n${coordinator}\n${bluetoothCoordinator}`,
+  /CB(?:Central|Peripheral)Manager\s*\(|ASAccessorySession|AccessorySetupKit/,
+  "only the Rust owner creates managers; Swift must not create a permission probe or ASK session",
 );
 assert.match(
-  accessoryCoordinator,
-  /case \.accessoryAdded, \.accessoryChanged, \.accessoryRemoved:\s+reconcileAuthorizedAccessories\(\)[\s\S]*?case \.pickerDidDismiss:\s+pickerDismissalPending = false\s+pickerPhase = \.idle\s+reconcileAuthorizedAccessories\(\)/,
-  "an added accessory must remain gated until ASK reports picker dismissal",
+  bluetoothCoordinator,
+  /switch CBManager\.authorization/,
+  "status must read the ordinary app-wide authorization without creating a manager",
 );
 assert.match(
-  accessoryCoordinator,
-  /if pickerDismissalPending && nextAuthorizedAccessoryCount > authorizedAccessoryCount \{\s+return\s+\}/,
-  "authorization increases must wait for picker dismissal while removals still reconcile",
+  bluetoothAuthorization,
+  /permitsAutomaticRestoration: Bool \{ self == \.allowedAlways \}/,
+  "automatic launch must not ask for Bluetooth permission",
 );
-assert.match(accessoryCoordinator, /37145B00-442D-4A94-917F-8F42C5DA28E3/);
 assert.match(
-  accessoryCoordinator,
+  bluetoothAuthorization,
+  /return self != \.notDetermined \|\| applicationActive/,
+  "ordinary startup must allow an offline node while requiring foreground for a new permission prompt",
+);
+assert.match(
+  bluetoothCoordinator,
+  /UIApplication\.didBecomeActiveNotification[\s\S]*?func applicationDidBecomeActive[\s\S]*?refreshAuthorization\(\)/,
+  "authorization changed in Settings must refresh independently of JavaScript",
+);
+assert.match(
+  bluetoothCoordinator,
   /nativeStartCompletions\.count < 8/,
   "duplicate native starts must be coalesced with a bounded waiter set",
 );
 assert.match(
-  `${swift}\n${accessoryCoordinator}`,
-  /requestNativeStart[\s\S]*?startGeneration[\s\S]*?requireAuthorized\([\s\S]*?startGeneration:[\s\S]*?startWithCentralRestoration/,
-  "the app-owned gate must revalidate authorization and start ownership before entering Rust",
+  `${swift}\n${bluetoothCoordinator}`,
+  /requestNativeStart[\s\S]*?startGeneration[\s\S]*?requireStartAllowed\([\s\S]*?startGeneration:[\s\S]*?restorationOnly:[\s\S]*?startWithBluetoothRestoration/,
+  "the app-owned gate must revalidate admission and start ownership before entering Rust",
 );
 assert.match(
   swift,
@@ -314,14 +290,14 @@ assert.match(
   "an explicit stop must invalidate the cached native start generation",
 );
 assert.match(
-  `${swift}\n${accessoryCoordinator}`,
+  `${swift}\n${bluetoothCoordinator}`,
   /beginNativeStop\(\)[\s\S]*?nativeStopWillBegin\(application: \.shared\)[\s\S]*?nativeStopWillBegin\(\)[\s\S]*?restorationDispatch\.cancel\(\)/,
   "explicit stop must cancel both pending lifecycle recovery and restoration dispatch",
 );
 assert.match(
   coordinator,
-  /case \.failure\(let error\):[\s\S]*?error is PrnsNativeStartInterruption \? \.cancelled : \.bridge[\s\S]*?if case \.cancelled = failure[\s\S]*?finishAttempt\(\)[\s\S]*?return/,
-  "stop supersession must terminate before ASK re-arm or protected-data retry",
+  /case \.failure\(let error\):[\s\S]*?cancelsRestoration == true \? \.cancelled : \.bridge[\s\S]*?if case \.cancelled = failure[\s\S]*?finishAttempt\(\)[\s\S]*?return/,
+  "stop supersession must terminate before authorization re-arm or protected-data retry",
 );
 assert.match(
   swift,
@@ -329,11 +305,11 @@ assert.match(
   "reset must invalidate the cached generation before a later onboarding start",
 );
 assert.match(
-  accessoryCoordinator,
+  bluetoothCoordinator,
   /case \.alreadyStopped, \.stopped:[\s\S]*?nativeStartPhase = \.notRequested[\s\S]*?default:[\s\S]*?nativeStartPhase = \.stopping/,
   "only a definitive stopped outcome may reopen native start admission",
 );
-assert.match(accessoryCoordinator, /statusRevision &\+= 1[\s\S]*?statusJSON\(\)/);
+assert.match(bluetoothCoordinator, /statusRevision &\+= 1[\s\S]*?statusJSON\(\)/);
 assert.match(
   swift,
   /static func configuredStartInput\(\)[\s\S]*?#if DEBUG\s+let target = Bundle\.main\.object\(forInfoDictionaryKey: "PRNSDevelopmentTcpTarget"\) as\? String\s+return DevelopmentNodeStartInput\(developmentTcpTarget: target\)\s+#else\s+DevelopmentNodeStartInput\(developmentTcpTarget: nil\)\s+#endif/,
@@ -341,7 +317,7 @@ assert.match(
 );
 assert.match(
   swift,
-  /AsyncFunction\("start"\)[\s\S]*?Self\.validatedStartInput\(Self\.decodeStartInput\(inputBytes\)\)[\s\S]*?Self\.startAuthorized\(input\)/,
+  /AsyncFunction\("start"\)[\s\S]*?Self\.validatedStartInput\(Self\.decodeStartInput\(inputBytes\)\)[\s\S]*?Self\.startNative\(input\)/,
   "JavaScript starts must resolve the compiled input before native start admission",
 );
 assert.match(
@@ -371,7 +347,7 @@ assert.match(
   /guard let event = PrnsIosDiagnostics\.RestorationEvent\(rawValue: code\)[\s\S]*?PrnsIosDiagnostics\.restoration\(sequence: sequence, event: event\)/,
 );
 assert.doesNotMatch(
-  `${restorationProbe}\n${coordinator}\n${accessoryCoordinator}\n${iosDiagnostics}`,
+  `${restorationProbe}\n${coordinator}\n${bluetoothCoordinator}\n${iosDiagnostics}`,
   /\bNSLog\s*\(/,
   "diagnostics must not rely on NSLog being forwarded into the USB unified-log stream",
 );
@@ -394,24 +370,19 @@ assert.match(
 assert.match(iosDiagnostics, /enum LifecycleEvent \{[\s\S]*?case nativeOutcome\(/);
 assert.match(
   iosDiagnostics,
-  /static func accessorySetup\(\s*phase: AccessorySetupPhase,[\s\S]*?restorationAttempt: Bool/,
+  /static func bluetoothAuthorization\(\s*authorization: PrnsBluetoothAuthorization,[\s\S]*?restorationAttempt: Bool/,
 );
 assert.match(
   iosDiagnostics,
   /static func restoration\(sequence: UInt64, event: RestorationEvent\)/,
 );
 assert.doesNotMatch(
-  `${restorationProbe}\n${coordinator}\n${accessoryCoordinator}`,
+  `${restorationProbe}\n${coordinator}\n${bluetoothCoordinator}`,
   /PrnsIosDiagnostics\.emit/,
   "callers must use typed diagnostic APIs rather than publish arbitrary strings",
 );
 assert.match(coordinator, /PrnsIosDiagnostics\.lifecycle\(event\)/);
-assert.match(accessoryCoordinator, /PrnsIosDiagnostics\.accessorySetup\(/);
-assert.doesNotMatch(
-  `${restorationProbe}\n${nativeRestorationProbe}`,
-  /peripheral_service_restored|bluetooth_auto::macos::peripheral/,
-  "central-only restoration diagnostics must not claim peripheral-role restoration",
-);
+assert.match(bluetoothCoordinator, /PrnsIosDiagnostics\.bluetoothAuthorization\(/);
 assert.match(
   restorationProbe,
   /codeLength > 0, codeLength <= 64[\s\S]*?RestorationEvent\(rawValue: code\)/,
@@ -436,11 +407,11 @@ assert.match(nativeRestorationProbe, /prns_app_ios_install_restoration_probe[\s\
 assert.doesNotMatch(nativeRestorationProbe, /fn prns_app_ios_restoration_probe_emit/);
 assert.match(
   swift,
-  /nativeStartWithAppleBluetoothCentralRestoration\([\s\S]*?storageRoot:[\s\S]*?input:[\s\S]*?centralIdentifier:/,
+  /nativeStartWithAppleBluetoothRestoration\([\s\S]*?storageRoot:[\s\S]*?input:[\s\S]*?centralIdentifier:[\s\S]*?peripheralIdentifier:/,
 );
 assert.match(
   swift,
-  /nativePrepareAppleBluetoothCentralRestoration\([\s\S]*?storageRoot:[\s\S]*?centralIdentifier:/,
+  /nativePrepareAppleBluetoothRestoration\([\s\S]*?storageRoot:[\s\S]*?centralIdentifier:[\s\S]*?peripheralIdentifier:/,
 );
 assert.match(
   swift,
@@ -459,8 +430,12 @@ assert.doesNotMatch(podspec, /-lprns_app|libprns_app\.a|s\.script_phase/);
 assert.match(bindingsPod, /s\.vendored_frameworks = "ios\/prns_app\.xcframework"/);
 assert.match(bindingsPod, /s\.dependency "UbjsReactNative"/);
 assert.match(podspec, /'UIKit'/, "the lifecycle subscriber must link UIKit explicitly");
-assert.match(podspec, /'AccessorySetupKit'/, "the native module must link ASK explicitly");
-assert.match(podspec, /:ios => '18\.0'/, "the ASK native module must require iOS 18.0");
+assert.doesNotMatch(podspec, /'AccessorySetupKit'/, "ordinary Bluetooth must not link ASK");
+assert.match(
+  podspec,
+  /:ios => '18\.0'/,
+  "this migration must preserve the iOS 18.0 deployment floor",
+);
 assert.match(
   iosDeploymentPlugin,
   /withPodfileProperties[\s\S]*?\["ios\.deploymentTarget"\] = deploymentTarget/,
@@ -551,12 +526,75 @@ assert.equal(
   2,
   "simulator and physical builds must both validate compiled bundle metadata",
 );
-assert.match(
-  developmentClient,
-  /NSAccessorySetupKitSupports\.0/,
-  "CNG and built-app checks must validate the physically proven ASK support key",
-);
-assert.doesNotMatch(developmentClient, /NSAccessorySetupSupports\.0/);
+assert.match(developmentClient, /assert_bluetooth_metadata "\$\{INFO_PLIST\}"/);
+assert.match(developmentClient, /assert_bluetooth_metadata "\$\{built_info_plist\}"/);
+const bluetoothMetadataValidator = developmentClient.match(
+  /assert_bluetooth_metadata\(\) \{[\s\S]*?node -e '([\s\S]*?)'/,
+)?.[1];
+assert.ok(bluetoothMetadataValidator, "the build helper must validate ordinary Bluetooth metadata");
+const centralIdentifier = "rs.reticulum.prns.dev.bluetooth-auto.central.v1";
+const peripheralIdentifier = "rs.reticulum.prns.dev.bluetooth-auto.peripheral.v1";
+const validBluetoothMetadata = {
+  UIBackgroundModes: ["bluetooth-central", "bluetooth-peripheral"],
+  PRNSCoreBluetoothCentralRestorationIdentifier: centralIdentifier,
+  PRNSCoreBluetoothPeripheralRestorationIdentifier: peripheralIdentifier,
+};
+for (const [name, metadata, valid] of [
+  ["dual-role ordinary Bluetooth", validBluetoothMetadata, true],
+  ["missing Bluetooth metadata", {}, false],
+  [
+    "central-only background",
+    { ...validBluetoothMetadata, UIBackgroundModes: ["bluetooth-central"] },
+    false,
+  ],
+  [
+    "extra background mode",
+    {
+      ...validBluetoothMetadata,
+      UIBackgroundModes: [...validBluetoothMetadata.UIBackgroundModes, "audio"],
+    },
+    false,
+  ],
+  [
+    "wrong peripheral identifier",
+    {
+      ...validBluetoothMetadata,
+      PRNSCoreBluetoothPeripheralRestorationIdentifier: centralIdentifier,
+    },
+    false,
+  ],
+  [
+    "missing peripheral identifier",
+    { ...validBluetoothMetadata, PRNSCoreBluetoothPeripheralRestorationIdentifier: undefined },
+    false,
+  ],
+  [
+    "ASK support declared",
+    { ...validBluetoothMetadata, NSAccessorySetupKitSupports: ["Bluetooth"] },
+    false,
+  ],
+  [
+    "legacy ASK support declared",
+    { ...validBluetoothMetadata, NSAccessorySetupSupports: ["Bluetooth"] },
+    false,
+  ],
+  [
+    "ASK discovery filter declared",
+    { ...validBluetoothMetadata, NSAccessorySetupBluetoothServices: [bluetoothServiceUuid] },
+    false,
+  ],
+]) {
+  const result = spawnSync(
+    process.execPath,
+    ["-e", bluetoothMetadataValidator, centralIdentifier, peripheralIdentifier],
+    {
+      input: JSON.stringify(metadata),
+      encoding: "utf8",
+    },
+  );
+  assert.ifError(result.error);
+  assert.equal(result.status === 0, valid, `Bluetooth metadata guard: ${name}`);
+}
 assert.match(
   appConfig,
   /"expo-build-properties"[\s\S]*?enableSceneSupport: true/,

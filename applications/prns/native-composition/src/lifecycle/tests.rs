@@ -1120,24 +1120,35 @@ fn development_tcp_target_requires_an_explicit_nonzero_ip_port() {
 }
 
 #[test]
-fn apple_central_restoration_identifier_is_nonempty() {
-    assert!(AppleBluetoothPreparation::CentralOnlyRestoration {
+fn apple_restoration_identifiers_are_nonempty_bounded_and_distinct() {
+    assert!(AppleBluetoothPreparation::Restoration {
         central: "rs.reticulum.prns.dev.bluetooth-auto.central.v1".to_owned(),
+        peripheral: "rs.reticulum.prns.dev.bluetooth-auto.peripheral.v1".to_owned(),
     }
     .validate()
     .is_ok());
-    assert!(AppleBluetoothPreparation::CentralOnlyRestoration {
-        central: String::new(),
+    for (central, peripheral) in [
+        (String::new(), "peripheral".to_owned()),
+        ("central".to_owned(), String::new()),
+        ("same".to_owned(), "same".to_owned()),
+        ("x".repeat(1025), "peripheral".to_owned()),
+        ("central".to_owned(), "x".repeat(1025)),
+    ] {
+        assert!(AppleBluetoothPreparation::Restoration {
+            central,
+            peripheral
+        }
+        .validate()
+        .is_err());
     }
-    .validate()
-    .is_err());
 }
 
 fn apple_owner_key(root: &str, central: &str, identity: u8) -> AppleBluetoothOwnerKey {
     AppleBluetoothOwnerKey {
         storage_root: PathBuf::from(root),
-        preparation: AppleBluetoothPreparation::CentralOnlyRestoration {
+        preparation: AppleBluetoothPreparation::Restoration {
             central: central.to_owned(),
+            peripheral: "peripheral".to_owned(),
         },
         identity: BleIdentity::new([identity; 16]),
     }
@@ -1146,12 +1157,18 @@ fn apple_owner_key(root: &str, central: &str, identity: u8) -> AppleBluetoothOwn
 #[test]
 fn prepared_apple_bluetooth_handoff_is_exact_and_single_use() {
     let expected = apple_owner_key("/tmp/prns/development", "central", 0x41);
+    let mut different_peripheral = expected.clone();
+    different_peripheral.preparation = AppleBluetoothPreparation::Restoration {
+        central: "central".to_owned(),
+        peripheral: "different-peripheral".to_owned(),
+    };
     let mut pending = Some(PreparedAppleBluetoothOwner {
         key: expected.clone(),
         prepared: "single owner",
     });
 
     for mismatch in [
+        different_peripheral,
         apple_owner_key("/different/prns/development", "central", 0x41),
         apple_owner_key("/tmp/prns/development", "different-central", 0x41),
         apple_owner_key("/tmp/prns/development", "central", 0x42),
@@ -1189,9 +1206,10 @@ fn stop_discard_helper_drops_a_pending_apple_bluetooth_owner() {
 #[test]
 fn invalid_early_restoration_configuration_fails_before_platform_work() {
     assert_eq!(
-        prepare_apple_bluetooth_central_restoration(
+        prepare_apple_bluetooth_restoration(
             Path::new("/tmp/prns/development"),
             String::new(),
+            "peripheral".to_owned(),
         ),
         AppleBluetoothRestorationPreparationOutcome::Failed {
             stage: AppleBluetoothRestorationPreparationFailureStage::Contract,
@@ -1230,8 +1248,9 @@ fn invalid_restoration_configuration_cannot_overwrite_a_running_generation() {
         DevelopmentNodeStartInput {
             development_tcp_target: None,
         },
-        AppleBluetoothPreparation::CentralOnlyRestoration {
+        AppleBluetoothPreparation::Restoration {
             central: String::new(),
+            peripheral: "peripheral".to_owned(),
         },
     );
 

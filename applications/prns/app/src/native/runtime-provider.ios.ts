@@ -1,5 +1,5 @@
 import {
-  accessorySetupRuntime,
+  bluetoothAuthorizationRuntime,
   developmentRuntime,
   scopedDevelopmentRuntime,
 } from "@prns-internal/expo";
@@ -7,7 +7,7 @@ import type { RuntimeProvider } from "./runtime-provider.types";
 
 export const runtimeProvider: RuntimeProvider = {
   availability: { type: "available", platform: "ios" },
-  accessorySetup: accessorySetupRuntime,
+  bluetoothAuthorization: bluetoothAuthorizationRuntime,
   runtime: developmentRuntime,
   acquire: (options) =>
     scopedDevelopmentRuntime(developmentRuntime, {

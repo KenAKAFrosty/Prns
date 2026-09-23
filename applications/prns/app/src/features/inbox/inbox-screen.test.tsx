@@ -73,14 +73,11 @@ const mockContact: Contact = {
   alias: "Saved alias",
   pinned: false,
 };
-const waitingAccessorySetup: Bindings.AccessorySetupStatus = {
-  phase: "setupRequired",
-  picker: "idle",
-  authorizedAccessoryCount: 0,
+const waitingBluetoothAuthorization: Bindings.BluetoothAuthorizationStatus = {
+  authorization: "denied",
   nativeStart: "notRequested",
   restorationAttemptRequested: false,
   revision: 1,
-  lastError: null,
 };
 const mockSnapshot: DevelopmentNodeSnapshot = {
   contractFingerprint: "test-contract",
@@ -160,7 +157,7 @@ const mockListContacts = jest.fn(async () =>
 const mockContactRuntime = { listContacts: mockListContacts };
 let mockPhase: "unavailable" | "starting" | "ready" | "failed" = "ready";
 let mockActiveSnapshot: DevelopmentNodeSnapshot | null = mockSnapshot;
-let mockAccessorySetup: Bindings.AccessorySetupStatus | null = null;
+let mockBluetoothAuthorization: Bindings.BluetoothAuthorizationStatus | null = null;
 let mockLifecycleFailure: string | null = null;
 jest.mock("expo-router", () => ({
   Link: ({ children }: { readonly children: ReactNode }) => children,
@@ -171,7 +168,7 @@ jest.mock("@/native/development-runtime-context", () => ({
     availability: { type: "available", platform: "ios" },
     phase: mockPhase,
     snapshot: mockActiveSnapshot,
-    accessorySetup: mockAccessorySetup,
+    bluetoothAuthorization: mockBluetoothAuthorization,
     lifecycleFailure: mockLifecycleFailure,
     backgroundFailure: null,
     refreshSnapshot: mockRefreshSnapshot,
@@ -194,7 +191,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockPhase = "ready";
   mockActiveSnapshot = mockSnapshot;
-  mockAccessorySetup = null;
+  mockBluetoothAuthorization = null;
   mockLifecycleFailure = null;
   mockListLxmfPeers.mockResolvedValue({
     type: "outcome",
@@ -474,7 +471,7 @@ describe("durable LXMF screens", () => {
   test("loads saved conversations and contact names during cold Bluetooth authorization wait", async () => {
     mockPhase = "starting";
     mockActiveSnapshot = null;
-    mockAccessorySetup = waitingAccessorySetup;
+    mockBluetoothAuthorization = waitingBluetoothAuthorization;
     const screen = render(<InboxScreen />);
     expect(await screen.findByText("Saved alias")).toBeTruthy();
     expect(screen.getByText("Open conversation")).toBeTruthy();
@@ -493,7 +490,7 @@ describe("durable LXMF screens", () => {
   });
   test("retains actual messaging health while Bluetooth access is needed", async () => {
     mockPhase = "starting";
-    mockAccessorySetup = waitingAccessorySetup;
+    mockBluetoothAuthorization = waitingBluetoothAuthorization;
     mockActiveSnapshot = {
       ...mockSnapshot,
       lxmf: { state: Bindings.LxmfHealthState.Degraded, inboundOverflowCount: 0n },
@@ -508,7 +505,7 @@ describe("durable LXMF screens", () => {
   test("offers exact durable Retry and Cancel while waiting for Bluetooth without a native session", async () => {
     mockPhase = "starting";
     mockActiveSnapshot = null;
-    mockAccessorySetup = waitingAccessorySetup;
+    mockBluetoothAuthorization = waitingBluetoothAuthorization;
     mockListLxmfMessages.mockResolvedValue({
       type: "outcome",
       outcome: Bindings.LxmfMessageListOutcome.Listed.new({

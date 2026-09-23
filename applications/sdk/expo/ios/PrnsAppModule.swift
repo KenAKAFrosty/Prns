@@ -18,21 +18,21 @@ public final class PrnsAppModule: Module {
   public func definition() -> ModuleDefinition {
     Name("PrnsApp")
 
-    Events("onAccessorySetupStatus")
+    Events("onBluetoothAuthorizationStatus")
 
-    OnStartObserving("onAccessorySetupStatus") {
+    OnStartObserving("onBluetoothAuthorizationStatus") {
       NotificationCenter.default.addObserver(
         self,
-        selector: #selector(self.handleAccessorySetupStatus(_:)),
-        name: prnsAccessorySetupStatusDidChange,
+        selector: #selector(self.handleBluetoothAuthorizationStatus(_:)),
+        name: prnsBluetoothAuthorizationStatusDidChange,
         object: nil
       )
     }
 
-    OnStopObserving("onAccessorySetupStatus") {
+    OnStopObserving("onBluetoothAuthorizationStatus") {
       NotificationCenter.default.removeObserver(
         self,
-        name: prnsAccessorySetupStatusDidChange,
+        name: prnsBluetoothAuthorizationStatusDidChange,
         object: nil
       )
     }
@@ -57,17 +57,10 @@ public final class PrnsAppModule: Module {
       return Self.encode(nativeCreateImportedIdentity(storageRoot: path, identity: Data(identity)), FfiConverterTypeIdentityCreationOutcome.write)
     }.runOnQueue(Self.nativeQueue)
 
-    AsyncFunction("accessorySetupStatus") { (promise: Promise) in
+    AsyncFunction("bluetoothAuthorizationStatus") { (promise: Promise) in
       DispatchQueue.main.async {
-        promise.resolve(PrnsAccessorySetupCoordinator.shared.statusJSON())
-      }
-    }
-
-    AsyncFunction("showAccessorySetupPicker") { (promise: Promise) in
-      DispatchQueue.main.async {
-        PrnsAccessorySetupCoordinator.shared.showPicker { outcome in
-          promise.resolve(outcome)
-        }
+        PrnsBluetoothCoordinator.shared.refreshAuthorization()
+        promise.resolve(PrnsBluetoothCoordinator.shared.statusJSON())
       }
     }
 
@@ -75,7 +68,7 @@ public final class PrnsAppModule: Module {
       do {
         let input = try Self.validatedStartInput(Self.decodeStartInput(inputBytes))
         DispatchQueue.main.async {
-          Self.startAuthorized(input) { result in
+          Self.startNative(input) { result in
             switch result {
             case .success(let outcome):
               promise.resolve(Self.encode(outcome, FfiConverterTypeDevelopmentNodeStartOutcome.write))
@@ -106,7 +99,7 @@ public final class PrnsAppModule: Module {
     }.runOnQueue(Self.nativeQueue)
 
     // Android refreshes its foreground Bluetooth owner here. Apple's owner is
-    // already admitted by native startup and accessory authorization.
+    // already admitted by process-owned native startup.
     AsyncFunction("prepareOutbound") { () in }
 
     #if targetEnvironment(simulator)
@@ -121,21 +114,23 @@ public final class PrnsAppModule: Module {
   }
 
   @objc
-  private func handleAccessorySetupStatus(_ notification: Notification) {
+  private func handleBluetoothAuthorizationStatus(_ notification: Notification) {
     guard let status = notification.userInfo?["status"] as? String else { return }
-    sendEvent("onAccessorySetupStatus", ["status": status])
+    sendEvent("onBluetoothAuthorizationStatus", ["status": status])
   }
 
   @MainActor
-  static func startAuthorized(
+  static func startNative(
     _ input: DevelopmentNodeStartInput,
+    restorationOnly: Bool = false,
     prepareRestoration: (() throws -> Void)? = nil,
     completion: @escaping (Result<DevelopmentNodeStartOutcome, Error>) -> Void
   ) {
     let startGeneration: UInt64
     do {
       guard
-        let requestedGeneration = try PrnsAccessorySetupCoordinator.shared.requestNativeStart(
+        let requestedGeneration = try PrnsBluetoothCoordinator.shared.requestNativeStart(
+          restorationOnly: restorationOnly,
           completion
         )
       else {
@@ -149,21 +144,22 @@ public final class PrnsAppModule: Module {
     PrnsNativeStartDispatch.enqueue(
       on: nativeQueue,
       validate: {
-        try PrnsAccessorySetupCoordinator.shared.requireAuthorized(
-          startGeneration: startGeneration
+        try PrnsBluetoothCoordinator.shared.requireStartAllowed(
+          startGeneration: startGeneration,
+          restorationOnly: restorationOnly
         )
       },
       prepare: prepareRestoration,
-      start: { try startWithCentralRestoration(input) },
+      start: { try startWithBluetoothRestoration(input) },
       completion: { result in
         switch result {
         case .success(let outcome):
-          PrnsAccessorySetupCoordinator.shared.nativeStartDidFinish(
+          PrnsBluetoothCoordinator.shared.nativeStartDidFinish(
             outcome: outcome,
             startGeneration: startGeneration
           )
         case .failure(let error):
-          PrnsAccessorySetupCoordinator.shared.nativeStartDidFail(
+          PrnsBluetoothCoordinator.shared.nativeStartDidFail(
             error,
             startGeneration: startGeneration
           )
@@ -193,20 +189,24 @@ public final class PrnsAppModule: Module {
     return configured
   }
 
-  static func startWithCentralRestoration(
+  static func startWithBluetoothRestoration(
     _ input: DevelopmentNodeStartInput
   ) throws -> DevelopmentNodeStartOutcome {
-    nativeStartWithAppleBluetoothCentralRestoration(
+    let identifiers = try restorationIdentifiers()
+    return nativeStartWithAppleBluetoothRestoration(
       storageRoot: try developmentStorageURL(create: true).path,
       input: input,
-      centralIdentifier: try restorationIdentifier()
+      centralIdentifier: identifiers.central,
+      peripheralIdentifier: identifiers.peripheral
     )
   }
 
-  static func prepareBluetoothCentralRestoration() throws -> AppleBluetoothRestorationPreparationOutcome {
-    nativePrepareAppleBluetoothCentralRestoration(
+  static func prepareBluetoothRestoration() throws -> AppleBluetoothRestorationPreparationOutcome {
+    let identifiers = try restorationIdentifiers()
+    return nativePrepareAppleBluetoothRestoration(
       storageRoot: try restorationStorageURL().path,
-      centralIdentifier: try restorationIdentifier()
+      centralIdentifier: identifiers.central,
+      peripheralIdentifier: identifiers.peripheral
     )
   }
 
@@ -230,15 +230,23 @@ public final class PrnsAppModule: Module {
     return input
   }
 
-  static func restorationIdentifier() throws -> String {
+  static func restorationIdentifiers() throws -> (central: String, peripheral: String) {
     let centralKey = "PRNSCoreBluetoothCentralRestorationIdentifier"
+    let peripheralKey = "PRNSCoreBluetoothPeripheralRestorationIdentifier"
     guard
       let central = Bundle.main.object(forInfoDictionaryKey: centralKey) as? String,
       !central.isEmpty
     else {
       throw PrnsAppException("The app is missing its central Bluetooth restoration identifier.")
     }
-    return central
+    guard
+      let peripheral = Bundle.main.object(forInfoDictionaryKey: peripheralKey) as? String,
+      !peripheral.isEmpty,
+      peripheral != central
+    else {
+      throw PrnsAppException("The app is missing a distinct peripheral Bluetooth restoration identifier.")
+    }
+    return (central, peripheral)
   }
 
   static func developmentStorageURL(create: Bool) throws -> URL {
@@ -367,13 +375,13 @@ public final class PrnsAppModule: Module {
   private static func beginNativeStop() {
     DispatchQueue.main.sync {
       PrnsAppLifecycleCoordinator.shared.nativeStopWillBegin(application: .shared)
-      PrnsAccessorySetupCoordinator.shared.nativeStopWillBegin()
+      PrnsBluetoothCoordinator.shared.nativeStopWillBegin()
     }
   }
 
   private static func finishNativeStop(_ outcome: DevelopmentNodeStopOutcome) {
     DispatchQueue.main.sync {
-      PrnsAccessorySetupCoordinator.shared.nativeStopDidFinish(outcome: outcome)
+      PrnsBluetoothCoordinator.shared.nativeStopDidFinish(outcome: outcome)
     }
   }
 
@@ -409,9 +417,10 @@ public final class PrnsAppModule: Module {
     let identity = nativeCreateGeneratedIdentity(storageRoot: path)
     guard case .created = identity else { throw PrnsAppException("Identity creation failed.") }
     for _ in 1...2 {
-      let started = nativeStartWithAppleBluetoothCentralRestoration(
+      let started = nativeStartWithAppleBluetoothRestoration(
           storageRoot: path, input: configuredStartInput(),
-          centralIdentifier: "rs.reticulum.prns.smoke.bluetooth-auto.central.v1"
+          centralIdentifier: "rs.reticulum.prns.smoke.bluetooth-auto.central.v1",
+          peripheralIdentifier: "rs.reticulum.prns.smoke.bluetooth-auto.peripheral.v1"
         )
       guard case .started(let owner) = started else { throw PrnsAppException("Native start failed.") }
       let first = try simulatorSnapshot()
@@ -424,9 +433,10 @@ public final class PrnsAppModule: Module {
     }
     let bluetoothIdentity = storageURL.appendingPathComponent("identities/bluetooth-auto.identity")
     try Data(repeating: 0, count: 40).write(to: bluetoothIdentity)
-    let failedStart = nativeStartWithAppleBluetoothCentralRestoration(
+    let failedStart = nativeStartWithAppleBluetoothRestoration(
         storageRoot: path, input: configuredStartInput(),
-        centralIdentifier: "rs.reticulum.prns.smoke.bluetooth-auto.central.v1"
+        centralIdentifier: "rs.reticulum.prns.smoke.bluetooth-auto.central.v1",
+        peripheralIdentifier: "rs.reticulum.prns.smoke.bluetooth-auto.peripheral.v1"
       )
     guard case .failed(stage: .identity, detail: _) = failedStart else {
       throw PrnsAppException("Malformed identity did not fail native start.")

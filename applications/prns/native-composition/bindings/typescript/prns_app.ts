@@ -736,12 +736,13 @@ export function nativeInspectIdentity(storageRoot: string): PrimaryIdentityState
 /**
  * Platform lifecycle queue only; does not start a JavaScript-owned node.
  */
-export function nativePrepareAppleBluetoothCentralRestoration(storageRoot: string, centralIdentifier: string): AppleBluetoothRestorationPreparationOutcome {
+export function nativePrepareAppleBluetoothRestoration(storageRoot: string, centralIdentifier: string, peripheralIdentifier: string): AppleBluetoothRestorationPreparationOutcome {
     const __rb: Uint8Array = uniffiCaller.rustCall(
             /*caller:*/ (callStatus) => {
-                return nativeModule().uniffi_prns_app_fn_func_native_prepare_apple_bluetooth_central_restoration(
+                return nativeModule().uniffi_prns_app_fn_func_native_prepare_apple_bluetooth_restoration(
         FfiConverterString.lower(storageRoot, nativeModule().rustbuffer_alloc),
         FfiConverterString.lower(centralIdentifier, nativeModule().rustbuffer_alloc),
+        FfiConverterString.lower(peripheralIdentifier, nativeModule().rustbuffer_alloc),
                 callStatus);
             },
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
@@ -815,13 +816,14 @@ export function nativeStart(storageRoot: string, input: DevelopmentNodeStartInpu
 /**
  * Platform lifecycle queue only, preserving native-before-JavaScript restoration.
  */
-export function nativeStartWithAppleBluetoothCentralRestoration(storageRoot: string, input: DevelopmentNodeStartInput, centralIdentifier: string): DevelopmentNodeStartOutcome {
+export function nativeStartWithAppleBluetoothRestoration(storageRoot: string, input: DevelopmentNodeStartInput, centralIdentifier: string, peripheralIdentifier: string): DevelopmentNodeStartOutcome {
     const __rb: Uint8Array = uniffiCaller.rustCall(
             /*caller:*/ (callStatus) => {
-                return nativeModule().uniffi_prns_app_fn_func_native_start_with_apple_bluetooth_central_restoration(
+                return nativeModule().uniffi_prns_app_fn_func_native_start_with_apple_bluetooth_restoration(
         FfiConverterString.lower(storageRoot, nativeModule().rustbuffer_alloc),
         FfiConverterTypeDevelopmentNodeStartInput.lower(input, nativeModule().rustbuffer_alloc),
         FfiConverterString.lower(centralIdentifier, nativeModule().rustbuffer_alloc),
+        FfiConverterString.lower(peripheralIdentifier, nativeModule().rustbuffer_alloc),
                 callStatus);
             },
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
@@ -14275,8 +14277,8 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_prns_app_checksum_func_native_inspect_identity() !== 53957) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_native_inspect_identity");
     }
-    if (nativeModule().uniffi_prns_app_checksum_func_native_prepare_apple_bluetooth_central_restoration() !== 26457) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_native_prepare_apple_bluetooth_central_restoration");
+    if (nativeModule().uniffi_prns_app_checksum_func_native_prepare_apple_bluetooth_restoration() !== 61093) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_native_prepare_apple_bluetooth_restoration");
     }
     if (nativeModule().uniffi_prns_app_checksum_func_native_prepare_storage() !== 45669) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_native_prepare_storage");
@@ -14287,8 +14289,8 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_prns_app_checksum_func_native_start() !== 57447) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_native_start");
     }
-    if (nativeModule().uniffi_prns_app_checksum_func_native_start_with_apple_bluetooth_central_restoration() !== 30569) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_native_start_with_apple_bluetooth_central_restoration");
+    if (nativeModule().uniffi_prns_app_checksum_func_native_start_with_apple_bluetooth_restoration() !== 54820) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_native_start_with_apple_bluetooth_restoration");
     }
     if (nativeModule().uniffi_prns_app_checksum_func_native_stop() !== 41536) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_native_stop");

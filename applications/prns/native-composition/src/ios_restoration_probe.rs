@@ -158,7 +158,7 @@ mod enabled {
                     })
                 {
                     // These existing log sites run after control_send/control_recv.
-                    // For this app's central-only role, Hello follows completion of
+                    // For a central-role session, Hello follows completion of
                     // the acknowledged write, not completion of the peer handshake.
                     return Some(code);
                 }

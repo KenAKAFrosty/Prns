@@ -682,7 +682,7 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_prns_app_checksum_func_native_inspect_identity(
     ): Int
-    external fun uniffi_prns_app_checksum_func_native_prepare_apple_bluetooth_central_restoration(
+    external fun uniffi_prns_app_checksum_func_native_prepare_apple_bluetooth_restoration(
     ): Int
     external fun uniffi_prns_app_checksum_func_native_prepare_storage(
     ): Int
@@ -690,7 +690,7 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_prns_app_checksum_func_native_start(
     ): Int
-    external fun uniffi_prns_app_checksum_func_native_start_with_apple_bluetooth_central_restoration(
+    external fun uniffi_prns_app_checksum_func_native_start_with_apple_bluetooth_restoration(
     ): Int
     external fun uniffi_prns_app_checksum_func_native_stop(
     ): Int
@@ -767,7 +767,7 @@ internal object UniffiLib {
     ): RustBuffer.ByValue
     external fun uniffi_prns_app_fn_func_native_inspect_identity(`storageRoot`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
     ): RustBuffer.ByValue
-    external fun uniffi_prns_app_fn_func_native_prepare_apple_bluetooth_central_restoration(`storageRoot`: RustBuffer.ByValue,`centralIdentifier`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    external fun uniffi_prns_app_fn_func_native_prepare_apple_bluetooth_restoration(`storageRoot`: RustBuffer.ByValue,`centralIdentifier`: RustBuffer.ByValue,`peripheralIdentifier`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
     ): RustBuffer.ByValue
     external fun uniffi_prns_app_fn_func_native_prepare_storage(`storageRoot`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
     ): RustBuffer.ByValue
@@ -775,7 +775,7 @@ internal object UniffiLib {
     ): RustBuffer.ByValue
     external fun uniffi_prns_app_fn_func_native_start(`storageRoot`: RustBuffer.ByValue,`input`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
     ): RustBuffer.ByValue
-    external fun uniffi_prns_app_fn_func_native_start_with_apple_bluetooth_central_restoration(`storageRoot`: RustBuffer.ByValue,`input`: RustBuffer.ByValue,`centralIdentifier`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+    external fun uniffi_prns_app_fn_func_native_start_with_apple_bluetooth_restoration(`storageRoot`: RustBuffer.ByValue,`input`: RustBuffer.ByValue,`centralIdentifier`: RustBuffer.ByValue,`peripheralIdentifier`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
     ): RustBuffer.ByValue
     external fun uniffi_prns_app_fn_func_native_stop(uniffi_out_err: UniffiRustCallStatus,
     ): RustBuffer.ByValue
@@ -978,7 +978,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_prns_app_checksum_func_native_inspect_identity() != 53957) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_prns_app_checksum_func_native_prepare_apple_bluetooth_central_restoration() != 26457) {
+    if (lib.uniffi_prns_app_checksum_func_native_prepare_apple_bluetooth_restoration() != 61093) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_prns_app_checksum_func_native_prepare_storage() != 45669) {
@@ -990,7 +990,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_prns_app_checksum_func_native_start() != 57447) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_prns_app_checksum_func_native_start_with_apple_bluetooth_central_restoration() != 30569) {
+    if (lib.uniffi_prns_app_checksum_func_native_start_with_apple_bluetooth_restoration() != 54820) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_prns_app_checksum_func_native_stop() != 41536) {
@@ -11159,12 +11159,12 @@ public typealias FfiConverterTypeSnapshotBox = FfiConverterTypeDevelopmentNodeSn
 
         /**
          * Platform lifecycle queue only; does not start a JavaScript-owned node.
-         */ fun `nativePrepareAppleBluetoothCentralRestoration`(`storageRoot`: kotlin.String, `centralIdentifier`: kotlin.String): AppleBluetoothRestorationPreparationOutcome {
+         */ fun `nativePrepareAppleBluetoothRestoration`(`storageRoot`: kotlin.String, `centralIdentifier`: kotlin.String, `peripheralIdentifier`: kotlin.String): AppleBluetoothRestorationPreparationOutcome {
             return FfiConverterTypeAppleBluetoothRestorationPreparationOutcome.lift(
     uniffiRustCall() { _status ->
-    UniffiLib.uniffi_prns_app_fn_func_native_prepare_apple_bluetooth_central_restoration(
+    UniffiLib.uniffi_prns_app_fn_func_native_prepare_apple_bluetooth_restoration(
 
-        FfiConverterString.lower(`storageRoot`),FfiConverterString.lower(`centralIdentifier`),_status)
+        FfiConverterString.lower(`storageRoot`),FfiConverterString.lower(`centralIdentifier`),FfiConverterString.lower(`peripheralIdentifier`),_status)
 }
     )
     }
@@ -11212,12 +11212,12 @@ public typealias FfiConverterTypeSnapshotBox = FfiConverterTypeDevelopmentNodeSn
 
         /**
          * Platform lifecycle queue only, preserving native-before-JavaScript restoration.
-         */ fun `nativeStartWithAppleBluetoothCentralRestoration`(`storageRoot`: kotlin.String, `input`: DevelopmentNodeStartInput, `centralIdentifier`: kotlin.String): DevelopmentNodeStartOutcome {
+         */ fun `nativeStartWithAppleBluetoothRestoration`(`storageRoot`: kotlin.String, `input`: DevelopmentNodeStartInput, `centralIdentifier`: kotlin.String, `peripheralIdentifier`: kotlin.String): DevelopmentNodeStartOutcome {
             return FfiConverterTypeDevelopmentNodeStartOutcome.lift(
     uniffiRustCall() { _status ->
-    UniffiLib.uniffi_prns_app_fn_func_native_start_with_apple_bluetooth_central_restoration(
+    UniffiLib.uniffi_prns_app_fn_func_native_start_with_apple_bluetooth_restoration(
 
-        FfiConverterString.lower(`storageRoot`),FfiConverterTypeDevelopmentNodeStartInput.lower(`input`),FfiConverterString.lower(`centralIdentifier`),_status)
+        FfiConverterString.lower(`storageRoot`),FfiConverterTypeDevelopmentNodeStartInput.lower(`input`),FfiConverterString.lower(`centralIdentifier`),FfiConverterString.lower(`peripheralIdentifier`),_status)
 }
     )
     }

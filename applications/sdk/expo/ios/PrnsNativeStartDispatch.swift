@@ -1,6 +1,6 @@
 import Foundation
 
-/// Queue work only: startup authority and generation remain with the accessory
+/// Queue work only: startup authority and generation remain with the Bluetooth
 /// coordinator. Restoration is scheduled directly by native launch, before JS.
 enum PrnsNativeStartDispatch {
   static func enqueue<Output>(

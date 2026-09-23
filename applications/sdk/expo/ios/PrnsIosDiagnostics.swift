@@ -19,19 +19,6 @@ enum PrnsIosDiagnostics {
     case startBridgeFailed
   }
 
-  enum AccessorySetupPhase: String {
-    case activating
-    case failed
-    case ready
-    case setupRequired
-  }
-
-  enum AccessoryPickerPhase: String {
-    case idle
-    case presented
-    case presenting
-  }
-
   enum NativeStartPhase: String {
     case failed
     case notRequested
@@ -90,7 +77,7 @@ enum PrnsIosDiagnostics {
 
   private enum Channel: String {
     case lifecycle = "PRNS_IOS_LIFECYCLE"
-    case accessorySetup = "PRNS_IOS_ASK"
+    case bluetoothAuthorization = "PRNS_IOS_BLUETOOTH"
     case restoration = "PRNS_IOS_RESTORATION"
   }
 
@@ -148,17 +135,14 @@ enum PrnsIosDiagnostics {
     emit(.lifecycle, message)
   }
 
-  static func accessorySetup(
-    phase: AccessorySetupPhase,
-    picker: AccessoryPickerPhase,
-    authorizedCount: Int,
+  static func bluetoothAuthorization(
+    authorization: PrnsBluetoothAuthorization,
     nativeStart: NativeStartPhase,
     restorationAttempt: Bool
   ) {
-    let nonnegativeAuthorizedCount = max(0, authorizedCount)
     emit(
-      .accessorySetup,
-      "phase=\(phase.rawValue) picker=\(picker.rawValue) authorized=\(nonnegativeAuthorizedCount) "
+      .bluetoothAuthorization,
+      "authorization=\(authorization.rawValue) "
         + "nativeStart=\(nativeStart.rawValue) restorationAttempt=\(restorationAttempt)"
     )
   }

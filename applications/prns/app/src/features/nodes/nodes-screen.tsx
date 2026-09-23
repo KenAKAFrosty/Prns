@@ -20,6 +20,7 @@ import {
 } from "@/ui/primitives";
 import { formatBytes, formatRuntime } from "./format";
 import { AndroidBluetoothCard } from "./android-bluetooth-card";
+import { IosBluetoothCard } from "./ios-bluetooth-card";
 import { AndroidNodeControls } from "./android-node-controls";
 
 export function NodesScreen() {
@@ -124,26 +125,7 @@ export function NodesScreen() {
       </Card>
 
       <AndroidBluetoothCard />
-
-      {runtime.accessorySetup?.phase === "setupRequired" ? (
-        <Card>
-          <Subheading>Bluetooth access needed</Subheading>
-          <Badge tone="warning">Connection access required</Badge>
-          <BodyText>
-            Allow a nearby Reticulum Bluetooth node before this device starts searching or
-            reconnecting.
-          </BodyText>
-          <NavigationLink href="/nodes/pair">Set up Bluetooth</NavigationLink>
-        </Card>
-      ) : null}
-
-      {runtime.accessorySetup?.phase === "failed" || runtime.accessorySetupFailure !== null ? (
-        <Card>
-          <Subheading>Bluetooth access unavailable</Subheading>
-          <Badge tone="warning">Relaunch required</Badge>
-          <BodyText>Relaunch prns to check Bluetooth access again.</BodyText>
-        </Card>
-      ) : null}
+      <IosBluetoothCard />
 
       {runtime.phase === "unavailable" ? (
         <Card>
@@ -153,7 +135,7 @@ export function NodesScreen() {
         </Card>
       ) : null}
 
-      {runtime.phase === "starting" && runtime.accessorySetup?.phase !== "setupRequired" ? (
+      {runtime.phase === "starting" ? (
         <Card>
           <Subheading>Getting ready</Subheading>
           <Badge>Starting</Badge>
@@ -174,6 +156,7 @@ export function LocalNodeScreen() {
       <ScreenHeading>This device</ScreenHeading>
       <NodeRecoveryCard />
       <AndroidNodeControls />
+      <IosBluetoothCard />
       {runtime.snapshot === null ? (
         <Card>
           <Badge tone={runtime.phase === "failed" ? "warning" : "neutral"}>{runtime.phase}</Badge>
@@ -197,10 +180,8 @@ function NodeRecoveryCard({
   const runtime = useDevelopmentRuntime();
   const stopped = runtime.snapshot?.runtime === Bindings.DevelopmentNodeRuntime.Stopped;
   const failed =
-    (runtime.phase === "failed" ||
-      runtime.snapshot?.runtime === Bindings.DevelopmentNodeRuntime.Failed) &&
-    runtime.accessorySetup?.phase !== "failed" &&
-    runtime.accessorySetupFailure === null;
+    runtime.phase === "failed" ||
+    runtime.snapshot?.runtime === Bindings.DevelopmentNodeRuntime.Failed;
   if (!stopped && !failed) return null;
   return (
     <Card>

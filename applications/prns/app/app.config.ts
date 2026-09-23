@@ -13,8 +13,6 @@ const variants = {
   },
 } as const;
 
-const prnsBluetoothServiceUuid = "37145B00-442D-4A94-917F-8F42C5DA28E3";
-
 type AppVariant = keyof typeof variants;
 
 function selectedVariant(value: string | undefined): AppVariant {
@@ -58,15 +56,11 @@ export default ({ config }: ConfigContext): ExpoConfig => {
         ...(developmentTcpTarget ? { PRNSDevelopmentTcpTarget: developmentTcpTarget } : {}),
         NSBluetoothAlwaysUsageDescription:
           "prns uses Bluetooth to connect to nearby Reticulum nodes.",
-        // Bluetooth Auto advertises its experimental role marker under company
-        // 0xFFFF. Declare it for ASK; discovery still requires our service UUID.
-        NSAccessorySetupBluetoothCompanyIdentifiers: ["FFFF"],
-        NSAccessorySetupBluetoothServices: [prnsBluetoothServiceUuid],
-        NSAccessorySetupKitSupports: ["Bluetooth"],
         NSLocalNetworkUsageDescription:
           "prns uses the local network for an explicitly configured development LXMF peer.",
         PRNSCoreBluetoothCentralRestorationIdentifier: `${bluetoothRestorationPrefix}.central.v1`,
-        UIBackgroundModes: ["bluetooth-central"],
+        PRNSCoreBluetoothPeripheralRestorationIdentifier: `${bluetoothRestorationPrefix}.peripheral.v1`,
+        UIBackgroundModes: ["bluetooth-central", "bluetooth-peripheral"],
       },
       supportsTablet: true,
     },

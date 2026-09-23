@@ -30,22 +30,21 @@ records completed cold Retry admission, iOS preparation-queue and connection-che
 lifetime fixes, plus the constrained firmware footprint correction. Physical
 observations remain tied to their recorded builds.
 
-## Proposed next priority: usable on-phone nodes and a two-phone demo
+## Current priority: usable on-phone nodes and a two-phone demo
 
 The [two-phone demo plan](phone-node-demo.md) promotes existing local-node,
 Contacts/Discovered and interface-management requirements into one observable
 journey: connect MetalbeardMobile and Galaxy S9+, announce distinct messaging
 names, save contacts, exchange LXMF messages over automatic, pair-free BLE,
-and inspect how the network is communicating. The design review changes no app
-behavior and does not authorize implementation.
+and inspect how the network is communicating. Ordinary CoreBluetooth feasibility
+was approved September 23; the remaining UX/inspection slices are still planned.
 
 Start with phone-to-phone Bluetooth feasibility without OS bonding or a per-peer
 accessory picker, and truthful connection states. Then finish announce/discovery/
 contact UX and bounded network inspection and device qualification. TCP is deferred.
 Preserve native background ownership; record foreground success separately from
-locked/background acceptance. The current central-only iOS composition does not
-provide direct iPhone-to-iPhone BLE. The revised plan evaluates ordinary
-CoreBluetooth permission/dual-role operation instead of the current per-accessory
+locked/background acceptance. The iOS composition now selects ordinary
+CoreBluetooth permission/dual-role operation instead of the per-accessory
 authorization model, without treating that change as already qualified. It records
 the distinction between app-level Bluetooth permission, messaging discovery and remote
 board-control pairing.

@@ -21,8 +21,8 @@ type LandingRuntime = Pick<
   | "availability"
   | "phase"
   | "snapshot"
-  | "accessorySetup"
-  | "accessorySetupFailure"
+  | "bluetoothAuthorization"
+  | "bluetoothAuthorizationFailure"
   | "backgroundFailure"
   | "androidRuntime"
   | "canStartNode"
@@ -76,8 +76,8 @@ beforeEach(() => {
     availability: { type: "available", platform: "android" },
     phase: "ready",
     snapshot: snapshot(),
-    accessorySetup: null,
-    accessorySetupFailure: null,
+    bluetoothAuthorization: null,
+    bluetoothAuthorizationFailure: null,
     backgroundFailure: null,
     androidRuntime: {
       status: {

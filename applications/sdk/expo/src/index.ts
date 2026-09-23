@@ -1,7 +1,7 @@
 import { createDevelopmentRuntime } from "./facade";
-import { createAccessorySetupRuntime } from "./accessory-setup";
+import { createBluetoothAuthorizationRuntime } from "./bluetooth-authorization";
 import { createAndroidRuntime } from "./android-runtime";
-import { getNativePrnsApp, nativeAccessorySetup, nativeAndroidRuntime } from "./native";
+import { getNativePrnsApp, nativeBluetoothAuthorization, nativeAndroidRuntime } from "./native";
 
 export {
   createAndroidRuntime,
@@ -11,13 +11,11 @@ export {
 } from "./android-runtime";
 
 export {
-  createAccessorySetupRuntime,
-  parseAccessorySetupStatus,
-  type AccessorySetupPickerOutcome,
-  type AccessorySetupRuntime,
-  type AccessorySetupStatus,
-  type AccessorySetupSubscription,
-} from "./accessory-setup";
+  createBluetoothAuthorizationRuntime,
+  parseBluetoothAuthorizationStatus,
+  type BluetoothAuthorizationRuntime,
+  type BluetoothAuthorizationStatus,
+} from "./bluetooth-authorization";
 export {
   NativeContractMismatchError,
   NativeStoragePreparationError,
@@ -39,7 +37,9 @@ export {
 export { NativePayloadError } from "./native-payload";
 
 export const developmentRuntime = createDevelopmentRuntime(getNativePrnsApp);
-export const accessorySetupRuntime = createAccessorySetupRuntime(nativeAccessorySetup);
+export const bluetoothAuthorizationRuntime = createBluetoothAuthorizationRuntime(
+  nativeBluetoothAuthorization,
+);
 export const androidRuntime = createAndroidRuntime(nativeAndroidRuntime);
 
 export const {

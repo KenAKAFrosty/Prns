@@ -1,10 +1,11 @@
 # Two-phone local-node demo plan
 
-Status: proposed next product slice, narrowed to BLE-only and automatic,
-unpaired peer discovery after review of `22be8b94c` on September 22, 2026.
-This is a design plan, not implemented behavior or permission to begin
-implementation. Both test phones were visible over USB during the review; no
-pairing, announces, messages, installs or connection settings were changed.
+Status: ordinary CoreBluetooth feasibility implementation approved September 23,
+2026. The remaining messaging UX and network-inspection slices are planned, not
+implemented. The user accepts losing ASK's extra force-quit relaunch support to
+make the phone usable as its own node, without a board or per-peer authorization.
+Control Center Bluetooth-toggle recovery is another documented ASK difference;
+physical results must record it separately from ordinary background operation.
 
 ## Outcome
 
@@ -31,11 +32,11 @@ The existing foundation is useful; this is not a messaging-engine rewrite.
 
 | Area | What exists | Gap for the demo |
 | --- | --- | --- |
-| Local node | One process-owned Rust runtime and stable primary identity | iOS startup currently depends on per-accessory authorization rather than ordinary app-level Bluetooth permission |
+| Local node | One process-owned Rust runtime and stable primary identity; ordinary iOS Bluetooth admission | New permission/start path needs retained-data and physical lifecycle qualification |
 | Announcing | Inbox → Messaging options → Share messaging address calls the real LXMF announce API | Hidden, ambiguous label; hardcoded name `prns`; no useful connection/outcome context |
 | Discovery | Authenticated LXMF announce observer and latest-per-destination peer cache | Peers appear as empty Inbox conversations; no dedicated discovered-contacts or announce view; cache lacks expiry/cap |
 | Contacts | Saved/manual contacts and Save as contact in local diagnostics | No direct discovery-to-contact-to-message journey; generic destinations are not necessarily messaging addresses |
-| Bluetooth | iOS central-only; Android scans and advertises | No useful local connection controls or physical-peer view; generic Disconnected label |
+| Bluetooth | iOS now selects the existing dual-role backend; Android scans and advertises | New iOS path needs physical qualification; local connection controls and physical-peer views remain incomplete |
 | TCP (deferred) | Optional developer TCP client fixture | Not part of this milestone |
 | Inspection | Logical interfaces, counters, routes and identity associations | Raw labels/IDs/times; physical peers are folded away; current route is not historical message evidence |
 
@@ -45,7 +46,7 @@ Source anchors: [Inbox](../prns/app/src/features/inbox/inbox-screen.native.tsx),
 [native composition](../prns/native-composition/src/lifecycle.rs),
 [LXMF peer owner](../services/lxmf/src/direct.rs),
 [durable messaging owner](../services/lxmf/src/mailbox.rs), and
-[iOS admission](../sdk/expo/ios/PrnsAccessorySetupCoordinator.swift).
+[iOS admission](../sdk/expo/ios/PrnsBluetoothCoordinator.swift).
 
 The historical local `scratch/prns-app/product-and-ux.md` already called
 for Saved/Discovered contacts, local-node-first navigation, local interfaces and
@@ -71,7 +72,7 @@ ordinary GATT permissions; the backend deliberately avoids central-initiated
 L2CAP where that would trigger bonding. Prefer the existing GATT path for this
 demo, not encrypted-GATT requirements that introduce new system pairing prompts.
 
-The recommended design investigation is ordinary CoreBluetooth authorization
+The approved feasibility implementation uses ordinary CoreBluetooth authorization
 instead of AccessorySetupKit for the app's general-purpose AutoBLE interface.
 Apple's [two-device sample](https://developer.apple.com/documentation/corebluetooth/transferring-data-between-bluetooth-low-energy-devices)
 demonstrates service-filtered discovery, automatic connection and bidirectional
@@ -80,12 +81,12 @@ phone-only protocol. For the mixed pair, iOS as central and Android advertising
 is the preferred role arrangement; central/peripheral roles remain internal.
 
 This requires a new app configuration/admission path, not merely hiding the
-picker. The current installed app still uses AccessorySetupKit and central-only
-Bluetooth. The [iOS guide](ios.md) records a historical abort when constructing a
+picker. Installation and acceptance of this new path must be recorded separately
+from earlier ASK binaries. The [iOS guide](ios.md) records a historical abort when constructing a
 peripheral manager with AccessorySetupKit active; it does not establish that
 ordinary non-ASK dual-role CoreBluetooth is impossible. The public
 `AutoBle::prepare_with_restoration` API already supports both managers, with
-stable app-owned restoration identifiers. Re-evaluate that path without ASK;
+stable app-owned restoration identifiers. Qualify that path without ASK;
 do not disable restoration or propose an unverified runtime toggle between
 incompatible permission modes. Core role selection permits iOS-to-iOS GATT too,
 but this has not been qualified with two physical iPhones.
@@ -237,9 +238,9 @@ the corresponding attempt/result. Otherwise label it as session-only and show
 Not recorded for older messages. Do not reconstruct missing history from current
 routes or counters.
 
-## Ordered implementation slices, after approval
+## Ordered implementation slices
 
-1. **Pair-free connection feasibility and status.** After implementation approval,
+1. **Pair-free connection feasibility and status (approved, in progress).**
    qualify ordinary CoreBluetooth permissions and existing Prns AutoBLE roles
    without ASK. Capture exact builds and show that neither phone needs a bond,
    per-peer chooser or RemoteControl grant. Include permission denial, readiness,

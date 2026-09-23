@@ -7,7 +7,6 @@ const appRoot = fileURLToPath(new URL("..", import.meta.url));
 const bluetoothUsageDescription = "prns uses Bluetooth to connect to nearby Reticulum nodes.";
 const localNetworkUsageDescription =
   "prns uses the local network for an explicitly configured development LXMF peer.";
-const prnsBluetoothServiceUuid = "37145B00-442D-4A94-917F-8F42C5DA28E3";
 
 function fail(message: string): never {
   throw new Error(`config:check: ${message}`);
@@ -74,8 +73,11 @@ function assertVariant(
   if (infoPlist.PRNSCoreBluetoothCentralRestorationIdentifier !== expectedCentral) {
     fail(`${variant}.ios.infoPlist must contain its exact central restoration identifier`);
   }
-  if ("PRNSCoreBluetoothPeripheralRestorationIdentifier" in infoPlist) {
-    fail(`${variant}.ios.infoPlist must not declare a peripheral restoration identifier`);
+  if (
+    infoPlist.PRNSCoreBluetoothPeripheralRestorationIdentifier !==
+    `${expected.identifier}.bluetooth-auto.peripheral.v1`
+  ) {
+    fail(`${variant}.ios.infoPlist must contain its exact peripheral restoration identifier`);
   }
   const scenePlugins = Array.isArray(config.plugins)
     ? config.plugins.filter(
@@ -92,34 +94,19 @@ function assertVariant(
   ) {
     fail(`${variant} must enable Expo's scene lifecycle support`);
   }
-  if (
-    !Array.isArray(infoPlist.NSAccessorySetupBluetoothCompanyIdentifiers) ||
-    infoPlist.NSAccessorySetupBluetoothCompanyIdentifiers.length !== 1 ||
-    infoPlist.NSAccessorySetupBluetoothCompanyIdentifiers[0] !== "FFFF"
-  ) {
-    fail(`${variant}.ios.infoPlist must declare the Bluetooth Auto manufacturer identifier`);
-  }
-  if (
-    !Array.isArray(infoPlist.NSAccessorySetupBluetoothServices) ||
-    infoPlist.NSAccessorySetupBluetoothServices.length !== 1 ||
-    infoPlist.NSAccessorySetupBluetoothServices[0] !== prnsBluetoothServiceUuid
-  ) {
-    fail(`${variant}.ios.infoPlist must declare the exact ASK Bluetooth service UUID`);
-  }
-  if (
-    !Array.isArray(infoPlist.NSAccessorySetupKitSupports) ||
-    infoPlist.NSAccessorySetupKitSupports.length !== 1 ||
-    infoPlist.NSAccessorySetupKitSupports[0] !== "Bluetooth"
-  ) {
-    fail(`${variant}.ios.infoPlist must declare ASK Bluetooth support`);
+  if (Object.keys(infoPlist).some((key) => key.startsWith("NSAccessorySetup"))) {
+    fail(
+      `${variant}.ios.infoPlist must use ordinary Bluetooth authorization, not accessory-only access`,
+    );
   }
   const backgroundModes = infoPlist.UIBackgroundModes;
   if (
     !Array.isArray(backgroundModes) ||
-    backgroundModes.length !== 1 ||
-    backgroundModes[0] !== "bluetooth-central"
+    backgroundModes.length !== 2 ||
+    !backgroundModes.includes("bluetooth-central") ||
+    !backgroundModes.includes("bluetooth-peripheral")
   ) {
-    fail(`${variant}.ios.infoPlist must declare only the central Bluetooth background mode`);
+    fail(`${variant}.ios.infoPlist must declare central and peripheral Bluetooth background modes`);
   }
   if (android.allowBackup !== false) {
     fail(`${variant}.android must disable backups of disposable development state`);
@@ -168,5 +155,5 @@ if (invalid.status === 0) {
 }
 
 console.log(
-  "config:check: variant coordinates, ASK declarations, and Android runtime policy are exact",
+  "config:check: variant coordinates, dual-role Bluetooth restoration, and Android runtime policy are exact",
 );

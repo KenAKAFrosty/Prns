@@ -29,6 +29,22 @@ try {
   );
   execFileSync(recoveryTestExecutable, [], { stdio: "inherit" });
 
+  const authorizationTestExecutable = resolve(recoveryTestDirectory, "authorization-tests");
+  execFileSync(
+    "xcrun",
+    [
+      "swiftc",
+      "-warnings-as-errors",
+      resolve(packageRoot, "ios/PrnsBluetoothAuthorization.swift"),
+      resolve(packageRoot, "ios/PrnsRestorationDispatch.swift"),
+      resolve(packageRoot, "scripts/PrnsBluetoothAuthorizationTests.swift"),
+      "-o",
+      authorizationTestExecutable,
+    ],
+    { stdio: "inherit" },
+  );
+  execFileSync(authorizationTestExecutable, [], { stdio: "inherit" });
+
   const dispatchTestExecutable = resolve(recoveryTestDirectory, "start-dispatch-tests");
   execFileSync(
     "xcrun",
@@ -52,6 +68,7 @@ try {
       "swiftc",
       "-D",
       "DEBUG",
+      resolve(packageRoot, "ios/PrnsBluetoothAuthorization.swift"),
       resolve(packageRoot, "ios/PrnsIosDiagnostics.swift"),
       probeSource,
       resolve(packageRoot, "scripts/PrnsAppRestorationProbeTests.swift"),
@@ -73,7 +90,7 @@ try {
     probeLines,
     [
       "PRNS_IOS_LIFECYCLE launch restorationAttempt=true protectedData=false",
-      "PRNS_IOS_ASK phase=ready picker=idle authorized=1 nativeStart=running restorationAttempt=true",
+      "PRNS_IOS_BLUETOOTH authorization=allowedAlways nativeStart=running restorationAttempt=true",
       "PRNS_IOS_LIFECYCLE prepare outcome=prepared stage=none",
       "PRNS_IOS_LIFECYCLE start outcome=failed stage=runtime",
       "PRNS_IOS_LIFECYCLE prepare outcome=unknown stage=unknown",
@@ -107,13 +124,14 @@ try {
     /prns_app_ios_restoration_probe_emit|prnsAppIosRestorationProbeEmit/,
     "non-Debug compilation must omit the diagnostic callback entirely",
   );
-  const releaseDiagnosticsObject = resolve(recoveryTestDirectory, "diagnostics-release.o");
+  const releaseDiagnosticsObject = resolve(recoveryTestDirectory, "diagnostics-release.dylib");
   execFileSync(
     "xcrun",
     [
       "swiftc",
       "-parse-as-library",
-      "-emit-object",
+      "-emit-library",
+      resolve(packageRoot, "ios/PrnsBluetoothAuthorization.swift"),
       resolve(packageRoot, "ios/PrnsIosDiagnostics.swift"),
       "-o",
       releaseDiagnosticsObject,
@@ -133,5 +151,5 @@ try {
 }
 
 console.log(
-  "ios:test: Swift startup dispatch, recovery, restoration diagnostics and release-symbol checks passed",
+  "ios:test: Swift authorization, startup dispatch, recovery, restoration diagnostics and release-symbol checks passed",
 );

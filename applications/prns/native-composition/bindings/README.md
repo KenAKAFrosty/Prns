@@ -51,7 +51,7 @@ The execution boundary is:
   Expo as owned byte arrays using the generated UniFFI codecs, without a
   handwritten domain model or field-by-field mapping.
 - `prepareOutbound` retains the platform preflight before outbound work.
-  Accessory setup, permissions and platform status events remain native concerns.
+  Bluetooth authorization, permissions and platform status events remain native concerns.
 
 The synchronous generated `native*` functions are for Swift/Kotlin background
 or lifecycle queues only. They can perform storage I/O or wait for Start/Stop;
