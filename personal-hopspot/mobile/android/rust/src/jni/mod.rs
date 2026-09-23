@@ -1,4 +1,5 @@
 mod bluetooth_auto;
+mod discovery_groups;
 mod face;
 mod usb;
 mod wifi_auto;

@@ -488,6 +488,7 @@ pub(super) const ALL_SETTING_KEYS: &[&str] = &[
     interface_key::ANNOUNCES_TO_INTERNAL,
     interface_key::IGNORE_CONFIG_WARNINGS,
     interface_key::GROUP_ID,
+    interface_key::GROUP_IDS,
     interface_key::DISCOVERY_SCOPE,
     interface_key::DISCOVERY_PORT,
     interface_key::DATA_PORT,
