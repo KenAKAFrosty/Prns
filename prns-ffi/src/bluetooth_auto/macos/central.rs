@@ -1796,6 +1796,17 @@ impl CentralDelegate {
         true
     }
 
+    pub(super) fn has_session(&self, peer_id: CoreBluetoothPeerId) -> bool {
+        self.ivars().sessions.borrow().contains_key(&peer_id)
+    }
+
+    pub(super) fn note_stale_cancellation(&self, peer_id: CoreBluetoothPeerId) {
+        self.ivars()
+            .discovery_guard
+            .borrow_mut()
+            .record_stale_cancellation(peer_id, Instant::now());
+    }
+
     /// Queue-confined restored-event handoff for the async backend.
     pub(super) fn offer_restored(&self) -> Option<CoreBluetoothPeerId> {
         if !self.ivars().radio_enabled.load(Ordering::Acquire) {
@@ -1937,17 +1948,6 @@ impl CentralDelegate {
                 cancel_system_connection(central, peer_id, &peripheral.0);
             }
         }
-    }
-
-    pub(super) fn has_session(&self, peer_id: CoreBluetoothPeerId) -> bool {
-        self.ivars().sessions.borrow().contains_key(&peer_id)
-    }
-
-    pub(super) fn note_stale_cancellation(&self, peer_id: CoreBluetoothPeerId) {
-        self.ivars()
-            .discovery_guard
-            .borrow_mut()
-            .record_stale_cancellation(peer_id, Instant::now());
     }
 
     pub(super) fn submit_write(
