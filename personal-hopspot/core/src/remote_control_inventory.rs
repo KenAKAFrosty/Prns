@@ -2,7 +2,9 @@ use core::fmt::Write as _;
 
 use personal_rns::interfaces::bluetooth_auto::BleIdentity;
 use personal_rns::interfaces::lora::RadioProfile;
-use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot, Membership};
+use personal_rns::interfaces::{
+    DiscoveryGroupSet, InterfaceId, InterfaceKind, InterfaceSnapshot, Membership,
+};
 use personal_rns::remote_control::{
     wifi_station_inventory_config, RemoteControlBuildVersion, RemoteControlBuildVersionLabelError,
     RemoteControlInterfaceCard, RemoteControlInterfaceCardError,
@@ -150,11 +152,11 @@ pub fn remote_control_interface_peers_from_snapshots(
     Ok(RemoteControlInterfacePeersOutcome::Page(page))
 }
 
-/// Shared Hopspot name, LoRa tune, Auto Wi-Fi SSID, and BLE group labels for one config card.
+/// Shared Hopspot name, LoRa tune, Auto Wi-Fi SSID, and compatibility group label for one card.
 pub fn decorate_hopspot_remote_control_card(
     snapshot: &InterfaceSnapshot,
     card: &mut RemoteControlInterfaceCard,
-    ble_group: Option<&str>,
+    discovery_group: Option<&str>,
     lora_profile: Option<RadioProfile>,
     wifi_ssid: Option<&str>,
     ble_identity: Option<BleIdentity>,
@@ -183,12 +185,23 @@ pub fn decorate_hopspot_remote_control_card(
             .map_err(|_| RemoteControlInterfaceCardError::ConfigTooLong)?;
         card.set_config(config.as_str())?;
     }
-    if kind == InterfaceKind::BluetoothAuto {
-        if let Some(group) = ble_group.filter(|group| !group.is_empty()) {
+    if matches!(kind, InterfaceKind::BluetoothAuto | InterfaceKind::AutoWifi) {
+        if let Some(group) = discovery_group.filter(|group| !group.is_empty()) {
             card.set_group(group)?;
         }
     }
     Ok(())
+}
+
+/// Compatibility inventory has room for one group only. A multi-group interface deliberately
+/// leaves that legacy field empty; callers retrieve the complete set through the plural operation.
+#[must_use]
+pub fn singleton_discovery_group(groups: &DiscoveryGroupSet) -> Option<&str> {
+    if groups.len() == 1 {
+        groups.iter().next().map(|group| group.as_str())
+    } else {
+        None
+    }
 }
 
 fn reject_duplicate_snapshot_ids(
@@ -398,7 +411,7 @@ mod tests {
                     decorate_hopspot_remote_control_card(
                         snapshot,
                         card,
-                        None,
+                        Some("reticulum"),
                         None,
                         Some("field-lab"),
                         None,
@@ -408,6 +421,7 @@ mod tests {
         else {
             panic!("Auto Wi-Fi supervisor should return a config card");
         };
+        assert_eq!(card.group.as_str(), "reticulum");
         assert_eq!(card.config.as_str(), "W,field-lab");
         assert!(!card.config.as_str().contains("secret"));
     }
@@ -627,5 +641,21 @@ mod tests {
             RemoteControlResponse::InventoryInterfaces(second).encoded_len()
                 <= MAX_RESPOND_DATA_LEN
         );
+    }
+
+    #[test]
+    fn legacy_group_inventory_is_truthful_for_single_and_multi_group_interfaces() {
+        let singleton = DiscoveryGroupSet::try_from_slice(&[
+            personal_rns::interfaces::DiscoveryGroupId::parse("field").unwrap(),
+        ])
+        .unwrap();
+        assert_eq!(singleton_discovery_group(&singleton), Some("field"));
+
+        let multiple = DiscoveryGroupSet::try_from_slice(&[
+            personal_rns::interfaces::DiscoveryGroupId::parse("field").unwrap(),
+            personal_rns::interfaces::DiscoveryGroupId::parse("relay").unwrap(),
+        ])
+        .unwrap();
+        assert_eq!(singleton_discovery_group(&multiple), None);
     }
 }

@@ -191,6 +191,7 @@ fn test_ui_state() -> UiState {
         access_point: AccessPointState::Unsupported,
         shared_instance_config_export: SharedInstanceConfigExport::Unavailable,
         gnss: super::GnssAvailability::Unavailable,
+        discovery_groups: super::DiscoveryGroupEditorAvailability::Unavailable,
     })
 }
 
@@ -201,6 +202,7 @@ fn test_ui_state_with_display_power() -> UiState {
         access_point: AccessPointState::Unsupported,
         shared_instance_config_export: SharedInstanceConfigExport::Unavailable,
         gnss: super::GnssAvailability::Unavailable,
+        discovery_groups: super::DiscoveryGroupEditorAvailability::Unavailable,
     })
 }
 
@@ -211,6 +213,7 @@ fn test_ui_state_with_access_point(access_point: AccessPointState) -> UiState {
         access_point,
         shared_instance_config_export: SharedInstanceConfigExport::Unavailable,
         gnss: super::GnssAvailability::Unavailable,
+        discovery_groups: super::DiscoveryGroupEditorAvailability::Unavailable,
     })
 }
 
@@ -221,6 +224,7 @@ fn test_ui_state_with_shared_instance_config() -> UiState {
         access_point: AccessPointState::Unsupported,
         shared_instance_config_export: SharedInstanceConfigExport::Available,
         gnss: super::GnssAvailability::Unavailable,
+        discovery_groups: super::DiscoveryGroupEditorAvailability::Unavailable,
     })
 }
 
@@ -231,6 +235,7 @@ fn test_ui_state_with_gnss() -> UiState {
         access_point: AccessPointState::Unsupported,
         shared_instance_config_export: SharedInstanceConfigExport::Unavailable,
         gnss: GnssAvailability::Available,
+        discovery_groups: super::DiscoveryGroupEditorAvailability::Unavailable,
     })
 }
 
@@ -249,6 +254,7 @@ fn has_on_pixel(
     false
 }
 
+mod groups;
 mod limits;
 mod model;
 mod render;

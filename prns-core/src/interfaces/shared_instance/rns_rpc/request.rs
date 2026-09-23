@@ -1,4 +1,5 @@
 use alloc::string::String;
+use alloc::vec;
 use alloc::vec::Vec;
 
 use rmp::decode::{read_marker, Bytes, RmpRead};

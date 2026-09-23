@@ -20,4 +20,4 @@ pub(crate) use host::ResumableHost;
 pub use interface_seam::EmbassyInterfaceSeam;
 pub use interface_status::EmbassyInterfaceStatus;
 pub(crate) use pooled_topology::run_pooled;
-pub use pooled_topology::{InterfaceLifecycle, PooledWiring};
+pub use pooled_topology::{InterfaceLifecycle, PooledWiring, RNS_PATH_TABLE_RESPONSE_BYTES};

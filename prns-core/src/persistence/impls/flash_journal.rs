@@ -83,6 +83,7 @@ pub enum FlashJournalRecordKind {
     SelfRatchet = 4,
     RemoteControlControllerGrants = 5,
     RemoteControlTargetAccesses = 6,
+    DiscoveryGroupConfigurations = 7,
 }
 
 impl FlashJournalRecordKind {
@@ -94,6 +95,7 @@ impl FlashJournalRecordKind {
             4 => Some(Self::SelfRatchet),
             5 => Some(Self::RemoteControlControllerGrants),
             6 => Some(Self::RemoteControlTargetAccesses),
+            7 => Some(Self::DiscoveryGroupConfigurations),
             _ => None,
         }
     }
@@ -135,6 +137,7 @@ pub enum FlashJournalError<E> {
     NoCompaction,
     PayloadTooLarge,
     ScratchTooShort,
+    VerificationFailed,
 }
 
 struct ArenaState {
@@ -774,18 +777,21 @@ async fn write_record<F: NorFlash>(
     if at < arena.start || end > arena.end {
         return Err(FlashJournalError::ArenaFull);
     }
-    let mut header = AlignedHeader([0xFF; HEADER_LEN]);
-    header.0[..4].copy_from_slice(&MAGIC);
-    header.0[4..6].copy_from_slice(&SCHEMA_VERSION.to_le_bytes());
-    header.0[6..8].copy_from_slice(&(kind as u16).to_le_bytes());
-    header.0[8..16].copy_from_slice(&epoch.to_le_bytes());
-    header.0[16..20].copy_from_slice(&payload_len.to_le_bytes());
-    let checksum = record_checksum(&header.0[..CHECKSUM_PREFIX_LEN], payload);
-    header.0[20..24].copy_from_slice(&checksum.to_le_bytes());
-    flash
-        .write(at, &header.0[..COMMIT_OFFSET])
-        .await
-        .map_err(FlashJournalError::Flash)?;
+    let checksum = {
+        let mut header = AlignedHeader([0xFF; HEADER_LEN]);
+        header.0[..4].copy_from_slice(&MAGIC);
+        header.0[4..6].copy_from_slice(&SCHEMA_VERSION.to_le_bytes());
+        header.0[6..8].copy_from_slice(&(kind as u16).to_le_bytes());
+        header.0[8..16].copy_from_slice(&epoch.to_le_bytes());
+        header.0[16..20].copy_from_slice(&payload_len.to_le_bytes());
+        let checksum = record_checksum(&header.0[..CHECKSUM_PREFIX_LEN], payload);
+        header.0[20..24].copy_from_slice(&checksum.to_le_bytes());
+        flash
+            .write(at, &header.0[..COMMIT_OFFSET])
+            .await
+            .map_err(FlashJournalError::Flash)?;
+        checksum
+    };
     let mut payload_at = at + HEADER_LEN as u32;
     let mut remaining = payload;
     while !remaining.is_empty() {
@@ -805,12 +811,78 @@ async fn write_record<F: NorFlash>(
         payload_at += write_len as u32;
         remaining = &remaining[take..];
     }
+
+    // Verify the complete uncommitted record before making it visible. A driver accepting a write
+    // is not proof that the flash cells hold the requested bytes; the commit word is deliberately
+    // last so a torn or misprogrammed record remains unavailable during replay.
+    {
+        let mut header = AlignedHeader([0u8; HEADER_LEN]);
+        flash
+            .read(at, &mut header.0)
+            .await
+            .map_err(FlashJournalError::Flash)?;
+        if !header_matches_record(&header.0, epoch, kind, payload_len, checksum, false) {
+            return Err(FlashJournalError::VerificationFailed);
+        }
+    }
+    let mut payload_at = at + HEADER_LEN as u32;
+    let mut remaining = payload;
+    while !remaining.is_empty() {
+        let take = remaining.len().min(IO_CHUNK_LEN);
+        let read_len = align_up(take, F::READ_SIZE).ok_or(FlashJournalError::PayloadTooLarge)?;
+        let mut chunk = AlignedIo([0u8; IO_CHUNK_LEN]);
+        flash
+            .read(payload_at, &mut chunk.0[..read_len])
+            .await
+            .map_err(FlashJournalError::Flash)?;
+        if chunk.0[..take] != remaining[..take]
+            || chunk.0[take..read_len].iter().any(|byte| *byte != 0xFF)
+        {
+            return Err(FlashJournalError::VerificationFailed);
+        }
+        payload_at += read_len as u32;
+        remaining = &remaining[take..];
+    }
+
     let commit = AlignedCommit(COMMIT_WORD.to_le_bytes());
     flash
         .write(at + COMMIT_OFFSET as u32, &commit.0)
         .await
         .map_err(FlashJournalError::Flash)?;
+    {
+        let mut header = AlignedHeader([0u8; HEADER_LEN]);
+        flash
+            .read(at, &mut header.0)
+            .await
+            .map_err(FlashJournalError::Flash)?;
+        if !header_matches_record(&header.0, epoch, kind, payload_len, checksum, true) {
+            return Err(FlashJournalError::VerificationFailed);
+        }
+    }
     Ok(end)
+}
+
+fn header_matches_record(
+    bytes: &[u8; HEADER_LEN],
+    epoch: u64,
+    kind: FlashJournalRecordKind,
+    payload_len: u32,
+    checksum: u32,
+    committed: bool,
+) -> bool {
+    let expected_commit = if committed {
+        COMMIT_WORD.to_le_bytes()
+    } else {
+        [0xFF; 4]
+    };
+    bytes[..4] == MAGIC
+        && bytes[4..6] == SCHEMA_VERSION.to_le_bytes()
+        && bytes[6..8] == (kind as u16).to_le_bytes()
+        && bytes[8..16] == epoch.to_le_bytes()
+        && bytes[16..20] == payload_len.to_le_bytes()
+        && bytes[20..24] == checksum.to_le_bytes()
+        && bytes[24..COMMIT_OFFSET].iter().all(|byte| *byte == 0xFF)
+        && bytes[COMMIT_OFFSET..HEADER_LEN] == expected_commit
 }
 
 fn record_end<F: NorFlash>(at: u32, payload_len: usize) -> Option<u32> {
@@ -1023,6 +1095,7 @@ mod tests {
         bytes: [u8; CAPACITY],
         operation: usize,
         fail_at: Option<usize>,
+        corrupt_at: Option<usize>,
     }
 
     impl FakeFlash {
@@ -1031,6 +1104,7 @@ mod tests {
                 bytes: [0xFF; CAPACITY],
                 operation: 0,
                 fail_at: None,
+                corrupt_at: None,
             }
         }
 
@@ -1084,6 +1158,15 @@ mod tests {
             self.interrupt()?;
             for (slot, byte) in self.bytes[start..end].iter_mut().zip(bytes) {
                 *slot &= *byte;
+            }
+            if self.corrupt_at == Some(self.operation) {
+                if let Some((slot, intended)) = self.bytes[start..end]
+                    .iter_mut()
+                    .zip(bytes)
+                    .find(|(_, intended)| **intended != 0xFF)
+                {
+                    *slot |= 1 << (!*intended).trailing_zeros();
+                }
             }
             Ok(())
         }
@@ -1183,6 +1266,7 @@ mod tests {
                     bytes: [0xFF; CAPACITY],
                     operation: 0,
                     fail_at: Some(failed_operation),
+                    corrupt_at: None,
                 };
                 let (mut journal, _, _) = open(flash).await;
                 assert_eq!(
@@ -1211,6 +1295,7 @@ mod tests {
                     bytes: baseline.bytes,
                     operation: 0,
                     fail_at: Some(failed_operation),
+                    corrupt_at: None,
                 };
                 let (mut journal, _, _) = open(flash).await;
                 let result = journal
@@ -1222,6 +1307,44 @@ mod tests {
                     Err(FlashJournalError::Flash(FakeError::Interrupted))
                 );
                 let (_, report, records) = open(flash).await;
+                assert_eq!(report.warning, None);
+                assert_eq!(
+                    records,
+                    vec![(FlashJournalRecordKind::RouteUpsert, b"prior".to_vec())]
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn every_silently_corrupted_append_write_is_refused_before_success() {
+        embassy_futures::block_on(async {
+            let (mut baseline, _, _) = open(FakeFlash::new()).await;
+            baseline.initialize_empty().await.unwrap();
+            baseline
+                .append(FlashJournalRecordKind::RouteUpsert, b"prior")
+                .await
+                .unwrap();
+            let baseline = baseline.release();
+
+            // Header, payload, and commit are three distinct programming operations. A driver may
+            // report success even when a cell did not program, so each boundary must be caught by
+            // read-back verification and remain unavailable to replay.
+            for corrupted_operation in 1..=3 {
+                let flash = FakeFlash {
+                    bytes: baseline.bytes,
+                    operation: 0,
+                    fail_at: None,
+                    corrupt_at: Some(corrupted_operation),
+                };
+                let (mut journal, _, _) = open(flash).await;
+                assert_eq!(
+                    journal
+                        .append(FlashJournalRecordKind::RouteUpsert, b"candidate")
+                        .await,
+                    Err(FlashJournalError::VerificationFailed)
+                );
+                let (_, report, records) = open(journal.release()).await;
                 assert_eq!(report.warning, None);
                 assert_eq!(
                     records,
@@ -1246,6 +1369,7 @@ mod tests {
                     bytes: baseline.bytes,
                     operation: 0,
                     fail_at: Some(failed_operation),
+                    corrupt_at: None,
                 };
                 let (mut journal, _, _) = open(flash).await;
                 let mut interrupted = false;
@@ -1321,6 +1445,7 @@ mod tests {
                     bytes: baseline.bytes,
                     operation: 0,
                     fail_at: Some(failed_operation),
+                    corrupt_at: None,
                 };
                 let (mut journal, _, _) = open(flash).await;
                 for sector in 0..journal.inactive_sector_count() {
@@ -1585,6 +1710,7 @@ mod tests {
                     bytes: baseline.bytes,
                     operation: 0,
                     fail_at: Some(failed_operation),
+                    corrupt_at: None,
                 };
                 let (mut journal, _, _) = open(flash).await;
                 assert_eq!(

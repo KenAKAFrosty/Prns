@@ -10,7 +10,6 @@ use crate::engine::{
     InstantMillis, RespondFailure, RespondRejection, SendResourceFailure, SendResourceRejection,
 };
 use crate::identity::IdentityHash;
-#[cfg(feature = "tracing")]
 use crate::remote_control::RemoteControlControllerGrantTable;
 use crate::routing::links::request::RequestId;
 use crate::routing::links::LinkId;
@@ -30,7 +29,9 @@ use super::remote_control_pairing_persistence::{
     RemoteControlAuthorizationPersistenceFailure, RemoteControlPairingPersistenceReceiver,
 };
 use super::remote_control_target_accesses::RemoteControlTargetAccessReceiver;
-use super::request_endpoints::{dispatch_request, Decline, InboundRequest, RequestEndpointSet};
+use super::request_endpoints::{
+    dispatch_request, Decline, InboundRequest, RequestEndpointPolicy, RequestEndpointSet,
+};
 use super::request_endpoints::{ResponseCapacityExceeded, ResponseSink};
 use super::AssembledRemoteControl;
 
@@ -80,7 +81,7 @@ struct PreparedRunnerRequest {
     route: PreparedRequestRoute,
 }
 
-fn prepare_request(
+fn prepare_request<St, R: RequestEndpointSet<St>>(
     remote_control: &mut AssembledRemoteControl,
     request: RunnerRequest,
 ) -> PreparedRunnerRequest {
@@ -108,6 +109,19 @@ fn prepare_request(
                 );
                 PreparedRequestRoute::Declined(error.into())
             }
+        }
+    } else if R::REGISTRATIONS.iter().any(|(path, policy)| {
+        RequestPathHash::of(path) == request.path_hash
+            && *policy == RequestEndpointPolicy::AllowRemoteControlControllers
+    }) {
+        let authorized = request.requester.is_some_and(|requester| {
+            remote_control
+                .controller_grants()
+                .is_some_and(|grants| grants.contains_controller(&requester))
+        });
+        match authorized {
+            true => PreparedRequestRoute::Application,
+            false => PreparedRequestRoute::Declined(Decline::Ignore),
         }
     } else {
         PreparedRequestRoute::Application
@@ -252,7 +266,7 @@ where
                             response_lanes.insert(request.link_id, Arc::downgrade(&lane));
                             lane
                         });
-                    let request = prepare_request(remote_control, request);
+                    let request = prepare_request::<St, R>(remote_control, request);
                     in_flight.push(dispatch_guarded::<St, R>(
                         state,
                         &commands,
@@ -507,6 +521,76 @@ mod tests {
         }
     }
 
+    struct ControllerRequestEndpointSet;
+
+    impl RequestEndpointSet<crate::runtime::NoRemoteControlHostControls>
+        for ControllerRequestEndpointSet
+    {
+        const REGISTRATIONS: &'static [(&'static str, RequestEndpointPolicy)] = &[(
+            "/controller",
+            RequestEndpointPolicy::AllowRemoteControlControllers,
+        )];
+
+        async fn dispatch(
+            _context: RequestContext<'_, crate::runtime::NoRemoteControlHostControls>,
+            _node: &impl crate::runtime::PrnsNodeApi,
+            _path_hash: RequestPathHash,
+        ) -> Result<(), Decline> {
+            Err(Decline::Ignore)
+        }
+    }
+
+    #[test]
+    fn controller_routes_follow_the_live_grant_table() {
+        use crate::remote_control::{
+            RemoteControlControllerAuthority, RemoteControlControllerGrant, RemoteControlRequestSet,
+        };
+
+        let mut remote_control = remote_control();
+        let controller = controller(0x41);
+        let request = || RunnerRequest {
+            destination: DestinationHash::new([0x5a; 16]),
+            link_id: LinkId::new([1; 16]),
+            request_id: RequestId([2; 16]),
+            requester: Some(controller.identity_hash()),
+            path_hash: RequestPathHash::of("/controller"),
+            requested_at: InstantMillis(3),
+            rtt: RttMillis::new(4),
+            data: std::vec::Vec::new(),
+        };
+        assert!(matches!(
+            prepare_request::<
+                crate::runtime::NoRemoteControlHostControls,
+                ControllerRequestEndpointSet,
+            >(&mut remote_control, request()),
+            PreparedRunnerRequest {
+                route: PreparedRequestRoute::Declined(Decline::Ignore),
+                ..
+            }
+        ));
+
+        remote_control
+            .set_controller_grant(
+                RemoteControlControllerGrant::new(
+                    controller,
+                    RemoteControlControllerAuthority::Operator,
+                    RemoteControlRequestSet::all_operator(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        assert!(matches!(
+            prepare_request::<
+                crate::runtime::NoRemoteControlHostControls,
+                ControllerRequestEndpointSet,
+            >(&mut remote_control, request()),
+            PreparedRunnerRequest {
+                route: PreparedRequestRoute::Application,
+                ..
+            }
+        ));
+    }
+
     #[test]
     fn static_file_sink_preserves_filename_and_borrowed_bytes() {
         static FILE: [u8; 32] = [0x42; 32];
@@ -556,7 +640,10 @@ mod tests {
         dispatch_guarded::<crate::runtime::NoRemoteControlHostControls, PanickingRequestEndpointSet>(
             &crate::runtime::NoRemoteControlHostControls,
             &handle,
-            prepare_request(
+            prepare_request::<
+                crate::runtime::NoRemoteControlHostControls,
+                PanickingRequestEndpointSet,
+            >(
                 &mut remote_control,
                 RunnerRequest {
                     destination: DestinationHash::new([0x33; 16]),
@@ -608,7 +695,7 @@ mod tests {
         >(
             &crate::runtime::NoRemoteControlHostControls,
             &handle,
-            prepare_request(
+            prepare_request::<crate::runtime::NoRemoteControlHostControls, PongRequestEndpointSet>(
                 &mut remote_control,
                 RunnerRequest {
                     destination: DestinationHash::new([0x33; 16]),

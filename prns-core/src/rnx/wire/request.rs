@@ -1,10 +1,8 @@
 use core::str;
 
-use rmp::Marker;
-
 use super::core::validate_request_ref;
 use super::{RnxCodecError, RnxField};
-use crate::message_pack::{MessagePackInteger, MessagePackReader};
+use crate::message_pack::{Marker, MessagePackInteger, MessagePackReader};
 use crate::rnx::{
     ExecutionRequestRef, MAX_COMMAND_BYTES, MAX_EXECUTION_REQUEST_BYTES, MAX_STDIN_BYTES,
 };
