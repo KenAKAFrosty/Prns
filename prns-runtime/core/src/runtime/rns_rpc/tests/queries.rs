@@ -89,6 +89,7 @@ async fn bitrate_timing_queries_use_online_eligible_interfaces_in_both_dialects(
             last_route_activity_at: prns_core::engine::InstantMillis(0),
             expires_at: prns_core::engine::InstantMillis(u64::MAX),
             interface: selected,
+            retention: prns_core::routing::RouteRetention::Network,
         }],
         timing: vec![
             InterfaceTimingSnapshot {

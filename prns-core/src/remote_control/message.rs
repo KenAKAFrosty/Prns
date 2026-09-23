@@ -5,8 +5,9 @@ use crate::wire::TRUNCATED_HASH_BYTE_LEN;
 
 use super::inventory::{
     parse_controller_public_keys, RemoteControlAuthorizeControllerOutcome,
-    RemoteControlBuildVersion, RemoteControlControllerInventory, RemoteControlGroupOutcome,
-    RemoteControlInterfaceConfigOutcome, RemoteControlInterfaceGroup,
+    RemoteControlBuildVersion, RemoteControlControllerInventory, RemoteControlDiscoveryGroups,
+    RemoteControlDiscoveryGroupsInventoryOutcome, RemoteControlDiscoveryGroupsReplaceOutcome,
+    RemoteControlGroupOutcome, RemoteControlInterfaceConfigOutcome, RemoteControlInterfaceGroup,
     RemoteControlInterfaceInventory, RemoteControlInterfacePeersOutcome,
     RemoteControlInterfacePower, RemoteControlLoRaOutcome, RemoteControlLoRaProfile,
     RemoteControlModeOutcome, RemoteControlPowerOutcome, RemoteControlRevokeControllerOutcome,
@@ -29,7 +30,9 @@ const MESSAGE_HEADER_ENCODED_LEN: usize = 2;
 const DESCRIPTION_COUNT_ENCODED_LEN: usize = 1;
 const PROTOCOL_ERROR_KIND_ENCODED_LEN: usize = 1;
 const PROTOCOL_ERROR_DETAIL_ENCODED_LEN: usize = 1;
-const REQUEST_KIND_BITMAP_LEN: usize = 32;
+// V1 request kinds occupy the contiguous wire range 0x01..=0x1e. Unknown values are rejected
+// before a request can enter this typed set, so four bytes represent the complete domain.
+const REQUEST_KIND_BITMAP_LEN: usize = 4;
 
 prns_macros::iterable_enum! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,6 +85,8 @@ prns_macros::iterable_enum! {
         ConfirmWifiCredentials = 0x1A,
         CancelWifiCredentials = 0x1B,
         InspectWifiTransaction = 0x1C,
+        InventoryInterfaceDiscoveryGroups = 0x1D,
+        ReplaceInterfaceDiscoveryGroups = 0x1E,
     }
 }
 
@@ -196,9 +201,33 @@ impl RemoteControlRequestKind {
                 RemoteControlWifiTransactionStatus::MAX_ENCODED_LEN,
                 RemoteControlProtocolError::MAX_ENCODED_BODY_LEN,
             )),
+            Self::InventoryInterfaceDiscoveryGroups => {
+                MESSAGE_HEADER_ENCODED_LEN.saturating_add(maximum(
+                    RemoteControlDiscoveryGroupsInventoryOutcome::MAX_ENCODED_LEN,
+                    RemoteControlProtocolError::MAX_ENCODED_BODY_LEN,
+                ))
+            }
+            Self::ReplaceInterfaceDiscoveryGroups => {
+                MESSAGE_HEADER_ENCODED_LEN.saturating_add(maximum(
+                    RemoteControlDiscoveryGroupsReplaceOutcome::ENCODED_LEN,
+                    RemoteControlProtocolError::MAX_ENCODED_BODY_LEN,
+                ))
+            }
         }
     }
 }
+
+#[allow(clippy::indexing_slicing)]
+const _: () = {
+    let mut index = 0;
+    while index < RemoteControlRequestKind::ALL.len() {
+        assert!(
+            (RemoteControlRequestKind::ALL[index] as usize >> 3) < REQUEST_KIND_BITMAP_LEN,
+            "every typed request kind must fit the request-set bitmap"
+        );
+        index += 1;
+    }
+};
 
 prns_macros::iterable_enum! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -232,6 +261,8 @@ prns_macros::iterable_enum! {
         ConfirmWifiCredentials = 0x1A,
         CancelWifiCredentials = 0x1B,
         InspectWifiTransaction = 0x1C,
+        InventoryInterfaceDiscoveryGroups = 0x1D,
+        ReplaceInterfaceDiscoveryGroups = 0x1E,
         ProtocolError = 0xFF,
     }
 }
@@ -322,6 +353,13 @@ pub enum RemoteControlRequest {
         id: InterfaceId,
         group: RemoteControlInterfaceGroup,
     },
+    InventoryInterfaceDiscoveryGroups {
+        id: InterfaceId,
+    },
+    ReplaceInterfaceDiscoveryGroups {
+        id: InterfaceId,
+        groups: RemoteControlDiscoveryGroups,
+    },
     InventoryInterfacePeers {
         id: InterfaceId,
         page: RemoteControlPeerPage,
@@ -386,13 +424,14 @@ pub enum RemoteControlRequest {
 }
 
 impl RemoteControlRequest {
-    pub const MAX_ENCODED_LEN: usize = MESSAGE_HEADER_ENCODED_LEN.saturating_add(
+    pub const MAX_ENCODED_LEN: usize = MESSAGE_HEADER_ENCODED_LEN.saturating_add(maximum(
         INTERFACE_ID_LEN
             .saturating_add(1)
             .saturating_add(REMOTE_CONTROL_WIFI_SSID_CAP)
             .saturating_add(1)
             .saturating_add(REMOTE_CONTROL_WIFI_PASSWORD_CAP),
-    );
+        INTERFACE_ID_LEN.saturating_add(RemoteControlDiscoveryGroups::MAX_ENCODED_BODY_LEN),
+    ));
 
     #[must_use]
     pub const fn kind(&self) -> RemoteControlRequestKind {
@@ -403,6 +442,12 @@ impl RemoteControlRequest {
             Self::SetInterfacePower { .. } => RemoteControlRequestKind::SetInterfacePower,
             Self::SetInterfaceMode { .. } => RemoteControlRequestKind::SetInterfaceMode,
             Self::SetInterfaceGroup { .. } => RemoteControlRequestKind::SetInterfaceGroup,
+            Self::InventoryInterfaceDiscoveryGroups { .. } => {
+                RemoteControlRequestKind::InventoryInterfaceDiscoveryGroups
+            }
+            Self::ReplaceInterfaceDiscoveryGroups { .. } => {
+                RemoteControlRequestKind::ReplaceInterfaceDiscoveryGroups
+            }
             Self::InventoryInterfacePeers { .. } => {
                 RemoteControlRequestKind::InventoryInterfacePeers
             }
@@ -477,6 +522,11 @@ impl RemoteControlRequest {
             Self::InventoryInterfaceConfig { .. } => {
                 MESSAGE_HEADER_ENCODED_LEN.saturating_add(INTERFACE_ID_LEN)
             }
+            Self::InventoryInterfaceDiscoveryGroups { .. } => {
+                MESSAGE_HEADER_ENCODED_LEN.saturating_add(INTERFACE_ID_LEN)
+            }
+            Self::ReplaceInterfaceDiscoveryGroups { groups, .. } => MESSAGE_HEADER_ENCODED_LEN
+                .saturating_add(INTERFACE_ID_LEN.saturating_add(groups.encoded_body_len())),
             Self::SetInterfaceGroup { group, .. } => MESSAGE_HEADER_ENCODED_LEN
                 .saturating_add(INTERFACE_ID_LEN.saturating_add(group.encoded_body_len())),
             Self::SetInterfaceLoRaProfile { profile, .. } => MESSAGE_HEADER_ENCODED_LEN
@@ -552,6 +602,12 @@ impl RemoteControlRequest {
             RemoteControlRequestKind::SetInterfacePower => parse_set_interface_power(body),
             RemoteControlRequestKind::SetInterfaceMode => parse_set_interface_mode(body),
             RemoteControlRequestKind::SetInterfaceGroup => parse_set_interface_group(body),
+            RemoteControlRequestKind::InventoryInterfaceDiscoveryGroups => {
+                parse_inventory_interface_discovery_groups(body)
+            }
+            RemoteControlRequestKind::ReplaceInterfaceDiscoveryGroups => {
+                parse_replace_interface_discovery_groups(body)
+            }
             RemoteControlRequestKind::InventoryInterfacePeers => {
                 parse_inventory_interface_peers(body)
             }
@@ -607,6 +663,16 @@ impl RemoteControlRequest {
             }
             Self::SetInterfaceGroup { id, group } => {
                 write_interface_id_and_group(body, *id, *group)?;
+            }
+            Self::InventoryInterfaceDiscoveryGroups { id } => {
+                write_interface_id(body, *id)?;
+            }
+            Self::ReplaceInterfaceDiscoveryGroups { id, groups } => {
+                let Some((id_out, groups_out)) = body.split_at_mut_checked(INTERFACE_ID_LEN) else {
+                    return Err(RemoteControlMessageWriteError::BufferTooShort);
+                };
+                id_out.copy_from_slice(id.as_bytes());
+                groups.write_body(groups_out)?;
             }
             Self::InventoryInterfacePeers { id, page } => {
                 let Some((id_out, page_out)) = body.split_at_mut_checked(INTERFACE_ID_LEN) else {
@@ -852,6 +918,42 @@ fn parse_set_interface_group(
     Ok(RemoteControlRequest::SetInterfaceGroup {
         id: InterfaceId::new(id),
         group,
+    })
+}
+
+fn parse_inventory_interface_discovery_groups(
+    body: &[u8],
+) -> Result<RemoteControlRequest, RemoteControlRequestParseError> {
+    if body.len() != INTERFACE_ID_LEN {
+        return Err(if body.is_empty() {
+            RemoteControlRequestParseError::Truncated
+        } else {
+            RemoteControlRequestParseError::Malformed
+        });
+    }
+    let mut id = [0u8; INTERFACE_ID_LEN];
+    id.copy_from_slice(body);
+    Ok(RemoteControlRequest::InventoryInterfaceDiscoveryGroups {
+        id: InterfaceId::new(id),
+    })
+}
+
+fn parse_replace_interface_discovery_groups(
+    body: &[u8],
+) -> Result<RemoteControlRequest, RemoteControlRequestParseError> {
+    let Some((id_bytes, groups_bytes)) = body.split_at_checked(INTERFACE_ID_LEN) else {
+        return Err(if body.is_empty() {
+            RemoteControlRequestParseError::Truncated
+        } else {
+            RemoteControlRequestParseError::Malformed
+        });
+    };
+    let groups = RemoteControlDiscoveryGroups::parse_body(groups_bytes)?;
+    let mut id = [0u8; INTERFACE_ID_LEN];
+    id.copy_from_slice(id_bytes);
+    Ok(RemoteControlRequest::ReplaceInterfaceDiscoveryGroups {
+        id: InterfaceId::new(id),
+        groups,
     })
 }
 
@@ -1440,6 +1542,8 @@ pub enum RemoteControlResponse {
     SetInterfacePower(RemoteControlPowerOutcome),
     SetInterfaceMode(RemoteControlModeOutcome),
     SetInterfaceGroup(RemoteControlGroupOutcome),
+    InventoryInterfaceDiscoveryGroups(RemoteControlDiscoveryGroupsInventoryOutcome),
+    ReplaceInterfaceDiscoveryGroups(RemoteControlDiscoveryGroupsReplaceOutcome),
     InventoryInterfacePeers(RemoteControlInterfacePeersOutcome),
     InventoryInterfaceConfig(RemoteControlInterfaceConfigOutcome),
     SetInterfaceLoRaProfile(RemoteControlLoRaOutcome),
@@ -1467,33 +1571,36 @@ pub enum RemoteControlResponse {
 
 impl RemoteControlResponse {
     pub const MAX_ENCODED_LEN: usize = MESSAGE_HEADER_ENCODED_LEN.saturating_add(maximum(
-        DESCRIPTION_COUNT_ENCODED_LEN.saturating_add(RemoteControlRequestKind::ALL.len()),
+        RemoteControlDiscoveryGroupsInventoryOutcome::MAX_ENCODED_LEN,
         maximum(
-            1usize
-                .saturating_add(
-                    REMOTE_CONTROL_INTERFACE_INVENTORY_CAP
-                        .saturating_mul(REMOTE_CONTROL_INTERFACE_ENTRY_ENCODED_LEN),
-                )
-                .saturating_add(REMOTE_CONTROL_INTERFACE_INVENTORY_CONTINUATION_MAX_ENCODED_LEN),
+            DESCRIPTION_COUNT_ENCODED_LEN.saturating_add(RemoteControlRequestKind::ALL.len()),
             maximum(
-                RemoteControlInterfacePeersOutcome::MAX_ENCODED_LEN,
+                1usize
+                    .saturating_add(
+                        REMOTE_CONTROL_INTERFACE_INVENTORY_CAP
+                            .saturating_mul(REMOTE_CONTROL_INTERFACE_ENTRY_ENCODED_LEN),
+                    )
+                    .saturating_add(REMOTE_CONTROL_INTERFACE_INVENTORY_CONTINUATION_MAX_ENCODED_LEN),
                 maximum(
-                    RemoteControlInterfaceConfigOutcome::MAX_ENCODED_LEN,
+                    RemoteControlInterfacePeersOutcome::MAX_ENCODED_LEN,
                     maximum(
-                        RemoteControlControllerInventory::MAX_ENCODED_LEN,
+                        RemoteControlInterfaceConfigOutcome::MAX_ENCODED_LEN,
                         maximum(
-                            RemoteControlBuildVersion::MAX_ENCODED_LEN,
+                            RemoteControlControllerInventory::MAX_ENCODED_LEN,
                             maximum(
-                                PowerSnapshot::ENCODED_LEN,
+                                RemoteControlBuildVersion::MAX_ENCODED_LEN,
                                 maximum(
-                                    RemoteControlAnnounceSelfOutcome::ENCODED_LEN,
+                                    PowerSnapshot::ENCODED_LEN,
                                     maximum(
-                                        RemoteControlPowerOutcome::ENCODED_LEN,
+                                        RemoteControlAnnounceSelfOutcome::ENCODED_LEN,
                                         maximum(
-                                            RemoteControlModeOutcome::ENCODED_LEN,
+                                            RemoteControlPowerOutcome::ENCODED_LEN,
                                             maximum(
-                                                RemoteControlSleepOutcome::ENCODED_LEN,
-                                                RemoteControlProtocolError::MAX_ENCODED_BODY_LEN,
+                                                RemoteControlModeOutcome::ENCODED_LEN,
+                                                maximum(
+                                                    RemoteControlSleepOutcome::ENCODED_LEN,
+                                                    RemoteControlProtocolError::MAX_ENCODED_BODY_LEN,
+                                                ),
                                             ),
                                         ),
                                     ),
@@ -1515,6 +1622,12 @@ impl RemoteControlResponse {
             Self::SetInterfacePower(_) => RemoteControlResponseKind::SetInterfacePower,
             Self::SetInterfaceMode(_) => RemoteControlResponseKind::SetInterfaceMode,
             Self::SetInterfaceGroup(_) => RemoteControlResponseKind::SetInterfaceGroup,
+            Self::InventoryInterfaceDiscoveryGroups(_) => {
+                RemoteControlResponseKind::InventoryInterfaceDiscoveryGroups
+            }
+            Self::ReplaceInterfaceDiscoveryGroups(_) => {
+                RemoteControlResponseKind::ReplaceInterfaceDiscoveryGroups
+            }
             Self::InventoryInterfacePeers(_) => RemoteControlResponseKind::InventoryInterfacePeers,
             Self::InventoryInterfaceConfig(_) => {
                 RemoteControlResponseKind::InventoryInterfaceConfig
@@ -1554,6 +1667,10 @@ impl RemoteControlResponse {
             Self::SetInterfacePower(_) => RemoteControlPowerOutcome::ENCODED_LEN,
             Self::SetInterfaceMode(_) => RemoteControlModeOutcome::ENCODED_LEN,
             Self::SetInterfaceGroup(_) => RemoteControlGroupOutcome::ENCODED_LEN,
+            Self::InventoryInterfaceDiscoveryGroups(outcome) => outcome.encoded_len(),
+            Self::ReplaceInterfaceDiscoveryGroups(_) => {
+                RemoteControlDiscoveryGroupsReplaceOutcome::ENCODED_LEN
+            }
             Self::InventoryInterfacePeers(outcome) => outcome.encoded_body_len(),
             Self::InventoryInterfaceConfig(outcome) => outcome.encoded_body_len(),
             Self::SetInterfaceLoRaProfile(_) => RemoteControlLoRaOutcome::ENCODED_LEN,
@@ -1609,6 +1726,14 @@ impl RemoteControlResponse {
             }
             RemoteControlResponseKind::SetInterfaceGroup => {
                 parse_group_outcome(body).map(Self::SetInterfaceGroup)
+            }
+            RemoteControlResponseKind::InventoryInterfaceDiscoveryGroups => {
+                RemoteControlDiscoveryGroupsInventoryOutcome::parse_body(body)
+                    .map(Self::InventoryInterfaceDiscoveryGroups)
+            }
+            RemoteControlResponseKind::ReplaceInterfaceDiscoveryGroups => {
+                parse_discovery_groups_replace_outcome(body)
+                    .map(Self::ReplaceInterfaceDiscoveryGroups)
             }
             RemoteControlResponseKind::InventoryInterfacePeers => {
                 RemoteControlInterfacePeersOutcome::parse_body(body)
@@ -1710,6 +1835,10 @@ impl RemoteControlResponse {
             Self::SetInterfacePower(outcome) => write_power_outcome(*outcome, body),
             Self::SetInterfaceMode(outcome) => write_mode_outcome(*outcome, body),
             Self::SetInterfaceGroup(outcome) => write_group_outcome(*outcome, body),
+            Self::InventoryInterfaceDiscoveryGroups(outcome) => outcome.write_body(body)?,
+            Self::ReplaceInterfaceDiscoveryGroups(outcome) => {
+                write_discovery_groups_replace_outcome(*outcome, body)
+            }
             Self::InventoryInterfacePeers(outcome) => outcome.write_body(body)?,
             Self::InventoryInterfaceConfig(outcome) => outcome.write_body(body)?,
             Self::SetInterfaceLoRaProfile(outcome) => write_lora_outcome(*outcome, body),
@@ -1985,6 +2114,20 @@ fn parse_group_outcome(
         .ok_or(RemoteControlResponseParseError::UnknownGroupOutcome { found: *outcome })
 }
 
+fn parse_discovery_groups_replace_outcome(
+    body: &[u8],
+) -> Result<RemoteControlDiscoveryGroupsReplaceOutcome, RemoteControlResponseParseError> {
+    let [outcome] = body else {
+        return Err(if body.is_empty() {
+            RemoteControlResponseParseError::Truncated
+        } else {
+            RemoteControlResponseParseError::Malformed
+        });
+    };
+    RemoteControlDiscoveryGroupsReplaceOutcome::from_wire(*outcome)
+        .ok_or(RemoteControlResponseParseError::Malformed)
+}
+
 fn parse_sleep_outcome(
     body: &[u8],
 ) -> Result<RemoteControlSleepOutcome, RemoteControlResponseParseError> {
@@ -2179,6 +2322,15 @@ fn write_group_outcome(outcome: RemoteControlGroupOutcome, body: &mut [u8]) {
     }
 }
 
+fn write_discovery_groups_replace_outcome(
+    outcome: RemoteControlDiscoveryGroupsReplaceOutcome,
+    body: &mut [u8],
+) {
+    if let Some(out) = body.first_mut() {
+        *out = outcome.wire_value();
+    }
+}
+
 fn write_lora_outcome(outcome: RemoteControlLoRaOutcome, body: &mut [u8]) {
     if let Some(out) = body.first_mut() {
         *out = outcome.wire_value();
@@ -2333,13 +2485,57 @@ mod kani_proofs {
     #[kani::proof]
     #[kani::unwind(40)]
     fn request_parser_handles_interface_configuration_family() {
-        parse_request_family::<{ RemoteControlRequest::MAX_ENCODED_LEN + 1 }>(&[
+        parse_request_family::<
+            {
+                MESSAGE_HEADER_ENCODED_LEN
+                    + INTERFACE_ID_LEN
+                    + 1
+                    + REMOTE_CONTROL_WIFI_SSID_CAP
+                    + 1
+                    + REMOTE_CONTROL_WIFI_PASSWORD_CAP
+                    + 1
+            },
+        >(&[
             RemoteControlRequestKind::SetInterfacePower,
             RemoteControlRequestKind::SetInterfaceMode,
             RemoteControlRequestKind::SetInterfaceGroup,
             RemoteControlRequestKind::SetInterfaceLoRaProfile,
             RemoteControlRequestKind::SetInterfaceWifiStation,
         ]);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(40)]
+    fn request_parser_handles_discovery_group_inventory() {
+        let bytes: [u8; INTERFACE_ID_LEN + 1] = kani::any();
+        let len: usize = kani::any();
+        kani::assume(len <= bytes.len());
+        let _result = parse_inventory_interface_discovery_groups(&bytes[..len]);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(40)]
+    fn request_parser_accepts_maximum_discovery_group_count() {
+        const ENCODED_LEN: usize =
+            INTERFACE_ID_LEN + 1 + crate::interfaces::MAX_DISCOVERY_GROUPS * 2;
+        let mut bytes: [u8; ENCODED_LEN + 1] = kani::any();
+        bytes[INTERFACE_ID_LEN] = crate::interfaces::MAX_DISCOVERY_GROUPS as u8;
+        let mut index = INTERFACE_ID_LEN + 1;
+        let mut previous = 0u8;
+        let mut group = 0;
+        while group < crate::interfaces::MAX_DISCOVERY_GROUPS {
+            bytes[index] = 1;
+            let value = bytes[index + 1];
+            kani::assume(value.is_ascii());
+            if group > 0 {
+                kani::assume(previous < value);
+            }
+            previous = value;
+            index += 2;
+            group += 1;
+        }
+        assert!(parse_replace_interface_discovery_groups(&bytes[..ENCODED_LEN]).is_ok());
+        assert!(parse_replace_interface_discovery_groups(&bytes).is_err());
     }
 
     #[kani::proof]
@@ -2374,13 +2570,24 @@ mod kani_proofs {
     #[kani::proof]
     #[kani::unwind(40)]
     fn response_parser_handles_interface_configuration_family() {
-        parse_response_family::<{ RemoteControlResponse::MAX_ENCODED_LEN + 1 }>(&[
+        parse_response_family::<
+            { MESSAGE_HEADER_ENCODED_LEN + RemoteControlProtocolError::MAX_ENCODED_BODY_LEN + 1 },
+        >(&[
             RemoteControlResponseKind::SetInterfacePower,
             RemoteControlResponseKind::SetInterfaceMode,
             RemoteControlResponseKind::SetInterfaceGroup,
             RemoteControlResponseKind::SetInterfaceLoRaProfile,
             RemoteControlResponseKind::SetInterfaceWifiStation,
         ]);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(40)]
+    fn response_parser_handles_discovery_group_replacement() {
+        let bytes: [u8; RemoteControlDiscoveryGroupsReplaceOutcome::ENCODED_LEN + 1] = kani::any();
+        let len: usize = kani::any();
+        kani::assume(len <= bytes.len());
+        let _result = parse_discovery_groups_replace_outcome(&bytes[..len]);
     }
 
     #[kani::proof]
@@ -2419,7 +2626,15 @@ mod kani_proofs {
     #[kani::proof]
     #[kani::unwind(40)]
     fn request_set_intersection_preserves_exact_membership() {
-        const CANONICAL_REQUEST_BITS: u32 = 0x1fff_fffe;
+        const CANONICAL_REQUEST_BITS: u32 = {
+            let mut bits = 0u32;
+            let mut index = 0;
+            while index < RemoteControlRequestKind::ALL.len() {
+                bits |= 1u32 << RemoteControlRequestKind::ALL[index].wire_value();
+                index += 1;
+            }
+            bits
+        };
 
         let left_membership: u32 = kani::any::<u32>() & CANONICAL_REQUEST_BITS;
         let right_membership: u32 = kani::any::<u32>() & CANONICAL_REQUEST_BITS;
