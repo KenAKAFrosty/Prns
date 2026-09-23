@@ -15,14 +15,14 @@ use crate::runtime::{
     RemoteControlDescribePower, RemoteControlError, RemoteControlInspectWifiTransaction,
     RemoteControlInventoryControllers, RemoteControlInventoryInterfaceConfig,
     RemoteControlInventoryInterfaceDiscoveryGroups, RemoteControlInventoryInterfacePeers,
-    RemoteControlInventoryInterfaces, RemoteControlReplaceInterfaceDiscoveryGroups,
-    RemoteControlRevokeController, RemoteControlSetDisplayAutoOff,
-    RemoteControlSetDisplayVisibility, RemoteControlSetEspRadioMode, RemoteControlSetGnssPower,
-    RemoteControlSetInterfaceGroup, RemoteControlSetInterfaceLoRaProfile,
-    RemoteControlSetInterfaceMode, RemoteControlSetInterfacePower,
-    RemoteControlSetInterfaceWifiStation, RemoteControlSetStationUplink,
-    RemoteControlSetSystemPower, RemoteControlSleepRadios, RemoteControlStageWifiCredentials,
-    RemoteControlWakeRadios,
+    RemoteControlInventoryInterfaces, RemoteControlInventoryPathTable,
+    RemoteControlReplaceInterfaceDiscoveryGroups, RemoteControlRevokeController,
+    RemoteControlSetDisplayAutoOff, RemoteControlSetDisplayVisibility,
+    RemoteControlSetEspRadioMode, RemoteControlSetGnssPower, RemoteControlSetInterfaceGroup,
+    RemoteControlSetInterfaceLoRaProfile, RemoteControlSetInterfaceMode,
+    RemoteControlSetInterfacePower, RemoteControlSetInterfaceWifiStation,
+    RemoteControlSetStationUplink, RemoteControlSetSystemPower, RemoteControlSleepRadios,
+    RemoteControlStageWifiCredentials, RemoteControlWakeRadios,
 };
 use crate::units::RttMillis;
 use prns_core::capabilities::power::PowerSnapshot;
@@ -256,6 +256,32 @@ impl RemoteControlHandle<'_> {
             .await
             .map_err(RemoteControlError::Request)?;
         let inventory = RemoteControlInventoryInterfaces::parse_response(response.as_slice())?;
+        Ok((inventory, rtt))
+    }
+
+    pub async fn inventory_path_table_page(
+        &self,
+        page: crate::remote_control::RemoteControlPathPage,
+    ) -> Result<(crate::remote_control::RemoteControlPathInventory, RttMillis), RemoteControlError>
+    {
+        let mut encoded = std::vec![0u8; RemoteControlRequest::MAX_ENCODED_LEN];
+        let encoded_len =
+            RemoteControlInventoryPathTable::write_page_request(page, encoded.as_mut_slice())?;
+        encoded.truncate(encoded_len);
+        let (response, rtt) = self
+            .node
+            .request_owned_with_options(
+                self.link_id,
+                RequestEndpointId::of(REMOTE_CONTROL_REQUEST_ENDPOINT_ID),
+                encoded,
+                RequestOptions {
+                    response_timeout: RequestResponseTimeout::LinkDefault,
+                    maximum_response_bytes: RemoteControlInventoryPathTable::MAXIMUM_RESPONSE_BYTES,
+                },
+            )
+            .await
+            .map_err(RemoteControlError::Request)?;
+        let inventory = RemoteControlInventoryPathTable::parse_response(response.as_slice())?;
         Ok((inventory, rtt))
     }
 

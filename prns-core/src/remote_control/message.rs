@@ -21,16 +21,17 @@ use super::inventory::{
 use super::{
     RemoteControlApplyOutcome, RemoteControlControllerIdentity, RemoteControlControllerPage,
     RemoteControlDisplayAutoOff, RemoteControlDisplayVisibility, RemoteControlEspRadioMode,
-    RemoteControlGnssPower, RemoteControlInterfacePage, RemoteControlPeerPage,
-    RemoteControlStationUplink, RemoteControlSystemPower, RemoteControlWifiCredentialRevision,
-    RemoteControlWifiStageOutcome, RemoteControlWifiTransactionStatus,
+    RemoteControlGnssPower, RemoteControlInterfacePage, RemoteControlPathInventory,
+    RemoteControlPathPage, RemoteControlPeerPage, RemoteControlStationUplink,
+    RemoteControlSystemPower, RemoteControlWifiCredentialRevision, RemoteControlWifiStageOutcome,
+    RemoteControlWifiTransactionStatus, REMOTE_CONTROL_PATH_INVENTORY_MAX_ENCODED_BODY_LEN,
 };
 
 const MESSAGE_HEADER_ENCODED_LEN: usize = 2;
 const DESCRIPTION_COUNT_ENCODED_LEN: usize = 1;
 const PROTOCOL_ERROR_KIND_ENCODED_LEN: usize = 1;
 const PROTOCOL_ERROR_DETAIL_ENCODED_LEN: usize = 1;
-// V1 request kinds occupy the contiguous wire range 0x01..=0x1e. Unknown values are rejected
+// V1 request kinds occupy the contiguous wire range 0x01..=0x1f. Unknown values are rejected
 // before a request can enter this typed set, so four bytes represent the complete domain.
 const REQUEST_KIND_BITMAP_LEN: usize = 4;
 
@@ -87,6 +88,7 @@ prns_macros::iterable_enum! {
         InspectWifiTransaction = 0x1C,
         InventoryInterfaceDiscoveryGroups = 0x1D,
         ReplaceInterfaceDiscoveryGroups = 0x1E,
+        InventoryPathTable = 0x1F,
     }
 }
 
@@ -213,6 +215,10 @@ impl RemoteControlRequestKind {
                     RemoteControlProtocolError::MAX_ENCODED_BODY_LEN,
                 ))
             }
+            Self::InventoryPathTable => MESSAGE_HEADER_ENCODED_LEN.saturating_add(maximum(
+                REMOTE_CONTROL_PATH_INVENTORY_MAX_ENCODED_BODY_LEN,
+                RemoteControlProtocolError::MAX_ENCODED_BODY_LEN,
+            )),
         }
     }
 }
@@ -263,6 +269,7 @@ prns_macros::iterable_enum! {
         InspectWifiTransaction = 0x1C,
         InventoryInterfaceDiscoveryGroups = 0x1D,
         ReplaceInterfaceDiscoveryGroups = 0x1E,
+        InventoryPathTable = 0x1F,
         ProtocolError = 0xFF,
     }
 }
@@ -360,6 +367,9 @@ pub enum RemoteControlRequest {
         id: InterfaceId,
         groups: RemoteControlDiscoveryGroups,
     },
+    InventoryPathTable {
+        page: RemoteControlPathPage,
+    },
     InventoryInterfacePeers {
         id: InterfaceId,
         page: RemoteControlPeerPage,
@@ -448,6 +458,7 @@ impl RemoteControlRequest {
             Self::ReplaceInterfaceDiscoveryGroups { .. } => {
                 RemoteControlRequestKind::ReplaceInterfaceDiscoveryGroups
             }
+            Self::InventoryPathTable { .. } => RemoteControlRequestKind::InventoryPathTable,
             Self::InventoryInterfacePeers { .. } => {
                 RemoteControlRequestKind::InventoryInterfacePeers
             }
@@ -511,6 +522,9 @@ impl RemoteControlRequest {
                 MESSAGE_HEADER_ENCODED_LEN.saturating_add(page.encoded_len())
             }
             Self::InventoryControllers { page } => {
+                MESSAGE_HEADER_ENCODED_LEN.saturating_add(page.encoded_len())
+            }
+            Self::InventoryPathTable { page } => {
                 MESSAGE_HEADER_ENCODED_LEN.saturating_add(page.encoded_len())
             }
             Self::SetInterfacePower { .. } | Self::SetInterfaceMode { .. } => {
@@ -608,6 +622,9 @@ impl RemoteControlRequest {
             RemoteControlRequestKind::ReplaceInterfaceDiscoveryGroups => {
                 parse_replace_interface_discovery_groups(body)
             }
+            RemoteControlRequestKind::InventoryPathTable => {
+                RemoteControlPathPage::parse(body).map(|page| Self::InventoryPathTable { page })
+            }
             RemoteControlRequestKind::InventoryInterfacePeers => {
                 parse_inventory_interface_peers(body)
             }
@@ -655,6 +672,7 @@ impl RemoteControlRequest {
             Self::InspectWifiTransaction => {}
             Self::InventoryInterfaces { page } => page.write_into(body)?,
             Self::InventoryControllers { page } => page.write_into(body)?,
+            Self::InventoryPathTable { page } => page.write_into(body)?,
             Self::SetInterfacePower { id, power } => {
                 write_interface_id_and_byte(body, *id, power.wire_value())?;
             }
@@ -1566,11 +1584,13 @@ pub enum RemoteControlResponse {
     ConfirmWifiCredentials(RemoteControlApplyOutcome),
     CancelWifiCredentials(RemoteControlApplyOutcome),
     InspectWifiTransaction(RemoteControlWifiTransactionStatus),
+    InventoryPathTable(RemoteControlPathInventory),
     ProtocolError(RemoteControlProtocolError),
 }
 
 impl RemoteControlResponse {
-    pub const MAX_ENCODED_LEN: usize = MESSAGE_HEADER_ENCODED_LEN.saturating_add(maximum(
+    pub const MAX_ENCODED_LEN: usize = maximum(
+        MESSAGE_HEADER_ENCODED_LEN.saturating_add(maximum(
         RemoteControlDiscoveryGroupsInventoryOutcome::MAX_ENCODED_LEN,
         maximum(
             DESCRIPTION_COUNT_ENCODED_LEN.saturating_add(RemoteControlRequestKind::ALL.len()),
@@ -1611,7 +1631,10 @@ impl RemoteControlResponse {
                 ),
             ),
         ),
-    ));
+    )),
+        MESSAGE_HEADER_ENCODED_LEN
+            .saturating_add(REMOTE_CONTROL_PATH_INVENTORY_MAX_ENCODED_BODY_LEN),
+    );
 
     #[must_use]
     pub const fn kind(&self) -> RemoteControlResponseKind {
@@ -1628,6 +1651,7 @@ impl RemoteControlResponse {
             Self::ReplaceInterfaceDiscoveryGroups(_) => {
                 RemoteControlResponseKind::ReplaceInterfaceDiscoveryGroups
             }
+            Self::InventoryPathTable(_) => RemoteControlResponseKind::InventoryPathTable,
             Self::InventoryInterfacePeers(_) => RemoteControlResponseKind::InventoryInterfacePeers,
             Self::InventoryInterfaceConfig(_) => {
                 RemoteControlResponseKind::InventoryInterfaceConfig
@@ -1671,6 +1695,7 @@ impl RemoteControlResponse {
             Self::ReplaceInterfaceDiscoveryGroups(_) => {
                 RemoteControlDiscoveryGroupsReplaceOutcome::ENCODED_LEN
             }
+            Self::InventoryPathTable(inventory) => inventory.encoded_body_len(),
             Self::InventoryInterfacePeers(outcome) => outcome.encoded_body_len(),
             Self::InventoryInterfaceConfig(outcome) => outcome.encoded_body_len(),
             Self::SetInterfaceLoRaProfile(_) => RemoteControlLoRaOutcome::ENCODED_LEN,
@@ -1734,6 +1759,9 @@ impl RemoteControlResponse {
             RemoteControlResponseKind::ReplaceInterfaceDiscoveryGroups => {
                 parse_discovery_groups_replace_outcome(body)
                     .map(Self::ReplaceInterfaceDiscoveryGroups)
+            }
+            RemoteControlResponseKind::InventoryPathTable => {
+                RemoteControlPathInventory::parse_body(body).map(Self::InventoryPathTable)
             }
             RemoteControlResponseKind::InventoryInterfacePeers => {
                 RemoteControlInterfacePeersOutcome::parse_body(body)
@@ -1839,6 +1867,7 @@ impl RemoteControlResponse {
             Self::ReplaceInterfaceDiscoveryGroups(outcome) => {
                 write_discovery_groups_replace_outcome(*outcome, body)
             }
+            Self::InventoryPathTable(inventory) => inventory.write_body(body)?,
             Self::InventoryInterfacePeers(outcome) => outcome.write_body(body)?,
             Self::InventoryInterfaceConfig(outcome) => outcome.write_body(body)?,
             Self::SetInterfaceLoRaProfile(outcome) => write_lora_outcome(*outcome, body),

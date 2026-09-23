@@ -6,6 +6,7 @@ use embassy_futures::select::{select, Either};
 use embassy_futures::yield_now;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
+use embassy_sync::signal::Signal;
 use embassy_time::{with_timeout, Duration, Timer};
 use heapless::Vec as HeaplessVec;
 
@@ -133,6 +134,7 @@ fn continuously_due_persistence_yields_to_sibling_tasks() {
         let notify: Channel<CriticalSectionRawMutex, InterfaceId, 1> = Channel::new();
         let commands: Channel<CriticalSectionRawMutex, IssuedCommand, 1> = Channel::new();
         let responses: Channel<CriticalSectionRawMutex, ResourceResponse<0>, 1> = Channel::new();
+        let path_page_reply = Signal::new();
         let lifecycle: Channel<CriticalSectionRawMutex, InterfaceLifecycle, 1> = Channel::new();
         let mut descriptors: HeaplessVec<InterfaceDescriptor, 1> = HeaplessVec::new();
         let mut ifacs: HeaplessVec<InterfaceIfac, 1> = HeaplessVec::new();
@@ -152,6 +154,7 @@ fn continuously_due_persistence_yields_to_sibling_tasks() {
                 notify: notify.receiver(),
                 commands: commands.receiver(),
                 resource_responses: responses.receiver(),
+                path_page_reply: &path_page_reply,
                 lifecycle: lifecycle.receiver(),
             },
             |_| {},
@@ -185,6 +188,7 @@ fn a_pooled_ifac_slot_added_at_runtime_opens_inbound_then_frees_on_remove() {
     let notify: Channel<CriticalSectionRawMutex, InterfaceId, 4> = Channel::new();
     let commands: Channel<CriticalSectionRawMutex, IssuedCommand, 2> = Channel::new();
     let responses: Channel<CriticalSectionRawMutex, ResourceResponse<0>, 1> = Channel::new();
+    let path_page_reply = Signal::new();
     let lifecycle: Channel<CriticalSectionRawMutex, InterfaceLifecycle, 2> = Channel::new();
 
     const FRAME: usize = EMBEDDED_MAX_WIRE_FRAME_LEN;
@@ -272,6 +276,7 @@ fn a_pooled_ifac_slot_added_at_runtime_opens_inbound_then_frees_on_remove() {
                 notify: notify.receiver(),
                 commands: commands.receiver(),
                 resource_responses: responses.receiver(),
+                path_page_reply: &path_page_reply,
                 lifecycle: lifecycle.receiver(),
                 ifacs: &mut ifacs,
             },
@@ -333,6 +338,7 @@ fn a_pooled_slot_retagged_at_runtime_carries_traffic_under_the_new_id() {
     let notify: Channel<CriticalSectionRawMutex, InterfaceId, 4> = Channel::new();
     let commands: Channel<CriticalSectionRawMutex, IssuedCommand, 2> = Channel::new();
     let responses: Channel<CriticalSectionRawMutex, ResourceResponse<0>, 1> = Channel::new();
+    let path_page_reply = Signal::new();
     let lifecycle: Channel<CriticalSectionRawMutex, InterfaceLifecycle, 2> = Channel::new();
 
     const FRAME: usize = EMBEDDED_MAX_WIRE_FRAME_LEN;
@@ -414,6 +420,7 @@ fn a_pooled_slot_retagged_at_runtime_carries_traffic_under_the_new_id() {
                 notify: notify.receiver(),
                 commands: commands.receiver(),
                 resource_responses: responses.receiver(),
+                path_page_reply: &path_page_reply,
                 lifecycle: lifecycle.receiver(),
                 ifacs: &mut ifacs,
             },
