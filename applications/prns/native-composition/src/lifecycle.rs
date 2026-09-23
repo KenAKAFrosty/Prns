@@ -28,9 +28,12 @@ use prns_core::identity::vault::{
     FileVault, FileVaultError, IdentityLabel, IdentitySecretKey, IdentityVault,
 };
 use prns_core::identity::PrivateIdentityMaterial;
+#[cfg(any(test, feature = "apple", feature = "android", feature = "host-test"))]
 use prns_host::InterfaceKind;
 use prns_host_native::owner::{HostClient, OwnedSession};
-use prns_host_native::{ApplicationEventDispatch, NativeEmbedding, NativePreparedAttachment};
+#[cfg(any(feature = "apple", feature = "android", feature = "host-test"))]
+use prns_host_native::NativePreparedAttachment;
+use prns_host_native::{ApplicationEventDispatch, NativeEmbedding};
 #[cfg(all(feature = "apple", target_os = "ios"))]
 use prns_interfaces_tokio::bluetooth_auto::PreparedAutoBle;
 use tokio::sync::{mpsc, oneshot, watch};
@@ -1913,12 +1916,12 @@ async fn run_generation(
             send_event(&event_tx, &event_overflowed, event);
         })),
         accepted_announces: Some(Box::new(lxmf_callbacks.authenticated_announce_observer())),
-        prepare_interfaces: Some(Box::new(move |client| {
+        prepare_interfaces: Some(Box::new(move |_client| {
             #[allow(unused_mut)]
             let mut attachments = Vec::new();
             #[cfg(all(feature = "apple", any(target_os = "ios", target_os = "macos")))]
             {
-                let attached = client.protocols().attach(prepared_bluetooth);
+                let attached = _client.protocols().attach(prepared_bluetooth);
                 attachments.push(NativePreparedAttachment::Registered {
                     interface: attached.id(),
                     kind: InterfaceKind::AutomaticBluetoothLe,
@@ -1926,13 +1929,13 @@ async fn run_generation(
             }
             #[cfg(all(feature = "android", target_os = "android"))]
             attachments.push(NativePreparedAttachment::Supervisor {
-                attachment: client.protocols().supervise(prepared_android),
+                attachment: _client.protocols().supervise(prepared_android),
                 kind: InterfaceKind::AutomaticBluetoothLe,
             });
             #[cfg(any(feature = "apple", feature = "android", feature = "host-test"))]
             if let Some(target) = development_tcp_target {
                 attachments.push(NativePreparedAttachment::Interface {
-                    attachment: client
+                    attachment: _client
                         .protocols()
                         .attach(personal_rns::tcp::TcpClientInterface::new(target)),
                     kind: InterfaceKind::TcpClient,
