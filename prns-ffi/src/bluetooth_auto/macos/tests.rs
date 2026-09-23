@@ -13,7 +13,7 @@ use super::backend::{
 };
 use super::central::{
     closed_central_session_ids, CentralDialCandidate, CentralPeerRegistry, CentralPeerSession,
-    RestoredAdmission, RestoredBufferResult, RestoredCallbackBuffer,
+    ControlInboxError, RestoredAdmission, RestoredBufferResult, RestoredCallbackBuffer,
     CENTRAL_CONTROL_INBOUND_CAPACITY,
 };
 use super::data_plane::{DataPlane, PendingL2cap};
@@ -782,13 +782,13 @@ fn active_control_inbox_reports_full_and_closed_instead_of_dropping_input() {
     }
     assert!(matches!(
         session.enqueue_control(control),
-        Err(mpsc::error::TrySendError::Full(_))
+        Err(ControlInboxError::Full)
     ));
 
     drop(control_rx);
     assert!(matches!(
         session.enqueue_control(control),
-        Err(mpsc::error::TrySendError::Closed(_))
+        Err(ControlInboxError::Closed)
     ));
 }
 
