@@ -97,12 +97,26 @@ pub(crate) enum CommandMode {
             long,
             value_name = "DIR",
             hide = true,
-            conflicts_with_all = ["version", "offline", "local_build"]
+            conflicts_with_all = ["version", "offline", "local_build", "developer_artifacts"]
         )]
         candidate: Option<PathBuf>,
+        /// Use unsigned prebuilt board artifacts (`target.json` plus binaries) for BOARD.
+        #[arg(
+            long,
+            value_name = "DIR",
+            hide = true,
+            conflicts_with_all = ["version", "offline", "local_build", "candidate"]
+        )]
+        developer_artifacts: Option<PathBuf>,
         /// Explicit mounted UF2 bootloader directory.
         #[arg(long, value_name = "DIR", hide = true)]
         mount: Option<PathBuf>,
+        /// Remote Control identity vault page (4096 bytes) for ESP sparse flash.
+        #[arg(long, value_name = "FILE", hide = true, requires = "rc_vault_offset")]
+        rc_vault: Option<PathBuf>,
+        /// Flash offset for `--rc-vault` (decimal or `0x`-prefixed hex).
+        #[arg(long, value_name = "OFFSET", hide = true, requires = "rc_vault")]
+        rc_vault_offset: Option<String>,
     },
     /// Build sparse developer artifacts for one board.
     #[command(hide = true)]
@@ -216,6 +230,48 @@ mod tests {
     }
 
     #[test]
+    fn rc_vault_requires_offset_and_parses_together() {
+        let missing = Cli::try_parse_from([
+            "hopspot-flash",
+            "flash",
+            "heltec-v4",
+            "--yes",
+            "--json",
+            "--rc-vault",
+            "/tmp/vault.bin",
+        ]);
+        assert!(missing.is_err());
+
+        let parsed = Cli::try_parse_from([
+            "hopspot-flash",
+            "flash",
+            "heltec-v4",
+            "--yes",
+            "--json",
+            "--local-build",
+            "--rc-vault",
+            "/tmp/vault.bin",
+            "--rc-vault-offset",
+            "0xe7d000",
+        ])
+        .expect("rc-vault pair must parse");
+        match parsed.command {
+            Some(CommandMode::Flash {
+                rc_vault,
+                rc_vault_offset,
+                ..
+            }) => {
+                assert_eq!(
+                    rc_vault.as_deref(),
+                    Some(std::path::Path::new("/tmp/vault.bin"))
+                );
+                assert_eq!(rc_vault_offset.as_deref(), Some("0xe7d000"));
+            }
+            _ => panic!("flash command was not parsed"),
+        }
+    }
+
+    #[test]
     fn cache_import_accepts_an_extracted_directory_and_json_mode() {
         assert!(Cli::try_parse_from([
             "hopspot-flash",
@@ -225,6 +281,57 @@ mod tests {
             "--json",
         ])
         .is_ok());
+    }
+
+    #[test]
+    fn flash_accepts_developer_artifacts_and_rejects_signed_source_flags() {
+        let parsed = Cli::try_parse_from([
+            "hopspot-flash",
+            "flash",
+            "t-echo",
+            "--yes",
+            "--json",
+            "--developer-artifacts",
+            "/tmp/firmware/t-echo",
+        ])
+        .expect("developer artifacts must parse");
+        let Some(CommandMode::Flash {
+            board,
+            developer_artifacts,
+            local_build,
+            candidate,
+            ..
+        }) = parsed.command
+        else {
+            panic!("expected flash command");
+        };
+        assert_eq!(board, "t-echo");
+        assert_eq!(
+            developer_artifacts.as_deref(),
+            Some(std::path::Path::new("/tmp/firmware/t-echo"))
+        );
+        assert!(!local_build);
+        assert!(candidate.is_none());
+
+        assert!(Cli::try_parse_from([
+            "hopspot-flash",
+            "flash",
+            "t-echo",
+            "--developer-artifacts",
+            "/tmp/firmware/t-echo",
+            "--local-build",
+        ])
+        .is_err());
+        assert!(Cli::try_parse_from([
+            "hopspot-flash",
+            "flash",
+            "t-echo",
+            "--developer-artifacts",
+            "/tmp/firmware/t-echo",
+            "--candidate",
+            "/tmp/signed-candidate",
+        ])
+        .is_err());
     }
 
     #[test]

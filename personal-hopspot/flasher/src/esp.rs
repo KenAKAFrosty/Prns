@@ -50,10 +50,11 @@ pub(crate) fn flash(
     port_name: Option<&str>,
     monitor: bool,
     reporter: Reporter,
+    rc_vault: Option<RcVaultWrite>,
 ) -> Result<(), AppError> {
     let selected = select_port(port_name)?;
     let expected = expected_device(board)?;
-    let plan = sparse_plan(board, target, provisioning)?;
+    let plan = sparse_plan(board, target, provisioning, rc_vault.as_ref())?;
     let total = plan.iter().map(|part| part.bytes.len() as u64).sum::<u64>();
 
     reporter.phase(
@@ -164,10 +165,18 @@ fn real_session(
     ))
 }
 
+/// Extra ESP flash page written beside firmware (Remote Control identity vault).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RcVaultWrite {
+    pub(crate) offset: u32,
+    pub(crate) bytes: Vec<u8>,
+}
+
 fn sparse_plan(
     board: &BoardCatalogEntry,
     target: &PreparedEspTarget,
     provisioning: &ProvisioningAction,
+    rc_vault: Option<&RcVaultWrite>,
 ) -> Result<Vec<SparsePart>, AppError> {
     if matches!(provisioning, ProvisioningAction::ConfigureWithTcp { .. })
         && !target.supports_tcp_client_provisioning()
@@ -182,6 +191,7 @@ fn sparse_plan(
         .map(|part| SparsePart {
             offset: part.offset(),
             bytes: part.bytes().to_vec(),
+            erase_before_write: false,
         })
         .collect::<Vec<_>>();
     if let Some(config) = provisioning_image(provisioning)
@@ -194,6 +204,14 @@ fn sparse_plan(
         plan.push(SparsePart {
             offset: slot.offset,
             bytes: config,
+            erase_before_write: false,
+        });
+    }
+    if let Some(vault) = rc_vault {
+        plan.push(SparsePart {
+            offset: vault.offset,
+            bytes: vault.bytes.clone(),
+            erase_before_write: true,
         });
     }
     plan.sort_by_key(|part| part.offset);
@@ -357,10 +375,12 @@ fn select_port_from(
                 AppError::serial_port(format!("serial port {requested:?} was not found"))
             });
     }
-    let mut candidates = ports
-        .into_iter()
-        .filter(is_likely_device_port)
-        .collect::<Vec<_>>();
+    let mut candidates = dedupe_macos_serial_aliases(
+        ports
+            .into_iter()
+            .filter(is_likely_device_port)
+            .collect::<Vec<_>>(),
+    );
     match candidates.len() {
         0 => Err(AppError::serial_port(
             "no usable serial device was found; connect the board with a USB data cable",
@@ -375,6 +395,49 @@ fn select_port_from(
                 .join(", ")
         ))),
     }
+}
+
+/// macOS exposes each USB CDC interface as both `/dev/cu.*` and `/dev/tty.*`.
+/// Prefer the call-out (`cu`) node; keep distinct hardware as separate candidates.
+fn dedupe_macos_serial_aliases(ports: Vec<SerialPortInfo>) -> Vec<SerialPortInfo> {
+    let mut by_key: Vec<(String, SerialPortInfo)> = Vec::new();
+    for port in ports {
+        let key = macos_serial_identity_key(&port.port_name);
+        if let Some((_, existing)) = by_key.iter_mut().find(|(seen, _)| seen == &key) {
+            if prefers_cu_over_tty(&port.port_name, &existing.port_name) {
+                *existing = port;
+            }
+            continue;
+        }
+        by_key.push((key, port));
+    }
+    by_key.into_iter().map(|(_, port)| port).collect()
+}
+
+fn macos_serial_identity_key(name: &str) -> String {
+    let basename = name.rsplit('/').next().unwrap_or(name);
+    let lowered = basename.to_ascii_lowercase();
+    if let Some(rest) = lowered.strip_prefix("cu.") {
+        return rest.to_string();
+    }
+    if let Some(rest) = lowered.strip_prefix("tty.") {
+        return rest.to_string();
+    }
+    lowered
+}
+
+fn prefers_cu_over_tty(candidate: &str, current: &str) -> bool {
+    let candidate_cu = candidate
+        .rsplit('/')
+        .next()
+        .unwrap_or(candidate)
+        .starts_with("cu.");
+    let current_cu = current
+        .rsplit('/')
+        .next()
+        .unwrap_or(current)
+        .starts_with("cu.");
+    candidate_cu && !current_cu
 }
 
 fn validate_device_identity(
@@ -681,14 +744,17 @@ mod port_tests {
             SparsePart {
                 offset: 0,
                 bytes: vec![1],
+                erase_before_write: false,
             },
             SparsePart {
                 offset: 0x8000,
                 bytes: vec![2],
+                erase_before_write: false,
             },
             SparsePart {
                 offset: 0x10000,
                 bytes: vec![3],
+                erase_before_write: false,
             },
         ]
     }
@@ -732,6 +798,16 @@ mod port_tests {
                 .port_name,
             "/dev/cu.usbmodem2"
         );
+    }
+
+    #[test]
+    fn macos_cu_and_tty_aliases_count_as_one_device() {
+        let ports = vec![
+            port("/dev/tty.usbmodem1101", SerialPortType::Unknown),
+            port("/dev/cu.usbmodem1101", SerialPortType::Unknown),
+        ];
+        let selected = select_port_from(ports, None).expect("cu/tty pair is one device");
+        assert_eq!(selected.port_name, "/dev/cu.usbmodem1101");
     }
 
     #[test]

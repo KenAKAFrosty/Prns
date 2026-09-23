@@ -22,7 +22,10 @@ use prns_flash_manifest::{
 };
 use serde::Serialize;
 
-use build::{assemble_manifest, build_board, build_board_for_flash, ManifestTargetProfile};
+use build::{
+    assemble_manifest, build_board, build_board_for_flash, prepare_developer_artifacts,
+    ManifestTargetProfile,
+};
 use cli::{CacheCommand, ChannelArg, Cli, CommandMode, WifiMode};
 use error::AppError;
 use events::{Phase, Reporter};
@@ -168,12 +171,15 @@ fn run(cli: Cli, reporter: Reporter) -> Result<(), AppError> {
             json,
             local_build,
             candidate,
+            developer_artifacts,
             mount,
+            rc_vault,
+            rc_vault_offset,
         }) => {
             let board = find_board(&catalog, &board)?;
             let interactive = !json && ui::interactive_terminal();
             confirm_board(board, yes, interactive)?;
-            if !local_build && candidate.is_none() {
+            if !local_build && candidate.is_none() && developer_artifacts.is_none() {
                 confirm_pinned_version(version.as_deref(), allow_downgrade, interactive)?;
             }
             let provisioning = wifi::resolve(
@@ -188,6 +194,7 @@ fn run(cli: Cli, reporter: Reporter) -> Result<(), AppError> {
                     interactive,
                 },
             )?;
+            let rc_vault = resolve_rc_vault(rc_vault.as_deref(), rc_vault_offset.as_deref())?;
             execute_flash(
                 &catalog,
                 board,
@@ -200,7 +207,9 @@ fn run(cli: Cli, reporter: Reporter) -> Result<(), AppError> {
                     monitor,
                     local_build,
                     candidate: candidate.as_deref(),
+                    developer_artifacts: developer_artifacts.as_deref(),
                     mount: mount.as_deref(),
+                    rc_vault,
                 },
                 reporter,
             )
@@ -218,7 +227,9 @@ struct FlashRequest<'a> {
     monitor: bool,
     local_build: bool,
     candidate: Option<&'a Path>,
+    developer_artifacts: Option<&'a Path>,
     mount: Option<&'a Path>,
+    rc_vault: Option<esp::RcVaultWrite>,
 }
 
 fn execute_flash(
@@ -254,6 +265,19 @@ fn execute_flash(
             )?
             .into_prepared()?,
         };
+        (prepared, detected_uf2)
+    } else if let Some(artifacts) = request.developer_artifacts {
+        let detected_uf2 = match board.transport {
+            Transport::EspSerial => None,
+            Transport::Uf2MassStorage => Some(uf2::detect_device(board, request.mount)?),
+            Transport::NrfSerialDfu => None,
+        };
+        let prepared = prepare_developer_artifacts(
+            board,
+            artifacts,
+            detected_uf2.as_ref().map(|device| device.softdevice()),
+            reporter,
+        )?;
         (prepared, detected_uf2)
     } else {
         let verified = if let Some(candidate) = request.candidate {
@@ -304,6 +328,7 @@ fn execute_flash(
             request.port,
             request.monitor,
             reporter,
+            request.rc_vault,
         ),
         (Transport::Uf2MassStorage, PreparedTarget::Uf2(prepared)) => {
             if !matches!(request.provisioning, ProvisioningAction::Preserve) {
@@ -315,9 +340,21 @@ fn execute_flash(
             let device = detected_uf2.ok_or_else(|| {
                 AppError::device_identity("UF2 device selection disappeared before delivery")
             })?;
-            uf2::flash(board, &prepared, device, reporter)
+            uf2::flash(
+                board,
+                &prepared,
+                device,
+                request.rc_vault.as_ref(),
+                reporter,
+            )
         }
         (Transport::NrfSerialDfu, PreparedTarget::NrfSerialDfu(prepared)) => {
+            if request.rc_vault.is_some() {
+                return Err(AppError::unsupported_operation(format!(
+                    "{} serial DFU cannot write the Remote Control enrollment vault; pair after flash or use a UF2 board",
+                    board.display_name
+                )));
+            }
             if !matches!(request.provisioning, ProvisioningAction::Preserve) {
                 return Err(AppError::unsupported_operation(format!(
                     "{} does not support Wi-Fi provisioning",
@@ -405,10 +442,61 @@ fn guided(catalog: &BoardCatalog, reporter: Reporter) -> Result<(), AppError> {
             monitor: false,
             local_build: false,
             candidate: None,
+            developer_artifacts: None,
             mount: None,
+            rc_vault: None,
         },
         reporter,
     )
+}
+
+const RC_VAULT_PAGE_LEN: usize = 4096;
+
+fn resolve_rc_vault(
+    path: Option<&Path>,
+    offset: Option<&str>,
+) -> Result<Option<esp::RcVaultWrite>, AppError> {
+    match (path, offset) {
+        (None, None) => Ok(None),
+        (Some(path), Some(offset)) => {
+            let bytes = std::fs::read(path).map_err(|error| {
+                AppError::configuration(format!(
+                    "could not read Remote Control vault {}: {error}",
+                    path.display()
+                ))
+            })?;
+            if bytes.len() != RC_VAULT_PAGE_LEN {
+                return Err(AppError::configuration(format!(
+                    "Remote Control vault must be {RC_VAULT_PAGE_LEN} bytes, got {}",
+                    bytes.len()
+                )));
+            }
+            Ok(Some(esp::RcVaultWrite {
+                offset: parse_flash_offset(offset)?,
+                bytes,
+            }))
+        }
+        _ => Err(AppError::arguments(
+            "--rc-vault and --rc-vault-offset must be provided together",
+        )),
+    }
+}
+
+fn parse_flash_offset(raw: &str) -> Result<u32, AppError> {
+    let trimmed = raw.trim();
+    let parsed = if let Some(hex) = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+    {
+        u32::from_str_radix(hex, 16)
+    } else {
+        trimmed.parse::<u32>()
+    };
+    parsed.map_err(|_| {
+        AppError::arguments(format!(
+            "invalid --rc-vault-offset {raw:?}; use decimal or 0x-prefixed hex"
+        ))
+    })
 }
 
 fn confirm_board(board: &BoardCatalogEntry, yes: bool, interactive: bool) -> Result<(), AppError> {
