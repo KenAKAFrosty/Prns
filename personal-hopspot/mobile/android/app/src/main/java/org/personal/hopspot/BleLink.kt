@@ -1001,7 +1001,7 @@ class BleLink(private val context: Context) {
     }
 
     private fun clientCallback(connId: Int, address: String): BluetoothGattCallback =
-        object : BluetoothGattCallback() {
+        object : BleNotificationCallback() {
             override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
                 if (!running || !radioActive) {
                     runCatching { gatt.disconnect() }
@@ -1290,7 +1290,7 @@ class BleLink(private val context: Context) {
                 }
             }
 
-            override fun onCharacteristicChanged(
+            override fun onNotification(
                 gatt: BluetoothGatt,
                 characteristic: BluetoothGattCharacteristic,
                 value: ByteArray,
