@@ -68,7 +68,7 @@ and the normal hook, not bypass the failure.
 No new binary was installed. The earlier physical proof remains evidence for
 `f606a3f5c`, not automatic acceptance of this cleanup build.
 
-## Publication
+## Publication paused for new upstream merges
 
 - #223 description updated and read back at unchanged head `8d7ea459b`: ordinary
   dual-role app rationale, actual #218 dependency, corrected comparison link,
@@ -77,7 +77,28 @@ No new binary was installed. The earlier physical proof remains evidence for
   `7bcbbf4e0e001aeaab998e171c4eb6eba1990163`.
 - Old #209 tip: `a20dcfd15b09f50a0d83fc66caf82cfc3fc3dd4d`, preserved locally as
   `rescue/prns-app-corebluetooth-scan-startup-pre-ask-removal-20260923`.
-- Atomic rescue/#209 publication is undergoing the normal publishing gate.
-  Exact force-with-lease applies only to `prns-app-corebluetooth-scan-startup`
-  at the old tip above. Close #208 only after the dependent branch is published;
-  retain its branch. Update this section with the confirmed result.
+- The atomic rescue/#209 push was stopped during its normal publishing gate
+  when the user reported a new upstream merge batch. No remote ref was updated:
+  #209 still points at the old tip above, and the remote rescue ref is absent.
+- Fresh upstream trunk is now `45d477e7bedb98fe86b665c904bda077061142e9`.
+  The new merges are #199, #217, #219, #220, #225, #222, #215 and #202.
+  #207, #208, #209, #218 and #223 remained open at their previously inspected
+  heads. The landed #202 Apple implementation matches its former PR head;
+  it does not invalidate the ordinary dual-role cleanup.
+- An intermediate, unpublished scan candidate `9b588ff7121e5a1f55adedcdbe64a70498aede4f`
+  was validated on merge base `ec9a95808a734f1534b4bdef339e23d5dfbf94de`
+  (trunk `ca2c907af` plus #207 `7bcbbf4e0`). It retains the identical own patch
+  and passes the focused checks above. This is **not** a candidate based on the
+  subsequent #215/#202 merges and is not ready for publication as-is.
+- The publishing sweep's desktop compilation failure was environmental:
+  missing `pkg-config` and SDL2 development metadata. Restoring the matching
+  Nix SDL2 development output and supplying `PKG_CONFIG` / `PKG_CONFIG_PATH`
+  made the normal desktop workspace check pass without source changes.
+  The complete publishing gate has not finished.
+- The app branch has not yet incorporated this merge batch. Its checks above
+  qualify the recorded cleanup commits, not integration with the new trunk.
+  The latest trunk also contains Android and L2CAP refinements to preserve.
+- Next: reconcile the remaining scan dependency against the settled trunk,
+  confirm the revised rewrite base, rerun the normal publishing gate, and use
+  an exact lease on the old #209 tip. Close #208 only after #209 no longer
+  depends on it remotely; retain #208's branch. The app branch remains unpushed.
