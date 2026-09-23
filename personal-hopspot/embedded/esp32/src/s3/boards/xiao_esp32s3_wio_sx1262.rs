@@ -44,6 +44,7 @@ impl Esp32S3Board for XiaoEsp32S3WioSx1262Board {
     type Gnss = NoGnss;
 
     async fn bringup(
+        spawner: Spawner,
         mut p: esp_hal::peripherals::Peripherals,
     ) -> S3BoardHardware<Self::Display, Self::Battery, Self::Gnss> {
         // XIAO ESP32S3 uses the ESP32-S3R8 SiP: 8 MiB Octal PSRAM and 8 MiB flash.
@@ -80,7 +81,8 @@ impl Esp32S3Board for XiaoEsp32S3WioSx1262Board {
             let lora_reset = Output::new(p.GPIO42, Level::High, OutputConfig::default());
             let lora_busy = Input::new(p.GPIO40, InputConfig::default());
             let lora_dio1 = Input::new(p.GPIO39, InputConfig::default());
-            let frontend_control = wio_sx1262_frontend::initialize(p.GPIO38);
+            // The Wio-SX1262 V1.0 schematic connects its green LED to GPIO48 through R2.
+            let frontend_control = wio_sx1262_frontend::initialize(p.GPIO38, p.GPIO48);
 
             Sx126x::new(
                 lora_spi_device,
@@ -99,6 +101,12 @@ impl Esp32S3Board for XiaoEsp32S3WioSx1262Board {
                 },
             )
         };
+
+        // The activity task needs the running embassy time driver, so it starts here, after
+        // `boot_common!` has brought the RTOS and timebase up.
+        spawner.spawn(
+            wio_sx1262_frontend::activity_led_task().expect("the LoRa activity LED task fits"),
+        );
 
         S3BoardHardware {
             runtime_bootstrap,

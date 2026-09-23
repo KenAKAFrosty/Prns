@@ -52,6 +52,7 @@ pub(crate) trait Esp32S3Board {
     type Gnss: GnssProvider;
 
     async fn bringup(
+        spawner: Spawner,
         peripherals: esp_hal::peripherals::Peripherals,
     ) -> S3BoardHardware<Self::Display, Self::Battery, Self::Gnss>;
 }

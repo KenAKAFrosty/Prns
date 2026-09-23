@@ -36,6 +36,7 @@ impl HeltecFrontendKind {
             Self::Kct8103l => FrontendControl::TxRx {
                 enter_transmit,
                 enter_receive,
+                on_frame_received: None,
             },
         }
     }

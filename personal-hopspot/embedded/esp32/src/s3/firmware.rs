@@ -37,7 +37,7 @@ where
 {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let p = esp_hal::init(config);
-    let bringup = B::bringup(p).await;
+    let bringup = B::bringup(spawner, p).await;
     // Pin into esp_alloc's global external heap, not `PsramAlloc`. On Heltec V4-R8, `PsramAlloc` is
     // the private bump that `reinit_private_psram_heap` resets inside `run_core` before the LoRa
     // queue lands — pinning here would place the live future (OLED/I2C state) in that window and
@@ -127,14 +127,15 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         }
     };
     #[cfg(feature = "lora")]
-    let node_announce_app_data: &'static [u8] = match lora_profile_store.load_node_announce_name().await {
-        Ok(Some(name)) => mk_static!(personal_hopspot_core::NodeAnnounceName, name).as_bytes(),
-        Ok(None) => B::NODE_ANNOUNCE_APP_DATA,
-        Err(error) => {
-            log::warn!("headless node display name unavailable: {error:?}");
-            B::NODE_ANNOUNCE_APP_DATA
-        }
-    };
+    let node_announce_app_data: &'static [u8] =
+        match lora_profile_store.load_node_announce_name().await {
+            Ok(Some(name)) => mk_static!(personal_hopspot_core::NodeAnnounceName, name).as_bytes(),
+            Ok(None) => B::NODE_ANNOUNCE_APP_DATA,
+            Err(error) => {
+                log::warn!("headless node display name unavailable: {error:?}");
+                B::NODE_ANNOUNCE_APP_DATA
+            }
+        };
     #[cfg(feature = "lora")]
     let loaded_lora_profile = match lora_profile_store.load(B::DEFAULT_LORA_PROFILE).await {
         Ok(loaded) => loaded,

@@ -13,6 +13,12 @@ cd personal-hopspot/embedded/esp32
 cargo xiao-s3-wio --locked
 ```
 
+The board is headless, so the Wio-SX1262 baseboard green LED doubles as a LoRa
+activity indicator: it stays lit for the duration of each transmit and pulses
+briefly for each successfully decoded receive frame. The Wio-SX1262 V1.0
+schematic connects this active-high LED to `GPIO48`; its button is on `GPIO21`.
+Check the pinout before using a different baseboard revision.
+
 Install the repository's ESP Rust toolchain once:
 
 ```console
