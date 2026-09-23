@@ -395,7 +395,7 @@ mod tests {
         RemoteControlPathEntry::new(
             DestinationHash::new([byte; TRUNCATED_HASH_BYTE_LEN]),
             byte,
-            if byte % 2 == 0 {
+            if byte.is_multiple_of(2) {
                 NextHop::Direct
             } else {
                 NextHop::Via(TransportId::new([byte; TRUNCATED_HASH_BYTE_LEN]))
