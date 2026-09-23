@@ -8,7 +8,7 @@ using normal merges rather than rewriting shared PR history. It follows the
 
 - Integrated upstream `a6748cea4` in `785d70cc6`, then the newly landed pairing
   persistence, scan diagnostics and controller persistence-event changes through
-  trunk `fe4966bab`. The final core integration is `e2c10c808`.
+  trunk `fe4966bab`. The pinned core source is `e2c10c808`.
 - Adopted upstream's immediate rejection of oversized L2CAP length prefixes and
   the legacy Android Hopspot callback/startup corrections. Preserved the app's
   pending target-expiry event, ordinary dual-role Bluetooth cleanup and tests.
@@ -19,12 +19,16 @@ using normal merges rather than rewriting shared PR history. It follows the
 - The later #205, #209 and #210 integration merges changed no app source. The
   app already contained those corrections. Discovery-store test isolation and
   pending event coverage were retained; no test was duplicated.
+- After #211 landed, merged trunk `7f19df026` in `3646fd879`. Git's clean merge
+  duplicated the target-expiry test because the maintainer had moved it beside
+  another test. Removing that duplicate preserves exactly the qualified parent
+  tree, with one of each test; no production behavior or pinned core code changed.
 - Pinned the combined source in `release/compatibility.json` using the app
   fork's repository, and regenerated the notices with their canonical generator.
   The legal text is unchanged; only the reviewed-input fingerprint changed.
 
-The remaining core contributions are separate PRs: shared Host snapshots (#201),
-target authorization-expiry events (#211), and E290 pairing (#212). The E290
+The remaining core contributions are separate PRs: shared Host snapshots (#201)
+and E290 pairing (#212). The E290
 refresh also contains the already-approved full-control preset and disclosure.
 The obsolete central-only Bluetooth PR remains closed. No menu-stall diagnostics
 or unrelated Wi-Fi correction was added to the E290 pairing PR.
@@ -54,9 +58,17 @@ Fresh complete app verification then passed:
   and release-symbol checks passed.
 
 These app checks cover the source preserved by the ancestry-only upstream merges.
-Canonical notices and the unsafe dependency inventory also passed. The normal
-publication gate and clean detached-consumer qualification are separate checks;
-this checkpoint does not itself claim their completion or a successful push.
+Canonical notices and the unsafe dependency inventory also passed.
+
+The clean detached-consumer check subsequently passed for app `309bc2a21` and
+core `e2c10c808`, including the complete app checks and a two-way Python LXMF
+exchange with verified inbound delivery and outbound proof. Its packed JavaScript
+artifact matched the recorded SHA-256. This run fetched the exact core source
+through a local Git URL; it does not establish public remote fetchability.
+
+The normal publication gate is separate. This checkpoint does not itself claim
+that gate's completion or a successful push; the PR's publication summary records
+the final result.
 
 No fresh iOS/Android binary or board firmware was installed. Earlier physical
 pairing, settings and unpaired phone-to-phone BLE evidence remains tied to its
