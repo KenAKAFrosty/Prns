@@ -115,9 +115,10 @@ impl<S: StorageLayout> ManifoldPersistence<S> for AlwaysDuePersistence {
         _snapshot: &crate::runtime::RemoteControlAuthorizationSnapshot,
         _now: InstantMillis,
     ) -> crate::runtime::StoreRemoteControlAuthorizationSnapshotOutcome {
-        crate::runtime::StoreRemoteControlAuthorizationSnapshotOutcome::Failed(
-            crate::runtime::EmbeddedPersistenceFailure::Flash,
-        )
+        crate::runtime::StoreRemoteControlAuthorizationSnapshotOutcome::Failed {
+            failure: crate::runtime::EmbeddedPersistenceFailure::Flash,
+            retry_at: None,
+        }
     }
 }
 
@@ -236,6 +237,7 @@ fn a_pooled_ifac_slot_added_at_runtime_opens_inbound_then_frees_on_remove() {
         | Journaled::RemoteControlControllerPairingConfirmationRequired(_)
         | Journaled::RemoteControlControllerPairingPersistenceRequired(_)
         | Journaled::RemoteControlControllerPairingAuthorizationPersisted { .. }
+        | Journaled::RemoteControlControllerPairingAuthorizationPersistenceFailed { .. }
         | Journaled::RemoteControlControllerPairingExpired { .. }
         | Journaled::RemoteControlControllerPairingLinkClosed { .. }
         | Journaled::RemoteControlTargetPairingExpired { .. }
@@ -381,6 +383,7 @@ fn a_pooled_slot_retagged_at_runtime_carries_traffic_under_the_new_id() {
         | Journaled::RemoteControlControllerPairingConfirmationRequired(_)
         | Journaled::RemoteControlControllerPairingPersistenceRequired(_)
         | Journaled::RemoteControlControllerPairingAuthorizationPersisted { .. }
+        | Journaled::RemoteControlControllerPairingAuthorizationPersistenceFailed { .. }
         | Journaled::RemoteControlControllerPairingExpired { .. }
         | Journaled::RemoteControlControllerPairingLinkClosed { .. }
         | Journaled::RemoteControlTargetPairingExpired { .. }
