@@ -27,6 +27,12 @@ tests pass, and the retained-data Galaxy installation was checked for node reads
 keyboard visibility, message disclosures and 1.5x/2x text navigation. These are
 presentation checks, not additional remote-write or iOS qualification.
 
+The [subsequent MetalbeardMobile install](../checkpoints/2026-09-22-ios-install.md)
+includes corrected back arrows and passes the 320-test app suite. Its signed,
+bundled-JavaScript iOS build installs but cannot launch under the newly installed
+iOS 27/Xcode 27 scene-lifecycle requirement. A scene-aware native Bluetooth startup
+migration is required; installation is not successful iOS UI or runtime acceptance.
+
 The expanded read/write screens have limited Galaxy/E290 evidence, not full
 physical qualification. Fresh Android
 pairing succeeded in a user-run trial against the separate E290 diagnostic
