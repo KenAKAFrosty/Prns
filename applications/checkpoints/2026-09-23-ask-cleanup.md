@@ -97,8 +97,31 @@ No new binary was installed. The earlier physical proof remains evidence for
   The complete publishing gate has not finished.
 - The app branch has not yet incorporated this merge batch. Its checks above
   qualify the recorded cleanup commits, not integration with the new trunk.
-  The latest trunk also contains Android and L2CAP refinements to preserve.
-- Next: reconcile the remaining scan dependency against the settled trunk,
-  confirm the revised rewrite base, rerun the normal publishing gate, and use
+  The latest trunk also contains refinements to preserve:
+
+  - #222 adds `StreamDeframer::pending_frame_len()` and rejects an oversized
+    L2CAP frame from its length prefix, before waiting for the full frame.
+    The app branch still uses the earlier post-extraction check.
+  - #220/#225 update the separate Personal Hopspot Android implementation.
+    The new app's SDK already has equivalent legacy-notification and startup
+    sequencing protections; do not replace that implementation unnecessarily.
+  - #215's runtime diagnostics match the app implementation. Preserve the
+    app branch's additional pairing expiry/persistence tests during integration.
+  - #217/#219 touched files already match the app branch. #199 only removes an
+    obsolete wake-receiver fixture in addition to the behavior already present.
+- Final local scan candidate: `67f526e0aba4e602ebe46c0d37bac0cbe919dcb2`, based on
+  `eb426538eeda4971e79590c6ed3fd6527772b650` (trunk `45d477e7b` plus current #207).
+  Squash-history conflicts preserve #207's bounded ingress/restoration handling.
+  Independent review confirms the Apple implementation matches the previously
+  validated candidate, public APIs/imports occur once, and the original scan
+  patch is unchanged. Fresh checks passed: 77 FFI tests in each logging mode
+  (one hardware test ignored each), 15 Bluetooth-interface tests, strict Clippy
+  and iOS compilation for both crates, formatting, notices and diff checks.
+  The full publishing gate remains pending. The final candidate is frozen.
+- An approval question briefly named provisional commits `62d4003b9` /
+  `0163921bd` before final merge review removed a duplicate import. That
+  question was explicitly withdrawn; it does not authorize publishing a
+  different candidate. Revised approval must name the final commits above.
+- Next: confirm the revised rewrite base, rerun the normal publishing gate, and use
   an exact lease on the old #209 tip. Close #208 only after #209 no longer
   depends on it remotely; retain #208's branch. The app branch remains unpushed.
