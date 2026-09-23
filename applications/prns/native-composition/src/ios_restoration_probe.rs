@@ -165,14 +165,21 @@ mod enabled {
             }
         }
         if target.ends_with("::backend") {
+            if message
+                .strip_prefix(
+                    "bluetooth: central powered, GATT service published, L2CAP listener on PSM 0x",
+                )
+                .is_some_and(|psm| {
+                    psm.len() == 4 && psm.bytes().all(|byte| byte.is_ascii_hexdigit())
+                })
+            {
+                // Record readiness without exporting the dynamically assigned PSM.
+                return Some("bluetooth_managers_ready");
+            }
             match message {
-                "bluetooth: central-only CoreBluetooth manager powered; no local peripheral capability" =>
+                "bluetooth: timed out waiting for central power, GATT publication, and L2CAP publication — is Bluetooth on and permission granted?" =>
                 {
-                    return Some("central_manager_ready");
-                }
-                "bluetooth: timed out waiting for central power — is Bluetooth on and permission granted?" =>
-                {
-                    return Some("central_manager_timeout");
+                    return Some("bluetooth_managers_timeout");
                 }
                 "bluetooth: CoreBluetooth logical radio resources up" => {
                     return Some("central_radio_enabled");
@@ -391,13 +398,13 @@ mod enabled {
             ),
             (
                 BACKEND,
-                "bluetooth: central-only CoreBluetooth manager powered; no local peripheral capability",
-                "central_manager_ready",
+                "bluetooth: central powered, GATT service published, L2CAP listener on PSM 0x0080",
+                "bluetooth_managers_ready",
             ),
             (
                 BACKEND,
-                "bluetooth: timed out waiting for central power — is Bluetooth on and permission granted?",
-                "central_manager_timeout",
+                "bluetooth: timed out waiting for central power, GATT publication, and L2CAP publication — is Bluetooth on and permission granted?",
+                "bluetooth_managers_timeout",
             ),
             (
                 BACKEND,
@@ -491,6 +498,33 @@ mod enabled {
                 assert_eq!(classify(target, &other_payload), Some(code));
                 let other_target = if target == CENTRAL { BACKEND } else { CENTRAL };
                 assert_eq!(classify(other_target, message), None);
+            }
+        }
+
+        #[test]
+        fn dual_role_readiness_omits_the_psm_and_rejects_unexpected_payloads() {
+            let prefix =
+                "bluetooth: central powered, GATT service published, L2CAP listener on PSM ";
+            for psm in ["0x0080", "0x00ff", "0xffff"] {
+                assert_eq!(
+                    classify(BACKEND, &format!("{prefix}{psm}")),
+                    Some("bluetooth_managers_ready")
+                );
+            }
+            for psm in [
+                "",
+                "0x80",
+                "0x0080 private-peer",
+                "0x0080\nprivate-error",
+                "0xzzzz",
+            ] {
+                assert_eq!(classify(BACKEND, &format!("{prefix}{psm}")), None);
+            }
+            for obsolete in [
+                "bluetooth: central-only CoreBluetooth manager powered; no local peripheral capability",
+                "bluetooth: timed out waiting for central power — is Bluetooth on and permission granted?",
+            ] {
+                assert_eq!(classify(BACKEND, obsolete), None);
             }
         }
 

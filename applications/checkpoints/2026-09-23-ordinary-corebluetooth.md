@@ -178,3 +178,7 @@ is hidden, both names are hardcoded `prns`, and discovered peers appear as empty
 conversations. Continue with the planned name/announce/discovered-contact journey,
 truthful Bluetooth status and network inspection; do not rewrite the working
 messaging transport. No push or PR update was performed.
+
+The subsequent [ASK cleanup](2026-09-23-ask-cleanup.md) removes unused central-only
+core APIs, refreshes diagnostics and records the separate upstream PR changes.
+It does not extend this binary's physical qualification to a new build.

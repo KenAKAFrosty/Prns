@@ -137,6 +137,10 @@ session, Hello means the acknowledged GATT write completed; neither
 event alone proves a validated, settled handshake. Closed-session reaping records
 the local cancellation path, not its cause or a measured handshake timeout.
 Only static event codes leave the probe; control fields are not exported.
+The [ASK cleanup](../checkpoints/2026-09-23-ask-cleanup.md) replaces obsolete
+central-only readiness events with `bluetooth_managers_ready` and
+`bluetooth_managers_timeout`, matching the dual-role backend without exposing its
+dynamically assigned PSM.
 Reset/reconnect request markers identify the one-shot restored-native recovery
 path, not a guarantee that the physical connection has closed or reopened.
 The classifier and Swift

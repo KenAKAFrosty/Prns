@@ -28,6 +28,8 @@ enum PrnsIosDiagnostics {
   }
 
   enum RestorationEvent: String {
+    case bluetoothManagersReady = "bluetooth_managers_ready"
+    case bluetoothManagersTimeout = "bluetooth_managers_timeout"
     case centralCharacteristicDiscoveryFailed = "central_characteristic_discovery_failed"
     case centralClosedSessionReaped = "central_closed_session_reaped"
     case centralColumbaSubscribed = "central_columba_subscribed"
@@ -44,8 +46,6 @@ enum PrnsIosDiagnostics {
     case centralDialSystemConnectionYielded = "central_dial_system_connection_yielded"
     case centralDialTimeout = "central_dial_timeout"
     case centralDisconnected = "central_disconnected"
-    case centralManagerReady = "central_manager_ready"
-    case centralManagerTimeout = "central_manager_timeout"
     case centralPeerSighted = "central_peer_sighted"
     case centralPendingConnectionResumed = "central_pending_connection_resumed"
     case centralRadioDisabled = "central_radio_disabled"

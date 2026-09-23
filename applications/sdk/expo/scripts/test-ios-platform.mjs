@@ -101,13 +101,15 @@ try {
       "PRNS_IOS_RESTORATION sequence=21 event=central_closed_session_reaped",
       "PRNS_IOS_RESTORATION sequence=22 event=central_restored_native_reset_requested",
       "PRNS_IOS_RESTORATION sequence=23 event=central_restored_native_reconnect_requested",
+      "PRNS_IOS_RESTORATION sequence=24 event=bluetooth_managers_ready",
+      "PRNS_IOS_RESTORATION sequence=25 event=bluetooth_managers_timeout",
       "PRNS_IOS_RESTORATION sequence=18446744073709551615 event=central_scan_started",
     ],
     "each diagnostic channel must reach stderr once; invalid probe codes must stay silent",
   );
   assert.doesNotMatch(
     probeResult.stderr,
-    /private-peer|private-error|private-outcome|private-stage|gatt_control_timeout/,
+    /private-peer|private-error|private-outcome|private-stage|gatt_control_timeout|central_manager_ready|central_manager_timeout|0x0080/,
     "unknown native values and rejected restoration payloads must never become public",
   );
   const releaseProbeObject = resolve(recoveryTestDirectory, "probe-release.o");

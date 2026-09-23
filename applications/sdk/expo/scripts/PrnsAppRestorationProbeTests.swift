@@ -31,6 +31,8 @@ enum PrnsAppRestorationProbeTests {
     emit(Array("central_closed_session_reaped".utf8), sequence: 21)
     emit(Array("central_restored_native_reset_requested".utf8), sequence: 22)
     emit(Array("central_restored_native_reconnect_requested".utf8), sequence: 23)
+    emit(Array("bluetooth_managers_ready".utf8), sequence: 24)
+    emit(Array("bluetooth_managers_timeout".utf8), sequence: 25)
     emit(Array("central_scan_started".utf8), sequence: UInt64.max)
 
     // Invalid calls must never reach the console, including private/error payloads.
@@ -45,6 +47,9 @@ enum PrnsAppRestorationProbeTests {
     emit([0xff, 0xfe], sequence: 105)
     emit(Array("gatt_control_hello_sent private-peer-payload".utf8), sequence: 106)
     emit(Array("gatt_control_timeout".utf8), sequence: 107)
+    emit(Array("central_manager_ready".utf8), sequence: 108)
+    emit(Array("central_manager_timeout".utf8), sequence: 109)
+    emit(Array("bluetooth_managers_ready 0x0080".utf8), sequence: 110)
   }
 
   private static func emit(_ bytes: [UInt8], sequence: UInt64) {
