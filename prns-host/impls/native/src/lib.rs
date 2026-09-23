@@ -69,7 +69,9 @@ use tokio::sync::{mpsc, oneshot, watch};
 
 #[cfg(unix)]
 mod supplied_pipe;
-pub use prns_host_snapshot::{assemble_host_snapshot, HostInterfaceAttachment};
+pub use prns_host_snapshot::{
+    assemble_host_snapshot, HostInterfaceAttachment, HostSnapshotAssemblyError,
+};
 #[cfg(unix)]
 pub use supplied_pipe::{
     NativeSuppliedPipe, SuppliedPipeConfig, SuppliedPipeOpenRequest, SuppliedPipeRequestWait,
@@ -137,6 +139,7 @@ pub enum NativeSnapshotError {
     Busy,
     Stopped,
     TimedOut,
+    Unavailable,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -504,7 +507,7 @@ impl NativeHost {
                 std::sync::mpsc::RecvTimeoutError::Disconnected => NativeSnapshotError::Stopped,
             }),
             None => result.recv().map_err(|_| NativeSnapshotError::Stopped),
-        }
+        }?
     }
 
     pub fn stop(&self) {
@@ -616,7 +619,7 @@ struct UploadJob {
 }
 
 struct SnapshotJob {
-    reply: std::sync::mpsc::SyncSender<HostSnapshot>,
+    reply: std::sync::mpsc::SyncSender<Result<HostSnapshot, NativeSnapshotError>>,
 }
 
 struct PendingCompletion(Arc<CommandCompletion>);
@@ -1309,17 +1312,15 @@ async fn command_loop(handle: PrnsNodeHandle, inputs: CommandLoopInputs) {
             }
             HostWork::Snapshot(job) => {
                 snapshot_revision = snapshot_revision.saturating_add(1);
-                if let Some(snapshot) = collect_snapshot(
+                let snapshot = collect_snapshot(
                     &handle,
                     &attachments,
                     snapshot_revision,
                     started_at,
                     &persistence,
                 )
-                .await
-                {
-                    let _ = job.reply.send(snapshot);
-                }
+                .await;
+                let _ = job.reply.send(snapshot);
             }
             HostWork::Preview(job) => {
                 tokio::spawn(job(handle.clone()));
@@ -1346,20 +1347,23 @@ async fn collect_snapshot(
     revision: u64,
     started_at: Instant,
     persistence: &Mutex<PersistenceSnapshot>,
-) -> Option<HostSnapshot> {
+) -> Result<HostSnapshot, NativeSnapshotError> {
     let raw_interfaces = handle.interface_inventory();
     let attached_interfaces = attachments
-        .values()
-        .flat_map(|attachment| {
+        .iter()
+        .flat_map(|(host_interface, attachment)| {
+            let host_interface = *host_interface;
             let kind = attachment.kind();
-            attachment
-                .interfaces()
-                .into_iter()
-                .map(move |interface| HostInterfaceAttachment::new(interface, kind))
+            attachment.interfaces().into_iter().map(move |interface| {
+                HostInterfaceAttachment::with_host_interface(interface, host_interface, kind)
+            })
         })
         .collect::<Vec<_>>();
-    let engine = handle.engine_inspection_snapshot().await?;
-    Some(assemble_host_snapshot(
+    let engine = handle
+        .engine_inspection_snapshot()
+        .await
+        .ok_or(NativeSnapshotError::Unavailable)?;
+    assemble_host_snapshot(
         raw_interfaces,
         attached_interfaces,
         engine,
@@ -1367,7 +1371,8 @@ async fn collect_snapshot(
         lock(persistence).clone(),
         revision,
         started_at.elapsed(),
-    ))
+    )
+    .map_err(|_| NativeSnapshotError::Unavailable)
 }
 
 async fn upload_loop(
@@ -1542,6 +1547,7 @@ fn reference_interface(config: &InterfaceConfig) -> Result<ReferenceInterface, C
             "AutoInterface",
             ReferenceConfigParams::Auto {
                 group_id: group_id.clone(),
+                group_ids: None,
                 discovery_scope: discovery_scope.map(|scope| {
                     match scope {
                         prns_host::DiscoveryScope::Link => "link",
@@ -1803,7 +1809,10 @@ fn reference_interface(config: &InterfaceConfig) -> Result<ReferenceInterface, C
         InterfaceConfig::AutomaticUsb => ("PrnsUsbAuto", ReferenceConfigParams::PrnsUsbAuto, None),
         InterfaceConfig::AutomaticBluetoothLe => (
             "PrnsBluetoothAuto",
-            ReferenceConfigParams::PrnsBluetoothAuto,
+            ReferenceConfigParams::PrnsBluetoothAuto {
+                group_id: None,
+                group_ids: None,
+            },
             None,
         ),
         InterfaceConfig::WebSocketClient { target, framing } => (
@@ -2733,6 +2742,14 @@ fn publish_message(sink: &dyn NativeEventSink, message: Message<'_>) -> bool {
             );
             return true;
         }
+        Message::RemoteControlTargetPairingExpiredDuringAuthorization { attempt_id } => {
+            publish_remote_control_diagnostic(
+                sink,
+                "RemoteControlTargetPairingExpiredDuringAuthorization",
+                format!("{attempt_id:?}"),
+            );
+            return true;
+        }
         Message::RemoteControlControllerPairingConfirmationRequired(attempt) => {
             publish_remote_control_diagnostic(
                 sink,
@@ -2753,6 +2770,14 @@ fn publish_message(sink: &dyn NativeEventSink, message: Message<'_>) -> bool {
             publish_remote_control_diagnostic(
                 sink,
                 "RemoteControlControllerPairingAuthorizationPersisted",
+                format!("{attempt_id:?}"),
+            );
+            return true;
+        }
+        Message::RemoteControlControllerPairingAuthorizationPersistenceFailed { attempt_id } => {
+            publish_remote_control_diagnostic(
+                sink,
+                "RemoteControlControllerPairingAuthorizationPersistenceFailed",
                 format!("{attempt_id:?}"),
             );
             return true;

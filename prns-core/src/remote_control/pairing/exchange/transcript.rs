@@ -16,7 +16,7 @@ use super::{
     MAX_REMOTE_CONTROL_PAIRING_ATTEMPT_TIMEOUT, PAIRING_ATTEMPT_TIMEOUT_ENCODED_LEN,
     PAIRING_COMPLETION_DOMAIN, PAIRING_CONFIRMATION_CODE_MODULUS,
     PAIRING_TRANSCRIPT_DIGEST_ENCODED_LEN, PAIRING_TRANSCRIPT_DOMAIN,
-    PAIRING_TRANSCRIPT_PERMISSION_BYTES_LEN,
+    PAIRING_TRANSCRIPT_PERMISSION_BYTES_LEN, V3_PAIRING_TRANSCRIPT_PERMISSION_BYTES_LEN,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,7 +98,7 @@ impl RemoteControlPairingBegin {
     ) -> Self {
         let invitation_proof = invitation_code.into_proof(endpoint, &controller);
         Self {
-            protocol_version: RemoteControlPairingProtocolVersion::V3,
+            protocol_version: RemoteControlPairingProtocolVersion::V4,
             controller,
             invitation_proof,
         }
@@ -148,6 +148,15 @@ impl RemoteControlPairingTranscriptDigest {
 pub struct RemoteControlPairingAttemptId(RemoteControlPairingTranscriptDigest);
 
 impl RemoteControlPairingAttemptId {
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn from_test_transcript_digest_bytes(
+        bytes: [u8; PAIRING_TRANSCRIPT_DIGEST_ENCODED_LEN],
+    ) -> Self {
+        Self(RemoteControlPairingTranscriptDigest(bytes))
+    }
+
     #[must_use]
     pub const fn transcript(self) -> RemoteControlPairingTranscriptDigest {
         self.0
@@ -363,7 +372,11 @@ impl RemoteControlPairingOffer {
         super::PAIRING_MESSAGE_HEADER_ENCODED_LEN
             .saturating_add(super::PAIRING_IDENTITY_ENCODED_LEN)
             .saturating_add(
-                if self.protocol_version == RemoteControlPairingProtocolVersion::V3 {
+                if matches!(
+                    self.protocol_version,
+                    RemoteControlPairingProtocolVersion::V3
+                        | RemoteControlPairingProtocolVersion::V4
+                ) {
                     super::PAIRING_AUTHORITY_ENCODED_LEN
                 } else {
                     0
@@ -397,6 +410,25 @@ impl RemoteControlPairingPreparedOffer {
                 RemoteControlPairingPreparedOfferError::AuthorityUnsupported {
                     version: begin.protocol_version,
                     authority: permissions.authority(),
+                },
+            );
+        }
+        let legacy_request = matches!(
+            begin.protocol_version,
+            RemoteControlPairingProtocolVersion::V2 | RemoteControlPairingProtocolVersion::V3
+        )
+        .then(|| {
+            permissions
+                .permitted_requests()
+                .iter()
+                .find(|request| usize::from(request.wire_value()) > super::V2_V3_REQUEST_KIND_CAP)
+        })
+        .flatten();
+        if let Some(request) = legacy_request {
+            return Err(
+                RemoteControlPairingPreparedOfferError::RequestUnsupportedForVersion {
+                    version: begin.protocol_version,
+                    request,
                 },
             );
         }
@@ -443,6 +475,10 @@ pub enum RemoteControlPairingPreparedOfferError {
     AuthorityUnsupported {
         version: RemoteControlPairingProtocolVersion,
         authority: RemoteControlControllerAuthority,
+    },
+    RequestUnsupportedForVersion {
+        version: RemoteControlPairingProtocolVersion,
+        request: crate::remote_control::RemoteControlRequestKind,
     },
 }
 
@@ -615,7 +651,7 @@ fn pairing_transcript_digest(
             ])
         }
         RemoteControlPairingProtocolVersion::V3 => {
-            let permission_bytes = transcript_permission_bytes(permissions);
+            let permission_bytes = v3_transcript_permission_bytes(permissions);
             sha256_chunks(&[
                 PAIRING_TRANSCRIPT_DOMAIN,
                 &version,
@@ -624,6 +660,22 @@ fn pairing_transcript_digest(
                 &controller_public_keys,
                 &target_public_keys,
                 &permission_bytes,
+                &attempt_timeout,
+            ])
+        }
+        RemoteControlPairingProtocolVersion::V4 => {
+            let (permission_bytes, permission_bytes_len) = transcript_permission_bytes(permissions);
+            let permission_bytes = permission_bytes
+                .get(..permission_bytes_len)
+                .unwrap_or(&permission_bytes);
+            sha256_chunks(&[
+                PAIRING_TRANSCRIPT_DOMAIN,
+                &version,
+                endpoint.as_bytes(),
+                context.link_id.as_bytes(),
+                &controller_public_keys,
+                &target_public_keys,
+                permission_bytes,
                 &attempt_timeout,
             ])
         }
@@ -639,8 +691,30 @@ fn pairing_completion_signature_message(
 
 fn transcript_permission_bytes(
     permissions: &RemoteControlPairingPermissions,
-) -> [u8; PAIRING_TRANSCRIPT_PERMISSION_BYTES_LEN] {
+) -> ([u8; PAIRING_TRANSCRIPT_PERMISSION_BYTES_LEN], usize) {
     let mut bytes = [0u8; PAIRING_TRANSCRIPT_PERMISSION_BYTES_LEN];
+    let Some((authority, rest)) = bytes.split_first_mut() else {
+        return (bytes, 0);
+    };
+    *authority = permissions.authority().wire_value();
+    let Some((count, kinds)) = rest.split_first_mut() else {
+        return (bytes, 1);
+    };
+    *count = permission_count(permissions);
+    for (out, kind) in kinds
+        .iter_mut()
+        .zip(permissions.permitted_requests().iter())
+    {
+        *out = kind.wire_value();
+    }
+    let len = 2usize.saturating_add(permissions.permitted_requests().len());
+    (bytes, len)
+}
+
+fn v3_transcript_permission_bytes(
+    permissions: &RemoteControlPairingPermissions,
+) -> [u8; V3_PAIRING_TRANSCRIPT_PERMISSION_BYTES_LEN] {
+    let mut bytes = [0u8; V3_PAIRING_TRANSCRIPT_PERMISSION_BYTES_LEN];
     let Some((authority, rest)) = bytes.split_first_mut() else {
         return bytes;
     };

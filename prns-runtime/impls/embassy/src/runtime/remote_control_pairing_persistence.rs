@@ -20,6 +20,7 @@ use crate::storage::StorageLayout;
 use super::embedded_persistence::{
     EmbeddedPersistenceFailure, ManifoldPersistence, RemoteControlAuthorizationSnapshot,
     RemoteControlAuthorizationSnapshotKind, StoreRemoteControlAuthorizationSnapshotOutcome,
+    DISCOVERY_GROUP_CONFIGURATION_STORES,
 };
 use super::node_facade::PrnsNodeHandle;
 use super::remote_control_pairing_authorizations::{
@@ -236,8 +237,10 @@ impl RemoteControlPairingPersistenceRequired {
             | Journaled::RemoteControlTargetPairingConfirmationRequired(_)
             | Journaled::RemoteControlTargetPairingControllerCommitted { .. }
             | Journaled::RemoteControlTargetPairingAuthorizationPersisted { .. }
+            | Journaled::RemoteControlTargetPairingExpiredDuringAuthorization { .. }
             | Journaled::RemoteControlControllerPairingConfirmationRequired(_)
             | Journaled::RemoteControlControllerPairingAuthorizationPersisted { .. }
+            | Journaled::RemoteControlControllerPairingAuthorizationPersistenceFailed { .. }
             | Journaled::RemoteControlControllerPairingExpired { .. }
             | Journaled::RemoteControlControllerPairingLinkClosed { .. }
             | Journaled::RemoteControlTargetPairingExpired { .. }
@@ -294,6 +297,11 @@ struct RemoteControlAuthorizationStoreRequest {
     kind: RemoteControlAuthorizationSnapshotKind,
     snapshot: RemoteControlAuthorizationSnapshot,
     requirement: RemoteControlAuthorizationStoreRequirement,
+}
+
+struct PendingRemoteControlAuthorizationStore {
+    request: RemoteControlAuthorizationStoreRequest,
+    ready_at: Option<crate::engine::InstantMillis>,
 }
 
 pub(super) struct RemoteControlAuthorizationStoreExchange<M: RawMutex> {
@@ -375,6 +383,10 @@ impl<M: RawMutex> RemoteControlAuthorizationStoreExchange<M> {
         self.failures.try_receive().ok()
     }
 
+    fn has_failure(&self) -> bool {
+        !self.failures.is_empty()
+    }
+
     fn settle(&self, result: Result<(), EmbeddedPersistenceFailure>) {
         self.completed.signal(result);
     }
@@ -386,8 +398,7 @@ where
 {
     persistence: &'a mut P,
     stores: &'a RemoteControlAuthorizationStoreExchange<M>,
-    pending_request: Option<RemoteControlAuthorizationStoreRequest>,
-    pending_failure: Option<EmbeddedRemoteControlPairingPersistenceFailure>,
+    pending_request: Option<PendingRemoteControlAuthorizationStore>,
 }
 
 impl<'a, M, P> RemoteControlPairingManifoldPersistence<'a, M, P>
@@ -402,7 +413,6 @@ where
             persistence,
             stores,
             pending_request: None,
-            pending_failure: None,
         }
     }
 }
@@ -429,30 +439,45 @@ where
         &mut self,
         now: crate::engine::InstantMillis,
     ) -> Option<crate::engine::InstantMillis> {
-        if self.pending_failure.is_none() {
-            self.pending_failure = self.stores.try_take_failure();
-        }
         if self.pending_request.is_none() {
-            self.pending_request = self.stores.try_take_request();
+            self.pending_request = self.stores.try_take_request().map(|request| {
+                PendingRemoteControlAuthorizationStore {
+                    request,
+                    ready_at: Some(now),
+                }
+            });
         }
-        if self.pending_failure.is_some() || self.pending_request.is_some() {
-            self.persistence.deadline(now).or(Some(now))
-        } else {
-            self.persistence.deadline(now)
+        // Leave failures in their bounded queue until progress observes them. Merely
+        // checking readiness must not require another resident failure payload.
+        if self.stores.has_failure() {
+            return Some(now);
+        }
+        // New work and compaction steps are immediate, but a retained failed rollback
+        // must respect the store's retry schedule. Unrelated persistence can still run.
+        let store_ready = self
+            .pending_request
+            .as_ref()
+            .and_then(|pending| pending.ready_at);
+        match (store_ready, self.persistence.deadline(now)) {
+            (Some(store), Some(other)) => Some(crate::engine::InstantMillis(store.0.min(other.0))),
+            (Some(ready), None) | (None, Some(ready)) => Some(ready),
+            (None, None) => None,
         }
     }
 
     async fn wait_for_work(&self) {
-        match embassy_futures::select::select(
+        match embassy_futures::select::select3(
             self.stores.requests.wait(),
             self.stores.failures.ready_to_receive(),
+            self.persistence.wait_for_work(),
         )
         .await
         {
-            embassy_futures::select::Either::First(request) => {
+            embassy_futures::select::Either3::First(request) => {
                 self.stores.requests.signal(request);
             }
-            embassy_futures::select::Either::Second(()) => {}
+            embassy_futures::select::Either3::Second(()) => {}
+            embassy_futures::select::Either3::Third(()) => {}
         }
     }
 
@@ -461,15 +486,24 @@ where
         engine: &mut crate::engine::EngineState<S>,
         now: crate::engine::InstantMillis,
     ) {
-        if let Some(failure) = self.pending_failure.take() {
+        if let Some(failure) = self.stores.try_take_failure() {
             self.persistence
                 .observe_remote_control_pairing_failure(failure);
             return;
         }
-        let Some(request) = self.pending_request.as_ref() else {
+        if DISCOVERY_GROUP_CONFIGURATION_STORES.has_pending_request() {
+            self.persistence.progress(engine, now).await;
+            return;
+        }
+        let Some(pending) = self
+            .pending_request
+            .as_mut()
+            .filter(|pending| pending.ready_at.is_some_and(|ready| now.0 >= ready.0))
+        else {
             self.persistence.progress(engine, now).await;
             return;
         };
+        let request = &pending.request;
         match self
             .persistence
             .store_remote_control_authorization_snapshot(
@@ -484,14 +518,18 @@ where
                 self.pending_request = None;
                 self.stores.settle(Ok(()));
             }
-            StoreRemoteControlAuthorizationSnapshotOutcome::CompactionInProgress => {}
-            StoreRemoteControlAuthorizationSnapshotOutcome::Failed(failure) => {
+            StoreRemoteControlAuthorizationSnapshotOutcome::CompactionInProgress => {
+                pending.ready_at = Some(now);
+            }
+            StoreRemoteControlAuthorizationSnapshotOutcome::Failed { failure, retry_at } => {
                 match request.requirement {
                     RemoteControlAuthorizationStoreRequirement::Initial => {
                         self.pending_request = None;
                         self.stores.settle(Err(failure));
                     }
-                    RemoteControlAuthorizationStoreRequirement::Rollback => {}
+                    RemoteControlAuthorizationStoreRequirement::Rollback => {
+                        pending.ready_at = retry_at;
+                    }
                 }
             }
         }
@@ -1200,8 +1238,12 @@ mod tests {
     }
 
     struct ScriptedPersistence {
-        fail_first_store: bool,
+        deadline: Option<InstantMillis>,
+        fail_store_attempt: Option<u8>,
+        retry_at: Option<InstantMillis>,
+        compaction_steps: u8,
         store_attempts: u8,
+        progress_calls: u8,
         observed_failure: Option<EmbeddedRemoteControlPairingPersistenceFailure>,
     }
 
@@ -1209,7 +1251,7 @@ mod tests {
         fn observe(&mut self, _journaled: &Journaled<'_>, _now: InstantMillis) {}
 
         fn deadline(&mut self, _now: InstantMillis) -> Option<InstantMillis> {
-            None
+            self.deadline
         }
 
         fn observe_remote_control_pairing_failure(
@@ -1220,6 +1262,8 @@ mod tests {
         }
 
         async fn progress(&mut self, _engine: &mut EngineState<GrowableHeap>, _now: InstantMillis) {
+            self.progress_calls += 1;
+            self.deadline = None;
         }
 
         async fn store_remote_control_authorization_snapshot(
@@ -1227,13 +1271,21 @@ mod tests {
             _engine: &EngineState<GrowableHeap>,
             _kind: RemoteControlAuthorizationSnapshotKind,
             _snapshot: &RemoteControlAuthorizationSnapshot,
-            _now: InstantMillis,
+            now: InstantMillis,
         ) -> StoreRemoteControlAuthorizationSnapshotOutcome {
             self.store_attempts = self.store_attempts.saturating_add(1);
-            if self.fail_first_store && self.store_attempts == 1 {
-                StoreRemoteControlAuthorizationSnapshotOutcome::Failed(
-                    EmbeddedPersistenceFailure::Flash,
-                )
+            if self.fail_store_attempt.is_some_and(|attempt| {
+                self.store_attempts == attempt
+                    || (self.store_attempts > attempt
+                        && self.retry_at.is_some_and(|retry| now.0 < retry.0))
+            }) {
+                StoreRemoteControlAuthorizationSnapshotOutcome::Failed {
+                    failure: EmbeddedPersistenceFailure::Flash,
+                    retry_at: self.retry_at,
+                }
+            } else if self.compaction_steps > 0 {
+                self.compaction_steps -= 1;
+                StoreRemoteControlAuthorizationSnapshotOutcome::CompactionInProgress
             } else {
                 StoreRemoteControlAuthorizationSnapshotOutcome::Stored
             }
@@ -1241,12 +1293,16 @@ mod tests {
     }
 
     #[test]
-    fn initial_store_wakes_the_manifold_and_returns_the_exact_failure() {
+    fn pending_initial_store_preempts_a_future_deadline_and_returns_the_exact_failure() {
         embassy_futures::block_on(async {
             let stores = RemoteControlAuthorizationStoreExchange::<CriticalSectionRawMutex>::new();
             let mut persistence = ScriptedPersistence {
-                fail_first_store: true,
+                deadline: Some(InstantMillis(60_000)),
+                fail_store_attempt: Some(1),
+                retry_at: Some(InstantMillis(60_000)),
+                compaction_steps: 0,
                 store_attempts: 0,
+                progress_calls: 0,
                 observed_failure: None,
             };
             let mut manifold =
@@ -1275,8 +1331,12 @@ mod tests {
         embassy_futures::block_on(async {
             let stores = RemoteControlAuthorizationStoreExchange::<CriticalSectionRawMutex>::new();
             let mut persistence = ScriptedPersistence {
-                fail_first_store: true,
+                deadline: Some(InstantMillis(60_000)),
+                fail_store_attempt: Some(1),
+                retry_at: Some(InstantMillis(9)),
+                compaction_steps: 0,
                 store_attempts: 0,
+                progress_calls: 0,
                 observed_failure: None,
             };
             let mut manifold =
@@ -1303,12 +1363,16 @@ mod tests {
     }
 
     #[test]
-    fn pairing_failure_wakes_the_manifold_and_preserves_its_exact_cause() {
+    fn pending_pairing_failure_preempts_a_future_deadline_and_preserves_its_exact_cause() {
         embassy_futures::block_on(async {
             let stores = RemoteControlAuthorizationStoreExchange::<CriticalSectionRawMutex>::new();
             let mut persistence = ScriptedPersistence {
-                fail_first_store: false,
+                deadline: Some(InstantMillis(60_000)),
+                fail_store_attempt: None,
+                retry_at: None,
+                compaction_steps: 0,
                 store_attempts: 0,
+                progress_calls: 0,
                 observed_failure: None,
             };
             let mut manifold =
@@ -1331,6 +1395,59 @@ mod tests {
             let ((), ()) = join(report, drive).await;
             drop(manifold);
             assert_eq!(persistence.observed_failure, Some(failure));
+        });
+    }
+
+    #[test]
+    fn failure_readiness_preserves_the_bounded_queue_until_progress() {
+        embassy_futures::block_on(async {
+            let stores = RemoteControlAuthorizationStoreExchange::<CriticalSectionRawMutex>::new();
+            let mut persistence = ScriptedPersistence {
+                deadline: Some(InstantMillis(60_000)),
+                fail_store_attempt: None,
+                retry_at: None,
+                compaction_steps: 0,
+                store_attempts: 0,
+                progress_calls: 0,
+                observed_failure: None,
+            };
+            let mut manifold =
+                RemoteControlPairingManifoldPersistence::new(&mut persistence, &stores);
+            let mut engine = EngineState::<GrowableHeap>::default();
+            let first = EmbeddedRemoteControlPairingPersistenceFailure::SettlementBusy {
+                attempt_id: super::super::node_facade::test_remote_control_pairing_attempt(0x91),
+                operation: EmbeddedRemoteControlPairingPersistenceOperation::SettlePersisted,
+            };
+            let second = EmbeddedRemoteControlPairingPersistenceFailure::NodeStopped {
+                attempt_id: super::super::node_facade::test_remote_control_pairing_attempt(0x92),
+                operation: EmbeddedRemoteControlPairingPersistenceOperation::SettleFailed,
+            };
+            stores.report_failure(first).await;
+            for now in [InstantMillis(10), InstantMillis(11)] {
+                manifold.wait_for_work().await;
+                assert_eq!(manifold.deadline(now), Some(now));
+                assert!(stores.failures.is_full());
+            }
+
+            let report_second = stores.report_failure(second);
+            let drive = async {
+                manifold.progress(&mut engine, InstantMillis(11)).await;
+                assert_eq!(manifold.persistence.observed_failure, Some(first));
+                manifold.wait_for_work().await;
+                assert_eq!(
+                    manifold.deadline(InstantMillis(12)),
+                    Some(InstantMillis(12))
+                );
+                manifold.progress(&mut engine, InstantMillis(12)).await;
+                assert_eq!(manifold.persistence.observed_failure, Some(second));
+            };
+            let ((), ()) = join(report_second, drive).await;
+            assert!(!stores.has_failure());
+            assert_eq!(
+                manifold.deadline(InstantMillis(13)),
+                Some(InstantMillis(60_000))
+            );
+            assert_eq!(manifold.persistence.progress_calls, 0);
         });
     }
 
@@ -1452,6 +1569,223 @@ mod tests {
                 }),
             );
             assert!(progress.is_ready());
+        });
+    }
+
+    #[test]
+    fn failed_rollback_honors_store_backoff_without_delaying_failure_reports() {
+        embassy_futures::block_on(async {
+            let stores = RemoteControlAuthorizationStoreExchange::<CriticalSectionRawMutex>::new();
+            let mut persistence = ScriptedPersistence {
+                // An unrelated batching deadline must not postpone the store's retry.
+                deadline: Some(InstantMillis(80_000)),
+                fail_store_attempt: Some(1),
+                retry_at: Some(InstantMillis(60_000)),
+                compaction_steps: 0,
+                store_attempts: 0,
+                progress_calls: 0,
+                observed_failure: None,
+            };
+            let mut manifold =
+                RemoteControlPairingManifoldPersistence::new(&mut persistence, &stores);
+            let mut engine = EngineState::<GrowableHeap>::default();
+            stores.submit(
+                RemoteControlAuthorizationSnapshotKind::TargetAccesses,
+                RemoteControlAuthorizationSnapshot::new(),
+                RemoteControlAuthorizationStoreRequirement::Rollback,
+            );
+            assert_eq!(manifold.deadline(InstantMillis(8)), Some(InstantMillis(8)));
+            manifold.progress(&mut engine, InstantMillis(8)).await;
+            // Bound the former driver hot loop and count calls, not just deadlines.
+            for _ in 0..32 {
+                if manifold
+                    .deadline(InstantMillis(9))
+                    .is_some_and(|due| due.0 <= 9)
+                {
+                    manifold.progress(&mut engine, InstantMillis(9)).await;
+                }
+            }
+            assert_eq!(manifold.persistence.store_attempts, 1);
+            assert_eq!(
+                manifold.deadline(InstantMillis(9)),
+                Some(InstantMillis(60_000))
+            );
+            assert_eq!(stores.completed.try_take(), None);
+
+            let failure = EmbeddedRemoteControlPairingPersistenceFailure::SettlementBusy {
+                attempt_id: super::super::node_facade::test_remote_control_pairing_attempt(0x92),
+                operation: EmbeddedRemoteControlPairingPersistenceOperation::SettleFailed,
+            };
+            stores.report_failure(failure).await;
+            assert_eq!(
+                manifold.deadline(InstantMillis(10)),
+                Some(InstantMillis(10))
+            );
+            manifold.progress(&mut engine, InstantMillis(10)).await;
+            assert_eq!(manifold.persistence.observed_failure, Some(failure));
+            assert_eq!(manifold.persistence.store_attempts, 1);
+            assert_eq!(
+                manifold.deadline(InstantMillis(59_999)),
+                Some(InstantMillis(60_000))
+            );
+
+            manifold.progress(&mut engine, InstantMillis(60_000)).await;
+            assert_eq!(manifold.persistence.store_attempts, 2);
+            assert_eq!(stores.completed.try_take(), Some(Ok(())));
+            assert!(manifold.pending_request.is_none());
+        });
+    }
+
+    #[test]
+    fn unrelated_persistence_can_progress_without_retrying_rollback_early() {
+        embassy_futures::block_on(async {
+            let stores = RemoteControlAuthorizationStoreExchange::<CriticalSectionRawMutex>::new();
+            let mut persistence = ScriptedPersistence {
+                deadline: Some(InstantMillis(12)),
+                fail_store_attempt: Some(1),
+                retry_at: Some(InstantMillis(60_000)),
+                compaction_steps: 0,
+                store_attempts: 0,
+                progress_calls: 0,
+                observed_failure: None,
+            };
+            let mut manifold =
+                RemoteControlPairingManifoldPersistence::new(&mut persistence, &stores);
+            let mut engine = EngineState::<GrowableHeap>::default();
+            stores.submit(
+                RemoteControlAuthorizationSnapshotKind::ControllerGrants,
+                RemoteControlAuthorizationSnapshot::new(),
+                RemoteControlAuthorizationStoreRequirement::Rollback,
+            );
+            assert_eq!(manifold.deadline(InstantMillis(8)), Some(InstantMillis(8)));
+            manifold.progress(&mut engine, InstantMillis(8)).await;
+            assert_eq!(manifold.deadline(InstantMillis(9)), Some(InstantMillis(12)));
+            manifold.progress(&mut engine, InstantMillis(12)).await;
+            assert_eq!(manifold.persistence.progress_calls, 1);
+            assert_eq!(manifold.persistence.store_attempts, 1);
+            assert_eq!(
+                manifold.deadline(InstantMillis(12)),
+                Some(InstantMillis(60_000))
+            );
+            assert_eq!(stores.completed.try_take(), None);
+            manifold.progress(&mut engine, InstantMillis(60_000)).await;
+            assert_eq!(stores.completed.try_take(), Some(Ok(())));
+        });
+    }
+
+    #[test]
+    fn unavailable_rollback_store_does_not_invent_a_retry_or_report_success() {
+        embassy_futures::block_on(async {
+            let stores = RemoteControlAuthorizationStoreExchange::<CriticalSectionRawMutex>::new();
+            let mut persistence = ScriptedPersistence {
+                deadline: None,
+                fail_store_attempt: Some(1),
+                retry_at: None,
+                compaction_steps: 0,
+                store_attempts: 0,
+                progress_calls: 0,
+                observed_failure: None,
+            };
+            let mut manifold =
+                RemoteControlPairingManifoldPersistence::new(&mut persistence, &stores);
+            let mut engine = EngineState::<GrowableHeap>::default();
+            stores.submit(
+                RemoteControlAuthorizationSnapshotKind::TargetAccesses,
+                RemoteControlAuthorizationSnapshot::new(),
+                RemoteControlAuthorizationStoreRequirement::Rollback,
+            );
+            assert_eq!(manifold.deadline(InstantMillis(8)), Some(InstantMillis(8)));
+            manifold.progress(&mut engine, InstantMillis(8)).await;
+            assert_eq!(manifold.deadline(InstantMillis(9)), None);
+            // Even a wake for unrelated work must not retry an unavailable store.
+            manifold.progress(&mut engine, InstantMillis(60_000)).await;
+            assert_eq!(manifold.persistence.store_attempts, 1);
+            assert_eq!(stores.completed.try_take(), None);
+            assert!(manifold.pending_request.is_some());
+        });
+    }
+
+    #[test]
+    fn compaction_steps_remain_immediately_runnable_until_the_store_completes() {
+        embassy_futures::block_on(async {
+            let stores = RemoteControlAuthorizationStoreExchange::<CriticalSectionRawMutex>::new();
+            let mut persistence = ScriptedPersistence {
+                deadline: Some(InstantMillis(60_000)),
+                fail_store_attempt: None,
+                retry_at: None,
+                compaction_steps: 2,
+                store_attempts: 0,
+                progress_calls: 0,
+                observed_failure: None,
+            };
+            let mut manifold =
+                RemoteControlPairingManifoldPersistence::new(&mut persistence, &stores);
+            let mut engine = EngineState::<GrowableHeap>::default();
+            stores.submit(
+                RemoteControlAuthorizationSnapshotKind::ControllerGrants,
+                RemoteControlAuthorizationSnapshot::new(),
+                RemoteControlAuthorizationStoreRequirement::Initial,
+            );
+            for now in 8..10 {
+                assert!(manifold
+                    .deadline(InstantMillis(now))
+                    .is_some_and(|due| due.0 <= now));
+                manifold.progress(&mut engine, InstantMillis(now)).await;
+                assert_eq!(stores.completed.try_take(), None);
+            }
+            assert!(manifold
+                .deadline(InstantMillis(10))
+                .is_some_and(|due| due.0 <= 10));
+            manifold.progress(&mut engine, InstantMillis(10)).await;
+            assert_eq!(manifold.persistence.store_attempts, 3);
+            assert_eq!(stores.completed.try_take(), Some(Ok(())));
+        });
+    }
+
+    #[test]
+    fn failed_compaction_enters_rollback_cooldown_on_the_next_store_outcome() {
+        embassy_futures::block_on(async {
+            let stores = RemoteControlAuthorizationStoreExchange::<CriticalSectionRawMutex>::new();
+            let mut persistence = ScriptedPersistence {
+                deadline: Some(InstantMillis(80_000)),
+                fail_store_attempt: Some(2),
+                retry_at: Some(InstantMillis(60_000)),
+                compaction_steps: 1,
+                store_attempts: 0,
+                progress_calls: 0,
+                observed_failure: None,
+            };
+            let mut manifold =
+                RemoteControlPairingManifoldPersistence::new(&mut persistence, &stores);
+            let mut engine = EngineState::<GrowableHeap>::default();
+            stores.submit(
+                RemoteControlAuthorizationSnapshotKind::ControllerGrants,
+                RemoteControlAuthorizationSnapshot::new(),
+                RemoteControlAuthorizationStoreRequirement::Rollback,
+            );
+            assert_eq!(manifold.deadline(InstantMillis(8)), Some(InstantMillis(8)));
+            manifold.progress(&mut engine, InstantMillis(8)).await;
+            assert!(manifold
+                .deadline(InstantMillis(9))
+                .is_some_and(|due| due.0 <= 9));
+            manifold.progress(&mut engine, InstantMillis(9)).await;
+            for _ in 0..32 {
+                if manifold
+                    .deadline(InstantMillis(10))
+                    .is_some_and(|due| due.0 <= 10)
+                {
+                    manifold.progress(&mut engine, InstantMillis(10)).await;
+                }
+            }
+            assert_eq!(manifold.persistence.store_attempts, 2);
+            assert_eq!(
+                manifold.deadline(InstantMillis(10)),
+                Some(InstantMillis(60_000))
+            );
+            assert_eq!(stores.completed.try_take(), None);
+            manifold.progress(&mut engine, InstantMillis(60_000)).await;
+            assert_eq!(manifold.persistence.store_attempts, 3);
+            assert_eq!(stores.completed.try_take(), Some(Ok(())));
         });
     }
 }

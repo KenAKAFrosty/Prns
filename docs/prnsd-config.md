@@ -288,7 +288,7 @@ remains compact and displays only the canonical mode name.
 
 | Stock interface | Applied configuration |
 | --- | --- |
-| `AutoInterface` | Group ID, multicast scope/address type, discovery and data ports, allowed and ignored devices, and common policy. |
+| `AutoInterface` | One to four discovery groups, multicast scope/address type, discovery and data ports, allowed and ignored devices, and common policy. |
 | `TCPClientInterface` | Target, port, KISS framing, I2P socket discipline, connect timeout, reconnect limit, fixed MTU. |
 | `TCPServerInterface` | Port aliases, address/device binding, IPv6 preference, KISS framing, I2P socket discipline, fixed MTU. Accepted members inherit the full policy and IFAC access. |
 | `UDPInterface` | Receive-only, send-only, or bidirectional endpoints; shared port alias; device broadcast resolution. |
@@ -312,7 +312,7 @@ Prnsd also accepts these canonical interface types, which stock RNS 1.4.2 does n
 | Canonical type | Applied configuration |
 | --- | --- |
 | `PrnsUsbAuto` | Discovers and supervises supported USB CDC devices. Only common interface policy is required. |
-| `PrnsBluetoothAuto` | Discovers and supervises Prns Bluetooth LE peers. Only common interface policy is required. |
+| `PrnsBluetoothAuto` | Discovers and supervises Prns Bluetooth LE peers, optionally filtered by one to four discovery groups. |
 | `PrnsWebSocketClient` | Connects to the required `ws://` or certificate-validated `wss://` URL in `target` and retries after disconnects. `framing` accepts `auto`, `raw`, `hdlc`, or `kiss` and defaults to `auto`. |
 | `PrnsWebSocketServer` | Listens on `port` or `listen_port`, with optional `listen_ip`, `device`, and `prefer_ipv6`. `framing` accepts `auto`, `raw`, `hdlc`, or `kiss` and defaults to `auto`. Accepted members inherit the full policy and IFAC access. |
 
@@ -337,6 +337,7 @@ WebSocket client and server stanzas may be repeated.
   [[Nearby Prns peers]]
     type = PrnsBluetoothAuto
     enabled = Yes
+    group_ids = reticulum, field-team
 
   [[WebSocket uplink]]
     type = PrnsWebSocketClient
@@ -404,11 +405,21 @@ RNodeMulti radios are nested beneath their physical device. Each enabled child r
       codingrate = 6
 ```
 
-AutoInterface defaults to group `reticulum`, link scope, temporary multicast addressing, discovery
-port 29716, and data port 42671. `discovery_scope` accepts `link`, `admin`, `site`, `organisation`,
-or `global`; `multicast_address_type` accepts `temporary` or `permanent`. A custom group changes
-both the multicast group and peer-authentication token. `devices` is an allowlist when present,
+AutoInterface and PrnsBluetoothAuto default to the single discovery group `reticulum`. Set
+`group_ids` to a comma-separated list of one to four unique UTF-8 names, each at most 32 bytes;
+`group_id` remains the compatible singleton spelling, and configuring both forms is an error.
+AutoInterface runs an independent upstream-compatible discovery lane for every configured group.
+It otherwise defaults to link scope, temporary multicast addressing, discovery port 29716, and
+data port 42671. `discovery_scope` accepts `link`, `admin`, `site`, `organisation`, or `global`;
+`multicast_address_type` accepts `temporary` or `permanent`. `devices` is an allowlist when present,
 `ignored_devices` always wins, and loopback devices are never selected.
+
+Bluetooth advertisements do not reveal a group or group count. PrnsBluetoothAuto exchanges full
+SHA-256 group tags during its existing connection handshake and admits a peer when at least one
+tag overlaps. These tags are proximity-scoped filtering and light plaintext obscurity, not an
+authentication or privacy boundary: a nearby observer can copy, correlate, or guess them. Legacy
+Bluetooth peers are treated as members of `reticulum`, and Columba compatibility is enabled only
+while `reticulum` is among the configured groups.
 
 An interface with `bootstrap_only = Yes` starts normally while no auto-connected discovered
 interface is available. When the configured `autoconnect_discovered_interfaces` limit is full,

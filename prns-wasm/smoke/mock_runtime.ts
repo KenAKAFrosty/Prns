@@ -324,6 +324,20 @@ export class MockRuntimeBase implements PrnsRuntimeBinding {
     return unexpectedRuntimeCall("sendResourceSegment");
   }
 
+  configureBrowserWork(
+    _execution: Parameters<PrnsRuntimeBinding["configureBrowserWork"]>[0],
+  ): ReturnType<PrnsRuntimeBinding["configureBrowserWork"]> {}
+
+  takeBrowserWork(): ReturnType<PrnsRuntimeBinding["takeBrowserWork"]> {
+    return undefined;
+  }
+
+  completeBrowserWork(
+    _options: Parameters<PrnsRuntimeBinding["completeBrowserWork"]>[0],
+  ): ReturnType<PrnsRuntimeBinding["completeBrowserWork"]> {
+    return unexpectedRuntimeCall("completeBrowserWork");
+  }
+
   setLinkResourceStrategy(
     _options: Parameters<
       PrnsRuntimeBinding["setLinkResourceStrategy"]
@@ -396,6 +410,12 @@ export class MockRuntimeBase implements PrnsRuntimeBinding {
 
   snapshot(): ReturnType<PrnsRuntimeBinding["snapshot"]> {
     return unexpectedRuntimeCall("snapshot");
+  }
+
+  projectionSnapshot(
+    _request: Parameters<PrnsRuntimeBinding["projectionSnapshot"]>[0],
+  ): ReturnType<PrnsRuntimeBinding["projectionSnapshot"]> {
+    return unexpectedRuntimeCall("projectionSnapshot");
   }
 }
 
