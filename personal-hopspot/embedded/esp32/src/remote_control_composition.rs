@@ -1,6 +1,6 @@
 use personal_hopspot_core::{
-    RemoteControlEventHandoff, RemoteControlTargetPairingState, RemoteControlTargetPairingUpdate,
-    StableTargetAnnouncementAction, StableTargetAnnouncer,
+    RemoteControlEventHandoff, RemoteControlTargetPairingFailure, RemoteControlTargetPairingState,
+    RemoteControlTargetPairingUpdate, StableTargetAnnouncementAction, StableTargetAnnouncer,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -122,6 +122,21 @@ where
             output.effects = output.effects.with_announcer_wake();
         }
         output
+    }
+
+    pub(crate) fn target_persistence_failed(
+        &mut self,
+        attempt_id: Attempt,
+    ) -> RemoteControlCompositionOutput<RemoteControlTargetPairingUpdate> {
+        self.update_pairing(|state| {
+            if state.attempt_id().is_none() {
+                return RemoteControlTargetPairingUpdate::StaleAttempt;
+            }
+            state.operation_failed(
+                Some(attempt_id),
+                RemoteControlTargetPairingFailure::Persistence,
+            )
+        })
     }
 
     #[must_use]
@@ -455,17 +470,27 @@ mod tests {
     fn persistence_failure_is_owned_by_the_same_visible_state_slot() {
         let attempt_id = 7_u8;
         let mut composition = RemoteControlComposition::new();
+
+        let (unrelated, effects) = composition
+            .target_persistence_failed(attempt_id)
+            .into_parts();
+        assert_eq!(unrelated, RemoteControlTargetPairingUpdate::StaleAttempt);
+        assert_eq!(effects, Default::default());
+        assert_eq!(
+            composition.take_current_pairing().phase(),
+            RemoteControlTargetPairingPhase::Idle
+        );
+
         composition.update_pairing(|state| {
             state.confirmation_required(attempt_id, 654_321, InstantMillis(30_000))
         });
 
+        let (unrelated, effects) = composition.target_persistence_failed(8_u8).into_parts();
+        assert_eq!(unrelated, RemoteControlTargetPairingUpdate::StaleAttempt);
+        assert_eq!(effects, Default::default());
+
         let (update, effects) = composition
-            .update_pairing(|state| {
-                state.operation_failed(
-                    Some(attempt_id),
-                    RemoteControlTargetPairingFailure::Persistence,
-                )
-            })
+            .target_persistence_failed(attempt_id)
             .into_parts();
         assert_eq!(update, RemoteControlTargetPairingUpdate::Changed);
         assert!(effects.wake_ui());

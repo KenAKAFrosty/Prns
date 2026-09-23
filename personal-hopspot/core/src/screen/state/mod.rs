@@ -682,6 +682,13 @@ impl UiState {
         self.remote_control_now = now;
     }
 
+    /// Restores pairing mode after an asynchronous close fails so the failure remains visible and
+    /// the user can retry it.
+    #[cfg(feature = "remote-control-pairing")]
+    pub fn remote_control_pairing_close_failed(&mut self) {
+        self.mode = UiMode::RemoteControlPairing { approve: false };
+    }
+
     #[cfg(feature = "remote-control-pairing")]
     pub(in crate::screen) const fn remote_control_state(&self) -> RemoteControlTargetPairingState {
         self.remote_control_state

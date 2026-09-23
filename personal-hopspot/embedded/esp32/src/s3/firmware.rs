@@ -1098,6 +1098,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                                     screen::RemoteControlTargetPairingFailure::Close,
                                                 )
                                             });
+                                            ui_state.remote_control_pairing_close_failed();
                                         }
                                     }
                                 }
