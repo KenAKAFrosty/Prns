@@ -94,11 +94,13 @@ pub use prns_runtime_tokio::runtime::ProcessCommands;
 
 #[cfg(all(feature = "embassy-host", not(feature = "tokio-host")))]
 pub use prns_runtime_embassy::runtime::{
-    minimum_interface_store_capacity, minimum_manifold_notification_capacity, CompletionPool,
-    EmbassyFleet, EmbassyInterfaceStore, EmbeddedCompactionPolicy, EmbeddedFlashPersistence,
-    EmbeddedPersistenceDiagnostic, EmbeddedPersistenceFailure, EmbeddedPersistencePolicy,
-    EmbeddedPersistenceRestoreReport, EmbeddedPersistenceTarget,
-    EmbeddedRemoteControlControllerPairingFinalization,
+    minimum_interface_store_capacity, minimum_manifold_notification_capacity,
+    restored_discovery_group_configuration, restored_discovery_group_configuration_now,
+    restored_discovery_groups, restored_discovery_groups_now, store_discovery_group_configuration,
+    CompletionPool, DiscoveryGroupConfigurationChange, EmbassyFleet, EmbassyInterfaceStore,
+    EmbeddedCompactionPolicy, EmbeddedFlashPersistence, EmbeddedPersistenceDiagnostic,
+    EmbeddedPersistenceFailure, EmbeddedPersistencePolicy, EmbeddedPersistenceRestoreReport,
+    EmbeddedPersistenceTarget, EmbeddedRemoteControlControllerPairingFinalization,
     EmbeddedRemoteControlPairingPersistenceFailure,
     EmbeddedRemoteControlPairingPersistenceOperation,
     EmbeddedRemoteControlTargetPairingFinalization, EntropyHandle, FixedRouteSnapshotKeys, Fleet,
@@ -111,11 +113,13 @@ pub use prns_runtime_embassy::runtime::{
 
 #[cfg(all(feature = "embassy-host", feature = "tokio-host"))]
 pub use prns_runtime_embassy::runtime::{
-    minimum_interface_store_capacity, minimum_manifold_notification_capacity, CompletionPool,
-    EmbassyFleet, EmbassyInterfaceStore, EmbeddedCompactionPolicy, EmbeddedFlashPersistence,
-    EmbeddedPersistenceDiagnostic, EmbeddedPersistenceFailure, EmbeddedPersistencePolicy,
-    EmbeddedPersistenceRestoreReport, EmbeddedPersistenceTarget,
-    EmbeddedRemoteControlControllerPairingFinalization,
+    minimum_interface_store_capacity, minimum_manifold_notification_capacity,
+    restored_discovery_group_configuration, restored_discovery_group_configuration_now,
+    restored_discovery_groups, restored_discovery_groups_now, store_discovery_group_configuration,
+    CompletionPool, DiscoveryGroupConfigurationChange, EmbassyFleet, EmbassyInterfaceStore,
+    EmbeddedCompactionPolicy, EmbeddedFlashPersistence, EmbeddedPersistenceDiagnostic,
+    EmbeddedPersistenceFailure, EmbeddedPersistencePolicy, EmbeddedPersistenceRestoreReport,
+    EmbeddedPersistenceTarget, EmbeddedRemoteControlControllerPairingFinalization,
     EmbeddedRemoteControlPairingPersistenceFailure,
     EmbeddedRemoteControlPairingPersistenceOperation,
     EmbeddedRemoteControlTargetPairingFinalization, EntropyHandle, FixedRouteSnapshotKeys,

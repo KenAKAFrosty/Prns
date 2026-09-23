@@ -430,6 +430,8 @@ fn protocol_discriminants_are_stable_typed_values() {
             RemoteControlRequestKind::ConfirmWifiCredentials,
             RemoteControlRequestKind::CancelWifiCredentials,
             RemoteControlRequestKind::InspectWifiTransaction,
+            RemoteControlRequestKind::InventoryInterfaceDiscoveryGroups,
+            RemoteControlRequestKind::ReplaceInterfaceDiscoveryGroups,
         ],
     );
     assert_eq!(
@@ -463,6 +465,8 @@ fn protocol_discriminants_are_stable_typed_values() {
             RemoteControlResponseKind::ConfirmWifiCredentials,
             RemoteControlResponseKind::CancelWifiCredentials,
             RemoteControlResponseKind::InspectWifiTransaction,
+            RemoteControlResponseKind::InventoryInterfaceDiscoveryGroups,
+            RemoteControlResponseKind::ReplaceInterfaceDiscoveryGroups,
             RemoteControlResponseKind::ProtocolError,
         ],
     );
@@ -841,6 +845,8 @@ fn stored_grants_never_gain_later_request_kinds() {
     assert!(!stored.supports(RemoteControlRequestKind::RevokeController));
     assert!(!stored.supports(RemoteControlRequestKind::DescribeBuild));
     assert!(!stored.supports(RemoteControlRequestKind::DescribePower));
+    assert!(!stored.supports(RemoteControlRequestKind::InventoryInterfaceDiscoveryGroups));
+    assert!(!stored.supports(RemoteControlRequestKind::ReplaceInterfaceDiscoveryGroups));
     let restored = stored;
     assert_eq!(restored, stored);
     assert!(!restored.supports(RemoteControlRequestKind::SetInterfaceGroup));
@@ -851,6 +857,8 @@ fn stored_grants_never_gain_later_request_kinds() {
     assert!(!restored.supports(RemoteControlRequestKind::InventoryControllers));
     assert!(!restored.supports(RemoteControlRequestKind::AuthorizeController));
     assert!(!restored.supports(RemoteControlRequestKind::RevokeController));
+    assert!(!restored.supports(RemoteControlRequestKind::InventoryInterfaceDiscoveryGroups));
+    assert!(!restored.supports(RemoteControlRequestKind::ReplaceInterfaceDiscoveryGroups));
 }
 
 #[test]
@@ -1208,16 +1216,18 @@ fn message_writers_use_only_their_reported_prefix_and_refuse_short_buffers() {
 #[test]
 fn inventory_power_and_sleep_messages_round_trip() {
     use crate::interfaces::{
-        ConnectionState, InterfaceId, InterfaceKind, InterfaceMode, INTERFACE_ID_LEN,
+        ConnectionState, DiscoveryGroupId, DiscoveryGroupSet, InterfaceId, InterfaceKind,
+        InterfaceMode, INTERFACE_ID_LEN,
     };
     use crate::remote_control::{
-        RemoteControlApplyOutcome, RemoteControlControllerPage, RemoteControlDisplayAutoOff,
-        RemoteControlDisplayVisibility, RemoteControlEspRadioMode, RemoteControlGnssPower,
-        RemoteControlGroupOutcome, RemoteControlInterfaceCard, RemoteControlInterfaceEntry,
-        RemoteControlInterfaceGroup, RemoteControlInterfaceInventory, RemoteControlInterfacePage,
-        RemoteControlInterfacePower, RemoteControlModeOutcome, RemoteControlPeerCursor,
-        RemoteControlPeerPage, RemoteControlPowerOutcome, RemoteControlSleepOutcome,
-        RemoteControlStationUplink, RemoteControlSystemPower,
+        RemoteControlApplyOutcome, RemoteControlControllerPage, RemoteControlDiscoveryGroups,
+        RemoteControlDiscoveryGroupsInventoryOutcome, RemoteControlDiscoveryGroupsReplaceOutcome,
+        RemoteControlDisplayAutoOff, RemoteControlDisplayVisibility, RemoteControlEspRadioMode,
+        RemoteControlGnssPower, RemoteControlGroupOutcome, RemoteControlInterfaceCard,
+        RemoteControlInterfaceEntry, RemoteControlInterfaceGroup, RemoteControlInterfaceInventory,
+        RemoteControlInterfacePage, RemoteControlInterfacePower, RemoteControlModeOutcome,
+        RemoteControlPeerCursor, RemoteControlPeerPage, RemoteControlPowerOutcome,
+        RemoteControlSleepOutcome, RemoteControlStationUplink, RemoteControlSystemPower,
         RemoteControlWifiConfirmationRemaining, RemoteControlWifiCredentialRevision,
         RemoteControlWifiStageOutcome, RemoteControlWifiTransactionStatus,
     };
@@ -1241,6 +1251,19 @@ fn inventory_power_and_sleep_messages_round_trip() {
         RemoteControlRequest::SetInterfaceGroup {
             id: InterfaceId::new([0x44; INTERFACE_ID_LEN]),
             group: RemoteControlInterfaceGroup::parse("field-mesh").expect("valid group"),
+        },
+        RemoteControlRequest::InventoryInterfaceDiscoveryGroups {
+            id: InterfaceId::new([0x45; INTERFACE_ID_LEN]),
+        },
+        RemoteControlRequest::ReplaceInterfaceDiscoveryGroups {
+            id: InterfaceId::new([0x46; INTERFACE_ID_LEN]),
+            groups: RemoteControlDiscoveryGroups::new(
+                DiscoveryGroupSet::try_from_slice(&[
+                    DiscoveryGroupId::parse("alpha").expect("valid group"),
+                    DiscoveryGroupId::parse("beta").expect("valid group"),
+                ])
+                .expect("valid groups"),
+            ),
         },
         RemoteControlRequest::InventoryInterfacePeers {
             id: InterfaceId::new([0x55; INTERFACE_ID_LEN]),
@@ -1348,6 +1371,35 @@ fn inventory_power_and_sleep_messages_round_trip() {
         RemoteControlResponse::SetInterfaceGroup(RemoteControlGroupOutcome::Applied),
         RemoteControlResponse::SetInterfaceGroup(RemoteControlGroupOutcome::UnknownInterface),
         RemoteControlResponse::SetInterfaceGroup(RemoteControlGroupOutcome::Failed),
+        RemoteControlResponse::InventoryInterfaceDiscoveryGroups(
+            RemoteControlDiscoveryGroupsInventoryOutcome::Groups(
+                RemoteControlDiscoveryGroups::new(
+                    DiscoveryGroupSet::try_from_slice(&[
+                        DiscoveryGroupId::parse("alpha").expect("valid group"),
+                        DiscoveryGroupId::parse("beta").expect("valid group"),
+                    ])
+                    .expect("valid groups"),
+                ),
+            ),
+        ),
+        RemoteControlResponse::InventoryInterfaceDiscoveryGroups(
+            RemoteControlDiscoveryGroupsInventoryOutcome::UnknownInterface,
+        ),
+        RemoteControlResponse::InventoryInterfaceDiscoveryGroups(
+            RemoteControlDiscoveryGroupsInventoryOutcome::Unsupported,
+        ),
+        RemoteControlResponse::ReplaceInterfaceDiscoveryGroups(
+            RemoteControlDiscoveryGroupsReplaceOutcome::Applied,
+        ),
+        RemoteControlResponse::ReplaceInterfaceDiscoveryGroups(
+            RemoteControlDiscoveryGroupsReplaceOutcome::Unchanged,
+        ),
+        RemoteControlResponse::ReplaceInterfaceDiscoveryGroups(
+            RemoteControlDiscoveryGroupsReplaceOutcome::UnknownInterface,
+        ),
+        RemoteControlResponse::ReplaceInterfaceDiscoveryGroups(
+            RemoteControlDiscoveryGroupsReplaceOutcome::Unsupported,
+        ),
         RemoteControlResponse::InventoryInterfacePeers(
             crate::remote_control::RemoteControlInterfacePeersOutcome::UnknownInterface,
         ),
@@ -1562,6 +1614,72 @@ fn inventory_responses_reject_overlong_and_noncanonical_fields() {
     assert_eq!(
         RemoteControlResponse::parse(&noncanonical_details),
         Err(RemoteControlResponseParseError::Malformed),
+    );
+}
+
+#[test]
+fn discovery_group_requests_reject_noncanonical_whole_values() {
+    use crate::interfaces::{DiscoveryGroupId, DiscoveryGroupSet, InterfaceId, INTERFACE_ID_LEN};
+    use crate::remote_control::RemoteControlDiscoveryGroups;
+
+    let request = RemoteControlRequest::ReplaceInterfaceDiscoveryGroups {
+        id: InterfaceId::new([0x41; INTERFACE_ID_LEN]),
+        groups: RemoteControlDiscoveryGroups::new(
+            DiscoveryGroupSet::try_from_slice(&[
+                DiscoveryGroupId::parse("aa").expect("valid group"),
+                DiscoveryGroupId::parse("bb").expect("valid group"),
+            ])
+            .expect("valid groups"),
+        ),
+    };
+    let mut encoded = [0u8; RemoteControlRequest::MAX_ENCODED_LEN];
+    let written = request.write_into(&mut encoded).expect("request fits");
+    let group_body = 2 + INTERFACE_ID_LEN;
+
+    let canonical = encoded.get(..written).unwrap_or_default();
+    let mut unsorted = canonical.to_vec();
+    assert_eq!(
+        unsorted
+            .get_mut(group_body + 2..group_body + 4)
+            .map(|slot| slot.copy_from_slice(b"bb")),
+        Some(())
+    );
+    assert_eq!(
+        unsorted
+            .get_mut(group_body + 5..group_body + 7)
+            .map(|slot| slot.copy_from_slice(b"aa")),
+        Some(())
+    );
+    assert_eq!(
+        RemoteControlRequest::parse(&unsorted),
+        Err(RemoteControlRequestParseError::Malformed)
+    );
+
+    let mut duplicate = canonical.to_vec();
+    assert_eq!(
+        duplicate
+            .get_mut(group_body + 5..group_body + 7)
+            .map(|slot| slot.copy_from_slice(b"aa")),
+        Some(())
+    );
+    assert_eq!(
+        RemoteControlRequest::parse(&duplicate),
+        Err(RemoteControlRequestParseError::Malformed)
+    );
+
+    let mut trailing = canonical.to_vec();
+    trailing.push(0);
+    assert_eq!(
+        RemoteControlRequest::parse(&trailing),
+        Err(RemoteControlRequestParseError::Malformed)
+    );
+
+    let mut empty = canonical.to_vec();
+    assert_eq!(empty.get_mut(group_body).map(|count| *count = 0), Some(()));
+    empty.truncate(group_body + 1);
+    assert_eq!(
+        RemoteControlRequest::parse(&empty),
+        Err(RemoteControlRequestParseError::Malformed)
     );
 }
 

@@ -10,13 +10,17 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use personal_hopspot_core::{
-    card_label, CardKind, CardLabel, MobileEngineFailure, MobileEngineState,
+    card_label, CardKind, CardLabel, MobileDiscoveryGroupOutcome, MobileDiscoveryInterface,
+    MobileEngineFailure, MobileEngineState,
 };
 use personal_rns::bluetooth_auto::BluetoothAutoStatus;
 use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, PrnsCommand};
 use personal_rns::identity::IdentityHash;
 use personal_rns::interfaces::bluetooth_auto::BleIdentity;
-use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus};
+use personal_rns::interfaces::{
+    DiscoveryGroupApplyOutcome, DiscoveryGroupSet, InterfaceId, InterfaceKind, InterfaceSnapshot,
+    InterfaceStatus,
+};
 use personal_rns::manifold::tokio::TokioInterfaceStatus;
 use personal_rns::runtime::{PrnsNodeHandle, RuntimeHealth};
 use personal_rns::shared_instance::rns_rpc::RpcAuthenticationKey;
@@ -75,6 +79,7 @@ pub(super) struct EngineResources {
     pub(super) rpc_key: RpcAuthenticationKey,
     pub(super) ports: EnginePorts,
     pub(super) persistence: PersistenceHealth,
+    pub(super) runtime: tokio::runtime::Handle,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -511,6 +516,76 @@ pub(crate) fn wifi_direct_failure_reason() -> Option<&'static str> {
     manager.reap_finished();
     let resources = manager.process.as_ref()?.resources.as_ref()?;
     resources.wd_status.failure_reason()
+}
+
+pub(crate) fn discovery_groups(
+    interface: MobileDiscoveryInterface,
+) -> Result<DiscoveryGroupSet, MobileDiscoveryGroupOutcome> {
+    let mut manager = lock_manager();
+    manager.reap_finished();
+    let resources = manager
+        .process
+        .as_ref()
+        .and_then(|process| process.resources.as_ref())
+        .ok_or(MobileDiscoveryGroupOutcome::EngineUnavailable)?;
+    Ok(match interface {
+        MobileDiscoveryInterface::BluetoothAuto => resources.ble_status.discovery_groups(),
+        MobileDiscoveryInterface::AutoWifi => resources.wifi_status.discovery_groups(),
+    })
+}
+
+pub(crate) fn replace_discovery_groups(
+    interface: MobileDiscoveryInterface,
+    groups: DiscoveryGroupSet,
+) -> MobileDiscoveryGroupOutcome {
+    enum Status {
+        Bluetooth(BluetoothAutoStatus),
+        Wifi(AutoWifiStatus),
+    }
+
+    let (runtime, status) = {
+        let mut manager = lock_manager();
+        manager.reap_finished();
+        let Some(resources) = manager
+            .process
+            .as_ref()
+            .and_then(|process| process.resources.as_ref())
+        else {
+            return MobileDiscoveryGroupOutcome::EngineUnavailable;
+        };
+        let status = match interface {
+            MobileDiscoveryInterface::BluetoothAuto => {
+                Status::Bluetooth(resources.ble_status.clone())
+            }
+            MobileDiscoveryInterface::AutoWifi => Status::Wifi(resources.wifi_status.clone()),
+        };
+        (resources.runtime.clone(), status)
+    };
+
+    let unchanged = match &status {
+        Status::Bluetooth(status) => status.discovery_groups() == groups,
+        Status::Wifi(status) => status.discovery_groups() == groups,
+    };
+    if unchanged {
+        return MobileDiscoveryGroupOutcome::Unchanged;
+    }
+
+    let (settled_tx, settled_rx) = mpsc::sync_channel(1);
+    runtime.spawn(async move {
+        let outcome = match status {
+            Status::Bluetooth(status) => status.replace_discovery_groups(groups).await,
+            Status::Wifi(status) => status.replace_discovery_groups_and_wait(groups).await,
+        };
+        let _ = settled_tx.send(outcome);
+    });
+    match settled_rx.recv_timeout(Duration::from_secs(5)) {
+        Ok(DiscoveryGroupApplyOutcome::Applied) => MobileDiscoveryGroupOutcome::Applied,
+        Ok(DiscoveryGroupApplyOutcome::Unchanged) => MobileDiscoveryGroupOutcome::Unchanged,
+        Ok(DiscoveryGroupApplyOutcome::Failed) | Err(mpsc::RecvTimeoutError::Disconnected) => {
+            MobileDiscoveryGroupOutcome::ApplyFailed
+        }
+        Err(mpsc::RecvTimeoutError::Timeout) => MobileDiscoveryGroupOutcome::Busy,
+    }
 }
 
 fn hex(bytes: &[u8]) -> String {

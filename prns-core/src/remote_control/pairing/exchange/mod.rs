@@ -39,8 +39,12 @@ const PAIRING_OFFER_MAX_ENCODED_LEN: usize = PAIRING_MESSAGE_HEADER_ENCODED_LEN
 const PAIRING_COMPLETED_ENCODED_LEN: usize = PAIRING_MESSAGE_HEADER_ENCODED_LEN
     .saturating_add(PAIRING_TRANSCRIPT_DIGEST_ENCODED_LEN)
     .saturating_add(PAIRING_SIGNATURE_ENCODED_LEN);
+const V2_V3_REQUEST_KIND_CAP: usize = 0x1C;
 const LEGACY_PAIRING_TRANSCRIPT_PERMISSION_BYTES_LEN: usize =
-    PAIRING_REQUEST_SET_COUNT_ENCODED_LEN.saturating_add(RemoteControlRequestKind::ALL.len());
+    PAIRING_REQUEST_SET_COUNT_ENCODED_LEN.saturating_add(V2_V3_REQUEST_KIND_CAP);
+const V3_PAIRING_TRANSCRIPT_PERMISSION_BYTES_LEN: usize = PAIRING_AUTHORITY_ENCODED_LEN
+    .saturating_add(PAIRING_REQUEST_SET_COUNT_ENCODED_LEN)
+    .saturating_add(V2_V3_REQUEST_KIND_CAP);
 const PAIRING_TRANSCRIPT_PERMISSION_BYTES_LEN: usize = PAIRING_AUTHORITY_ENCODED_LEN
     .saturating_add(PAIRING_REQUEST_SET_COUNT_ENCODED_LEN)
     .saturating_add(RemoteControlRequestKind::ALL.len());
@@ -57,6 +61,7 @@ prns_macros::iterable_enum! {
     pub enum RemoteControlPairingProtocolVersion {
         V2 = 2,
         V3 = 3,
+        V4 = 4,
     }
 }
 
@@ -70,6 +75,7 @@ impl RemoteControlPairingProtocolVersion {
         match value {
             2 => Some(Self::V2),
             3 => Some(Self::V3),
+            4 => Some(Self::V4),
             _ => None,
         }
     }

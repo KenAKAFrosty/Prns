@@ -22,6 +22,7 @@ fn ui_state() -> UiState {
         shared_instance_config_export:
             personal_hopspot_core::SharedInstanceConfigExport::Unavailable,
         gnss: personal_hopspot_core::GnssAvailability::Unavailable,
+        discovery_groups: personal_hopspot_core::DiscoveryGroupEditorAvailability::Unavailable,
     })
 }
 
@@ -91,6 +92,8 @@ impl HopspotFace {
             | UiAction::ToggleDisplayAutoOff
             | UiAction::ControlGnss(_)
             | UiAction::ToggleStationUplink
+            | UiAction::OpenDiscoveryGroupsEditor(_)
+            | UiAction::ReplaceDiscoveryGroups
             | UiAction::OpenSubGEditor
             | UiAction::OpenDocs
             | UiAction::SetSubGConfiguration(_)
