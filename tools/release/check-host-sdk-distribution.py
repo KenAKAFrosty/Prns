@@ -224,6 +224,10 @@ def check_hopspot_alias(version):
             "import": "./contract.js",
             "require": "./contract.cjs",
         },
+        "./remote-control": {
+            "types": "./remote-control.d.ts",
+            "import": "./remote-control.js",
+        },
         "./native": {
             "types": "./native.d.ts",
             "import": "./native.js",
@@ -280,6 +284,8 @@ def check_hopspot_alias(version):
         "contract.js": 'export * from "personal-rns/contract";\n',
         "contract.cjs": 'module.exports = require("personal-rns/contract");\n',
         "contract.d.ts": 'export * from "personal-rns/contract";\n',
+        "remote-control.js": 'export * from "personal-rns/remote-control";\n',
+        "remote-control.d.ts": 'export * from "personal-rns/remote-control";\n',
         "native.js": 'export * from "personal-rns/native";\n',
         "native.cjs": 'module.exports = require("personal-rns/native");\n',
         "native.d.ts": 'export * from "personal-rns/native";\n',
