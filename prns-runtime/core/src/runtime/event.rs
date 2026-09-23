@@ -63,6 +63,9 @@ pub enum Message<'a> {
     RemoteControlControllerPairingAuthorizationPersisted {
         attempt_id: RemoteControlPairingAttemptId,
     },
+    RemoteControlControllerPairingAuthorizationPersistenceFailed {
+        attempt_id: RemoteControlPairingAttemptId,
+    },
     RemoteControlControllerPairingExpired {
         aborted: RemoteControlControllerPairingAborted,
     },
@@ -259,6 +262,13 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
                     Message::RemoteControlControllerPairingAuthorizationPersisted { attempt_id },
                 )
             }
+            Journaled::RemoteControlControllerPairingAuthorizationPersistenceFailed {
+                attempt_id,
+            } => PrnsEvent::Message(
+                Message::RemoteControlControllerPairingAuthorizationPersistenceFailed {
+                    attempt_id,
+                },
+            ),
             Journaled::RemoteControlControllerPairingExpired { aborted } => {
                 PrnsEvent::Message(Message::RemoteControlControllerPairingExpired { aborted })
             }
@@ -560,6 +570,25 @@ mod tests {
             PrnsEvent::Message(Message::RemoteControlTargetPairingExpiredDuringAuthorization {
                 attempt_id: observed,
             }) if observed == attempt_id
+        ));
+    }
+
+    #[test]
+    fn controller_pairing_persistence_failure_is_an_app_facing_message() {
+        let attempt_id =
+            RemoteControlPairingAttemptId::from_test_transcript_digest_bytes([0x83; 32]);
+
+        let event = PrnsEvent::from(
+            Journaled::RemoteControlControllerPairingAuthorizationPersistenceFailed { attempt_id },
+        );
+
+        assert!(matches!(
+            event,
+            PrnsEvent::Message(
+                Message::RemoteControlControllerPairingAuthorizationPersistenceFailed {
+                    attempt_id: observed,
+                },
+            ) if observed == attempt_id
         ));
     }
 }
