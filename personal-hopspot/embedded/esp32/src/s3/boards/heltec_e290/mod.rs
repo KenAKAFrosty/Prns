@@ -42,6 +42,7 @@ impl Esp32S3Board for HeltecE290Board {
     type Gnss = NoGnss;
 
     async fn bringup(
+        _spawner: Spawner,
         mut p: esp_hal::peripherals::Peripherals,
     ) -> S3BoardHardware<Self::Display, Self::Battery, Self::Gnss> {
         let display_power = Output::new(p.GPIO18, Level::Low, OutputConfig::default());

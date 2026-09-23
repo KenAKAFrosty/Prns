@@ -6,6 +6,19 @@ Embedded Prns is the same protocol engine and node-recipe API used by native app
 
 The XIAO ESP32-C6 is the smallest complete reference path. It is headless and uses USB, ESP-NOW, and Bluetooth, so this example punctuates the fact that an embedded node does not need a display or Wi-Fi LAN.
 
+The Seeed XIAO ESP32S3 with its Wio-SX1262 B2B baseboard is the compact headless LoRa path. It runs the complete ESP32-S3 Hopspot interface set and starts with the EU868 profile; persisted radio settings take precedence after first boot. Build it without flashing from the ESP32 workspace:
+
+```console
+cd personal-hopspot/embedded/esp32
+cargo xiao-s3-wio --locked
+```
+
+The board is headless, so the Wio-SX1262 baseboard green LED doubles as a LoRa
+activity indicator: it stays lit for the duration of each transmit and pulses
+briefly for each successfully decoded receive frame. The Wio-SX1262 V1.0
+schematic connects this active-high LED to `GPIO48`; its button is on `GPIO21`.
+Check the pinout before using a different baseboard revision.
+
 Install the repository's ESP Rust toolchain once:
 
 ```console
@@ -66,6 +79,59 @@ cargo c6-flash --locked
 ```
 
 The doctor step is read-only. The final command flashes and opens a serial monitor. For signed release firmware, board discovery, and the supported operator flow, use the flasher described in [Personal Hopspot](../personal-hopspot/README.md).
+
+### Provision the headless XIAO LoRa profile
+
+The XIAO ESP32-S3 + Wio-SX1262 has no display. Provision its persistent LoRa
+profile as part of the sparse flash operation:
+
+```console
+cargo prns-esp32-flasher flash xiao-esp32s3-wio-sx1262 \
+  --local-build \
+  --region eu869 \
+  --frequency-hz 869527000 \
+  --spreading-factor 9 \
+  --tx-power-dbm 14 \
+  --bandwidth-khz 250 \
+  --coding-rate 4/5 \
+  --announce-mm 15 \
+  --node-name "Nodo tetto Roma" \
+  --yes
+```
+
+`--region` selects the regulatory limits and is required whenever any radio
+option is present. The other values override the regional preset. Omitting the
+overrides uses the region's default frequency and maximum permitted power plus
+the firmware's default modulation and preamble. Invalid combinations are
+rejected before a serial port is opened or any flash is written.
+
+The flasher clears both reserved radio-profile pages, writes the new profile to
+the initial slot, and verifies it with the rest of the sparse image. Later
+firmware updates preserve the profile unless they explicitly provision another
+one.
+
+After firmware is installed, update only the two persistent radio-profile pages:
+
+```console
+cargo prns-esp32-flasher configure xiao-esp32s3-wio-sx1262 \
+  --region eu869 \
+  --frequency-hz 869527000 \
+  --spreading-factor 9 \
+  --tx-power-dbm 14 \
+  --bandwidth-khz 250 \
+  --coding-rate 4/5 \
+  --announce-mm 15 \
+  --node-name "Nodo tetto Roma"
+```
+
+The command verifies the selected ESP32-S3, erases and writes only those two
+pages, verifies the write on the device, and resets it. Firmware, Wi-Fi
+provisioning, identities, and retained node state remain untouched.
+
+`--announce-mm 15` enables a headless-node announce every 15 minutes. The
+setting is stored beside the persistent LoRa profile, survives reboot and later
+firmware flashes, and sends the first announce shortly after startup before
+repeating it on all active interfaces.
 
 ## Verify embedded changes
 

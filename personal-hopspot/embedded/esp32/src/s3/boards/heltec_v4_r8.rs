@@ -149,6 +149,7 @@ impl Esp32S3Board for HeltecV4R8Board {
     type Gnss = NoGnss;
 
     async fn bringup(
+        _spawner: Spawner,
         mut p: esp_hal::peripherals::Peripherals,
     ) -> S3BoardHardware<Self::Display, Self::Battery, Self::Gnss> {
         // Octal 8 MiB at 40 MHz, split between a private low engine window and a global high `esp_alloc` window.

@@ -5,6 +5,7 @@ mod error;
 mod esp;
 mod events;
 mod nrf_serial_dfu;
+mod radio_profile;
 mod release;
 mod splash;
 mod toolchain;
@@ -110,6 +111,26 @@ fn run(cli: Cli, reporter: Reporter) -> Result<(), AppError> {
             ));
             Ok(())
         }
+        Some(CommandMode::Configure {
+            board,
+            port,
+            yes,
+            json,
+            radio,
+        }) => {
+            let board = find_board(&catalog, &board)?;
+            let radio_profile = radio.required_provisioned_for(&board.slug)?;
+            let interactive = !json && ui::interactive_terminal();
+            confirm_board(board, yes, interactive)?;
+            if board.transport != Transport::EspSerial {
+                return Err(AppError::unsupported_operation(format!(
+                    "{} does not support serial LoRa profile configuration",
+                    board.display_name
+                )));
+            }
+            esp::begin_cancellable_operation()?;
+            esp::configure_radio(board, &radio_profile, port.as_deref(), reporter)
+        }
         Some(CommandMode::Build {
             board,
             out_root,
@@ -171,9 +192,11 @@ fn run(cli: Cli, reporter: Reporter) -> Result<(), AppError> {
             json,
             local_build,
             candidate,
+            radio,
             mount,
         }) => {
             let board = find_board(&catalog, &board)?;
+            let radio_profile = radio.provisioned_for(&board.slug)?;
             let interactive = !json && ui::interactive_terminal();
             confirm_board(board, yes, interactive)?;
             if !local_build && candidate.is_none() {
@@ -203,6 +226,7 @@ fn run(cli: Cli, reporter: Reporter) -> Result<(), AppError> {
                     monitor,
                     local_build,
                     candidate: candidate.as_deref(),
+                    radio_profile,
                     mount: mount.as_deref(),
                 },
                 reporter,
@@ -221,6 +245,7 @@ struct FlashRequest<'a> {
     monitor: bool,
     local_build: bool,
     candidate: Option<&'a Path>,
+    radio_profile: Option<radio_profile::ProvisionedRadioProfile>,
     mount: Option<&'a Path>,
 }
 
@@ -304,6 +329,7 @@ fn execute_flash(
             board,
             &prepared,
             &request.provisioning,
+            request.radio_profile.as_ref(),
             request.port,
             request.monitor,
             reporter,
@@ -408,6 +434,7 @@ fn guided(catalog: &BoardCatalog, reporter: Reporter) -> Result<(), AppError> {
             monitor: false,
             local_build: false,
             candidate: None,
+            radio_profile: None,
             mount: None,
         },
         reporter,

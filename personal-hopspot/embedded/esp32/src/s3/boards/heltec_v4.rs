@@ -253,6 +253,7 @@ impl Esp32S3Board for HeltecBoard {
     type Gnss = HeltecV4Gnss;
 
     async fn bringup(
+        _spawner: Spawner,
         mut p: esp_hal::peripherals::Peripherals,
     ) -> S3BoardHardware<Self::Display, Self::Battery, Self::Gnss> {
         let (sw_int1, timebase, rtc) = s3::boot_common!(p, Self::BOOT_BANNER);

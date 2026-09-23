@@ -9,6 +9,17 @@ use personal_hopspot_core::display::{
 use personal_hopspot_core::face_64x128::{Frame, RenderInput};
 use personal_hopspot_core::UserBlanking;
 
+/// A board face with no display hardware.
+///
+/// The runtime reports the display as unavailable and consumes local button presses so a
+/// headless device cannot navigate or apply an invisible screen action. Remote control and all
+/// network interfaces remain independent from this surface.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct HeadlessBoardDisplay;
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct HeadlessDisplayRuntime;
+
 pub(crate) enum ImmediateBoardDisplay<D> {
     Initialized(D),
     InitializationFailed(D),
@@ -113,6 +124,72 @@ pub(crate) trait S3DisplayRuntime {
     ) -> Result<BlankingDecision, BlankingError>;
 
     fn toggle_auto_off(&mut self, now: MonotonicMillis) -> Result<DisplayAutoOff, BlankingError>;
+}
+
+impl S3BoardDisplay for HeadlessBoardDisplay {
+    type Runtime = HeadlessDisplayRuntime;
+
+    fn into_runtime(self, _now: MonotonicMillis) -> Self::Runtime {
+        HeadlessDisplayRuntime
+    }
+}
+
+impl S3DisplayRuntime for HeadlessDisplayRuntime {
+    type PresentationError = core::convert::Infallible;
+
+    fn user_blanking(&self) -> UserBlanking {
+        UserBlanking::unavailable()
+    }
+
+    fn visibility(&self) -> DisplayVisibility {
+        DisplayVisibility::Unavailable
+    }
+
+    async fn render_and_present(
+        &mut self,
+        _input: RenderInput<'_, '_>,
+        _planned_at: MonotonicMillis,
+        _urgency: PresentationUrgency,
+        _completed_at: impl FnOnce() -> MonotonicMillis,
+    ) -> Result<S3Presentation, Self::PresentationError> {
+        Ok(S3Presentation::Unavailable)
+    }
+
+    fn poll_blanking(
+        &mut self,
+        _now: MonotonicMillis,
+        _completed_at: impl FnOnce() -> MonotonicMillis,
+    ) -> Result<BlankingDecision, BlankingError> {
+        Ok(BlankingDecision::Settled)
+    }
+
+    fn schedule_blanking(
+        &mut self,
+        _at: MonotonicMillis,
+        _reason: DisplayBlankReason,
+    ) -> Result<(), BlankingError> {
+        Err(BlankingError::UserBlankingUnavailable)
+    }
+
+    fn button_pressed(
+        &mut self,
+        _now: MonotonicMillis,
+        _completed_at: impl FnOnce() -> MonotonicMillis,
+    ) -> Result<DisplayButtonOutcome, BlankingError> {
+        Ok(DisplayButtonOutcome::WakeAndConsume)
+    }
+
+    fn request_visible(
+        &mut self,
+        _now: MonotonicMillis,
+        _completed_at: impl FnOnce() -> MonotonicMillis,
+    ) -> Result<BlankingDecision, BlankingError> {
+        Ok(BlankingDecision::Settled)
+    }
+
+    fn toggle_auto_off(&mut self, _now: MonotonicMillis) -> Result<DisplayAutoOff, BlankingError> {
+        Err(BlankingError::UserBlankingUnavailable)
+    }
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -438,5 +515,21 @@ mod tests {
 
         assert_eq!(runtime.visibility(), DisplayVisibility::Unavailable);
         assert!(!runtime.user_blanking().is_available());
+    }
+
+    #[test]
+    fn headless_runtime_is_unavailable_and_consumes_local_input() {
+        let mut runtime = HeadlessBoardDisplay.into_runtime(MonotonicMillis::new(0));
+
+        assert_eq!(runtime.visibility(), DisplayVisibility::Unavailable);
+        assert!(!runtime.user_blanking().is_available());
+        assert_eq!(
+            runtime.button_pressed(MonotonicMillis::new(1), || MonotonicMillis::new(2)),
+            Ok(DisplayButtonOutcome::WakeAndConsume)
+        );
+        assert_eq!(
+            runtime.poll_blanking(MonotonicMillis::new(3), || MonotonicMillis::new(4)),
+            Ok(BlankingDecision::Settled)
+        );
     }
 }

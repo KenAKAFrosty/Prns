@@ -71,7 +71,11 @@ pub use prns_core::capabilities::power::{
     PowerSnapshot,
 };
 pub use radio_profile_store::{
-    LoadedRadioProfile, RadioProfileLoadNotice, RadioProfileStore, RadioProfileStoreError,
+    encode_provisioned_auto_announce, encode_provisioned_node_announce_name,
+    encode_provisioned_radio_profile, LoadedRadioProfile, NodeAnnounceName, NodeAnnounceNameError,
+    RadioProfileLoadNotice, RadioProfileStore, RadioProfileStoreError, AUTO_ANNOUNCE_EXTENSION_LEN,
+    AUTO_ANNOUNCE_EXTENSION_OFFSET, NODE_ANNOUNCE_NAME_EXTENSION_LEN,
+    NODE_ANNOUNCE_NAME_EXTENSION_OFFSET, NODE_ANNOUNCE_NAME_MAX_LEN, RADIO_PROFILE_RECORD_LEN,
 };
 #[cfg(feature = "display")]
 pub use screen::{

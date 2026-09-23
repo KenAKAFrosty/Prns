@@ -232,6 +232,7 @@ impl T096Board {
                 frontend_control: FrontendControl::TxRx {
                     enter_transmit,
                     enter_receive,
+                    on_frame_received: None,
                 },
             },
         );

@@ -198,17 +198,21 @@ pub struct ExternalPowerAmplifier {
     pub chip_power_dbm: fn(i8) -> i8,
 }
 
-/// Board-owned front-end switching that must surround every SX126x TX/RX transition.
+/// Board-owned control that must surround every SX126x TX/RX transition.
 ///
-/// The callbacks are one unit because a front-end that can enter transmit must also have a
-/// defined path back to receive. Boards with no software-driven transition use
-/// [`Self::NoDynamicControl`].
+/// The transition callbacks are one unit because a front-end that can enter transmit must also
+/// have a defined path back to receive. The received-frame callback rides alongside them so a
+/// board can pulse an activity indicator on decoded traffic without a second board hook. Boards
+/// with no software-driven transition or activity indicator use [`Self::NoDynamicControl`].
 #[derive(Debug, Clone, Copy)]
 pub enum FrontendControl {
     NoDynamicControl,
     TxRx {
         enter_transmit: fn(),
         enter_receive: fn(),
+        /// Invoked once per successfully decoded data frame so a board can pulse an activity
+        /// indicator; `None` when the board has none.
+        on_frame_received: Option<fn()>,
     },
 }
 
@@ -222,6 +226,16 @@ impl FrontendControl {
     fn enter_receive(self) {
         if let Self::TxRx { enter_receive, .. } = self {
             enter_receive();
+        }
+    }
+
+    fn frame_received(self) {
+        if let Self::TxRx {
+            on_frame_received: Some(on_frame_received),
+            ..
+        } = self
+        {
+            on_frame_received();
         }
     }
 }
@@ -647,6 +661,7 @@ where
                     quality: None,
                 };
                 self.read_buffer(offset, &mut buf[..len]).await?;
+                self.config.frontend_control.frame_received();
                 Ok(RadioEvent::Frame(ReceivedAirFrame { len, phy }))
             }
             IrqEventKind::PreambleDetected => Ok(RadioEvent::PreambleDetected),
@@ -1277,17 +1292,26 @@ mod tests {
             FRONTEND_STATE.store(2, Ordering::Relaxed);
         }
 
+        fn on_frame_received() {
+            FRONTEND_STATE.store(3, Ordering::Relaxed);
+        }
+
         let control = FrontendControl::TxRx {
             enter_transmit,
             enter_receive,
+            on_frame_received: Some(on_frame_received),
         };
         control.enter_transmit();
         assert_eq!(FRONTEND_STATE.load(Ordering::Relaxed), 1);
         control.enter_receive();
         assert_eq!(FRONTEND_STATE.load(Ordering::Relaxed), 2);
+        control.frame_received();
+        assert_eq!(FRONTEND_STATE.load(Ordering::Relaxed), 3);
 
         FrontendControl::NoDynamicControl.enter_transmit();
-        assert_eq!(FRONTEND_STATE.load(Ordering::Relaxed), 2);
+        assert_eq!(FRONTEND_STATE.load(Ordering::Relaxed), 3);
+        FrontendControl::NoDynamicControl.frame_received();
+        assert_eq!(FRONTEND_STATE.load(Ordering::Relaxed), 3);
     }
 
     #[test]

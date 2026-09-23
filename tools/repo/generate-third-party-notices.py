@@ -62,6 +62,11 @@ GRAPHS = (
         "personal-hopspot/embedded/esp32/boards/t-beam-supreme/Cargo.toml",
         "xtensa-esp32s3-none-elf",
     ),
+    (
+        "ESP32-S3 XIAO Wio-SX1262",
+        "personal-hopspot/embedded/esp32/boards/xiao-esp32s3-wio-sx1262/Cargo.toml",
+        "xtensa-esp32s3-none-elf",
+    ),
     ("WASM", "prns-wasm/Cargo.toml", "wasm32-unknown-unknown"),
     ("Nordic DFU browser core", "prns-nrf-dfu-wasm/Cargo.toml", "wasm32-unknown-unknown"),
     ("website Rust/WASM", "docs/website/Cargo.toml", "wasm32-unknown-unknown"),

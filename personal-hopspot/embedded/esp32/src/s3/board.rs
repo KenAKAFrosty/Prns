@@ -45,11 +45,14 @@ pub(crate) trait Esp32S3Board {
     const BOOT_BANNER: &'static str;
     const USB_INTERFACE_ID: InterfaceId;
     const FLASH_LAYOUT: screen::HopspotS3FlashLayout;
+    #[cfg(feature = "lora")]
+    const DEFAULT_LORA_PROFILE: RadioProfile = DEFAULT_915_PROFILE;
     type Display: crate::display_runtime::S3BoardDisplay;
     type Battery: screen::BatterySource;
     type Gnss: GnssProvider;
 
     async fn bringup(
+        spawner: Spawner,
         peripherals: esp_hal::peripherals::Peripherals,
     ) -> S3BoardHardware<Self::Display, Self::Battery, Self::Gnss>;
 }
