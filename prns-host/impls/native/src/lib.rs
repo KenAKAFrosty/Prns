@@ -65,7 +65,25 @@ use prns_host::{
     WebSocketFramingSelection, SAFE_INT_MAX, SAFE_INT_MIN, SAFE_UINT_MAX,
 };
 use tokio::io::{AsyncRead, ReadBuf};
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::{mpsc, oneshot, watch, Semaphore};
+
+pub mod embedding;
+pub use embedding::{
+    ApplicationEventDispatch, AuthenticatedAnnounce, NativeEmbedding, NativePreparedAttachment,
+    NativeServiceClient,
+};
+pub mod owner;
+pub mod platform;
+mod readiness;
+pub mod remote_control;
+pub mod remote_control_service;
+pub use remote_control::NativeRemoteControlError;
+mod session;
+pub use readiness::{Readiness, ReadinessAlreadyRegistered, RegisteredReadiness};
+pub use session::{
+    NativeEvent, NativeEventStream, NativeEventValue, NativeResourceStream, NativeSessionEvents,
+    NativeStreamError,
+};
 
 #[cfg(unix)]
 mod supplied_pipe;
@@ -78,7 +96,6 @@ pub use supplied_pipe::{
 use supplied_pipe::{SuppliedPipeAttach, SuppliedPipeBroker, SuppliedPipeLifetime};
 
 const START_TIMEOUT: Duration = Duration::from_secs(5);
-const STOP_TIMEOUT: Duration = Duration::from_secs(5);
 const AUTO_BITRATE_BPS: u64 = 65_000_000;
 const UPLOAD_CHUNK_CAPACITY: usize = 4;
 const MAX_UPLOAD_CHUNK_BYTES: usize = 256 * 1024;
@@ -91,6 +108,13 @@ static THREAD_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static RESOURCE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 pub trait NativeEventSink: Send + Sync + 'static {
+    fn publish_remote_control(
+        &self,
+        _event: remote_control_service::NativeRemoteControlEvent,
+    ) -> bool {
+        false
+    }
+
     fn running(&self);
     fn publish_application(&self, event: ApplicationEvent) -> bool;
     fn publish_resource(&self, event: ResourceAvailable, body: Vec<u8>) -> bool;
@@ -133,6 +157,13 @@ pub enum NativeSubmitError {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NativeStopError {
+    WorkerPanicked,
+    NodeFailed(personal_rns::runtime::NodeRunError),
+    EventBackpressure,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NativeSnapshotError {
     Busy,
     Stopped,
@@ -158,6 +189,7 @@ struct CommandCompletion {
     state: Mutex<CompletionState>,
     ready: Condvar,
     readiness: Option<CommandReadiness>,
+    changed: watch::Sender<()>,
 }
 
 impl CommandCompletion {
@@ -169,6 +201,7 @@ impl CommandCompletion {
             }),
             ready: Condvar::new(),
             readiness,
+            changed: watch::channel(()).0,
         }
     }
 
@@ -180,6 +213,7 @@ impl CommandCompletion {
         state.result = Some(result);
         drop(state);
         self.ready.notify_all();
+        self.changed.send_replace(());
         if let Some(readiness) = &self.readiness {
             readiness();
         }
@@ -200,6 +234,9 @@ impl CommandHandle {
         }
         if state.interrupted {
             return CommandWait::Interrupted;
+        }
+        if timeout == Some(Duration::ZERO) {
+            return CommandWait::TimedOut;
         }
         match timeout {
             None => {
@@ -232,9 +269,24 @@ impl CommandHandle {
         }
     }
 
+    /// Runtime-independent wait. Dropping this future never cancels the admitted command.
+    pub async fn wait_async(&self) -> CommandWait {
+        let mut changed = self.completion.changed.subscribe();
+        loop {
+            match self.wait(Some(Duration::ZERO)) {
+                CommandWait::TimedOut => {}
+                value => return value,
+            }
+            if changed.changed().await.is_err() {
+                return CommandWait::Interrupted;
+            }
+        }
+    }
+
     pub fn interrupt_wait(&self) {
         lock(&self.completion.state).interrupted = true;
         self.completion.ready.notify_all();
+        self.completion.changed.send_replace(());
         if let Some(readiness) = &self.completion.readiness {
             readiness();
         }
@@ -266,6 +318,12 @@ impl Drop for CommandJob {
     }
 }
 
+struct StopState {
+    join: Option<std::thread::JoinHandle<Result<(), NativeStopError>>>,
+    result: Option<Result<(), NativeStopError>>,
+    directory_lock: Option<std::fs::File>,
+}
+
 pub struct NativeHost {
     commands: mpsc::Sender<CommandJob>,
     // Every current `NativeControl` variant is unix-only, so on other targets the enum is
@@ -276,12 +334,14 @@ pub struct NativeHost {
     uploads: mpsc::Sender<UploadJob>,
     snapshots: mpsc::Sender<SnapshotJob>,
     preview: mpsc::Sender<NativePreviewJob>,
+    preview_slots: Arc<Semaphore>,
     shutdown: watch::Sender<bool>,
-    join: Mutex<Option<std::thread::JoinHandle<()>>>,
+    stop: Mutex<StopState>,
     stopped: AtomicBool,
     identity_hash: IdentityHash,
     destination_hashes: Vec<DestinationHash>,
     handle: PrnsNodeHandle,
+    clock: personal_rns::manifold::tokio::TokioClock,
 }
 
 impl NativeHost {
@@ -289,6 +349,33 @@ impl NativeHost {
         config: HostConfig,
         sink: Arc<dyn NativeEventSink>,
     ) -> Result<Self, NativeStartError> {
+        Self::start_with_embedding(config, sink, NativeEmbedding::default())
+    }
+
+    pub fn start_with_embedding(
+        config: HostConfig,
+        sink: Arc<dyn NativeEventSink>,
+        embedding: NativeEmbedding,
+    ) -> Result<Self, NativeStartError> {
+        if embedding.application_events == ApplicationEventDispatch::NativeCallback
+            && embedding.on_event.is_none()
+        {
+            return Err(NativeStartError::Runtime(
+                "native application dispatch requires a callback".into(),
+            ));
+        }
+        if embedding.application_events == ApplicationEventDispatch::Queue
+            && embedding.on_event.is_some()
+        {
+            return Err(NativeStartError::Runtime(
+                "an owning native event callback requires native application dispatch".into(),
+            ));
+        }
+        if embedding.remote_control_config.is_some() && embedding.remote_control.is_available() {
+            return Err(NativeStartError::Runtime(
+                "remote-control service has two configuration owners".into(),
+            ));
+        }
         let missing: Vec<Capability> = config
             .required_capabilities
             .iter()
@@ -298,6 +385,7 @@ impl NativeHost {
         if !missing.is_empty() {
             return Err(NativeStartError::MissingCapabilities(missing));
         }
+        let directory_lock = lock_persistence_directory(&config.persistence)?;
         let pending_commands = config.limits.pending_commands();
         let (command_tx, command_rx) = mpsc::channel(pending_commands);
         let (control_tx, control_rx) = mpsc::unbounded_channel();
@@ -315,20 +403,31 @@ impl NativeHost {
         let join = std::thread::Builder::new()
             .name(format!("prns-host-{sequence}"))
             .spawn(move || {
-                worker(
-                    config,
-                    sink,
-                    WorkerInputs {
-                        commands: command_rx,
-                        controls: control_rx,
-                        uploads: upload_rx,
-                        snapshots: snapshot_rx,
-                        preview: preview_rx,
-                        shutdown: shutdown_rx,
-                        persistence: worker_persistence,
-                    },
-                    ready_tx,
-                )
+                let failure_sink = Arc::clone(&sink);
+                let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    worker(
+                        config,
+                        sink,
+                        embedding,
+                        WorkerInputs {
+                            commands: command_rx,
+                            controls: control_rx,
+                            uploads: upload_rx,
+                            snapshots: snapshot_rx,
+                            preview: preview_rx,
+                            shutdown: shutdown_rx,
+                            persistence: worker_persistence,
+                        },
+                        ready_tx,
+                    )
+                }));
+                match outcome {
+                    Ok(result) => result,
+                    Err(panic) => {
+                        failure_sink.failed("native host worker panicked".into());
+                        std::panic::resume_unwind(panic);
+                    }
+                }
             })
             .map_err(|error| NativeStartError::Thread(error.to_string()))?;
         let ready = match ready_rx.recv_timeout(START_TIMEOUT) {
@@ -344,19 +443,33 @@ impl NativeHost {
                     "native host exited during startup".to_string(),
                 ));
             }
-        }?;
+        };
+        let ready = match ready {
+            Ok(ready) => ready,
+            Err(error) => {
+                let _ = shutdown_tx.send(true);
+                let _ = join.join();
+                return Err(error);
+            }
+        };
         Ok(Self {
             commands: command_tx,
             controls: control_tx,
             uploads: upload_tx,
             snapshots: snapshot_tx,
             preview: preview_tx,
+            preview_slots: Arc::new(Semaphore::new(pending_commands)),
             shutdown: shutdown_tx,
-            join: Mutex::new(Some(join)),
+            stop: Mutex::new(StopState {
+                join: Some(join),
+                result: None,
+                directory_lock,
+            }),
             stopped: AtomicBool::new(false),
             identity_hash: ready.identity_hash,
             destination_hashes: ready.destination_hashes,
             handle: ready.handle,
+            clock: ready.clock,
         })
     }
 
@@ -368,6 +481,17 @@ impl NativeHost {
     #[must_use]
     pub fn destination_hashes(&self) -> &[DestinationHash] {
         &self.destination_hashes
+    }
+
+    /// A borrowed native service view; host lifecycle stays with the owning session.
+    pub fn service_client(&self) -> Result<NativeServiceClient, NativeSubmitError> {
+        if self.stopped.load(Ordering::Acquire) {
+            return Err(NativeSubmitError::Stopped);
+        }
+        Ok(NativeServiceClient {
+            handle: self.handle.clone(),
+            clock: self.clock.clone(),
+        })
     }
 
     pub fn preview_handle(&self) -> Result<PrnsNodeHandle, NativeSubmitError> {
@@ -387,11 +511,17 @@ impl NativeHost {
         if self.stopped.load(Ordering::Acquire) {
             return Err(NativeSubmitError::Stopped);
         }
+        // One permit covers both queued and executing jobs. Dropping the foreign
+        // waiter leaves the admitted task and permit with the native owner.
+        let permit = Arc::clone(&self.preview_slots)
+            .try_acquire_owned()
+            .map_err(|_| NativeSubmitError::Busy)?;
         let (result_tx, result_rx) = oneshot::channel();
         let job: NativePreviewJob = Box::new(move |handle| {
             Box::pin(async move {
                 let value = run(handle).await;
                 let _ = result_tx.send(value);
+                drop(permit);
             })
         });
         self.preview.try_send(job).map_err(|error| match error {
@@ -484,6 +614,7 @@ impl NativeHost {
             declared_length,
             written: AtomicU64::new(0),
             finished: AtomicBool::new(false),
+            changed: watch::channel(()).0,
         })
     }
 
@@ -493,7 +624,9 @@ impl NativeHost {
         }
         let (reply, result) = std::sync::mpsc::sync_channel(1);
         self.snapshots
-            .try_send(SnapshotJob { reply })
+            .try_send(SnapshotJob {
+                reply: SnapshotReply::Blocking(reply),
+            })
             .map_err(|error| match error {
                 mpsc::error::TrySendError::Full(_) => NativeSnapshotError::Busy,
                 mpsc::error::TrySendError::Closed(_) => NativeSnapshotError::Stopped,
@@ -507,15 +640,46 @@ impl NativeHost {
         }
     }
 
+    /// No caller runtime is required: the host executes the request and wakes this future.
+    pub async fn snapshot_async(&self) -> Result<HostSnapshot, NativeSnapshotError> {
+        if self.stopped.load(Ordering::Acquire) {
+            return Err(NativeSnapshotError::Stopped);
+        }
+        let (reply, result) = oneshot::channel();
+        self.snapshots
+            .try_send(SnapshotJob {
+                reply: SnapshotReply::Async(reply),
+            })
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => NativeSnapshotError::Busy,
+                mpsc::error::TrySendError::Closed(_) => NativeSnapshotError::Stopped,
+            })?;
+        result.await.map_err(|_| NativeSnapshotError::Stopped)
+    }
+
     pub fn stop(&self) {
-        if self.stopped.swap(true, Ordering::AcqRel) {
-            return;
-        }
+        let _ = self.stop_result();
+    }
+
+    /// Blocking native-owner operation. Every caller observes the same joined outcome.
+    /// Foreign leases must schedule this on the lifecycle executor, never from GC/drop.
+    pub fn stop_result(&self) -> Result<(), NativeStopError> {
+        self.stopped.store(true, Ordering::Release);
         let _ = self.shutdown.send(true);
-        let join = lock(&self.join).take();
-        if let Some(join) = join {
-            let _ = join.join();
+        let mut stop = lock(&self.stop);
+        if let Some(result) = stop.result {
+            return result;
         }
+        let result = match stop.join.take() {
+            Some(join) => join
+                .join()
+                .map_err(|_| NativeStopError::WorkerPanicked)
+                .and_then(|result| result),
+            None => Ok(()),
+        };
+        stop.directory_lock.take();
+        stop.result = Some(result);
+        result
     }
 }
 
@@ -535,6 +699,7 @@ pub struct NativeUpload {
     declared_length: u64,
     written: AtomicU64,
     finished: AtomicBool,
+    changed: watch::Sender<()>,
 }
 
 impl NativeUpload {
@@ -547,9 +712,13 @@ impl NativeUpload {
         }
         let length = u64::try_from(chunk.len()).map_err(|_| UploadWriteError::LengthOverrun)?;
         let mut chunks = lock(&self.chunks);
+        if self.finished.load(Ordering::Acquire) {
+            return Err(UploadWriteError::Finished);
+        }
         let written = self.written.load(Ordering::Acquire);
         if written.saturating_add(length) > self.declared_length {
             self.finished.store(true, Ordering::Release);
+            self.changed.send_replace(());
             self.cancelled.store(true, Ordering::Release);
             self.completion
                 .finish(Err(CommandFailure::ResourceLengthOverrun));
@@ -567,6 +736,45 @@ impl NativeUpload {
         Ok(())
     }
 
+    /// Waits for channel capacity without reserving bytes or mutating the upload until
+    /// admission. Cancelling the future before admission leaves the upload unchanged.
+    pub async fn write_async(&self, chunk: Vec<u8>) -> Result<(), UploadWriteError> {
+        if chunk.len() > MAX_UPLOAD_CHUNK_BYTES {
+            return Err(UploadWriteError::ChunkTooLarge);
+        }
+        let length = u64::try_from(chunk.len()).map_err(|_| UploadWriteError::LengthOverrun)?;
+        let mut changed = self.changed.subscribe();
+        let sender = {
+            let chunks = lock(&self.chunks);
+            if self.finished.load(Ordering::Acquire) {
+                return Err(UploadWriteError::Finished);
+            }
+            chunks.as_ref().cloned().ok_or(UploadWriteError::Finished)?
+        };
+        let permit = tokio::select! {
+            biased;
+            _ = changed.changed() => return Err(UploadWriteError::Finished),
+            permit = sender.reserve_owned() => permit.map_err(|_| UploadWriteError::Stopped)?,
+        };
+        let mut chunks = lock(&self.chunks);
+        if self.finished.load(Ordering::Acquire) {
+            return Err(UploadWriteError::Finished);
+        }
+        let written = self.written.load(Ordering::Acquire);
+        if written.saturating_add(length) > self.declared_length {
+            self.finished.store(true, Ordering::Release);
+            self.changed.send_replace(());
+            self.cancelled.store(true, Ordering::Release);
+            self.completion
+                .finish(Err(CommandFailure::ResourceLengthOverrun));
+            chunks.take();
+            return Err(UploadWriteError::LengthOverrun);
+        }
+        permit.send(chunk);
+        self.written.store(written + length, Ordering::Release);
+        Ok(())
+    }
+
     #[must_use]
     pub fn is_writable(&self) -> bool {
         lock(&self.chunks)
@@ -576,6 +784,7 @@ impl NativeUpload {
 
     pub fn finish(&self) -> CommandHandle {
         if !self.finished.swap(true, Ordering::AcqRel) {
+            self.changed.send_replace(());
             lock(&self.chunks).take();
             let written = self.written.load(Ordering::Acquire);
             if written != self.declared_length {
@@ -591,6 +800,7 @@ impl NativeUpload {
 
     pub fn abort(&self) {
         if !self.finished.swap(true, Ordering::AcqRel) {
+            self.changed.send_replace(());
             self.cancelled.store(true, Ordering::Release);
             lock(&self.chunks).take();
             self.completion
@@ -616,7 +826,25 @@ struct UploadJob {
 }
 
 struct SnapshotJob {
-    reply: std::sync::mpsc::SyncSender<HostSnapshot>,
+    reply: SnapshotReply,
+}
+
+enum SnapshotReply {
+    Blocking(std::sync::mpsc::SyncSender<HostSnapshot>),
+    Async(oneshot::Sender<HostSnapshot>),
+}
+
+impl SnapshotReply {
+    fn send(self, snapshot: HostSnapshot) {
+        match self {
+            Self::Blocking(reply) => {
+                let _ = reply.send(snapshot);
+            }
+            Self::Async(reply) => {
+                let _ = reply.send(snapshot);
+            }
+        }
+    }
 }
 
 struct PendingCompletion(Arc<CommandCompletion>);
@@ -687,12 +915,22 @@ pub fn native_capabilities() -> &'static [Capability] {
         Capability::TcpClient,
         Capability::TcpServer,
         Capability::Udp,
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         Capability::Serial,
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
         Capability::Usb,
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "ios",
+            target_os = "windows",
+            all(target_os = "android", feature = "android-platform")
+        ))]
         Capability::Bluetooth,
         Capability::Wifi,
         Capability::WebSocket,
         Capability::I2p,
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         Capability::Weave,
         #[cfg(unix)]
         Capability::SuppliedPipe,
@@ -706,17 +944,34 @@ pub fn native_interface_kinds() -> &'static [InterfaceKind] {
         InterfaceKind::TcpClient,
         InterfaceKind::TcpServer,
         InterfaceKind::Udp,
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         InterfaceKind::Serial,
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         InterfaceKind::Kiss,
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         InterfaceKind::Ax25Kiss,
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         InterfaceKind::RNode,
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         InterfaceKind::MultiRNode,
+        // Pipe also identifies externally supplied Unix descriptors, which do
+        // not create subprocesses and remain supported by mobile native hosts.
+        #[cfg(any(unix, not(any(target_os = "android", target_os = "ios"))))]
         InterfaceKind::Pipe,
         InterfaceKind::BackboneClient,
         InterfaceKind::BackboneServer,
         InterfaceKind::I2p,
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         InterfaceKind::Weave,
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
         InterfaceKind::AutomaticUsb,
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "ios",
+            target_os = "windows",
+            all(target_os = "android", feature = "android-platform")
+        ))]
         InterfaceKind::AutomaticBluetoothLe,
         InterfaceKind::WebSocketClient,
         InterfaceKind::WebSocketServer,
@@ -757,6 +1012,7 @@ struct Ready {
     identity_hash: IdentityHash,
     destination_hashes: Vec<DestinationHash>,
     handle: PrnsNodeHandle,
+    clock: personal_rns::manifold::tokio::TokioClock,
 }
 
 struct ResolvedSingle {
@@ -828,6 +1084,45 @@ fn resolve_identity(
                 NativeStartError::Identity(failure)
             }),
     }
+}
+
+/// The lock file is intentionally retained on disk: unlinking it while another process
+/// opens the directory could create independent locks for the same persisted state.
+fn lock_persistence_directory(
+    config: &PersistenceConfig,
+) -> Result<Option<std::fs::File>, NativeStartError> {
+    let PersistenceConfig::Directory { path } = config else {
+        return Ok(None);
+    };
+    let map_error = |error: std::io::Error| {
+        NativeStartError::Persistence(match error.kind() {
+            std::io::ErrorKind::PermissionDenied => {
+                PersistenceStartError::PermissionDenied { path: path.clone() }
+            }
+            std::io::ErrorKind::NotADirectory | std::io::ErrorKind::AlreadyExists => {
+                PersistenceStartError::NotDirectory { path: path.clone() }
+            }
+            _ => PersistenceStartError::Unavailable {
+                path: path.clone(),
+                detail: error.to_string(),
+            },
+        })
+    };
+    std::fs::create_dir_all(path).map_err(map_error)?;
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(Path::new(path).join(".prns-host.lock"))
+        .map_err(map_error)?;
+    lock.try_lock().map_err(|error| {
+        NativeStartError::Persistence(PersistenceStartError::Unavailable {
+            path: path.clone(),
+            detail: format!("persistent directory is already owned or cannot be locked: {error}"),
+        })
+    })?;
+    Ok(Some(lock))
 }
 
 fn resolve_persistence(
@@ -1015,9 +1310,10 @@ struct WorkerInputs {
 fn worker(
     config: HostConfig,
     sink: Arc<dyn NativeEventSink>,
+    embedding: NativeEmbedding,
     inputs: WorkerInputs,
     ready_tx: std::sync::mpsc::SyncSender<Result<Ready, NativeStartError>>,
-) {
+) -> Result<(), NativeStopError> {
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -1027,19 +1323,24 @@ fn worker(
             let failure = NativeStartError::Runtime(error.to_string());
             let _ = ready_tx.send(Err(failure.clone()));
             sink.failed(format!("{failure:?}"));
-            return;
+            return Ok(());
         }
     };
-    runtime.block_on(run(config, sink, inputs, ready_tx));
-    runtime.shutdown_timeout(STOP_TIMEOUT);
+    let result = runtime.block_on(run(config, sink, embedding, inputs, ready_tx));
+    // A timed Tokio shutdown can leave blocking persistence work running after
+    // this worker joins. Keep the owner and directory lock until it actually exits;
+    // callers may bound their wait without releasing unfinished native ownership.
+    drop(runtime);
+    result
 }
 
 async fn run(
     config: HostConfig,
     sink: Arc<dyn NativeEventSink>,
+    embedding: NativeEmbedding,
     inputs: WorkerInputs,
     ready_tx: std::sync::mpsc::SyncSender<Result<Ready, NativeStartError>>,
-) {
+) -> Result<(), NativeStopError> {
     let WorkerInputs {
         commands: command_rx,
         controls: control_rx,
@@ -1049,12 +1350,21 @@ async fn run(
         shutdown: shutdown_rx,
         persistence: persistence_snapshot,
     } = inputs;
+    let NativeEmbedding {
+        remote_control,
+        remote_control_config,
+        plan_context: provided_context,
+        mut on_event,
+        accepted_announces,
+        prepare_interfaces,
+        application_events,
+    } = embedding;
     let resolved = match resolve_config(config) {
         Ok(config) => config,
         Err(error) => {
             let _ = ready_tx.send(Err(error.clone()));
             sink.failed(format!("{error:?}"));
-            return;
+            return Ok(());
         }
     };
     let ResolvedConfig {
@@ -1072,15 +1382,18 @@ async fn run(
         Err(error) => {
             let _ = ready_tx.send(Err(error.clone()));
             sink.failed(format!("{error:?}"));
-            return;
+            return Ok(());
         }
     };
-    let plan_context = match plan_runtime_context(persistence_root.as_deref(), identity_hash) {
+    let plan_context = match provided_context
+        .map(Ok)
+        .unwrap_or_else(|| plan_runtime_context(persistence_root.as_deref(), identity_hash))
+    {
         Ok(context) => context,
         Err(error) => {
             let _ = ready_tx.send(Err(error.clone()));
             sink.failed(format!("{error:?}"));
-            return;
+            return Ok(());
         }
     };
     let aspects = aspect_refs(&resolved_destinations);
@@ -1093,10 +1406,56 @@ async fn run(
                 let failure = NativeStartError::Destination(format!("{error:?}"));
                 let _ = ready_tx.send(Err(failure.clone()));
                 sink.failed(format!("{failure:?}"));
-                return;
+                return Ok(());
             }
         }
     }
+    let resolved_remote_control = match remote_control_config
+        .map(|config| config.resolve())
+        .transpose()
+    {
+        Ok(config) => config,
+        Err(error) => {
+            let _ = ready_tx.send(Err(error.clone()));
+            sink.failed(format!("{error:?}"));
+            return Ok(());
+        }
+    };
+    let remote_control_grants;
+    let remote_control = if let Some(config) = resolved_remote_control {
+        let (identities, grants, announcement, capabilities) = config.into_parts();
+        remote_control_grants = grants;
+        let grants = if remote_control_grants.is_empty() {
+            personal_rns::remote_control::RemoteControlInitialControllerGrants::Nobody
+        } else {
+            match personal_rns::remote_control::RemoteControlControllerGrants::try_from(
+                remote_control_grants.as_slice(),
+            ) {
+                Ok(grants) => {
+                    personal_rns::remote_control::RemoteControlInitialControllerGrants::Grants(
+                        grants,
+                    )
+                }
+                Err(error) => {
+                    let failure = NativeStartError::Runtime(format!(
+                        "invalid initial remote-control grants: {error:?}"
+                    ));
+                    let _ = ready_tx.send(Err(failure.clone()));
+                    sink.failed(format!("{failure:?}"));
+                    return Ok(());
+                }
+            }
+        };
+        personal_rns::remote_control::RemoteControlService::with_capabilities(
+            identities,
+            grants,
+            announcement,
+            capabilities,
+        )
+    } else {
+        remote_control
+    };
+    let remote_control_enabled = remote_control.is_available();
     let event_sink = Arc::clone(&sink);
     let backpressure = Arc::new(tokio::sync::Notify::new());
     let event_backpressure = Arc::clone(&backpressure);
@@ -1110,15 +1469,44 @@ async fn run(
         app_state: personal_rns::NoRemoteControlHostControls,
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
+        remote_control,
         interfaces: ManuallyAttached,
         persistence,
         on_event: move |event, _state: &personal_rns::NoRemoteControlHostControls| {
+            if application_events == ApplicationEventDispatch::NativeCallback {
+                if let PrnsEvent::Diagnostic(diagnostic) = &event {
+                    publish_native_diagnostic(event_sink.as_ref(), diagnostic, &event_persistence);
+                }
+                if let Some(callback) = on_event.as_mut() {
+                    callback(event);
+                }
+                return;
+            }
+            if let PrnsEvent::Message(message) = &event {
+                if !remote_control_enabled
+                    && remote_control_service::NativeRemoteControlEvent::from_message(message)
+                        .is_some()
+                {
+                    return;
+                }
+            }
             if !publish_event(event_sink.as_ref(), event, &event_persistence) {
-                event_backpressure.notify_waiters();
+                // Retain a permit even before run_until polls its stop future.
+                event_backpressure.notify_one();
             }
         },
     });
+    if let Some(mut observer) = accepted_announces {
+        node = node.with_accepted_announce_observer(move |observation| {
+            observer(AuthenticatedAnnounce {
+                destination: host_destination(observation.destination),
+                announced_identity: IdentityHash::new(*observation.announced_identity.as_bytes()),
+                app_data: observation.app_data,
+                arrived_at_millis: observation.arrived_at.0,
+                is_path_response: observation.is_path_response,
+            });
+        });
+    }
     for (destination, hash) in resolved_destinations.iter().zip(&destination_hashes) {
         let Some(single) = &destination.single else {
             continue;
@@ -1135,21 +1523,63 @@ async fn run(
                 ));
                 let _ = ready_tx.send(Err(failure.clone()));
                 sink.failed(format!("{failure:?}"));
-                return;
+                return Ok(());
             }
         }
     }
     let handle = node.handle();
+    let clock = node.clock();
+    let mut prepared_attachments = BTreeMap::new();
+    if let Some(prepare) = prepare_interfaces {
+        let client = NativeServiceClient {
+            handle: handle.clone(),
+            clock: clock.clone(),
+        };
+        let attachments = match prepare(&client) {
+            Ok(attachments) => attachments,
+            Err(error) => {
+                let _ = ready_tx.send(Err(error.clone()));
+                sink.failed(format!("{error:?}"));
+                return Ok(());
+            }
+        };
+        for attachment in attachments {
+            let attachment = match attachment {
+                NativePreparedAttachment::Registered { interface, kind } => {
+                    Attachment::Registered { interface, kind }
+                }
+                NativePreparedAttachment::Interface { attachment, kind } => {
+                    Attachment::Interface { attachment, kind }
+                }
+                NativePreparedAttachment::Supervisor { attachment, kind } => {
+                    Attachment::Supervisor { attachment, kind }
+                }
+            };
+            if let Some(interface) = attachment.interfaces().first().copied() {
+                let key = host_interface(interface);
+                if prepared_attachments.contains_key(&key) {
+                    let failure = NativeStartError::Runtime(
+                        "prepared interface registered more than once".into(),
+                    );
+                    let _ = ready_tx.send(Err(failure.clone()));
+                    sink.failed(format!("{failure:?}"));
+                    return Ok(());
+                }
+                prepared_attachments.insert(key, attachment);
+            }
+        }
+    }
     sink.running();
     if ready_tx
         .send(Ok(Ready {
             identity_hash,
             destination_hashes,
             handle: handle.clone(),
+            clock,
         }))
         .is_err()
     {
-        return;
+        return Ok(());
     }
     let commands = tokio::spawn(command_loop(
         handle.clone(),
@@ -1157,28 +1587,49 @@ async fn run(
             commands: command_rx,
             controls: control_rx,
             snapshots: snapshot_rx,
-            preview: preview_rx,
             plan_context,
             shutdown: shutdown_rx.clone(),
             persistence: persistence_snapshot,
             started_at: Instant::now(),
+            prepared_attachments,
         },
     ));
+    let (preview_stop, preview_stopped) = oneshot::channel();
+    let previews = tokio::spawn(preview_loop(
+        preview_rx,
+        handle.clone(),
+        shutdown_rx.clone(),
+        preview_stopped,
+    ));
     let uploads = tokio::spawn(upload_loop(upload_rx, handle, shutdown_rx.clone()));
-    let exit = tokio::select! {
-        result = node.run_until(shutdown_requested(shutdown_rx)) => {
-            result.map_err(|error| format!("{error}"))
-        },
-        () = backpressure.notified() => Err("application event backpressure exceeded".to_string()),
-    };
+    let overloaded = AtomicBool::new(false);
+    let exit = node
+        .run_until(async {
+            tokio::select! {
+                () = shutdown_requested(shutdown_rx) => {},
+                () = backpressure.notified() => { overloaded.store(true, Ordering::Release); },
+            }
+        })
+        .await
+        .map_err(NativeStopError::NodeFailed)
+        .and_then(|()| {
+            if overloaded.load(Ordering::Acquire) {
+                Err(NativeStopError::EventBackpressure)
+            } else {
+                Ok(())
+            }
+        });
+    let _ = preview_stop.send(());
+    let _ = previews.await;
     commands.abort();
     let _ = commands.await;
     uploads.abort();
     let _ = uploads.await;
     match exit {
         Ok(()) => sink.stopped(),
-        Err(detail) => sink.failed(detail),
+        Err(error) => sink.failed(format!("{error:?}")),
     }
+    exit
 }
 
 async fn shutdown_requested(mut shutdown: watch::Receiver<bool>) {
@@ -1189,6 +1640,15 @@ async fn shutdown_requested(mut shutdown: watch::Receiver<bool>) {
 }
 
 enum Attachment {
+    #[cfg(all(target_os = "android", feature = "android-platform"))]
+    AndroidBluetooth {
+        attachment: AttachedSupervisor,
+        session: platform::android::BluetoothSession,
+    },
+    Registered {
+        interface: personal_rns::interfaces::InterfaceId,
+        kind: InterfaceKind,
+    },
     Interface {
         attachment: AttachedInterface,
         kind: InterfaceKind,
@@ -1212,7 +1672,10 @@ enum Attachment {
 impl Attachment {
     fn kind(&self) -> InterfaceKind {
         match self {
-            Self::Interface { kind, .. }
+            #[cfg(all(target_os = "android", feature = "android-platform"))]
+            Self::AndroidBluetooth { .. } => InterfaceKind::AutomaticBluetoothLe,
+            Self::Registered { kind, .. }
+            | Self::Interface { kind, .. }
             | Self::Supervisor { kind, .. }
             | Self::Plan { kind, .. } => *kind,
             #[cfg(unix)]
@@ -1222,6 +1685,9 @@ impl Attachment {
 
     fn interfaces(&self) -> Vec<personal_rns::interfaces::InterfaceId> {
         match self {
+            #[cfg(all(target_os = "android", feature = "android-platform"))]
+            Self::AndroidBluetooth { attachment, .. } => vec![attachment.id()],
+            Self::Registered { interface, .. } => vec![*interface],
             Self::Interface { attachment, .. } => vec![attachment.id()],
             #[cfg(unix)]
             Self::SuppliedPipe { attachment, .. } => vec![attachment.id()],
@@ -1232,6 +1698,15 @@ impl Attachment {
 
     async fn teardown(self, handle: &PrnsNodeHandle) {
         match self {
+            #[cfg(all(target_os = "android", feature = "android-platform"))]
+            Self::AndroidBluetooth {
+                attachment,
+                session,
+            } => {
+                attachment.teardown();
+                drop(session);
+            }
+            Self::Registered { interface, .. } => handle.remove_interface(interface),
             Self::Interface { attachment, .. } => attachment.teardown(),
             #[cfg(unix)]
             Self::SuppliedPipe {
@@ -1251,11 +1726,11 @@ struct CommandLoopInputs {
     commands: mpsc::Receiver<CommandJob>,
     controls: mpsc::UnboundedReceiver<NativeControl>,
     snapshots: mpsc::Receiver<SnapshotJob>,
-    preview: mpsc::Receiver<NativePreviewJob>,
     plan_context: PlanRuntimeContext,
     shutdown: watch::Receiver<bool>,
     persistence: Arc<Mutex<PersistenceSnapshot>>,
     started_at: Instant,
+    prepared_attachments: BTreeMap<InterfaceId, Attachment>,
 }
 
 async fn command_loop(handle: PrnsNodeHandle, inputs: CommandLoopInputs) {
@@ -1263,13 +1738,12 @@ async fn command_loop(handle: PrnsNodeHandle, inputs: CommandLoopInputs) {
         mut commands,
         mut controls,
         mut snapshots,
-        mut preview,
         plan_context,
         mut shutdown,
         persistence,
         started_at,
+        prepared_attachments: mut attachments,
     } = inputs;
-    let mut attachments = BTreeMap::new();
     let mut snapshot_revision = 0u64;
     loop {
         let work = tokio::select! {
@@ -1283,10 +1757,6 @@ async fn command_loop(handle: PrnsNodeHandle, inputs: CommandLoopInputs) {
             },
             snapshot = snapshots.recv() => match snapshot {
                 Some(snapshot) => HostWork::Snapshot(snapshot),
-                None => break,
-            },
-            preview = preview.recv() => match preview {
-                Some(preview) => HostWork::Preview(preview),
                 None => break,
             },
             _ = shutdown.wait_for(|stopping| *stopping) => break,
@@ -1318,11 +1788,8 @@ async fn command_loop(handle: PrnsNodeHandle, inputs: CommandLoopInputs) {
                 )
                 .await
                 {
-                    let _ = job.reply.send(snapshot);
+                    job.reply.send(snapshot);
                 }
-            }
-            HostWork::Preview(job) => {
-                tokio::spawn(job(handle.clone()));
             }
         }
     }
@@ -1337,7 +1804,33 @@ enum HostWork {
     Command(CommandJob),
     Control(NativeControl),
     Snapshot(SnapshotJob),
-    Preview(NativePreviewJob),
+}
+
+/// Native extension tasks share one bounded owner. Stop closes admission,
+/// aborts pending exchanges, and joins their drop guards before host teardown.
+async fn preview_loop(
+    mut jobs: mpsc::Receiver<NativePreviewJob>,
+    handle: PrnsNodeHandle,
+    mut shutdown: watch::Receiver<bool>,
+    mut stopped: oneshot::Receiver<()>,
+) {
+    let mut tasks = tokio::task::JoinSet::new();
+    loop {
+        tokio::select! {
+            biased;
+            _ = shutdown.wait_for(|stopping| *stopping) => break,
+            _ = &mut stopped => break,
+            _ = tasks.join_next(), if !tasks.is_empty() => {},
+            job = jobs.recv() => match job {
+                Some(job) => { tasks.spawn(job(handle.clone())); }
+                None => break,
+            },
+        }
+    }
+    jobs.close();
+    while jobs.try_recv().is_ok() {}
+    tasks.abort_all();
+    while tasks.join_next().await.is_some() {}
 }
 
 async fn collect_snapshot(
@@ -1834,7 +2327,7 @@ fn reference_interface(config: &InterfaceConfig) -> Result<ReferenceInterface, C
             )
         }
         InterfaceConfig::BrowserRendezvous { .. } => {
-            return Err(CommandFailure::UnsupportedByBackend)
+            return Err(CommandFailure::UnsupportedByBackend);
         }
     };
     let mut interface = ReferenceInterface::enabled("sdk-interface", type_name, params);
@@ -1917,6 +2410,7 @@ fn plan_failure(config: &InterfaceConfig, failure: PlanFailure) -> CommandFailur
             CommandFailure::BindFailed { detail }
         }
         PlanFailure::Network(_) => CommandFailure::ConnectFailed { detail },
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         PlanFailure::WeaveIdentity(_) => CommandFailure::EntropyUnavailable,
         PlanFailure::MissingIfacCredentials
         | PlanFailure::AutoWifiSettings(_)
@@ -1928,8 +2422,11 @@ fn plan_failure(config: &InterfaceConfig, failure: PlanFailure) -> CommandFailur
         | PlanFailure::I2pPeerAddress(_)
         | PlanFailure::DuplicateI2pPeer(_)
         | PlanFailure::MissingI2pStorage
-        | PlanFailure::MissingBleIdentity
-        | PlanFailure::RNodeMultiMembers(_) => invalid_configuration(detail),
+        | PlanFailure::MissingBleIdentity => invalid_configuration(detail),
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        PlanFailure::RNodeMultiMembers(_) => invalid_configuration(detail),
+        #[allow(unreachable_patterns)]
+        _ => invalid_configuration(detail),
     }
 }
 
@@ -1939,6 +2436,31 @@ async fn attach_typed_interface(
     config: &InterfaceConfig,
     routing: Option<InterfaceRoutingPolicy>,
 ) -> Result<Attachment, CommandFailure> {
+    if !native_interface_kinds().contains(&config.kind()) {
+        return Err(CommandFailure::UnsupportedByBackend);
+    }
+    #[cfg(all(target_os = "android", feature = "android-platform"))]
+    if matches!(config, InterfaceConfig::AutomaticBluetoothLe) {
+        // The OS owner prepares permissions and callback pumps; the host uses the
+        // already-persisted identity and owns the attached generation thereafter.
+        if routing.is_some() {
+            return Err(CommandFailure::UnsupportedByBackend);
+        }
+        let identity = context
+            .ble_identity()
+            .ok_or_else(|| invalid_configuration("Bluetooth identity is unavailable"))?;
+        let session = platform::android::take_prepared_bluetooth().ok_or_else(|| {
+            CommandFailure::DeviceUnavailable {
+                detail: "Android Bluetooth transport has not been prepared by its platform owner"
+                    .into(),
+            }
+        })?;
+        let attachment = handle.supervise(session.interface(identity));
+        return Ok(Attachment::AndroidBluetooth {
+            attachment,
+            session,
+        });
+    }
     let plan = typed_interface_plan(config, routing)?;
     let mut primary = None;
     let mut failure = None;
@@ -2385,6 +2907,9 @@ fn establish_link_failure(error: SendError<EstablishLinkFailure>) -> CommandFail
             EstablishLinkRejection::NoRouteToDestination => CommandFailure::NoRouteToDestination,
             EstablishLinkRejection::NotDirectlyReachable => CommandFailure::NotDirectlyReachable,
         },
+        SendError::Failed(EstablishLinkFailure::WriteFailed(
+            personal_rns::routing::links::establish::WriteEstablishLinkRejection::RouteVanished,
+        )) => CommandFailure::NoRouteToDestination,
         SendError::Failed(EstablishLinkFailure::WriteFailed(error)) => {
             CommandFailure::WriteFailed {
                 detail: format!("{error:?}"),
@@ -2665,12 +3190,20 @@ fn publish_event(
     match event {
         PrnsEvent::Message(message) => publish_message(sink, message),
         PrnsEvent::Diagnostic(diagnostic) => {
-            if let Some(diagnostic) = translate_diagnostic(diagnostic) {
-                update_persistence_snapshot(persistence, &diagnostic);
-                sink.publish_diagnostic(diagnostic);
-            }
+            publish_native_diagnostic(sink, &diagnostic, persistence);
             true
         }
+    }
+}
+
+fn publish_native_diagnostic(
+    sink: &dyn NativeEventSink,
+    diagnostic: &Diagnostic<'_>,
+    persistence: &Mutex<PersistenceSnapshot>,
+) {
+    if let Some(diagnostic) = translate_diagnostic(diagnostic) {
+        update_persistence_snapshot(persistence, &diagnostic);
+        sink.publish_diagnostic(diagnostic);
     }
 }
 
@@ -2696,135 +3229,10 @@ fn update_persistence_snapshot(
 }
 
 fn publish_message(sink: &dyn NativeEventSink, message: Message<'_>) -> bool {
+    if let Some(event) = remote_control_service::NativeRemoteControlEvent::from_message(&message) {
+        return sink.publish_remote_control(event);
+    }
     let event = match message {
-        Message::RemoteControlPairingAvailable(observation) => {
-            publish_remote_control_diagnostic(
-                sink,
-                "RemoteControlPairingAvailable",
-                format!("{observation:?}"),
-            );
-            return true;
-        }
-        Message::RemoteControlTargetPairingConfirmationRequired(attempt) => {
-            publish_remote_control_diagnostic(
-                sink,
-                "RemoteControlTargetPairingConfirmationRequired",
-                format!("{attempt:?}"),
-            );
-            return true;
-        }
-        Message::RemoteControlTargetPairingControllerCommitted { attempt_id } => {
-            publish_remote_control_diagnostic(
-                sink,
-                "RemoteControlTargetPairingControllerCommitted",
-                format!("{attempt_id:?}"),
-            );
-            return true;
-        }
-        Message::RemoteControlTargetPairingAuthorizationRequired { attempt_id, grant } => {
-            publish_remote_control_diagnostic(
-                sink,
-                "RemoteControlTargetPairingAuthorizationRequired",
-                format!("attempt_id={attempt_id:?}, grant={grant:?}"),
-            );
-            return true;
-        }
-        Message::RemoteControlTargetPairingAuthorizationPersisted { attempt_id } => {
-            publish_remote_control_diagnostic(
-                sink,
-                "RemoteControlTargetPairingAuthorizationPersisted",
-                format!("{attempt_id:?}"),
-            );
-            return true;
-        }
-        Message::RemoteControlTargetPairingExpiredDuringAuthorization { attempt_id } => {
-            publish_remote_control_diagnostic(
-                sink,
-                "RemoteControlTargetPairingExpiredDuringAuthorization",
-                format!("{attempt_id:?}"),
-            );
-            return true;
-        }
-        Message::RemoteControlControllerPairingConfirmationRequired(attempt) => {
-            publish_remote_control_diagnostic(
-                sink,
-                "RemoteControlControllerPairingConfirmationRequired",
-                format!("{attempt:?}"),
-            );
-            return true;
-        }
-        Message::RemoteControlControllerPairingPersistenceRequired(persistence) => {
-            publish_remote_control_diagnostic(
-                sink,
-                "RemoteControlControllerPairingPersistenceRequired",
-                format!("{persistence:?}"),
-            );
-            return true;
-        }
-        Message::RemoteControlControllerPairingAuthorizationPersisted { attempt_id } => {
-            publish_remote_control_diagnostic(
-                sink,
-                "RemoteControlControllerPairingAuthorizationPersisted",
-                format!("{attempt_id:?}"),
-            );
-            return true;
-        }
-        Message::RemoteControlControllerPairingAuthorizationPersistenceFailed { attempt_id } => {
-            publish_remote_control_diagnostic(
-                sink,
-                "RemoteControlControllerPairingAuthorizationPersistenceFailed",
-                format!("{attempt_id:?}"),
-            );
-            return true;
-        }
-        Message::RemoteControlControllerPairingExpired { aborted } => {
-            publish_remote_control_diagnostic(
-                sink,
-                "RemoteControlControllerPairingExpired",
-                format!("{aborted:?}"),
-            );
-            return true;
-        }
-        Message::RemoteControlControllerPairingLinkClosed { aborted } => {
-            publish_remote_control_diagnostic(
-                sink,
-                "RemoteControlControllerPairingLinkClosed",
-                format!("{aborted:?}"),
-            );
-            return true;
-        }
-        Message::RemoteControlTargetPairingExpired { aborted } => {
-            publish_remote_control_diagnostic(
-                sink,
-                "RemoteControlTargetPairingExpired",
-                format!("{aborted:?}"),
-            );
-            return true;
-        }
-        Message::RemoteControlTargetPairingLinkClosed { aborted } => {
-            publish_remote_control_diagnostic(
-                sink,
-                "RemoteControlTargetPairingLinkClosed",
-                format!("{aborted:?}"),
-            );
-            return true;
-        }
-        Message::RemoteControlTargetPairingCompletionRetentionExpired { attempt_id } => {
-            publish_remote_control_diagnostic(
-                sink,
-                "RemoteControlTargetPairingCompletionRetentionExpired",
-                format!("{attempt_id:?}"),
-            );
-            return true;
-        }
-        Message::RemoteControlTargetPairingCompletionLinkClosed { attempt_id } => {
-            publish_remote_control_diagnostic(
-                sink,
-                "RemoteControlTargetPairingCompletionLinkClosed",
-                format!("{attempt_id:?}"),
-            );
-            return true;
-        }
         Message::Delivered(Delivery::Single(delivery)) => {
             ApplicationEvent::SingleDelivery(SingleDelivery {
                 destination: host_destination(delivery.destination),
@@ -2835,6 +3243,8 @@ fn publish_message(sink: &dyn NativeEventSink, message: Message<'_>) -> bool {
         Message::Delivered(Delivery::Link(delivery)) => {
             ApplicationEvent::LinkDelivery(LinkDelivery {
                 link_id: host_link(delivery.link_id),
+                local_destination: delivery.local_destination.map(host_destination),
+                arrived_at_millis: delivery.arrived_at.0,
                 source_interface: host_interface(delivery.source_interface),
                 plaintext: delivery.plaintext.to_vec(),
             })
@@ -2928,18 +3338,12 @@ fn publish_message(sink: &dyn NativeEventSink, message: Message<'_>) -> bool {
             message_type: message_type.0,
             data: data.to_vec(),
         }),
+        _ => return true, // RemoteControl messages were projected above.
     };
     sink.publish_application(event)
 }
 
-fn publish_remote_control_diagnostic(sink: &dyn NativeEventSink, kind: &str, detail: String) {
-    sink.publish_diagnostic(DiagnosticEvent::BackendDiagnostic {
-        kind: kind.to_string(),
-        detail,
-    });
-}
-
-fn translate_diagnostic(diagnostic: Diagnostic<'_>) -> Option<DiagnosticEvent> {
+fn translate_diagnostic(diagnostic: &Diagnostic<'_>) -> Option<DiagnosticEvent> {
     Some(match diagnostic {
         Diagnostic::PersistenceRestored {
             routes,
@@ -2949,21 +3353,21 @@ fn translate_diagnostic(diagnostic: Diagnostic<'_>) -> Option<DiagnosticEvent> {
             refused,
             dropped,
         } => DiagnosticEvent::PersistenceRestored {
-            routes: routes.into(),
-            destination_identities: destination_identities.into(),
-            tunnels: tunnels.into(),
-            ratchets: ratchets.into(),
-            refused: refused.into(),
-            dropped: dropped.into(),
+            routes: (*routes).into(),
+            destination_identities: (*destination_identities).into(),
+            tunnels: (*tunnels).into(),
+            ratchets: (*ratchets).into(),
+            refused: (*refused).into(),
+            dropped: (*dropped).into(),
         },
         Diagnostic::PersistenceFlushed { cause, target } => DiagnosticEvent::PersistenceFlushed {
-            cause: persistence_flush_cause(cause),
-            target: persistence_flush_target(target),
+            cause: persistence_flush_cause(*cause),
+            target: persistence_flush_target(*target),
         },
         Diagnostic::PersistenceFlushFailed { cause, target } => {
             DiagnosticEvent::PersistenceFlushFailed {
-                cause: persistence_flush_cause(cause),
-                target: persistence_flush_target(target),
+                cause: persistence_flush_cause(*cause),
+                target: persistence_flush_target(*target),
             }
         }
         Diagnostic::AnnounceHeard {
@@ -2972,9 +3376,9 @@ fn translate_diagnostic(diagnostic: Diagnostic<'_>) -> Option<DiagnosticEvent> {
             source_interface,
             app_data,
         } => DiagnosticEvent::AnnounceHeard {
-            destination: host_destination(destination),
-            hops,
-            source_interface: host_interface(source_interface),
+            destination: host_destination(*destination),
+            hops: *hops,
+            source_interface: host_interface(*source_interface),
             app_data: app_data.to_vec(),
         },
         Diagnostic::LinkEstablished(established) => DiagnosticEvent::LinkEstablished {
@@ -2982,11 +3386,11 @@ fn translate_diagnostic(diagnostic: Diagnostic<'_>) -> Option<DiagnosticEvent> {
             rtt_millis: established.rtt_millis,
         },
         Diagnostic::PeerIdentified { link_id, identity } => DiagnosticEvent::PeerIdentified {
-            link_id: host_link(link_id),
+            link_id: host_link(*link_id),
             identity: IdentityHash::new(*identity.as_bytes()),
         },
         Diagnostic::LinkClosed { link_id, reason } => DiagnosticEvent::LinkClosed {
-            link_id: host_link(link_id),
+            link_id: host_link(*link_id),
             reason: match reason {
                 EngineLinkClosedReason::Timeout => LinkClosedReason::Timeout,
                 EngineLinkClosedReason::PeerClosed => LinkClosedReason::PeerClosed,
@@ -3011,15 +3415,15 @@ fn translate_diagnostic(diagnostic: Diagnostic<'_>) -> Option<DiagnosticEvent> {
             }
         }
         Diagnostic::SelfRatchetRotated { destination } => DiagnosticEvent::SelfRatchetRotated {
-            destination: host_destination(destination),
+            destination: host_destination(*destination),
         },
         Diagnostic::AnnounceHeldDropped {
             destination,
             source_interface,
             cause,
         } => DiagnosticEvent::AnnounceHeldDropped {
-            destination: host_destination(destination),
-            source_interface: host_interface(source_interface),
+            destination: host_destination(*destination),
+            source_interface: host_interface(*source_interface),
             cause: format!("{cause:?}"),
         },
         Diagnostic::LinkInterfaceMismatch {
@@ -3027,40 +3431,40 @@ fn translate_diagnostic(diagnostic: Diagnostic<'_>) -> Option<DiagnosticEvent> {
             attached_interface,
             arrived_on,
         } => DiagnosticEvent::LinkInterfaceMismatch {
-            link_id: host_link(link_id),
-            attached_interface: host_interface(attached_interface),
-            arrived_on: host_interface(arrived_on),
+            link_id: host_link(*link_id),
+            attached_interface: host_interface(*attached_interface),
+            arrived_on: host_interface(*arrived_on),
         },
         Diagnostic::ResourceAssembled {
             link_id,
             original_hash,
             total_size_bytes,
         } => DiagnosticEvent::ResourceAssembled {
-            link_id: host_link(link_id),
-            original_hash: host_resource_hash(original_hash),
-            total_size_bytes,
+            link_id: host_link(*link_id),
+            original_hash: host_resource_hash(*original_hash),
+            total_size_bytes: *total_size_bytes,
         },
         Diagnostic::ResourceFailed {
             link_id,
             hash,
             cause,
         } => DiagnosticEvent::ResourceFailed {
-            link_id: host_link(link_id),
-            hash: host_resource_hash(hash),
+            link_id: host_link(*link_id),
+            hash: host_resource_hash(*hash),
             cause: format!("{cause:?}"),
         },
         Diagnostic::RouteRemoved { destination, cause } => match cause {
             RouteRemovalCause::Expired => DiagnosticEvent::RouteExpired {
-                destination: host_destination(destination),
+                destination: host_destination(*destination),
             },
             RouteRemovalCause::Evicted => DiagnosticEvent::RouteEvicted {
-                destination: host_destination(destination),
+                destination: host_destination(*destination),
             },
             RouteRemovalCause::InterfaceGone => DiagnosticEvent::RouteInterfaceGone {
-                destination: host_destination(destination),
+                destination: host_destination(*destination),
             },
             RouteRemovalCause::Dropped => DiagnosticEvent::RouteDropped {
-                destination: host_destination(destination),
+                destination: host_destination(*destination),
             },
         },
     })

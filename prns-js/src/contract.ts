@@ -13,6 +13,8 @@ import type {
   CapabilityName,
   CommandFailure,
   CommandOutcome,
+  CommandOutcomeFor,
+  CommandSettlement,
   DestinationConfig,
   DestinationHash,
   HostCommand,
@@ -135,73 +137,6 @@ export type BackendStartFailed = Tag<
   "BackendStartFailed",
   { readonly detail: string; readonly code?: string }
 >;
-
-export type CommandSettlement =
-  | Tag<"Succeeded", CommandOutcome>
-  | Tag<"Failed", CommandFailure>;
-
-export type CommandOutcomeFor<Command extends HostCommand> =
-  Command extends Tag<"Announce", unknown>
-    ? Extract<CommandOutcome, { readonly tag: "Announced" }>
-    : Command extends Tag<"SendSinglePacket", unknown>
-      ? Extract<CommandOutcome, { readonly tag: "PacketDelivered" }>
-      : Command extends Tag<"CloseLink", unknown>
-        ? Extract<CommandOutcome, { readonly tag: "LinkCloseQueued" }>
-        : Command extends
-              | Tag<"AttachTcpServer", unknown>
-              | Tag<"AttachTcpClient", unknown>
-              | Tag<"AttachUdp", unknown>
-              | Tag<"AttachInterface", unknown>
-          ? Extract<CommandOutcome, { readonly tag: "InterfaceAttached" }>
-          : Command extends Tag<"DetachInterface", unknown>
-            ? Extract<CommandOutcome, { readonly tag: "InterfaceDetached" }>
-            : Command extends Tag<"EstablishLink", unknown>
-              ? Extract<CommandOutcome, { readonly tag: "LinkEstablished" }>
-              : Command extends Tag<"RequestPath", unknown>
-                ? Extract<CommandOutcome, { readonly tag: "PathDiscovered" }>
-                : Command extends Tag<"Identify", unknown>
-                  ? Extract<CommandOutcome, { readonly tag: "Identified" }>
-                  : Command extends
-                        | Tag<"SendLinkPacket", unknown>
-                        | Tag<"SendChannelMessage", unknown>
-                    ? Extract<
-                        CommandOutcome,
-                        { readonly tag: "PacketDelivered" }
-                      >
-                    : Command extends Tag<"Request", unknown>
-                      ? Extract<
-                          CommandOutcome,
-                          { readonly tag: "ResponseReceived" }
-                        >
-                      : Command extends Tag<"Respond", unknown>
-                        ? Extract<
-                            CommandOutcome,
-                            { readonly tag: "ResponseSent" }
-                          >
-                        : Command extends Tag<"SendResource", unknown>
-                          ? Extract<
-                              CommandOutcome,
-                              { readonly tag: "ResourceSent" }
-                            >
-                          : Command extends
-                                | Tag<
-                                    "SetLinkResourceStrategy",
-                                    unknown
-                                  >
-                                | Tag<
-                                    "SetDestinationResourceStrategy",
-                                    unknown
-                                  >
-                            ? Extract<
-                                CommandOutcome,
-                                { readonly tag: "ResourceStrategySet" }
-                              >
-                            : Command extends Tag<"AllowRequester", unknown>
-                              ? Extract<
-                                  CommandOutcome,
-                                  { readonly tag: "RequesterAllowed" }
-                                >
-                              : never;
 
 export type CommandSettlementFor<Command extends HostCommand> =
   | Tag<"Succeeded", CommandOutcomeFor<Command>>

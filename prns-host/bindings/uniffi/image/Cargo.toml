@@ -1,0 +1,23 @@
+[package]
+name = "prns-host-uniffi-image"
+version = "0.3.7"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[workspace]
+
+[lib]
+name = "prns_host_mobile"
+crate-type = ["cdylib", "lib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi_bindgen.rs"
+
+[dependencies]
+prns-host-uniffi = { path = ".." }
+uniffi = { version = "=0.31.2", features = ["cli", "cargo-metadata"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+prns-expo-android = { path = "../../../../prns-react-native/platform/android" }

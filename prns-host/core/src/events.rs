@@ -16,6 +16,9 @@ pub struct SingleDelivery {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LinkDelivery {
     pub link_id: LinkId,
+    /// Present only when this node owns the responder destination for the link.
+    pub local_destination: Option<DestinationHash>,
+    pub arrived_at_millis: u64,
     pub source_interface: InterfaceId,
     pub plaintext: Vec<u8>,
 }

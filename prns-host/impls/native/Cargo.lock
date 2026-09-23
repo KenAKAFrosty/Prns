@@ -1860,6 +1860,7 @@ version = "0.3.7"
 dependencies = [
  "dbus",
  "personal-rns",
+ "prns-ffi",
  "prns-host",
  "prns-host-snapshot",
  "tokio",

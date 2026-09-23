@@ -57,9 +57,10 @@ pub use generated::{
     SerialParity, SerialStopBits, Status, StopReason, WebSocketFramingSelection,
     BALANCED_APPLICATION_EVENTS, BALANCED_DIAGNOSTICS, BALANCED_PENDING_COMMANDS,
     BALANCED_RETAINED_EVENT_BYTES, DESTINATION_HASH_LENGTH, HOST_OPERATION_NAMES, HOST_SCHEMA_ABI,
-    HOST_SCHEMA_PRODUCT_VERSION, HOST_SCHEMA_VERSION, IDENTITY_HASH_LENGTH, IDENTITY_SECRET_LENGTH,
-    INTERFACE_ID_LENGTH, LINK_ID_LENGTH, PACKET_HASH_LENGTH, REQUEST_ID_LENGTH,
-    REQUEST_PATH_HASH_LENGTH, RESOURCE_HASH_LENGTH, SAFE_INT_MAX, SAFE_INT_MIN, SAFE_UINT_MAX,
+    HOST_SCHEMA_PRODUCT_VERSION, HOST_SCHEMA_VERSION, HOST_SEMANTIC_FINGERPRINT,
+    IDENTITY_HASH_LENGTH, IDENTITY_SECRET_LENGTH, INTERFACE_ID_LENGTH, LINK_ID_LENGTH,
+    PACKET_HASH_LENGTH, REQUEST_ID_LENGTH, REQUEST_PATH_HASH_LENGTH, RESOURCE_HASH_LENGTH,
+    SAFE_INT_MAX, SAFE_INT_MIN, SAFE_UINT_MAX,
 };
 pub use inspection::{
     DestinationIdentitySnapshot, HostSnapshot, InterfaceSnapshot, PersistenceSnapshot,
@@ -74,7 +75,7 @@ pub use lifecycle::{HostFailure, LifecycleSnapshot, LifecycleState, LifecycleTra
 pub use limits::{PrnsLimits, PrnsLimitsError};
 pub use queue::{
     ApplicationEventPushError, BoundedHostQueue, ConsumerLane, ConsumerUnavailable,
-    DiagnosticPushOutcome, QueueDepths, SubmitError,
+    DiagnosticPushOutcome, QueueDepths, RetainedApplicationEvent, SubmitError,
 };
 pub use resource::{
     ResourceAvailable, ResourceChunk, ResourceReadError, ResourceReader, ResourceStreamId,

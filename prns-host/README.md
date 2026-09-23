@@ -2,13 +2,14 @@
 
 `prns-host` is the language-neutral center of every hosted Personal RNS SDK. The canonical schema in `schema/host-contract-v1.json` owns stable discriminants, fixed byte widths, semantic configuration, commands, outcomes, application events, diagnostics, and resource streams. Deterministic generation projects that vocabulary into Rust, TypeScript, C, C#, Python, Go, Swift, Kotlin, and Julia.
 
-The schema flowers into three runtime paths:
+The schema feeds these runtime adapters:
 
 ```text
 host-contract-v1.json
     -> generated Rust vocabulary -> native Rust host -> direct N-API adapter -> Node/Bun SDK
                               |            |
                               |            -> C capsule -> Python/.NET/Go/Swift/Kotlin/Julia/C/C++
+                              |            -> UniFFI/JSI -> Expo/React Native SDK
                               |
                               -> cooperative Rust host -> WebAssembly adapter -> browser SDK
 ```
@@ -35,6 +36,7 @@ Rust and TypeScript/JavaScript are the paved application SDKs. Python, .NET, Go,
 | Ecosystem | Typed cases | Async/event surface | Intended public distribution |
 | --- | --- | --- | --- |
 | TypeScript, Node, Bun, browser | `casework` unions and exhaustive `match()` | `AsyncIterableIterator<T>` | one `personal-rns` npm package with native and browser exports |
+| Expo / React Native | canonical TypeScript values and generated UniFFI transports | async calls and exclusive iterators | [`personal-rns-expo`](../prns-react-native/README.md), selecting one default or aggregate native image |
 | .NET | sealed records and exhaustive `Match` helpers | `IAsyncEnumerable<T>` | `PersonalRns` NuGet with runtime-specific native assets |
 | Python | frozen variant classes | async iterators | platform wheels containing the native capsule |
 | Go | generated closed interfaces and concrete cases | context-aware pull streams | Go module plus native release archive |

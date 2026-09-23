@@ -1,5 +1,5 @@
 const HOST_CONTRACT_ABI = UInt32(1)
-const HOST_SCHEMA_VERSION = UInt32(1)
+const HOST_SCHEMA_VERSION = UInt32(2)
 const PRODUCT_VERSION = "0.3.7"
 const DESTINATION_HASH_LENGTH = 16
 const IDENTITY_HASH_LENGTH = 16
@@ -382,6 +382,8 @@ end
     EventFieldPersistenceCause = 38
     EventFieldPersistenceTarget = 39
     EventFieldAppData = 40
+    EventFieldLocalDestination = 41
+    EventFieldArrivedAtMillis = 42
 end
 
 struct DestinationHash
@@ -1181,6 +1183,8 @@ struct ApplicationEventLinkDelivery <: ApplicationEvent
     link_id::LinkId
     source_interface::InterfaceId
     plaintext::Vector{UInt8}
+    local_destination::Union{Nothing,DestinationHash}
+    arrived_at_millis::UInt64
 end
 
 struct DiagnosticEventAnnounceHeard <: DiagnosticEvent
