@@ -354,6 +354,7 @@ pub async fn run(spawner: Spawner) -> ! {
             access_point: hopspot::AccessPointState::Unsupported,
             shared_instance_config_export: hopspot::SharedInstanceConfigExport::Unavailable,
             gnss: hopspot::GnssAvailability::Unavailable,
+            discovery_groups: hopspot::DiscoveryGroupEditorAvailability::Available,
         });
         let startup_notice = identity_startup_notice.or(subg_startup_notice);
         let mut pending_startup_notice = identity_startup_notice
@@ -622,6 +623,51 @@ pub async fn run(spawner: Spawner) -> ! {
                                     }
                                 }
                             }
+                            hopspot::UiAction::OpenDiscoveryGroupsEditor(id) => {
+                                if id == BLE_SUPERVISOR_ID {
+                                    let groups =
+                                        BluetoothAutoStatus::new(&BLE_SHARED).discovery_groups();
+                                    ui_state.open_discovery_groups_editor(id, &groups);
+                                }
+                            }
+                            hopspot::UiAction::ReplaceDiscoveryGroups => {
+                                let Some(replacement) = ui_state.take_discovery_group_replacement()
+                                else {
+                                    continue;
+                                };
+                                let id = replacement.interface_id();
+                                let groups = replacement.into_groups();
+                                let result = execute_hopspot_command!(
+                                    snapshots,
+                                    battery,
+                                    personal_rns::runtime::RemoteControlHostCommand::ReplaceInterfaceDiscoveryGroups {
+                                        id,
+                                        groups: personal_rns::remote_control::RemoteControlDiscoveryGroups::new(groups),
+                                    }
+                                );
+                                let notice = match result {
+                                    Ok(personal_rns::runtime::RemoteControlHostResponse::ReplaceInterfaceDiscoveryGroups(
+                                        personal_rns::remote_control::RemoteControlDiscoveryGroupsReplaceOutcome::Applied
+                                        | personal_rns::remote_control::RemoteControlDiscoveryGroupsReplaceOutcome::Unchanged,
+                                    )) => hopspot::UiNotice::Saved,
+                                    Err(personal_rns::runtime::RemoteControlHostCommandError::Busy) => {
+                                        hopspot::UiNotice::GroupsBusy
+                                    }
+                                    Err(personal_rns::runtime::RemoteControlHostCommandError::PersistenceFailed) => {
+                                        hopspot::UiNotice::GroupsNotSaved
+                                    }
+                                    Err(personal_rns::runtime::RemoteControlHostCommandError::RollbackFailed) => {
+                                        hopspot::UiNotice::GroupsRollbackFailed
+                                    }
+                                    _ => hopspot::UiNotice::GroupsApplyFailed,
+                                };
+                                show_notice(
+                                    &mut ui_state,
+                                    &mut notice_timer,
+                                    notice,
+                                    NOTICE_DURATION,
+                                );
+                            }
                             hopspot::UiAction::OpenSubGEditor => {
                                 ui_state.open_subg_editor(working_subg_configuration);
                             }
@@ -689,6 +735,12 @@ pub async fn run(spawner: Spawner) -> ! {
         super::bootloader_entry::wait(),
     );
     let ble_plane = async move {
+        if let Some(groups) =
+            personal_rns::runtime::restored_discovery_groups(BLE_SUPERVISOR_ID).await
+        {
+            let _ =
+                BluetoothAutoStatus::new(&BLE_SHARED).restore_discovery_groups_before_start(groups);
+        }
         match bluetooth {
             Some((supervisor, fleet)) => {
                 join3(acceptor(sd, &HUB), scanner(sd, &HUB), supervisor.run(fleet)).await;
