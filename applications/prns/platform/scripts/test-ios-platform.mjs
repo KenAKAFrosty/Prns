@@ -1,0 +1,116 @@
+import assert from "node:assert/strict";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+assert.equal(
+  process.platform,
+  "darwin",
+  "ios:test requires macOS with Xcode; it cannot run on this host",
+);
+const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const sdkRoot = resolve(packageRoot, "../../../prns-react-native");
+
+const recoveryTestDirectory = mkdtempSync(resolve(tmpdir(), "prns-protected-data-recovery-"));
+try {
+  execFileSync(process.execPath, [resolve(sdkRoot, "scripts/test-apple.mjs")], {
+    stdio: "inherit",
+  });
+
+  const probeSource = resolve(packageRoot, "ios/PrnsAppRestorationProbe.swift");
+  const probeTestExecutable = resolve(recoveryTestDirectory, "probe-tests");
+  execFileSync(
+    "xcrun",
+    [
+      "swiftc",
+      "-D",
+      "DEBUG",
+      resolve(sdkRoot, "ios/PrnsBluetoothAuthorization.swift"),
+      resolve(packageRoot, "ios/PrnsIosDiagnostics.swift"),
+      probeSource,
+      resolve(packageRoot, "scripts/PrnsAppRestorationProbeTests.swift"),
+      "-o",
+      probeTestExecutable,
+    ],
+    { stdio: "inherit" },
+  );
+  const probeResult = spawnSync(probeTestExecutable, [], { encoding: "utf8" });
+  assert.ifError(probeResult.error);
+  assert.equal(probeResult.status, 0, probeResult.stderr);
+  assert.equal(probeResult.stdout, "");
+  const probeTag = "PRNS_IOS_";
+  const probeLines = probeResult.stderr
+    .split("\n")
+    .filter((line) => line.includes(probeTag))
+    .map((line) => line.slice(line.indexOf(probeTag)));
+  assert.deepEqual(
+    probeLines,
+    [
+      "PRNS_IOS_LIFECYCLE launch restorationAttempt=true protectedData=false",
+      "PRNS_IOS_BLUETOOTH authorization=allowedAlways nativeStart=running restorationAttempt=true",
+      "PRNS_IOS_LIFECYCLE prepare outcome=prepared stage=none",
+      "PRNS_IOS_LIFECYCLE start outcome=failed stage=runtime",
+      "PRNS_IOS_LIFECYCLE prepare outcome=unknown stage=unknown",
+      "PRNS_IOS_RESTORATION sequence=17 event=logger_installed",
+      "PRNS_IOS_RESTORATION sequence=18 event=central_scan_already_scanning",
+      "PRNS_IOS_RESTORATION sequence=19 event=gatt_control_hello_sent",
+      "PRNS_IOS_RESTORATION sequence=20 event=gatt_control_welcome_received",
+      "PRNS_IOS_RESTORATION sequence=21 event=central_closed_session_reaped",
+      "PRNS_IOS_RESTORATION sequence=22 event=central_restored_native_reset_requested",
+      "PRNS_IOS_RESTORATION sequence=23 event=central_restored_native_reconnect_requested",
+      "PRNS_IOS_RESTORATION sequence=24 event=bluetooth_managers_ready",
+      "PRNS_IOS_RESTORATION sequence=25 event=bluetooth_managers_timeout",
+      "PRNS_IOS_RESTORATION sequence=18446744073709551615 event=central_scan_started",
+    ],
+    "each diagnostic channel must reach stderr once; invalid probe codes must stay silent",
+  );
+  assert.doesNotMatch(
+    probeResult.stderr,
+    /private-peer|private-error|private-outcome|private-stage|gatt_control_timeout|central_manager_ready|central_manager_timeout|0x0080/,
+    "unknown native values and rejected restoration payloads must never become public",
+  );
+  const releaseProbeObject = resolve(recoveryTestDirectory, "probe-release.o");
+  execFileSync(
+    "xcrun",
+    ["swiftc", "-parse-as-library", "-emit-object", probeSource, "-o", releaseProbeObject],
+    { stdio: "inherit" },
+  );
+  const releaseProbeSymbols = execFileSync("xcrun", ["nm", "-g", releaseProbeObject], {
+    encoding: "utf8",
+  });
+  assert.doesNotMatch(
+    releaseProbeSymbols,
+    /prns_app_ios_restoration_probe_emit|prnsAppIosRestorationProbeEmit/,
+    "non-Debug compilation must omit the diagnostic callback entirely",
+  );
+  const releaseDiagnosticsObject = resolve(recoveryTestDirectory, "diagnostics-release.dylib");
+  execFileSync(
+    "xcrun",
+    [
+      "swiftc",
+      "-parse-as-library",
+      "-emit-library",
+      resolve(sdkRoot, "ios/PrnsBluetoothAuthorization.swift"),
+      resolve(packageRoot, "ios/PrnsIosDiagnostics.swift"),
+      "-o",
+      releaseDiagnosticsObject,
+    ],
+    { stdio: "inherit" },
+  );
+  const releaseDiagnosticsSymbols = execFileSync("xcrun", ["nm", "-g", releaseDiagnosticsObject], {
+    encoding: "utf8",
+  });
+  assert.doesNotMatch(
+    releaseDiagnosticsSymbols,
+    /\b_fputs\b/,
+    "non-Debug diagnostics must omit the stderr mirror",
+  );
+} finally {
+  rmSync(recoveryTestDirectory, { force: true, recursive: true });
+}
+
+console.log(
+  "ios:test: Swift authorization, startup dispatch, recovery, restoration diagnostics and release-symbol checks passed",
+);

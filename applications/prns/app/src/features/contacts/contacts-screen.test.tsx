@@ -39,6 +39,7 @@ function snapshot(): DevelopmentNodeSnapshot {
 }
 function fakeRuntime(overrides: Partial<DevelopmentRuntime> = {}): DevelopmentRuntime {
   return {
+    attachHost: async () => undefined,
     inspectDevelopmentIdentity: async () => Bindings.PrimaryIdentityState.Missing.new(),
     previewIdentityImport: async () => Bindings.IdentityImportPreviewOutcome.InvalidLength.new(),
     createGeneratedIdentity: async () => Bindings.IdentityCreationOutcome.AlreadyExists.new(),

@@ -4,11 +4,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::request_endpoints;
-use personal_rns::runtime::{NoPersistence, PrnsNode, PrnsNodeRecipe};
-use personal_rns::storage::GrowableHeap;
-use personal_rns::tcp::TcpClientInterface;
-use personal_rns::ManuallyAttached;
+use prns_host::{HostConfig, HostRole, IdentityConfig, PersistenceConfig, PrnsLimits};
+use prns_host_native::owner::OwnedSession;
+use prns_host_native::{ApplicationEventDispatch, NativeEmbedding};
 use prns_lxmf::direct::{
     prepare_local_lxmf_destination, DirectLxmfService, PrnsDirectNetwork, SendDirectTextOutcome,
 };
@@ -133,28 +131,45 @@ async fn run() -> Result<(), Failure> {
             .map_err(|_| Failure::InvalidDestination)?;
     let (pending, callbacks) = DirectLxmfService::prepare(identity);
     let event_callbacks = callbacks.clone();
-    let client = TcpClientInterface::new(target);
-    let node = PrnsNode::new(PrnsNodeRecipe {
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
-        transport_identity: None,
-        pre_configured_destinations: [destination],
-        app_state: personal_rns::runtime::NoRemoteControlHostControls,
-        storage: GrowableHeap,
-        request_endpoints: request_endpoints![],
-        interfaces: ManuallyAttached,
-        persistence: NoPersistence,
-        on_event: move |event, _state: &personal_rns::runtime::NoRemoteControlHostControls| {
-            let _outcome = event_callbacks.on_prns_event(&event);
+    let owner = OwnedSession::open_with_embedding(
+        HostConfig {
+            identity: IdentityConfig::GenerateEphemeral,
+            persistence: PersistenceConfig::Ephemeral,
+            role: HostRole::Endpoint,
+            destinations: vec![destination],
+            required_capabilities: vec![],
+            limits: PrnsLimits::balanced(),
         },
-    })
-    .with_accepted_announce_observer(callbacks.accepted_announce_observer());
-    let handle = node.handle();
-    handle.attach(client);
+        NativeEmbedding {
+            on_event: Some(Box::new(move |event| {
+                let _outcome = event_callbacks.on_prns_event(&event);
+            })),
+            accepted_announces: Some(Box::new(callbacks.authenticated_announce_observer())),
+            application_events: ApplicationEventDispatch::NativeCallback,
+            ..NativeEmbedding::default()
+        },
+    )
+    .await
+    .map_err(|_| Failure::NodeStopped)?;
+    let host = owner.client();
+    let attached = host
+        .execute(prns_host::HostCommand::AttachTcpClient {
+            target,
+            bitrate: prns_host::Bitrate::Auto,
+        })
+        .await;
+    if !matches!(
+        attached,
+        Ok(Ok(prns_host::CommandOutcome::InterfaceAttached { .. }))
+    ) {
+        owner.stop().await.map_err(|_| Failure::StopTimedOut)?;
+        return Err(Failure::NodeStopped);
+    }
     let service = pending
-        .start(Arc::new(PrnsDirectNetwork::new(handle)))
+        .start(Arc::new(PrnsDirectNetwork::new(host)))
         .map_err(|_| Failure::NoTokioRuntime)?;
     let announcer = service.clone();
-    tokio::spawn(async move {
+    let announce_task = tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_millis(400));
         loop {
             interval.tick().await;
@@ -164,8 +179,9 @@ async fn run() -> Result<(), Failure> {
         }
     });
 
-    tokio::select! {
-        _result = node.run() => Err(Failure::NodeStopped),
-        result = complete_exchange(service) => result,
-    }
+    let result = complete_exchange(service.clone()).await;
+    announce_task.abort();
+    service.stop().await.map_err(|_| Failure::StopTimedOut)?;
+    owner.stop().await.map_err(|_| Failure::StopTimedOut)?;
+    result
 }

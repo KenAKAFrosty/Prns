@@ -152,6 +152,7 @@ function fakeProvider(
 ): RuntimeProvider {
   const initial = snapshot(2n, includeObservation, pairing, pairedTargets, pairingCandidates);
   const runtime: DevelopmentRuntime = {
+    attachHost: async () => undefined,
     inspectDevelopmentIdentity: async () => initial.primaryIdentity,
     previewIdentityImport: async () => Bindings.IdentityImportPreviewOutcome.InvalidLength.new(),
     createGeneratedIdentity: async () => Bindings.IdentityCreationOutcome.AlreadyExists.new(),

@@ -1,0 +1,87 @@
+{
+  "name": "personal-rns-expo",
+  "version": "0.3.7",
+  "description": "General PRNS host SDK for Expo and React Native",
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "react-native": "src/index.native.ts",
+  "types": "src/index.native.ts",
+  "sideEffects": [
+    "src/bindings.native.ts"
+  ],
+  "exports": {
+    ".": {
+      "react-native": "./src/index.native.ts",
+      "browser": "./src/index.web.ts",
+      "types": "./src/index.native.ts",
+      "default": "./src/index.web.ts"
+    },
+    "./bindings": "./src/bindings.native.ts",
+    "./browser": "./src/index.web.ts",
+    "./package.json": "./package.json",
+    "./contract-adapter": "./src/generated/host-adapter.generated.ts",
+    "./bindings/values": "./src/generated/prns_host_uniffi.ts"
+  },
+  "files": [
+    "src",
+    "ios/*.swift",
+    "ios/*.podspec",
+    "ios/generated",
+    "ios/*.xcframework/**",
+    "android/build.gradle",
+    "android/consumer-rules.pro",
+    "android/generated",
+    "android/src/main",
+    "expo-module.config.json",
+    "native-image.json",
+    "README.md"
+  ],
+  "scripts": {
+    "generate": "python3 tools/generate.py generate",
+    "generate:check": "python3 tools/generate.py generate --check",
+    "build:ios": "python3 tools/generate.py ios",
+    "build:android": "python3 tools/generate.py android",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --test tests/*.test.mjs && python3 -m unittest discover -s tools -p 'test_*.py'",
+    "verify": "npm run typecheck && npm test",
+    "pack:check": "node tools/detached-consumer.mjs --pack-only --require-ios",
+    "test:apple": "node scripts/test-apple.mjs",
+    "test:consumer": "node tools/detached-consumer.mjs --android"
+  },
+  "peerDependencies": {
+    "expo": "^57.0.0",
+    "expo-modules-core": "^57.0.0",
+    "react": ">=19 <20",
+    "react-native": "^0.86.0",
+    "personal-rns": "0.3.7",
+    "@ubjs/core": "0.31.0-5",
+    "@ubjs/react-native": "0.31.0-5"
+  },
+  "devDependencies": {
+    "@expo/metro-runtime": "~57.0.16",
+    "@types/react": "19.2.14",
+    "@ubjs/core": "file:../vendor/ubrn/packages/ubjs-core-0.31.0-5.tgz",
+    "@ubjs/react-native": "file:../vendor/ubrn/packages/ubjs-react-native-0.31.0-5.tgz",
+    "expo": "~57.0.24",
+    "expo-build-properties": "57.0.21",
+    "expo-modules-core": "~57.0.18",
+    "personal-rns": "file:../prns-js",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native": "0.86.3",
+    "react-native-web": "~0.21.0",
+    "typescript": "7.0.2"
+  },
+  "author": "Prns contributors",
+  "homepage": "https://reticulum.rs",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/KenAKAFrosty/Prns.git",
+    "directory": "prns-react-native"
+  },
+  "packageManager": "npm@11.16.0",
+  "engines": {
+    "node": "^22.13.0 || ^24.3.0 || >=25.0.0"
+  }
+}

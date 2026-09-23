@@ -45,7 +45,7 @@ class DetachedConsumerCheckTests(unittest.TestCase):
                 "javascriptContract": {
                     "package": "personal-rns",
                     "sourcePath": "prns-js",
-                    "consumers": ["prns/app/package.json", "sdk/expo/package.json"],
+                    "consumers": ["prns/app/package.json", "prns/platform/package.json"],
                 }
             }
         }
@@ -260,7 +260,7 @@ checksum = "abc"
                 '{"name":"personal-rns","version":"0.0.0"}\n', encoding="utf-8"
             )
             runtime_selection = "file:../../vendor/ubrn/packages/ubjs-core.tgz"
-            for relative in (pathlib.Path("prns/app"), pathlib.Path("sdk/expo")):
+            for relative in (pathlib.Path("prns/app"), pathlib.Path("prns/platform")):
                 package = applications / relative
                 package.mkdir(parents=True)
                 selection = f"file:{os.path.relpath(personal_rns, package)}"
@@ -297,7 +297,7 @@ checksum = "abc"
 
             self.assertEqual(selection, "file:../../vendor/personal-rns.tgz")
             self.assertEqual(bindings.read_text(encoding="utf-8"), binding_manifest)
-            for relative in ("prns/app", "sdk/expo"):
+            for relative in ("prns/app", "prns/platform"):
                 package = json.loads((applications / relative / "package.json").read_text())
                 self.assertEqual(package["dependencies"]["@ubjs/core"], runtime_selection)
             mobility.reject_external_npm_paths(applications)
@@ -430,6 +430,74 @@ checksum = "abc"
                 "tracked application symlinks are forbidden",
             ):
                 mobility.reject_tracked_symlinks(repository)
+
+
+
+
+class SharedInputExportTests(unittest.TestCase):
+    def test_export_contains_only_application_and_explicit_shared_inputs(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            repository, destination = root / 'repository', root / 'detached'
+            repository.mkdir()
+            destination.mkdir()
+            expected = ('applications/package.json', 'prns-react-native/package.json', 'tools/uniffi/tooling.py',
+                        'tools/ubrn-vendor/vendor.py', 'vendor/ubrn/receipt.json')
+            for relative in (*expected, 'vendor/unrelated/private.txt', 'prns-core/private.txt'):
+                path = repository / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(relative)
+            subprocess.run(['git', 'init', '--quiet', repository], check=True)
+            subprocess.run(['git', '-C', repository, 'add', '.'], check=True)
+            subprocess.run(['git', '-C', repository, '-c', 'user.name=Test', '-c',
+                            'user.email=test@example.invalid', 'commit', '--quiet', '-m', 'fixture'], check=True)
+            application = mobility.export_applications(repository, destination)
+            for relative in expected:
+                self.assertEqual((application.parent / relative).read_text(), relative)
+            self.assertFalse((application.parent / 'vendor/unrelated').exists())
+            self.assertFalse((application.parent / 'prns-core').exists())
+
+    def test_only_receipt_listed_shared_runtime_archives_may_escape_application(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            applications, vendor = root / 'applications', root / 'vendor/ubrn'
+            applications.mkdir()
+            (vendor / 'packages').mkdir(parents=True)
+            archive = vendor / 'packages/ubjs-core.tgz'
+            archive.write_bytes(b'fixture')
+            (vendor / 'receipt.json').write_text(json.dumps({'packages': [
+                {'name': '@ubjs/core', 'file': 'packages/ubjs-core.tgz'}]}))
+            manifest = applications / 'package.json'
+            manifest.write_text(json.dumps({'dependencies': {
+                '@ubjs/core': 'file:../vendor/ubrn/packages/ubjs-core.tgz'}}))
+            mobility.reject_external_npm_paths(applications)
+            self.assertTrue(mobility.shared_runtime_archive(archive, applications, '@ubjs/core'))
+            self.assertFalse(mobility.shared_runtime_archive(archive, applications, 'another-package'))
+            lock = applications / 'package-lock.json'
+            lock.write_text(json.dumps({'packages': {'node_modules/@ubjs/core': {
+                'resolved': 'file:../vendor/ubrn/packages/ubjs-core.tgz'}}}))
+            mobility.reject_external_npm_lock_paths(applications)
+            for selection in ('../vendor/ubrn/packages/unreviewed.tgz', '../tools/uniffi/tooling.py'):
+                with self.subTest(selection=selection):
+                    manifest.write_text(json.dumps({'dependencies': {'@ubjs/core': 'file:' + selection}}))
+                    with self.assertRaisesRegex(mobility.QualificationFailure, 'escapes detached'):
+                        mobility.reject_external_npm_paths(applications)
+                    lock.write_text(json.dumps({'packages': {'node_modules/@ubjs/core': {
+                        'resolved': 'file:' + selection}}}))
+                    with self.assertRaisesRegex(mobility.QualificationFailure, 'escapes detached'):
+                        mobility.reject_external_npm_lock_paths(applications)
+
+    def test_receipt_cannot_extend_runtime_archive_allowlist_outside_packages(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            vendor = root / 'vendor/ubrn'
+            vendor.mkdir(parents=True)
+            for selection in ('../../outside.tgz', '/absolute.tgz', 'packages/../outside.tgz'):
+                (vendor / 'receipt.json').write_text(json.dumps({'packages': [
+                    {'name': '@ubjs/core', 'file': selection}]}))
+                with self.subTest(selection=selection):
+                    with self.assertRaisesRegex(mobility.QualificationFailure, 'unsafe shared runtime'):
+                        mobility.shared_runtime_archive(root / 'outside.tgz', root / 'applications')
 
 
 if __name__ == "__main__":

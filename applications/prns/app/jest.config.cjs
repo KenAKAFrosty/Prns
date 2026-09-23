@@ -1,5 +1,6 @@
 module.exports = {
   preset: "jest-expo",
+  modulePaths: ["<rootDir>/../../node_modules"],
   moduleNameMapper: {
     "^@/native/runtime-provider$": "<rootDir>/src/native/runtime-provider.web.ts",
   },

@@ -18,12 +18,14 @@ npm --prefix applications run bindings:ios -- --sim-only --targets aarch64-apple
 npm --prefix applications run bindings:android -- --targets arm64-v8a --release
 ```
 
-Generation refreshes TypeScript, Swift, Kotlin, semantic contract fingerprints
-and the canonical HostSnapshot adapters from the same Rust API. Checking rejects
-stale output without rewriting it. The mobile commands build the shared image
-owned by this package; the normal native client build helpers invoke them before
-Expo prebuild and autolinking. The Expo module must not link or package a second
-copy of `prns_app`.
+Generation refreshes product TypeScript, Swift, Kotlin and semantic contract
+fingerprints, and selects this composition through `host-provider.json` for the
+general Expo SDK. Checking rejects stale output without rewriting it. The SDK
+package owns the sole `prns_app` native image; this package owns only product
+bindings. The native client helpers build it before Expo prebuild/autolinking.
+`bindings:aggregate:test` exercises real generated Python namespaces against
+that image, including borrowed ownership, native event admission and restart;
+the routine `native:verify` gate includes it.
 
 See the [generation guide](../../../tools/generated-bindings/README.md) for
 toolchain requirements, target selection and disposable build caches. Generated
@@ -34,16 +36,15 @@ files are outputs of that workflow and must not be edited directly.
 Use `@prns-internal/native-bindings` for types, enum factories, generated
 converters and fingerprint constants. This entry is safe to import on web and
 does not install the native runtime. The `/native` entry installs the JSI runtime
-and initializes the generated UniFFI ABI checks. The Expo SDK loads it lazily
-after checking native capability, then checks the app and canonical Host semantic
-fingerprints separately. Application code should use that SDK so platform
-admission accompanies execution.
+and initializes the generated UniFFI ABI checks. The app-owned platform facade
+loads it lazily after checking native capability, then checks the app and canonical
+Host semantic fingerprints separately. Product calls use `@prns-internal/expo`
+for platform admission; general host calls use `personal-rns-expo`.
 
 The execution boundary is:
 
-- `readSnapshot` and nineteen domain operations call generated async bindings:
-  pairing initiate/approve/reject, Describe/AnnounceSelf, seven contact operations
-  and seven LXMF operations. `previewIdentityImport` is a bounded synchronous
+- Product snapshots, pairing/management workflows, contact operations and LXMF
+  operations call generated async bindings. `previewIdentityImport` is a bounded synchronous
   parse of exactly 64 bytes; `bindingContract` reads immutable identifiers.
 - Seven Expo methods retain platform-owned storage, identity and lifecycle
   admission: `prepareStorage`, `inspectIdentity`, `createGeneratedIdentity`,
@@ -67,12 +68,13 @@ TypeScript `bigint`, Swift `UInt64` and Kotlin `ULong`. Keep them exact through
 arithmetic and comparisons. Canonical Host `safeUint` fields remain checked
 JavaScript numbers, while canonical exact counters remain `bigint`.
 
-`host_contract.py` resolves the app's locked `prns-host` dependency through Cargo
-metadata and reads its canonical `host-contract-v1.json` schema. It generates
-transport records and conversions over the actual Rust `HostSnapshot`, custom
-type configuration and the TypeScript adapter to `personal-rns/contract`.
-Canonical state remains owned by `prns_host`; the no_std core has no UniFFI
-dependency. There is no second handwritten snapshot or JSON/ts-rs contract.
+The repository's canonical generator owns all host records, conversions and
+the TypeScript adapter to `personal-rns/contract`. The former app snapshot
+generator has been deleted. This package imports `personal-rns-expo` converters
+and the external `HostClientHandle`; its custom snapshot type delegates to those
+same generated conversions. Canonical state remains owned by `prns_host`; the
+no_std core has no UniFFI dependency. `sharedHost` lends command/query access
+without the authority to stop native services.
 
 Generated types support `exactOptionalPropertyTypes`. UniFFI `None` uses
 `undefined`; the canonical Host adapter omits absent optional properties as its
@@ -83,7 +85,7 @@ Rust semantic checks; TypeScript types alone do not validate foreign inputs.
 
 ## Cancellation and ownership
 
-Generated async functions accept optional `{ signal: AbortSignal }`. The SDK
+Generated async functions accept optional `{ signal: AbortSignal }`. The app facade
 forwards caller signals, including Effect interruption, and checks cancellation
 after platform preflight before submitting domain work. Aborting a caller or
 tearing down its JavaScript runtime releases its generated future without
@@ -105,7 +107,7 @@ it owns neither an executor nor a node.
 ## Runtime scope and validation
 
 The runtime and generator use the exact jsi2 source revision and ordered patches
-recorded in the [vendor distribution](../../../vendor/ubrn/README.md). The current
+recorded in the [vendor distribution](../../../../vendor/ubrn/README.md). The current
 patches cover strict optional properties, JavaScript runtime teardown, Android
 queue teardown and Apple framework version metadata. They are shared runtime
 maintenance, separate from the generated application API; the vendor guide

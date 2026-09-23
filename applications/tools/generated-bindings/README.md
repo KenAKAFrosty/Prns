@@ -8,15 +8,16 @@ npm --prefix applications run api:check
 ```
 
 Both commands use the source revision and patches recorded in
-`applications/vendor/ubrn/source-lock.json`. The helper verifies that source,
+`vendor/ubrn/source-lock.json`. The helper verifies that source,
 builds the generator, builds the application metadata library, and generates
 TypeScript, Swift, Kotlin, and contract identifiers from the same Rust API.
-Generation also refreshes the canonical HostSnapshot adapters; checking rejects
-any stale or obsolete output without rewriting it. Do not edit generated files
-directly.
+The shared canonical pipeline generates the SDK host contract; this recipe
+generates product bindings and refreshes the selected SDK namespace from the
+same aggregate image. Checking rejects stale or obsolete output without
+rewriting it. Do not edit generated files directly.
 
 `outputs.json` records the generator's complete ownership: its three generated
-directories, the two generated files beside Rust source, and the application-owned
+directories and the application-owned
 package scaffolding. Generation removes obsolete files only inside those declared
 output directories. It rejects unowned output paths and symlinks before writing.
 Keep handwritten files outside the generated directories. Native package metadata,
@@ -53,8 +54,9 @@ in the source lock, `cargo-ndk`, and the requested Rust targets. It resolves
 `ANDROID_SDK_ROOT`, and rejects a different NDK. The normal native client build
 helpers invoke this process before Expo prebuild and autolinking.
 
-`prns/native-composition/bindings` owns the resulting dynamic framework or
-Android shared libraries. Both native lifecycle calls and JSI use that image;
+`prns-react-native` owns the resulting dynamic framework or Android shared
+libraries, selected by `bindings/host-provider.json`. Product bindings import
+that SDK namespace. Both native lifecycle calls and JSI use that image;
 the Expo module must not package or link another copy of the Rust supervisor.
 Mobile build outputs are ignored and rebuilt locally. Debug iOS builds enable
 the existing bounded restoration diagnostic probe; release builds omit it.
@@ -64,4 +66,10 @@ integer/optional Host adapters and vendoring checks without building native code
 
 The committed runtime npm archives are a separate dependency. Their source,
 verification, rebuild, and upstream replacement procedure are documented in
-[`../ubrn-vendor/README.md`](../ubrn-vendor/README.md).
+[`tools/ubrn-vendor`](../../../tools/ubrn-vendor/README.md).
+
+The generic build/generation/ownership implementation lives in
+[`tools/uniffi`](../../../tools/uniffi/README.md). This directory contains only
+the application's recipe, product export/fingerprint projection and debug
+build policy. The general SDK supplies its own `BindingRecipe` to the shared
+implementation and never imports application code.

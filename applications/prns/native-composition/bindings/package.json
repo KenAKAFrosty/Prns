@@ -17,8 +17,9 @@
     "index.ts",
     "index.native.ts",
     "typescript",
-    "ios",
-    "android",
+    "android/build.gradle",
+    "android/src/main/AndroidManifest.xml",
+    "android/src/main/java",
     "*.podspec"
   ],
   "peerDependencies": {
@@ -26,7 +27,8 @@
     "personal-rns": "*"
   },
   "dependencies": {
-    "@ubjs/core": "0.31.0-5"
+    "@ubjs/core": "0.31.0-5",
+    "personal-rns-expo": "file:../../../../prns-react-native"
   },
   "exports": {
     ".": {

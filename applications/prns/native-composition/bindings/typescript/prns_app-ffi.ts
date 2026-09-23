@@ -434,6 +434,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_prns_app_fn_func_shared_host": {
+      args: [],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
     "uniffi_prns_app_fn_func_start_remote_wifi_trial": {
       args: [FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -619,6 +624,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_prns_app_checksum_func_shared_host": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_prns_app_checksum_func_start_remote_wifi_trial": {
       args: [],
       ret: FfiType.UInt16,
@@ -733,6 +743,7 @@ interface NativeModuleInterface {
     uniffi_prns_app_fn_func_send_direct_text(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_set_contact_alias(input: Uint8Array): bigint;
     uniffi_prns_app_fn_func_set_contact_pinned(input: Uint8Array): bigint;
+    uniffi_prns_app_fn_func_shared_host(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_prns_app_fn_func_start_remote_wifi_trial(input: Uint8Array): bigint;
     ffi_prns_app_uniffi_contract_version(): number;
     uniffi_prns_app_checksum_func_announce_lxmf(): number;
@@ -770,12 +781,15 @@ interface NativeModuleInterface {
     uniffi_prns_app_checksum_func_send_direct_text(): number;
     uniffi_prns_app_checksum_func_set_contact_alias(): number;
     uniffi_prns_app_checksum_func_set_contact_pinned(): number;
+    uniffi_prns_app_checksum_func_shared_host(): number;
     uniffi_prns_app_checksum_func_start_remote_wifi_trial(): number;
     // Codegen call sites use these via `nativeModule().rustbuffer_alloc(...)`
     // and `nativeModule().rustbuffer_free(...)`. The runtime's registered
     // module exposes them as method properties.
     rustbuffer_alloc(n: number): Uint8Array;
     rustbuffer_free(view: Uint8Array): void;
+    // The JSI player owns object guards even without FinalizationRegistry.
+    $uniffiBlessPointer?(pointer: bigint, freeSymbol: string): UniffiGcObject;
 }
 
 let _nativeModule: NativeModuleInterface | undefined;

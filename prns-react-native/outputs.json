@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "directories": [
+    "src/generated",
+    "ios/generated",
+    "android/generated"
+  ],
+  "files": [
+    "native-image.json",
+    "ios/NativeImage.generated.swift",
+    "android/src/main/java/rs/reticulum/prns/expo/NativeImage.generated.kt"
+  ],
+  "scaffolding": [
+    "package.json",
+    "expo-module.config.json"
+  ]
+}

@@ -11,17 +11,15 @@ use personal_rns::interfaces::{
     InterfaceMode, ReportsStatus, TransportCapability,
 };
 use personal_rns::manifold::interface_seam::{Interface, InterfaceSeam};
-use personal_rns::remote_control::RemoteControlService;
 use personal_rns::routing::delivery::Delivery;
-use personal_rns::runtime::{
-    Attachable, AttachedInterface, ManuallyAttached, Message, NoPersistence, PrnsEvent,
-    PrnsNodeRecipe,
-};
-use personal_rns::storage::GrowableHeap;
+use personal_rns::runtime::{Attachable, AttachedInterface, Message, PrnsEvent};
 use personal_rns::wire::{
     DestinationType, PacketType, WireContext, WirePacketHeader, BROADCAST_MTU,
 };
-use personal_rns::{PrnsNode, PrnsNodeHandle};
+use personal_rns::PrnsNodeHandle;
+use prns_host::{HostConfig, HostRole, IdentityConfig, PersistenceConfig, PrnsLimits};
+use prns_host_native::owner::OwnedSession;
+use prns_host_native::{ApplicationEventDispatch, NativeEmbedding, NativePreparedAttachment};
 use prns_lxmf::direct::{
     prepare_local_lxmf_destination, DirectLxmfService, DirectNetwork, PrnsDirectNetwork,
 };
@@ -29,7 +27,7 @@ use prns_lxmf::wire::{
     compose_basic_direct_lxmf, encode_current_lxmf_announce, MAX_BASIC_LXMF_WIRE_BYTES,
 };
 use prns_lxmf::LxmfVerification;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 
 const SENDER_SECRET: [u8; 64] = [0x31; 64];
 const RECEIVER_SECRET: [u8; 64] = [0x52; 64];
@@ -245,16 +243,15 @@ async fn wait_for_route(network: &PrnsDirectNetwork, destination: [u8; 16]) {
     .expect("the direct announce creates a route");
 }
 
-async fn stop_node(
-    shutdown: oneshot::Sender<()>,
-    task: tokio::task::JoinHandle<Result<(), personal_rns::runtime::NodeRunError>>,
-) {
-    let _sent = shutdown.send(());
-    tokio::time::timeout(WAIT, task)
-        .await
-        .expect("node shutdown is bounded")
-        .expect("node task joins")
-        .expect("node shuts down cleanly");
+fn host_config(destination: prns_host::DestinationConfig) -> HostConfig {
+    HostConfig {
+        identity: IdentityConfig::GenerateEphemeral,
+        persistence: PersistenceConfig::Ephemeral,
+        role: HostRole::Endpoint,
+        destinations: vec![destination],
+        required_capabilities: vec![],
+        limits: PrnsLimits::balanced(),
+    }
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -297,40 +294,6 @@ async fn run_link_proof_packet_replay_and_lxmf_dedup_are_layered() {
     let raw_deliveries = Arc::new(AtomicUsize::new(0));
     let delivery_counter = Arc::clone(&raw_deliveries);
     let event_callbacks = receiver_callbacks.clone();
-    let receiver_node = PrnsNode::new(PrnsNodeRecipe {
-        transport_identity: None,
-        remote_control: RemoteControlService::Unavailable,
-        pre_configured_destinations: [receiver_destination],
-        app_state: personal_rns::runtime::NoRemoteControlHostControls,
-        storage: GrowableHeap,
-        request_endpoints: personal_rns::request_endpoints![],
-        interfaces: ManuallyAttached,
-        persistence: NoPersistence,
-        on_event: move |event, _state: &personal_rns::runtime::NoRemoteControlHostControls| {
-            let _outcome = event_callbacks.on_prns_event(&event);
-            if matches!(
-                event,
-                PrnsEvent::Message(Message::Delivered(Delivery::Link(_)))
-            ) {
-                delivery_counter.fetch_add(1, Ordering::AcqRel);
-            }
-        },
-    })
-    .with_accepted_announce_observer(receiver_callbacks.accepted_announce_observer());
-    let sender_node = PrnsNode::new(PrnsNodeRecipe {
-        transport_identity: None,
-        remote_control: RemoteControlService::Unavailable,
-        pre_configured_destinations: [sender_destination],
-        app_state: personal_rns::runtime::NoRemoteControlHostControls,
-        storage: GrowableHeap,
-        request_endpoints: personal_rns::request_endpoints![],
-        interfaces: ManuallyAttached,
-        persistence: NoPersistence,
-        on_event: |_event, _state: &personal_rns::runtime::NoRemoteControlHostControls| {},
-    });
-    let receiver_handle = receiver_node.handle();
-    let sender_handle = sender_node.handle();
-
     let WireHarness {
         sender,
         receiver,
@@ -338,19 +301,57 @@ async fn run_link_proof_packet_replay_and_lxmf_dedup_are_layered() {
         state: wire,
         forwarder,
     } = WireHarness::new();
-    let _sender_attachment = sender_handle.attach(sender);
-    let _receiver_attachment = receiver_handle.attach(receiver);
-    let (sender_shutdown, sender_shutdown_rx) = oneshot::channel();
-    let (receiver_shutdown, receiver_shutdown_rx) = oneshot::channel();
-    let sender_task = tokio::task::spawn_local(sender_node.run_until(async move {
-        let _stopped = sender_shutdown_rx.await;
-    }));
-    let receiver_task = tokio::task::spawn_local(receiver_node.run_until(async move {
-        let _stopped = receiver_shutdown_rx.await;
-    }));
-
-    let sender_network = PrnsDirectNetwork::new(sender_handle.clone());
-    let receiver_network = Arc::new(PrnsDirectNetwork::new(receiver_handle.clone()));
+    let receiver_owner = OwnedSession::open_with_embedding(
+        host_config(receiver_destination),
+        NativeEmbedding {
+            on_event: Some(Box::new(move |event| {
+                let _outcome = event_callbacks.on_prns_event(&event);
+                if matches!(
+                    event,
+                    PrnsEvent::Message(Message::Delivered(Delivery::Link(_)))
+                ) {
+                    delivery_counter.fetch_add(1, Ordering::AcqRel);
+                }
+            })),
+            accepted_announces: Some(Box::new(
+                receiver_callbacks.authenticated_announce_observer(),
+            )),
+            application_events: ApplicationEventDispatch::NativeCallback,
+            prepare_interfaces: Some(Box::new(move |client| {
+                Ok(vec![NativePreparedAttachment::Interface {
+                    attachment: client.protocols().attach(receiver),
+                    kind: prns_host::InterfaceKind::Pipe,
+                }])
+            })),
+            ..NativeEmbedding::default()
+        },
+    )
+    .await
+    .unwrap();
+    let sender_owner = OwnedSession::open_with_embedding(
+        host_config(sender_destination),
+        NativeEmbedding {
+            prepare_interfaces: Some(Box::new(move |client| {
+                Ok(vec![NativePreparedAttachment::Interface {
+                    attachment: client.protocols().attach(sender),
+                    kind: prns_host::InterfaceKind::Pipe,
+                }])
+            })),
+            ..NativeEmbedding::default()
+        },
+    )
+    .await
+    .unwrap();
+    // Raw protocol access here is solely for packet replay/corruption assertions.
+    // The production LXMF adapter always takes the public host client.
+    let sender_handle = sender_owner
+        .client()
+        .native_services()
+        .unwrap()
+        .protocols()
+        .clone();
+    let sender_network = PrnsDirectNetwork::new(sender_owner.client());
+    let receiver_network = Arc::new(PrnsDirectNetwork::new(receiver_owner.client()));
     let receiver_service = pending_receiver.start(receiver_network).unwrap();
     sender_network
         .announce(sender_destination_hash)
@@ -463,7 +464,7 @@ async fn run_link_proof_packet_replay_and_lxmf_dedup_are_layered() {
     corrupt_attempt.abort();
 
     receiver_service.stop().await.unwrap();
-    stop_node(sender_shutdown, sender_task).await;
-    stop_node(receiver_shutdown, receiver_task).await;
+    sender_owner.stop().await.unwrap();
+    receiver_owner.stop().await.unwrap();
     forwarder.abort();
 }

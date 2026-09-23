@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc as std_mpsc, Arc, Mutex, MutexGuard, OnceLock};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 #[cfg(all(feature = "apple", target_os = "ios"))]
 use personal_rns::bluetooth_auto::{AutoBle, CoreBluetoothRestorationIdentifiers};
@@ -13,25 +13,24 @@ use personal_rns::bluetooth_auto::{AutoBle, CoreBluetoothRestorationIdentifiers}
 use personal_rns::interfaces::bluetooth_auto::BleIdentity;
 use personal_rns::node_introspection::DestinationIdentityQuery;
 use personal_rns::prelude::{
-    GrowableHeap, InitiateRemoteControlControllerPairing, ManuallyAttached, PrnsNode,
-    PrnsNodeHandle, PrnsNodeRecipe, RemoteControlControllerPairingInitiationControl,
-    RemoteControlPairingControl,
+    InitiateRemoteControlControllerPairing, PrnsNodeHandle,
+    RemoteControlControllerPairingInitiationControl, RemoteControlPairingControl,
 };
 use personal_rns::remote_control::{
     RemoteControlInitialControllerGrants, RemoteControlPairingInvitationCode,
     RemoteControlSelfAnnouncement, RemoteControlService,
 };
 use personal_rns::runtime::{
-    LocalIdentityFileError, NodePersistence, RemoteControlIdentityDirectory,
-    RemoteControlPairingControlError,
+    LocalIdentityFileError, RemoteControlIdentityDirectory, RemoteControlPairingControlError,
 };
 use personal_rns::wire::DestinationHash;
 use prns_core::identity::vault::{
     FileVault, FileVaultError, IdentityLabel, IdentitySecretKey, IdentityVault,
 };
 use prns_core::identity::PrivateIdentityMaterial;
-use prns_host::{BackendInfo, BackendKind, Capability, InterfaceKind, PersistenceSnapshot};
-use prns_host_snapshot::{assemble_host_snapshot, HostInterfaceAttachment};
+use prns_host::InterfaceKind;
+use prns_host_native::owner::{HostClient, OwnedSession};
+use prns_host_native::{ApplicationEventDispatch, NativeEmbedding, NativePreparedAttachment};
 #[cfg(all(feature = "apple", target_os = "ios"))]
 use prns_interfaces_tokio::bluetooth_auto::PreparedAutoBle;
 use tokio::sync::{mpsc, oneshot, watch};
@@ -44,10 +43,9 @@ use crate::development_store::{
 use crate::directory::{DirectoryRequest, DirectoryResponse};
 use crate::node::{prepare_storage, reset_storage, NodeStoragePaths};
 use crate::pairing::{
-    apply_event, apply_overflow_failure, apply_persistence_event, attempt_id_string,
-    expire_candidates, publish_candidate_resolution, remove_selected_candidate, send_event,
-    AppliedNodeEvent, OwnedNodeEvent, PairingCandidateResolution, PairingControls,
-    EVENT_LANE_CAPACITY,
+    apply_event, apply_overflow_failure, attempt_id_string, expire_candidates,
+    publish_candidate_resolution, remove_selected_candidate, send_event, AppliedNodeEvent,
+    OwnedNodeEvent, PairingCandidateResolution, PairingControls, EVENT_LANE_CAPACITY,
 };
 use crate::snapshot::SnapshotStore;
 
@@ -150,6 +148,7 @@ struct IdentityOwner {
 
 struct Worker {
     runtime: Arc<OnceLock<tokio::runtime::Handle>>,
+    host: Arc<OnceLock<HostClient>>,
     commands: mpsc::Sender<Command>,
     shutdown: ShutdownSignal,
     done: std_mpsc::Receiver<WorkerResult>,
@@ -215,16 +214,6 @@ struct DescribeCommand {
     caller: oneshot::Receiver<()>,
 }
 
-#[derive(Default)]
-struct HostAttachment {
-    #[cfg(all(feature = "apple", any(target_os = "ios", target_os = "macos")))]
-    bluetooth: Option<personal_rns::bluetooth_auto::AttachedBle>,
-    #[cfg(all(feature = "android", target_os = "android"))]
-    android_bluetooth: Option<personal_rns::bluetooth_auto::BluetoothAutoStatus>,
-    #[cfg(any(feature = "apple", feature = "android", feature = "host-test"))]
-    tcp: Option<personal_rns::runtime::AttachedInterface>,
-}
-
 #[must_use]
 pub fn inspect_identity(storage_root: &Path) -> PrimaryIdentityState {
     let supervisor = supervisor();
@@ -283,7 +272,7 @@ fn create_identity(storage_root: &Path, creation: IdentityCreation<'_>) -> Ident
                     Err(error) => {
                         return IdentityCreationOutcome::Unavailable {
                             detail: format!("could not generate identity material: {error}"),
-                        }
+                        };
                     }
                 },
                 IdentityCreation::Import(bytes) => {
@@ -573,7 +562,7 @@ fn prepare_apple_bluetooth_restoration_with_supervisor(
             return apple_bluetooth_preparation_failed(
                 AppleBluetoothRestorationPreparationFailureStage::Identity,
                 format!("could not load the installation Bluetooth identity: {error}"),
-            )
+            );
         }
     };
     let requested = AppleBluetoothOwnerKey {
@@ -619,7 +608,7 @@ fn prepare_apple_bluetooth_restoration_with_supervisor(
             return apple_bluetooth_preparation_failed(
                 AppleBluetoothRestorationPreparationFailureStage::Contract,
                 error.to_string(),
-            )
+            );
         }
     };
     let runtime = match tokio::runtime::Builder::new_current_thread()
@@ -631,7 +620,7 @@ fn prepare_apple_bluetooth_restoration_with_supervisor(
             return apple_bluetooth_preparation_failed(
                 AppleBluetoothRestorationPreparationFailureStage::Runtime,
                 format!("could not create the Bluetooth preparation runtime: {error}"),
-            )
+            );
         }
     };
     let prepared = match runtime.block_on(AutoBle::prepare_with_restoration(identity, identifiers))
@@ -641,7 +630,7 @@ fn prepare_apple_bluetooth_restoration_with_supervisor(
             return apple_bluetooth_preparation_failed(
                 AppleBluetoothRestorationPreparationFailureStage::Runtime,
                 format!("could not create the CoreBluetooth restoration managers: {error:?}"),
-            )
+            );
         }
     };
     state.pending_apple_bluetooth = Some(PreparedAppleBluetoothOwner {
@@ -951,11 +940,14 @@ fn start_configured_with_supervisor(
     let worker_shutdown = shutdown.clone();
     let runtime = Arc::new(OnceLock::new());
     let worker_runtime = Arc::clone(&runtime);
+    let host = Arc::new(OnceLock::new());
+    let worker_host = Arc::clone(&host);
     let join = std::thread::Builder::new()
         .name("prns-app-native".to_owned())
         .spawn(move || {
             let result = run_worker(
                 worker_runtime,
+                worker_host,
                 paths,
                 primary_identity_secret,
                 mailbox_submitter,
@@ -987,6 +979,7 @@ fn start_configured_with_supervisor(
     };
     state.worker = Some(Worker {
         runtime,
+        host,
         commands: command_tx,
         shutdown,
         done: done_rx,
@@ -1648,6 +1641,17 @@ fn supervisor() -> &'static Supervisor {
     })
 }
 
+/// Borrow the current host without bypassing the app's service-draining owner.
+pub fn shared_host() -> Option<HostClient> {
+    supervisor()
+        .lock_state()
+        .worker
+        .as_ref()?
+        .host
+        .get()
+        .cloned()
+}
+
 impl Supervisor {
     fn lock_state(&self) -> MutexGuard<'_, SupervisorState> {
         self.state
@@ -1695,6 +1699,7 @@ fn join_finished_worker(worker: &mut Worker) {
 #[allow(clippy::too_many_arguments)]
 fn run_worker(
     published_runtime: Arc<OnceLock<tokio::runtime::Handle>>,
+    published_host: Arc<OnceLock<HostClient>>,
     paths: NodeStoragePaths,
     primary_identity_secret: IdentitySecretKey,
     mailbox_submitter: Arc<dyn prns_lxmf::mailbox::MailboxSubmitter>,
@@ -1717,6 +1722,7 @@ fn run_worker(
         })?;
     let _ = published_runtime.set(runtime.handle().clone());
     runtime.block_on(run_generation(
+        published_host,
         paths,
         primary_identity_secret,
         mailbox_submitter,
@@ -1733,6 +1739,7 @@ fn run_worker(
 
 #[allow(clippy::too_many_arguments)]
 async fn run_generation(
+    published_host: Arc<OnceLock<HostClient>>,
     paths: NodeStoragePaths,
     primary_identity_secret: IdentitySecretKey,
     mailbox_submitter: Arc<dyn prns_lxmf::mailbox::MailboxSubmitter>,
@@ -1836,14 +1843,6 @@ async fn run_generation(
     #[cfg(not(all(feature = "apple", any(target_os = "ios", target_os = "macos"))))]
     let _ = (bluetooth_identity, bluetooth_preparation.preparation);
 
-    let persistence = NodePersistence::custom_dir(&paths.network).map_err(|error| {
-        boot_failure(
-            &ready,
-            &snapshots,
-            DevelopmentNodeFailureStage::Storage,
-            format!("could not open the upstream persistence owner: {error}"),
-        )
-    })?;
     let remote_control = RemoteControlService::new(
         identity_secrets,
         RemoteControlInitialControllerGrants::Nobody,
@@ -1861,8 +1860,8 @@ async fn run_generation(
                 )
             },
         )?;
-    let (lxmf_identity, lxmf_destination) = prns_lxmf::direct::prepare_local_lxmf_destination(
-        primary_identity_secret,
+    let (lxmf_identity, lxmf_destination) = prns_lxmf::direct::prepare_host_lxmf_destination(
+        &primary_identity_secret,
         &announce_app_data[..announce_len],
     )
     .map_err(|error| {
@@ -1873,148 +1872,179 @@ async fn run_generation(
             format!("could not derive the built-in LXMF destination: {error:?}"),
         )
     })?;
+    let host_config = prns_host::HostConfig {
+        identity: prns_host::IdentityConfig::Existing(prns_host::IdentitySecret::new(
+            *primary_identity_secret,
+        )),
+        persistence: prns_host::PersistenceConfig::Directory {
+            path: paths.network.to_string_lossy().into_owned(),
+        },
+        role: prns_host::HostRole::Endpoint,
+        destinations: vec![lxmf_destination],
+        required_capabilities: Vec::new(),
+        limits: prns_host::PrnsLimits::balanced(),
+    };
     let (pending_lxmf, lxmf_callbacks) =
         prns_lxmf::mailbox::DurableDirectLxmfService::prepare(lxmf_identity);
     let (event_tx, event_rx) = mpsc::channel(EVENT_LANE_CAPACITY);
     let overflowed = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let event_overflowed = Arc::clone(&overflowed);
     let lxmf_events = lxmf_callbacks.clone();
-    let node = PrnsNode::new(PrnsNodeRecipe {
-        transport_identity: None,
+    #[cfg(all(feature = "android", target_os = "android"))]
+    let android_bluetooth_session = Arc::new(bluetooth_preparation.android);
+    #[cfg(all(feature = "android", target_os = "android"))]
+    let prepared_android = android_bluetooth_session.interface(bluetooth_identity);
+    let bluetooth_attached = cfg!(any(
+        all(
+            feature = "apple",
+            any(target_os = "ios", target_os = "macos")
+        ),
+        all(feature = "android", target_os = "android"),
+    ));
+    let embedding = NativeEmbedding {
+        remote_control_config: None,
         remote_control,
-        pre_configured_destinations: [lxmf_destination],
-        app_state: personal_rns::runtime::NoRemoteControlHostControls,
-        storage: GrowableHeap,
-        request_endpoints: personal_rns::request_endpoints![],
-        interfaces: ManuallyAttached,
-        persistence,
-        on_event: move |event, _state: &personal_rns::runtime::NoRemoteControlHostControls| {
+        plan_context: Some(
+            personal_rns::PlanRuntimeContext::default().with_ble_identity(bluetooth_identity),
+        ),
+        application_events: ApplicationEventDispatch::NativeCallback,
+        on_event: Some(Box::new(move |event| {
             let _lxmf_outcome = lxmf_events.on_prns_event(&event);
             send_event(&event_tx, &event_overflowed, event);
-        },
-    })
-    .with_accepted_announce_observer(lxmf_callbacks.accepted_announce_observer());
-    let handle = node.handle();
-    let clock = node.clock();
-
-    #[cfg(any(feature = "apple", feature = "android", feature = "host-test"))]
-    let mut host_attachment = HostAttachment::default();
-    #[cfg(not(any(feature = "apple", feature = "android", feature = "host-test")))]
-    let host_attachment = HostAttachment::default();
-    #[cfg(all(feature = "apple", any(target_os = "ios", target_os = "macos")))]
-    {
-        host_attachment.bluetooth = Some(handle.attach(prepared_bluetooth));
-    }
-    #[cfg(all(feature = "android", target_os = "android"))]
-    let _android_bluetooth_session = {
-        let session = bluetooth_preparation.android;
-        let bluetooth = session.interface(bluetooth_identity);
-        host_attachment.android_bluetooth = Some(bluetooth.status());
-        // Platform readiness (including permissions and the local PSM) is awaited
-        // inside this supervised transport, never by the node startup transaction.
-        handle.supervise(bluetooth);
-        session
+        })),
+        accepted_announces: Some(Box::new(lxmf_callbacks.authenticated_announce_observer())),
+        prepare_interfaces: Some(Box::new(move |client| {
+            #[allow(unused_mut)]
+            let mut attachments = Vec::new();
+            #[cfg(all(feature = "apple", any(target_os = "ios", target_os = "macos")))]
+            {
+                let attached = client.protocols().attach(prepared_bluetooth);
+                attachments.push(NativePreparedAttachment::Registered {
+                    interface: attached.id(),
+                    kind: InterfaceKind::AutomaticBluetoothLe,
+                });
+            }
+            #[cfg(all(feature = "android", target_os = "android"))]
+            attachments.push(NativePreparedAttachment::Supervisor {
+                attachment: client.protocols().supervise(prepared_android),
+                kind: InterfaceKind::AutomaticBluetoothLe,
+            });
+            #[cfg(any(feature = "apple", feature = "android", feature = "host-test"))]
+            if let Some(target) = development_tcp_target {
+                attachments.push(NativePreparedAttachment::Interface {
+                    attachment: client
+                        .protocols()
+                        .attach(personal_rns::tcp::TcpClientInterface::new(target)),
+                    kind: InterfaceKind::TcpClient,
+                });
+            }
+            #[cfg(not(any(feature = "apple", feature = "android", feature = "host-test")))]
+            if development_tcp_target.is_some() {
+                return Err(prns_host_native::NativeStartError::Runtime(
+                    "this native build does not include the development TCP fixture".into(),
+                ));
+            }
+            Ok(attachments)
+        })),
     };
-    #[cfg(any(feature = "apple", feature = "android", feature = "host-test"))]
-    if let Some(target) = development_tcp_target {
-        host_attachment.tcp =
-            Some(handle.attach(personal_rns::tcp::TcpClientInterface::new(target)));
-    }
-    #[cfg(not(any(feature = "apple", feature = "android", feature = "host-test")))]
-    if development_tcp_target.is_some() {
-        return Err(boot_failure(
-            &ready,
-            &snapshots,
-            DevelopmentNodeFailureStage::Contract,
-            "this native build does not include the development TCP fixture".to_owned(),
-        ));
-    }
-
-    let lxmf_service = pending_lxmf
-        .start_paused(
-            Arc::new(prns_lxmf::direct::PrnsDirectNetwork::new(handle.clone())),
-            mailbox_submitter,
-            Arc::new(prns_lxmf::mailbox::SystemMailboxClock),
-        )
+    let owner = OwnedSession::open_with_embedding(host_config, embedding)
         .await
         .map_err(|error| {
             boot_failure(
                 &ready,
                 &snapshots,
-                DevelopmentNodeFailureStage::Runtime,
-                format!("could not start the LXMF service worker: {error:?}"),
+                DevelopmentNodeFailureStage::Node,
+                format!("could not start the shared PRNS host: {error:?}"),
             )
         })?;
-    let lxmf_refresh = lxmf_service.subscribe();
-    refresh_lxmf_health(&lxmf_service, &snapshots)
-        .await
-        .map(|_| ())
-        .map_err(|failure| {
-            let detail = lxmf_storage_failure_detail(&snapshots, &failure);
-            boot_failure(
-                &ready,
-                &snapshots,
-                DevelopmentNodeFailureStage::Storage,
-                detail,
+    // Joining the host belongs to this generation even if service startup fails.
+    // A foreign finalizer's scheduled cleanup is insufficient for app reset safety.
+    let result = async {
+        let host_client = owner.client();
+        let services = host_client.native_services().map_err(|error| boot_failure(
+            &ready, &snapshots, DevelopmentNodeFailureStage::Node, format!("host unavailable: {error:?}")))?;
+        let handle = services.protocols().clone();
+        let clock = services.clock();
+        let _ = published_host.set(host_client.clone());
+
+        let lxmf_service = pending_lxmf
+            .start_paused(
+                Arc::new(prns_lxmf::direct::PrnsDirectNetwork::new(host_client.clone())),
+                mailbox_submitter,
+                Arc::new(prns_lxmf::mailbox::SystemMailboxClock),
             )
-        })?;
+            .await
+            .map_err(|error| {
+                boot_failure(
+                    &ready,
+                    &snapshots,
+                    DevelopmentNodeFailureStage::Runtime,
+                    format!("could not start the LXMF service worker: {error:?}"),
+                )
+            })?;
+        let lxmf_refresh = lxmf_service.subscribe();
 
-    snapshots.update(|snapshot| {
-        snapshot.controller_identity_fingerprint = Some(controller_identity_fingerprint);
-        if host_attachment.bluetooth_is_none() {
-            snapshot.pairing = RemoteControlPairingState::BluetoothUnavailable;
-        }
-    });
+        snapshots.update(|snapshot| {
+            snapshot.controller_identity_fingerprint = Some(controller_identity_fingerprint);
+            if !bluetooth_attached {
+                snapshot.pairing = RemoteControlPairingState::BluetoothUnavailable;
+            }
+        });
 
-    let (node_shutdown_tx, mut node_shutdown_rx) = watch::channel(false);
-    let node_run = node.run_until(async {
-        if !*node_shutdown_rx.borrow() {
-            let _ = node_shutdown_rx.changed().await;
-        }
-    });
-    let actor = run_actor(
-        handle,
-        lxmf_service,
-        lxmf_refresh,
-        commands,
-        event_rx,
-        overflowed,
-        host_attachment,
-        clock,
-        Arc::clone(&snapshots),
-        Arc::clone(&operation_admitted),
-        ready,
-        shutdown_rx,
-    );
-    tokio::pin!(node_run);
-    tokio::pin!(actor);
-    let result = tokio::select! {
-        actor_result = &mut actor => {
-            let _changed = node_shutdown_tx.send(true);
-            let node_result = node_run.await.map_err(|error| map_node_run_error(
-                error,
-                "the Prns node failed during shutdown",
-            ));
-            actor_result.and(node_result)
-        }
-        node_result = &mut node_run => {
-            let node_result = node_result.map_err(|error| map_node_run_error(
-                error,
-                "the Prns node stopped unexpectedly",
-            ));
-            shutdown.request();
-            let actor_result = actor.await;
-            match node_result {
-                Err(failure) => Err(failure),
-                Ok(()) => actor_result.and(Err((
-                    DevelopmentNodeStopStage::Node,
-                    "The Prns node stopped before lifecycle shutdown completed.".to_owned(),
-                ))),
+        let actor = run_actor(
+            handle,
+            lxmf_service,
+            lxmf_refresh,
+            commands,
+            event_rx,
+            overflowed,
+            host_client.clone(),
+            clock,
+            Arc::clone(&snapshots),
+            Arc::clone(&operation_admitted),
+            ready,
+            shutdown_rx,
+        );
+        tokio::pin!(actor);
+        let host_events = host_client.events();
+        tokio::select! {
+            actor_result = &mut actor => {
+                actor_result
+            }
+            terminal = host_events.wait_terminal() => {
+                shutdown.request();
+                let actor_result = actor.await;
+                actor_result.and(Err((DevelopmentNodeStopStage::Node,
+                    format!("shared host stopped before app shutdown completed: {:?}", terminal.state))))
             }
         }
-    };
+    }.await;
+    let joined = owner.stop().await.map_err(map_host_stop_error);
+    let result = joined.and(result);
     settle_worker_result(&operation_admitted, &snapshots, &result);
     result
+}
+
+fn map_host_stop_error(
+    error: prns_host_native::owner::SessionError,
+) -> (DevelopmentNodeStopStage, String) {
+    use personal_rns::runtime::NodeRunError;
+    use prns_host_native::{owner::SessionError, NativeStopError};
+    let stage = match &error {
+        SessionError::Stop(NativeStopError::NodeFailed(
+            NodeRunError::PersistenceFailed
+            | NodeRunError::PersistenceWorkerStopped
+            | NodeRunError::RemoteControlAuthorizationPersistenceFailed(_),
+        )) => DevelopmentNodeStopStage::Persistence,
+        _ => DevelopmentNodeStopStage::Node,
+    };
+    let detail = match error {
+        SessionError::Stop(NativeStopError::NodeFailed(error)) => {
+            format!("shared host shutdown failed: {error}")
+        }
+        error => format!("shared host shutdown failed: {error:?}"),
+    };
+    (stage, detail)
 }
 
 fn settle_worker_result(
@@ -2068,25 +2098,6 @@ const fn failure_stage_for_stop(stage: DevelopmentNodeStopStage) -> DevelopmentN
         | DevelopmentNodeStopStage::TargetConnection
         | DevelopmentNodeStopStage::Node => DevelopmentNodeFailureStage::Node,
     }
-}
-
-fn map_node_run_error(
-    error: personal_rns::runtime::NodeRunError,
-    context: &str,
-) -> (DevelopmentNodeStopStage, String) {
-    let stage = match error {
-        personal_rns::runtime::NodeRunError::PersistenceFailed
-        | personal_rns::runtime::NodeRunError::PersistenceWorkerStopped
-        | personal_rns::runtime::NodeRunError::RemoteControlAuthorizationPersistenceFailed(_) => {
-            DevelopmentNodeStopStage::Persistence
-        }
-        personal_rns::runtime::NodeRunError::ManifoldPanicked
-        | personal_rns::runtime::NodeRunError::RequestEndpointrPanicked
-        | personal_rns::runtime::NodeRunError::InterfaceDriverPanicked => {
-            DevelopmentNodeStopStage::Node
-        }
-    };
-    (stage, format!("{context}: {error}"))
 }
 
 fn describe_timed_out() -> RemoteControlDescribeOutcome {
@@ -2176,7 +2187,7 @@ async fn run_actor(
     commands: mpsc::Receiver<Command>,
     events: mpsc::Receiver<OwnedNodeEvent>,
     overflowed: Arc<std::sync::atomic::AtomicBool>,
-    host_attachment: HostAttachment,
+    host_client: HostClient,
     clock: personal_rns::manifold::tokio::TokioClock,
     snapshots: Arc<SnapshotStore>,
     operation_admitted: Arc<AtomicBool>,
@@ -2192,7 +2203,7 @@ async fn run_actor(
         commands,
         events,
         overflowed,
-        &host_attachment,
+        &host_client,
         clock,
         &snapshots,
         &operation_admitted,
@@ -2221,7 +2232,7 @@ async fn run_actor_loop(
     mut commands: mpsc::Receiver<Command>,
     mut events: mpsc::Receiver<OwnedNodeEvent>,
     overflowed: Arc<std::sync::atomic::AtomicBool>,
-    host_attachment: &HostAttachment,
+    host_client: &HostClient,
     clock: personal_rns::manifold::tokio::TokioClock,
     snapshots: &SnapshotStore,
     operation_admitted: &AtomicBool,
@@ -2229,15 +2240,25 @@ async fn run_actor_loop(
     mut shutdown_rx: watch::Receiver<bool>,
 ) -> WorkerResult {
     let mut controls = PairingControls::default();
-    let mut persistence = PersistenceSnapshot::persistent();
-    let started = Instant::now();
-    let mut host_revision = 0_u64;
+    // The paused service already accepts inbound callbacks. Keep this fallible
+    // startup read inside run_actor's guaranteed service-stop/drain scope.
+    refresh_lxmf_health(lxmf_service, snapshots)
+        .await
+        .map(|_| ())
+        .map_err(|failure| {
+            let detail = lxmf_storage_failure_detail(snapshots, &failure);
+            boot_failure(
+                ready,
+                snapshots,
+                DevelopmentNodeFailureStage::Storage,
+                detail,
+            )
+        })?;
     let startup = async {
         loop {
             let Some(event) = events.recv().await else {
                 return Err("The native event lane closed before persistence restoration.");
             };
-            apply_persistence_event(&event, &mut persistence);
             if apply_event(event, &mut controls, snapshots, clock.now())
                 == AppliedNodeEvent::PersistenceRestored
             {
@@ -2278,15 +2299,7 @@ async fn run_actor_loop(
         snapshot.runtime = DevelopmentNodeRuntime::Running;
         snapshot.failure = None;
     });
-    refresh_host_snapshot(
-        handle,
-        host_attachment,
-        &persistence,
-        &mut host_revision,
-        started,
-        snapshots,
-    )
-    .await;
+    refresh_host_snapshot(host_client, snapshots).await;
     let _ = ready.send(Ok(snapshots.read()));
 
     let mut candidate_expiry = tokio::time::interval(Duration::from_millis(500));
@@ -2344,8 +2357,7 @@ async fn run_actor_loop(
             event = events.recv() => {
                 match event {
                     Some(event) => {
-                        apply_persistence_event(&event, &mut persistence);
-                        if apply_event(event, &mut controls, snapshots, clock.now())
+                                    if apply_event(event, &mut controls, snapshots, clock.now())
                             == AppliedNodeEvent::TargetInventoryChanged
                         {
                             if let Err(detail) = crate::remote_control::refresh_targets(handle, snapshots).await {
@@ -2377,8 +2389,7 @@ async fn run_actor_loop(
                             biased;
                             () = response.closed() => {},
                             () = refresh_host_snapshot(
-                                handle, host_attachment, &persistence,
-                                &mut host_revision, started, snapshots,
+                                host_client, snapshots,
                             ) => { let _ = response.send(snapshots.read()); }
                         }
                     }
@@ -2687,46 +2698,17 @@ async fn stop_lxmf_service_and_drain(
     stop_result.and(response_result)
 }
 
-async fn refresh_host_snapshot(
-    handle: &PrnsNodeHandle,
-    attachment: &HostAttachment,
-    persistence: &PersistenceSnapshot,
-    revision: &mut u64,
-    started: Instant,
-    snapshots: &SnapshotStore,
-) {
-    let interfaces = handle.interface_inventory();
-    let engine =
-        match tokio::time::timeout(HOST_INSPECTION_TIMEOUT, handle.engine_inspection_snapshot())
-            .await
-        {
-            Ok(Some(engine)) => engine,
-            Ok(None) => {
-                snapshots.set_local_host_unavailable_if_running(
-                    "The local node inspection lane is unavailable.".to_owned(),
-                );
-                return;
-            }
-            Err(_) => {
-                snapshots.set_local_host_unavailable_if_running(
-                    "The local node inspection lane exceeded its bounded wait.".to_owned(),
-                );
-                return;
-            }
-        };
-    *revision = revision.saturating_add(1);
-    let host = assemble_host_snapshot(
-        interfaces,
-        attachment.metadata(),
-        engine,
-        attachment.backend_info(),
-        persistence.clone(),
-        *revision,
-        started.elapsed(),
-    );
-    snapshots.set_local_host(LocalHostState::Running {
-        host: Box::new(host),
-    });
+async fn refresh_host_snapshot(host: &HostClient, snapshots: &SnapshotStore) {
+    match tokio::time::timeout(HOST_INSPECTION_TIMEOUT, host.snapshot()).await {
+        Ok(Ok(host)) => snapshots.set_local_host(LocalHostState::Running {
+            host: Box::new(host),
+        }),
+        Ok(Err(error)) => snapshots
+            .set_local_host_unavailable_if_running(format!("Host inspection failed: {error:?}")),
+        Err(_) => snapshots.set_local_host_unavailable_if_running(
+            "The local host inspection lane exceeded its bounded wait.".into(),
+        ),
+    }
 }
 
 async fn initiate_pairing(
@@ -2748,7 +2730,7 @@ async fn initiate_pairing(
             return pairing_failed(
                 RemoteControlPairingFailureStage::Input,
                 "The invitation code must be exactly eight uppercase hexadecimal characters.",
-            )
+            );
         }
     };
     let resolution = controls.resolve_candidate(&input.candidate_id, now);
@@ -2761,7 +2743,7 @@ async fn initiate_pairing(
             return pairing_failed(
                 RemoteControlPairingFailureStage::Candidate,
                 "The selected pairing session is no longer available.",
-            )
+            );
         }
         PairingCandidateResolution::Expired => {
             publish_candidate_resolution(controls, snapshots, now, resolution);
@@ -3079,78 +3061,6 @@ async fn reject_pairing(
             RemoteControlPairingFailureStage::Confirmation,
             "The upstream RemoteControl rejection failed.",
         ),
-    }
-}
-
-impl HostAttachment {
-    const fn bluetooth_is_none(&self) -> bool {
-        #[cfg(all(feature = "apple", any(target_os = "ios", target_os = "macos")))]
-        {
-            self.bluetooth.is_none()
-        }
-        #[cfg(all(feature = "android", target_os = "android"))]
-        {
-            self.android_bluetooth.is_none()
-        }
-        #[cfg(not(any(
-            all(feature = "apple", any(target_os = "ios", target_os = "macos")),
-            all(feature = "android", target_os = "android")
-        )))]
-        {
-            true
-        }
-    }
-
-    fn metadata(&self) -> Vec<HostInterfaceAttachment> {
-        #[cfg(not(any(feature = "apple", feature = "android", feature = "host-test")))]
-        return Vec::new();
-
-        #[cfg(any(feature = "apple", feature = "android", feature = "host-test"))]
-        let mut attachments = Vec::new();
-        #[cfg(all(feature = "apple", any(target_os = "ios", target_os = "macos")))]
-        if let Some(attached) = self.bluetooth.as_ref() {
-            attachments.push(HostInterfaceAttachment::new(
-                attached.id(),
-                InterfaceKind::AutomaticBluetoothLe,
-            ));
-        }
-        #[cfg(all(feature = "android", target_os = "android"))]
-        if let Some(status) = self.android_bluetooth.as_ref() {
-            use personal_rns::interfaces::InterfaceStatus as _;
-            attachments.push(HostInterfaceAttachment::new(
-                status.id(),
-                InterfaceKind::AutomaticBluetoothLe,
-            ));
-        }
-        #[cfg(any(feature = "apple", feature = "android", feature = "host-test"))]
-        if let Some(attached) = self.tcp.as_ref() {
-            attachments.push(HostInterfaceAttachment::new(
-                attached.id(),
-                InterfaceKind::TcpClient,
-            ));
-        }
-        #[cfg(any(feature = "apple", feature = "android", feature = "host-test"))]
-        attachments
-    }
-
-    fn backend_info(&self) -> BackendInfo {
-        #[cfg(any(feature = "apple", feature = "android", feature = "host-test"))]
-        {
-            let mut capabilities = vec![Capability::Bluetooth];
-            let mut interface_kinds = vec![InterfaceKind::AutomaticBluetoothLe];
-            if self.tcp.is_some() {
-                capabilities.push(Capability::TcpClient);
-                interface_kinds.push(InterfaceKind::TcpClient);
-            }
-            BackendInfo::new(BackendKind::Native, capabilities, interface_kinds)
-        }
-
-        #[cfg(not(any(feature = "apple", feature = "android", feature = "host-test")))]
-        BackendInfo::new(
-            BackendKind::Native,
-            [Capability::Bluetooth],
-            [InterfaceKind::AutomaticBluetoothLe],
-        )
     }
 }
 

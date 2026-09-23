@@ -53,7 +53,7 @@
       "artifactSha256": "0b292b27e05d5c3f4e6f0d0861c1ef159059c62116ac983105f055eee5a71296",
       "consumers": [
         "prns/app/package.json",
-        "sdk/expo/package.json"
+        "prns/platform/package.json"
       ],
       "requiredFiles": [
         "package/package.json",

@@ -374,6 +374,16 @@ entrypoint = ["python3", "tools/repo/generate-host-contract.py"]
 requires = ["python3"]
 
 [[task]]
+id = "repo.host-uniffi.check"
+summary = "Build the default native image and verify generated UniFFI transport through persistent two-node foreign conformance."
+domain = "repo"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci"]
+entrypoint = ["python3", "tools/repo/check-host-uniffi.py"]
+requires = ["cargo", "python3", "rustc"]
+
+[[task]]
 id = "repo.host-contract.check"
 summary = "Verify generated host-contract artifacts and required high-level SDK projections match the canonical schema."
 domain = "repo"
@@ -1080,3 +1090,19 @@ reason = "Cargo package metadata for the post-bootstrap cargo-tools forwarding a
 [[internal]]
 path = "tools/repo/cargo-tools-command/src/main.rs"
 reason = "Thin Cargo adapter that forwards arguments to the canonical tools/prns task registry."
+
+[[internal]]
+path = "tools/repo/host_contract/uniffi.py"
+reason = "Shared schema-owned UniFFI transport and React Native adapter generation."
+
+[[internal]]
+path = "tools/repo/host_contract/remote_control.py"
+reason = "Schema-owned typed RemoteControl extension transport generation."
+
+[[internal]]
+path = "tools/repo/host_contract/extensions.py"
+reason = "Native extension source and target availability validation for host-contract generation."
+
+[[internal]]
+path = "tools/repo/host_contract/formatting.py"
+reason = "Shared Rust formatting for canonical host-contract generated output."

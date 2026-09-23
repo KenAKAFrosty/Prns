@@ -5,11 +5,11 @@ use std::time::Duration;
 
 use personal_rns::identity::{IdentityHash, PrivateIdentityMaterial, Zeroizing};
 use personal_rns::interfaces::InterfaceId;
-use personal_rns::routing::announce::{derive_single_destination_hash, AnnounceObservation};
+use personal_rns::routing::announce::derive_single_destination_hash;
 use personal_rns::routing::delivery::{Delivery, LinkDelivery};
 use personal_rns::routing::links::LinkId;
 use personal_rns::runtime::{Diagnostic, Message, PrnsEvent};
-use personal_rns::units::{HopCount, InstantMillis};
+use personal_rns::units::InstantMillis;
 use personal_rns::wire::DestinationHash;
 use prns_lxmf_wire::{
     compose_basic_direct_lxmf, encode_current_lxmf_announce, MAX_BASIC_LXMF_WIRE_BYTES,
@@ -188,25 +188,17 @@ impl DirectNetwork for FakeNetwork {
 }
 
 #[test]
-fn production_adapter_preserves_stale_route_failures_as_no_route() {
+fn production_adapter_preserves_canonical_route_and_stop_failures() {
     assert_eq!(
-        classify_establish_link_failure(SendError::Failed(EstablishLinkFailure::Rejected(
-            EstablishLinkRejection::NoRouteToDestination,
-        ))),
+        classify_establish_link_failure(CommandFailure::NoRouteToDestination),
         DirectSendFailure::NoRoute
     );
     assert_eq!(
-        classify_establish_link_failure(SendError::Failed(EstablishLinkFailure::WriteFailed(
-            WriteEstablishLinkRejection::RouteVanished,
-        ))),
-        DirectSendFailure::NoRoute
-    );
-    assert_eq!(
-        classify_establish_link_failure(SendError::Failed(EstablishLinkFailure::Timeout)),
+        classify_establish_link_failure(CommandFailure::DeliveryTimedOut),
         DirectSendFailure::LinkFailed
     );
     assert_eq!(
-        classify_establish_link_failure(SendError::NodeStopped),
+        classify_establish_link_failure(CommandFailure::NodeStopped),
         DirectSendFailure::LocalNodeStopped
     );
 }
@@ -233,17 +225,15 @@ fn current_announce(name: &[u8]) -> Vec<u8> {
     output[..length].to_vec()
 }
 
-fn accepted_observation<'a>(
+fn authenticated_observation<'a>(
     destination: [u8; 16],
     announced_identity: IdentityHash,
     app_data: &'a [u8],
-) -> AnnounceObservation<'a> {
-    AnnounceObservation {
-        destination: DestinationHash::new(destination),
-        announced_identity,
-        hops: HopCount(2),
-        source_interface: TEST_INTERFACE,
-        arrived_at: InstantMillis(4_200),
+) -> prns_host_native::AuthenticatedAnnounce<'a> {
+    prns_host_native::AuthenticatedAnnounce {
+        destination: prns_host::DestinationHash::new(destination),
+        announced_identity: prns_host::IdentityHash::new(*announced_identity.as_bytes()),
+        arrived_at_millis: 4_200,
         app_data,
         is_path_response: false,
     }
@@ -252,6 +242,7 @@ fn accepted_observation<'a>(
 fn link_event(wire: &[u8]) -> PrnsEvent<'_> {
     PrnsEvent::Message(Message::Delivered(Delivery::Link(LinkDelivery {
         link_id: LinkId::new([0xc7; 16]),
+        local_destination: Some(DestinationHash::new(identity(&LOCAL_SECRET).destination())),
         plaintext: wire,
         arrived_at: InstantMillis(7_700),
         source_interface: TEST_INTERFACE,
@@ -284,7 +275,7 @@ async fn learn_peer(
     let (material, destination) = peer_facts(secret);
     let announce = current_announce(b"Python peer");
     assert_eq!(
-        callbacks.on_accepted_announce(accepted_observation(
+        callbacks.on_authenticated_announce(&authenticated_observation(
             destination,
             material.identity_hash(),
             &announce,
@@ -337,6 +328,70 @@ fn destination_construction_retains_a_zeroizing_signer() {
 }
 
 #[tokio::test]
+async fn host_and_dedicated_destinations_keep_the_signer_identity_and_direct_only_policy() {
+    let announce = current_announce(b"Local peer");
+    for use_host_identity in [true, false] {
+        let (signer, destination) = if use_host_identity {
+            prepare_host_lxmf_destination(&LOCAL_SECRET, &announce)
+        } else {
+            prepare_local_lxmf_destination(Zeroizing::new(LOCAL_SECRET), &announce)
+        }
+        .expect("local destination is valid");
+        let prns_host::DestinationConfig::Single(single) = &destination else {
+            panic!("LXMF requires an authenticated single destination");
+        };
+        assert_eq!(
+            matches!(
+                single.identity,
+                prns_host::DestinationIdentityConfig::HostIdentity
+            ),
+            use_host_identity
+        );
+        assert_eq!(single.announce_app_data, announce);
+        assert_eq!(single.maximum_request_bytes, Some(0));
+        assert_eq!(
+            single.resource_strategy,
+            prns_host::ResourceStrategy::Refuse
+        );
+        assert_eq!(single.proof, prns_host::DestinationProofStrategy::ProveAll);
+        assert_eq!(
+            single.link_requests,
+            prns_host::DestinationLinkRequestPolicy::AcceptAll
+        );
+        assert_eq!(
+            single.ratchet,
+            prns_host::DestinationRatchetPolicy::NoRatchets
+        );
+        assert!(single.request_handlers.is_empty());
+
+        // A dedicated LXMF identity must remain independent of the host identity.
+        let host_secret = if use_host_identity {
+            LOCAL_SECRET
+        } else {
+            OTHER_SECRET
+        };
+        let owner = prns_host_native::owner::OwnedSession::open(prns_host::HostConfig {
+            identity: prns_host::IdentityConfig::Existing(prns_host::IdentitySecret::new(
+                host_secret,
+            )),
+            persistence: prns_host::PersistenceConfig::Ephemeral,
+            role: prns_host::HostRole::Endpoint,
+            destinations: vec![destination],
+            required_capabilities: Vec::new(),
+            limits: prns_host::PrnsLimits::balanced(),
+        })
+        .await
+        .expect("host resolves the LXMF destination");
+        let destinations = owner.client().destination_hashes().expect("host is live");
+        owner.stop().await.expect("host shutdown joins");
+        assert_eq!(
+            destinations,
+            vec![prns_host::DestinationHash::new(signer.destination())]
+        );
+    }
+}
+
+#[tokio::test]
 async fn authenticated_observer_is_the_only_peer_discovery_lane() {
     let fake = Arc::new(FakeNetwork::default());
     let service =
@@ -363,7 +418,7 @@ async fn authenticated_observer_is_the_only_peer_discovery_lane() {
     assert!(service.snapshot().await.peers.is_empty());
 
     assert_eq!(
-        callbacks.on_accepted_announce(accepted_observation(
+        callbacks.on_authenticated_announce(&authenticated_observation(
             [0xff; 16],
             peer_material.identity_hash(),
             &announce,
@@ -371,7 +426,7 @@ async fn authenticated_observer_is_the_only_peer_discovery_lane() {
         CallbackOutcome::InvalidDestinationAssociation
     );
     assert_eq!(
-        callbacks.on_accepted_announce(accepted_observation(
+        callbacks.on_authenticated_announce(&authenticated_observation(
             peer_destination,
             peer_material.identity_hash(),
             &announce,
@@ -772,7 +827,7 @@ async fn stamped_peer_is_visible_but_send_is_explicitly_unsupported() {
     let (peer_material, peer_destination) = peer_facts(&PEER_SECRET);
     let stamped_announce = [0x93, 0xc4, 0x04, b's', b't', b'a', b'm', 0x05, 0x90];
     assert_eq!(
-        callbacks.on_accepted_announce(accepted_observation(
+        callbacks.on_authenticated_announce(&authenticated_observation(
             peer_destination,
             peer_material.identity_hash(),
             &stamped_announce,
@@ -788,4 +843,32 @@ async fn stamped_peer_is_visible_but_send_is_explicitly_unsupported() {
         SendDirectTextOutcome::UnsupportedRemoteStampRequirement
     );
     service.stop().await.expect("service tasks stop promptly");
+}
+
+#[test]
+fn canonical_ingress_ignores_unassociated_and_other_destination_links() {
+    let local = identity(&LOCAL_SECRET);
+    let destination = local.destination();
+    let (_pending, callbacks) = DirectLxmfService::prepare(local);
+    let mut delivery = prns_host::LinkDelivery {
+        link_id: prns_host::LinkId::new([3; 16]),
+        local_destination: None,
+        arrived_at_millis: 42,
+        source_interface: prns_host::InterfaceId::new([4; 8]),
+        plaintext: vec![1, 2, 3],
+    };
+    assert_eq!(
+        callbacks.on_host_link_delivery(&delivery),
+        CallbackOutcome::Ignored
+    );
+    delivery.local_destination = Some(prns_host::DestinationHash::new([0; 16]));
+    assert_eq!(
+        callbacks.on_host_link_delivery(&delivery),
+        CallbackOutcome::Ignored
+    );
+    delivery.local_destination = Some(prns_host::DestinationHash::new(destination));
+    assert_eq!(
+        callbacks.on_host_link_delivery(&delivery),
+        CallbackOutcome::Enqueued
+    );
 }

@@ -683,8 +683,8 @@ mod enabled {
 
         #[test]
         fn swift_allowlist_accepts_exactly_the_tested_event_codes() {
-            let swift = include_str!("../../../sdk/expo/ios/PrnsAppRestorationProbe.swift");
-            let diagnostics = include_str!("../../../sdk/expo/ios/PrnsIosDiagnostics.swift");
+            let swift = include_str!("../../platform/ios/PrnsAppRestorationProbe.swift");
+            let diagnostics = include_str!("../../platform/ios/PrnsIosDiagnostics.swift");
             let allowlist = diagnostics
                 .split_once("enum RestorationEvent: String {")
                 .expect("Swift must retain the typed event allowlist")

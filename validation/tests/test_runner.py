@@ -767,8 +767,8 @@ expires = "2099-01-01"
                 inputs = suites[identifier]["inputs"]
                 for source in (
                     "applications/tools/generated-bindings",
-                    "applications/tools/ubrn-vendor",
-                    "applications/vendor/ubrn",
+                    "tools/ubrn-vendor",
+                    "vendor/ubrn",
                 ):
                     self.assertIn(source, inputs)
 

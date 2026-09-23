@@ -2,6 +2,7 @@ use super::*;
 use crate::test_support::foreign_block_on;
 use std::future::Future;
 use std::task::{Context, Waker};
+use std::time::Instant;
 fn owner() -> Arc<Supervisor> {
     Arc::new(Supervisor {
         snapshots: Arc::new(SnapshotStore::new()),

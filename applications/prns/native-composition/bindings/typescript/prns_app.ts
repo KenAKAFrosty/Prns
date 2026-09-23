@@ -3,12 +3,16 @@
 import nativeModule from "./prns_app-ffi";
 import { type UniffiRustFutureContinuationCallback, type UniffiForeignFutureDroppedCallback, type UniffiForeignFutureDroppedCallbackStruct,
 } from "./prns_app-ffi";
-import { liftBackendKind, liftCapability, liftHostSnapshot, liftInterfaceHealth, liftInterfaceKind, liftPersistenceFlushCause, liftSafeUint, lowerHostSnapshot, lowerSafeUint,
-} from "./host-adapter.generated";
+import { type HostClientHandleLike, type HostSnapshot,
+} from "./prns_host_uniffi";
 import { type FfiConverter, type RustBufferAllocator, type UniffiByteArray, AbstractFfiConverterByteArray, Cursor, FfiConverterArray, FfiConverterBool, FfiConverterInt16, FfiConverterInt8, FfiConverterOptional, FfiConverterUInt16, FfiConverterUInt32, FfiConverterUInt64, FfiConverterUInt8, FfiConverterUint8Array, RustBuffer, UniffiEnum, UniffiInternalError, UniffiRustCaller, uniffiCreateFfiConverterString, uniffiCreateRecord, uniffiRustCallAsync, uniffiTypeNameSymbol,
 } from "@ubjs/core";
-import { destinationHash, identityHash, interfaceId, type BackendKind as CanonicalBackendKind, type CapabilityName as CanonicalCapabilityName, type DestinationHash as CanonicalDestinationHash, type HostSnapshot, type IdentityHash as CanonicalIdentityHash, type InterfaceHealth as CanonicalInterfaceHealth, type InterfaceId as CanonicalInterfaceId, type InterfaceKind as CanonicalInterfaceKind, type PersistenceFlushCause as CanonicalPersistenceFlushCause,
+import { liftHostSnapshot, lowerHostSnapshot,
+} from "personal-rns-expo/contract-adapter";
+import { type HostSnapshot as CanonicalHostSnapshotValue,
 } from "personal-rns/contract";
+import uniffiPrnsHostUniffiModule from "./prns_host_uniffi";
+const { FfiConverterTypeHostClientHandle, FfiConverterTypeHostSnapshot } = uniffiPrnsHostUniffiModule.converters;
 const uniffiCaller = new UniffiRustCaller(() => ({ code: 0 }));
 
 const uniffiIsDebug =
@@ -1198,6 +1202,24 @@ export async function setContactPinned(input: SetContactPinnedInput, asyncOpts_?
     }
     }
 
+/**
+ * The same SDK host used by native services. Stop remains the app owner's operation.
+ */
+export function sharedHost(): HostClientHandleLike | undefined {
+    const __rb: Uint8Array = uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_prns_app_fn_func_shared_host(
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    );
+    try {
+        return FfiConverterOptionalTypeHostClientHandle.lift(__rb);
+    } finally {
+        nativeModule().rustbuffer_free(__rb);
+    }
+    }
+
 export async function startRemoteWifiTrial(input: StartRemoteWifiTrialInput, asyncOpts_?: { signal: AbortSignal }): Promise<RemoteWifiCommandOutcome> {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
     try {
@@ -1328,164 +1350,6 @@ const stringConverter = (() => {
     };
 })();
 const FfiConverterString = uniffiCreateFfiConverterString(stringConverter);
-
-/**
- * Typealias from the type name used in the UDL file to the custom type.  This
- * is needed because the UDL type name is used in function/method signatures.
- */
-export type BackendKind = CanonicalBackendKind;
-
-// FfiConverter for BackendKind
-const FfiConverterTypeBackendKind = (() => {
-    type TsType = BackendKind;
-    type FfiType = Uint8Array;
-    const intermediateConverter = FfiConverterString;
-    class FFIConverter implements FfiConverter<FfiType, TsType> {
-        lift(value: FfiType): TsType {
-            const intermediate = intermediateConverter.lift(value);
-            return liftBackendKind(intermediate);
-        }
-        lower(value: TsType, alloc: RustBufferAllocator): FfiType {
-            const intermediate = value;
-            return intermediateConverter.lower(intermediate, alloc);
-        }
-        readFromCursor(c: Cursor): TsType {
-            const intermediate = intermediateConverter.readFromCursor(c);
-            return liftBackendKind(intermediate);
-        }
-        writeIntoCursor(value: TsType, c: Cursor): void {
-            const intermediate = value;
-            intermediateConverter.writeIntoCursor(intermediate, c);
-        }
-        allocationSize(value: TsType): number {
-            const intermediate = value;
-            return intermediateConverter.allocationSize(intermediate);
-        }
-    }
-
-    return new FFIConverter();
-})();
-
-/**
- * Typealias from the type name used in the UDL file to the custom type.  This
- * is needed because the UDL type name is used in function/method signatures.
- */
-export type Capability = CanonicalCapabilityName;
-
-// FfiConverter for Capability
-const FfiConverterTypeCapability = (() => {
-    type TsType = Capability;
-    type FfiType = Uint8Array;
-    const intermediateConverter = FfiConverterString;
-    class FFIConverter implements FfiConverter<FfiType, TsType> {
-        lift(value: FfiType): TsType {
-            const intermediate = intermediateConverter.lift(value);
-            return liftCapability(intermediate);
-        }
-        lower(value: TsType, alloc: RustBufferAllocator): FfiType {
-            const intermediate = value;
-            return intermediateConverter.lower(intermediate, alloc);
-        }
-        readFromCursor(c: Cursor): TsType {
-            const intermediate = intermediateConverter.readFromCursor(c);
-            return liftCapability(intermediate);
-        }
-        writeIntoCursor(value: TsType, c: Cursor): void {
-            const intermediate = value;
-            intermediateConverter.writeIntoCursor(intermediate, c);
-        }
-        allocationSize(value: TsType): number {
-            const intermediate = value;
-            return intermediateConverter.allocationSize(intermediate);
-        }
-    }
-
-    return new FFIConverter();
-})();
-
-/**
- * Typealias from the type name used in the UDL file to the custom type.  This
- * is needed because the UDL type name is used in function/method signatures.
- */
-export type InterfaceKind = CanonicalInterfaceKind;
-
-// FfiConverter for InterfaceKind
-const FfiConverterTypeInterfaceKind = (() => {
-    type TsType = InterfaceKind;
-    type FfiType = Uint8Array;
-    const intermediateConverter = FfiConverterString;
-    class FFIConverter implements FfiConverter<FfiType, TsType> {
-        lift(value: FfiType): TsType {
-            const intermediate = intermediateConverter.lift(value);
-            return liftInterfaceKind(intermediate);
-        }
-        lower(value: TsType, alloc: RustBufferAllocator): FfiType {
-            const intermediate = value;
-            return intermediateConverter.lower(intermediate, alloc);
-        }
-        readFromCursor(c: Cursor): TsType {
-            const intermediate = intermediateConverter.readFromCursor(c);
-            return liftInterfaceKind(intermediate);
-        }
-        writeIntoCursor(value: TsType, c: Cursor): void {
-            const intermediate = value;
-            intermediateConverter.writeIntoCursor(intermediate, c);
-        }
-        allocationSize(value: TsType): number {
-            const intermediate = value;
-            return intermediateConverter.allocationSize(intermediate);
-        }
-    }
-
-    return new FFIConverter();
-})();
-
-export type BackendInfoTransport = {
-    backend: BackendKind,
-    capabilities: Array<Capability>,
-    interfaceKinds: Array<InterfaceKind>
-}
-
-/**
- * Generated factory for {@link BackendInfoTransport} record objects.
- */
-export const BackendInfoTransport = (() => {
-    const defaults = () => ({
-    });
-    const create = (() => {
-        return uniffiCreateRecord<BackendInfoTransport, ReturnType<typeof defaults>>(defaults);
-    })();
-    return Object.freeze({
-        create,
-        new: create,
-        defaults: () => Object.freeze(defaults()) as Partial<BackendInfoTransport>,
-    });
-})();
-
-const FfiConverterTypeBackendInfoTransport = (() => {
-    type TypeName = BackendInfoTransport;
-    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-        readFromCursor(c: Cursor): TypeName {
-            return {
-                backend: FfiConverterTypeBackendKind.readFromCursor(c),
-                capabilities: FfiConverterSequenceTypeCapability.readFromCursor(c),
-                interfaceKinds: FfiConverterSequenceTypeInterfaceKind.readFromCursor(c)
-            };
-        }
-        writeIntoCursor(value: TypeName, c: Cursor): void {
-            FfiConverterTypeBackendKind.writeIntoCursor(value.backend, c);
-            FfiConverterSequenceTypeCapability.writeIntoCursor(value.capabilities, c);
-            FfiConverterSequenceTypeInterfaceKind.writeIntoCursor(value.interfaceKinds, c);
-        }
-        allocationSize(value: TypeName): number {
-            return FfiConverterTypeBackendKind.allocationSize(value.backend) +
-             FfiConverterSequenceTypeCapability.allocationSize(value.capabilities) +
-             FfiConverterSequenceTypeInterfaceKind.allocationSize(value.interfaceKinds);
-
-        }
-    };
-    return new FFIConverter();
-})();
 
 /**
  * App and canonical contract identifiers, independent of UniFFI ABI checksums.
@@ -2670,123 +2534,6 @@ const FfiConverterTypeDescribeRemoteControlTargetInput = (() => {
     return new FFIConverter();
 })();
 
-/**
- * Typealias from the type name used in the UDL file to the custom type.  This
- * is needed because the UDL type name is used in function/method signatures.
- */
-export type DestinationHash = CanonicalDestinationHash;
-
-// FfiConverter for DestinationHash
-const FfiConverterTypeDestinationHash = (() => {
-    type TsType = DestinationHash;
-    type FfiType = Uint8Array;
-    const intermediateConverter = FfiConverterUint8Array;
-    class FFIConverter implements FfiConverter<FfiType, TsType> {
-        lift(value: FfiType): TsType {
-            const intermediate = intermediateConverter.lift(value);
-            return destinationHash(intermediate);
-        }
-        lower(value: TsType, alloc: RustBufferAllocator): FfiType {
-            const intermediate = value;
-            return intermediateConverter.lower(intermediate, alloc);
-        }
-        readFromCursor(c: Cursor): TsType {
-            const intermediate = intermediateConverter.readFromCursor(c);
-            return destinationHash(intermediate);
-        }
-        writeIntoCursor(value: TsType, c: Cursor): void {
-            const intermediate = value;
-            intermediateConverter.writeIntoCursor(intermediate, c);
-        }
-        allocationSize(value: TsType): number {
-            const intermediate = value;
-            return intermediateConverter.allocationSize(intermediate);
-        }
-    }
-
-    return new FFIConverter();
-})();
-
-/**
- * Typealias from the type name used in the UDL file to the custom type.  This
- * is needed because the UDL type name is used in function/method signatures.
- */
-export type IdentityHash = CanonicalIdentityHash;
-
-// FfiConverter for IdentityHash
-const FfiConverterTypeIdentityHash = (() => {
-    type TsType = IdentityHash;
-    type FfiType = Uint8Array;
-    const intermediateConverter = FfiConverterUint8Array;
-    class FFIConverter implements FfiConverter<FfiType, TsType> {
-        lift(value: FfiType): TsType {
-            const intermediate = intermediateConverter.lift(value);
-            return identityHash(intermediate);
-        }
-        lower(value: TsType, alloc: RustBufferAllocator): FfiType {
-            const intermediate = value;
-            return intermediateConverter.lower(intermediate, alloc);
-        }
-        readFromCursor(c: Cursor): TsType {
-            const intermediate = intermediateConverter.readFromCursor(c);
-            return identityHash(intermediate);
-        }
-        writeIntoCursor(value: TsType, c: Cursor): void {
-            const intermediate = value;
-            intermediateConverter.writeIntoCursor(intermediate, c);
-        }
-        allocationSize(value: TsType): number {
-            const intermediate = value;
-            return intermediateConverter.allocationSize(intermediate);
-        }
-    }
-
-    return new FFIConverter();
-})();
-
-export type DestinationIdentitySnapshotTransport = {
-    destination: DestinationHash,
-    identity: IdentityHash
-}
-
-/**
- * Generated factory for {@link DestinationIdentitySnapshotTransport} record objects.
- */
-export const DestinationIdentitySnapshotTransport = (() => {
-    const defaults = () => ({
-    });
-    const create = (() => {
-        return uniffiCreateRecord<DestinationIdentitySnapshotTransport, ReturnType<typeof defaults>>(defaults);
-    })();
-    return Object.freeze({
-        create,
-        new: create,
-        defaults: () => Object.freeze(defaults()) as Partial<DestinationIdentitySnapshotTransport>,
-    });
-})();
-
-const FfiConverterTypeDestinationIdentitySnapshotTransport = (() => {
-    type TypeName = DestinationIdentitySnapshotTransport;
-    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-        readFromCursor(c: Cursor): TypeName {
-            return {
-                destination: FfiConverterTypeDestinationHash.readFromCursor(c),
-                identity: FfiConverterTypeIdentityHash.readFromCursor(c)
-            };
-        }
-        writeIntoCursor(value: TypeName, c: Cursor): void {
-            FfiConverterTypeDestinationHash.writeIntoCursor(value.destination, c);
-            FfiConverterTypeIdentityHash.writeIntoCursor(value.identity, c);
-        }
-        allocationSize(value: TypeName): number {
-            return FfiConverterTypeDestinationHash.allocationSize(value.destination) +
-             FfiConverterTypeIdentityHash.allocationSize(value.identity);
-
-        }
-    };
-    return new FFIConverter();
-})();
-
 export enum DevelopmentNodeFailureStage {
     Storage,
     Identity,
@@ -3216,504 +2963,13 @@ const FfiConverterTypePrimaryIdentityState = (() => {
  * Typealias from the type name used in the UDL file to the custom type.  This
  * is needed because the UDL type name is used in function/method signatures.
  */
-export type InterfaceId = CanonicalInterfaceId;
-
-// FfiConverter for InterfaceId
-const FfiConverterTypeInterfaceId = (() => {
-    type TsType = InterfaceId;
-    type FfiType = Uint8Array;
-    const intermediateConverter = FfiConverterUint8Array;
-    class FFIConverter implements FfiConverter<FfiType, TsType> {
-        lift(value: FfiType): TsType {
-            const intermediate = intermediateConverter.lift(value);
-            return interfaceId(intermediate);
-        }
-        lower(value: TsType, alloc: RustBufferAllocator): FfiType {
-            const intermediate = value;
-            return intermediateConverter.lower(intermediate, alloc);
-        }
-        readFromCursor(c: Cursor): TsType {
-            const intermediate = intermediateConverter.readFromCursor(c);
-            return interfaceId(intermediate);
-        }
-        writeIntoCursor(value: TsType, c: Cursor): void {
-            const intermediate = value;
-            intermediateConverter.writeIntoCursor(intermediate, c);
-        }
-        allocationSize(value: TsType): number {
-            const intermediate = value;
-            return intermediateConverter.allocationSize(intermediate);
-        }
-    }
-
-    return new FFIConverter();
-})();
-
-/**
- * Typealias from the type name used in the UDL file to the custom type.  This
- * is needed because the UDL type name is used in function/method signatures.
- */
-export type InterfaceHealth = CanonicalInterfaceHealth;
-
-// FfiConverter for InterfaceHealth
-const FfiConverterTypeInterfaceHealth = (() => {
-    type TsType = InterfaceHealth;
-    type FfiType = Uint8Array;
-    const intermediateConverter = FfiConverterString;
-    class FFIConverter implements FfiConverter<FfiType, TsType> {
-        lift(value: FfiType): TsType {
-            const intermediate = intermediateConverter.lift(value);
-            return liftInterfaceHealth(intermediate);
-        }
-        lower(value: TsType, alloc: RustBufferAllocator): FfiType {
-            const intermediate = value;
-            return intermediateConverter.lower(intermediate, alloc);
-        }
-        readFromCursor(c: Cursor): TsType {
-            const intermediate = intermediateConverter.readFromCursor(c);
-            return liftInterfaceHealth(intermediate);
-        }
-        writeIntoCursor(value: TsType, c: Cursor): void {
-            const intermediate = value;
-            intermediateConverter.writeIntoCursor(intermediate, c);
-        }
-        allocationSize(value: TsType): number {
-            const intermediate = value;
-            return intermediateConverter.allocationSize(intermediate);
-        }
-    }
-
-    return new FFIConverter();
-})();
-
-/**
- * Typealias from the type name used in the UDL file to the custom type.  This
- * is needed because the UDL type name is used in function/method signatures.
- */
-export type SafeUint = number;
-
-// FfiConverter for SafeUint
-const FfiConverterTypeSafeUint = (() => {
-    type TsType = SafeUint;
-    type FfiType = bigint;
-    const intermediateConverter = FfiConverterUInt64;
-    class FFIConverter implements FfiConverter<FfiType, TsType> {
-        lift(value: FfiType): TsType {
-            const intermediate = intermediateConverter.lift(value);
-            return liftSafeUint(intermediate);
-        }
-        lower(value: TsType, alloc: RustBufferAllocator): FfiType {
-            const intermediate = lowerSafeUint(value);
-            return intermediateConverter.lower(intermediate, alloc);
-        }
-        readFromCursor(c: Cursor): TsType {
-            const intermediate = intermediateConverter.readFromCursor(c);
-            return liftSafeUint(intermediate);
-        }
-        writeIntoCursor(value: TsType, c: Cursor): void {
-            const intermediate = lowerSafeUint(value);
-            intermediateConverter.writeIntoCursor(intermediate, c);
-        }
-        allocationSize(value: TsType): number {
-            const intermediate = lowerSafeUint(value);
-            return intermediateConverter.allocationSize(intermediate);
-        }
-    }
-
-    return new FFIConverter();
-})();
-
-export type InterfaceSnapshotTransport = {
-    interfaceId: InterfaceId,
-    name?: string | undefined,
-    kind?: InterfaceKind | undefined,
-    health: InterfaceHealth,
-    failureDetail?: string | undefined,
-    rxBytes: bigint,
-    txBytes: bigint,
-    rxBps?: SafeUint | undefined,
-    txBps?: SafeUint | undefined,
-    routeCount: number,
-    linkCount: number,
-    transportedLinkCount: number
-}
-
-/**
- * Generated factory for {@link InterfaceSnapshotTransport} record objects.
- */
-export const InterfaceSnapshotTransport = (() => {
-    const defaults = () => ({
-    });
-    const create = (() => {
-        return uniffiCreateRecord<InterfaceSnapshotTransport, ReturnType<typeof defaults>>(defaults);
-    })();
-    return Object.freeze({
-        create,
-        new: create,
-        defaults: () => Object.freeze(defaults()) as Partial<InterfaceSnapshotTransport>,
-    });
-})();
-
-const FfiConverterTypeInterfaceSnapshotTransport = (() => {
-    type TypeName = InterfaceSnapshotTransport;
-    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-        readFromCursor(c: Cursor): TypeName {
-            return {
-                interfaceId: FfiConverterTypeInterfaceId.readFromCursor(c),
-                name: FfiConverterOptionalString.readFromCursor(c),
-                kind: FfiConverterOptionalTypeInterfaceKind.readFromCursor(c),
-                health: FfiConverterTypeInterfaceHealth.readFromCursor(c),
-                failureDetail: FfiConverterOptionalString.readFromCursor(c),
-                rxBytes: FfiConverterUInt64.readFromCursor(c),
-                txBytes: FfiConverterUInt64.readFromCursor(c),
-                rxBps: FfiConverterOptionalTypeSafeUint.readFromCursor(c),
-                txBps: FfiConverterOptionalTypeSafeUint.readFromCursor(c),
-                routeCount: FfiConverterUInt32.readFromCursor(c),
-                linkCount: FfiConverterUInt32.readFromCursor(c),
-                transportedLinkCount: FfiConverterUInt32.readFromCursor(c)
-            };
-        }
-        writeIntoCursor(value: TypeName, c: Cursor): void {
-            FfiConverterTypeInterfaceId.writeIntoCursor(value.interfaceId, c);
-            FfiConverterOptionalString.writeIntoCursor(value.name, c);
-            FfiConverterOptionalTypeInterfaceKind.writeIntoCursor(value.kind, c);
-            FfiConverterTypeInterfaceHealth.writeIntoCursor(value.health, c);
-            FfiConverterOptionalString.writeIntoCursor(value.failureDetail, c);
-            FfiConverterUInt64.writeIntoCursor(value.rxBytes, c);
-            FfiConverterUInt64.writeIntoCursor(value.txBytes, c);
-            FfiConverterOptionalTypeSafeUint.writeIntoCursor(value.rxBps, c);
-            FfiConverterOptionalTypeSafeUint.writeIntoCursor(value.txBps, c);
-            FfiConverterUInt32.writeIntoCursor(value.routeCount, c);
-            FfiConverterUInt32.writeIntoCursor(value.linkCount, c);
-            FfiConverterUInt32.writeIntoCursor(value.transportedLinkCount, c);
-        }
-        allocationSize(value: TypeName): number {
-            return FfiConverterTypeInterfaceId.allocationSize(value.interfaceId) +
-             FfiConverterOptionalString.allocationSize(value.name) +
-             FfiConverterOptionalTypeInterfaceKind.allocationSize(value.kind) +
-             FfiConverterTypeInterfaceHealth.allocationSize(value.health) +
-             FfiConverterOptionalString.allocationSize(value.failureDetail) +
-             FfiConverterUInt64.allocationSize(value.rxBytes) +
-             FfiConverterUInt64.allocationSize(value.txBytes) +
-             FfiConverterOptionalTypeSafeUint.allocationSize(value.rxBps) +
-             FfiConverterOptionalTypeSafeUint.allocationSize(value.txBps) +
-             FfiConverterUInt32.allocationSize(value.routeCount) +
-             FfiConverterUInt32.allocationSize(value.linkCount) +
-             FfiConverterUInt32.allocationSize(value.transportedLinkCount);
-
-        }
-    };
-    return new FFIConverter();
-})();
-
-export type RouteSnapshotTransport = {
-    destination: DestinationHash,
-    hops: number,
-    viaIdentity?: IdentityHash | undefined,
-    interfaceId: InterfaceId,
-    learnedAtMillis: SafeUint,
-    lastRouteActivityAtMillis: SafeUint,
-    expiresAtMillis: SafeUint
-}
-
-/**
- * Generated factory for {@link RouteSnapshotTransport} record objects.
- */
-export const RouteSnapshotTransport = (() => {
-    const defaults = () => ({
-    });
-    const create = (() => {
-        return uniffiCreateRecord<RouteSnapshotTransport, ReturnType<typeof defaults>>(defaults);
-    })();
-    return Object.freeze({
-        create,
-        new: create,
-        defaults: () => Object.freeze(defaults()) as Partial<RouteSnapshotTransport>,
-    });
-})();
-
-const FfiConverterTypeRouteSnapshotTransport = (() => {
-    type TypeName = RouteSnapshotTransport;
-    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-        readFromCursor(c: Cursor): TypeName {
-            return {
-                destination: FfiConverterTypeDestinationHash.readFromCursor(c),
-                hops: FfiConverterUInt8.readFromCursor(c),
-                viaIdentity: FfiConverterOptionalTypeIdentityHash.readFromCursor(c),
-                interfaceId: FfiConverterTypeInterfaceId.readFromCursor(c),
-                learnedAtMillis: FfiConverterTypeSafeUint.readFromCursor(c),
-                lastRouteActivityAtMillis: FfiConverterTypeSafeUint.readFromCursor(c),
-                expiresAtMillis: FfiConverterTypeSafeUint.readFromCursor(c)
-            };
-        }
-        writeIntoCursor(value: TypeName, c: Cursor): void {
-            FfiConverterTypeDestinationHash.writeIntoCursor(value.destination, c);
-            FfiConverterUInt8.writeIntoCursor(value.hops, c);
-            FfiConverterOptionalTypeIdentityHash.writeIntoCursor(value.viaIdentity, c);
-            FfiConverterTypeInterfaceId.writeIntoCursor(value.interfaceId, c);
-            FfiConverterTypeSafeUint.writeIntoCursor(value.learnedAtMillis, c);
-            FfiConverterTypeSafeUint.writeIntoCursor(value.lastRouteActivityAtMillis, c);
-            FfiConverterTypeSafeUint.writeIntoCursor(value.expiresAtMillis, c);
-        }
-        allocationSize(value: TypeName): number {
-            return FfiConverterTypeDestinationHash.allocationSize(value.destination) +
-             FfiConverterUInt8.allocationSize(value.hops) +
-             FfiConverterOptionalTypeIdentityHash.allocationSize(value.viaIdentity) +
-             FfiConverterTypeInterfaceId.allocationSize(value.interfaceId) +
-             FfiConverterTypeSafeUint.allocationSize(value.learnedAtMillis) +
-             FfiConverterTypeSafeUint.allocationSize(value.lastRouteActivityAtMillis) +
-             FfiConverterTypeSafeUint.allocationSize(value.expiresAtMillis);
-
-        }
-    };
-    return new FFIConverter();
-})();
-
-export type RuntimeHealthSnapshotTransport = {
-    running: boolean,
-    uptimeMillis: SafeUint,
-    interfaceCount: number,
-    onlineInterfaceCount: number,
-    routeCount: number,
-    linkCount: number,
-    transportedLinkCount: number,
-    rxBytes: bigint,
-    txBytes: bigint,
-    rxBps: SafeUint,
-    txBps: SafeUint
-}
-
-/**
- * Generated factory for {@link RuntimeHealthSnapshotTransport} record objects.
- */
-export const RuntimeHealthSnapshotTransport = (() => {
-    const defaults = () => ({
-    });
-    const create = (() => {
-        return uniffiCreateRecord<RuntimeHealthSnapshotTransport, ReturnType<typeof defaults>>(defaults);
-    })();
-    return Object.freeze({
-        create,
-        new: create,
-        defaults: () => Object.freeze(defaults()) as Partial<RuntimeHealthSnapshotTransport>,
-    });
-})();
-
-const FfiConverterTypeRuntimeHealthSnapshotTransport = (() => {
-    type TypeName = RuntimeHealthSnapshotTransport;
-    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-        readFromCursor(c: Cursor): TypeName {
-            return {
-                running: FfiConverterBool.readFromCursor(c),
-                uptimeMillis: FfiConverterTypeSafeUint.readFromCursor(c),
-                interfaceCount: FfiConverterUInt32.readFromCursor(c),
-                onlineInterfaceCount: FfiConverterUInt32.readFromCursor(c),
-                routeCount: FfiConverterUInt32.readFromCursor(c),
-                linkCount: FfiConverterUInt32.readFromCursor(c),
-                transportedLinkCount: FfiConverterUInt32.readFromCursor(c),
-                rxBytes: FfiConverterUInt64.readFromCursor(c),
-                txBytes: FfiConverterUInt64.readFromCursor(c),
-                rxBps: FfiConverterTypeSafeUint.readFromCursor(c),
-                txBps: FfiConverterTypeSafeUint.readFromCursor(c)
-            };
-        }
-        writeIntoCursor(value: TypeName, c: Cursor): void {
-            FfiConverterBool.writeIntoCursor(value.running, c);
-            FfiConverterTypeSafeUint.writeIntoCursor(value.uptimeMillis, c);
-            FfiConverterUInt32.writeIntoCursor(value.interfaceCount, c);
-            FfiConverterUInt32.writeIntoCursor(value.onlineInterfaceCount, c);
-            FfiConverterUInt32.writeIntoCursor(value.routeCount, c);
-            FfiConverterUInt32.writeIntoCursor(value.linkCount, c);
-            FfiConverterUInt32.writeIntoCursor(value.transportedLinkCount, c);
-            FfiConverterUInt64.writeIntoCursor(value.rxBytes, c);
-            FfiConverterUInt64.writeIntoCursor(value.txBytes, c);
-            FfiConverterTypeSafeUint.writeIntoCursor(value.rxBps, c);
-            FfiConverterTypeSafeUint.writeIntoCursor(value.txBps, c);
-        }
-        allocationSize(value: TypeName): number {
-            return FfiConverterBool.allocationSize(value.running) +
-             FfiConverterTypeSafeUint.allocationSize(value.uptimeMillis) +
-             FfiConverterUInt32.allocationSize(value.interfaceCount) +
-             FfiConverterUInt32.allocationSize(value.onlineInterfaceCount) +
-             FfiConverterUInt32.allocationSize(value.routeCount) +
-             FfiConverterUInt32.allocationSize(value.linkCount) +
-             FfiConverterUInt32.allocationSize(value.transportedLinkCount) +
-             FfiConverterUInt64.allocationSize(value.rxBytes) +
-             FfiConverterUInt64.allocationSize(value.txBytes) +
-             FfiConverterTypeSafeUint.allocationSize(value.rxBps) +
-             FfiConverterTypeSafeUint.allocationSize(value.txBps);
-
-        }
-    };
-    return new FFIConverter();
-})();
-
-/**
- * Typealias from the type name used in the UDL file to the custom type.  This
- * is needed because the UDL type name is used in function/method signatures.
- */
-export type PersistenceFlushCause = CanonicalPersistenceFlushCause;
-
-// FfiConverter for PersistenceFlushCause
-const FfiConverterTypePersistenceFlushCause = (() => {
-    type TsType = PersistenceFlushCause;
-    type FfiType = Uint8Array;
-    const intermediateConverter = FfiConverterString;
-    class FFIConverter implements FfiConverter<FfiType, TsType> {
-        lift(value: FfiType): TsType {
-            const intermediate = intermediateConverter.lift(value);
-            return liftPersistenceFlushCause(intermediate);
-        }
-        lower(value: TsType, alloc: RustBufferAllocator): FfiType {
-            const intermediate = value;
-            return intermediateConverter.lower(intermediate, alloc);
-        }
-        readFromCursor(c: Cursor): TsType {
-            const intermediate = intermediateConverter.readFromCursor(c);
-            return liftPersistenceFlushCause(intermediate);
-        }
-        writeIntoCursor(value: TsType, c: Cursor): void {
-            const intermediate = value;
-            intermediateConverter.writeIntoCursor(intermediate, c);
-        }
-        allocationSize(value: TsType): number {
-            const intermediate = value;
-            return intermediateConverter.allocationSize(intermediate);
-        }
-    }
-
-    return new FFIConverter();
-})();
-
-export type PersistenceSnapshotTransport = {
-    persistent: boolean,
-    restored: boolean,
-    lastFlushCause?: PersistenceFlushCause | undefined,
-    lastFailureDetail?: string | undefined
-}
-
-/**
- * Generated factory for {@link PersistenceSnapshotTransport} record objects.
- */
-export const PersistenceSnapshotTransport = (() => {
-    const defaults = () => ({
-    });
-    const create = (() => {
-        return uniffiCreateRecord<PersistenceSnapshotTransport, ReturnType<typeof defaults>>(defaults);
-    })();
-    return Object.freeze({
-        create,
-        new: create,
-        defaults: () => Object.freeze(defaults()) as Partial<PersistenceSnapshotTransport>,
-    });
-})();
-
-const FfiConverterTypePersistenceSnapshotTransport = (() => {
-    type TypeName = PersistenceSnapshotTransport;
-    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-        readFromCursor(c: Cursor): TypeName {
-            return {
-                persistent: FfiConverterBool.readFromCursor(c),
-                restored: FfiConverterBool.readFromCursor(c),
-                lastFlushCause: FfiConverterOptionalTypePersistenceFlushCause.readFromCursor(c),
-                lastFailureDetail: FfiConverterOptionalString.readFromCursor(c)
-            };
-        }
-        writeIntoCursor(value: TypeName, c: Cursor): void {
-            FfiConverterBool.writeIntoCursor(value.persistent, c);
-            FfiConverterBool.writeIntoCursor(value.restored, c);
-            FfiConverterOptionalTypePersistenceFlushCause.writeIntoCursor(value.lastFlushCause, c);
-            FfiConverterOptionalString.writeIntoCursor(value.lastFailureDetail, c);
-        }
-        allocationSize(value: TypeName): number {
-            return FfiConverterBool.allocationSize(value.persistent) +
-             FfiConverterBool.allocationSize(value.restored) +
-             FfiConverterOptionalTypePersistenceFlushCause.allocationSize(value.lastFlushCause) +
-             FfiConverterOptionalString.allocationSize(value.lastFailureDetail);
-
-        }
-    };
-    return new FFIConverter();
-})();
-
-export type HostSnapshotTransport = {
-    revision: bigint,
-    backend: BackendInfoTransport,
-    interfaces: Array<InterfaceSnapshotTransport>,
-    routes: Array<RouteSnapshotTransport>,
-    activeLinkCount: number,
-    destinationIdentities: Array<DestinationIdentitySnapshotTransport>,
-    runtime: RuntimeHealthSnapshotTransport,
-    persistence: PersistenceSnapshotTransport
-}
-
-/**
- * Generated factory for {@link HostSnapshotTransport} record objects.
- */
-export const HostSnapshotTransport = (() => {
-    const defaults = () => ({
-    });
-    const create = (() => {
-        return uniffiCreateRecord<HostSnapshotTransport, ReturnType<typeof defaults>>(defaults);
-    })();
-    return Object.freeze({
-        create,
-        new: create,
-        defaults: () => Object.freeze(defaults()) as Partial<HostSnapshotTransport>,
-    });
-})();
-
-const FfiConverterTypeHostSnapshotTransport = (() => {
-    type TypeName = HostSnapshotTransport;
-    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-        readFromCursor(c: Cursor): TypeName {
-            return {
-                revision: FfiConverterUInt64.readFromCursor(c),
-                backend: FfiConverterTypeBackendInfoTransport.readFromCursor(c),
-                interfaces: FfiConverterSequenceTypeInterfaceSnapshotTransport.readFromCursor(c),
-                routes: FfiConverterSequenceTypeRouteSnapshotTransport.readFromCursor(c),
-                activeLinkCount: FfiConverterUInt32.readFromCursor(c),
-                destinationIdentities: FfiConverterSequenceTypeDestinationIdentitySnapshotTransport.readFromCursor(c),
-                runtime: FfiConverterTypeRuntimeHealthSnapshotTransport.readFromCursor(c),
-                persistence: FfiConverterTypePersistenceSnapshotTransport.readFromCursor(c)
-            };
-        }
-        writeIntoCursor(value: TypeName, c: Cursor): void {
-            FfiConverterUInt64.writeIntoCursor(value.revision, c);
-            FfiConverterTypeBackendInfoTransport.writeIntoCursor(value.backend, c);
-            FfiConverterSequenceTypeInterfaceSnapshotTransport.writeIntoCursor(value.interfaces, c);
-            FfiConverterSequenceTypeRouteSnapshotTransport.writeIntoCursor(value.routes, c);
-            FfiConverterUInt32.writeIntoCursor(value.activeLinkCount, c);
-            FfiConverterSequenceTypeDestinationIdentitySnapshotTransport.writeIntoCursor(value.destinationIdentities, c);
-            FfiConverterTypeRuntimeHealthSnapshotTransport.writeIntoCursor(value.runtime, c);
-            FfiConverterTypePersistenceSnapshotTransport.writeIntoCursor(value.persistence, c);
-        }
-        allocationSize(value: TypeName): number {
-            return FfiConverterUInt64.allocationSize(value.revision) +
-             FfiConverterTypeBackendInfoTransport.allocationSize(value.backend) +
-             FfiConverterSequenceTypeInterfaceSnapshotTransport.allocationSize(value.interfaces) +
-             FfiConverterSequenceTypeRouteSnapshotTransport.allocationSize(value.routes) +
-             FfiConverterUInt32.allocationSize(value.activeLinkCount) +
-             FfiConverterSequenceTypeDestinationIdentitySnapshotTransport.allocationSize(value.destinationIdentities) +
-             FfiConverterTypeRuntimeHealthSnapshotTransport.allocationSize(value.runtime) +
-             FfiConverterTypePersistenceSnapshotTransport.allocationSize(value.persistence);
-
-        }
-    };
-    return new FFIConverter();
-})();
-
-/**
- * Typealias from the type name used in the UDL file to the custom type.  This
- * is needed because the UDL type name is used in function/method signatures.
- */
-export type CanonicalHostSnapshot = HostSnapshot;
+export type CanonicalHostSnapshot = CanonicalHostSnapshotValue;
 
 // FfiConverter for CanonicalHostSnapshot
 const FfiConverterTypeCanonicalHostSnapshot = (() => {
     type TsType = CanonicalHostSnapshot;
     type FfiType = Uint8Array;
-    const intermediateConverter = FfiConverterTypeHostSnapshotTransport;
+    const intermediateConverter = FfiConverterTypeHostSnapshot;
     class FFIConverter implements FfiConverter<FfiType, TsType> {
         lift(value: FfiType): TsType {
             const intermediate = intermediateConverter.lift(value);
@@ -14093,12 +13349,6 @@ const FfiConverterTypeSendDirectTextOutcome = (() => {
     return new FFIConverter();
 })();
 
-// FfiConverter for Array<Capability>
-const FfiConverterSequenceTypeCapability = new FfiConverterArray(FfiConverterTypeCapability);
-
-// FfiConverter for Array<InterfaceKind>
-const FfiConverterSequenceTypeInterfaceKind = new FfiConverterArray(FfiConverterTypeInterfaceKind);
-
 // FfiConverter for Array<string>
 const FfiConverterSequenceString = new FfiConverterArray(FfiConverterString);
 
@@ -14107,27 +13357,6 @@ const FfiConverterOptionalString = new FfiConverterOptional(FfiConverterString);
 
 // FfiConverter for Bytes16 | undefined
 const FfiConverterOptionalTypeBytes16 = new FfiConverterOptional(FfiConverterTypeBytes16);
-
-// FfiConverter for InterfaceKind | undefined
-const FfiConverterOptionalTypeInterfaceKind = new FfiConverterOptional(FfiConverterTypeInterfaceKind);
-
-// FfiConverter for SafeUint | undefined
-const FfiConverterOptionalTypeSafeUint = new FfiConverterOptional(FfiConverterTypeSafeUint);
-
-// FfiConverter for Array<InterfaceSnapshotTransport>
-const FfiConverterSequenceTypeInterfaceSnapshotTransport = new FfiConverterArray(FfiConverterTypeInterfaceSnapshotTransport);
-
-// FfiConverter for IdentityHash | undefined
-const FfiConverterOptionalTypeIdentityHash = new FfiConverterOptional(FfiConverterTypeIdentityHash);
-
-// FfiConverter for Array<RouteSnapshotTransport>
-const FfiConverterSequenceTypeRouteSnapshotTransport = new FfiConverterArray(FfiConverterTypeRouteSnapshotTransport);
-
-// FfiConverter for Array<DestinationIdentitySnapshotTransport>
-const FfiConverterSequenceTypeDestinationIdentitySnapshotTransport = new FfiConverterArray(FfiConverterTypeDestinationIdentitySnapshotTransport);
-
-// FfiConverter for PersistenceFlushCause | undefined
-const FfiConverterOptionalTypePersistenceFlushCause = new FfiConverterOptional(FfiConverterTypePersistenceFlushCause);
 
 // FfiConverter for Uint8Array | undefined
 const FfiConverterOptionalBytes = new FfiConverterOptional(FfiConverterUint8Array);
@@ -14197,6 +13426,9 @@ const FfiConverterSequenceTypeLxmfMessage = new FfiConverterArray(FfiConverterTy
 
 // FfiConverter for Array<LxmfPeerSummary>
 const FfiConverterSequenceTypeLxmfPeerSummary = new FfiConverterArray(FfiConverterTypeLxmfPeerSummary);
+
+// FfiConverter for HostClientHandleLike | undefined
+const FfiConverterOptionalTypeHostClientHandle = new FfiConverterOptional(FfiConverterTypeHostClientHandle);
 
 
 /**
@@ -14322,6 +13554,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_prns_app_checksum_func_set_contact_pinned() !== 4387) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_set_contact_pinned");
     }
+    if (nativeModule().uniffi_prns_app_checksum_func_shared_host() !== 49238) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_shared_host");
+    }
     if (nativeModule().uniffi_prns_app_checksum_func_start_remote_wifi_trial() !== 55182) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_prns_app_checksum_func_start_remote_wifi_trial");
     }
@@ -14335,15 +13570,12 @@ export default Object.freeze({
     FfiConverterTypeAnnounceRemoteControlTargetInput,
     FfiConverterTypeAppleBluetoothRestorationPreparationFailureStage,
     FfiConverterTypeAppleBluetoothRestorationPreparationOutcome,
-    FfiConverterTypeBackendInfoTransport,
-    FfiConverterTypeBackendKind,
     FfiConverterTypeBindingContract,
     FfiConverterTypeBytes16,
     FfiConverterTypeBytes32,
     FfiConverterTypeCancelLxmfMessageInput,
     FfiConverterTypeCancelLxmfMessageOutcome,
     FfiConverterTypeCanonicalHostSnapshot,
-    FfiConverterTypeCapability,
     FfiConverterTypeChangeRemoteNodeInput,
     FfiConverterTypeChangeRemoteNodeOutcome,
     FfiConverterTypeContact,
@@ -14353,8 +13585,6 @@ export default Object.freeze({
     FfiConverterTypeContactMutationOutcome,
     FfiConverterTypeCreateManualContactInput,
     FfiConverterTypeDescribeRemoteControlTargetInput,
-    FfiConverterTypeDestinationHash,
-    FfiConverterTypeDestinationIdentitySnapshotTransport,
     FfiConverterTypeDevelopmentNodeFailure,
     FfiConverterTypeDevelopmentNodeFailureStage,
     FfiConverterTypeDevelopmentNodeOperation,
@@ -14366,16 +13596,10 @@ export default Object.freeze({
     FfiConverterTypeDevelopmentNodeStopOutcome,
     FfiConverterTypeDevelopmentNodeStopStage,
     FfiConverterTypeFinishRemoteWifiTrialInput,
-    FfiConverterTypeHostSnapshotTransport,
     FfiConverterTypeIdentityCreationOutcome,
-    FfiConverterTypeIdentityHash,
     FfiConverterTypeIdentityImportPreviewOutcome,
     FfiConverterTypeInitiateRemoteControlPairingInput,
     FfiConverterTypeInspectRemoteWifiTrialInput,
-    FfiConverterTypeInterfaceHealth,
-    FfiConverterTypeInterfaceId,
-    FfiConverterTypeInterfaceKind,
-    FfiConverterTypeInterfaceSnapshotTransport,
     FfiConverterTypeListLxmfMessagesInput,
     FfiConverterTypeLocalHostState,
     FfiConverterTypeLxmfDeliveryFailure,
@@ -14392,8 +13616,6 @@ export default Object.freeze({
     FfiConverterTypeMeasureLxmfTextInput,
     FfiConverterTypeMeasureLxmfTextOutcome,
     FfiConverterTypeNativeStoragePreparationOutcome,
-    FfiConverterTypePersistenceFlushCause,
-    FfiConverterTypePersistenceSnapshotTransport,
     FfiConverterTypePrimaryIdentityState,
     FfiConverterTypeReadRemoteNodeInput,
     FfiConverterTypeReadRemoteNodeOutcome,
@@ -14445,9 +13667,6 @@ export default Object.freeze({
     FfiConverterTypeRemoteWifiTransaction,
     FfiConverterTypeRetryLxmfMessageInput,
     FfiConverterTypeRetryLxmfMessageOutcome,
-    FfiConverterTypeRouteSnapshotTransport,
-    FfiConverterTypeRuntimeHealthSnapshotTransport,
-    FfiConverterTypeSafeUint,
     FfiConverterTypeSendDirectTextInput,
     FfiConverterTypeSendDirectTextOutcome,
     FfiConverterTypeSetContactAliasInput,

@@ -3,7 +3,15 @@
 //! This module creates neither a node nor a runtime. Platform lifecycle owners and
 //! generated JavaScript callers must link/load the same `prns_app` library image.
 
-mod host_generated;
+// The app contributes only the box ownership adapter. All host fields and
+// transport conversions are generated once in the public SDK crate.
+type CanonicalHostSnapshot = Box<prns_host::HostSnapshot>;
+use prns_host_uniffi::transport::HostSnapshot as HostSnapshotTransport;
+uniffi::custom_type!(CanonicalHostSnapshot, HostSnapshotTransport, {
+    remote,
+    lower: |value| (*value).into(),
+    try_lift: |value| Ok(Box::new(value.try_into()?)),
+});
 
 use crate::contract::*;
 use std::path::Path;
@@ -37,6 +45,12 @@ pub async fn read_snapshot() -> DevelopmentNodeSnapshot {
     crate::lifecycle::snapshot_async().await
 }
 
+/// The same SDK host used by native services. Stop remains the app owner's operation.
+#[uniffi::export]
+pub fn shared_host() -> Option<std::sync::Arc<prns_host_uniffi::HostClientHandle>> {
+    crate::lifecycle::shared_host().map(prns_host_uniffi::HostClientHandle::borrow)
+}
+
 /// App and canonical contract identifiers, independent of UniFFI ABI checksums.
 #[derive(uniffi::Record)]
 pub struct BindingContract {
@@ -46,6 +60,8 @@ pub struct BindingContract {
 
 #[uniffi::export]
 pub fn binding_contract() -> BindingContract {
+    #[cfg(feature = "android")]
+    prns_expo_android::ensure_linked();
     BindingContract {
         app: crate::contract::CONTRACT_FINGERPRINT.to_owned(),
         host: crate::contract::HOST_CONTRACT_FINGERPRINT.to_owned(),

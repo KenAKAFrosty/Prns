@@ -38,6 +38,10 @@ INLINE_DEPENDENCY = re.compile(
 )
 PATH_ATTRIBUTE = re.compile(r'(?<![A-Za-z0-9_-])path\s*=\s*"(?P<path>[^"]+)"')
 PACKAGE_ATTRIBUTE = re.compile(r'(?<![A-Za-z0-9_-])package\s*=\s*"(?P<package>[^"]+)"')
+SHARED_EXPORT_PATHS = ('tools/uniffi', 'tools/ubrn-vendor', 'vendor/ubrn')
+EXPORT_PATHS = ('applications', 'prns-react-native', *SHARED_EXPORT_PATHS)
+
+
 DEPENDENCY_SECTIONS = (
     "dependencies",
     "devDependencies",
@@ -204,7 +208,7 @@ def controlled_environment(
 ) -> dict[str, str]:
     environment = os.environ.copy()
     # This selects a disposable compiler cache, never an alternative binding
-    # source: the app-local vendor recipe verifies its pinned tree on reuse.
+    # source: the shared vendor recipe verifies its pinned tree on reuse.
     ubrn_cache = environment.get("PRNS_UBRN_CACHE")
     forbidden_prefixes = ("CARGO_", "NPM_CONFIG_", "PRNS_", "RUST", "UV_")
     forbidden_names = {"LXMF_VENV", "NODE_OPTIONS", "PYTHONHOME", "PYTHONPATH"}
@@ -460,19 +464,19 @@ def require_clean_application_source(repository_root: pathlib.Path) -> None:
             "--porcelain=v1",
             "--untracked-files=all",
             "--",
-            "applications",
+            *EXPORT_PATHS,
         ),
         check=True,
         stdout=subprocess.PIPE,
     ).stdout
     if status_output:
         raise fail(
-            "applications/ must be committed before its tracked export is qualified"
+            "applications and shared binding inputs must be committed before their tracked export is qualified"
         )
 
 
 def reject_tracked_symlinks(repository_root: pathlib.Path) -> None:
-    listing = git_output(repository_root, "ls-files", "--stage", "--", "applications")
+    listing = git_output(repository_root, "ls-files", "--stage", "--", *EXPORT_PATHS)
     symlinks = []
     for line in listing.splitlines():
         metadata, _, path = line.partition("\t")
@@ -497,7 +501,7 @@ def export_applications(
             "-o",
             archive,
             "HEAD",
-            "applications",
+            *EXPORT_PATHS,
         ),
         cwd=repository_root,
     )
@@ -509,7 +513,10 @@ def export_applications(
             path = pathlib.PurePosixPath(member.name)
             if (
                 not path.parts
-                or path.parts[0] != "applications"
+                or not any(path == pathlib.PurePosixPath(scope)
+                           or path.is_relative_to(scope)
+                           or (member.isdir() and pathlib.PurePosixPath(scope).is_relative_to(path))
+                           for scope in EXPORT_PATHS)
                 or path.is_absolute()
                 or ".." in path.parts
             ):
@@ -531,7 +538,7 @@ def export_applications(
                 shutil.copyfileobj(archived_file, output)
             destination_path.chmod(member.mode & 0o777)
     applications_root = export_root / "applications"
-    for path in applications_root.rglob("*"):
+    for path in export_root.rglob("*"):
         if path.is_symlink():
             raise fail(f"exported application symlink is forbidden: {path}")
     return applications_root
@@ -573,6 +580,34 @@ def reject_resolver_configuration(applications_root: pathlib.Path) -> None:
         )
 
 
+def sdk_directory(applications_root: pathlib.Path) -> pathlib.Path:
+    return applications_root.resolve().parent / 'prns-react-native'
+
+
+def shared_sdk_package(path: pathlib.Path, applications_root: pathlib.Path, name: str | None = None) -> bool:
+    expected = sdk_directory(applications_root)
+    if path.resolve() != expected or expected.is_symlink() or not (expected / 'package.json').is_file():
+        return False
+    package = json.loads((expected / 'package.json').read_text())
+    return package.get('name') == 'personal-rns-expo' and name in (None, 'personal-rns-expo')
+
+
+def shared_sdk_cargo(path: pathlib.Path, applications_root: pathlib.Path) -> bool:
+    expected = sdk_directory(applications_root) / 'platform/android'
+    return (path.resolve() == expected and not expected.is_symlink()
+            and (expected / 'Cargo.toml').is_file()
+            and cargo_package_identity(expected / 'Cargo.toml')[0] == 'prns-expo-android')
+
+
+def application_cargo_manifests(applications_root: pathlib.Path) -> Iterable[pathlib.Path]:
+    yield from manifests_below(applications_root, 'Cargo.toml')
+    platform = sdk_directory(applications_root) / 'platform/android'
+    if platform.exists():
+        if not shared_sdk_cargo(platform, applications_root):
+            raise fail('unreviewed sibling SDK Rust package')
+        yield platform / 'Cargo.toml'
+
+
 def cargo_rewrite_plan(
     applications_root: pathlib.Path,
     repository_root: pathlib.Path,
@@ -580,7 +615,7 @@ def cargo_rewrite_plan(
 ) -> list[CargoRewrite]:
     direct_packages, source_packages = rust_packages(compatibility)
     result = []
-    for manifest in manifests_below(applications_root, "Cargo.toml"):
+    for manifest in application_cargo_manifests(applications_root):
         lines = manifest.read_text(encoding="utf-8").splitlines(keepends=True)
         for line_index, line in enumerate(lines):
             declaration = INLINE_DEPENDENCY.match(line.rstrip("\n"))
@@ -590,7 +625,8 @@ def cargo_rewrite_plan(
             if path_match is None:
                 continue
             dependency_path = (manifest.parent / path_match.group("path")).resolve()
-            if relative_to(dependency_path, applications_root):
+            if (relative_to(dependency_path, applications_root)
+                    or shared_sdk_cargo(dependency_path, applications_root)):
                 continue
             if not relative_to(dependency_path, repository_root):
                 raise fail(
@@ -625,7 +661,7 @@ def cargo_rewrite_plan(
                 )
             result.append(
                 CargoRewrite(
-                    manifest=manifest.relative_to(applications_root),
+                    manifest=pathlib.Path(os.path.relpath(manifest, applications_root)),
                     line_index=line_index,
                     original=path_match.group("path"),
                     dependency=declaration.group("name"),
@@ -634,13 +670,14 @@ def cargo_rewrite_plan(
             )
     planned_paths = sorted((rewrite.manifest, rewrite.original) for rewrite in result)
     discovered_paths: list[tuple[pathlib.Path, str]] = []
-    for manifest in manifests_below(applications_root, "Cargo.toml"):
+    for manifest in application_cargo_manifests(applications_root):
         document = tomllib.loads(manifest.read_text(encoding="utf-8"))
         for path_value in walk_path_values(document):
             resolved = (manifest.parent / path_value).resolve()
-            if not relative_to(resolved, applications_root):
+            if (not relative_to(resolved, applications_root)
+                    and not shared_sdk_cargo(resolved, applications_root)):
                 discovered_paths.append(
-                    (manifest.relative_to(applications_root), path_value)
+                    (pathlib.Path(os.path.relpath(manifest, applications_root)), path_value)
                 )
     if sorted(discovered_paths) != planned_paths:
         raise fail(
@@ -693,11 +730,12 @@ def walk_path_values(value: Any) -> Iterable[str]:
 
 
 def reject_external_cargo_paths(applications_root: pathlib.Path) -> None:
-    for manifest in manifests_below(applications_root, "Cargo.toml"):
+    for manifest in application_cargo_manifests(applications_root):
         document = tomllib.loads(manifest.read_text(encoding="utf-8"))
         for path_value in walk_path_values(document):
             resolved = (manifest.parent / path_value).resolve()
-            if not relative_to(resolved, applications_root):
+            if (not relative_to(resolved, applications_root)
+                    and not shared_sdk_cargo(resolved, applications_root)):
                 raise fail(
                     f"Cargo path escapes detached applications/: {manifest}: {path_value}"
                 )
@@ -708,11 +746,38 @@ def npm_local_path(selection: str) -> str | None:
         if selection.startswith(prefix):
             return selection.removeprefix(prefix)
     if (
-        selection.startswith(("./", "../", "/", "~"))
+        selection.startswith(("./", "../", "/", "~/"))
         or re.match(r"^[A-Za-z]:[\\/]", selection) is not None
     ):
         return selection
     return None
+
+
+def shared_runtime_archive(path: pathlib.Path, applications_root: pathlib.Path,
+                           package_name: str | None = None) -> bool:
+    """Allow only receipt-listed runtime archives from the explicit shared export."""
+    vendor = applications_root.resolve().parent / "vendor/ubrn"
+    path = path.resolve()
+    receipt_path = vendor / "receipt.json"
+    if not receipt_path.is_file():
+        return False
+    receipt = object_value(json.loads(receipt_path.read_text()), "runtime receipt")
+    for package in receipt.get("packages", []):
+        if package.get("name") not in ("@ubjs/core", "@ubjs/react-native"):
+            continue
+        if package_name is not None and package_name != package["name"]:
+            continue
+        relative = pathlib.PurePosixPath(package.get("file", ""))
+        if (relative.is_absolute() or ".." in relative.parts
+                or len(relative.parts) != 2 or relative.parts[0] != "packages"
+                or relative.suffix != ".tgz"):
+            raise fail("unsafe shared runtime archive path in receipt")
+        expected = vendor / pathlib.Path(relative)
+        if expected.is_symlink() or expected.resolve() != expected.absolute():
+            raise fail("symlink in shared runtime archive path")
+        if path == expected.resolve():
+            return True
+    return False
 
 
 def npm_rewrite_plan(
@@ -762,6 +827,9 @@ def npm_rewrite_plan(
                     continue
                 dependency_path = (manifest.parent / local_path).resolve()
                 if relative_to(dependency_path, applications_root):
+                    continue
+                if (shared_runtime_archive(dependency_path, applications_root, dependency)
+                        or shared_sdk_package(dependency_path, applications_root, dependency)):
                     continue
                 if not relative_to(dependency_path, repository_root):
                     raise fail(
@@ -851,7 +919,9 @@ def reject_external_npm_paths(applications_root: pathlib.Path) -> None:
             if local_path is None:
                 continue
             resolved = (manifest.parent / local_path).resolve()
-            if not relative_to(resolved, applications_root):
+            if (not relative_to(resolved, applications_root)
+                    and not shared_runtime_archive(resolved, applications_root)
+                    and not shared_sdk_package(resolved, applications_root)):
                 raise fail(
                     f"npm local path escapes detached applications/: {manifest}: {selection}"
                 )
@@ -866,7 +936,8 @@ def reject_external_npm_lock_paths(applications_root: pathlib.Path) -> None:
     )
     packages = object_value(lock.get("packages"), "detached package-lock packages")
     for key, raw_entry in packages.items():
-        if key.startswith("../") or pathlib.PurePosixPath(key).is_absolute():
+        if ((key.startswith("../") or pathlib.PurePosixPath(key).is_absolute())
+                and not shared_sdk_package(applications_root / key, applications_root)):
             raise fail(f"npm lock package key escapes detached applications/: {key}")
         entry = object_value(raw_entry, f"detached package-lock packages.{key}")
         resolved = entry.get("resolved")
@@ -875,9 +946,10 @@ def reject_external_npm_lock_paths(applications_root: pathlib.Path) -> None:
         local_path = npm_local_path(resolved)
         if local_path is None:
             continue
-        if not relative_to(
-            (applications_root / local_path).resolve(), applications_root
-        ):
+        resolved_path = (applications_root / local_path).resolve()
+        if (not relative_to(resolved_path, applications_root)
+                and not shared_runtime_archive(resolved_path, applications_root)
+                and not shared_sdk_package(resolved_path, applications_root)):
             raise fail(
                 f"npm lock resolution escapes detached applications/: {key}: {resolved}"
             )
@@ -923,6 +995,23 @@ def checkout_prns(
     ).stdout.strip()
     if resolved != revision:
         raise fail(f"Prns checkout resolved {resolved}, expected {revision}")
+
+
+def stage_sdk_metadata(prns_root: pathlib.Path, export_root: pathlib.Path) -> None:
+    # Canonical conversion inputs come from the exact recorded source checkout.
+    # They are not application-owned exports or an alternate Rust dependency.
+    for relative in (
+        'prns-host/bindings/uniffi/src/transport.generated.rs',
+        'prns-host/bindings/uniffi/typescript/host-adapter.generated.ts',
+        'prns-host/bindings/uniffi/typescript/remote-control-adapter.generated.ts',
+    ):
+        source = prns_root / relative
+        if not source.is_file() or source.is_symlink():
+            raise fail('recorded Prns revision lacks SDK metadata; promote compatibility only after '
+                       'a real SDK release commit and artifact exist, or use --working-tree')
+        destination = export_root / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, destination)
 
 
 def build_javascript_artifact(
@@ -1183,7 +1272,8 @@ def validate_cargo_sources(
         manifest_path = entry.get("manifest_path")
         if isinstance(manifest_path, str):
             resolved_manifest = pathlib.Path(manifest_path).resolve()
-            if relative_to(resolved_manifest, applications_root):
+            if (relative_to(resolved_manifest, applications_root)
+                    or shared_sdk_cargo(resolved_manifest.parent, applications_root)):
                 owners_by_manifest[resolved_manifest] = entry
     required_sources = {rewrite.package for rewrite in rewrites}
     if not required_sources.issubset(sources_by_name):
@@ -1502,9 +1592,10 @@ def qualify(
             cwd=applications_root,
             environment=environment,
         )
+        stage_sdk_metadata(prns_root, applications_root.parent)
         # The exported archives and recipe must agree before npm installs them.
         run(
-            (sys.executable, applications_root / "tools/ubrn-vendor/vendor.py", "check"),
+            (sys.executable, applications_root.parent / "tools/ubrn-vendor/vendor.py", "check"),
             cwd=applications_root,
             environment=environment,
         )
@@ -1614,12 +1705,23 @@ def arguments() -> argparse.Namespace:
         type=pathlib.Path,
         help="retain the detached workspace at this new path for inspection",
     )
-    return parser.parse_args()
+    parser.add_argument('--working-tree', action='store_true',
+                        help='qualify an explicit snapshot of current source; never release/recorded-revision evidence')
+    parser.add_argument('--snapshot-only', action='store_true',
+                        help='with --working-tree, only export and validate the complete dependency closure')
+    selected = parser.parse_args()
+    if selected.snapshot_only and not selected.working_tree:
+        parser.error('--snapshot-only requires --working-tree')
+    return selected
 
 
 def main() -> int:
     selected = arguments()
-    qualify(REPOSITORY_ROOT, selected.prns_git_url, selected.keep_workspace)
+    if selected.working_tree:
+        import working_tree
+        working_tree.qualify(REPOSITORY_ROOT, selected.keep_workspace, selected.snapshot_only, sys.modules[__name__])
+    else:
+        qualify(REPOSITORY_ROOT, selected.prns_git_url, selected.keep_workspace)
     return 0
 
 
@@ -1628,6 +1730,7 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except (
         QualificationFailure,
+        ValueError,
         OSError,
         subprocess.CalledProcessError,
         tomllib.TOMLDecodeError,

@@ -1,7 +1,7 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 
-#[cfg(feature = "android")]
-mod android;
+#[cfg(all(feature = "android", target_os = "android"))]
+use prns_host_native::platform::android;
 pub mod contract;
 mod development_store;
 mod directory;

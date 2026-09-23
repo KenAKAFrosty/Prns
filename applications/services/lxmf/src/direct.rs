@@ -10,26 +10,12 @@ use std::sync::{Arc, Mutex as LifecycleMutex, MutexGuard as LifecycleMutexGuard,
 use std::time::Duration;
 use std::vec::Vec;
 
-use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceTarget, DeliveryEvidence, EstablishLinkFailure,
-    EstablishLinkRejection, SendToLinkFailure,
-};
 use personal_rns::identity::{PrivateIdentityMaterial, Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::node_introspection::{DestinationIdentityQuery, NodeIntrospection};
-use personal_rns::routing::announce::{
-    derive_single_destination_hash, AnnounceObservation, ExpandNameError,
-};
+use personal_rns::routing::announce::{derive_single_destination_hash, ExpandNameError};
 use personal_rns::routing::delivery::Delivery;
-use personal_rns::routing::links::establish::WriteEstablishLinkRejection;
-use personal_rns::routing::links::resources::ResourceStrategy;
-use personal_rns::routing::links::LinkId;
-use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
-use personal_rns::runtime::{
-    Message, PreConfiguredDestination, PrnsEvent, RequestPathError, ServeMyRequestEndpoints,
-};
-use personal_rns::units::ByteLimit;
-use personal_rns::wire::DestinationHash;
-use personal_rns::{PrnsNodeHandle, RatchetPolicy, SendError};
+use personal_rns::runtime::{Message, PrnsEvent};
+use prns_host::{CommandFailure, CommandOutcome, HostCommand};
+use prns_host_native::owner::{HostClient, SessionError};
 use prns_lxmf_wire::{
     compose_basic_direct_lxmf, normalize_lxmf_display_name, parse_lxmf_announce,
     BasicLxmfComposeError, BasicLxmfSigner, CarrierIngress, MessageView, WireLimits,
@@ -82,8 +68,7 @@ pub enum DirectServiceStopError {
 /// Narrow network operations required by the direct engine.
 ///
 /// [`PrnsDirectNetwork`] is the production adapter. The trait keeps deterministic
-/// tests on the same public service API without pretending Prns has a portable
-/// async node facade.
+/// tests on the same public service API; production uses the shared host client.
 pub trait DirectNetwork: Send + Sync + 'static {
     fn has_route(&self, destination: [u8; 16]) -> DirectNetworkFuture<'_, bool>;
     fn request_path(
@@ -109,26 +94,29 @@ pub trait DirectNetwork: Send + Sync + 'static {
     ) -> DirectNetworkFuture<'_, Result<(), DirectAnnounceFailure>>;
 }
 
-/// Direct network adapter over one existing Tokio [`PrnsNodeHandle`].
+/// Direct network adapter over one borrowed canonical host client.
+/// The service neither owns nor stops the host session.
 #[derive(Clone)]
 pub struct PrnsDirectNetwork {
-    handle: PrnsNodeHandle,
+    host: HostClient,
 }
 
 impl PrnsDirectNetwork {
     #[must_use]
-    pub fn new(handle: PrnsNodeHandle) -> Self {
-        Self { handle }
+    pub fn new(host: HostClient) -> Self {
+        Self { host }
     }
 }
 
 impl DirectNetwork for PrnsDirectNetwork {
     fn has_route(&self, destination: [u8; 16]) -> DirectNetworkFuture<'_, bool> {
         Box::pin(async move {
-            self.handle
-                .route(DestinationHash::new(destination))
-                .await
-                .is_some()
+            self.host.snapshot().await.is_ok_and(|snapshot| {
+                snapshot
+                    .routes
+                    .iter()
+                    .any(|route| route.destination.as_bytes() == &destination)
+            })
         })
     }
 
@@ -138,15 +126,17 @@ impl DirectNetwork for PrnsDirectNetwork {
     ) -> DirectNetworkFuture<'_, Result<(), DirectSendFailure>> {
         Box::pin(async move {
             match self
-                .handle
-                .request_path(DestinationHash::new(destination))
+                .host
+                .execute(HostCommand::RequestPath {
+                    destination: prns_host::DestinationHash::new(destination),
+                })
                 .await
             {
-                Ok(_) => Ok(()),
-                Err(RequestPathError::NodeStopped) => Err(DirectSendFailure::LocalNodeStopped),
-                Err(RequestPathError::EntropyUnavailable | RequestPathError::Failed(_)) => {
-                    Err(DirectSendFailure::NoRoute)
+                Ok(Ok(CommandOutcome::PathDiscovered { .. })) => Ok(()),
+                Err(SessionError::Stopped) | Ok(Err(CommandFailure::NodeStopped)) => {
+                    Err(DirectSendFailure::LocalNodeStopped)
                 }
+                _ => Err(DirectSendFailure::NoRoute),
             }
         })
     }
@@ -156,11 +146,18 @@ impl DirectNetwork for PrnsDirectNetwork {
         destination: [u8; 16],
     ) -> DirectNetworkFuture<'_, Result<[u8; 16], DirectSendFailure>> {
         Box::pin(async move {
-            self.handle
-                .establish_link(DestinationHash::new(destination))
+            match self
+                .host
+                .execute(HostCommand::EstablishLink {
+                    destination: prns_host::DestinationHash::new(destination),
+                })
                 .await
-                .map(|link| *link.as_bytes())
-                .map_err(classify_establish_link_failure)
+            {
+                Ok(Ok(CommandOutcome::LinkEstablished { link_id, .. })) => Ok(link_id.into_bytes()),
+                Ok(Err(failure)) => Err(classify_establish_link_failure(failure)),
+                Err(SessionError::Stopped) => Err(DirectSendFailure::LocalNodeStopped),
+                _ => Err(DirectSendFailure::LinkFailed),
+            }
         })
     }
 
@@ -171,21 +168,26 @@ impl DirectNetwork for PrnsDirectNetwork {
     ) -> DirectNetworkFuture<'_, Result<DirectDeliveryReceipt, DirectSendFailure>> {
         Box::pin(async move {
             match self
-                .handle
-                .send_link_packet(LinkId::new(link), &complete_wire)
+                .host
+                .execute(HostCommand::SendLinkPacket {
+                    link_id: prns_host::LinkId::new(link),
+                    payload: complete_wire,
+                })
                 .await
             {
-                Ok(receipt) if matches!(receipt.evidence, DeliveryEvidence::Proof(_)) => {
-                    Ok(DirectDeliveryReceipt {
-                        rtt_millis: receipt.rtt.millis(),
-                    })
-                }
-                Ok(_) => Err(DirectSendFailure::LinkFailed),
-                Err(SendError::Failed(SendToLinkFailure::Timeout)) => {
+                Ok(Ok(CommandOutcome::PacketDelivered {
+                    rtt_millis,
+                    evidence:
+                        prns_host::DeliveryEvidence::ExplicitProof(_)
+                        | prns_host::DeliveryEvidence::ImplicitProof(_),
+                })) => Ok(DirectDeliveryReceipt { rtt_millis }),
+                Ok(Err(CommandFailure::DeliveryTimedOut)) => {
                     Err(DirectSendFailure::DeliveryTimedOut)
                 }
-                Err(SendError::NodeStopped) => Err(DirectSendFailure::LocalNodeStopped),
-                Err(_) => Err(DirectSendFailure::LinkFailed),
+                Err(SessionError::Stopped) | Ok(Err(CommandFailure::NodeStopped)) => {
+                    Err(DirectSendFailure::LocalNodeStopped)
+                }
+                _ => Err(DirectSendFailure::LinkFailed),
             }
         })
     }
@@ -195,12 +197,11 @@ impl DirectNetwork for PrnsDirectNetwork {
         destination: [u8; 16],
     ) -> DirectNetworkFuture<'_, Option<[u8; 64]>> {
         Box::pin(async move {
-            self.handle
-                .destination_identity(DestinationIdentityQuery::Destination(DestinationHash::new(
-                    destination,
-                )))
+            self.host
+                .destination_public_key(prns_host::DestinationHash::new(destination))
                 .await
-                .map(|snapshot| *snapshot.public.as_bytes())
+                .ok()
+                .flatten()
         })
     }
 
@@ -209,38 +210,26 @@ impl DirectNetwork for PrnsDirectNetwork {
         destination: [u8; 16],
     ) -> DirectNetworkFuture<'_, Result<(), DirectAnnounceFailure>> {
         Box::pin(async move {
-            self.handle
-                .announce_now(AnnounceNow {
-                    destination: DestinationHash::new(destination),
-                    target: AnnounceTarget::AllInterfaces,
-                    app_data: AnnounceAppData::Registered,
+            match self
+                .host
+                .execute(HostCommand::Announce {
+                    destination: prns_host::DestinationHash::new(destination),
+                    interface: None,
                 })
                 .await
-                .map_err(|_| DirectAnnounceFailure::NodeRejected)
+            {
+                Ok(Ok(CommandOutcome::Announced)) => Ok(()),
+                _ => Err(DirectAnnounceFailure::NodeRejected),
+            }
         })
     }
 }
 
-fn classify_establish_link_failure(failure: SendError<EstablishLinkFailure>) -> DirectSendFailure {
+fn classify_establish_link_failure(failure: CommandFailure) -> DirectSendFailure {
     match failure {
-        SendError::Failed(EstablishLinkFailure::Rejected(
-            EstablishLinkRejection::NoRouteToDestination,
-        ))
-        | SendError::Failed(EstablishLinkFailure::WriteFailed(
-            WriteEstablishLinkRejection::RouteVanished,
-        )) => DirectSendFailure::NoRoute,
-        SendError::NodeStopped => DirectSendFailure::LocalNodeStopped,
-        SendError::PayloadTooLarge
-        | SendError::Busy
-        | SendError::Failed(
-            EstablishLinkFailure::Rejected(EstablishLinkRejection::NotDirectlyReachable)
-            | EstablishLinkFailure::WriteFailed(
-                WriteEstablishLinkRejection::Serialize
-                | WriteEstablishLinkRejection::LinkTableFull
-                | WriteEstablishLinkRejection::DuplicateLinkId,
-            )
-            | EstablishLinkFailure::Timeout,
-        ) => DirectSendFailure::LinkFailed,
+        CommandFailure::NoRouteToDestination => DirectSendFailure::NoRoute,
+        CommandFailure::NodeStopped => DirectSendFailure::LocalNodeStopped,
+        _ => DirectSendFailure::LinkFailed,
     }
 }
 
@@ -283,26 +272,60 @@ impl BasicLxmfSigner for LocalLxmfIdentity {
     }
 }
 
+/// Failure to construct the fixed LXMF destination in the canonical host contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LxmfDestinationError {
+    IdentityName(ExpandNameError),
+    HostName(prns_host::DestinationNameError),
+}
+
 /// Retain a zeroizing signer and move a separate zeroizing copy into the exact
-/// direct-only Prns destination configuration.
-pub fn prepare_local_lxmf_destination<'a>(
+/// direct-only canonical host destination configuration.
+pub fn prepare_local_lxmf_destination(
     identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
-    announce_app_data: &'a [u8],
-) -> Result<(LocalLxmfIdentity, PreConfiguredDestination<'a>), ExpandNameError> {
-    let retained = LocalLxmfIdentity::from_secret_bytes(&identity)?;
-    let destination = PreConfiguredDestination::Single {
-        app_name: prns_lxmf_wire::LXMF_APP_NAME,
-        aspects: prns_lxmf_wire::LXMF_DELIVERY_ASPECTS,
-        identity,
+    announce_app_data: &[u8],
+) -> Result<(LocalLxmfIdentity, prns_host::DestinationConfig), LxmfDestinationError> {
+    prepare_lxmf_destination(
+        &identity,
+        prns_host::DestinationIdentityConfig::Dedicated(prns_host::IdentityConfig::Existing(
+            prns_host::IdentitySecret::new(*identity),
+        )),
         announce_app_data,
-        proof: ProofStrategy::ProveAll,
-        link_requests: LinkRequestPolicy::AcceptAll,
-        ratchet: RatchetPolicy::NoRatchets,
-        resource_strategy: ResourceStrategy::AcceptNone,
-        maximum_request_bytes: ByteLimit::Maximum(0),
-        request_endpoints: ServeMyRequestEndpoints::No,
-    };
-    Ok((retained, destination))
+    )
+}
+
+/// Retain the LXMF signer while using the host's identity for its destination.
+/// The caller must configure the host with this same identity. Neither the
+/// borrowed secret nor a separate destination identity is retained in the config.
+pub fn prepare_host_lxmf_destination(
+    host_identity: &[u8; IDENTITY_SECRET_KEY_LEN],
+    announce_app_data: &[u8],
+) -> Result<(LocalLxmfIdentity, prns_host::DestinationConfig), LxmfDestinationError> {
+    prepare_lxmf_destination(
+        host_identity,
+        prns_host::DestinationIdentityConfig::HostIdentity,
+        announce_app_data,
+    )
+}
+
+fn prepare_lxmf_destination(
+    secret: &[u8; IDENTITY_SECRET_KEY_LEN],
+    identity: prns_host::DestinationIdentityConfig,
+    announce_app_data: &[u8],
+) -> Result<(LocalLxmfIdentity, prns_host::DestinationConfig), LxmfDestinationError> {
+    let retained =
+        LocalLxmfIdentity::from_secret_bytes(secret).map_err(LxmfDestinationError::IdentityName)?;
+    let name = prns_host::DestinationName::try_new(
+        prns_lxmf_wire::LXMF_APP_NAME,
+        prns_lxmf_wire::LXMF_DELIVERY_ASPECTS
+            .iter()
+            .map(|aspect| (*aspect).to_owned()),
+    )
+    .map_err(LxmfDestinationError::HostName)?;
+    let mut destination = prns_host::SingleDestinationConfig::new(name, identity);
+    destination.announce_app_data = announce_app_data.to_vec();
+    destination.maximum_request_bytes = Some(0);
+    Ok((retained, prns_host::DestinationConfig::Single(destination)))
 }
 
 /// One authenticated peer learned through the accepted-announce observer.
@@ -389,56 +412,95 @@ pub struct LxmfCallbacks {
 }
 
 impl LxmfCallbacks {
-    /// Build the one authenticated accepted-announce callback installed on the node.
-    pub fn accepted_announce_observer(
+    /// Build the binding-neutral authenticated observer installed by the shared host.
+    pub fn authenticated_announce_observer(
         &self,
-    ) -> impl for<'a> FnMut(AnnounceObservation<'a>) + Send + 'static {
+    ) -> impl for<'a> FnMut(prns_host_native::AuthenticatedAnnounce<'a>) + Send + 'static {
         let callbacks = self.clone();
         move |observation| {
-            let _outcome = callbacks.on_accepted_announce(observation);
+            let _outcome = callbacks.on_authenticated_announce(&observation);
         }
     }
 
     /// Validate the authenticated identity/name association, then copy only bounded facts.
-    pub fn on_accepted_announce(&self, observation: AnnounceObservation<'_>) -> CallbackOutcome {
+    pub fn on_authenticated_announce(
+        &self,
+        observation: &prns_host_native::AuthenticatedAnnounce<'_>,
+    ) -> CallbackOutcome {
         if self.health.state() == LxmfHealthState::Stopped {
             return CallbackOutcome::Stopped;
         }
+        let identity =
+            personal_rns::identity::IdentityHash::new(observation.announced_identity.into_bytes());
         let Ok(expected) = derive_single_destination_hash(
-            &observation.announced_identity,
+            &identity,
             prns_lxmf_wire::LXMF_APP_NAME,
             prns_lxmf_wire::LXMF_DELIVERY_ASPECTS,
         ) else {
             return CallbackOutcome::InvalidDestinationAssociation;
         };
-        if expected != observation.destination {
+        if expected.as_bytes() != observation.destination.as_bytes() {
             return CallbackOutcome::InvalidDestinationAssociation;
         }
         if observation.app_data.len() > MAX_ANNOUNCE_APP_DATA_BYTES {
             return CallbackOutcome::Oversized;
         }
         let job = Job::Peer(PeerJob {
-            destination: *observation.destination.as_bytes(),
-            announced_identity: *observation.announced_identity.as_bytes(),
+            destination: observation.destination.into_bytes(),
+            announced_identity: observation.announced_identity.into_bytes(),
             app_data: observation.app_data.to_vec(),
-            observed_at_millis: observation.arrived_at.0,
+            observed_at_millis: observation.arrived_at_millis,
             is_path_response: observation.is_path_response,
         });
         self.try_enqueue(job, false)
     }
 
-    /// Route only Link DATA into the LXMF lane; diagnostics never discover peers.
+    /// Route a canonical Link DATA event only when the authenticated link belongs
+    /// to this service's registered local destination.
+    pub fn on_host_link_delivery(&self, delivery: &prns_host::LinkDelivery) -> CallbackOutcome {
+        self.on_scoped_link_delivery(
+            delivery
+                .local_destination
+                .map(prns_host::DestinationHash::into_bytes),
+            &delivery.plaintext,
+            delivery.arrived_at_millis,
+            delivery.source_interface.into_bytes(),
+        )
+    }
+
+    /// Native protocol callback compatibility; it applies the same destination
+    /// ownership check as canonical ingress and never treats all Link DATA as LXMF.
     pub fn on_prns_event(&self, event: &PrnsEvent<'_>) -> CallbackOutcome {
         let PrnsEvent::Message(Message::Delivered(Delivery::Link(delivery))) = event else {
             return CallbackOutcome::Ignored;
         };
-        if delivery.plaintext.len() > MAX_BASIC_LXMF_WIRE_BYTES {
+        self.on_scoped_link_delivery(
+            delivery
+                .local_destination
+                .map(|destination| *destination.as_bytes()),
+            delivery.plaintext,
+            delivery.arrived_at.0,
+            *delivery.source_interface.as_bytes(),
+        )
+    }
+
+    fn on_scoped_link_delivery(
+        &self,
+        local_destination: Option<[u8; 16]>,
+        plaintext: &[u8],
+        arrived_at_millis: u64,
+        source_interface: [u8; 8],
+    ) -> CallbackOutcome {
+        if local_destination != Some(self.local_destination) {
+            return CallbackOutcome::Ignored;
+        }
+        if plaintext.len() > MAX_BASIC_LXMF_WIRE_BYTES {
             return CallbackOutcome::Oversized;
         }
         let job = Job::Inbound(InboundJob {
-            wire: delivery.plaintext.to_vec(),
-            arrived_at_millis: delivery.arrived_at.0,
-            source_interface: *delivery.source_interface.as_bytes(),
+            wire: plaintext.to_vec(),
+            arrived_at_millis,
+            source_interface,
         });
         self.try_enqueue(job, true)
     }

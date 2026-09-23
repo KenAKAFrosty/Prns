@@ -2277,7 +2277,7 @@ mod tests {
 
     use personal_rns::identity::{IdentityHash, PrivateIdentityMaterial, IDENTITY_SECRET_KEY_LEN};
     use personal_rns::interfaces::InterfaceId;
-    use personal_rns::routing::announce::{derive_single_destination_hash, AnnounceObservation};
+    use personal_rns::routing::announce::derive_single_destination_hash;
     use personal_rns::routing::delivery::{Delivery, LinkDelivery};
     use personal_rns::routing::links::LinkId;
     use personal_rns::runtime::{Message, PrnsEvent};
@@ -2558,17 +2558,15 @@ mod tests {
         (material, *destination.as_bytes())
     }
 
-    fn accepted_observation<'a>(
+    fn authenticated_observation<'a>(
         destination: [u8; 16],
         identity: IdentityHash,
         app_data: &'a [u8],
-    ) -> AnnounceObservation<'a> {
-        AnnounceObservation {
-            destination: DestinationHash::new(destination),
-            announced_identity: identity,
-            hops: personal_rns::units::HopCount(1),
-            source_interface: TEST_INTERFACE,
-            arrived_at: InstantMillis(100),
+    ) -> prns_host_native::AuthenticatedAnnounce<'a> {
+        prns_host_native::AuthenticatedAnnounce {
+            destination: prns_host::DestinationHash::new(destination),
+            announced_identity: prns_host::IdentityHash::new(*identity.as_bytes()),
+            arrived_at_millis: 100,
             app_data,
             is_path_response: false,
         }
@@ -2583,6 +2581,9 @@ mod tests {
     fn link_event(wire: &[u8]) -> PrnsEvent<'_> {
         PrnsEvent::Message(Message::Delivered(Delivery::Link(LinkDelivery {
             link_id: LinkId::new([0xc7; 16]),
+            local_destination: Some(DestinationHash::new(
+                wire[..16].try_into().expect("fixture carries destination"),
+            )),
             plaintext: wire,
             arrived_at: InstantMillis(200),
             source_interface: TEST_INTERFACE,
@@ -2635,7 +2636,7 @@ mod tests {
         assert_eq!(
             service
                 .callbacks()
-                .on_accepted_announce(accepted_observation(
+                .on_authenticated_announce(&authenticated_observation(
                     destination,
                     peer.identity_hash(),
                     &announce,
@@ -3578,7 +3579,7 @@ mod tests {
         assert_eq!(
             receiver
                 .callbacks()
-                .on_accepted_announce(accepted_observation(
+                .on_authenticated_announce(&authenticated_observation(
                     *sender_destination.as_bytes(),
                     sender_material.identity_hash(),
                     &announce,

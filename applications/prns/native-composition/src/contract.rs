@@ -4,7 +4,7 @@ mod remote_wifi;
 pub use remote_wifi::*;
 
 pub const CONTRACT_FINGERPRINT: &str = env!("PRNS_APP_CONTRACT_FINGERPRINT");
-pub const HOST_CONTRACT_FINGERPRINT: &str = env!("PRNS_HOST_CONTRACT_FINGERPRINT");
+pub const HOST_CONTRACT_FINGERPRINT: &str = prns_host::HOST_SEMANTIC_FINGERPRINT;
 
 /// Storage initialization runs only on the native lifecycle/background queue.
 #[derive(Debug, Clone, PartialEq, Eq)]

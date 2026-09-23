@@ -40,6 +40,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     slug: selection.slug,
     scheme: selection.identifier,
     version: "0.0.0",
+    runtimeVersion: { policy: "fingerprint" },
     orientation: "default",
     userInterfaceStyle: "automatic",
     plugins: [

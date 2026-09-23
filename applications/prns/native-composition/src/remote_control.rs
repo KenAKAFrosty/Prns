@@ -444,6 +444,7 @@ fn announce_exchange_failure(error: RemoteControlTargetOperationError) -> Announ
         },
         RemoteControlTargetOperationError::Exchange(
             RemoteControlError::Encode(_)
+            | RemoteControlError::UnsupportedRequestKind(_)
             | RemoteControlError::Remote(_)
             | RemoteControlError::Request(SendError::Busy | SendError::PayloadTooLarge),
         ) => AnnounceStatus::Failed {

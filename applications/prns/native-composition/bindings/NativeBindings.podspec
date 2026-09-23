@@ -14,10 +14,7 @@ Pod::Spec.new do |s|
   s.platforms    = { :ios => min_ios_version_supported }
   s.source       = { :git => "https://github.com/KenAKAFrosty/Prns.git", :tag => "#{s.version}" }
 
-  # The Rust library as a dynamic framework: CocoaPods embeds it in the app
-  # and signs it with the app's identity. Nothing here is compiled.
-  s.vendored_frameworks = "ios/prns_app.xcframework"
-  # The player compiles the only native code. A missing pod here is the
-  # earliest sign that @ubjs/react-native is not a direct dependency of the app.
+  # Product namespaces share the SDK-selected Rust image.
+  s.dependency "PrnsHostExpo"
   s.dependency "UbjsReactNative"
 end

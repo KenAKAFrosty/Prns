@@ -25,7 +25,7 @@ required-features = ["uniffi-bindgen"]
 
 [features]
 default = ["uniffi-bindings"]
-uniffi-bindings = ["dep:uniffi"]
+uniffi-bindings = ["dep:uniffi", "dep:prns-host-uniffi"]
 uniffi-bindgen = ["uniffi-bindings", "uniffi/cli", "uniffi/cargo-metadata"]
 apple = [
     "dep:prns-interfaces-tokio",
@@ -35,8 +35,8 @@ apple = [
 ]
 host-test = ["personal-rns/tcp"]
 android = [
-    "dep:jni",
-    "dep:prns-ffi",
+    "dep:prns-expo-android",
+    "prns-host-native/android-platform",
     "personal-rns/bluetooth-auto",
     "personal-rns/tcp",
 ]
@@ -49,11 +49,11 @@ personal-rns = { path = "../../../personal-rns", default-features = false, featu
 prns-lxmf = { path = "../../services/lxmf", default-features = false, features = ["redb-mailbox", "tokio-host"] }
 prns-core = { path = "../../../prns-core", default-features = false, features = ["std"] }
 prns-host = { path = "../../../prns-host/core" }
-prns-host-snapshot = { path = "../../../prns-host/impls/snapshot" }
+prns-host-native = { path = "../../../prns-host/impls/native" }
+prns-host-uniffi = { path = "../../../prns-host/bindings/uniffi", optional = true }
 prns-interfaces-tokio = { path = "../../../prns-interfaces/impls/tokio", default-features = false, optional = true }
 log = { version = "0.4", default-features = false, optional = true }
-jni = { version = "0.21", default-features = false, optional = true }
-prns-ffi = { path = "../../../prns-ffi", default-features = false, optional = true }
+prns-expo-android = { path = "../../../prns-react-native/platform/android", optional = true }
 redb = "=4.2.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -64,9 +64,6 @@ tokio = { version = "1", default-features = false, features = ["macros", "rt-mul
 prns-runtime = { path = "../../../prns-runtime/core", default-features = false, features = ["remote-control-wifi-host"] }
 tempfile = "3"
 tokio = { version = "1", default-features = false, features = ["test-util"] }
-
-[build-dependencies]
-serde_json = "1"
 
 [lints]
 workspace = true

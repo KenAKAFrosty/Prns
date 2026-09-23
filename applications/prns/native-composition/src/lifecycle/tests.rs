@@ -1,5 +1,18 @@
 use super::*;
 use crate::test_support::foreign_block_on;
+use prns_host::{BackendInfo, BackendKind, Capability, PersistenceSnapshot};
+
+#[test]
+fn shared_host_persistence_failure_retains_app_reset_protection() {
+    let error =
+        prns_host_native::owner::SessionError::Stop(prns_host_native::NativeStopError::NodeFailed(
+            personal_rns::runtime::NodeRunError::PersistenceFailed,
+        ));
+    assert_eq!(
+        map_host_stop_error(error).0,
+        DevelopmentNodeStopStage::Persistence
+    );
+}
 
 fn test_describe_command(
     deadline: tokio::time::Instant,
@@ -437,6 +450,7 @@ pub(super) fn test_worker(
     };
     Worker {
         runtime: Arc::new(OnceLock::new()),
+        host: Arc::new(OnceLock::new()),
         commands,
         shutdown,
         done,
@@ -505,6 +519,26 @@ impl prns_lxmf::mailbox::MailboxSubmitter for BlockingInsertSubmitter {
 
 struct ResetCompletionSubmitter {
     inner: Arc<dyn prns_lxmf::mailbox::MailboxSubmitter>,
+}
+
+struct ResetListSubmitter {
+    inner: Arc<dyn prns_lxmf::mailbox::MailboxSubmitter>,
+}
+
+impl prns_lxmf::mailbox::MailboxSubmitter for ResetListSubmitter {
+    fn submit(
+        &self,
+        request: prns_lxmf::mailbox::MailboxRequest,
+    ) -> prns_lxmf::mailbox::MailboxFuture<'_> {
+        Box::pin(async move {
+            if matches!(&request, prns_lxmf::mailbox::MailboxRequest::List(_)) {
+                return Err(prns_lxmf::mailbox::MailboxFailure::ResetRequired(
+                    "initial mailbox projection is unreadable".to_owned(),
+                ));
+            }
+            self.inner.submit(request).await
+        })
+    }
 }
 
 impl prns_lxmf::mailbox::MailboxSubmitter for ResetCompletionSubmitter {
@@ -819,9 +853,7 @@ fn assert_offline_list_retry_cancel(supervisor: &Supervisor, destination: [u8; 1
 }
 
 async fn learn_pending_peer(service: &prns_lxmf::mailbox::DurableDirectLxmfService) -> [u8; 16] {
-    use personal_rns::interfaces::InterfaceId;
-    use personal_rns::routing::announce::{derive_single_destination_hash, AnnounceObservation};
-    use personal_rns::units::{HopCount, InstantMillis};
+    use personal_rns::routing::announce::derive_single_destination_hash;
 
     let peer_material = PrivateIdentityMaterial::from_bytes(
         [0x52; personal_rns::identity::IDENTITY_SECRET_KEY_LEN],
@@ -840,12 +872,12 @@ async fn learn_pending_peer(service: &prns_lxmf::mailbox::DurableDirectLxmfServi
     assert_eq!(
         service
             .callbacks()
-            .on_accepted_announce(AnnounceObservation {
-                destination: peer_destination,
-                announced_identity: peer_material.identity_hash(),
-                hops: HopCount(1),
-                source_interface: InterfaceId::new([4, 1, 2, 3, 4, 5, 6, 7]),
-                arrived_at: InstantMillis(4_200),
+            .on_authenticated_announce(&prns_host_native::AuthenticatedAnnounce {
+                destination: prns_host::DestinationHash::new(*peer_destination.as_bytes()),
+                announced_identity: prns_host::IdentityHash::new(
+                    *peer_material.identity_hash().as_bytes()
+                ),
+                arrived_at_millis: 4_200,
                 app_data: &announce[..announce_len],
                 is_path_response: false,
             }),
@@ -1798,6 +1830,82 @@ async fn durable_lxmf_send_accepts_and_queries_before_pending_proof() {
     .expect("proof settlement is persisted");
     service.stop().await.expect("the service stops promptly");
     owner.close().expect("the owner closes after the service");
+}
+
+#[tokio::test]
+async fn initial_mailbox_refresh_failure_stops_the_paused_service() {
+    let root = tempfile::tempdir().expect("temporary application root");
+    let database = DevelopmentStoreOwner::open(root.path(), &root.path().join("application.redb"))
+        .expect("application owner");
+    let identity = prns_lxmf::direct::LocalLxmfIdentity::from_secret_bytes(
+        &[0x31; personal_rns::identity::IDENTITY_SECRET_KEY_LEN],
+    )
+    .expect("local identity");
+    let network = Arc::new(PendingProofNetwork::default());
+    let (pending, _) = prns_lxmf::mailbox::DurableDirectLxmfService::prepare(identity);
+    let service = pending
+        .start_paused(
+            network.clone(),
+            Arc::new(ResetListSubmitter {
+                inner: database.mailbox_submitter(),
+            }),
+            Arc::new(prns_lxmf::mailbox::SystemMailboxClock),
+        )
+        .await
+        .expect("paused service starts before its initial projection");
+    let host = OwnedSession::open(prns_host::HostConfig {
+        identity: prns_host::IdentityConfig::GenerateEphemeral,
+        persistence: prns_host::PersistenceConfig::Ephemeral,
+        role: prns_host::HostRole::Endpoint,
+        destinations: Vec::new(),
+        required_capabilities: Vec::new(),
+        limits: prns_host::PrnsLimits::balanced(),
+    })
+    .await
+    .expect("native owner");
+    let client = host.client();
+    let native = client.native_services().expect("native services");
+    let (_commands, commands) = mpsc::channel(1);
+    let (_events, events) = mpsc::channel(1);
+    let (_shutdown, shutdown) = watch::channel(false);
+    let (ready, result) = std_mpsc::sync_channel(1);
+    let snapshots = Arc::new(SnapshotStore::new());
+    let actor_result = tokio::time::timeout(
+        Duration::from_secs(2),
+        run_actor(
+            native.protocols().clone(),
+            service.clone(),
+            service.subscribe(),
+            commands,
+            events,
+            Arc::new(AtomicBool::new(false)),
+            client,
+            native.clock(),
+            snapshots.clone(),
+            Arc::new(AtomicBool::new(false)),
+            ready,
+            shutdown,
+        ),
+    )
+    .await
+    .expect("startup failure must not wait for PersistenceRestored");
+    assert!(actor_result.is_err());
+    assert!(matches!(
+        result.try_recv(),
+        Ok(Err((DevelopmentNodeFailureStage::Storage, _)))
+    ));
+    assert!(matches!(
+        snapshots.read().local_host,
+        LocalHostState::DevelopmentResetRequired { .. }
+    ));
+    // Keeping this clone proves explicit actor cleanup ran: dropping the actor's
+    // service alone would leave this paused generation capable of activation.
+    assert!(!service.activate_queued_attempts().await);
+    assert_eq!(network.send_count.load(Ordering::Acquire), 0);
+    host.stop().await.expect("host joins after service cleanup");
+    database
+        .close()
+        .expect("database closes after service cleanup");
 }
 
 #[tokio::test]
@@ -3602,7 +3710,7 @@ fn identity_and_node_reopen_reset_and_recreate_in_one_process() {
     };
     assert_eq!(host.backend.backend(), BackendKind::Native);
     assert!(host.backend.supports(Capability::Bluetooth));
-    assert_eq!(host.backend.capabilities().len(), 1);
+    assert_eq!(host.backend, prns_host_native::native_backend_info());
     assert!(host.persistence.persistent);
     assert!(host.persistence.restored);
     assert!(host.revision >= 1);

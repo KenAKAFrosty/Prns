@@ -881,6 +881,7 @@ jobs:
           cache: npm
           cache-dependency-path: |
             applications/package-lock.json
+            prns-react-native/package-lock.json
             prns-js/package-lock.json
       - name: Build the provider-neutral Prns contract and install the exact application toolchain
         run: |
@@ -889,7 +890,10 @@ jobs:
           test "$(npm --version)" = "11.16.0"
           npm --prefix prns-js ci --ignore-scripts --no-audit --no-fund
           npm --prefix prns-js run build:code
+          npm --prefix prns-react-native ci --ignore-scripts --no-audit --no-fund
           npm --prefix applications ci --ignore-scripts --no-audit --no-fund
+      - name: Verify standalone React Native SDK
+        run: python3 validation/run.py run --suite react-native-sdk --expected-sha "$GITHUB_SHA"
       - name: Verify application scaffold
         run: python3 validation/run.py run --suite application-scaffold --expected-sha "$GITHUB_SHA"
 
@@ -916,6 +920,7 @@ jobs:
           cache: npm
           cache-dependency-path: |
             applications/package-lock.json
+            prns-react-native/package-lock.json
             prns-js/package-lock.json
       - name: Build the provider-neutral Prns contract and install the exact application toolchain
         run: |
@@ -924,6 +929,7 @@ jobs:
           test "$(npm --version)" = "11.16.0"
           npm --prefix prns-js ci --ignore-scripts --no-audit --no-fund
           npm --prefix prns-js run build:code
+          npm --prefix prns-react-native ci --ignore-scripts --no-audit --no-fund
           npm --prefix applications ci --ignore-scripts --no-audit --no-fund
       - name: Verify native application foundation
         run: python3 validation/run.py run --suite application-native-foundation --expected-sha "$GITHUB_SHA"
