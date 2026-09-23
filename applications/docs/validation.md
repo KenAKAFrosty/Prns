@@ -5,6 +5,12 @@ mobile implementation uses generated UniFFI bindings and one shared Rust image;
 see the [binding boundary](../prns/native-composition/bindings/README.md).
 Browser and Tauri runtime providers are not implemented.
 
+The [September 23 upstream refresh](../checkpoints/2026-09-23-upstream-refresh.md)
+preserves the maintainer's merged pairing/Bluetooth changes, adopts early L2CAP
+frame rejection and updates the app's Expo patch versions. Full app checks pass
+with 190 native unit tests, four integration tests, 59 SDK tests and 325 UI tests.
+It records source validation, not a new phone installation or hardware acceptance.
+
 The [September 23 ordinary CoreBluetooth feasibility](../checkpoints/2026-09-23-ordinary-corebluetooth.md)
 removes the iOS accessory requirement and selects dual-role AutoBLE while retaining
 native restoration. Its retained-data MetalbeardMobile Release installation now
