@@ -33,6 +33,7 @@ use crate::engine::{
     SetRegisteredAnnounceAppData, Settlement, PATH_REQUEST_ID_LEN,
 };
 use crate::identity::IdentityHash;
+use crate::interfaces::rns_management::RnsRemotePathTableRequest;
 use crate::interfaces::InterfaceId;
 use crate::manifold::driver::{HostCommand, LocalCommandProducer};
 use crate::routing::links::channel::MessageType;
@@ -743,6 +744,14 @@ impl super::PrnsNodeApi for PrnsNodeHandle {
 
     fn respond_packed(&self, responder: RespondToken, packed: &[u8]) -> bool {
         self.respond_packed(responder, packed).is_some()
+    }
+
+    async fn respond_rns_path_table(
+        &self,
+        responder: RespondToken,
+        request: RnsRemotePathTableRequest,
+    ) -> bool {
+        self.respond_rns_path_table(responder, request).await
     }
 
     fn close_link(&self, link_id: LinkId) -> bool {

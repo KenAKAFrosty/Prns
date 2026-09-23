@@ -177,6 +177,21 @@ impl RemoteControlTargetPairingState {
                     },
                 }
             }
+            Err(
+                super::super::RemoteControlPairingPreparedOfferError::RequestUnsupportedForVersion {
+                    version,
+                    request,
+                },
+            ) => {
+                return BeginRemoteControlTargetPairingOutcome::Rejected {
+                    rejected: arrival.responder,
+                    reason:
+                        RemoteControlTargetPairingBeginRejection::RequestUnsupportedForVersion {
+                            version,
+                            request,
+                        },
+                }
+            }
         };
         let (offer, transcript) = prepared.into_parts();
         let attempt = RemoteControlTargetPairingAttempt { transcript, window };
