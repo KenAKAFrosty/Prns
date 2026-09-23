@@ -52,7 +52,7 @@ Source anchors: [Inbox](../prns/app/src/features/inbox/inbox-screen.native.tsx),
 [native composition](../prns/native-composition/src/lifecycle.rs),
 [LXMF peer owner](../services/lxmf/src/direct.rs),
 [durable messaging owner](../services/lxmf/src/mailbox.rs), and
-[iOS admission](../sdk/expo/ios/PrnsBluetoothCoordinator.swift).
+[iOS admission](../prns/platform/ios/PrnsBluetoothCoordinator.swift).
 
 The historical local `scratch/prns-app/product-and-ux.md` already called
 for Saved/Discovered contacts, local-node-first navigation, local interfaces and

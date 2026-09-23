@@ -3,7 +3,19 @@
 This is a development application, not a release-qualified client. The current
 mobile implementation uses generated UniFFI bindings and one shared Rust image;
 see the [binding boundary](../prns/native-composition/bindings/README.md).
-Browser and Tauri runtime providers are not implemented.
+Browser and Tauri providers for the full application are not implemented. The
+general Expo SDK's web entry delegates to the existing PRNS browser host.
+
+The current source includes the [general React Native SDK migration and cleanup](react-native-sdk-implementation.md).
+Shared host ownership and generic mobile mechanics now live below app policy and
+LXMF. That record separates source tests, packed-consumer checks and simulator
+results from release qualification.
+
+The [September 23 SDK mobile checkpoint](../checkpoints/2026-09-23-sdk-mobile.md)
+records new retained-data builds on the Galaxy S9+ and MetalbeardMobile, the E290
+firmware update, binding-lifetime defects found on real Hermes runtimes, and
+remaining device checks. The older checkpoints below describe different sources
+and binaries and do not qualify the current migration.
 
 The [September 23 upstream refresh](../checkpoints/2026-09-23-upstream-refresh.md)
 preserves the maintainer's merged pairing/Bluetooth changes, adopts early L2CAP

@@ -54,7 +54,7 @@ start the node or use the in-app Stop control.
 Install the Android SDK, JDK 21, the repository Rust toolchain, and the Rust
 `aarch64-linux-android` target. Set `ANDROID_HOME` to the SDK directory. Install
 the NDK revision and `cargo-ndk` version recorded in
-[`vendor/ubrn/source-lock.json`](../vendor/ubrn/source-lock.json); the build helper
+[`vendor/ubrn/source-lock.json`](../../vendor/ubrn/source-lock.json); the build helper
 rejects a different NDK. Follow the [workspace setup](../README.md#setup) to
 install the JavaScript dependencies and build the core contract. The
 [generation guide](../tools/generated-bindings/README.md) explains target
@@ -105,8 +105,11 @@ not a claim of seamless radio-toggle recovery.
 ### Physical evidence before the generated-binding cutover
 
 The September 8–9 Galaxy S9+/Android 10 trials used the previous bridge.
-They do not qualify the current generated-binding build. Fresh physical
-pairing, messaging and lifecycle checks on that build are pending; see
+They do not qualify the current generated-binding build. The later
+[September 23 SDK checkpoint](../checkpoints/2026-09-23-sdk-mobile.md) records
+current-image retained-data lifecycle checks, real Hermes replacement and
+proof-backed phone-to-phone messaging. Fresh pairing, longer idle and newer
+Android permission/service behavior remain separate qualification; see
 [current validation and limits](validation.md).
 
 The historical clean combined APK/firmware passed twenty-two radio off/on

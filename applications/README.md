@@ -8,6 +8,7 @@ services. It consumes public core APIs; the core does not depend on this tree.
 - [App behavior and routes](prns/app/README.md)
 - [iOS development](docs/ios.md) and [Android development](docs/android.md)
 - [Current validation and limits](docs/validation.md)
+- [React Native SDK ownership and implementation](docs/react-native-sdk-implementation.md)
 - [Implementation roadmap](docs/roadmap.md)
 - [Expanded remote-control plan](docs/remote-control-expansion.md)
 - [Proposed two-phone local-node demo](docs/phone-node-demo.md)
@@ -21,12 +22,14 @@ not current setup instructions. The original scratch plans are design history.
 | Path | Responsibility |
 | --- | --- |
 | `prns/app` | Expo screens, navigation and application UI |
-| `prns/native-composition/src` | Rust application policy, storage, command admission and the process-owned node |
-| `prns/native-composition/bindings` | Generated JavaScript interface and the single shared Rust image packaged for each mobile target |
-| `sdk/expo` | SDK admission plus native storage, lifecycle, permissions and Bluetooth integration; generated Swift/Kotlin views use the same Rust image |
+| `prns/native-composition/src` | Rust application policy, storage, service composition and ownership of the shared host session |
+| `prns/native-composition/bindings` | Generated product interface; imports shared host converters and borrows the SDK-selected native image |
+| `prns/platform` | App storage/startup/reset admission, notification presentation and product platform facade; delegates generic lifecycle and Bluetooth mechanics to the SDK |
 | `services` | Reusable application services, including LXMF and its wire format |
-| `tools/generated-bindings` | Generation, ownership checks and mobile build orchestration |
-| `vendor/ubrn` | Pinned upstream runtime archives, patches and provenance |
+| `../prns-host/impls/native` | Shared native runtime, queues/resources, readiness and joined shutdown used by C, UniFFI and native services |
+| `../prns-react-native` | General Expo SDK, generated host bindings, reusable mobile mechanics and packaging of the one selected native image |
+| `tools/generated-bindings` | App generation recipe using shared `../tools/uniffi` orchestration |
+| `../vendor/ubrn` | Shared pinned upstream runtime archives, patches and provenance |
 
 Start with the [binding boundary](prns/native-composition/bindings/README.md) for
 generated values, cancellation and native ownership. Edit Rust declarations and
@@ -46,8 +49,12 @@ application workspace:
 ```sh
 npm --prefix prns-js ci --ignore-scripts --no-audit --no-fund
 npm --prefix prns-js run build:code
+npm --prefix prns-react-native ci --ignore-scripts --no-audit --no-fund
 npm --prefix applications ci --ignore-scripts --no-audit --no-fund
 ```
+
+The SDK has its own locked development dependencies. Install them even when
+working only on the app: platform typechecking follows the SDK source package.
 
 The committed runtime archives make installation independent of mobile build
 tools. Xcode is required for iOS builds and Swift tests. Android builds require
@@ -66,7 +73,8 @@ npm --prefix applications run verify
 npm --prefix applications run mobility:verify
 ```
 
-`verify` runs the portable Rust, generated-output, SDK, UI and web checks.
+`verify` runs the portable Rust, generated-output, SDK, aggregate foreign-object
+sharing, UI and web checks.
 `mobility:verify` checks a clean tracked export against the exact core revision
 and includes native/Python LXMF interoperability. On macOS, also run the explicit
 Swift lifecycle and release-symbol tests:

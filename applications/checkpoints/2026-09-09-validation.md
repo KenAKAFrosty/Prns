@@ -713,7 +713,7 @@ generated binary values, with one additional outbound-preparation method.
 
 The generator and runtime are pinned to upstream jsi2 source
 `67af14f7a1b60758664cd3a4a50c235fa0b469c6`, with the four recorded patches in
-[`vendor/ubrn`](../vendor/ubrn/README.md). Upstream PR 460 remains a draft at this
+[`vendor/ubrn`](../../vendor/ubrn/README.md). Upstream PR 460 remains a draft at this
 checkpoint. This is an explicit temporary runtime dependency, with source and
 artifact verification and a documented replacement procedure. It is not an
 upstream release qualification.
