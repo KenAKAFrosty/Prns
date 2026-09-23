@@ -1,5 +1,5 @@
 use prns_core::interfaces::bluetooth_auto::{
-    AppleHost, BleIdentity, Control, Endpoint, LinkCapabilities, PeerProtocol,
+    AppleHost, BleIdentity, Control, Endpoint, LinkCapabilities, PeerDiscoveryGroups, PeerProtocol,
 };
 use tokio::sync::{mpsc, oneshot};
 
@@ -49,12 +49,14 @@ fn greetings() -> [Control; 2] {
             endpoint,
             capabilities,
             peer_rssi: None,
+            discovery_groups: PeerDiscoveryGroups::LegacyReticulum,
         },
         Control::Welcome {
             identity,
             endpoint,
             capabilities,
             peer_rssi: Some(-47),
+            discovery_groups: PeerDiscoveryGroups::LegacyReticulum,
         },
     ]
 }
