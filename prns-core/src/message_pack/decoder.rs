@@ -1,10 +1,91 @@
-#[cfg(feature = "alloc")]
 use core::str;
 
-use rmp::decode::{read_marker, Bytes, RmpRead};
-use rmp::Marker;
-
 use super::MessagePackDecodeError;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Marker {
+    FixPos(u8),
+    FixMap(u8),
+    FixArray(u8),
+    FixStr(u8),
+    Null,
+    Reserved,
+    False,
+    True,
+    Bin8,
+    Bin16,
+    Bin32,
+    Ext8,
+    Ext16,
+    Ext32,
+    F32,
+    F64,
+    U8,
+    U16,
+    U32,
+    U64,
+    I8,
+    I16,
+    I32,
+    I64,
+    FixExt1,
+    FixExt2,
+    FixExt4,
+    FixExt8,
+    FixExt16,
+    Str8,
+    Str16,
+    Str32,
+    Array16,
+    Array32,
+    Map16,
+    Map32,
+    FixNeg(i8),
+}
+
+impl Marker {
+    const fn from_u8(value: u8) -> Self {
+        match value {
+            0x00..=0x7f => Self::FixPos(value),
+            0x80..=0x8f => Self::FixMap(value & 0x0f),
+            0x90..=0x9f => Self::FixArray(value & 0x0f),
+            0xa0..=0xbf => Self::FixStr(value & 0x1f),
+            0xc0 => Self::Null,
+            0xc1 => Self::Reserved,
+            0xc2 => Self::False,
+            0xc3 => Self::True,
+            0xc4 => Self::Bin8,
+            0xc5 => Self::Bin16,
+            0xc6 => Self::Bin32,
+            0xc7 => Self::Ext8,
+            0xc8 => Self::Ext16,
+            0xc9 => Self::Ext32,
+            0xca => Self::F32,
+            0xcb => Self::F64,
+            0xcc => Self::U8,
+            0xcd => Self::U16,
+            0xce => Self::U32,
+            0xcf => Self::U64,
+            0xd0 => Self::I8,
+            0xd1 => Self::I16,
+            0xd2 => Self::I32,
+            0xd3 => Self::I64,
+            0xd4 => Self::FixExt1,
+            0xd5 => Self::FixExt2,
+            0xd6 => Self::FixExt4,
+            0xd7 => Self::FixExt8,
+            0xd8 => Self::FixExt16,
+            0xd9 => Self::Str8,
+            0xda => Self::Str16,
+            0xdb => Self::Str32,
+            0xdc => Self::Array16,
+            0xdd => Self::Array32,
+            0xde => Self::Map16,
+            0xdf => Self::Map32,
+            0xe0..=0xff => Self::FixNeg(value as i8),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MessagePackInteger {
@@ -13,22 +94,20 @@ pub(crate) enum MessagePackInteger {
 }
 
 pub(crate) struct MessagePackReader<'a> {
-    bytes: Bytes<'a>,
+    bytes: &'a [u8],
 }
 
 impl<'a> MessagePackReader<'a> {
     pub(crate) fn new(bytes: &'a [u8]) -> Self {
-        Self {
-            bytes: Bytes::new(bytes),
-        }
+        Self { bytes }
     }
 
     pub(crate) fn marker(&mut self) -> Result<Marker, MessagePackDecodeError> {
-        read_marker(&mut self.bytes).map_err(|_| MessagePackDecodeError)
+        self.u8().map(Marker::from_u8)
     }
 
     pub(crate) fn is_finished(&self) -> bool {
-        self.bytes.remaining_slice().is_empty()
+        self.bytes.is_empty()
     }
 
     pub(crate) fn array_length(
@@ -43,7 +122,11 @@ impl<'a> MessagePackReader<'a> {
         }
     }
 
-    #[cfg(feature = "alloc")]
+    #[cfg(any(
+        feature = "rnx",
+        feature = "shared-instance-rpc",
+        feature = "signed-artifact"
+    ))]
     pub(crate) fn map_length(
         &mut self,
         marker: Marker,
@@ -56,7 +139,6 @@ impl<'a> MessagePackReader<'a> {
         }
     }
 
-    #[cfg(feature = "alloc")]
     pub(crate) const fn is_string(marker: Marker) -> bool {
         matches!(
             marker,
@@ -64,7 +146,6 @@ impl<'a> MessagePackReader<'a> {
         )
     }
 
-    #[cfg(feature = "alloc")]
     pub(crate) fn string(
         &mut self,
         marker: Marker,
@@ -132,6 +213,11 @@ impl<'a> MessagePackReader<'a> {
         Ok(Some(integer))
     }
 
+    #[cfg(any(
+        feature = "rnx",
+        feature = "shared-instance-rpc",
+        feature = "signed-artifact"
+    ))]
     pub(crate) fn float(&mut self, marker: Marker) -> Result<Option<f64>, MessagePackDecodeError> {
         match marker {
             Marker::F32 => Ok(Some(f64::from(f32::from_bits(self.u32()?)))),
@@ -140,7 +226,7 @@ impl<'a> MessagePackReader<'a> {
         }
     }
 
-    #[cfg(feature = "shared-instance-rpc")]
+    #[cfg(feature = "rns-management-wire")]
     pub(crate) fn skip_value(
         &mut self,
         marker: Marker,
@@ -226,7 +312,7 @@ impl<'a> MessagePackReader<'a> {
         Ok(())
     }
 
-    #[cfg(feature = "shared-instance-rpc")]
+    #[cfg(feature = "rns-management-wire")]
     fn skip_sequence(
         &mut self,
         length: usize,
@@ -245,21 +331,23 @@ impl<'a> MessagePackReader<'a> {
     }
 
     fn bytes(&mut self, length: usize) -> Result<&'a [u8], MessagePackDecodeError> {
-        let remaining = self.bytes.remaining_slice();
-        let (value, after) = remaining
+        let (value, after) = self
+            .bytes
             .split_at_checked(length)
             .ok_or(MessagePackDecodeError)?;
-        self.bytes = Bytes::new(after);
+        self.bytes = after;
         Ok(value)
     }
 
-    #[cfg(feature = "shared-instance-rpc")]
+    #[cfg(feature = "rns-management-wire")]
     fn skip(&mut self, length: usize) -> Result<(), MessagePackDecodeError> {
         self.bytes(length).map(|_| ())
     }
 
     fn u8(&mut self) -> Result<u8, MessagePackDecodeError> {
-        self.bytes.read_u8().map_err(|_| MessagePackDecodeError)
+        let (&value, after) = self.bytes.split_first().ok_or(MessagePackDecodeError)?;
+        self.bytes = after;
+        Ok(value)
     }
 
     fn u16(&mut self) -> Result<u16, MessagePackDecodeError> {

@@ -1542,6 +1542,7 @@ fn reference_interface(config: &InterfaceConfig) -> Result<ReferenceInterface, C
             "AutoInterface",
             ReferenceConfigParams::Auto {
                 group_id: group_id.clone(),
+                group_ids: None,
                 discovery_scope: discovery_scope.map(|scope| {
                     match scope {
                         prns_host::DiscoveryScope::Link => "link",
@@ -1803,7 +1804,10 @@ fn reference_interface(config: &InterfaceConfig) -> Result<ReferenceInterface, C
         InterfaceConfig::AutomaticUsb => ("PrnsUsbAuto", ReferenceConfigParams::PrnsUsbAuto, None),
         InterfaceConfig::AutomaticBluetoothLe => (
             "PrnsBluetoothAuto",
-            ReferenceConfigParams::PrnsBluetoothAuto,
+            ReferenceConfigParams::PrnsBluetoothAuto {
+                group_id: None,
+                group_ids: None,
+            },
             None,
         ),
         InterfaceConfig::WebSocketClient { target, framing } => (

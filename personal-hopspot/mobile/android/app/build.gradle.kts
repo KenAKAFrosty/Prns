@@ -124,6 +124,7 @@ tasks.register("verifyExperimentalWifiDirectDisabled")
 dependencies {
     implementation(libs.usb.serial)
     testImplementation(libs.junit)
+    testImplementation(libs.mockito.core)
 }
 
 afterEvaluate {

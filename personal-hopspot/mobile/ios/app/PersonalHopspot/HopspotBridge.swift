@@ -124,3 +124,83 @@ final class HopspotBridge: ObservableObject {
         )
     }
 }
+
+enum DiscoveryInterface: Int32 {
+    case bluetoothAuto = 0
+    case autoWifi = 1
+}
+
+enum DiscoveryGroupOutcome: Int32, Error {
+    case applied = 0
+    case unchanged = 1
+    case engineUnavailable = 2
+    case unsupported = 3
+    case invalidInterface = 4
+    case invalidEncoding = 5
+    case bufferTooShort = 6
+    case applyFailed = 7
+    case busy = 8
+}
+
+enum DiscoveryGroupsClient {
+    static func inventory(_ interface: DiscoveryInterface) -> Result<[String], DiscoveryGroupOutcome> {
+        var encoded = [UInt8](
+            repeating: 0,
+            count: Int(hopspot_discovery_groups_wire_capacity())
+        )
+        let result = encoded.withUnsafeMutableBufferPointer { buffer in
+            hopspot_discovery_groups(interface.rawValue, buffer.baseAddress, buffer.count)
+        }
+        guard result >= 0 else {
+            let code = -1 - result
+            return .failure(DiscoveryGroupOutcome(rawValue: code) ?? .invalidEncoding)
+        }
+        guard result > 0, Int(result) <= encoded.count else {
+            return .failure(.invalidEncoding)
+        }
+        let resultLength = Int(result)
+        var offset = 0
+        let count = Int(encoded[offset])
+        offset += 1
+        var groups: [String] = []
+        groups.reserveCapacity(count)
+        for _ in 0..<count {
+            guard offset < resultLength else { return .failure(.invalidEncoding) }
+            let length = Int(encoded[offset])
+            offset += 1
+            guard length > 0, offset + length <= resultLength else {
+                return .failure(.invalidEncoding)
+            }
+            let bytes = encoded[offset..<(offset + length)]
+            guard let group = String(bytes: bytes, encoding: .utf8) else {
+                return .failure(.invalidEncoding)
+            }
+            groups.append(group)
+            offset += length
+        }
+        guard offset == resultLength else { return .failure(.invalidEncoding) }
+        return .success(groups)
+    }
+
+    static func replace(
+        _ interface: DiscoveryInterface,
+        groups: [String]
+    ) -> DiscoveryGroupOutcome {
+        guard (1...4).contains(groups.count) else { return .invalidEncoding }
+        let canonical = groups.map { Array($0.utf8) }.sorted {
+            $0.lexicographicallyPrecedes($1)
+        }
+        var encoded = [UInt8]()
+        encoded.reserveCapacity(Int(hopspot_discovery_groups_wire_capacity()))
+        encoded.append(UInt8(canonical.count))
+        for bytes in canonical {
+            guard (1...32).contains(bytes.count) else { return .invalidEncoding }
+            encoded.append(UInt8(bytes.count))
+            encoded.append(contentsOf: bytes)
+        }
+        let result = encoded.withUnsafeBufferPointer { buffer in
+            hopspot_replace_discovery_groups(interface.rawValue, buffer.baseAddress, buffer.count)
+        }
+        return DiscoveryGroupOutcome(rawValue: result) ?? .invalidEncoding
+    }
+}

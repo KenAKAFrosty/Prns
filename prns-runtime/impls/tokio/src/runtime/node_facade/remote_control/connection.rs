@@ -16,10 +16,11 @@ use prns_core::interfaces::InterfaceMode;
 use prns_core::remote_control::{
     RemoteControlApplyOutcome, RemoteControlAuthorizeControllerOutcome, RemoteControlBuildVersion,
     RemoteControlControllerIdentity, RemoteControlControllerInventory, RemoteControlControllerPage,
-    RemoteControlDescription, RemoteControlDisplayAutoOff, RemoteControlDisplayVisibility,
-    RemoteControlEspRadioMode, RemoteControlGnssPower, RemoteControlGroupOutcome,
-    RemoteControlInterfaceConfigOutcome, RemoteControlInterfaceGroup,
-    RemoteControlInterfaceInventory, RemoteControlInterfacePage,
+    RemoteControlDescription, RemoteControlDiscoveryGroups,
+    RemoteControlDiscoveryGroupsInventoryOutcome, RemoteControlDiscoveryGroupsReplaceOutcome,
+    RemoteControlDisplayAutoOff, RemoteControlDisplayVisibility, RemoteControlEspRadioMode,
+    RemoteControlGnssPower, RemoteControlGroupOutcome, RemoteControlInterfaceConfigOutcome,
+    RemoteControlInterfaceGroup, RemoteControlInterfaceInventory, RemoteControlInterfacePage,
     RemoteControlInterfacePeersOutcome, RemoteControlInterfacePower, RemoteControlLoRaOutcome,
     RemoteControlLoRaProfile, RemoteControlModeOutcome, RemoteControlPeerPage,
     RemoteControlPowerOutcome, RemoteControlRequestKind, RemoteControlRequestSet,
@@ -247,6 +248,37 @@ impl RemoteControlTargetHandle<'_> {
             .admit(RemoteControlRequestKind::SetInterfaceGroup)?;
         self.remote_control
             .set_interface_group(id, group)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn inventory_interface_discovery_groups(
+        &self,
+        id: InterfaceId,
+    ) -> Result<
+        (RemoteControlDiscoveryGroupsInventoryOutcome, RttMillis),
+        RemoteControlTargetOperationError,
+    > {
+        self.connection
+            .admit(RemoteControlRequestKind::InventoryInterfaceDiscoveryGroups)?;
+        self.remote_control
+            .inventory_interface_discovery_groups(id)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn replace_interface_discovery_groups(
+        &self,
+        id: InterfaceId,
+        groups: RemoteControlDiscoveryGroups,
+    ) -> Result<
+        (RemoteControlDiscoveryGroupsReplaceOutcome, RttMillis),
+        RemoteControlTargetOperationError,
+    > {
+        self.connection
+            .admit(RemoteControlRequestKind::ReplaceInterfaceDiscoveryGroups)?;
+        self.remote_control
+            .replace_interface_discovery_groups(id, groups)
             .await
             .map_err(Into::into)
     }
