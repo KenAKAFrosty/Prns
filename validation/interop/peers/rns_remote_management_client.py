@@ -6,6 +6,8 @@ import RNS
 from rns_protocol_evidence import start_reference_reticulum
 
 
+PATH_FIELDS = {"hash", "timestamp", "via", "hops", "expires", "interface"}
+
 
 def prepare(server_config, client_config, port, identity_path):
     server_config = pathlib.Path(server_config)
@@ -46,6 +48,28 @@ def prepare(server_config, client_config, port, identity_path):
         encoding="utf-8",
     )
     print(identity_hash)
+
+
+def prepare_hopspot(client_config, port, identity_path):
+    client_config = pathlib.Path(client_config)
+    client_config.mkdir(parents=True, exist_ok=True)
+    identity = RNS.Identity()
+    identity.to_file(identity_path)
+    client_config.joinpath("config").write_text(
+        "[reticulum]\n"
+        "enable_transport = No\n"
+        "share_instance = No\n"
+        "[logging]\n"
+        "loglevel = 2\n"
+        "[interfaces]\n"
+        "[[Hopspot Remote]]\n"
+        "type = TCPClientInterface\n"
+        "enabled = Yes\n"
+        "target_host = 127.0.0.1\n"
+        f"target_port = {port}\n",
+        encoding="utf-8",
+    )
+    print(identity.get_public_key().hex())
 
 
 def identity_hash(path):
@@ -166,14 +190,83 @@ def query(client_config, transport_hash, identity_path):
     )
 
 
+def query_hopspot(client_config, transport_hash, identity_path):
+    start_reference_reticulum(configdir=client_config, loglevel=RNS.LOG_ERROR)
+    transport_identity_hash = bytes.fromhex(transport_hash)
+    destination_hash = RNS.Destination.hash_from_name_and_identity(
+        "rnstransport.remote.management", transport_identity_hash
+    )
+    if not RNS.Transport.has_path(destination_hash):
+        RNS.Transport.request_path(destination_hash)
+    wait_for(
+        lambda: RNS.Transport.has_path(destination_hash),
+        10,
+        "path to Hopspot management destination was not learned",
+    )
+    remote_identity = RNS.Identity.recall(destination_hash)
+    if remote_identity is None:
+        raise RuntimeError("Hopspot management identity was not recalled")
+    destination = RNS.Destination(
+        remote_identity,
+        RNS.Destination.OUT,
+        RNS.Destination.SINGLE,
+        "rnstransport",
+        "remote",
+        "management",
+    )
+    link = RNS.Link(destination)
+    wait_for(
+        lambda: link.status == RNS.Link.ACTIVE,
+        10,
+        "Hopspot management link did not activate",
+    )
+    management_identity = RNS.Identity.from_file(identity_path)
+    if management_identity is None:
+        raise RuntimeError("Hopspot management identity did not load")
+    link.identify(management_identity)
+
+    route = RNS.Destination(
+        RNS.Identity(),
+        RNS.Destination.IN,
+        RNS.Destination.SINGLE,
+        "interop",
+        "hopspot-path",
+    )
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        route.announce()
+        time.sleep(0.25)
+        table = request(link, "/path", ["table", None, None])
+        for row in table if isinstance(table, list) else ():
+            if not isinstance(row, dict) or row.get("hash") != route.hash:
+                continue
+            if set(row) != PATH_FIELDS:
+                raise RuntimeError(f"Hopspot path row has unexpected fields: {row!r}")
+            if not isinstance(row["hops"], int) or row["hops"] < 1:
+                raise RuntimeError(f"Hopspot path row has invalid hops: {row!r}")
+            if not isinstance(row["interface"], str) or not row["interface"]:
+                raise RuntimeError(f"Hopspot path row has invalid interface: {row!r}")
+            link.teardown()
+            print(
+                f"HOPSPOT_PATH_OK hash={route.hash.hex()} "
+                f"hops={row['hops']} interface={row['interface']}"
+            )
+            return
+    raise RuntimeError("Hopspot path table omitted the live stock RNS route")
+
+
 def main():
     command = sys.argv[1]
     if command == "prepare":
         prepare(*sys.argv[2:])
+    elif command == "prepare-hopspot":
+        prepare_hopspot(*sys.argv[2:])
     elif command == "identity-hash":
         identity_hash(sys.argv[2])
     elif command == "query":
         query(*sys.argv[2:])
+    elif command == "query-hopspot":
+        query_hopspot(*sys.argv[2:])
     else:
         raise RuntimeError(f"unknown command {command}")
 

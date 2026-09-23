@@ -1,10 +1,12 @@
 mod path;
+#[cfg(feature = "shared-instance-rpc")]
 mod status;
 
 pub use path::{
     decode_remote_path_request, RnsRemotePathRequest, RnsRemotePathTableRequest,
     RnsRemoteRateTableRequest,
 };
+#[cfg(feature = "shared-instance-rpc")]
 pub use status::{decode_remote_status_request, RnsRemoteStatusRequest};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,5 +42,5 @@ fn finish<T>(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "shared-instance-rpc"))]
 mod tests;

@@ -569,6 +569,7 @@ where
                 egress: &mut egress,
                 notify,
                 commands,
+                resource_responses: handle.resource_response_receiver(),
                 lifecycle,
             },
             |journaled| {
@@ -851,6 +852,7 @@ where
                 egress,
                 notify: *notify,
                 commands: *commands,
+                resource_responses: handle.resource_response_receiver(),
                 lifecycle: *lifecycle,
             },
             |journaled| {

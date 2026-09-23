@@ -20,6 +20,7 @@ use crate::storage::StorageLayout;
 use super::embedded_persistence::{
     EmbeddedPersistenceFailure, ManifoldPersistence, RemoteControlAuthorizationSnapshot,
     RemoteControlAuthorizationSnapshotKind, StoreRemoteControlAuthorizationSnapshotOutcome,
+    DISCOVERY_GROUP_CONFIGURATION_STORES,
 };
 use super::node_facade::PrnsNodeHandle;
 use super::remote_control_pairing_authorizations::{
@@ -443,16 +444,18 @@ where
     }
 
     async fn wait_for_work(&self) {
-        match embassy_futures::select::select(
+        match embassy_futures::select::select3(
             self.stores.requests.wait(),
             self.stores.failures.ready_to_receive(),
+            self.persistence.wait_for_work(),
         )
         .await
         {
-            embassy_futures::select::Either::First(request) => {
+            embassy_futures::select::Either3::First(request) => {
                 self.stores.requests.signal(request);
             }
-            embassy_futures::select::Either::Second(()) => {}
+            embassy_futures::select::Either3::Second(()) => {}
+            embassy_futures::select::Either3::Third(()) => {}
         }
     }
 
@@ -464,6 +467,10 @@ where
         if let Some(failure) = self.pending_failure.take() {
             self.persistence
                 .observe_remote_control_pairing_failure(failure);
+            return;
+        }
+        if DISCOVERY_GROUP_CONFIGURATION_STORES.has_pending_request() {
+            self.persistence.progress(engine, now).await;
             return;
         }
         let Some(request) = self.pending_request.as_ref() else {

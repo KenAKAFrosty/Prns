@@ -17,6 +17,7 @@ pub const SUPPRESS_TTL_MS: u64 = 8_000;
 pub const DIAL_RETRY_TTL_MS: u64 = 16_000;
 pub const DIAL_FAILED_RETRY_TTL_MS: u64 = 5_000;
 pub const DIAL_PAUSE_MS: u64 = 15_000;
+pub const GROUP_MISMATCH_RETRY_TTL_MS: u64 = 60_000;
 pub const KEEPER_DUEL_WINDOW_MS: u64 = 5_000;
 pub const HANDSHAKE_SLACK: usize = 4;
 
@@ -43,6 +44,8 @@ pub enum PolicyInput {
     HandshakeFailed {
         address: BleAddress,
         origin: Origin,
+        failure: HandshakeFailureKind,
+        now_ms: u64,
     },
     DialFailed {
         address: BleAddress,
@@ -52,6 +55,12 @@ pub enum PolicyInput {
         identity: BleIdentity,
         address: BleAddress,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HandshakeFailureKind {
+    Incompatible,
+    Other,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,6 +98,7 @@ enum BackoffKind {
     Dialing,
     Suppressed,
     FailedDial,
+    GroupMismatch,
 }
 
 #[derive(Clone, Copy)]
@@ -104,6 +114,7 @@ impl Backoff {
             BackoffKind::Dialing => DIAL_RETRY_TTL_MS,
             BackoffKind::Suppressed => SUPPRESS_TTL_MS,
             BackoffKind::FailedDial => DIAL_FAILED_RETRY_TTL_MS,
+            BackoffKind::GroupMismatch => GROUP_MISMATCH_RETRY_TTL_MS,
         }
     }
 
@@ -113,7 +124,9 @@ impl Backoff {
 }
 
 pub struct ConnectionPolicy<const MAX_PEERS: usize, const DIAL_TRACK: usize> {
-    local: LocalPeer,
+    local_identity: BleIdentity,
+    local_endpoint: super::handshake::Endpoint,
+    local_capabilities: super::handshake::LinkCapabilities,
     settled: [Option<SettledSlot>; MAX_PEERS],
     backoff: [Option<Backoff>; DIAL_TRACK],
     advertising: bool,
@@ -126,7 +139,9 @@ impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionPolicy<MAX_PEERS
     #[must_use]
     pub const fn new(local: LocalPeer) -> Self {
         Self {
-            local,
+            local_identity: local.identity,
+            local_endpoint: local.endpoint,
+            local_capabilities: local.capabilities,
             settled: [None; MAX_PEERS],
             backoff: [None; DIAL_TRACK],
             advertising: false,
@@ -165,8 +180,13 @@ impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionPolicy<MAX_PEERS
                 established,
                 now_ms,
             } => self.on_settled(address, origin, established, now_ms, emit),
-            PolicyInput::HandshakeFailed { address, origin } => {
-                self.on_handshake_failed(address, origin, emit);
+            PolicyInput::HandshakeFailed {
+                address,
+                origin,
+                failure,
+                now_ms,
+            } => {
+                self.on_handshake_failed(address, origin, failure, now_ms, emit);
             }
             PolicyInput::DialFailed { address, now_ms } => self.on_dial_failed(address, now_ms),
             PolicyInput::Closed { identity, address } => self.on_closed(identity, address, emit),
@@ -209,21 +229,21 @@ impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionPolicy<MAX_PEERS
                 endpoint,
                 capabilities,
             } => (
-                l2cap_arrangement(self.local.endpoint, endpoint),
-                self.local.capabilities.l2cap.is_some() && capabilities.l2cap.is_some(),
+                l2cap_arrangement(self.local_endpoint, endpoint),
+                self.local_capabilities.l2cap.is_some() && capabilities.l2cap.is_some(),
             ),
             EstablishedTransport::ColumbaGatt => {
                 (super::handshake::L2capArrangement::GattOnly, false)
             }
         };
         if can_upgrade
-            && needs_redial(plan, role, self.local.endpoint)
+            && needs_redial(plan, role, self.local_endpoint)
             && self.find_settled_by_identity(identity).is_none()
             && self.settled_count() < MAX_PEERS
         {
             let we_open = matches!(
                 plan,
-                super::handshake::L2capArrangement::Opens(opener) if opener == self.local.endpoint
+                super::handshake::L2capArrangement::Opens(opener) if opener == self.local_endpoint
             );
             if dialed {
                 // Non-opener who dialed: pause outbound so the designated opener can take central.
@@ -241,8 +261,8 @@ impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionPolicy<MAX_PEERS
         let keeper = is_keeper(
             plan,
             role,
-            self.local.identity,
-            self.local.endpoint,
+            self.local_identity,
+            self.local_endpoint,
             identity,
         );
 
@@ -284,8 +304,8 @@ impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionPolicy<MAX_PEERS
                 l2cap_plan(
                     plan,
                     role,
-                    self.local.endpoint,
-                    &self.local.capabilities,
+                    self.local_endpoint,
+                    &self.local_capabilities,
                     &capabilities,
                 )
             }
@@ -312,10 +332,14 @@ impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionPolicy<MAX_PEERS
         &mut self,
         address: BleAddress,
         origin: Origin,
+        failure: HandshakeFailureKind,
+        now_ms: u64,
         emit: &mut F,
     ) {
         self.handshaking = self.handshaking.saturating_sub(1);
-        if matches!(origin, Origin::Dialed) {
+        if matches!(failure, HandshakeFailureKind::Incompatible) {
+            self.upsert_backoff(address, BackoffKind::GroupMismatch, now_ms);
+        } else if matches!(origin, Origin::Dialed) {
             self.clear_backoff(address);
         }
         emit(PolicyAction::NotifyClosed(address));
@@ -460,6 +484,7 @@ pub fn defaults_for_bitrate(bitrate: BitrateBps) -> InterfaceDefaults {
 mod tests {
     use super::*;
     use crate::interfaces::bluetooth_auto::{Endpoint, LinkCapabilities, Nrf52Host};
+    use crate::interfaces::DiscoveryGroupSet;
 
     const CAPS: LinkCapabilities = LinkCapabilities {
         l2cap: None,
@@ -475,6 +500,7 @@ mod tests {
             identity: BleIdentity::new([identity; 16]),
             endpoint: endpoint(),
             capabilities: CAPS,
+            discovery_groups: DiscoveryGroupSet::reticulum().hashes(),
         }
     }
 
@@ -705,6 +731,7 @@ mod tests {
             identity: BleIdentity::new([1; 16]),
             endpoint: Endpoint::Android(AndroidHost::Android),
             capabilities,
+            discovery_groups: DiscoveryGroupSet::reticulum().hashes(),
         });
         manager.start(&mut |_| {});
 
@@ -751,6 +778,7 @@ mod tests {
             identity: BleIdentity::new([1; 16]),
             endpoint: Endpoint::CoreBluetooth(AppleHost::MacOs),
             capabilities,
+            discovery_groups: DiscoveryGroupSet::reticulum().hashes(),
         });
         manager.start(&mut |_| {});
 
@@ -887,6 +915,7 @@ mod tests {
             identity: BleIdentity::new([1; 16]),
             endpoint: Endpoint::Esp32(Esp32Host::Esp32),
             capabilities: l2cap_caps,
+            discovery_groups: DiscoveryGroupSet::reticulum().hashes(),
         };
         let mut manager = ConnectionPolicy::<2, 8>::new(me);
         manager.start(&mut |_| {});
@@ -1127,6 +1156,8 @@ mod tests {
             PolicyInput::HandshakeFailed {
                 address: addr(7),
                 origin: Origin::Accepted,
+                failure: HandshakeFailureKind::Other,
+                now_ms: 10,
             },
         );
         assert_eq!(actions, std::vec![PolicyAction::NotifyClosed(addr(7))]);
@@ -1159,12 +1190,55 @@ mod tests {
             PolicyInput::HandshakeFailed {
                 address: addr(7),
                 origin: Origin::Accepted,
+                failure: HandshakeFailureKind::Other,
+                now_ms: 10,
             },
             &mut |_| {},
         );
         assert!(
             manager.begin_handshake(Origin::Accepted),
             "a completed handshake frees an in-flight slot"
+        );
+    }
+
+    #[test]
+    fn an_incompatible_peer_is_cooled_down_for_sixty_seconds() {
+        let mut manager = ConnectionPolicy::<2, 8>::new(local(1));
+        manager.start(&mut |_| {});
+        let first = collect(
+            &mut manager,
+            PolicyInput::Sighting {
+                address: addr(7),
+                now_ms: 1,
+            },
+        );
+        assert_eq!(first, std::vec![PolicyAction::Dial(addr(7))]);
+        collect(
+            &mut manager,
+            PolicyInput::HandshakeFailed {
+                address: addr(7),
+                origin: Origin::Dialed,
+                failure: HandshakeFailureKind::Incompatible,
+                now_ms: 2,
+            },
+        );
+        assert!(collect(
+            &mut manager,
+            PolicyInput::Sighting {
+                address: addr(7),
+                now_ms: GROUP_MISMATCH_RETRY_TTL_MS,
+            },
+        )
+        .is_empty());
+        assert_eq!(
+            collect(
+                &mut manager,
+                PolicyInput::Sighting {
+                    address: addr(7),
+                    now_ms: GROUP_MISMATCH_RETRY_TTL_MS + 2,
+                },
+            ),
+            std::vec![PolicyAction::Dial(addr(7))]
         );
     }
 }
