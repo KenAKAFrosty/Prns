@@ -70,7 +70,9 @@ pub use crate::wire::WireError as EgressSerializeError;
 pub use command_execution::CommandTiming;
 pub use commands::*;
 pub use destination_retirement::RetireDestinationOutcome;
-pub use introspection::{ActiveLinkSnapshot, AnnounceRateState, RouteSnapshot};
+pub use introspection::{
+    ActiveLinkSnapshot, AnnounceRateState, BoundedRouteSnapshots, RouteSnapshot,
+};
 pub use node_egress::ReemitAnnounce;
 #[cfg(test)]
 pub(crate) use node_ingress::drive_packet_to_quiescence;

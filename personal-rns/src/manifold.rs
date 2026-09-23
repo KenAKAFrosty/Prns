@@ -30,7 +30,7 @@ pub mod embassy {
         embassy_grant_lane, run, run_with_deciders, run_with_store, EmbassyEgress,
         EmbassyGrantConsumer, EmbassyGrantProducer, EmbassyHost, EmbassyInterfaceSeam,
         EmbassyInterfaceStatus, InterfaceLifecycle, ManifoldEgress, ManifoldWiring, PooledEgress,
-        PooledWiring,
+        PooledWiring, RNS_PATH_TABLE_RESPONSE_BYTES,
     };
     pub use prns_runtime_embassy::manifold::timebase::EmbassyTimebase;
 }

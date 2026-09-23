@@ -156,6 +156,11 @@ pub async fn run(spawner: Spawner) {
     let persistence = PERSISTENCE.init(persistence);
 
     spawner.spawn(manifold_task(node, persistence).expect("manifold task fits"));
+    if let Some(groups) = personal_rns::runtime::restored_discovery_groups(BLE_SUPERVISOR_ID).await
+    {
+        let _ = personal_rns::bluetooth_auto::BluetoothAutoStatus::new(&BLE_SHARED)
+            .restore_discovery_groups_before_start(groups);
+    }
     spawner.spawn(usb_device_task(usb_rx, usb_tx, usb_seam).expect("USB task fits"));
     spawner.spawn(
         ble_task(spawner, bluetooth, mac, ble_identity, ble_fleet).expect("Bluetooth task fits"),

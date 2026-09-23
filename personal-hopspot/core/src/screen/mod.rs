@@ -16,9 +16,10 @@ pub use notice::PresentedNoticeTimer;
 pub use render::cards::card_label_max_chars;
 pub use state::{
     apply_and_persist_subg_configuration, AccessPointState, ActiveSubGConfiguration,
-    GnssAvailability, InputEvent, PersistenceNotice, SharedInstanceConfigExport,
-    SubGConfigurationChangeResult, SubGConfigurationPersistenceOutcome,
-    SubGConfigurationStepOutcome, UiAction, UiConfiguration, UiNotice, UiState, UserBlanking,
+    DiscoveryGroupEditorAvailability, DiscoveryGroupReplacement, GnssAvailability, InputEvent,
+    PersistenceNotice, SharedInstanceConfigExport, SubGConfigurationChangeResult,
+    SubGConfigurationPersistenceOutcome, SubGConfigurationStepOutcome, UiAction, UiConfiguration,
+    UiNotice, UiState, UserBlanking,
 };
 
 #[cfg(test)]

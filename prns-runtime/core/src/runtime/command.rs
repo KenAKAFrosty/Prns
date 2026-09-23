@@ -13,6 +13,7 @@ use crate::identity::{
     IdentityHash, MarkDestinationUsedOutcome, ReleaseDestinationOutcome, RetainDestinationOutcome,
     RetainIdentityOutcome,
 };
+use crate::interfaces::rns_management::RnsRemotePathTableRequest;
 use crate::routing::links::LinkId;
 use crate::wire::{DestinationHash, TransportId};
 
@@ -204,6 +205,14 @@ pub trait PrnsNodeApi: RemoteControlControllerGrantControl {
     ) -> Result<(), SendError<SendGroupFailure>>;
 
     fn respond_packed(&self, responder: RespondToken, packed: &[u8]) -> bool;
+
+    async fn respond_rns_path_table(
+        &self,
+        _responder: RespondToken,
+        _request: RnsRemotePathTableRequest,
+    ) -> bool {
+        false
+    }
 
     fn close_link(&self, link_id: LinkId) -> bool;
 }

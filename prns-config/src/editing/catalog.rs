@@ -168,6 +168,7 @@ impl InterfaceSettingSpec {
             | interface_key::MAX_RECONNECT_TRIES
             | interface_key::PREFER_IPV6
             | interface_key::GROUP_ID
+            | interface_key::GROUP_IDS
             | interface_key::DISCOVERY_SCOPE
             | interface_key::DISCOVERY_PORT
             | interface_key::DATA_PORT
@@ -470,7 +471,10 @@ impl InterfaceSettingSpec {
                 "Requests stock RNS warning suppression; Prns intentionally does not apply this setting."
             }
             interface_key::GROUP_ID => {
-                "Selects the AutoInterface discovery group whose nearby members can find each other."
+                "Selects one discovery group as the compatibility form of group_ids."
+            }
+            interface_key::GROUP_IDS => {
+                "Selects one to four discovery groups whose nearby members can find each other."
             }
             interface_key::DISCOVERY_SCOPE => {
                 "Sets how far AutoInterface multicast discovery packets may travel."
@@ -642,7 +646,11 @@ impl InterfaceSettingSpec {
             interface_key::RECURSIVE_PRS => Some("No"),
             interface_key::ANNOUNCES_FROM_INTERNAL => Some("Yes"),
             interface_key::ANNOUNCES_TO_INTERNAL => Some("No"),
-            interface_key::GROUP_ID if kind == InterfaceKind::Auto => Some("reticulum"),
+            interface_key::GROUP_ID | interface_key::GROUP_IDS
+                if matches!(kind, InterfaceKind::Auto | InterfaceKind::PrnsBluetoothAuto) =>
+            {
+                Some("reticulum")
+            }
             interface_key::DISCOVERY_SCOPE if kind == InterfaceKind::Auto => Some("link"),
             interface_key::DISCOVERY_PORT if kind == InterfaceKind::Auto => Some("29716"),
             interface_key::DATA_PORT if kind == InterfaceKind::Auto => Some("42671"),
@@ -1051,9 +1059,18 @@ impl InterfaceSettingSpec {
                 }
                 _ => None,
             },
-            interface_key::GROUP_ID => {
-                auto_plan(planned).map(|auto| auto.group_id().as_str().to_string())
-            }
+            interface_key::GROUP_ID => discovery_groups(planned).and_then(|groups| {
+                (groups.len() == 1)
+                    .then(|| groups.iter().next().map(|group| group.as_str().to_string()))
+                    .flatten()
+            }),
+            interface_key::GROUP_IDS => discovery_groups(planned).map(|groups| {
+                groups
+                    .iter()
+                    .map(|group| group.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }),
             interface_key::DISCOVERY_SCOPE => auto_plan(planned)
                 .map(|auto| format!("{:?}", auto.discovery_scope()).to_ascii_lowercase()),
             interface_key::DISCOVERY_PORT => {
@@ -1144,9 +1161,10 @@ impl InterfaceSettingSpec {
             | common_key::IC_NEW_TIME
             | common_key::IC_BURST_PENALTY
             | common_key::IC_HELD_RELEASE_INTERVAL => InterfaceSettingInputKind::Decimal,
-            interface_key::DEVICES | interface_key::IGNORED_DEVICES | interface_key::PEERS => {
-                InterfaceSettingInputKind::List
-            }
+            interface_key::GROUP_IDS
+            | interface_key::DEVICES
+            | interface_key::IGNORED_DEVICES
+            | interface_key::PEERS => InterfaceSettingInputKind::List,
             interface_key::DISCOVERY_PORT
             | interface_key::DATA_PORT
             | interface_key::TARGET_PORT
@@ -1442,6 +1460,16 @@ fn discovery_advertisement(planned: &PlannedInterface) -> Option<&DiscoveryAdver
 fn auto_plan(planned: &PlannedInterface) -> Option<&crate::AutoInterfacePlan> {
     match &planned.medium {
         PlannedMedium::AutoWifi(auto) => Some(auto),
+        _ => None,
+    }
+}
+
+fn discovery_groups(
+    planned: &PlannedInterface,
+) -> Option<&prns_core::interfaces::DiscoveryGroupSet> {
+    match &planned.medium {
+        PlannedMedium::AutoWifi(auto) => Some(auto.group_ids()),
+        PlannedMedium::PrnsBluetoothAuto(bluetooth) => Some(bluetooth.group_ids()),
         _ => None,
     }
 }

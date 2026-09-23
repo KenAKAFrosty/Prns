@@ -13,7 +13,7 @@ pub(super) use medium::{airtime_limit, ready_command_flow_control, station_ident
 pub use medium::{
     AddressFamilyPreference, AirtimeLimitCentiPercent, AutoInterfaceDataPort,
     AutoInterfaceDevicePolicy, AutoInterfaceDiscoveryPort, AutoInterfaceDiscoveryScope,
-    AutoInterfaceGroupId, AutoInterfaceMulticastAddressType, AutoInterfacePlan,
+    AutoInterfaceGroupId, AutoInterfaceMulticastAddressType, AutoInterfacePlan, BluetoothAutoPlan,
     ConnectTimeoutSeconds, I2pPeerPlan, I2pPeersPlan, I2pReachabilityPlan, PipeCommandPlan,
     PipeRespawnDelay, PlannedMedium, ReadyCommandFlowControl, ReconnectLimit, SerialDataBits,
     SerialLinePlan, SerialParity, SerialStopBits, StationIdentificationPlan, TcpDialPlan,
@@ -126,7 +126,7 @@ pub(super) fn plan_access(
         | PlannedMedium::Pipe { .. }
         | PlannedMedium::Rnode { .. }
         | PlannedMedium::RnodeMulti { .. }
-        | PlannedMedium::PrnsBluetoothAuto => IfacSize::NARROW,
+        | PlannedMedium::PrnsBluetoothAuto(_) => IfacSize::NARROW,
     };
     let size = match interface.ifac_size_bits {
         Some(bits) if bits >= 8 => {
