@@ -10,6 +10,7 @@ services. It consumes public core APIs; the core does not depend on this tree.
 - [Current validation and limits](docs/validation.md)
 - [Implementation roadmap](docs/roadmap.md)
 - [Expanded remote-control plan](docs/remote-control-expansion.md)
+- [Proposed two-phone local-node demo](docs/phone-node-demo.md)
 
 This guide owns setup and workspace commands. The binding and platform guides
 own their narrower boundaries; dated checkpoints preserve historical evidence,

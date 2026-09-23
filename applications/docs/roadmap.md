@@ -30,7 +30,30 @@ records completed cold Retry admission, iOS preparation-queue and connection-che
 lifetime fixes, plus the constrained firmware footprint correction. Physical
 observations remain tied to their recorded builds.
 
-## Current priority: qualify remote settings and complete recipient onboarding
+## Proposed next priority: usable on-phone nodes and a two-phone demo
+
+The [two-phone demo plan](phone-node-demo.md) promotes existing local-node,
+Contacts/Discovered and interface-management requirements into one observable
+journey: connect MetalbeardMobile and Galaxy S9+, announce distinct messaging
+names, save contacts, exchange LXMF messages over isolated BLE and TCP paths,
+and inspect how the network is communicating. The design review changes no app
+behavior and does not authorize implementation.
+
+Start with actual phone-to-phone Bluetooth feasibility and truthful connection
+states, then finish announce/discovery/contact UX, add independent saved TCP
+connections, and complete bounded network inspection and device qualification.
+Preserve native background ownership; record foreground success separately from
+locked/background acceptance. The current central-only iOS composition does not
+provide direct iPhone-to-iPhone BLE. The plan records that platform decision and
+the distinction between Bluetooth authorization, messaging discovery and remote
+board-control pairing.
+
+This prioritization does not erase the remote-settings qualification below.
+It avoids making more board-management features prerequisites for using the
+phone's own node. Direct LXMF Resources follows this usability slice rather than
+blocking the first short-message demo.
+
+## Parallel backlog: remote settings qualification and recipient onboarding
 
 The [September 21 integration](../checkpoints/2026-09-21-remote-control-management.md)
 rebases the app on upstream `8c211827b` and names all 30 RemoteControl request
