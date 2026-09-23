@@ -6,10 +6,11 @@ use heapless::Vec as HeaplessVec;
 use crate::engine::{CommandId, InstantMillis, Journaled, RespondData};
 use crate::identity::IdentityHash;
 use crate::remote_control::{
-    RemoteControlAuthorizeControllerOutcome, RemoteControlResponse,
-    RemoteControlRevokeControllerOutcome,
+    RemoteControlAuthorizeControllerOutcome, RemoteControlControllerGrantTable,
+    RemoteControlResponse, RemoteControlRevokeControllerOutcome,
 };
 use crate::routing::links::request::RequestId;
+use crate::routing::links::request::RESPONSE_WIRE_OVERHEAD;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::units::RttMillis;
@@ -40,14 +41,15 @@ use super::remote_control_target_accesses::{
     RemoteControlTargetAccessCommand, RemoteControlTargetAccessCompletion,
 };
 use super::request_endpoints::{
-    dispatch_request, Decline, InboundRequest, RequestEndpointSet, RespondToken,
-    ResponseCapacityExceeded, ResponseSink,
+    dispatch_request, Decline, InboundRequest, RequestEndpointPolicy, RequestEndpointSet,
+    RespondToken, ResponseCapacityExceeded, ResponseSink,
 };
 use super::AssembledRemoteControl;
 
 #[allow(clippy::large_enum_variant)]
-enum RunnerResponse {
+enum RunnerResponse<const N: usize> {
     Buffered(RespondData),
+    Resource(HeaplessVec<u8, N>),
     StaticBytes(&'static [u8]),
     #[cfg(feature = "large-static-responses")]
     StaticFile {
@@ -62,21 +64,44 @@ enum PreparedRunnerRequest {
     Declined(Decline),
 }
 
-impl ResponseSink for RunnerResponse {
+impl<const N: usize> ResponseSink for RunnerResponse<N> {
     fn put_packed(&mut self, bytes: &[u8]) -> Result<(), ResponseCapacityExceeded> {
         match self {
             RunnerResponse::Buffered(body) => body
                 .extend_from_slice(bytes)
                 .map_err(|()| ResponseCapacityExceeded),
+            RunnerResponse::Resource(_) => Err(ResponseCapacityExceeded),
             RunnerResponse::StaticBytes(_) => Err(ResponseCapacityExceeded),
             #[cfg(feature = "large-static-responses")]
             RunnerResponse::StaticFile { .. } => Err(ResponseCapacityExceeded),
         }
     }
 
+    fn put_resource(&mut self, bytes: &[u8]) -> Result<(), ResponseCapacityExceeded> {
+        match self {
+            RunnerResponse::Buffered(body) if body.is_empty() => {
+                let mut resource = HeaplessVec::new();
+                resource
+                    .resize(RESPONSE_WIRE_OVERHEAD, 0)
+                    .map_err(|()| ResponseCapacityExceeded)?;
+                if bytes.is_empty() {
+                    resource.push(0xc0).map_err(|_| ResponseCapacityExceeded)?;
+                } else {
+                    resource
+                        .extend_from_slice(bytes)
+                        .map_err(|()| ResponseCapacityExceeded)?;
+                }
+                *self = RunnerResponse::Resource(resource);
+                Ok(())
+            }
+            _ => Err(ResponseCapacityExceeded),
+        }
+    }
+
     fn put_bytes(&mut self, bytes: &[u8]) -> Result<(), ResponseCapacityExceeded> {
         match self {
             RunnerResponse::Buffered(body) => ResponseSink::put_bytes(body, bytes),
+            RunnerResponse::Resource(_) => Err(ResponseCapacityExceeded),
             RunnerResponse::StaticBytes(_) => Err(ResponseCapacityExceeded),
             #[cfg(feature = "large-static-responses")]
             RunnerResponse::StaticFile { .. } => Err(ResponseCapacityExceeded),
@@ -371,10 +396,7 @@ struct ReadyVerifiedControllerGrant {
 
 enum VerifiedControllerGrantStart {
     Pending,
-    Dispatch {
-        request: RunnerRequest<0>,
-        verified: VerifiedAdmittedRemoteControlRequest,
-    },
+    Dispatch,
     Respond(ReadyVerifiedControllerGrant),
 }
 
@@ -894,10 +916,13 @@ fn settle_target_access_command<
     }
 }
 
-fn prepare_runner_request<const REQUEST_BYTES: usize>(
+fn prepare_runner_request<St, R, const REQUEST_BYTES: usize>(
     remote_control: &mut AssembledRemoteControl,
     request: &RunnerRequest<REQUEST_BYTES>,
-) -> PreparedRunnerRequest {
+) -> PreparedRunnerRequest
+where
+    R: RequestEndpointSet<St>,
+{
     let inbound = InboundRequest::new(
         request.destination,
         request.link_id,
@@ -918,6 +943,19 @@ fn prepare_runner_request<const REQUEST_BYTES: usize>(
         ) {
             Ok(verified) => PreparedRunnerRequest::RemoteControl(verified),
             Err(reason) => PreparedRunnerRequest::Declined(reason.into()),
+        }
+    } else if R::REGISTRATIONS.iter().any(|(path, policy)| {
+        RequestPathHash::of(path) == request.path_hash
+            && *policy == RequestEndpointPolicy::AllowRemoteControlControllers
+    }) {
+        let authorized = request.requester.is_some_and(|requester| {
+            remote_control
+                .controller_grants()
+                .is_some_and(|grants| grants.contains_controller(&requester))
+        });
+        match authorized {
+            true => PreparedRunnerRequest::Application,
+            false => PreparedRunnerRequest::Declined(Decline::Ignore),
         }
     } else {
         PreparedRunnerRequest::Application
@@ -1005,8 +1043,8 @@ fn begin_verified_controller_grant_persistence<M: RawMutex>(
     progress: &mut ControllerGrantPersistenceProgress,
     remote_control: &mut AssembledRemoteControl,
     stores: Option<&RemoteControlAuthorizationStoreExchange<M>>,
-    request: RunnerRequest<0>,
-    verified: VerifiedAdmittedRemoteControlRequest,
+    request: &RunnerRequest<0>,
+    verified: &VerifiedAdmittedRemoteControlRequest,
 ) -> VerifiedControllerGrantStart {
     let responder = request.respond_token();
     let (prepared, completion) = if let Some(grant) = verified.authorize_controller_grant() {
@@ -1057,7 +1095,7 @@ fn begin_verified_controller_grant_persistence<M: RawMutex>(
             VerifiedControllerGrantCompletion::Revoke(completion),
         )
     } else {
-        return VerifiedControllerGrantStart::Dispatch { request, verified };
+        return VerifiedControllerGrantStart::Dispatch;
     };
 
     if prepared.is_unchanged() {
@@ -1219,7 +1257,10 @@ pub(super) async fn run_router<
                     request.data.len(),
                     hex4(request.link_id.as_bytes())
                 );
-                let prepared = match prepare_runner_request(remote_control, &request) {
+                let prepared = match prepare_runner_request::<St, R, REQUEST_BYTES>(
+                    remote_control,
+                    &request,
+                ) {
                     PreparedRunnerRequest::RemoteControl(verified) => {
                         let request = request.without_data();
                         let mut controller_grant_persistence =
@@ -1228,8 +1269,8 @@ pub(super) async fn run_router<
                             &mut controller_grant_persistence,
                             remote_control,
                             authorization_stores,
-                            request,
-                            verified,
+                            &request,
+                            &verified,
                         ) {
                             VerifiedControllerGrantStart::Pending => {
                                 authorization_persistence =
@@ -1240,7 +1281,7 @@ pub(super) async fn run_router<
                             VerifiedControllerGrantStart::Respond(ready) => {
                                 let _responded = respond_verified_controller_grant(commands, ready);
                             }
-                            VerifiedControllerGrantStart::Dispatch { request, verified } => {
+                            VerifiedControllerGrantStart::Dispatch => {
                                 dispatch_prepared::<
                                     St,
                                     R,
@@ -1380,7 +1421,7 @@ async fn dispatch_prepared<
         &request.data,
     );
     let responder = inbound.respond_token();
-    let mut body = RunnerResponse::Buffered(RespondData::new());
+    let mut body = RunnerResponse::<RESPONSE_BYTES>::Buffered(RespondData::new());
     #[cfg_attr(not(feature = "log"), allow(unused_variables))]
     let kind = request.data.get(1).copied();
     let dispatched = match prepared {
@@ -1423,6 +1464,7 @@ async fn dispatch_prepared<
             #[cfg_attr(not(feature = "log"), allow(unused_variables))]
             let reply_len = match &body {
                 RunnerResponse::Buffered(body) => body.len(),
+                RunnerResponse::Resource(body) => body.len().saturating_sub(RESPONSE_WIRE_OVERHEAD),
                 RunnerResponse::StaticBytes(bytes) => bytes.len(),
                 #[cfg(feature = "large-static-responses")]
                 RunnerResponse::StaticFile { bytes, .. } => bytes.len(),
@@ -1435,6 +1477,9 @@ async fn dispatch_prepared<
             match body {
                 RunnerResponse::Buffered(body) => {
                     commands.respond_owned_packed(responder, body);
+                }
+                RunnerResponse::Resource(body) => {
+                    commands.respond_owned_resource(responder, body).await;
                 }
                 RunnerResponse::StaticBytes(bytes) => {
                     commands.respond_static_bytes(responder, bytes);
@@ -1597,6 +1642,7 @@ mod tests {
 
     struct DestinationEcho;
     struct DestinationRoutes;
+    struct ControllerRoutes;
 
     impl RequestEndpoint<crate::runtime::NoRemoteControlHostControls> for DestinationEcho {
         const ENDPOINT_ID: &'static str = "/destination";
@@ -1628,6 +1674,73 @@ mod tests {
         }
     }
 
+    impl RequestEndpointSet<crate::runtime::NoRemoteControlHostControls> for ControllerRoutes {
+        const REGISTRATIONS: &'static [(&'static str, RequestEndpointPolicy)] = &[(
+            "/controller",
+            RequestEndpointPolicy::AllowRemoteControlControllers,
+        )];
+
+        async fn dispatch(
+            _context: RequestContext<'_, crate::runtime::NoRemoteControlHostControls>,
+            _node: &impl crate::runtime::PrnsNodeApi,
+            _path_hash: RequestPathHash,
+        ) -> Result<(), Decline> {
+            Err(Decline::Ignore)
+        }
+    }
+
+    fn prepare_controller_route<const N: usize>(
+        remote_control: &mut AssembledRemoteControl,
+        request: &RunnerRequest<N>,
+    ) -> PreparedRunnerRequest {
+        prepare_runner_request::<crate::runtime::NoRemoteControlHostControls, ControllerRoutes, N>(
+            remote_control,
+            request,
+        )
+    }
+
+    #[test]
+    fn controller_routes_follow_the_live_grant_table() {
+        use crate::remote_control::{
+            RemoteControlControllerAuthority, RemoteControlControllerGrant, RemoteControlRequestSet,
+        };
+
+        let mut remote_control = remote_control();
+        let controller = controller(0x41);
+        let mut request = RunnerRequest {
+            destination: DestinationHash::new([0x5a; 16]),
+            link_id: LinkId::new([1; 16]),
+            request_id: RequestId([2; 16]),
+            requester: Some(controller.identity_hash()),
+            path_hash: RequestPathHash::of("/controller"),
+            requested_at: InstantMillis(3),
+            rtt: RttMillis::new(4),
+            data: HeaplessVec::<u8, 1>::new(),
+        };
+        assert!(matches!(
+            prepare_controller_route(&mut remote_control, &request),
+            PreparedRunnerRequest::Declined(Decline::Ignore)
+        ));
+
+        let grant = RemoteControlControllerGrant::new(
+            controller,
+            RemoteControlControllerAuthority::Operator,
+            RemoteControlRequestSet::all_operator(),
+        )
+        .unwrap();
+        remote_control.set_controller_grant(grant).unwrap();
+        assert!(matches!(
+            prepare_controller_route(&mut remote_control, &request),
+            PreparedRunnerRequest::Application
+        ));
+
+        request.requester = None;
+        assert!(matches!(
+            prepare_controller_route(&mut remote_control, &request),
+            PreparedRunnerRequest::Declined(Decline::Ignore)
+        ));
+    }
+
     struct StaticPage;
     struct StaticRoutes;
     static PAGE: [u8; 1200] = [0x21; 1200];
@@ -1635,7 +1748,7 @@ mod tests {
     #[cfg(feature = "large-static-responses")]
     #[test]
     fn static_file_sink_preserves_filename_and_borrowed_bytes() {
-        let mut response = RunnerResponse::Buffered(RespondData::new());
+        let mut response = RunnerResponse::<0>::Buffered(RespondData::new());
         ResponseSink::put_static_file(&mut response, "source.zip", &PAGE).unwrap();
         let RunnerResponse::StaticFile { name, bytes } = response else {
             panic!("static file response");
@@ -1691,7 +1804,11 @@ mod tests {
             data: HeaplessVec::<u8, 16>::new(),
         };
 
-        let prepared = prepare_runner_request(&mut remote_control, &request);
+        let prepared = prepare_runner_request::<
+            crate::runtime::NoRemoteControlHostControls,
+            StaticRoutes,
+            16,
+        >(&mut remote_control, &request);
         block_on(dispatch_prepared::<
             crate::runtime::NoRemoteControlHostControls,
             StaticRoutes,
@@ -1742,7 +1859,11 @@ mod tests {
             data: HeaplessVec::<u8, 16>::new(),
         };
 
-        let prepared = prepare_runner_request(&mut remote_control, &request);
+        let prepared = prepare_runner_request::<
+            crate::runtime::NoRemoteControlHostControls,
+            DestinationRoutes,
+            16,
+        >(&mut remote_control, &request);
         block_on(dispatch_prepared::<
             crate::runtime::NoRemoteControlHostControls,
             DestinationRoutes,

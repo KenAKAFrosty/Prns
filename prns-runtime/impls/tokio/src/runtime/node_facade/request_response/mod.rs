@@ -5,10 +5,14 @@ use crate::engine::RequestResponseTimeout;
 use crate::engine::RespondFailure;
 use crate::engine::SendRequestFailure;
 use crate::engine::Settlement;
+use crate::interfaces::rns_management::{
+    write_route_snapshots, RnsPathTableWriteError, RnsRemotePathTableRequest,
+};
 use crate::manifold::compression;
 use crate::manifold::driver::{
     HostCommand, HostResourcePayload, RequestAnyHostCommand, RespondAnyHostCommand,
 };
+use crate::node_introspection::NodeIntrospection;
 use crate::routing::links::data::LINK_MDU;
 use crate::routing::links::request::{
     packed_binary_len, response_envelope_prefix, write_packed_binary_header,
@@ -255,6 +259,36 @@ impl PrnsNodeHandle {
         packed: std::vec::Vec<u8>,
     ) -> Option<RttMillis> {
         self.send_packed_response(responder, packed.into())
+    }
+
+    pub async fn respond_rns_path_table(
+        &self,
+        responder: RespondToken,
+        request: RnsRemotePathTableRequest,
+    ) -> bool {
+        let routes: std::vec::Vec<_> = self
+            .routes()
+            .await
+            .into_iter()
+            .filter(|route| request.includes(route.destination, route.hops))
+            .collect();
+        let mut capacity = 256usize;
+        loop {
+            let mut packed = std::vec![0; capacity];
+            match write_route_snapshots(&routes, &mut packed) {
+                Ok(written) => {
+                    packed.truncate(written);
+                    return self.respond_owned_packed(responder, packed).is_some();
+                }
+                Err(RnsPathTableWriteError::BufferTooShort) => {
+                    let Some(next) = capacity.checked_mul(2) else {
+                        return false;
+                    };
+                    capacity = next;
+                }
+                Err(_) => return false,
+            }
+        }
     }
 
     pub fn respond_bytes(&self, responder: RespondToken, bytes: &[u8]) -> Option<RttMillis> {

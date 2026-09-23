@@ -236,6 +236,7 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
         rpc_key,
         ports,
         persistence: persistence_health,
+        runtime: tokio::runtime::Handle::current(),
     };
     let mut node_run = Box::pin(node.run());
     let initialized = {

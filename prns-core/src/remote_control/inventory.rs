@@ -11,8 +11,9 @@ use super::{
 use crate::identity::{IdentityHash, PublicIdentityMaterial, IDENTITY_PUBLIC_KEY_LEN};
 use crate::interfaces::lora::RadioProfile;
 use crate::interfaces::{
-    ConnectionState, InterfaceId, InterfaceKind, InterfaceMode, PeerDetails, RadioIndication,
-    INTERFACE_ID_LEN,
+    ConnectionState, DiscoveryGroupId, DiscoveryGroupSet, InterfaceId, InterfaceKind,
+    InterfaceMode, PeerDetails, RadioIndication, INTERFACE_ID_LEN, MAX_DISCOVERY_GROUPS,
+    MAX_DISCOVERY_GROUP_ID_LEN,
 };
 use crate::wire::TRUNCATED_HASH_BYTE_LEN;
 use zeroize::{Zeroize, ZeroizeOnDrop};
@@ -1381,38 +1382,241 @@ fn short_hex_commit(commit: &str) -> Option<&str> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RemoteControlInterfaceGroup {
-    bytes: [u8; REMOTE_CONTROL_INTERFACE_GROUP_CAP],
-    len: u8,
+    group: DiscoveryGroupId,
 }
 
 impl RemoteControlInterfaceGroup {
     #[must_use]
     pub fn parse(text: &str) -> Option<Self> {
-        let bytes = text.as_bytes();
-        if bytes.is_empty() || bytes.len() > REMOTE_CONTROL_INTERFACE_GROUP_CAP {
-            return None;
-        }
-        let mut stored = [0u8; REMOTE_CONTROL_INTERFACE_GROUP_CAP];
-        stored.get_mut(..bytes.len())?.copy_from_slice(bytes);
         Some(Self {
-            bytes: stored,
-            len: u8::try_from(bytes.len()).ok()?,
+            group: DiscoveryGroupId::parse(text).ok()?,
         })
     }
 
     #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
-        self.bytes.get(..usize::from(self.len)).unwrap_or(&[])
+        self.group.as_bytes()
     }
 
     #[must_use]
     pub fn as_str(&self) -> Option<&str> {
-        core::str::from_utf8(self.as_bytes()).ok()
+        Some(self.group.as_str())
+    }
+
+    #[must_use]
+    pub const fn into_discovery_group(self) -> DiscoveryGroupId {
+        self.group
     }
 
     #[must_use]
     pub const fn encoded_body_len(self) -> usize {
-        1usize.saturating_add(self.len as usize)
+        1usize.saturating_add(self.group.byte_len())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteControlDiscoveryGroups {
+    groups: DiscoveryGroupSet,
+    encoded_body_len: u8,
+}
+
+impl RemoteControlDiscoveryGroups {
+    pub const MAX_ENCODED_BODY_LEN: usize = 1usize.saturating_add(
+        MAX_DISCOVERY_GROUPS.saturating_mul(1usize.saturating_add(MAX_DISCOVERY_GROUP_ID_LEN)),
+    );
+
+    #[must_use]
+    pub fn new(groups: DiscoveryGroupSet) -> Self {
+        let mut encoded_body_len = 1usize;
+        for group in groups.iter() {
+            encoded_body_len =
+                encoded_body_len.saturating_add(1usize.saturating_add(group.as_bytes().len()));
+        }
+        debug_assert!(encoded_body_len <= Self::MAX_ENCODED_BODY_LEN);
+        Self {
+            groups,
+            encoded_body_len: encoded_body_len as u8,
+        }
+    }
+
+    #[must_use]
+    pub const fn groups(&self) -> &DiscoveryGroupSet {
+        &self.groups
+    }
+
+    #[must_use]
+    pub fn into_groups(self) -> DiscoveryGroupSet {
+        self.groups
+    }
+
+    #[must_use]
+    pub const fn encoded_body_len(&self) -> usize {
+        self.encoded_body_len as usize
+    }
+
+    pub(crate) fn write_body(
+        &self,
+        body: &mut [u8],
+    ) -> Result<(), super::RemoteControlMessageWriteError> {
+        let Some((count, mut rest)) = body.split_first_mut() else {
+            return Err(super::RemoteControlMessageWriteError::BufferTooShort);
+        };
+        *count = self.groups.len() as u8;
+        for group in self.groups.iter() {
+            let Some((len, remaining)) = rest.split_first_mut() else {
+                return Err(super::RemoteControlMessageWriteError::BufferTooShort);
+            };
+            *len = group.as_bytes().len() as u8;
+            let Some((value, remaining)) = remaining.split_at_mut_checked(group.as_bytes().len())
+            else {
+                return Err(super::RemoteControlMessageWriteError::BufferTooShort);
+            };
+            value.copy_from_slice(group.as_bytes());
+            rest = remaining;
+        }
+        if !rest.is_empty() {
+            return Err(super::RemoteControlMessageWriteError::BufferTooShort);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn parse_body(body: &[u8]) -> Result<Self, super::RemoteControlRequestParseError> {
+        let Some((count, mut rest)) = body.split_first() else {
+            return Err(super::RemoteControlRequestParseError::Truncated);
+        };
+        if *count == 0 || usize::from(*count) > MAX_DISCOVERY_GROUPS {
+            return Err(super::RemoteControlRequestParseError::Malformed);
+        }
+        let mut groups: heapless::Vec<DiscoveryGroupId, MAX_DISCOVERY_GROUPS> =
+            heapless::Vec::new();
+        for _ in 0..*count {
+            let Some((len, remaining)) = rest.split_first() else {
+                return Err(super::RemoteControlRequestParseError::Truncated);
+            };
+            let len = usize::from(*len);
+            if len == 0 || len > MAX_DISCOVERY_GROUP_ID_LEN {
+                return Err(super::RemoteControlRequestParseError::Malformed);
+            }
+            let Some((value, remaining)) = remaining.split_at_checked(len) else {
+                return Err(super::RemoteControlRequestParseError::Truncated);
+            };
+            let group = DiscoveryGroupId::from_bytes(value)
+                .map_err(|_| super::RemoteControlRequestParseError::Malformed)?;
+            if groups.last().is_some_and(|previous| previous >= &group) {
+                return Err(super::RemoteControlRequestParseError::Malformed);
+            }
+            groups
+                .push(group)
+                .map_err(|_| super::RemoteControlRequestParseError::Malformed)?;
+            rest = remaining;
+        }
+        if !rest.is_empty() {
+            return Err(super::RemoteControlRequestParseError::Malformed);
+        }
+        let groups = DiscoveryGroupSet::try_from_slice(&groups)
+            .map_err(|_| super::RemoteControlRequestParseError::Malformed)?;
+        Ok(Self::new(groups))
+    }
+
+    pub(crate) fn parse_response_body(
+        body: &[u8],
+    ) -> Result<Self, super::RemoteControlResponseParseError> {
+        Self::parse_body(body).map_err(|error| match error {
+            super::RemoteControlRequestParseError::Truncated => {
+                super::RemoteControlResponseParseError::Truncated
+            }
+            super::RemoteControlRequestParseError::Malformed
+            | super::RemoteControlRequestParseError::UnsupportedVersion { .. }
+            | super::RemoteControlRequestParseError::UnknownRequestKind { .. } => {
+                super::RemoteControlResponseParseError::Malformed
+            }
+        })
+    }
+}
+
+const _: () = assert!(RemoteControlDiscoveryGroups::MAX_ENCODED_BODY_LEN <= u8::MAX as usize);
+
+prns_macros::iterable_enum! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[repr(u8)]
+    pub enum RemoteControlDiscoveryGroupsReplaceOutcome {
+        Applied = 0x01,
+        Unchanged = 0x02,
+        UnknownInterface = 0x03,
+        Unsupported = 0x04,
+    }
+}
+
+impl RemoteControlDiscoveryGroupsReplaceOutcome {
+    pub const ENCODED_LEN: usize = 1;
+
+    #[must_use]
+    pub const fn wire_value(self) -> u8 {
+        self as u8
+    }
+
+    pub(crate) fn from_wire(value: u8) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|candidate| candidate.wire_value() == value)
+    }
+}
+
+// Remote Control is also built without an allocator; keep the bounded group value inline instead
+// of making this wire outcome depend on heap allocation.
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemoteControlDiscoveryGroupsInventoryOutcome {
+    Groups(RemoteControlDiscoveryGroups),
+    UnknownInterface,
+    Unsupported,
+}
+
+impl RemoteControlDiscoveryGroupsInventoryOutcome {
+    pub const MAX_ENCODED_LEN: usize =
+        1usize.saturating_add(RemoteControlDiscoveryGroups::MAX_ENCODED_BODY_LEN);
+
+    #[must_use]
+    pub fn encoded_len(&self) -> usize {
+        match self {
+            Self::Groups(groups) => 1usize.saturating_add(groups.encoded_body_len()),
+            Self::UnknownInterface | Self::Unsupported => 1,
+        }
+    }
+
+    pub(crate) fn write_body(
+        &self,
+        body: &mut [u8],
+    ) -> Result<(), super::RemoteControlMessageWriteError> {
+        let Some((kind, rest)) = body.split_first_mut() else {
+            return Err(super::RemoteControlMessageWriteError::BufferTooShort);
+        };
+        match self {
+            Self::Groups(groups) => {
+                *kind = 0x01;
+                groups.write_body(rest)
+            }
+            Self::UnknownInterface => {
+                *kind = 0x02;
+                Ok(())
+            }
+            Self::Unsupported => {
+                *kind = 0x03;
+                Ok(())
+            }
+        }
+    }
+
+    pub(crate) fn parse_body(body: &[u8]) -> Result<Self, super::RemoteControlResponseParseError> {
+        let Some((kind, rest)) = body.split_first() else {
+            return Err(super::RemoteControlResponseParseError::Truncated);
+        };
+        match (*kind, rest.is_empty()) {
+            (0x01, _) => RemoteControlDiscoveryGroups::parse_response_body(rest).map(Self::Groups),
+            (0x02, true) => Ok(Self::UnknownInterface),
+            (0x03, true) => Ok(Self::Unsupported),
+            _ => Err(super::RemoteControlResponseParseError::Malformed),
+        }
     }
 }
 

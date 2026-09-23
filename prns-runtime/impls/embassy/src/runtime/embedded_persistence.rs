@@ -1,3 +1,8 @@
+use core::cell::RefCell;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
+use embassy_sync::mutex::Mutex as AsyncMutex;
+use embassy_sync::signal::Signal;
 use embedded_storage_async::nor_flash::NorFlash;
 use heapless::Vec as HeaplessVec;
 
@@ -5,6 +10,10 @@ use crate::crypto::ratchets::SeedSelfRatchetsOutcome;
 use crate::engine::{EngineState, InstantMillis, Journaled, RouteSeedOutcome};
 use crate::identity::Zeroizing;
 use crate::interfaces::AttachedInterfaces;
+use crate::interfaces::{
+    DiscoveryGroupConfigurationSnapshot, DiscoveryGroupConfigurationSnapshotError,
+    DISCOVERY_GROUP_CONFIGURATION_SNAPSHOT_MAX_LEN,
+};
 use crate::persistence::{
     maximum_route_upsert_payload_len, read_remote_control_controller_grants_snapshot,
     read_remote_control_target_accesses_snapshot, read_routing_table_snapshot,
@@ -40,16 +49,350 @@ pub(crate) const REMOTE_CONTROL_AUTHORIZATION_SNAPSHOT_CAPACITY: usize =
 const MAXIMUM_RECORD_PAYLOAD_LEN: usize =
     if maximum_route_upsert_payload_len(MAX_ANNOUNCE_APP_DATA_LEN, 0)
         > REMOTE_CONTROL_AUTHORIZATION_SNAPSHOT_CAPACITY
+        && maximum_route_upsert_payload_len(MAX_ANNOUNCE_APP_DATA_LEN, 0)
+            > DISCOVERY_GROUP_CONFIGURATION_SNAPSHOT_MAX_LEN
     {
         maximum_route_upsert_payload_len(MAX_ANNOUNCE_APP_DATA_LEN, 0)
-    } else {
+    } else if REMOTE_CONTROL_AUTHORIZATION_SNAPSHOT_CAPACITY
+        > DISCOVERY_GROUP_CONFIGURATION_SNAPSHOT_MAX_LEN
+    {
         REMOTE_CONTROL_AUTHORIZATION_SNAPSHOT_CAPACITY
+    } else {
+        DISCOVERY_GROUP_CONFIGURATION_SNAPSHOT_MAX_LEN
     };
 const RECORD_SCRATCH_LEN: usize = (MAXIMUM_RECORD_PAYLOAD_LEN + 3) & !3;
 const HOPSPOT_MINIMUM_COMPACTION_INTERVAL_MILLIS: u64 = 24 * 60 * 60 * 1_000;
 
 pub(crate) type RemoteControlAuthorizationSnapshot =
     HeaplessVec<u8, REMOTE_CONTROL_AUTHORIZATION_SNAPSHOT_CAPACITY>;
+const _: () = assert!(
+    REMOTE_CONTROL_AUTHORIZATION_SNAPSHOT_CAPACITY
+        >= DISCOVERY_GROUP_CONFIGURATION_SNAPSHOT_MAX_LEN
+);
+
+#[derive(Clone, Copy)]
+pub struct DiscoveryGroupConfigurationChange {
+    interface_id: crate::interfaces::InterfaceId,
+    groups: crate::interfaces::DiscoveryGroupSet,
+}
+
+impl DiscoveryGroupConfigurationChange {
+    #[must_use]
+    pub fn upsert(
+        interface_id: crate::interfaces::InterfaceId,
+        groups: crate::interfaces::DiscoveryGroupSet,
+    ) -> Self {
+        Self {
+            interface_id,
+            groups,
+        }
+    }
+
+    pub(super) fn apply_to(
+        &self,
+        snapshot: &mut DiscoveryGroupConfigurationSnapshot,
+    ) -> Result<(), DiscoveryGroupConfigurationSnapshotError> {
+        snapshot.upsert(self.interface_id, self.groups)
+    }
+}
+
+struct RestoredDiscoveryGroupConfiguration {
+    complete: bool,
+    snapshot: Option<DiscoveryGroupConfigurationSnapshot>,
+}
+
+enum DiscoveryGroupConfigurationStoreState {
+    Idle,
+    Pending(DiscoveryGroupConfigurationChange),
+    Processing,
+}
+
+pub(super) struct DiscoveryGroupConfigurationStoreExchange {
+    caller: AsyncMutex<CriticalSectionRawMutex, ()>,
+    state: BlockingMutex<CriticalSectionRawMutex, RefCell<DiscoveryGroupConfigurationStoreState>>,
+    request_ready: Signal<CriticalSectionRawMutex, ()>,
+    completed: Signal<CriticalSectionRawMutex, Result<(), EmbeddedPersistenceFailure>>,
+    restored: BlockingMutex<CriticalSectionRawMutex, RefCell<RestoredDiscoveryGroupConfiguration>>,
+    restored_changed: Signal<CriticalSectionRawMutex, ()>,
+}
+
+impl DiscoveryGroupConfigurationStoreExchange {
+    const fn new() -> Self {
+        Self {
+            caller: AsyncMutex::new(()),
+            state: BlockingMutex::new(RefCell::new(DiscoveryGroupConfigurationStoreState::Idle)),
+            request_ready: Signal::new(),
+            completed: Signal::new(),
+            restored: BlockingMutex::new(RefCell::new(RestoredDiscoveryGroupConfiguration {
+                complete: false,
+                snapshot: None,
+            })),
+            restored_changed: Signal::new(),
+        }
+    }
+
+    pub(super) fn publish_restored(&self, snapshot: Option<DiscoveryGroupConfigurationSnapshot>) {
+        self.restored.lock(|state| {
+            let mut state = state.borrow_mut();
+            state.complete = true;
+            state.snapshot = snapshot;
+        });
+        self.restored_changed.signal(());
+    }
+
+    fn restored_now(&self) -> Option<DiscoveryGroupConfigurationSnapshot> {
+        self.restored.lock(|state| {
+            let state = state.borrow();
+            state.complete.then(|| state.snapshot.unwrap_or_default())
+        })
+    }
+
+    fn groups_now(
+        &self,
+        interface_id: crate::interfaces::InterfaceId,
+    ) -> Option<Option<crate::interfaces::DiscoveryGroupSet>> {
+        self.restored.lock(|state| {
+            let state = state.borrow();
+            state.complete.then(|| {
+                state
+                    .snapshot
+                    .as_ref()
+                    .and_then(|snapshot| snapshot.groups_for(interface_id))
+                    .cloned()
+            })
+        })
+    }
+
+    fn encode_restored(
+        &self,
+        output: &mut [u8; DISCOVERY_GROUP_CONFIGURATION_SNAPSHOT_MAX_LEN],
+    ) -> Option<usize> {
+        self.restored.lock(|state| {
+            let state = state.borrow();
+            state
+                .snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.encode_into_max(output))
+        })
+    }
+
+    fn encode_projected(
+        &self,
+        change: &DiscoveryGroupConfigurationChange,
+        output: &mut [u8; DISCOVERY_GROUP_CONFIGURATION_SNAPSHOT_MAX_LEN],
+    ) -> Result<usize, DiscoveryGroupConfigurationSnapshotError> {
+        self.restored.lock(|state| {
+            let state = state.borrow();
+            let mut projected = state.snapshot.unwrap_or_default();
+            change.apply_to(&mut projected)?;
+            Ok(projected.encode_into_max(output))
+        })
+    }
+
+    pub(super) fn commit_change(
+        &self,
+        change: &DiscoveryGroupConfigurationChange,
+    ) -> Result<(), DiscoveryGroupConfigurationSnapshotError> {
+        let result = self.restored.lock(|state| {
+            let mut state = state.borrow_mut();
+            let snapshot = state.snapshot.get_or_insert_default();
+            change.apply_to(snapshot)
+        });
+        if result.is_ok() {
+            self.restored_changed.signal(());
+        }
+        result
+    }
+
+    fn submit(&self, change: DiscoveryGroupConfigurationChange) -> bool {
+        let submitted = self.state.lock(|state| {
+            let mut state = state.borrow_mut();
+            match &*state {
+                DiscoveryGroupConfigurationStoreState::Idle => {
+                    *state = DiscoveryGroupConfigurationStoreState::Pending(change);
+                    true
+                }
+                DiscoveryGroupConfigurationStoreState::Pending(_)
+                | DiscoveryGroupConfigurationStoreState::Processing => false,
+            }
+        });
+        if submitted {
+            self.completed.reset();
+            self.request_ready.signal(());
+        }
+        submitted
+    }
+
+    fn take_pending(&self) -> Option<DiscoveryGroupConfigurationChange> {
+        self.state.lock(|state| {
+            let mut state = state.borrow_mut();
+            let current =
+                core::mem::replace(&mut *state, DiscoveryGroupConfigurationStoreState::Idle);
+            match current {
+                DiscoveryGroupConfigurationStoreState::Pending(change) => {
+                    *state = DiscoveryGroupConfigurationStoreState::Processing;
+                    Some(change)
+                }
+                other => {
+                    *state = other;
+                    None
+                }
+            }
+        })
+    }
+
+    pub(super) fn try_take_request(&self) -> Option<DiscoveryGroupConfigurationChange> {
+        let pending = self.take_pending();
+        if pending.is_some() {
+            self.request_ready.reset();
+        }
+        pending
+    }
+
+    pub(super) fn has_pending_request(&self) -> bool {
+        self.state.lock(|state| {
+            matches!(
+                &*state.borrow(),
+                DiscoveryGroupConfigurationStoreState::Pending(_)
+            )
+        })
+    }
+
+    pub(super) async fn wait_until_request_ready(&self) {
+        loop {
+            if self.has_pending_request() {
+                return;
+            }
+            self.request_ready.wait().await;
+        }
+    }
+
+    pub(super) fn resignal_request(&self, change: DiscoveryGroupConfigurationChange) {
+        let resignal = self.state.lock(|state| {
+            let mut state = state.borrow_mut();
+            if matches!(*state, DiscoveryGroupConfigurationStoreState::Processing) {
+                *state = DiscoveryGroupConfigurationStoreState::Pending(change);
+                true
+            } else {
+                false
+            }
+        });
+        debug_assert!(
+            resignal,
+            "only a processing group change can be rescheduled"
+        );
+        if resignal {
+            self.request_ready.signal(());
+        }
+    }
+
+    pub(super) fn settle(&self, result: Result<(), EmbeddedPersistenceFailure>) {
+        let settled = self.state.lock(|state| {
+            let mut state = state.borrow_mut();
+            if matches!(*state, DiscoveryGroupConfigurationStoreState::Processing) {
+                // Publish completion before reopening admission so a cancelled caller cannot let
+                // its stale result race a newer request's reset.
+                self.completed.signal(result);
+                *state = DiscoveryGroupConfigurationStoreState::Idle;
+                true
+            } else {
+                false
+            }
+        });
+        debug_assert!(settled, "only a processing group change can be settled");
+    }
+
+    #[cfg(test)]
+    fn reset_for_test(&self) {
+        self.state.lock(|state| {
+            *state.borrow_mut() = DiscoveryGroupConfigurationStoreState::Idle;
+        });
+        self.request_ready.reset();
+        self.completed.reset();
+        self.restored.lock(|state| {
+            *state.borrow_mut() = RestoredDiscoveryGroupConfiguration {
+                complete: false,
+                snapshot: None,
+            };
+        });
+        self.restored_changed.reset();
+    }
+}
+
+pub(super) static DISCOVERY_GROUP_CONFIGURATION_STORES: DiscoveryGroupConfigurationStoreExchange =
+    DiscoveryGroupConfigurationStoreExchange::new();
+
+pub async fn restored_discovery_group_configuration() -> DiscoveryGroupConfigurationSnapshot {
+    loop {
+        if let Some(snapshot) = DISCOVERY_GROUP_CONFIGURATION_STORES.restored_now() {
+            return snapshot;
+        }
+        DISCOVERY_GROUP_CONFIGURATION_STORES
+            .restored_changed
+            .wait()
+            .await;
+    }
+}
+
+#[must_use]
+pub fn restored_discovery_group_configuration_now() -> Option<DiscoveryGroupConfigurationSnapshot> {
+    DISCOVERY_GROUP_CONFIGURATION_STORES.restored_now()
+}
+
+pub async fn restored_discovery_groups(
+    interface_id: crate::interfaces::InterfaceId,
+) -> Option<crate::interfaces::DiscoveryGroupSet> {
+    loop {
+        if let Some(groups) = DISCOVERY_GROUP_CONFIGURATION_STORES.groups_now(interface_id) {
+            return groups;
+        }
+        DISCOVERY_GROUP_CONFIGURATION_STORES
+            .restored_changed
+            .wait()
+            .await;
+    }
+}
+
+/// Returns `None` until journal restoration is complete, then the optional durable set.
+#[must_use]
+pub fn restored_discovery_groups_now(
+    interface_id: crate::interfaces::InterfaceId,
+) -> Option<Option<crate::interfaces::DiscoveryGroupSet>> {
+    DISCOVERY_GROUP_CONFIGURATION_STORES.groups_now(interface_id)
+}
+
+pub fn store_discovery_group_configuration(
+    change: DiscoveryGroupConfigurationChange,
+) -> impl core::future::Future<Output = Result<(), EmbeddedPersistenceFailure>> + Unpin {
+    let caller = DISCOVERY_GROUP_CONFIGURATION_STORES.caller.try_lock().ok();
+    let admitted = caller.is_some() && DISCOVERY_GROUP_CONFIGURATION_STORES.submit(change);
+    let immediate_failure = (!admitted).then_some(EmbeddedPersistenceFailure::Capacity);
+    DiscoveryGroupConfigurationStoreFuture {
+        _caller: caller,
+        immediate_failure,
+    }
+}
+
+struct DiscoveryGroupConfigurationStoreFuture {
+    _caller: Option<embassy_sync::mutex::MutexGuard<'static, CriticalSectionRawMutex, ()>>,
+    immediate_failure: Option<EmbeddedPersistenceFailure>,
+}
+
+impl core::future::Future for DiscoveryGroupConfigurationStoreFuture {
+    type Output = Result<(), EmbeddedPersistenceFailure>;
+
+    fn poll(
+        self: core::pin::Pin<&mut Self>,
+        context: &mut core::task::Context<'_>,
+    ) -> core::task::Poll<Self::Output> {
+        if let Some(failure) = self.immediate_failure {
+            return core::task::Poll::Ready(Err(failure));
+        }
+        let completed = DISCOVERY_GROUP_CONFIGURATION_STORES.completed.wait();
+        let mut completed = core::pin::pin!(completed);
+        completed.as_mut().poll(context)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EmbeddedCompactionPolicy {
@@ -191,6 +534,8 @@ pub struct EmbeddedPersistenceRestoreReport {
     pub remote_control_target_accesses_restored_count: u32,
     pub remote_control_target_accesses_refused_count: u32,
     pub remote_control_target_accesses_dropped_count: u32,
+    pub discovery_group_configuration_restored: bool,
+    pub discovery_group_configuration_refused_count: u32,
     pub warning: Option<FlashJournalWarning>,
 }
 
@@ -253,6 +598,7 @@ enum CompactionPhase {
     Ratchets { index: usize },
     RemoteControlControllerGrants,
     RemoteControlTargetAccesses,
+    DiscoveryGroupConfigurations,
     Commit,
 }
 
@@ -387,30 +733,40 @@ where
             remote_control_target_accesses_restored_count: 0,
             remote_control_target_accesses_refused_count: 0,
             remote_control_target_accesses_dropped_count: 0,
+            discovery_group_configuration_restored: false,
+            discovery_group_configuration_refused_count: 0,
             warning: None,
         };
         let mut controller_grants_snapshot = None;
         let mut target_accesses_snapshot = None;
+        let mut discovery_group_configuration_snapshot = None;
         let opened = FlashJournal::open(flash, self.layout, &mut scratch[..], |record| {
             apply_record(
                 engine,
                 remote_control,
                 logical_start,
                 record,
-                &mut controller_grants_snapshot,
-                &mut target_accesses_snapshot,
-                &mut report,
+                ApplyRecordDestinations {
+                    controller_grants_snapshot: &mut controller_grants_snapshot,
+                    target_accesses_snapshot: &mut target_accesses_snapshot,
+                    discovery_group_configuration_snapshot:
+                        &mut discovery_group_configuration_snapshot,
+                    report: &mut report,
+                },
             )
         })
         .await;
         let Ok((mut journal, restored)) = opened else {
             report.warning = Some(FlashJournalWarning::Corrupt);
+            DISCOVERY_GROUP_CONFIGURATION_STORES.publish_restored(None);
             (self.observe_diagnostic)(EmbeddedPersistenceDiagnostic::Restored(report));
             return report;
         };
         report.warning = restored.warning;
         self.remote_control_controller_grants_snapshot = controller_grants_snapshot;
         self.remote_control_target_accesses_snapshot = target_accesses_snapshot;
+        DISCOVERY_GROUP_CONFIGURATION_STORES
+            .publish_restored(discovery_group_configuration_snapshot);
         let initialization_failed =
             restored.active_epoch.is_none() && journal.initialize_empty().await.is_err();
         self.next_compaction_not_before = timebase_state
@@ -435,6 +791,7 @@ where
         logical_start: InstantMillis,
         warning: Option<FlashJournalWarning>,
     ) -> EmbeddedPersistenceRestoreReport {
+        DISCOVERY_GROUP_CONFIGURATION_STORES.publish_restored(None);
         let report = EmbeddedPersistenceRestoreReport {
             logical_start,
             route_seeded_count: 0,
@@ -448,6 +805,8 @@ where
             remote_control_target_accesses_restored_count: 0,
             remote_control_target_accesses_refused_count: 0,
             remote_control_target_accesses_dropped_count: 0,
+            discovery_group_configuration_restored: false,
+            discovery_group_configuration_refused_count: 0,
             warning,
         };
         (self.observe_diagnostic)(EmbeddedPersistenceDiagnostic::Restored(report));
@@ -571,8 +930,15 @@ where
     }
 
     fn next_deadline(&self, now: InstantMillis) -> Option<InstantMillis> {
-        self.journal.as_ref()?;
-        let mut deadline = if self.compaction.is_some() || self.landing_batch.is_some() {
+        let group_configuration_pending =
+            DISCOVERY_GROUP_CONFIGURATION_STORES.has_pending_request();
+        if self.journal.is_none() {
+            return group_configuration_pending.then_some(now);
+        }
+        let mut deadline = if self.compaction.is_some()
+            || self.landing_batch.is_some()
+            || group_configuration_pending
+        {
             Some(now)
         } else {
             None
@@ -636,6 +1002,26 @@ where
         engine: &mut EngineState<S>,
         now: InstantMillis,
     ) {
+        if let Some(change) = DISCOVERY_GROUP_CONFIGURATION_STORES.try_take_request() {
+            match self
+                .store_discovery_group_configuration_change(engine, &change, now)
+                .await
+            {
+                StoreRemoteControlAuthorizationSnapshotOutcome::Stored => {
+                    let result = DISCOVERY_GROUP_CONFIGURATION_STORES
+                        .commit_change(&change)
+                        .map_err(|_| EmbeddedPersistenceFailure::Codec);
+                    DISCOVERY_GROUP_CONFIGURATION_STORES.settle(result);
+                }
+                StoreRemoteControlAuthorizationSnapshotOutcome::CompactionInProgress => {
+                    DISCOVERY_GROUP_CONFIGURATION_STORES.resignal_request(change);
+                }
+                StoreRemoteControlAuthorizationSnapshotOutcome::Failed(failure) => {
+                    DISCOVERY_GROUP_CONFIGURATION_STORES.settle(Err(failure));
+                }
+            }
+            return;
+        }
         if self.retry_not_before.is_some_and(|retry| now.0 < retry.0) {
             return;
         }
@@ -779,6 +1165,84 @@ where
         snapshot: &RemoteControlAuthorizationSnapshot,
         now: InstantMillis,
     ) -> StoreRemoteControlAuthorizationSnapshotOutcome {
+        let record_kind = match kind {
+            RemoteControlAuthorizationSnapshotKind::ControllerGrants => {
+                FlashJournalRecordKind::RemoteControlControllerGrants
+            }
+            RemoteControlAuthorizationSnapshotKind::TargetAccesses => {
+                FlashJournalRecordKind::RemoteControlTargetAccesses
+            }
+        };
+        let outcome = self
+            .store_critical_snapshot(engine, record_kind, snapshot, now)
+            .await;
+        if outcome == StoreRemoteControlAuthorizationSnapshotOutcome::Stored {
+            match kind {
+                RemoteControlAuthorizationSnapshotKind::ControllerGrants => {
+                    self.remote_control_controller_grants_snapshot = Some(snapshot.clone());
+                }
+                RemoteControlAuthorizationSnapshotKind::TargetAccesses => {
+                    self.remote_control_target_accesses_snapshot = Some(snapshot.clone());
+                }
+            }
+        }
+        outcome
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn store_discovery_group_configuration_snapshot<S: StorageLayout>(
+        &mut self,
+        engine: &EngineState<S>,
+        snapshot: &DiscoveryGroupConfigurationSnapshot,
+        now: InstantMillis,
+    ) -> StoreRemoteControlAuthorizationSnapshotOutcome {
+        let mut encoded = [0u8; DISCOVERY_GROUP_CONFIGURATION_SNAPSHOT_MAX_LEN];
+        let written = snapshot.encode_into_max(&mut encoded);
+        let outcome = self
+            .store_critical_snapshot(
+                engine,
+                FlashJournalRecordKind::DiscoveryGroupConfigurations,
+                &encoded[..written],
+                now,
+            )
+            .await;
+        if outcome == StoreRemoteControlAuthorizationSnapshotOutcome::Stored {
+            DISCOVERY_GROUP_CONFIGURATION_STORES.publish_restored(Some(*snapshot));
+        }
+        outcome
+    }
+
+    #[inline(never)]
+    pub(crate) async fn store_discovery_group_configuration_change<S: StorageLayout>(
+        &mut self,
+        engine: &EngineState<S>,
+        change: &DiscoveryGroupConfigurationChange,
+        now: InstantMillis,
+    ) -> StoreRemoteControlAuthorizationSnapshotOutcome {
+        let mut encoded = [0u8; DISCOVERY_GROUP_CONFIGURATION_SNAPSHOT_MAX_LEN];
+        let Ok(written) =
+            DISCOVERY_GROUP_CONFIGURATION_STORES.encode_projected(change, &mut encoded)
+        else {
+            return StoreRemoteControlAuthorizationSnapshotOutcome::Failed(
+                EmbeddedPersistenceFailure::Codec,
+            );
+        };
+        self.store_critical_snapshot(
+            engine,
+            FlashJournalRecordKind::DiscoveryGroupConfigurations,
+            &encoded[..written],
+            now,
+        )
+        .await
+    }
+
+    async fn store_critical_snapshot<S: StorageLayout>(
+        &mut self,
+        engine: &EngineState<S>,
+        record_kind: FlashJournalRecordKind,
+        payload: &[u8],
+        now: InstantMillis,
+    ) -> StoreRemoteControlAuthorizationSnapshotOutcome {
         if self.retry_not_before.is_some_and(|retry| now.0 < retry.0) {
             return StoreRemoteControlAuthorizationSnapshotOutcome::Failed(
                 EmbeddedPersistenceFailure::Flash,
@@ -788,31 +1252,13 @@ where
             self.progress_compaction(engine, now).await;
             return StoreRemoteControlAuthorizationSnapshotOutcome::CompactionInProgress;
         }
-        let record_kind = match kind {
-            RemoteControlAuthorizationSnapshotKind::ControllerGrants => {
-                FlashJournalRecordKind::RemoteControlControllerGrants
-            }
-            RemoteControlAuthorizationSnapshotKind::TargetAccesses => {
-                FlashJournalRecordKind::RemoteControlTargetAccesses
-            }
-        };
         let Some(journal) = self.journal.as_mut() else {
             return StoreRemoteControlAuthorizationSnapshotOutcome::Failed(
                 EmbeddedPersistenceFailure::Flash,
             );
         };
-        match journal.append(record_kind, snapshot).await {
-            Ok(()) => {
-                match kind {
-                    RemoteControlAuthorizationSnapshotKind::ControllerGrants => {
-                        self.remote_control_controller_grants_snapshot = Some(snapshot.clone());
-                    }
-                    RemoteControlAuthorizationSnapshotKind::TargetAccesses => {
-                        self.remote_control_target_accesses_snapshot = Some(snapshot.clone());
-                    }
-                }
-                StoreRemoteControlAuthorizationSnapshotOutcome::Stored
-            }
+        match journal.append(record_kind, payload).await {
+            Ok(()) => StoreRemoteControlAuthorizationSnapshotOutcome::Stored,
             Err(FlashJournalError::ArenaFull) => {
                 self.require_snapshot(EmbeddedPersistenceTarget::CriticalState, now);
                 let allowed = self.next_compaction_not_before.unwrap_or(now);
@@ -1046,13 +1492,37 @@ where
             }
             CompactionPhase::RemoteControlTargetAccesses => {
                 let Some(snapshot) = self.remote_control_target_accesses_snapshot.as_ref() else {
-                    self.compaction = Some(CompactionPhase::Commit);
+                    self.compaction = Some(CompactionPhase::DiscoveryGroupConfigurations);
                     return;
                 };
                 match journal
                     .append_compacted(
                         FlashJournalRecordKind::RemoteControlTargetAccesses,
                         snapshot,
+                    )
+                    .await
+                {
+                    Ok(()) => {
+                        self.landing_records = self.landing_records.saturating_add(1);
+                        self.compaction = Some(CompactionPhase::DiscoveryGroupConfigurations);
+                    }
+                    Err(error) => {
+                        self.note_write_failure(now, failure_from_journal(error));
+                    }
+                }
+            }
+            CompactionPhase::DiscoveryGroupConfigurations => {
+                let mut encoded = [0u8; DISCOVERY_GROUP_CONFIGURATION_SNAPSHOT_MAX_LEN];
+                let Some(written) =
+                    DISCOVERY_GROUP_CONFIGURATION_STORES.encode_restored(&mut encoded)
+                else {
+                    self.compaction = Some(CompactionPhase::Commit);
+                    return;
+                };
+                match journal
+                    .append_compacted(
+                        FlashJournalRecordKind::DiscoveryGroupConfigurations,
+                        &encoded[..written],
                     )
                     .await
                 {
@@ -1217,6 +1687,12 @@ where
         self.next_deadline(now)
     }
 
+    async fn wait_for_work(&self) {
+        DISCOVERY_GROUP_CONFIGURATION_STORES
+            .wait_until_request_ready()
+            .await;
+    }
+
     fn observe_remote_control_pairing_failure(
         &mut self,
         failure: super::EmbeddedRemoteControlPairingPersistenceFailure,
@@ -1335,15 +1811,26 @@ fn encode_tombstone(destination: DestinationHash) -> Result<EncodedDelta, ()> {
     })
 }
 
+struct ApplyRecordDestinations<'a> {
+    controller_grants_snapshot: &'a mut Option<RemoteControlAuthorizationSnapshot>,
+    target_accesses_snapshot: &'a mut Option<RemoteControlAuthorizationSnapshot>,
+    discovery_group_configuration_snapshot: &'a mut Option<DiscoveryGroupConfigurationSnapshot>,
+    report: &'a mut EmbeddedPersistenceRestoreReport,
+}
+
 fn apply_record<S: StorageLayout>(
     engine: &mut EngineState<S>,
     remote_control: &mut AssembledRemoteControl,
     now: InstantMillis,
     record: FlashJournalRecord<'_>,
-    controller_grants_snapshot: &mut Option<RemoteControlAuthorizationSnapshot>,
-    target_accesses_snapshot: &mut Option<RemoteControlAuthorizationSnapshot>,
-    report: &mut EmbeddedPersistenceRestoreReport,
+    destinations: ApplyRecordDestinations<'_>,
 ) {
+    let ApplyRecordDestinations {
+        controller_grants_snapshot,
+        target_accesses_snapshot,
+        discovery_group_configuration_snapshot,
+        report,
+    } = destinations;
     match record.kind {
         FlashJournalRecordKind::ArenaCommit => {}
         FlashJournalRecordKind::RouteUpsert => {
@@ -1488,12 +1975,27 @@ fn apply_record<S: StorageLayout>(
                 }
             }
         }
+        FlashJournalRecordKind::DiscoveryGroupConfigurations => {
+            match DiscoveryGroupConfigurationSnapshot::decode(record.payload) {
+                Ok(snapshot) => {
+                    *discovery_group_configuration_snapshot = Some(snapshot);
+                    report.discovery_group_configuration_restored = true;
+                }
+                Err(_) => {
+                    report.discovery_group_configuration_refused_count = report
+                        .discovery_group_configuration_refused_count
+                        .saturating_add(1);
+                }
+            }
+        }
     }
 }
 
 fn failure_from_journal<E>(error: FlashJournalError<E>) -> EmbeddedPersistenceFailure {
     match error {
-        FlashJournalError::Flash(_) => EmbeddedPersistenceFailure::Flash,
+        FlashJournalError::Flash(_) | FlashJournalError::VerificationFailed => {
+            EmbeddedPersistenceFailure::Flash
+        }
         FlashJournalError::ArenaFull
         | FlashJournalError::OutOfBounds
         | FlashJournalError::Misaligned
@@ -1523,9 +2025,18 @@ mod tests {
     use std::rc::Rc;
     use std::vec::Vec;
 
+    static DISCOVERY_GROUP_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn lock_discovery_group_store() -> std::sync::MutexGuard<'static, ()> {
+        DISCOVERY_GROUP_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     const ERASE: usize = 512;
     const CAPACITY: usize = ERASE * 6;
-    const EMPTY_STATE_COMPACTION_PROGRESS_STEPS: usize = 9;
+    // One bounded persistence turn per phase, including the optional discovery-group snapshot.
+    const EMPTY_STATE_COMPACTION_PROGRESS_STEPS: usize = 10;
     const LAYOUT: FlashJournalLayout = FlashJournalLayout::new(
         [0, ERASE as u32],
         [
@@ -1704,6 +2215,18 @@ mod tests {
         RemoteControlAuthorizationSnapshot::from_slice(&bytes[..written]).unwrap()
     }
 
+    fn discovery_group_snapshot(group: &str) -> DiscoveryGroupConfigurationSnapshot {
+        let group = crate::interfaces::DiscoveryGroupId::parse(group).expect("valid group");
+        let groups = crate::interfaces::DiscoveryGroupSet::singleton(group).expect("valid set");
+        DiscoveryGroupConfigurationSnapshot::try_from_entries(&[
+            crate::interfaces::DiscoveryGroupConfigurationEntry::new(
+                crate::interfaces::InterfaceId::new([0x42; crate::interfaces::INTERFACE_ID_LEN]),
+                groups,
+            ),
+        ])
+        .expect("valid snapshot")
+    }
+
     fn signed_route(secret: u8, app_data: &[u8]) -> crate::routing::PersistedRouteRow<'_> {
         use crate::identity::in_memory::InMemoryNodeIdentity;
         use crate::interfaces::InterfaceId;
@@ -1745,6 +2268,7 @@ mod tests {
 
     #[test]
     fn exact_route_and_ratchet_deadlines_are_distinct() {
+        let _group_store = lock_discovery_group_store();
         let policy =
             EmbeddedPersistencePolicy::hopspot_default(EmbeddedCompactionPolicy::hopspot(64));
         assert_eq!(policy.first_route_commit_delay_millis, 2_000);
@@ -1764,6 +2288,7 @@ mod tests {
 
     #[test]
     fn deadline_formula_batches_first_write_then_honors_five_minutes() {
+        let _group_store = lock_discovery_group_store();
         let mut persistence = ready();
         persistence.route_dirty_since = Some(InstantMillis(1_000));
         assert_eq!(
@@ -1790,6 +2315,7 @@ mod tests {
 
     #[test]
     fn repeated_route_and_ratchet_changes_coalesce_by_destination() {
+        let _group_store = lock_discovery_group_store();
         let mut persistence = ready();
         let destination = DestinationHash::new([0x11; TRUNCATED_HASH_BYTE_LEN]);
         persistence.queue_route(
@@ -1815,6 +2341,7 @@ mod tests {
 
     #[test]
     fn pending_overflow_waits_for_the_batch_deadline_before_compacting() {
+        let _group_store = lock_discovery_group_store();
         let mut persistence = ready();
         for byte in 0..5 {
             persistence.queue_route(
@@ -1854,6 +2381,7 @@ mod tests {
 
     #[test]
     fn failures_keep_dirty_state_and_raise_the_notice() {
+        let _group_store = lock_discovery_group_store();
         let mut persistence = ready();
         let destination = DestinationHash::new([0x22; TRUNCATED_HASH_BYTE_LEN]);
         persistence.queue_route(
@@ -1879,6 +2407,7 @@ mod tests {
 
     #[test]
     fn legacy_timebase_allows_one_needed_compaction_then_adopts_the_budget_marker() {
+        let _group_store = lock_discovery_group_store();
         embassy_futures::block_on(async {
             let (mut journal, _) = {
                 let flash = TestFlash::new();
@@ -1935,6 +2464,7 @@ mod tests {
 
     #[test]
     fn restore_uses_the_later_of_flash_high_water_and_the_raw_clock() {
+        let _group_store = lock_discovery_group_store();
         embassy_futures::block_on(async {
             let recorded_at = InstantMillis(10_000);
             let flash_high_water = InstantMillis(recorded_at.0 + TIMEBASE_HEADROOM_MILLIS);
@@ -1970,6 +2500,7 @@ mod tests {
 
     #[test]
     fn idle_persistence_advances_the_flash_timebase_on_schedule() {
+        let _group_store = lock_discovery_group_store();
         embassy_futures::block_on(async {
             let mut persistence =
                 EmbeddedFlashPersistence::<_, FixedRouteSnapshotKeys<8>, _, 4>::new(
@@ -2019,6 +2550,7 @@ mod tests {
 
     #[test]
     fn failed_compaction_attempt_consumes_the_daily_budget() {
+        let _group_store = lock_discovery_group_store();
         let diagnostics = Rc::new(RefCell::new(Vec::new()));
         let observed = Rc::clone(&diagnostics);
         let mut persistence = ready_with_observer(move |diagnostic| {
@@ -2073,6 +2605,7 @@ mod tests {
 
     #[test]
     fn recorded_compaction_budget_survives_reboot() {
+        let _group_store = lock_discovery_group_store();
         embassy_futures::block_on(async {
             let mut persistence = ready();
             let mut engine = EngineState::<crate::storage::GrowableHeap>::default();
@@ -2110,6 +2643,7 @@ mod tests {
 
     #[test]
     fn marker_write_failure_does_not_consume_the_compaction_budget() {
+        let _group_store = lock_discovery_group_store();
         embassy_futures::block_on(async {
             let (flash, fail_next_write) = TestFlash::controlled();
             let mut scratch = [0u8; RECORD_SCRATCH_LEN];
@@ -2154,6 +2688,7 @@ mod tests {
 
     #[test]
     fn timebase_writes_and_repeated_reboots_do_not_move_the_compaction_deadline() {
+        let _group_store = lock_discovery_group_store();
         embassy_futures::block_on(async {
             let mut persistence = ready();
             let deadline = persistence.next_compaction_not_before;
@@ -2192,6 +2727,7 @@ mod tests {
 
     #[test]
     fn overflow_during_compaction_commits_once_and_defers_the_next_snapshot() {
+        let _group_store = lock_discovery_group_store();
         let diagnostics = Rc::new(RefCell::new(Vec::new()));
         let observed = Rc::clone(&diagnostics);
         let mut persistence = ready_with_observer(move |diagnostic| {
@@ -2212,8 +2748,11 @@ mod tests {
             );
         }
         persistence.route_dirty_since = Some(now);
-        for _ in 0..8 {
+        for _ in 0..EMPTY_STATE_COMPACTION_PROGRESS_STEPS {
             embassy_futures::block_on(persistence.progress(&mut engine, now));
+            if persistence.compaction.is_none() {
+                break;
+            }
         }
 
         assert_eq!(persistence.compaction, None);
@@ -2258,6 +2797,7 @@ mod tests {
 
     #[test]
     fn captured_route_keys_survive_slot_shifts_and_new_routes_land_after_compaction() {
+        let _group_store = lock_discovery_group_store();
         embassy_futures::block_on(async {
             let mut persistence = ready();
             let mut engine = EngineState::<crate::storage::GrowableHeap>::default();
@@ -2283,8 +2823,11 @@ mod tests {
             persistence.queue_route(PendingRouteDelta::RouteUpsert(added.destination), now);
             persistence.route_dirty_since = Some(now);
 
-            for _ in 0..8 {
+            for _ in 0..EMPTY_STATE_COMPACTION_PROGRESS_STEPS {
                 persistence.progress(&mut engine, now).await;
+                if persistence.compaction.is_none() {
+                    break;
+                }
             }
             assert_eq!(persistence.compaction, None);
             assert_eq!(
@@ -2319,6 +2862,7 @@ mod tests {
 
     #[test]
     fn sixteen_route_records_restore_eight_and_report_capacity_drops() {
+        let _group_store = lock_discovery_group_store();
         type EightRouteStorage =
             crate::storage::TestFixedStorage<8, 8, 256, 2, 2, 16, 4, 4, 4, 4, 4, 16>;
         let now = InstantMillis(1_000);
@@ -2330,6 +2874,7 @@ mod tests {
         .expect("unavailable RemoteControl requires no storage");
         let mut controller_grants_snapshot = None;
         let mut target_accesses_snapshot = None;
+        let mut discovery_group_configuration_snapshot = None;
         let mut report = EmbeddedPersistenceRestoreReport {
             logical_start: now,
             route_seeded_count: 0,
@@ -2343,6 +2888,8 @@ mod tests {
             remote_control_target_accesses_restored_count: 0,
             remote_control_target_accesses_refused_count: 0,
             remote_control_target_accesses_dropped_count: 0,
+            discovery_group_configuration_restored: false,
+            discovery_group_configuration_refused_count: 0,
             warning: None,
         };
 
@@ -2362,9 +2909,13 @@ mod tests {
                     kind: FlashJournalRecordKind::RouteUpsert,
                     payload: &scratch[..written],
                 },
-                &mut controller_grants_snapshot,
-                &mut target_accesses_snapshot,
-                &mut report,
+                ApplyRecordDestinations {
+                    controller_grants_snapshot: &mut controller_grants_snapshot,
+                    target_accesses_snapshot: &mut target_accesses_snapshot,
+                    discovery_group_configuration_snapshot:
+                        &mut discovery_group_configuration_snapshot,
+                    report: &mut report,
+                },
             );
         }
 
@@ -2383,6 +2934,8 @@ mod tests {
                 remote_control_target_accesses_restored_count: 0,
                 remote_control_target_accesses_refused_count: 0,
                 remote_control_target_accesses_dropped_count: 0,
+                discovery_group_configuration_restored: false,
+                discovery_group_configuration_refused_count: 0,
                 warning: None,
             }
         );
@@ -2390,6 +2943,7 @@ mod tests {
 
     #[test]
     fn malformed_newest_authorization_records_preserve_the_last_valid_tables() {
+        let _group_store = lock_discovery_group_store();
         use crate::identity::IdentityPublicKeys;
         use crate::remote_control::{
             RemoteControlControllerGrantTable, RemoteControlRequestKind, RemoteControlRequestSet,
@@ -2426,6 +2980,7 @@ mod tests {
         remote_control.forget_target(&target).unwrap();
         let mut controller_grants_snapshot = None;
         let mut target_accesses_snapshot = None;
+        let mut discovery_group_configuration_snapshot = None;
         let mut report = EmbeddedPersistenceRestoreReport {
             logical_start: now,
             route_seeded_count: 0,
@@ -2439,6 +2994,8 @@ mod tests {
             remote_control_target_accesses_restored_count: 0,
             remote_control_target_accesses_refused_count: 0,
             remote_control_target_accesses_dropped_count: 0,
+            discovery_group_configuration_restored: false,
+            discovery_group_configuration_refused_count: 0,
             warning: None,
         };
 
@@ -2469,9 +3026,13 @@ mod tests {
                 &mut remote_control,
                 now,
                 record,
-                &mut controller_grants_snapshot,
-                &mut target_accesses_snapshot,
-                &mut report,
+                ApplyRecordDestinations {
+                    controller_grants_snapshot: &mut controller_grants_snapshot,
+                    target_accesses_snapshot: &mut target_accesses_snapshot,
+                    discovery_group_configuration_snapshot:
+                        &mut discovery_group_configuration_snapshot,
+                    report: &mut report,
+                },
             );
         }
 
@@ -2501,7 +3062,314 @@ mod tests {
     }
 
     #[test]
+    fn malformed_newest_discovery_group_record_preserves_the_last_valid_snapshot() {
+        let _store = lock_discovery_group_store();
+        let now = InstantMillis(1_000);
+        let mut engine = EngineState::<crate::storage::GrowableHeap>::default();
+        let mut remote_control = available_remote_control(&mut engine);
+        let expected = discovery_group_snapshot("field-mesh");
+        let mut encoded = [0u8; DISCOVERY_GROUP_CONFIGURATION_SNAPSHOT_MAX_LEN];
+        let written = expected.encode(&mut encoded).expect("snapshot fits");
+        let mut controller_grants_snapshot = None;
+        let mut target_accesses_snapshot = None;
+        let mut discovery_group_configuration_snapshot = None;
+        let mut report = EmbeddedPersistenceRestoreReport {
+            logical_start: now,
+            route_seeded_count: 0,
+            route_refused_count: 0,
+            route_dropped_count: 0,
+            ratchet_seeded_count: 0,
+            ratchet_refused_count: 0,
+            remote_control_controller_grants_restored_count: 0,
+            remote_control_controller_grants_refused_count: 0,
+            remote_control_controller_grants_dropped_count: 0,
+            remote_control_target_accesses_restored_count: 0,
+            remote_control_target_accesses_refused_count: 0,
+            remote_control_target_accesses_dropped_count: 0,
+            discovery_group_configuration_restored: false,
+            discovery_group_configuration_refused_count: 0,
+            warning: None,
+        };
+
+        for payload in [&encoded[..written], &[0xFF][..]] {
+            apply_record(
+                &mut engine,
+                &mut remote_control,
+                now,
+                FlashJournalRecord {
+                    epoch: 1,
+                    kind: FlashJournalRecordKind::DiscoveryGroupConfigurations,
+                    payload,
+                },
+                ApplyRecordDestinations {
+                    controller_grants_snapshot: &mut controller_grants_snapshot,
+                    target_accesses_snapshot: &mut target_accesses_snapshot,
+                    discovery_group_configuration_snapshot:
+                        &mut discovery_group_configuration_snapshot,
+                    report: &mut report,
+                },
+            );
+        }
+
+        assert_eq!(discovery_group_configuration_snapshot, Some(expected));
+        assert!(report.discovery_group_configuration_restored);
+        assert_eq!(report.discovery_group_configuration_refused_count, 1);
+    }
+
+    #[test]
+    fn failed_discovery_group_write_retains_the_last_durable_snapshot() {
+        let _store = lock_discovery_group_store();
+        DISCOVERY_GROUP_CONFIGURATION_STORES.reset_for_test();
+        embassy_futures::block_on(async {
+            let (flash, fail_next_write) = TestFlash::controlled();
+            let mut persistence =
+                EmbeddedFlashPersistence::<_, FixedRouteSnapshotKeys<8>, _, 4>::new(
+                    flash,
+                    LAYOUT,
+                    EmbeddedPersistencePolicy::hopspot_default(EmbeddedCompactionPolicy::hopspot(
+                        0,
+                    )),
+                    FixedRouteSnapshotKeys::new(),
+                    (|_| {}) as fn(EmbeddedPersistenceDiagnostic),
+                );
+            let mut engine = EngineState::<crate::storage::GrowableHeap>::default();
+            let mut remote_control = available_remote_control(&mut engine);
+            persistence
+                .restore(&mut engine, &mut remote_control, InstantMillis(0))
+                .await;
+            let confirmed = discovery_group_snapshot("confirmed");
+            assert_eq!(
+                persistence
+                    .store_discovery_group_configuration_snapshot(
+                        &engine,
+                        &confirmed,
+                        InstantMillis(1),
+                    )
+                    .await,
+                StoreRemoteControlAuthorizationSnapshotOutcome::Stored,
+            );
+
+            fail_next_write.set(true);
+            assert_eq!(
+                persistence
+                    .store_discovery_group_configuration_snapshot(
+                        &engine,
+                        &discovery_group_snapshot("candidate"),
+                        InstantMillis(2),
+                    )
+                    .await,
+                StoreRemoteControlAuthorizationSnapshotOutcome::Failed(
+                    EmbeddedPersistenceFailure::Flash,
+                ),
+            );
+            assert_eq!(
+                restored_discovery_group_configuration_now(),
+                Some(confirmed)
+            );
+
+            let flash = persistence.journal.take().unwrap().release();
+            let mut restored = EmbeddedFlashPersistence::<_, FixedRouteSnapshotKeys<8>, _, 4>::new(
+                flash,
+                LAYOUT,
+                EmbeddedPersistencePolicy::hopspot_default(EmbeddedCompactionPolicy::hopspot(0)),
+                FixedRouteSnapshotKeys::new(),
+                (|_| {}) as fn(EmbeddedPersistenceDiagnostic),
+            );
+            let report = restored
+                .restore(&mut engine, &mut remote_control, InstantMillis(0))
+                .await;
+            assert!(report.discovery_group_configuration_restored);
+            assert_eq!(
+                restored_discovery_group_configuration_now(),
+                Some(confirmed)
+            );
+        });
+        DISCOVERY_GROUP_CONFIGURATION_STORES.reset_for_test();
+    }
+
+    #[test]
+    fn discovery_group_snapshot_survives_compaction_and_reboot() {
+        let _store = lock_discovery_group_store();
+        DISCOVERY_GROUP_CONFIGURATION_STORES.reset_for_test();
+        embassy_futures::block_on(async {
+            let mut persistence =
+                EmbeddedFlashPersistence::<_, FixedRouteSnapshotKeys<8>, _, 4>::new(
+                    TestFlash::new(),
+                    LAYOUT,
+                    EmbeddedPersistencePolicy::hopspot_default(EmbeddedCompactionPolicy::hopspot(
+                        0,
+                    )),
+                    FixedRouteSnapshotKeys::new(),
+                    (|_| {}) as fn(EmbeddedPersistenceDiagnostic),
+                );
+            let mut engine = EngineState::<crate::storage::GrowableHeap>::default();
+            let mut remote_control = available_remote_control(&mut engine);
+            persistence
+                .restore(&mut engine, &mut remote_control, InstantMillis(0))
+                .await;
+            let expected = discovery_group_snapshot("field-mesh");
+            assert_eq!(
+                persistence
+                    .store_discovery_group_configuration_snapshot(
+                        &engine,
+                        &expected,
+                        InstantMillis(1),
+                    )
+                    .await,
+                StoreRemoteControlAuthorizationSnapshotOutcome::Stored,
+            );
+
+            persistence
+                .require_snapshot(EmbeddedPersistenceTarget::CriticalState, InstantMillis(2));
+            persistence.try_start_compaction(&engine, InstantMillis(2));
+            for now in 2..32 {
+                if persistence.compaction.is_none() {
+                    break;
+                }
+                persistence
+                    .progress_compaction(&engine, InstantMillis(now))
+                    .await;
+            }
+            assert_eq!(persistence.compaction, None);
+
+            let flash = persistence.journal.take().unwrap().release();
+            let mut restored = EmbeddedFlashPersistence::<_, FixedRouteSnapshotKeys<8>, _, 4>::new(
+                flash,
+                LAYOUT,
+                EmbeddedPersistencePolicy::hopspot_default(EmbeddedCompactionPolicy::hopspot(0)),
+                FixedRouteSnapshotKeys::new(),
+                (|_| {}) as fn(EmbeddedPersistenceDiagnostic),
+            );
+            let report = restored
+                .restore(&mut engine, &mut remote_control, InstantMillis(0))
+                .await;
+            assert!(report.discovery_group_configuration_restored);
+            assert_eq!(report.discovery_group_configuration_refused_count, 0);
+            assert_eq!(restored_discovery_group_configuration_now(), Some(expected));
+        });
+        DISCOVERY_GROUP_CONFIGURATION_STORES.reset_for_test();
+    }
+
+    #[test]
+    fn cancelled_group_store_cannot_be_overwritten_or_observe_stale_completion() {
+        let _store = lock_discovery_group_store();
+        DISCOVERY_GROUP_CONFIGURATION_STORES.reset_for_test();
+        let interface_id =
+            crate::interfaces::InterfaceId::new([0x42; crate::interfaces::INTERFACE_ID_LEN]);
+        let first = DiscoveryGroupConfigurationChange::upsert(
+            interface_id,
+            crate::interfaces::DiscoveryGroupSet::reticulum(),
+        );
+
+        let abandoned = store_discovery_group_configuration(first);
+        drop(abandoned);
+        assert_eq!(
+            embassy_futures::block_on(store_discovery_group_configuration(first)),
+            Err(EmbeddedPersistenceFailure::Capacity),
+        );
+
+        let pending = DISCOVERY_GROUP_CONFIGURATION_STORES
+            .try_take_request()
+            .expect("the abandoned request remains owned by the writer");
+        assert_eq!(
+            embassy_futures::block_on(store_discovery_group_configuration(first)),
+            Err(EmbeddedPersistenceFailure::Capacity),
+        );
+        DISCOVERY_GROUP_CONFIGURATION_STORES.settle(Ok(()));
+
+        let replacement = DiscoveryGroupConfigurationChange::upsert(
+            interface_id,
+            discovery_group_snapshot("replacement")
+                .groups_for(interface_id)
+                .copied()
+                .expect("fixture contains the interface"),
+        );
+        let replacement_result = store_discovery_group_configuration(replacement);
+        let admitted = DISCOVERY_GROUP_CONFIGURATION_STORES
+            .try_take_request()
+            .expect("settlement reopens the bounded exchange");
+        assert_eq!(admitted.interface_id, pending.interface_id);
+        DISCOVERY_GROUP_CONFIGURATION_STORES.settle(Err(EmbeddedPersistenceFailure::Flash));
+        assert_eq!(
+            embassy_futures::block_on(replacement_result),
+            Err(EmbeddedPersistenceFailure::Flash),
+        );
+        DISCOVERY_GROUP_CONFIGURATION_STORES.reset_for_test();
+    }
+
+    #[test]
+    fn group_store_without_an_open_journal_settles_as_flash_failure() {
+        let _store = lock_discovery_group_store();
+        DISCOVERY_GROUP_CONFIGURATION_STORES.reset_for_test();
+        let interface_id =
+            crate::interfaces::InterfaceId::new([0x42; crate::interfaces::INTERFACE_ID_LEN]);
+        let change = DiscoveryGroupConfigurationChange::upsert(
+            interface_id,
+            crate::interfaces::DiscoveryGroupSet::reticulum(),
+        );
+        let mut persistence = EmbeddedFlashPersistence::<_, FixedRouteSnapshotKeys<8>, _, 4>::new(
+            TestFlash::new(),
+            LAYOUT,
+            EmbeddedPersistencePolicy::hopspot_default(EmbeddedCompactionPolicy::hopspot(0)),
+            FixedRouteSnapshotKeys::new(),
+            (|_| {}) as fn(EmbeddedPersistenceDiagnostic),
+        );
+        let mut engine = EngineState::<crate::storage::GrowableHeap>::default();
+        let now = InstantMillis(123);
+        let pending = store_discovery_group_configuration(change);
+
+        assert_eq!(persistence.next_deadline(now), Some(now));
+        embassy_futures::block_on(persistence.progress(&mut engine, now));
+        assert_eq!(
+            embassy_futures::block_on(pending),
+            Err(EmbeddedPersistenceFailure::Flash),
+        );
+        assert_eq!(persistence.next_deadline(now), None);
+        DISCOVERY_GROUP_CONFIGURATION_STORES.reset_for_test();
+    }
+
+    #[test]
+    fn group_store_commits_restored_state_only_after_durable_success() {
+        let _store = lock_discovery_group_store();
+        DISCOVERY_GROUP_CONFIGURATION_STORES.reset_for_test();
+        let interface_id =
+            crate::interfaces::InterfaceId::new([0x42; crate::interfaces::INTERFACE_ID_LEN]);
+        assert_eq!(restored_discovery_groups_now(interface_id), None);
+        DISCOVERY_GROUP_CONFIGURATION_STORES
+            .publish_restored(Some(DiscoveryGroupConfigurationSnapshot::empty()));
+        assert_eq!(restored_discovery_groups_now(interface_id), Some(None));
+
+        let desired = discovery_group_snapshot("durable")
+            .groups_for(interface_id)
+            .copied()
+            .expect("fixture contains the interface");
+        let change = DiscoveryGroupConfigurationChange::upsert(interface_id, desired);
+        assert!(DISCOVERY_GROUP_CONFIGURATION_STORES.submit(change));
+        let admitted = DISCOVERY_GROUP_CONFIGURATION_STORES
+            .try_take_request()
+            .expect("submitted change is ready");
+        DISCOVERY_GROUP_CONFIGURATION_STORES.settle(Err(EmbeddedPersistenceFailure::Flash));
+        assert_eq!(restored_discovery_groups_now(interface_id), Some(None));
+
+        assert!(DISCOVERY_GROUP_CONFIGURATION_STORES.submit(admitted));
+        let admitted = DISCOVERY_GROUP_CONFIGURATION_STORES
+            .try_take_request()
+            .expect("retried change is ready");
+        assert_eq!(
+            DISCOVERY_GROUP_CONFIGURATION_STORES.commit_change(&admitted),
+            Ok(()),
+        );
+        DISCOVERY_GROUP_CONFIGURATION_STORES.settle(Ok(()));
+        assert_eq!(
+            restored_discovery_groups_now(interface_id),
+            Some(Some(desired)),
+        );
+        DISCOVERY_GROUP_CONFIGURATION_STORES.reset_for_test();
+    }
+
+    #[test]
     fn authorization_snapshots_survive_compaction_and_restore_complete_runtime_tables() {
+        let _group_store = lock_discovery_group_store();
         use crate::identity::IdentityPublicKeys;
         use crate::remote_control::{
             RemoteControlControllerGrantTable, RemoteControlRequestKind, RemoteControlRequestSet,
@@ -2622,6 +3490,7 @@ mod tests {
 
     #[test]
     fn thirty_days_of_pressure_erase_each_arena_sector_at_most_fifteen_times() {
+        let _group_store = lock_discovery_group_store();
         let diagnostics = Rc::new(RefCell::new(Vec::new()));
         let observed = Rc::clone(&diagnostics);
         let mut persistence = ready_with_observer(move |diagnostic| {

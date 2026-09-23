@@ -8,6 +8,8 @@ use nrf_softdevice::ble::{Connection, DeferredWriteReply, GattError, Uuid};
 use nrf_softdevice::Softdevice;
 
 const GATT_VALUE_CAPACITY: usize = 244;
+const _: () =
+    assert!(personal_rns::interfaces::bluetooth_auto::CONTROL_MAX_LEN <= GATT_VALUE_CAPACITY);
 const SERVICE_UUID: [u8; 16] = [
     0xe3, 0x28, 0xda, 0xc5, 0x42, 0x8f, 0x7f, 0x91, 0x94, 0x4a, 0x2d, 0x44, 0x00, 0x5b, 0x14, 0x37,
 ];

@@ -9,9 +9,11 @@ use personal_rns::manifold::embassy::EmbassyInterfaceStatus;
 #[cfg(feature = "board-t096")]
 use personal_rns::remote_control::RemoteControlGnssPower;
 use personal_rns::remote_control::{
-    RemoteControlApplyOutcome, RemoteControlCapabilities, RemoteControlDisplayAutoOff,
-    RemoteControlDisplayVisibility, RemoteControlInterfacePower, RemoteControlLoRaOutcome,
-    RemoteControlPowerOutcome, RemoteControlRequestKind, RemoteControlSystemPower,
+    RemoteControlApplyOutcome, RemoteControlCapabilities, RemoteControlDiscoveryGroups,
+    RemoteControlDiscoveryGroupsInventoryOutcome, RemoteControlDiscoveryGroupsReplaceOutcome,
+    RemoteControlDisplayAutoOff, RemoteControlDisplayVisibility, RemoteControlGroupOutcome,
+    RemoteControlInterfacePower, RemoteControlLoRaOutcome, RemoteControlPowerOutcome,
+    RemoteControlRequestKind, RemoteControlSystemPower,
 };
 use personal_rns::runtime::{
     RemoteControlHostCommand, RemoteControlHostCommandError, RemoteControlHostResponse,
@@ -97,6 +99,9 @@ pub(super) fn capabilities() -> RemoteControlCapabilities {
         RemoteControlRequestKind::AnnounceSelf,
         RemoteControlRequestKind::InventoryInterfaces,
         RemoteControlRequestKind::SetInterfacePower,
+        RemoteControlRequestKind::SetInterfaceGroup,
+        RemoteControlRequestKind::InventoryInterfaceDiscoveryGroups,
+        RemoteControlRequestKind::ReplaceInterfaceDiscoveryGroups,
         RemoteControlRequestKind::InventoryInterfacePeers,
         RemoteControlRequestKind::InventoryInterfaceConfig,
         RemoteControlRequestKind::SetInterfaceLoRaProfile,
@@ -143,12 +148,14 @@ pub(super) async fn execute<D: ImmediateDisplayDevice>(
                 }
                 SubGConfigurationState::Unconfigured => None,
             };
+            let ble_groups = BluetoothAutoStatus::new(&BLE_SHARED).discovery_groups();
+            let ble_group = hopspot::singleton_discovery_group(&ble_groups);
             let outcome = hopspot::remote_control_interface_config_from_snapshots(
                 context.snapshots,
                 id,
                 |snapshot, card| {
                     hopspot::decorate_hopspot_remote_control_card(
-                        snapshot, card, None, profile, None, None,
+                        snapshot, card, ble_group, profile, None, None,
                     )
                 },
             )
@@ -193,6 +200,41 @@ pub(super) async fn execute<D: ImmediateDisplayDevice>(
                 RemoteControlPowerOutcome::Scheduled
             };
             Ok(RemoteControlHostResponse::SetInterfacePower(outcome))
+        }
+        RemoteControlHostCommand::SetInterfaceGroup { id, group } => {
+            let groups = personal_rns::interfaces::DiscoveryGroupSet::from_singleton(group);
+            let outcome = replace_bluetooth_discovery_groups(id, &groups).await?;
+            let outcome = match outcome {
+                RemoteControlDiscoveryGroupsReplaceOutcome::Applied
+                | RemoteControlDiscoveryGroupsReplaceOutcome::Unchanged => {
+                    RemoteControlGroupOutcome::Applied
+                }
+                RemoteControlDiscoveryGroupsReplaceOutcome::UnknownInterface => {
+                    RemoteControlGroupOutcome::UnknownInterface
+                }
+                RemoteControlDiscoveryGroupsReplaceOutcome::Unsupported => {
+                    return Err(RemoteControlHostCommandError::Unsupported);
+                }
+            };
+            Ok(RemoteControlHostResponse::SetInterfaceGroup(outcome))
+        }
+        RemoteControlHostCommand::InventoryInterfaceDiscoveryGroups { id } => {
+            let outcome = if id == BLE_SUPERVISOR_ID {
+                RemoteControlDiscoveryGroupsInventoryOutcome::Groups(
+                    RemoteControlDiscoveryGroups::new(
+                        BluetoothAutoStatus::new(&BLE_SHARED).discovery_groups(),
+                    ),
+                )
+            } else {
+                RemoteControlDiscoveryGroupsInventoryOutcome::UnknownInterface
+            };
+            Ok(RemoteControlHostResponse::InventoryInterfaceDiscoveryGroups(outcome))
+        }
+        RemoteControlHostCommand::ReplaceInterfaceDiscoveryGroups { id, groups } => {
+            let groups = groups.into_groups();
+            Ok(RemoteControlHostResponse::ReplaceInterfaceDiscoveryGroups(
+                replace_bluetooth_discovery_groups(id, &groups).await?,
+            ))
         }
         RemoteControlHostCommand::SetInterfaceLoRaProfile { id, profile } => {
             if context.lora_status.id() != id {
@@ -324,6 +366,41 @@ pub(super) async fn execute<D: ImmediateDisplayDevice>(
         }
         _ => Err(RemoteControlHostCommandError::Unsupported),
     }
+}
+
+async fn replace_bluetooth_discovery_groups(
+    id: InterfaceId,
+    desired: &personal_rns::interfaces::DiscoveryGroupSet,
+) -> Result<RemoteControlDiscoveryGroupsReplaceOutcome, RemoteControlHostCommandError> {
+    if id != BLE_SUPERVISOR_ID {
+        return Ok(RemoteControlDiscoveryGroupsReplaceOutcome::UnknownInterface);
+    }
+    let status = BluetoothAutoStatus::new(&BLE_SHARED);
+    if status.discovery_groups() == *desired {
+        return Ok(RemoteControlDiscoveryGroupsReplaceOutcome::Unchanged);
+    }
+    let prepared = hopspot::persist_discovery_group_replacement(id, desired).await?;
+    if matches!(
+        status.replace_discovery_groups(desired).await,
+        personal_rns::interfaces::DiscoveryGroupApplyOutcome::Applied
+            | personal_rns::interfaces::DiscoveryGroupApplyOutcome::Unchanged
+    ) {
+        return Ok(RemoteControlDiscoveryGroupsReplaceOutcome::Applied);
+    }
+    let durable_restored = hopspot::rollback_discovery_group_replacement(&prepared)
+        .await
+        .is_ok();
+    let previous = prepared.runtime_rollback_groups();
+    let runtime_restored = status.discovery_groups() == previous
+        || matches!(
+            status.replace_discovery_groups(&previous).await,
+            personal_rns::interfaces::DiscoveryGroupApplyOutcome::Applied
+                | personal_rns::interfaces::DiscoveryGroupApplyOutcome::Unchanged
+        );
+    if !durable_restored || !runtime_restored {
+        return Err(RemoteControlHostCommandError::RollbackFailed);
+    }
+    Err(RemoteControlHostCommandError::ApplyFailed)
 }
 
 fn cancel_pending_interface_disable(
