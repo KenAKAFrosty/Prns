@@ -16915,11 +16915,11 @@
       "name": "prns-host-c",
       "source": "prns-host/abi/c",
       "unsafe": {
-        "blocks": 295,
+        "blocks": 297,
         "externs": 70,
         "functions": 18,
         "impls": 2,
-        "tokens": 385
+        "tokens": 387
       },
       "version": "0.3.7"
     },
@@ -16940,9 +16940,15 @@
     },
     {
       "graphs": {
-        "host-c-linux": [],
-        "host-c-macos": [],
-        "host-c-windows": []
+        "host-c-linux": [
+          "default"
+        ],
+        "host-c-macos": [
+          "default"
+        ],
+        "host-c-windows": [
+          "default"
+        ]
       },
       "name": "prns-host-native",
       "source": "prns-host/impls/native",
