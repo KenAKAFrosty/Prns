@@ -36,6 +36,13 @@ Expo's compatibility check required newer patch versions. Commit `911145f0d`
 updates Expo, Metro runtime, constants and router within SDK 57, including their
 lockfile and explicit version checks. This is not a new phone binary.
 
+The clean-export check also exposed an omitted compatibility entry: the existing
+Wi-Fi workflow tests directly enable `prns-runtime`'s `remote-control-wifi-host`
+feature. That test dependency is now recorded in the explicit direct-package
+list; it was already present in the source-package list. No new production
+dependency or resolver override was introduced. The generator's disposable
+compiler cache was moved outside the app export tree before qualification.
+
 Fresh complete app verification then passed:
 
 - Generated bindings, compatibility and detached-checker tests.

@@ -28,7 +28,8 @@
         "prns-ffi",
         "prns-host",
         "prns-host-snapshot",
-        "prns-interfaces-tokio"
+        "prns-interfaces-tokio",
+        "prns-runtime"
       ],
       "source": [
         { "name": "personal-rns", "path": "personal-rns", "version": "0.3.7" },
