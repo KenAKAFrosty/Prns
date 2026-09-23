@@ -95,13 +95,24 @@ background execution entitlement.
 
 AccessorySetupKit requires iOS 18, so the Expo configuration plugin, Xcode
 project, and native module all use iOS 18.0 as the minimum deployment target.
-Starting in iOS 26, prior AccessorySetupKit setup is also a platform eligibility
-gate for CoreBluetooth process restoration, including Apple's documented
-force-quit exception. The source implements that setup gate. The
+The current app gates Bluetooth startup on AccessorySetupKit authorization.
+This is its chosen permission model, not an inherent requirement for BLE
+connections or all background operation. Apple's
+[TN3115](https://developer.apple.com/documentation/technotes/tn3115-bluetooth-state-restoration-app-relaunch-rules)
+ties its iOS 26 AccessorySetupKit condition to specific relaunch cases; an
+[Apple engineering clarification](https://developer.apple.com/forums/thread/818370)
+distinguishes ordinary state restoration from relaunch after user force-quit.
+Do not interpret the current app's gate as proving that ordinary CoreBluetooth
+cannot restore without AccessorySetupKit. The
 [current checkpoint](../checkpoints/2026-09-09-follow-up.md) records a bounded
 restoration-requested relaunch and its remaining UI, delivery and lifecycle
 limits. The full physical matrix remains open; source, simulator, build and
 ordinary foreground results do not establish it.
+
+The proposed [BLE-only phone demo](phone-node-demo.md) evaluates ordinary
+CoreBluetooth authorization and dual-role AutoBLE to remove per-peer setup.
+It changes no installed behavior yet; any replacement needs new foreground,
+background and restoration evidence rather than inheriting the ASK results.
 
 During an iOS-granted Bluetooth background window, the process-owned Host and
 central interface can run without React. This is bounded, event-driven iOS
