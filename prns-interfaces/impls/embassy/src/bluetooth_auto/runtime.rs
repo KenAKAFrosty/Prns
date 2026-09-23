@@ -1,7 +1,7 @@
-use ::core::cell::Cell;
+use ::core::cell::{Cell, RefCell};
 
 use embassy_futures::join::join_array;
-use embassy_futures::select::{select, select5, select_array, Either, Either5};
+use embassy_futures::select::{select, select6, select_array, Either, Either6};
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex};
 use embassy_sync::blocking_mutex::CriticalSectionMutex;
 use embassy_sync::signal::Signal;
@@ -10,9 +10,9 @@ use portable_atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
 
 use prns_core::engine::FanTarget;
 use prns_core::interfaces::bluetooth_auto::{
-    self as contract, BleAddress, BleIdentity, Control, Endpoint, EstablishedPeer,
-    EstablishedTransport, Handshake, HandshakeOutcome, L2capPlan, LinkCapabilities, LocalPeer,
-    PeerProtocol,
+    self as contract, BleAddress, BleIdentity, CloseReason, Control, DiscoveryGroupSet, Endpoint,
+    EstablishedPeer, EstablishedTransport, Handshake, HandshakeFailureKind, HandshakeOutcome,
+    L2capPlan, LinkCapabilities, LocalPeer, PeerProtocol,
 };
 use prns_core::interfaces::bluetooth_auto::{
     role_for, ConnectionPolicy, PolicyAction, PolicyInput,
@@ -22,7 +22,8 @@ use prns_core::interfaces::bluetooth_auto::{
     RadioMode, ScanningMode,
 };
 use prns_core::interfaces::{
-    BitrateBps, ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus,
+    BitrateBps, ConnectionState, DiscoveryGroupApplyOutcome, InterfaceId, InterfaceKind,
+    InterfaceStatus, DEFAULT_DISCOVERY_GROUP_HASH,
 };
 use prns_runtime::atomic::AtomicU64;
 use prns_runtime::manifold::grant::FrameTarget;
@@ -157,6 +158,12 @@ pub struct BluetoothAutoShared<const MEMBERS: usize> {
     id: InterfaceId,
     enabled: AtomicBool,
     enabled_changed: Signal<CriticalSectionRawMutex, bool>,
+    discovery_groups: CriticalSectionMutex<RefCell<Option<DiscoveryGroupSet>>>,
+    discovery_groups_revision: AtomicU32,
+    discovery_groups_changed: Signal<CriticalSectionRawMutex, u32>,
+    settled_discovery_groups_revision: AtomicU32,
+    last_discovery_groups_apply_succeeded: AtomicBool,
+    discovery_groups_settled: Signal<CriticalSectionRawMutex, u32>,
     up: AtomicBool,
     failed: AtomicBool,
     fatal_failure_reason: CriticalSectionMutex<Cell<Option<&'static str>>>,
@@ -173,6 +180,12 @@ impl<const MEMBERS: usize> BluetoothAutoShared<MEMBERS> {
             id,
             enabled: AtomicBool::new(true),
             enabled_changed: Signal::new(),
+            discovery_groups: CriticalSectionMutex::new(RefCell::new(None)),
+            discovery_groups_revision: AtomicU32::new(0),
+            discovery_groups_changed: Signal::new(),
+            settled_discovery_groups_revision: AtomicU32::new(0),
+            last_discovery_groups_apply_succeeded: AtomicBool::new(false),
+            discovery_groups_settled: Signal::new(),
             up: AtomicBool::new(false),
             failed: AtomicBool::new(false),
             fatal_failure_reason: CriticalSectionMutex::new(Cell::new(None)),
@@ -303,6 +316,107 @@ impl<const MEMBERS: usize> BluetoothAutoStatus<MEMBERS> {
     pub fn toggle_enabled(&self) {
         let enabled = !self.shared.enabled.fetch_xor(true, Ordering::Relaxed);
         self.shared.enabled_changed.signal(enabled);
+    }
+
+    #[must_use]
+    pub fn discovery_groups(&self) -> DiscoveryGroupSet {
+        self.shared
+            .discovery_groups
+            .lock(|groups| *groups.borrow())
+            .unwrap_or_else(DiscoveryGroupSet::reticulum)
+    }
+
+    fn configure_initial_discovery_groups(&self, groups: DiscoveryGroupSet) {
+        self.shared.discovery_groups.lock(|configured| {
+            *configured.borrow_mut() = Some(groups);
+        });
+    }
+
+    /// Installs a durable group set before the supervisor starts touching the radio.
+    ///
+    /// Returns `false` after the supervisor has started or a live replacement has been requested;
+    /// callers must then use [`Self::replace_discovery_groups`] so teardown is settled exactly.
+    pub fn restore_discovery_groups_before_start(&self, groups: DiscoveryGroupSet) -> bool {
+        if self.shared.up.load(Ordering::Acquire)
+            || self
+                .shared
+                .discovery_groups_revision
+                .load(Ordering::Acquire)
+                != 0
+        {
+            return false;
+        }
+        self.configure_initial_discovery_groups(groups);
+        true
+    }
+
+    /// Replaces the complete set and settles only after old peers and handshakes are gone and the
+    /// radio policy has restarted with the new hashes.
+    pub async fn replace_discovery_groups(
+        &self,
+        groups: &DiscoveryGroupSet,
+    ) -> DiscoveryGroupApplyOutcome {
+        if self.discovery_groups() == *groups {
+            return DiscoveryGroupApplyOutcome::Unchanged;
+        }
+        if self.is_failed() || (self.is_enabled() && !self.shared.up.load(Ordering::Acquire)) {
+            return DiscoveryGroupApplyOutcome::Failed;
+        }
+        self.shared.discovery_groups.lock(|configured| {
+            *configured.borrow_mut() = Some(*groups);
+        });
+        let revision = self
+            .shared
+            .discovery_groups_revision
+            .fetch_add(1, Ordering::AcqRel)
+            .wrapping_add(1);
+        self.shared.discovery_groups_changed.signal(revision);
+        if !self.is_enabled() {
+            self.settle_discovery_groups(revision, true);
+            return DiscoveryGroupApplyOutcome::Applied;
+        }
+        loop {
+            if self
+                .shared
+                .settled_discovery_groups_revision
+                .load(Ordering::Acquire)
+                == revision
+            {
+                return if self
+                    .shared
+                    .last_discovery_groups_apply_succeeded
+                    .load(Ordering::Acquire)
+                {
+                    DiscoveryGroupApplyOutcome::Applied
+                } else {
+                    DiscoveryGroupApplyOutcome::Failed
+                };
+            }
+            let _ = self.shared.discovery_groups_settled.wait().await;
+        }
+    }
+
+    async fn wait_for_discovery_groups_change(&self, applied_revision: u32) -> u32 {
+        loop {
+            let revision = self
+                .shared
+                .discovery_groups_revision
+                .load(Ordering::Acquire);
+            if revision != applied_revision {
+                return revision;
+            }
+            let _ = self.shared.discovery_groups_changed.wait().await;
+        }
+    }
+
+    fn settle_discovery_groups(&self, revision: u32, applied: bool) {
+        self.shared
+            .last_discovery_groups_apply_succeeded
+            .store(applied, Ordering::Release);
+        self.shared
+            .settled_discovery_groups_revision
+            .store(revision, Ordering::Release);
+        self.shared.discovery_groups_settled.signal(revision);
     }
 
     fn update_enabled(&self, enabled: bool) {
@@ -451,22 +565,61 @@ impl<const CAP: usize> PendingActions<CAP> {
 }
 
 enum HandshakeStage {
+    RejectColumba,
     ColumbaReceive,
     ColumbaSend {
         identity: BleIdentity,
     },
     NativeSend {
         handshake: Option<Handshake>,
-        control: Control,
+        control: PendingNativeControl,
     },
     NativeReceive {
         handshake: Option<Handshake>,
     },
     NativeReply {
         handshake: Option<Handshake>,
-        control: Control,
+        control: PendingNativeControl,
         outcome: HandshakeOutcome,
     },
+}
+
+#[derive(Clone, Copy)]
+enum PendingNativeControl {
+    Hello,
+    Welcome,
+    Close(CloseReason),
+}
+
+impl PendingNativeControl {
+    fn from_control(control: Control) -> Self {
+        match control {
+            Control::Hello { .. } => Self::Hello,
+            Control::Welcome { .. } => Self::Welcome,
+            Control::Close { reason } => Self::Close(reason),
+        }
+    }
+
+    fn materialize(self, handshake: Option<&Handshake>, local: &LocalPeer) -> Option<Control> {
+        let peer_rssi = || handshake.map(Handshake::measured_rssi);
+        match self {
+            Self::Hello => Some(Control::Hello {
+                identity: local.identity,
+                endpoint: local.endpoint,
+                capabilities: local.capabilities,
+                peer_rssi: peer_rssi()?,
+                discovery_groups: contract::PeerDiscoveryGroups::Explicit(local.discovery_groups),
+            }),
+            Self::Welcome => Some(Control::Welcome {
+                identity: local.identity,
+                endpoint: local.endpoint,
+                capabilities: local.capabilities,
+                peer_rssi: peer_rssi()?,
+                discovery_groups: contract::PeerDiscoveryGroups::Explicit(local.discovery_groups),
+            }),
+            Self::Close(reason) => Some(Control::Close { reason }),
+        }
+    }
 }
 
 struct PendingHandshake<L: BleLink> {
@@ -478,15 +631,22 @@ struct PendingHandshake<L: BleLink> {
 }
 
 impl<L: BleLink> PendingHandshake<L> {
-    fn new(link: L, origin: Origin, local: LocalPeer) -> Self {
+    fn new(link: L, origin: Origin, local: &LocalPeer) -> Self {
         let stage = if link.peer_protocol() == PeerProtocol::Columba {
-            HandshakeStage::ColumbaReceive
+            if local
+                .discovery_groups
+                .contains(&DEFAULT_DISCOVERY_GROUP_HASH)
+            {
+                HandshakeStage::ColumbaReceive
+            } else {
+                HandshakeStage::RejectColumba
+            }
         } else {
-            let (handshake, opening) = Handshake::begin(role_for(origin), local, None);
+            let (handshake, opening) = Handshake::begin(role_for(origin), *local, None);
             match opening {
                 Some(control) => HandshakeStage::NativeSend {
                     handshake: Some(handshake),
-                    control,
+                    control: PendingNativeControl::from_control(control),
                 },
                 None => HandshakeStage::NativeReceive {
                     handshake: Some(handshake),
@@ -507,7 +667,7 @@ impl<L: BleLink> PendingHandshake<L> {
 enum HandshakeFailure {
     Timeout,
     Link,
-    Aborted,
+    Aborted(CloseReason),
     InvariantViolation,
 }
 
@@ -532,6 +692,7 @@ enum SendState {
 
 enum SupervisorStep<L: BleLink> {
     Disabled,
+    DiscoveryGroups(u32),
     Handshake(HandshakeStep<L>),
     Backend(BleEvent<L>),
     Inbound(usize, Result<usize, <L::Source as BleSource>::Error>),
@@ -557,14 +718,36 @@ where
         capabilities: LinkCapabilities,
         shared: &'static BluetoothAutoShared<MEMBERS>,
     ) -> Self {
+        Self::new_with_discovery_groups(
+            backend,
+            identity,
+            endpoint,
+            capabilities,
+            shared,
+            DiscoveryGroupSet::reticulum(),
+        )
+    }
+
+    #[must_use]
+    pub fn new_with_discovery_groups(
+        backend: B,
+        identity: BleIdentity,
+        endpoint: Endpoint,
+        capabilities: LinkCapabilities,
+        shared: &'static BluetoothAutoShared<MEMBERS>,
+        discovery_groups: DiscoveryGroupSet,
+    ) -> Self {
+        let status = BluetoothAutoStatus::new(shared);
+        status.configure_initial_discovery_groups(discovery_groups);
         Self {
             backend,
             local: LocalPeer {
                 identity,
                 endpoint,
                 capabilities,
+                discovery_groups: discovery_groups.hashes(),
             },
-            status: BluetoothAutoStatus::new(shared),
+            status,
             bitrate: contract::BLE_BITRATE_GUESS_BPS,
         }
     }
@@ -591,8 +774,15 @@ where
             ::core::future::pending::<()>().await;
             return;
         }
+        let configured_identity = configured_local.identity;
+        let configured_endpoint = configured_local.endpoint;
         let configured_capabilities = configured_local.capabilities;
         let mut local = configured_local;
+        local.discovery_groups = status.discovery_groups().hashes();
+        let mut discovery_groups_revision = status
+            .shared
+            .discovery_groups_revision
+            .load(Ordering::Acquire);
         prepare_radio(&mut backend, &mut local, configured_capabilities, &status).await;
         if status.is_failed() {
             let _ = backend.set_radio_mode(RadioMode::Off).await;
@@ -632,7 +822,12 @@ where
                 disable_members(&status, &mut fleet, &mut backend, &mut members).await;
                 pending.clear();
                 status.wait_until_enabled().await;
-                local = configured_local;
+                local = LocalPeer {
+                    identity: configured_identity,
+                    endpoint: configured_endpoint,
+                    capabilities: configured_capabilities,
+                    discovery_groups: status.discovery_groups().hashes(),
+                };
                 prepare_radio(&mut backend, &mut local, configured_capabilities, &status).await;
                 if status.is_failed() {
                     continue;
@@ -654,17 +849,41 @@ where
                 &status,
                 &mut backend,
                 &mut handshakes,
-                local,
+                &local,
                 &mut members,
                 &mut inbufs,
                 &fleet,
                 outbound_first,
+                discovery_groups_revision,
             )
             .await;
             outbound_first = !matches!(&step, SupervisorStep::Outbound);
             let now_ms = Instant::now().as_millis();
             match step {
                 SupervisorStep::Disabled => {}
+                SupervisorStep::DiscoveryGroups(revision) => {
+                    let _ = backend.set_advertising(AdvertisingMode::Off).await;
+                    let _ = backend.set_scanning(ScanningMode::Off).await;
+                    handshakes.fill_with(|| None);
+                    pending.clear();
+                    disable_members(&status, &mut fleet, &mut backend, &mut members).await;
+                    if !status.is_failed() {
+                        local.discovery_groups = status.discovery_groups().hashes();
+                        manager = ConnectionPolicy::<MEMBERS, DIAL_TRACK>::new(local);
+                        manager.start(&mut |action| pending.push(action));
+                        apply_radio(
+                            &mut pending,
+                            &mut manager,
+                            &status,
+                            &mut fleet,
+                            &mut backend,
+                            &mut members,
+                        )
+                        .await;
+                    }
+                    discovery_groups_revision = revision;
+                    status.settle_discovery_groups(revision, !status.is_failed());
+                }
                 SupervisorStep::Handshake(HandshakeStep::Advanced) => {}
                 SupervisorStep::Handshake(HandshakeStep::Done(HandshakeDone {
                     address,
@@ -693,10 +912,26 @@ where
                         )
                         .await;
                     }
-                    Err(_) => {
+                    Err(reason) => {
                         status.note_setup_failure();
+                        let failure = match reason {
+                            HandshakeFailure::Aborted(CloseReason::Incompatible) => {
+                                HandshakeFailureKind::Incompatible
+                            }
+                            HandshakeFailure::Timeout
+                            | HandshakeFailure::Link
+                            | HandshakeFailure::InvariantViolation
+                            | HandshakeFailure::Aborted(
+                                CloseReason::SelfConnection | CloseReason::DuplicateLink,
+                            ) => HandshakeFailureKind::Other,
+                        };
                         manager.handle(
-                            PolicyInput::HandshakeFailed { address, origin },
+                            PolicyInput::HandshakeFailed {
+                                address,
+                                origin,
+                                failure,
+                                now_ms,
+                            },
                             &mut |action| pending.push(action),
                         );
                         apply_radio(
@@ -728,7 +963,7 @@ where
                     queue_handshake(
                         link,
                         Origin::Accepted,
-                        local,
+                        &local,
                         &mut manager,
                         &mut handshakes,
                         &mut backend,
@@ -739,7 +974,7 @@ where
                     queue_handshake(
                         link,
                         origin,
-                        local,
+                        &local,
                         &mut manager,
                         &mut handshakes,
                         &mut backend,
@@ -813,18 +1048,20 @@ async fn next_step<
     status: &BluetoothAutoStatus<MEMBERS>,
     backend: &mut B,
     handshakes: &mut [Option<PendingHandshake<B::Link>>; HANDSHAKE_LANES],
-    local: LocalPeer,
+    local: &LocalPeer,
     members: &mut [Option<Active<B::Link>>; MEMBERS],
     inbufs: &mut [[u8; contract::BLE_HW_MTU]; MEMBERS],
     fleet: &Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
     outbound_first: bool,
+    discovery_groups_revision: u32,
 ) -> SupervisorStep<B::Link>
 where
     B: BleBackend<MEMBERS>,
 {
     if outbound_first {
-        return match select5(
+        return match select6(
             status.wait_until_disabled(),
+            status.wait_for_discovery_groups_change(discovery_groups_revision),
             fleet.outbound_ready(),
             advance_handshakes(handshakes, local),
             backend.next_event(),
@@ -832,15 +1069,17 @@ where
         )
         .await
         {
-            Either5::First(()) => SupervisorStep::Disabled,
-            Either5::Second(()) => SupervisorStep::Outbound,
-            Either5::Third(step) => SupervisorStep::Handshake(step),
-            Either5::Fourth(event) => SupervisorStep::Backend(event),
-            Either5::Fifth((index, received)) => SupervisorStep::Inbound(index, received),
+            Either6::First(()) => SupervisorStep::Disabled,
+            Either6::Second(revision) => SupervisorStep::DiscoveryGroups(revision),
+            Either6::Third(()) => SupervisorStep::Outbound,
+            Either6::Fourth(step) => SupervisorStep::Handshake(step),
+            Either6::Fifth(event) => SupervisorStep::Backend(event),
+            Either6::Sixth((index, received)) => SupervisorStep::Inbound(index, received),
         };
     }
-    match select5(
+    match select6(
         status.wait_until_disabled(),
+        status.wait_for_discovery_groups_change(discovery_groups_revision),
         advance_handshakes(handshakes, local),
         backend.next_event(),
         recv_any(members, inbufs),
@@ -848,11 +1087,12 @@ where
     )
     .await
     {
-        Either5::First(()) => SupervisorStep::Disabled,
-        Either5::Second(step) => SupervisorStep::Handshake(step),
-        Either5::Third(event) => SupervisorStep::Backend(event),
-        Either5::Fourth((index, received)) => SupervisorStep::Inbound(index, received),
-        Either5::Fifth(()) => SupervisorStep::Outbound,
+        Either6::First(()) => SupervisorStep::Disabled,
+        Either6::Second(revision) => SupervisorStep::DiscoveryGroups(revision),
+        Either6::Third(step) => SupervisorStep::Handshake(step),
+        Either6::Fourth(event) => SupervisorStep::Backend(event),
+        Either6::Fifth((index, received)) => SupervisorStep::Inbound(index, received),
+        Either6::Sixth(()) => SupervisorStep::Outbound,
     }
 }
 
@@ -877,7 +1117,7 @@ async fn prepare_radio<B, const MEMBERS: usize>(
 async fn queue_handshake<B, const MEMBERS: usize>(
     link: B::Link,
     origin: Origin,
-    local: LocalPeer,
+    local: &LocalPeer,
     manager: &mut ConnectionPolicy<MEMBERS, DIAL_TRACK>,
     handshakes: &mut [Option<PendingHandshake<B::Link>>; HANDSHAKE_LANES],
     backend: &mut B,
@@ -898,7 +1138,7 @@ async fn queue_handshake<B, const MEMBERS: usize>(
 
 async fn advance_handshakes<L: BleLink>(
     handshakes: &mut [Option<PendingHandshake<L>>; HANDSHAKE_LANES],
-    local: LocalPeer,
+    local: &LocalPeer,
 ) -> HandshakeStep<L> {
     let [first, second] = handshakes;
     match select(
@@ -913,7 +1153,7 @@ async fn advance_handshakes<L: BleLink>(
 
 async fn advance_handshake<L: BleLink>(
     pending: &mut Option<PendingHandshake<L>>,
-    local: LocalPeer,
+    local: &LocalPeer,
 ) -> HandshakeStep<L> {
     let completion = match pending.as_mut() {
         Some(pending) => {
@@ -921,6 +1161,9 @@ async fn advance_handshake<L: BleLink>(
             match with_deadline(deadline, async {
                 let mut next_stage = None;
                 let completion = match &mut pending.stage {
+                    HandshakeStage::RejectColumba => {
+                        Some(Err(HandshakeFailure::Aborted(CloseReason::Incompatible)))
+                    }
                     HandshakeStage::ColumbaReceive => {
                         match pending.link.receive_columba_peer_identity().await {
                             Ok(identity) if pending.origin == Origin::Dialed => {
@@ -947,7 +1190,9 @@ async fn advance_handshake<L: BleLink>(
                         }
                     }
                     HandshakeStage::NativeSend { handshake, control } => {
-                        let control = *control;
+                        let Some(control) = control.materialize(handshake.as_ref(), local) else {
+                            return Some(Err(HandshakeFailure::InvariantViolation));
+                        };
                         match pending.link.control_send(&control).await {
                             Ok(()) => match handshake.take() {
                                 Some(handshake) => {
@@ -965,13 +1210,15 @@ async fn advance_handshake<L: BleLink>(
                         match pending.link.control_recv().await {
                             Ok(control) => match handshake.as_mut() {
                                 Some(active) => {
-                                    let reaction = active.absorb(control);
+                                    let reaction = active.absorb(*local, control);
                                     match reaction.reply {
                                         Some(control) => match handshake.take() {
                                             Some(handshake) => {
                                                 next_stage = Some(HandshakeStage::NativeReply {
                                                     handshake: Some(handshake),
-                                                    control,
+                                                    control: PendingNativeControl::from_control(
+                                                        control,
+                                                    ),
                                                     outcome: reaction.outcome,
                                                 });
                                                 None
@@ -983,8 +1230,8 @@ async fn advance_handshake<L: BleLink>(
                                             HandshakeOutcome::Settled(established) => {
                                                 Some(Ok(established))
                                             }
-                                            HandshakeOutcome::Aborted(_) => {
-                                                Some(Err(HandshakeFailure::Aborted))
+                                            HandshakeOutcome::Aborted(reason) => {
+                                                Some(Err(HandshakeFailure::Aborted(reason)))
                                             }
                                         },
                                     }
@@ -999,7 +1246,9 @@ async fn advance_handshake<L: BleLink>(
                         control,
                         outcome,
                     } => {
-                        let control = *control;
+                        let Some(control) = control.materialize(handshake.as_ref(), local) else {
+                            return Some(Err(HandshakeFailure::InvariantViolation));
+                        };
                         let outcome = *outcome;
                         match pending.link.control_send(&control).await {
                             Ok(()) => match outcome {
@@ -1013,8 +1262,8 @@ async fn advance_handshake<L: BleLink>(
                                     None => Some(Err(HandshakeFailure::InvariantViolation)),
                                 },
                                 HandshakeOutcome::Settled(established) => Some(Ok(established)),
-                                HandshakeOutcome::Aborted(_) => {
-                                    Some(Err(HandshakeFailure::Aborted))
+                                HandshakeOutcome::Aborted(reason) => {
+                                    Some(Err(HandshakeFailure::Aborted(reason)))
                                 }
                             },
                             Err(_) => Some(Err(HandshakeFailure::Link)),
@@ -1461,8 +1710,8 @@ async fn apply_settled<
 mod tests {
     use core::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
-    use embassy_futures::block_on;
     use embassy_futures::select::{select, Either};
+    use embassy_futures::{block_on, join::join};
     use prns_core::interfaces::bluetooth_auto::{Endpoint, Nrf52Host};
 
     use super::*;
@@ -1471,6 +1720,52 @@ mod tests {
         l2cap: None,
         link_mtu: contract::BLE_HW_MTU as u16,
     };
+
+    #[test]
+    fn discovery_group_replacement_waits_for_the_runtime_acknowledgement() {
+        static GROUP_SHARED: BluetoothAutoShared<1> =
+            BluetoothAutoShared::new(InterfaceId::new([0x71; 8]));
+        let status = BluetoothAutoStatus::new(&GROUP_SHARED);
+        status.mark_up();
+        let desired = DiscoveryGroupSet::try_from_slice(&[
+            prns_core::interfaces::DiscoveryGroupId::parse("field").expect("valid group"),
+            prns_core::interfaces::DiscoveryGroupId::parse("relay").expect("valid group"),
+        ])
+        .expect("valid set");
+
+        block_on(async {
+            let apply = status.replace_discovery_groups(&desired);
+            let settle = async {
+                let revision = status.wait_for_discovery_groups_change(0).await;
+                assert_eq!(status.discovery_groups(), desired);
+                status.settle_discovery_groups(revision, true);
+            };
+            let (applied, ()) = join(apply, settle).await;
+            assert_eq!(applied, DiscoveryGroupApplyOutcome::Applied);
+        });
+    }
+
+    #[test]
+    fn discovery_group_replacement_reports_runtime_failure() {
+        static GROUP_SHARED: BluetoothAutoShared<1> =
+            BluetoothAutoShared::new(InterfaceId::new([0x72; 8]));
+        let status = BluetoothAutoStatus::new(&GROUP_SHARED);
+        status.mark_up();
+        let desired = DiscoveryGroupSet::singleton(
+            prns_core::interfaces::DiscoveryGroupId::parse("field").expect("valid group"),
+        )
+        .expect("valid set");
+
+        block_on(async {
+            let apply = status.replace_discovery_groups(&desired);
+            let settle = async {
+                let revision = status.wait_for_discovery_groups_change(0).await;
+                status.settle_discovery_groups(revision, false);
+            };
+            let (applied, ()) = join(apply, settle).await;
+            assert_eq!(applied, DiscoveryGroupApplyOutcome::Failed);
+        });
+    }
 
     #[derive(Debug)]
     struct MockError;
@@ -1575,6 +1870,7 @@ mod tests {
             identity: BleIdentity::new([identity; 16]),
             endpoint: Endpoint::Nrf52(Nrf52Host::Nrf52),
             capabilities: CAPS,
+            discovery_groups: DiscoveryGroupSet::reticulum().hashes(),
         }
     }
 
@@ -1607,30 +1903,33 @@ mod tests {
             endpoint: Endpoint::Nrf52(Nrf52Host::Nrf52),
             capabilities: CAPS,
             peer_rssi: None,
+            discovery_groups: contract::PeerDiscoveryGroups::Explicit(
+                DiscoveryGroupSet::reticulum().hashes(),
+            ),
         };
         let mut handshakes = [
             Some(PendingHandshake::new(
                 link(2, None, false),
                 Origin::Dialed,
-                local,
+                &local,
             )),
             Some(PendingHandshake::new(
                 link(3, Some(hello), false),
                 Origin::Accepted,
-                local,
+                &local,
             )),
         ];
 
         block_on(async {
             assert!(matches!(
-                advance_handshakes(&mut handshakes, local).await,
+                advance_handshakes(&mut handshakes, &local).await,
                 HandshakeStep::Advanced
             ));
             assert!(matches!(
-                advance_handshakes(&mut handshakes, local).await,
+                advance_handshakes(&mut handshakes, &local).await,
                 HandshakeStep::Advanced
             ));
-            let step = advance_handshakes(&mut handshakes, local).await;
+            let step = advance_handshakes(&mut handshakes, &local).await;
             assert!(matches!(&step, HandshakeStep::Done(_)));
             if let HandshakeStep::Done(done) = step {
                 assert_eq!(done.address, BleAddress::new([3; 6]));
@@ -1649,7 +1948,7 @@ mod tests {
             Some(PendingHandshake::new(
                 link(2, None, true),
                 Origin::Dialed,
-                local(1),
+                &local(1),
             )),
             None,
         ];

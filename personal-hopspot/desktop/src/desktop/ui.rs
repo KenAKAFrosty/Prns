@@ -44,6 +44,7 @@ fn ui_state() -> UiState {
         access_point: AccessPointState::Unsupported,
         shared_instance_config_export: screen::SharedInstanceConfigExport::Unavailable,
         gnss: screen::GnssAvailability::Unavailable,
+        discovery_groups: screen::DiscoveryGroupEditorAvailability::Unavailable,
     })
 }
 
@@ -662,6 +663,7 @@ pub(super) fn run_window(handles: WindowHandles) {
             _ => {}
         },
         UiAction::ToggleStationUplink => {}
+        UiAction::OpenDiscoveryGroupsEditor(_) | UiAction::ReplaceDiscoveryGroups => {}
         UiAction::OpenSubGEditor => ui_state.open_subg_editor(*working_subg_configuration),
         UiAction::SetSubGConfiguration(configuration) => {
             ui_state.show_notice(screen::UiNotice::Saved);

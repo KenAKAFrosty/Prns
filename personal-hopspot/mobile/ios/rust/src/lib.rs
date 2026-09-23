@@ -12,8 +12,9 @@ pub use personal_hopspot_core::{
 
 use core::ffi::c_char;
 use personal_hopspot_core::{
-    BatteryPercent, ExternalPowerState, MobileActionCode, MobileInputCode, PowerSnapshot,
-    COALESCE_MS,
+    encode_mobile_discovery_groups, parse_mobile_discovery_groups, BatteryPercent,
+    ExternalPowerState, MobileActionCode, MobileDiscoveryGroupOutcome, MobileDiscoveryInterface,
+    MobileInputCode, PowerSnapshot, COALESCE_MS, MOBILE_DISCOVERY_GROUPS_WIRE_MAX_LEN,
 };
 
 /// # Safety
@@ -85,6 +86,63 @@ pub unsafe extern "C" fn hopspot_post_input(handle: *mut HopspotFace, code: i32)
 #[no_mangle]
 pub extern "C" fn hopspot_announce() {
     crate::engine::announce();
+}
+
+#[no_mangle]
+pub extern "C" fn hopspot_discovery_groups_wire_capacity() -> usize {
+    MOBILE_DISCOVERY_GROUPS_WIRE_MAX_LEN
+}
+
+/// Returns the encoded byte count on success or a negative [`MobileDiscoveryGroupOutcome`] code.
+///
+/// # Safety
+/// `out` must describe a writable allocation of `capacity` bytes that is not aliased for this call.
+#[no_mangle]
+pub unsafe extern "C" fn hopspot_discovery_groups(
+    interface: i32,
+    out: *mut u8,
+    capacity: usize,
+) -> i32 {
+    let Ok(interface) = MobileDiscoveryInterface::decode(interface) else {
+        return MobileDiscoveryGroupOutcome::InvalidInterface.inventory_error_code();
+    };
+    if out.is_null() {
+        return MobileDiscoveryGroupOutcome::BufferTooShort.inventory_error_code();
+    }
+    let groups = match engine::discovery_groups(interface) {
+        Ok(groups) => groups,
+        Err(outcome) => return outcome.inventory_error_code(),
+    };
+    // SAFETY: the caller contract guarantees a writable, unaliased allocation of `capacity`
+    // bytes; null was rejected above.
+    let out = unsafe { core::slice::from_raw_parts_mut(out, capacity) };
+    match encode_mobile_discovery_groups(&groups, out) {
+        Ok(len) => len as i32,
+        Err(_) => MobileDiscoveryGroupOutcome::BufferTooShort.inventory_error_code(),
+    }
+}
+
+/// # Safety
+/// `encoded` must describe a readable allocation of `len` bytes for the duration of this call.
+#[no_mangle]
+pub unsafe extern "C" fn hopspot_replace_discovery_groups(
+    interface: i32,
+    encoded: *const u8,
+    len: usize,
+) -> i32 {
+    let Ok(interface) = MobileDiscoveryInterface::decode(interface) else {
+        return MobileDiscoveryGroupOutcome::InvalidInterface.code();
+    };
+    if encoded.is_null() {
+        return MobileDiscoveryGroupOutcome::InvalidEncoding.code();
+    }
+    // SAFETY: the caller contract guarantees a readable allocation of `len` bytes; null was
+    // rejected above.
+    let encoded = unsafe { core::slice::from_raw_parts(encoded, len) };
+    let Ok(groups) = parse_mobile_discovery_groups(encoded) else {
+        return MobileDiscoveryGroupOutcome::InvalidEncoding.code();
+    };
+    engine::replace_discovery_groups(interface, groups).code()
 }
 
 /// # Safety

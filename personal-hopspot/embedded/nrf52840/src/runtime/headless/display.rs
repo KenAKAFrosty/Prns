@@ -110,6 +110,7 @@ pub(super) fn face(input: FaceInput) -> impl Future {
             user_blanking: display.user_blanking(),
             access_point: hopspot::AccessPointState::Unsupported,
             shared_instance_config_export: hopspot::SharedInstanceConfigExport::Unavailable,
+            discovery_groups: hopspot::DiscoveryGroupEditorAvailability::Available,
             #[cfg(feature = "board-t096")]
             gnss: hopspot::GnssAvailability::Available,
             #[cfg(feature = "board-t114")]
@@ -407,6 +408,47 @@ pub(super) fn face(input: FaceInput) -> impl Future {
                                     }
                                 );
                             }
+                        }
+                        hopspot::UiAction::OpenDiscoveryGroupsEditor(id) => {
+                            if id == BLE_SUPERVISOR_ID {
+                                let groups =
+                                    BluetoothAutoStatus::new(&BLE_SHARED).discovery_groups();
+                                ui_state.open_discovery_groups_editor(id, &groups);
+                            }
+                        }
+                        hopspot::UiAction::ReplaceDiscoveryGroups => {
+                            let Some(replacement) = ui_state.take_discovery_group_replacement()
+                            else {
+                                continue;
+                            };
+                            let id = replacement.interface_id();
+                            let groups = replacement.into_groups();
+                            let result = execute_hopspot_command!(
+                                snapshots,
+                                battery_state,
+                                personal_rns::runtime::RemoteControlHostCommand::ReplaceInterfaceDiscoveryGroups {
+                                    id,
+                                    groups: personal_rns::remote_control::RemoteControlDiscoveryGroups::new(groups),
+                                }
+                            );
+                            let notice = match result {
+                                Ok(personal_rns::runtime::RemoteControlHostResponse::ReplaceInterfaceDiscoveryGroups(
+                                    personal_rns::remote_control::RemoteControlDiscoveryGroupsReplaceOutcome::Applied
+                                    | personal_rns::remote_control::RemoteControlDiscoveryGroupsReplaceOutcome::Unchanged,
+                                )) => hopspot::UiNotice::Saved,
+                                Err(personal_rns::runtime::RemoteControlHostCommandError::Busy) => {
+                                    hopspot::UiNotice::GroupsBusy
+                                }
+                                Err(personal_rns::runtime::RemoteControlHostCommandError::PersistenceFailed) => {
+                                    hopspot::UiNotice::GroupsNotSaved
+                                }
+                                Err(personal_rns::runtime::RemoteControlHostCommandError::RollbackFailed) => {
+                                    hopspot::UiNotice::GroupsRollbackFailed
+                                }
+                                _ => hopspot::UiNotice::GroupsApplyFailed,
+                            };
+                            ui_state.show_notice(notice);
+                            notice_until_ms = Some((now_ms + NOTICE_MS, notice));
                         }
                         hopspot::UiAction::OpenSubGEditor => {
                             ui_state.open_subg_editor(working_subg_configuration);
