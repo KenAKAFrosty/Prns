@@ -16943,6 +16943,23 @@
     },
     {
       "graphs": {
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": []
+      },
+      "name": "prns-host-snapshot",
+      "source": "prns-host/impls/snapshot",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.3.7"
+    },
+    {
+      "graphs": {
         "android": [
           "bluetooth-auto",
           "log",
