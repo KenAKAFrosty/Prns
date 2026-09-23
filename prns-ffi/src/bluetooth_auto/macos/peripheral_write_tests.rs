@@ -4,7 +4,8 @@ use std::task::Poll;
 use std::time::Duration;
 
 use prns_core::interfaces::bluetooth_auto::{
-    AppleHost, BleIdentity, Control, Endpoint, LinkCapabilities, PeerProtocol, CONTROL_MAX_LEN,
+    AppleHost, BleIdentity, Control, Endpoint, LinkCapabilities, PeerDiscoveryGroups, PeerProtocol,
+    CONTROL_MAX_LEN,
 };
 use tokio::sync::mpsc;
 
@@ -123,6 +124,7 @@ fn hello() -> Control {
             link_mtu: 512,
         },
         peer_rssi: None,
+        discovery_groups: PeerDiscoveryGroups::LegacyReticulum,
     }
 }
 
@@ -135,6 +137,7 @@ fn welcome() -> Control {
             link_mtu: 512,
         },
         peer_rssi: Some(-47),
+        discovery_groups: PeerDiscoveryGroups::LegacyReticulum,
     }
 }
 

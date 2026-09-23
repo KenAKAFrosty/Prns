@@ -105,6 +105,12 @@ pub(super) enum DialRejection {
 
 pub(super) const CENTRAL_CONTROL_INBOUND_CAPACITY: usize = 8;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ControlInboxError {
+    Full,
+    Closed,
+}
+
 /// Value notifications received after CoreBluetooth restores a peripheral but before the Host
 /// admits its central-role session. A buffer overflow marks the handoff failed: silently skipping
 /// a control message or framed-data fragment could corrupt the restored protocol stream.
@@ -691,11 +697,13 @@ impl CentralPeerSession {
         true
     }
 
-    pub(super) fn enqueue_control(
-        &self,
-        control: Control,
-    ) -> Result<(), tokio_mpsc::error::TrySendError<Control>> {
-        self.control_tx.try_send(control)
+    pub(super) fn enqueue_control(&self, control: Control) -> Result<(), ControlInboxError> {
+        self.control_tx
+            .try_send(control)
+            .map_err(|error| match error {
+                tokio_mpsc::error::TrySendError::Full(_) => ControlInboxError::Full,
+                tokio_mpsc::error::TrySendError::Closed(_) => ControlInboxError::Closed,
+            })
     }
 
     fn complete_columba(
