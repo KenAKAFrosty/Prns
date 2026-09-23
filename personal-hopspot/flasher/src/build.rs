@@ -7,9 +7,10 @@ use personal_hopspot_builder::platform::nrf52840::serial_dfu as serial_dfu_build
 use personal_hopspot_builder::platform::nrf52840::uf2 as uf2_builder;
 use personal_hopspot_builder::{BuildContext, BuildVersion};
 use prns_flash_manifest::{
-    BoardBuild, BoardCatalog, BoardCatalogEntry, FlashManifest, FlashPart, ManifestTargetSetPolicy,
-    NrfSerialDfuManifest, OfflineKeySigningInfo, ReleaseChannel, ReleaseInfo, ReleaseTarget,
-    ReleaseVersion, SoftdeviceIdentity, TargetManifest, Uf2VariantManifest, FLASH_MANIFEST_SCHEMA,
+    sha256_hex, BoardBuild, BoardCatalog, BoardCatalogEntry, FlashManifest, FlashPart,
+    ManifestTargetSetPolicy, NrfSerialDfuManifest, OfflineKeySigningInfo, ReleaseChannel,
+    ReleaseInfo, ReleaseTarget, ReleaseVersion, SoftdeviceIdentity, TargetManifest,
+    Uf2VariantManifest, FLASH_MANIFEST_SCHEMA,
 };
 
 use crate::cli::ChannelArg;
@@ -86,6 +87,198 @@ pub(crate) fn build_board_for_flash(
         BoardBuild::NrfSerialDfu(_) => Err(AppError::developer_build(
             "Nordic serial DFU build does not accept a UF2 SoftDevice selection",
         )),
+    }
+}
+
+pub(crate) fn prepare_developer_artifacts(
+    board: &BoardCatalogEntry,
+    artifacts_dir: &Path,
+    softdevice: Option<&SoftdeviceIdentity>,
+    reporter: Reporter,
+) -> Result<PreparedTarget, AppError> {
+    reporter.phase(
+        Phase::VerifyingArtifacts,
+        Some(&board.slug),
+        &format!(
+            "Using unsigned {} artifacts in {}…",
+            board.display_name,
+            artifacts_dir.display()
+        ),
+    );
+    let record = artifacts_dir.join("target.json");
+    let bytes = fs::read(&record).map_err(|error| {
+        AppError::developer_artifact(format!(
+            "missing built target record {}: {error}",
+            record.display()
+        ))
+    })?;
+    let target = serde_json::from_slice::<TargetManifest>(&bytes).map_err(|error| {
+        AppError::developer_artifact(format!(
+            "invalid target record {}: {error}",
+            record.display()
+        ))
+    })?;
+    if target.board_slug != board.slug {
+        return Err(AppError::developer_artifact(format!(
+            "developer artifacts are for {:?}, not {:?}",
+            target.board_slug, board.slug
+        )));
+    }
+    let version = version_from_developer_target(&target)?;
+    let version = ReleaseVersion::parse(version).map_err(|error| {
+        AppError::developer_artifact(format!("invalid developer artifact version: {error}"))
+    })?;
+    let validated = match softdevice {
+        Some(softdevice) => target
+            .into_validated_uf2_variant(board, &version, softdevice)
+            .map_err(|error| {
+                AppError::developer_manifest(format!("invalid built target: {error}"))
+            })?,
+        None => target.into_validated(board, &version).map_err(|error| {
+            AppError::developer_manifest(format!("invalid built target: {error}"))
+        })?,
+    };
+    let parts = developer_target_parts(&validated, softdevice)?
+        .into_iter()
+        .map(|part| {
+            (
+                part.path().as_str().to_string(),
+                part.size(),
+                part.sha256().as_str().to_string(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut artifacts = Vec::with_capacity(parts.len());
+    for (part_path, size, expected_sha256) in parts {
+        reporter.phase(
+            Phase::VerifyingArtifacts,
+            Some(&board.slug),
+            &format!("Verifying local {part_path} ({size} bytes)…"),
+        );
+        let path = resolve_developer_artifact_path(artifacts_dir, &part_path);
+        let bytes = fs::read(&path).map_err(|error| {
+            AppError::developer_artifact(format!(
+                "could not read developer artifact {}: {error}",
+                path.display()
+            ))
+        })?;
+        if bytes.len() as u64 != size {
+            return Err(AppError::developer_artifact(format!(
+                "artifact {part_path:?} is {} bytes; target.json requires {size}",
+                bytes.len()
+            )));
+        }
+        let actual = sha256_hex(&bytes);
+        if actual != expected_sha256 {
+            return Err(AppError::developer_artifact(format!(
+                "SHA-256 mismatch for {part_path}: expected {expected_sha256}, found {actual}"
+            )));
+        }
+        artifacts.push(bytes);
+    }
+    match softdevice {
+        Some(softdevice) => {
+            let [bytes] = <[Vec<u8>; 1]>::try_from(artifacts).map_err(|artifacts| {
+                AppError::developer_artifact(format!(
+                    "selected UF2 variant produced {} artifacts instead of one",
+                    artifacts.len()
+                ))
+            })?;
+            PreparedTarget::bind_uf2(version, validated, softdevice, bytes)
+                .map_err(|error| AppError::developer_artifact(error.to_string()))
+        }
+        None => PreparedTarget::bind(version, validated, artifacts)
+            .map_err(|error| AppError::developer_artifact(error.to_string())),
+    }
+}
+
+fn version_from_developer_target(target: &TargetManifest) -> Result<String, AppError> {
+    let mut paths: Vec<&str> = target
+        .parts
+        .iter()
+        .map(|part| part.path.as_str())
+        .chain(target.variants.iter().map(|variant| variant.path.as_str()))
+        .collect();
+    if let Some(dfu) = &target.nrf_serial_dfu {
+        paths.push(dfu.application.path.as_str());
+        paths.push(dfu.init_packet.path.as_str());
+        paths.push(dfu.recovery.artifact.path.as_str());
+    }
+    let prefix = format!("firmware/hopspot/{}/", target.board_slug);
+    paths
+        .into_iter()
+        .find_map(|path| {
+            path.strip_prefix(&prefix)?
+                .split('/')
+                .next()
+                .filter(|segment| !segment.is_empty())
+                .map(str::to_owned)
+        })
+        .ok_or_else(|| {
+            AppError::developer_artifact(format!(
+                "developer artifacts for {} do not record a firmware version path",
+                target.board_slug
+            ))
+        })
+}
+
+fn resolve_developer_artifact_path(root: &Path, recorded_path: &str) -> PathBuf {
+    let nested = root.join(recorded_path);
+    if nested.is_file() {
+        return nested;
+    }
+    match Path::new(recorded_path).file_name() {
+        Some(name) => {
+            let flat = root.join(name);
+            if flat.is_file() {
+                flat
+            } else {
+                nested
+            }
+        }
+        None => nested,
+    }
+}
+
+fn developer_target_parts<'a>(
+    target: &'a ReleaseTarget,
+    softdevice: Option<&SoftdeviceIdentity>,
+) -> Result<Vec<prns_flash_manifest::ReleasePartRef<'a>>, AppError> {
+    match target {
+        ReleaseTarget::EspSerial(_) => {
+            if softdevice.is_some() {
+                return Err(AppError::developer_artifact(
+                    "ESP target cannot use a SoftDevice compatibility selection",
+                ));
+            }
+            Ok(target.parts())
+        }
+        ReleaseTarget::Uf2(target) => {
+            let softdevice = softdevice.ok_or_else(|| {
+                AppError::developer_artifact(
+                    "UF2 target requires a detected SoftDevice compatibility selection",
+                )
+            })?;
+            let variant = target.variant_for(softdevice).ok_or_else(|| {
+                AppError::developer_artifact(format!(
+                    "developer artifacts have no UF2 variant for detected {softdevice}"
+                ))
+            })?;
+            Ok(vec![prns_flash_manifest::ReleasePartRef::Uf2(
+                variant.part(),
+            )])
+        }
+        ReleaseTarget::NrfSerialDfu(target) => {
+            if softdevice.is_some() {
+                return Err(AppError::developer_artifact(
+                    "Nordic serial DFU target cannot use a UF2 compatibility selection",
+                ));
+            }
+            Ok(vec![
+                prns_flash_manifest::ReleasePartRef::NrfSerialDfu(target.application()),
+                prns_flash_manifest::ReleasePartRef::NrfSerialDfu(target.init_packet()),
+            ])
+        }
     }
 }
 
@@ -546,7 +739,7 @@ fn with_newline(mut bytes: Vec<u8>) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prns_flash_manifest::Transport;
+    use prns_flash_manifest::{FlashPartKind, Transport};
 
     #[test]
     fn all_catalog_boards_have_a_build_recipe() -> Result<(), Box<dyn std::error::Error>> {
@@ -606,5 +799,131 @@ mod tests {
             Some((7_639_296, 3_055_718))
         );
         assert_eq!(sparse_size_gate("xiao-esp32-c6"), None);
+    }
+
+    #[test]
+    fn developer_artifact_paths_accept_nested_or_basename_layout() {
+        let root = std::env::temp_dir().join(format!(
+            "hopspot-dev-artifacts-layout-{}",
+            std::process::id()
+        ));
+        let nested_dir = root.join("firmware/hopspot/t-echo/0.3.7");
+        fs::create_dir_all(&nested_dir).expect("nested layout");
+        let nested_file = nested_dir.join("t-echo-s140-6.1.1.uf2");
+        fs::write(&nested_file, b"nested").expect("nested file");
+        assert_eq!(
+            resolve_developer_artifact_path(
+                &root,
+                "firmware/hopspot/t-echo/0.3.7/t-echo-s140-6.1.1.uf2"
+            ),
+            nested_file
+        );
+
+        let flat = root.join("flat");
+        fs::create_dir_all(&flat).expect("flat layout");
+        let flat_file = flat.join("t-echo-s140-6.1.1.uf2");
+        fs::write(&flat_file, b"flat").expect("flat file");
+        assert_eq!(
+            resolve_developer_artifact_path(
+                &flat,
+                "firmware/hopspot/t-echo/0.3.7/t-echo-s140-6.1.1.uf2"
+            ),
+            flat_file
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn developer_artifacts_bind_unsigned_esp_files_next_to_target_json(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let catalog = prns_flash_manifest::board_catalog()?;
+        let board = catalog
+            .board("heltec-v4")
+            .ok_or("missing Heltec V4 catalog entry")?;
+        let BoardBuild::Esp(build) = &board.build else {
+            return Err("Heltec V4 is not an ESP build".into());
+        };
+        let artifacts: [&[u8]; 3] = [b"boot", b"part", b"app-image"];
+        let recipes = [
+            (FlashPartKind::Bootloader, "bootloader.bin", 0),
+            (FlashPartKind::PartitionTable, "partition-table.bin", 0x8000),
+            (FlashPartKind::Application, "application.bin", 0x10000),
+        ];
+        let parts = recipes
+            .into_iter()
+            .zip(artifacts)
+            .map(|((kind, name, offset), bytes)| FlashPart {
+                kind,
+                path: format!("firmware/hopspot/heltec-v4/0.2.6/{name}"),
+                offset: Some(offset),
+                size: bytes.len() as u64,
+                sha256: sha256_hex(bytes),
+            })
+            .collect();
+        let target = TargetManifest {
+            board_slug: board.slug.clone(),
+            display_name: board.display_name.clone(),
+            silicon: board.silicon.clone(),
+            interfaces: board.interfaces.clone(),
+            transport: board.transport,
+            expected_chip: board.expected_chip.clone(),
+            flash_size: board.flash_size,
+            flash_mode: Some(build.flash_mode.clone()),
+            flash_frequency: Some(build.flash_frequency.clone()),
+            before_reset: Some(build.before_reset.clone()),
+            after_reset: Some(build.after_reset.clone()),
+            preparation_profile: board.preparation_profile.clone(),
+            parts,
+            variants: Vec::new(),
+            nrf_serial_dfu: None,
+            provisioning: board.provisioning.clone(),
+            source: None,
+        };
+        let root =
+            std::env::temp_dir().join(format!("hopspot-dev-artifacts-esp-{}", std::process::id()));
+        fs::create_dir_all(&root)?;
+        fs::write(
+            root.join("target.json"),
+            serde_json::to_vec_pretty(&target)?,
+        )?;
+        for (name, bytes) in [
+            ("bootloader.bin", artifacts[0]),
+            ("partition-table.bin", artifacts[1]),
+            ("application.bin", artifacts[2]),
+        ] {
+            fs::write(root.join(name), bytes)?;
+        }
+        let prepared = prepare_developer_artifacts(board, &root, None, Reporter::json_lines())?;
+        assert_eq!(prepared.board_id().as_str(), "heltec-v4");
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn developer_artifacts_reject_a_mismatched_board_slug() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let catalog = prns_flash_manifest::board_catalog()?;
+        let board = catalog
+            .board("t-echo")
+            .ok_or("missing T-Echo catalog entry")?;
+        let root = std::env::temp_dir().join(format!(
+            "hopspot-dev-artifacts-mismatch-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root)?;
+        fs::write(
+            root.join("target.json"),
+            br#"{"board_slug":"heltec-v4","display_name":"Heltec","silicon":"esp","interfaces":[],"transport":"esp-serial","expected_chip":null,"flash_size":null,"flash_mode":null,"flash_frequency":null,"before_reset":null,"after_reset":null,"preparation_profile":"heltec-v4","parts":[],"variants":[],"provisioning":null}"#,
+        )?;
+        let error = prepare_developer_artifacts(board, &root, None, Reporter::json_lines())
+            .expect_err("slug mismatch must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("developer artifacts are for \"heltec-v4\""),
+            "{error}"
+        );
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
     }
 }

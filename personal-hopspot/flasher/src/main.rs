@@ -22,7 +22,10 @@ use prns_flash_manifest::{
 };
 use serde::Serialize;
 
-use build::{assemble_manifest, build_board, build_board_for_flash, ManifestTargetProfile};
+use build::{
+    assemble_manifest, build_board, build_board_for_flash, prepare_developer_artifacts,
+    ManifestTargetProfile,
+};
 use cli::{CacheCommand, ChannelArg, Cli, CommandMode, WifiMode};
 use error::AppError;
 use events::{Phase, Reporter};
@@ -168,12 +171,13 @@ fn run(cli: Cli, reporter: Reporter) -> Result<(), AppError> {
             json,
             local_build,
             candidate,
+            developer_artifacts,
             mount,
         }) => {
             let board = find_board(&catalog, &board)?;
             let interactive = !json && ui::interactive_terminal();
             confirm_board(board, yes, interactive)?;
-            if !local_build && candidate.is_none() {
+            if !local_build && candidate.is_none() && developer_artifacts.is_none() {
                 confirm_pinned_version(version.as_deref(), allow_downgrade, interactive)?;
             }
             let provisioning = wifi::resolve(
@@ -200,6 +204,7 @@ fn run(cli: Cli, reporter: Reporter) -> Result<(), AppError> {
                     monitor,
                     local_build,
                     candidate: candidate.as_deref(),
+                    developer_artifacts: developer_artifacts.as_deref(),
                     mount: mount.as_deref(),
                 },
                 reporter,
@@ -218,6 +223,7 @@ struct FlashRequest<'a> {
     monitor: bool,
     local_build: bool,
     candidate: Option<&'a Path>,
+    developer_artifacts: Option<&'a Path>,
     mount: Option<&'a Path>,
 }
 
@@ -254,6 +260,19 @@ fn execute_flash(
             )?
             .into_prepared()?,
         };
+        (prepared, detected_uf2)
+    } else if let Some(artifacts) = request.developer_artifacts {
+        let detected_uf2 = match board.transport {
+            Transport::EspSerial => None,
+            Transport::Uf2MassStorage => Some(uf2::detect_device(board, request.mount)?),
+            Transport::NrfSerialDfu => None,
+        };
+        let prepared = prepare_developer_artifacts(
+            board,
+            artifacts,
+            detected_uf2.as_ref().map(|device| device.softdevice()),
+            reporter,
+        )?;
         (prepared, detected_uf2)
     } else {
         let verified = if let Some(candidate) = request.candidate {
@@ -405,6 +424,7 @@ fn guided(catalog: &BoardCatalog, reporter: Reporter) -> Result<(), AppError> {
             monitor: false,
             local_build: false,
             candidate: None,
+            developer_artifacts: None,
             mount: None,
         },
         reporter,

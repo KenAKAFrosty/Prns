@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn canonical_matrix_has_fourteen_unique_profile_bound_targets(
+fn canonical_matrix_has_fifteen_unique_profile_bound_targets(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let catalog = prns_flash_manifest::board_catalog()?;
     let matrix = Matrix::from_catalog(&catalog)?;
@@ -101,6 +101,13 @@ fn canonical_matrix_has_fourteen_unique_profile_bound_targets(
             (
                 "t096",
                 "t096",
+                "thumbv7em-none-eabihf",
+                "thumbv7em-rust-lld",
+                TargetPlatform::Nrf52840
+            ),
+            (
+                "rak4631",
+                "rak4631",
                 "thumbv7em-none-eabihf",
                 "thumbv7em-rust-lld",
                 TargetPlatform::Nrf52840

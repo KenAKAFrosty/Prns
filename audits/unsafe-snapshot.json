@@ -22367,11 +22367,11 @@
       "name": "t-echo",
       "source": "personal-hopspot/embedded/nrf52840",
       "unsafe": {
-        "blocks": 1481,
+        "blocks": 1483,
         "externs": 13,
         "functions": 299,
         "impls": 17,
-        "tokens": 1811
+        "tokens": 1813
       },
       "version": "0.1.0"
     },

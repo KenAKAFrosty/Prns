@@ -10,6 +10,8 @@ use personal_hopspot_core as hopspot;
 use personal_rns::engine::IssuedCommand;
 use personal_rns::interfaces::lora::{AirtimePolicy, LORA_MAX_PAYLOAD};
 #[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
+use personal_rns::interfaces::subghz::regions::us915::Us915;
+#[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
 use personal_rns::interfaces::subghz::SubGConfigurationState;
 use personal_rns::interfaces::usb_auto::{WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID};
 use personal_rns::interfaces::{ConnectionState, InterfaceId};
@@ -17,7 +19,7 @@ use personal_rns::lora::{LoRaControl, LoRaInterface, LoRaInterfaceInput, LoRaSpe
 use personal_rns::manifold::embassy::{EmbassyHost, EmbassyInterfaceStatus, InterfaceLifecycle};
 use personal_rns::manifold::interface_seam::{Interface, EMBEDDED_MAX_WIRE_FRAME_LEN};
 use personal_rns::remote_control::{
-    RemoteControlInitialControllerGrants, RemoteControlSelfAnnouncement, RemoteControlService,
+    RemoteControlControllerGrant, RemoteControlSelfAnnouncement, RemoteControlService,
 };
 use personal_rns::runtime::{
     minimum_interface_store_capacity, minimum_manifold_notification_capacity, CompletionPool,
@@ -41,13 +43,15 @@ use super::entropy::install_hal_runtime_entropy;
 #[cfg(any(
     feature = "board-t096",
     feature = "board-t114",
-    feature = "board-mesh-tower-v2"
+    feature = "board-mesh-tower-v2",
+    feature = "board-rak4631"
 ))]
 use super::entropy::install_softdevice_runtime_entropy;
 #[cfg(any(
     feature = "board-t096",
     feature = "board-t114",
-    feature = "board-mesh-tower-v2"
+    feature = "board-mesh-tower-v2",
+    feature = "board-rak4631"
 ))]
 use super::entropy::prepare_softdevice_runtime_entropy;
 use super::entropy::{runtime_entropy, seed_from_hal};
@@ -55,15 +59,20 @@ use super::entropy::{runtime_entropy, seed_from_hal};
 #[cfg(any(
     feature = "board-t096",
     feature = "board-t114",
-    feature = "board-mesh-tower-v2"
+    feature = "board-mesh-tower-v2",
+    feature = "board-rak4631"
 ))]
 mod bluetooth;
 #[cfg(any(feature = "board-t096", feature = "board-t114"))]
 mod remote_control;
-#[cfg(any(feature = "board-t1000e", feature = "board-mesh-tower-v2"))]
+#[cfg(any(
+    feature = "board-t1000e",
+    feature = "board-mesh-tower-v2",
+    feature = "board-rak4631"
+))]
 #[path = "remote_control_headless.rs"]
 mod remote_control;
-#[cfg(feature = "board-mesh-tower-v2")]
+#[cfg(any(feature = "board-mesh-tower-v2", feature = "board-rak4631"))]
 #[path = "mesh_tower_v2.rs"]
 mod selected;
 #[cfg(any(feature = "board-t096", feature = "board-t114"))]
@@ -84,7 +93,8 @@ const LORA_OUTBOUND_DEPTH: usize = Storage::MAX_OUTGOING_RESOURCE_REACTION_FRAME
 #[cfg(any(
     feature = "board-t096",
     feature = "board-t114",
-    feature = "board-mesh-tower-v2"
+    feature = "board-mesh-tower-v2",
+    feature = "board-rak4631"
 ))]
 const BLE_OUTBOUND_DEPTH: usize = Storage::MAX_OUTGOING_RESOURCE_REACTION_FRAMES;
 const NOTIFY_CAP: usize = minimum_manifold_notification_capacity(LANE_COUNT, LANE_DEPTH);
@@ -103,7 +113,8 @@ const PACKET_PHY_INDEX_BUCKETS: usize =
 #[cfg(any(
     feature = "board-t096",
     feature = "board-t114",
-    feature = "board-mesh-tower-v2"
+    feature = "board-mesh-tower-v2",
+    feature = "board-rak4631"
 ))]
 const _: () = assert!(Storage::LINK_SESSIONS > bluetooth::MEMBERS);
 
@@ -149,7 +160,8 @@ static LORA_MANIFOLD_LANE: StaticManifoldLane<
 #[cfg(any(
     feature = "board-t096",
     feature = "board-t114",
-    feature = "board-mesh-tower-v2"
+    feature = "board-mesh-tower-v2",
+    feature = "board-rak4631"
 ))]
 static BLE_MANIFOLD_LANE: StaticManifoldLane<
     Mtx,
@@ -173,37 +185,46 @@ async fn manifold_task(
 #[allow(clippy::too_many_lines)]
 pub async fn run(spawner: Spawner) -> ! {
     #[cfg(feature = "board-t1000e")]
-    let ((node_bootstrap, remote_control_bootstrap, entropy), hardware) =
+    let ((node_bootstrap, remote_control_bootstrap, factory_grant, entropy), hardware) =
         Board::initialize(|nvmc, rng| {
             let mut entropy = seed_from_hal(rng);
             let node_bootstrap = board::bootstrap_node_identity(nvmc, &mut entropy);
-            let remote_control_bootstrap = board::REMOTE_CONTROL_IDENTITY_FLASH
+            let loaded = board::REMOTE_CONTROL_IDENTITY_FLASH
                 .load_or_generate(nvmc, &mut entropy)
                 .expect("RemoteControl identity bootstrap failed");
-            (node_bootstrap, remote_control_bootstrap, entropy)
+            (
+                node_bootstrap,
+                loaded.bootstrap,
+                loaded.factory_grant,
+                entropy,
+            )
         })
         .await;
     #[cfg(any(
         feature = "board-t096",
         feature = "board-t114",
-        feature = "board-mesh-tower-v2"
+        feature = "board-mesh-tower-v2",
+        feature = "board-rak4631"
     ))]
-    let ((node_bootstrap, remote_control_bootstrap, ble_bootstrap, entropy), hardware) =
-        Board::initialize(|nvmc, rng| {
-            let mut entropy = seed_from_hal(rng);
-            let node_bootstrap = board::bootstrap_node_identity(nvmc, &mut entropy);
-            let remote_control_bootstrap = board::REMOTE_CONTROL_IDENTITY_FLASH
-                .load_or_generate(nvmc, &mut entropy)
-                .expect("RemoteControl identity bootstrap failed");
-            let ble_bootstrap = board::bootstrap_ble_identity(nvmc, &mut entropy);
-            (
-                node_bootstrap,
-                remote_control_bootstrap,
-                ble_bootstrap,
-                entropy,
-            )
-        })
-        .await;
+    let (
+        (node_bootstrap, remote_control_bootstrap, factory_grant, ble_bootstrap, entropy),
+        hardware,
+    ) = Board::initialize(|nvmc, rng| {
+        let mut entropy = seed_from_hal(rng);
+        let node_bootstrap = board::bootstrap_node_identity(nvmc, &mut entropy);
+        let loaded = board::REMOTE_CONTROL_IDENTITY_FLASH
+            .load_or_generate(nvmc, &mut entropy)
+            .expect("RemoteControl identity bootstrap failed");
+        let ble_bootstrap = board::bootstrap_ble_identity(nvmc, &mut entropy);
+        (
+            node_bootstrap,
+            loaded.bootstrap,
+            loaded.factory_grant,
+            ble_bootstrap,
+            entropy,
+        )
+    })
+    .await;
     #[cfg(any(feature = "board-t096", feature = "board-t114"))]
     let identity_startup_notice =
         board::identity_startup_notice(node_bootstrap.persistence(), ble_bootstrap.persistence());
@@ -213,7 +234,8 @@ pub async fn run(spawner: Spawner) -> ! {
     #[cfg(any(
         feature = "board-t096",
         feature = "board-t114",
-        feature = "board-mesh-tower-v2"
+        feature = "board-mesh-tower-v2",
+        feature = "board-rak4631"
     ))]
     let ble_identity = Some(ble_bootstrap.into_identity());
     #[cfg(feature = "board-t096")]
@@ -247,7 +269,7 @@ pub async fn run(spawner: Spawner) -> ! {
     } = hardware;
     #[cfg(feature = "board-t1000e")]
     install_hal_runtime_entropy(entropy);
-    #[cfg(feature = "board-mesh-tower-v2")]
+    #[cfg(any(feature = "board-mesh-tower-v2", feature = "board-rak4631"))]
     let Hardware {
         usb: usb_driver,
         vbus,
@@ -288,26 +310,36 @@ pub async fn run(spawner: Spawner) -> ! {
     #[cfg(any(
         feature = "board-t096",
         feature = "board-t114",
-        feature = "board-mesh-tower-v2"
+        feature = "board-mesh-tower-v2",
+        feature = "board-rak4631"
     ))]
     let entropy = prepare_softdevice_runtime_entropy(entropy);
     #[cfg(any(
         feature = "board-t096",
         feature = "board-t114",
-        feature = "board-mesh-tower-v2"
+        feature = "board-mesh-tower-v2",
+        feature = "board-rak4631"
     ))]
     let sd = bluetooth::enable(spawner, vbus, ble_identity);
+    // softdevice_task and GATT slots are spawned, not running. Embassy will not
+    // schedule them until this task awaits. T096/T114 get that yield from radio
+    // profile flash; RAK/MeshTower skip it and would otherwise keep USB VBUS SoC
+    // events and BLE setup queued through node init.
+    #[cfg(any(feature = "board-mesh-tower-v2", feature = "board-rak4631"))]
+    Timer::after_millis(100).await;
     #[cfg(any(
         feature = "board-t096",
         feature = "board-t114",
-        feature = "board-mesh-tower-v2"
+        feature = "board-mesh-tower-v2",
+        feature = "board-rak4631"
     ))]
     install_softdevice_runtime_entropy(entropy, sd);
 
     #[cfg(any(
         feature = "board-t096",
         feature = "board-t114",
-        feature = "board-mesh-tower-v2"
+        feature = "board-mesh-tower-v2",
+        feature = "board-rak4631"
     ))]
     let shared_flash = super::learned_state::take_flash(sd);
     #[cfg(feature = "board-t1000e")]
@@ -325,9 +357,14 @@ pub async fn run(spawner: Spawner) -> ! {
     .expect("the hopspot destination names are valid")
     .node_page;
     let self_announcement = RemoteControlSelfAnnouncement::Destination(node_page_destination);
+    static FACTORY_GRANT_STORAGE: StaticCell<Option<[RemoteControlControllerGrant; 1]>> =
+        StaticCell::new();
+    let factory_grant_storage = FACTORY_GRANT_STORAGE.init(None);
+    let initial_controller_grants =
+        crate::boards::initial_controller_grants(factory_grant, factory_grant_storage);
     let remote_control = RemoteControlService::with_capabilities(
         remote_control_identity_secrets,
-        RemoteControlInitialControllerGrants::Nobody,
+        initial_controller_grants,
         self_announcement,
         remote_control::capabilities(),
     );
@@ -337,7 +374,7 @@ pub async fn run(spawner: Spawner) -> ! {
     #[cfg(any(feature = "board-t096", feature = "board-t114"))]
     let subg_configuration = loaded_subg_configuration.state;
     #[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
-    let subg_configuration = SubGConfigurationState::Unconfigured;
+    let subg_configuration = SubGConfigurationState::Configured(Us915::auto_lora());
     static LORA_STATUS: StaticCell<EmbassyInterfaceStatus> = StaticCell::new();
     let lora_status: &'static EmbassyInterfaceStatus =
         LORA_STATUS.init(EmbassyInterfaceStatus::new_accounted(
@@ -384,7 +421,8 @@ pub async fn run(spawner: Spawner) -> ! {
     #[cfg(any(
         feature = "board-t096",
         feature = "board-t114",
-        feature = "board-mesh-tower-v2"
+        feature = "board-mesh-tower-v2",
+        feature = "board-rak4631"
     ))]
     let ble_supervisor_lane = ble_identity.as_ref().map(|_| {
         manifold_lanes
@@ -436,10 +474,13 @@ pub async fn run(spawner: Spawner) -> ! {
     #[cfg(any(
         feature = "board-t096",
         feature = "board-t114",
-        feature = "board-mesh-tower-v2"
+        feature = "board-mesh-tower-v2",
+        feature = "board-rak4631"
     ))]
     let bluetooth = bluetooth::prepare(ble_identity, ble_supervisor_lane);
     let heartbeat = async move {
+        #[cfg(feature = "board-rak4631")]
+        status_led.boot_splash().await;
         loop {
             status_led.illuminate();
             let timing = selected::heartbeat_timing();
@@ -512,7 +553,7 @@ pub async fn run(spawner: Spawner) -> ! {
         gnss,
     )
     .await;
-    #[cfg(feature = "board-mesh-tower-v2")]
+    #[cfg(any(feature = "board-mesh-tower-v2", feature = "board-rak4631"))]
     selected::run(
         io,
         lora.run(lora_seam),

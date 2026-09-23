@@ -338,6 +338,7 @@ pub enum PreparationProfile {
     T096Uf2,
     T114Uf2,
     MeshPocketUf2,
+    Rak4631Uf2,
     T1000eNrfDfu,
 }
 
@@ -349,6 +350,7 @@ impl PreparationProfile {
             "t096-uf2" => Ok(Self::T096Uf2),
             "t114-uf2" => Ok(Self::T114Uf2),
             "mesh-pocket-uf2" => Ok(Self::MeshPocketUf2),
+            "rak4631-uf2" => Ok(Self::Rak4631Uf2),
             "t1000e-nrf-dfu" => Ok(Self::T1000eNrfDfu),
             _ => Err(DomainValueError::PreparationProfile(value.to_string())),
         }
@@ -361,6 +363,7 @@ impl PreparationProfile {
             Self::T096Uf2 => "t096-uf2",
             Self::T114Uf2 => "t114-uf2",
             Self::MeshPocketUf2 => "mesh-pocket-uf2",
+            Self::Rak4631Uf2 => "rak4631-uf2",
             Self::T1000eNrfDfu => "t1000e-nrf-dfu",
         }
     }
