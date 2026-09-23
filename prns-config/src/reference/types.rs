@@ -94,6 +94,7 @@ pub struct ReferenceInterfaceDiscovery {
 pub enum ReferenceConfigParams {
     Auto {
         group_id: Option<String>,
+        group_ids: Option<Vec<String>>,
         discovery_scope: Option<String>,
         discovery_port: Option<u16>,
         data_port: Option<u16>,
@@ -202,7 +203,10 @@ pub enum ReferenceConfigParams {
         port: Option<String>,
     },
     PrnsUsbAuto,
-    PrnsBluetoothAuto,
+    PrnsBluetoothAuto {
+        group_id: Option<String>,
+        group_ids: Option<Vec<String>>,
+    },
     PrnsWebSocketClient {
         target: Option<String>,
         framing: Option<String>,

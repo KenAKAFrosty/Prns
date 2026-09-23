@@ -448,7 +448,16 @@ impl NoiseFloor {
             return None;
         }
         let mut ordered = self.samples;
-        ordered.sort_unstable();
+        // This fixed 32-sample window is smaller than the code footprint of the generic slice
+        // sorter on embedded targets. Insertion sort also performs well on a rolling noise floor,
+        // where adjacent samples are commonly close to their final order.
+        for right in 1..ordered.len() {
+            let mut index = right;
+            while index > 0 && ordered[index] < ordered[index - 1] {
+                ordered.swap(index, index - 1);
+                index -= 1;
+            }
+        }
         let index = (NOISE_SAMPLE_COUNT - 1) * NOISE_PERCENTILE / 100;
         Some(ordered[index])
     }
