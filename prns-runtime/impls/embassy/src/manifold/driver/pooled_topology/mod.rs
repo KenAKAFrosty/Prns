@@ -138,6 +138,7 @@ fn resource_response_data<S: StorageLayout, const N: usize>(
     }
 }
 
+#[inline(never)]
 fn remote_control_path_inventory<S: StorageLayout>(
     engine: &EngineState<S>,
     descriptors: &[InterfaceDescriptor],
