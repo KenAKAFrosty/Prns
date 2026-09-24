@@ -28,6 +28,7 @@
     "native:verify": "npm run compatibility:check && npm run bindings:test && npm run api:check && npm run native:test && npm run bindings:aggregate:test && npm --prefix prns/platform run verify:code",
     "native:ios:client": "bash prns/platform/ios/build-development-client.sh",
     "native:ios:device": "bash prns/platform/ios/build-development-client.sh --device",
+    "native:ios:build": "bash prns/platform/ios/build-development-client.sh --build-only",
     "native:ios": "npm run native:ios:client",
     "native:android:client": "bash prns/platform/android/build-client.sh",
     "native:android:standalone": "bash prns/platform/android/build-client.sh --standalone",

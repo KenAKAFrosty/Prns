@@ -764,7 +764,7 @@ platform = "linux"
 toolchain = "python"
 timeout_seconds = 600
 command = ["bash", "validation/release/contracts.sh"]
-inputs = ["tools/tests", "tools/release", "prnsd/Cargo.toml", "validation/release/contracts.sh", "validation/release/prnsd-feature-contracts.py", "validation/release/workflow-contracts.py", "validation/release/acceptance-doc-contracts.py", "release/acceptance/README.md", "release/acceptance/QUALIFICATION.md", "release/acceptance/rosters/README.md", "release/flash/README.md", "release/flash/boards.json", "docs/release-dependency-audit.md"]
+inputs = ["tools/tests", "tools/release", "prnsd/Cargo.toml", "validation/release/contracts.sh", "validation/release/prnsd-feature-contracts.py", "validation/release/workflow-contracts.py", "applications/release/compatibility.json", "validation/release/acceptance-doc-contracts.py", "release/acceptance/README.md", "release/acceptance/QUALIFICATION.md", "release/acceptance/rosters/README.md", "release/flash/README.md", "release/flash/boards.json", "docs/release-dependency-audit.md"]
 artifacts = "validation-artifacts/results/release-contracts"
 
 [[suite]]
@@ -1279,6 +1279,30 @@ inputs = [
   "applications/prns/platform/scripts/PrnsAppRestorationProbeTests.swift",
 ]
 artifacts = "validation-artifacts/results/application-ios-platform"
+
+[[suite]]
+id = "application-android-build"
+domain = "platform"
+group = "application-mobile"
+tiers = ["pr"]
+platform = "linux"
+toolchain = "stable"
+timeout_seconds = 4500
+command = ["npm", "--prefix", "applications", "run", "native:android:standalone"]
+inputs = ["applications", "prns-react-native", "prns-host", "prns-js", "tools/uniffi", "tools/ubrn-vendor", "vendor/ubrn"]
+artifacts = "validation-artifacts/results/application-android-build"
+
+[[suite]]
+id = "application-ios-build"
+domain = "platform"
+group = "application-mobile"
+tiers = ["pr"]
+platform = "macos"
+toolchain = "stable"
+timeout_seconds = 4500
+command = ["npm", "--prefix", "applications", "run", "native:ios:build"]
+inputs = ["applications", "prns-react-native", "prns-host", "prns-js", "tools/uniffi", "tools/ubrn-vendor", "vendor/ubrn"]
+artifacts = "validation-artifacts/results/application-ios-build"
 
 [[suite]]
 id = "application-lxmf-direct"

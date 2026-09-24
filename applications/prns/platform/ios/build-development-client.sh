@@ -63,14 +63,17 @@ assert_bluetooth_metadata() {
       fail "Bluetooth metadata must enable ordinary dual-role restoration without accessory setup"
 }
 
+CONFIGURATION="Debug"
 case "${1:-}" in
   "") MODE="simulator" ;;
   --device) MODE="device" ;;
-  *) fail "usage: build-development-client.sh [--device]" ;;
+  --build-only) MODE="simulator-build"; CONFIGURATION="Release" ;;
+  *) fail "usage: build-development-client.sh [--device|--build-only]" ;;
 esac
-(( $# <= 1 )) || fail "usage: build-development-client.sh [--device]"
+(( $# <= 1 )) || fail "usage: build-development-client.sh [--device|--build-only]"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
+  [[ "${MODE}" != "simulator-build" ]] || fail "the iOS build requires macOS and Xcode"
   echo "build-development-client.sh: Apple toolchain unavailable; skipping the iOS development client"
   exit 0
 fi
@@ -135,6 +138,8 @@ fi
 echo "build-development-client.sh: generating typed bindings and the shared Rust framework"
 if [[ "${MODE}" == "device" ]]; then
   python3 "${APPLICATIONS_DIRECTORY}/tools/generated-bindings/generate.py" ios --targets aarch64-apple-ios
+elif [[ "${MODE}" == "simulator-build" ]]; then
+  python3 "${APPLICATIONS_DIRECTORY}/tools/generated-bindings/generate.py" ios --sim-only --targets aarch64-apple-ios-sim --release
 else
   python3 "${APPLICATIONS_DIRECTORY}/tools/generated-bindings/generate.py" ios --sim-only --targets aarch64-apple-ios-sim
 fi
@@ -190,6 +195,10 @@ assert_development_client_metadata() {
   assert_scene_metadata "${built_info_plist}"
   [[ "$(plutil -extract MinimumOSVersion raw "${built_info_plist}")" == "18.0" ]] ||
     fail "development client does not require iOS 18.0"
+  [[ -f "${app_bundle}/Frameworks/prns_app.framework/prns_app" ]] ||
+    fail "the app must embed its aggregate PRNS framework"
+  [[ ! -e "${app_bundle}/Frameworks/prns_host_mobile.framework" ]] ||
+    fail "the app must not embed a second standalone PRNS framework"
 }
 
 if [[ "${MODE}" == "device" ]]; then
@@ -245,46 +254,59 @@ if [[ "${MODE}" == "device" ]]; then
   exit 0
 fi
 
-SIMULATOR_SELECTION="$({
-  xcrun simctl list devices available --json |
-    PRNS_REQUESTED_SIMULATOR_ID="${PRNS_IOS_SIMULATOR_UDID:-}" node -e '
-      let input = "";
-      process.stdin.setEncoding("utf8");
-      process.stdin.on("data", (chunk) => { input += chunk; });
-      process.stdin.on("end", () => {
-        const requested = process.env.PRNS_REQUESTED_SIMULATOR_ID;
-        const devices = Object.values(JSON.parse(input).devices)
-          .flat()
-          .filter((device) => device.isAvailable && device.name.startsWith("iPhone "));
-        const selected = requested
-          ? devices.find((device) => device.udid === requested)
-          : devices.find((device) => device.state === "Booted") ?? devices[0];
-        if (selected) process.stdout.write(`${selected.udid}\t${selected.name}`);
-      });
-    '
-})"
-[[ -n "${SIMULATOR_SELECTION}" ]] || {
-  if [[ -n "${PRNS_IOS_SIMULATOR_UDID:-}" ]]; then
-    fail "named iPhone simulator ${PRNS_IOS_SIMULATOR_UDID} is not available"
-  fi
-  fail "no available iPhone simulator was found"
-}
-IFS=$'\t' read -r SIMULATOR_ID SIMULATOR_NAME <<<"${SIMULATOR_SELECTION}"
-DESTINATION="platform=iOS Simulator,id=${SIMULATOR_ID}"
+SIMULATOR_ARCH_ARGUMENTS=(ONLY_ACTIVE_ARCH=YES)
+if [[ "${MODE}" == "simulator-build" ]]; then
+  DESTINATION="generic/platform=iOS Simulator"
+  SIMULATOR_ARCH_ARGUMENTS=(ARCHS=arm64 ONLY_ACTIVE_ARCH=YES)
+else
+  SIMULATOR_SELECTION="$({
+    xcrun simctl list devices available --json |
+      PRNS_REQUESTED_SIMULATOR_ID="${PRNS_IOS_SIMULATOR_UDID:-}" node -e '
+        let input = "";
+        process.stdin.setEncoding("utf8");
+        process.stdin.on("data", (chunk) => { input += chunk; });
+        process.stdin.on("end", () => {
+          const requested = process.env.PRNS_REQUESTED_SIMULATOR_ID;
+          const devices = Object.values(JSON.parse(input).devices)
+            .flat()
+            .filter((device) => device.isAvailable && device.name.startsWith("iPhone "));
+          const selected = requested
+            ? devices.find((device) => device.udid === requested)
+            : devices.find((device) => device.state === "Booted") ?? devices[0];
+          if (selected) process.stdout.write(`${selected.udid}\t${selected.name}`);
+        });
+      '
+  })"
+  [[ -n "${SIMULATOR_SELECTION}" ]] || {
+    if [[ -n "${PRNS_IOS_SIMULATOR_UDID:-}" ]]; then
+      fail "named iPhone simulator ${PRNS_IOS_SIMULATOR_UDID} is not available"
+    fi
+    fail "no available iPhone simulator was found"
+  }
+  IFS=$'\t' read -r SIMULATOR_ID SIMULATOR_NAME <<<"${SIMULATOR_SELECTION}"
+  DESTINATION="platform=iOS Simulator,id=${SIMULATOR_ID}"
+fi
 
 echo "build-development-client.sh: building ${SCHEME} for ${DESTINATION}"
 env -u LIBRARY_PATH xcodebuild -quiet \
   -workspace "${WORKSPACE}" \
   -scheme "${SCHEME}" \
-  -configuration Debug \
+  -configuration "${CONFIGURATION}" \
   -destination "${DESTINATION}" \
   -derivedDataPath "${DERIVED_DATA}" \
   CODE_SIGNING_ALLOWED=NO \
+  "${SIMULATOR_ARCH_ARGUMENTS[@]}" \
   RCT_METRO_PORT="${METRO_PORT}" \
   build
 
-APP_BUNDLE="${DERIVED_DATA}/Build/Products/Debug-iphonesimulator/prnsdev.app"
+APP_BUNDLE="${DERIVED_DATA}/Build/Products/${CONFIGURATION}-iphonesimulator/prnsdev.app"
 assert_development_client_metadata "${APP_BUNDLE}"
+
+if [[ "${MODE}" == "simulator-build" ]]; then
+  [[ -f "${APP_BUNDLE}/main.jsbundle" ]] || fail "the Release app must embed JavaScript"
+  echo "IOS_APPLICATION_BUILD_OK app=${APP_BUNDLE} configuration=${CONFIGURATION} signing=disabled"
+  exit 0
+fi
 
 echo "build-development-client.sh: installing and launching on ${SIMULATOR_NAME} (${SIMULATOR_ID})"
 xcrun simctl boot "${SIMULATOR_ID}" 2>/dev/null || true

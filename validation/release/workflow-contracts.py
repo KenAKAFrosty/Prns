@@ -182,6 +182,72 @@ def validate_release_sdk_bootstrap(text: str) -> list[str]:
     return errors
 
 
+def validate_release_application_bootstrap(text: str) -> list[str]:
+    """Release app suites need targets on the toolchains they actually execute."""
+    qualify = dict(workflow_jobs(text)).get("qualify", "")
+    steps = re.split(r"(?m)(?=^      - )", qualify)
+    qualification = json.loads(
+        (ROOT / "applications/release/compatibility.json").read_text()
+    )["qualification"]
+    rust_setup = (
+        f'rustup toolchain install {qualification["rustToolchain"]} --profile minimal'
+        + "".join(f" --component {item}" for item in qualification["rustComponents"])
+        + "".join(f" --target {item}" for item in qualification["rustTargets"])
+    )
+    requirements = {
+        "application-lxmf-direct": (
+            'rustup target add --toolchain "$RUSTUP_TOOLCHAIN" thumbv7em-none-eabihf',
+        ),
+        "application-detached-mobility": (
+            rust_setup,
+            f'npm install --global npm@{qualification["npm"]}',
+            f'test "$(node --version)" = "v{qualification["node"]}"',
+            f'test "$(npm --version)" = "{qualification["npm"]}"',
+        ),
+    }
+    errors = []
+    execution = qualify.find("name: Run exact-SHA suite")
+    node = qualify.find("uses: actions/setup-node@")
+    for suite, commands in requirements.items():
+        setup = next((step for step in steps if f"if: matrix.id == '{suite}'" in step), "")
+        positions = [setup.find(command) for command in commands]
+        if not setup or -1 in positions or positions != sorted(positions):
+            errors.append(f"release-readiness.yml must prepare the required toolchain for {suite}")
+        elif not 0 <= node < qualify.find(setup) < execution:
+            errors.append(f"release-readiness.yml must prepare {suite} before running its suite")
+    return errors
+
+
+def validate_application_mobile_ci(text: str) -> list[str]:
+    """App native compilation must use its staged SDK and block the PR gate."""
+    jobs = dict(workflow_jobs(text))
+    build = jobs.get("application-mobile-build", "")
+    gate = jobs.get("release-critical", "")
+    errors = []
+    for requirement in (
+        "suite: application-android-build",
+        "suite: application-ios-build",
+        '--suite "${{ matrix.suite }}" --expected-sha "$GITHUB_SHA"',
+        "git diff --exit-code -- prns-react-native applications/prns/native-composition/bindings",
+    ):
+        if requirement not in build:
+            errors.append(f"app mobile CI omits {requirement}")
+    stage = build.find("python3 applications/tools/generated-bindings/generate.py stage")
+    install = build.find("npm --prefix applications ci")
+    compile_app = build.find('name: Compile and verify the aggregate app')
+    if not 0 <= stage < install < compile_app:
+        errors.append("app mobile CI must stage its SDK before installing and compiling the app")
+    for requirement in (
+        "- application-mobile-build",
+        "APPLICATION_MOBILE_BUILD_RESULT: ${{ needs.application-mobile-build.result }}",
+        '"$APPLICATION_MOBILE_BUILD_RESULT"',
+    ):
+        if requirement not in gate:
+            errors.append("release-critical must require both app mobile builds")
+            break
+    return errors
+
+
 def validate() -> list[str]:
     errors: list[str] = []
     lock_path = ROOT / "release" / "flash" / "action-pins.json"
@@ -406,6 +472,7 @@ def validate() -> list[str]:
         ROOT / ".github" / "workflows" / "release-readiness.yml"
     ).read_text(encoding="utf-8")
     errors.extend(validate_release_sdk_bootstrap(readiness))
+    errors.extend(validate_release_application_bootstrap(readiness))
     for preflight_fragment in (
         "./tools/prns repo notices check-inputs",
         "astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86",
@@ -746,6 +813,7 @@ def validate() -> list[str]:
                 errors.append(
                     f"ci.yml {resource_job_name} does not upload {evidence}"
                 )
+    errors.extend(validate_application_mobile_ci((ROOT / ".github/workflows/ci.yml").read_text()))
     release_critical = ci_jobs.get("release-critical", "")
     for job, result in (
         ("react-native-sdk", "REACT_NATIVE_SDK_RESULT"),

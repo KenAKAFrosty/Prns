@@ -1171,6 +1171,102 @@ jobs:
       - name: Verify native Swift lifecycle and diagnostic behavior
         run: python3 validation/run.py run --suite application-ios-platform --expected-sha "$GITHUB_SHA"
 
+  application-mobile-build:
+    name: ${{ matrix.suite }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix:
+        include:
+          - suite: application-android-build
+            runner: ubuntu-24.04
+            rust-target: aarch64-linux-android
+          - suite: application-ios-build
+            runner: macos-latest
+            rust-target: aarch64-apple-ios-sim
+    env:
+      CARGO_INCREMENTAL: "0"
+      RUSTUP_TOOLCHAIN: "1.98.1"
+      PRNS_IOS_DERIVED_DATA: ${{ github.workspace }}/applications/target/ios-ci
+    steps:
+      - name: Use the runner temporary directory
+        run: printf 'TMPDIR=%s\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - name: Install native metadata build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: "1.98.1"
+          components: rustfmt
+          targets: ${{ matrix.rust-target }}
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: ${{ matrix.suite }}
+          workspaces: |
+            . -> target
+            applications -> target
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+        if: runner.os == 'Linux'
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        if: runner.os == 'Linux'
+        with:
+          packages: platform-tools
+      - name: Install pinned Android native build tools
+        if: runner.os == 'Linux'
+        run: |
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.1.12297006"
+          printf 'ANDROID_NDK_HOME=%s\n' "$ANDROID_HOME/ndk/27.1.12297006" >> "$GITHUB_ENV"
+          cargo install cargo-ndk --locked --version 4.1.2
+      - name: Record the Apple build toolchain
+        if: runner.os == 'macOS'
+        run: |
+          xcodebuild -version
+          pod --version
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.18.0"
+          cache: npm
+          cache-dependency-path: |
+            applications/package-lock.json
+            prns-react-native/package-lock.json
+            prns-js/package-lock.json
+      - name: Install the app with its staged aggregate SDK
+        run: |
+          npm install --global npm@11.16.0
+          test "$(node --version)" = "v24.18.0"
+          test "$(npm --version)" = "11.16.0"
+          npm --prefix prns-js ci --ignore-scripts --no-audit --no-fund
+          npm --prefix prns-js run build:code
+          npm --prefix prns-react-native ci --ignore-scripts --no-audit --no-fund
+          python3 applications/tools/generated-bindings/generate.py stage
+          npm --prefix applications ci --ignore-scripts --no-audit --no-fund
+      - name: Compile and verify the aggregate app
+        run: python3 validation/run.py run --suite "${{ matrix.suite }}" --expected-sha "$GITHUB_SHA"
+      - name: Verify builds preserve both generated packages
+        run: |
+          npm --prefix applications run api:check
+          python3 prns-react-native/tools/generate.py generate --check
+          git diff --exit-code -- prns-react-native applications/prns/native-composition/bindings
+      - name: Upload app build evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ${{ matrix.suite }}-${{ github.sha }}
+          path: |
+            validation-artifacts/results/${{ matrix.suite }}/
+            applications/prns/app/android/app/build/outputs/apk/release/app-release.apk
+            applications/target/ios-ci/Build/Products/Release-iphonesimulator/prnsdev.app/Info.plist
+          if-no-files-found: error
+          retention-days: 7
+
   application-lxmf-direct:
     runs-on: ubuntu-24.04
     timeout-minutes: 35
@@ -1247,6 +1343,7 @@ jobs:
       - application-scaffold
       - application-native-foundation
       - application-ios-platform
+      - application-mobile-build
       - application-lxmf-direct
       - application-detached-mobility
       - react-native-sdk
@@ -1285,6 +1382,7 @@ jobs:
       APPLICATION_SCAFFOLD_RESULT: ${{ needs.application-scaffold.result }}
       APPLICATION_NATIVE_FOUNDATION_RESULT: ${{ needs.application-native-foundation.result }}
       APPLICATION_IOS_PLATFORM_RESULT: ${{ needs.application-ios-platform.result }}
+      APPLICATION_MOBILE_BUILD_RESULT: ${{ needs.application-mobile-build.result }}
       APPLICATION_LXMF_DIRECT_RESULT: ${{ needs.application-lxmf-direct.result }}
       APPLICATION_DETACHED_MOBILITY_RESULT: ${{ needs.application-detached-mobility.result }}
       REACT_NATIVE_SDK_RESULT: ${{ needs.react-native-sdk.result }}
@@ -1313,6 +1411,7 @@ jobs:
             "$APPLICATION_SCAFFOLD_RESULT" \
             "$APPLICATION_NATIVE_FOUNDATION_RESULT" \
             "$APPLICATION_IOS_PLATFORM_RESULT" \
+            "$APPLICATION_MOBILE_BUILD_RESULT" \
             "$APPLICATION_LXMF_DIRECT_RESULT" \
             "$APPLICATION_DETACHED_MOBILITY_RESULT" \
             "$REACT_NATIVE_SDK_RESULT" \

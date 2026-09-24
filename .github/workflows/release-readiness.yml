@@ -125,6 +125,16 @@ jobs:
       - name: Prepare embedded targets
         if: matrix.group == 'embedded' || matrix.group == 'esp' || matrix.group == 'embedded-isa' || matrix.group == 'embedded-platform'
         run: rustup target add --toolchain 1.96.0 riscv32imac-unknown-none-elf thumbv7em-none-eabihf
+      - name: Prepare application LXMF target
+        if: matrix.id == 'application-lxmf-direct'
+        run: rustup target add --toolchain "$RUSTUP_TOOLCHAIN" thumbv7em-none-eabihf
+      - name: Prepare recorded application qualification toolchain
+        if: matrix.id == 'application-detached-mobility'
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy --component rustfmt --target thumbv7em-none-eabihf
+          npm install --global npm@11.16.0
+          test "$(node --version)" = "v24.18.0"
+          test "$(npm --version)" = "11.16.0"
       - name: Prepare Linux native development packages
         if: runner.os == 'Linux' && matrix.platform != 'android-device'
         run: |
