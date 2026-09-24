@@ -116,3 +116,12 @@ evidence belongs to the [SDK qualification record](../../prns-react-native/docs/
 Current-source extraction and local device checks do not promote a recorded
 release or establish hosted CI success; consult the PR checks for their current
 commit.
+
+Hosted CI exposes an existing upstream firmware-assurance failure: adding
+`muzi-base-duo` raised the target count to 15, while four assertions and the
+14-target baseline were not updated. Six tests fail identically in the
+[upstream run](https://github.com/KenAKAFrosty/Prns/actions/runs/36047238325/job/107793683195)
+and [SDK run](https://github.com/KenAKAFrosty/Prns/actions/runs/36055973989/job/107822855371).
+A focused local reproduction confirms the same failures. Refreshing that
+baseline requires its missing board evidence; this SDK adoption leaves those
+checks intact and does not claim hosted CI is green.
