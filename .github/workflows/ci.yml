@@ -953,8 +953,9 @@ jobs:
     env:
       CARGO_INCREMENTAL: "0"
       RUSTUP_TOOLCHAIN: "1.98.1"
-      TMPDIR: ${{ runner.temp }}
     steps:
+      - name: Use the runner temporary directory
+        run: printf 'TMPDIR=%s\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           submodules: false
@@ -1022,8 +1023,9 @@ jobs:
     env:
       CARGO_INCREMENTAL: "0"
       RUSTUP_TOOLCHAIN: "1.98.1"
-      TMPDIR: ${{ runner.temp }}
     steps:
+      - name: Use the runner temporary directory
+        run: printf 'TMPDIR=%s\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           submodules: false
