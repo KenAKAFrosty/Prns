@@ -35,26 +35,26 @@ app aggregate image's device results as evidence for the default provider.
 
 ## Physical device checks and limits
 
-The default-provider Debug example passed on Galaxy S9+ (Android 10/API 29)
-and MetalbeardMobile (iPhone 14 Pro, iOS 27.0), using source commit
+The default-provider Debug example passed on physical Android (API 29)
+and iOS devices, using source commit
 `f03be48d2f2e66f1fde5ef39e6fe75ddae65ead4`. Both physical Hermes runtimes confirmed
 the selected image and absence of app-policy modules, exclusive ownership of the
 application stream, pending-reader closure, shared stop completion and released
 clients. Each kept a
 pending diagnostic reader across a real runtime reload, then reopened the same
-persisted identity and reclaimed both streams. The iPhone example's Open/Stop UI
+persisted identity and reclaimed both streams. The iOS example's Open/Stop UI
 also passed. These checks cover JavaScript-owned sessions, not native app-owner
 continuity.
 
-The Galaxy also passed a same-signature Release upgrade and cold startup with
+Android also passed a same-signature Release upgrade and cold startup with
 Metro stopped and no USB port reversals. Its bundled JavaScript opened a native
 host, displayed the snapshot and stopped the host through the example UI. The
 Release example was left stopped with its data retained.
 
-A direct Wi-Fi TCP connection from the iPhone to the Galaxy passed announcement
+A direct Wi-Fi TCP connection from iOS to Android passed announcement
 routing, encrypted link establishment, a random nonce packet and exact-byte echo,
 schema-2 delivery fields and `bigint` traffic counters. The forward command
-settled with `ExplicitProof`. The reverse packet reached the iPhone but its send
+settled with `ExplicitProof`. The reverse packet reached iOS but its send
 settled with `DeliveryTimedOut`, matching the existing core contract: the link
 initiator emits no automatic packet proof. The test now checks that distinction
 explicitly. See [the SDK guide](../README.md) before treating delivery timeout as
@@ -66,7 +66,9 @@ No fatal native crash was observed. Tests used the separate
 `rs.reticulum.prns.host.example` bundle, without resetting or replacing existing
 PRNS app installations or data.
 
-The CI definitions are checked locally; hosted CI has not run on this branch.
+Hosted CI runs on [PR #251](https://github.com/KenAKAFrosty/Prns/pull/251).
+Consult its checks for the current commit; the observations above remain local
+qualification evidence.
 The detached consumer pins the reviewed runtime archives. It does not establish
 installation using only public registry packages. Registry publication, extended
 background operation, radio/permission transitions and OS restoration require
@@ -74,12 +76,16 @@ separate qualification.
 
 ## App adoption follow-up
 
-The app in [PR #197](https://github.com/KenAKAFrosty/Prns/pull/197) still
-selects its aggregate image in the tracked SDK output directory. Restacking that
-PR must keep the canonical SDK files on the default provider and generate the
-app-selected SDK package into app-owned staging through the shared recipe. Both
-SDK and app checks must pass in one checkout, and app builds must leave tracked
-SDK outputs unchanged. That app migration is separate from this SDK preparation.
+The shared generator supports native compositions through an explicit
+`--destination`: it copies the package's maintained runtime sources and generates
+bindings for the selected image into a consumer-owned package. The canonical SDK
+package always selects the default provider. The detached consumer check accepts
+the staged package through `--sdk` and checks its selected image.
+
+[PR #197](https://github.com/KenAKAFrosty/Prns/pull/197) adopts this recipe for the
+app aggregate. Both SDK and app checks must pass in one checkout, and app builds
+must leave tracked SDK outputs unchanged. App-specific behavior and native-owner
+continuity are qualified separately in that PR.
 
 ## Repeating the checks
 
