@@ -35,6 +35,15 @@ def load_policy(root):
     for name, value in packages.items():
         if value not in policy['sourceRoots']:
             raise ValueError(f'unreviewed npm source root for {name}')
+    artifacts = policy.get('npmArtifacts')
+    if not isinstance(artifacts, dict) or set(artifacts) != set(packages):
+        raise ValueError('npmArtifacts must identify each reviewed package artifact')
+    for name, value in artifacts.items():
+        path = PurePosixPath(value)
+        if path.is_absolute() or '..' in path.parts or not path.parts or str(path) != value:
+            raise ValueError(f'unsafe npm artifact path for {name}')
+        if not any(path == PurePosixPath(scope) or path.is_relative_to(scope) for scope in policy['sourceRoots']):
+            raise ValueError(f'unreviewed npm artifact path for {name}')
     return policy
 
 
@@ -201,7 +210,8 @@ def install_current_artifacts(root, environment, receipt, mobility):
     before = json.loads((apps / 'package-lock.json').read_text())
     artifacts = {}
     extra_packages = {}
-    for name, scope in (('personal-rns', 'prns-js'), ('personal-rns-expo', 'prns-react-native')):
+    artifact_scopes = load_policy(root)['npmArtifacts']
+    for name, scope in artifact_scopes.items():
         packed = mobility.run(['npm', 'pack', '--ignore-scripts', '--json', '--pack-destination', str(vendor)],
                               cwd=root / scope, environment=environment, capture=True)
         report = json.loads(packed.stdout)
@@ -232,7 +242,8 @@ def install_current_artifacts(root, environment, receipt, mobility):
                  cwd=apps, environment=environment)
     after = json.loads((apps / 'package-lock.json').read_text())
     old, new = before['packages'], after['packages']
-    allowed_source = {'../prns-js', '../prns-react-native'}
+    allowed_source = {Path(os.path.relpath(root / scope, apps)).as_posix()
+                      for scope in artifact_scopes.values()}
     if set(old) - set(new) != allowed_source & set(old):
         raise ValueError('current artifact installation removed unrelated locked packages')
     allowed_changed = changed_manifests | {'node_modules/' + name for name in artifacts}
@@ -284,6 +295,7 @@ def qualify(root, keep_workspace, snapshot_only, mobility):
                 ([sys.executable, '../tools/ubrn-vendor/vendor.py', 'check'], apps),
                 (['npm', 'ci', '--ignore-scripts', '--no-audit', '--no-fund'], exported / 'prns-js'),
                 (['npm', 'run', 'build:code'], exported / 'prns-js'),
+                ([sys.executable, 'tools/generated-bindings/generate.py', 'stage'], apps),
                 (['npm', 'ci', '--ignore-scripts', '--no-audit', '--no-fund'], exported / 'prns-react-native'),
                 (['npm', 'run', 'verify'], exported / 'prns-react-native'),
                 (['npm', 'run', 'bindings:test'], apps),
@@ -301,7 +313,7 @@ def qualify(root, keep_workspace, snapshot_only, mobility):
             for command, cwd in checks:
                 mobility.run(command, cwd=cwd, environment=environment)
                 receipt['checks'].append(' '.join(command))
-                if command == ['npm', 'run', 'build:code']:
+                if command == [sys.executable, 'tools/generated-bindings/generate.py', 'stage']:
                     install_current_artifacts(exported, environment, receipt, mobility)
                     receipt['checks'].append('install-content-locked-current-code-artifacts')
         (work / 'qualification.json').write_text(json.dumps(receipt, indent=2) + '\n')

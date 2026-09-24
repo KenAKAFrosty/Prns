@@ -1078,11 +1078,20 @@ jobs:
 
   application-scaffold:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           submodules: false
+      - name: Install native metadata build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          components: rustfmt
+          toolchain: stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          workspaces: applications -> target
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: "24.18.0"
@@ -1099,6 +1108,7 @@ jobs:
           npm --prefix prns-js ci --ignore-scripts --no-audit --no-fund
           npm --prefix prns-js run build:code
           npm --prefix prns-react-native ci --ignore-scripts --no-audit --no-fund
+          python3 applications/tools/generated-bindings/generate.py stage
           npm --prefix applications ci --ignore-scripts --no-audit --no-fund
       - name: Verify standalone React Native SDK
         run: python3 validation/run.py run --suite react-native-sdk --expected-sha "$GITHUB_SHA"
@@ -1138,9 +1148,14 @@ jobs:
           npm --prefix prns-js ci --ignore-scripts --no-audit --no-fund
           npm --prefix prns-js run build:code
           npm --prefix prns-react-native ci --ignore-scripts --no-audit --no-fund
+          python3 applications/tools/generated-bindings/generate.py stage
           npm --prefix applications ci --ignore-scripts --no-audit --no-fund
       - name: Verify native application foundation
         run: python3 validation/run.py run --suite application-native-foundation --expected-sha "$GITHUB_SHA"
+      - name: Verify SDK default generation survives app generation
+        run: |
+          python3 prns-react-native/tools/generate.py generate --check
+          git diff --exit-code -- prns-react-native
 
   application-ios-platform:
     runs-on: macos-latest
@@ -1174,6 +1189,7 @@ jobs:
         run: python3 validation/run.py run --suite application-lxmf-direct --expected-sha "$GITHUB_SHA"
 
   application-detached-mobility:
+    name: Application current-source mobility
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -1199,8 +1215,8 @@ jobs:
           npm install --global npm@11.16.0
           test "$(node --version)" = "v24.18.0"
           test "$(npm --version)" = "11.16.0"
-      - name: Verify the tracked application as a detached consumer
-        run: python3 validation/run.py run --suite application-detached-mobility --expected-sha "$GITHUB_SHA"
+      - name: Verify current application sources as a detached consumer
+        run: python3 validation/run.py run --suite application-current-source-mobility --expected-sha "$GITHUB_SHA"
 
   release-critical:
     name: Release critical

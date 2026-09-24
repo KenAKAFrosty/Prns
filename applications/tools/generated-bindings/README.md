@@ -3,17 +3,26 @@
 From the repository root:
 
 ```sh
-npm --prefix applications run api:generate
+npm --prefix applications run sdk:stage
+npm --prefix applications ci --ignore-scripts --no-audit --no-fund
 npm --prefix applications run api:check
+# After changing Rust exports:
+npm --prefix applications run api:generate
 ```
 
-Both commands use the source revision and patches recorded in
+`sdk:stage` bootstraps a clean checkout before npm resolves the app's local SDK
+dependency. It checks all tracked product bindings and writes only the disposable
+`applications/target/react-native-sdk` package. `api:generate` explicitly refreshes
+tracked product outputs and that stage; `api:check` verifies both without writes.
+
+All commands use the source revision and patches recorded in
 `vendor/ubrn/source-lock.json`. The helper verifies that source,
 builds the generator, builds the application metadata library, and generates
 TypeScript, Swift, Kotlin, and contract identifiers from the same Rust API.
 The shared canonical pipeline generates the SDK host contract; this recipe
-generates product bindings and refreshes the selected SDK namespace from the
-same aggregate image. Checking rejects stale or obsolete output without
+generates product bindings and refreshes the staged SDK namespace from the
+same aggregate image. The canonical `prns-react-native` package always retains
+its default image and generated outputs. Checking rejects stale or obsolete output without
 rewriting it. Do not edit generated files directly.
 
 `outputs.json` records the generator's complete ownership: its three generated
@@ -54,9 +63,12 @@ in the source lock, `cargo-ndk`, and the requested Rust targets. It resolves
 `ANDROID_SDK_ROOT`, and rejects a different NDK. The normal native client build
 helpers invoke this process before Expo prebuild and autolinking.
 
-`prns-react-native` owns the resulting dynamic framework or Android shared
-libraries, selected by `bindings/host-provider.json`. Product bindings import
-that SDK namespace. Both native lifecycle calls and JSI use that image;
+`applications/target/react-native-sdk` owns the resulting dynamic framework or
+Android shared libraries, selected by `bindings/host-provider.json`. The app,
+platform facade, and product bindings all select that same `personal-rns-expo`
+package. The maintained SDK sources are copied by the shared generator;
+there is no app-maintained fork of its facade or platform glue. Product bindings
+import that SDK namespace. Both native lifecycle calls and JSI use that image;
 the Expo module must not package or link another copy of the Rust supervisor.
 Mobile build outputs are ignored and rebuilt locally. Debug iOS builds enable
 the existing bounded restoration diagnostic probe; release builds omit it.

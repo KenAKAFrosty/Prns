@@ -47,6 +47,7 @@
     "bindings:ios": "python3 tools/generated-bindings/generate.py ios",
     "bindings:android": "python3 tools/generated-bindings/generate.py android",
     "bindings:test": "python3 ../tools/ubrn-vendor/vendor.py check && python3 -m unittest discover --start-directory tools/generated-bindings --pattern 'test_*.py' --verbose && python3 -m unittest discover --start-directory ../tools/uniffi --pattern 'test_*.py' --verbose && npm --prefix prns/platform run test -- host-adapter.test.ts && python3 -m unittest discover --start-directory ../tools/ubrn-vendor --pattern 'test_*.py' --verbose",
-    "native:ios:test": "npm --prefix prns/platform run ios:test"
+    "native:ios:test": "npm --prefix prns/platform run ios:test",
+    "sdk:stage": "python3 tools/generated-bindings/generate.py stage"
   }
 }

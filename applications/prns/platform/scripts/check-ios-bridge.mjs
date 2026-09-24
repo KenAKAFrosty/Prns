@@ -5,7 +5,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const sdkRoot = resolve(packageRoot, "../../../prns-react-native");
+const sdkRoot = resolve(packageRoot, "../../target/react-native-sdk");
 const swift = readFileSync(resolve(packageRoot, "ios/PrnsAppModule.swift"), "utf8");
 const coordinator = readFileSync(
   resolve(packageRoot, "ios/PrnsAppLifecycleCoordinator.swift"),

@@ -27,7 +27,8 @@ not current setup instructions. The original scratch plans are design history.
 | `prns/platform` | App storage/startup/reset admission, notification presentation and product platform facade; delegates generic lifecycle and Bluetooth mechanics to the SDK |
 | `services` | Reusable application services, including LXMF and its wire format |
 | `../prns-host/impls/native` | Shared native runtime, queues/resources, readiness and joined shutdown used by C, UniFFI and native services |
-| `../prns-react-native` | General Expo SDK, generated host bindings, reusable mobile mechanics and packaging of the one selected native image |
+| `../prns-react-native` | Canonical general Expo SDK with its standalone default native image |
+| `target/react-native-sdk` | Generated app-selected SDK package, with the app aggregate native image; no separately maintained SDK sources |
 | `tools/generated-bindings` | App generation recipe using shared `../tools/uniffi` orchestration |
 | `../vendor/ubrn` | Shared pinned upstream runtime archives, patches and provenance |
 
@@ -50,14 +51,18 @@ application workspace:
 npm --prefix prns-js ci --ignore-scripts --no-audit --no-fund
 npm --prefix prns-js run build:code
 npm --prefix prns-react-native ci --ignore-scripts --no-audit --no-fund
+python3 applications/tools/generated-bindings/generate.py stage
 npm --prefix applications ci --ignore-scripts --no-audit --no-fund
 ```
 
-The SDK has its own locked development dependencies. Install them even when
-working only on the app: platform typechecking follows the SDK source package.
+The app consumes `target/react-native-sdk`, staged from the canonical SDK through
+its shared generator. `stage` checks the committed app bindings and writes only
+the ignored package. Run it before installing dependencies in a fresh checkout,
+and again after removing `applications/target`. The SDK's own development
+dependencies support its independent validation.
 
-The committed runtime archives make installation independent of mobile build
-tools. Xcode is required for iOS builds and Swift tests. Android builds require
+Staging requires the recorded Rust toolchain and host compiler. Building mobile
+images additionally requires Xcode for iOS builds and Swift tests. Android builds require
 JDK 21, the Android SDK, the pinned NDK, `cargo-ndk` and the requested Rust targets;
 see the [generation guide](tools/generated-bindings/README.md) and
 [Android setup](docs/android.md#build).
@@ -70,13 +75,20 @@ Run these commands from the repository root:
 npm --prefix applications run api:generate
 npm --prefix applications run api:check
 npm --prefix applications run verify
-npm --prefix applications run mobility:verify
+npm --prefix applications run mobility:verify -- --working-tree
 ```
 
 `verify` runs the portable Rust, generated-output, SDK, aggregate foreign-object
 sharing, UI and web checks.
-`mobility:verify` checks a clean tracked export against the exact core revision
-and includes native/Python LXMF interoperability. On macOS, also run the explicit
+The canonical SDK keeps the `prns_host_mobile` provider; app generation and builds
+select `prns_app` only in the staged package. Both packages can be checked in the
+same checkout without switching providers or changing tracked SDK files.
+`mobility:verify -- --working-tree` checks an isolated export of the current
+source, including packed npm dependencies and native/Python LXMF interoperability.
+It is the app PR gate. Without `--working-tree`, the command checks the recorded
+release revision; that separate qualification requires the
+[release record](release/README.md) to be promoted to a real SDK commit.
+On macOS, also run the explicit
 Swift lifecycle and release-symbol tests:
 
 ```sh

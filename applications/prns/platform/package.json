@@ -31,7 +31,7 @@
     "effect": "4.0.0-rc.112",
     "personal-rns": "file:../../../prns-js",
     "@prns-internal/native-bindings": "*",
-    "personal-rns-expo": "file:../../../prns-react-native"
+    "personal-rns-expo": "file:../../target/react-native-sdk"
   },
   "peerDependencies": {
     "expo": "*"

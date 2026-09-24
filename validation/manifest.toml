@@ -1323,13 +1323,19 @@ artifacts = "validation-artifacts/results/application-lxmf-direct"
 id = "application-detached-mobility"
 domain = "platform"
 group = "application"
-tiers = ["pr", "release", "scheduled"]
+tiers = ["release", "scheduled"]
 platform = "linux"
 toolchain = "stable"
 timeout_seconds = 3600
 command = ["npm", "--prefix", "applications", "run", "mobility:verify"]
 inputs = [
   "applications",
+  "prns-react-native",
+  "prns-host/bindings/uniffi",
+  "prns-host/impls/native",
+  "tools/uniffi",
+  "tools/ubrn-vendor",
+  "vendor/ubrn",
   "personal-rns",
   "prns-core",
   "prns-host/core",
@@ -1341,6 +1347,42 @@ inputs = [
   "prns-runtime/impls/tokio",
 ]
 artifacts = "validation-artifacts/results/application-detached-mobility"
+
+
+[[suite]]
+id = "application-current-source-mobility"
+domain = "platform"
+group = "application"
+tiers = ["pr"]
+platform = "linux"
+toolchain = "stable"
+timeout_seconds = 3600
+command = ["npm", "--prefix", "applications", "run", "mobility:verify", "--", "--working-tree"]
+inputs = [
+  "applications",
+  "Cargo.toml",
+  "VERSION",
+  "LICENSE-MIT",
+  "LICENSE-APACHE",
+  "personal-rns",
+  "prns-core",
+  "prns-config",
+  "prns-ffi",
+  "prns-host",
+  "prns-interfaces/impls/tokio",
+  "prns-interfaces/impls/embassy",
+  "prns-js",
+  "prns-macros",
+  "prns-react-native",
+  "prns-runtime/core",
+  "prns-runtime/impls/tokio",
+  "prns-runtime/impls/embassy",
+  "tools/repo",
+  "tools/uniffi",
+  "tools/ubrn-vendor",
+  "vendor/ubrn",
+]
+artifacts = "validation-artifacts/results/application-current-source-mobility"
 
 [[suite]]
 id = "javascript-contract"

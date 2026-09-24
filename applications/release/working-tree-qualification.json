@@ -33,5 +33,9 @@
   "npmPackages": {
     "personal-rns": "prns-js",
     "personal-rns-expo": "prns-react-native"
+  },
+  "npmArtifacts": {
+    "personal-rns": "prns-js",
+    "personal-rns-expo": "applications/target/react-native-sdk"
   }
 }

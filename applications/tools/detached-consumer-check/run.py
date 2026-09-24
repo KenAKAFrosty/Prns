@@ -1001,6 +1001,8 @@ def stage_sdk_metadata(prns_root: pathlib.Path, export_root: pathlib.Path) -> No
     # Canonical conversion inputs come from the exact recorded source checkout.
     # They are not application-owned exports or an alternate Rust dependency.
     for relative in (
+        'LICENSE-MIT',
+        'LICENSE-APACHE',
         'prns-host/bindings/uniffi/src/transport.generated.rs',
         'prns-host/bindings/uniffi/typescript/host-adapter.generated.ts',
         'prns-host/bindings/uniffi/typescript/remote-control-adapter.generated.ts',
@@ -1631,6 +1633,13 @@ def qualify(
             git_url,
             source_packages,
             cargo_rewrites,
+        )
+        # The aggregate SDK is ignored build output. Recreate it before npm
+        # resolves the file dependency, while checking every tracked binding.
+        run(
+            (sys.executable, applications_root / "tools/generated-bindings/generate.py", "stage"),
+            cwd=applications_root,
+            environment=environment,
         )
         run(
             (
