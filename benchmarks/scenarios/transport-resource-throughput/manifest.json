@@ -4,11 +4,11 @@
   "order": 9,
   "title": "Transported resource throughput",
   "category": "Transport",
-  "summary": "Relay balanced near-MTU resource parts over one warm transported link using each implementation's default TCP policy.",
+  "summary": "Relay balanced near-MTU resource parts over one warm transported link using each implementation's default host-interface policy.",
   "primary_metric": "carried_payload_bytes_per_sec",
   "headline": true,
   "notes": [
-    "Default-policy deployment view: Prns and RNS retain their normal TCP bitrate and MTU policy."
+    "Default-policy deployment view: Prns and RNS retain their normal host-interface bitrate and MTU policy."
   ],
   "description": "The fixed wire driver establishes one genuine transported link across the relay before measurement, then drives balanced full-duplex LINK/DATA frames in RESOURCE context. Each opaque part fills the negotiated link MTU and carries deterministic sequence data. The relay performs transported-link switching, HDLC framing, buffering, copying, and TCP I/O without endpoint encryption, decryption, resource hashing, or application assembly in the measured window.",
   "roles": [

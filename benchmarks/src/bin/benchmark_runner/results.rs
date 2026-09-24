@@ -79,7 +79,7 @@ pub(super) fn provenance_for(subject: &Subject) -> BTreeMap<String, String> {
     );
     #[cfg(target_os = "linux")]
     provenance.insert("energy_source".into(), "RAPL package-0 energy_uj".into());
-    let uses_compiled_reference = match subject {
+    let uses_reference = match subject {
         Subject::Direct {
             initiator,
             responder,
@@ -90,20 +90,18 @@ pub(super) fn provenance_for(subject: &Subject) -> BTreeMap<String, String> {
                 || relay.as_deref() == Some(REFERENCE_IMPLEMENTATION)
         }
     };
-    if !uses_compiled_reference {
+    if !uses_reference {
         return provenance;
     }
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("reference/.object-cache/proof.json");
-    let json: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&path).unwrap_or_else(|error| {
-            panic!("compiled-reference proof {}: {error}", path.display())
-        }))
-        .unwrap_or_else(|error| {
-            panic!("parse compiled-reference proof {}: {error}", path.display())
-        });
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("reference/.reference-state/proof.json");
+    let json: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("stock-reference proof {}: {error}", path.display())),
+    )
+    .unwrap_or_else(|error| panic!("parse stock-reference proof {}: {error}", path.display()));
     provenance.extend(
         json.as_object()
-            .expect("compiled-reference proof is an object")
+            .expect("stock-reference proof is an object")
             .iter()
             .map(|(key, value)| {
                 let value = value

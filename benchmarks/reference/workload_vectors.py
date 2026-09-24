@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deterministic workload vectors shared by the compiled-reference participant.
+"""Deterministic workload vectors shared by the stock-reference participant.
 
 This module deliberately has no RNS or third-party imports, so qualification can
 prove the payload and size law before starting either implementation.
