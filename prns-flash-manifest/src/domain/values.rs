@@ -339,6 +339,7 @@ pub enum PreparationProfile {
     T114Uf2,
     MeshPocketUf2,
     MuziBaseDuoUf2,
+    Rak4631Uf2,
     T1000eNrfDfu,
 }
 
@@ -351,6 +352,7 @@ impl PreparationProfile {
             "t114-uf2" => Ok(Self::T114Uf2),
             "mesh-pocket-uf2" => Ok(Self::MeshPocketUf2),
             "muzi-base-duo-uf2" => Ok(Self::MuziBaseDuoUf2),
+            "rak4631-uf2" => Ok(Self::Rak4631Uf2),
             "t1000e-nrf-dfu" => Ok(Self::T1000eNrfDfu),
             _ => Err(DomainValueError::PreparationProfile(value.to_string())),
         }
@@ -364,6 +366,7 @@ impl PreparationProfile {
             Self::T114Uf2 => "t114-uf2",
             Self::MeshPocketUf2 => "mesh-pocket-uf2",
             Self::MuziBaseDuoUf2 => "muzi-base-duo-uf2",
+            Self::Rak4631Uf2 => "rak4631-uf2",
             Self::T1000eNrfDfu => "t1000e-nrf-dfu",
         }
     }
