@@ -56,6 +56,8 @@ mod remote_control;
     feature = "board-muzi-base-duo"
 ))]
 pub(crate) mod software_vbus;
+#[cfg(feature = "usb-debug-log")]
+mod usb_debug;
 
 #[cfg(any(feature = "board-t-echo", feature = "board-mesh-pocket"))]
 pub use firmware::run;
